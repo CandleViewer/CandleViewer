@@ -7,6 +7,7 @@ test releases them; no sleeps, no network."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import AsyncIterator, Callable
 from itertools import pairwise
 from typing import Any, cast
@@ -29,6 +30,7 @@ from candleviewer.oms.reconcile_job import (
     RetryHop,
     leaf_of,
 )
+from candleviewer.oms.reconcile_report import STALE_NOTICE
 from candleviewer.oms.reconcile_standing import STALE_AFTER_S
 from candleviewer.statechart.bindings import b19_reconciliation as b19
 from candleviewer.statechart.factory import default_clock
@@ -841,35 +843,115 @@ async def test_a_job_restored_backing_off_is_sent_its_owed_retry_due(
         await later.stop()
 
 
-async def test_a_refused_or_mid_pass_restore_builds_the_job_afresh(
+async def test_a_mid_pass_restore_builds_the_job_afresh(
     job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from candleviewer.statechart.persistence import RestoreRefusedError
-
+    """A job restored in `diffing` or `remediating`, which no event leaves, is rebuilt afresh and
+    runs a `startup` pass; a refused snapshot locks instead (the tests below)."""
     memory = Memory()
     first = _driver(job, timers, persistence=memory)
     await first.start([ACCOUNT])
     await _resting(first)
     await first.stop()
-    [key] = memory.repo.rows
+    fresh = Job(retries=cast(Any, RetryHop()))  # the driver's hop, as its phases take it
+    later = _driver(fresh, timers, persistence=memory)
+    with monkeypatch.context() as patch:
+        patch.setattr(b19, "redrive_after_restore", lambda _state, _context: None)
+        await later.start([ACCOUNT])
+    try:
+        assert await _resting(later) == "idle"
+        assert [r[2]["trigger"] for r in fresh.records.rows] == ["startup"]
+        assert not fresh.standing.is_stale(ACCOUNT)
+    finally:
+        await later.stop()
 
-    async def refused(_key: MachineKey, _sealed: SealedSnapshot) -> Any:
-        raise RestoreRefusedError(key, "machine_hash")
 
-    for case in ("refused", "mid_pass"):
-        fresh = Job(retries=RetryHop())  # type: ignore[arg-type]  # the driver's hop, not the rig's
-        later = _driver(fresh, timers, persistence=memory)
-        with monkeypatch.context() as patch:
-            if case == "refused":
-                patch.setattr(memory, "restore", refused)
-            else:  # diffing or remediating: no event leaves them, so the job is rebuilt
-                patch.setattr(b19, "redrive_after_restore", lambda _state, _context: None)
-            await later.start([ACCOUNT])
-        try:
-            assert await _resting(later) == "idle"
-            assert [r[2]["trigger"] for r in fresh.records.rows] == ["startup"]
-        finally:
-            await later.stop()
+def _refusing(memory: Memory) -> tuple[MachineKey, SealedSnapshot]:
+    """The held snapshot, its machine hash replaced by one no upcaster carries, as a B19 chart
+    change without one leaves it: the real `Restorer` refuses it, quarantines and pages it."""
+    [(key, sealed)] = memory.repo.rows.items()
+    refused = dataclasses.replace(sealed, machine_hash="0" * 64)
+    memory.repo.rows[key] = refused
+    return key, refused
+
+
+async def _no_record(_state: str) -> None:
+    return None
+
+
+async def test_a_refused_snapshot_locks_its_job_before_any_pass_and_the_lock_outlives_restarts(
+    job: Job, timers: Timers
+) -> None:
+    """Low 1, ruled (ii) (INV-B19-a, 24 Sec.8.5): a snapshot the restore refuses leaves the job's
+    state unknown, so the restart refuses the account at once and its job, built afresh, locks on
+    its first fetch, paged, before any pass runs; no trigger unlocks it, the stop persists the lock
+    and the next restart restores it locked. Only the Owner's `OPERATOR_RESOLVED` leaves it, and
+    passes run again after it."""
+    memory = Memory()
+    first = _driver(job, timers, persistence=memory)
+    await first.start([ACCOUNT])
+    assert await _resting(first) == "idle"
+    await first.stop()
+    _refusing(memory)
+    fresh = Job(retries=cast(Any, RetryHop()))
+    later = _driver(fresh, timers, persistence=memory)
+    with capture_logs() as logs:
+        await later.start([ACCOUNT])
+    try:
+        assert "reconcile_job_restore_refused" in {e["event"] for e in logs}
+        assert fresh.standing.is_stale(ACCOUNT) and await _resting(later) == "stale_lockout"
+        assert fresh.records.rows == []  # no pass ran: none reported
+        assert (ACCOUNT, STALE_NOTICE) in fresh.notices.published  # the stale episode, paged
+        assert any(severity == "page" for severity, _ in fresh.world.oms.pages)
+        for trigger in ("startup", "periodic", "reconnect", "unknown"):
+            await later.trigger(ACCOUNT, trigger)
+        assert fresh.standing.is_stale(ACCOUNT) and await _resting(later) == "stale_lockout"
+    finally:
+        await later.stop()
+    again = Job(retries=cast(Any, RetryHop()))
+    third = _driver(again, timers, persistence=memory)
+    await third.start([ACCOUNT])
+    try:  # the stop persisted the lock over the refused snapshot: restored, still locked
+        assert again.standing.is_stale(ACCOUNT) and await _resting(third) == "stale_lockout"
+        resolved = await third.resolve(ACCOUNT, decided_by="owner", write_ahead=_no_record)
+        assert resolved == "stale_lockout" and not again.standing.is_stale(ACCOUNT)
+        await third.trigger(ACCOUNT, "periodic")
+        assert await _resting(third) == "idle" and not again.standing.is_stale(ACCOUNT)
+        assert [r[2]["trigger"] for r in again.records.rows] == ["periodic"]
+    finally:
+        await third.stop()
+
+
+async def test_a_stop_before_the_lock_is_recorded_keeps_the_refused_snapshot(
+    job: Job, timers: Timers
+) -> None:
+    """The refused account is refused from the moment its job opens, whatever the fresh build's
+    state, and a stop before B19 has recorded the lock persists nothing: the refused snapshot
+    stays, so the next start refuses it again and locks the job then."""
+    memory = Memory()
+    first = _driver(job, timers, persistence=memory)
+    await first.start([ACCOUNT])
+    assert await _resting(first) == "idle"
+    await first.stop()
+    key, refused = _refusing(memory)
+    fresh = Job(retries=cast(Any, RetryHop()))
+    later = _driver(fresh, timers, persistence=memory)
+    await later.start([])
+    persisted = len(memory.persisted)
+    try:
+        await later._job(ACCOUNT)  # opened, built afresh, sent nothing yet
+        assert leaf_of(later._jobs[ACCOUNT].interp) == "idle"
+        assert fresh.standing.is_stale(ACCOUNT)  # refused at once, never by the fresh state
+    finally:
+        await later.stop()
+    assert len(memory.persisted) == persisted and memory.repo.rows[key] is refused
+    again = Job(retries=cast(Any, RetryHop()))
+    third = _driver(again, timers, persistence=memory)
+    await third.start([ACCOUNT])
+    try:
+        assert again.standing.is_stale(ACCOUNT) and await _resting(third) == "stale_lockout"
+    finally:
+        await third.stop()
 
 
 async def test_a_persist_that_fails_stops_the_job_without_a_snapshot(

@@ -33,7 +33,15 @@ from candleviewer.statechart.bindings import b19_reconciliation as b19
 from candleviewer.storage.repositories.accounts import OwnerScope
 from tests.unit.oms.reconcile_rig import ACCOUNT, Job
 from tests.unit.oms.test_oms_runtime import InlineLane
-from tests.unit.oms.test_reconcile_driver import Timers, _driver, _locked, _resting, _sent
+from tests.unit.oms.test_reconcile_driver import (
+    Memory,
+    Timers,
+    _driver,
+    _locked,
+    _refusing,
+    _resting,
+    _sent,
+)
 
 OWNER, SESSION = UUID(int=0x0E), UUID(int=0x5E)
 BODY = {"reason": "Exchange reachable again; positions checked by hand."}
@@ -229,5 +237,42 @@ async def test_a_locked_job_refuses_the_manual_pass_through_the_driver(
             409, "reconciliation_locked",
         )  # fmt: skip
         assert audit.seen == [] and await _resting(driver) == "stale_lockout"
+    finally:
+        await driver.stop()
+
+
+async def test_a_refused_snapshot_restarts_locked_and_only_the_owners_resolve_unlocks_it(
+    job: Job, timers: Timers
+) -> None:
+    """Low 1, ruled (ii) (INV-B19-a, 24 Sec.8.5), through the routes: after a restart whose
+    snapshot the restore refuses, the account is locked (`stale_lockout`) and runs no pass, so a
+    manual pass is `409 reconciliation_locked`; `resolveReconciliation`, the Owner's ordinary
+    resolve, records the decision while it is still locked, then unlocks it, and the next manual
+    pass runs and leaves it open."""
+    memory = Memory()
+    first = _driver(job, timers, persistence=memory)
+    await first.start([ACCOUNT])
+    assert await _resting(first) == "idle"
+    await first.stop()
+    _refusing(memory)
+    fresh = Job(retries=cast(Any, RetryHop()))
+    driver = _driver(fresh, timers, persistence=memory)
+    await driver.start([ACCOUNT])  # the restart
+    audit = Recorder(fresh)
+    try:
+        assert fresh.standing.is_stale(ACCOUNT) and await _resting(driver) == "stale_lockout"
+        app = _app(driver, audit)
+        locked = await _post(app, f"/admin/reconciliation/{ACCOUNT}")
+        assert (locked.status_code, locked.json()["errors"][0]["rule"]) == (
+            409, "reconciliation_locked",
+        )  # fmt: skip
+        resolved = await _post(app, f"/admin/reconciliation/{ACCOUNT}/resolve", json=BODY)
+        assert resolved.status_code == 200 and resolved.json()["resolved"] == "stale_lockout"
+        assert audit.seen == [("resolved", True, "stale_lockout")]  # recorded while locked
+        assert not fresh.standing.is_stale(ACCOUNT) and await _resting(driver) == "idle"
+        again = await _post(app, f"/admin/reconciliation/{ACCOUNT}")
+        assert again.status_code == 202 and await _resting(driver) == "idle"
+        assert [r[2]["trigger"] for r in fresh.records.rows] == ["manual"]  # a pass, no relock
+        assert not fresh.standing.is_stale(ACCOUNT)
     finally:
         await driver.stop()
