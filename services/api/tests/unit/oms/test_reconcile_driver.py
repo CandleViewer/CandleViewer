@@ -121,6 +121,7 @@ def _driver(
 ) -> ReconcileJobs:
     hop = job.phases._retries
     assert isinstance(hop, RetryHop)
+    # `environment` is the tests' plain `str`, not the `Environment` literal the driver takes
     driver = ReconcileJobs(
         job.phases, standing=job.standing, environment=environment,  # type: ignore[arg-type]
         remediates=remediates, metrics=job.metrics, pager=job.world.oms,
@@ -137,7 +138,7 @@ async def timers() -> Timers:
 
 @pytest.fixture
 async def job() -> AsyncIterator[Job]:
-    wired = Job(retries=RetryHop())  # type: ignore[arg-type]
+    wired = Job(retries=RetryHop())  # type: ignore[arg-type]  # the driver's hop, not the rig's
     yield wired
     b19.set_ports(None)
 
@@ -221,7 +222,7 @@ async def test_a_trigger_for_an_account_with_no_job_opens_one(job: Job, timers: 
         assert await driver.request_reconciliation(ACCOUNT, reason="reconnected") is None
         assert await _resting(driver) == "idle"
         assert [r[2]["trigger"] for r in job.records.rows] == ["reconnect"]
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError):  # "bogus" is no `ResyncReason`, on purpose
             await driver.request_reconciliation(ACCOUNT, reason="bogus")  # type: ignore[arg-type]
     finally:
         await driver.stop()
@@ -516,7 +517,7 @@ async def test_a_restart_restores_a_locked_job_and_never_unlocks_it(
     await first.start([])
     await _locked(job, first, timers)
     await first.stop()
-    fresh = Job(retries=RetryHop())  # type: ignore[arg-type]  # a new process
+    fresh = Job(retries=RetryHop())  # type: ignore[arg-type]  # a new process, the driver's hop
     later = _driver(fresh, timers, persistence=memory)
     with capture_logs() as logs:
         await later.start([ACCOUNT])
@@ -530,7 +531,9 @@ async def test_a_restart_restores_a_locked_job_and_never_unlocks_it(
         await later.stop()
 
 
-async def test_a_job_restored_backing_off_is_owed_its_retry(job: Job, timers: Timers) -> None:
+async def test_stop_cancels_a_pass_backing_off_so_its_snapshot_restores_idle(
+    job: Job, timers: Timers
+) -> None:
     memory = Memory()
     first = _driver(job, timers, persistence=memory)
     await first.start([])
@@ -621,7 +624,7 @@ async def test_the_cadence_spreads_the_accounts_under_five_seconds_apart_and_tic
         ticks.append((account, kind))
         return await trigger(account, kind)
 
-    driver.trigger = counted  # type: ignore[method-assign]
+    driver.trigger = counted  # type: ignore[method-assign]  # a spy over the real trigger
     await driver.start(accounts)
     try:
         await _asked(timers, lambda asked: len(asked) >= 3)
@@ -688,7 +691,7 @@ async def test_unknown_triggers_and_accounts_are_refused(job: Job, timers: Timer
     driver = _driver(job, timers)
     await driver.start([ACCOUNT])
     try:
-        with pytest.raises(ValueError, match="triggers"):
+        with pytest.raises(ValueError, match="triggers"):  # "kill" is no `Trigger`, on purpose
             await driver.trigger(ACCOUNT, "kill")  # type: ignore[arg-type]
         nobody = AccountId(UUID(int=7))
 
@@ -736,7 +739,7 @@ async def test_a_job_restored_backing_off_is_sent_its_owed_retry_due(
     assert await _until(first, "backing_off") == "backing_off"
     await memory.persist(first._jobs[ACCOUNT].interp, first._jobs[ACCOUNT].machine_key)
     await first.stop()
-    fresh = Job(retries=RetryHop())  # type: ignore[arg-type]
+    fresh = Job(retries=RetryHop())  # type: ignore[arg-type]  # the driver's hop, not the rig's
     later = _driver(fresh, timers, persistence=memory)
     sent = _sent(later, pytest.MonkeyPatch())
     await later.start([ACCOUNT])
@@ -764,7 +767,7 @@ async def test_a_refused_or_mid_pass_restore_builds_the_job_afresh(
         raise RestoreRefusedError(key, "machine_hash")
 
     for case in ("refused", "mid_pass"):
-        fresh = Job(retries=RetryHop())  # type: ignore[arg-type]
+        fresh = Job(retries=RetryHop())  # type: ignore[arg-type]  # the driver's hop, not the rig's
         later = _driver(fresh, timers, persistence=memory)
         with monkeypatch.context() as patch:
             if case == "refused":
