@@ -115,6 +115,10 @@ _AWAIT_STEP: Final = True
 SEND_TIMEOUT_S: Final = 5.0
 QUIESCE_TIMEOUT_S: Final = 10.0
 QUIESCE_POLL_S: Final = 0.01
+#: Each step of a job's open the driver awaits (C-2.18): its snapshot's load, its restore, which
+#: starts the machine within the factory's own 5 s (CV-C56), and a fresh build's plugins. One that
+#: hangs is a job that did not open: logged, and its account refused order entry at the start.
+OPEN_TIMEOUT_S: Final = 10.0
 #: The states a pass is running in: a trigger there is skipped, never queued.
 _RESTING: Final = frozenset({"idle", "divergent", "stale_lockout"})
 #: The states the operator's decision leaves (22 `resolveReconciliation`).
@@ -429,11 +433,11 @@ class ReconcileJobs:
         it), or one restored mid-diff or remediation, which no event leaves."""
         if self._persistence is None:
             return None, ()
-        sealed = await self._persistence.load(key)
+        sealed = await _opening_step(self._persistence.load(key))
         if sealed is None:
             return None, ()
         try:
-            interp = await self._persistence.restore(key, sealed)
+            interp = await _opening_step(self._persistence.restore(key, sealed))
         except RestoreRefusedError:
             _log().error("reconcile_job_restore_refused", account_id=str(account))
             return None, ()
@@ -445,7 +449,7 @@ class ReconcileJobs:
 
     async def _built(self, account: AccountId, key: MachineKey) -> Any:
         if self._persistence is not None:  # its chain seeded and the orphan scan run first
-            plugins = await self._persistence.plugins(key)
+            plugins = await _opening_step(self._persistence.plugins(key))
         else:
             plugins = cv_plugins(
                 machine_kind=MACHINE, lane=LANE, entity_id=str(account), env=self._env,
@@ -559,6 +563,13 @@ class ReconcileJobs:
 
 
 _UNOPENED: Final = "A reconciliation job could not open: its account's order entry is refused."
+
+
+async def _opening_step[T](step: Awaitable[T]) -> T:
+    """One step of a job's open within `OPEN_TIMEOUT_S`, else `TimeoutError`, which `_open`
+    turns into a job that did not open (C-2.18): a hang is logged, never waited on in silence."""
+    async with asyncio.timeout(OPEN_TIMEOUT_S):
+        return await step
 
 
 class RetryHop:

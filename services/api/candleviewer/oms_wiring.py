@@ -2809,9 +2809,10 @@ class OmsRuntime:
         """E29-T06 #914 (24 Sec.8.5, BQ-14): the reconciliation jobs open on the lane, each sent
         `startup`, before `ready` is set; order entry never waits for their passes. The accounts
         are the environment's that resolve to a trading account; another opens on its stream's
-        first trigger. A start that fails is logged CRITICAL and paged, and the runtime goes on to
-        `ready`: each account whose job did not open is refused order entry (its standing set),
-        never left unreconciled silently."""
+        first trigger. The start is bounded as the seed is (`_bounded`), so it delays `ready` by
+        at most 17 s, and one that overruns has failed. A start that fails is logged CRITICAL and
+        paged, and the runtime goes on to `ready`: each account whose job did not open is refused
+        order entry (its standing set), never left unreconciled silently."""
         if parts.reconcile is None or parts.tradable is None:
             return
         jobs, tradable = parts.reconcile.jobs, parts.tradable
@@ -2821,7 +2822,7 @@ class OmsRuntime:
             await jobs.start(await tradable(ids))
 
         try:
-            await parts.lane.call(opened())
+            await self._bounded(parts.lane.call(opened()))
         except Exception as exc:
             if self._stopping:
                 raise asyncio.CancelledError from exc
