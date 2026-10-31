@@ -337,6 +337,8 @@ def f189(state: str) -> k.Node:
         c.pane.append(k.rect("future dim", c.pw - xv, c.ph, k.APP, {"opacity": k.OPACITY_SCRIM}, x=xv, y=0))
         c.pane.append(k.dashes("virtual-now line", xv, 0, c.ph, rp, vertical=True))
         c.times = ["13:30", "13:35", "13:40", "13:45"]
+        # live fold r2: the clock pill covers 13:35 / 13:40, which drop as collisions (E11-D02 D4, L111)
+        c.drop_times = {1, 2}
         # m3: the virtual now is read off this frame's axis; the zone tag's clock shows it (E11-D02 L276)
         now = c.clock_at(xv, secs=True)
         c.zone = f"UTC {now}"

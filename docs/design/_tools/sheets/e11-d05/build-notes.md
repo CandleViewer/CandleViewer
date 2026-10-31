@@ -113,3 +113,11 @@ Four frames failed and now pass (m3):
   the 63,960-64,040 ticks plus one step.
 
 The CMP-180 disconnected strip's "last data 00:12" is an age (L413), not a clock value, so the sweep skips it.
+
+## Live-check fold, round 2 (2026-10-31)
+
+The round-2 live check left two overlaps open on board 09: in CMP-189 (virtual-now) the clock pill covered `time 1`
+(13:35) and `time 2` (13:40) by 8 and 7 px. Both labels were removed live and the board re-exported. The kit now drops
+them too (`Crop.drop_times = {1, 2}`, E11-D02 D4: a label that overlaps a placed label is dropped as a collision), so
+a rebuild reproduces the drawn board: 2838 -> 2836 shapes in the sheet, root size unchanged. Board 09's overlaps are
+now 13, all by design (crosshair over tick 9, replay frame 3, watermark under the stale ink 1).
