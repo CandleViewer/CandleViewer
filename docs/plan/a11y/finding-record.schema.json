@@ -1,45 +1,881 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://candleviewer.local/schemas/a11y-finding-record.schema.json",
-  "title": "A11y audit findings file (E47-K01)",
+  "title": "A11y audit findings file (E47-K01; additive v2 for the E47-T01 register)",
+  "description": "schemaVersion 1 is E47-K01's findings-only file and still validates unchanged. schemaVersion 2 (E47-T01, BQ-12 of the #1323 ruling of record) adds the per-screen rows (screens[]), the pattern groups (patterns[]) and optional finding fields. Cross-document rules (unique ids, one row per SCR-001..159, references resolve) are checked by scripts/tests/test_a11y_finding_schema.py.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "build", "findings"],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "build": { "type": "string", "minLength": 1, "description": "Demo-environment build id the sweep ran against" },
-    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } }
+    "schemaVersion": {
+      "enum": [1, 2]
+    },
+    "build": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Build id the sweep ran against (v2: the audited git sha of main)"
+    },
+    "auditedSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "environment": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Honest-scope line: what the sweep ran against and what it did not (BQ-05)"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "screens": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/screen"
+      }
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/pattern"
+      }
+    }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": ["screens"]
+            },
+            {
+              "required": ["patterns"]
+            },
+            {
+              "required": ["auditedSha"]
+            },
+            {
+              "required": ["environment"]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "const": 2
+          }
+        }
+      },
+      "then": {
+        "required": ["screens", "patterns", "auditedSha", "environment"],
+        "properties": {
+          "findings": {
+            "items": {
+              "$ref": "#/$defs/findingV2Rules"
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
+    "scrId": {
+      "type": "string",
+      "pattern": "^SCR-[0-9]{3}$"
+    },
+    "ticketId": {
+      "description": "A ticket (never an epic): plan key, optionally with its issue number, or a bare issue number",
+      "type": "string",
+      "pattern": "^E[0-9]{2}-[A-Z][0-9]{2}( #[0-9]+)?$|^#[0-9]+$"
+    },
+    "epicId": {
+      "type": "string",
+      "pattern": "^E[0-9]{2}( \\(epic\\))?( #[0-9]+)?$"
+    },
+    "owningTicket": {
+      "description": "v1: plan key or 'unassigned'. v2 widens it to an issue number, an epic (only on unreachable coverage rows, never on a finding) and 'needs-filing-go' (BQ-16)",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ticketId"
+        },
+        {
+          "$ref": "#/$defs/epicId"
+        },
+        {
+          "const": "unassigned"
+        },
+        {
+          "const": "needs-filing-go"
+        }
+      ]
+    },
+    "verdict": {
+      "description": "BQ-09's four values; WCAG's built-in exceptions are 'pass (exception: <name>)'",
+      "type": "string",
+      "pattern": "^(pass|pass \\(exception: [^()]+\\)|fail|n/a \\(.+\\)|unreachable \\(.+\\))$"
+    },
+    "evidenceVerdict": {
+      "description": "An evidence-type cell: a BQ-09 value, or an honest 'not run' / 'deferred' with its reason",
+      "type": "string",
+      "pattern": "^(pass|pass \\(exception: [^()]+\\)|fail|n/a \\(.+\\)|unreachable \\(.+\\)|not run( \\(.+\\))?|deferred \\(.+\\))$"
+    },
+    "scope": {
+      "type": "string",
+      "pattern": "^built part \\(.+\\)$"
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict"],
+      "properties": {
+        "verdict": {
+          "$ref": "#/$defs/evidenceVerdict"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Record section or result file"
+        },
+        "note": {
+          "type": "string"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^A11Y-F-[0-9]{4}$"
+          }
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Measured wall-clock, ms"
+        },
+        "themes": {
+          "type": "array",
+          "items": {
+            "enum": ["dark", "light", "high-contrast"]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict"],
+      "properties": {
+        "verdict": {
+          "$ref": "#/$defs/verdict"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "note": {
+          "type": "string"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^A11Y-F-[0-9]{4}$"
+          }
+        }
+      }
+    },
+    "wcag22": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["2.4.11", "2.5.7", "2.5.8", "3.2.6", "3.3.7", "3.3.8"],
+      "properties": {
+        "2.4.11": {
+          "$ref": "#/$defs/criterion"
+        },
+        "2.5.7": {
+          "$ref": "#/$defs/criterion"
+        },
+        "2.5.8": {
+          "$ref": "#/$defs/criterion"
+        },
+        "3.2.6": {
+          "$ref": "#/$defs/criterion"
+        },
+        "3.3.7": {
+          "$ref": "#/$defs/criterion"
+        },
+        "3.3.8": {
+          "$ref": "#/$defs/criterion"
+        }
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "source", "status"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "enum": ["catalogue", "prose", "derived", "derived (type line)"],
+          "description": "BQ-03: the States line, a prose list, or derived (Behaviour / Validation / Hi-fi, or the Type line)"
+        },
+        "status": {
+          "enum": ["covered", "unreachable", "not run"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": ["unreachable", "not run"]
+              }
+            }
+          },
+          "then": {
+            "required": ["reason"]
+          }
+        }
+      ]
+    },
+    "screen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "coverage", "owningTicket", "states", "evidence", "noFindings"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/scrId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "coverage": {
+          "description": "BQ-02's taxonomy; a StubRoute placeholder is never audited as the screen",
+          "enum": [
+            "covered",
+            "partial",
+            "unreachable: not built",
+            "unreachable: built, not mounted",
+            "unreachable: needs a state the harness cannot induce",
+            "reserved: no screen"
+          ]
+        },
+        "coverageReason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Evidence for the coverage value (file:line at the audited sha, or the reason)"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope",
+          "description": "Partial rows: what the built part is"
+        },
+        "owningTicket": {
+          "$ref": "#/$defs/owningTicket"
+        },
+        "ownerResolution": {
+          "type": "string",
+          "description": "BQ-04: how the owner was chosen (rule step, or 'hand-resolved: <why>')"
+        },
+        "deepPassListed": {
+          "type": "boolean",
+          "description": "On the ticket's 33-id deep-pass list"
+        },
+        "states": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/state"
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["automated", "keyboard", "deep", "sr"],
+          "properties": {
+            "automated": {
+              "$ref": "#/$defs/evidence"
+            },
+            "keyboard": {
+              "$ref": "#/$defs/evidence"
+            },
+            "deep": {
+              "$ref": "#/$defs/evidence"
+            },
+            "spot": {
+              "$ref": "#/$defs/evidence"
+            },
+            "sr": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["owner"],
+              "properties": {
+                "owner": {
+                  "const": "E47-T04"
+                },
+                "proxies": {
+                  "$ref": "#/$defs/evidence"
+                }
+              },
+              "description": "BQ-11: the SR sign-off is E47-T04's; T01 only records heuristic proxies"
+            }
+          }
+        },
+        "wcag22": {
+          "$ref": "#/$defs/wcag22"
+        },
+        "importedFrom": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "designReviewed": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "BQ-19: spec-level reviews, cited, never counted as conformance evidence"
+        },
+        "noFindings": {
+          "type": "boolean",
+          "description": "Explicit 'no findings' record (Gherkin 1); true only on an audited row with no finding"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "coverage": {
+                "enum": ["covered"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "owningTicket": {
+                "not": {
+                  "$ref": "#/$defs/epicId"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "coverage": {
+                "const": "partial"
+              }
+            }
+          },
+          "then": {
+            "required": ["scope", "coverageReason"],
+            "properties": {
+              "owningTicket": {
+                "not": {
+                  "$ref": "#/$defs/epicId"
+                }
+              },
+              "wcag22": {
+                "properties": {
+                  "2.4.11": {
+                    "$ref": "#/$defs/partialCriterion"
+                  },
+                  "2.5.7": {
+                    "$ref": "#/$defs/partialCriterion"
+                  },
+                  "2.5.8": {
+                    "$ref": "#/$defs/partialCriterion"
+                  },
+                  "3.2.6": {
+                    "$ref": "#/$defs/partialCriterion"
+                  },
+                  "3.3.7": {
+                    "$ref": "#/$defs/partialCriterion"
+                  },
+                  "3.3.8": {
+                    "$ref": "#/$defs/partialCriterion"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "coverage": {
+                "enum": [
+                  "unreachable: not built",
+                  "unreachable: built, not mounted",
+                  "unreachable: needs a state the harness cannot induce",
+                  "reserved: no screen"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": ["coverageReason"],
+            "properties": {
+              "noFindings": {
+                "const": false
+              },
+              "evidence": {
+                "properties": {
+                  "automated": {
+                    "$ref": "#/$defs/notPassEvidence"
+                  },
+                  "keyboard": {
+                    "$ref": "#/$defs/notPassEvidence"
+                  },
+                  "deep": {
+                    "$ref": "#/$defs/notPassEvidence"
+                  },
+                  "spot": {
+                    "$ref": "#/$defs/notPassEvidence"
+                  }
+                }
+              },
+              "states": {
+                "items": {
+                  "properties": {
+                    "status": {
+                      "not": {
+                        "const": "covered"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "coverage": {
+                "enum": [
+                  "unreachable: not built",
+                  "unreachable: built, not mounted",
+                  "unreachable: needs a state the harness cannot induce"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "wcag22": {
+                "properties": {
+                  "2.4.11": {
+                    "$ref": "#/$defs/unreachableCriterion"
+                  },
+                  "2.5.7": {
+                    "$ref": "#/$defs/unreachableCriterion"
+                  },
+                  "2.5.8": {
+                    "$ref": "#/$defs/unreachableCriterion"
+                  },
+                  "3.2.6": {
+                    "$ref": "#/$defs/unreachableCriterion"
+                  },
+                  "3.3.7": {
+                    "$ref": "#/$defs/unreachableCriterion"
+                  },
+                  "3.3.8": {
+                    "$ref": "#/$defs/unreachableCriterion"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "coverage": {
+                "const": "reserved: no screen"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "owningTicket": {
+                "const": "unassigned"
+              },
+              "states": {
+                "maxItems": 0
+              }
+            },
+            "not": {
+              "required": ["wcag22"]
+            }
+          }
+        }
+      ]
+    },
+    "partialCriterion": {
+      "description": "BQ-09: on a partial row every verdict carries 'scope: built part (<what>)' (an unreachable verdict is exempt)",
+      "if": {
+        "properties": {
+          "verdict": {
+            "pattern": "^unreachable "
+          }
+        }
+      },
+      "else": {
+        "required": ["scope"]
+      }
+    },
+    "unreachableCriterion": {
+      "description": "BQ-09 / BQ-12: every criterion on an unreachable row is 'unreachable (<reason>)', never pass, never n/a",
+      "properties": {
+        "verdict": {
+          "pattern": "^unreachable \\(.+\\)$"
+        }
+      }
+    },
+    "notPassEvidence": {
+      "description": "No pass on an unreachable or reserved row",
+      "properties": {
+        "verdict": {
+          "not": {
+            "pattern": "^pass"
+          }
+        }
+      }
+    },
+    "pattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "group", "title", "screenIds", "owningTicket", "findings"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^A11Y-P-[0-9]{2}$"
+        },
+        "group": {
+          "enum": [
+            "canvas surrogate",
+            "roving-tabindex grid",
+            "dialog focus-return",
+            "motion token",
+            "colour-only encoding",
+            "target size",
+            "drag-only interaction",
+            "label/name mismatch",
+            "other"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "componentIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^CMP-[A-Z0-9-]+$"
+          }
+        },
+        "screenIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scrId"
+          },
+          "minItems": 1
+        },
+        "owningTicket": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ticketId"
+            },
+            {
+              "const": "needs-filing-go"
+            }
+          ]
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^A11Y-F-[0-9]{4}$"
+          },
+          "minItems": 1
+        }
+      }
+    },
     "finding": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "id", "screenId", "state", "componentId", "wcagSc", "level", "severity",
-        "reproduction", "detection", "owningTicket", "status"
+        "id",
+        "screenId",
+        "state",
+        "componentId",
+        "wcagSc",
+        "level",
+        "severity",
+        "reproduction",
+        "detection",
+        "owningTicket",
+        "status"
       ],
       "properties": {
-        "id": { "type": "string", "pattern": "^A11Y-F-[0-9]{4}$" },
-        "screenId": { "type": "string", "pattern": "^SCR-[0-9]{3}$" },
-        "state": { "type": "string", "minLength": 1, "description": "Screen state, e.g. populated, empty, error" },
-        "componentId": { "type": "string", "pattern": "^CMP-[A-Z0-9-]+$|^none$" },
-        "wcagSc": { "type": "string", "pattern": "^[1-4][.][0-9]+[.][0-9]+$" },
-        "level": { "enum": ["A", "AA"] },
-        "severity": { "enum": ["blocker", "serious", "moderate", "minor"] },
-        "reproduction": { "type": "string", "minLength": 1 },
+        "id": {
+          "type": "string",
+          "pattern": "^A11Y-F-[0-9]{4}$"
+        },
+        "screenId": {
+          "type": "string",
+          "pattern": "^SCR-[0-9]{3}$"
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Screen state, e.g. populated, empty, error"
+        },
+        "componentId": {
+          "type": "string",
+          "pattern": "^CMP-[A-Z0-9-]+$|^none$"
+        },
+        "wcagSc": {
+          "type": "string",
+          "pattern": "^[1-4][.][0-9]+[.][0-9]+$"
+        },
+        "level": {
+          "enum": ["A", "AA"]
+        },
+        "severity": {
+          "enum": ["blocker", "serious", "moderate", "minor"]
+        },
+        "reproduction": {
+          "type": "string",
+          "minLength": 1
+        },
         "detection": {
           "type": "object",
           "additionalProperties": false,
           "required": ["source"],
           "properties": {
-            "source": { "enum": ["automated", "manual"] },
-            "tool": { "type": "string", "description": "axe-core, keyboard-e2e, nvda, ..." },
-            "heuristic": { "type": "boolean" }
+            "source": {
+              "enum": ["automated", "manual"]
+            },
+            "tool": {
+              "type": "string",
+              "description": "axe-core, keyboard-e2e, nvda, design-review, ..."
+            },
+            "heuristic": {
+              "type": "boolean",
+              "description": "true where an SR proxy or a code read, not a run, detected it (BQ-11)"
+            }
           }
         },
-        "owningTicket": { "type": "string", "pattern": "^E[0-9]{2}-[A-Z][0-9]{2}$|^unassigned$" },
-        "status": { "enum": ["open", "in-progress", "fixed", "verified", "wont-fix"] }
+        "owningTicket": {
+          "$ref": "#/$defs/owningTicket"
+        },
+        "status": {
+          "enum": ["open", "in-progress", "fixed", "verified", "wont-fix"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected": {
+          "type": "string",
+          "minLength": 1
+        },
+        "priority": {
+          "enum": ["P0", "P1", "P2", "P3"]
+        },
+        "pattern": {
+          "type": "string",
+          "pattern": "^A11Y-P-[0-9]{2}$"
+        },
+        "alsoOn": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scrId"
+          },
+          "uniqueItems": true,
+          "description": "BQ-18: the same defect on the same component under the same SC on further screens"
+        },
+        "needsFilingGo": {
+          "type": "boolean",
+          "description": "BQ-16: no open owner; listed in the 'needs filing go' table for the orchestrator"
+        },
+        "exception": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nominated", "compensatingControl", "rationale", "proposedExpiry"],
+          "properties": {
+            "nominated": {
+              "const": true
+            },
+            "compensatingControl": {
+              "type": "string",
+              "minLength": 1
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "proposedExpiry": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+            }
+          },
+          "description": "BQ-17: a nomination only; acceptance is E47-T05's"
+        },
+        "importedFrom": {
+          "type": "string",
+          "minLength": 1,
+          "description": "BQ-19: source record and its finding id"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Repo-relative PNG paths or record anchors (BQ-25)"
+        }
       }
+    },
+    "findingV2Rules": {
+      "description": "v2-only finding rules (BQ-12, BQ-16, BQ-17); v1 files keep K01's semantics",
+      "allOf": [
+        {
+          "description": "Never an epic on a finding (epic owners only on unreachable coverage rows)",
+          "properties": {
+            "owningTicket": {
+              "not": {
+                "$ref": "#/$defs/epicId"
+              }
+            }
+          }
+        },
+        {
+          "description": "Level A: never an exception, priority P0/P1 when set (Gherkin 4)",
+          "if": {
+            "properties": {
+              "level": {
+                "const": "A"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": ["exception"]
+            },
+            "properties": {
+              "priority": {
+                "enum": ["P0", "P1"]
+              }
+            }
+          }
+        },
+        {
+          "description": "Level A: a ticket id (never E47-T01) unless it sits in the 'needs filing go' table",
+          "if": {
+            "properties": {
+              "level": {
+                "const": "A"
+              }
+            },
+            "not": {
+              "required": ["needsFilingGo"],
+              "properties": {
+                "needsFilingGo": {
+                  "const": true
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "owningTicket": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/ticketId"
+                  },
+                  {
+                    "not": {
+                      "pattern": "^E47-T01( |$)"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["needsFilingGo"],
+            "properties": {
+              "needsFilingGo": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "owningTicket": {
+                "const": "needs-filing-go"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "owningTicket": {
+                "const": "needs-filing-go"
+              }
+            },
+            "required": ["owningTicket"]
+          },
+          "then": {
+            "required": ["needsFilingGo"],
+            "properties": {
+              "needsFilingGo": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

@@ -1,6 +1,141 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "build": "EXAMPLE-NOT-A-REAL-FINDING",
+  "auditedSha": "0000000000000000000000000000000000000000",
+  "environment": "Illustrative schema example only: no sweep ran against this file.",
+  "screens": [
+    {
+      "id": "SCR-152",
+      "name": "Disconnected / reconnecting state",
+      "coverage": "partial",
+      "coverageReason": "Illustrative: only the connection region is built.",
+      "scope": "built part (connection region)",
+      "owningTicket": "E17-D04 #408",
+      "deepPassListed": true,
+      "states": [
+        {
+          "name": "reconnecting",
+          "source": "catalogue",
+          "status": "covered"
+        },
+        {
+          "name": "panels frozen with last-good timestamp",
+          "source": "catalogue",
+          "status": "unreachable",
+          "reason": "Illustrative: no data panels are mounted."
+        }
+      ],
+      "evidence": {
+        "automated": {
+          "verdict": "pass",
+          "themes": ["dark", "light", "high-contrast"]
+        },
+        "keyboard": {
+          "verdict": "pass"
+        },
+        "deep": {
+          "verdict": "fail",
+          "findings": ["A11Y-F-0001"]
+        },
+        "sr": {
+          "owner": "E47-T04",
+          "proxies": {
+            "verdict": "fail",
+            "findings": ["A11Y-F-0001"]
+          }
+        }
+      },
+      "wcag22": {
+        "2.4.11": {
+          "verdict": "pass",
+          "scope": "built part (connection region)"
+        },
+        "2.5.7": {
+          "verdict": "n/a (no drag interaction)",
+          "scope": "built part (connection region)"
+        },
+        "2.5.8": {
+          "verdict": "pass",
+          "scope": "built part (connection region)"
+        },
+        "3.2.6": {
+          "verdict": "n/a (no help offered)",
+          "scope": "built part (connection region)"
+        },
+        "3.3.7": {
+          "verdict": "n/a (not a multi-step process)",
+          "scope": "built part (connection region)"
+        },
+        "3.3.8": {
+          "verdict": "n/a (not an authentication step)",
+          "scope": "built part (connection region)"
+        }
+      },
+      "noFindings": false
+    },
+    {
+      "id": "SCR-045",
+      "name": "Chart data table",
+      "coverage": "unreachable: not built",
+      "coverageReason": "Illustrative: no component exists.",
+      "owningTicket": "E15 (epic)",
+      "ownerResolution": "Illustrative: no Story names the screen.",
+      "deepPassListed": true,
+      "states": [
+        {
+          "name": "default",
+          "source": "derived",
+          "status": "unreachable",
+          "reason": "not built"
+        }
+      ],
+      "evidence": {
+        "automated": {
+          "verdict": "unreachable (not built)"
+        },
+        "keyboard": {
+          "verdict": "unreachable (not built)"
+        },
+        "deep": {
+          "verdict": "deferred (deep pass deferred to #1323's next run)"
+        },
+        "sr": {
+          "owner": "E47-T04"
+        }
+      },
+      "wcag22": {
+        "2.4.11": {
+          "verdict": "unreachable (not built)"
+        },
+        "2.5.7": {
+          "verdict": "unreachable (not built)"
+        },
+        "2.5.8": {
+          "verdict": "unreachable (not built)"
+        },
+        "3.2.6": {
+          "verdict": "unreachable (not built)"
+        },
+        "3.3.7": {
+          "verdict": "unreachable (not built)"
+        },
+        "3.3.8": {
+          "verdict": "unreachable (not built)"
+        }
+      },
+      "noFindings": false
+    }
+  ],
+  "patterns": [
+    {
+      "id": "A11Y-P-01",
+      "group": "label/name mismatch",
+      "title": "Illustrative pattern: status changes without a status role",
+      "screenIds": ["SCR-152"],
+      "owningTicket": "E47-S05 #1319",
+      "findings": ["A11Y-F-0001"]
+    }
+  ],
   "findings": [
     {
       "id": "A11Y-F-0001",
@@ -11,9 +146,24 @@
       "level": "AA",
       "severity": "serious",
       "reproduction": "Illustrative schema example only: drop the WS mock; reconnect overlay appears without a status role.",
-      "detection": { "source": "manual", "tool": "nvda", "heuristic": true },
-      "owningTicket": "unassigned",
-      "status": "open"
+      "detection": {
+        "source": "manual",
+        "tool": "nvda",
+        "heuristic": true
+      },
+      "owningTicket": "E47-S05 #1319",
+      "status": "open",
+      "title": "Illustrative: reconnect overlay is not announced",
+      "observed": "Illustrative: no live region or status role on the overlay.",
+      "expected": "Illustrative: the state change is announced politely (role=status).",
+      "priority": "P2",
+      "pattern": "A11Y-P-01",
+      "exception": {
+        "nominated": true,
+        "compensatingControl": "Illustrative: the status bar repeats the state as text.",
+        "rationale": "Illustrative only.",
+        "proposedExpiry": "2027-03-25"
+      }
     }
   ]
 }
