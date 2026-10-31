@@ -1606,15 +1606,17 @@ C19, C20, C23, C24, C25; 3.4 C32, C35, C36, C38, C39; 3.5 C46, C51; 3.8 C63, C64
   and the epic QA sign-off comment with pass / fail per story group; the "how to not break the design system" note. **For
   E05-Q03 (#263)** — the table of regression candidates handed over (BQ-20, ruled):
 
-  | Candidate                                                           | From       | Why                                                                                           |
-  | ------------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------- |
-  | Combobox-in-Dialog: a story composing CMP-048 in CMP-043            | C53, SG-1  | the ticket's composition 1 has no story; the Esc-order rule (`15`:571) needs a direct surface |
-  | Menu-in-Drawer: a story mounting a Menu trigger in a scrolling body | C55, SG-2  | composition 3 has no story                                                                    |
-  | Toast under a modal (`RegionUnderModal`)                            | C54        | already a play; keep it in the per-PR subset                                                  |
-  | Table `Reflow` at `high-contrast` · `compact`                       | C56        | the composition's cell is not the toolbar default the `storybook` job runs                    |
-  | `HoldReducedMotion`, `HoldKeyboard`                                 | C57, C35   | the gate's two perceivable paths                                                              |
-  | `EchoReason` on a gated icon                                        | C58        | the echo-never-the-only-copy rule (`15`:54)                                                   |
-  | every case that fails in the execution pass                         | the record | one story per fixed defect (#263 Scope)                                                       |
+  | Candidate                                                           | From        | Why                                                                                                                                                              |
+  | ------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | Combobox-in-Dialog: a story composing CMP-048 in CMP-043            | C53, SG-1   | the ticket's composition 1 has no story; the Esc-order rule (`15`:571) needs a direct surface                                                                    |
+  | Menu-in-Drawer: a story mounting a Menu trigger in a scrolling body | C55, SG-2   | composition 3 has no story                                                                                                                                       |
+  | Toast under a modal (`RegionUnderModal`)                            | C54         | already a play; keep it in the per-PR subset                                                                                                                     |
+  | Table `Reflow` at `high-contrast` · `compact`                       | C56         | the composition's cell is not the toolbar default the `storybook` job runs                                                                                       |
+  | `HoldReducedMotion`, `HoldKeyboard`                                 | C57, C35    | the gate's two perceivable paths                                                                                                                                 |
+  | `EchoReason` on a gated icon                                        | C58         | the echo-never-the-only-copy rule (`15`:54)                                                                                                                      |
+  | D4: `Checkbox` `Indeterminate` shows no visible word "Mixed"        | C06, pass 2 | `15`:95 pairs `aria-checked="mixed"` with the word; the glyph carries the state, so a row, not filed (coordinator ruling 2026-10-31; pass 2 on #261, 6537431192) |
+  | D5: the stacked `Table` at `high-contrast` · `compact`              | C56, pass 2 | the row fills step about 1.07 : 1 with no drawn boundary; a row, not filed (coordinator ruling 2026-10-31; pass 2 on #261, 6537431192)                           |
+  | every case that fails in the execution pass                         | the record  | one story per fixed defect (#263 Scope)                                                                                                                          |
 
 - **E05-X02 (#272), the security review:** the dependency review, the CSP hash of the pre-paint script, Storybook hosting, the
   gitleaks path rule, and the component-level checks — MaskedValue, the ConfirmDialog gates ("cannot be satisfied by a single
