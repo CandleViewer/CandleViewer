@@ -7,11 +7,16 @@
   (`ws_wiring.ingestion_streams`), and every symbol the recorder records (`recorded`) is held
   too, re-read once a second. Only listed symbols ever become topics.
 - **Prints.** A push is parsed whole (the adapter's parser, injected, C-2.2); a refused one is
-  counted and logged, never half-written. Each print is published on `{env}.md.{symbol}
-  .liquidation` for the WS topic and queued for the store.
-- **Backpressure, never loss.** The write queue is bounded (`WRITE_QUEUE_MAXSIZE` pushes); a
-  full queue makes the frame handler wait, which backs up the socket's dispatch lane instead of
-  dropping a print or growing without limit (C-2.18). The writer batches whatever is queued.
+  counted and logged, never half-written. Every print's time must also pass the clock- and
+  listing-relative window trades use (`event_window`, #1892): one print stamped in the future
+  refuses its push, so it can neither hold a live cluster open nor land ahead of now. Each print
+  is published on `{env}.md.{symbol}.liquidation` for the WS topic and queued for the store.
+- **Backpressure, never loss.** The write queue is bounded in pushes (`WRITE_QUEUE_MAXSIZE`) and
+  in prints (`WRITE_QUEUE_MAX_PRINTS`); a full queue makes the frame handler wait, which backs up
+  the socket's dispatch lane instead of dropping a print or growing without limit (C-2.18). The
+  writer batches whatever is queued. `stop()` drains it for up to `STOP_DRAIN_S` first. A frame
+  the lane drops is counted there (`ingest_dispatch_overflow_total{stream="liquidation"}`) and
+  logged here: no REST history refills it.
 - **Reconnect.** A socket-wide drop is logged with the time since the last push and counted;
   the first push after it logs the gap's length. The connection manager resubscribes; prints the
   exchange replays land on the same dedup key `(ts, symbol, side, price, size, batch_index)`, so
@@ -38,6 +43,11 @@ from candleviewer.observability.context import spawn
 #: Pushes waiting for the store (C-2.18). A push is one symbol's 500 ms, so 4096 is minutes of a
 #: cascade across every recorded symbol; past it the frame handler waits (backpressure).
 WRITE_QUEUE_MAXSIZE: Final = 4096
+#: Prints waiting for the store: the memory bound (a push holds up to 1 000 prints, so the push
+#: bound alone would allow ~4 M). Past it the frame handler waits too.
+WRITE_QUEUE_MAX_PRINTS: Final = 100_000
+#: `stop()` gives the write-behind this long to store what is queued before cancelling it.
+STOP_DRAIN_S: Final = 5.0
 #: Prints handed to the store in one write, at most.
 WRITE_BATCH_MAX: Final = 5000
 WRITE_RETRY_S: Final = 1.0
@@ -82,6 +92,9 @@ class LiquidationStream:
         grace_s: float = DEFAULT_GRACE_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         queue_max: int = WRITE_QUEUE_MAXSIZE,
+        queue_max_prints: int = WRITE_QUEUE_MAX_PRINTS,
+        event_window: Callable[[str, int], None] | None = None,
+        stop_drain_s: float = STOP_DRAIN_S,
     ) -> None:
         self._bus, self._env = bus, env
         self._set_desired, self._parse, self._topic_for = set_desired, parse_frame, topic_for
@@ -94,6 +107,11 @@ class LiquidationStream:
         self._last_push: float | None = None
         self._dropped_at: float | None = None
         self._writes: asyncio.Queue[list[LiquidationEvent]] = asyncio.Queue(maxsize=queue_max)
+        #: #1892: clock/listing-relative plausibility (`ingestion.rejection.EventWindow`).
+        self._window = event_window
+        self._max_prints, self._queued_prints = queue_max_prints, 0
+        self._room = asyncio.Condition()
+        self._stop_drain_s = stop_drain_s
         self._tasks: list[asyncio.Task[None]] = []
         self._health = bus.subscribe(
             "liquidation-stream-health",
@@ -141,6 +159,9 @@ class LiquidationStream:
     async def handle_frame(self, frame: str) -> None:
         try:
             events = self._parse(frame, self._now_us())
+            if events and self._window is not None:
+                for e in events:
+                    self._window(e.symbol, e.ts_event)
         except (ValueError, RecursionError) as exc:  # the whole push is refused, never half
             self._rejects.record(exc)
             if self._observer is not None:
@@ -162,10 +183,28 @@ class LiquidationStream:
         for event in events:
             await self._bus.publish(topic, event)
         if self._writer is not None:
-            await self._writes.put(events)  # full: wait, so the socket lane backs up (no drop)
+            await self._enqueue(events)  # full: wait, so the socket lane backs up (no drop)
+
+    async def _enqueue(self, events: list[LiquidationEvent]) -> None:
+        """Wait for room by prints (one push always fits an empty queue), then by pushes."""
+        async with self._room:
+            await self._room.wait_for(
+                lambda: (
+                    self._queued_prints == 0
+                    or self._queued_prints + len(events) <= self._max_prints
+                )
+            )
+            self._queued_prints += len(events)
+        await self._writes.put(events)
+
+    async def _taken(self, n: int) -> None:
+        async with self._room:
+            self._queued_prints -= n
+            self._room.notify_all()
 
     def note_gap(self, reason: str, symbol: str | None = None) -> None:
-        """A dispatch lane dropped frames (`IngestionService`): no REST history can fill it."""
+        """A dispatch lane dropped frames (`IngestionService`): no REST history can fill it. The
+        lane counts each dropped frame (`ingest_dispatch_overflow_total{stream="liquidation"}`)."""
         get_logger(__name__).warning("liquidation_frames_lost", reason=reason, symbol=symbol)
 
     # ---- feed health (reconnect) ----------------------------------------
@@ -202,6 +241,7 @@ class LiquidationStream:
         store takes it (no print is dropped), one attempt per `WRITE_RETRY_S`."""
         first = await self._writes.get()
         batch = first + self.take_batch()
+        await self._taken(len(batch))
         while self._writer is not None:
             try:
                 await self._writer.write_liquidations(batch)
@@ -231,7 +271,22 @@ class LiquidationStream:
             spawn(self._write_loop(), name="liquidation-write-behind"),
         ]
 
+    async def drain(self) -> None:
+        """Store every queued push now (the write loop's work, without waiting for a new one)."""
+        while not self._writes.empty():
+            await self.write_once()
+
     async def stop(self) -> None:
+        """Drain the write-behind for up to `stop_drain_s`, then cancel the loops: what is still
+        queued then is lost (logged), as a socket gap is."""
+        if self._writer is not None and not self._writes.empty():
+            try:
+                async with asyncio.timeout(self._stop_drain_s):
+                    await self.drain()
+            except TimeoutError:
+                get_logger(__name__).warning(
+                    "liquidation_write_behind_unflushed", pushes=self._writes.qsize()
+                )
         tasks, self._tasks = self._tasks, []
         for t in tasks:
             t.cancel()
@@ -240,7 +295,9 @@ class LiquidationStream:
 
 
 __all__ = [
+    "STOP_DRAIN_S",
     "WRITE_QUEUE_MAXSIZE",
+    "WRITE_QUEUE_MAX_PRINTS",
     "LiquidationObserver",
     "LiquidationStream",
     "LiquidationWriter",

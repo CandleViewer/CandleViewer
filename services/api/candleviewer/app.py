@@ -4275,6 +4275,7 @@ def wire_public_ws(
             writer=_LiquidationWriter(),
             observer=LiquidationMeter(),
             clock=clock,
+            event_window=window,  # a future-stamped print cannot wedge clustering (#667)
         )
     )
     # #1916/#1905: per-topic dispatch lanes behind the pump; the pump touches

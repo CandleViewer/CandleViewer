@@ -256,9 +256,10 @@ class LiquidationsTopic[B]:
         if held is None:
             held = self._clusterers[(symbol, window_ms)] = Clusterer(window_ms)
             state = self._symbols.get(symbol)
+            now = self._now_us()
             for p in sorted(state.recent if state is not None else (), key=LiqPrint.key):
-                held.add(p)
-            held.expire(self._now_us() - LATE_GRACE_US)
+                held.add(p, now)
+            held.expire(now - LATE_GRACE_US)
         return held
 
     # -- deltas
@@ -336,14 +337,16 @@ class LiquidationsTopic[B]:
         wanted = {(sym, opts.window_ms) for (_, syms, opts) in groups for sym in syms}
         for key in [k for k in self._clusterers if k not in wanted]:
             del self._clusterers[key]
-        horizon = self._now_us() - LATE_GRACE_US
+        now = self._now_us()
+        horizon = now - LATE_GRACE_US
         closed: dict[tuple[str, int], list[LiqItem]] = {}
         for sym, window in wanted:
             state = self._symbols.get(sym)
             if state is None:
                 continue
             clusterer = self._clusterer(sym, window)
-            out = [i for p in sorted(state.pending, key=LiqPrint.key) if (i := clusterer.add(p))]
+            pending = sorted(state.pending, key=LiqPrint.key)
+            out = [i for p in pending if (i := clusterer.add(p, now))]
             closed[(sym, window)] = out + clusterer.expire(horizon)
         for state in self._symbols.values():
             if state.pending:
