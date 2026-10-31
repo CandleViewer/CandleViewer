@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import itertools
 
 import pytest
@@ -147,3 +148,117 @@ async def test_observers_and_placeholders_and_ticker() -> None:
     assert all(c.state is S.NOT_DEPLOYED for c in snap.components)
     assert snap.overall is S.HEALTHY
     assert "disk" in seen
+
+
+# F1 (E04-Q02): the ticker must outlive a failing refresh and never serve stale HEALTHY.
+async def test_probe_ticker_survives_one_raising_refresh_and_shows_the_next_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    yield_once = asyncio.sleep  # the loop's own sleep is replaced; this one stays real
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: yield_once(0))
+    down = False
+    calls = 0
+
+    async def probe() -> ProbeResult:
+        return ProbeResult(S.DOWN if down else S.HEALTHY, "")
+
+    def observer(_name: str, _state: S) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:  # the second refresh raises, once
+            raise RuntimeError("observer failed")
+
+    reg = HealthRegistry()
+    reg.register(CallableProbe("postgres", probe))
+    reg.state_observer = observer
+    reg.start(1.0)
+    try:
+        for _ in range(20):
+            await yield_once(0)
+        first = reg.snapshot()
+        assert first is not None and first.overall is S.HEALTHY
+        down = True
+        for _ in range(200):  # many ticks of the fake clock; no wall time passes
+            await yield_once(0)
+        latest = reg.snapshot()
+        assert latest is not None and latest.overall is S.DOWN
+    finally:
+        await reg.stop()
+
+
+async def _spin(n: int) -> None:
+    for _ in range(n):
+        await _REAL_SLEEP(0)
+
+
+_REAL_SLEEP = asyncio.sleep
+
+
+async def test_ticker_survives_raising_refresh_and_marks_snapshot_degraded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))
+    reg = HealthRegistry()
+
+    async def ok() -> ProbeResult:
+        return ProbeResult(S.HEALTHY)
+
+    reg.register(CallableProbe("postgres", ok))
+    await reg.refresh()
+    fail = True
+    real_refresh = reg.refresh
+    calls = 0
+
+    async def flaky() -> object:
+        nonlocal calls
+        calls += 1
+        if fail:
+            raise RuntimeError("boom")
+        return await real_refresh()
+
+    monkeypatch.setattr(reg, "refresh", flaky)
+    reg.start(1.0)
+    try:
+        await _spin(20)
+        assert calls > 2  # kept ticking after the first raise
+        snap = reg.snapshot()
+        assert snap is not None and snap.overall is S.DEGRADED  # not stale HEALTHY
+        fail = False
+        await _spin(20)
+        snap = reg.snapshot()
+        assert snap is not None and snap.overall is S.HEALTHY  # recovered
+    finally:
+        await reg.stop()
+
+
+async def test_raising_observers_do_not_freeze_the_snapshot() -> None:
+    def bad_state(_n: str, _s: S) -> None:
+        raise RuntimeError("state hook")
+
+    def bad_duration(_n: str, _d: float) -> None:
+        raise RuntimeError("duration hook")
+
+    async def ok() -> ProbeResult:
+        return ProbeResult(S.DOWN)
+
+    reg = HealthRegistry()
+    reg.state_observer = bad_state
+    reg.duration_observer = bad_duration
+    reg.register(CallableProbe("postgres", ok))
+    snap = await reg.refresh()
+    assert snap.overall is S.DOWN
+    assert reg.snapshot() is snap
+
+
+async def test_stop_cancels_the_ticker_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    reg = HealthRegistry()
+    reg.register_placeholders(["postgres"])
+    reg.start(30.0)
+    await _spin(5)
+    task = reg._task
+    assert task is not None
+    await reg.stop()
+    assert task.cancelled() or task.done()
+    assert reg._task is None
+    with contextlib.suppress(asyncio.CancelledError):
+        assert task.cancelled()

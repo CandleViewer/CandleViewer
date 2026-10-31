@@ -14,10 +14,12 @@ import asyncio
 import contextlib
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
+
+import structlog
 
 from candleviewer.observability.context import spawn
 
@@ -178,6 +180,12 @@ class HealthSnapshot:
     taken_at: datetime
 
 
+def _log_observer_failed(which: str, exc: Exception) -> None:
+    structlog.get_logger(__name__).warning(
+        "health_observer_failed", observer=which, error=type(exc).__name__
+    )
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -229,7 +237,10 @@ class HealthRegistry:
         if res.state in (ComponentState.HEALTHY, ComponentState.NOT_DEPLOYED):
             self._last_good[probe.name] = now
         if self.duration_observer is not None:
-            self.duration_observer(probe.name, elapsed)
+            try:
+                self.duration_observer(probe.name, elapsed)
+            except Exception as exc:  # a metrics hook must not fail the probe or the refresh
+                _log_observer_failed("duration", exc)
         return ComponentHealth(
             name=probe.name,
             state=res.state,
@@ -257,7 +268,10 @@ class HealthRegistry:
     async def _record_transitions(self, results: Sequence[ComponentHealth]) -> None:
         for r in results:
             if self.state_observer is not None:
-                self.state_observer(r.name, r.state)
+                try:
+                    self.state_observer(r.name, r.state)
+                except Exception as exc:  # a metrics hook must not freeze the snapshot
+                    _log_observer_failed("state", exc)
             prev = self._prev.get(r.name)
             self._prev[r.name] = r.state
             if prev is None or prev == r.state or self._events is None:
@@ -286,7 +300,28 @@ class HealthRegistry:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
+    def _mark_refresh_failed(self) -> None:
+        """Stop serving a stale HEALTHY snapshot as current after a failed refresh.
+
+        Reuses the module's existing vocabulary: a probe that cannot answer is reported
+        DEGRADED (as for a timeout), so overall is raised to at least DEGRADED. Components and
+        `taken_at` stay as last observed (honest about what was measured); the next successful
+        refresh replaces the snapshot and clears the flag. No snapshot yet means the endpoint
+        already has nothing to serve.
+        """
+        snap = self._snapshot
+        if snap is not None:
+            self._snapshot = replace(
+                snap, overall=worst_of([snap.overall, ComponentState.DEGRADED])
+            )
+
     async def _loop(self, interval_s: float) -> None:
         while True:
-            await self.refresh()
+            try:
+                await self.refresh()
+            except Exception as exc:  # CancelledError is BaseException and still propagates
+                structlog.get_logger(__name__).error(
+                    "health_refresh_failed", error=type(exc).__name__
+                )
+                self._mark_refresh_failed()
             await asyncio.sleep(interval_s)
