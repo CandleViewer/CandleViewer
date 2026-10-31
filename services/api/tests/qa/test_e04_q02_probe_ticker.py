@@ -2,8 +2,8 @@
 
 `HealthRegistry._loop` calls `refresh()` with no exception guard, so one raise from the unguarded
 state observer ends the task and `/admin/health` keeps serving the last snapshot. Charter 1 reports
-it, routed to E04 (NQ-1); this is the deterministic in-process reproduction, an expected failure
-until the fix lands (strict: the fix turns it into an XPASS that fails CI, so the marker goes then).
+it as #5173 (P1, area/backend-platform; NQ-1, ruled). This is the deterministic in-process
+reproduction: a strict expected failure until the fix lands, then skipped (see `_FIXED`).
 """
 
 from __future__ import annotations
@@ -23,7 +23,16 @@ from candleviewer.observability.health_probes import (
 S = ComponentState
 
 
-@pytest.mark.xfail(strict=True, reason="F1, fix routed to E04 (NQ-1): the ticker loop has no guard")
+# Order-independent with the fix (#5173, PR #5175): once `HealthRegistry` carries the
+# refresh-failure handling, `tests/unit/observability/test_health_probes.py` covers the case and
+# this one is skipped; before it the loop has no guard and this is a strict expected failure.
+_FIXED = hasattr(HealthRegistry, "_mark_refresh_failed")
+
+
+@pytest.mark.skipif(
+    _FIXED, reason="fixed by #5173; covered by tests/unit/observability/test_health_probes.py"
+)
+@pytest.mark.xfail(strict=True, reason="F1, #5173: the ticker loop has no exception guard")
 async def test_probe_ticker_survives_one_raising_refresh_and_shows_the_next_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

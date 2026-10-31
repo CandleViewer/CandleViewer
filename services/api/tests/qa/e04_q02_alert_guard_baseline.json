@@ -370,7 +370,7 @@
       "alert": "UserDisableFailed",
       "series": "cv_user_lifecycle_total",
       "class": "routed",
-      "reason": "every action/result series bound at import (admin/lifecycle_metrics.py); a guard is feasible; routed to E09"
+      "reason": "every action/result series bound at import (admin/lifecycle_metrics.py); a guard is feasible; routed to E42 (the metric catalogue names E42 as owner)"
     },
     {
       "alert": "WsAuditWriteFailed",

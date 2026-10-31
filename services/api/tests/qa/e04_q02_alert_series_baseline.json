@@ -3,17 +3,17 @@
     {
       "alert": "AlertmanagerNotificationsFailed",
       "series": "alertmanager_notifications_failed_total",
-      "reason": "on the dashboard lint's EXTERNAL list, but Alertmanager is not a scrape target in infra/prometheus/prometheus.yml (jobs: candleviewer-api, pushgateway), so nothing supplies it (static finding, not yet confirmed live)"
+      "reason": "on the dashboard lint's EXTERNAL list, but Alertmanager is not a scrape target in infra/prometheus/prometheus.yml (jobs: candleviewer-api, pushgateway), so nothing supplies it (static finding, not yet confirmed live); filed as #5174 (P1)"
     },
     {
       "alert": "ClockDriftBlockingTrading",
       "series": "bybit_clock_drift_ms",
-      "reason": "planned, owner E08, no emitter: the emitted series is exchange_clock_drift_ms and bybit_clock_drift_ms appears only in a comment in observability/latency.py; the alert can never fire (static finding, not yet confirmed live)"
+      "reason": "planned, owner E08, no emitter: the emitted series is exchange_clock_drift_ms and bybit_clock_drift_ms appears only in a comment in observability/latency.py; the alert can never fire (static finding, not yet confirmed live); filed as #5174 (P1)"
     },
     {
       "alert": "CredentialExpiryApproaching",
       "series": "credential_expiry_days",
-      "reason": "no emitter in services/api/candleviewer and no catalogue entry; only promtool synthetic series feed it (static finding, not yet confirmed live)"
+      "reason": "no emitter in services/api/candleviewer and no catalogue entry; only promtool synthetic series feed it (static finding, not yet confirmed live); filed as #5174 (P1)"
     },
     {
       "alert": "CredentialVerificationFailures",
@@ -28,17 +28,17 @@
     {
       "alert": "EnvMismatchAttempt",
       "series": "env_mismatch_attempts_total",
-      "reason": "no emitter in services/api/candleviewer and no catalogue entry (the code logs key_selfcheck_env_mismatch / account_health.env_mismatch only); promtool synthetic series only (static finding, not yet confirmed live)"
+      "reason": "no emitter in services/api/candleviewer and no catalogue entry (the code logs key_selfcheck_env_mismatch / account_health.env_mismatch only); promtool synthetic series only (static finding, not yet confirmed live); filed as #5174 (P1)"
     },
     {
       "alert": "ExpectedMetricMissingBybitClockDriftMs",
       "series": "bybit_clock_drift_ms",
-      "reason": "planned, owner E08, no emitter: the emitted series is exchange_clock_drift_ms and bybit_clock_drift_ms appears only in a comment in observability/latency.py; the alert can never fire (static finding, not yet confirmed live)"
+      "reason": "planned, owner E08, no emitter: the emitted series is exchange_clock_drift_ms and bybit_clock_drift_ms appears only in a comment in observability/latency.py; the alert can never fire (static finding, not yet confirmed live); filed as #5174 (P1)"
     },
     {
       "alert": "ExpectedMetricMissingCredentialExpiryDays",
       "series": "credential_expiry_days",
-      "reason": "no emitter in services/api/candleviewer and no catalogue entry; only promtool synthetic series feed it (static finding, not yet confirmed live)"
+      "reason": "no emitter in services/api/candleviewer and no catalogue entry; only promtool synthetic series feed it (static finding, not yet confirmed live); filed as #5174 (P1)"
     },
     {
       "alert": "ExpectedMetricMissingCredentialVerificationFailuresTotal",
@@ -53,7 +53,7 @@
     {
       "alert": "ExpectedMetricMissingEnvMismatchAttemptsTotal",
       "series": "env_mismatch_attempts_total",
-      "reason": "no emitter in services/api/candleviewer and no catalogue entry (the code logs key_selfcheck_env_mismatch / account_health.env_mismatch only); promtool synthetic series only (static finding, not yet confirmed live)"
+      "reason": "no emitter in services/api/candleviewer and no catalogue entry (the code logs key_selfcheck_env_mismatch / account_health.env_mismatch only); promtool synthetic series only (static finding, not yet confirmed live); filed as #5174 (P1)"
     },
     {
       "alert": "ExpectedMetricMissingNakedPositionAlertsTotal",
@@ -63,7 +63,7 @@
     {
       "alert": "ExpectedMetricMissingPgUp",
       "series": "pg_up",
-      "reason": "no emitter in services/api/candleviewer, no catalogue entry, and prometheus.yml scrapes no postgres exporter; the PostgresDown page and its inhibition cannot fire on a running stack (static finding, not yet confirmed live)"
+      "reason": "no emitter in services/api/candleviewer, no catalogue entry, and prometheus.yml scrapes no postgres exporter; the PostgresDown page and its inhibition cannot fire on a running stack (static finding, not yet confirmed live); filed as #5174 (P1)"
     },
     {
       "alert": "ExpectedMetricMissingRuleAutodisarmTotal",
@@ -78,7 +78,7 @@
     {
       "alert": "PostgresDown",
       "series": "pg_up",
-      "reason": "no emitter in services/api/candleviewer, no catalogue entry, and prometheus.yml scrapes no postgres exporter; the PostgresDown page and its inhibition cannot fire on a running stack (static finding, not yet confirmed live)"
+      "reason": "no emitter in services/api/candleviewer, no catalogue entry, and prometheus.yml scrapes no postgres exporter; the PostgresDown page and its inhibition cannot fire on a running stack (static finding, not yet confirmed live); filed as #5174 (P1)"
     },
     {
       "alert": "RuleAutodisarm",

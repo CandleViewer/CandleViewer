@@ -2,15 +2,15 @@
 
 - Ticket: E04-Q02 (#257) · Format: session-based test management · Date: 2026-10-31
 - Plan: `docs/qa/test-plans/e04-observability-charters.md` (base, rulings, regression pack, blind-spot report, sign-off draft).
-- Tester: AI agent. The "Security engineer" seat is the security-reviewer lens on these notes (BQ-03, pending ruling). **Deviation (honest scope):** an agent ran the static and in-process work. It is not a human session, and the lens has not run yet. No stack ran, so no real log stream, alert payload, bundle or dashboard was read.
+- Tester: AI agent. The "Security engineer" seat is the security-reviewer lens on these notes (BQ-03, ruled). **Deviation (honest scope):** an agent ran the static and in-process work. It is not a human session, and the lens has not run yet. No stack ran, so no real log stream, alert payload, bundle or dashboard was read.
 - Canary values only (`CANARY-SECRET-` prefix, as E04-Q01). No real credential was used, read or printed. No network (C-13.5).
-- **If a real secret is found on any surface, it is reported privately under `SECURITY.md` (C-12.13), never as a public issue.** The exposure-window assessment goes in that private report (BQ-03, pending ruling). None was found.
+- **If a real secret is found on any surface, it is reported privately under `SECURITY.md` (C-12.13), never as a public issue.** The exposure-window assessment goes in that private report (BQ-03, ruled). None was found.
 
 ## Charter
 
 Explore every output surface (logs, metric labels, health details, alert payloads, support bundle, dashboard panels) for secret or PII exposure.
 
-Time box: 3 h (the ticket's). Actual: see "Session metrics" (BQ-15, pending ruling).
+Time box: 3 h (the ticket's). Actual: see "Session metrics" (BQ-15, ruled).
 
 ## Oracles (defined before probing)
 
@@ -46,4 +46,4 @@ None. Six of six surfaces are cleared statically. Absence of a finding is not ev
 
 ## Handover to E04-X02
 
-E04-X02 (#258) closed on 2026-10-04. Its follow-up #1720 (remove nine `nosemgrep` suppressions) is open. The proposed handover is one comment on #258 with the per-surface table above, cross-linked on #1720 (BQ-03, pending ruling). It is drafted in the plan's sign-off section and **not posted**.
+E04-X02 (#258) closed on 2026-10-04. Its follow-up #1720 (remove nine `nosemgrep` suppressions) is open. The proposed handover is one comment on #258 with the per-surface table above, cross-linked on #1720 (BQ-03, ruled). It is drafted in the plan's sign-off section and **not posted**.
