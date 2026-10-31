@@ -24,6 +24,7 @@ import "../src/components/link.css";
 import "../src/components/maskedvalue.css";
 import "../src/components/menu.css";
 import "../src/components/popover.css";
+import "../src/components/previewtile.css";
 import "../src/components/progress.css";
 import "../src/components/checkbox.css";
 import "../src/components/choice.css";

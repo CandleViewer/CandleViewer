@@ -213,6 +213,14 @@ export type {
   PopoverProps,
 } from "./Popover.js";
 
+export { PreviewTile, PREVIEW_TILE_CONTRAST_PAIR, PREVIEW_TILE_COPY } from "./PreviewTile.js";
+export type {
+  PreviewTileKind,
+  PreviewTileProps,
+  PreviewTileSource,
+  PreviewTileStatus,
+} from "./PreviewTile.js";
+
 export { ProgressBar } from "./ProgressBar.js";
 export type { ProgressBarName, ProgressBarProps } from "./ProgressBar.js";
 
