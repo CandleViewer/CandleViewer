@@ -58,7 +58,7 @@
     {
       "alert": "ExpectedMetricMissingNakedPositionAlertsTotal",
       "series": "naked_position_alerts_total",
-      "reason": "planned, owner E32, module not shipped (RSK-047): no emitter in services/api/candleviewer, catalogue status planned only (static finding, not yet confirmed live)"
+      "reason": "planned, owner E32 (RSK-047): the counter exists (oms/reconcile_report.py:351, incremented at oms/reconciler.py:957) but ReconcileMetrics is constructed only in tests, never wired in the app, so nothing emits it at runtime (static finding, not yet confirmed live)"
     },
     {
       "alert": "ExpectedMetricMissingPgUp",
@@ -73,7 +73,7 @@
     {
       "alert": "NakedPositionDetected",
       "series": "naked_position_alerts_total",
-      "reason": "planned, owner E32, module not shipped (RSK-047): no emitter in services/api/candleviewer, catalogue status planned only (static finding, not yet confirmed live)"
+      "reason": "planned, owner E32 (RSK-047): the counter exists (oms/reconcile_report.py:351, incremented at oms/reconciler.py:957) but ReconcileMetrics is constructed only in tests, never wired in the app, so nothing emits it at runtime (static finding, not yet confirmed live)"
     },
     {
       "alert": "PostgresDown",
