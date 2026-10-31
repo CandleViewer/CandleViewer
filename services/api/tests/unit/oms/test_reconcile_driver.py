@@ -10,6 +10,7 @@ import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Callable
 from itertools import pairwise
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
 
@@ -166,6 +167,12 @@ async def _until(driver: ReconcileJobs, state: str, account: AccountId = ACCOUNT
             break
         await asyncio.sleep(0)
     return leaf_of(driver._jobs[account].interp)
+
+
+async def _refused(_key: str, _event: Any, *, wait: bool = False) -> Any:
+    """B19's receipt for an event it refused, a conclusive error (`_gateway.send`): the job
+    takes nothing and stays where it rests."""
+    return SimpleNamespace(deferred=False, changed=False, error=ValueError("denied"))
 
 
 def _starve(job: Job, starved: bool = True) -> None:
@@ -775,7 +782,8 @@ async def test_a_start_send_that_fails_holds_that_account_alone_until_a_trigger_
 ) -> None:
     """The code look's m1: any failure of an account's start, a send that does not answer
     included, holds that account (paged) and the others still start; its job is open, so the
-    next trigger B19 takes from a rest rebuilds its standing from that state."""
+    next trigger B19 takes from a rest rebuilds its standing from that state, and one B19
+    refuses, the job still resting there, lifts nothing (the code look's m3 on the final PR)."""
     driver = _driver(job, timers)
     _failing(driver, monkeypatch, "STARTUP", ACCOUNT)
     with capture_logs() as logs:
@@ -790,6 +798,10 @@ async def test_a_start_send_that_fails_holds_that_account_alone_until_a_trigger_
         assert OTHER in driver._pass_ids  # its STARTUP went out
         monkeypatch.undo()
         assert await _resting(driver) == "idle"
+        monkeypatch.setattr(driver._gateway, "send", _refused)
+        await driver.trigger(ACCOUNT, "periodic")  # refused: the job rests in `idle` still
+        assert job.standing.is_stale(ACCOUNT) and await _resting(driver) == "idle"
+        monkeypatch.undo()
         assert await driver.trigger(ACCOUNT, "periodic") is not None  # B19 takes it
         assert not job.standing.is_stale(ACCOUNT)
     finally:
@@ -1077,6 +1089,34 @@ async def test_a_stop_before_the_lock_is_recorded_keeps_the_refused_snapshot(
         assert again.standing.is_stale(ACCOUNT) and await _resting(third) == "stale_lockout"
     finally:
         await third.stop()
+
+
+async def test_a_refused_snapshot_whose_startup_send_fails_stays_refused_on_its_way_to_the_lock(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The code look's m3 on the final PR (`_reached`): an account held since its start failed
+    whose snapshot was refused too is never lifted by the trigger B19 then takes from `idle`: its
+    fetch fails with the window spent, and B19's lock keeps it refused; no instant passes with
+    the account open (INV-B19-a)."""
+    memory = Memory()
+    first = _driver(job, timers, persistence=memory)
+    await first.start([ACCOUNT])
+    assert await _resting(first) == "idle"
+    await first.stop()
+    _refusing(memory)
+    fresh = Job(retries=cast(Any, RetryHop()))
+    driver = _driver(fresh, timers, persistence=memory)
+    _failing(driver, monkeypatch, "STARTUP", ACCOUNT)
+    await driver.start([ACCOUNT])
+    try:
+        assert (driver._unstarted, driver._escalating) == ({ACCOUNT}, {ACCOUNT})
+        monkeypatch.undo()
+        assert await driver.trigger(ACCOUNT, "periodic") is not None  # B19 takes it from idle
+        assert fresh.standing.is_stale(ACCOUNT)  # as `_reached` left it, before the lock lands
+        assert await _until(driver, "stale_lockout") == "stale_lockout"
+        assert fresh.standing.is_stale(ACCOUNT) and driver._escalating == set()
+    finally:
+        await driver.stop()
 
 
 async def test_a_persist_that_fails_stops_the_job_without_a_snapshot(
