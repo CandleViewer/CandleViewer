@@ -461,7 +461,10 @@ export function ConfirmDialog({
         text: `Holding — keep pressing to ${lowerFirst(confirmLabel)}`,
       })),
     onHoldCancel: () =>
-      setPolite((s) => ({ n: s.n + 1, text: `Released early — ${confirmLabel} cancelled` })),
+      setPolite((s) => ({
+        n: s.n + 1,
+        text: `Released early — hold cancelled; ${lowerFirst(confirmLabel)} not done`,
+      })),
     // The guard's rearm (a new title or effect) drops a hold or an armed press made for the old intent.
     resetKey: `${title}\n${confirmLabel}`,
   });

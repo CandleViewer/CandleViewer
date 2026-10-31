@@ -178,12 +178,14 @@ export function useHoldGate({
     tickTimer.current = setTimeout(tick, Math.max(1, Math.min(TICK_MS, total - elapsed)));
   };
 
-  const startHold = (kind: Hold["kind"], at: number): void => {
-    if (hold.current !== null) return;
+  /** True when a hold really began (none was running). */
+  const startHold = (kind: Hold["kind"], at: number): boolean => {
+    if (hold.current !== null) return false;
     hold.current = { kind, start: at };
     ticks.current = 0;
     setHolding(true);
     tickTimer.current = setTimeout(tick, Math.min(TICK_MS, latest.current.durationMs));
+    return true;
   };
 
   const lapse = (): void => {
@@ -218,6 +220,8 @@ export function useHoldGate({
     if (kind === "enter") startHold("key", at);
   };
 
+  // Deliberately silent: Esc, blur and these resets drop a hold without a message (Esc cancels the dialog,
+  // which is its own event; a reset is a new intent, spoken by its own title).
   // Confirm going unavailable (busy, gated, closed, a mismatch) or a new intent (`resetKey`) drops any hold
   // and the armed press, before a pending tick can complete the hold.
   const seenKey = useRef(resetKey);
@@ -269,8 +273,7 @@ export function useHoldGate({
             // An inactive pointer id (a synthetic event): the leave and up handlers still release.
           }
         }
-        startHold("pointer", at);
-        latest.current.onHoldStart?.();
+        if (startHold("pointer", at)) latest.current.onHoldStart?.();
       },
       onPointerUp: () => release("pointer"),
       onPointerCancel: () => release("pointer"),

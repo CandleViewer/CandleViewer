@@ -1,18 +1,31 @@
 import { useMemo, useSyncExternalStore } from "react";
 import { resolveConfirm } from "./resolve";
-import type { ConfirmAction, ConfirmEnv, Resolution } from "./resolve";
+import type { ConfirmAction, ConfirmEnv, Resolution, ServerFloor } from "./resolve";
 import { getConfirmPolicyStore } from "./store";
 import type { ConfirmPolicyStore } from "./store";
 
+export interface ConfirmPolicyOptions {
+  readonly serverFloor?: ServerFloor;
+  /** For tests. */
+  readonly store?: ConfirmPolicyStore;
+}
+
 /**
- * How `action` is confirmed in `env`. The owning screens (SCR-029, 072, 076, 129) call this; `env` is their
- * input because no environment source is wired yet (BQ-8). `store` is for tests.
+ * How `action` is confirmed in `env` for `userId` (UX only, C-2.12). The owning screens (SCR-029, 072,
+ * 076, 129) call this; `env` is their input (from `shell/bootstrap/store`, BQ-8).
  */
 export function useConfirmPolicy(
   action: ConfirmAction,
   env: ConfirmEnv,
-  store: ConfirmPolicyStore = getConfirmPolicyStore(),
+  userId: string,
+  options: ConfirmPolicyOptions = {},
 ): Resolution {
+  const store = options.store ?? getConfirmPolicyStore(userId);
   const policy = useSyncExternalStore(store.subscribe, store.get, store.get);
-  return useMemo(() => resolveConfirm(action, env, policy), [action, env, policy]);
+  const confirmFlatten = options.serverFloor?.confirmFlatten;
+  return useMemo(
+    () =>
+      resolveConfirm(action, env, policy, confirmFlatten === undefined ? {} : { confirmFlatten }),
+    [action, env, policy, confirmFlatten],
+  );
 }
