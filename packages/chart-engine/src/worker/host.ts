@@ -295,6 +295,8 @@ export interface ChartHostOptions {
   readonly theme: ThemeLut;
   readonly syncGroup: string | null;
   readonly bench: boolean;
+  /** The app's resolved motion mode at mount (E11-S04 BQ-104); `setMotion` updates it. */
+  readonly reducedMotion?: boolean;
   readonly listener: HostListener;
 }
 
@@ -387,19 +389,24 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   let exportSeq = 0;
   /** Set once by the degraded-2d handoff and kept across worker restarts (BQ-53). */
   let forced = o.env.forceProfile !== undefined;
+  /** The motion mode every `init` carries, a restart's included (not a retained command). */
+  let reduce = o.reducedMotion === true;
 
   const init = (): void => {
     const canvas = o.canvas();
     const dpr = size?.dpr ?? o.dpr;
     const config = { bench: o.bench, syncGroup: o.syncGroup };
-    const profile = forced ? { profile: "degraded-2d" as const } : {};
+    const extra = {
+      ...(forced && { profile: "degraded-2d" as const }),
+      ...(reduce && { reducedMotion: true }),
+    };
     if (link.runMode === "worker") {
       const off = canvas.transferControlToOffscreen();
-      link.post({ t: "init", id, canvas: off, dpr, theme, config, ...profile }, [
+      link.post({ t: "init", id, canvas: off, dpr, theme, config, ...extra }, [
         off as unknown as Transferable,
       ]);
     } else {
-      link.post({ t: "init", id, canvas, dpr, theme, config, ...profile }, []);
+      link.post({ t: "init", id, canvas, dpr, theme, config, ...extra }, []);
     }
     if (size !== null) {
       styleCanvas(canvas, size);
@@ -590,6 +597,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
     command(cmd): void {
       if (disposed) return;
       if (cmd.k === "setTheme") theme = cmd.theme;
+      if (cmd.k === "setMotion") reduce = cmd.reduce;
       const key = retainKey(cmd);
       if (key !== null) {
         retained.delete(key);

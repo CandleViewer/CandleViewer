@@ -124,6 +124,12 @@ export class ChartViewport implements ViewportState {
     return this.place(at - x / s, s);
   }
 
+  /** A cut (E11-S04 BQ-107): bar-space `left` at the plot's left edge, at `spacing` px a bar. */
+  scrollTo(left: number, spacing = this.barSpacing): boolean {
+    if (!(spacing > 0) || !Number.isFinite(spacing)) return false;
+    return this.place(left, clampSpacing(spacing));
+  }
+
   /** §8 `TimeScale.setVisibleRange`: through the map into bar space, then clamped. */
   setTimeRange(from: number, to: number): boolean {
     if (!(to > from) || !Number.isFinite(from) || !Number.isFinite(to)) return false;

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routeInput } from "../../src/host/input-router.js";
 import { MOD } from "../../src/interaction/wheel.js";
 import { captureInput, createChartHost, type ChartHost } from "../../src/worker/host.js";
-import { INPUT, type ToWorker } from "../../src/worker/protocol.js";
+import { INPUT, KEY, type ToWorker } from "../../src/worker/protocol.js";
 import { asHtml, FakeDocument, FakeElement } from "../api/fake-dom.js";
 import { fakeEnv, FakeWorker } from "./fake-worker.js";
 
@@ -171,6 +171,59 @@ describe("pointer routing (BQ-102)", () => {
       [INPUT.move, 350, 12],
     ]);
     expect(container.style["touchAction"]).toBe("none");
+    detach();
+  });
+});
+
+describe("keys on the chart container only (BQ-106 to BQ-109)", () => {
+  const kb = (key: string, code: string, t: number, mods: object = {}): object => ({
+    ...base,
+    metaKey: false,
+    key,
+    code,
+    timeStamp: t,
+    ...mods,
+  });
+
+  it("the navigator's keys are prevented and posted; Ctrl/Meta zoom and other keys are not", () => {
+    const detach = routeInput(asHtml(container), host);
+    expect(container.dispatch("keydown", kb("ArrowLeft", "ArrowLeft", 10))).toBe(true);
+    expect(
+      container.dispatch("keydown", kb("ArrowRight", "ArrowRight", 30, { shiftKey: true })),
+    ).toBe(true);
+    expect(container.dispatch("keydown", kb("Home", "Home", 40, { ctrlKey: true }))).toBe(true);
+    expect(container.dispatch("keydown", kb("=", "Equal", 50, { ctrlKey: true }))).toBe(false);
+    expect(container.dispatch("keydown", kb("-", "Minus", 60, { metaKey: true }))).toBe(false);
+    expect(container.dispatch("keydown", kb("a", "KeyA", 70))).toBe(false);
+    frame();
+    expect(rowsOf(inputs("key")[0] as Input)).toEqual([
+      [INPUT.key, KEY.left, 0, 0, 0, 0],
+      [INPUT.key, KEY.right, 0, 0, MOD.shift, 20],
+      [INPUT.key, KEY.home, 0, 0, MOD.ctrl, 10],
+    ]);
+    expect(container.listeners.get("keydown")?.size).toBe(1); // the container, never the window
+    detach();
+    expect(["keydown", "keyup", "focusout"].map((n) => container.listeners.get(n)?.size)).toEqual([
+      0, 0, 0,
+    ]);
+  });
+
+  it("Space posts down once while held and up on release or focus loss; prevented mid-drag", () => {
+    const detach = routeInput(asHtml(container), host);
+    expect(container.dispatch("keydown", kb(" ", "Space", 10))).toBe(false); // the page's
+    container.dispatch("keydown", { ...kb(" ", "Space", 20), repeat: true });
+    container.dispatch("keyup", kb(" ", "Space", 30));
+    container.dispatch("pointerdown", ptr(7, 100, 40));
+    expect(container.dispatch("keydown", kb(" ", "Space", 50))).toBe(true); // mid-drag
+    container.dispatch("focusout", { timeStamp: 60 });
+    container.dispatch("focusout", { timeStamp: 70 }); // nothing held: nothing posted
+    frame();
+    expect(rowsOf(inputs("key")[0] as Input).map((r) => r[1])).toEqual([
+      KEY.spaceDown,
+      KEY.spaceUp,
+      KEY.spaceDown,
+      KEY.spaceUp,
+    ]);
     detach();
   });
 });

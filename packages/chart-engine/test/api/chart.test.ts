@@ -75,7 +75,7 @@ describe("Scenario: A chart mounts and reports frame stats through the stub", ()
   it("releases the probe's WebGL2 context once it has answered", () => {
     const chart = mount();
     expect(chart.getStats().renderProfile).toBe("full");
-    const probe = container.ownerDocument.created[2];
+    const probe = container.ownerDocument.created[3]; // after the canvas, mirror and help
     expect(probe?.tagName).toBe("CANVAS");
     expect(probe?.webgl2?.lost).toBe(true);
     chart.dispose();
@@ -85,11 +85,11 @@ describe("Scenario: A chart mounts and reports frame stats through the stub", ()
     container.ownerDocument.webgl2Available = false;
     const chart = mount();
     const probesBefore = container.ownerDocument.created.length;
-    expect(probesBefore).toBe(2); // the canvas and the mirror root; no probe yet
+    expect(probesBefore).toBe(3); // the canvas, the mirror root and its help; no probe yet
     expect(chart.getStats().renderProfile).toBe("degraded-2d");
-    expect(container.ownerDocument.created.length).toBe(3);
+    expect(container.ownerDocument.created.length).toBe(4);
     chart.getStats();
-    expect(container.ownerDocument.created.length).toBe(3); // probed once
+    expect(container.ownerDocument.created.length).toBe(4); // probed once
     chart.dispose();
   });
 

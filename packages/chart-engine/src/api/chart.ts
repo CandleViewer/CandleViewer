@@ -3,6 +3,7 @@
 // shared render runtime, in a worker or inline (`ChartOptions.runMode`, src/worker/host.ts); the
 // scene graph and GL backend land in E11-S01 / E11-S02 behind this same surface.
 import { mountSurface, probeRenderProfile } from "../host/mount.js";
+import { readReducedMotion, watchMotion } from "../host/motion.js";
 import {
   captureInput,
   createChartHost,
@@ -169,6 +170,7 @@ export function createChart(opts: ChartOptions): Chart {
   }
 
   const env = (envOverride ?? defaultHostEnv)(doc);
+  const reducedMotion = readReducedMotion(doc); // the app's resolved mode (E11-S04 BQ-104)
   const host = createChartHost({
     realm: doc,
     runMode: selectRunMode(opts.runMode, surface.canvas, doc.defaultView),
@@ -178,6 +180,7 @@ export function createChart(opts: ChartOptions): Chart {
     dpr: doc.defaultView?.devicePixelRatio ?? 1,
     theme: opts.theme.colors,
     syncGroup: opts.syncGroup ?? null,
+    reducedMotion,
     // Bench mode (every-frame `frame`, the C-Q02-1 LOD trace) has no §8 option: README BQ-18.
     bench: false,
     listener: {
@@ -203,6 +206,9 @@ export function createChart(opts: ChartOptions): Chart {
     },
   });
   const detachInput = captureInput(opts.container, host);
+  const detachMotion = watchMotion(doc, surface.mirrorRoot, reducedMotion, (reduce) =>
+    host.command({ k: "setMotion", reduce }),
+  );
   const timeScale = createTimeScale((r) => {
     host.command({ k: "setViewport", timeStart: r.from, timeEnd: r.to });
   });
@@ -280,6 +286,7 @@ export function createChart(opts: ChartOptions): Chart {
       for (const pane of [...panes]) pane.remove();
       listeners.clear();
       detachInput();
+      detachMotion();
       host.dispose();
       surface.unmount();
     },
