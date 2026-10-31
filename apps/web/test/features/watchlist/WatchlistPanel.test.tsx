@@ -3,7 +3,8 @@
  * `ticker` golden (C-13.5), on fake timers, a fake transport under the real ticker hub, a fake instrument index and a
  * fake `/watchlists` API (no network). Plus message to pixels over the golden as the server sends it (D32), the
  * keyboard paths, focus kept off the page, axe in dark and light, and the teardown of every subscription. The app's
- * one announcer is rendered beside the panel: the panel owns no live region (E08-D07 D17).
+ * one announcer is rendered beside the panel: the panel owns no live region (E08-D07 D17). PR (c): the paths that open
+ * SCR-101, each with its intent, and the lists SCR-101 stores reaching the panel (`sync`).
  */
 import { createRequire } from "node:module";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
@@ -15,11 +16,15 @@ const { apiFetch } = vi.hoisted(() => ({
 vi.mock("../../../src/lib/http/csrfFetch", () => ({ apiFetch }));
 
 import { ShellAnnouncer, clearAnnouncements } from "../../../src/features/app-shell/announcer";
+import { KeymapHost } from "../../../src/keymap/KeymapHost";
+import { getBindings, resetBindings, setBindings } from "../../../src/keymap/profile";
 import type { IndexSnapshot } from "../../../src/features/symbol-search/instrumentIndex";
 import { toEntry, type Instrument } from "../../../src/features/symbol-search/ranking";
 import { WatchlistPanel } from "../../../src/features/watchlist/WatchlistPanel";
 import type { Watchlist } from "../../../src/features/watchlist/listEdits";
 import type { InstrumentSource } from "../../../src/features/watchlist/instruments";
+import type { ManagerIntent } from "../../../src/features/watchlist/manager/intent";
+import { createWatchlistSync, type WatchlistSync } from "../../../src/features/watchlist/sync";
 import { createLocalPaneSettings, type SyncGroupPort } from "../../../src/features/watchlist/ports";
 import {
   FLUSH_MS,
@@ -54,6 +59,10 @@ const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/play
     o?: object,
   ) => Promise<{ violations: { id: string; impact?: string | null }[] }>;
 };
+
+// Each test draws the whole panel in jsdom, which on a loaded runner takes seconds (the 60 s window stress test keeps
+// its own budget).
+vi.setConfig({ testTimeout: 30_000 });
 
 /** A whole second, so the shared 1 Hz clock ticks on whole seconds from the mount. */
 const T0 = Date.UTC(2026, 9, 31, 10, 0, 0);
@@ -282,7 +291,8 @@ function mount(
   shown: Watchlist,
   extra: {
     syncGroup?: SyncGroupPort;
-    onManage?: () => void;
+    onManage?: (intent: ManagerIntent) => void;
+    sync?: WatchlistSync;
     api?: WatchlistApi;
     hub?: TickerHub | null;
     instruments?: InstrumentSource;
@@ -1213,7 +1223,7 @@ describe("panel states (E08-D07 §4.2)", () => {
     await flush();
     expect(screen.getByRole("heading", { name: "No watchlists yet" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create watchlist" }));
-    expect(onManage).toHaveBeenCalledOnce();
+    expect(onManage).toHaveBeenCalledExactlyOnceWith({ kind: "create" });
   });
 
   it("an empty list: its own empty state, no subscription, and 'Add symbols to watch' opens the add", async () => {
@@ -1383,5 +1393,147 @@ describe("panel states (E08-D07 §4.2)", () => {
     expect(events).toEqual([
       { name: "data_confidence.state_entered", surface: "SCR-100", state: "disconnected" },
     ]);
+  });
+});
+
+describe("SCR-101's paths and lists (#4702 PR (c))", () => {
+  it("the tab menu's Rename, Duplicate, Delete… and 'Manage watchlists…', and '+', open SCR-101 with their intent", async () => {
+    const onManage = vi.fn<(intent: ManagerIntent) => void>();
+    mount([MAJORS, ALTS], MAJORS, { onManage });
+    await flush();
+    const tab = screen.getByRole("tab", { name: "Majors, 12 symbols" });
+    for (const [item, intent] of [
+      ["Rename", { kind: "rename", listId: MAJORS.id }],
+      ["Duplicate", { kind: "duplicate", listId: MAJORS.id }],
+      ["Delete…", { kind: "delete", listId: MAJORS.id }],
+      ["Manage watchlists…", { kind: "open", listId: MAJORS.id }],
+    ] as const) {
+      act(() => tab.focus());
+      fireEvent.keyDown(tab, { key: "F10", shiftKey: true });
+      await flush();
+      fireEvent.click(screen.getByRole("menuitem", { name: item }));
+      await flush();
+      expect(onManage).toHaveBeenLastCalledWith(intent);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "New watchlist" }));
+    expect(onManage).toHaveBeenLastCalledWith({ kind: "create" });
+  });
+
+  it("the empty list's 'Import a list' links to SCR-101 on the list, and opens it in place asking for the import", async () => {
+    const onManage = vi.fn<(intent: ManagerIntent) => void>();
+    const empty = list("Majors", [], MAJORS.id);
+    mount([empty], empty, { onManage });
+    await flush();
+    const link = screen.getByRole("link", { name: "Import a list" });
+    expect(link).toHaveAttribute("href", `/watchlist/${MAJORS.id}?modal=watchlists`);
+    expect(fireEvent.click(link)).toBe(false); // the page does not navigate
+    expect(onManage).toHaveBeenCalledExactlyOnceWith({ kind: "import", listId: MAJORS.id });
+    // a press asking for a new tab is the browser's
+    fireEvent.click(link, { ctrlKey: true });
+    expect(onManage).toHaveBeenCalledOnce();
+  });
+
+  it("the add popover's 'Paste several…' follows the input and opens SCR-101's paste on the list", async () => {
+    const onManage = vi.fn<(intent: ManagerIntent) => void>();
+    mount([MAJORS], MAJORS, { onManage });
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: /^Add symbol/ }));
+    await flush();
+    const popover = screen.getByRole("dialog", { name: "Add to Majors" });
+    const paste = within(popover).getByRole("button", { name: "Paste several…" });
+    expect(
+      within(popover).getByRole("combobox").compareDocumentPosition(paste) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.click(paste);
+    await flush();
+    expect(onManage).toHaveBeenCalledExactlyOnceWith({ kind: "paste", listId: MAJORS.id });
+    expect(screen.queryByRole("dialog", { name: "Add to Majors" })).toBeNull();
+  });
+
+  it("a list SCR-101 saves reaches the panel: it shows, and the next edit saves against its version (no 412)", async () => {
+    const { api, replace, stored } = versionedApi([MAJORS, ALTS]);
+    const sync = createWatchlistSync();
+    mount([MAJORS, ALTS], MAJORS, { api, sync });
+    await flush();
+    const saved = { ...MAJORS, symbols: [...MAJORS_SYMBOLS].reverse(), version: 2 };
+    stored.set(MAJORS.id, saved);
+    act(() => sync.publish({ kind: "stored", list: saved }));
+    await flush();
+    expect(within(grid()).getAllByRole("rowheader")[0]).toHaveTextContent("TONUSDT");
+    act(() => cellOf("SOLUSDT", "last").focus());
+    fireEvent.keyDown(cellOf("SOLUSDT", "last"), { key: "Delete" });
+    await flush();
+    expect(replace.mock.calls.at(-1)?.[0].version).toBe(2);
+    await expect(replace.mock.results.at(-1)?.value).resolves.toMatchObject({ kind: "saved" });
+    expect(said).not.toContain("Majors changed in another window.");
+  });
+
+  it("a list SCR-101 creates joins the tabs, an older version changes nothing, and its closing reads the lists again", async () => {
+    const { api, list: reads, stored } = versionedApi([MAJORS]);
+    const sync = createWatchlistSync();
+    mount([MAJORS], MAJORS, { api, sync });
+    await flush();
+    const created = list("Breakouts", ["SOLUSDT"], "66666666-6666-4666-8666-666666666666");
+    act(() => sync.publish({ kind: "stored", list: created }));
+    act(() => sync.publish({ kind: "stored", list: { ...MAJORS, symbols: [], version: 1 } }));
+    await flush();
+    expect(screen.getByRole("tab", { name: "Breakouts, 1 symbol" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Majors, 12 symbols" })).toBeInTheDocument();
+    stored.delete(created.id);
+    act(() => sync.publish({ kind: "reread" }));
+    await flush();
+    expect(reads).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("tab", { name: /^Breakouts/ })).toBeNull();
+  });
+});
+
+describe("the Watchlist focus context (E08-D07 §6.2; #5335 A-5335-02, B-5335-03)", () => {
+  afterEach(() => resetBindings());
+  /** The toasts the window keymap raised (SCR-015's region, portalled): none for a key the panel handled. */
+  const toasts = (): string =>
+    screen.queryByRole("region", { name: "Notifications", hidden: true })?.textContent ?? "";
+
+  it("the panel is the Watchlist context: Alt+↓ on a row moves it and says only the move, with no toast", async () => {
+    render(<KeymapHost />);
+    mount([MAJORS], MAJORS);
+    await flush();
+    expect(screen.getByRole("region", { name: "Watchlist Majors" })).toHaveAttribute(
+      "data-keymap-context",
+      "Watchlist",
+    );
+    act(() => cellOf("BTCUSDT", "last").focus());
+    fireEvent.keyDown(cellOf("BTCUSDT", "last"), { key: "ArrowDown", altKey: true });
+    await flush();
+    expect(said).toEqual(["BTCUSDT moved to position 2 of 12."]);
+    expect(toasts()).toBe("");
+  });
+
+  it("its keys are remappable: a remapped remove key removes, and the old one does nothing", async () => {
+    render(<KeymapHost />);
+    act(() => setBindings(new Map(getBindings()).set("watchlist.remove", "Backspace")));
+    const { replace } = mount([MAJORS], MAJORS);
+    await flush();
+    act(() => cellOf("SOLUSDT", "last").focus());
+    fireEvent.keyDown(cellOf("SOLUSDT", "last"), { key: "Delete" });
+    await flush();
+    expect(replace).not.toHaveBeenCalled();
+    fireEvent.keyDown(cellOf("SOLUSDT", "last"), { key: "Backspace" });
+    await flush();
+    expect(said).toContain("Removed SOLUSDT. Undo is in the footer.");
+    expect(replace).toHaveBeenCalledOnce();
+    expect(toasts()).not.toContain("Watchlist view");
+  });
+
+  it("a row key pressed off a row says it needs one, naming the Watchlist view, never another view's command", async () => {
+    render(<KeymapHost />);
+    mount([MAJORS], MAJORS);
+    await flush();
+    const filter = screen.getByRole("searchbox", { name: "Filter symbols" });
+    act(() => filter.focus());
+    fireEvent.keyDown(filter, { key: "ArrowUp", altKey: true });
+    await flush();
+    expect(toasts()).toContain("Move row up is not available here (Watchlist view)");
+    expect(toasts()).not.toContain("Rules");
   });
 });

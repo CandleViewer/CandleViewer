@@ -2178,6 +2178,15 @@ describe("Table (CMP-049) grid mode: E08-D07's window, custom rows, merged cells
     expect(cellAt(2, 2)).toHaveAttribute("tabindex", "0");
   });
 
+  it("a reorder carries the Tab stop's place too: Del after Alt+↓ hands focus to the row after the moved one's new place", async () => {
+    await mount(<EditHost />);
+    act(() => cellAt(1, 1).focus());
+    await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}"); // S000USDT is now the second row
+    await userEvent.keyboard("{Delete}");
+    expect(focusedSymbol()).toBe("S002USDT");
+    expect(document.activeElement).toBe(cellAt(2, 1));
+  });
+
   it("a row removed while focus is outside the grid takes nothing back into it", async () => {
     await mount(<EditHost />);
     act(() => cellAt(2, 1).focus());

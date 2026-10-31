@@ -61,10 +61,13 @@ describe("E10-S01 S1: ShellLayout landmarks and one main per route", () => {
           <RouterProvider router={router} />
         </PreferencesProvider>,
       );
-      const [heading] = await screen.findAllByRole("heading");
+      // R-110 opens SCR-101 (#4702), a modal over its page: the page is inert (`aria-hidden` where jsdom has no `inert`)
+      const hidden = entry.id === "R-110";
+      const [heading] = await screen.findAllByRole("heading", { hidden });
       // the screen itself, never the route error fallback
       expect(screen.queryByRole("heading", { name: /Something went wrong/ }), entry.id).toBeNull();
-      const mains = screen.getAllByRole("main");
+      if (hidden) expect(screen.getByRole("dialog", { name: "Watchlists" })).toBeInTheDocument();
+      const mains = screen.getAllByRole("main", { hidden });
       expect(mains, entry.id).toHaveLength(1);
       expect(mains[0]?.contains(heading as HTMLElement), entry.id).toBe(true);
       expect(screen.getByRole("banner"), entry.id).toBeInTheDocument();

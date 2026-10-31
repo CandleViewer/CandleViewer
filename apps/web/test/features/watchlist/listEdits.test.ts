@@ -2,7 +2,8 @@
  * E08-S08 (#4702): SCR-100's local-first list edits (E08-D07 D15, §6.2, §6.4): each change applies at once, then
  * `PUT /watchlists/{watchlistId}` replaces the list (one save in flight, the latest state next); a failure rolls back
  * with an inline error and Retry; `Del` has Undo, which restores every removal since, in place; each saved list goes
- * back to the host, and a list read again after a conflict is adopted whole.
+ * back to the host, and a list read again after a conflict is adopted whole. SCR-101 (#4702 PR (c)) adds the name to
+ * the change, a bulk add up to the cap, and "Overwrite with my version" after a conflict.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -25,12 +26,17 @@ const MAJORS: Watchlist = {
 
 /** A saver whose answers the test releases one by one. */
 function saver() {
-  const calls: { list: Watchlist; symbols: readonly string[]; columns: readonly string[] }[] = [];
+  const calls: {
+    list: Watchlist;
+    name: string | undefined;
+    symbols: readonly string[];
+    columns: readonly string[];
+  }[] = [];
   const answers: ((outcome: SaveOutcome) => void)[] = [];
   const port: WatchlistSaver = {
     replace: (list, next) =>
       new Promise<SaveOutcome>((resolve) => {
-        calls.push({ list, symbols: next.symbols, columns: next.columns });
+        calls.push({ list, name: next.name, symbols: next.symbols, columns: next.columns });
         answers.push(resolve);
       }),
   };
@@ -181,5 +187,81 @@ describe("local-first edits", () => {
     expect(s.calls).toHaveLength(1);
     edits.remove("SOLUSDT");
     expect(s.calls.at(-1)?.list.version).toBe(7);
+  });
+});
+
+describe("SCR-101's edits (#4702 PR (c))", () => {
+  it("a rename is one more change: shown at once, sent with the whole list, rolled back on a taken name (409)", async () => {
+    const s = saver();
+    const edits = createListEdits(MAJORS, s.port);
+    edits.rename("Core");
+    expect(edits.getState().name).toBe("Core");
+    expect(s.calls[0]).toMatchObject({ name: "Core", symbols: MAJORS.symbols });
+    await s.answer({ kind: "name_taken" });
+    expect(edits.getState()).toMatchObject({ name: "Majors", error: { kind: "name_taken" } });
+    edits.rename("Majors");
+    expect(s.calls).toHaveLength(1);
+  });
+
+  it("C-5335-12: a taken name's error names the name sent, not one typed after it", async () => {
+    const s = saver();
+    const edits = createListEdits(MAJORS, s.port);
+    edits.rename("Core");
+    edits.rename("Core 2"); // typed while "Core" is in flight: it goes next
+    await s.answer({ kind: "name_taken" });
+    expect(edits.getState().error).toEqual({ kind: "name_taken", name: "Core" });
+  });
+
+  it("every save carries the name shown, so a symbol change never undoes a rename", async () => {
+    const s = saver();
+    const edits = createListEdits(MAJORS, s.port);
+    edits.rename("Core");
+    edits.remove("ETHUSDT");
+    await s.answer({ kind: "saved", list: { ...MAJORS, name: "Core", version: 4 } });
+    expect(s.calls[1]).toMatchObject({ name: "Core", symbols: ["BTCUSDT", "SOLUSDT", "XRPUSDT"] });
+  });
+
+  it("addAll appends the symbols not on the list, as one change, up to the cap", () => {
+    const s = saver();
+    const edits = createListEdits(MAJORS, s.port);
+    expect(edits.addAll(["ETHUSDT", "DOGEUSDT", "DOGEUSDT", "ADAUSDT"])).toEqual([
+      "DOGEUSDT",
+      "ADAUSDT",
+    ]);
+    expect(s.calls).toHaveLength(1);
+    expect(s.calls[0]?.symbols.slice(-2)).toEqual(["DOGEUSDT", "ADAUSDT"]);
+    const near = createListEdits(
+      { ...MAJORS, symbols: Array.from({ length: 199 }, (_, i) => `S${i}USDT`) },
+      s.port,
+    );
+    expect(near.addAll(["BTCUSDT", "ETHUSDT"])).toEqual(["BTCUSDT"]);
+    expect(near.addAll(["ETHUSDT"])).toEqual([]);
+    expect(s.calls).toHaveLength(2);
+  });
+
+  it("overwrite, after a conflict: the change undone, saved against the version stored now", async () => {
+    const s = saver();
+    const edits = createListEdits(MAJORS, s.port);
+    edits.move("XRPUSDT", 0);
+    await s.answer({ kind: "conflict" });
+    const fresh: Watchlist = { ...MAJORS, symbols: ["BTCUSDT", "ETHUSDT"], version: 9 };
+    edits.overwrite(fresh);
+    expect(edits.getState()).toMatchObject({
+      symbols: ["XRPUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT"],
+      error: null,
+    });
+    expect(s.calls.at(-1)).toMatchObject({
+      symbols: ["XRPUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT"],
+      list: { version: 9 },
+    });
+  });
+
+  it("overwrite with nothing undone shows the stored list and saves nothing", () => {
+    const s = saver();
+    const edits = createListEdits(MAJORS, s.port);
+    const fresh: Watchlist = { ...MAJORS, symbols: ["BTCUSDT"], version: 9 };
+    edits.overwrite(fresh);
+    expect(edits.getState().list).toBe(fresh);
+    expect(s.calls).toHaveLength(0);
   });
 });
