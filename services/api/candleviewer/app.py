@@ -130,7 +130,7 @@ from candleviewer.api.csp import (
     tailnet_host_from,
 )
 from candleviewer.api.csp_report import METRIC_NAME as CSP_VIOLATIONS_METRIC
-from candleviewer.api.csp_report import CspReportReceiver
+from candleviewer.api.csp_report import CspReportReceiver, make_csp_report_router
 from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
 from candleviewer.api.deny_by_default import (
     assert_app_routes_declared,
@@ -1741,6 +1741,7 @@ def create_app(
     app.state.log_level_overrides = overrides
     # `principal_resolver=None` -> fails closed with 501 until E09-S03 (as /admin/audit).
     app.include_router(make_log_level_router(overrides, _LazyAuditEmitter(ctx.audit)))
+    app.include_router(make_csp_report_router())  # E43-T01: the receiver answers it first
     app.include_router(
         make_health_router(
             resolved,

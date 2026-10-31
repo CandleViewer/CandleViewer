@@ -526,8 +526,9 @@ operations:
     permissions: []
     scope: none
     public: true
-    state: not_mounted
-    reason: served by the outermost ASGI layer (api/csp_report.py), ahead of every router, so it is not a route; browsers send reports with no credential, and tests/unit/api/test_csp_report.py asserts the cells
+    state: executed
+    request:
+      json: []
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: allow}
   GET /drawings:
     permissions: ['workspaces:read']

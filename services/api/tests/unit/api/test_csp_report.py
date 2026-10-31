@@ -22,6 +22,7 @@ from candleviewer.api.csp_report import (
     CspReportReceiver,
     classify_blocked,
     extract_violations,
+    make_csp_report_router,
     normalise_directive,
 )
 from candleviewer.observability.metrics import Metrics
@@ -285,7 +286,15 @@ def test_the_deployed_app_serves_the_receiver_with_the_policy_header_and_counts(
     r = TestClient(off, client=("127.0.0.1", 50000)).post(
         "/api/v1/csp-report", content=SCRIPT_INLINE, headers={"content-type": LEGACY}
     )
-    assert r.status_code != 204
+    assert r.status_code == 403  # off: the CSRF layer answers a credential-less POST, as before
+    assert len(off.state.csp.policy) > 0 and off.state.csp.report_enabled is False
+
+
+def test_the_declared_route_answers_404_when_nothing_ahead_of_it_does() -> None:
+    bare = FastAPI()
+    bare.include_router(make_csp_report_router())
+    r = TestClient(bare).post("/csp-report", content=b"[]")
+    assert (r.status_code, r.content) == (404, b"")
 
 
 def test_the_metric_is_catalogued_with_the_two_closed_labels() -> None:

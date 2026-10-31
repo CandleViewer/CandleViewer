@@ -27,6 +27,7 @@ from typing import Any, Final, Protocol
 from urllib.parse import urlsplit
 
 import structlog
+from fastapi import APIRouter, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 METRIC_NAME: Final = "cv_csp_violations_total"
@@ -229,3 +230,20 @@ class CspReportReceiver:
             chunks.append(chunk)
             if not message.get("more_body", False):
                 return b"".join(chunks)
+
+
+def make_csp_report_router() -> APIRouter:
+    """The contract's `POST /csp-report`, declared as a real route so the RBAC matrix, the
+    composition guard and the deny-by-default check see the operation served.
+
+    `CspReportReceiver` answers it first, outside the CSRF, CORS, mesh and session layers (a
+    browser's report carries no credential and, from the shell, a foreign Origin). This route
+    answers only when the receiver is off (`CV_CSP_REPORT_ENABLED=false`): `404`, nothing
+    counted."""
+    router = APIRouter(tags=["admin"])
+
+    @router.post("/csp-report", include_in_schema=False)
+    async def csp_report_disabled() -> Response:
+        return Response(status_code=404, headers={"cache-control": "no-store"})
+
+    return router
