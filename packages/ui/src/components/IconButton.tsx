@@ -105,7 +105,8 @@ export function IconButton<N extends IconName>({
           <Icon name={icon} size={size} />
           {reason.gated ? (
             <span className="cv-icon-button__badge">
-              <Icon name="lock" size="sm" />
+              {/* E05-D02 CMP-079 a11y: the badge is CMP-019 `decorative=false`, an img named "Not available". */}
+              <Icon name="lock" size="sm" decorative={false} label="Not available" />
             </span>
           ) : null}
         </button>

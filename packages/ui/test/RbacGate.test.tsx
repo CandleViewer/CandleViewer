@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createRequire } from "node:module";
 import { act, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
@@ -18,6 +19,21 @@ import {
 } from "../src/components/index.js";
 import { mount } from "./theme/mount.js";
 import { clearPolite, politeText } from "./theme/polite.js";
+
+type Axe = {
+  run: (context: object, options?: object) => Promise<{ violations: { impact?: string | null }[] }>;
+};
+const axe = createRequire(createRequire(import.meta.url).resolve("@storybook/addon-a11y"))(
+  "axe-core",
+) as Axe;
+
+async function seriousAxe(host: HTMLElement): Promise<unknown[]> {
+  const { violations } = await axe.run(
+    { include: [host] },
+    { rules: { "color-contrast": { enabled: false } } },
+  );
+  return violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+}
 
 const button = (host: HTMLElement): HTMLButtonElement =>
   within(host).getByRole("button", { name: "Place order" }) as HTMLButtonElement;
@@ -190,6 +206,7 @@ describe("RbacGate forms (E05-D02 G15, E09-D09 §2.2)", () => {
       expect(control).not.toHaveAttribute("title");
       expect(control).toHaveAccessibleDescription(OWNER_ONLY);
       expect(control.querySelector(".cv-icon-button__badge")).not.toBeNull();
+      expect(within(control).getByRole("img", { name: "Not available" })).toBeInTheDocument();
       await act(async () => {
         fireEvent.pointerOver(control);
         vi.advanceTimersByTime(300);
@@ -224,6 +241,61 @@ describe("RbacGate forms (E05-D02 G15, E09-D09 §2.2)", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it("tooltip: the misuse warning fires once per mount, not on every re-render", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let bump: () => void = () => undefined;
+    function Host(): JSX.Element {
+      const [n, setN] = useState(0);
+      bump = () => setN((v) => v + 1);
+      return (
+        <RbacGate form="tooltip" allowed={false} reason="rbac.env">
+          <Button>{`Place order ${n}`}</Button>
+        </RbacGate>
+      );
+    }
+    try {
+      await mount(<Host />);
+      await act(async () => bump());
+      await act(async () => bump());
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("tooltip: an icon-only control does not warn", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await mount(
+        <RbacGate form="tooltip" allowed={false} reason="rbac.env">
+          <IconButton icon="settings" label="Account settings" />
+        </RbacGate>,
+      );
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("tooltip: a press re-announces the reason once and calls nothing", async () => {
+    const onClick = fn();
+    const host = await mount(
+      <RbacGate
+        form="tooltip"
+        allowed={false}
+        reason="rbac.owner_only"
+        fills={{ verb: "change account settings" }}
+      >
+        <IconButton icon="settings" label="Account settings" onClick={onClick} />
+      </RbacGate>,
+    );
+    clearPolite();
+    await userEvent.click(within(host).getByRole("button", { name: "Account settings" }));
+    expect(await politeText()).toBe(OWNER_ONLY);
+    expect(document.querySelectorAll("[role='status']")).toHaveLength(1);
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   const notice = (allowed: boolean): JSX.Element => {
@@ -261,6 +333,7 @@ describe("RbacGate forms (E05-D02 G15, E09-D09 §2.2)", () => {
       expect(control).toHaveAccessibleDescription(OWNER_ONLY);
     }
     expect(field).toHaveAttribute("readonly");
+    expect(within(host).getByRole("img", { name: "Not available" })).toBeInTheDocument();
     const copies = [...host.querySelectorAll("*")].filter(
       (n) => n.childElementCount === 0 && n.textContent === OWNER_ONLY,
     );
@@ -286,9 +359,44 @@ describe("RbacGate forms (E05-D02 G15, E09-D09 §2.2)", () => {
         </RbacGate>
       </>,
     );
+    const panel = document.getElementById("n");
+    const silent = (): void => {
+      expect(panel).not.toHaveAttribute("role");
+      expect(panel).not.toHaveAttribute("aria-live");
+      expect(panel).toHaveTextContent(OWNER_ONLY);
+    };
+    silent();
+    clearPolite();
     await userEvent.click(within(host).getByRole("button", { name: "Save" }));
     expect(await politeText()).toBe(OWNER_ONLY);
+    expect(document.querySelectorAll("[role='status']")).toHaveLength(1);
     expect(onClick).not.toHaveBeenCalled();
+    silent();
+  });
+
+  it("notice: a descendant with the same sentence follows the notice, portalled or not (by design)", async () => {
+    const host = await mount(
+      <RbacGate
+        form="notice"
+        noticeId="n"
+        allowed={false}
+        reason="rbac.owner_only"
+        fills={{ verb: "change account settings" }}
+      >
+        <>
+          <Button disabledReason={OWNER_ONLY}>Save</Button>
+          {createPortal(<Button disabledReason={OWNER_ONLY}>Send</Button>, document.body)}
+        </>
+      </RbacGate>,
+    );
+    expect(within(host).getByRole("button", { name: "Save" })).toHaveAttribute(
+      "aria-describedby",
+      "n",
+    );
+    expect(within(document.body).getByRole("button", { name: "Send" })).toHaveAttribute(
+      "aria-describedby",
+      "n",
+    );
   });
 
   it("notice: a portalled descendant with another reason keeps its own node", async () => {
@@ -392,6 +500,55 @@ const ACTIONS: readonly ActionRow[] = [
 ];
 const ROLES: readonly Role[] = ["owner", "manager", "viewer"];
 const CASES = ROLES.flatMap((role) => ACTIONS.map((row) => [role, row.label, row] as const));
+
+describe("RbacGate axe (E05-D02 G15)", () => {
+  it("inline: no serious or critical violations", async () => {
+    const host = await mount(
+      <RbacGate allowed={false} reason="rbac.env">
+        <Button>Place order</Button>
+      </RbacGate>,
+    );
+    expect(await seriousAxe(host)).toEqual([]);
+  });
+
+  it("tooltip: no serious or critical violations", async () => {
+    const host = await mount(
+      <RbacGate
+        form="tooltip"
+        allowed={false}
+        reason="rbac.owner_only"
+        fills={{ verb: "change account settings" }}
+      >
+        <IconButton icon="settings" label="Account settings" />
+      </RbacGate>,
+    );
+    expect(await seriousAxe(host)).toEqual([]);
+  });
+
+  it("notice: no serious or critical violations", async () => {
+    const deny = {
+      form: "notice",
+      noticeId: "panel-notice",
+      allowed: false,
+      reason: "rbac.owner_only",
+      fills: { verb: "change account settings" },
+    } as const;
+    const host = await mount(
+      <>
+        <Callout id="panel-notice" title={OWNER_ONLY} live="off" />
+        <RbacGate {...deny}>
+          <Button>Save</Button>
+        </RbacGate>
+        <RbacGate {...deny}>
+          <FormField label="Display name">
+            <TextInput />
+          </FormField>
+        </RbacGate>
+      </>,
+    );
+    expect(await seriousAxe(host)).toEqual([]);
+  });
+});
 
 describe("RbacGate RBAC matrix", () => {
   it.each(CASES)("%s × %s", async (role, label, { verb, expected }) => {

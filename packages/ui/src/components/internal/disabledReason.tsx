@@ -28,7 +28,9 @@ export interface GateNotice {
 /**
  * Set by `RbacGate form="notice"` (E09-D09 §2.2 "one notice, many pointers"; E42-D03). Only a control whose own
  * reason is the notice's sentence follows it, so a descendant with another reason (a portalled menu item, say) keeps
- * its own node; context crosses portals, the sentence match does not.
+ * its own node; context crosses portals, the sentence match does not. By design the match is by sentence, not by
+ * gate: a descendant (portalled or under an inner inline gate) whose reason is the same sentence follows the notice
+ * too, since the notice already says it once.
  */
 const GateNoticeContext = createContext<GateNotice | null>(null);
 

@@ -1,4 +1,4 @@
-import { cloneElement, type JSX, type ReactElement } from "react";
+import { cloneElement, useEffect, type JSX, type ReactElement } from "react";
 import type { IconName } from "../icons/registry.js";
 import { GateNoticeProvider } from "./internal/disabledReason.js";
 import { fillRbacReason, type RbacReasonArgs, type RbacReasonKey } from "./rbacReasons.js";
@@ -75,9 +75,14 @@ export type RbacGateProps<F extends RbacGateForm = "inline"> = (Allowed | Denied
   readonly form?: F;
 } & GateForm<F>;
 
+/** An icon and a name and no visible text: a text Button that also takes `icon` and `label` is not icon-only. */
 const isIconOnly = (child: ReactElement): boolean => {
-  const props = child.props as { icon?: unknown; label?: unknown };
-  return typeof props.icon === "string" && typeof props.label === "string";
+  const props = child.props as { icon?: unknown; label?: unknown; children?: unknown };
+  return (
+    typeof props.icon === "string" &&
+    typeof props.label === "string" &&
+    (props.children === undefined || props.children === null)
+  );
 };
 
 /**
@@ -91,9 +96,13 @@ const isIconOnly = (child: ReactElement): boolean => {
 export function RbacGate<F extends RbacGateForm = "inline">(props: RbacGateProps<F>): JSX.Element {
   // The form is a type parameter, which does not narrow; read it as the plain union it is at run time.
   const { form, noticeId } = props as { readonly form?: RbacGateForm; readonly noticeId?: string };
-  if (form === "tooltip" && import.meta.env?.DEV && !isIconOnly(props.children)) {
-    console.warn("RbacGate: the tooltip form is for icon-only controls; use inline (CMP-079).");
-  }
+  const misused = form === "tooltip" && !isIconOnly(props.children);
+  // Once per mount (and again only if the misuse comes back), not on every render.
+  useEffect(() => {
+    if (misused && import.meta.env?.DEV) {
+      console.warn("RbacGate: the tooltip form is for icon-only controls; use inline (CMP-079).");
+    }
+  }, [misused]);
   const reason = props.allowed ? undefined : fillRbacReason(props.reason, props.fills);
   const child =
     reason === undefined

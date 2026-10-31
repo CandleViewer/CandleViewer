@@ -450,7 +450,8 @@ describe("DatePicker (CMP-047): gates", () => {
     expect(input).toHaveAttribute("readonly");
     expect(input).toHaveAttribute("aria-disabled", "true");
     expect(input).toHaveAccessibleDescription(REASON);
-    expect(within(host).getByRole("img", { name: "Not available" })).toBeInTheDocument();
+    // The well's lock plus the gated calendar IconButton's badge, each an img "Not available" (CMP-079).
+    expect(within(host).getAllByRole("img", { name: "Not available" })).toHaveLength(2);
     const calendar = button(host);
     expect(calendar).toHaveAttribute("aria-disabled", "true");
     expect(calendar).not.toBeDisabled();
@@ -593,7 +594,8 @@ describe("DatePicker (CMP-047): withTime", () => {
     const host = await mount(<TimeHost value="2026-10-23" disabledReason={REASON} />);
     expect(time(host)).toHaveAttribute("readonly");
     expect(time(host)).toHaveAccessibleDescription(REASON);
-    expect(within(host).getAllByRole("img", { name: "Not available" })).toHaveLength(2);
+    // The two wells' locks plus the gated calendar IconButton's badge, each an img "Not available" (CMP-079).
+    expect(within(host).getAllByRole("img", { name: "Not available" })).toHaveLength(3);
   });
 });
 

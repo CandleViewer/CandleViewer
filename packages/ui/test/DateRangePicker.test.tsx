@@ -300,7 +300,8 @@ describe("DateRangePicker (CMP-047 range): time and gates", () => {
       expect(input).toHaveAttribute("aria-disabled", "true");
       expect(input).toHaveAccessibleDescription(REASON);
     }
-    expect(within(host).getAllByRole("img", { name: "Not available" })).toHaveLength(4);
+    // The four wells' locks plus the gated calendar IconButton's badge, each an img "Not available" (CMP-079).
+    expect(within(host).getAllByRole("img", { name: "Not available" })).toHaveLength(5);
     expect(within(host).getAllByText(REASON).length).toBeGreaterThanOrEqual(1);
     expect(button(host)).toHaveAttribute("aria-disabled", "true");
     await click(button(host));
