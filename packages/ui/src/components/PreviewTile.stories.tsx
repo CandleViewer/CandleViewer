@@ -114,6 +114,22 @@ export const LadderCollapsed: Story = {
   },
 };
 
+export const LadderProvisional: Story = {
+  args: {
+    kind: "ladder",
+    label: "Worst case 1,365.85 (provisional)",
+    value: "worst case 1,365.85 (provisional)",
+  },
+};
+
+export const LadderRefused: Story = {
+  args: {
+    kind: "ladder",
+    label: "Worst case 719.11 beside the cap 600.00",
+    value: "719.11 beside 600.00",
+  },
+};
+
 /** Reads two token values at runtime, so the story carries no raw colour (the hex-literal lint). */
 function LowContrastTile(): JSX.Element {
   const [overrides, setOverrides] = useState<Record<string, string>>({});

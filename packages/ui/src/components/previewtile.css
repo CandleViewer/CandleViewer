@@ -41,13 +41,20 @@
   gap: var(--space-inset-xs);
 }
 
-/* Ladder: the value in type.num.base, primary; the collapsed form wraps rather than truncates. */
+/* Ladder: the value in type.num.base, primary; the collapsed form is one line: it never wraps, never truncates the name. */
 .cv-preview-tile__value {
-  overflow-wrap: anywhere;
+  overflow: visible;
+  white-space: nowrap;
   color: var(--color-text-primary);
   font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
     var(--type-num-base-line-height) var(--type-num-base-font-family);
   font-variant-numeric: tabular-nums;
+}
+
+/* Compact density: the ladder tile is one 24 px row (E32-D04 §8, size.row.compact); the frame keeps its own padding in the box. */
+[data-density="compact"] .cv-preview-tile[data-kind="ladder"] .cv-preview-tile__frame {
+  height: var(--size-row-compact);
+  padding-block: 0;
 }
 
 /* Empty and error: caption type in text.secondary; the error glyph in status.danger.strong. */

@@ -32,6 +32,17 @@ describe("previewtile.css contract", () => {
     expect(value).toContain("tabular-nums");
   });
 
+  it("ladder value never wraps; compact density makes the ladder tile 24 px (size.row.compact)", () => {
+    expect(find(normal, ".cv-preview-tile__value", "white-space")).toContain("nowrap");
+    expect(find(normal, ".cv-preview-tile__value", "font")).not.toContain("anywhere");
+    const row = find(
+      normal,
+      '[data-density="compact"] .cv-preview-tile[data-kind="ladder"] .cv-preview-tile__frame',
+      "height",
+    );
+    expect(row).toContain("height: var(--size-row-compact)");
+  });
+
   it("glyphs: danger.strong for the error, warning.strong for the contrast warning", () => {
     expect(find(normal, ".cv-preview-tile__glyph", "color")).toContain(
       "var(--color-status-danger-strong)",
