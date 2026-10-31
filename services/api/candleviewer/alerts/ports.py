@@ -11,9 +11,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Sequence
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import structlog
+
+#: The only reason the server disarms an alert (the OpenAPI `Alert.disarm_reason` enum).
+DisarmReason = Literal["source_unavailable"]
 
 
 def _log() -> Any:
@@ -76,7 +79,7 @@ class FiringStore(Protocol):
         fired_at: datetime,
         once: bool,
         bump: bool,
-        disarm_reason: str | None = None,
+        disarm_reason: DisarmReason | None = None,
     ) -> list[int] | None:
         """One transaction. `once`: `UPDATE ... SET enabled = false WHERE enabled`; zero
         rows means another worker won the race -> roll back, return None. `disarm_reason`
@@ -114,7 +117,7 @@ class WakingFiringStore:
         fired_at: datetime,
         once: bool,
         bump: bool,
-        disarm_reason: str | None = None,
+        disarm_reason: DisarmReason | None = None,
     ) -> list[int] | None:
         ids = await self._inner.record_firing(
             alert_id=alert_id, user_id=user_id, channels=channels, status=status, title=title,
