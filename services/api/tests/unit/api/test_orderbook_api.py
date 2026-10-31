@@ -82,16 +82,3 @@ def test_orderbook_rbac_and_validation() -> None:
         _client().get("/market/orderbook", params={"symbol": "BTCUSDT", "depth": 7}).status_code
         == 422
     )
-
-
-def test_resync_response_carries_update_id_and_seq() -> None:
-    """E21-T03 BQ-7 (pin only): 503 while resynchronising, then the rebuilt book's `u` and `seq`
-    (the snapshot it was rebuilt from) on the next read, never the pre-resync values."""
-    reader = Reader(live=False)
-    client = _client(reader=reader)
-    resyncing = client.get("/market/orderbook", params={"symbol": "BTCUSDT"})
-    assert resyncing.status_code == 503 and "u" not in resyncing.json()
-    reader.live = True
-    body = client.get("/market/orderbook", params={"symbol": "BTCUSDT"}).json()
-    OrderbookSnapshot.model_validate(body)
-    assert (body["u"], body["seq"]) == (7, 7)

@@ -13,8 +13,8 @@
   stored snapshots carry no checksum today, so every rebuilt column is `estimated` (BQ-4). The
   deltas come from the cold tier when its manifests cover the whole range, else from QuestDB,
   at most `BOOK_CHANGE_ROWS` (more raise `HeatmapReadLimit`).
-- **Range.** `first_available` is the oldest stored heatmap cell or book snapshot of either
-  tier (BQ-3; the recorder forces a snapshot a minute, so the first delta is no older).
+- **Range.** `first_available` is the oldest stored heatmap cell, book snapshot or book delta
+  of either tier (BQ-3; 22 `HeatmapResponse.first_available`).
 
 Only on the `real` storage backend: one lazily opened QuestDB wire and one cold reader, both
 released by `HeatmapWiring.aclose()` when the app stops.
@@ -119,6 +119,14 @@ def _changes(events: Sequence[RecordedEvent]) -> list[BookChange]:
     return out
 
 
+#: The streams whose oldest row may open the range (BQ-3): cells, snapshots and deltas.
+_FIRST_STREAMS = (
+    StreamKind.HEATMAP_CELLS,
+    StreamKind.ORDERBOOK_SNAPSHOT,
+    StreamKind.ORDERBOOK_DELTA,
+)
+
+
 class StoredHeatmapReader:
     """`HeatmapHistoryReader` over QuestDB (`hot`) and the Parquet cold tier (`cold`)."""
 
@@ -132,7 +140,7 @@ class StoredHeatmapReader:
     async def first_available(self, symbol: str) -> int | None:
         found: list[int | None] = []
         for tier in (self._hot, self._cold):
-            for stream in (StreamKind.HEATMAP_CELLS, StreamKind.ORDERBOOK_SNAPSHOT):
+            for stream in _FIRST_STREAMS:
                 found.append(await tier.earliest(symbol, stream))
         known = [v for v in found if v is not None]
         return min(known) if known else None

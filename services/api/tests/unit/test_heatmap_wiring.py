@@ -128,7 +128,7 @@ async def test_a_row_read_twice_keeps_the_copy_read_last() -> None:
         archived=[TimeRange(start_us=T0, end_us=T0 + S)],
     )
     (span,) = await _spans(StoredHeatmapReader(FakeTier(), cold), T0, T0 + S)
-    assert [(r.price, r.bid_size) for r in span.rows] == [(1.0, 3.0)]
+    assert [(r.price, r.bid_size) for r in span.rows] == [(Decimal("1.0"), 3.0)]
 
 
 async def test_first_available_is_the_oldest_of_either_tier() -> None:
@@ -136,6 +136,15 @@ async def test_first_available_is_the_oldest_of_either_tier() -> None:
     cold = FakeTier(earliest={StreamKind.ORDERBOOK_SNAPSHOT: T0})
     assert await StoredHeatmapReader(hot, cold).first_available(SYM) == T0
     assert await StoredHeatmapReader(FakeTier(), FakeTier()).first_available(SYM) is None
+
+
+async def test_first_available_counts_a_delta_older_than_any_cell_or_snapshot() -> None:
+    """BQ-3: coverage is the earliest of cells, snapshots and deltas (22 `first_available`)."""
+    hot = FakeTier(earliest={StreamKind.HEATMAP_CELLS: T0 + 9 * S, StreamKind.ORDERBOOK_DELTA: T0})
+    cold = FakeTier(earliest={StreamKind.ORDERBOOK_SNAPSHOT: T0 + 5 * S})
+    assert await StoredHeatmapReader(hot, cold).first_available(SYM) == T0
+    cold_delta = FakeTier(earliest={StreamKind.ORDERBOOK_DELTA: T0 - S})
+    assert await StoredHeatmapReader(hot, cold_delta).first_available(SYM) == T0 - S
 
 
 async def test_the_anchor_falls_back_to_the_cold_tier_and_is_unverified() -> None:

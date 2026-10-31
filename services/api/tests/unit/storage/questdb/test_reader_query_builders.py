@@ -117,6 +117,12 @@ def test_build_first_book_snapshot_is_one_ts_ordered_row() -> None:
     assert qb.sql == "SELECT ts FROM orderbook_snapshots WHERE symbol = $1 ORDER BY ts LIMIT 1"
 
 
+def test_build_first_book_delta_is_one_ts_ordered_row() -> None:
+    qb = reader.build_first_book_delta("BTCUSDT")
+    assert qb.sql == "SELECT ts FROM orderbook_deltas WHERE symbol = $1 ORDER BY ts LIMIT 1"
+    assert qb.params == ("BTCUSDT",)
+
+
 def test_build_first_heatmap_cell_is_one_ts_ordered_row() -> None:
     qb = reader.build_first_heatmap_cell("BTCUSDT")
     assert qb.sql == "SELECT ts FROM heatmap_cells WHERE symbol = $1 ORDER BY ts LIMIT 1"

@@ -31,6 +31,7 @@ from candleviewer.storage.errors import HotReplayReadError, HotReplayReadTimeout
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.questdb.reader import (
     QueryBuilder,
+    build_first_book_delta,
     build_first_book_snapshot,
     build_first_heatmap_cell,
     build_read_heatmap_cells,
@@ -173,13 +174,14 @@ class QuestDbRecordedReader:
         return await asyncio.to_thread(lambda: [cell_from_row(r) for r in rows])
 
     async def earliest(self, symbol: str, stream: StreamKind) -> int | None:
-        """E21-T03 `first_available`: the oldest stored `heatmap_cells` or `orderbook_snapshots`
-        row of `symbol` (µs); None when there is none."""
+        """E21-T03 `first_available`: the oldest stored `heatmap_cells`, `orderbook_snapshots` or
+        `orderbook_deltas` row of `symbol` (µs); None when there is none."""
         if not _SYMBOL_RE.fullmatch(symbol):
             raise RecordedQueryRejected("symbol is not a plain instrument code")
         builders = {
             StreamKind.HEATMAP_CELLS: build_first_heatmap_cell,
             StreamKind.ORDERBOOK_SNAPSHOT: build_first_book_snapshot,
+            StreamKind.ORDERBOOK_DELTA: build_first_book_delta,
         }
         build = builders.get(stream)
         if build is None:

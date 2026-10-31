@@ -508,7 +508,7 @@ async def test_a_heatmap_size_that_is_not_a_number_fails_closed() -> None:
         await QuestDbRecordedReader(wire).heatmap_cells("BTCUSDT", RNG, limit=1)
 
 
-async def test_earliest_reads_the_first_cell_or_snapshot() -> None:
+async def test_earliest_reads_the_first_cell_snapshot_or_delta() -> None:
     wire = FakePgWire([{"ts": NAIVE}])
     reader = QuestDbRecordedReader(wire)
     assert await reader.earliest("BTCUSDT", StreamKind.ORDERBOOK_SNAPSHOT) == 1_500
@@ -516,5 +516,10 @@ async def test_earliest_reads_the_first_cell_or_snapshot() -> None:
     assert await QuestDbRecordedReader(FakePgWire()).earliest(
         "BTCUSDT", StreamKind.HEATMAP_CELLS
     ) is None  # fmt: skip
+    deltas = FakePgWire([{"ts": NAIVE}])
+    assert (
+        await QuestDbRecordedReader(deltas).earliest("BTCUSDT", StreamKind.ORDERBOOK_DELTA) == 1_500
+    )
+    assert "FROM orderbook_deltas" in deltas.calls[0][0]
     with pytest.raises(RecordedQueryRejected):
         await reader.earliest("BTCUSDT", StreamKind.TRADES)

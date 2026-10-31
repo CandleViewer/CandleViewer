@@ -197,6 +197,13 @@ def build_first_book_snapshot(sym: str) -> QueryBuilder:
     return _checked(sql, (sym,))
 
 
+def build_first_book_delta(sym: str) -> QueryBuilder:
+    """Oldest stored `orderbook_deltas` row of `sym`: the third hot half of `first_available`
+    (E21-T03, BQ-3), so a delta recorded before the first snapshot still opens the range."""
+    sql = "SELECT ts FROM orderbook_deltas WHERE symbol = $1 ORDER BY ts LIMIT 1"
+    return _checked(sql, (sym,))
+
+
 def build_read_book_snapshot_at(sym: str, ts_us: int) -> QueryBuilder:
     """Shape #7 (replay seek), snapshot half: nearest snapshot at/before
     `ts_us`."""
