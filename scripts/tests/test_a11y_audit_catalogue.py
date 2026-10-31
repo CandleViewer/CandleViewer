@@ -660,8 +660,10 @@ def test_real_nine_level_a_rows_are_fixed_by_the_override() -> None:
     by = {f["id"]: f for f in reg["findings"]}
     ids = [f"A11Y-F-{n:04d}" for n in (3, 6, 10, 11, 12, 25, 26, 27, 28)]
     for i in ids:
-        assert by[i]["status"].startswith("fixed (#52"), i
-    assert reg["counts"]["fixed"] == 13 and reg["counts"]["open"] == 106
+        # "fixed (#52…, sha)" while the override carries it; plain "fixed" once the register does
+        assert by[i]["status"] == "fixed" or by[i]["status"].startswith("fixed (#52"), i
+    counts = reg["counts"]
+    assert counts["fixed"] >= 13 and counts["fixed"] + counts["open"] == 119
 
 
 def test_real_md_carries_the_sweep_carry_and_the_ci_correction() -> None:
