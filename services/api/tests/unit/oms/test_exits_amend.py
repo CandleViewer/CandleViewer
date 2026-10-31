@@ -21,9 +21,10 @@ from fastapi.responses import Response
 from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
+from candleviewer.admin.flags.maintenance import MaintenanceGate
 from candleviewer.api.order_etag import NO_VERSION
 from candleviewer.api.order_exits_common import exit_fault, exit_response, run_claimed
-from candleviewer.domain.order_entry import OrderEntryRefusal
+from candleviewer.domain.order_entry import OrderEntryGate, OrderEntryRefusal
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.exchange.base.fakes import FakeReject
 from candleviewer.oms.errors import (
@@ -36,7 +37,7 @@ from candleviewer.oms.errors import (
 )
 from candleviewer.oms.exits import AmendTerms, ExitCaller, ExitOutcome, OrderExits, risk_increasing
 from candleviewer.oms.ports import RequestRecord, StopOffset
-from candleviewer.oms.reconcile_standing import STALE_DETAIL
+from candleviewer.oms.reconcile_standing import STALE_DETAIL, ReconcileStanding
 from candleviewer.risk.models import RiskDecision, RiskRefusal
 from candleviewer.statechart.gateway import GatewayDegradedError, GatewayOverloadedError
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -974,3 +975,38 @@ async def test_a_stale_account_refuses_a_risk_increasing_amend_and_never_a_reduc
     assert (up.kind, up.status) == ("refused", 403) and amends(rig) == []
     down = await exits.amend(found, AmendTerms(qty=D("0.009")), caller=CALLER, expected_seq=None)
     assert down.kind == "accepted" and len(amends(rig)) == 1
+
+
+async def test_a_stale_account_takes_its_stops_tightening_and_attach_through_the_real_gate(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The orchestrator's read of the wiring, L3 (24 Sec.8.10, C-2.6, C-2.21): every switch the
+    rig's pieces ask is the runtime's own (`TradingSwitchesBinding`) over the order-entry gate as
+    `app.py` composes it, the maintenance check first and the reconciliation standing last, which
+    marks the account stale once its entry rests. A new entry on the account meets
+    `account_stale` there, so the gate is live, while the stop writes on the same account, which
+    never consult it, are sent: the entry's stop tightened by an amend, and the stop B1 attaches
+    at its first fill."""
+    maintenance, standing = MaintenanceGate(), ReconcileStanding()
+    maintenance.set(False)  # both flags read off
+    switches = oms_wiring.TradingSwitchesBinding(
+        live_enabled=False, live_flag=lambda: False, kill_switch=oms_wiring.InterimKillSwitch(),
+        gate=OrderEntryGate(maintenance, standing), fenced=lambda: False,
+    )  # fmt: skip
+    monkeypatch.setattr(rig.port.switches, "refusal", switches.refusal)  # one gate, as composed
+    found = await scoped(rig)  # sent while the account was fresh
+    standing.mark_stale(cr.ACCOUNT)
+    sent = rig.calls()
+    with pytest.raises(OrderEntryRefused) as entry:
+        await rig.submit()
+    assert entry.value.reason == "account_stale" and rig.calls() == sent  # nothing sent
+    tighter = AmendTerms(sides={"stop_loss": StopOffset("price", D("59000"))})  # from 58000
+    tightened = await exits_of(rig).amend(found, tighter, caller=CALLER, expected_seq=None)
+    assert tightened.kind == "accepted" and len(amends(rig)) == 1
+    await rig.quiet()
+    row = found.order
+    rig.port.demo.seed_position(cr.position(qty=_FILL))  # so the stop's attach reads it back
+    await rig.machines.push(cr.ACCOUNT, row.id, "EXEC", _fill(row))
+    await rig.quiet()
+    assert rig.calls().count("set_trading_stop") == 1  # the attach, sent on a stale account
+    assert standing.refusal(cr.ACCOUNT) == OrderEntryRefusal("account_stale", STALE_DETAIL)
