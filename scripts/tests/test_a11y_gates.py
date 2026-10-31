@@ -74,6 +74,45 @@ def test_flash_five_hz_fails_and_names_component() -> None:
     assert len(msgs) == 1 and "bubbles" in msgs[0]
 
 
+def test_flash_five_hz_message_names_component_and_rate() -> None:
+    fps = 60
+    strobe = [1.0 if (i // 6) % 2 == 0 else 0.0 for i in range(fps)]  # 5 Hz
+    rate = gates.count_flashes(strobe, fps)
+    assert rate >= 3
+    msg = gates.check_flash({"fps": fps, "components": {"liquidation-flash": strobe}})[
+        0
+    ]
+    assert "component=liquidation-flash" in msg and f"{rate} flashes/s" in msg
+
+
+def test_flash_two_per_second_passes_with_margin() -> None:
+    fps = 60  # a 100 ms flash every 500 ms: the coalescer's worst case
+    lum = [1.0 if i % 30 < 6 else 0.0 for i in range(fps * 3)]
+    assert gates.count_flashes(lum, fps) == 2
+    assert gates.check_flash({"fps": fps, "components": {"c": lum}}) == []
+
+
+def test_flash_table_lists_rate_limit_and_result() -> None:
+    fps = 60
+    strobe = [1.0 if (i // 6) % 2 == 0 else 0.0 for i in range(fps)]
+    table = gates.flash_table(
+        {"fps": fps, "components": {"b": strobe, "a": [0.5] * fps}}
+    )
+    assert table.splitlines() == [
+        "| component | max flashes/s | limit | result |",
+        "|---|---|---|---|",
+        "| a | 0 | < 3 | pass |",
+        f"| b | {gates.count_flashes(strobe, fps)} | < 3 | FAIL |",
+    ]
+
+
+def test_flash_cli_table_flag_prints_table(tmp_path, capsys) -> None:
+    cap = tmp_path / "c.json"
+    cap.write_text('{"fps": 60, "components": {"a": [0.5, 0.5]}}')
+    assert gates.main(["flash", str(cap), "--table"]) == 0
+    assert "| a | 0 | < 3 | pass |" in capsys.readouterr().out
+
+
 def test_flash_empty_capture_is_infra() -> None:
     with pytest.raises(gates.InfraError):
         gates.check_flash({"fps": 30, "components": {}})

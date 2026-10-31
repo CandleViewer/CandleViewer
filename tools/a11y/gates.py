@@ -124,7 +124,16 @@ def check_lighthouse(scores: dict, floor: float = LIGHTHOUSE_FLOOR) -> list[str]
 
 
 def count_flashes(luminance: list[float], fps: float) -> int:
-    """Max flashes in any 1 s window. A flash = an opposing luminance change >= delta."""
+    """Max flashes in any 1 s window.
+
+    Calibration (E47-S04, WCAG 2.3.1 general flash): a flash is a PAIR of opposing
+    luminance changes, each >= FLASH_LUMINANCE_DELTA (0.1 relative luminance), so the
+    window's change count is halved. The gate fails at >= 3 flashes in any 1 s window
+    (WCAG's own line is "more than 3"; this is one stricter). The flash coalescer lets
+    one cell start at most every 500 ms (HS-1): at most 2 flashes in any 1 s window,
+    which passes with margin; the ticket's earlier 400 ms interval would admit 3 and
+    fail.
+    """
     if fps <= 0:
         raise InfraError("A11Y-INFRA fps must be positive")
     events: list[int] = []
@@ -139,13 +148,14 @@ def count_flashes(luminance: list[float], fps: float) -> int:
             direction = sign
             last = lum
     window = max(1, round(fps))
-    return max(
+    changes = max(
         (
             sum(1 for e in events[idx:] if e - start < window)
             for idx, start in enumerate(events)
         ),
         default=0,
     )
+    return changes // 2
 
 
 def check_flash(capture: dict) -> list[str]:
@@ -161,6 +171,19 @@ def check_flash(capture: dict) -> list[str]:
                 f"A11Y-G005 component={name} {rate} flashes/s (limit < {MAX_FLASHES_PER_SECOND})"
             )
     return msgs
+
+
+def flash_table(capture: dict) -> str:
+    """Markdown flash-rate table (component | max flashes/s | limit | result) for the CI summary."""
+    comps = capture.get("components")
+    if not comps or not capture.get("fps"):
+        raise InfraError("A11Y-INFRA flash capture is empty")
+    rows = ["| component | max flashes/s | limit | result |", "|---|---|---|---|"]
+    for name, lum in sorted(comps.items()):
+        rate = count_flashes(lum, float(capture["fps"]))
+        verdict = "FAIL" if rate >= MAX_FLASHES_PER_SECOND else "pass"
+        rows.append(f"| {name} | {rate} | < {MAX_FLASHES_PER_SECOND} | {verdict} |")
+    return "\n".join(rows)
 
 
 # --- Gate 6: accessibility-tree snapshot ---------------------------------
@@ -258,7 +281,11 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("report")
     a.add_argument("--baseline", default="tools/a11y/axe-baseline.json")
     sub.add_parser("lighthouse").add_argument("scores")
-    sub.add_parser("flash").add_argument("capture")
+    fl = sub.add_parser("flash")
+    fl.add_argument("capture")
+    fl.add_argument(
+        "--table", action="store_true", help="print the markdown rate table first"
+    )
     sub.add_parser("keyboard").add_argument("result")
     bp = sub.add_parser("baseline-pr")
     bp.add_argument("base_baseline")
@@ -290,6 +317,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "lighthouse":
             return _emit(check_lighthouse(_load(args.scores)))
         if args.cmd == "flash":
+            if args.table:
+                print(flash_table(_load(args.capture)))
             return _emit(check_flash(_load(args.capture)))
         if args.cmd == "keyboard":
             return _emit(check_keyboard(_load(args.result)))
