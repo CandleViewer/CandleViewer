@@ -59,7 +59,10 @@ class _Rig:
 
     def __init__(self, *, tail: Any = None, history: Any = None, slots: int = 2) -> None:
         self.w = h.World()
-        self.store = SeriesStore(tail, release_grace_s=0.0, clock=lambda: 0.0)
+        # #4839: the store's clock is fake, but a read's deadline runs on the loop's own time. At
+        # the 2 s default a starved loop can time a hydration out and serve an empty series; at 60 s
+        # no run meets it (the bars, cold-series and heal rigs' bound).
+        self.store = SeriesStore(tail, release_grace_s=0.0, clock=lambda: 0.0, timeout_s=60.0)
         self.engine = IndicatorEngine(self.store, history=history, slots=slots)
         self.engine.listen(IndicatorsPublisher(self.w.hub))
         self.router = EmitRouter([self.store, self.engine])
