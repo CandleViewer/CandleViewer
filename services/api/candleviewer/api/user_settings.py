@@ -59,7 +59,6 @@ from candleviewer.storage.repositories.user_settings import (
 )
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
-ACTION: Final = "settings.change"
 _STATUS: Final = {
     "unauthenticated": 401, "forbidden": 403, "view_as_read_only": 403, "validation_failed": 422,
     "store_unavailable": 503, "audit_unavailable": 503,
@@ -202,8 +201,8 @@ def make_user_settings_router(
 
         async def hook(changes: tuple[LeafChange, ...]) -> None:
             try:
-                await audit.emit(
-                    ACTION, actor_label=f"user:{_role(p)}", actor_user_id=p.actor_id,
+                await audit.emit(  # a literal, so the registered-action scan reads it (#2144)
+                    "settings.change", actor_label=f"user:{_role(p)}", actor_user_id=p.actor_id,
                     actor_ip=p.ip, session_id=p.session_id, request_id=p.request_id,
                     object_kind="setting", object_id=str(p.user_id),
                     outcome=AuditOutcome.SUCCESS, severity=Severity.INFO,
@@ -239,4 +238,4 @@ def make_user_settings_router(
     return router
 
 
-__all__ = ["ACTION", "SettingsAuditRefused", "make_user_settings_router"]
+__all__ = ["SettingsAuditRefused", "make_user_settings_router"]

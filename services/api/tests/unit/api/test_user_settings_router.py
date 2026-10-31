@@ -393,7 +393,7 @@ async def test_patch_settings_logs_the_changed_keys_and_never_a_value(env: _Env)
     assert "canary-5181" not in json.dumps(logs)
 
 
-def test_only_the_owner_and_managers_hold_settings_write_so_the_record_role_holds() -> None:
+def test_record_role_holds_while_only_the_owner_and_managers_hold_settings_write() -> None:
     """`_role` labels a writer `owner` or `manager`: it holds only while no other role holds
     `settings:write` (22 `x-permissions`, the owner by `*`)."""
     roles = {

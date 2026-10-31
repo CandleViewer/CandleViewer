@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
@@ -25,6 +25,7 @@ from candleviewer.storage.errors import (
     WriteAheadTimeout,
 )
 from candleviewer.storage.repositories import user_settings_sqlalchemy as m
+from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.repositories.user_settings import LeafChange, UserSetting
 
 _USER = uuid.UUID(int=7)
@@ -93,7 +94,7 @@ class _Rel:
 
 
 def _store(rel: _Rel, **kw: Any) -> m.SqlAlchemyUserSettings:
-    return m.SqlAlchemyUserSettings(rel, **kw)  # type: ignore[arg-type]  # structural fake
+    return m.SqlAlchemyUserSettings(cast(SqlAlchemyRelationalRepository, rel), **kw)
 
 
 async def _apply(
