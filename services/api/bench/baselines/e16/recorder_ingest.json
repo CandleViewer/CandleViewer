@@ -1,0 +1,19 @@
+{
+  "scenario": "recorder_ingest",
+  "harness_version": "e16-q04/1",
+  "machine_profile": "unrecorded",
+  "gate": "warn-only",
+  "run_profile": "full",
+  "higher_is_better": [],
+  "profile_scaling": "none",
+  "metrics": {},
+  "provisional": true,
+  "budgets": {
+    "flush_p95_ms": 50,
+    "rss_ceiling_mib": 512,
+    "msgs_per_s": 50000,
+    "duration_s": 600,
+    "source": "E16-Q04 (#481) scope and performance notes"
+  },
+  "note": "No run is recorded: E16-Q04 delivered the scripts with a tiny-scale smoke only, and perf measurements never run on agent hosts. The budgets above fail the run by themselves (bench/recorder/budgets.py); a recorded baseline adds the regression bands. Record it with --record-baseline on the runner, in a reviewed PR (06-performance 7.4)."
+}
