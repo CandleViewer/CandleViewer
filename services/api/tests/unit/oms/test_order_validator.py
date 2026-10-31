@@ -609,6 +609,56 @@ def test_an_order_that_only_reduces_is_not_held_to_the_leverage() -> None:
     _check(_order(**_REDUCE), instrument=_instrument(max_leverage=Decimal("2")))
 
 
+# --- BQ-5 (E29-S03 #978, as ruled): an exit is never refused for its notional --------------------
+
+#: A sell of 0.010 at 400: a notional of 4, under the instrument's minimum of 5.
+_SMALL: dict[str, Any] = {"qty": Decimal("0.010"), "price": Decimal("400.0"),
+                          "reference_price": Decimal("400.0")}  # fmt: skip
+
+
+@pytest.mark.parametrize("order_type", ["limit", "market"])
+def test_bq5_an_order_that_only_reduces_is_never_refused_for_its_notional(order_type: str) -> None:
+    """C-2.6: the venue arbitrates an exit's notional; the server's own check never traps one."""
+    priced = {"price": None} if order_type == "market" else {}
+    _check(_order(**_REDUCE, **(_SMALL | priced), order_type=order_type))
+
+
+def test_bq5_an_entry_under_the_minimum_notional_is_still_refused() -> None:
+    stop = {"stop_loss": Decimal("390.0")}
+    with pytest.raises(LotSizeViolation) as refused:
+        _check(_order(**_SMALL, **stop))
+    assert _rules(refused.value) == [("qty", "min_notional")]
+
+
+def test_bq5_a_reduce_only_order_not_shown_to_reduce_is_held_to_the_minimum_notional() -> None:
+    """Fail closed: a reduce-only order the venue's read does not show reducing is an entry."""
+    entry = {"effect": OrderEffect.ENTRY, "stop_loss": Decimal("410.0")}
+    with pytest.raises(LotSizeViolation) as refused:
+        _check(_order(**(_REDUCE | _SMALL | entry)))
+    assert ("qty", "min_notional") in _rules(refused.value)
+
+
+def test_bq5_the_exemption_rests_on_a_reducing_order_being_reduce_only() -> None:
+    """The exemption reads the effect alone: `SizedOrder` refuses a `REDUCE` that is not
+    reduce-only (SR-E29-01), so no order outside the reduce-only flag can reach it."""
+    with pytest.raises(ValueError, match="only reduces is reduce_only"):
+        _order(**(_REDUCE | _SMALL | {"reduce_only": False}))
+
+
+def test_bq5_an_exit_is_held_to_every_other_filter() -> None:
+    with pytest.raises(LotSizeViolation) as refused:
+        _check(_order(**(_REDUCE | _SMALL | {"qty": Decimal("0.0105")})))
+    assert _rules(refused.value) == [("qty", "qty_step")]
+
+
+def test_bq5_an_amends_terms_stay_held_to_the_minimum_notional() -> None:
+    """The exemption is a close's, at `check_order`: an amend's terms keep the check."""
+    validator = Validator(read_only_gate=_Gate())
+    with pytest.raises(LotSizeViolation) as refused:
+        validator.check_terms(_order(**(_REDUCE | _SMALL)), instrument=_instrument())
+    assert _rules(refused.value) == [("qty", "min_notional")]
+
+
 # --- the read-only gate and the trading status ---------------------------------------------------
 
 

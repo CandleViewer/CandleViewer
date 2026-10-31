@@ -29,6 +29,7 @@ from candleviewer.exchange.base.models import (
 from candleviewer.oms.errors import (
     EnvironmentMismatch,
     IdempotencyKeyReuse,
+    LotSizeViolation,
     OrderInvalid,
     StoreUnavailable,
 )
@@ -48,7 +49,7 @@ from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from candleviewer.storage.repositories.trade_groups import GroupAnchor
 from tests.unit.api.oms_reads_world import position
 from tests.unit.oms import command_rig as cr
-from tests.unit.oms.submit_rig import SubmitRig, context, rigged
+from tests.unit.oms.submit_rig import SYMBOL, SubmitRig, context, entry, instrument, rigged
 
 ACCOUNT = cr.ACCOUNT
 ACTOR = SubmitActor(user_id=uuid.uuid4(), role="owner")
@@ -558,6 +559,33 @@ async def test_native_sl_a_partial_close_sends_only_its_reduce_only_order(rig: S
     assert [c for c in rig.calls() if c != "positions"] == ["place_order"]
     [create] = _creates(rig)
     assert (create.reduce_only, create.stop_loss) == (True, None)
+
+
+# --- BQ-5 as ruled (E29-S03 #978): the server's own min_notional never traps an exit -------------
+
+
+async def test_bq5_a_reduce_only_close_under_the_minimum_notional_is_sent(rig: SubmitRig) -> None:
+    """C-2.6: a close of 0.001 at the reference 60000 is a notional of 60, under a minimum of 100;
+    the venue arbitrates it, so it is recorded and sent, reduce-only."""
+    rig.instruments.listed[SYMBOL] = instrument(min_notional=Decimal("100"))
+    rig.port.demo.seed_position(cr.position(qty="0.050"))
+    held = row(exchange_account_id=ACCOUNT, size=Decimal("0.050"))
+    request = close_request(held, CloseTerms("market", qty=Decimal("0.001")))
+    closing = replace(context(), operation="closePosition", protective=True)
+    outcome = await rig.pipeline.submit(request, closing)
+    assert outcome.status == 202
+    [create] = _creates(rig)
+    assert (create.reduce_only, create.qty, create.stop_loss) == (True, Decimal("0.001"), None)
+
+
+async def test_bq5_an_entry_under_the_minimum_notional_is_still_refused_unsent(
+    rig: SubmitRig,
+) -> None:
+    """An order that opens exposure is held to the minimum notional as before: nothing is sent."""
+    rig.instruments.listed[SYMBOL] = instrument(min_notional=Decimal("1000"))
+    with pytest.raises(LotSizeViolation):
+        await rig.pipeline.submit(entry(), context())
+    assert _creates(rig) == []
 
 
 # --- the persist's check of a reversal entry's anchor (21 Sec.3.3.10) -----------------------------
