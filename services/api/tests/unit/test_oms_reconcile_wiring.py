@@ -17,6 +17,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer import oms_reconcile_wiring as rw
+from candleviewer.domain.primitives import AccountId
 from candleviewer.oms.reconcile_job import ReconcileJobs
 from candleviewer.oms.reconcile_report import Notice
 from candleviewer.oms.reconciler import PositionDriftSeen
@@ -447,7 +448,7 @@ async def test_an_accounts_fetch_waits_once_for_its_own_resumed_requests_in_turn
     facade.doors[UUID(int=3)].set()
     await waiting
     await swept.answered(ACCOUNT)
-    await swept.answered(UUID(int=0xAB))
+    await swept.answered(AccountId(UUID(int=0xAB)))
     assert len(facade.asked) == 2
     facade.doors[UUID(int=5)] = asyncio.Event()
     facade.doors[UUID(int=5)].set()
