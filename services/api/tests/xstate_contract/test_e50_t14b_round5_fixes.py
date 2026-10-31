@@ -19,17 +19,20 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 from xstate_statemachine import SimulatedClock
 
 import candleviewer.statechart.bindings.b11_recording as b11
-from candleviewer.statechart import build
+from candleviewer.statechart import BuildResult, build
 from candleviewer.statechart.bindings import b14_book
+from candleviewer.statechart.bindings import b19_reconciliation as b19
 from candleviewer.statechart.book_upcasters import (
     B14_FROM_HASH,
     B14_TO_HASH,
@@ -46,8 +49,10 @@ from candleviewer.statechart.persistence import (
 from candleviewer.statechart.plugins.audit import CvAuditPlugin, InMemoryMachineEventSink
 from candleviewer.statechart.registry import Registry
 from candleviewer.statechart.upcasters import get_upcaster, has_upcaster
+from tests.unit.oms.reconcile_rig import ACCOUNT, Job
 from tests.xstate_contract._harness import (
     Audit,
+    AuditTap,
     Charts,
     Keys,
     Pager,
@@ -56,6 +61,7 @@ from tests.xstate_contract._harness import (
     lane_of,
     park,
     settle,
+    tap,
 )
 
 REG = Registry()
@@ -212,24 +218,90 @@ def test_oc05_operator_resolved_is_the_only_exit_from_stale_lockout() -> None:
 _B19_EVENTS = ["RECONNECTED", "SWEEP_DUE", "STARTUP", "UNKNOWN_ORDER", "RETRY_DUE", "CANCEL"]
 
 
+def _into(event: str, leaf: str) -> tuple[str, frozenset[str]]:
+    """An `AuditTap` transition: the event and the configuration it entered."""
+    return event, frozenset({"reconciliation", f"reconciliation.{leaf}"})
+
+
+_RESOLVED = _into("OPERATOR_RESOLVED", "idle")
+
+
+@contextmanager
+def _wired() -> Iterator[Job]:
+    """B19's port wired to a clean pass over the recording OMS (`tests/unit/oms/reconcile_rig`),
+    and cleared however the test ends. A trigger the lock deferred, replayed once the Owner
+    resolved it, then runs a pass that completes, as in production, so the job rests in `idle`;
+    unwired, that pass fails closed and locks the job again (the golden case below)."""
+    job = Job()
+    b19.set_ports(job.phases)
+    try:
+        yield job
+    finally:
+        b19.set_ports(None)
+
+
+async def _recon_locked_for(charts: Charts) -> BuildResult:
+    """B19 parked in `stale_lockout` on its real bindings, for the rig's account (the build's
+    `input`, as a job is built), with an `AuditTap`."""
+    return await build(
+        "reconciliation",
+        ctx={"account_id": str(ACCOUNT)},
+        clock=SimulatedClock(),
+        lane=lane_of("reconciliation"),
+        registry=charts.registry("reconciliation", REG.get("reconciliation"), "stale_lockout"),
+        plugins=(AuditTap(),),
+    )
+
+
 @_HYP
 @given(noise=st.lists(st.sampled_from(_B19_EVENTS), max_size=8))
+@example(noise=["SWEEP_DUE"] * 8)  # eight deferred triggers, each replayed as a pass
 async def test_oc05_property_inv_b19_b_only_operator_resolved_clears_lockout(
     charts: Charts, noise: list[str]
 ) -> None:
-    """INV-B19-b: no sequence of non-operator events leaves `stale_lockout`; the
-    lock and page fire once; `OPERATOR_RESOLVED` then always reaches `idle`."""
-    interp = (
-        await park("reconciliation", REG.get("reconciliation"), "stale_lockout", charts)
-    ).interpreter
+    """INV-B19-b: no sequence of non-operator events leaves `stale_lockout` or clears the
+    account's standing; the lock and page fire once; `OPERATOR_RESOLVED` then always reaches
+    `idle` and clears the standing. The port is wired, as in production, so a trigger the lock
+    deferred runs a clean pass once it is replayed."""
+    with _wired() as job:
+        result = await _recon_locked_for(charts)
+        interp = result.interpreter
+        try:
+            for ev in noise:
+                await interp.send(ev, wait=True)
+                await _quiesce(4)
+                assert _leaf(interp) == "stale_lockout"
+                assert job.standing.is_stale(ACCOUNT)
+            await interp.send("OPERATOR_RESOLVED", wait=True)
+            await _quiesce()
+            assert _RESOLVED in tap(result).transitions
+            assert _leaf(interp) == "idle" and not job.standing.is_stale(ACCOUNT)
+            stale = [n for _, n in job.notices.published if n.reason == "oms.account_stale"]
+            assert len(stale) == 1
+        finally:
+            await interp.stop()
+
+
+async def test_oc05_golden_unwired_trigger_replayed_after_resolve_locks_again(
+    charts: Charts,
+) -> None:
+    """Unwired, B19's fetch fails closed with its stale window spent: a trigger the lock
+    deferred, replayed once `OPERATOR_RESOLVED` reached `idle`, runs a pass that locks the job
+    again. INV-B19-b still holds, as the Owner's resolve did reach `idle`."""
+    b19.set_ports(None)
+    result = await park("reconciliation", REG.get("reconciliation"), "stale_lockout", charts)
+    interp = result.interpreter
     try:
-        for ev in noise:
-            await interp.send(ev, wait=True)
-            await _quiesce(4)
-            assert _leaf(interp) == "stale_lockout"
+        await interp.send("SWEEP_DUE", wait=True)
+        await _quiesce(4)
+        assert _leaf(interp) == "stale_lockout"  # deferred, not taken
         await interp.send("OPERATOR_RESOLVED", wait=True)
         await _quiesce()
-        assert _leaf(interp) == "idle"
+        moves = tap(result).transitions
+        after = moves[moves.index(_RESOLVED) + 1 :]
+        assert _into("SWEEP_DUE", "fetching") in after
+        assert after[-1][1] == frozenset({"reconciliation", "reconciliation.stale_lockout"})
+        assert _leaf(interp) == "stale_lockout"
     finally:
         await interp.stop()
 

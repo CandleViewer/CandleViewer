@@ -4544,9 +4544,9 @@ producer's table pins them once its wiring lands:
 
 When E29-T06's rows fire (the orchestrator's ruling of record on #914, BQ-6 and BQ-9; `24-internal-schemas.md` §8.5):
 
-- `oms.account_desync` is sent once per pass that applied at least one correction to tracked state, never once per row. A correction is a step sent to an order, a position corrected, or a stop attached or restored. It is `critical` for a pass that found an open position with no exchange-side stop and no recorded stop in force: that pass pages P1, lists the position in its report, and leaves the attach to E32-T02.
+- `oms.account_desync` is sent once per pass that applied at least one correction to tracked state, never once per row. A correction is a step sent to an order, a position corrected, or a stop attached or restored. It is `critical` for a pass that found an open position with no exchange-side stop and no recorded stop in force: that pass pages P1, lists the position in its report, and leaves the attach to E32-T02. A pass whose only finding is such a position sends it at `critical` too, though it applied no correction (BQ-9 and BQ-6).
 - `oms.account_stale` is sent once per episode, when the 2-minute window of failed fetches ends and the account's reconciliation job locks (`stale_lockout`), so its order entry is refused with `account_stale`.
-- `oms.account_synced` is sent once, on the first clean pass after a desync or stale episode, never on every clean pass. A clean pass applied no correction and left nothing for the Owner. A stale episode ends only by the operator's decision (`resolveReconciliation`), so its `synced` follows the first clean pass after it.
+- `oms.account_synced` is sent once, on the first clean pass after a desync or stale episode, never on every clean pass. A clean pass applied no correction, left nothing for the Owner and listed no error, so a pass that found such a naked position is never clean. A stale episode ends only by the operator's decision (`resolveReconciliation`), so its `synced` follows the first clean pass after it.
 
 ### 15.10 `MachineStateUpdate`
 

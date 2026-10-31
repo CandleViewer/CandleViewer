@@ -170,6 +170,9 @@ CANCEL_ALL_FOLD_BUCKETS: Final = (2, 4, 8, 16, 32, 64, 128, 256, 500)
 #: The private-stream consumer's backlog (E29-T05, 24 Sec.8.12): a row's ingest to its handling,
 #: 1 ms to the 30 s silence bound; edges at the 5 s hand-over bound and the 15 s refresh.
 OMS_STREAM_LAG_BUCKETS: Final = (0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 15.0, 30.0)
+#: A reconciliation pass (E29-T06, 24 Sec.8.5): its fetch to its report, 2 s p95; edges past it at
+#: the 5 s lane wait, the 10 s and the 30 s cadence.
+RECONCILE_BUCKETS: Final = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0)
 #: Order submit click→ack, p99 ≤ 500 ms.
 SUBMIT_BUCKETS: Final = (0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.0, 5.0)
 #: Audit page: edges at the SCR-135 filter round trip (0.4 s p95), the US-ADMIN-009 first
@@ -3329,6 +3332,68 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "Live orders whose B1 machine is in unknown: the outcome of their last create or step is "
         "not known, so nothing is sent for them until reconciliation decides (E29-T04).",
         "> 0 for 60s (page)",
+        _P,
+        "E29",
+    ),
+    _s(
+        "oms_reconcile_seconds",
+        "histogram",
+        "seconds",
+        ("trigger",),
+        "A reconciliation pass's run time, from its fetch to its report (E29-T06, 24 Sec.8.5), "
+        "by trigger: startup, reconnect, periodic, manual or unknown. No account label (BQ-11).",
+        "2 s p95 per pass (dashboard)",
+        _P,
+        "E29",
+        RECONCILE_BUCKETS,
+        max_series=5,
+    ),
+    _s(
+        "oms_reconcile_passes_total",
+        "counter",
+        "passes",
+        ("trigger", "result"),
+        "Reconciliation passes by trigger and result (E29-T06): clean, corrected, divergent (an "
+        "item left for the Owner), errored (a diff or remediation error, reported), failed (a "
+        "failed fetch, retried) or stale (the account locked). No account label (BQ-11).",
+        "dashboard",
+        _P,
+        "E29",
+        max_series=30,
+    ),
+    _s(
+        "oms_reconcile_corrections_total",
+        "counter",
+        "corrections",
+        ("kind",),
+        "Corrections reconciliation passes applied, by kind, one of the report's lists (24 "
+        "Sec.8.5): corrected, resolved_from_history, abandoned, newly_unknown, untracked, held, "
+        "foreign_stops, position_drift, sl_repaired or sl_restored. No account label (BQ-11).",
+        "dashboard",
+        _P,
+        "E29",
+        max_series=10,
+    ),
+    _s(
+        "oms_untracked_orders",
+        "gauge",
+        "orders",
+        (),
+        "Untracked rows across the process's accounts (E29-T06): exchange orders reconciliation "
+        "recorded and never manages (S9, SR-E29-12), as each account's last pass counted them.",
+        "> 0 (alert; rules: E29-T08)",
+        _P,
+        "E29",
+    ),
+    _s(
+        "oms_stale_accounts",
+        "gauge",
+        "accounts",
+        (),
+        "Accounts whose reconciliation job is locked stale (E29-T06, B19 stale_lockout): 2 "
+        "minutes of failed fetches, order entry refused with account_stale until the Owner "
+        "resolves it (24 Sec.8.5). No account label: the logs name the account.",
+        "> 0 (page)",
         _P,
         "E29",
     ),
