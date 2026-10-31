@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import pytest
 from structlog.testing import capture_logs
@@ -17,6 +17,7 @@ from candleviewer.bus.models import QueuePolicy, Topic
 from candleviewer.exchange.base.models import LiquidationEvent
 from candleviewer.exchange.bybit.liquidations import liquidation_topic, parse_liquidation_frame
 from candleviewer.ingestion.liquidation_stream import LiquidationStream
+from candleviewer.ingestion.rejection import EventWindow
 from candleviewer.ingestion.service import IngestionService
 from candleviewer.ingestion.watchdog import feed_health
 from tests._corpus import corpus_path
@@ -65,7 +66,15 @@ class Observer:
 
 
 class Rig:
-    def __init__(self, *, recorded: frozenset[str] = frozenset(), queue_max: int = 64) -> None:
+    def __init__(
+        self,
+        *,
+        recorded: frozenset[str] = frozenset(),
+        queue_max: int = 64,
+        queue_max_prints: int = 100_000,
+        event_window: Callable[[str, int], None] | None = None,
+        stop_drain_s: float = 5.0,
+    ) -> None:
         self.clock = Clock()
         self.bus = Bus()
         self.desired: set[str] = set()
@@ -87,6 +96,9 @@ class Rig:
             now_us=lambda: NOW_US,
             sleep=self._sleep,
             queue_max=queue_max,
+            queue_max_prints=queue_max_prints,
+            event_window=event_window,
+            stop_drain_s=stop_drain_s,
         )
 
     def _set(self, desired: set[str]) -> None:
@@ -217,3 +229,60 @@ async def test_stream_health_loop_counts_a_drop_and_release_frees_demand() -> No
     assert rig.obs.reconnects == 1
     rig.stream.release("c", "BTCUSDT")
     rig.stream.note_gap("dispatch_overflow", "BTCUSDT")
+
+
+def _window(now_ms: int) -> EventWindow:
+    """The trades' `EventWindow` over a fixed clock (no listing time: that side is skipped)."""
+    return EventWindow(lambda: now_ms * 1000, lambda _s: None)
+
+
+async def test_stream_refuses_a_push_stamped_ahead_of_the_local_clock() -> None:
+    """A print far in the future would hold its side's live cluster open for good (#667 r1)."""
+    push = json.loads(BURST[1])
+    rig = Rig(event_window=_window(push["ts"]))
+    rig.stream.acquire("c", "BTCUSDT")
+    await rig.stream.handle_frame(BURST[1])  # the fixture's own clock: accepted
+    assert rig.sub.qsize() == 3 and rig.stream.queued == 1
+    push["data"][2]["T"] = push["ts"] + 365 * 86_400_000  # a year ahead; the envelope too
+    push["ts"] = push["data"][2]["T"]
+    await rig.stream.handle_frame(json.dumps(push))
+    assert rig.obs.rejects == 1 and rig.sub.qsize() == 3 and rig.stream.queued == 1
+
+
+async def test_stream_write_queue_is_bounded_in_prints_too() -> None:
+    rig = Rig(queue_max_prints=4)
+    rig.stream.acquire("c", "BTCUSDT")
+    await rig.stream.handle_frame(BURST[1])  # 3 prints
+    blocked = asyncio.ensure_future(rig.stream.handle_frame(BURST[2]))  # 2 more: over 4
+    await asyncio.sleep(0)
+    assert not blocked.done() and rig.stream.queued == 1
+    assert await rig.stream.write_once() == 3
+    await blocked
+    assert rig.stream.queued == 1 and await rig.stream.write_once() == 2
+
+
+async def test_stream_stop_stores_what_is_queued_first() -> None:
+    rig = Rig()
+    rig.stream.acquire("c", "BTCUSDT")
+    await rig.stream.start()
+    for frame in BURST[:3]:
+        await rig.stream.handle_frame(frame)
+    await rig.stream.stop()
+    assert rig.stream.queued == 0 and len(rig.store.rows) == 6
+
+
+async def test_stream_stop_drain_is_bounded_when_the_store_hangs() -> None:
+    rig = Rig(stop_drain_s=0)
+
+    class Hanging:
+        hang = asyncio.Event()
+
+        async def write_liquidations(self, events: Sequence[LiquidationEvent]) -> None:
+            await self.hang.wait()  # never set: the hot tier does not answer
+
+    rig.stream._writer = Hanging()
+    rig.stream.acquire("c", "BTCUSDT")
+    await rig.stream.handle_frame(BURST[0])
+    with capture_logs() as logs:
+        await rig.stream.stop()
+    assert [e["event"] for e in logs] == ["liquidation_write_behind_unflushed"]

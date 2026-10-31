@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-from candleviewer.domain.liquidations import LiqPrint
+from candleviewer.domain.liquidations import Cut, LiqPrint
 from candleviewer.orderflow.liquidations import LiquidationService, LiquidationStore
 from candleviewer.storage.errors import StorageTierUnavailable
 
@@ -45,9 +45,9 @@ class GuardedLiquidationStore:
         await self._live().write_prints(rows)
 
     async def read_prints(
-        self, symbol: str, rng: Any, side: str | None, limit: int
+        self, symbol: str, rng: Any, side: str | None, limit: int, from_key: Cut | None = None
     ) -> Sequence[LiqPrint]:
-        return await self._live().read_prints(symbol, rng, side, limit)
+        return await self._live().read_prints(symbol, rng, side, limit, from_key)
 
     async def first_ts(self, symbol: str) -> int | None:
         return await self._live().first_ts(symbol)

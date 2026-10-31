@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from candleviewer.domain.liquidations import ClosingSide, LiqPrint
@@ -173,6 +174,9 @@ async def _all_pages(store: InMemoryLiquidationStore, scan: int, **kw: Any) -> l
 @settings(max_examples=80, deadline=None)
 @given(rows=_prints, window=st.sampled_from([0, 300, 1000]), limit=st.integers(1, 4),
        spare=st.integers(1, 6), floor=st.sampled_from([None, Decimal(150)]))  # fmt: skip
+# r1: more prints share one (ts, side) than one scan reads; a ts-only cut lost the third.
+@example(rows=[(0, "buy", 1)] * 3, window=0, limit=1, spare=1, floor=None)
+@example(rows=[(5, "sell", 2)] * 7 + [(5, "buy", 1)] * 4, window=300, limit=2, spare=1, floor=None)
 async def test_pages_concatenate_to_the_one_shot_clustering(
     rows: list[tuple[int, str, int]], window: int, limit: int, spare: int, floor: Decimal | None
 ) -> None:
@@ -258,3 +262,107 @@ def test_meter_counts_prints_notional_lag_reconnects_and_rejects() -> None:
     assert m.deriv_liquidation_prints_total.labels("long")._value.get() - before == longs
     assert m.deriv_liquidation_burst_rate._value.get() >= 1
     assert m.deriv_liquidation_ingest_lag_seconds._value.get() > 0
+
+
+def _forge(cursor: str, edit: Any) -> str:
+    """A real cursor (so its binding holds) with a field rewritten as a client could."""
+    raw = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+    edit(raw)
+    text = json.dumps(raw, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(text).decode().rstrip("=")
+
+
+async def _first_cursor(store: InMemoryLiquidationStore, scan: int = 5000) -> str:
+    base = NOW_US // 1000 - 60_000
+    await store.write_prints([_p(base, bi=k) for k in range(3)])
+    first = await _page(_svc(store, scan), limit=1)
+    assert first.next_cursor is not None
+    return cast(str, first.next_cursor)
+
+
+def _set_after_price(value: str) -> Any:
+    def edit(raw: dict[str, Any]) -> None:
+        raw["a"][2] = value
+
+    return edit
+
+
+def _set_cut_size(value: str) -> Any:
+    def edit(raw: dict[str, Any]) -> None:
+        raw["c"]["sell"][2] = value
+
+    return edit
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        _set_after_price("NaN"),
+        _set_after_price("-1"),
+        _set_after_price("1e99999999999"),
+        _set_after_price("1e-999999999"),
+        _set_cut_size("1e99999999999"),
+        _set_cut_size("Infinity"),
+        _set_cut_size("1" * 33),
+    ],
+)
+async def test_forged_cursor_numbers_are_refused_before_any_arithmetic(edit: Any) -> None:
+    """r1 HIGH: a NaN key reached a Decimal compare (500); a huge exponent was re-encoded with
+    `format(.., "f")` (a gigabyte string on the loop). Both are `invalid_cursor` now, unread."""
+    store = SpyStore()
+    forged = _forge(await _first_cursor(store, scan=2), edit)
+    store.reads = 0
+    with pytest.raises(DerivInvalidRequest) as err:
+        await _page(_svc(store, 2), cursor=forged, limit=1)
+    assert err.value.code == "invalid_cursor" and store.reads == 0
+
+
+async def test_next_cursor_never_echoes_the_client_key() -> None:
+    """An `after` above every row: the page is empty and the next cursor holds no client key."""
+    store = InMemoryLiquidationStore()
+    forged = _forge(await _first_cursor(store, scan=2), _set_after_price("999999999999"))
+    page = await _page(_svc(store, 2), cursor=forged, limit=1)
+    assert page.items == ()
+    if page.next_cursor is not None:
+        raw = json.loads(base64.urlsafe_b64decode(page.next_cursor + "=="))
+        assert raw["a"] is None or raw["a"][2] != "999999999999"
+
+
+async def test_cursor_is_bound_to_from_and_to() -> None:
+    store = InMemoryLiquidationStore()
+    cursor = await _first_cursor(store)
+    with pytest.raises(DerivInvalidRequest) as err:
+        await _page(_svc(store), cursor=cursor, start_us=NOW_US - 2 * HOUR_US)
+    assert err.value.code == "invalid_cursor"
+
+
+async def test_more_same_ts_prints_than_a_scan_are_all_paged_once() -> None:
+    store = InMemoryLiquidationStore()
+    base = NOW_US // 1000 - 60_000
+    await store.write_prints([_p(base, "buy", bi=k) for k in range(9)])
+    got = await _all_pages(store, 2, limit=1, cluster_window_ms=0)
+    assert len(got) == 9 and sum(i["cluster_size"] for i in got) == 9
+
+
+def test_clusterer_with_a_clock_ends_a_future_print_cluster_by_now_plus_window() -> None:
+    """r1 MEDIUM: a print stamped a year ahead must not hold its side open for good; one inside
+    the ingest skew keeps its full window."""
+    c = Clusterer(1000)
+    now_us = 1_000_000_000
+    assert c.add(_p(now_us // 1000 + 365 * 86_400_000), now_us) is None
+    assert c.expire(now_us + 5_999_999) == []
+    (closed,) = c.expire(now_us + 6_000_000)  # now + 5 s skew + 1 s window
+    assert closed.count == 1
+    assert c.add(_p(now_us // 1000 + 4_000), now_us) is None
+    assert c.open["sell"].end_us == now_us + 5_000_000  # inside the skew: not clamped
+
+
+def test_questdb_resume_key_is_bound_never_inlined() -> None:
+    from candleviewer.domain.sql_names import ts_param
+    from candleviewer.storage.models import TimeRange
+    from candleviewer.storage.questdb.reader import build_read_liquidations
+
+    q = build_read_liquidations("BTCUSDT", TimeRange(start_us=0, end_us=10), "buy", 5,
+                                (7, 100.5, 2.0, 3))  # fmt: skip
+    assert "100.5" not in q.sql and "$14" in q.sql and "$15" not in q.sql
+    assert q.params[3] == "buy" and q.params[4] == ts_param(7) and q.params[-1] == 3
