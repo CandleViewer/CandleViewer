@@ -285,5 +285,5 @@ def test_the_refusal_record_budget_is_named_with_its_default_and_its_exclusions(
     heading = re.search(title, _RAW_24, re.MULTILINE)
     assert heading is not None
     entry = text(_RAW_24[heading.start() :].split("\n### ", 1)[0])
-    assert "The orchestrator allocated this number on 2026-10-31" in entry
+    assert f"This number follows `main`'s last entry, §19.{int(heading.group(1)) - 1};" in entry
     assert f"`rules_refusal_budget_per_hour` (default {budget})" in entry
