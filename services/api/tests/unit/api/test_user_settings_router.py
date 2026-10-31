@@ -334,6 +334,44 @@ async def test_settings_one_user_never_reads_or_writes_another_users(env: _Env) 
     ]
 
 
+# -- SR-026: no query parameter, a target user's least of all -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("query", "rule"),
+    [
+        ({"user_id": str(_OWNER)}, "target_user_not_accepted"),
+        ({"userId": str(_OWNER)}, "target_user_not_accepted"),
+        ({"theme": "light"}, "undeclared_parameter"),
+    ],
+    ids=["user_id", "userId", "undeclared"],
+)
+async def test_settings_a_query_parameter_is_422_and_nothing_is_read_or_written(
+    env: _Env, query: dict[str, str], rule: str
+) -> None:
+    await env.seed(_MANAGER, {"appearance.theme": "dark"})
+    calls, sent = list(env.store.calls), {"appearance": {"theme": "light"}}
+    for resp in (
+        env.client.get(_URL, params=query, headers=_bearer(_MANAGER)),
+        env.client.patch(_URL, params=query, json=sent, headers=_bearer(_MANAGER)),
+    ):
+        body = _problem(resp, 422, "validation_failed")
+        assert [e["rule"] for e in body["errors"]] == [rule]
+        assert set(body) == {"type", "title", "status", "code", "detail", "errors"}  # no data
+    assert env.store.calls == calls and env.audit.records == []  # nothing read, no record
+    assert env.values(_MANAGER) == {"appearance.theme": "dark"}
+
+
+async def test_settings_the_permission_is_refused_before_a_query_parameter_is(env: _Env) -> None:
+    sent = {"accessibility": {"verbosity": "low"}}
+    resp = env.client.patch(
+        _URL, params={"user_id": str(_OWNER)}, json=sent, headers=_bearer(_VIEWER)
+    )
+    _problem(resp, 403, "forbidden")
+    assert [action for action, _ in env.audit.records] == ["rbac.denied"]
+    assert env.store.calls == []
+
+
 # -- Gherkin: a view-as context reads the target and writes nothing -------------------------------
 
 

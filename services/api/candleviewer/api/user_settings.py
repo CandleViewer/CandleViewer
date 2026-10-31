@@ -6,12 +6,15 @@ Callers come from the session (`SessionAuditPrincipalResolver`). RBAC (C-12.4) r
 through `auth.scopes.enforce()`, before any store read, each denial audited `rbac.denied`:
 `settings:read` to read (the Owner, Managers and Viewers), `settings:write` to write (the Owner and
 Managers; a Viewer's `PATCH` is `403`, 21 Sec.10.1). No resolver (the fake backend) is `401`, and
-no store wired `503 store_unavailable`. There is no target-user parameter (SR-026): every store
-call names the principal's user, re-derived from the session on every call. Under a view-as
-context a read answers the target's settings (the principal is the target's, #3085), and a write
-never reaches this router: the view-as guard refuses it `403 view_as_read_only` first. One that
-arrives all the same (a router mounted without the guard) is refused the same way, unwritten.
-CSRF guards the write at the edge (`CsrfMiddleware`, SR-041); no step-up is asked (22 has none).
+no store wired `503 store_unavailable`. Neither operation declares a query parameter, so any one,
+a target user under any spelling included, is refused with SR-026's shared `422`
+(`api.query_allowlist`), after the permission check and before anything is read or written: a
+refused `PATCH` reads no body and writes no record. Every store call names the principal's user,
+re-derived from the session on every call. Under a view-as context a read answers the target's
+settings (the principal is the target's, #3085), and a write never reaches this router: the view-as
+guard refuses it `403 view_as_read_only` first. One that arrives all the same (a router mounted
+without the guard) is refused the same way, unwritten. CSRF guards the write at the edge
+(`CsrfMiddleware`, SR-041); no step-up is asked (22 has none).
 
 `PATCH` is a partial deep merge (`user_settings_models`). The body is read up to `MAX_BODY_BYTES`
 (`422 body_too_large`: the contract declares no `413`) and judged whole against 22's `Settings`
@@ -42,6 +45,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
+from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.user_settings_models import (
     MAX_BODY_BYTES,
@@ -69,6 +73,9 @@ _STATUS: Final = {
 }  # fmt: skip
 _RETRY_AFTER_S: Final = 5
 _PERMISSIONS: Final = {p.value: p for p in Permission}
+#: SR-026: the query parameters each operation declares (22): none, so any key is refused.
+GET_SETTINGS_QUERY: frozenset[str] = frozenset()
+UPDATE_SETTINGS_QUERY: frozenset[str] = frozenset()
 _LENGTH: Final = re.compile(r"[0-9]{1,19}")
 
 
@@ -110,9 +117,18 @@ class _Problem(Exception):
         return JSONResponse(body | self.extra, self.status, headers, "application/problem+json")
 
 
+class _Answered(Exception):
+    """A refusal answered as its shared helper made it (SR-026's `422`, `api.query_allowlist`)."""
+
+    def __init__(self, answer: Response) -> None:
+        super().__init__(answer.status_code)
+        self.answer = answer
+
+
 class _ProblemRoute(APIRoute):
-    """`_Problem` -> its response; a record not written -> 503 `audit_unavailable`; a store
-    outage -> 503 `store_unavailable`; anything else is a defect and propagates."""
+    """`_Problem` -> its response, `_Answered` -> its answer; a record not written -> 503
+    `audit_unavailable`; a store outage -> 503 `store_unavailable`; anything else is a defect and
+    propagates."""
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         inner = super().get_route_handler()
@@ -122,6 +138,8 @@ class _ProblemRoute(APIRoute):
                 return await inner(request)
             except _Problem as p:
                 return p.response()
+            except _Answered as refused:
+                return refused.answer
             except (SettingsAuditRefused, WriteAheadTimeout, AuditError) as exc:
                 _log().error("user_settings_audit_unavailable", error=type(exc).__name__)
                 detail = "The audit record could not be written; nothing was changed."
@@ -178,7 +196,9 @@ def make_user_settings_router(
     closed with 401, no store with 503."""
     router = APIRouter(tags=["settings"], route_class=_ProblemRoute)
 
-    async def caller(request: Request, permission: Permission) -> AuditPrincipal:
+    async def caller(
+        request: Request, permission: Permission, query: frozenset[str]
+    ) -> AuditPrincipal:
         got: object = None if principal_resolver is None else principal_resolver.resolve(request)
         if inspect.isawaitable(got):
             got = await got
@@ -197,6 +217,8 @@ def make_user_settings_router(
                            required_permissions=[permission.value]) from None  # fmt: skip
         except RuntimeError as exc:  # no audit writer: the denial's record cannot be written
             raise SettingsAuditRefused from exc
+        if (refusal := undeclared_query_refusal(request, query)) is not None:
+            raise _Answered(refusal)  # SR-026: before the store or the body is read
         return got
 
     def store() -> UserSettings:
@@ -226,13 +248,13 @@ def make_user_settings_router(
 
     @router.get("/settings")
     async def get_settings(request: Request) -> Response:
-        principal = await caller(request, Permission.SETTINGS_READ)
+        principal = await caller(request, Permission.SETTINGS_READ, GET_SETTINGS_QUERY)
         rows = await store().read(principal.user_id)
         return JSONResponse(effective(rows, viewing=_viewing(principal)))
 
     @router.patch("/settings")
     async def update_settings(request: Request) -> Response:
-        principal = await caller(request, Permission.SETTINGS_WRITE)
+        principal = await caller(request, Permission.SETTINGS_WRITE, UPDATE_SETTINGS_QUERY)
         repo = store()
         try:
             patch = judge_patch(await _read_body(request))

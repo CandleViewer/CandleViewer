@@ -40,7 +40,7 @@ _SPEC: Any = load_openapi_spec()
 _PATH = "/settings"
 _ROLES = ACTORS[:4]
 #: Every status the routes answer in this world, per operation (`updateSettings`' `401`: above).
-_ANSWERED = {"get": {"200", "401", "403", "503"}, "patch": {"200", "403", "422", "503"}}
+_ANSWERED = {"get": {"200", "401", "403", "422", "503"}, "patch": {"200", "403", "422", "503"}}
 
 
 @pytest.fixture(scope="module")
@@ -184,6 +184,26 @@ async def test_patch_settings_without_a_matching_csrf_token_is_403_and_changes_n
     assert body["code"] == "csrf_token_invalid"
     assert _values(store, "owner") == {"appearance.theme": "dark"}
     assert not [r for r in world.audit.records if r["action"] == "settings.change"]
+
+
+async def test_settings_a_target_user_query_is_422_and_a_refused_patch_changes_nothing(
+    world: World, store: FakeUserSettings
+) -> None:
+    """SR-026: neither operation declares a query parameter, so `?user_id=<other>` is refused
+    `422` after the permission check, with no record, and the other user's settings untouched."""
+    await _seed(store, "owner", {"appearance.theme": "dark"})
+    await _seed(store, "manager_with_grant", {"appearance.theme": "light"})
+    other = {"user_id": str(user_id_of("manager_with_grant"))}
+    sent = {"appearance": {"theme": "neon"}}  # never judged: the query is refused first
+    reads = world.client.get(_PATH, params=other, headers=bearer("owner"))
+    writes = world.client.patch(_PATH, params=other, json=sent, headers=bearer("owner"))
+    for method, resp in (("get", reads), ("patch", writes)):
+        body = _conforms(method, resp)
+        assert (resp.status_code, body["code"]) == (422, "validation_failed")
+        assert [e["rule"] for e in body["errors"]] == ["target_user_not_accepted"]
+    assert _values(store, "owner") == {"appearance.theme": "dark"}
+    assert _values(store, "manager_with_grant") == {"appearance.theme": "light"}
+    assert world.audit.records == []
 
 
 async def test_settings_one_user_never_reads_or_writes_another_users(
