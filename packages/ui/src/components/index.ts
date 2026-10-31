@@ -25,6 +25,13 @@ export { Tag } from "./Tag.js";
 export type { TagProps } from "./Tag.js";
 
 // E29-S01's blotter components.
+export { AccountMultiSelect } from "./AccountMultiSelect.js";
+export type {
+  AccountMultiSelectProps,
+  AccountMultiSelectTriggerProps,
+  AccountOption,
+} from "./AccountMultiSelect.js";
+
 export { FilterBar } from "./FilterBar.js";
 export type { FilterBarProps, FilterChip } from "./FilterBar.js";
 

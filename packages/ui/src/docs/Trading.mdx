@@ -24,3 +24,24 @@ never parsed into a JavaScript number.
 
 The mode as the word "One-way" or "Hedge": no Tab stop, no control role, no reason and no live region. The `toggle`
 variant ships with the ticket that hosts it.
+
+### AccountMultiSelect (CMP-105, the account filter use: an APG Listbox, multi-select, in a CMP-017 popover)
+
+| Keys                  | Action                                                                                 |
+| --------------------- | -------------------------------------------------------------------------------------- |
+| Enter / Space / Alt+↓ | On the trigger: opens the popover, focus on the list, the first chosen account active. |
+| ↑ / ↓, Home / End     | Move the active option (`aria-activedescendant`); no wrap.                             |
+| Space                 | Includes or drops the active account.                                                  |
+| Enter                 | Closes; the choices are already applied. Focus returns to the trigger.                 |
+| Tab / Shift+Tab       | "Select all", then out of the popover (it closes); Shift+Tab back to the trigger.      |
+| Esc                   | Closes and returns focus to the trigger.                                               |
+
+| Element      | Role    | Name                | ARIA                                                        |
+| ------------ | ------- | ------------------- | ----------------------------------------------------------- |
+| trigger      | button  | its label: "Filter" | `aria-haspopup="dialog"`, `aria-expanded`, `aria-controls`. |
+| panel        | dialog  | the trigger         | CMP-017, non-modal.                                         |
+| list         | listbox | the trigger         | `aria-multiselectable="true"`, `aria-activedescendant`.     |
+| account      | option  | its label: "Sub-1"  | `aria-selected`; the drawn check box is `aria-hidden`.      |
+| "Select all" | button  | "Select all"        | A distinct labelled control (`15` CMP-105 A11y).            |
+
+The list is the server's scope: a Manager's assigned accounts only. A filter is a view choice, never T2.
