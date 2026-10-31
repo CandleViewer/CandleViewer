@@ -177,6 +177,10 @@ class RecordedStopWriter:
         what: str,
     ) -> StopWrite:
         take_profit = read.take_profit if read.take_profit and read.take_profit > 0 else None
+        # Always a Full-mode request (`tpsl_mode`, its default): the pass restores only
+        # a Full record (`reconciler._plan_stop`) but attaches any record in force, and a Partial
+        # record attached as Full covers the whole position, more never less (C-2.6). The
+        # Partial-mode attach and restore are E45-T01's carry (`partial_mode_restore`, BQ-2).
         request = TradingStopRequest(
             account=account, symbol=read.symbol, position_idx=_POSITION_IDX[read.position_idx],
             stop_loss=record.trigger_price, take_profit=take_profit,

@@ -389,6 +389,9 @@ class LastMessages:
         return self._feed.ws_dropped(account_id)
 
     def wallet_pushed(self, account_id: AccountId, snapshot: Any) -> object:
+        # No mark here: the consumer gave this row's `ws_heartbeat` on its dequeue, which marked
+        # it, unless its socket was already down, when the row is no evidence and a mark at its
+        # dequeue time would narrow `gap_from` past the drop (24 Sec.8.5, Sec.8.12).
         return self._feed.wallet_pushed(account_id, snapshot)
 
 
