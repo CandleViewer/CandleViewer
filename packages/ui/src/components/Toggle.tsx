@@ -2,7 +2,7 @@ import { useId, type ComponentPropsWithoutRef, type JSX } from "react";
 import { Icon } from "../icons/Icon.js";
 import { ChoiceRow } from "./internal/ChoiceRow.js";
 import { cx } from "./internal/cx.js";
-import { announceGatedReason, useDisabledReason } from "./internal/disabledReason.js";
+import { useDisabledReason, useGatedAnnounce } from "./internal/disabledReason.js";
 import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { useControllable } from "./internal/useControllable.js";
 
@@ -55,6 +55,7 @@ export function Toggle({
   const generated = useId();
   const controlId = id ?? generated;
   const reason = useDisabledReason(disabled, disabledReason);
+  const announceGated = useGatedAnnounce();
   const [checked, setChecked] = useControllable(controlled, defaultChecked);
   const hidden = labelPosition === "hidden";
   const track = (
@@ -74,7 +75,7 @@ export function Toggle({
         onClick={() => {
           // Enter and Space arrive as clicks: a gated switch stays focusable but changes nothing.
           if (reason.gated) {
-            announceGatedReason(reason.reason);
+            announceGated(reason.reason);
             return;
           }
           setChecked(!checked);

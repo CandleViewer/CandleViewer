@@ -2,7 +2,7 @@
 import { composeStories } from "@storybook/react-vite";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
-import { Button } from "../src/components/index.js";
+import { Button, GatedAnnounceProvider } from "../src/components/index.js";
 import * as stories from "../src/components/Button.stories.js";
 import { mount } from "./theme/mount.js";
 import { clearPolite, politeText } from "./theme/polite.js";
@@ -308,6 +308,22 @@ describe("Button gated announcement (D09 2.2)", () => {
     const open = await mount(<Button onClick={onClick}>Go</Button>);
     await userEvent.click(within(open).getByRole("button", { name: "Go" }));
     expect(onClick).toHaveBeenCalledTimes(1);
+    expect(await politeText()).toBe("");
+  });
+});
+
+describe("Button gated announcement routed by a host", () => {
+  it("a provider's announce receives the reason, and the default region stays empty", async () => {
+    clearPolite();
+    const announce = fn();
+    const host = await mount(
+      <GatedAnnounceProvider announce={announce}>
+        <Button disabledReason={REASON}>Save</Button>
+      </GatedAnnounceProvider>,
+    );
+    await userEvent.click(within(host).getByRole("button"));
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith(REASON);
     expect(await politeText()).toBe("");
   });
 });

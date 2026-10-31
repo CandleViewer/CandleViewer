@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, type ComponentPropsWithoutRef, type JSX } fro
 import { Icon } from "../icons/Icon.js";
 import { ChoiceRow } from "./internal/ChoiceRow.js";
 import { cx } from "./internal/cx.js";
-import { announceGatedReason, useDisabledReason } from "./internal/disabledReason.js";
+import { useDisabledReason, useGatedAnnounce } from "./internal/disabledReason.js";
 import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { useControllable } from "./internal/useControllable.js";
 
@@ -50,6 +50,7 @@ export function Checkbox({
   const generated = useId();
   const controlId = id ?? generated;
   const reason = useDisabledReason(disabled, disabledReason);
+  const announceGated = useGatedAnnounce();
   const [checked, setChecked] = useControllable(controlled, defaultChecked);
   const ref = useRef<HTMLInputElement>(null);
   // Every render: a prop change must reach the DOM property. The change handler re-asserts it too, because a
@@ -78,7 +79,7 @@ export function Checkbox({
             e.currentTarget.indeterminate = indeterminate;
             // Controlled by `checked`: React restores the box after a no-op change, so a gated box keeps its value.
             if (reason.gated) {
-              announceGatedReason(reason.reason);
+              announceGated(reason.reason);
               return;
             }
             const next = indeterminate ? true : !checked;

@@ -1,4 +1,4 @@
-import { useId, type JSX } from "react";
+import { createContext, useCallback, useContext, useId, type JSX, type ReactNode } from "react";
 import { announcePolite } from "../../theme/a11y.js";
 
 export interface DisabledReasonAttrs {
@@ -37,10 +37,36 @@ export function useDisabledReason(
  * frame) runs deterministically under fake timers. Best effort: whether a reader re-speaks an identical sentence
  * set in the same task is the reader's; real-reader checks are E05-Q02's.
  */
-export function announceGatedReason(reason: string | undefined): void {
-  if (reason === undefined) return;
+function announceInOwnRegion(reason: string): void {
   announcePolite("");
   queueMicrotask(() => announcePolite(reason));
+}
+
+const GatedAnnounceContext = createContext<(reason: string) => void>(announceInOwnRegion);
+
+export interface GatedAnnounceProviderProps {
+  /** Receives the reason of a refused activation instead of this package's own polite region. */
+  readonly announce: (reason: string) => void;
+  readonly children?: ReactNode;
+}
+
+/** A host that owns one announcer (the app shell) routes the gated announcement there, or passes a no-op. */
+export function GatedAnnounceProvider({
+  announce,
+  children,
+}: GatedAnnounceProviderProps): JSX.Element {
+  return <GatedAnnounceContext.Provider value={announce}>{children}</GatedAnnounceContext.Provider>;
+}
+
+/** The announce function each gated atom calls on a refused activation; a no-op for an undefined reason. */
+export function useGatedAnnounce(): (reason: string | undefined) => void {
+  const announce = useContext(GatedAnnounceContext);
+  return useCallback(
+    (reason: string | undefined) => {
+      if (reason !== undefined) announce(reason);
+    },
+    [announce],
+  );
 }
 
 /**

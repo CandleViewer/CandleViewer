@@ -1,6 +1,6 @@
 import { useEffect, type CSSProperties, type JSX, type MouseEvent } from "react";
 import { Icon } from "../icons/Icon.js";
-import { ReasonText, announceGatedReason, useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonText, useDisabledReason, useGatedAnnounce } from "./internal/disabledReason.js";
 import { cx } from "./internal/cx.js";
 import { useRoving, type RovingItemProps } from "./internal/useRoving.js";
 
@@ -99,6 +99,7 @@ function SwatchRadio({
   onPick,
 }: SwatchRadioProps): JSX.Element {
   const reason = useDisabledReason(option.disabled, option.disabledReason);
+  const announceGated = useGatedAnnounce();
   const disabled = groupDisabled || (option.disabled === true && !reason.gated);
   const gated = !disabled && (reason.gated || groupReasonId !== undefined);
   // Every swatch of a locked picker carries the picker's reason (a click can focus any of them).
@@ -106,7 +107,7 @@ function SwatchRadio({
   const handleClick = (event: MouseEvent<HTMLElement>): void => {
     // A refused swatch changes nothing. A gated one still takes focus from the browser's own focus on a
     // tabindex element (so its reason is read); this handler never calls focus() for it.
-    if (gated) announceGatedReason(groupReason ?? reason.reason);
+    if (gated) announceGated(groupReason ?? reason.reason);
     if (disabled || gated) return;
     event.currentTarget.focus();
     onPick(option.value);
@@ -161,6 +162,7 @@ export function ColorSwatchPicker({
   ...name
 }: ColorSwatchPickerProps): JSX.Element {
   const group = useDisabledReason(disabled, disabledReason);
+  const announceGated = useGatedAnnounce();
   const groupDisabled = group.disabled;
   const refused = groupDisabled || group.gated;
   // Values key the swatches and the roving focus: a duplicate selects two and strands one (dev only).
@@ -189,9 +191,7 @@ export function ColorSwatchPicker({
     onSelect: onPick,
     gated: refused,
     onRefused: (v) =>
-      announceGatedReason(
-        group.reason ?? swatches.find((s) => s.value === v)?.disabledReason?.trim(),
-      ),
+      announceGated(group.reason ?? swatches.find((s) => s.value === v)?.disabledReason?.trim()),
   });
   return (
     <>

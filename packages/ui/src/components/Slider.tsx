@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, JSX, KeyboardEvent, PointerEvent } from "react";
 import { Icon } from "../icons/Icon.js";
-import { ReasonText, announceGatedReason, useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonText, useDisabledReason, useGatedAnnounce } from "./internal/disabledReason.js";
 import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { cx } from "./internal/cx.js";
 import { formatNumeric, stepValue, valueText } from "./internal/numeric.js";
@@ -72,6 +72,7 @@ export function Slider({
   ...name
 }: SliderProps): JSX.Element {
   const reason = useDisabledReason(disabled, disabledReason);
+  const announceGated = useGatedAnnounce();
   const locked = reason.gated || reason.disabled;
   const places = precision ?? Math.max(decimals(step), decimals(min));
   const thumb = useRef<HTMLSpanElement>(null);
@@ -124,7 +125,7 @@ export function Slider({
     // Handled keys never scroll the page, and a gated or disabled slider takes no action.
     event.preventDefault();
     if (!locked) commit(next());
-    else announceGatedReason(reason.reason);
+    else announceGated(reason.reason);
   };
 
   const valueAt = (clientX: number, rect: { left: number; width: number }): number => {
@@ -144,7 +145,7 @@ export function Slider({
     pressFocused.current = true;
     setKeyRing(false);
     if (locked) {
-      announceGatedReason(reason.reason);
+      announceGated(reason.reason);
       return;
     }
     // A second press while a drag is live is ignored until the first pointer is released or cancelled.
