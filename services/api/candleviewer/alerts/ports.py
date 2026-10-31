@@ -76,12 +76,13 @@ class FiringStore(Protocol):
         fired_at: datetime,
         once: bool,
         bump: bool,
-        disable: bool = False,
+        disarm_reason: str | None = None,
     ) -> list[int] | None:
         """One transaction. `once`: `UPDATE ... SET enabled = false WHERE enabled`; zero
-        rows means another worker won the race -> roll back, return None. `disable`
-        (source loss) uses the same conditional update: zero rows -> None. Queued rows
-        get an `alert.deliver` outbox row; `suppressed` rows are history only.
+        rows means another worker won the race -> roll back, return None. `disarm_reason`
+        (a server-side disarm, e.g. `source_unavailable`, stored on the alert) uses the same
+        conditional update: zero rows -> None. Queued rows get an `alert.deliver` outbox row;
+        `suppressed` rows are history only.
         Returns the delivery ids."""
         ...
 
@@ -113,11 +114,12 @@ class WakingFiringStore:
         fired_at: datetime,
         once: bool,
         bump: bool,
-        disable: bool = False,
+        disarm_reason: str | None = None,
     ) -> list[int] | None:
         ids = await self._inner.record_firing(
             alert_id=alert_id, user_id=user_id, channels=channels, status=status, title=title,
-            body=body, context=context, fired_at=fired_at, once=once, bump=bump, disable=disable,
+            body=body, context=context, fired_at=fired_at, once=once, bump=bump,
+            disarm_reason=disarm_reason,
         )  # fmt: skip
         if ids and status == "queued":  # committed with outbox rows: deliver them now
             try:  # past the commit nothing may raise: the evaluator would re-fire a committed one

@@ -24,7 +24,11 @@ export interface FireFact {
 export interface AlertsStore {
   readonly getState: () => AlertsState;
   readonly subscribe: (listener: () => void) => () => void;
-  /** Replaces the whole set (a fresh REST list). Records without an id are dropped. */
+  /**
+   * Replaces the whole set (a fresh REST list). Records without an id are dropped. The REST list
+   * is authoritative: it overwrites anything a WS bump applied since (e.g. a fire count), so a
+   * count that moved between the server's read and this call is corrected by the next list.
+   */
   readonly replaceAll: (alerts: readonly Alert[]) => void;
   readonly upsert: (alert: Alert) => void;
   readonly remove: (id: string) => void;

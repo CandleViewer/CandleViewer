@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from _alert_api_env import NOW, PRICE_CROSS, USER_B, Env
@@ -132,3 +132,38 @@ def test_naive_expiry_is_422_and_null_or_future_expiry_is_accepted(env: Env) -> 
         == 422
     )
     assert env.c.post("/alerts", json=PRICE_CROSS | {"expires_at": None}).status_code == 201
+
+
+def test_replace_echoing_a_stored_past_expiry_is_accepted(env: Env) -> None:
+    aid = env.create()["id"]
+    past = datetime(2026, 10, 1, tzinfo=UTC)
+    env.repo.rows[aid] = replace(env.repo.rows[aid], expires_at=past)
+    r = env.c.put(f"/alerts/{aid}", json=PRICE_CROSS | {"expires_at": "2026-10-01T00:00:00Z"})
+    assert r.status_code == 200 and env.repo.rows[aid].expires_at == past
+
+
+def test_replace_changing_to_another_past_expiry_is_422(env: Env) -> None:
+    aid = env.create()["id"]
+    past = datetime(2026, 10, 1, tzinfo=UTC)
+    env.repo.rows[aid] = replace(env.repo.rows[aid], expires_at=past)
+    r = env.c.put(f"/alerts/{aid}", json=PRICE_CROSS | {"expires_at": "2026-10-02T00:00:00Z"})
+    assert r.status_code == 422 and env.repo.rows[aid].expires_at == past
+    assert r.json()["errors"][0]["rule"] == "expires_in_past"
+
+
+def test_snooze_of_an_alert_deleted_after_the_read_is_404_with_no_success_audit(
+    env: Env,
+) -> None:
+    aid = env.create()["id"]
+    real_get, calls = env.repo.get, []
+
+    async def get(alert_id: str) -> object:
+        calls.append(alert_id)
+        return await real_get(alert_id) if len(calls) == 1 else None  # gone before the audit
+
+    env.repo.get = get  # type: ignore[method-assign]
+    n = len(env.audit.calls)
+    r = env.c.put(f"/alerts/{aid}/snooze", json={"until": FUTURE})
+    assert r.status_code == 404
+    assert env.repo.rows[aid].snoozed_until is None
+    assert not {"alert.snoozed", "alert.unsnoozed"} & set(env.audit.actions()[n:])

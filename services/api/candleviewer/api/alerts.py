@@ -229,7 +229,11 @@ def make_alerts_router(
                             reason="account_not_granted", after_state={"op": op})  # fmt: skip
 
     async def parse(
-        request: Request, actor: Actor, alert_id: str, op: str
+        request: Request,
+        actor: Actor,
+        alert_id: str,
+        op: str,
+        stored_expiry: datetime | None = None,
     ) -> tuple[AlertInput, Any]:
         try:
             body = AlertInput.model_validate(await request.json())
@@ -240,9 +244,13 @@ def make_alerts_router(
                                     "message": e["msg"]} for e in errs]) from None  # fmt: skip
         except ValueError:
             raise _Problem(422, "validation_failed", "Invalid alert", "Body is not JSON.") from None
-        if body.expires_at is not None and (
-            body.expires_at.tzinfo is None or body.expires_at <= d.clock()
-        ):  # CC-10: an alert that is born expired is a mistake, not a state
+        unchanged = stored_expiry is not None and body.expires_at == stored_expiry
+        if (
+            body.expires_at is not None
+            and not unchanged
+            and (body.expires_at.tzinfo is None or body.expires_at <= d.clock())
+        ):  # CC-10: an alert that is born expired is a mistake; a replace that merely echoes
+            # the stored (since lapsed) expiry is not setting one, so it is accepted
             raise _Problem(422, "validation_failed", "Invalid alert",
                            "expires_at must be a future instant with a UTC offset.",
                            errors=[{"field": "expires_at", "rule": "expires_in_past",
@@ -357,7 +365,7 @@ def make_alerts_router(
             if_match = datetime.fromisoformat(raw) if raw else row.updated_at
         except ValueError:
             raise _stale() from None
-        body, compiled = await parse(request, actor, row.id, "update")
+        body, compiled = await parse(request, actor, row.id, "update", row.expires_at)
         if if_match != row.updated_at:  # stale: refuse before auditing (store re-checks atomically)
             raise _stale()
         await d.audit_event("alert.updated", actor, row.id, before_state=_audit_view(row),
@@ -424,6 +432,13 @@ def make_alerts_router(
                            "until must be a future instant with a UTC offset.",
                            errors=[{"field": "until", "rule": "until_in_past",
                                     "message": "until must be in the future"}])  # fmt: skip
+        # The dependency read the row earlier; re-confirm it still exists and is still the
+        # caller's so a deleted/foreign alert never gets a success audit. The write below can
+        # still race a delete: write-ahead (C-2.9) keeps the audit before the write, and that
+        # 404 is then the only outcome without a state change.
+        fresh = await d.store().get(row.id)
+        if fresh is None or fresh.owner_user_id != actor.user_id:
+            raise _not_found()
         await d.audit_event("alert.unsnoozed" if until is None else "alert.snoozed", actor, row.id,
                             before_state={"snoozed_until": _iso(row.snoozed_until)},
                             after_state={"snoozed_until": _iso(until)})  # fmt: skip

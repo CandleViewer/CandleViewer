@@ -496,7 +496,8 @@ class AlertEvaluator:
                 alert_id=a.id, user_id=a.owner_user_id, channels=a.channels, status="queued",
                 title=DISARM_TITLE.format(metric=metric), body="",
                 context={"disarmed": True, "reason": "source_unavailable", "metric": metric},
-                fired_at=_dt(now), once=False, bump=False, disable=True,
+                fired_at=_dt(now), once=False, bump=False,
+                disarm_reason="source_unavailable",
             )  # fmt: skip
             a.enabled = False
             if ids is None:  # already disarmed (a `once` firing won): nothing to announce
