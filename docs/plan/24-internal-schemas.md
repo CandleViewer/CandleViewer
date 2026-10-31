@@ -2953,7 +2953,7 @@ cancel_children: cancel-all for (uid, symbol) filtered to this leg's children
                  that row's trade_group_leg_id is one of this group's legs, or its
                  parent_order_id chain reaches such a row. The relation decides,
                  never the id text: an ext- row bound to the group by adoption
-                 under management (E45-S01) is the group's, an unbound untracked
+                 under management (none in v1, BQ-17) is the group's, an unbound untracked
                  row never is, and a §8.3 group22 is a cross-check, not the test).
                  Treat retCode 110001 "order does not exist" as SUCCESS (already gone).
 close_position:  read authoritative filled_qty (position qty from /v5/position/list,
@@ -6615,4 +6615,4 @@ This number follows `main`'s last entry, §19.59; an entry that lands first take
 This number follows `main`'s last entry, §19.59; an entry that lands first takes it, and this one moves to the next free number.
 
 - §8.2 "Who sends a command" (BQ-17 of the orchestrator's ruling of record on #914, and its ruling of 2026-10-31 00:16Z on the documents that still named a human adoption): `ADOPT` stays a command only a user sends, and no route sends it in v1, where the sentence named E45-S01 as its sender. D6 is resolved for v1 as automatic adoption only: the reconciliation pass records an exchange order that no row takes as an `untracked` row, never managed, and audits it as `order.adopted_untracked` with the venue identity (§8.5 step 3c, §15.5); no human adopt action exists, and B1's `adoption_allowed` denies every `ADOPT` (28 B1.5). The routes that resolve what a pass leaves (cancel an `untracked` order at the exchange, accept the exchange's position, attach a missing stop and force-resolve an `unknown` order) are E45-T12's, contract first in its own change, and send no `ADOPT`; E45-S01 is their UI.
-- With it: `28-statechart-catalogue.md` B1.5's `adoption_allowed` row, `32-risk-register.md` RSK-077's mitigation and the E29 threat model (revision 29) say the same. No REST, WS, table, column, chart or `machine_hash` change.
+- With it: `28-statechart-catalogue.md` B1.5's `adoption_allowed` row, `32-risk-register.md` RSK-077's mitigation and the E29 threat model (revision 29) say the same, and §9.5.1's `cancel_children` comment no longer names E45-S01 for an adoption under management, which no route makes in v1. No REST, WS, table, column, chart or `machine_hash` change.
