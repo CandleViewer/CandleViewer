@@ -748,6 +748,32 @@ async def test_with_its_stores_reconciliation_composes_in_place_of_its_stand_ins
     assert not b19.ports_wired()
 
 
+async def test_with_the_topics_and_its_stores_the_reconciliation_closer_moves_no_other() -> None:
+    """E29-T06 #914, on a process composing all the root can hand it (the WS topics, which
+    `app.py` always hands, the tickers, the catalogue and the reconciliation stores): the
+    reconciliation closer lands by name ahead of the stop gate, after the topics' own, and every
+    other closer keeps the place it has without it, so the lane's sink still closes after the
+    machines that write to it, and the tickers' demand after the sink."""
+    from tests.unit.oms.test_handovers import _Store
+    from tests.unit.oms.test_oms_runtime_ws_topics import Topics
+    from tests.unit.test_oms_reconcile_wiring import Reads
+
+    world = World(handover_store=_Store(), reconcile_reads=Reads())
+    world.ingestion.instruments = SimpleNamespace(snapshot=lambda: {cr.SYMBOL: instrument()})
+    world.ingestion.tickers = SimpleNamespace(
+        latest=lambda _symbol: None, is_stale=lambda _symbol: False,
+        acquire=lambda _consumer, _symbol: None, release=lambda _consumer, _symbol: None,
+    )  # fmt: skip
+    async with started(world.runtime(topics=Topics())) as runtime:
+        names = [name for name, _ in runtime._composed().closers]
+    assert names == [
+        "position_sweeps", "exits", "ws_topics", "reconciliation", "stop_gate", "machines",
+        "cancel_all_folds", "sink", "ticker_demand", "commands", "private_streams",
+        "trading_port", "loop_signing", "audit", "pool", "tier_requests", "heartbeat",
+        "environment_lock",
+    ]  # fmt: skip
+
+
 async def test_the_router_and_cancel_all_share_the_one_fold_port_over_the_lanes_own_port() -> None:
     """CR-S4F-09 (S4-F): the OMS reaches the venue through the cancel-all fold port the wiring
     builds. The router routes the environment to it, so the submit pipeline and B1's command
