@@ -106,6 +106,7 @@ PATHS: dict[str, str] = {
     "02": "docs/plan/02-definition-of-ready-done.md",
     "05": "docs/plan/05-accessibility-standard.md",
     "11": "docs/plan/11-user-stories.md",
+    "13": "docs/plan/13-user-flows.md",
     "14": PLAN14_REL,
     "15": "docs/plan/15-component-catalogue.md",
     "22": "docs/plan/22-api-openapi.yaml",
@@ -131,6 +132,7 @@ PATHS: dict[str, str] = {
     "E11D06": "docs/design/E11/E11-D06.md",
     "E11P": "docs/design/E11/E11-D09.md",
     "E16D06": "docs/design/E16/E16-D06.md",
+    "E09D09": "docs/design/E09/E09-D09.md",
     "SEED": "services/api/candleviewer/auth/rbac_seed.json",
     "CAL": "docs/plan/backlog/_tools/calendar_cv.py",
     "E12J": "docs/plan/backlog/E12.json",
@@ -172,6 +174,181 @@ CITES: dict[str, tuple[str, str, str]] = {
        for n in ("181", "220", "222", "226", "248")},
     "d09.log": ("D09", "<!--=COUNT:log.ids-->", r"(\d+)<!--=COUNT:log\.ids-->"),
 }  # fmt: skip
+# the cites inside the copied blocks (RULED BQ-02; the lens's M2): index id -> (source, the block
+# its text sits in or "", the text the cite points at); the tool re-finds each by content at the base
+COPY_CITES: dict[str, tuple[str, str, str]] = {
+    "c01": ("22", "", "| `renko` | brick size in ticks, or `atr:14` for ATR bricks"),
+    "c02": ("23", "", '"barType": {'),
+    "c03": ("22", "", 'schema: { type: string, maxLength: 24, examples: ["1000", "atr:14", "10:3"] }'),
+    "c04": ("22", "", "**Precedence:** when a non-time window both starts before"),
+    "c05": ("26", "", "is clamped to `[0.05, 200]` px"),
+    "c06": ("26", "", "L2 min/max column strip (one column per pixel)"),
+    "c07": ("26", "", "uses a **min/max preserving** reduction"),
+    "c08": ("26", "", "LOD thresholds have a ±15 % dead band"),
+    "c09": ("26", "", "1 instanced quad for bodies + 1 for wicks"),
+    "c10": ("14", "", "E11-D02's status-row chip, persistent while active"),
+    "c11": ("14", "", "| LOD-aggregated + forming-bar |"),
+    "c12": ("26", "", "lodCandles: 0 | 1 | 2;"),
+    "c13": ("14", "", "**Precedence (E12-D01 §4, extended to every state):**"),
+    "c14": ("14", "", "**Precedence (E12-D01 §4, extended to every state):**"),
+    "c15": ("14", "", "| rebuilding + partial-history | rebuilding (strip) |"),
+    "c16": ("14", "", "| rebuilding + partial-history | rebuilding (strip) |"),
+    "c17": ("14", "", "| cache-loading + partial-history | cache-loading (strip) |"),
+    "c18": ("14", "", "| LOD-aggregated + partial-history | both shown |"),
+    "c19": ("14", "", "**Shown together, each in its own slot, neither degrades:**"),
+    "c20": ("14", "", "**With E08 data-confidence states:**"),
+    "c21": ("22", "", "x-error-codes:"),
+    "c22": ("22", "", "x-error-codes-ws:"),
+    "c23": ("14", "", "**Never together:**"),
+    "c24": ("22", "", "a cursor issued before a swap returns `invalid_cursor`"),
+    "c25": ("22", "", "`recording_started_at` returns `no_data_recorded` (422) rather than silently"),
+    "c26": ("22", "  /market/bars:", '"400": { $ref: "#/components/responses/BadRequest" }'),
+    "c27": ("13", "", "Requested from the recording start: bars from the boundary on"),
+    "c28": ("13", "", "first load with no bars in the window, not built"),
+    "c29": ("23", "", "**`stale`.** It is true for one of two causes"),
+    "c30": ("23", "", "| `subscription_limit` | topic |"),
+    "c31": ("23", "", "### 10.3 Mapping to UI treatment"),
+    "c32": ("D08", "", "### 10.4 T2 on these surfaces"),
+    "c33": ("05", "", "## 7. Reduced motion"),
+    "c34": ("22", "    Problem:", "instance:"),
+}  # fmt: skip
+# every cite of the pack and the text its first line holds at the base (the lens's M1): generated
+# once by a helper from a read of the base, never by `--repin-ruled`: a shifted cite fails after
+# a re-pin
+CITE_TEXT: dict[str, str] = {
+    '02:51-56': '- [ ] Design-ready **[if labelled `design` or the Story has ',
+    '02:53': '- [ ] Design has been Done for ≥2 sprints (design-ahead rule',
+    '05:144': '### 6.2 Layer 2 — ARIA live regions for streaming updates',
+    '05:245': '## 9. Automated gates (CI-enforced)',
+    '05:35': '6. No functionality may depend on hover-only or drag-only in',
+    '11:895': 'NFR: ≥55 fps at 100k bars on the reference GPU; GPU memory ≤',
+    '14:1092': '- **Performance:** Virtualised table renders 100k rows witho',
+    '14:739': '- **Performance:** ≥58 fps at 2560×1440 with 100 k bars load',
+    '14:86': '6. **WCAG 2.2 AA.** Every canvas surface has an equal-status',
+    '22:11742-11747': 'ADR-0014 §2 field telemetry. One pre-bucketed payload per 10',
+    '22:12757': '/me/preferences:',
+    '22:344': '`403 view_as_expired`, whatever its method, and changes noth',
+    '22:4040': '/instruments/{symbol}:',
+    '22:4330': '/market/bars:',
+    '22:4390': '- name: bar_type',
+    '22:4398': 'schema: { type: string, maxLength: 24, examples: ["1000", "a',
+    '22:4409': 'x-rbac: { permissions: [marketdata:read], scope: none }',
+    '22:5257': '/recording/symbols:',
+    '23:749': '| `bars.{symbol}.{bar_type}.{param}` | `include_delta` (fals',
+    '23:768': '- **Unconfirmed bars.** The last bar in any `bars`/`footprin',
+    '23:770': '- **What the topic carries.** Only bars built from the recor',
+    '23:774': '- **`include_delta`.** It defaults to false, unlike REST `/m',
+    '26:742': '| B1 | 100k candles, continuous pan at 1000 px/s | ≤ 12 ms |',
+    '26:750': '| B9 | Cold init to first frame with 100k bars | ≤ 900 ms | ',
+    '26:751': '| B10 | Memory soak: 30 min live feed | peak ≤ 600 MB | no m',
+    '30:114': '| **E12** | Bar builders & series rendering (time/tick/volum',
+    'D02:19-39': '## 1. Decisions this spec settles',
+    'D02:25': '| D-1 | A switch, build or request that fails or is cancelle',
+    'D02:257-346': '## 7. SCR-030 — In-canvas states',
+    'D02:257-390': '## 7. SCR-030 — In-canvas states',
+    'D02:362-390': '## 10. Budgets and analytics',
+    'D02:366': '| Interval switch ≤200 ms from cache, visible centre preserv',
+    'D02:367': '| Uncached first paint ≤600 ms (time bars; non-time at the l',
+    'D02:369': '| Chart-type switch ≤100 ms, no refetch | US-CHART-002 | F-B',
+    'D02:370': '| Build: 10 s per 1 M prints, its G-2 estimate (prints and b',
+    'D02:371': '| Silent wait ≤600 ms; progress UI from 600 ms; cancel from ',
+    'D02:372': '| Menu open and parameter entry under 50 ms; SCR-041 ≤80 ms ',
+    'D02:377': '| `chart.interval_changed` | `from, to, source, cache, first',
+    'D02:378': '| `chart.bar_mode_changed` | `from, to` (`bar_type`, `param`',
+    'D02:379': '| `chart.symbol_changed` | `from, to, source` (`quick-switch',
+    'D02:380': '| `chart.bar_rebuild_started` (proposed) | `bar_type, param,',
+    'D02:381': '| `chart.bar_rebuild_completed` (proposed) | `bar_type, para',
+    'D02:382': '| `chart.bar_rebuild_cancelled` | `bar_type, param, elapsed_',
+    'D02:383': '| `chart.bar_rebuild_failed` (proposed) | `bar_type, param, ',
+    'D02:384': '| `chart.chart_type_changed` (proposed) | `from, to, source`',
+    'D02:385': '| `chart.unsupported_combination_shown` (proposed) | `reques',
+    'D02:386': '| `chart.empty_state_shown` | `reason` (`not_recorded`, `no_',
+    'D02:387': '| `chart.error_shown` | `code, correlationId`, plus `surface',
+    'D02:389': "Property names follow the API's `bar_type`/`param` as E12-D0",
+    'D02:39': '| D-15 | The one-frame swap never moves a price under the tr',
+    'D02:479-494': '| OQ-1 | G-1a: sub-minute (1–30 s), non-whole-minute (90 s) ',
+    'D03:182-231': '## 5. Copy deck (exact strings; `{...}` is data)',
+    'D03:209': '| C-24 | Mode row reason | Needs recorded prints: none yet |',
+    'D03:29': '| V-3 | AC 2 and `14`: the words "Needs recorded ticks" | "N',
+    'D03:444': '| `chart.interval_favourites_saved` (proposed) | `slots_chan',
+    'D03:462-480': '| CR-1 | G-1b: a custom whole-minute interval and the Recent',
+    'D03:475': '| X-1 | E09-D09 applies "`recording:write` is owner-only" ov',
+    'D03:52': '| D3-7 | **Recording route.** SCR-042 holds no record action',
+    'D03:60-85': '## 2. Per-mode specification (AC 1; the design source for CM',
+    'D03:81-83': '- **Only canonical values leave the client:** whole digits, ',
+    'D04:260': '| Every role | changes symbol, interval and mode for its own',
+    'D04:260-263': '| Every role | changes symbol, interval and mode for its own',
+    'D04:261': '| Owner | "Record this symbol..." opens M-023 (E08-D05:199),',
+    'D04:261-263': '| Owner | "Record this symbol..." opens M-023 (E08-D05:199),',
+    'D04:368': '| `chart.bar_mode_fallback` (proposed) | `from_bar_type, to,',
+    'D04:564-566': '- **D04-G1** The favourites and recents stores (§3.3): PROPO',
+    'D04:99-372': '## 3. The strip: parity with SCR-042 (RULED BQ-6)',
+    'D05:291-293': '| Owner, Manager | full (`SEED`:210–211, :233, :235) |',
+    'D05:292-293': "| Viewer (`SEED`:251–252) | E11-D09 C-14's PROPOSED treatmen",
+    'D05:389': '| `chart.settings_changed` | `{section: "general", key, scop',
+    'D05:394': '| `chart.settings_partial_apply` (proposed) | `applied, unch',
+    'D05:564-567': '- **D05-G1** `PaneConfig.settings` has no keys for chart typ',
+    'D05:92-398': '## 2. The General tab (RULED BQ-4)',
+    'D06:124-414': '## 2. Units, device pixels and rounding (RULED BQ-4)',
+    'D06:137-201': '## 3. Geometry per type at L0 (RULED BQ-5)',
+    'D06:169-185': '## 4. Direction: the non-colour channel per type and tier (R',
+    'D06:203-237': '## 5. The density ladder (RULED BQ-7, BQ-8)',
+    'D06:237': '**Draw calls.** Candles stay at 2<!--=BUDGET:candle.draws-->',
+    'D06:256-258': '### 6.3 One value for the chip and SCR-046',
+    'D06:260-273': '## 7. Forming, stale and corrected bars (RULED BQ-11)',
+    'D06:262-264': '### 7.1 Forming (`confirm: false`, `23`:749)',
+    'D06:264': 'The last bar keeps its normal direction encoding and gains a',
+    'D06:344': '## 13. The DOM mirror and accessible names (RULED BQ-18)',
+    'D06:344-360': '## 13. The DOM mirror and accessible names (RULED BQ-18)',
+    'D06:362-384': '## 14. Tokens and themes (RULED BQ-17)',
+    'D06:418': '- Budgets: SCR-030 ≥ 58<!--=BUDGET:scr030.fps--> fps at the ',
+    'D06:562-567': '- **D06-G1** CMP-181 `chartType` lacks `hollow`, `area`, `ba',
+    'D07:106-107': '| The forming row: `forming` in `state`, `aria-describedby`,',
+    'D07:127-366': '## 2. The row header and row identity (RULED BQ-3, BQ-4)',
+    'D07:219-246': '## 6. The `state` vocabulary (RULED BQ-7, BQ-8, BQ-10)',
+    'D07:225': '| `forming` | the bar is open (`confirm: false`) | `confirm`',
+    'D07:328': '- **CSV** stays designed and disabled, "Export arrives with ',
+    'D07:329': '- **Analytics.** `chart.data_table_opened` gains `bar_type` ',
+    'D07:333': 'Market data only (R-5): the columns, the copy and the analyt',
+    'D07:455-461': "| D07-G1 | `trades`, tick mode's closing quantity, is option",
+    'D08:109': '- **R-1 Never approximate (BQ-28).** No state builds non-tim',
+    'D08:111': '- **R-3 No new data-confidence state.** Stale, reconnecting ',
+    'D08:113': '- **R-5 Never colour alone.** Every state carries text, a da',
+    'D08:114': '- **R-6 The server decides.** Hiding a CTA is presentational',
+    'D08:115': 'sha:8577dba64d07',  # the line holds a public-text word; held by its hash
+    'D08:117-422': '## 2. SCR-047 in the E12 chassis (RULED BQ-4, BQ-7, BQ-8, BQ',
+    'D08:139': "The Owner's CTA → SCR-140 `/admin/recorder?symbol=...` (E11-",
+    'D08:145-176': '## 3. The error → destination mapping table (RULED BQ-11; a ',
+    'D08:194': 'Source order: `Problem.instance` (`urn:cv:req:{uuid}`, `22`:',
+    'D08:198': "SCR-048 lives in one panel's pane-stack region; the toolbar,",
+    'D08:244-246': '### 7.2 Cadence, the overrun and reduced motion (RULED BQ-20',
+    'D08:246': 'Progress text and the bar update at 2<!--=RULED:cadence.hz--',
+    'D08:264': 'Only the requesting principal or the Owner may cancel (ADR33',
+    'D08:268-282': '### 9.1 The matrix',
+    'D08:313': "Gated controls here and their rendering: the Owner's SCR-047",
+    'D08:414': "E11-D04's closed payloads (E11-D04:405–406): `chart.empty_st",
+    'D08:499-513': '| D08-G1 | the build contract: `POST` / `DELETE /market/bars',
+    'D09:115-117': '## 7. The named pattern "Bar rebuild progress" (BQ-17; AC5)',
+    'D09:142': '- **Resolution as G-rows** (the catalogue changes only what ',
+    'D09:144-166': '## 10. The consistency contract (BQ-21, BQ-22; AC2)',
+    'D09:201-214': "| G-D07-1, G-D07-2, DR-4 | SCR-045's column of §10 (E11-D04:",
+    'D09:94-109': '## 5. CMP-226 BarCountdown on non-time bars (BQ-14; AC4)',
+    'D09:94-117': '## 5. CMP-226 BarCountdown on non-time bars (BQ-14; AC4)',
+    'D09:94-214': '## 5. CMP-226 BarCountdown on non-time bars (BQ-14; AC4)',
+    'E09D09:114': '| workspaces | `workspaces:read` → "see workspaces" · `works',
+    'E09D09:115': '| settings | `settings:read` → "see settings" · `settings:wr',
+    'E09D09:89': '| `rbac.permission` | "Your role can\'t {verb}." | the operat',
+    'E11D04:403': '| `chart.data_table_opened` | `symbol`, `interval` (`bar_typ',
+    'E11D04:404': '| `chart.data_table_exported` | `symbol`, `interval`, `forma',
+    'E11D06:212-214': '| 10 s to close (`warnBelowMs` 10 000, US-CHART-008) | `bar ',
+    'E11D06:348-351': '| 46 | **Interval switch** (`1..9` presets, CMP-220 Interval',
+    'E11D06:351': '**Rows 46–47, the series switch** `(heuristic; PROPOSED — th',
+    'E11D06:90': '| D14 | **LOD step-down / up is one frame, no crossfade, in ',
+    'E11D06:99': '| D23 | **No transition in this spec adds a render pass** (`',
+    'SEED:214': '"marketdata:read",',
+    'SEED:217': '"recording:write",',
+    'SEED:240': '"marketdata:read",',
+}  # fmt: skip
 # the backlog keys whose sprints the design-ahead record reads: key -> (backlog, value key)
 SPRINT_KEYS: dict[str, tuple[str, str]] = {
     "E12-S06": ("E12J", "s06"), "E12-S10": ("E12J", "s10"), "E12-S09": ("E12J", "s09"),
@@ -203,7 +380,7 @@ TICKS: dict[str, tuple[tuple[str, str], ...]] = {
     "SCR-045": (("column set and sorting drawn", "E12-D07 §3; boards 01, 02, 03"),),
     "SCR-047": (
         (("three distinct reasons drawn (never recorded / no data in this range / instrument not "
-          "trading)"), "E12-D02 §8; boards 31, 35, 36; E12-D08 §2.2"),
+          "trading)"), "E12-D02 §8; boards 31, 36, 37; E12-D08 §2.2"),
         ("owner CTA to SCR-140 and non-owner explanatory copy both drawn",
          "E12-D02 §8; boards 33, 34; E12-D08 §2.3"),
         ("live-data-still-works note present where true", "E12-D08 §2.4; W-12"),
@@ -224,7 +401,7 @@ PRINTS = {"time": "no"}  # every other offered mode reads "yes"; a mode not offe
 # the binding audit's Served vocabulary
 SERVED = ("REST and WS", "REST only", "WS only", "neither")
 # the budgets' ruled units and gates (RULED BQ-15)
-UNITS = ("fps", "ms", "s", "MB", "draws")
+UNITS = ("fps", "ms", "s", "MB", "draws", "Hz")
 GATE_STORIES = ("E12-S06", "E12-S07", "E12-S11", "E12-S12", "E12-T07", "E11-S14")
 # the analytics events `T Scope` names (RULED BQ-17)
 T_EVENTS = (
@@ -673,6 +850,50 @@ def status_values(env: Env) -> dict[str, str]:
     return vals
 
 
+def copy_index_rows(spec: str) -> list[list[str]]:
+    return table_after(own_section(spec, "### 1.4 "), "#")
+
+
+def refind(env: Env, key: str) -> int | None:
+    """The one line (1-based) at the base that holds a copy-cite's text, inside its block."""
+    src, block, needle = COPY_CITES[key]
+    ls = env.lines(env.base, PATHS[src])
+    lo, hi = 0, len(ls)
+    if block:
+        a = next((i for i, ln in enumerate(ls) if ln == block), -1)
+        if a < 0:
+            return None
+        indent = len(block) - len(block.lstrip())
+        stop = re.compile("^" + " " * indent + r"\S")
+        lo = a
+        hi = next((i for i in range(a + 1, len(ls)) if stop.match(ls[i])), len(ls))
+    want = pin_norm(needle)
+    hits = [i + 1 for i in range(lo, hi) if want in pin_norm(ls[i])]
+    return hits[0] if len(hits) == 1 else None
+
+
+def refound_values(env: Env, spec: str) -> dict[str, str]:
+    vals: dict[str, str] = {}
+    for r in copy_index_rows(spec):
+        if len(r) < 5 or r[0] not in COPY_CITES:
+            continue
+        n = refind(env, r[0])
+        if n is None:
+            continue
+        m = re.search(r":(\d+)", r[2])
+        vals[f"REFOUND:{r[0]}"] = "stands" if m and int(m[1]) == n else f"`:{n}`"
+    return vals
+
+
+def copy_cites(spec: str) -> set[tuple[str, str]]:
+    """(copy key, the cite as written, backticks cut) of every plan cite inside the copied blocks."""
+    out: set[tuple[str, str]] = set()
+    for m in COPY_BLOCK.finditer(spec):
+        for c in re.finditer(r"`(\d\d)`:(\d+(?:[–-]\d+)?)|`(\d\d):(\d+(?:-\d+)?)`", m[0]):
+            out.add((m[1], f"{c[1] or c[3]}:{c[2] or c[4]}"))
+    return out
+
+
 def lift_hash(t: Texts, key: str) -> str | None:
     parts: list[str] = []
     for src, head, end in LIFTS[key]:
@@ -725,6 +946,7 @@ def compute(t: Texts) -> dict[str, str]:
         h = lift_hash(t, k)
         if h:
             vals[f"HASH:{k}"] = h
+    vals.update(refound_values(env, t.spec))
     for name in token_names(t.spec):
         vals[f"TOKEN:{name}"] = token_status(env, name)
     reg = registry(env)
@@ -1138,6 +1360,7 @@ def one(gate: str, problems: list[str], level: str = "FAIL") -> list[Finding]:
 
 ANCHOR_GATE = (
     ("HASH:", "G-LIFT"),
+    ("REFOUND:", "G-COPY"),
     ("COUNT:modes", "G-MODES"),
     ("BIND:", "G-BIND"), ("COUNT:bind", "G-BIND"),
     ("TOKEN:", "G-STORYBOOK"), ("STATUS:cmp.", "G-STORYBOOK"), ("CITE:stories", "G-STORYBOOK"),
@@ -1203,6 +1426,16 @@ def g_copy(t: Texts) -> list[Finding]:
     for k in COPIES:
         if keys.count(k) != 1:
             bad.append(f"COPY:{k} appears {keys.count(k)} times (once expected)")
+    bad += anchor_problems(t, "G-COPY")
+    rows = copy_index_rows(t.spec)
+    if sorted(r[0] for r in rows) != sorted(COPY_CITES):
+        bad.append("§1.4's rows are not the tool's copy-cite index")
+    for k in COPY_CITES:
+        if refind(t.env, k) is None:
+            bad.append(f"{k}: its text is not found once at the base")
+    listed = {(r[1], r[2].strip("`")) for r in rows if len(r) > 2}
+    for c in sorted(copy_cites(t.spec) - listed):
+        bad.append(f"the cite {c[1]} inside COPY:{c[0]} has no row in §1.4")
     return one("G-COPY", bad)
 
 
@@ -1216,7 +1449,27 @@ def g_cite(t: Texts) -> list[Finding]:
             bad.append(f"spec:{n} `{key}`:{a}-{b} is out of range ({len(ls)} lines)")
         elif not ls[a - 1].strip() or not ls[b - 1].strip():
             bad.append(f"spec:{n} `{key}`:{a}-{b} ends on a blank line")
+        else:
+            lab = cite_label(key, a, b)
+            want = CITE_TEXT.get(lab)
+            if want is None:
+                bad.append(f"spec:{n} `{key}`:{a}-{b} has no recorded text in the tool")
+            elif cite_text(ls, a) != want and want != "sha:" + sha12(pin_norm(ls[a - 1])):
+                bad.append(f"spec:{n} `{key}`:{a}-{b} does not hold its recorded text at the base")
+    used = {cite_label(k, a, b) for k, a, b, _ in cites_in(t.spec)}
+    for lab in sorted(set(CITE_TEXT) - used):
+        bad.append(f"the recorded text for {lab} is held by no cite")
     return one("G-CITE", bad)
+
+
+def cite_label(key: str, a: int, b: int) -> str:
+    return f"{key}:{a}" if a == b else f"{key}:{a}-{b}"
+
+
+def cite_text(ls: list[str], a: int) -> str:
+    """The text a cite is held to: its first line, normalised, its first 60 characters (or
+    `sha:` and the line's hash where the text holds a public-text word)."""
+    return pin_norm(ls[a - 1])[:60]
 
 
 def g_version(t: Texts) -> list[Finding]:
@@ -1437,8 +1690,14 @@ def g_motion(t: Texts) -> list[Finding]:
         if any(NO_SOURCE in c for c in r[2:5]):
             nosrc.append(r[0])
             held = D12_ID.findall(r[5])
-            if not held or any(h not in own for h in held) or cites_in(r[5]):
-                bad.append(f"{r[0]}: {NO_SOURCE!r} needs a held G-row and no cite")
+            if r[2] != NO_SOURCE or r[3] != NO_SOURCE:
+                bad.append(
+                    f"{r[0]}: a held row states a motion or a duration no merged row decides"
+                )
+            if not held or any(h not in own for h in held):
+                bad.append(f"{r[0]}: {NO_SOURCE!r} needs a held G-row")
+            if r[4] != NO_SOURCE and not cites_in(r[5]):
+                bad.append(f"{r[0]}: a reduced-motion cell with no merged cite")
         elif not cites_in(r[5]):
             bad.append(f"{r[0]}: a decided moment with no merged cite")
     for word in ("switch", "bar close", "rebuild", "LOD"):
@@ -1489,7 +1748,7 @@ ROLE_FROZEN: tuple[tuple[str, ...], ...] = (
     (
         "R-01",
         "change symbol, interval and bar mode (SCR-041, SCR-042)",
-        "`marketdata:read`",
+        "`marketdata:read`, `instruments:read`, `recording:read`",
         "enabled",
         "enabled",
         "enabled",
@@ -1527,7 +1786,7 @@ ROLE_FROZEN: tuple[tuple[str, ...], ...] = (
         "T2 `rbac.owner_only`",
         "T2 `rbac.owner_only`",
         "not stated",
-        '`rbac.owner_only` · "inspect the chart engine" (PROPOSED) · CMP-079 RbacGate, CMP-019 `lock`',
+        '`rbac.owner_only` · "inspect the chart engine" (PROPOSED; D08-A12, owner: E09-D09\'s verb table) · CMP-079 RbacGate, CMP-019 `lock`',
         "`D08`:313",
     ),
     (
@@ -1538,7 +1797,7 @@ ROLE_FROZEN: tuple[tuple[str, ...], ...] = (
         "not gated (X-3)",
         "not gated (X-3)",
         "T2 `rbac.view_as`",
-        "`rbac.view_as` · — · CMP-079 RbacGate, CMP-019 `lock`",
+        "`rbac.view_as` · — (the key takes no verb) · CMP-079 RbacGate, CMP-019 `lock`",
         "`D08`:313",
     ),
     (
@@ -1558,10 +1817,10 @@ ROLE_FROZEN: tuple[tuple[str, ...], ...] = (
         "`workspaces:write`",
         "enabled",
         "enabled",
-        "T2",
-        "T2 (W-26)",
-        '"Your role can\'t save workspaces."; W-26 · CMP-079 RbacGate, CMP-019 `lock`',
-        "`D05`:291-293",
+        "T2 (PROPOSED, `D05`)",
+        "T2 (W-26; PROPOSED, `D05`)",
+        '`rbac.permission` · "save workspaces" · "Your role can\'t save workspaces." (Save, both Resets); W-23 (the radios); W-26 (viewing as) · CMP-079 RbacGate, CMP-019 `lock`',
+        "`D05`:291-293; `E09D09`:89, :114",
     ),
     (
         "R-08",
@@ -1569,10 +1828,21 @@ ROLE_FROZEN: tuple[tuple[str, ...], ...] = (
         "none: view state",
         "enabled",
         "enabled",
-        "live as view state",
-        "live as view state",
+        "live as view state (PROPOSED, `D05`)",
+        "live as view state (PROPOSED, `D05`)",
         "—",
         "`D05`:292-293",
+    ),
+    (
+        "R-09",
+        "the As new default segment (SCR-031)",
+        "`settings:write`",
+        "enabled",
+        "enabled",
+        "T2 (PROPOSED, `D05`)",
+        "T2 (W-26; PROPOSED, `D05`)",
+        '`rbac.permission` · "change settings" · "Your role can\'t change settings."; W-26 (viewing as) · CMP-079 RbacGate, CMP-019 `lock`',
+        "`D05`:292-293; `E09D09`:89, :115",
     ),
 )
 
@@ -1640,6 +1910,24 @@ def g_t2(t: Texts) -> list[Finding]:
             bad.append(f"{scr}: the component list does not name CMP-079 RbacGate")
         if scr != "SCR-047" and "CMP-019 `lock`" not in comp:
             bad.append(f"{scr}: the component list does not name CMP-019 `lock`")
+    e09 = doc_text(t, "E09D09")
+    keys = set(re.findall(r"^\| `(rbac\.[a-z_]+)` ", section(e09, "### 3.1 "), re.MULTILINE))
+    verbs = section(e09, "### 3.2 ")
+    for r in role_rows(t.spec):
+        if len(r) < 9 or not any(re.search(r"\bT2\b|sentence", c) for c in r[3:7]):
+            continue
+        key = re.match(r"`(rbac\.[a-z_]+)` · ", r[7])
+        if not key or key[1] not in keys:
+            bad.append(f"{r[0]}: a T2 row without an E09-D09 §3.1 key")
+            continue
+        verb = re.match(r'`rbac\.[a-z_]+` · ("([^"]+)"( \(PROPOSED; [^)]*owner[^)]*\))?|— )', r[7])
+        if not verb or (verb[2] and not verb[3] and f'"{verb[2]}"' not in verbs):
+            bad.append(f"{r[0]}: its verb is not an E09-D09 §3.2 verb, a PROPOSED one with an owner, "
+                       "or — for `rbac.view_as`")  # fmt: skip
+        elif not verb[2] and key[1] != "rbac.view_as":
+            bad.append(f"{r[0]}: only `rbac.view_as` takes no verb")
+        if "CMP-079 RbacGate" not in r[7]:
+            bad.append(f"{r[0]}: a T2 row without CMP-079 RbacGate")
     cmp = {r[0] for r in table_after(own_section(t.spec, "## 3. "), "CMP")}
     for c in ("CMP-079", "CMP-019"):
         if c not in cmp:
@@ -1953,6 +2241,22 @@ def tick_moved(t: Texts) -> Texts:
                    spec=t.spec.replace(f"| {old} ", f"| {new} "))  # fmt: skip
 
 
+def events_swapped(t: Texts) -> Texts:
+    """`chart.symbol_changed` and `chart.bar_rebuild_started` trade their parent cites (§13)."""
+    ls = t.spec.split("\n")
+    a = next(i for i, ln in enumerate(ls) if "`D02`:379" in ln and "`chart.symbol_changed`" in ln)
+    b = next(i for i, ln in enumerate(ls) if "`D02`:380" in ln and "`chart.bar_rebuild_" in ln)
+    ls[a] = ls[a].replace("`D02`:379", "`D02`:380")
+    ls[b] = ls[b].replace("`D02`:380", "`D02`:379")
+    return replace(t, spec="\n".join(ls))
+
+
+def shifted_and_repinned(t: Texts) -> Texts:
+    """A cite moved one line on (`D08`:111 to :112), and the pins re-written to match."""
+    t2 = subst("`D08`:111 (R-3)", "`D08`:112 (R-3)")(t)
+    return replace(t2, pins=write_pins(all_units(t2)))
+
+
 def merged_and_edited(t: Texts) -> Texts:
     """A merge-base that already holds this pack and its `14` lines (a simulated later PR)."""
     sim = "simulated-merge-base"
@@ -1970,6 +2274,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("G-COPY", "change one byte inside the copied D06 §6.3", copy_edit),
     Mutation("G-CITE", "point a cite past the end of its file",
              subst("`D08`:111 (R-3)", "`D08`:99999 (R-3)")),
+    Mutation("G-CITE", "shift a cite one line, then re-pin", shifted_and_repinned),
     Mutation("G-VERSION", "edit D06's forming line at origin/main", head_gone),
     Mutation("G-MODES", "rename tick's field label", subst("| Trades per bar    |", "| Trades per brick  |")),
     Mutation("G-BIND", "name a REST field that does not exist", subst("`Bar.trades`", "`Bar.tradez`")),
@@ -1980,8 +2285,10 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("G-BUDGETS", "type the frame rate by hand", subst("| ≥58 fps        |", "| ≥59 fps        |")),
     Mutation("G-MOTION", "mark the #245 comment as posted",
              subst("to post at this pack's merge (not posted here):", "posted:")),
-    Mutation("G-EVENTS", "point an event at another event's parent line",
-             subst("| `D02`:379              |", "| `D02`:380              |")),
+    Mutation("G-MOTION", "invent a motion for the bar close", subst(
+        "| M-05 | the bar close (forming to closed) | no merged source | no merged source |",
+        "| M-05 | the bar close (forming to closed) | a 150 ms fade | 150 ms · ease-out |")),
+    Mutation("G-EVENTS", "swap two events' parent lines", events_swapped),
     Mutation("G-ROLES", "let a Manager cancel any build",
              subst("| own build only           | own build only", "| any build                | own build only")),
     Mutation("G-T2", "drop the reason node's `aria-describedby` link",
