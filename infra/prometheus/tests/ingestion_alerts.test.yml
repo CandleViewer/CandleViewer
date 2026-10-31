@@ -24,7 +24,7 @@ tests:
         alertname: IngestionTradeGapUnrecovered
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: ticket
               component: ingestion
               resolves: window
               env: demo
