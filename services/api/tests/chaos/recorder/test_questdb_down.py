@@ -135,6 +135,9 @@ async def test_wal_exhausted_writes_backpressure_drop_gap_and_critical_event(
         for g in o.store.gaps:  # C-2.14, but for a message split at the gap's first instant
             key, lo, hi = (g["stream"], g["symbol"]), g["start"], g["end"]
             assert isinstance(lo, datetime) and isinstance(hi, datetime)
+            # OPEN FINDING for the recorder owner (SCENARIOS.md Findings): a split message can share
+            # the gap's first instant. Escalated to the coordinator on PR #481; tighten to
+            # lo <= w[2] once ruled.
             spanned = [w for w in written if w[:2] == key and lo < w[2] <= hi]
             assert spanned == [], f"gap {g} spans a written row"
     finally:

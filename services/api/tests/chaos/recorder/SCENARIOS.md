@@ -62,3 +62,5 @@ Validation section's 85/91/96 does not and is left for an ADR follow-up.
   exactly (produced == written + dropped). Whether C-2.14 ("a gap never contains written data")
   should hold at message granularity is for the recorder's owner; the test pins today's behaviour
   (nothing written strictly inside a gap) and does not change production code.
+  **OPEN FINDING** for the recorder owner: escalated to the coordinator on PR #481; tighten to
+  `lo <= w[2]` once ruled.

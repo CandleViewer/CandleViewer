@@ -9,7 +9,8 @@ name: chaos-recorder-nightly
 # so the RetentionStale `> 0` guard stays (#481 owns dropping it once a nightly runs retention).
 # Not a required check (C-9.1 is unchanged), but a red night blocks the next release (C-9.2,
 # C-13.6). One pytest call; its own `-m` replaces addopts', so `not flaky` repeats the C-9.3
-# quarantine. No retries: a flaky test is quarantined, never re-run until green. `--no-cov`, as
+# quarantine. That `-m` expression replaces addopts, which is why `harness` chaos tests are
+# picked up here. No retries: a flaky test is quarantined, never re-run until green. `--no-cov`, as
 # chaos-ws-nightly.yml. A red night comments on, or opens, the `chaos-recorder` signal's issue
 # (_nightly-issue.yml, #1849); it pages no one. No workflow-level concurrency group (#3449).
 # Offline: no exchange egress (C-13.5).
