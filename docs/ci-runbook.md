@@ -1054,6 +1054,34 @@ index alone, removing nothing.
   `WARN` and never fails the gate by itself: it asks the reviewer to confirm
   the Security review (C-10.2).
 
+### CI-QDB-LOCK-* — applied QuestDB DDL files (`tools/ci/verify_questdb_ddl_lock.py`, C-5.4)
+
+The `migrations` job runs the check after the Alembic lockfile step. It compares the `*.sql` files of
+`backend/db/questdb/` with `backend/db/questdb/lockfile.json` and with the tree at the merge base
+with `origin/main`, by bytes: a comment or a line ending is a change. Run it from the repo root with
+`python3 tools/ci/verify_questdb_ddl_lock.py`; `--no-base-check` skips the merge-base comparison, is
+for local use and is never passed by CI. No option rewrites the lock.
+
+- **CI-QDB-LOCK-000** (internal error, exit 2): the lock is missing or malformed (no object `files`,
+  a key that is not a bare `*.sql` name, an entry without a 64-digit lowercase `sha256`, a key that
+  appears twice), the merge base with the base ref cannot be resolved (a bad ref, a shallow clone),
+  or git cannot be read. Repair the lock or fetch the full history; an unresolvable base is never
+  read as an empty one.
+- **CI-QDB-LOCK-001** (a locked file's bytes differ from its entry): the file was edited after it
+  was locked. Restore it with `git checkout origin/main -- backend/db/questdb/<file>`. An applied file
+  is never edited (C-5.4): fix forward with a new file.
+- **CI-QDB-LOCK-002** (a `*.sql` file has no entry): a new file adds its entry in the PR that adds
+  it. Run `sha256sum backend/db/questdb/<file>` and add `"<file>": {"sha256": "<that hash>"}` to
+  `files` in `lockfile.json`, in filename order. A file that another PR added and left unlisted gets
+  its entry the same way.
+- **CI-QDB-LOCK-003** (an entry's file is not on disk): the file was deleted or renamed, and the
+  runner applies a renamed file again as a new one. Restore the file under its name.
+- **CI-QDB-LOCK-004** (a file at the merge base differs at HEAD, or is gone): the PR edited, deleted
+  or renamed an applied file, and the check reads the merge base, so rewriting the file's entry with
+  it does not pass. Restore the file and add a new one.
+- **CI-QDB-LOCK-005** (a `*.sql` entry is a symlink or not a regular file): the runner reads a DDL
+  file's own bytes. Replace it with a regular file.
+
 ### CI-IMG-* — container image supply chain (merge-to-main, `main.yml`)
 
 - **CI-IMG-001** (unpinned base image): a `FROM` line in a Dockerfile is not

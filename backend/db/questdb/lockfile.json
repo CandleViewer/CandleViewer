@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "C-5.4: the SHA-256 of each applied QuestDB DDL file's bytes, checked by `tools/ci/verify_questdb_ddl_lock.py` in the `migrations` CI job; a new file adds its entry in the PR that adds it.",
+  "files": {
+    "0001_core_tables.sql": {
+      "sha256": "58d46a26e586a238cc64980d1eedc35559ed4cf791b7a97658878bf56de36d48"
+    },
+    "0002_footprint_cells.sql": {
+      "sha256": "1b38a4b35cd9a96f774b17c49954cc9fc72a2f95c85e1de105a530c9ff34f178"
+    },
+    "0003_bars_integrity_columns.sql": {
+      "sha256": "2bc0de824c6cebc9cad2bd7bdd258736c52cf909d9e54cabf87b585b55eb291b"
+    },
+    "0004_bars_key_by_index.sql": {
+      "sha256": "558b948687916cb3bd40789c6f4b592d4660b65355002a009ab376be000d72d8"
+    },
+    "0005_liquidations_batch_index.sql": {
+      "sha256": "8e075109b6b27c844e66f1fac1fff58c97d96f1eb5db14dfb399f2aa40e48836"
+    },
+    "0006_orderbook_replay_columns.sql": {
+      "sha256": "11c392858b3f02934b7cec9615141f370229014fdf1fee3294d09019e71eaedc"
+    },
+    "0007_heatmap_cells_column_fields.sql": {
+      "sha256": "780f0fd45276b4e212da840abe8f8981f7cdcfc91d6dd182a0a4fca946274fee"
+    }
+  }
+}

@@ -35,6 +35,10 @@ files they read (READ_INPUTS); js also the token formats packages/ui imports, py
 and the fixture corpus. Every lane's `if:` and resolver entry read the same filters, from
 `steps.filter`. Pytest targets are not followed: contract's and migrations' suites, outside their
 filters, run in the py and integration lanes too.
+
+#4014: no other filter names `backend/`, so the `migrations` filter names the applied QuestDB DDL
+files, their lock and the check that pins them: a PR that edits only a DDL file starts the lane
+that refuses the edit.
 """
 
 from __future__ import annotations
@@ -114,6 +118,7 @@ READ_INPUTS = (
     ("engine-bench", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),
     ("e2e", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),  # #1819
     ("migrations", "tools/ci/migration_lint.py", "tools/ci/security-sensitive-tables.txt"),
+    ("migrations", "tools/ci/verify_questdb_ddl_lock.py", "backend/db/questdb/lockfile.json"),
     ("pin-check", "tools/ci/check_action_pins.py", ".github/actions-pins.md"),  # #3580
 )
 FILTER_NAMES: tuple[str, ...] = ("js", "py", "engine", "protocol", "infra", "image", "docs")
@@ -564,6 +569,17 @@ def test_pr_yml_py_filter_covers_the_a11y_gate_logic_and_the_fixture_corpus() ->
         assert pattern in py and any(ROOT.glob(pattern)), pattern
     corpus = (ROOT / "services" / "api" / "tests" / "_corpus.py").read_text(encoding="utf-8")
     assert re.search(r"^CORPUS_ROOT\b.*\bpackages\W+fixtures\b", corpus, re.MULTILINE)
+
+
+def test_pr_yml_migrations_filter_covers_the_questdb_ddl_and_its_verifier() -> None:
+    # #4014: a DDL-only PR starts no other lane (no filter names backend/), so the lane that holds
+    # the lock check starts on the DDL files, their lock and the check's own script.
+    ddl = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "backend/db/questdb").iterdir())
+    assert "backend/db/questdb/lockfile.json" in ddl and len(ddl) > 1
+    verifier = "tools/ci/verify_questdb_ddl_lock.py"
+    rules = _filters()["migrations"]
+    assert [p for p in [*ddl, verifier] if not any(_matches(p, rule) for rule in rules)] == []
+    assert verifier in _lane_runs()["migrations"][1]
 
 
 @pytest.mark.parametrize(("lane", "reader", "path"), READ_INPUTS)
