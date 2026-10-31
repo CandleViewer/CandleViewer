@@ -60,6 +60,7 @@ from candleviewer.admin.wiring import (
     keyed_record_id,
     unclaimed_machine_events,
 )
+from candleviewer.bus.bus import Bus
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId, Environment, GroupId, Px, Symbol
@@ -198,6 +199,14 @@ from candleviewer.oms.ws_topics import (
     StepPublisher,
     TopicReads,
     View,
+)
+from candleviewer.oms_detect_wiring import (
+    DetectRuntime,
+    DetectStores,
+    build_detect_stores,
+    build_stuck_detection,
+    stop_detection,
+    thresholds_of,
 )
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, Lane, LaneStopped, OrderLane, Serving
 from candleviewer.oms_reconcile_wiring import (
@@ -1609,6 +1618,9 @@ class OmsStores:
     #: a composition without them binds `NoHandoverStore` and `NoReconciliation`.
     handovers: OmsHandoverStore | None = None
     reconcile: ReconcileReads | None = None
+    #: E29-T08 #916: the stuck-order detector's stores, on a pool of its own (`oms-detect`); a
+    #: composition without them composes no detector.
+    detect: DetectStores | None = None
 
 
 #: The name prefix of the order lane's own WAL files, each beside the serving loop's (#913 L2, D6).
@@ -1762,6 +1774,7 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
         release=pool.dispose,
         handovers=SqlAlchemyHandoverStore(pool, statement_timeout_ms=cap_ms),
         reconcile=SqlAlchemyReconcileStore(pool, statement_timeout_ms=cap_ms),
+        detect=build_detect_stores(settings),
     )
 
 
@@ -1946,6 +1959,9 @@ class _Parts:
     #: The way back to the serving loop, where the reconciliation routes' records are written
     #: ahead (`OnLaneReconciliation`, E29-T06 #914).
     serving: Serving | None = None
+    #: E29-T08 #916: the stuck-order detector, whose stall `/readyz` reads; None where the stores
+    #: or the bus compose none.
+    detect: DetectRuntime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2397,8 +2413,11 @@ class OmsRuntime:
         serving_tick: Callable[[], ServingTick] = ServingTick,
         trade_groups: GroupTopic | None = None,
         standing: ReconcileStanding | None = None,
+        bus: Bus | None = None,
     ) -> None:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
+        #: E29-T08 #916: the in-process bus its incidents go on (`{env}.oms.incident`, BQ-6).
+        self._bus = bus
         #: E29-T06 #914: the reconciliation standing the order-entry gate reads (`account_stale`,
         #: composed into the gate by the root), which the jobs set and clear (BQ-5, C-2.21).
         self._standing = ReconcileStanding() if standing is None else standing
@@ -2513,6 +2532,8 @@ class OmsRuntime:
         if state != "ok" or parts is None:
             return state
         if self._streaming is not True or parts.stream.readiness.degraded() is not None:
+            return "degraded"
+        if parts.detect is not None and parts.detect.stalled():  # E29-T08 #916 (24 Sec.8.13)
             return "degraded"
         return state
 
@@ -3426,6 +3447,28 @@ class OmsRuntime:
                 jobs = reconcile.jobs
                 at_gate = [name for name, _ in closers].index("stop_gate")
                 closers.insert(at_gate, ("reconciliation", lambda: lane.call(jobs.stop())))
+            # E29-T08 #916 (24 Sec.8.13, 20 Sec.6.2): the stuck-order detector. Its reads, rows and
+            # the rate gauge's account reads on its own pool, its records ahead through the lane's
+            # writer, its bus publishes on the serving loop; its task runs on the lane from here and
+            # scans once `ready`, reading the standing in place and changing nothing it reads
+            # (C-2.21). Its closer stops it ahead of the reconciliation jobs', by name, once the
+            # inserts at fixed indexes above are in. No flag gates it (C-4.14).
+            self._phase = "detect"
+            detect: DetectRuntime | None = None
+            if stores.detect is not None and self._bus is not None:
+                rate_accounts = TradingAccountsBinding(stores.detect.accounts, environment=env)
+                detect = running = build_stuck_detection(
+                    environment=env, stores=stores.detect, thresholds=thresholds_of(settings),
+                    stale=self._standing, emitter=writer, bus=self._bus, serving=serving,
+                    pager=self._pager, metrics=metrics, rate=router.port_for(env),
+                    resolve=rate_accounts.trading_account, ready=self._ready.is_set,
+                    monotonic=self._monotonic, now=self._now,
+                )  # fmt: skip
+                named = [name for name, _ in closers]
+                ahead = named.index("reconciliation" if "reconciliation" in named else "stop_gate")
+                stopped = functools.partial(stop_detection, lane, serving, running)
+                closers.insert(ahead, ("stuck_detector", stopped))
+                running.start()
             # S4-F: a fold's call still out once the machines have cut its members' invokes, as
             # theirs are, is ended before the trading port closes
             after = [name for name, _ in closers].index("machines") + 1
@@ -3473,7 +3516,7 @@ class OmsRuntime:
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
                 stream, admit_after, preview, leverage, writes, reads, observed, reconcile,
-                tradable, serving,
+                tradable, serving, detect,
             )  # fmt: skip
             with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
                 stopping = self._stopping
@@ -3548,5 +3591,5 @@ def build_oms_runtime(
         standings=standings, oms_enabled=oms_enabled, live_enabled=live_enabled,
         profiles=profiles, persistence=persistence, feed=feed, lane_signing=lane_signing,
         health=health, hub=hub, lane_transport=lane_transport, topics=topics,
-        trade_groups=trade_groups, standing=standing,
+        trade_groups=trade_groups, standing=standing, bus=ctx.bus.bus,
     )  # fmt: skip

@@ -110,6 +110,11 @@ OMS_AFTER_ANCHOR_S: Final = 12.0
 #: The in-flight window's ceiling (SEC-S3D-02): the longest a crashed request's key stays
 #: `409 idempotency_in_flight`.
 OMS_INFLIGHT_STUCK_MAX_S: Final = 120.0
+#: E29-T08 (#916; 24 Sec.8.13): a pending cancel or amend's stuck threshold is above B1's command
+#: timeout (`statechart.config.CV_COMMAND_TIMEOUT`, 10 s, which M1 may not import; a test pins the
+#: two alike), so a request B1 still waits on is never stuck, and at most this ceiling.
+OMS_PENDING_STUCK_FLOOR_S: Final = 10.0
+OMS_PENDING_STUCK_MAX_S: Final = 120.0
 #: What the OMS runtime's stop keeps after its drain for its closers (the machines, the order lane's
 #: own sink and audit writer, and its pool) and then the order lane's join, of the supervised OMS
 #: module's grace (`TEARDOWN_BUDGET_S`).
@@ -858,6 +863,15 @@ class Settings(BaseSettings):
     # send (`_refuse_a_stuck_window_inside_the_bounds`), and at most `OMS_INFLIGHT_STUCK_MAX_S`.
     oms_inflight_stuck_s: float = Field(
         default=30.0, le=OMS_INFLIGHT_STUCK_MAX_S, allow_inf_nan=False
+    )
+    # E29-T08 (#916; 24 Sec.8.13): a cancel or an amend pending this long is a stuck-order incident;
+    # above B1's 10 s command timeout and at most 120 s. No value switches the detector off
+    # (C-4.14).
+    oms_pending_stuck_s: float = Field(
+        default=15.0,
+        gt=OMS_PENDING_STUCK_FLOOR_S,
+        le=OMS_PENDING_STUCK_MAX_S,
+        allow_inf_nan=False,
     )
     # The startup sweep's wait for the clock guard's first measurement and the key standing's
     # first read; the sweep must fit a deploy's 60 s `/readyz` smoke window. Account health's boot
