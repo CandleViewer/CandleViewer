@@ -6646,9 +6646,9 @@ This number follows `main`'s last entry, §19.61; an entry that lands first take
 - §15.5: one sentence states that the `rules.scope_denied` and `rules.arm` refusal records are held to that budget per acting user and per action, with an over-cap refusal counted and its count carried by the next record or a `suppressed_summary` record, and that a rule action's own denial and the boot-time system-rule record are never held to it. No action is registered or removed: the closed set is unchanged, and the refusals of a limit write no record.
 - No new `x-error-codes` entry, schema member, `RuleValidationIssue.code` value or operation, so the `openapi_pending` baselines do not move; no WS, table, column, chart or `machine_hash` change. The code that holds each bound follows in the two later changes of #4834, each with the test that ties its number to 22's text.
 
-### 19.63 2026-10-31 — §8.5: B1 version 8 closes a multi-fill `untracked` order, and an unreadable hand-over pages (E29-T06, #914)
+### 19.65 2026-10-31 — §8.5: B1 version 8 closes a multi-fill `untracked` order, and an unreadable hand-over pages (E29-T06, #914)
 
-This number follows §19.62, which #5152 holds; an entry that lands first takes it, and this one moves to the next free number.
+This number follows §19.64, which #5255 (#5111) holds, after §19.63, which #5163 holds, as the orchestrator ruled on 2026-10-31; an entry that lands first takes it, and this one moves to the next free number.
 
 - The third of the ticket's four changes (the job driver, the triggers and the wiring; the Owner's two routes are the fourth), with the contract lines its runtime needs.
 - §8.5, the standing items: B1 chart version 8 (#5157) applies an `untracked` row's `EXEC`, so the orchestrator's interim of 2026-10-31 ends for an order filled in more than one execution: the pass sends its fills and the order closes once the fills read complete it. `untracked_fills_unread` stays one of the closed list's three, for a row whose fills read cannot complete it (a fill outside every window the pass reads) or whose status no finding maps, as a held window would recover none of those either.
