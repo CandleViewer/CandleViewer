@@ -597,7 +597,7 @@ def g_audit(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             continue
         if vals[key] != val:
             f.append(("G02-AUDIT", f"{key}: the marker says {val!r}, the tool {vals[key]!r}"))
-        if not ctx.spec[: m.start()].rstrip().endswith(val):
+        if not ctx.spec[: m.start()].rstrip().rstrip("`").endswith(val):
             f.append(("G02-AUDIT", f"{key}: the visible value before the marker is not {val!r}"))
 
 
@@ -885,12 +885,25 @@ def fill(ctx: Ctx) -> str:
     for ln in spec.split("\n"):
         for m in list(AUDIT.finditer(ln)):
             key, old = m[1], m[2]
-            if key in vals and old != vals[key] and f"{old} <!-- audit:{key}=" in ln:
-                ln = ln.replace(
-                    f"{old} <!-- audit:{key}={old} -->",
-                    f"{vals[key]} <!-- audit:{key}={vals[key]} -->",
-                )
-        out.append(AUDIT.sub(marker, ln))
+            if key in vals and old != vals[key]:
+                new = vals[key]
+                for tick in ("", "`"):
+                    ln = ln.replace(
+                        f"{old}{tick} <!-- audit:{key}={old} -->",
+                        f"{new}{tick} <!-- audit:{key}={new} -->",
+                    )
+
+        ln = AUDIT.sub(marker, ln)
+        for m in list(AUDIT.finditer(ln)):  # a single-token visible value left stale: rewrite it
+            key, val = m[1], m[2]
+            if " " not in val:
+                tail = f" <!-- audit:{key}={val} -->"
+                pat = re.compile(rf"(`?)(?<![>\w.:+-])[\w.:+-]+(`?){re.escape(tail)}")
+                hit = pat.search(ln)
+                if hit:
+                    fixed = f"{hit[1]}{val}{hit[2]}{tail}"
+                    ln = ln[: hit.start()] + fixed + ln[hit.end() :]
+        out.append(ln)
     return "\n".join(out)
 
 
