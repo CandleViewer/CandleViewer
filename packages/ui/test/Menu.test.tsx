@@ -13,6 +13,7 @@ import {
   type MenuItem,
 } from "../src/components/index.js";
 import { seriousViolations } from "./axe.js";
+import { holdEnter } from "./heldEnter.js";
 import { mount } from "./theme/mount.js";
 
 const page = within(document.body);
@@ -308,6 +309,17 @@ describe("Menu (CMP-041) items", () => {
       ["Only the owner can change account settings."],
     ]);
     expect(page.queryByRole("status")).toBeNull();
+  });
+
+  it("a held Enter on a gated item hands the host its reason once, not once per repeat", async () => {
+    const announceReason = fn<(reason: string) => void>();
+    await renderMenu({ items: states, announceReason });
+    await openWith("{Enter}");
+    await press("{ArrowDown}");
+    const gated = page.getByRole("menuitem", { name: "Edit risk caps", hidden: true });
+    expect(gated).toHaveFocus();
+    holdEnter(gated, 5);
+    expect(announceReason.mock.calls).toEqual([["Only the owner can change account settings."]]);
   });
 
   it("hovering moves focus to the row's item, gated, disabled and busy rows too, without activating", async () => {

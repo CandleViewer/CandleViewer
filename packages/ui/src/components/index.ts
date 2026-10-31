@@ -3,10 +3,16 @@ export type { DirectionalSwatchColor, SwatchLegendItemProps } from "./SwatchLege
 
 export { Table } from "./Table.js";
 export type {
+  TableCellOptions,
+  TableCellProps,
   TableColumn,
   TableError,
+  TableHeaderStatus,
   TableNumericColumn,
   TableProps,
+  TableRowContext,
+  TableRowProps,
+  TableRowWindow,
   TableSort,
   TableSortDirection,
   TableTextColumn,
@@ -132,6 +138,16 @@ export type { FormFieldLayout, FormFieldProps } from "./FormField.js";
 
 export { FormSection } from "./FormSection.js";
 export type { FormSectionProps } from "./FormSection.js";
+
+export {
+  DATA_CONFIDENCE_PRECEDENCE,
+  FreshnessMarker,
+  formatStaleAge,
+  freshnessClassName,
+  freshnessOf,
+  staleAgeName,
+} from "./FreshnessMarker.js";
+export type { DataConfidenceState, FreshnessMarkerProps } from "./FreshnessMarker.js";
 
 export { FuzzyList, fuzzyOptionId } from "./FuzzyList.js";
 export type { FuzzyListColumns, FuzzyListItem, FuzzyListProps, FuzzyListTag } from "./FuzzyList.js";
@@ -324,3 +340,42 @@ export type {
 
 export { Checkbox } from "./Checkbox.js";
 export type { CheckboxProps } from "./Checkbox.js";
+
+export {
+  WATCHLIST_DEFAULT_COLUMNS,
+  WATCHLIST_OPTIONAL_COLUMNS,
+  WatchlistRow,
+  watchlistColumns,
+} from "./WatchlistRow.js";
+export type {
+  WatchlistColumnId,
+  WatchlistColumnsOptions,
+  WatchlistDefaultColumnId,
+  WatchlistFreshness,
+  WatchlistOiFreshness,
+  WatchlistOptionalColumnId,
+  WatchlistRec,
+  WatchlistRowData,
+  WatchlistRowProps,
+  WatchlistRowState,
+  WatchlistTickerFreshness,
+} from "./WatchlistRow.js";
+
+export {
+  WATCHLIST_NEAR_CAP,
+  WATCHLIST_SYMBOL_CAP,
+  WatchlistGroupTabs,
+  watchlistCountName,
+} from "./WatchlistGroupTabs.js";
+export type { WatchlistGroup, WatchlistGroupTabsProps } from "./WatchlistGroupTabs.js";
+
+export { ColumnPicker } from "./ColumnPicker.js";
+export type {
+  ColumnPickerColumn,
+  ColumnPickerListProps,
+  ColumnPickerMenuProps,
+  ColumnPickerProps,
+} from "./ColumnPicker.js";
+
+export { FileDrop, formatFileSize } from "./FileDrop.js";
+export type { FileDropAction, FileDropPreview, FileDropProps } from "./FileDrop.js";

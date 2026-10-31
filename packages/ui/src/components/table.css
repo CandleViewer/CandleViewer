@@ -53,6 +53,14 @@
   margin-inline-start: var(--space-inset-sm);
 }
 
+/*
+ * The echo (CMP-016, fixed) is drawn inside the table's scroll box, where the sticky header row stacks at 1: it stacks
+ * above it, so an echo anchored in the first body row is never painted under the header (A11Y-4702A5-02).
+ */
+.cv-table__echo {
+  z-index: 2;
+}
+
 /* The header row: sticky, on surface.hover, a 1 px border.subtle rule under it (the real edge forced colours keep). */
 .cv-table__header {
   position: sticky;
@@ -76,10 +84,30 @@
   text-align: end;
 }
 
+/*
+ * A header's label is a block that shrinks and ellipsises when its column is narrower than its words (never a run
+ * clipped under the next header): its whole words stay its text and the header's name, and in a grid the echo shows
+ * them while it is cut (E08-D07 §4.1 pairs every cut with the echo).
+ */
 .cv-table__label {
+  display: block;
+  flex: 0 1 auto;
+  min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A plain header with a status glyph lays the two out on one line, as a sort button does. */
+.cv-table__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-inline-size: 0;
+}
+
+.cv-table__header[data-numeric] .cv-table__head {
+  justify-content: flex-end;
 }
 
 /* A sort button fills its cell; the glyph trails the label at inset.xs. */
@@ -104,6 +132,20 @@
   justify-content: flex-end;
 }
 
+/*
+ * An end-aligned header (a numeric column, or `align: "end"`) uses its start padding as room for its label: its words
+ * sit against the end, where the values' end padding lines them up, so the start side is no alignment edge (E08-D07
+ * §4.1's 784 px reference; the interim: no copy, breakpoint or column width change). A start-aligned header keeps both
+ * paddings, and so does the stacked reflow, whose headers wrap as blocks and none is end-aligned.
+ */
+.cv-table:not([data-layout="stacked"]) .cv-table__header[data-numeric] {
+  padding-inline-start: 0;
+}
+
+.cv-table:not([data-layout="stacked"]) .cv-table__header[data-numeric] .cv-table__sort {
+  padding-inline-start: 0;
+}
+
 .cv-table__sort-glyph {
   display: inline-flex;
   flex: none;
@@ -112,6 +154,27 @@
 
 .cv-table__sort .cv-spinner {
   flex: none;
+}
+
+/*
+ * A T2 sort header (E08-D07 §6.6, §7.1 "T2"; E09-D09 §2.2): the CMP-019 lock before the full label, both in
+ * text.tertiary (4.78:1 or more on the header's surface.hover, E08-D07 §7.2 row 30); never text.disabled, never an
+ * opacity. The button keeps its focus ring and its place in the grid.
+ */
+.cv-table__sort[aria-disabled="true"] {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.cv-table__lock,
+.cv-table__header-status {
+  display: inline-flex;
+  flex: none;
+}
+
+/* A header's status glyph (a stale column's ⚠, E08-D07 §4.2): its word is visually hidden beside it. */
+.cv-table__header-status[data-tone="stale"] {
+  color: var(--color-data-confidence-stale-indicator);
 }
 
 /* Body rows: zebra (odd canvas, even raised), hover on surface.hover; cells never use text.tertiary. */
@@ -130,6 +193,7 @@
 .cv-table__cell {
   block-size: var(--size-row-height);
   padding: 0 var(--space-inset-sm);
+  text-align: start;
   font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
     var(--type-ui-body-line-height) var(--type-ui-body-font-family);
   color: var(--color-text-primary);
@@ -165,6 +229,29 @@
 .cv-table__row[aria-selected="true"],
 .cv-table__row[aria-selected="true"]:hover {
   background: var(--color-action-selected);
+}
+
+/*
+ * The active row (`aria-current`, E08-D07 §7.1 "Rows"): surface.selected and a 2 px border.selected bar, drawn inside
+ * its first cell so nothing moves (3.39:1 or more on surface.selected, E08-D07 §7.2 row 25).
+ */
+.cv-table__row[aria-current="true"],
+.cv-table__row[aria-current="true"]:hover {
+  background: var(--color-surface-selected);
+}
+
+.cv-table__row[aria-current="true"] > :first-child {
+  box-shadow: inset calc(var(--border-thick) * 1px) 0 0 0 var(--color-border-selected);
+}
+
+/* A windowed list's spacer rows (the rows not drawn): their height alone, from the component. */
+.cv-table__spacer {
+  background: transparent;
+}
+
+.cv-table__spacer > td {
+  padding: 0;
+  border: 0;
 }
 
 /* The select column (a CMP-005 per row, select-all in the header) and the trailing actions column: one control wide. */
@@ -303,6 +390,11 @@
 
   .cv-table__row[aria-selected="true"] .cv-table__cell {
     color: HighlightText;
+  }
+
+  /* The active row's bar becomes a Highlight edge: forced colours drop the fill and the box-shadow. */
+  .cv-table__row[aria-current="true"] > :first-child {
+    border-inline-start: 2px solid Highlight;
   }
 
   /* Stacked: one separator per row block, not per cell. */

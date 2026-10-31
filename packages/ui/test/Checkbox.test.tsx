@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, type JSX } from "react";
 import { composeStories } from "@storybook/react-vite";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
-import { Checkbox } from "../src/components/index.js";
+import { Checkbox, GatedAnnounceProvider } from "../src/components/index.js";
 import * as stories from "../src/components/Checkbox.stories.js";
 import { mount } from "./theme/mount.js";
 import { clearPolite, politeText } from "./theme/polite.js";
@@ -187,5 +187,53 @@ describe("Checkbox gated announcement (D09 2.2)", () => {
     await userEvent.click(within(open).getByRole("checkbox"));
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(await politeText()).toBe("");
+  });
+});
+
+// E09-D09 §2.2 rendering 2a with the reason node the host's (a caption under the row, or a read-only panel's one
+// notice): E08-S08's ColumnPicker points its locked and read-only boxes at it.
+describe("Checkbox disabledReasonId: the reason shown by the host (2a)", () => {
+  const Captioned = ({ onChange }: { readonly onChange?: (on: boolean) => void }): JSX.Element => (
+    <>
+      <Checkbox
+        label="Symbol"
+        checked
+        disabledReason={REASON}
+        disabledReasonId="symbol-reason"
+        {...(onChange === undefined ? {} : { onChange })}
+      />
+      <p id="symbol-reason">{REASON}</p>
+    </>
+  );
+
+  it("is described by the host's node alone: no copy of its own and no echo", async () => {
+    const host = await mount(<Captioned />);
+    const c = get(host, "Not available Symbol");
+    expect(c).toHaveAttribute("aria-disabled", "true");
+    expect(c).toHaveAttribute("aria-describedby", "symbol-reason");
+    expect(c).toHaveAccessibleDescription(REASON);
+    expect(within(host).getAllByText(REASON)).toHaveLength(1);
+    expect(document.querySelector('[data-cmp="CMP-016"]')).toBeNull();
+  });
+
+  it("its lock leads the label, named Not available, and no lock trails the row", async () => {
+    const host = await mount(<Captioned />);
+    const label = host.querySelector<HTMLElement>(".cv-choice__label") as HTMLElement;
+    const lock = within(label).getByRole("img", { name: "Not available" });
+    expect(label.firstElementChild).toContainElement(lock);
+    expect(host.querySelectorAll(".cv-choice__lock")).toHaveLength(1);
+  });
+
+  it("a press changes nothing and announces the reason once", async () => {
+    const onChange = fn();
+    const announce = fn();
+    const host = await mount(
+      <GatedAnnounceProvider announce={announce}>
+        <Captioned onChange={onChange} />
+      </GatedAnnounceProvider>,
+    );
+    await userEvent.click(get(host, "Not available Symbol"));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(announce.mock.calls).toEqual([[REASON]]);
   });
 });

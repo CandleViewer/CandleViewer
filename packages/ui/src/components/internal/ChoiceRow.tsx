@@ -18,7 +18,11 @@ export interface ChoiceRowProps {
   readonly critical?: boolean | undefined;
 }
 
-/** Shared by CMP-004 and CMP-005: label (part of the target), control, trailing lock (T2) and reason text. */
+/**
+ * Shared by CMP-004 and CMP-005: label (part of the target), control, trailing lock (T2) and reason text. With the
+ * reason's node the host's (2a, `reason.external`), the lock leads the label instead, named "Not available", and
+ * no reason text renders here.
+ */
 export function ChoiceRow({
   cmp,
   control,
@@ -31,9 +35,15 @@ export function ChoiceRow({
   density,
   critical,
 }: ChoiceRowProps): JSX.Element {
+  const namedLock = reason.external ? (
+    <span className="cv-choice__lock">
+      <Icon name="lock" decorative={false} label="Not available" />
+    </span>
+  ) : null;
   const labelNode =
     label === undefined ? null : (
       <span className="cv-choice__label">
+        {namedLock}
         {lead}
         {label}
       </span>
@@ -58,12 +68,14 @@ export function ChoiceRow({
         <span className="cv-choice__control">{control}</span>
         {labelPosition === "right" ? labelNode : null}
       </Target>
-      {reason.gated ? (
+      {reason.gated && !reason.external ? (
         <span className="cv-choice__lock">
           <Icon name="lock" />
         </span>
       ) : null}
-      <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
+      {/* Without a visible label the named lock trails the control (it never leads an `aria-label`). */}
+      {label === undefined ? namedLock : null}
+      {reason.external ? null : <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>}
     </div>
   );
 }

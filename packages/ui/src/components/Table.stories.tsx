@@ -5,7 +5,13 @@ import { createRoot } from "react-dom/client";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import { EmptyState } from "./EmptyState.js";
 import type { MenuItem } from "./Menu.js";
-import { Table, type TableColumn, type TableProps, type TableSort } from "./Table.js";
+import {
+  Table,
+  type TableColumn,
+  type TableProps,
+  type TableRowContext,
+  type TableSort,
+} from "./Table.js";
 import { Heading } from "./Typography.js";
 
 interface Position {
@@ -553,6 +559,137 @@ export const RowActions: Story = {
         await userEvent.keyboard("{Escape}");
         await waitFor(() => expect(cell).toHaveFocus());
       },
+    );
+  },
+};
+
+/** A custom row (`renderRow`, CMP-049's row contract): the symbol is the row header, the values its cells. */
+const positionRow = (p: Position, grid: TableRowContext): JSX.Element =>
+  p.id === "p3" ? (
+    // A merged cell: one cell over Account to Unrealised PnL, a native colspan, one cell to the arrows.
+    <tr {...grid.rowProps}>
+      <th {...grid.cellProps(0, { header: true })}>{p.symbol}</th>
+      <td {...grid.cellProps(1, { span: 4 })}>Delisted by the exchange</td>
+    </tr>
+  ) : (
+    <tr {...grid.rowProps}>
+      <th {...grid.cellProps(0, { header: true })}>{p.symbol}</th>
+      <td {...grid.cellProps(1)}>
+        {grid.label(1)}
+        {p.account}
+      </td>
+      <td {...grid.cellProps(2, { numeric: true })}>
+        {grid.label(2)}
+        {p.size}
+      </td>
+      <td {...grid.cellProps(3, { numeric: true })}>
+        {grid.label(3)}
+        {p.entry.toFixed(4)}
+      </td>
+      <td {...grid.cellProps(4, { numeric: true })}>
+        {grid.label(4)}
+        {p.pnl.toFixed(2)}
+      </td>
+    </tr>
+  );
+
+/**
+ * Grid mode, merged cells (E08-D07 D20, §5): a custom row merges cells into one (a native `colspan`); the arrows
+ * treat it as one cell: → reaches it from the row header and stays on it, ← leaves it.
+ */
+export const MergedCell: Story = {
+  render: () => <Host grid renderRow={positionRow} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const header = canvas.getByRole("rowheader", { name: "SOLUSDT" });
+    header.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    const merged = canvas.getByRole("gridcell", { name: "Delisted by the exchange" });
+    await expect(merged).toHaveFocus();
+    await expect(merged).toHaveAttribute("colspan", "4");
+    await userEvent.keyboard("{ArrowRight}");
+    await expect(merged).toHaveFocus();
+    await userEvent.keyboard("{ArrowLeft}");
+    await expect(header).toHaveFocus();
+  },
+};
+
+const LIVE_SORT = "Live sort needs every symbol live.";
+const GATED: readonly TableColumn<Position>[] = COLUMNS.map((column) =>
+  column.id === "size" || column.id === "pnl"
+    ? { ...column, sortable: true, sortDisabledReason: LIVE_SORT }
+    : column,
+) as readonly TableColumn<Position>[];
+
+/**
+ * A T2 sort header (E08-D07 §6.6, D5): the button keeps its label, `aria-sort` and focus; the lock before the label,
+ * named "Not available", `aria-disabled`, described by the host's one note (in the design-system face, as a host's text
+ * is). A press sorts nothing and re-shows the reason in the echo.
+ */
+export const SortUnavailable: Story = {
+  render: () => (
+    <div style={{ fontFamily: "var(--font-family-ui), system-ui, sans-serif" }}>
+      <Host grid columns={GATED} sortReasonId="sort-note" />
+      <p id="sort-note">{LIVE_SORT}</p>
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const size = within(canvasElement).getByRole("button", { name: "Not available Size" });
+    await expect(size).toHaveAttribute("aria-disabled", "true");
+    await expect(size).toHaveAccessibleDescription(LIVE_SORT);
+    size.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(document.querySelector(".cv-table__echo:not([hidden])")).toHaveTextContent(LIVE_SORT),
+    );
+    await expect(
+      within(canvasElement).getByRole("columnheader", { name: "Not available Size" }),
+    ).toHaveAttribute("aria-sort", "none");
+  },
+};
+
+const LONG: readonly Position[] = Array.from({ length: 300 }, (_, i) => ({
+  id: `w${i}`,
+  symbol: `PAIR${String(i + 1).padStart(3, "0")}USDT`,
+  account: ["Main", "Hedge", "Swing"][i % 3] ?? "Main",
+  size: (i + 1) * 0.25,
+  entry: 100 + i * 1.75,
+  pnl: (i % 7) * 9.5 - 30,
+}));
+
+/** A host that draws a window of a long list: the rows in view and 10 either side (SCR-100 past 60 rows). */
+function WindowHost(): JSX.Element {
+  const [first, setFirst] = useState(0);
+  const offset = Math.max(0, Math.min(first - 10, LONG.length - 40));
+  return (
+    <div style={{ height: "16rem", display: "flex", flexDirection: "column" }}>
+      <Table<Position>
+        grid
+        caption="Positions, 300"
+        columns={COLUMNS}
+        rows={LONG.slice(offset, offset + 40)}
+        rowKey={(p) => p.id}
+        rowWindow={{ offset, total: LONG.length }}
+        onRowsInView={(top) => setFirst(top)}
+      />
+    </div>
+  );
+}
+
+/**
+ * Grid mode, the host's window (E08-D07 D6; `14` SCR-100 "virtualised beyond 60 rows"): 300 rows, 40 drawn between
+ * spacer rows; `aria-rowcount` counts them all and `aria-rowindex` is absolute; Ctrl+End draws the last row, then
+ * focuses it.
+ */
+export const WindowedRows: Story = {
+  render: () => <WindowHost />,
+  play: async ({ canvasElement }) => {
+    const table = within(canvasElement).getByRole("grid", { name: "Positions, 300" });
+    await expect(table).toHaveAttribute("aria-rowcount", "301");
+    within(table).getAllByRole("gridcell")[0]?.focus();
+    await userEvent.keyboard("{Control>}{End}{/Control}");
+    await waitFor(() =>
+      expect(document.activeElement?.closest("tr")).toHaveAttribute("aria-rowindex", "301"),
     );
   },
 };

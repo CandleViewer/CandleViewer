@@ -2,8 +2,9 @@
 import { composeStories } from "@storybook/react-vite";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
-import { IconButton } from "../src/components/index.js";
+import { GatedAnnounceProvider, IconButton } from "../src/components/index.js";
 import * as stories from "../src/components/IconButton.stories.js";
+import { holdEnter } from "./heldEnter.js";
 import { mount } from "./theme/mount.js";
 import { clearPolite, politeText } from "./theme/polite.js";
 
@@ -164,5 +165,57 @@ describe("IconButton gated announcement (D09 2.2)", () => {
     const open = await mount(<IconButton icon="lock" label="Arm" onClick={onClick} />);
     await userEvent.click(within(open).getByRole("button", { name: "Arm" }));
     expect(await politeText()).toBe("");
+  });
+});
+
+// E09-D09 §2.2 "one notice, many pointers": a read-only panel's one notice describes every gated control;
+// E08-S08's WatchlistGroupTabs "+" and ColumnPicker's move buttons point at it. 2b stays: the badge and the echo.
+describe("IconButton disabledReasonId: the reason shown by the host's notice", () => {
+  it("is described by the notice alone, keeps its name, badge and echo, and renders no hidden copy", async () => {
+    const host = await mount(
+      <>
+        <p id="notice">{REASON}</p>
+        <IconButton
+          icon="plus"
+          label="New watchlist"
+          disabledReason={REASON}
+          disabledReasonId="notice"
+        />
+      </>,
+    );
+    const b = get(host, "New watchlist");
+    expect(b).toHaveAttribute("aria-disabled", "true");
+    expect(b).toHaveAttribute("aria-describedby", "notice");
+    expect(b).toHaveAccessibleDescription(REASON);
+    expect(within(host).getAllByText(REASON)).toHaveLength(1);
+    expect(b.querySelector(".cv-icon-button__badge svg")).not.toBeNull();
+    expect(document.querySelector('[data-cmp="CMP-016"]')).toHaveTextContent(
+      `New watchlist · ${REASON}`,
+    );
+  });
+});
+
+// G-T2.3 (E09-D09 §9.3): a held Enter's repeats would each click the native button; a T2 one swallows them.
+describe("IconButton T2: a held Enter says the reason once per press", () => {
+  it("a held Enter's repeats change nothing and say nothing; the next press says the reason again", async () => {
+    const onClick = fn();
+    const announce = fn();
+    const host = await mount(
+      <GatedAnnounceProvider announce={announce}>
+        <IconButton icon="plus" label="Settings" disabledReason={REASON} onClick={onClick} />
+      </GatedAnnounceProvider>,
+    );
+    holdEnter(get(host), 2);
+    expect(announce.mock.calls).toEqual([[REASON]]);
+    holdEnter(get(host), 0);
+    expect(announce.mock.calls).toEqual([[REASON], [REASON]]);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("an enabled icon button keeps the native repeat: a held Enter clicks once per keydown", async () => {
+    const onClick = fn();
+    const host = await mount(<IconButton icon="plus" label="Settings" onClick={onClick} />);
+    holdEnter(get(host), 2);
+    expect(onClick).toHaveBeenCalledTimes(3);
   });
 });

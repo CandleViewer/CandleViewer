@@ -1,16 +1,24 @@
 // @vitest-environment jsdom
+import { composeStories } from "@storybook/react-vite";
 import { act, useState, type JSX } from "react";
 import { expect, fireEvent, userEvent, waitFor, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
   EmptyState,
+  GatedAnnounceProvider,
   Table,
   type MenuItem,
   type TableColumn,
   type TableProps,
+  type TableRowContext,
   type TableSort,
 } from "../src/components/index.js";
+import { seriousViolations } from "./axe.js";
+import { find, loadCss } from "./css-contract.js";
+import { holdEnter } from "./heldEnter.js";
+import * as stories from "../src/components/Table.stories.js";
 import { mount } from "./theme/mount.js";
+import { politeText } from "./theme/polite.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -85,6 +93,24 @@ describe("Table (CMP-049), table mode", () => {
       "data-numeric",
       "",
     );
+  });
+
+  // table.css gives an end-aligned header its start padding as room (E08-D07 §4.1, interim): its rules reach a header
+  // marked `data-numeric` and the sort button inside it, and no start-aligned header.
+  it("an end-aligned header is marked around its label or its sort button; a start-aligned one is not", async () => {
+    const host = await mount(<Host />);
+    const canvas = within(host);
+    const pnl = canvas.getByRole("columnheader", { name: "PnL" });
+    expect(pnl).toHaveClass("cv-table__header");
+    expect(pnl).toHaveAttribute("data-numeric", "");
+    expect(pnl.firstElementChild).toHaveClass("cv-table__sort");
+    expect(pnl.querySelector(".cv-table__sort > .cv-table__label")).not.toBeNull();
+    const accounts = canvas.getByRole("columnheader", { name: "Accounts" });
+    expect(accounts).toHaveAttribute("data-numeric", "");
+    expect(accounts.firstElementChild).toHaveClass("cv-table__label");
+    const name = canvas.getByRole("columnheader", { name: "Name" });
+    expect(name).toHaveClass("cv-table__header");
+    expect(name).not.toHaveAttribute("data-numeric");
   });
 
   it("text cells ellipsize with the full text in the DOM", async () => {
@@ -551,6 +577,26 @@ describe("Table (CMP-049) stacked reflow", () => {
       fireEvent.click(within(host).getByRole("button", { name: "Hide" }));
     });
     expect(second.disconnected()).toBe(true);
+  });
+
+  it('reflow "grid": stacked, a grid keeps role grid, its gridcells and one Tab stop (E08-D07 D30 cards)', async () => {
+    const observer = stub({ value: 16 });
+    const host = await mount(base({ grid: true, reflow: "grid" }));
+    await observer().resize(300);
+    expect(layout(host)).toBe("stacked");
+    const grid = within(host).getByRole("grid", { name: CAPTION });
+    expect(within(grid).getAllByRole("gridcell")).toHaveLength(9);
+    expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+  });
+
+  it('reflow "grid": stacked, the arrows still move by cell', async () => {
+    const observer = stub({ value: 16 });
+    const host = await mount(base({ grid: true, reflow: "grid" }));
+    await observer().resize(300);
+    const first = within(host).getAllByRole("gridcell")[0] as HTMLElement;
+    act(() => first.focus());
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toHaveTextContent("sam");
   });
 });
 
@@ -1326,5 +1372,1288 @@ describe("Table (CMP-049) grid mode, selection and row actions", () => {
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
     await mount(<GridHost />);
     expect(page.getByRole("region", { name: CAPTION })).not.toHaveAttribute("tabindex");
+  });
+});
+
+describe("Table (CMP-049) grid mode: E08-D07's window, custom rows, merged cells and T2", () => {
+  const page = within(document.body);
+
+  interface Sym {
+    readonly id: string;
+    readonly symbol: string;
+    readonly last: number;
+  }
+  const LIST: readonly Sym[] = Array.from({ length: 120 }, (_, i) => ({
+    id: `s${i}`,
+    symbol: `S${String(i).padStart(3, "0")}USDT`,
+    last: 100 + i,
+  }));
+  const SYM_COLUMNS: readonly TableColumn<Sym>[] = [
+    { id: "symbol", header: "Symbol", cell: (s) => s.symbol },
+    { id: "last", header: "Last", cell: (s) => s.last, numeric: "price" },
+    { id: "chg", header: "24h %", cell: (s) => s.last / 10, numeric: "pct" },
+  ];
+  const LIVE_SORT = "Live sort needs every symbol live.";
+
+  type WindowHostProps = Partial<TableProps<Sym>> & {
+    readonly size?: number;
+    readonly start?: number;
+  };
+
+  /** A host that windows the list: `size` rows from the first row it is asked for, as SCR-100 does past 60. */
+  const WindowHost = ({ size = 10, start = 0, ...props }: WindowHostProps): JSX.Element => {
+    const [offset, setOffset] = useState(start);
+    return (
+      <>
+        <button type="button" onClick={() => setOffset(60)}>
+          Jump
+        </button>
+        <Table<Sym>
+          grid
+          caption="Alts"
+          columns={SYM_COLUMNS}
+          rows={LIST.slice(offset, offset + size)}
+          rowKey={(s) => s.id}
+          rowWindow={{ offset, total: LIST.length }}
+          onRowsInView={(first) => setOffset(Math.min(Math.max(0, first), LIST.length - size))}
+          {...props}
+        />
+        <button type="button">After</button>
+      </>
+    );
+  };
+
+  /** A custom row as CMP-161 draws one: the symbol is the row header, then the values. */
+  const renderSym = (s: Sym, grid: TableRowContext): JSX.Element => (
+    <tr {...grid.rowProps}>
+      <th {...grid.cellProps(0, { header: true })}>{s.symbol}</th>
+      <td {...grid.cellProps(1, { numeric: true })}>{s.last.toFixed(2)}</td>
+      <td {...grid.cellProps(2, { numeric: true })}>{(s.last / 10).toFixed(2)}</td>
+    </tr>
+  );
+  /** Row s1 merges its two value cells, as a delisted watchlist row does (E08-D07 D20). */
+  const renderMerged = (s: Sym, grid: TableRowContext): JSX.Element =>
+    s.id === "s1" ? (
+      <tr {...grid.rowProps}>
+        <th {...grid.cellProps(0, { header: true })}>{s.symbol}</th>
+        <td {...grid.cellProps(1, { span: 2 })}>Delisted by the exchange</td>
+      </tr>
+    ) : (
+      renderSym(s, grid)
+    );
+  /** Enter on any cell of a row is refused with a reason (a T2 key, E08-D07 §6.6). */
+  const renderRefused = (s: Sym, grid: TableRowContext): JSX.Element => (
+    <tr
+      {...grid.rowProps}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        grid.refuse("Delisted by the exchange");
+      }}
+    >
+      <th {...grid.cellProps(0, { header: true })}>{s.symbol}</th>
+      <td {...grid.cellProps(1, { numeric: true })}>{s.last.toFixed(2)}</td>
+      <td {...grid.cellProps(2, { numeric: true, echo: "Last update 10:31:02 UTC" })}>
+        {(s.last / 10).toFixed(2)}
+      </td>
+    </tr>
+  );
+  const CustomHost = (props: Partial<TableProps<Sym>>): JSX.Element => (
+    <>
+      <button type="button">Before</button>
+      <Table<Sym>
+        grid
+        caption="Majors"
+        columns={SYM_COLUMNS}
+        rows={LIST.slice(0, 4)}
+        rowKey={(s) => s.id}
+        renderRow={renderSym}
+        {...props}
+      />
+      <button type="button">After</button>
+    </>
+  );
+
+  const grid = (): HTMLElement => page.getByRole("grid");
+  const cellAt = (r: number, c: number): HTMLElement => {
+    const cell = grid().querySelector<HTMLElement>(`[data-cv-r="${r}"][data-cv-c="${c}"]`);
+    if (cell === null) throw new Error(`no cell ${r},${c}`);
+    return cell;
+  };
+  const rowOfFocus = (): string | null | undefined =>
+    document.activeElement?.closest("tr")?.getAttribute("aria-rowindex");
+  const echo = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('.cv-table__echo[data-cmp="CMP-016"]');
+  const line = (): HTMLElement =>
+    grid().closest(".cv-table")?.querySelector<HTMLElement>(".cv-table__live") as HTMLElement;
+  const rect = (top: number, height: number): DOMRect =>
+    ({ top, height, bottom: top + height, left: 0, right: 0, width: 0, x: 0, y: top }) as DOMRect;
+
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("a window: aria-rowcount counts the whole list and each drawn row's aria-rowindex is absolute", async () => {
+    await mount(<WindowHost start={50} />);
+    expect(grid()).toHaveAttribute("aria-rowcount", "121");
+    const rows = within(grid()).getAllByRole("row");
+    expect(rows).toHaveLength(11);
+    expect([
+      rows[1]?.getAttribute("aria-rowindex"),
+      rows[10]?.getAttribute("aria-rowindex"),
+    ]).toEqual(["52", "61"]);
+  });
+
+  it("a window: the rows it does not draw are held by spacer rows hidden from AT", async () => {
+    await mount(<WindowHost start={50} />);
+    const spacers = grid().querySelectorAll("tbody tr.cv-table__spacer");
+    expect(spacers.length).toBeGreaterThanOrEqual(2);
+    for (const spacer of spacers) expect(spacer).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it.each([0, 3, 4])("a window keeps the zebra of the absolute row (offset %i)", async (start) => {
+    await mount(<WindowHost start={start} />);
+    const first = within(grid()).getAllByRole("row")[1] as HTMLElement;
+    expect(first.matches(":nth-child(even)")).toBe(start % 2 === 1);
+  });
+
+  it("reports the rows in view as the region scrolls, once per change", async () => {
+    const seen: [number, number][] = [];
+    await mount(
+      <Table<Sym>
+        grid
+        caption="Alts"
+        columns={SYM_COLUMNS}
+        rows={LIST.slice(0, 20)}
+        rowKey={(s) => s.id}
+        rowWindow={{ offset: 0, total: LIST.length }}
+        onRowsInView={(first, last) => seen.push([first, last])}
+      />,
+    );
+    const region = document.querySelector(".cv-table__region") as HTMLElement;
+    let scrollTop = 0;
+    Object.defineProperty(region, "scrollTop", { configurable: true, get: () => scrollTop });
+    Object.defineProperty(region, "clientHeight", { configurable: true, get: () => 120 });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.tagName === "TBODY") return rect(24 - scrollTop, 24 * LIST.length);
+      if (this.tagName === "THEAD" || this.tagName === "TR") return rect(0, 24);
+      return rect(0, 0);
+    });
+    scrollTop = 240;
+    fireEvent.scroll(region);
+    fireEvent.scroll(region);
+    expect(seen).toEqual([[10, 13]]);
+  });
+
+  it("↓ on the last drawn row asks the host for the next row and lands focus once it is drawn", async () => {
+    await mount(<WindowHost />);
+    act(() => cellAt(10, 1).focus());
+    await userEvent.keyboard("{ArrowDown}");
+    expect(rowOfFocus()).toBe("12");
+    expect(document.activeElement).toHaveTextContent("110.00");
+  });
+
+  it("Ctrl+End reaches the last cell of the whole list, drawn first", async () => {
+    await mount(<WindowHost />);
+    act(() => cellAt(1, 0).focus());
+    await userEvent.keyboard("{Control>}{End}{/Control}");
+    expect(rowOfFocus()).toBe("121");
+    expect(document.activeElement).toBe(cellAt(120, 2));
+  });
+
+  it("the one Tab stop stays on a drawn row when the remembered row leaves the window", async () => {
+    await mount(<WindowHost />);
+    act(() => cellAt(3, 1).focus());
+    await userEvent.click(page.getByRole("button", { name: "Jump" }));
+    const stops = grid().querySelectorAll('[tabindex="0"]');
+    expect(stops).toHaveLength(1);
+    expect(stops[0]?.closest("tr")).toHaveAttribute("aria-rowindex", "62");
+    await userEvent.tab();
+    expect(document.activeElement).toBe(stops[0]);
+  });
+
+  /** A host that draws the row it is asked for only when told to (`draw`), as one that loads its rows would. */
+  const DeferredHost = ({
+    onDraw,
+  }: {
+    readonly onDraw: (draw: () => void) => void;
+  }): JSX.Element => {
+    const [offset, setOffset] = useState(0);
+    const [asked, setAsked] = useState(0);
+    onDraw(() => setOffset(Math.max(0, Math.min(asked - 15, LIST.length - 20))));
+    return (
+      <>
+        <Table<Sym>
+          grid
+          caption="Alts"
+          columns={SYM_COLUMNS}
+          rows={LIST.slice(offset, offset + 20)}
+          rowKey={(s) => s.id}
+          rowWindow={{ offset, total: LIST.length }}
+          onRowsInView={(first) => setAsked(first)}
+        />
+        <button type="button">After</button>
+      </>
+    );
+  };
+
+  it("a press in the grid drops a key's request for an undrawn row: focus never jumps to it later", async () => {
+    let draw = (): void => undefined;
+    await mount(<DeferredHost onDraw={(fn) => (draw = fn)} />);
+    act(() => cellAt(20, 1).focus());
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(cellAt(20, 1));
+    act(() => {
+      fireEvent.mouseDown(cellAt(15, 1));
+    });
+    act(() => draw());
+    expect(grid().querySelector('[data-cv-r="21"]')).not.toBeNull();
+    expect(document.activeElement).toBe(cellAt(20, 1));
+  });
+
+  it("focus moved in the grid drops a key's request for an undrawn row: focus never jumps to it later", async () => {
+    let draw = (): void => undefined;
+    await mount(<DeferredHost onDraw={(fn) => (draw = fn)} />);
+    act(() => cellAt(20, 1).focus());
+    await userEvent.keyboard("{ArrowDown}");
+    act(() => cellAt(15, 2).focus());
+    act(() => draw());
+    expect(grid().querySelector('[data-cv-r="21"]')).not.toBeNull();
+    expect(document.activeElement).toBe(cellAt(15, 2));
+  });
+
+  it("an undisturbed request still lands focus on its row once the host draws it", async () => {
+    let draw = (): void => undefined;
+    await mount(<DeferredHost onDraw={(fn) => (draw = fn)} />);
+    act(() => cellAt(20, 1).focus());
+    await userEvent.keyboard("{ArrowDown}");
+    act(() => draw());
+    expect(document.activeElement).toBe(cellAt(21, 1));
+  });
+
+  it("a cell's echo words show on hover after CMP-016's 300 ms, and go CMP-016's 100 ms grace after the pointer leaves", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount(<CustomHost renderRow={renderRefused} />);
+      act(() => {
+        fireEvent.pointerOver(cellAt(1, 2));
+      });
+      act(() => {
+        vi.advanceTimersByTime(299);
+      });
+      expect(echo()).toHaveAttribute("hidden");
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(echo()).toHaveTextContent("Last update 10:31:02 UTC");
+      expect(echo()).not.toHaveAttribute("hidden");
+      // A pointerout with no related target leaves the table (React's leave): the leave grace starts.
+      act(() => {
+        fireEvent.pointerOut(cellAt(1, 2));
+      });
+      act(() => {
+        vi.advanceTimersByTime(99);
+      });
+      expect(echo()).not.toHaveAttribute("hidden");
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(echo()).toHaveAttribute("hidden");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a hover echo stays while the pointer crosses onto it and rests there (WCAG 1.4.13); leaving both hides it after the grace", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount(<CustomHost renderRow={renderRefused} />);
+      const cell = cellAt(1, 2);
+      act(() => {
+        fireEvent.pointerOver(cell);
+      });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      const surface = echo() as HTMLElement;
+      expect(surface).not.toHaveAttribute("hidden");
+      // The pointer leaves the cell for the echo: React's leave of the table, its enter of the echo.
+      act(() => {
+        fireEvent.pointerOut(cell, { relatedTarget: surface });
+        fireEvent.pointerOver(surface, { relatedTarget: cell });
+      });
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(echo()).toBe(surface);
+      expect(surface).toHaveTextContent("Last update 10:31:02 UTC");
+      // It leaves the echo for the page: the echo goes once the grace has passed.
+      act(() => {
+        fireEvent.pointerOut(surface);
+      });
+      act(() => {
+        vi.advanceTimersByTime(99);
+      });
+      expect(echo()).toBe(surface);
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(echo()).toHaveAttribute("hidden");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a hover echo stays when the pointer comes back from it to its cell", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount(<CustomHost renderRow={renderRefused} />);
+      const cell = cellAt(1, 2);
+      act(() => {
+        fireEvent.pointerOver(cell);
+      });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      const surface = echo() as HTMLElement;
+      act(() => {
+        fireEvent.pointerOut(cell, { relatedTarget: surface });
+        fireEvent.pointerOut(surface, { relatedTarget: cell });
+        fireEvent.pointerOver(cell, { relatedTarget: surface });
+      });
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(echo()).toBe(surface);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The leave grace is for a hover echo: keyboard focus on its cell keeps the echo whatever the pointer does (WCAG 2.1.1
+  // and 1.4.13 together: the words stay while the cell is focused, the pointer a bystander).
+  it.each([
+    { where: "onto another cell", move: () => fireEvent.pointerOver(cellAt(2, 1)) },
+    { where: "out of the table", move: () => fireEvent.pointerOut(cellAt(1, 2)) },
+  ])(
+    "a keyboard-focused cell's echo outlives the pointer moving $where: the leave grace never starts",
+    async ({ move }) => {
+      vi.useFakeTimers();
+      try {
+        await mount(<CustomHost renderRow={renderRefused} />);
+        act(() => cellAt(1, 2).focus());
+        expect(echo()).not.toHaveAttribute("hidden");
+        act(() => {
+          move();
+        });
+        act(() => {
+          vi.advanceTimersByTime(1000);
+        });
+        expect(echo()).not.toHaveAttribute("hidden");
+        expect(echo()).toHaveTextContent("Last update 10:31:02 UTC");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("unmounting the table while the echo's leave grace runs clears its timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const Hideable = (): JSX.Element => {
+        const [shown, setShown] = useState(true);
+        return (
+          <>
+            <button type="button" onClick={() => setShown(false)}>
+              Hide
+            </button>
+            {shown ? <CustomHost renderRow={renderRefused} /> : null}
+          </>
+        );
+      };
+      await mount(<Hideable />);
+      const idle = vi.getTimerCount();
+      act(() => {
+        fireEvent.pointerOver(cellAt(1, 2));
+      });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(echo()).not.toHaveAttribute("hidden");
+      act(() => {
+        fireEvent.pointerOut(cellAt(1, 2));
+      });
+      expect(vi.getTimerCount()).toBeGreaterThan(idle); // the leave grace is pending
+      act(() => {
+        fireEvent.click(page.getByRole("button", { name: "Hide" }));
+      });
+      expect(page.queryByRole("grid")).toBeNull();
+      expect(vi.getTimerCount()).toBeLessThanOrEqual(idle);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renderRow: a custom row takes the grid contract, its first cell the row header", async () => {
+    await mount(<CustomHost />);
+    expect(within(grid()).getAllByRole("rowheader")).toHaveLength(4);
+    expect(within(grid()).getAllByRole("gridcell")).toHaveLength(8);
+    expect(within(grid()).getAllByRole("row")[1]).toHaveAttribute("aria-rowindex", "2");
+    expect(grid().querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+  });
+
+  it("renderRow: one Tab stop, then the arrows move by cell through the custom cells", async () => {
+    await mount(<CustomHost />);
+    page.getByRole("button", { name: "Before" }).focus();
+    await userEvent.tab();
+    expect(document.activeElement).toBe(cellAt(1, 0));
+    await userEvent.keyboard("{ArrowRight}{ArrowDown}");
+    expect(document.activeElement).toBe(cellAt(2, 1));
+  });
+
+  it("renderRow draws no select or actions column; the row menu opens as a context menu", async () => {
+    await mount(
+      <CustomHost
+        onRowSelect={() => undefined}
+        rowActions={(s) => [{ id: "copy", label: `Copy ${s.symbol}`, onSelect: () => undefined }]}
+      />,
+    );
+    expect(grid()).toHaveAttribute("aria-colcount", "3");
+    expect(page.queryByRole("checkbox")).toBeNull();
+    act(() => cellAt(2, 1).focus());
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    expect(page.getByRole("menuitem", { name: "Copy S001USDT" })).toHaveFocus();
+  });
+
+  it("a merged cell: a native colspan, and one cell to → and ←", async () => {
+    await mount(<CustomHost renderRow={renderMerged} />);
+    act(() => cellAt(2, 0).focus());
+    await userEvent.keyboard("{ArrowRight}");
+    const merged = cellAt(2, 1);
+    expect(document.activeElement).toBe(merged);
+    expect(merged).toHaveAttribute("colspan", "2");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(document.activeElement).toBe(merged);
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(document.activeElement).toBe(cellAt(2, 0));
+  });
+
+  it("a merged cell: ↓ onto any column it covers lands on it; ↓ off it keeps its first column", async () => {
+    await mount(<CustomHost renderRow={renderMerged} />);
+    act(() => cellAt(1, 2).focus());
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(cellAt(2, 1));
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(cellAt(3, 1));
+  });
+
+  it("refuse(): a T2 key changes nothing and shows its reason in an aria-hidden echo on the focused cell", async () => {
+    await mount(<CustomHost renderRow={renderRefused} />);
+    act(() => cellAt(2, 1).focus());
+    await userEvent.keyboard("{Enter}");
+    expect(echo()).not.toHaveAttribute("hidden");
+    expect(echo()).toHaveTextContent("Delisted by the exchange");
+    expect(echo()).toHaveAttribute("aria-hidden", "true");
+    expect(document.activeElement).toBe(cellAt(2, 1));
+  });
+
+  it("refuse(): each press says the reason once, through the gated announcer, never the table's own line", async () => {
+    const announce = vi.fn<(text: string) => void>();
+    await mount(
+      <GatedAnnounceProvider announce={announce}>
+        <CustomHost renderRow={renderRefused} />
+      </GatedAnnounceProvider>,
+    );
+    act(() => cellAt(2, 1).focus());
+    await userEvent.keyboard("{Enter}{Enter}");
+    expect(announce.mock.calls).toEqual([
+      ["Delisted by the exchange"],
+      ["Delisted by the exchange"],
+    ]);
+    expect(line()).not.toHaveTextContent("Delisted by the exchange");
+  });
+
+  it("refuse(): without a host's announcer the reason is said once in the package's polite region", async () => {
+    await mount(<CustomHost renderRow={renderRefused} />);
+    act(() => cellAt(2, 1).focus());
+    await userEvent.keyboard("{Enter}");
+    expect(await politeText()).toBe("Delisted by the exchange");
+    expect(line().textContent).toBe("");
+  });
+
+  it("refuse(): Esc hides the echo and keeps focus; a move hides it too", async () => {
+    await mount(<CustomHost renderRow={renderRefused} />);
+    act(() => cellAt(2, 1).focus());
+    await userEvent.keyboard("{Enter}{Escape}");
+    expect(echo()).toHaveAttribute("hidden");
+    expect(document.activeElement).toBe(cellAt(2, 1));
+    await userEvent.keyboard("{Enter}{ArrowLeft}");
+    expect(echo()).toHaveAttribute("hidden");
+  });
+
+  it("a cell's echo text shows on keyboard focus, aria-hidden, and goes on blur", async () => {
+    await mount(<CustomHost renderRow={renderRefused} />);
+    act(() => cellAt(1, 1).focus());
+    await userEvent.keyboard("{ArrowRight}");
+    expect(echo()).toHaveTextContent("Last update 10:31:02 UTC");
+    expect(echo()).not.toHaveAttribute("hidden");
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(echo()).toHaveAttribute("hidden");
+  });
+
+  /** Lays `element` out cut: its text `scroll` px wide in a box `client` px wide (jsdom has no layout). */
+  const cutTo = (element: Element, scroll: number, client: number): void => {
+    Object.defineProperty(element, "scrollWidth", { configurable: true, value: scroll });
+    Object.defineProperty(element, "clientWidth", { configurable: true, value: client });
+  };
+
+  it("a cut header label is a block of its own; on keyboard focus the echo shows its whole words (E08-D07 §4.1)", async () => {
+    await mount(<CustomHost />);
+    const header = cellAt(0, 2);
+    const label = header.querySelector<HTMLElement>(".cv-table__label") as HTMLElement;
+    cutTo(label, 37, 20);
+    act(() => cellAt(1, 2).focus());
+    await userEvent.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(header);
+    expect(echo()).not.toHaveAttribute("hidden");
+    expect(echo()).toHaveTextContent("24h %");
+    // The header keeps its whole name: the cut is visual.
+    expect(header).toHaveAccessibleName("24h %");
+  });
+
+  it("a cut sort header's label: its button's focus shows the whole words in the echo", async () => {
+    const columns: readonly TableColumn<Sym>[] = SYM_COLUMNS.map((c) =>
+      c.id === "chg" ? { ...c, sortable: true } : c,
+    ) as readonly TableColumn<Sym>[];
+    await mount(<CustomHost columns={columns} onSortChange={() => undefined} />);
+    const button = page.getByRole("button", { name: "24h %" });
+    cutTo(button.querySelector(".cv-table__label") as HTMLElement, 37, 20);
+    act(() => cellAt(1, 2).focus());
+    await userEvent.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(button);
+    expect(echo()).toHaveTextContent("24h %");
+    expect(echo()).not.toHaveAttribute("hidden");
+  });
+
+  it("a header label that is not cut shows no echo", async () => {
+    await mount(<CustomHost />);
+    act(() => cellAt(1, 2).focus());
+    await userEvent.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(cellAt(0, 2));
+    expect(echo()).toHaveAttribute("hidden");
+  });
+
+  it("a cell's `cut` text: the echo shows it on hover while the cell is cut, after CMP-016's 300 ms", async () => {
+    vi.useFakeTimers();
+    try {
+      const renderCut = (s: Sym, grid: TableRowContext): JSX.Element => (
+        <tr {...grid.rowProps}>
+          <th {...grid.cellProps(0, { header: true, cut: s.symbol })}>{s.symbol}</th>
+          <td {...grid.cellProps(1, { numeric: true })}>{s.last.toFixed(2)}</td>
+          <td {...grid.cellProps(2, { numeric: true })}>{(s.last / 10).toFixed(2)}</td>
+        </tr>
+      );
+      await mount(<CustomHost renderRow={renderCut} />);
+      cutTo(cellAt(2, 0), 90, 60);
+      act(() => {
+        fireEvent.pointerOver(cellAt(2, 0));
+      });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(echo()).toHaveTextContent("S001USDT");
+      expect(echo()).not.toHaveAttribute("hidden");
+      // The same cell laid out whole: nothing to echo.
+      act(() => {
+        fireEvent.pointerOver(cellAt(3, 0));
+      });
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(echo()).toHaveAttribute("hidden");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A11Y-4702A3-03 (E08-D07 §4.1 pairs every ellipsis with the echo): `scrollWidth` and `clientWidth` are whole
+  // pixels, so a text 0.4 px wider than its box reads as no cut there while the ellipsis is still drawn. The line is
+  // measured to the fraction against the box's content width. jsdom has no layout and no `Range` geometry: the boxes
+  // and the text runs below are what a browser reports (the whole-pixel measures rounded alike, as it rounds them).
+  describe("a cut measured to the fraction", () => {
+    /** The text runs' widths in px, as `Range` reports them. */
+    const runs = new Map<Node, number>();
+    const area = (left: number, width: number): DOMRect =>
+      ({
+        x: left,
+        y: 0,
+        left,
+        right: left + width,
+        top: 0,
+        bottom: 20,
+        width,
+        height: 20,
+      }) as DOMRect;
+    const original = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+
+    beforeEach(() => {
+      runs.clear();
+      Object.defineProperty(Range.prototype, "getClientRects", {
+        configurable: true,
+        writable: true,
+        value(this: Range): DOMRect[] {
+          const width = runs.get(this.startContainer);
+          return width === undefined ? [] : [area(0, width)];
+        },
+      });
+    });
+    afterEach(() => {
+      if (original === undefined) Reflect.deleteProperty(Range.prototype, "getClientRects");
+      else Object.defineProperty(Range.prototype, "getClientRects", original);
+    });
+
+    /** Lays `element` out `width` px wide, `padding` px of it padding, the whole-pixel measures rounded alike. */
+    const boxed = (element: HTMLElement, width: number, padding = 0): void => {
+      Object.defineProperty(element, "scrollWidth", {
+        configurable: true,
+        value: Math.round(width),
+      });
+      Object.defineProperty(element, "clientWidth", {
+        configurable: true,
+        value: Math.round(width),
+      });
+      element.getBoundingClientRect = () => area(0, width);
+      if (padding > 0) element.style.padding = `0 ${padding / 2}px`;
+    };
+
+    /** A header label `text` px wide in a 100 px box, then focus on its header, as ↑ from the cell under it moves it. */
+    const focusHeader = async (text: number): Promise<void> => {
+      await mount(<CustomHost />);
+      const label = cellAt(0, 2).querySelector<HTMLElement>(".cv-table__label") as HTMLElement;
+      boxed(label, 100);
+      runs.set(label.firstChild as Node, text);
+      act(() => cellAt(1, 2).focus());
+      await userEvent.keyboard("{ArrowUp}");
+      expect(document.activeElement).toBe(cellAt(0, 2));
+    };
+
+    it("a header label 0.4 px wider than its box shows its whole words in the echo", async () => {
+      await focusHeader(100.4);
+      expect(echo()).not.toHaveAttribute("hidden");
+      expect(echo()).toHaveTextContent("24h %");
+    });
+
+    it.each([100, 100.01])(
+      "a header label %f px wide in a 100 px box is not cut: one layout step is rounding",
+      async (text) => {
+        await focusHeader(text);
+        expect(echo()).toHaveAttribute("hidden");
+      },
+    );
+
+    /** Rows whose symbol cell is `cut`, with an optional note after the symbol that takes no room (absolute). */
+    const renderCut =
+      (note?: string) =>
+      (s: Sym, grid: TableRowContext): JSX.Element => (
+        <tr {...grid.rowProps}>
+          <th {...grid.cellProps(0, { header: true, cut: s.symbol })}>
+            <span>{s.symbol}</span>
+            {note === undefined ? null : <span style={{ position: "absolute" }}>{note}</span>}
+          </th>
+          <td {...grid.cellProps(1, { numeric: true })}>{s.last.toFixed(2)}</td>
+          <td {...grid.cellProps(2, { numeric: true })}>{(s.last / 10).toFixed(2)}</td>
+        </tr>
+      );
+    /** Focus on the symbol cell of the first row, as ← from its value moves it. */
+    const focusSymbol = async (): Promise<void> => {
+      act(() => cellAt(1, 1).focus());
+      await userEvent.keyboard("{ArrowLeft}");
+      expect(document.activeElement).toBe(cellAt(1, 0));
+    };
+
+    it("a symbol cell's padding is no room for its text: 100.4 px in a 116 px cell with 16 px of padding", async () => {
+      await mount(<CustomHost renderRow={renderCut()} />);
+      const cell = cellAt(1, 0);
+      boxed(cell, 116, 16);
+      runs.set(cell.querySelector("span")?.firstChild as Node, 100.4);
+      await focusSymbol();
+      expect(echo()).not.toHaveAttribute("hidden");
+      expect(echo()).toHaveTextContent("S000USDT");
+    });
+
+    it("a visually hidden note in the cell takes no room in its line", async () => {
+      await mount(<CustomHost renderRow={renderCut("Last update 10:31:02 UTC")} />);
+      const cell = cellAt(1, 0);
+      const [symbol, note] = cell.querySelectorAll("span");
+      boxed(cell, 60);
+      runs.set(symbol?.firstChild as Node, 60);
+      runs.set(note?.firstChild as Node, 250);
+      await focusSymbol();
+      expect(echo()).toHaveAttribute("hidden");
+    });
+  });
+
+  /** A host that edits its list as SCR-100 does through CMP-161's keys: `Del` removes a row, `Alt+↑/↓` moves it. */
+  const EditHost = (): JSX.Element => {
+    const [list, setList] = useState(LIST.slice(0, 4));
+    const renderEditable = (s: Sym, grid: TableRowContext): JSX.Element => (
+      <tr
+        {...grid.rowProps}
+        onKeyDown={(event) => {
+          const down = event.key === "ArrowDown";
+          if (event.key === "Delete") {
+            event.preventDefault();
+            setList((all) => all.filter((x) => x.id !== s.id));
+          } else if (event.altKey && (down || event.key === "ArrowUp")) {
+            event.preventDefault();
+            setList((all) => {
+              const from = all.findIndex((x) => x.id === s.id);
+              const to = from + (down ? 1 : -1);
+              if (to < 0 || to >= all.length) return all;
+              const rest = all.filter((x) => x.id !== s.id);
+              return [...rest.slice(0, to), s, ...rest.slice(to)];
+            });
+          }
+        }}
+      >
+        <th {...grid.cellProps(0, { header: true })}>{s.symbol}</th>
+        <td {...grid.cellProps(1, { numeric: true })}>{s.last.toFixed(2)}</td>
+        <td {...grid.cellProps(2, { numeric: true })}>{(s.last / 10).toFixed(2)}</td>
+      </tr>
+    );
+    return (
+      <>
+        <button type="button">Before</button>
+        <Table<Sym>
+          grid
+          caption="Majors"
+          columns={SYM_COLUMNS}
+          rows={list}
+          rowKey={(s) => s.id}
+          renderRow={renderEditable}
+        />
+        <button type="button">After</button>
+      </>
+    );
+  };
+  /** The row header's text of the row that holds focus. */
+  const focusedSymbol = (): string | null | undefined =>
+    document.activeElement?.closest("tr")?.querySelector("th")?.textContent;
+
+  it("Del on a middle row: focus moves to the same cell of the next row (E08-D07 §6.3)", async () => {
+    await mount(<EditHost />);
+    act(() => cellAt(2, 1).focus());
+    await userEvent.keyboard("{Delete}");
+    expect(document.activeElement).toBe(cellAt(2, 1));
+    expect(focusedSymbol()).toBe("S002USDT");
+  });
+
+  it("Del on the last row: focus moves to the same cell of the previous row", async () => {
+    await mount(<EditHost />);
+    act(() => cellAt(4, 2).focus());
+    await userEvent.keyboard("{Delete}");
+    expect(document.activeElement).toBe(cellAt(3, 2));
+    expect(focusedSymbol()).toBe("S002USDT");
+  });
+
+  it("a reorder that moves the focused row's node: focus stays on the moved symbol, which keeps the Tab stop", async () => {
+    await mount(<EditHost />);
+    act(() => cellAt(1, 1).focus());
+    await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
+    expect(focusedSymbol()).toBe("S000USDT");
+    expect(document.activeElement).toBe(cellAt(2, 1));
+    expect(grid().querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+    expect(cellAt(2, 1)).toHaveAttribute("tabindex", "0");
+  });
+
+  it("a reorder that moves another row's node: the focused symbol keeps focus and the Tab stop follows it", async () => {
+    await mount(<EditHost />);
+    act(() => cellAt(3, 2).focus());
+    await userEvent.keyboard("{Alt>}{ArrowUp}{/Alt}");
+    expect(focusedSymbol()).toBe("S002USDT");
+    expect(document.activeElement).toBe(cellAt(2, 2));
+    expect(grid().querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+    expect(cellAt(2, 2)).toHaveAttribute("tabindex", "0");
+  });
+
+  it("a row removed while focus is outside the grid takes nothing back into it", async () => {
+    await mount(<EditHost />);
+    act(() => cellAt(2, 1).focus());
+    const after = page.getByRole("button", { name: "After" });
+    await userEvent.tab();
+    expect(document.activeElement).toBe(after);
+    act(() => {
+      fireEvent.keyDown(cellAt(2, 1), { key: "Delete" });
+    });
+    expect(document.activeElement).toBe(after);
+  });
+
+  it("a row removed after a click away from the grid takes nothing back into it: focus stays on the page", async () => {
+    await mount(<EditHost />);
+    act(() => cellAt(2, 1).focus());
+    await userEvent.click(document.body);
+    expect(document.activeElement).toBe(document.body);
+    act(() => {
+      fireEvent.keyDown(cellAt(2, 1), { key: "Delete" });
+    });
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  /**
+   * A windowed host that also edits its list (SCR-100 past 60 rows): `Del` removes a row, so the list shrinks;
+   * `scrollTo` draws another window of it, as the region scrolling does, and the list keeps its length.
+   */
+  const WindowEditHost = ({
+    onScroll,
+  }: {
+    readonly onScroll: (scrollTo: (offset: number) => void) => void;
+  }): JSX.Element => {
+    const [offset, setOffset] = useState(0);
+    const [list, setList] = useState(LIST.slice(0, 30));
+    onScroll(setOffset);
+    return (
+      <>
+        <button type="button">Before</button>
+        <Table<Sym>
+          grid
+          caption="Alts"
+          columns={SYM_COLUMNS}
+          rows={list.slice(offset, offset + 10)}
+          rowKey={(s) => s.id}
+          rowWindow={{ offset, total: list.length }}
+          onRowsInView={() => undefined}
+          renderRow={(s, grid) => (
+            <tr
+              {...grid.rowProps}
+              onKeyDown={(event) => {
+                if (event.key !== "Delete") return;
+                event.preventDefault();
+                setList((all) => all.filter((x) => x.id !== s.id));
+              }}
+            >
+              <th {...grid.cellProps(0, { header: true })}>{s.symbol}</th>
+              <td {...grid.cellProps(1, { numeric: true })}>{s.last.toFixed(2)}</td>
+              <td {...grid.cellProps(2, { numeric: true })}>{(s.last / 10).toFixed(2)}</td>
+            </tr>
+          )}
+        />
+        <button type="button">After</button>
+      </>
+    );
+  };
+
+  it("a windowed list gives focus to the same cell of the next row when a removal shrinks it", async () => {
+    await mount(<WindowEditHost onScroll={() => undefined} />);
+    act(() => cellAt(3, 1).focus());
+    await userEvent.keyboard("{Delete}");
+    expect(focusedSymbol()).toBe("S003USDT");
+    expect(document.activeElement).toBe(cellAt(3, 1));
+  });
+
+  it("a windowed list takes no focus back when the focused row only scrolls out of the window", async () => {
+    let scrollTo: (offset: number) => void = () => undefined;
+    await mount(<WindowEditHost onScroll={(fn) => (scrollTo = fn)} />);
+    act(() => cellAt(3, 1).focus());
+    expect(document.activeElement).toBe(cellAt(3, 1));
+    act(() => scrollTo(15));
+    expect(grid().querySelector('[data-cv-r="3"]')).toBeNull();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("a T2 sort header keeps its button, label and aria-sort; aria-disabled, the lock, described by the host's note", async () => {
+    const columns: readonly TableColumn<Sym>[] = SYM_COLUMNS.map((c) =>
+      c.id === "last" ? { ...c, sortable: true, sortDisabledReason: LIVE_SORT } : c,
+    ) as readonly TableColumn<Sym>[];
+    await mount(
+      <>
+        <CustomHost columns={columns} onSortChange={() => undefined} sortReasonId="sort-note" />
+        <p id="sort-note">{LIVE_SORT}</p>
+      </>,
+    );
+    const button = page.getByRole("button", { name: "Not available Last" });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveAccessibleDescription(LIVE_SORT);
+    expect(page.getByRole("columnheader", { name: "Not available Last" })).toHaveAttribute(
+      "aria-sort",
+      "none",
+    );
+  });
+
+  it("a T2 sort header's lock leads its label, named Not available (E09-D09 §2.2, G-T2.1d)", async () => {
+    const columns: readonly TableColumn<Sym>[] = SYM_COLUMNS.map((c) =>
+      c.id === "last" ? { ...c, sortable: true, sortDisabledReason: LIVE_SORT } : c,
+    ) as readonly TableColumn<Sym>[];
+    await mount(<CustomHost columns={columns} onSortChange={() => undefined} />);
+    const button = page.getByRole("button", { name: "Not available Last" });
+    const lock = within(button).getByRole("img", { name: "Not available" });
+    expect(button.firstElementChild).toContainElement(lock);
+  });
+
+  it("a press on a T2 sort header sorts nothing and re-shows its reason in the echo, said once", async () => {
+    const onSortChange = vi.fn();
+    const columns: readonly TableColumn<Sym>[] = SYM_COLUMNS.map((c) =>
+      c.id === "last" ? { ...c, sortable: true, sortDisabledReason: LIVE_SORT } : c,
+    ) as readonly TableColumn<Sym>[];
+    const announce = vi.fn<(text: string) => void>();
+    await mount(
+      <GatedAnnounceProvider announce={announce}>
+        <CustomHost columns={columns} onSortChange={onSortChange} />
+      </GatedAnnounceProvider>,
+    );
+    const button = page.getByRole("button", { name: "Not available Last" });
+    act(() => button.focus());
+    await userEvent.keyboard("{Enter}");
+    await userEvent.click(button);
+    expect(onSortChange).not.toHaveBeenCalled();
+    expect(echo()).toHaveTextContent(LIVE_SORT);
+    expect(announce.mock.calls).toEqual([[LIVE_SORT], [LIVE_SORT]]);
+    expect(line()).not.toHaveTextContent(LIVE_SORT);
+  });
+
+  // G-T2.3 (E09-D09 §9.3; the orchestrator's design read on #5146): a held Enter repeats its keydown, and each repeat
+  // clicks a native button; the T2 sort header swallows the repeats, so the reason is said once per press.
+  it("a held Enter on a T2 sort header sorts nothing and says its reason once, not per repeat", async () => {
+    const onSortChange = vi.fn();
+    const columns: readonly TableColumn<Sym>[] = SYM_COLUMNS.map((c) =>
+      c.id === "last" ? { ...c, sortable: true, sortDisabledReason: LIVE_SORT } : c,
+    ) as readonly TableColumn<Sym>[];
+    const announce = vi.fn<(text: string) => void>();
+    await mount(
+      <GatedAnnounceProvider announce={announce}>
+        <CustomHost columns={columns} onSortChange={onSortChange} />
+      </GatedAnnounceProvider>,
+    );
+    const button = page.getByRole("button", { name: "Not available Last" });
+    act(() => button.focus());
+    holdEnter(button, 2);
+    expect(announce.mock.calls).toEqual([[LIVE_SORT]]);
+    holdEnter(button, 0);
+    expect(announce.mock.calls).toEqual([[LIVE_SORT], [LIVE_SORT]]);
+    expect(onSortChange).not.toHaveBeenCalled();
+  });
+
+  // An enabled sort header keeps the native repeat: only a T2 header swallows a held Enter's repeats (CR-4702AI-02).
+  it("a held Enter on an enabled sort header keeps the native repeat: each repeat presses it", async () => {
+    const onSortChange = vi.fn();
+    const columns: readonly TableColumn<Sym>[] = SYM_COLUMNS.map((c) =>
+      c.id === "last" ? { ...c, sortable: true } : c,
+    ) as readonly TableColumn<Sym>[];
+    await mount(<CustomHost columns={columns} onSortChange={onSortChange} />);
+    const button = page.getByRole("button", { name: "Last" });
+    act(() => button.focus());
+    holdEnter(button, 2);
+    expect(onSortChange).toHaveBeenCalledTimes(3);
+  });
+
+  // G-T2.2 (E09-D09 §2.2, §11): the T2 header is the button table.css draws in text.tertiary (table-css.test.ts pins
+  // the rule), the lock inside it taking the same colour.
+  it("a T2 sort header is the .cv-table__sort[aria-disabled] button table.css draws in text.tertiary, its lock inside", async () => {
+    const columns: readonly TableColumn<Sym>[] = SYM_COLUMNS.map((c) =>
+      c.id === "last" ? { ...c, sortable: true, sortDisabledReason: LIVE_SORT } : c,
+    ) as readonly TableColumn<Sym>[];
+    await mount(<CustomHost columns={columns} onSortChange={() => undefined} />);
+    const button = page.getByRole("button", { name: "Not available Last" });
+    expect(button.matches('.cv-table__sort[aria-disabled="true"]')).toBe(true);
+    expect(button.querySelector(".cv-table__lock svg")).not.toBeNull();
+    expect(
+      find(loadCss("table.css").normal, '.cv-table__sort[aria-disabled="true"]', "color"),
+    ).toContain("color: var(--color-text-tertiary)");
+  });
+
+  it("a T2 sort header without a host note is described by its own reason", async () => {
+    const columns: readonly TableColumn<Sym>[] = SYM_COLUMNS.map((c) =>
+      c.id === "last" ? { ...c, sortable: true, sortDisabledReason: LIVE_SORT } : c,
+    ) as readonly TableColumn<Sym>[];
+    await mount(<CustomHost columns={columns} onSortChange={() => undefined} />);
+    expect(page.getByRole("button", { name: "Not available Last" })).toHaveAccessibleDescription(
+      LIVE_SORT,
+    );
+  });
+
+  it("headerStatus: a glyph after the label and its word in the header's name", async () => {
+    const columns: readonly TableColumn<Sym>[] = SYM_COLUMNS.map((c) =>
+      c.id === "chg" ? { ...c, headerStatus: { icon: "warning", label: "stale" } } : c,
+    ) as readonly TableColumn<Sym>[];
+    await mount(<CustomHost columns={columns} />);
+    const header = page.getByRole("columnheader", { name: "24h % stale" });
+    expect(header.querySelector(".cv-table__header-status svg")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+  });
+
+  it("widthEm sets a column's width on its <col>, in em of the table's font", async () => {
+    const columns: readonly TableColumn<Sym>[] = SYM_COLUMNS.map((c) =>
+      c.id === "symbol" ? { ...c, widthEm: 7.5 } : c,
+    ) as readonly TableColumn<Sym>[];
+    await mount(<CustomHost columns={columns} />);
+    const cols = grid().querySelectorAll<HTMLElement>("colgroup > col");
+    expect([...cols].map((col) => col.style.width)).toEqual(["7.5em", "", ""]);
+  });
+
+  it("a text column aligned to the end marks its header and cells numeric", async () => {
+    const columns: readonly TableColumn<Sym>[] = [
+      ...SYM_COLUMNS.slice(0, 1),
+      { id: "code", header: "Code", cell: (s) => s.id, align: "end" },
+    ];
+    await mount(
+      <Table<Sym> caption="Codes" columns={columns} rows={LIST.slice(0, 2)} rowKey={(s) => s.id} />,
+    );
+    expect(page.getByRole("columnheader", { name: "Code" })).toHaveAttribute("data-numeric", "");
+    expect(page.getByRole("cell", { name: "s0" })).toHaveAttribute("data-numeric", "");
+  });
+
+  it("announce: the table renders no live region and hands each line to the host's", async () => {
+    const announce = vi.fn<(text: string) => void>();
+    const SortingHost = (): JSX.Element => {
+      const [sort, setSort] = useState<TableSort | undefined>(undefined);
+      return (
+        <CustomHost
+          columns={
+            SYM_COLUMNS.map((c) =>
+              c.id === "symbol" ? { ...c, sortable: true } : c,
+            ) as readonly TableColumn<Sym>[]
+          }
+          sort={sort}
+          onSortChange={setSort}
+          announce={announce}
+        />
+      );
+    };
+    await mount(<SortingHost />);
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    await userEvent.click(page.getByRole("button", { name: "Symbol" }));
+    // The line lands two effect passes after the click (the sort settles, then the line is set): wait for it.
+    await waitFor(() => expect(announce.mock.calls).toEqual([["Sorted by Symbol, ascending"]]));
+  });
+
+  it("announce: a T2 key's reason goes to the gated announcer, not to the host's table lines", async () => {
+    const lines = vi.fn<(text: string) => void>();
+    const gated = vi.fn<(text: string) => void>();
+    await mount(
+      <GatedAnnounceProvider announce={gated}>
+        <CustomHost renderRow={renderRefused} announce={lines} />
+      </GatedAnnounceProvider>,
+    );
+    act(() => cellAt(2, 1).focus());
+    await userEvent.keyboard("{Enter}");
+    expect(gated.mock.calls).toEqual([["Delisted by the exchange"]]);
+    expect(lines).not.toHaveBeenCalled();
+  });
+
+  it("axe: a windowed grid of custom rows with a merged cell and a T2 header", async () => {
+    const columns: readonly TableColumn<Sym>[] = SYM_COLUMNS.map((c) =>
+      c.id === "last" ? { ...c, sortable: true, sortDisabledReason: LIVE_SORT } : c,
+    ) as readonly TableColumn<Sym>[];
+    const host = await mount(
+      <WindowHost renderRow={renderMerged} columns={columns} onSortChange={() => undefined} />,
+    );
+    expect(await seriousViolations(host)).toEqual([]);
+  });
+});
+
+// The orchestrator's design read on #5146 (item 5): E08-D07 §4.1 pairs every cut with the echo, in table mode too. A
+// table-mode table has the same one CMP-016 echo, under the same rules as grid mode: a cut header label's or a cut
+// cell's whole words after CMP-016's 300 ms hover, at once on a sort button's keyboard focus, gone CMP-016's 100 ms
+// grace after the pointer leaves, and on Esc. Its static cells take no focus, so hover is their only way in.
+describe("Table (CMP-049), table mode: the echo for a cut header or cell", () => {
+  const page = within(document.body);
+  /** The shown echo: none, or its node `hidden`, when nothing shows. */
+  const shown = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('.cv-table__echo[data-cmp="CMP-016"]:not([hidden])');
+  /** Lays `element` out cut: its text `scroll` px wide in a box `client` px wide (jsdom has no layout). */
+  const cutTo = (element: Element | null, scroll: number, client: number): void => {
+    if (element === null) throw new Error("nothing to cut");
+    Object.defineProperty(element, "scrollWidth", { configurable: true, value: scroll });
+    Object.defineProperty(element, "clientWidth", { configurable: true, value: client });
+  };
+  const labelOf = (header: HTMLElement): Element | null => header.querySelector(".cv-table__label");
+
+  it("a cut header label shows its whole words after CMP-016's 300 ms hover, and goes 100 ms after the pointer leaves", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount(<Host />);
+      expect(page.queryByRole("grid")).toBeNull();
+      const header = page.getByRole("columnheader", { name: "Accounts" });
+      cutTo(labelOf(header), 37, 20);
+      act(() => {
+        fireEvent.pointerOver(header);
+      });
+      act(() => {
+        vi.advanceTimersByTime(299);
+      });
+      expect(shown()).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(shown()).toHaveTextContent("Accounts");
+      expect(shown()).toHaveAttribute("aria-hidden", "true");
+      act(() => {
+        fireEvent.pointerOut(header);
+      });
+      act(() => {
+        vi.advanceTimersByTime(99);
+      });
+      expect(shown()).toHaveTextContent("Accounts");
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(shown()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a plain table mounts no echo node until one shows, and has none after it goes (CR-4702AI-02)", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount(<Host />);
+      const node = (): Element | null => document.querySelector(".cv-table__echo");
+      expect(node()).toBeNull();
+      const header = page.getByRole("columnheader", { name: "Accounts" });
+      cutTo(labelOf(header), 37, 20);
+      act(() => {
+        fireEvent.pointerOver(header);
+      });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(node()).not.toBeNull();
+      act(() => {
+        fireEvent.pointerOut(header);
+      });
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(node()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a cut sort header's label shows its whole words at once on its button's keyboard focus; Esc hides it, focus kept", async () => {
+    await mount(<Host />);
+    const button = page.getByRole("button", { name: "Name" });
+    cutTo(labelOf(button), 37, 20);
+    await userEvent.tab();
+    expect(button).toHaveFocus();
+    expect(shown()).toHaveTextContent("Name");
+    await userEvent.keyboard("{Escape}");
+    expect(shown()).toBeNull();
+    expect(button).toHaveFocus();
+  });
+
+  it("focus moving on from a cut header's button takes its echo away", async () => {
+    await mount(<Host />);
+    const name = page.getByRole("button", { name: "Name" });
+    cutTo(labelOf(name), 37, 20);
+    await userEvent.tab();
+    expect(shown()).toHaveTextContent("Name");
+    await userEvent.tab();
+    expect(page.getByRole("button", { name: "PnL" })).toHaveFocus();
+    expect(shown()).toBeNull();
+  });
+
+  it("a hover echo stays while the pointer crosses onto it and rests there (WCAG 1.4.13)", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount(<Host />);
+      const header = page.getByRole("columnheader", { name: "Accounts" });
+      cutTo(labelOf(header), 37, 20);
+      act(() => {
+        fireEvent.pointerOver(header);
+      });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      const surface = shown() as HTMLElement;
+      expect(surface).toHaveTextContent("Accounts");
+      // The pointer leaves the header for the echo: React's leave of the table, its enter of the echo.
+      act(() => {
+        fireEvent.pointerOut(header, { relatedTarget: surface });
+        fireEvent.pointerOver(surface, { relatedTarget: header });
+      });
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(shown()).toBe(surface);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a header label that is not cut shows no echo, on hover or on keyboard focus", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount(<Host />);
+      act(() => {
+        fireEvent.pointerOver(page.getByRole("columnheader", { name: "Accounts" }));
+      });
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(shown()).toBeNull();
+      act(() => page.getByRole("button", { name: "Name" }).focus());
+      expect(shown()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a custom row's cut cell (`cut`) shows its whole words after CMP-016's 300 ms hover", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount(
+        <Table<User>
+          caption={CAPTION}
+          columns={COLUMNS}
+          rows={USERS}
+          rowKey={(u) => u.id}
+          renderRow={(u, grid) => (
+            <tr {...grid.rowProps}>
+              <th {...grid.cellProps(0, { header: true, cut: u.name })}>{u.name}</th>
+              <td {...grid.cellProps(1, { numeric: true })}>{u.accounts}</td>
+              <td {...grid.cellProps(2, { numeric: true })}>{u.pnl}</td>
+            </tr>
+          )}
+        />,
+      );
+      expect(page.queryByRole("grid")).toBeNull();
+      const alex = page.getByRole("rowheader", { name: "alex" });
+      cutTo(alex, 90, 60);
+      act(() => {
+        fireEvent.pointerOver(alex);
+      });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(shown()).toHaveTextContent("alex");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// Each story's play in jsdom (the storybook project runs them in Chromium, with axe): E08-D07's three; the rest predate this harness.
+describe("Table stories", () => {
+  it("runs each story's play function", { timeout: 30_000 }, async () => {
+    for (const [name, Story] of Object.entries(composeStories(stories))) {
+      if (!["MergedCell", "SortUnavailable", "WindowedRows"].includes(name)) continue;
+      const canvasElement = document.body.appendChild(document.createElement("div"));
+      await expect(Story.run({ canvasElement }), name).resolves.toBeUndefined();
+      canvasElement.remove();
+    }
+  });
+
+  // The orchestrator's design read on #5146 (item 6): host text renders in the design-system font, never the serif.
+  it("SortUnavailable's host note renders in the design-system font", async () => {
+    const { SortUnavailable } = composeStories(stories);
+    const host = await mount(<SortUnavailable />);
+    const note = host.querySelector<HTMLElement>("#sort-note");
+    expect(note?.closest<HTMLElement>('[style*="font-family"]')?.style.fontFamily).toContain(
+      "var(--font-family-ui)",
+    );
   });
 });

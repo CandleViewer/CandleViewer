@@ -746,10 +746,14 @@ function MenuSurface({
         root.tabOut(event.shiftKey);
         return;
       case "Enter":
-      case " ":
+      case " ": {
         handled();
+        // A held key's repeats re-show nothing: a T2 item says its reason once per press (E09-D09 §9.3).
+        const item = flat[at];
+        if (event.repeat && item !== undefined && stateOf(item) === "gated") return;
         activate(at, key === "Enter" ? "enter" : "space");
         return;
+      }
       default:
         break;
     }

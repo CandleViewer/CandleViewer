@@ -1,0 +1,56 @@
+/*
+ * CMP-056 ColumnPicker (E08-D07 §5, §6.4): the list variant's rows. The boxes are CMP-005's and the move buttons
+ * CMP-002's, so their looks (T2 included) are theirs; this file lays the rows out and draws a locked row's reason
+ * (E09-D09 §2.2 rendering 2a) under its box, and the session's reason, when the host shows none, before the boxes.
+ * Tokens only; static.
+ */
+.cv-colpicker__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cv-colpicker__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 var(--space-inset-sm);
+  min-block-size: var(--size-row-height);
+}
+
+.cv-colpicker__moves {
+  display: inline-flex;
+  flex: none;
+  gap: var(--space-inset-xs);
+}
+
+/* A locked row's reason (2a): a caption line of its own under the box, lined up with the label it describes. */
+.cv-colpicker__reason {
+  flex: 1 0 100%;
+  padding-inline-start: calc(var(--size-control-height) + var(--space-field-gap));
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/*
+ * The session's reason (2a) when the host has no notice of its own: one caption line before the boxes, which every
+ * gated box and move button points at (E09-D09 §2.2 "one notice, many pointers").
+ */
+.cv-colpicker__notice {
+  margin: 0 0 var(--space-stack-xs);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+@media (forced-colors: active) {
+  .cv-colpicker__reason,
+  .cv-colpicker__notice {
+    color: CanvasText;
+  }
+}

@@ -10,17 +10,29 @@ export interface DisabledReasonAttrs {
   readonly reason: string | undefined;
   readonly ariaDisabled: true | undefined;
   readonly ariaDescribedBy: string | undefined;
+  /**
+   * The reason's node is the host's (`disabledReasonId`, E09-D09 §2.2 rendering 2a: a caption under the control, or
+   * a read-only panel's one notice): the control points at it and renders no reason node of its own.
+   */
+  readonly external: boolean;
 }
 
-/** The T2 contract (D02 conv. 3, D09 2.2): a reason wins over `disabled`; `aria-disabled`, never `disabled`. */
+/**
+ * The T2 contract (D02 conv. 3, D09 2.2): a reason wins over `disabled`; `aria-disabled`, never `disabled`. With
+ * `hostReasonId` the reason is already shown by the host, in the node with that id, which describes the control.
+ */
 export function useDisabledReason(
   disabled: boolean | undefined,
   disabledReason: string | undefined,
+  hostReasonId?: string,
 ): DisabledReasonAttrs {
-  const reasonId = useId();
+  const ownId = useId();
   // Whitespace-only is no reason: a sighted user would see nothing, a screen reader a blank description.
   const trimmed = disabledReason?.trim();
   const gated = trimmed !== undefined && trimmed !== "";
+  const host = hostReasonId?.trim() || undefined;
+  const external = gated && host !== undefined;
+  const reasonId = external && host !== undefined ? host : ownId;
   return {
     gated,
     disabled: disabled === true && !gated,
@@ -28,6 +40,7 @@ export function useDisabledReason(
     reason: gated ? trimmed : undefined,
     ariaDisabled: gated ? true : undefined,
     ariaDescribedBy: gated ? reasonId : undefined,
+    external,
   };
 }
 
