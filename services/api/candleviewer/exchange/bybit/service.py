@@ -45,7 +45,11 @@ from candleviewer.exchange.bybit.key_ws_probe import (
     connect_private_stream,
 )
 from candleviewer.exchange.bybit.klines import BybitKlineFetcher, TickSizeFor
-from candleviewer.exchange.bybit.liquidations import liquidation_topic, parse_liquidation_frame
+from candleviewer.exchange.bybit.liquidations import (
+    LIQUIDATION_NOTE,
+    liquidation_topic,
+    parse_liquidation_frame,
+)
 from candleviewer.exchange.bybit.open_interest import BybitOpenInterestFetcher
 from candleviewer.exchange.bybit.orderbook import book_topic, parse_book_frame
 from candleviewer.exchange.bybit.private_stream import (
@@ -192,6 +196,7 @@ class ExchangeBybitService:
     #: E24-T03: `allLiquidation` topic naming + strict push parser, injected into ingestion.
     liquidation_topic = staticmethod(liquidation_topic)
     parse_liquidation_frame = staticmethod(parse_liquidation_frame)
+    liquidation_note = LIQUIDATION_NOTE
 
     @staticmethod
     def trade_archive(
