@@ -1,6 +1,6 @@
 """Open-interest service (E24-T01, #665): 1 Hz ticker downsampler, REST backfill, read side.
 
-Module boundary (C-3.1): orderflow may not import `storage`, `ingestion` or the Bybit adapter,
+Module boundary (C-3.1): orderflow may not import `storage`, `ingestion` or the exchange adapter,
 so the store and the fetcher are local structural Protocols the composition root injects.
 
 Invariants (STRIDE `docs/security/threat-models/E24-derivatives.md` D5/D8/D12):
