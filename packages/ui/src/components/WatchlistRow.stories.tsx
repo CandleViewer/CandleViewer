@@ -179,10 +179,27 @@ export const FocusVisible: Story = {
 };
 
 /**
+ * Whether Chromium draws `family` itself, an installed face and never a substitute: a sample set in it, with a generic
+ * behind it, measures other than in that generic alone, for two generics. Only the vr job installs the pinned faces
+ * (CI-A11Y-008); the storybook job draws fallbacks.
+ */
+function drawsFamily(family: string): boolean {
+  const context = document.createElement("canvas").getContext("2d");
+  if (context === null) return false;
+  const width = (font: string): number => {
+    context.font = font;
+    return context.measureText("Turnover USDT Spread bps").width;
+  };
+  return ["monospace", "serif"].every(
+    (generic) => width(`16px "${family}", ${generic}`) !== width(`16px ${generic}`),
+  );
+}
+
+/**
  * SCR-100's default columns with their sort buttons (D5) at E08-D07 §4.1's 784 px reference: nine sort buttons, each
  * named with its header's whole words, and Status fixed. Where a header's box is narrower than its label and glyph,
- * the label ellipsises and the echo shows it whole (§4.1): this story's capture, in Chromium with the pinned fonts, is
- * the evidence for how many are cut, the C-row for E08-D07's owner.
+ * the label ellipsises and the echo shows it whole (§4.1): in Chromium with the pinned fonts six of the nine are cut,
+ * the C-row for E08-D07's owner, which this story's capture shows and its play counts.
  */
 export const SortableHeaders: Story = {
   render: () => (
@@ -198,6 +215,17 @@ export const SortableHeaders: Story = {
     await expect(
       within(canvasElement).getByRole("columnheader", { name: "Status" }),
     ).not.toHaveAttribute("aria-sort");
+    // The cut count is the pinned faces' (the vr job's): jsdom lays nothing out (every width 0), and the storybook
+    // job's fallback faces measure otherwise.
+    if (grid(canvasElement).clientWidth === 0) return;
+    await document.fonts.ready;
+    const labels = [
+      ...grid(canvasElement).querySelectorAll<HTMLElement>("button .cv-table__label"),
+    ];
+    const [face = ""] = getComputedStyle(labels[0] ?? canvasElement).fontFamily.split(",");
+    if (!drawsFamily(face.trim().replace(/^["']|["']$/g, ""))) return;
+    const cut = labels.filter((label) => label.scrollWidth > label.clientWidth);
+    await expect(cut.map((label) => label.textContent)).toHaveLength(6);
   },
 };
 
