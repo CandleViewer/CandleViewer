@@ -138,7 +138,10 @@ describe("LoginScreen (SCR-001)", () => {
     const button = screen.getByRole("button", { name: "Sign in" });
     expect(button).toHaveAccessibleDescription(/Try again in 0:30/);
     expect(button.previousElementSibling).toBe(lockout); // adjacent to the button
-    const css = readFileSync(resolve(process.cwd(), "src/features/auth/login.css"), "utf8");
+    const css = readFileSync(
+      resolve(import.meta.dirname, "../../src/features/auth/login.css"),
+      "utf8",
+    );
     expect(css).toMatch(/button\[aria-disabled="true"\][^}]*opacity: var\(--opacity-disabled\)/u);
   });
 
