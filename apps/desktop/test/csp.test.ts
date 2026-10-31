@@ -1,11 +1,54 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildCsp } from "../src/main/csp";
+import { buildCspPolicy } from "@candleviewer/config/csp-policy";
+import { buildCsp, buildReportingEndpoints, parseTailnetHost } from "../src/main/csp";
+
+// The shared builder's golden strings (packages/config/src/csp-policy.golden.json): this mirror
+// and the FastAPI one must equal them.
+const golden = JSON.parse(
+  readFileSync(
+    resolve(import.meta.dirname, "../../../packages/config/src/csp-policy.golden.json"),
+    "utf8",
+  ),
+) as Record<string, string | string[]>;
 
 describe("CSP string builder", () => {
-  it("matches the SR-112 policy verbatim (snapshot)", () => {
-    expect(buildCsp("http://127.0.0.1:8000")).toBe(
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000; img-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+  it("matches the SR-112 policy verbatim (golden, C-12.10: no unsafe-inline)", () => {
+    expect(buildCsp("http://127.0.0.1:8000", undefined)).toBe(golden["header"]);
+    expect(buildReportingEndpoints("http://127.0.0.1:8000")).toBe(golden["reporting_endpoints"]);
+  });
+
+  it("equals the shared builder for every golden variant", () => {
+    expect(buildCsp("http://127.0.0.1:8000", "Box.tail1234.ts.net")).toBe(golden["tailnet"]);
+    expect(buildCsp("http://127.0.0.1:8000", "box.tail1234.ts.net")).toBe(
+      buildCspPolicy({ tailnetHost: "box.tail1234.ts.net" }),
     );
+    expect(buildCsp("http://127.0.0.1:8000", "box.tail1234.ts.net:8443")).toBe(
+      golden["tailnet_port"],
+    );
+    expect(buildCsp("https://localhost:9000", undefined)).toBe(golden["https_loopback_origin"]);
+    expect(buildCsp("http://evil.example", undefined)).toBe(
+      golden["non_loopback_origin_falls_back"],
+    );
+  });
+
+  it.each(golden["invalid_tailnet_hosts"] as string[])(
+    "ignores the invalid tailnet host %j",
+    (host) => {
+      expect(parseTailnetHost(host)).toBeNull();
+      expect(buildCsp("http://127.0.0.1:8000", host)).toBe(golden["header"]);
+    },
+  );
+
+  it("ignores a non-string tailnet host and an out-of-range port", () => {
+    expect(parseTailnetHost(undefined)).toBeNull();
+    expect(parseTailnetHost("box.ts.net:0")).toBeNull();
+  });
+
+  it("names the report endpoint on the backend origin (header only)", () => {
+    expect(buildCsp()).toContain("report-uri http://127.0.0.1:8000/api/v1/csp-report");
+    expect(buildCsp()).toContain("report-to csp-endpoint");
   });
 
   it("includes hardening directives (object-src, base-uri, frame-ancestors, form-action)", () => {
@@ -51,14 +94,9 @@ describe("CSP string builder", () => {
     expect(buildCsp("http://[::1]:9000")).toContain("http://[::1]:9000");
   });
 
-  it("scopes 'unsafe-inline' to style-src only", () => {
-    const csp = buildCsp();
-    const directives = csp.split("; ");
-    for (const directive of directives) {
-      if (directive.includes("unsafe-inline")) {
-        expect(directive.startsWith("style-src")).toBe(true);
-      }
-    }
+  it("never allows unsafe-inline (C-12.10)", () => {
+    expect(buildCsp("http://127.0.0.1:8000", "box.tail1234.ts.net")).not.toContain("unsafe-inline");
+    expect(buildCsp()).toContain("style-src 'self';");
   });
 
   it("does not allow an unrestricted connect-src", () => {

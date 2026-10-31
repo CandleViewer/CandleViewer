@@ -17,7 +17,9 @@
     "./vitest-flaky": "./src/vitest-flaky.mjs",
     "./perf-calibration": "./src/perf-calibration.mjs",
     "./perf-budget-guard": "./src/perf-budget-guard.mjs",
-    "./no-restricted-imports": "./no-restricted-imports.mjs"
+    "./no-restricted-imports": "./no-restricted-imports.mjs",
+    "./csp-policy": "./src/csp-policy.mjs",
+    "./csp-policy.golden.json": "./src/csp-policy.golden.json"
   },
   "scripts": {
     "lint": "eslint . --max-warnings=0",

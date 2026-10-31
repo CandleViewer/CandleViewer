@@ -4,6 +4,6 @@
     "outDir": "dist",
     "noEmit": true
   },
-  "include": ["src", "test", "vite.config.ts", "e2e/**/*.ts"],
+  "include": ["src", "test", "vite.config.ts", "plugins/**/*.ts", "e2e/**/*.ts"],
   "exclude": ["dist", "node_modules", "coverage"]
 }

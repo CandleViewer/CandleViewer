@@ -4,17 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
-      This meta CSP is the fallback to the shell's CSP response header (SR-112).
-      The desktop shell serves this page over its app:// handler
-      (apps/desktop/src/main/appProtocol.ts), which attaches the policy from
-      apps/desktop/src/main/csp.ts to every response. Both policies are enforced,
-      so this tag must be scoped exactly like csp.ts (backend origin only, not
-      `ws:`/`wss:` wildcards) — keep both in sync.
+      No CSP meta here: `vite build` injects it from the shared policy builder
+      (apps/web/plugins/cspMetaPlugin.ts, @candleviewer/config/csp-policy; SR-112, C-12.10).
+      The shell and the API send the same policy as a header.
     -->
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000; img-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-    />
     <title>CandleViewer</title>
   </head>
   <body>

@@ -3,7 +3,7 @@ import type { IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HARDENED_WEB_PREFERENCES } from "./shellPort.js";
-import { buildCsp } from "./csp.js";
+import { buildCsp, buildReportingEndpoints } from "./csp.js";
 import {
   APP_ENTRY_URL,
   APP_SCHEME,
@@ -258,7 +258,7 @@ export function createMainWindow(devServerUrl: DevServerUrl | undefined): Browse
   return win;
 }
 
-function installCspHeader(csp: string): void {
+function installCspHeader(csp: string, reportingEndpoints: string): void {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     // The app:// handler answers every app: request (any host) with this
     // header already; leave those unchanged: one CSP source, never two.
@@ -270,6 +270,7 @@ function installCspHeader(csp: string): void {
       responseHeaders: {
         ...details.responseHeaders,
         "Content-Security-Policy": [csp],
+        "Reporting-Endpoints": [reportingEndpoints],
       },
     });
   });
@@ -280,11 +281,18 @@ function installCspHeader(csp: string): void {
  * handler confined to APP_ROOT_DIR that attaches the shell's CSP header
  * (SR-112) to every response it returns.
  */
-function installAppProtocol(csp: string): void {
+function installAppProtocol(csp: string, reportingEndpoints: string): void {
   const read = createDistReader(APP_ROOT_DIR);
   protocol.handle(APP_SCHEME, async (request) => {
     const { url, method } = request;
-    const response = await resolveAppRequest(url, APP_ROOT_DIR, read, csp, method);
+    const response = await resolveAppRequest(
+      url,
+      APP_ROOT_DIR,
+      read,
+      csp,
+      method,
+      reportingEndpoints,
+    );
     return new Response(response.body, { status: response.status, headers: response.headers });
   });
 }
@@ -434,11 +442,12 @@ void app.whenReady().then(() => {
   // One CSP value for both delivery points: the dev-server response hook and
   // the app:// handler.
   const csp = buildCsp();
+  const reportingEndpoints = buildReportingEndpoints();
   // One dev-server decision per run, so the window's load, its guards and the IPC check agree.
   const devServerUrl = acceptedDevServerUrl();
   readyDevServerUrl = devServerUrl;
-  installCspHeader(csp);
-  installAppProtocol(csp);
+  installCspHeader(csp, reportingEndpoints);
+  installAppProtocol(csp, reportingEndpoints);
   installPermissionHandler();
   // The renderer's crash entries, one JSON line each, in <userData>/logs (local only, E10-S04).
   const crashLog = createCrashLog({
