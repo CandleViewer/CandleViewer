@@ -11,14 +11,23 @@ const load = async () => ({
   ...(await import("../src/keymap/profile")),
   ...(await import("../src/keymap/audit")),
   ...(await import("../src/features/app-shell/announcer")),
+  ...(await import("../src/shell/bootstrap/themeStore")),
 });
 let m: Awaited<ReturnType<typeof load>>;
+let audits: { action?: string }[];
+let events: { name: string }[];
+const onEvent = (e: Event): void => {
+  events.push((e as CustomEvent<{ name: string }>).detail);
+};
 
 beforeEach(async () => {
   window.localStorage.clear();
   vi.resetModules();
   m = await load();
-  m.setAuditSink(() => undefined);
+  audits = [];
+  events = [];
+  m.setAuditSink((r) => audits.push(r));
+  window.addEventListener(m.THEME_ANALYTICS_EVENT, onEvent);
   const { HotkeyEditor, ShellAnnouncer } = m;
   render(
     <>
@@ -27,7 +36,19 @@ beforeEach(async () => {
     </>,
   );
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  window.removeEventListener(m.THEME_ANALYTICS_EVENT, onEvent);
+});
+const bindKey = (label: string, key: string, mods: readonly string[] = []): void => {
+  const row = inRow(label);
+  for (const mod of mods)
+    fireEvent.click(row.getByRole("checkbox", { name: `${mod} for ${label}` }));
+  fireEvent.change(row.getByRole("textbox", { name: `Key for ${label}` }), {
+    target: { value: key },
+  });
+  fireEvent.click(row.getByRole("button", { name: /^Save\b/ }));
+};
 
 const polite = (): string => document.querySelector('[aria-live="polite"]')?.textContent ?? "";
 const rowCount = (): number => document.querySelectorAll("tbody tr").length;
@@ -77,17 +98,15 @@ describe("record a keystroke", () => {
     const rec = row.getByRole("button", { name: /^Record\b/ });
     rec.focus();
     fireEvent.click(rec);
-    expect(row.getByRole("button", { name: /^Press keys now/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(row.getByRole("button", { name: /^Record\b/ })).toHaveAttribute("aria-pressed", "true");
+    expect(row.getByText(/Press keys now/)).toBeVisible();
     expect(polite()).toBe("Press the keys now. Esc cancels.");
     fireEvent.keyDown(rec, { key: "F6", ctrlKey: true });
     expect(polite()).toBe("Captured Ctrl+F6. Choose Save to apply it.");
     expect(row.getByRole("checkbox", { name: "Ctrl for Price zoom in" })).toBeChecked();
     expect(row.getByRole("textbox", { name: "Key for Price zoom in" })).toHaveValue("F6");
     fireEvent.click(row.getByRole("button", { name: /^Record\b/ }));
-    fireEvent.keyDown(row.getByRole("button", { name: /^Press keys now/ }), { key: "Escape" });
+    fireEvent.keyDown(row.getByRole("button", { name: /^Record\b/ }), { key: "Escape" });
     expect(polite()).toBe("Recording cancelled.");
     expect(row.getByRole("textbox", { name: "Key for Price zoom in" })).toHaveValue("F6");
   });
@@ -122,6 +141,67 @@ describe("caution note and print", () => {
     const print = vi.spyOn(window, "print").mockImplementation(() => undefined);
     fireEvent.click(screen.getByRole("button", { name: "Print list" }));
     expect(print).toHaveBeenCalledOnce();
-    expect(document.querySelectorAll(".hk-noprint").length).toBeGreaterThan(3);
+    expect(screen.getByRole("columnheader", { name: "Change" })).toHaveClass("hk-noprint");
+    const row = inRow("Price zoom in");
+    expect(row.getByRole("textbox", { name: /^Key\b/ }).closest("td")).toHaveClass("hk-noprint");
+    expect(row.getByRole("button", { name: /^Unbind\b/ })).toHaveClass("hk-noprint");
+    expect(row.getByRole("button", { name: /^Reset\b/ })).toHaveClass("hk-noprint");
+  });
+});
+
+describe("review folds", () => {
+  it("Reset onto a default another command took is refused, offers Swap, and changes nothing", () => {
+    // Ctrl+Shift+W (close_all's default) is a reviewed override no other command may take, so the
+    // same three steps run on the DOM zoom pair, whose defaults are plain keys.
+    bindKey("Price zoom out", "F6");
+    bindKey("Price zoom in", "-");
+    expect(m.getBindings().get("dom.zoom_in")).toBe("-");
+    const before = new Map(m.getBindings());
+    const row = inRow("Price zoom out");
+    fireEvent.click(row.getByRole("button", { name: /^Reset\b/ }));
+    expect(row.getByText(/already bound to/)).toBeVisible();
+    expect(row.getByRole("button", { name: "Swap" })).toBeVisible();
+    expect(m.getBindings()).toEqual(before);
+    expect(events.map((e) => e.name)).toContain("hotkey.conflict_blocked");
+    expect(events.map((e) => e.name)).not.toContain("hotkey.reset");
+  });
+
+  it("a successful Reset also emits hotkey.reset, and a trading command audits exactly once", () => {
+    const label = KEYMAP.find((c) => c.id === "ticket.submit")?.label ?? "";
+    bindKey(label, "Enter", ["Ctrl", "Alt"]);
+    audits.length = 0;
+    events.length = 0;
+    fireEvent.click(inRow(label).getByRole("button", { name: /^Reset\b/ }));
+    expect(audits.filter((a) => a.action === "hotkey.trading_binding_changed")).toHaveLength(1);
+    expect(events.map((e) => e.name)).toContain("hotkey.reset");
+  });
+
+  it("Tab is not captured and cancels the recording; a blur says so", () => {
+    const row = inRow("Price zoom in");
+    const rec = row.getByRole("button", { name: /^Record\b/ });
+    fireEvent.click(rec);
+    expect(fireEvent.keyDown(rec, { key: "Tab" })).toBe(true); // not prevented
+    expect(rec).toHaveAttribute("aria-pressed", "false");
+    expect(polite()).toBe("Recording cancelled.");
+    expect(row.getByRole("textbox", { name: "Key for Price zoom in" })).toHaveValue("");
+    fireEvent.click(rec);
+    rec.focus();
+    fireEvent.blur(rec);
+    expect(rec).toHaveAttribute("aria-pressed", "false");
+    expect(polite()).toBe("Recording cancelled.");
+  });
+
+  it("the row being edited stays listed when the search would drop it", () => {
+    const row = inRow("Price zoom in");
+    fireEvent.focus(row.getByRole("textbox", { name: "Key for Price zoom in" }));
+    fireEvent.change(screen.getByLabelText("Search commands"), { target: { value: "flatten" } });
+    expect(screen.getByText("Price zoom in", { selector: "th" })).toBeVisible();
+    fireEvent.focus(screen.getByLabelText("Search commands"));
+    expect(screen.queryByText("Price zoom in", { selector: "th" })).toBeNull();
+  });
+
+  it("the context select's first option is a labelled sentinel, not a context", () => {
+    const all = screen.getByRole("option", { name: "All contexts" }) as HTMLOptionElement;
+    expect(all.value).toBe("*");
   });
 });

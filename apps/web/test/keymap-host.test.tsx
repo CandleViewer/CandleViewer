@@ -199,6 +199,41 @@ describe("SCR-113 editor", () => {
   });
 });
 
+describe("SCR-113 record capture is isolated from the hotkey layer", () => {
+  it("a bound trading chord pressed while recording runs nothing, counts no inert press and is captured", () => {
+    const { KeymapHost, HotkeyEditor, registerCommand } = mods;
+    const run = vi.fn();
+    const off = registerCommand("dom.cancel_all", run, () => false);
+    const seen: string[] = [];
+    const listen = (e: Event): void => {
+      seen.push((e as CustomEvent<{ name: string }>).detail.name);
+    };
+    window.addEventListener("cv:analytics", listen);
+    render(
+      <>
+        <KeymapHost />
+        <HotkeyEditor />
+      </>,
+    );
+    const th = screen.getByText("Price zoom in", { selector: 'th[scope="row"]' });
+    const row = within(th.closest("tr") as HTMLElement);
+    const rec = row.getByRole("button", { name: /^Record\b/ });
+    rec.focus();
+    fireEvent.click(rec);
+    fireEvent.keyDown(rec, { key: "X", ctrlKey: true, shiftKey: true });
+    expect(run).not.toHaveBeenCalled();
+    expect(seen).not.toContain("hotkey.inert_pressed");
+    expect(screen.queryByRole("region", { name: "Notifications" })?.textContent ?? "").not.toMatch(
+      /Cancel all/,
+    );
+    expect(row.getByRole("textbox", { name: "Key for Price zoom in" })).toHaveValue("X");
+    expect(row.getByRole("checkbox", { name: "Ctrl for Price zoom in" })).toBeChecked();
+    expect(row.getByRole("checkbox", { name: "Shift for Price zoom in" })).toBeChecked();
+    window.removeEventListener("cv:analytics", listen);
+    off();
+  });
+});
+
 describe("SCR-013 cheatsheet", () => {
   it("renders real tables and flags conflicts", () => {
     const { Cheatsheet, getBindings, setBindings } = mods;

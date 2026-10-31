@@ -28,7 +28,8 @@ import {
 const MODS = ["Ctrl", "Alt", "Shift"] as const;
 /** The search box's announcement waits for the typing to stop: one count, never one per keystroke. */
 const SEARCH_SAY_MS = 600;
-const ALL = "All";
+/** The context select's "every context" value: no context is named this. */
+const ALL = "*";
 const CONTEXTS = [...new Set(KEYMAP.map((c) => c.context))];
 /** The editor's one key in the shell announcer (#304): each message replaces the last, none is a region of its own. */
 const SAID = "keymap:editor";
@@ -121,7 +122,8 @@ export function HotkeyEditor(): JSX.Element {
   const [query, setQuery] = useState("");
   const [ctx, setCtx] = useState(ALL);
   const needle = query.trim().toLowerCase();
-  const shown = KEYMAP.filter(
+  const [editing, setEditing] = useState<string | null>(null);
+  const matches = KEYMAP.filter(
     (c) =>
       (ctx === ALL || c.context === ctx) &&
       (needle === "" ||
@@ -129,7 +131,10 @@ export function HotkeyEditor(): JSX.Element {
           .toLowerCase()
           .includes(needle)),
   );
-  const count = shown.length;
+  const count = matches.length;
+  /** The row being edited, or holding the last message, stays listed whatever the search says. */
+  const keep = notice?.id ?? editing;
+  const shown = KEYMAP.filter((c) => matches.includes(c) || c.id === keep);
   const filtering = needle !== "" || ctx !== ALL;
   useEffect(() => {
     if (!filtering) return undefined;
@@ -157,28 +162,32 @@ export function HotkeyEditor(): JSX.Element {
     say(text);
   }
 
+  /** A refusal, for a Save or a Reset alike: counted, said, and offering the swap a conflict allows. */
+  function refuse(
+    cmd: KeymapCommand,
+    raw: string,
+    problem: BindingProblem,
+    current: ReadonlyMap<string, string>,
+  ): void {
+    if (problem.kind === "conflict") {
+      reportHotkey({ name: "hotkey.conflict_blocked", action: cmd.id, collidesWith: problem.with });
+    }
+    const swap = problem.kind === "conflict" ? planSwap(cmd.id, raw, current) : null;
+    const text = refusalText(cmd, problem);
+    // The button it offers sits after Save: say it is there (A11Y-305B-01, A11Y-305B-05).
+    const pointer = pointerTo(problem, swap);
+    tell(
+      cmd.id,
+      text,
+      { raw, problem, swap },
+      pointer === "" ? text : `${sentence(text)} ${pointer}`,
+    );
+  }
+
   function tryBind(cmd: KeymapCommand, raw: string, ack = false): void {
     const current = getBindings();
     const problem = validateBinding(cmd.id, raw, current, undefined, { acknowledgedUnsafe: ack });
-    if (problem) {
-      if (problem.kind === "conflict") {
-        reportHotkey({
-          name: "hotkey.conflict_blocked",
-          action: cmd.id,
-          collidesWith: problem.with,
-        });
-      }
-      const swap = problem.kind === "conflict" ? planSwap(cmd.id, raw, current) : null;
-      const text = refusalText(cmd, problem);
-      // The button it offers sits after Save: say it is there (A11Y-305B-01, A11Y-305B-05).
-      const pointer = pointerTo(problem, swap);
-      return tell(
-        cmd.id,
-        text,
-        { raw, problem, swap },
-        pointer === "" ? text : `${sentence(text)} ${pointer}`,
-      );
-    }
+    if (problem) return refuse(cmd, raw, problem, current);
     const binding = normaliseBinding(raw) ?? raw;
     const next = applyRebind(current, cmd.id, binding, ack);
     setBindings(next);
@@ -201,9 +210,14 @@ export function HotkeyEditor(): JSX.Element {
 
   function resetOne(cmd: KeymapCommand): void {
     const before = getBindings();
+    // The default may have been taken since: the same checks as a Save, and nothing is applied on a refusal.
+    const problem =
+      cmd.defaultBinding === "" ? null : validateBinding(cmd.id, cmd.defaultBinding, before);
+    if (problem) return refuse(cmd, cmd.defaultBinding, problem, before);
     const next = applyRebind(before, cmd.id, cmd.defaultBinding);
     setBindings(next);
     reportRebound(before, next, [cmd.id]);
+    reportHotkey({ name: "hotkey.reset" });
     tell(cmd.id, `${cmd.label}: back to its default, ${cmd.defaultBinding || "unbound"}`);
     focusIn(cmd.id, "key"); // the row's Reset is now disabled
   }
@@ -252,12 +266,21 @@ export function HotkeyEditor(): JSX.Element {
       <div className="hk-noprint">
         <label>
           Search commands
-          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input
+            type="search"
+            value={query}
+            onFocus={() => setEditing(null)}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </label>
         <label>
           Context
-          <select value={ctx} onChange={(e) => setCtx(e.target.value)}>
-            <option>{ALL}</option>
+          <select
+            value={ctx}
+            onFocus={() => setEditing(null)}
+            onChange={(e) => setCtx(e.target.value)}
+          >
+            <option value={ALL}>All contexts</option>
             {CONTEXTS.map((c) => (
               <option key={c}>{c}</option>
             ))}
@@ -290,6 +313,7 @@ export function HotkeyEditor(): JSX.Element {
               onSwap={swap}
               onUnbind={unbind}
               onReset={resetOne}
+              onEdit={setEditing}
             />
           ))}
         </tbody>
@@ -345,8 +369,9 @@ function Row(props: {
   onSwap: (c: KeymapCommand, r: Refusal) => void;
   onUnbind: (c: KeymapCommand) => void;
   onReset: (c: KeymapCommand) => void;
+  onEdit: (id: string) => void;
 }): JSX.Element {
-  const { cmd, binding, notice, onBind, onSwap, onUnbind, onReset } = props;
+  const { cmd, binding, notice, onBind, onSwap, onUnbind, onReset, onEdit } = props;
   const [recording, setRecording] = useState(false);
   const [mods, setMods] = useState<readonly string[]>([]);
   const [key, setKey] = useState("");
@@ -355,7 +380,7 @@ function Row(props: {
   const locked = commandMeta(cmd.id)?.remappable === false;
   const refusal = notice?.refusal ?? null;
   return (
-    <tr>
+    <tr onFocus={() => onEdit(cmd.id)}>
       <td>
         {cmd.context}
         {isDangerous(cmd) ? <span> (trading)</span> : null}
@@ -421,9 +446,18 @@ function Row(props: {
                 setRecording(!recording);
                 if (!recording) say("Press the keys now. Esc cancels.");
               }}
-              onBlur={() => setRecording(false)}
+              onBlur={() => {
+                if (!recording) return;
+                setRecording(false);
+                say("Recording cancelled.");
+              }}
               onKeyDown={(e) => {
                 if (!recording) return;
+                if (e.key === "Tab") {
+                  // Tab keeps moving focus (WCAG 2.1.2); leaving the button cancels the recording.
+                  setRecording(false);
+                  return say("Recording cancelled.");
+                }
                 e.preventDefault();
                 e.stopPropagation();
                 if (e.key === "Escape") {
@@ -440,9 +474,10 @@ function Row(props: {
                 say(`Captured ${hit}. Choose Save to apply it.`);
               }}
             >
-              {recording ? "Press keys now (Esc cancels)" : "Record"}
+              Record
               <ForRow cmd={cmd} />
             </button>
+            {recording ? <span> Press keys now (Esc cancels)</span> : null}
             <button
               id={`hk-save-${cmd.id}`}
               type="button"
