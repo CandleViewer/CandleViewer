@@ -1,4 +1,12 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
+
+// Playwright resolves a reporter `outputFile` against this file's directory (e2e/); anchor the JSON
+// report to the package root, where CI's flaky-summary step reads it (E10-Q02).
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const FLAKY = /@flaky/u;
+const QUARANTINE = process.env["CV_E2E_QUARANTINE"] === "1";
 
 // apps/web Playwright config — smoke + a11y specs only (E02-T04).
 export default defineConfig({
@@ -8,13 +16,27 @@ export default defineConfig({
   // output for E03-Q03's deferred quarantine automation); local runs stay
   // deterministic (no retry) so failures aren't masked during development.
   retries: process.env["CI"] ? 1 : 0,
+  // E10-Q02 / C-9.3: a test tagged `@flaky` is quarantined, never silently skipped: the PR lane's
+  // project drops it (grepInvert) and e2e-nightly.yml runs it in the `flaky-nightly` project
+  // (CV_E2E_QUARANTINE=1). It carries a P1 ticket and is fixed or deleted within 10 working days.
+  projects: QUARANTINE
+    ? [{ name: "flaky-nightly", grep: FLAKY }]
+    : [{ name: "chromium", grepInvert: FLAKY }],
+  // The JSON report next to the list: CI writes its `stats.flaky` count (passed only on retry) to
+  // the job summary, so a pass-on-retry is visible on the PR (E10-Q02).
+  reporter: [
+    ["list"],
+    ["json", { outputFile: path.resolve(__dirname, "../playwright-report/results.json") }],
+  ],
   // E03-T06-B1 (bug #1527): capture failure artifacts so AC3's
   // "trace/video/screenshot uploaded on failure" scenario is actually
   // satisfied — defaults are "off"; "on-first-retry" / "retain-on-failure"
   // only materialize files when a spec actually fails.
   use: {
     baseURL: "http://127.0.0.1:4173",
-    trace: "on-first-retry",
+    // E10-Q02: retain-on-failure, not on-first-retry, so a first failure keeps its trace even
+    // when the retry passes. Stub values only: no real session is ever captured.
+    trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },

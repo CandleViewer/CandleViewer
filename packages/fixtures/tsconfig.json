@@ -1,0 +1,8 @@
+{
+  "extends": "@candleviewer/config/tsconfig/node.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/e2e", "test/e2e"],
+  "exclude": ["node_modules", "coverage"]
+}

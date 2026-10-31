@@ -299,8 +299,9 @@ def _legs(axis: object, inputs: dict[str, object]) -> int:
     # 5 / 30 / 30 / 50. #270 adds the vr job's ten compare shards beside `storybook` on the e2e
     # filter (the vr_update dispatch's single shard never runs on a PR): 5 / 30 / 30 / 60. #5193
     # shards `py-perf` in three (+2) and adds `py-perf-index` (+1): 5 / 33 / 33 / 63. #5275 runs the
-    # vr job in fourteen shards (+4): 5 / 33 / 33 / 67.
-    [("docs", 5), ("py", 33), ("py,infra", 33), ("all", 67)],
+    # vr job in fourteen shards (+4): 5 / 33 / 33 / 67. E10-Q02 runs `e2e-electron` on every e2e call
+    # (C-9.1 #8), not on release/* heads only (+1): 5 / 33 / 33 / 68.
+    [("docs", 5), ("py", 33), ("py,infra", 33), ("all", 68)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))
