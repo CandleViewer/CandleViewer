@@ -24,6 +24,13 @@ export type { TabItem, TabsBaseProps, TabsProps } from "./Tabs.js";
 export { Tag } from "./Tag.js";
 export type { TagProps } from "./Tag.js";
 
+// E29-S01's blotter components.
+export { PnLBadge } from "./PnLBadge.js";
+export type { PnLBadgeProps, PnLFormat } from "./PnLBadge.js";
+
+export { PositionModeToggle } from "./PositionModeToggle.js";
+export type { PositionMode, PositionModeToggleProps } from "./PositionModeToggle.js";
+
 export { ColorConventionLegend, colourName } from "./ColorConventionLegend.js";
 export type {
   ColorConventionLegendProps,

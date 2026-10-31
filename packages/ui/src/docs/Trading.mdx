@@ -7,3 +7,20 @@ import { Meta } from "@storybook/addon-docs/blocks";
 `CMP-100..139` in `docs/plan/15-component-catalogue.md`: trading-specific molecules and organisms:
 the order ticket, DOM row, footprint cell and positions grid. A component's stories live under
 `Trading/<Component>` and ship with the component (E05-S01..S04).
+
+## Keyboard
+
+Each component's keyboard table lives here, with its accessible name and role table.
+
+### PnLBadge (CMP-116, no widget pattern: text)
+
+Not interactive: no Tab stop, no keys. One visually hidden sentence is what assistive technology reads, the sign in
+words with the magnitude and its unit: "profit 8.00 USDT", "loss 121.50 USDT", "profit 0.32 R"; a null R reads
+"R unavailable: no stop price". The visible digits and the accent bar are `aria-hidden`, and nothing carries an
+`aria-label` (E29-D04 §2.3). The value is the server's decimal string, rounded half away from zero for display and
+never parsed into a JavaScript number.
+
+### PositionModeToggle (CMP-129, `display`: text)
+
+The mode as the word "One-way" or "Hedge": no Tab stop, no control role, no reason and no live region. The `toggle`
+variant ships with the ticket that hosts it.
