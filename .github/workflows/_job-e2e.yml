@@ -106,7 +106,7 @@ jobs:
         working-directory: apps/web
         env:
           CV_E2E_QUARANTINE: "1"
-        run: npx playwright test -c e2e/playwright.config.ts --grep-invert "@demo-rest-only" --shard=${{ matrix.shard }}/4 --retries=1 --pass-with-no-tests
+        run: npx playwright test -c e2e/playwright.config.ts --grep-invert "@demo-rest-only" --shard=${{ matrix.shard }}/4 --retries=1 --pass-with-no-tests --output test-results-quarantine
 
       - name: Quarantine count to the job summary
         if: ${{ always() && inputs.quarantine }}
@@ -307,7 +307,7 @@ jobs:
         working-directory: apps/desktop
         env:
           CV_E2E_QUARANTINE: "1"
-        run: xvfb-run -a pnpm run e2e --retries=1 --pass-with-no-tests
+        run: xvfb-run -a pnpm run e2e --retries=1 --pass-with-no-tests --output test-results-quarantine
 
       - name: Quarantine count to the job summary
         if: ${{ always() && inputs.quarantine }}
