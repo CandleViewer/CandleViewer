@@ -6665,9 +6665,9 @@ The orchestrator assigned this number on 2026-10-31 (23:40Z, with #5267's unique
 - 22 `getLiquidations` gains the same `400` and `422` answers, `LiquidationsPageMeta` (`coverage`: `first_available_ts`, `covered_from`, `covered_to`, `no_coverage`), the cluster rule and `cluster_window_ms` 0–60000 on REST (WS stays 0–5000, the 23 topic registry); the code is E24-T03's (#667).
 - §2.6 states the series as built (`1s` / `ws_ticker`, `5min`…`1d` / `rest`) beside the sketch, whose `tick` and `rest_history` names are on no wire. `21-database-schema.md` §4.6 and §4.7 note the liquidations dedup key and the two `open_interest` writers. No WS frame, table, column, chart or `machine_hash` change, and no migration.
 
-### 19.66 2026-10-31 — §6.3, 22 `getHeatmap`: the recorded-history read, contract first (E21-T03, #606)
+### 19.71 2026-10-31 — §6.3, 22 `getHeatmap`: the recorded-history read, contract first (E21-T03, #606)
 
-This number follows §19.65, which an entry in flight holds; an entry that lands first takes it, and this one moves to the next free number.
+The orchestrator assigned this number on 2026-10-31 (23:40Z, with #5267's unique-and-increasing rule).
 
 - §6.3 gains "Read-time bucketing": how `GET /market/heatmap` builds a bucket from the stored native columns (grouped prices, summed sizes over the bucket's native count, `samples` summed, a NULL `samples` counting 1, `estimated` if any), how a window with no stored cell is rebuilt from the recorded book, and the snapshot `checksum` (CRC32 of the stored `bids` text then `asks` text), skipped on a mismatch and `estimated` when NULL. No writer computes the checksum yet (E16).
 - 22 `getHeatmap` documents the recorded read, the clamp (2 000 columns, 512 rows, the bucket coarsened along its enum), newest-first paging with a bound `cursor`, the 2-per-user backfill limit (`429 rate_limited`) and abort handling, and gains `401` and `429`. `HeatmapResponse` gains `first_available`, `history`, `samples`, `estimated_columns`, `effective_time_bucket_ms`, `segments` (the new `HeatmapSegment`), `clamped` and `next_cursor`, all additive (C-6.3). `getOrderbookSnapshot` is unchanged.
