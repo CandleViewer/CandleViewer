@@ -7,10 +7,13 @@ Fake clocks and a fake hub; the prints are the docs-shaped burst fixture through
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+import pytest
 
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import StreamInvalidated
@@ -22,7 +25,12 @@ from candleviewer.exchange.bybit.liquidations import (
 )
 from candleviewer.ingestion.liquidation_stream import LiquidationStream
 from candleviewer.orderflow import deriv_metrics
-from candleviewer.orderflow.liquidation_topic import LiquidationsTopic, note_cap_refusal
+from candleviewer.orderflow.liquidation_topic import (
+    LiquidationsTopic,
+    _stopped,
+    note_cap_refusal,
+    options_of,
+)
 from candleviewer.orderflow.liquidations import LiquidationMeter, LiquidationService
 from candleviewer.storage.questdb.liquidation_store import InMemoryLiquidationStore
 from tests._corpus import corpus_path
@@ -253,3 +261,85 @@ async def test_liquidation_cascade_500_per_s_no_loss_inside_the_throttle_lag_und
     assert len(rig.store) == 5000  # socket -> table: nothing lost
     assert sum(len(b["liquidations"]) for _, b, _ in rig.hub.frames) == 5000
     assert len(rig.hub.frames) <= 21  # at most one frame per 500 ms window
+
+
+async def test_topic_bounds_shed_a_new_symbol_and_resnap_on_a_full_pending_list() -> None:
+    rig = Rig()
+    rig.topic._max, rig.topic._pending_max = 1, 2
+    rig.sub()
+    other = json.loads(BURST[0]) | {"topic": "allLiquidation.ETHUSDT"}
+    other["data"] = [row | {"s": "ETHUSDT"} for row in other["data"]]
+    rig.stream.acquire("c", "ETHUSDT")
+    await rig.feed(BURST[1], json.dumps(other))  # three prints into a pending list of two
+    assert set(rig.topic._symbols) == {"BTCUSDT"} and rig.hub.resnaps == 1
+    assert len(rig.store) == 4  # the store never sheds: the topic is only a view
+
+
+async def test_topic_contains_a_failing_publish_and_resync() -> None:
+    rig = Rig()
+    rig.sub()
+
+    def boom(*a: Any, **k: Any) -> int:
+        raise RuntimeError("socket gone")
+
+    rig.topic._publish = boom
+    assert await rig.feed(BURST[0]) == 0 and rig.hub.resnaps == 1
+    rig.topic._resnapshot = boom
+    rig.topic.offer(StreamInvalidated(topic="live.md.BTCUSDT.liquidation", ts_event=T0_US))
+
+
+async def test_topic_drops_a_clusterer_once_no_subscription_uses_its_window() -> None:
+    rig = Rig()
+    clustered = rig.sub(cluster_window_ms=1000)
+    rig.sub("liquidations.ETHUSDT")  # served, but no print yet: nothing to cluster
+    await rig.feed(BURST[3])
+    assert ("BTCUSDT", 1000) in rig.topic._clusterers
+    rig.hub.subs.remove(clustered)
+    rig.clock.advance(1.0)
+    await rig.feed(BURST[4])
+    assert ("BTCUSDT", 1000) not in rig.topic._clusterers
+    assert options_of({"min_notional_usd": "n/a"}).min_notional is None
+
+
+async def test_topic_runs_on_its_own_task_and_stops_cleanly() -> None:
+    rig = Rig()
+    rig.sub()
+    sent = asyncio.Event()
+    publish = rig.hub.publish
+
+    def spy(*a: Any, **k: Any) -> int:
+        sent.set()
+        return publish(*a, **k)
+
+    rig.topic._publish, rig.topic._window_s = spy, 0.01
+    rig.topic.start()
+    await rig.stream.handle_frame(BURST[0])
+    await asyncio.wait_for(sent.wait(), 5)
+    await rig.topic.stop()
+    assert rig.topic._sub is None and rig.topic._task is None
+
+
+async def test_topic_turn_failure_resyncs_and_waits_one_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rig = Rig()
+    waited = asyncio.Event()
+
+    def tick() -> int:
+        raise RuntimeError("bad turn")
+
+    async def sleep(s: float) -> None:
+        waited.set()
+        rig.topic._sub = None  # end the loop after this turn
+
+    monkeypatch.setattr(rig.topic, "tick", tick)
+    rig.topic._sleep, rig.topic._window_s = sleep, 0.01
+    await rig.topic._run()
+    assert waited.is_set() and rig.hub.resnaps == 1
+
+    async def fail() -> None:
+        raise RuntimeError("dead")
+
+    task = asyncio.ensure_future(fail())
+    await asyncio.gather(task, return_exceptions=True)
+    _stopped(task)  # logs, never raises
