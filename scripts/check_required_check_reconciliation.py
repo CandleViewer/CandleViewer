@@ -110,11 +110,11 @@ JOB_KEYS = ("name", "if", "needs", "runs-on", "timeout-minutes", "permissions", 
 STEP_KEYS = ("name", "id", "env", "run", "timeout-minutes")
 # The one name but FILTER_ and RESULT_ the resolver step's env may set, with exactly this value:
 # the draft flag the resolver reads to report the lanes pr.yml defers while a pull request is a
-# draft (DRAFT_DEFERRED in the resolver) as deferred, false on every other event by construction.
+# draft (DRAFT_DEFERRED in the resolver) as deferred: a plain context path (the governance proof
+# of the resolver step evaluates paths only), empty on every event without a pull request, and the
+# resolver reads it on pull_request only.
 DRAFT_FLAG = "PR_DRAFT"
-DRAFT_EXPRESSION = (
-    "${{ github.event_name == 'pull_request' && github.event.pull_request.draft == true }}"
-)
+DRAFT_EXPRESSION = "${{ github.event.pull_request.draft }}"
 # GitHub's default pull_request activity types: a `types` filter that drops one stops a check
 # arriving on every pull request.
 DEFAULT_TYPES = {"pull_request": {"opened", "synchronize", "reopened"}}

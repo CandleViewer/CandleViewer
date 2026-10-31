@@ -388,7 +388,7 @@ NESTED_ERROR = "job 'nested' of lane 'contract' calls another workflow"
         # The draft flag is the one other name the step's env may set, with its pinned expression:
         # any other value (a flag set by hand would defer the lanes off a draft) or a second one.
         ("pr.yml", PR_DRAFT, '          PR_DRAFT: "true"\n', "step's env"),
-        ("pr.yml", PR_DRAFT, PR_DRAFT.replace("== true", "!= false"), "step's env"),
+        ("pr.yml", PR_DRAFT, PR_DRAFT.replace(".draft }}", ".draft || true }}"), "step's env"),
         ("pr.yml", PR_DRAFT, PR_DRAFT + PR_DRAFT, "step's env"),
         ("pr.yml", "\nconcurrency:\n", "\nenv:\n  NODE_OPTIONS: --x$&", "may set no env"),
         (

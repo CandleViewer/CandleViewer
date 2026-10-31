@@ -864,9 +864,10 @@ jobs:
         # #3881: the resolver also reads GITHUB_EVENT_NAME, which the runner sets. On a pull request
         # it reads a skipped `integration` lane as deferred to the merge group, not as CI-GATE-002.
         # On a draft pull request (PR_DRAFT) it reads a skipped e2e, a11y or engine-bench lane as
-        # deferred until the PR leaves draft (DRAFT_DEFERRED); the flag is false on every other event.
+        # deferred until the PR leaves draft (DRAFT_DEFERRED). The path is empty on every event
+        # without a pull request (merge_group), and the resolver reads it on pull_request only.
         env:
-          PR_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == true }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
           FILTER_JS: ${{ needs.changed-paths.outputs.js }}
           FILTER_PY: ${{ needs.changed-paths.outputs.py }}
           FILTER_MIGRATIONS: ${{ needs.changed-paths.outputs.migrations }}

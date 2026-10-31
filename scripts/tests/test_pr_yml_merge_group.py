@@ -56,6 +56,10 @@ PR_GUARDS = ("github.event_name == 'pull_request'", "needs.changed-paths.outputs
 #: `github.event_name == 'pull_request'` in the same `&&`, so on a merge group or train it is false
 #: by construction and the read is never reached.
 DRAFT = "github.event_name == 'pull_request' && github.event.pull_request.draft == true"
+#: The resolver step's flag (PR_DRAFT): the plain path, which the governance proof of the step
+#: evaluates (paths only); empty on every event without a pull request, and the resolver reads it
+#: on pull_request only (GITHUB_EVENT_NAME), so no payload can defer a lane off a pull request.
+DRAFT_FLAG = "github.event.pull_request.draft"
 #: The lanes pr.yml defers while the pull request is a draft, with the filters each starts on: the
 #: job's `if:` is those filters, then `&& !(DRAFT)`, and the resolver (DRAFT_DEFERRED in
 #: scripts/ci_gate_resolver.mjs, fed PR_DRAFT) reads their skip as deferred there. The run that
@@ -141,7 +145,7 @@ FALSE_ON_A_MERGE_GROUP = {
 DRAFT_READS = {
     (f"pr.yml:{lane}", EVENT_CONDITIONS[f"pr.yml:{lane}"].removeprefix("${{ ").removesuffix(" }}"))
     for lane in DRAFT_DEFERRED
-} | {("pr.yml:ci-required:Resolve ci-required conclusion", DRAFT)}
+} | {("pr.yml:ci-required:Resolve ci-required conclusion", DRAFT_FLAG)}
 #: The secret-scan range's ends: a PR's, a merge group's, else a merge train's (#3783).
 SCAN = "github.event.pull_request.%s.sha || github.event.merge_group.%s_sha || inputs.train_%s"
 #: A merge train's base branch in a lane pr.yml calls, which sees its own inputs only (#3783).
@@ -161,7 +165,7 @@ EVENT_VALUES = [
     ("pr.yml:gates", SCAN % ("base", "base", "base")),
     ("pr.yml:gates", SCAN % ("head", "head", "head")),
     ("pr.yml:ci-required", "needs.changed-paths.outputs.pr"),
-    ("pr.yml:ci-required", DRAFT),  # PR_DRAFT, false off a pull request by construction
+    ("pr.yml:ci-required", DRAFT_FLAG),  # PR_DRAFT: empty off a pull request; read on one only
     ("_job-migrations.yml:migrations", MIGRATIONS_BASE),
 ]
 LANE = r'^\s*"?([\w-]+)"?:\s*\{\s*applicable:\s*(.+?),\s*result:\s*process\.env\.(RESULT_\w+)'
@@ -448,12 +452,8 @@ def test_pr_metadata_gates_run_on_pull_requests_only() -> None:
 
 
 def _value(expression: str, values: dict[str, str]) -> str:
-    """A resolver env expression under `values`: a context path's value, or the draft clause as
-    GitHub renders it, `true` when both of its `==` hold, else `false`."""
-    if expression == "${{ " + DRAFT + " }}":
-        pull = values.get("github.event_name") == "pull_request"
-        draft = values.get("github.event.pull_request.draft") == "true"
-        return "true" if pull and draft else "false"
+    """A resolver env expression under `values`: a context path's value ('' when unset, as
+    GitHub renders a missing path)."""
     path = re.fullmatch(r"\$\{\{ ([\w.-]+) \}\}", expression)
     assert path, expression
     return values.get(path[1], "")
@@ -613,7 +613,7 @@ def test_the_draft_deferred_lanes_are_the_ones_whose_job_skips_a_draft() -> None
     }
     assert skipping == set(re.findall(r'"([\w-]+)"', listed)) == set(DRAFT_DEFERRED)
     assert set(DRAFT_DEFERRED) == {"e2e", "a11y", "engine-bench"}
-    assert RESOLVER["env"]["PR_DRAFT"] == "${{ " + DRAFT + " }}"
+    assert RESOLVER["env"]["PR_DRAFT"] == "${{ " + DRAFT_FLAG + " }}"
     assert 'process.env.PR_DRAFT === "true"' in script
 
 

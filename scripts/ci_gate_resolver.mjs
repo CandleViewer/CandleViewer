@@ -107,8 +107,8 @@ export { evaluateLane, MERGE_GROUP_ONLY, DRAFT_DEFERRED };
 // Reads lane definitions from argv[2] as a JSON string:
 //   { "js": {"applicable": true, "result": "success"}, ... }
 // the event from GITHUB_EVENT_NAME, which the runner sets in every step, and whether the pull
-// request is a draft from PR_DRAFT ("true" / "false"), which the `ci-required` step sets from
-// `github.event.pull_request.draft` on a pull_request event only.
+// request is a draft from PR_DRAFT ("true" / "false", empty off a pull request), which the
+// `ci-required` step sets from `github.event.pull_request.draft`; read on a pull_request only.
 // Exits 0 on success, 1 on failure, printing each failure reason to stderr.
 async function main() {
   const raw = process.argv[2];
