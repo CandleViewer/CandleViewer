@@ -18,9 +18,11 @@ name: _job-py
 #     addopts --cov-fail-under floor on the combined data -> uv build -> upload
 #     the `py-coverage` artifact (E03-T04's threshold gate owns the per-package
 #     floors) -> fail unless py-checks and every lane succeeded.
-#   `py-perf` (parallel): pytest -m "perf and not flaky" --no-cov, the C-13.9
+#   `py-perf (N/3)` (parallel): pytest -m "perf and not flaky" --no-cov, the C-13.9
 #     wall-clock budgets, DB-backed ones included (testcontainers); `flaky`
-#     tests are quarantined per C-9.3.
+#     tests are quarantined per C-9.3. Three shards of the committed perf index
+#     (tools/ci/py-perf-index.json, #5193), so no shard collects the whole suite;
+#     `py-perf-index` checks the index against a live collection.
 #
 # Out of scope (per ticket): coverage threshold enforcement (E03-T04),
 # Bandit/pip-audit (E03-T07), Alembic migration checks (E03-T10), contract
@@ -301,17 +303,28 @@ jobs:
   # cancelled at 20m01 on #2182). Same selection, same flags, still blocking: `ci-required` in
   # pr.yml depends on `py`, whose reusable-workflow conclusion aggregates every job in this file.
   py-perf:
-    name: py-perf
+    # #5193: one job ran the whole set, 16.5-18.9 min a run on hosted runners (#5171, #5186): about
+    # 5 min to collect the 68,000-test suite to select the perf tests, then about 12.7 min of tests.
+    # Now three shards of tools/ci/py-perf-index.json (153 tests on 2026-10-31; `py-perf-index`
+    # below fails when the index drifts from a live collection), split by whole test file with the
+    # file weights of CI job 124449801043 (run 41171217151, the slowest of #5186's four: 759 s of
+    # tests), about 253 s of tests a shard. Each shard imports only its own files: locally 7-17 s
+    # of collection against 505 s for the whole suite. Expected a shard, at that slowest pace:
+    # 60 s of set-up and pre-pull, 30 s of collection and 253 s of tests, about 5.7 min (`python
+    # tools/ci/py_perf_index.py plan 3`). The job name carries the shard; `ci-required` still
+    # judges the `py` workflow's conclusion, which aggregates every job here (C-9.1 unchanged).
+    name: py-perf (${{ matrix.shard }}/${{ matrix.total }})
     runs-on: ubuntu-latest
-    # Fixed, not CV_CI_TIMEOUT_MINUTES. The per-test C-13.9 budgets gate inside the tests; this
-    # bounds a hung run and is a hang guard, not a budget (#5171). The set is 155 tests (pytest -m
-    # "perf and not flaky" --collect-only, 2026-10-31); the 1,000-sample login-timing test alone
-    # takes 110 s, and collecting the whole suite to select them takes about 5 min. On 2026-10-31
-    # the merge-group job took 18.9, 16.5, 18.9 and 16.6 min (runs 41171217151, 41171215945,
-    # 41171215130, 41170388195), and run 41169089415 hit the old 20-minute bound at 98% and
-    # ejected #5093. 30 is at least 1.5x the lane's observed p95 (18.9 min), as 20 was at 9-10 min
-    # (#4460); raise it with the measurement when the lane grows, never to hide a hang.
-    timeout-minutes: 30
+    # Fixed, not CV_CI_TIMEOUT_MINUTES: a hang guard, not a budget (the per-test C-13.9 budgets gate
+    # inside the tests). 16 is the larger of 1.5x a shard's expected 343 s (8.6 min) and that plus
+    # the pre-pull's 580 s worst case (15.4 min), rounded up; scripts/tests/test_py_perf_index.py
+    # recomputes it from the index's weights. Raise it with the measurement, never to hide a hang.
+    timeout-minutes: 16
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+        total: [3] # keep in sync with the shard list above (a pin test checks it)
     defaults:
       run:
         working-directory: services/api
@@ -334,9 +347,47 @@ jobs:
       - name: Pre-pull postgres:16-alpine (CI-INFRA-001)
         working-directory: ${{ github.workspace }}
         env:
-          # 8 pulls x 45 s + 220 s of waits = 580 s, inside this job's 30-minute timeout.
+          # 8 pulls x 45 s + 220 s of waits = 580 s, inside this job's 16-minute timeout.
           PREPULL_PULL_TIMEOUT: "45"
         run: tools/ci/prepull_images.sh postgres
 
-      - name: pytest perf budgets (C-13.9, no coverage tracing, isolated)
-        run: uv run pytest -m "perf and not flaky" --no-cov -p no:cacheprovider -p no:randomly --durations=0
+      # The shard's node ids, then the lane's selection on them: `-m` still applies, so the index
+      # can only narrow what the marker selects, and a listed id that no longer exists fails here.
+      - name: pytest perf budgets, one shard of the index (C-13.9, no coverage tracing, isolated)
+        env:
+          SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ matrix.total }}
+        run: |
+          set -euo pipefail
+          listing=$(python ../../tools/ci/py_perf_index.py shard "$SHARD" "$TOTAL")
+          mapfile -t ids <<< "$listing"
+          uv run pytest "${ids[@]}" -m "perf and not flaky" --no-cov -p no:cacheprovider -p no:randomly --durations=0
+
+  # #5193: the shards run the committed index, so a perf test the index misses would run nowhere.
+  # This job collects the whole suite the way the single job did (about 5 min on a hosted runner,
+  # beside the shards) and fails, naming the tests and the regeneration command, when the index
+  # differs from it.
+  py-perf-index:
+    name: py-perf-index
+    runs-on: ubuntu-latest
+    # About 6 min (1 min of set-up and the 5-min collection); 1.5x is 9, rounded up to 10.
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv (cache keyed on uv.lock)
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+
+      - name: uv sync --frozen
+        run: uv sync --frozen --all-groups
+
+      - name: The perf index equals a live perf collection (#5193)
+        run: uv run python ../../tools/ci/py_perf_index.py check

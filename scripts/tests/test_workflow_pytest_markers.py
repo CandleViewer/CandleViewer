@@ -73,6 +73,10 @@ EXPANSIONS = {
     # tools/ci/integration_shards.py prints the test file paths `pytest tests/integration`
     # collects, and test_integration_shards checks its shards partition exactly those (#4605).
     ("_job-integration.yml", "integration-shard"): frozenset({"${files[@]}"}),
+    # tools/ci/py_perf_index.py shard prints node ids of the committed perf index only (its load()
+    # refuses anything but `tests/...py::` ids), and test_py_perf_index checks that the shards
+    # partition the index and that the index equals the live `perf and not flaky` collection.
+    ("_job-py.yml", "py-perf"): frozenset({"${ids[@]}"}),
 }
 QUARANTINE = "flaky"  # C-9.3 quarantines a test by adding it on top of the test's lane markers
 # Shell scripts a workflow step runs, read like a `run:` (#3091): the blocking xstate-contract gate.
