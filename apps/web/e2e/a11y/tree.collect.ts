@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { test } from "@playwright/test";
-import { openScreen } from "./open";
+import { openScreen, STEP_TIMEOUT_MS, sweep } from "./open";
 import { REPORT_DIR, SCREENS, SIGNED_IN_SCREENS } from "./screens";
 
 // Gate 6 collector: ARIA snapshot (role/name/landmark/heading tree) per screen
@@ -13,9 +13,9 @@ const FIXED_NOW = new Date("2026-01-01T12:00:00Z");
 test("collect a11y trees", async ({ page }) => {
   mkdirSync(`${REPORT_DIR}/trees`, { recursive: true });
   await page.clock.setFixedTime(FIXED_NOW);
-  for (const s of [...SCREENS, ...SIGNED_IN_SCREENS]) {
+  await sweep("trees", [...SCREENS, ...SIGNED_IN_SCREENS], async (s) => {
     await openScreen(page, s);
-    const tree = await page.locator("body").ariaSnapshot();
+    const tree = await page.locator("body").ariaSnapshot({ timeout: STEP_TIMEOUT_MS });
     writeFileSync(`${REPORT_DIR}/trees/${s.id}.txt`, `${tree}\n`);
-  }
+  });
 });

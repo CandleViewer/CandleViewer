@@ -89,7 +89,8 @@ scheduled (.github/workflows/governance*.yml, cold-cache.yml, a11y-, e2e- and st
 ├─ governance             → bypass-register check                        (CI-PROT-004)
 ├─ governance-drift       → break-glass / register staleness detection   (CI-PROT-004)
 ├─ cold-cache             → py and web suites with no caches, non-required (CI-BUILD-001)
-├─ a11y-nightly           → a11y sweep of every manifest route, non-required (see below)
+├─ a11y-nightly           → a11y sweep of every manifest route, non-required; a red
+│                           scheduled run is reported as e2e-nightly's is (A11Y-G0xx; below)
 ├─ e2e-nightly            → _job-e2e.yml on main, e2e-electron included, non-required; a red
 │                           scheduled run comments on its tracker issue or opens one
 │                           (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001; below)
@@ -171,6 +172,23 @@ not a positive integer fails the report job and files nothing. No concurrency gr
 manual run (`gh workflow run storybook-nightly.yml`) runs the same job and files no report. Triage
 the red job by its code (§4, CI-A11Y-002..004). Cost: one job a night, within its 600 s budget and
 capped by its 15-minute timeout.
+
+**Nightly accessibility sweep (E47-T02, #5151).** `a11y-nightly.yml` runs the a11y collectors
+(axe, keyboard, trees, flash, canvas flash) over every manifest route on `main` daily at 03:17 UTC
+and on demand, then `tools/a11y/gates.py` over their reports, within a 20-minute budget. The
+nightly is not a required check (C-9.1 is unchanged), but a red one blocks the next release
+(C-9.2). Its `a11y-nightly-report` job, the only one that can write (`issues: write`, no checkout),
+reports a red scheduled run as `e2e-nightly.yml` does: while the repository variable
+`CV_A11Y_NIGHTLY_TRACKER_ISSUE` is unset, each red night opens a `qa`, `area/frontend-platform`,
+`priority/p1` issue; set it to an open issue's number (an owner/admin action, as for
+`CV_E2E_NIGHTLY_TRACKER_ISSUE`) and each red night comments on that issue instead. A value that is
+not a positive integer fails the report job and files nothing. A manual run
+(`gh workflow run a11y-nightly.yml`) runs the same sweep and files no report. Triage from the
+`a11y-sweep-reports` artifact and the "Collect and evaluate" step log: a gate failure names its
+code (`A11Y-G0xx`, see `tools/a11y/gates.py`; axe findings as for CI-A11Y-001 in §4); a collector
+failure names the screen id and route, and a sweep whose first screens project past the 300 s
+test timeout stops early and names its slowest screen. Reproduce with
+`A11Y_SWEEP=full npx playwright test -c e2e/playwright.a11y.config.ts` from `apps/web`.
 
 **Nightly WS chaos (#410).** `chaos-ws-nightly.yml` runs the client WS chaos suite
 (`services/api/tests/chaos/ws`, E17-Q02; its catalogue is the `SCENARIOS.md` there) on `main` daily
