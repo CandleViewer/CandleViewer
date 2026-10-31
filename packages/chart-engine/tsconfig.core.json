@@ -15,6 +15,7 @@
     "src/host",
     "src/worker/host.ts",
     "test/api",
-    "test/worker"
+    "test/worker",
+    "test/chaos"
   ]
 }
