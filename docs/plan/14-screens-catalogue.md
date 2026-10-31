@@ -141,13 +141,14 @@ graph LR
 - **Components:** CMP-001 Button, CMP-005 Checkbox, CMP-007 TextInput, CMP-027 ErrorState / InlineError, CMP-075 EnvBadgeLocal, CMP-200 AuthCard, CMP-201 PasswordField, CMP-207 BuildFooter.
 - **Data:** `POST /api/v1/auth/login` → `{mfaRequired, mfaToken}`; `GET /api/v1/system/build` (version, node).
 - **Interactions/hotkeys:** `Enter` submits; Tab order username→password→remember→submit; caps-lock warning on password focus.
-- **States:** idle · submitting (button spinner, fields locked) · error (generic message) · rate-limited (after 5 failures per 15 min: "Too many attempts. Try again in 14:32.") · account disabled ("This account is disabled. Contact the owner.") · server unreachable (SCR-152 inline variant).
+- **States:** idle · submitting · error (one message for every credential failure) · rate-limited (from `Retry-After`) · server unreachable.
 - **Validation/errors:** username required ("Enter your username."); password required ("Enter your password."); never reveal which field was wrong.
 - **A11y:** `<form>` with labelled inputs, `aria-describedby` for errors, error region `role="alert"`, autocomplete `username`/`current-password`, focus moves to the alert on failure.
 - **Performance:** first paint ≤1 s cold; no chart bundle loaded on this route (code-split).
 - **Analytics/audit:** `auth.login.attempt`, `auth.login.success`, `auth.login.failure` (audit, with IP), `auth.login.rate_limited`.
 - **Sign-off checklist:** [ ] error copy never leaks account existence [ ] rate-limit countdown designed [ ] 125 % zoom layout [ ] dark + light + CVD-safe themes [ ] keyboard-only pass.
 - **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
+- **Design QA (E09-D11):** [E09-D11.md](../design/E09/E09-D11.md) — the built screen has no account-disabled state: one message for every credential failure (DF-47, accepted under `16` §13.5).
 - **Stories:** US-ONB-001, US-ONB-008.
 
 ### SCR-002 — Two-factor (TOTP) challenge
@@ -260,7 +261,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 ```
 
 - **Data:** `POST /auth/step-up` `{password, code, action_class?}` → `{elevated_until, action_class, single_use, step_up_expires_at}`; there is no token, elevation is server-side session state.
-- **Validation:** typed confirmation must match exactly (case-sensitive); Confirm disabled until both fields are valid.
+- **Validation:** typed confirmation must match exactly (case-sensitive); Confirm stays enabled; a press with an incomplete field is refused with focus to that field.
 - **Audit:** `auth.step_up_granted|failed|required` with the target action key; `auth.session_readonly_downgrade` on the 3rd failure. **Stories:** US-AUTH-008, US-ADMIN-011.
 - **A11y:** Dialog is `role="alertdialog"` with the sensitive action named in the accessible description ('Confirm: rotate API key for Main'); the reason for step-up is text, not an icon; focus starts on the password field and is trapped until resolved; failures are announced via `aria-live="assertive"`.
 - **Performance:** Step-up elevation <=400 ms p95; there is no token: remaining validity is rendered from the server-provided `step_up_expires_at`, never a client clock assumption.
@@ -270,6 +271,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Motion (E09-D08):** `docs/design/E09/E09-D08.md` — open / close, the one-frame failure feedback, the grace indicator's cadence, the input-opacity rule and the reduced-motion variants.
 - **Design sign-off acceptance checklist:** [ ] the exact action being authorised is restated verbatim in the dialog [ ] remaining-TTL indicator for an already-valid step-up token [ ] failure/lockout state drawn [ ] cancel returns the caller to a safe no-op state
 - **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
+- **Design QA (E09-D11):** [E09-D11.md](../design/E09/E09-D11.md) — the built dialog warns before its challenge expires and offers a fresh challenge (DF-46, accepted); Confirm stays enabled and names the first unmet field on a press (DF-45, accepted).
 
 ### SCR-010 — App shell (global chrome)
 
