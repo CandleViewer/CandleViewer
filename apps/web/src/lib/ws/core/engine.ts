@@ -92,6 +92,8 @@ export interface WsEngine {
   start(): void;
   /** A client stop: closes the socket, never reconnects, and forgets every stream. */
   stop(): void;
+  /** CMP-077 `Retry now` (#304): `Connection.retryNow`; `false` when refused. */
+  retryNow(): boolean;
   /** `rs` selects a replay stream of the `ch` (23 11). `system` is implicit and shared. */
   consume(spec: ConsumerSpec, rs?: string | undefined): StreamHandle;
   /**
@@ -704,6 +706,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
 
   return {
     start: () => connection.start(),
+    retryNow: () => connection.retryNow(),
 
     stop() {
       connection.stop();

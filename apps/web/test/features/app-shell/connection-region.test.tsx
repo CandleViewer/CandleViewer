@@ -60,13 +60,15 @@ const fatal = (closeCode: number): WsState =>
 
 let state: WsState = INITIAL_WS_STATE;
 const listeners = new Set<() => void>();
+const retryNow = vi.fn(() => true);
 const client = {
+  retryNow,
   getState: () => state,
   subscribe: (listener: () => void) => {
     listeners.add(listener);
     return () => void listeners.delete(listener);
   },
-} as unknown as WsClientHandle; // the hook reads only `getState` and `subscribe`
+} as unknown as WsClientHandle; // the slot reads only `getState`, `subscribe` and `retryNow`
 const go = (next: WsState): void =>
   act(() => {
     state = next;
@@ -100,6 +102,7 @@ const settle = async (): Promise<void> => {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(T0);
+  retryNow.mockClear();
   state = UP;
   act(() => setActiveClient(client));
 });
@@ -122,8 +125,14 @@ describe("CMP-077 region: one view per state", () => {
     ).toEqual([["polite", ""]]);
   });
 
-  const CASES: readonly [string, () => void, string, readonly string[]][] = [
-    ["reconnecting", () => go(DROPPED), "Disconnected — reconnecting (1)", ["Next try in ~4 s"]],
+  const CASES: readonly [string, () => void, string, readonly string[], boolean][] = [
+    [
+      "reconnecting",
+      () => go(DROPPED),
+      "Disconnected — reconnecting (1)",
+      ["Next try in ~4 s"],
+      true,
+    ],
     [
       "long-outage",
       () => {
@@ -132,25 +141,29 @@ describe("CMP-077 region: one view per state", () => {
       },
       "Disconnected for 05:00 — escalated",
       ["Last data 05:12 ago."],
+      true,
     ],
     [
       "offline fatal",
       () => go(fatal(1002)),
       "Offline — retry stopped",
       ["disagree on the protocol"],
+      true,
     ],
-    ["session ended", () => go(fatal(4403)), "Session ended", ["Your access was removed"]],
+    ["session ended", () => go(fatal(4403)), "Session ended", ["Your access was removed"], false],
     [
       "R1",
       () => go(reduce(UP, shutdown)),
       "Order entry off — backend restarting",
       ["Cancel and close"],
+      false,
     ],
     [
       "R2",
       () => go(reduce(UP, killSwitch(ON))),
       "trading frozen by the owner",
       ["Cancel still works."],
+      false,
     ],
     [
       "R5",
@@ -160,20 +173,27 @@ describe("CMP-077 region: one view per state", () => {
         ),
       "private feed down",
       ["confirmed over REST"],
+      false,
     ],
-    ["R6", () => go(run(connecting, authOk(), stream("live"))), "kill-switch status unknown", []],
+    [
+      "R6",
+      () => go(run(connecting, authOk(), stream("live"))),
+      "kill-switch status unknown",
+      [],
+      false,
+    ],
   ];
 
   it.each(CASES)(
     "%s: its title and lines, pointer events on, no axe failure",
-    async (_, to, title, texts) => {
+    async (_, to, title, texts, retry) => {
       render(<ShellBannerSlot />);
       to();
       const el = region();
       expect(within(el).getByText(title, { exact: false })).toBeInTheDocument();
       for (const text of texts) expect(el).toHaveTextContent(text);
-      // Nothing to retry: the client has no manual retry yet, and a session end never retries.
-      expect(within(el).queryByRole("button", { name: /Retry/ })).toBeNull();
+      // Retry now on a down link that may come back; never on a session end or a read-only reason.
+      expect(within(el).queryByRole("button", { name: "Retry now" }) !== null).toBe(retry);
       vi.useRealTimers(); // axe schedules with real timers
       expect(await seriousAxe(document.body)).toEqual([]);
     },
@@ -187,6 +207,34 @@ describe("CMP-077 region: one view per state", () => {
     act(() => vi.advanceTimersByTime(30_000));
     expect(age()).toHaveTextContent("Last data 00:42 ago.");
     expect(age().style.color).toBe("var(--color-status-danger-strong)");
+  });
+});
+
+describe("CMP-077 region: Retry now (#304 S10, BQ-07)", () => {
+  it("asks the client for one handshake from the keyboard, and stays focused while it runs", () => {
+    render(<ShellBannerSlot />);
+    go(DROPPED);
+    const button = within(region()).getByRole("button", { name: "Retry now" });
+    expect(button.tagName).toBe("BUTTON");
+    expect(button.tabIndex).toBe(0);
+    button.focus();
+    // Enter / Space on a native <button> dispatch a click with detail 0 (no user-event devDependency)
+    fireEvent.click(document.activeElement ?? document.body, { detail: 0 });
+    expect(retryNow).toHaveBeenCalledTimes(1);
+    go(reduce(DROPPED, connecting)); // the handshake is under way
+    const busy = within(region()).getByRole("button", { name: "Retry now" });
+    expect(busy).toHaveFocus();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    fireEvent.click(busy, { detail: 0 });
+    expect(retryNow).toHaveBeenCalledTimes(1); // busy: a press does nothing, never a loop
+  });
+
+  it("offers no retry after a 4403: the session ended, sign in again", () => {
+    render(<ShellBannerSlot />);
+    go(fatal(4403));
+    expect(within(region()).queryByRole("button", { name: "Retry now" })).toBeNull();
+    expect(within(region()).getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(retryNow).not.toHaveBeenCalled();
   });
 });
 

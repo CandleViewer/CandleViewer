@@ -128,6 +128,13 @@ interface Consumer {
   reask: unknown;
 }
 
+/** `Retry now` is offered on a down link that may come back: not up or opening, not after a 4403 (the session ended). */
+export function mayRetry(state: WsState): boolean {
+  const { link } = state;
+  if (link.kind === "reconnecting") return true;
+  return link.kind === "offline" && !(link.cause === "fatal" && link.closeCode === 4403);
+}
+
 const NOTHING: Readonly<Record<string, unknown>> = Object.freeze({});
 
 /** What the worker reads of a token result and no more: a field the source adds (a refresh token, a user) stays in the tab. */
@@ -406,6 +413,11 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
       if (!stopped) post({ t: "focus", id: paneId });
     },
     getState: () => state,
+    retryNow() {
+      if (stopped || !mayRetry(state)) return false;
+      post({ t: "retry" });
+      return true;
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => void listeners.delete(listener);

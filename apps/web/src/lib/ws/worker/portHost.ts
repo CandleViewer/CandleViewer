@@ -567,6 +567,8 @@ export function createPortHost(options: PortHostOptions): PortHost {
         settle(message.req, message.result);
         return true;
       }
+      case "retry":
+        return engine.retryNow(); // refused (counted) while a dial is under way, too soon, or after a 4403
       case "fault":
         options.fault?.(message.command);
         return true;

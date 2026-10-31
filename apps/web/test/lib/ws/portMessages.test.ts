@@ -62,6 +62,7 @@ const CLIENT: Record<string, Record<string, unknown>> = {
   },
   "token locked": { t: "token", req: 4, result: { kind: "locked" } },
   "token unavailable": { t: "token", req: 5, result: { kind: "unavailable" } },
+  retry: { t: "retry" },
   stop: { t: "stop" },
   fault: { t: "fault", command: { kind: "anything" } },
 };

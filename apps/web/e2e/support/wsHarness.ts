@@ -25,6 +25,11 @@ export interface GatewayOptions {
   readonly firstAuthSystem?: readonly Readonly<Record<string, unknown>>[];
   /** `auth_ok.token_expires_at_ms` past the server's now (default 600 000); 61 000 makes the client re-auth in place 5 s on (4.1). */
   readonly tokenTtlMs?: number;
+  /**
+   * Test-only (#304 S10, E04-D02-F11): every data frame's `ts` is this far behind the server's now (default 0), so a
+   * consumer's frame age, and the status bar's latency band, can be held (100-249 ms: "slow"). `setFrameAge` moves it.
+   */
+  readonly ageMs?: number;
 }
 
 export interface WsHarness {
@@ -48,6 +53,8 @@ export interface WsHarness {
   revokeSession(): void;
   /** The next fixture ticker (BTCUSDT) or `fields`, as a `snap` then `d`s on `ticker.<symbol>` (6.1, 14.8). */
   sendTicker(symbol: string, fields?: Partial<TickerRow>): void;
+  /** Test-only: the age of every data frame sent from now on (`GatewayOptions.ageMs`). */
+  setFrameAge(ms: number): void;
 }
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -165,6 +172,7 @@ export async function installWsHarness(
   let down = false;
   let stalled: Conn | undefined;
   let current: Conn | undefined;
+  let ageMs = gateway.ageMs ?? 0;
   const now = (): number => EPOCH_MS + (tick += 1);
 
   const send = (c: Conn, frame: Frame): void => {
@@ -174,7 +182,7 @@ export async function installWsHarness(
   };
   const data = (c: Conn, t: "snap" | "d", ch: string, p: unknown, s: number, meta?: object) => {
     c.seq.set(ch, s);
-    send(c, { t, ch, s, ts: now(), e: "j", ...(meta && { meta }), p });
+    send(c, { t, ch, s, ts: now() - ageMs, e: "j", ...(meta && { meta }), p });
   };
 
   /** 4.2, 4.3, 5.2, 5.3, 7.5, 9.1: the replies a gateway owes each client frame. */
@@ -321,6 +329,9 @@ export async function installWsHarness(
       send(current, { t: "bye", p: bye });
       void current.route.close({ code: 4401, reason: "session_revoked" });
       current = undefined;
+    },
+    setFrameAge(ms) {
+      ageMs = ms;
     },
     sendTicker(symbol, fields = {}) {
       if (!current) throw new Error("sendTicker: no live connection");

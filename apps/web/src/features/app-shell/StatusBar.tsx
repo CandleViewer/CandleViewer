@@ -1,8 +1,10 @@
 import type { CSSProperties, JSX, ReactNode } from "react";
 import { Icon, type IconName } from "@candleviewer/ui";
-import type { ConnectionState, Environment } from "../../shell/bootstrap/store.js";
+import type { Environment } from "../../shell/bootstrap/store.js";
 import { useShellSelector } from "../../shell/useShellSelector.js";
 import type { LatencyState } from "../../lib/telemetry/latencyIndicator.js";
+import { useWsState } from "../../lib/ws/client/useWsState";
+import { connectionPresentation } from "../../lib/ws/state/connectionPresentation";
 import { CLIENT_VERSION } from "../../lib/ws/protocol/frames.js";
 import { VERSION_COPY } from "../system-states/copy";
 import { checkVersion } from "../system-states/versionMismatch";
@@ -83,22 +85,17 @@ function Chip({ tone, text, kind }: ChipProps): JSX.Element {
   );
 }
 
-const CONNECTION_WORD: Record<ConnectionState["kind"], readonly [string, Tone]> = {
-  live: ["live", "ok"],
-  connecting: ["connecting", "warn"],
-  reconnecting: ["reconnecting", "error"],
-  offline: ["offline", "error"],
-};
-
 /**
- * The WS health chip. It reads only the connection kind, so attempts and the 1 Hz latency never
- * re-render it. The store has no attempt count or last-data age for it to name. It is a DOM sibling
- * of the "System status" region, never live content: a connection transition is announced once,
- * assertively, by the connection region (CMP-077), not a second time politely here.
+ * The WS health chip (#304 S10, BQ-02): the word of `connectionPresentation`, read through
+ * `useWsState()`, so it splits the link as the CMP-076 chip and the CMP-077 region do (a running
+ * retry reads "reconnecting" whatever its cause; "offline" only once the retry stopped). The
+ * snapshot is referentially stable between transitions, so attempts and the 1 Hz latency never
+ * re-render it. It is a DOM sibling of the "System status" region, never live content: a
+ * connection transition is announced once, assertively, by the connection region (CMP-077), not a
+ * second time politely here.
  */
 function ConnectionChip(): JSX.Element {
-  const kind = useShellSelector((s) => s.connection.kind);
-  const [word, tone] = CONNECTION_WORD[kind];
+  const { word, tone } = connectionPresentation(useWsState());
   return <Chip kind="connection" tone={tone} text={`Connection: ${word}`} />;
 }
 
@@ -109,20 +106,34 @@ const LATENCY_TONE: Record<LatencyState, Tone> = {
   unavailable: "none",
 };
 
+/**
+ * The display word per `LatencyState` (#304 S10, BQ-09; PROPOSED for #325): the contract's
+ * `degraded` reads "slow", so it is never the API probe's or the shell mode's "degraded" (SCR-153).
+ */
+export const LATENCY_WORD: Record<LatencyState, string> = {
+  ok: "ok",
+  degraded: "slow",
+  breach: "over budget",
+  unavailable: "unavailable",
+};
+
 /** The latency chip's live half: glyph + state word only, so a value-only update is silent. */
 function LatencyStateChip(): JSX.Element {
   const state = useShellSelector((s) => s.latency.state);
-  return <Chip kind="latency" tone={LATENCY_TONE[state]} text={`WS latency: ${state}`} />;
+  return (
+    <Chip kind="latency" tone={LATENCY_TONE[state]} text={`WS latency: ${LATENCY_WORD[state]}`} />
+  );
 }
 
 /**
  * The latency value, outside the live region: the eye reads "· 38 ms"; browse mode reads the
- * E10-D03 §10.2 name verbatim ("WS latency: ok, 38 ms", `latencyIndicator.ts`).
+ * E10-D03 §10.2 name with the display word ("WS latency: ok, 38 ms"; "slow" for `degraded`).
  */
 function LatencyValue(): JSX.Element | null {
   const valueMs = useShellSelector((s) => s.latency.valueMs);
-  const label = useShellSelector((s) => s.latency.label);
+  const state = useShellSelector((s) => s.latency.state);
   if (valueMs === null) return null;
+  const label = `WS latency: ${LATENCY_WORD[state]}, ${valueMs} ms`;
   return (
     <span data-latency-value="" style={{ color: "var(--color-text-secondary)" }}>
       <span aria-hidden="true">{`· ${valueMs} ms`}</span>

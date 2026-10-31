@@ -110,5 +110,12 @@ export interface WsClient {
   /** A `useSyncExternalStore` pair: the snapshot is referentially stable between transitions. */
   getState(): WsState;
   subscribe(listener: () => void): () => void;
+  /**
+   * CMP-077 `Retry now` (#304): asks the worker for one handshake now, in place of the backoff
+   * wait. `false` (nothing sent) unless the link is down and may come back: never while up or
+   * connecting, never after a 4403 (`session-ended`: sign in again), never once stopped. The
+   * worker may still refuse it (a dial under way, or too soon after the last).
+   */
+  retryNow(): boolean;
   stop(): void;
 }

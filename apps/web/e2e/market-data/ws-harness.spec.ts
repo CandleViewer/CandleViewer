@@ -87,6 +87,20 @@ test("desync: a sequence gap makes the client resync", async ({ page }) => {
   expect(harness.sent.flatMap(schemaErrors)).toEqual([]);
 });
 
+// #304 S10 (E04-D02-F11): the test-only frame-age knob. The C-d e2e (hold 150 ms for 60 ticker frames and see one
+// "System status" change) needs a mounted surface that consumes a topic; none does at this base, so only the knob is
+// checked here and C-d stays a row for E10-Q03 (#302).
+test("setFrameAge stamps each data frame that far behind the server's clock", async ({ page }) => {
+  const harness = await signedIn(page);
+  harness.sendTicker("BTCUSDT");
+  const fresh = Number(harness.sent.at(-1)?.["ts"]);
+  harness.setFrameAge(150);
+  harness.sendTicker("BTCUSDT");
+  const aged = Number(harness.sent.at(-1)?.["ts"]);
+  expect(fresh - aged).toBe(149); // one tick of the server's counter later, 150 ms older
+  expect(harness.sent.flatMap(schemaErrors)).toEqual([]);
+});
+
 test("fixture tickers translate into valid 23 ticker payloads", () => {
   const rows = H.fixtureTickers();
   expect(rows).toHaveLength(20);

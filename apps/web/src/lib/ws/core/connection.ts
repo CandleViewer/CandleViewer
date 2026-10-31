@@ -75,6 +75,12 @@ export interface Connection {
   start(): void;
   /** A client stop: closes the socket and never reconnects. */
   stop(): void;
+  /**
+   * CMP-077 `Retry now` (#304): one handshake now in place of the wait, never a loop. Refused
+   * (`false`) while a socket or a token wait is in flight, within `RETRY_NOW_MIN_INTERVAL_MS` of
+   * the last one, and after a 4403 (the session ended: only a new sign-in brings it back).
+   */
+  retryNow(): boolean;
   /** Paces `frame` out (8.5); dropped unless the connection is `ready`. */
   send(frame: F.ClientFrame): void;
   /** An id for a request: unique among everything this connection sends (`hello`, `auth` and pings take theirs from the same source). */
@@ -112,6 +118,10 @@ const MAX_HEARTBEAT_MS = 300_000;
 const MAX_TIMER_MS = 2 ** 31 - 1;
 /** Pongs sent before `auth_ok`: there a `pong` counts against the rate limit like any frame (8.5), and the gateway drops it. */
 const MAX_PRE_AUTH_PONGS = 3;
+/** The least time between two manual retries: a tab that asks over and over gets one dial per window, not a hot loop. */
+export const RETRY_NOW_MIN_INTERVAL_MS = 2_000;
+/** 4403: the access was removed; a manual retry is refused after it (E17-D02 §6 `session-ended`). */
+const CLOSE_SESSION_ENDED = 4403;
 /** Application close codes (3000-4999) for the connections the client ends itself. */
 const CLOSE_STOP = 1000;
 const CLOSE_TIMEOUT = 4000;
@@ -185,6 +195,11 @@ export function createConnection(options: ConnectionOptions): Connection {
   let started = false;
   let stopped = false;
   let reconnectTimer: unknown;
+  /** A token wait of `connect` is in flight: a manual retry would be a second dial. */
+  let dialing = false;
+  /** The code of the fatal close the connection stopped on; `undefined` while it is not stopped on one. */
+  let fatalCode: number | undefined;
+  let lastManualAt: number | undefined;
 
   const pacer = createOutboundPacer({
     // Cast: the pacer is reset whenever `current` goes (`drop`), so no frame outlives its socket.
@@ -241,9 +256,16 @@ export function createConnection(options: ConnectionOptions): Connection {
     if (stopped) return;
     // Before the socket: a locked or unavailable token opens nothing, and `auth` has its token the
     // moment `welcome` arrives, well inside the 10 s the gateway allows.
+    dialing = true;
     const token = await acquireToken();
+    dialing = false;
     if (stopped) return; // a stop overtook the wait
     if (token === undefined) {
+      // a manual dial after a fatal close that finds no token stops again: never back on the schedule
+      if (fatalCode !== undefined) {
+        emit({ type: "offline", cause: "fatal", closeCode: fatalCode });
+        return;
+      }
       attempt += 1;
       scheduleReconnect(
         backoffDelayWithJitter(attempt, random),
@@ -268,6 +290,7 @@ export function createConnection(options: ConnectionOptions): Connection {
   }
 
   function open(token: Token): void {
+    fatalCode = undefined; // the socket dials: a fatal close is no longer what the connection stopped on
     emit({ type: "connecting" });
     const c: Conn = {
       socket: UNOPENED,
@@ -493,6 +516,7 @@ export function createConnection(options: ConnectionOptions): Connection {
     attempt += 1;
     const decision = decideClose({ code, bye: c.bye, attempt }, random);
     if (decision.fatal) {
+      fatalCode = code;
       emit({ type: "offline", cause: "fatal", closeCode: code });
       return;
     }
@@ -514,6 +538,19 @@ export function createConnection(options: ConnectionOptions): Connection {
       if (reconnectTimer !== undefined) timers.clearTimeout(reconnectTimer);
       reconnectTimer = undefined;
       if (current !== undefined) abandon(current, CLOSE_STOP, "client_stop");
+    },
+    retryNow() {
+      if (!started || stopped || current !== undefined || dialing) return false;
+      if (fatalCode === CLOSE_SESSION_ENDED) return false;
+      const now = timers.now();
+      if (lastManualAt !== undefined && now - lastManualAt < RETRY_NOW_MIN_INTERVAL_MS)
+        return false;
+      lastManualAt = now;
+      // the wait is cleared, the attempt count is kept: a failed manual dial goes on with the next row of the table
+      if (reconnectTimer !== undefined) timers.clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+      void connect();
+      return true;
     },
     send(frame) {
       if (current?.phase === "ready") pacer.enqueue(frame);

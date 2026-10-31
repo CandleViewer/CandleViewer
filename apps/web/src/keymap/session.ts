@@ -9,6 +9,7 @@ import { getMeClaims } from "../lib/auth/meCache";
 import { getShellState, subscribeShellState, type Me } from "../shell/bootstrap/store";
 
 /** `/me`'s user id; null before sign-in, and for a `/me` without a user (a stub's), which then keeps nothing. */
+// View-as (E42-S03 #1134): while a view-as context is live this must return null, with a test (#304 gap 13).
 export function keymapUser(): string | null {
   const user: Partial<Me["user"]> | undefined = getShellState().me?.user;
   return typeof user?.id === "string" && user.id !== "" ? user.id : null;

@@ -6,10 +6,19 @@ export interface ConnectionRegionProps {
   readonly view: ConnectionRegionView;
   /** `session-ended`: SCR-001 through the auth path (E17-D02 §6 `onSignIn`). */
   readonly onSignIn: () => void;
+  /**
+   * `Retry now` (#304 S10, BQ-07; `15` CMP-077 `onRetryNow`): one manual handshake, never a loop.
+   * Without it no button is drawn; a view without the `retry` control (`session-ended`, read-only)
+   * draws none either.
+   */
+  readonly onRetryNow?: (() => void) | undefined;
+  /** A handshake is under way: the button stays, focusable and busy, and does nothing. */
+  readonly retrying?: boolean;
 }
 
 const BOX: CSSProperties = {
   display: "flex",
+  flexWrap: "wrap", // at 320 CSS px the buttons go under the text, never squeeze it (SC 1.4.10)
   alignItems: "flex-start",
   gap: "var(--space-inset-sm)",
   padding: "var(--space-inset-sm)",
@@ -54,16 +63,24 @@ function look(view: ConnectionRegionView): CSSProperties {
  * In the banner slot below the TopBar (§4.1), so it never covers SCR-063's cancel / close or
  * CMP-211; it pushes the workspace down rather than overlaying it.
  *
- * Deferred: `Retry now` (B2; the WS client exposes no manual retry), `Details` and its Owner /
- * Viewer split (no role or diagnostics surface here yet), `recovered`, `unstable`, "Back in ~N s"
- * on R1 (`WsState` keeps no notice time), and the long-outage outlined pill (no retry button).
+ * `Retry now` (#304 S10, BQ-07 (b)): `WsClient.retryNow()`, the WS worker's `retry` port message;
+ * a native button (Enter / Space), busy while a handshake is under way so focus never drops, and
+ * never drawn for `session-ended` (4403: sign in again).
+ * Deferred (carried to E17-Q04 #569): `Details` and its Owner / Viewer split (no diagnostics copy
+ * spec yet) and `recovered`. Also deferred: `unstable`, "Back in ~N s" on R1 (`WsState` keeps no
+ * notice time), and the long-outage outlined pill (the button keeps its secondary look).
  * Gap: the fatal L1 keeps §10 F's verbatim "Copy details and report a bug.", but no Details / Copy
  * details control exists until `Details` lands.
  * Visual deviations, deferred: the left border is `border.thick` (2 px),
  * not §4.1's 4 px (no 4 px border token); no 96 px min-height (§4.1, §13.2: no size token), so the
  * region is as tall as its text; the §4.1 pixel offsets and `color.text.secondary` body lines.
  */
-export function ConnectionRegion({ view, onSignIn }: ConnectionRegionProps): JSX.Element {
+export function ConnectionRegion({
+  view,
+  onSignIn,
+  onRetryNow,
+  retrying = false,
+}: ConnectionRegionProps): JSX.Element {
   const strong = view.state === "long-outage";
   const ink = strong ? undefined : `var(--border-ink)`;
   // §10 B5: from T4 30 s the age line takes `color.status.danger.strong` (the strong fill keeps inverse).
@@ -78,7 +95,7 @@ export function ConnectionRegion({ view, onSignIn }: ConnectionRegionProps): JSX
       <span style={{ display: "inline-flex", color: ink }}>
         <Icon name={view.state === "read-only" ? "warning" : "danger"} size="md" />
       </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: "1 1 12em", minWidth: 0 }}>
         <p style={{ ...P, fontWeight: 600 }}>{view.title}</p>
         {view.lines.map((line, i) => (
           <p key={line} style={{ ...P, color: i === 0 ? ageInk : undefined }}>
@@ -91,6 +108,11 @@ export function ConnectionRegion({ view, onSignIn }: ConnectionRegionProps): JSX
           </p>
         )}
       </div>
+      {onRetryNow !== undefined && view.controls.includes("retry") ? (
+        <Button variant="secondary" size="sm" loading={retrying} onClick={onRetryNow}>
+          Retry now
+        </Button>
+      ) : null}
       {view.controls.includes("sign-in") ? (
         <Button variant="primary" size="sm" onClick={onSignIn}>
           Sign in
