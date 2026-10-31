@@ -281,6 +281,10 @@ def f189(state: str) -> k.Node:
     cl = "paused" if state == "paused" else "following"
     if state not in ("virtual-now",):
         c.strip.append(k.cluster(cl, x=round(c.w - k.cluster_w(cl)), y=0))
+    if state == "paused":
+        # r3 axis sweep: "Paused at hh:mm" reads the newest bar on screen off this frame's axis (E11-D02 L267: hh:mm
+        # of the newest bar on screen), not the zone tag's wall clock
+        c.strip[-1] = k.cluster(cl, x=c.strip[-1]["x"], y=0, at=c.clock_at(c.x(len(c.bars) - 1)))
     if state == "boundary":
         xb = c.x(7) - round(c.slot_w / 2)
         c.pane.append(k.rect("session boundary", 1, c.ph, k.slot("color.chart.boundary"), x=xb, y=0,
@@ -291,14 +295,16 @@ def f189(state: str) -> k.Node:
         c.strip.append(k.text("boundary label", "14 Oct", k.NUM, k.slot("color.chart.axis"), x=xb - 19, y=6,
                               note="priority 0, medium weight"))
     elif state == "maintenance band":
-        x0, bw = c.x(5), 176
+        # r3 axis sweep: the band runs 13:31-13:38 on this axis, so its label sits between the 13:30 and 13:40 ticks
+        # and covers only 13:35 (the one dropped label); both its times lie on the visible ticks
+        x0, bw = 157, 150
         c.pane.append(dict(hatch("maintenance band", bw, c.ph), x=x0, y=0))
         c.strip.append(dict(hatch("maintenance band · strip", bw, c.sh - 1), x=x0, y=1))
         # m3: the band's times are read off this frame's axis (13:30 / 13:35 / 13:40)
         t0, t1 = c.clock_at(x0), c.clock_at(x0 + bw)
-        c.strip.append(k.text("band label", f"{t0} – {t1} maintenance", k.CAPTION, k.TEXT_2, x=x0 + 6, y=5,
+        c.strip.append(k.text("band label", f"{t0}–{t1} maintenance", k.CAPTION, k.TEXT_2, x=x0 + 6, y=5,
                               note="shown when the band is >= 48 px wide"))
-        c.drop_times = {0, 1}  # live fold: the band label covers these time labels (dropped as collisions, D8)
+        c.drop_times = {1}  # live fold: the band label covers this time label (dropped as a collision, D8)
     elif state == "loading band":
         lw = 132
         c.first = 6  # no bar loaded left of the oldest bar

@@ -13,7 +13,7 @@ runs from a full checkout of the repository with Python 3.12 and `git`; nothing 
 | `gen/gen_10.py`          | Board 10 `ref-frames-b`: CMP-197 / 198 / 199 / 226, 22 frames.                                                                                                                                   |
 | `NN-<slug>.md`           | Each board's sidecar as the kit writes it (line 3 is the render drivers' line: page and theme), its frames, the validator line and the sheet's notes.                                            |
 | `v4/NN-<slug>.json`      | The packed sheets that reproduce the drawn boards. `compactOf.file` is the bare raw-sheet name; `compactOf.sha256` is the raw sheet's, so a rebuild proves itself.                               |
-| `build-notes.md`         | The authors' notes: layout, tokens, rules, the critic fold, the live-check fold r2 and the review fold r2.                                                                                       |
+| `build-notes.md`         | The authors' notes: layout, tokens, rules, the critic fold, the live-check fold r2 and the review folds r2 and r3.                                                                               |
 | `build/` (not committed) | The raw sheets `NN-<slug>.json`, a copy of each `.md` (the set the render drivers read) and `NN-<slug>.post-live.js`. Listed in `.gitignore`.                                                    |
 
 The kit reads `docs/design/E11/E11-D05.md`, `E11-D05-handoff.md`, `E11-D02.md`, `E11-D04.md` and

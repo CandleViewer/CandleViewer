@@ -33,8 +33,8 @@ Root 3000 x 2566 px at (4000, 0); footer "page E11-D05 ref frames · board 10 ·
 
 ## Validator and size
 
-- `10-ref-frames-b.json: 0 errors, 14 warnings, 80 sections, 273681 bytes` (exit 0)
-- 80 sections, 2167 shapes, 273681 bytes
+- `10-ref-frames-b.json: 0 errors, 14 warnings, 80 sections, 274641 bytes` (exit 0)
+- 80 sections, 2173 shapes, 274641 bytes
 
 ## Live checks (13)
 
@@ -59,8 +59,8 @@ Root 3000 x 2566 px at (4000, 0); footer "page E11-D05 ref frames · board 10 ·
 
 ## Deviations (5)
 
-- CMP-197 docked: the frame's price range is widened so the last-price band sits low and the box clears it (rule 4 priority); a layout choice of the crop, not a spec value
-- CMP-197 overflow: the frame's price range is widened so the last-price band sits low and the box clears it (rule 4 priority); a layout choice of the crop, not a spec value
+- CMP-197 docked: the frame's price range is widened so the last-price band sits low and the box clears it (rule 4 priority), and its bars and series sit 40.0 higher so every value the frame shows lies on its visible ticks (64,000-64,400); a layout choice of the crop, not a spec value
+- CMP-197 overflow: the frame's price range is widened so the last-price band sits low and the box clears it (rule 4 priority), and its bars and series sit 40.0 higher so every value the frame shows lies on its visible ticks (64,000-64,400); a layout choice of the crop, not a spec value
 - CMP-199 hidden rows: E11-D02 D12 (L119) and L343 draw an eye-off icon; the local icon set has none, so it is drawn from primitives - the `show` eye plus a 2 px diagonal stroke (13 2 x 2 steps) in color.text.tertiary; swap for the library icon when it lands
 - CMP-199 one hidden: the frame's price range is widened so no candle crosses the hidden row's "—" value (D12 gives the legend no row fill); a layout choice of the crop, not a spec value
 - CMP-199 all hidden: every series row is hidden, the price series included, so the pane draws no candles (grid and axis stay) and no "—" value sits over a wick

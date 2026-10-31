@@ -954,12 +954,13 @@ def segment(name: str, chars: str, *, pressed: bool = False, glyph: str | None =
     return hbox(name, kids, o, h=24, w=None if chars and len(chars) > 1 else 24)
 
 
-def cluster(state: str = "following", *, x: float = 0, y: float = 0) -> Node:
+def cluster(state: str = "following", *, x: float = 0, y: float = 0, at: str = "13:47") -> Node:
     """[ auto | fit | › ] (E11-D01 Q2-c / E11-D02 D8): auto on = "Live" pressed (selected + border.strong + check);
-    off = the "Paused at 13:47" warning pill replacing auto's label and widening the cluster leftwards."""
+    off = the "Paused at hh:mm" warning pill (hh:mm = `at`, the newest bar on screen, E11-D02 L267) replacing auto's
+    label and widening the cluster leftwards."""
     if state == "paused":
         auto = hbox("auto · paused", [icon("glyph", "pending", WARN_STRONG, ICON_SM),
-                                      text("label", "Paused at 13:47", CAPTION, TEXT_1)],
+                                      text("label", f"Paused at {at}", CAPTION, TEXT_1)],
                     {"fill": WARN_SUBTLE, "stroke": BORDER, "strokeWidth": HAIR, "strokeAlign": "inner",
                      "padX": INSET_XS, "gap": INSET_XS}, h=24)
     else:
