@@ -3,8 +3,9 @@
 Market/bar/snapshot producers call `submit()` (non-blocking, sync). A single tracked task
 drains a bounded queue (C-2.18, drop-oldest + counter on overflow) and, per tick, evaluates
 each simulate/armed rule whose trigger type matches (C-2.20: per snapshot, never per book
-delta). Results go to `on_result` (`RulesService.evaluation_sink()`); `on_fire` also gets each
-result with the stored facts of the work-list entry it was evaluated for (E35-S03, 24 §11.5).
+delta). Each evaluator hands its results to its own `on_result` hook, which the factory sets
+(`RulesService.evaluation_sink()`); `on_fire` is the one hook the runner calls, with each result
+and the stored facts of the work-list entry it was evaluated for (E35-S03, 24 §11.5).
 """
 
 from __future__ import annotations

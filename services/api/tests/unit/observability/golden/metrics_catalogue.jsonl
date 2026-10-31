@@ -373,6 +373,7 @@
 ["rule_actions_total", "counter", ["type", "result"], "planned", "E35"]
 ["rule_autodisarm_total", "counter", [], "planned", "E35"]
 ["rule_circuit_breaker_trips_total", "counter", [], "planned", "E35"]
+["rule_dispatch_reread_failed_total", "counter", ["reason"], "planned", "E35"]
 ["rule_evaluations_total", "counter", [], "planned", "E35"]
 ["rule_fires_total", "counter", ["rule_id"], "planned", "E35"]
 ["rule_signal_chain_truncated_total", "counter", [], "planned", "E35"]

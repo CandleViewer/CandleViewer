@@ -3727,6 +3727,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E35",
         max_series=16,
     ),
+    # E35-T08 (#4999): `reason` is `rules/service.RereadFailure`, a closed set of two.
+    _s(
+        "rule_dispatch_reread_failed_total",
+        "counter",
+        "actions",
+        ("reason",),
+        "Armed rule actions dropped, nothing sent, because the dispatch-time re-read of the rule's "
+        "row (24 Sec.11.5 check 1) failed: timeout (no answer within its bound) or store_error.",
+        "dashboard only",
+        _P,
+        "E35",
+        max_series=2,
+    ),
     _s(
         "rule_signal_chain_truncated_total",
         "counter",

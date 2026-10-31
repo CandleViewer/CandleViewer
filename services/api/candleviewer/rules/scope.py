@@ -29,6 +29,9 @@ Reason = Literal[
     "out_of_scope",
 ]
 EntityKind = Literal["open_position", "pending_order", "account"]
+#: The modes the evaluator runs a rule in (`rules.manager` imports it from here). A rule's mode is
+#: its stored row's, never the IR's own `mode` field, which can be stale (E35-S03, BQ-12).
+EvaluableMode = Literal["simulate", "armed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,9 +299,8 @@ class ActionRequest:
     instance: ScopeInstanceRef
     action_type: str
     payload: Action
-    #: The stored row's mode when the rule was evaluated: required, with no default. The IR's own
-    #: `mode` is never read for routing, as it can be stale (E35-S03, BQ-12).
-    mode: Literal["simulate", "armed"]
+    #: The stored row's mode when the rule was evaluated: required, with no default.
+    mode: EvaluableMode
     rule_id: str
     version: int
     ir_hash: str  # the version's content hash

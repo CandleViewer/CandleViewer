@@ -12,16 +12,18 @@ import asyncio
 import dataclasses
 import json
 import uuid
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_args
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.observability.health import HealthStatus
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.rules import service as rules_service
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.ir.models import MetricRef, RuleScope
@@ -34,7 +36,7 @@ from candleviewer.rules.manager import (
 )
 from candleviewer.rules.runner import EvalTick, RuleEvaluationRunner
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
-from candleviewer.rules.service import RulesService
+from candleviewer.rules.service import RereadFailure, RulesService
 from tests.rules.executor.request_builders import action_request
 from tests.rules.test_evaluator import Clock
 from tests.rules.test_scope_wiring import OWNER, Source
@@ -185,7 +187,19 @@ def _new_active_version(row: RuleRow) -> None:
     row.active_version_id = "v2"
 
 
-@pytest.mark.parametrize("change", [_new_active_version, lambda row: setattr(row, "deleted", True)])
+def _new_content_at_the_same_version(row: RuleRow) -> None:
+    row.versions[0] = dataclasses.replace(row.versions[0], ir_hash="f" * 64)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param(_new_active_version, id="new_active_version"),
+        pytest.param(_new_content_at_the_same_version, id="new_ir_hash_same_version"),
+        pytest.param(lambda row: setattr(row, "active_version_id", "v9"), id="no_stored_version"),
+        pytest.param(lambda row: setattr(row, "deleted", True), id="deleted"),
+    ],
+)
 async def test_a_changed_row_between_evaluation_and_dispatch_drops_the_fire(
     rig: Rig, change: Callable[[RuleRow], None]
 ) -> None:
@@ -196,6 +210,100 @@ async def test_a_changed_row_between_evaluation_and_dispatch_drops_the_fire(
     await rig.settle()
     assert rig.executor == [] and rig.simulated == []
     assert dict(rig.svc.actions_blocked_total) == {"mode_changed": 1}
+
+
+async def test_an_action_in_flight_when_the_service_stops_drops(rig: Rig) -> None:
+    """A stopped service has no manager to read the row with: the action drops as `mode_changed`.
+    (`stop()` runs a queued action before it clears the manager; K1b's workers reach this arm.)"""
+    await rig.add("armed")
+    await rig.fire()
+    manager, rig.svc._manager = rig.svc._manager, None
+    await rig.settle()
+    rig.svc._manager = manager  # for the fixture's `stop()`
+    assert rig.executor == [] and rig.simulated == []
+    assert dict(rig.svc.actions_blocked_total) == {"mode_changed": 1}
+
+
+def _fail_the_dispatch_read(
+    monkeypatch: pytest.MonkeyPatch,
+    store: InMemoryRuleStore,
+    failure: Callable[[], Awaitable[None]],
+) -> None:
+    """The store's point read runs `failure` first inside the task that emits an action, the
+    dispatch's re-read; the evaluation's own recording, a task of its own, reads as usual."""
+    read = store.get
+
+    async def get(rule_id: str) -> RuleRow | None:
+        task = asyncio.current_task()
+        if task is not None and task.get_name() == "rule-action-emit":
+            await failure()
+        return await read(rule_id)
+
+    monkeypatch.setattr(store, "get", get)
+
+
+async def _store_down() -> None:
+    raise ConnectionError("the rule store is unreachable")
+
+
+async def _store_stalled() -> None:
+    """Never answers: only the read's bound ends it (0 s here, at its first wait)."""
+    await asyncio.Event().wait()
+
+
+@pytest.mark.parametrize(
+    ("failure", "bound", "reason"),
+    [(_store_down, 2.0, "store_error"), (_store_stalled, 0.0, "timeout")],
+)
+async def test_a_failed_reread_at_dispatch_sends_nothing_and_is_counted(
+    rig: Rig,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Callable[[], Awaitable[None]],
+    bound: float,
+    reason: RereadFailure,
+) -> None:
+    """Fail closed (24 §11.5 check 1): the action reaches neither sink and is counted under its
+    reason, logged once with the rule id and that reason only; nothing raises out of its task."""
+    rid = await rig.add("armed")
+    await rig.fire()  # evaluated as armed: its action's task is scheduled and has not run
+    _fail_the_dispatch_read(monkeypatch, rig.store, failure)
+    monkeypatch.setattr(rules_service, "REREAD_TIMEOUT_S", bound)
+    with capture_logs() as logs:
+        await rig.settle()
+    assert rig.executor == [] and rig.simulated == []
+    assert dict(rig.svc.dispatch_reread_failed_total) == {reason: 1}
+    assert not rig.svc.actions_blocked_total  # 24 §11.9 has no `blocked_by` for it yet (K2)
+    skipped = {"event": "rules.action_skipped", "log_level": "warning"}
+    assert [e for e in logs if e.get("rule_id") == rid] == [
+        skipped | {"rule_id": rid, "reason": reason}
+    ]
+
+
+async def test_a_cancelled_reread_is_never_swallowed(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancellation is no failed read: the emit task ends cancelled, nothing sent or counted."""
+    await rig.add("armed")
+    await rig.fire()
+
+    async def cancelled_mid_read() -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        task.cancel()  # delivered at the read's next wait, as any cancel of the task is
+        await asyncio.Event().wait()
+
+    _fail_the_dispatch_read(monkeypatch, rig.store, cancelled_mid_read)
+    (emit,) = [t for t in rig.svc._tasks if t.get_name() == "rule-action-emit"]
+    await asyncio.gather(*rig.svc._tasks, return_exceptions=True)
+    assert emit.cancelled()
+    assert rig.executor == [] and rig.simulated == []
+    assert not rig.svc.dispatch_reread_failed_total and not rig.svc.actions_blocked_total
+
+
+def test_the_reread_failure_counter_is_catalogued_with_its_closed_reasons() -> None:
+    (spec,) = [s for s in CATALOGUE if s.name == "rule_dispatch_reread_failed_total"]
+    assert (spec.kind, spec.labels, spec.status) == ("counter", ("reason",), "planned")
+    assert spec.max_series == len(get_args(RereadFailure)) == 2
 
 
 @pytest.mark.parametrize(
@@ -270,11 +378,46 @@ async def test_evaluable_rules_carry_the_stored_mode_armed_by_version_and_hash(r
     assert [str(i.rule.rule_id) for i in only] == [simulating]
 
 
+async def test_a_stored_mode_outside_the_two_is_never_evaluated(rig: Rig) -> None:
+    """Membership is explicit: a row in any other mode gets no work-list entry, so it is never
+    dispatched, even for a caller that asks for that mode."""
+    armed = await rig.add("armed")
+    await rig.add("disabled")
+    await rig.add("paused")  # no such mode, but a row a store could hold
+    asked: Any = ("simulate", "armed", "disabled", "paused")  # wider than `EvaluableMode`
+    items = await rig.mgr.evaluable_rules(asked)
+    assert [(str(i.rule.rule_id), i.mode) for i in items] == [(armed, "armed")]
+
+
 async def test_current_mode_reads_the_stored_row_again(rig: Rig) -> None:
     rid = await rig.add("armed")
-    assert await rig.mgr.current_mode(rid) == StoredMode("armed", 1)
-    (await rig.row(rid)).mode = "simulate"
-    assert await rig.mgr.current_mode(rid) == StoredMode("simulate", 1)
+    row = await rig.row(rid)
+    h = row.versions[0].ir_hash
+    assert await rig.mgr.current_mode(rid) == StoredMode("armed", 1, h)
+    row.mode = "simulate"
+    assert await rig.mgr.current_mode(rid) == StoredMode("simulate", 1, h)
+    row.active_version_id = "v9"  # names no stored version
+    assert await rig.mgr.current_mode(rid) == StoredMode("simulate", None, None)
+
+
+def test_a_second_bind_keeps_what_the_first_one_set() -> None:
+    """`bind` sets only what it is given: a later call (E35-S05's simulation sink, the executor's
+    handlers) never drops the store, the hooks or a sink of an earlier one."""
+
+    async def audit(_event: str, _data: dict[str, Any]) -> None:
+        return None
+
+    async def broadcast(_payload: dict[str, Any]) -> None:
+        return None
+
+    async def sink(_req: ActionRequest) -> None:
+        return None
+
+    store, svc = InMemoryRuleStore(), RulesService()
+    svc.bind(store=store, audit=audit, broadcast=broadcast, action_sink=sink)
+    svc.bind(simulation_sink=sink)
+    kept = (svc._store, svc._audit, svc._broadcast, svc._action_sink, svc._simulation_sink)
+    assert kept == (store, audit, broadcast, sink, sink)
 
 
 async def test_an_unstarted_service_is_stopped_and_refuses_an_ungated_emitter() -> None:

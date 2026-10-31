@@ -226,9 +226,13 @@ async def _e2e(target: uuid.UUID) -> tuple[list[str], list[Any]]:
     async def sink(req: Any) -> None:
         seen.append(req)
 
+    async def no_hook(*_args: Any) -> None:
+        """No audit backend or bus here: `bind` keeps the app's hooks unless given these."""
+
     ctx = create_app(Settings(rules_evaluator_enabled=True)).state.app_context
     # The rule simulates: its in-scope action reaches the simulation sink (E35-S03, BQ-12).
     ctx.rules.bind(store=InMemoryRuleStore(), action_sink=sink, simulation_sink=sink)
+    ctx.rules.bind(audit=no_hook, broadcast=no_hook)
     ctx.rules.wire_scope(Source(), "demo", audit)
     await ctx.rules.refresh_scope(OWNER)
     await ctx.rules.start(ctx)

@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final, Literal
 from uuid import UUID, uuid4
 
 import structlog
@@ -24,7 +24,6 @@ from candleviewer.rules.ir.models import Rule
 from candleviewer.rules.manager import (
     Audit,
     Broadcast,
-    EvaluableMode,
     EvaluableRule,
     InMemoryRuleStore,
     RulesManager,
@@ -36,8 +35,16 @@ from candleviewer.rules.runner import (
     RuleEvaluationRunner,
     default_clocks,
 )
-from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
+from candleviewer.rules.scope import ActionRequest, EvaluableMode, ScopeInstanceRef
 from candleviewer.rules.vocabulary import MetricRegistry, default_registry
+
+#: Bound on a dispatch's re-read of the rule's row (24 §11.5 check 1), the 2 s the manager gives
+#: its disarm beside the tick (`TICK_DISARM_TIMEOUT_S`).
+REREAD_TIMEOUT_S: Final = 2.0
+#: `rule_dispatch_reread_failed_total{reason}`, a closed set: why a dispatch's re-read of the row
+#: failed, its action dropped and nothing sent. `timeout`: no answer within `REREAD_TIMEOUT_S` (or
+#: the store's own `TimeoutError`); `store_error`: the read raised anything else.
+RereadFailure = Literal["timeout", "store_error"]
 
 
 def _log() -> Any:
@@ -87,6 +94,9 @@ class RulesService:
         #: `rule_actions_blocked_total{reason}` until E35-T09 makes it a metric (24 §11.9): the
         #: armed actions a dispatch dropped, so far only as `mode_changed`.
         self.actions_blocked_total: Counter[str] = Counter()
+        #: `rule_dispatch_reread_failed_total{reason}` until E35-T09 makes it a metric: the armed
+        #: actions dropped because the dispatch's re-read failed (24 §11.5 names no `blocked_by`).
+        self.dispatch_reread_failed_total: Counter[RereadFailure] = Counter()
 
     def bind(
         self,
@@ -98,6 +108,8 @@ class RulesService:
         simulation_sink: ActionSink | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
+        Each option is set only when given, so a later call (E35-S05's simulation sink, the
+        executor's handlers) keeps what an earlier one set.
 
         `action_sink` is the executor's downstream and `simulation_sink` where the actions of a
         simulate rule go (E35-S05 swaps it). Both are stored privately and reached only through
@@ -108,7 +120,10 @@ class RulesService:
             self._simulation_sink = simulation_sink
         if store is not None:
             self._store = store
-        self._audit, self._broadcast = audit, broadcast
+        if audit is not None:
+            self._audit = audit
+        if broadcast is not None:
+            self._broadcast = broadcast
 
     def manager(self) -> RulesManager | None:
         """The store/version/mode manager while the module runs; `None` otherwise (-> 503)."""
@@ -205,13 +220,27 @@ class RulesService:
 
     async def _execute(self, req: ActionRequest) -> None:
         """The executor sink: nothing is handed on before the stored row is read again (24 §11.5
-        check 1), one point read per action, in the task that emits it and never on the evaluation
-        tick (C-2.20). A rule that is gone, no longer armed or on another active version than the
-        fire was evaluated under drops the action as `skipped`, `mode_changed`: counted and logged
-        until E35-T09 records results, and never sent."""
+        check 1), one point read per action, bounded by `REREAD_TIMEOUT_S`, in the task that emits
+        it and never on the evaluation tick (C-2.20). A rule that is gone (or a stopped service),
+        no longer armed, or on another active version or `ir_hash` than the fire was evaluated
+        under drops the action as `skipped`, `mode_changed`. A read that fails or does not answer
+        in time drops it under its `RereadFailure`, never raised out of the task. Each drop is
+        counted and logged with the rule id until E35-T09 records results; nothing is sent."""
         manager = self._manager
-        stored = await manager.current_mode(req.rule_id) if manager is not None else None
-        if stored is None or stored.mode != "armed" or stored.version != req.version:
+        try:
+            async with asyncio.timeout(REREAD_TIMEOUT_S):
+                stored = await manager.current_mode(req.rule_id) if manager is not None else None
+        except Exception as failed:  # never `CancelledError`, which is no `Exception`
+            reason: RereadFailure = "timeout" if isinstance(failed, TimeoutError) else "store_error"
+            self.dispatch_reread_failed_total[reason] += 1
+            _log().warning("rules.action_skipped", rule_id=req.rule_id, reason=reason)
+            return
+        if (
+            stored is None
+            or stored.mode != "armed"
+            or stored.version != req.version
+            or stored.ir_hash != req.ir_hash
+        ):
             self.actions_blocked_total["mode_changed"] += 1
             _log().info("rules.action_skipped", rule_id=req.rule_id, reason="mode_changed")
             return

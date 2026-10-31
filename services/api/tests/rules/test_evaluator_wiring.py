@@ -27,6 +27,10 @@ def _ir() -> dict[str, Any]:
     return dict(raw)
 
 
+async def _no_hook(*_args: Any) -> None:
+    """No audit backend or bus in these rigs: `bind` keeps the app's hooks unless given these."""
+
+
 async def _until(pred: Callable[[], bool]) -> None:
     async with asyncio.timeout(2):
         while not pred():  # noqa: ASYNC110 - polls state owned by the runner task
@@ -46,7 +50,7 @@ async def test_evaluator_not_constructed_when_flag_off() -> None:
 async def test_create_rule_feed_snapshot_evaluator_records_result() -> None:
     """create rule -> simulate -> feed snapshot -> evaluator runs -> result recorded."""
     ctx = create_app(Settings(rules_evaluator_enabled=True)).state.app_context
-    ctx.rules.bind(store=InMemoryRuleStore())
+    ctx.rules.bind(store=InMemoryRuleStore(), audit=_no_hook, broadcast=_no_hook)
     await ctx.rules.start(ctx)
     try:
         runner = ctx.rules.runner
@@ -70,7 +74,7 @@ async def test_create_rule_feed_snapshot_evaluator_records_result() -> None:
 
 async def test_unpushed_metric_skips_stale_never_fires() -> None:
     ctx = create_app(Settings(rules_evaluator_enabled=True)).state.app_context
-    ctx.rules.bind(store=InMemoryRuleStore())
+    ctx.rules.bind(store=InMemoryRuleStore(), audit=_no_hook, broadcast=_no_hook)
     await ctx.rules.start(ctx)
     try:
         mgr = ctx.rules.manager()
