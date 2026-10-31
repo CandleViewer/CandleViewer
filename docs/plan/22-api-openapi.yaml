@@ -8541,6 +8541,7 @@ paths:
         Each rule is presented as `getRule` presents it, so listing disarms an armed rule the
         engine must not run, audited and broadcast the same way. A page holds at most 200 rules
         whatever `limit` asks for (`Limit` takes up to 500), and `meta.next_cursor` carries the rest.
+        A `cursor` that is not a rule id is `400 invalid_cursor`.
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
@@ -8591,6 +8592,7 @@ paths:
                         created_at: "2026-09-05T12:00:00Z"
                         updated_at: "2026-09-12T08:20:00Z"
                     meta: { next_cursor: null, has_more: false, count: 1 }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
