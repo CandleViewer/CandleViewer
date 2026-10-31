@@ -3881,7 +3881,7 @@
     },
     {
       "id": "A11Y-R-E09-D10-F-1",
-      "screenSource": "routing attribution: E09-D10 §2 inventory L167 (SCR-002 two-factor, D03:129-151) and §1.2 L99 (F-26 is F-1's sibling on SCR-006)",
+      "screenSource": "routing attribution: E09-D10 finding row L536 (cites D03:131, :157-158) within the §2 inventory L167 range for SCR-002 (D03:129-151)",
       "source": "review E09-D10",
       "sourceId": "F-1",
       "screens": [
