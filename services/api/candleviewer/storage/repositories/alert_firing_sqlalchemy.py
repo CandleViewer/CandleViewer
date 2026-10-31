@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import sqlalchemy as sa
 
@@ -127,7 +127,7 @@ class SqlAlchemyAlertFiringStore:
         fired_at: datetime,
         once: bool,
         bump: bool,
-        disarm_reason: str | None = None,
+        disarm_reason: Literal["source_unavailable"] | None = None,
     ) -> list[int] | None:
         ids: list[int] = []
         async with self._relational.unit_of_work() as uow:
