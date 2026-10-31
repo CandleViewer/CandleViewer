@@ -32,6 +32,7 @@ def env_example(tmp_path: Path) -> Path:
 
 
 REPO = Path(__file__).resolve().parents[2]
+BASE = REPO / "infra" / "compose" / "docker-compose.yml"
 OVERLAY = REPO / "infra" / "compose" / "docker-compose.deploy.yml"
 CONTAINER_ID = "c0ffee000000"  # 12 hex digits, as `docker compose ps -q` prints one
 COMPOSE = ("infra/compose/docker-compose.yml",)
@@ -938,3 +939,20 @@ def test_deploy_overlay_lint_refuses(key: str, value: object, why: str) -> None:
     overlay["services"]["api"][key] = value
     errors = lint_compose.check_deploy_overlay(overlay)
     assert len(errors) == 1 and why in errors[0], errors
+
+
+def test_the_deploy_stack_runs_api_and_migrate_from_the_one_verified_image() -> None:
+    """`compose_up` passes `--no-build`, and compose answers `No such image` for a service that only
+    builds (measured on v5.6.0), so every `core` service that builds takes the verified image from
+    the overlay: `api` and the schema step `api` waits for run the one image cosign verified."""
+    base = yaml.safe_load(BASE.read_text(encoding="utf-8"))["services"]
+    overlay = yaml.safe_load(OVERLAY.read_text(encoding="utf-8"))["services"]
+    stack = {name: {**service, **overlay.get(name, {})} for name, service in base.items()}
+    core = {name: svc for name, svc in stack.items() if "core" in svc.get("profiles", [])}
+    assert {"api", "migrate"} <= set(core)
+    assert [name for name, svc in core.items() if "build" in svc and "image" not in svc] == []
+    api, migrate = core["api"], core["migrate"]
+    assert migrate["image"] == api["image"] and "${CV_IMAGE_DIGEST" in migrate["image"]
+    assert {api["pull_policy"], migrate["pull_policy"]} <= {"always", "missing"}
+    assert migrate["entrypoint"] == ["python", "-m", "candleviewer.storage.migrate"]  # the image's
+    assert "migrate" in api["depends_on"]  # the step runs before `api` in this stack

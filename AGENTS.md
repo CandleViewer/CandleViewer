@@ -7,7 +7,7 @@
 > **Precedence:** `CONSTITUTION.md` > `AGENTS.md` > `CONTRIBUTING.md` > tool defaults. If this file
 > contradicts the Constitution, the Constitution wins and this file is a bug.
 >
-> **Version:** 2.1.1 · Last updated 2026-10-23 · Owner `@basiltt`
+> **Version:** 2.1.2 · Last updated 2026-10-31 · Owner `@basiltt`
 
 ---
 
@@ -389,6 +389,10 @@ handoff that still names `black --check .` is stale (#4229): run `ruff format --
 | Chaos suite                                                         | `pnpm chaos`                                                                                                  |
 | Secret scan on your diff                                            | `gitleaks protect --staged --redact`                                                                          |
 | Container scan                                                      | `trivy image candleviewer/api:dev`                                                                            |
+
+`make up` and `make dev` also run the `migrate` one-shot (the Postgres and QuestDB schemas,
+`docs/ops/runbooks/storage-migrate.md`) before `api` starts: `api` waits for it, and a failed step
+stops `up`.
 
 ### Governance (C-16.4, C-16.5 — runnable today; stdlib Python plus `jsonschema` for GOV-004)
 

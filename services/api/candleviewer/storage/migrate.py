@@ -11,8 +11,10 @@ password or a driver message: C-12.6) and its own `MigrateExit` status, so a dep
 starts the API on a schema it cannot write. A directory with no `.sql` file fails too: the runner
 would find nothing to apply and report success.
 
-Never run at API boot or by a request handler (20-architecture.md section 6.2); an automated apply
-waits for #3093. Runbook: `docs/ops/runbooks/storage-migrate.md`.
+Never run at API boot or by a request handler (20-architecture.md section 6.2). Compose runs it as
+the `migrate` service, which `api` waits for to complete successfully (#4014): an `up` that
+includes `api` stops before the API starts when this step fails. Runbook:
+`docs/ops/runbooks/storage-migrate.md`.
 """
 
 from __future__ import annotations

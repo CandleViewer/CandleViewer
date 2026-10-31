@@ -23,6 +23,7 @@ ENV_EXAMPLE = REPO_ROOT / "infra" / "compose" / ".env.example"
 DOCKERFILE = REPO_ROOT / "infra" / "images" / "Dockerfile.api"
 PINNED = "${CV_API_IMAGE_REF:?set by the deploy}@${CV_IMAGE_DIGEST:?set by the deploy}"
 API = {"image": PINNED, "pull_policy": "always", "read_only": True}  # the accepted api
+MIGRATE = {"image": PINNED, "pull_policy": "always"}  # the accepted migrate: the same image
 
 
 def test_committed_compose_file_passes_lint() -> None:
@@ -31,13 +32,39 @@ def test_committed_compose_file_passes_lint() -> None:
 
 
 def _overlay(**api: object) -> dict[str, object]:
-    """A deploy overlay whose api service is `API` with `api`'s keys set (None drops one)."""
+    """A deploy overlay whose api service is `API` with `api`'s keys set (None drops one), and whose
+    migrate service is `MIGRATE`."""
     service = {**API, **api}
-    return {"services": {"api": {k: v for k, v in service.items() if v is not None}}}
+    return {
+        "services": {
+            "api": {k: v for k, v in service.items() if v is not None},
+            "migrate": dict(MIGRATE),
+        }
+    }
+
+
+def _overlay_migrate(**migrate: object) -> dict[str, object]:
+    """A deploy overlay whose api service is `API` and whose migrate service is `MIGRATE` with
+    `migrate`'s keys set (None drops one)."""
+    service = {**MIGRATE, **migrate}
+    return {
+        "services": {
+            "api": dict(API),
+            "migrate": {k: v for k, v in service.items() if v is not None},
+        }
+    }
 
 
 def test_committed_deploy_overlay_passes_lint() -> None:
     assert lint_compose.lint(DEPLOY_OVERLAY_PATH, deploy_overlay=True) == []
+
+
+def test_committed_deploy_overlay_gives_migrate_the_api_image() -> None:
+    """The deploy runs `--no-build`, so the schema step has no image of its own to start: it runs
+    the one image the deploy verified, as `api` does."""
+    services = yaml.safe_load(DEPLOY_OVERLAY_PATH.read_text(encoding="utf-8"))["services"]
+    assert services["migrate"]["image"] == services["api"]["image"]
+    assert services["migrate"]["pull_policy"] in ("always", "missing")
 
 
 @pytest.mark.parametrize("policy", ["always", "missing"])
@@ -45,8 +72,14 @@ def test_deploy_overlay_accepts_an_api_pinned_by_digest_with_a_pull_policy(polic
     assert lint_compose.check_deploy_overlay(_overlay(pull_policy=policy)) == []
 
 
+@pytest.mark.parametrize("policy", ["always", "missing"])
+def test_deploy_overlay_accepts_a_migrate_pinned_to_the_verified_image(policy: str) -> None:
+    assert lint_compose.check_deploy_overlay(_overlay_migrate(pull_policy=policy)) == []
+
+
 SOURCE_MOUNT = "../../services/api/candleviewer:/app/candleviewer:ro"
 RELOAD = ["python", "-m", "candleviewer.server", "--reload"]
+OTHER_STEP = ["python", "-m", "candleviewer.storage.migrate", "--ddl-dir", "/srv/ddl"]
 
 
 @pytest.mark.parametrize(
@@ -68,13 +101,62 @@ RELOAD = ["python", "-m", "candleviewer.server", "--reload"]
         pytest.param(_overlay(pull_policy="never"), "pull_policy", id="pull-never"),
         pytest.param(_overlay(pull_policy=None), "pull_policy", id="no-pull-policy"),
         pytest.param(_overlay(ports=["127.0.0.1:8000:8000"]), "ports", id="ports"),
-        pytest.param({"services": {"api": API, "migrate": {}}}, "migrate", id="second-service"),
+        pytest.param(
+            {"services": {"api": API, "migrate": MIGRATE, "questdb": {}}},
+            "questdb",
+            id="second-service",
+        ),
         pytest.param({**_overlay(), "networks": {"cv-internal": {}}}, "networks", id="networks"),
     ],
 )
 def test_deploy_overlay_lint_refuses(overlay: dict[str, object], why: str) -> None:
     errors = lint_compose.check_deploy_overlay(overlay)
     assert len(errors) == 1 and why in errors[0], errors
+
+
+@pytest.mark.parametrize(
+    ("migrate", "why"),
+    [
+        pytest.param({"build": {"context": "../.."}}, "builds locally", id="build"),
+        pytest.param({"volumes": [SOURCE_MOUNT]}, "mounts", id="source-mount"),
+        pytest.param(
+            {"entrypoint": OTHER_STEP}, "replaces the image's entrypoint", id="entrypoint"
+        ),
+        pytest.param(
+            {"command": ["--ddl-dir", "/srv/ddl"]}, "replaces the image's command", id="command"
+        ),
+    ],
+)
+def test_deploy_overlay_lint_refuses_a_migrate_that_builds_mounts_or_replaces_its_command(
+    migrate: dict[str, object], why: str
+) -> None:
+    errors = lint_compose.check_deploy_overlay(_overlay_migrate(**migrate))
+    assert len(errors) == 1 and "service 'migrate'" in errors[0] and why in errors[0], errors
+
+
+@pytest.mark.parametrize(
+    ("overlay", "why"),
+    [
+        pytest.param(_overlay_migrate(image="ghcr.io/o/img:dev"), "not pinned", id="tag"),
+        pytest.param(_overlay_migrate(image=None), "not pinned", id="no-image"),
+        pytest.param(_overlay_migrate(pull_policy="build"), "pull_policy", id="pull-build"),
+        pytest.param(_overlay_migrate(pull_policy=None), "pull_policy", id="no-pull-policy"),
+        pytest.param(_overlay_migrate(environment={"CV_PG_DSN": "x"}), "environment", id="env"),
+        pytest.param(_overlay_migrate(read_only=True), "read_only", id="own-root-setting"),
+    ],
+)
+def test_deploy_overlay_lint_refuses_a_migrate_off_the_verified_image(
+    overlay: dict[str, object], why: str
+) -> None:
+    errors = lint_compose.check_deploy_overlay(overlay)
+    assert len(errors) == 1 and "service 'migrate'" in errors[0] and why in errors[0], errors
+
+
+def test_deploy_overlay_lint_refuses_an_overlay_without_migrate() -> None:
+    """With `migrate` in `core`, an overlay that leaves it out leaves the deploy's `--no-build` `up`
+    with a service that has no image: compose answers `No such image`."""
+    errors = lint_compose.check_deploy_overlay({"services": {"api": API}})
+    assert errors and all("service 'migrate'" in error for error in errors), errors
 
 
 def test_main_without_arguments_also_lints_the_deploy_overlay(

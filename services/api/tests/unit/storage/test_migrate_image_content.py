@@ -1,12 +1,14 @@
-"""#3897: what the API image, the compose file and the runbook recipe carry for the migrate step.
+"""#3897, #4014: what the API image, the compose file and the runbook recipe carry for the migrate
+step.
 
 Static, like `tests/unit/architecture/test_image_boot_path.py`: no docker, no network. The image
 copies `backend/db/questdb` to the path `candleviewer.storage.migrate` hands the runner, root-owned
 and not writable (the runtime user reads the DDL and cannot change it). The compose `migrate`
-service is an opt-in one-shot that is rebuilt from the API's definition, takes the owner role's DSN
-from its own variable (never the one `api` reads), and is not a dependency of `api`: an automated
-apply waits for #3093. The runbook recipe is what makes the one-shot the API's current build and
-keeps the owner DSN on its one command.
+service is a one-shot in the `core` and `migrate` profiles that is rebuilt from the API's
+definition and takes the owner role's DSN from its own variable (never the one `api` reads). `api`
+waits for it to complete successfully, so the API never starts after a schema step that failed. The
+runbook recipe is the one `up` that runs it first, as this checkout's build, with the owner DSN on
+that one command.
 """
 
 from __future__ import annotations
@@ -58,11 +60,11 @@ def services() -> dict[str, Any]:
     return dict(yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))["services"])
 
 
-def test_migrate_is_an_opt_in_one_shot_rebuilt_from_the_api_definition_on_its_stores(
+def test_migrate_is_a_one_shot_in_core_and_migrate_rebuilt_from_the_api_definition_on_its_stores(
     services: dict[str, Any],
 ) -> None:
     migrate, api = services["migrate"], services["api"]
-    assert migrate["profiles"] == ["migrate"]  # `--profile core` and `obs` never start it
+    assert migrate["profiles"] == ["core", "migrate"]  # an `up` of `core` runs it, as `api` waits
     assert migrate["build"] == api["build"]  # one Dockerfile and context: the recipe builds both
     # Always rebuilt, and never a tag it shares with `api`: dev builds api's `builder` target.
     assert migrate["pull_policy"] == "build" and "image" not in migrate
@@ -83,21 +85,49 @@ def test_the_owner_dsn_reaches_migrate_through_its_own_variable_and_never_api(
     assert [name for name, service in services.items() if _OWNER_DSN in str(service)] == ["migrate"]
 
 
-def _recipe() -> str:
-    """The runbook's run recipe: its first fenced bash block, continuation lines joined."""
-    blocks: list[str] = re.findall(
-        r"```bash\n(.*?)```", _RUNBOOK.read_text(encoding="utf-8"), re.DOTALL
-    )
-    return blocks[0].replace("\\\n", " ")
+def _bash_blocks() -> list[str]:
+    """The runbook's fenced bash blocks, continuation lines joined."""
+    text = _RUNBOOK.read_text(encoding="utf-8")
+    return [
+        block.replace("\\\n", " ") for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL)
+    ]
 
 
 def test_the_recipe_rebuilds_both_images_and_gives_the_owner_dsn_to_the_one_command() -> None:
-    recipe = _recipe()
-    migrate_command, _, api_command = recipe.partition("&&")
-    assert "run --rm --build migrate" in migrate_command and "up -d --build api" in api_command
-    assert f"{_OWNER_DSN}=" in migrate_command.split("$C", 1)[0]  # a prefix of that one command
-    assert _OWNER_DSN not in api_command and "export" not in recipe  # not the API's, not exported
+    recipe = _bash_blocks()[0]  # the run recipe: the runbook's first fenced bash block
+    prefix, _, command = recipe.partition("$C")
+    # One `up`: `api` waits for the step, so there is no second command to run it before. `--build`
+    # makes `api` this checkout's build; `migrate` rebuilds itself on every `up` (`pull_policy`).
+    assert "up -d --build api" in command and "&&" not in recipe and "run --rm" not in recipe
+    assert f"{_OWNER_DSN}=" in prefix  # a prefix of that one command
+    assert "export" not in recipe  # never left in the shell's environment
 
 
-def test_api_does_not_wait_for_migrate_until_3093_is_fixed(services: dict[str, Any]) -> None:
-    assert "migrate" not in services["api"].get("depends_on", {})
+def test_the_rehearsal_runs_the_step_alone_with_the_owner_dsn_on_its_command() -> None:
+    rehearsal = _bash_blocks()[1]  # the second block: `run` returns the step's exit status
+    assert "--profile core run --rm --build migrate" in rehearsal
+    assert rehearsal.lstrip().startswith(f"{_OWNER_DSN}=") and "export" not in rehearsal
+
+
+def test_api_waits_for_migrate_to_complete_successfully(services: dict[str, Any]) -> None:
+    healthy = {"condition": "service_healthy"}  # the stores stay as `api` waited for them
+    assert services["api"]["depends_on"] == {
+        "postgres": healthy,
+        "questdb": healthy,
+        "migrate": {"condition": "service_completed_successfully"},
+    }
+
+
+def test_every_service_api_depends_on_runs_under_a_profile_api_runs_under(
+    services: dict[str, Any],
+) -> None:
+    """Compose refuses an `api` that depends on a service of an inactive profile (`depends on
+    undefined service`, measured on v5.6.0), so every profile `api` runs under starts them all."""
+    api = services["api"]
+    for profile in api["profiles"]:
+        left_out = [
+            name
+            for name in api["depends_on"]
+            if services[name].get("profiles") and profile not in services[name]["profiles"]
+        ]
+        assert left_out == [], f"`--profile {profile}` leaves {left_out} out, which compose refuses"

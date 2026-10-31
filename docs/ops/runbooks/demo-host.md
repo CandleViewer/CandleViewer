@@ -95,8 +95,8 @@ cosign verify \
 If `cosign verify` exits non-zero, stop here: set neither variable and do not run `up`; build from
 the checkout (above) instead. Otherwise add `-f infra/compose/docker-compose.deploy.yml` as the last
 file of `$COMPOSE`, set `CV_API_IMAGE_REF=$IMAGE` and `CV_IMAGE_DIGEST=$DIGEST` in `.env`, and pass
-`--no-build` to `up`. The `migrate` one-shot still builds from the checkout, so keep it at the same
-sha.
+`--no-build` to `up`. That file gives the `migrate` one-shot the same verified image, so the schema
+step and `api` run one build and the host builds nothing.
 
 ## 2. The secret files and their modes
 
@@ -144,15 +144,17 @@ read -rs -p 'cv_ro password: ' RO_PW; echo
 unset OWNER_PW APP_PW RO_PW
 ```
 
-Then apply both schemas (`docs/ops/runbooks/storage-migrate.md`; `--build` rebuilds `migrate` from
-this checkout, as that runbook does):
+Then apply both schemas by hand, once (`docs/ops/runbooks/storage-migrate.md`; `--build` rebuilds
+`migrate` from this checkout, as that runbook does). Step 4's `up` runs the step again before it
+starts `api`, because `api` waits for `migrate`, so this is the run whose exit status you read:
 
 ```bash
-$COMPOSE --profile core --profile migrate run --rm --build migrate
+$COMPOSE --profile core run --rm --build migrate
 ```
 
 Expected: exit 0 and a `storage_migrate_done` line; a second run applies nothing and exits 0. Any
-other exit is in `storage-migrate.md` ("Exit status"): do not start the api on it. On this host the
+other exit is in `storage-migrate.md` ("Exit status"): do not start the api on it (step 4's `up`
+stops at the same failure and starts no `api`). On this host the
 owner DSN lives in `.env`, as provisioned, where `storage-migrate.md` gives it to the one command as
 a prefix: the overlay requires it for every command, and `lint_compose.py` keeps it off `api` and
 `bootstrap-owner`.
@@ -164,7 +166,8 @@ are each their own filesystem, apart from the audit volume and the state the bac
 Docker's named volumes on one disk share one device, so on such a host the api logs
 `recording_volume_shared` and `recorder_startup_failed` (`RecorderWalVolumeError`) at boot and
 refuses to record; trading still starts. Before the api's first start, give each an ext4 filesystem
-of its own. On a one-disk host, use a sparse loop image for each, mounted inside the data volume:
+of its own. On a one-disk host, use a sparse loop image for each, mounted inside the data volume.
+`create api` also creates the `migrate` container, from the image step 3 built, and starts nothing:
 
 ```bash
 $COMPOSE --profile core create api
@@ -203,6 +206,11 @@ lines and images: removing the volume deletes what is mounted inside it.
 $COMPOSE --profile core up -d --wait --wait-timeout 180 api
 $COMPOSE ps api
 ```
+
+`api` waits for `migrate`, so this `up` runs the schema step first (it applies nothing after step 3
+and exits 0) and starts `api` once it has exited 0. A failed step stops `up` with `service "migrate"
+didn't complete successfully: exit <n>` and starts no `api`: `<n>` is in `storage-migrate.md` ("Exit
+status"), and `$COMPOSE --profile core logs migrate` has the step's own line.
 
 Expected: `api` is `healthy`, and its log has `secrets.kek_file_source` (a warning, expected in
 demo) and no `secrets.kek_unavailable`. If it does not get healthy, read
@@ -261,7 +269,8 @@ $COMPOSE --profile bootstrap-owner run --rm --no-deps bootstrap-owner --owner <o
 $COMPOSE --profile core up -d --wait api
 ```
 
-Retype the phrase it shows. It prints the token once: take it straight to step 7, over nothing that
+The last command runs `migrate` first, which applies nothing. Retype the phrase it shows. It prints
+the token once: take it straight to step 7, over nothing that
 keeps a copy. Run it with no session recorder (`script`, `asciinema`), keep the token out of any
 clipboard manager's history, and once step 7 has redeemed it clear the terminal and its scrollback
 (`clear; printf '\033[3J'`, and `tmux clear-history` in tmux). Its options, exit statuses and
