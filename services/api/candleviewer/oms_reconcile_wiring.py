@@ -21,7 +21,9 @@ the facade and before the private-stream consumer, which takes its driver as its
 * the notices (`ReconcileNoticesBinding`, 23 Sec.15.9's closed table, offered to the gateway's
   `system` topic on the serving loop: no new bus topic, BQ-6), the pager, and the five metrics of
   20 Sec.12.1 with no account label (`ReconcileMetrics`; `oms_stale_accounts` is the driver's);
-* the stream's last message per account (`LastMessages`), the other half of `gap_from`.
+* the stream's last message per account (`LastMessages`), the other half of `gap_from`;
+* the requests the startup sweep resumed (`SweptRequests`), which the sweep records and each
+  account's next fetch waits for, bounded, so the first pass never races them (24 Sec.8.5).
 
 The pass, its phases and B19's port (`ReconcilePhases`) then go to the driver (`ReconcileJobs`),
 which owns the jobs and their timers. The standing it sets and clears is the one the order-entry
@@ -32,7 +34,8 @@ Logs carry ids, kinds and outcomes only (C-12.6).
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping, Sequence
+import asyncio
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -53,7 +56,7 @@ from candleviewer.oms.ports import (
 )
 from candleviewer.oms.push_mapping import money_text
 from candleviewer.oms.reconcile_job import JobPersistence, ReconcileJobs, RetryHop
-from candleviewer.oms.reconcile_phases import ReconcilePhases
+from candleviewer.oms.reconcile_phases import ReconcilePhases, ResumedRequests
 from candleviewer.oms.reconcile_report import Notice, ReconcileMetrics
 from candleviewer.oms.reconcile_standing import FailureTracker, ReconcileStanding
 from candleviewer.oms.reconcile_stops import RecordedStopWriter
@@ -75,6 +78,7 @@ from candleviewer.oms_stream_wiring import (
     account_notice,
     checked_notice,
 )
+from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from candleviewer.statechart.factory import restore as restore_chart
 from candleviewer.statechart.persistence import MachineKey, SealedSnapshot
 from candleviewer.statechart.plugins import MachineEventSink
@@ -90,6 +94,8 @@ from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 __all__ = [
     "ADOPTED_UNTRACKED",
     "RECONCILE",
+    "RESUMED_HOLD_S",
+    "RESUMED_STATES",
     "AccountWatermarks",
     "AdoptionRecords",
     "BundleJobs",
@@ -101,12 +107,19 @@ __all__ = [
     "ReconcileNoticesBinding",
     "ReconcileRecords",
     "ReconcileWiring",
+    "SweptRequests",
     "build_reconciliation",
 ]
 
 #: The two audited actions the pass writes (24 Sec.15.5), registered in `audit/actions.py`.
 RECONCILE: Final = "oms.reconcile"
 ADOPTED_UNTRACKED: Final = "order.adopted_untracked"
+#: B1's states whose invoke a hydration resumes once its replay ends (24 Sec.8.2 "Recovery"): a
+#: create's `place`, an exit's `cancel` or `amend`.
+RESUMED_STATES: Final = frozenset({"submitting", "cancel_pending", "amend_pending"})
+#: How long a pass waits for an account's resumed requests: one attempt's calls, which B1 bounds
+#: together (`CV_COMMAND_TIMEOUT`), and its step's write (`CV_PERSIST_TIMEOUT`); then it reads.
+RESUMED_HOLD_S: Final = CV_COMMAND_TIMEOUT + CV_PERSIST_TIMEOUT
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _US: Final = timedelta(microseconds=1)
 #: A stored position's side, as the exchange's read names it (`Position.side`).
@@ -423,6 +436,66 @@ def job_persistence(bundle: object | None) -> JobPersistence | None:
     return BundleJobs(bundle)  # type: ignore[arg-type]  # its members checked above
 
 
+# --- The requests the startup resumed (`ResumedRequests`) -----------------------------------------
+
+
+class ResumingOrders(Protocol):
+    """The order facade as `SweptRequests` reads it (`OrderMachines`): an order's lifecycle state
+    while its machine lives, and its state once it has left one."""
+
+    def state(self, order_id: UUID) -> tuple[str, str] | None: ...
+
+    async def settled(
+        self, account_id: UUID, order_id: UUID, *, leaving: str, timeout_s: float
+    ) -> str: ...
+
+
+class SweptRequests:
+    """`ResumedRequests` (24 Sec.8.5; 24 Sec.8.2 "Recovery"): the requests the startup sweep's
+    hydration resumed, by account, which the sweep records (`record`) before the jobs are sent
+    `startup`. An account's next fetch waits for its own (`answered`: each order has left the
+    state it was resumed in, the facade's `settled` following it through a rebuild), so the pass
+    never reads the venue and the rows while one is in flight: its answer could land between the
+    two reads, and the diff would judge a row by a snapshot older than its state. The wait is once
+    an account and bounded (`RESUMED_HOLD_S`). Past it, or where a row cannot be read, it is
+    logged and the pass reads all the same, never held for good (INV-B19-a). `startup` is still
+    sent before `ready`, and order entry never waits for the pass (BQ-14)."""
+
+    def __init__(self) -> None:
+        self._orders: ResumingOrders | None = None
+        self._owed: dict[UUID, tuple[tuple[UUID, str], ...]] = {}
+
+    def record(self, orders: ResumingOrders, rows: Iterable[OrderRow]) -> None:
+        """The sweep's, once its orders are hydrated: each order its hydration left in a state
+        whose invoke it resumed (`RESUMED_STATES`), by account; a sweep run again replaces them."""
+        owed: dict[UUID, list[tuple[UUID, str]]] = {}
+        for row in rows:
+            state = (orders.state(row.id) or ("",))[0]
+            if state in RESUMED_STATES:
+                owed.setdefault(row.exchange_account_id, []).append((row.id, state))
+        self._orders = orders
+        self._owed = {account: tuple(held) for account, held in owed.items()}
+
+    async def answered(self, account_id: AccountId) -> None:
+        owed, orders = self._owed.pop(account_id, ()), self._orders
+        if not owed or orders is None:
+            return
+        try:
+            async with asyncio.timeout(RESUMED_HOLD_S):
+                for order_id, state in owed:
+                    await orders.settled(
+                        account_id, order_id, leaving=state, timeout_s=RESUMED_HOLD_S
+                    )
+        except TimeoutError:
+            _log().warning(
+                "reconcile_resumed_unanswered", account_id=str(account_id), orders=len(owed)
+            )
+        except Exception as exc:  # a row the facade could not read: the pass reads all the same
+            _log().warning(
+                "reconcile_resumed_unread", account_id=str(account_id), failure=type(exc).__name__
+            )
+
+
 # --- The composition ------------------------------------------------------------------------
 
 
@@ -447,11 +520,13 @@ def build_reconciliation(
     serving: Notify, feed: StreamEvidence, metrics: Metrics, pager: Pager,
     sink: MachineEventSink, persistence: JobPersistence | None, now_us: Callable[[], int],
     stale_after_s: float, remediates: Callable[[Environment], bool],
+    resumed: ResumedRequests | None = None,
 ) -> ReconcileWiring:  # fmt: skip
     """The pass, its phases and the driver over the runtime's stores and adapters (module
     docstring), built and not started; `ReconcileJobs.start` opens the jobs. A live or demo
     environment whose capability record does not remediate is a `ValueError` here, so the OMS's
-    composition fails closed (24 Sec.14.3, C-2.6, C-4.14)."""
+    composition fails closed (24 Sec.14.3, C-2.6, C-4.14). `resumed`, the requests the startup
+    sweep resumed, holds each account's next fetch until they have answered (24 Sec.8.5)."""
     if environment in ("live", "demo") and not remediates(environment):
         raise ValueError("a live or demo reconciliation job always remediates (24 Sec.14.3)")
     counted = ReconcileMetrics(metrics)
@@ -471,7 +546,7 @@ def build_reconciliation(
         marks=marks, watermarks=AccountWatermarks(reads),
         records=ReconcileRecords(emitter, environment=environment),
         notices=ReconcileNoticesBinding(hub, serving), retries=hop, metrics=counted,
-        pager=pager, now_us=now_us,
+        pager=pager, now_us=now_us, resumed=resumed,
     )  # fmt: skip
     jobs = ReconcileJobs(
         phases, standing=standing, environment=environment, remediates=remediates,

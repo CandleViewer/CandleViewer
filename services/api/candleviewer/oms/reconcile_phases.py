@@ -7,7 +7,9 @@ then its plan, then its report) in memory, one pass per account, as B19 runs one
   watermark, BQ-10) and fetches. Any failure of it, whatever its cause, is a failed fetch: the plain
   tracker judges it against the stale window and, once it is spent, sets the account's standing
   before it raises `FetchFailed`, the event that tells B19 (C-2.21). So the job's own faults
-  escalate to `stale_lockout` rather than retrying forever (INV-B19-a).
+  escalate to `stale_lockout` rather than retrying forever (INV-B19-a). It reads nothing while a
+  request the startup resumed for the account is in flight (`ResumedRequests`, bounded): its answer
+  could land between the venue's reads and the diff's row reads.
 * **diff** and **remediate** run the pass's phases on what the fetch read.
 * **report** freezes the report, writes it as its `oms.reconcile` record (`stage: finished`, 24
   Sec.15.5) ahead of everything that follows from it (C-2.9), stores the watermark a clean enough
@@ -59,6 +61,7 @@ __all__ = [
     "ReconcileNotices",
     "ReconcilePhases",
     "ReportRecords",
+    "ResumedRequests",
     "RetryTimer",
     "StreamMarks",
     "Watermarks",
@@ -116,6 +119,15 @@ class RetryTimer(Protocol):
     def retry(self, account_id: AccountId, *, attempt: int) -> None: ...
 
 
+class ResumedRequests(Protocol):
+    """The requests the OMS's startup sweep resumed (24 Sec.8.2 "Recovery": a create left
+    `submitting`, an exit left `cancel_pending` or `amend_pending`). `answered` returns once the
+    account's have answered, at most once an account and within its own bound, and raises nothing
+    but a cancellation (24 Sec.8.5: a pass never races a request in flight)."""
+
+    async def answered(self, account_id: AccountId) -> None: ...
+
+
 @dataclass
 class _Pass:
     """What one account's pass carries between its phases."""
@@ -157,11 +169,12 @@ class ReconcilePhases:
         metrics: ReconcileMetrics,
         pager: Pager,
         now_us: Callable[[], int],
+        resumed: ResumedRequests | None = None,
     ) -> None:
         self._r, self._standing, self._tracker = reconciler, standing, tracker
         self._marks, self._watermarks, self._records = marks, watermarks, records
         self._notices, self._retries, self._metrics = notices, retries, metrics
-        self._pager, self._now = pager, now_us
+        self._pager, self._now, self._resumed = pager, now_us, resumed
         self._passes: dict[AccountId, _Pass] = {}
         self._reports: dict[AccountId, ReconcileReport] = {}
         self._failures: dict[AccountId, tuple[str, str]] = {}
@@ -173,7 +186,9 @@ class ReconcilePhases:
 
     async def fetch(self, account_id: str, *, pass_id: str, trigger: str) -> Mapping[str, Any]:
         """Step 1; any failure is a failed fetch, judged by the tracker, the standing set before
-        `FetchFailed` tells B19 when the stale window is spent (C-2.21, INV-B19-a)."""
+        `FetchFailed` tells B19 when the stale window is spent (C-2.21, INV-B19-a). Its reads, and
+        the window's end, come once the requests the startup resumed for the account have
+        answered (`resumed`, 24 Sec.8.5)."""
         now = self._now()
         try:
             account = _account(account_id)
@@ -183,6 +198,9 @@ class ReconcilePhases:
             ) from None
         self._passes.pop(account, None)
         self._failures.pop(account, None)
+        if self._resumed is not None:  # bounded, never raising: the pass reads after them
+            await self._resumed.answered(account)
+            now = self._now()
         try:
             stored = await _bounded(self._watermarks.last_reconciled_us(account))
             window = gap_window(
