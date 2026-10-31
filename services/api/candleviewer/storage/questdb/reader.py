@@ -144,6 +144,23 @@ def build_oi_coverage(sym: str, interval: str, source: str) -> QueryBuilder:
     return _checked(sql, (sym, interval, source))
 
 
+def build_read_liquidations(sym: str, rng: TimeRange, side: str | None, limit: int) -> QueryBuilder:
+    """E24-T03 one symbol's prints in the dedup key's order (a total order, so a page re-reads
+    alike), two-sided ts bound, optional side equality, hard row cap (validated int, inlined)."""
+    side_sql, params = ("AND side = $4 ", (side,)) if side is not None else ("", ())
+    sql = (
+        "SELECT ts, symbol, side, price, size, notional, batch_index "  # noqa: S608  # nosec B608 reason=int-limit-clamped-by-_inline_limit owner=@CandleViewer/backend
+        f"FROM liquidations WHERE symbol = $1 AND ts >= $2 AND ts < $3 {side_sql}"
+        f"ORDER BY ts, side, price, size, batch_index LIMIT {_inline_limit(limit)}"
+    )
+    return _checked(sql, (sym, ts_param(rng.start_us), ts_param(rng.end_us), *params))
+
+
+def build_liquidations_first(sym: str) -> QueryBuilder:
+    """E24-T03 coverage: the first stored print's `ts` for a symbol (NULL when none is)."""
+    return _checked("SELECT min(ts) lo FROM liquidations WHERE symbol = $1", (sym,))
+
+
 def build_read_big_trades(sym: str, rng: TimeRange, min_notional: float) -> QueryBuilder:
     """Shape #4 (big-trade bubbles): precomputed `notional` column."""
     sql = (
