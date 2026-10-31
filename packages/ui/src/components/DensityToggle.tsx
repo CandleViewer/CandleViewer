@@ -9,17 +9,15 @@ import {
   type SegmentedOptions,
 } from "./SegmentedControl.js";
 
-/** The runtime's densities, plus `dense`, offered only on a chart panel's override (E05-D02 J14). */
-export type DensityToggleValue = DensityName | "dense";
-
 /**
- * Default English copy (plan gap 9 / BQ-21: copy as props, defaults exported beside the component).
- * The panel sentence is E11-D05's ("Chart panel density: dense"); the global one is the host's key,
- * none being written yet (J16), so this default is a stand-in the host replaces.
+ * Default English copy (BQ-21: copy as props, defaults exported beside the component). The panel
+ * sentence follows E11-D05's form ("Chart panel density: compact"). The global sentence is the host's
+ * key and none is written yet (J16), so `globalAnnouncement` is an English placeholder default that a
+ * host overrides through `copy`.
  */
 export const DENSITY_TOGGLE_COPY: DensityToggleCopy = {
   groupLabel: "Density",
-  options: { compact: "Compact", comfortable: "Comfortable", dense: "Dense" },
+  options: { compact: "Compact", comfortable: "Comfortable" },
   panelGroupLabel: (panel: string): string => `${panel} density`,
   globalAnnouncement: (label: string): string => `Density: ${label}`,
   panelAnnouncement: (panel: string, label: string): string =>
@@ -28,7 +26,7 @@ export const DENSITY_TOGGLE_COPY: DensityToggleCopy = {
 
 export interface DensityToggleCopy {
   readonly groupLabel: string;
-  readonly options: Readonly<Record<DensityToggleValue, string>>;
+  readonly options: Readonly<Record<DensityName, string>>;
   readonly panelGroupLabel: (panel: string) => string;
   readonly globalAnnouncement: (label: string) => string;
   readonly panelAnnouncement: (panel: string, label: string) => string;
@@ -36,9 +34,11 @@ export interface DensityToggleCopy {
 
 interface DensityToggleCommon {
   readonly copy?: Partial<DensityToggleCopy>;
+  /** Passed through to CMP-003 (its size). */
   readonly size?: "sm" | "md";
+  /** Passed through to CMP-003 (its full-width layout). */
   readonly fullWidth?: boolean;
-  /** No reason form: every role changes the density on this device, so there is no T2 (J15 (a)). */
+  /** Passed through to CMP-003's disabled state, which CMP-003 owns and draws. */
   readonly disabled?: boolean;
   /** Renders the control itself at this density (`data-density`); absent = inherit. */
   readonly density?: DensityName;
@@ -52,41 +52,34 @@ export interface DensityToggleGlobalProps extends DensityToggleCommon {
 
 export interface DensityTogglePanelProps extends DensityToggleCommon {
   readonly scope: "panel";
-  /** The panel's name: it names the group and leads the sentence ("Chart panel density: dense"). */
+  /** The panel's name: it names the group and leads the sentence ("Chart panel density: compact"). */
   readonly panelName: string;
-  /** A chart panel adds Dense (E11-D02 CR-8); no other panel offers it. */
-  readonly chartPanel?: boolean;
-  readonly value: DensityToggleValue;
-  readonly onChange: (value: DensityToggleValue) => void;
+  readonly value: DensityName;
+  readonly onChange: (value: DensityName) => void;
 }
 
 export type DensityToggleProps = DensityToggleGlobalProps | DensityTogglePanelProps;
 
-const option = (copy: DensityToggleCopy, value: DensityToggleValue): SegmentedOption => ({
+const option = (copy: DensityToggleCopy, value: DensityName): SegmentedOption => ({
   value,
   label: copy.options[value],
 });
 
 /**
- * CMP-063: the density switch, CMP-003's segmented form (the `menuitemradio` form is E05-S03's).
+ * CMP-063: the density switch, CMP-003's segmented form. The `menuitemradio` menu form (`form`
+ * prop, the MenuForm story) is slice H's.
  * Props only: it emits no analytics (the store is the one emitter, BQ-16). A committed user change
  * speaks one polite sentence (J16); a new `value` from the host (initial load, a server-fed apply)
  * speaks nothing, because only the change handler announces. Global offers exactly the runtime's
- * DENSITIES (BQ-19); a chart panel's override adds Dense (J14).
+ * DENSITIES in both scopes (BQ-19). J14's chart-panel Dense is not offered: no runtime density
+ * carries it, and its naming reconcile is slice H's row.
  */
 export function DensityToggle(props: DensityToggleProps): JSX.Element {
   const copy: DensityToggleCopy = { ...DENSITY_TOGGLE_COPY, ...props.copy };
   const [compact, comfortable] = DENSITIES;
   const panel = props.scope === "panel" ? props : undefined;
-  const dense = panel?.chartPanel === true;
-  const values: readonly DensityToggleValue[] = dense
-    ? [compact, comfortable, "dense"]
-    : [compact, comfortable];
-  const first = option(copy, compact);
-  const second = option(copy, comfortable);
-  const options: SegmentedOptions = dense
-    ? [first, second, option(copy, "dense")]
-    : [first, second];
+  const values: readonly DensityName[] = [compact, comfortable];
+  const options: SegmentedOptions = [option(copy, compact), option(copy, comfortable)];
   const onChange = (raw: string): void => {
     const next = values.find((v) => v === raw);
     if (next === undefined) return;
@@ -94,7 +87,7 @@ export function DensityToggle(props: DensityToggleProps): JSX.Element {
     if (panel !== undefined) {
       panel.onChange(next);
       announcePolite(copy.panelAnnouncement(panel.panelName, label));
-    } else if (props.scope !== "panel" && next !== "dense") {
+    } else if (props.scope !== "panel") {
       props.onChange(next);
       announcePolite(copy.globalAnnouncement(label));
     }

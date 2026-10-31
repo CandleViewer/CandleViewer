@@ -12,7 +12,6 @@ import {
   ThemeProvider,
   createThemeStore,
   type DensityName,
-  type DensityToggleValue,
   type ThemeAnalyticsEvent,
 } from "../src/index.js";
 import * as stories from "../src/components/DensityToggle.stories.js";
@@ -34,17 +33,9 @@ const labels = (host: HTMLElement): string[] =>
     .getAllByRole("radio")
     .map((r) => r.textContent ?? "");
 
-function Panel({ chart = false }: { chart?: boolean }): JSX.Element {
-  const [value, setValue] = useState<DensityToggleValue>("compact");
-  return (
-    <DensityToggle
-      scope="panel"
-      panelName="Chart panel"
-      chartPanel={chart}
-      value={value}
-      onChange={setValue}
-    />
-  );
+function Panel(): JSX.Element {
+  const [value, setValue] = useState<DensityName>("compact");
+  return <DensityToggle scope="panel" panelName="Chart panel" value={value} onChange={setValue} />;
 }
 
 describe("DensityToggle (CMP-063)", () => {
@@ -58,12 +49,11 @@ describe("DensityToggle (CMP-063)", () => {
     expect(root).toHaveAttribute("data-scope", "global");
   });
 
-  it("panel: the group names the panel; Dense only on a chart panel", async () => {
+  it("panel: the group names the panel and offers exactly the runtime DENSITIES (BQ-19)", async () => {
     const plain = await mount(<Panel />);
     expect(within(plain).getByRole("radiogroup", { name: "Chart panel density" })).toBeVisible();
-    expect(labels(plain)).toEqual(["Compact", "Comfortable"]);
-    const chart = await mount(<Panel chart />);
-    expect(labels(chart)).toEqual(["Compact", "Comfortable", "Dense"]);
+    expect(labels(plain)).toEqual(DENSITIES.map((d) => DENSITY_TOGGLE_COPY.options[d]));
+    expect(within(plain).queryByRole("radio", { name: "Dense" })).toBeNull();
   });
 
   it("a committed change calls onChange once and speaks one sentence with the scope (J16)", async () => {
@@ -74,18 +64,18 @@ describe("DensityToggle (CMP-063)", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith("comfortable");
     expect(await politeText()).toBe("Density: Comfortable");
-    const panel = await mount(<Panel chart />);
-    await userEvent.click(radio(panel, "Dense"));
-    expect(await politeText()).toBe("Chart panel density: dense");
+    const panel = await mount(<Panel />);
+    await userEvent.click(radio(panel, "Comfortable"));
+    expect(await politeText()).toBe("Chart panel density: comfortable");
   });
 
   it("arrows commit (selection follows focus); the region keeps the last value", async () => {
-    const host = await mount(<Panel chart />);
+    const host = await mount(<Panel />);
     await userEvent.tab();
-    await userEvent.keyboard("{ArrowRight}{ArrowRight}");
-    expect(radio(host, "Dense")).toHaveFocus();
-    expect(radio(host, "Dense")).toBeChecked();
-    expect(await politeText()).toBe("Chart panel density: dense");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(radio(host, "Comfortable")).toHaveFocus();
+    expect(radio(host, "Comfortable")).toBeChecked();
+    expect(await politeText()).toBe("Chart panel density: comfortable");
   });
 
   it("a host-fed value speaks nothing and calls nothing; re-picking the checked value is no change", async () => {
