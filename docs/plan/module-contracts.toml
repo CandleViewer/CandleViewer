@@ -369,8 +369,17 @@ forbidden_modules = ["candleviewer.exchange.bybit"]
 [[frontend_package]]
 name = "packages/chart-engine"
 rule = "C-2.16"
-forbidden_deps = ["react", "react-dom", "apps/*"]
-forbidden_identifiers = ["fetch", "XMLHttpRequest", "WebSocket", "bybit"]
+# E11-X02: `src` may import only its own files (`chart-engine-src-relative-only`); the named
+# app-state and I/O-client rules exist for their failure messages.
+allowed_deps = ["packages/chart-engine/src"]
+forbidden_deps = ["react", "react-dom", "apps/*", "zustand", "jotai", "redux", "rxjs", "axios", "ws"]
+# Descriptive mirror of packages/chart-engine/eslint.config.mjs (the enforcing source). `indexedDB`
+# is lifted in src/text/ only (E11-S11's atlas cache); `sendBeacon` is banned however reached.
+forbidden_identifiers = [
+  "fetch", "XMLHttpRequest", "WebSocket", "EventSource", "WebTransport", "RTCPeerConnection",
+  "RTCDataChannel", "BroadcastChannel", "bybit", "sendBeacon", "localStorage", "sessionStorage",
+  "indexedDB", "caches", "cookieStore", "eval", "Function", "importScripts",
+]
 
 [[frontend_package]]
 name = "packages/protocol"

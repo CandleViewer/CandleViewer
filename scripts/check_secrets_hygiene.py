@@ -10,6 +10,8 @@ Subcommands (all offline, deterministic, exit 1 on violation):
   (``workflow_scripts``; SR-146)
 * ``inventory`` - a secret-name list (JSON array) holds no live key / KEK (SR-140)
 * ``logs``      - scan log/artefact files for secret shapes (SR-146)
+* ``engine-fixtures`` - no chart-engine fixture, golden or bench result holds an account, order or
+  user id, an e-mail address or a key shape (E11-X02, CE-I09)
 
 A failure that implicates a real credential refers to runbook IR-02 (rotate first, SR-143).
 """
@@ -157,6 +159,50 @@ def check_fixtures(root: Path) -> list[str]:
                 errors.append(
                     f"{path.relative_to(root).as_posix()}: {hit} without {DUMMY_PREFIX} prefix"
                 )
+    return errors
+
+
+#: E11-X02 (#392; CE-I09, BQ-166): the chart engine's test data is seeded and synthetic, so an id
+#: field holding a quoted value or a long number, or an e-mail address, is a recorded session. Its
+#: tests and bench (fixtures, goldens, matrix results) are scanned whole: ``check_fixtures`` skips
+#: ``/test/`` paths, so it cannot cover them. A value that starts with a synthetic marker passes.
+_ENGINE_FIXTURE_DIRS = ("packages/chart-engine/test", "packages/chart-engine/bench")
+_PII_FIELD = re.compile(
+    r"""(?i)["']?\b(account_?id|order_?id|order_?link_?id|uid|user_?id|email|api_?key)["']?"""
+    r"""\s*[:=]\s*(?:"([^"]*)"|'([^']*)'|(\d{5,})\b)"""
+)
+_EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+\.)+[A-Za-z]{2,}\b")
+_SYNTHETIC = ("fixture-", "synthetic-", "test-", DUMMY_PREFIX)
+_EXAMPLE_MAIL = re.compile(r"(?i)@(?:[\w-]+\.)*(?:example\.(?:com|org|net)|test|invalid)$")
+
+
+def scan_engine_fixture(text: str) -> list[str]:
+    """CE-I09 hits in ``text``: the pattern and line, never the matched value."""
+    hits: list[str] = []
+    for m in _PII_FIELD.finditer(text):
+        value = next(g for g in m.groups()[1:] if g is not None)
+        if value and not value.startswith(_SYNTHETIC) and not _is_benign(value):
+            line = text.count("\n", 0, m.start()) + 1
+            hits.append(f"line {line}: {m.group(1)} field with a value")
+    for m in _EMAIL.finditer(text):
+        if not _EXAMPLE_MAIL.search(m.group(0)):
+            hits.append(f"line {text.count(chr(10), 0, m.start()) + 1}: e-mail address")
+    hits += scan_text(text)
+    return hits
+
+
+def check_engine_fixtures(root: Path) -> list[str]:
+    errors: list[str] = []
+    for d in _ENGINE_FIXTURE_DIRS:
+        base = root / d
+        for path in sorted(base.rglob("*")) if base.is_dir() else []:
+            if not path.is_file() or path.suffix not in _TEXT_SUFFIXES:
+                continue
+            if "node_modules" in path.parts:
+                continue
+            rel = path.relative_to(root).as_posix()
+            for hit in scan_engine_fixture(path.read_text(encoding="utf-8", errors="replace")):
+                errors.append(f"{rel}: {hit}; engine fixtures are synthetic only (CE-I09)")
     return errors
 
 
@@ -689,7 +735,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "check",
-        choices=["fixtures", "dev-env", "workflows", "inventory", "logs", "all"],
+        choices=["fixtures", "engine-fixtures", "dev-env", "workflows", "inventory", "logs", "all"],
     )
     ap.add_argument("paths", nargs="*")
     ap.add_argument("--root", default=".")
@@ -698,6 +744,8 @@ def main(argv: list[str] | None = None) -> int:
     errors: list[str] = []
     if ns.check in ("fixtures", "all"):
         errors += check_fixtures(root)
+    if ns.check in ("engine-fixtures", "all"):
+        errors += check_engine_fixtures(root)
     if ns.check in ("dev-env", "all"):
         errors += check_dev_env(root)
     if ns.check in ("workflows", "all"):

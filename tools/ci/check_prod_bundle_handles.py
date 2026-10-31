@@ -6,8 +6,10 @@ page that exposes it hands any script a way to spoof where a drawing sits: the E
 DR5 (`docs/security/threat-models/E14-drawings.md`). The script files (`.js`, `.mjs`, `.cjs`) and
 pages (`.html`, `.htm`) of the web build must hold no identifier of
 `tools/ci/prod-bundle-forbidden-handles.json` (E14-Q03's two names are registered; a later test-only
-handle is added there). Source maps are never read: their `sourcesContent` holds the source of a
-handle that is correctly gated out of the bundle.
+handle is added there). E11-X02 (#392; CE-E05) adds the engine's debug surface: `__engine` (any
+`window.__engine*` global and the `/__engine-harness` route) and `runBenchScene` (the `./bench`
+entry). Source maps are never read: their `sourcesContent` holds the source of a handle that is
+correctly gated out of the bundle.
 A dist with no script file fails, so a missing or half-written build never passes, whatever `.html`
 it holds. An identifier is matched as a substring: `__cvEngineDebug` counts as `__cvEngine`.
 
@@ -30,6 +32,14 @@ SCRIPT_SUFFIXES = frozenset({".js", ".mjs", ".cjs"})
 SCAN_SUFFIXES = SCRIPT_SUFFIXES | {".html", ".htm"}  # never ".map"
 IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]{3,}")
 FIELDS = ("identifier", "threat", "requirement")
+#: What a finding of each threat means and where it is modelled.
+THREATS = {
+    "DR5": "spoofing: a test-only handle in a production bundle, SR-E14-10: gate it out of the"
+    " build (docs/security/threat-models/E14-drawings.md)",
+    "CE-E05": "disclosure: the engine's debug surface (a window.__engine* global, the"
+    " /__engine-harness route or the ./bench entry) in a production bundle, E11-X02: gate it out"
+    " of the build (docs/security/threat-models/E11-chart-engine.md)",
+}
 
 
 def load_handles(manifest: Path) -> list[dict[str, str]]:
@@ -86,11 +96,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     for message in found:
         print(f"prod-bundle: {message}", file=sys.stderr)
     if found:
-        print(
-            "prod-bundle: DR5 (spoofing: a test-only handle in a production bundle), SR-E14-10:"
-            " gate it out of the build (docs/security/threat-models/E14-drawings.md)",
-            file=sys.stderr,
-        )
+        text = "\n".join(found)
+        for threat in sorted({h["threat"] for h in handles if f"({h['threat']};" in text}):
+            reason = THREATS.get(threat, "see the manifest")
+            print(f"prod-bundle: {threat}: {reason}", file=sys.stderr)
         return 1
     print(
         f"prod-bundle: OK: {scanned} file(s) scanned, none of {len(handles)} identifier(s) present"

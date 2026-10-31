@@ -1,11 +1,11 @@
 // The browser `TextPlatform` (E11-S11, BQ-261): a worker-scope (or page) `FontFace` built from the
-// app's bytes, OffscreenCanvas `fillText` coverage, IndexedDB and `crypto.subtle`, all reached
-// structurally (this file compiles without the DOM lib). Coverage is read from the font's own
+// app's bytes, OffscreenCanvas `fillText` coverage, IndexedDB (opened by src/text/idb-store.ts) and
+// `crypto.subtle`, all reached structurally (this file compiles without the DOM lib). Coverage is read from the font's own
 // `cmap` (sfnt: TrueType / OpenType, formats 4 and 12), never from what the canvas draws, so a
 // system fallback face can never fill the atlas (K01 item 1). No network (C-2.16).
-import { ATLAS_DB, ATLAS_STORE } from "../text/atlas-cache.js";
 import { fnv64Hex } from "../text/hash.js";
-import type { ChartFont, GlyphRaster, KvStore, TextPlatform } from "../text/platform.js";
+import { openAtlasStore, type IdbFactory } from "../text/idb-store.js";
+import type { ChartFont, GlyphRaster, TextPlatform } from "../text/platform.js";
 
 interface Ctx2D {
   font: string;
@@ -22,32 +22,14 @@ interface Ctx2D {
   fillText(t: string, x: number, y: number): void;
   getImageData(x: number, y: number, w: number, h: number): { data: Uint8ClampedArray };
 }
-interface Req<T> {
-  result: T;
-  onsuccess: (() => void) | null;
-  onerror: (() => void) | null;
-}
-interface IdbStore {
-  get(k: string): Req<unknown>;
-  put(v: unknown, k: string): Req<unknown>;
-  getAllKeys(): Req<unknown[]>;
-  delete(k: string): Req<unknown>;
-}
-interface Idb {
-  close(): void;
-  onversionchange: (() => void) | null;
-  createObjectStore(name: string): unknown;
-  transaction(name: string, mode: string): { objectStore(name: string): IdbStore };
-}
 export interface TextScope {
   FontFace?: new (family: string, src: ArrayBuffer, d: object) => { load(): Promise<unknown> };
   /** The worker's FontFaceSet (`self.fonts`); a page's is `document.fonts`. */
   fonts?: FaceSet;
   document?: { fonts?: FaceSet };
   OffscreenCanvas?: new (w: number, h: number) => { getContext(id: "2d", o: object): unknown };
-  indexedDB?: {
-    open(name: string, v: number): Req<Idb> & { onupgradeneeded: (() => void) | null };
-  };
+  /** Opened by src/text/idb-store.ts only (the E11-X02 IndexedDB exception, CE-E04). */
+  indexedDB?: IdbFactory;
   crypto?: { subtle?: { digest(alg: string, data: ArrayBuffer): Promise<ArrayBuffer> } };
   isSecureContext?: boolean;
 }
@@ -66,12 +48,6 @@ interface Face {
 
 /** The scratch canvas's side: a glyph box larger than this is a raster fault, never clipped. */
 export const RASTER_CANVAS_PX = 256;
-
-const done = <T>(r: Req<T>): Promise<T> =>
-  new Promise((resolve, reject) => {
-    r.onsuccess = () => resolve(r.result);
-    r.onerror = () => reject(new Error("indexedDB request failed"));
-  });
 
 /** The platform on `scope`, or null where it cannot load a face or draw one off-screen. */
 export function createTextPlatform(scope: TextScope): TextPlatform | null {
@@ -133,24 +109,7 @@ export function createTextPlatform(scope: TextScope): TextPlatform | null {
         return fallback(); // a scope whose subtle is present but unusable (G-90)
       }
     },
-    store: () => openStore(scope),
-  };
-}
-
-async function openStore(scope: TextScope): Promise<KvStore | null> {
-  const factory = scope.indexedDB;
-  if (factory === undefined) return null;
-  const open = factory.open(ATLAS_DB, 1);
-  open.onupgradeneeded = () => void open.result.createObjectStore(ATLAS_STORE);
-  const db = await done(open);
-  db.onversionchange = () => db.close(); // another context upgrades the database: let it
-  const tx = (mode: string): IdbStore => db.transaction(ATLAS_STORE, mode).objectStore(ATLAS_STORE);
-  return {
-    get: (k) => done(tx("readonly").get(k)),
-    put: async (k, v) => void (await done(tx("readwrite").put(v, k))),
-    keys: async () => (await done(tx("readonly").getAllKeys())).map(String),
-    delete: async (k) => void (await done(tx("readwrite").delete(k))),
-    close: () => db.close(),
+    store: () => openAtlasStore(scope),
   };
 }
 
@@ -190,6 +149,7 @@ export function cmapLookup(bytes: ArrayBuffer): (cp: number) => boolean {
 
 function format4(v: DataView, t: number, cp: number): boolean {
   const n = v.getUint16(t + 6) / 2;
+  if (t + 16 + n * 8 > v.byteLength) return false; // more segments than the bytes hold (SR-128)
   const [ends, starts, deltas, offs] = [t + 14, t + 16 + n * 2, t + 16 + n * 4, t + 16 + n * 6];
   for (let s = 0; s < n; s += 1) {
     const [a, b] = [v.getUint16(starts + s * 2), v.getUint16(ends + s * 2)];
@@ -203,7 +163,9 @@ function format4(v: DataView, t: number, cp: number): boolean {
 }
 
 function format12(v: DataView, t: number, cp: number): boolean {
-  for (let g = 0; g < v.getUint32(t + 12); g += 1) {
+  const groups = v.getUint32(t + 12);
+  if (t + 16 + groups * 12 > v.byteLength) return false; // more groups than the bytes hold (SR-128)
+  for (let g = 0; g < groups; g += 1) {
     if (cp >= v.getUint32(t + 16 + g * 12) && cp <= v.getUint32(t + 20 + g * 12)) return true;
   }
   return false;

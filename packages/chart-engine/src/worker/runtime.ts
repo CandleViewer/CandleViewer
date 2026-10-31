@@ -165,10 +165,18 @@ interface Instance {
   readonly where: StructuralHit;
   /** The last hover pick posted, (objectId, part, handle): edge-triggered (BQ-134). */
   readonly hover: { id: string | null; part: PickHit["part"]; handle: number };
-  readonly elements: Record<StoreId, number>;
+  /** Per-store element counts: a Map, so a received store id never keys an object write (CE-E02). */
+  readonly elements: Map<StoreId, number>;
   /** `init.fonts`, checked on their own (a bad option never rejects the init, BQ-258). */
   readonly fonts: readonly ChartFont[] | "invalid" | undefined;
 }
+
+const STORE_ZERO: readonly [StoreId, number][] = [
+  ["bars", 0],
+  ["footprint", 0],
+  ["heatmap", 0],
+  ["profile", 0],
+];
 
 const summarise = (timeUs: number): string => {
   const d = new Date(Math.floor(timeUs / 1000));
@@ -584,7 +592,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         resizes: old?.resizes ?? { reallocations: 0, dprChanges: 0, lastDpr: msg.dpr },
         loss: null,
         detach: null,
-        elements: old ? { ...old.elements } : { bars: 0, footprint: 0, heatmap: 0, profile: 0 },
+        elements: new Map(old ? old.elements : STORE_ZERO),
         fonts: msg.fonts === undefined ? undefined : fontsOk(msg.fonts) ? msg.fonts : "invalid",
       };
       inst.gestures.reduce = msg.reducedMotion === true;
@@ -610,8 +618,12 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "data": {
         // The stores are E11-T03's; until then a batch only moves the element count.
         const n = msg.layout.count;
-        if (msg.op === "replace") inst.elements[msg.store] = n;
-        else if (msg.op !== "patch") inst.elements[msg.store] += n;
+        // rejectReason has checked it (layoutBytes); kept local for CE-T02's rule (E11-X02).
+        if (!Number.isSafeInteger(n)) return;
+        if (msg.op === "replace") inst.elements.set(msg.store, n);
+        else if (msg.op !== "patch") {
+          inst.elements.set(msg.store, (inst.elements.get(msg.store) ?? 0) + n);
+        }
         // BQ-115: a bars batch's params are [priceOrigin, tickSize], the main series' (pane 0).
         const [origin, tick] = msg.layout.params;
         if (msg.store === "bars" && origin !== undefined && tick !== undefined) {

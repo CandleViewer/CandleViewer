@@ -1,0 +1,40 @@
+# E11-X02 (#392; CE-E03, the E11-X01 tampering control): GLSL is static, bundled text. `ProgramCache`
+# (`src/gl/program-cache.ts`) is the one place that hands a source to `shaderSource`, and it hands
+# over a `ProgramSource` field unchanged; a source built at run time (concatenation, a template with a
+# substitution, a call such as `.replace` or `.join`) is code made from data. The shader modules'
+# own literals are ESLint's (`src/gl/shaders/**`, no `${}`); this rule covers the call site.
+rules:
+  - id: cv-engine-shader-source-dynamic
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      CE-E03 (E11-X01 tampering): a shader source built at run time, or handed to the GPU outside
+      `ProgramCache`. Shader sources are static strings bundled in `src/gl/shaders/**`; vary a
+      shader through uniforms or a second static program, never by building GLSL from data, which
+      lets a theme, a label or a decoded value inject GPU code. Rule doc:
+      docs/plan/security/ci-gates-e11.md#cv-engine-shader-source-dynamic.
+    metadata:
+      rule-id: cv-engine-shader-source-dynamic
+      threat: CE-E03
+      references:
+        - docs/security/threat-models/E11-chart-engine.md CE-E03 (section 6)
+        - packages/chart-engine/eslint.config.mjs (src/gl/shaders/** template-literal ban)
+    pattern-either:
+      - patterns:
+          - pattern: $GL.shaderSource($S, $SRC)
+          - metavariable-pattern:
+              metavariable: $SRC
+              patterns:
+                - pattern-either:
+                    - pattern: $A + $B
+                    - pattern: "`...${$X}...`"
+                    - pattern: $F(...)
+                    - pattern: $O.$M(...)
+      - patterns:
+          - pattern: $GL.shaderSource(...)
+          - pattern-not-inside: |
+              class ProgramCache { ... }
+    paths:
+      include:
+        - "packages/chart-engine/src/**"
+        - "packages/chart-engine/bench/**"

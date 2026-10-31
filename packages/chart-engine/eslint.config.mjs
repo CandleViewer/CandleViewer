@@ -1,12 +1,14 @@
 // C-2.16 enforcement: packages/chart-engine must not import React, the DOM,
-// `fetch`, or any Bybit/exchange-specific module. Violations fail lint with a
+// `fetch`, or any Bybit/exchange-specific module; E11-X02 adds origin storage,
+// `sendBeacon` and dynamic code (eval, Function, string timers). Violations fail lint with a
 // message citing C-2.16 (ticket E02-T03 acceptance criterion #2).
 import tseslint from "typescript-eslint";
 import globals from "globals";
 import baseConfig from "@candleviewer/config/eslint";
 
-// C-2.16 network ban, shared by src/** and the worker override below (no I/O anywhere here).
-const NETWORK_GLOBALS = [
+// C-2.16 / E11-X02 (CE-E04) I/O ban, shared by src/** and the overrides below: no network and no
+// origin storage anywhere in the engine. IndexedDB alone is lifted, in src/text/ only (below).
+const IO_GLOBALS = [
   { name: "fetch", message: "C-2.16: packages/chart-engine must not call fetch (no I/O)." },
   {
     name: "XMLHttpRequest",
@@ -16,7 +18,25 @@ const NETWORK_GLOBALS = [
     name: "WebSocket",
     message: "C-2.16: packages/chart-engine must not open a WebSocket (no I/O).",
   },
+  {
+    name: "EventSource",
+    message: "C-2.16: packages/chart-engine must not open an EventSource (no I/O).",
+  },
+  ...["localStorage", "sessionStorage", "indexedDB", "caches", "cookieStore"].map((name) => ({
+    name,
+    message:
+      "C-2.16 / E11-X02 (CE-E04): packages/chart-engine keeps no origin storage (no I/O); " +
+      "IndexedDB is the src/text/ atlas cache's alone (E11-S11).",
+  })),
+  // E11-X02 (CE-E04, review l10): the other channels out of a worker or a page.
+  ...["WebTransport", "RTCPeerConnection", "RTCDataChannel", "BroadcastChannel"].map((name) => ({
+    name,
+    message: `C-2.16 / E11-X02 (CE-E04): packages/chart-engine must not open a ${name} (no I/O).`,
+  })),
 ];
+const IO_NAMES = new Set(IO_GLOBALS.map((g) => g.name));
+// E11-S11's SDF atlas cache (TM DS1, CE-I07) is the one IndexedDB user: src/text/ only.
+const TEXT_IO_GLOBALS = IO_GLOBALS.filter((g) => g.name !== "indexedDB");
 
 // C-2.16 DOM ban for src/core|layers|scene|model|gl|canvas2d: every browser global (`globals.browser`) that is
 // neither an ES built-in nor a Node global, plus `navigator`, which Node also defines. The
@@ -27,15 +47,43 @@ const DOM_GLOBALS = [
   ...Object.keys(globals.browser).filter((name) => !NODE_OR_ES.has(name)),
   "navigator",
   "Navigator",
-].map((name) => ({
-  name,
-  message:
-    "C-2.16: no DOM globals in src/core|layers|scene|model|gl|canvas2d (DOM glue is the host's).",
-}));
+]
+  .filter((name) => !IO_NAMES.has(name))
+  .map((name) => ({
+    name,
+    message:
+      "C-2.16: no DOM globals in src/core|layers|scene|model|gl|canvas2d (DOM glue is the host's).",
+  }));
+
+// The storage globals reached through a global object (`self.indexedDB`, `self["indexedDB"]`), and
+// `sendBeacon` however it is reached; `storage` is a regex alternation of the names banned there.
+const GLOBAL_OBJ = "[object.name=/^(globalThis|self|window)$/]";
+const named = (names) =>
+  `:matches([property.name=/^(${names})$/], [property.value=/^(${names})$/])`;
+const ioSyntax = (storage) => [
+  {
+    selector: `MemberExpression${GLOBAL_OBJ}${named(`${storage}|caches|cookieStore`)}`,
+    message:
+      "C-2.16 / E11-X02 (CE-E04): packages/chart-engine keeps no origin storage (no I/O); " +
+      "IndexedDB is the src/text/ atlas cache's alone (E11-S11).",
+  },
+  {
+    selector:
+      "MemberExpression[property.name='sendBeacon'], MemberExpression[property.value='sendBeacon']",
+    message:
+      "C-2.16 / E11-X02 (CE-E04): packages/chart-engine must not send a beacon (network I/O).",
+  },
+  {
+    selector: `MemberExpression[object.property.name='navigator']${named("storage")}, MemberExpression[object.name='navigator']${named("storage")}`,
+    message:
+      "C-2.16 / E11-X02 (CE-E04): packages/chart-engine keeps no origin storage " +
+      "(navigator.storage).",
+  },
+];
 
 // C-2.16 exchange-knowledge ban on symbol names and string literals (E11-T01), and the network
 // globals reached through a global object, which `no-restricted-globals` does not see.
-const C216_SYNTAX = [
+const C216_BASE = [
   {
     selector: "Identifier[name=/bybit/i]",
     message: "C-2.16: packages/chart-engine must have no Bybit/exchange knowledge (symbol name).",
@@ -51,11 +99,80 @@ const C216_SYNTAX = [
   },
   {
     selector:
-      "MemberExpression[object.name=/^(globalThis|self|window)$/]" +
-      "[property.name=/^(fetch|XMLHttpRequest|WebSocket)$/]",
+      `MemberExpression${GLOBAL_OBJ}` +
+      named(
+        "fetch|XMLHttpRequest|WebSocket|EventSource|WebTransport|RTCPeerConnection|" +
+          "RTCDataChannel|BroadcastChannel",
+      ),
     message: "C-2.16: packages/chart-engine must not do network I/O (fetch/XHR/WebSocket).",
   },
+  {
+    // E11-X02 (CE-E04, review m3): a computed key or an alias hides the name from the arms above.
+    selector:
+      `MemberExpression${GLOBAL_OBJ}[computed=true]:not([property.type='Literal']), ` +
+      "VariableDeclarator[init.name=/^(globalThis|self|window)$/], " +
+      "TSAsExpression[expression.name=/^(globalThis|self|window)$/]",
+    message:
+      "C-2.16 / E11-X02 (CE-E04): no computed access to, or alias of, the global object; it " +
+      "hides an I/O global from the ban. src/worker/render-worker.ts holds the one typed alias.",
+  },
 ];
+
+// E11-X02 (CE-E03, review m4): no code loader. A dynamic import, importScripts, a Worker made
+// outside src/worker/host.ts, or an object URL (with the CSP's `worker-src blob:`) would run
+// code the bundle never shipped; no-eval and no-new-func do not see those.
+const LOADER_SYNTAX = {
+  importExpr: {
+    selector: "ImportExpression",
+    message: "C-2.16 / E11-X02 (CE-E03): no dynamic import() in packages/chart-engine/src.",
+  },
+  importScripts: {
+    selector:
+      "CallExpression[callee.name='importScripts'], CallExpression[callee.property.name=" +
+      "'importScripts']",
+    message: "C-2.16 / E11-X02 (CE-E03): packages/chart-engine never calls importScripts.",
+  },
+  objectUrl: {
+    selector:
+      "MemberExpression[property.name=/^(createObjectURL|revokeObjectURL)$/], " +
+      "NewExpression[callee.name='Blob']",
+    message:
+      "C-2.16 / E11-X02 (CE-E03): no Blob or object URL in packages/chart-engine (a blob: " +
+      "worker runs a string as code).",
+  },
+  worker: {
+    selector: "NewExpression[callee.name=/^(Worker|SharedWorker)$/]",
+    message:
+      "C-2.16 / E11-X02 (CE-E03): the render worker is created in src/worker/host.ts only, " +
+      "from its bundled same-origin URL.",
+  },
+};
+const LOADERS = Object.values(LOADER_SYNTAX);
+// E11-S11 / E11-X02 (CE-E04): IndexedDB reached through any other object (a structurally typed
+// worker or page scope) is still IndexedDB; outside src/text/ that fails as well.
+const IDB_VIA_SCOPE = {
+  selector:
+    `MemberExpression:not(${GLOBAL_OBJ}):matches([property.name='indexedDB'], ` +
+    "[property.value='indexedDB'])",
+  message:
+    "C-2.16 / E11-X02 (CE-E04): packages/chart-engine keeps no origin storage (no I/O); " +
+    "IndexedDB is the src/text/ atlas cache's alone (E11-S11), however the scope is typed.",
+};
+const C216_SYNTAX = [
+  ...C216_BASE,
+  ...ioSyntax("localStorage|sessionStorage|indexedDB"),
+  IDB_VIA_SCOPE,
+  ...LOADERS,
+];
+const TEXT_SYNTAX = [...C216_BASE, ...ioSyntax("localStorage|sessionStorage"), ...LOADERS];
+
+// E11-X02 (CE-E03): no dynamic code. A string handed to eval, Function or a timer is code built
+// at run time, which the CSP (no unsafe-eval, C-12.10) would refuse and the engine never needs.
+const DYNAMIC_CODE = {
+  "no-eval": "error",
+  "no-implied-eval": "error",
+  "no-new-func": "error",
+};
 
 // US-CHART-007 NFR (E11-S03, BQ-77): "projection is a single shared function used by every
 // renderer". Arithmetic on `priceLow` / `priceHigh` (binary, compound assignment, ++/--) is a second
@@ -113,6 +230,12 @@ export default tseslint.config(
     },
   },
   {
+    // CE-E03: `no-implied-eval` sees a string timer only through a timer the file declares, and
+    // src/ declared none, so `setTimeout("code")` passed. Both runtimes (page, worker) have them.
+    files: ["src/**/*.ts"],
+    languageOptions: { globals: { setTimeout: "readonly", setInterval: "readonly" } },
+  },
+  {
     files: ["src/**/*.ts", "bench/**/*.ts"],
     rules: {
       "no-restricted-imports": [
@@ -157,11 +280,26 @@ export default tseslint.config(
       ],
       "no-restricted-globals": [
         "error",
-        ...NETWORK_GLOBALS,
+        ...IO_GLOBALS,
         { name: "document", message: "C-2.16: no DOM globals in src/core or src/layers." },
         { name: "window", message: "C-2.16: no DOM globals in src/core or src/layers." },
       ],
       "no-restricted-syntax": ["error", ...C216_SYNTAX, ...PROJECTION_SYNTAX],
+      ...DYNAMIC_CODE,
+    },
+  },
+  {
+    // E11-X02: the one narrow I/O exception. E11-S11's SDF atlas cache (26 §3.7, TM DS1) may use
+    // IndexedDB here and nowhere else; network and the other storage stay banned.
+    files: ["src/text/**/*.ts"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        ...TEXT_IO_GLOBALS,
+        { name: "document", message: "C-2.16: no DOM globals in src/core or src/layers." },
+        { name: "window", message: "C-2.16: no DOM globals in src/core or src/layers." },
+      ],
+      "no-restricted-syntax": ["error", ...TEXT_SYNTAX, ...PROJECTION_SYNTAX],
     },
   },
   {
@@ -213,9 +351,17 @@ export default tseslint.config(
     // E11-S04: and the gesture, velocity and momentum logic (src/interaction, BQ-98).
     // E11-S08: and picking (src/hit, BQ-140). E11-S11: and the SDF atlas (src/text, BQ-261), whose
     // font, raster and store needs reach the browser only through the TextPlatform seam.
-    files: ["src/{core,layers,scene,model,gl,viewport,canvas2d,interaction,hit,text}/**/*.ts"],
+    files: ["src/{core,layers,scene,model,gl,viewport,canvas2d,interaction,hit}/**/*.ts"],
     rules: {
-      "no-restricted-globals": ["error", ...NETWORK_GLOBALS, ...DOM_GLOBALS],
+      "no-restricted-globals": ["error", ...IO_GLOBALS, ...DOM_GLOBALS],
+    },
+  },
+  {
+    // The same DOM ban for src/text, which keeps its one IndexedDB exception (E11-X02, TM DS1):
+    // this block comes after the src/text/** override, so it must carry TEXT_IO_GLOBALS itself.
+    files: ["src/text/**/*.ts"],
+    rules: {
+      "no-restricted-globals": ["error", ...TEXT_IO_GLOBALS, ...DOM_GLOBALS],
     },
   },
   {
@@ -246,7 +392,37 @@ export default tseslint.config(
     rules: {
       // The worker glue is the one place OffscreenCanvas/postMessage globals
       // are expected; core/layers stay DOM-free (C-2.16). The network ban still holds here.
-      "no-restricted-globals": ["error", ...NETWORK_GLOBALS],
+      "no-restricted-globals": ["error", ...IO_GLOBALS],
     },
+  },
+  {
+    // E11-X02 (CE-E03): the one site that creates the render worker (from its bundled URL).
+    files: ["src/worker/host.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...C216_SYNTAX.filter((s) => s !== LOADER_SYNTAX.worker),
+        ...PROJECTION_SYNTAX,
+      ],
+    },
+  },
+  {
+    // E11-X02 (CE-E04): the worker entry's one typed alias of its global scope.
+    files: ["src/worker/render-worker.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...C216_SYNTAX.filter((s) => s !== C216_BASE[3]),
+        ...PROJECTION_SYNTAX,
+      ],
+    },
+  },
+  {
+    // E11-X02 (review l11): no inline comment lifts a rule anywhere in the engine source, so the
+    // I/O, loader and dynamic-code bans cannot be silenced next to the code they guard. (The
+    // repo-wide suppression check, tools/ci/no-inline-suppression-paths.json, stays the drawing
+    // paths: it must equal cv-drawings-text-to-html-sink's paths.)
+    files: ["src/**/*.{ts,mts,cts}"],
+    linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: "error" },
   },
 );

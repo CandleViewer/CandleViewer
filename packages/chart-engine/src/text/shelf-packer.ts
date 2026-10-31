@@ -29,7 +29,10 @@ export function shelfPack(
   const xs = new Int32Array(items.length);
   const ys = new Int32Array(items.length);
   let [x, y, shelf, ink] = [0, 0, 0, 0];
-  for (const i of order) {
+  // An index loop, not `for...of`: Semgrep folds `of` into `in`, so an indexed write in a
+  // `for...of` reads as a keyed copy to cv-engine-proto-pollution (E11-X02, F-15).
+  for (let k = 0; k < order.length; k += 1) {
+    const i = order[k] as number;
     const { w, h } = it(i);
     if (w > width) return null;
     if (x + w > width) {

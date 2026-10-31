@@ -1,4 +1,5 @@
-"""Unit tests for tools/ci/check_prod_bundle_handles.py (E14-X03, #549; DR5, SR-E14-10)."""
+"""Unit tests for tools/ci/check_prod_bundle_handles.py (E14-X03, #549; DR5, SR-E14-10; E11-X02,
+#392; CE-E05)."""
 
 from __future__ import annotations
 
@@ -162,8 +163,11 @@ def test_the_build_job_runs_the_guard_on_the_web_build_it_just_made() -> None:
 
 def test_the_real_manifest_registers_both_handles_for_dr5() -> None:
     handles = guard.load_handles(guard.MANIFEST)
-    assert {h["identifier"] for h in handles} >= {"__cvEngine", "projectForTest"}
-    assert {(h["threat"], h["requirement"]) for h in handles} == {("DR5", "SR-E14-10")}
+    owner = {h["identifier"]: (h["threat"], h["requirement"]) for h in handles}
+    assert owner["__cvEngine"] == owner["projectForTest"] == ("DR5", "SR-E14-10")
+    # E11-X02 (#392; CE-E05) registers the engine's debug surface beside them under its own threat.
+    assert owner["__engine"] == owner["runBenchScene"] == ("CE-E05", "E11-X02")
+    assert set(owner.values()) == {("DR5", "SR-E14-10"), ("CE-E05", "E11-X02")}
 
 
 def test_the_script_runs_as_a_command(tmp_path):
@@ -177,3 +181,26 @@ def test_the_script_runs_as_a_command(tmp_path):
         check=False,
     )
     assert run.returncode == 1 and "a.js:1:8: '__cvEngine'" in run.stderr
+
+
+# E11-X02 (#392; CE-E05): the engine's debug surface cannot ship.
+@pytest.mark.parametrize(
+    ("name", "js"),
+    [
+        ("__engine", "window.__engineEvents = [];\n"),
+        ("__engine", 'const routes = ["/", "/__engine-harness"];\n'),
+        ("runBenchScene", "export function runBenchScene() {}\n"),
+    ],
+)
+def test_an_engine_debug_surface_fails_naming_ce_e05(tmp_path, capsys, name, js):
+    code, _, err = _run(tmp_path, capsys, CLEAN | {"assets/engine-1c.js": js})
+    assert code == 1
+    assert "assets/engine-1c.js:1:" in err and f"'{name}' (CE-E05; E11-X02)" in err
+    assert "E11-chart-engine.md" in err and "E14-drawings.md" not in err  # its own threat model
+
+
+def test_the_manifest_registers_the_engine_debug_surface():
+    handles = {h["identifier"]: h for h in guard.load_handles(guard.MANIFEST)}
+    for name in ("__engine", "runBenchScene"):
+        assert (handles[name]["threat"], handles[name]["requirement"]) == ("CE-E05", "E11-X02")
+    assert set(guard.THREATS) >= {h["threat"] for h in handles.values()}  # each one explained

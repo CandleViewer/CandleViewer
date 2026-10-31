@@ -430,6 +430,17 @@ export function fontsOk(fonts: unknown): fonts is readonly ChartFont[] {
 }
 
 /**
+ * E11-X02 (F-09, CE-I02, BQ-168): a refusal echoes at most this many characters of the kind,
+ * store or op it received, so a page cannot fill the error path with its own text. Every legal
+ * name is far shorter.
+ */
+const ECHO_MAX = 32;
+const echo = (v: unknown): string => {
+  const s = String(v);
+  return s.length > ECHO_MAX ? `${s.slice(0, ECHO_MAX)}…` : s;
+};
+
+/**
  * Checks a message at the worker boundary before any typed-array view is made. Returns the reason
  * it is rejected, or null when it is a well-formed `ToWorker`. Never throws (E11-T02 security).
  */
@@ -444,7 +455,7 @@ export function rejectReason(msg: unknown): string | null {
       ? null
       : "malformed sync";
   }
-  if (!chartId(msg["id"])) return `bad chart id in ${String(t)}`;
+  if (!chartId(msg["id"])) return `bad chart id in ${echo(t)}`;
   switch (t) {
     case "init":
       return finite(msg["dpr"]) &&
@@ -467,7 +478,10 @@ export function rejectReason(msg: unknown): string | null {
       const ev = msg["events"];
       if (!KINDS.has(msg["kind"] as string) || !(ev instanceof Float32Array))
         return "malformed input";
-      if (ev.length % INPUT_STRIDE !== 0 || ev.length > INPUT_STRIDE * INPUT_MAX_ROWS) {
+      // A Float32Array length; checking it here keeps CE-T02's taint rule intra-procedural.
+      const rows = ev.length;
+      if (!Number.isSafeInteger(rows)) return "malformed input";
+      if (rows % INPUT_STRIDE !== 0 || rows > INPUT_STRIDE * INPUT_MAX_ROWS) {
         return "input length is not a whole number of rows";
       }
       for (let i = 0; i < ev.length; i += 1) if (!Number.isFinite(ev[i])) return "non-finite input";
@@ -478,8 +492,8 @@ export function rejectReason(msg: unknown): string | null {
       return null;
     }
     case "data": {
-      if (!STORES.has(msg["store"] as string)) return `unknown store ${String(msg["store"])}`;
-      if (!OPS.has(msg["op"] as string)) return `unknown op ${String(msg["op"])}`;
+      if (!STORES.has(msg["store"] as string)) return `unknown store ${echo(msg["store"])}`;
+      if (!OPS.has(msg["op"] as string)) return `unknown op ${echo(msg["op"])}`;
       const buf = msg["buffer"];
       if (!(buf instanceof ArrayBuffer)) return "data without an ArrayBuffer";
       const covered = layoutBytes(msg["layout"], buf.byteLength);
@@ -488,7 +502,7 @@ export function rejectReason(msg: unknown): string | null {
     case "command":
       return validCommand(msg["cmd"]) ? null : "malformed command";
     default:
-      return `unknown message kind ${String(t)}`;
+      return `unknown message kind ${echo(t)}`;
   }
 }
 
@@ -506,22 +520,32 @@ const sameShape = (a: BufferLayout, b: BufferLayout): boolean =>
   a.params.length === b.params.length &&
   a.params.every((p, i) => p === b.params[i]);
 
-/** Concatenates two batches column by column (`first` then `second`) into one fresh buffer. */
-export function concatBatches(first: PendingData, second: PendingData): PendingData {
-  const count = first.layout.count + second.layout.count;
+/**
+ * Concatenates two batches column by column (`first` then `second`) into one fresh buffer. Returns
+ * null when a count or a column width is not a non-negative safe integer (E11-X02, CE-T02): the
+ * layouts are the caller's, so the pair stays unmerged and the worker's `rejectReason` refuses the
+ * malformed one by name instead of a NaN sizing the merged buffer.
+ */
+export function concatBatches(first: PendingData, second: PendingData): PendingData | null {
+  const n1 = first.layout.count;
+  const n2 = second.layout.count;
+  if (!Number.isSafeInteger(n1) || !Number.isSafeInteger(n2) || n1 < 0 || n2 < 0) return null;
+  const count = n1 + n2;
   const columns: ColumnLayout[] = [];
   let offset = 0;
   for (const col of first.layout.columns) {
-    columns.push({ offset, bytes: col.bytes });
-    offset += count * col.bytes;
+    const bytes = col.bytes;
+    if (!Number.isSafeInteger(bytes) || bytes <= 0) return null;
+    columns.push({ offset, bytes });
+    offset += count * bytes;
   }
   const out = new Uint8Array(offset);
   first.layout.columns.forEach((col, i) => {
     const other = second.layout.columns[i] as ColumnLayout;
-    const at = (columns[i] as ColumnLayout).offset;
-    const a = first.layout.count * col.bytes;
+    const { offset: at, bytes } = columns[i] as ColumnLayout;
+    const a = n1 * bytes;
     out.set(new Uint8Array(first.buffer, col.offset, a), at);
-    out.set(new Uint8Array(second.buffer, other.offset, second.layout.count * col.bytes), at + a);
+    out.set(new Uint8Array(second.buffer, other.offset, n2 * bytes), at + a);
   });
   return {
     op: first.op,
@@ -548,9 +572,17 @@ export function conflate(queue: PendingData[], next: PendingData): boolean {
     queue.push(next);
     return false;
   }
-  if (next.op === "patch") queue[queue.length - 1] = next;
-  else if (next.op === "append") queue[queue.length - 1] = concatBatches(tail, next);
-  else queue[queue.length - 1] = concatBatches(next, tail);
+  const merged =
+    next.op === "patch"
+      ? next
+      : next.op === "append"
+        ? concatBatches(tail, next)
+        : concatBatches(next, tail);
+  if (merged === null) {
+    queue.push(next);
+    return false;
+  }
+  queue[queue.length - 1] = merged;
   return true;
 }
 

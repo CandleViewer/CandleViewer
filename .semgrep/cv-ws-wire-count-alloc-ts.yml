@@ -217,4 +217,7 @@ rules:
       include:
         - "packages/protocol/src/runtime/**"
         - "apps/web/src/lib/ws/**"
+        # E11-X02 (F-11, CE-D01): the engine's stores and its worker boundary, where counts arrive.
+        - "packages/chart-engine/src/model/**"
+        - "packages/chart-engine/src/worker/**"
         - "**/cv-ws-wire-count-alloc-ts.ts"

@@ -1,7 +1,9 @@
 {
-  "description": "Identifiers that must not appear in the production web bundle (E14-X03, #549; DR5, SR-E14-10). E14-Q03 registers its test-only handles here.",
+  "description": "Identifiers that must not appear in the production web bundle (E14-X03, #549; DR5, SR-E14-10). E14-Q03 registers its test-only handles here; E11-X02 (#392; CE-E05) the engine's debug surface: any window.__engine* global or /__engine-harness route, and the ./bench entry.",
   "handles": [
     { "identifier": "__cvEngine", "threat": "DR5", "requirement": "SR-E14-10" },
-    { "identifier": "projectForTest", "threat": "DR5", "requirement": "SR-E14-10" }
+    { "identifier": "projectForTest", "threat": "DR5", "requirement": "SR-E14-10" },
+    { "identifier": "__engine", "threat": "CE-E05", "requirement": "E11-X02" },
+    { "identifier": "runBenchScene", "threat": "CE-E05", "requirement": "E11-X02" }
   ]
 }

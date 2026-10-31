@@ -156,6 +156,17 @@ describe("createTextPlatform (BQ-261)", () => {
     expect(cmapLookup(new ArrayBuffer(8))(0x30)).toBe(false); // truncated
   });
 
+  it("a cmap table that claims more segments or groups than its bytes hold maps nothing (F-11)", () => {
+    // E11-X02 (SR-128, CE-D01): the count is checked against the buffer before any loop, so a
+    // lying count never sizes the walk, even where its first entries would have matched.
+    const groups = sfnt();
+    new DataView(groups).setUint32(92 + 12, 0x10000000);
+    expect(cmapLookup(groups)(0x25b2)).toBe(false);
+    const segments = sfnt();
+    new DataView(segments).setUint16(48 + 6, 0xfffe);
+    expect(cmapLookup(segments)(0x30)).toBe(false);
+  });
+
   it("digests with SHA-256, or FNV-64 outside a secure context (G-90)", async () => {
     const subtle = { digest: async () => Uint8Array.of(0, 255).buffer };
     const secure = createTextPlatform(fakeScope({ crypto: { subtle } }).scope);

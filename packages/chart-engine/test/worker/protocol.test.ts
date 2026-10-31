@@ -166,6 +166,19 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
     expect(rejectReason(msg)).toBe(reason);
   });
 
+  it("a refusal echoes at most 32 characters of the rejected kind, store or op (F-09)", () => {
+    const long = `${"x".repeat(32)}<img src=x onerror=alert(1)>`;
+    const cut = `${"x".repeat(32)}…`;
+    const data = { t: "data", id: 1, store: "bars", op: "append", buffer: new ArrayBuffer(0) };
+    expect(rejectReason({ t: long, id: 1 })).toBe(`unknown message kind ${cut}`);
+    expect(rejectReason({ t: long, id: -1 })).toBe(`bad chart id in ${cut}`);
+    expect(rejectReason({ ...data, store: long })).toBe(`unknown store ${cut}`);
+    expect(rejectReason({ ...data, op: long })).toBe(`unknown op ${cut}`);
+    expect(rejectReason({ t: "x".repeat(32), id: 1 })).toBe(
+      `unknown message kind ${"x".repeat(32)}`,
+    );
+  });
+
   it.each([
     ["missing columns", { count: 1, params: [] }],
     ["a negative count", { count: -1, columns: [], params: [] }],
@@ -244,10 +257,35 @@ describe("conflation under a 3x overrun", () => {
       new Int32Array(buf, t.length * 8, v.length).set(v);
       return { op: "append", layout: layout(t.length), buffer: buf };
     };
-    const out = concatBatches(make([1], [10]), make([2, 3], [20, 30]));
+    const out = concatBatches(make([1], [10]), make([2, 3], [20, 30])) as PendingData;
     expect(out.layout).toEqual(layout(3));
     expect([...new Float64Array(out.buffer, 0, 3)]).toEqual([1, 2, 3]);
     expect([...new Int32Array(out.buffer, 24, 3)]).toEqual([10, 20, 30]);
+  });
+});
+
+describe("concatBatches refuses a malformed layout (E11-X02, CE-T02)", () => {
+  const good = (count: number): PendingData => ({
+    op: "append",
+    layout: { count, columns: [{ offset: 0, bytes: 8 }], params: [] },
+    buffer: new ArrayBuffer(count * 8),
+  });
+  it.each([Number.NaN, Infinity, -1, 1.5])("a count of %s leaves the pair unmerged", (n) => {
+    const bad: PendingData = { ...good(1), layout: { ...good(1).layout, count: n } };
+    expect(concatBatches(good(1), bad)).toBeNull();
+    expect(concatBatches(bad, good(1))).toBeNull();
+    const q = [good(1)];
+    expect(conflate(q, bad)).toBe(false);
+    expect(q).toHaveLength(2);
+  });
+  it("a column width that is not a positive integer leaves the pair unmerged", () => {
+    const wide = (bytes: number): PendingData => ({
+      ...good(1),
+      // A page may post any number here; the type names only the legal widths.
+      layout: { count: 1, columns: [{ offset: 0, bytes: bytes as 1 | 2 | 4 | 8 }], params: [] },
+    });
+    expect(concatBatches(wide(Number.NaN), wide(Number.NaN))).toBeNull();
+    expect(concatBatches(wide(0), wide(0))).toBeNull();
   });
 });
 
