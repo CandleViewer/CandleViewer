@@ -793,22 +793,23 @@ jobs:
       security-events: write
     uses: ./.github/workflows/_job-security.yml
 
+  # Deferred while the PR is a draft (the resolver's DRAFT_DEFERRED set says the same); ready_for_review re-runs them.
   e2e:
     name: e2e
     needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.e2e == 'true' }}
+    if: ${{ needs.changed-paths.outputs.e2e == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
     uses: ./.github/workflows/_job-e2e.yml
 
   a11y:
     name: a11y
     needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.e2e == 'true' }}
+    if: ${{ needs.changed-paths.outputs.e2e == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
     uses: ./.github/workflows/_job-a11y.yml
 
   engine-bench:
     name: engine-bench
     needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.engine == 'true' || needs.changed-paths.outputs.protocol == 'true' }}
+    if: ${{ (needs.changed-paths.outputs.engine == 'true' || needs.changed-paths.outputs.protocol == 'true') && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
     uses: ./.github/workflows/_job-engine-bench.yml
 
   coverage-thresholds:
@@ -862,7 +863,10 @@ jobs:
       - name: Resolve ci-required conclusion
         # #3881: the resolver also reads GITHUB_EVENT_NAME, which the runner sets. On a pull request
         # it reads a skipped `integration` lane as deferred to the merge group, not as CI-GATE-002.
+        # On a draft pull request (PR_DRAFT) it reads a skipped e2e, a11y or engine-bench lane as
+        # deferred until the PR leaves draft (DRAFT_DEFERRED); the flag is false on every other event.
         env:
+          PR_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == true }}
           FILTER_JS: ${{ needs.changed-paths.outputs.js }}
           FILTER_PY: ${{ needs.changed-paths.outputs.py }}
           FILTER_MIGRATIONS: ${{ needs.changed-paths.outputs.migrations }}

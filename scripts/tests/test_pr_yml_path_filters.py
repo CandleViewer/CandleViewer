@@ -160,19 +160,27 @@ def _filter_step() -> dict[str, Any]:
 
 #: The `pr` output fails closed (#3433): a PR-metadata gate skips only where it is false.
 _OUTPUT_TERM = re.compile(r"needs\.changed-paths\.outputs\.(?:(\w+) == 'true'|(pr) != 'false')")
+#: Deferred while the PR is a draft: the e2e, a11y and engine-bench jobs' `if:` ends in this clause
+#: (the resolver's DRAFT_DEFERRED set); the filters before it are what the lane starts on.
+NOT_A_DRAFT = " && !(github.event_name == 'pull_request' && "
+NOT_A_DRAFT += "github.event.pull_request.draft == true)"
 
 
 def _outputs_in(condition: str) -> set[str]:
     """The `changed-paths` outputs a job `if:` ORs together.
 
-    The expression is split on `||` and each term must be exactly
-    `needs.changed-paths.outputs.<name> == 'true'` (`pr`: `!= 'false'`), so an `&&`, any other
-    `!=` or a stray operator fails here instead of being skipped over by a search.
+    A trailing draft clause (NOT_A_DRAFT) and the parentheses that then wrap the filters are
+    removed first. Then the expression is split on `||` and each term must be exactly
+    `needs.changed-paths.outputs.<name> == 'true'` (`pr`: `!= 'false'`), so any other `&&`, any
+    other `!=` or a stray operator fails here instead of being skipped over by a search.
     """
     wrapped = re.fullmatch(r"\s*\$\{\{(.*)\}\}\s*", condition, re.DOTALL)
     assert wrapped, f"not a `${{{{ ... }}}}` expression: {condition!r}"
+    body = wrapped.group(1).strip().removesuffix(NOT_A_DRAFT)
+    if body.startswith("(") and body.endswith(")"):
+        body = body[1:-1]
     names: set[str] = set()
-    for term in wrapped.group(1).split("||"):
+    for term in body.split("||"):
         match = _OUTPUT_TERM.fullmatch(term.strip())
         assert match, f"not a `needs.changed-paths.outputs.<name> == 'true'` term: {term.strip()!r}"
         names.add(match[1] or match[2])
@@ -190,7 +198,7 @@ def _if_filters(condition: object) -> set[str]:
     rest = re.sub(r"^(?:always\(\)|!cancelled\(\))(?: && |$)", "", body)
     if rest in ("", "true"):
         return set()
-    return _outputs_in("${{ " + rest.removeprefix("(").removesuffix(")") + " }}")
+    return _outputs_in("${{ " + rest + " }}")
 
 
 def _lane_if(lane: str) -> object:
@@ -487,6 +495,24 @@ def test_pr_yml_a11y_job_and_resolver_lane_read_the_same_filters() -> None:
     job = _outputs_in(_jobs()["a11y"]["if"])
     assert "e2e" in job
     assert _resolver_lane_filters("a11y") == job
+
+
+def test_outputs_in_reads_the_filters_before_a_draft_clause_and_no_other_and_term() -> None:
+    # The deferred lanes' `if:` is their filters, then NOT_A_DRAFT, the one `&&` the parser strips;
+    # the filters of an `||` are parenthesised so the clause binds to all of them, not to the last.
+    e2e = "${{ needs.changed-paths.outputs.e2e == 'true'" + NOT_A_DRAFT + " }}"
+    both = "(needs.changed-paths.outputs.engine == 'true' || "
+    both += "needs.changed-paths.outputs.protocol == 'true')"
+    assert _outputs_in(e2e) == {"e2e"}
+    assert _outputs_in("${{ " + both + NOT_A_DRAFT + " }}") == {"engine", "protocol"}
+    assert _if_filters("${{ always() && " + both + " }}") == {"engine", "protocol"}
+    for lane in ("e2e", "a11y", "engine-bench"):
+        assert str(_jobs()[lane]["if"]).endswith(NOT_A_DRAFT + " }}"), lane
+    other = " && github.event_name == 'push'"
+    with pytest.raises(AssertionError):
+        _outputs_in("${{ needs.changed-paths.outputs.e2e == 'true'" + other + " }}")
+    with pytest.raises(AssertionError):
+        _outputs_in("${{ needs.changed-paths.outputs.e2e == 'true'" + NOT_A_DRAFT[:-1] + " }}")
 
 
 def _js_workspace_packages() -> list[str]:

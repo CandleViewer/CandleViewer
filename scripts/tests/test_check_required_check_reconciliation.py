@@ -223,6 +223,7 @@ INDENTLESS = ARCH_STEP.replace("      - ", "    - ").replace(
 FORM = "plain block-style YAML"
 FILTER_PY = "          FILTER_PY: ${{ needs.changed-paths.outputs.py }}\n"
 RESULT_PY = "          RESULT_PY: ${{ needs.py.result }}\n"
+PR_DRAFT = f"          {recon.DRAFT_FLAG}: {recon.DRAFT_EXPRESSION}\n"
 CI_NAME = "    name: ci-required\n"
 SETUP_NODE = '          node-version: "20"\n'
 SHADOW = "  shadow:\n    name: ci-required\n    runs-on: x\n    steps:\n      - run: echo\n$&"
@@ -380,10 +381,15 @@ NESTED_ERROR = "job 'nested' of lane 'contract' calls another workflow"
         ),
         (
             "pr.yml",
-            "        env:\n          FILTER_JS",
+            "        env:\n          PR_DRAFT",
             "        env:\n          A: b\n$&",
             "step's env",
         ),
+        # The draft flag is the one other name the step's env may set, with its pinned expression:
+        # any other value (a flag set by hand would defer the lanes off a draft) or a second one.
+        ("pr.yml", PR_DRAFT, '          PR_DRAFT: "true"\n', "step's env"),
+        ("pr.yml", PR_DRAFT, PR_DRAFT.replace("== true", "!= false"), "step's env"),
+        ("pr.yml", PR_DRAFT, PR_DRAFT + PR_DRAFT, "step's env"),
         ("pr.yml", "\nconcurrency:\n", "\nenv:\n  NODE_OPTIONS: --x$&", "may set no env"),
         (
             "pr.yml",

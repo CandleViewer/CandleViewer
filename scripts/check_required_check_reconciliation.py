@@ -108,6 +108,13 @@ PATHS_RE = re.compile(r"^\s+paths(-ignore)?:", re.M)
 # continue-on-error on the job, no shell, working-directory or if: on the step.
 JOB_KEYS = ("name", "if", "needs", "runs-on", "timeout-minutes", "permissions", "steps")
 STEP_KEYS = ("name", "id", "env", "run", "timeout-minutes")
+# The one name but FILTER_ and RESULT_ the resolver step's env may set, with exactly this value:
+# the draft flag the resolver reads to report the lanes pr.yml defers while a pull request is a
+# draft (DRAFT_DEFERRED in the resolver) as deferred, false on every other event by construction.
+DRAFT_FLAG = "PR_DRAFT"
+DRAFT_EXPRESSION = (
+    "${{ github.event_name == 'pull_request' && github.event.pull_request.draft == true }}"
+)
 # GitHub's default pull_request activity types: a `types` filter that drops one stops a check
 # arriving on every pull request.
 DEFAULT_TYPES = {"pull_request": {"opened", "synchronize", "reopened"}}
@@ -291,7 +298,8 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     `ci-required` must run `if: always()`, with only JOB_KEYS (pr.yml sets no env or defaults),
     its steps checkout, setup-node and one `run:` step, with only STEP_KEYS, that is the resolver
     call alone (RESOLVER_RUN_RE) on PROGRAM_RE's program, and the only place that sets a FILTER_
-    or RESULT_ name. A lane counts when its applicability is not the literal `false` and reads
+    or RESULT_ name; its env sets those names and, at most, DRAFT_FLAG as DRAFT_EXPRESSION. A lane
+    counts when its applicability is not the literal `false` and reads
     only FILTER_<NAME> set from the `changed-paths` output <name> (set once, from OUTPUT_STEPS,
     whose `filter` step is FILTER_ACTION_RE),
     and the table, with no key twice and nothing but lanes, takes its result from the needed job of
@@ -336,11 +344,16 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     env_block = re.search(r"^        env:\n((?:          .*\n)*)", decider[0] + "\n", re.M)
     env_text = env_block[1] if env_block else ""
     named = re.findall(r"^\s+(?:- +)?((?:FILTER|RESULT)_\w+)\s*:", body, re.M)
-    if sorted(named) != sorted(set(re.findall(r"^          (\w+):", env_text, re.M))):
+    set_names = re.findall(r"^          (\w+):", env_text, re.M)
+    draft = re.findall(rf"^          {DRAFT_FLAG}:[ \t]*(.*?)[ \t]*$", env_text, re.M)
+    if sorted(named) != sorted(set(set_names) - {DRAFT_FLAG}) or draft not in (
+        [],
+        [DRAFT_EXPRESSION],
+    ):
         return set(), [
             f"{path}: the resolver step's env must set each FILTER_ and RESULT_ name once and "
-            f"nothing else, and no other part of `{AGGREGATE_CONTEXT}` may set one (a step's own "
-            "env wins over the job's)"
+            f"nothing else but {DRAFT_FLAG} as `{DRAFT_EXPRESSION}`, and no other part of "
+            f"`{AGGREGATE_CONTEXT}` may set one (a step's own env wins over the job's)"
         ]
     program = PROGRAM_RE.fullmatch(run.group(2))
     if not program:
