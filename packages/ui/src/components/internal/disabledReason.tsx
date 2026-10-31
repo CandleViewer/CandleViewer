@@ -34,7 +34,8 @@ export function useDisabledReason(
 /**
  * D09 2.2: a refused activation re-shows the reason with one polite announcement. The region is cleared, then set
  * in a microtask: an unchanged sentence would not announce again on a repeat press, and a microtask (unlike a
- * frame) runs deterministically under fake timers.
+ * frame) runs deterministically under fake timers. Best effort: whether a reader re-speaks an identical sentence
+ * set in the same task is the reader's; real-reader checks are E05-Q02's.
  */
 export function announceGatedReason(reason: string | undefined): void {
   if (reason === undefined) return;

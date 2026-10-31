@@ -5,7 +5,7 @@ import { describe, it } from "vitest";
 import { Button } from "../src/components/index.js";
 import * as stories from "../src/components/Button.stories.js";
 import { mount } from "./theme/mount.js";
-import { politeText } from "./theme/polite.js";
+import { clearPolite, politeText } from "./theme/polite.js";
 
 const REASON = "Owner only";
 // exactOptionalPropertyTypes rejects a literal `iconLeft={undefined}`; callers forwarding an optional prop do this.
@@ -282,8 +282,10 @@ describe("Button gated announcement (D09 2.2)", () => {
     expect(await politeText()).toBe("");
     await userEvent.click(b);
     expect(await politeText()).toBe(REASON);
+    clearPolite();
     await userEvent.keyboard("{Enter}");
     expect(await politeText()).toBe(REASON);
+    clearPolite();
     await userEvent.keyboard(" ");
     expect(await politeText()).toBe(REASON);
     expect(onClick).not.toHaveBeenCalled();
