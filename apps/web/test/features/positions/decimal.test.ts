@@ -13,6 +13,7 @@ import {
   dec,
   div,
   isZero,
+  MAX_DIGITS,
   mul,
   neg,
   normalise,
@@ -82,8 +83,10 @@ describe("parseDecimal", () => {
     },
   );
 
-  it("refuses a value too long to be a numeric(38,18)", () => {
-    expect(parseDecimal("9".repeat(70))).toBeNull();
+  it("refuses a value longer than MAX_DIGITS and two characters, before BigInt reads it", () => {
+    expect(parseDecimal("9".repeat(MAX_DIGITS + 3))).toBeNull();
+    expect(parseDecimal("9".repeat(MAX_DIGITS + 2))).not.toBeNull(); // the bound's own length
+    expect(parseDecimal("9".repeat(38))).not.toBeNull(); // a numeric(38,18)'s digits parse
   });
 
   it("dec throws on a literal typo", () => {

@@ -8,7 +8,9 @@
  * - Cross and portfolio: the account's `wallet` `account_mm_rate` (`23` §15.4): Watch ≥ 50 %, Near
  *   ≥ 70 %, Critical ≥ 85 %.
  * - Any mode: Critical within 1 % of liquidation (the distance floor).
- * - A tier is left 5 points past its threshold (hysteresis), one tier at a time.
+ * - A tier is left 5 points past its threshold (hysteresis), one tier at a time. The floor has no
+ *   band of its own: none is ruled yet (#911 ask 4, OQ-1, AM-5), so past 1 % only the share's or
+ *   the rate's band holds a row.
  *
  * The cell shows glyph, word and the distance from liquidation ("! Near 1.2", D02 §5.3): never
  * colour alone. Crossings up into Near and into Critical are events, once each (D02 §5.3's
@@ -70,6 +72,9 @@ export interface LiqInputs {
   readonly marginMode: MarginMode | null;
   /** The account's `account_mm_rate` (a ratio, `"0.72"`), cross and portfolio only. */
   readonly mmRate: string | null;
+  /** `23` §15.4: whether the `wallet` balance of `mmRate` is stale; `null` when not known. */
+  readonly mmRateStale?: boolean | null;
+  readonly mmRateStaleSinceMs?: number | null;
 }
 
 export interface LiqReading {
@@ -82,6 +87,13 @@ export interface LiqReading {
   readonly sharePct: string | null;
   /** Cross and portfolio: the account's margin rate, in whole percent. */
   readonly mmRatePct: string | null;
+  /**
+   * An `mm_rate` reading's balance is stale (`23` §15.4's `stale`, since `mmRateStaleSinceMs`),
+   * so its tier may lag (the cell's treatment is the closing PR's); `null` for any other basis,
+   * and for a rate that is not the `wallet`'s (the REST balance's first paint).
+   */
+  readonly mmRateStale: boolean | null;
+  readonly mmRateStaleSinceMs: number | null;
 }
 
 interface Metrics {
@@ -145,17 +157,11 @@ const RATE_AT = {
 };
 
 /**
- * Whether a row held in `tier` may step down: its metric is 5 points past the tier's threshold,
- * and, for Critical, it is past the distance floor too (the floor has no band of its own, as drawn).
+ * Whether a row held in `tier` may step down: its metric is 5 points past the tier's threshold.
+ * Only a row whose raw tier is lower asks, so it is past the distance floor already: the floor has
+ * no band (unruled, #911 ask 4), and hysteresis stays as drawn until one is.
  */
 function mayLeave(tier: Exclude<LiqTier, "none">, m: Metrics): boolean {
-  if (
-    tier === "critical" &&
-    m.distance !== null &&
-    atMost(m.distance, CRITICAL_DISTANCE_FLOOR_PCT)
-  ) {
-    return false;
-  }
   if (m.share !== null) return cmp(m.share, add(SHARE_AT[tier], HYSTERESIS_POINTS)) > 0;
   if (m.rate !== null) return cmp(m.rate, sub(RATE_AT[tier], HYSTERESIS_POINTS)) < 0;
   return true; // no metric left: nothing holds the row in the tier
@@ -174,7 +180,7 @@ const pct = (d: Decimal | null, scale: number): string | null =>
   d === null ? null : toPlain(round(d, scale));
 
 /** A reading at `tier` (already settled) from the row's inputs. */
-function readingOf(tier: LiqTier, m: Metrics): LiqReading {
+function readingOf(tier: LiqTier, m: Metrics, inputs: LiqInputs): LiqReading {
   const basis =
     m.share !== null
       ? "buffer"
@@ -183,19 +189,22 @@ function readingOf(tier: LiqTier, m: Metrics): LiqReading {
         : m.distance !== null
           ? "floor"
           : "none";
+  const stale = basis === "mm_rate" ? (inputs.mmRateStale ?? null) : null;
   return {
     tier,
     basis,
     distancePct: pct(m.distance, DISTANCE_SCALE),
     sharePct: pct(m.share, PERCENT_SCALE),
     mmRatePct: pct(m.rate, PERCENT_SCALE),
+    mmRateStale: stale,
+    mmRateStaleSinceMs: stale === true ? (inputs.mmRateStaleSinceMs ?? null) : null,
   };
 }
 
 /** The reading of a row whose tier was `previous` (`none` for a row seen first): hysteresis applies. */
 export function readLiq(inputs: LiqInputs, previous: LiqTier = "none"): LiqReading {
   const m = metricsOf(inputs);
-  return readingOf(settleTier(previous, m), m);
+  return readingOf(settleTier(previous, m), m, inputs);
 }
 
 export type LiqCrossing = "near" | "critical";

@@ -83,6 +83,8 @@ describe("Liquidation proximity is not colour-only: D02 §5.2's rows (glyph, wor
       distancePct: distance,
       sharePct,
       mmRatePct: null,
+      mmRateStale: null,
+      mmRateStaleSinceMs: null,
     });
   });
 
@@ -192,8 +194,47 @@ describe("hysteresis (D01 D5: left 5 points past, one tier at a time)", () => {
     expect(readLiq(iso("long", "101.2222", "100.0101", "99"), "critical").tier).toBe("watch");
   });
 
+  it("the floor alone holds no row past 1 % (no band is ruled, #911 ask 4)", () => {
+    // cross with no MM rate: only the floor reads, so Critical goes as soon as it is passed
+    expect(readLiq(cross("100", "99.5", null), "none")).toMatchObject({
+      tier: "critical",
+      basis: "floor",
+    });
+    expect(readLiq(cross("100", "98.9", null), "critical")).toMatchObject({
+      tier: "none",
+      basis: "floor",
+    });
+  });
+
   it("an escalation is never held back", () => {
     expect(readLiq(share("10"), "watch").tier).toBe("critical");
+  });
+});
+
+describe("the MM rate's staleness (23 §15.4) rides on an mm_rate reading only", () => {
+  it("passes the wallet's stale and its since through; fresh has no since", () => {
+    const stale = { ...cross("200", "50", "0.72"), mmRateStale: true, mmRateStaleSinceMs: 7 };
+    expect(readLiq(stale)).toMatchObject({
+      basis: "mm_rate",
+      mmRateStale: true,
+      mmRateStaleSinceMs: 7,
+    });
+    expect(readLiq({ ...stale, mmRateStale: false })).toMatchObject({
+      mmRateStale: false,
+      mmRateStaleSinceMs: null,
+    });
+    expect(readLiq(cross("200", "50", "0.72"))).toMatchObject({ mmRateStale: null });
+  });
+
+  it("is null for a buffer or floor reading, whatever the inputs say", () => {
+    const buffer = { ...share("40"), mmRateStale: true, mmRateStaleSinceMs: 7 };
+    expect(readLiq(buffer)).toMatchObject({ basis: "buffer", mmRateStale: null });
+    const floor = { ...cross("100", "99.5", null), mmRateStale: true, mmRateStaleSinceMs: 7 };
+    expect(readLiq(floor)).toMatchObject({
+      basis: "floor",
+      mmRateStale: null,
+      mmRateStaleSinceMs: null,
+    });
   });
 });
 

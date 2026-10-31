@@ -7,17 +7,17 @@
  * file is a convenience, never an audit substitute (the ticket's security note). RFC 4180: CRLF
  * lines, a field quoted when it holds a quote, a comma or a line break.
  */
+import { parseDecimal } from "./model/decimal";
 import type { LiqReading } from "./model/liqTier";
 import type { PositionRowModel } from "./model/rowMapping";
 
 export interface CsvColumn<R> {
   readonly header: string;
-  /** A `number` cell is written raw when it is a plain decimal; anything else is guarded text. */
+  /** A `number` cell is written raw when `parseDecimal` reads it; anything else is guarded text. */
   readonly kind: "text" | "number";
   readonly value: (row: R) => string | null;
 }
 
-const DECIMAL = /^-?[0-9]+(\.[0-9]+)?$/;
 /** D-21 names `=`, `+`, `-` and `@`; a tab and a carriage return start a formula too (OWASP). */
 const FORMULA_START = /^[=+\-@\t\r]/;
 
@@ -33,7 +33,7 @@ function quote(text: string): string {
 function cell<R>(column: CsvColumn<R>, row: R): string {
   const raw = column.value(row);
   if (raw === null) return "";
-  if (column.kind === "number" && DECIMAL.test(raw)) return raw; // numbers stay numbers
+  if (column.kind === "number" && parseDecimal(raw) !== null) return raw; // numbers stay numbers
   return quote(guardCell(raw));
 }
 

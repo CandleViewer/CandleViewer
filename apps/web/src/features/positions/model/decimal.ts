@@ -13,7 +13,11 @@ export interface Decimal {
 
 /** `22` `Decimal` and `23` §13 `decimal`: plain digits, an optional sign and fraction, no exponent. */
 const DECIMAL = /^-?[0-9]+(\.[0-9]+)?$/;
-/** `numeric(38,18)` (`21` §3.3.7) holds 38 digits; a wire value past this many is refused. */
+/**
+ * A wire value longer than this many characters and two (room for a sign and a point) is refused
+ * before `BigInt` reads it: a bound on the work, set above `numeric(38,18)`'s 38 digits (`21`
+ * §3.3.7) so every stored value parses. It is not the column's precision.
+ */
 export const MAX_DIGITS = 64;
 
 const TEN = 10n;
