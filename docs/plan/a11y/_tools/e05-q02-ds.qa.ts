@@ -13,7 +13,10 @@
 //     npx playwright test -c ../../docs/plan/a11y/_tools/e05-q02-ds.config.ts
 //   node ../../docs/plan/a11y/_tools/e05-q02-merge.mjs   # stories/*.json -> results.json + summary.md
 // Local: A11Y_WORKERS 2-4 (default 2). CI: split with Playwright's `--shard=i/n`, one A11Y_OUT per shard,
-// then `e05-q02-merge.mjs <out1> <out2> ...` merges them (and fails if a story file is missing).
+// then `e05-q02-merge.mjs [--strict] <out1> <out2> ...` merges them. One A11Y_OUT per shard, never shared:
+// the control wipes <A11Y_OUT>/stories/ on start. The merge fails on a missing or duplicate story file,
+// a wrong cell count, shards that disagree on sha or story list, and off-site requests or errored cells;
+// --strict also fails on any serious/critical violation (without it violations are only reported).
 // Typecheck: cd apps/web && npx tsc -p ../../docs/plan/a11y/_tools/tsconfig.json
 //
 // Environment: A11Y_SHA (recorded), A11Y_ONLY (comma-separated story-id substrings), A11Y_THEMES,
@@ -67,6 +70,11 @@ interface Cell {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+/** The story URL for one cell; the control and the matrix share it (motion left to the OS preference). */
+const storyUrl = (story: string, theme: string, density: string): string =>
+  `/iframe.html?id=${story}&viewMode=story` +
+  `&globals=theme:${theme};density:${density};motion:system;a11y.manual:!true`;
+
 /** Story ids from the built Storybook's index.json (read at load), perf-tagged dropped, sorted by id. */
 const STATIC =
   process.env["A11Y_STATIC"] ?? resolve(process.cwd(), "../../packages/ui/storybook-static");
@@ -105,11 +113,7 @@ async function runCell(
   const empty = { critical: 0, serious: 0, moderate: 0, minor: 0 };
   try {
     await page.emulateMedia({ reducedMotion: motion as "reduce" | "no-preference" });
-    await page.goto(
-      `/iframe.html?id=${story}&viewMode=story` +
-        `&globals=theme:${theme};density:${density};motion:system;a11y.manual:!true`,
-      { timeout: STORY_TIMEOUT_MS },
-    );
+    await page.goto(storyUrl(story, theme, density), { timeout: STORY_TIMEOUT_MS });
     const handle = await page.waitForFunction(pinnedGlobals, undefined, {
       polling: 50,
       timeout: STORY_TIMEOUT_MS,
@@ -153,9 +157,7 @@ async function runCell(
 /** Must-trip negative control: axe has to flag a violation injected into a known story, else infra. */
 async function negativeControl(page: Page, story: string): Promise<string[]> {
   const expected = ["image-alt", "button-name"];
-  await page.goto(`/iframe.html?id=${story}&viewMode=story&globals=theme:dark;density:compact`, {
-    timeout: STORY_TIMEOUT_MS,
-  });
+  await page.goto(storyUrl(story, "dark", "compact"), { timeout: STORY_TIMEOUT_MS });
   await page.waitForFunction(pinnedGlobals, undefined, { polling: 50, timeout: STORY_TIMEOUT_MS });
   await page.evaluate(() => {
     const root = document.querySelector("#storybook-root") ?? document.body;
@@ -188,15 +190,28 @@ async function isolatedPage(browser: Browser, offsite: string[]): Promise<Page> 
 }
 
 const { ids, excluded } = readStories();
+const themes = subset(THEMES, process.env["A11Y_THEMES"]);
+const densities = subset(DENSITIES, process.env["A11Y_DENSITIES"]);
 
 test("negative control", async ({ browser }) => {
   rmSync(join(OUT, "stories"), { recursive: true, force: true });
   mkdirSync(join(OUT, "stories"), { recursive: true });
   const page = await isolatedPage(browser, []);
-  const rules = ids[0] === undefined ? [] : await negativeControl(page, ids[0]);
+  const first = ids[0];
+  if (first === undefined)
+    throw new Error("A11Y-INFRA: no stories selected; the control cannot run");
+  const rules = await negativeControl(page, first);
   await page.context().close();
   const sha = process.env["A11Y_SHA"] ?? "unset";
-  const manifest = { sha, stories: ids, excluded, negativeControl: { tripped: true, rules } };
+  const manifest = {
+    sha,
+    stories: ids,
+    excluded,
+    themes,
+    densities,
+    motions: MOTIONS,
+    negativeControl: { tripped: true, rules },
+  };
   writeFileSync(join(OUT, "manifest.json"), JSON.stringify(manifest, null, 2));
 });
 
@@ -205,8 +220,8 @@ for (const id of ids) {
     const offsite: string[] = [];
     const page = await isolatedPage(browser, offsite);
     const cells: Cell[] = [];
-    for (const theme of subset(THEMES, process.env["A11Y_THEMES"])) {
-      for (const density of subset(DENSITIES, process.env["A11Y_DENSITIES"])) {
+    for (const theme of themes) {
+      for (const density of densities) {
         const first = await runCell(page, id, theme, density, MOTIONS[0]);
         cells.push(first);
         // A story that pins its own motion override renders the same under both OS preferences.
@@ -219,7 +234,11 @@ for (const id of ids) {
     mkdirSync(join(OUT, "stories"), { recursive: true });
     writeFileSync(
       join(OUT, "stories", `${id}.json`),
-      JSON.stringify({ id, offsite, cells }, null, 2),
+      JSON.stringify(
+        { id, offsite, pinned: cells.some((c) => c.pinnedMotion !== null), cells },
+        null,
+        2,
+      ),
     );
     const failed = cells.filter((c) => c.error !== undefined);
     if (offsite.length > 0) throw new Error(`${offsite.length} off-site request(s) were aborted`);

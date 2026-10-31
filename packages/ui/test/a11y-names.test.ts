@@ -16,7 +16,7 @@
 import { composeStories } from "@storybook/react-vite";
 import { createElement, type ComponentType } from "react";
 import { describe, expect, it } from "vitest";
-import { within } from "storybook/test";
+import { userEvent, within } from "storybook/test";
 import * as avatarGroup from "../src/components/AvatarGroup.stories.js";
 import * as avatar from "../src/components/Avatar.stories.js";
 import * as button from "../src/components/Button.stories.js";
@@ -103,12 +103,9 @@ describe("CMP-034 MaskedValue while masked", () => {
       ...host.querySelectorAll('[aria-live], [role="status"], [role="alert"], [role="log"]'),
     ].map((el) => el.textContent ?? "");
     for (const text of [...named, ...labelledBy, ...live]) expect(text).not.toContain(value);
-    // The accessible names the tree computes, by role, for the controls the component owns.
-    for (const role of ["group", "button"]) {
-      for (const el of within(host).queryAllByRole(role)) {
-        expect(el.getAttribute("aria-label") ?? "").not.toContain(value);
-      }
-    }
     expect(host.innerHTML).not.toContain(value);
+    // Positive control: once revealed the value is on the page, so "not contained" above is not trivial.
+    await userEvent.click(within(host).getByRole("button", { name: "Show API secret" }));
+    expect(host.textContent).toContain(value);
   });
 });
