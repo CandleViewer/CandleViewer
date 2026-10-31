@@ -39,6 +39,7 @@ own `capture_date` (the `recorded_*` files below).
 | Order path (#2877): trade replies, reads, two errors   | `rest/trading-*.json` (docs-transcribed, below)                                  |
 | Private stream (#3963): replies and topic pushes       | `ws/private-*.jsonl` (docs-transcribed, below)                                   |
 | Open-interest history (#665): 260 rows, 2 cursor pages | `rest/open_interest_BTCUSDT_5min_page{0,1}.json`, `rest/docs-open-interest.json` |
+| Liquidation cascade (#667): twins, replay after drop   | `ws/allLiquidation_BTCUSDT_burst.jsonl`, `ws/docs-all-liquidation.jsonl`         |
 
 ## Provenance and size
 
@@ -199,6 +200,17 @@ read from the page retrieved 2026-10-31, with generated (seeded) linear values, 
 A recording made with `capture_fixture.py --rest-path` replaces all three.
 
 - `docs-open-interest.json`: source: docs-transcribed, `market/open-interest`; 2026-10-31; symbol BTCUSD (inverse); env none; redaction none.
+
+### Docs-transcribed liquidation shape (#667, E24-T03)
+
+No recording holds an `allLiquidation` push yet. `ws/docs-all-liquidation.jsonl` is the docs page's
+Response Example (`websocket/public/all-liquidation`, at `bybit-exchange/docs` commit `19518b90fb36`),
+keys and values unchanged (whitespace compacted). `ws/allLiquidation_BTCUSDT_burst.jsonl` takes that
+frame shape with generated (seeded) BTCUSDT values, built by `build_corpus.py`: eight pushes 500 ms
+apart, two identical prints in push 2, five prints inside one second in push 4, and push 2 replayed
+as the last frame (a reconnect). A recording made with `capture_fixture.py` replaces both.
+
+- `docs-all-liquidation.jsonl`: source: docs-transcribed, `websocket/public/all-liquidation`; 2026-10-31; symbol ROSEUSDT; env none; redaction none.
 
 ## Gates
 
