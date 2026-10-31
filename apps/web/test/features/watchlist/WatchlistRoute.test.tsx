@@ -1,10 +1,13 @@
 /**
  * E08-S08 (#4702): SCR-100 is R-111's routed page in the shell's `main` (pre-ruling 1): through the real route tree,
  * `/watchlist/:groupId` renders the page's heading and the list's grid, an unknown list is the not-found state, a
- * list switched from its tab keeps keyboard focus on the tabs past the shell's route focus, and R-110 is left to
- * SCR-101 (#4702 PR c). The REST calls are answered by a faked `apiFetch` (no network).
+ * list switched from its tab keeps keyboard focus on its tab (a navigation marked `ROUTE_FOCUS_KEEP`, #304 S10, so
+ * the shell's route focus never visits the h1). PR (c): SCR-101 is the page's `?modal=watchlists`, which R-110
+ * opens, and closing it follows what it changed, focus on the page when no opener is left. The session's
+ * `workspaces:write` decides the writes; a signed-out visit goes to sign in. The REST calls are answered by a faked
+ * `apiFetch` holding the lists (no network).
  */
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +20,7 @@ vi.mock("../../../src/lib/http/csrfFetch", () => ({ apiFetch }));
 import { ROUTE_FOCUS_KEEP } from "../../../src/features/app-shell/useRouteFocus";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
 import { buildRoutes } from "../../../src/routes/tree";
+import { resetShellState, setShellState, type Me } from "../../../src/shell/bootstrap/store";
 
 const MAJORS = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -44,10 +48,25 @@ const instrument = (symbol: string) => ({
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
+/** The lists the faked `/watchlists` holds; a DELETE takes one out. */
+let held: (typeof MAJORS)[] = [];
+
 beforeEach(() => {
   setMeClaims({ authenticated: true, role: "owner", permissions: ["workspaces:write"] });
-  apiFetch.mockImplementation(async (url: string) => {
-    if (url === "/api/v1/watchlists") return json({ items: [MAJORS, ALTS] });
+  setShellState({
+    me: {
+      role: "owner",
+      permissions: ["workspaces:write"],
+      user: { username: "robin" },
+    } as unknown as Me,
+  });
+  held = [MAJORS, ALTS];
+  apiFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (init?.method === "DELETE") {
+      held = held.filter((l) => !url.endsWith(l.id));
+      return new Response(null, { status: 204 });
+    }
+    if (url === "/api/v1/watchlists") return json({ items: held });
     if (url.startsWith("/api/v1/instruments?"))
       return json({
         items: [instrument("BTCUSDT"), instrument("ETHUSDT"), instrument("SOLUSDT")],
@@ -58,6 +77,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   resetMeClaims();
+  resetShellState();
   apiFetch.mockReset();
 });
 
@@ -95,8 +115,10 @@ describe("R-111 /watchlist/:groupId", () => {
 
   it("an id that is none of the user's lists is the not-found state", async () => {
     renderAt("/watchlist/99999999-9999-4999-8999-999999999999");
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { level: 1 })).not.toHaveTextContent("Watchlist"),
+    // the lists are read first: a loaded runner takes more than waitFor's default second
+    await waitFor(
+      () => expect(screen.getByRole("heading", { level: 1 })).not.toHaveTextContent("Watchlist"),
+      { timeout: 5_000 },
     );
     expect(screen.queryByRole("grid")).toBeNull();
   });
@@ -133,6 +155,170 @@ describe("R-111 /watchlist/:groupId", () => {
       expect(tab).toHaveAttribute("aria-selected", "true");
       expect(document.activeElement).toBe(tab);
       expect(entered).not.toContain("h1");
+    },
+  );
+});
+
+describe("SCR-101 at ?modal=watchlists (R-110 opens it)", () => {
+  /**
+   * A whole route (the shell, the panel and the dialog) renders slowly on a loaded runner, and the router commits a
+   * navigation as a transition: the dialog leaves, and the page under it wakes, a render or two after the location.
+   */
+  const WAIT = { timeout: 15_000 };
+
+  it(
+    "R-110 /watchlist opens the manager on the first list; Close goes to that list's page",
+    { timeout: 60_000 },
+    async () => {
+      const router = renderAt("/watchlist");
+      const dialog = await screen.findByRole("dialog", { name: "Watchlists" }, WAIT);
+      await within(dialog).findByRole("option", { name: "Majors, 2 symbols" }, WAIT);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await waitFor(
+        () => expect(router.state.location.pathname).toBe(`/watchlist/${MAJORS.id}`),
+        WAIT,
+      );
+      expect(
+        await screen.findByRole("grid", { name: /^Watchlist Majors/ }, WAIT),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Watchlists" })).toBeNull();
+    },
+  );
+
+  it(
+    "'Manage watchlists…' opens it at ?modal=watchlists; Close goes back, and focus returns to the tab",
+    { timeout: 60_000 },
+    async () => {
+      const router = renderAt(`/watchlist/${MAJORS.id}`);
+      await screen.findByRole("grid", { name: /^Watchlist Majors/ }, WAIT);
+      const tab = screen.getByRole("tab", { name: /^Majors/ });
+      act(() => tab.focus());
+      fireEvent.keyDown(tab, { key: "F10", shiftKey: true });
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Manage watchlists…" }, WAIT));
+      await waitFor(() => expect(router.state.location.search).toBe("?modal=watchlists"), WAIT);
+      const dialog = await screen.findByRole("dialog", { name: "Watchlists" }, WAIT);
+      await within(dialog).findByRole("option", { name: "Majors, 2 symbols" }, WAIT);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(router.state.location.search).toBe(""), WAIT);
+      expect(router.state.location.pathname).toBe(`/watchlist/${MAJORS.id}`);
+      await waitFor(
+        () => expect(screen.queryByRole("dialog", { name: "Watchlists" })).toBeNull(),
+        WAIT,
+      );
+      await waitFor(
+        () => expect(document.activeElement).toBe(screen.getByRole("tab", { name: /^Majors/ })),
+        WAIT,
+      );
+    },
+  );
+
+  it(
+    "a deep link opens it on that list; the list deleted there, Close hands the page to the list it shows",
+    { timeout: 60_000 },
+    async () => {
+      const router = renderAt(`/watchlist/${ALTS.id}?modal=watchlists`);
+      const dialog = await screen.findByRole("dialog", { name: "Watchlists" }, WAIT);
+      const alts = await within(dialog).findByRole("option", { name: "Alts, 1 symbol" }, WAIT);
+      expect(alts).toHaveAttribute("aria-selected", "true");
+      // CMP-044's guard (no press counts in its first 400 ms) reads `performance`: faked from before the confirm opens,
+      // so the test moves it on with no real sleep (C-5335-09)
+      vi.useFakeTimers({ toFake: ["performance"] });
+      try {
+        fireEvent.keyDown(alts, { key: "Delete" });
+        const confirm = await screen.findByRole("alertdialog", { name: "Delete Alts?" }, WAIT);
+        act(() => vi.advanceTimersByTime(450));
+        fireEvent.click(within(confirm).getByRole("button", { name: "Delete Alts" }));
+      } finally {
+        vi.useRealTimers();
+      }
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull(), WAIT);
+      await waitFor(
+        () => expect(within(dialog).queryByRole("option", { name: /^Alts/ })).toBeNull(),
+        WAIT,
+      );
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await waitFor(
+        () => expect(router.state.location.pathname).toBe(`/watchlist/${MAJORS.id}`),
+        WAIT,
+      );
+      expect(
+        await screen.findByRole("grid", { name: /^Watchlist Majors/ }, WAIT),
+      ).toBeInTheDocument();
+      // the page read the lists again as the manager closed: the deleted list is no tab
+      await waitFor(() => expect(screen.queryByRole("tab", { name: /^Alts/ })).toBeNull(), WAIT);
+    },
+  );
+});
+
+describe("#5335's lens round (the route)", () => {
+  const WAIT = { timeout: 15_000 };
+
+  it(
+    "C-5335-06: R-110 with a typed ?modal=watchlists and no list closes: the param goes, the no-list state shows, focus on its button",
+    { timeout: 60_000 },
+    async () => {
+      held = [];
+      const router = renderAt("/watchlist?modal=watchlists");
+      const dialog = await screen.findByRole("dialog", { name: "Watchlists" }, WAIT);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await waitFor(
+        () => expect(screen.queryByRole("dialog", { name: "Watchlists" })).toBeNull(),
+        WAIT,
+      );
+      expect(router.state.location.search).toBe("");
+      // A-5335-08: no opener to go back to: the page's first control takes focus, never the body
+      const create = screen.getByRole("button", { name: "Create watchlist" });
+      await waitFor(() => expect(document.activeElement).toBe(create), WAIT);
+    },
+  );
+
+  it(
+    "A-5335-08: a deep link has no opener: Close puts focus on the shown list's tab, never on the body",
+    { timeout: 60_000 },
+    async () => {
+      renderAt(`/watchlist/${MAJORS.id}?modal=watchlists`);
+      const dialog = await screen.findByRole("dialog", { name: "Watchlists" }, WAIT);
+      await within(dialog).findByRole("option", { name: "Majors, 2 symbols" }, WAIT);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await waitFor(
+        () => expect(document.activeElement).toBe(screen.getByRole("tab", { name: /^Majors/ })),
+        WAIT,
+      );
+    },
+  );
+
+  it(
+    "S-5335-04: without workspaces:write the manager reads only: one notice, '+ New watchlist' and Import… T2, Export live",
+    { timeout: 60_000 },
+    async () => {
+      setMeClaims({ authenticated: true, role: "viewer", permissions: [] });
+      setShellState({
+        me: { role: "viewer", permissions: [], user: { username: "robin" } } as unknown as Me,
+      });
+      renderAt(`/watchlist/${MAJORS.id}?modal=watchlists`);
+      const dialog = await screen.findByRole("dialog", { name: "Watchlists" }, WAIT);
+      await within(dialog).findByRole("option", { name: "Majors, 2 symbols" }, WAIT);
+      const notice = within(dialog).getByText("Read-only — your role can't save workspaces.");
+      for (const name of [/New watchlist/, /Import…/]) {
+        const control = within(dialog).getByRole("button", { name });
+        expect(control).toHaveAttribute("aria-disabled", "true");
+        expect(control.getAttribute("aria-describedby")).toContain(notice.id);
+      }
+      expect(within(dialog).getByRole("button", { name: "Export Majors" })).not.toHaveAttribute(
+        "aria-disabled",
+      );
+    },
+  );
+
+  it(
+    "S-5335-04: a signed-out visit to /watchlist/x goes to sign in, coming back there after",
+    { timeout: 60_000 },
+    async () => {
+      resetMeClaims();
+      setMeClaims({ authenticated: false, role: null, permissions: [] });
+      const router = renderAt("/watchlist/x");
+      await waitFor(() => expect(router.state.location.pathname).toBe("/login"), WAIT);
+      expect(router.state.location.search).toBe("?next=%2Fwatchlist%2Fx");
     },
   );
 });

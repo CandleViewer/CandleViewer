@@ -206,6 +206,8 @@ describe("the metadata the editor and the cheatsheet read", () => {
       "rules.cycle_nodes",
       "rules.move_down",
       "rules.move_up",
+      "watchlist.move_down",
+      "watchlist.move_up",
       "workspace.panel_next",
       "workspace.panel_prev",
     ]);

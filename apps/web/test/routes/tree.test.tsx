@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { createMemoryRouter } from "react-router";
+import { createMemoryRouter, type RouteObject } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { buildRoutes } from "../../src/routes/tree";
+import { WatchlistRoute } from "../../src/features/watchlist/WatchlistRoute";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
 import { pageTitle, syncDocumentTitle } from "../../src/routes/titles";
 import { setMeClaims, resetMeClaims } from "../../src/lib/auth/meCache";
@@ -113,11 +114,46 @@ describe("route tree x RBAC matrix", () => {
         const concretePath = entry.path.replace(/:[a-zA-Z]+/g, "x");
         const router = createMemoryRouter(buildRoutes(), { initialEntries: [concretePath] });
         const { unmount } = render(<RouterProvider router={router} />);
-        await waitFor(() => expect(screen.getByRole("main")).toBeInTheDocument());
+        // R-110 opens SCR-101 (#4702), a modal: the page under it is inert, `aria-hidden` where jsdom has no `inert`.
+        const hidden = entry.id === "R-110";
+        await waitFor(() => expect(screen.getByRole("main", { hidden })).toBeInTheDocument());
+        if (hidden) expect(screen.getByRole("dialog", { name: "Watchlists" })).toBeInTheDocument();
         unmount();
       }
     },
   );
+});
+
+describe("feature routes load on first visit (C-14.3; #5335's read)", () => {
+  /** A route of the shell's children, as `buildRoutes` declares it. */
+  const shellRoute = (id: string): RouteObject | undefined =>
+    buildRoutes()
+      .find((route) => route.id === "shell")
+      ?.children?.find((route) => route.id === id);
+
+  it.each(["R-110", "R-111"])(
+    "%s: its screen is a route `lazy` (no static element); the guard and the access are unchanged",
+    async (id) => {
+      const route = shellRoute(id);
+      expect(route?.element).toBeUndefined();
+      expect(route?.loader).toBeTypeOf("function");
+      expect(ROUTE_MANIFEST.find((entry) => entry.id === id)?.access).toEqual({
+        roles: ["owner", "manager", "viewer"],
+      });
+      const lazy = route?.lazy;
+      expect(lazy).toBeTypeOf("function");
+      const loaded = typeof lazy === "function" ? await lazy() : undefined;
+      expect(loaded).toEqual({ Component: WatchlistRoute });
+    },
+  );
+
+  it("a signed-out visit is still guarded: /watchlist/x goes to sign in, coming back there after", async () => {
+    claimsFor(null);
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/watchlist/x"] });
+    render(<RouterProvider router={router} />);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    expect(router.state.location.search).toBe("?next=%2Fwatchlist%2Fx");
+  });
 });
 
 describe("E49-S07 reachability through the real route tree", () => {

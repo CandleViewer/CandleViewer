@@ -45,6 +45,10 @@ describe("table.css contract", () => {
     expect(numeric).toContain("white-space: nowrap");
   });
 
+  it("the table is a stacking context of its own: its sticky header never paints over a dialog or a menu opened over it", () => {
+    expect(find(css.normal, ".cv-table", "isolation")).toContain("isolation: isolate");
+  });
+
   it("the scroll region scrolls and draws the inset focus ring", () => {
     expect(find(css.normal, ".cv-table__region", "overflow")).toContain("overflow: auto");
     expect(find(css.normal, ".cv-table__region:focus-visible", "outline")).toContain(
