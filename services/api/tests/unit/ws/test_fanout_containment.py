@@ -1,13 +1,15 @@
-"""#3363: with the flag off, the hub's flush and publish fan-outs contain what one connection's
-`TopicEmitter` raises, as #3262 did for its re-snapshot (`23-ws-protocol.md` §7.1, §7.4, §10.1).
+"""#3363: the hub's flush and publish fan-outs contain what one connection's sink raises when it is
+a bare `TopicEmitter`, as #3262 did for its re-snapshot (`23-ws-protocol.md` §7.1, §7.4, §10.1).
 Every other connection is still served; a `snap` that a flush or a waking publish cannot build
 or queue stays pending with its reason; a `d` that raises leaves its subscription, only that
 one, pending an `upstream_desync` `snap`, counted as a malformed update, so its client gets that
 `snap`, never a `d` across the update it lost; a waking publish (`machines.*`) sends that `snap`
 at once, an entity's last publish included. A connection's `on_rebuild` that raises is
 contained too, and a failure that repeats logs one line an interval, `orders` and `executions`
-aside. A cancellation is never contained. Flag on, the sink is a `ConnectionPipeline`, which
-contains these itself (`test_pipeline_pacing.py`, `test_resnapshot_containment.py`).
+aside. A cancellation is never contained. The gateway's sink is a `ConnectionPipeline`, which
+contains these itself (`test_pipeline_pacing.py`, `test_resnapshot_containment.py`), so since #2409
+removed the flag-off path these guards are defence in depth for any other sink: the hub's own
+contract, pinned here on bare emitters.
 """
 
 from __future__ import annotations
@@ -56,7 +58,7 @@ _Pair = list[tuple[Conn, Subscription]]
 
 
 def _pair(hub: SequencingHub, entry: Any = _BOOK_ENTRY, second: Any = None) -> _Pair:
-    """Two flag-off connections on `hub`, subscribed to `entry` (the second to `second`, if
+    """Two bare-emitter connections on `hub`, subscribed to `entry` (the second to `second`, if
     given), each with its first `snap` sent."""
     pairs = []
     for e in (entry, second or entry):
@@ -74,7 +76,7 @@ def _pair(hub: SequencingHub, entry: Any = _BOOK_ENTRY, second: Any = None) -> _
 
 
 def _machines(hub: SequencingHub) -> tuple[MachineStateRegistry, MachineEntity, _Pair]:
-    """Two flag-off connections subscribed to one `order` entity of a registry that fans out
+    """Two bare-emitter connections subscribed to one `order` entity of a registry that fans out
     through `hub` (§6.4), each with its first `snap` sent."""
     registry, order = MachineStateRegistry(hub=hub), MachineEntity("order", OID, ON_A)
     registry.publish(order, _payload())
@@ -343,6 +345,30 @@ def test_a_snap_whose_push_raises_stays_pending_and_takes_no_d(
     assert (_fan_out(hub, "delta"), bad.take()) == (1, [])
     assert hub.flush_pending() == 1
     assert _seen(bad) == [("snap", 3, _HELD)]
+
+
+def test_a_failed_snap_or_d_never_marks_an_ended_subscription_pending() -> None:
+    """#2409: an ended subscription is never snapped, so a failure contained on it never marks it
+    pending (as `_drop` clears the mark on end). The guards are defence in depth: the emitter
+    already sends an ended one nothing, so they are pinned here directly."""
+    hub = SequencingHub()
+    [(conn, sub), _] = _pair(hub)
+    sub.ended, sub.snapshot_pending = True, False
+    hub._snapshot_failed(conn.authz, sub, RuntimeError("snap"))
+    hub._delta_failed(conn.authz, sub, RuntimeError("d"))
+    assert sub.snapshot_pending is False
+
+
+@pytest.mark.parametrize("ended", [False, True])
+def test_a_failed_d_marks_a_live_subscription_upstream_desync_and_an_ended_one_not(
+    ended: bool,
+) -> None:
+    hub = SequencingHub()
+    [(conn, sub), _] = _pair(hub)
+    sub.ended, sub.snapshot_pending = ended, False
+    hub._delta_failed(conn.authz, sub, RuntimeError("d"))
+    assert sub.snapshot_pending is (not ended)
+    assert (sub.pending_reason == "upstream_desync") is (not ended)
 
 
 def test_a_raising_revoke_is_contained_to_its_connection(monkeypatch: pytest.MonkeyPatch) -> None:

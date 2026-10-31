@@ -29,9 +29,10 @@ with a 5 s bound, except scenario 2's wait for the sleeper's snapshots, which it
 (below). Same seed, same backoff schedule and fault trace (scenario 6 pins the trace).
 A reset crosses the proxy, `PAUSE` also holds the chunk being read, no server behind it = reset (`down`).
 
-**Flag on.** Every `Stack` (#2409; the fixtures `stack` and `stack_on`, `_server.flag_on()`) serves the router with
-E17-T03's `CV_WS_BACKPRESSURE_ENABLED` on: the default `BackpressureConfig` (8 MiB / 2 000 frames,
-the §8.4 ladder, pacing, classification and the RTT probe). Its listening socket has a fixed 32 KiB
+**The outbound pipeline.** Every `Stack` (the fixtures `stack` and `stack_on`, `_server.granted()`)
+serves the router on E17-T03's pipeline, the one outbound path since #2409 removed
+`CV_WS_BACKPRESSURE_ENABLED`: the default `BackpressureConfig` (8 MiB / 2 000 frames, the §8.4
+ladder, pacing, classification and the RTT probe). Its listening socket has a fixed 32 KiB
 `SO_SNDBUF` (64 KiB once the kernel doubles it), which every accepted socket inherits, and each of
 its lanes fixes its upstream `SO_RCVBUF` at 128 KiB (`LANE_RCVBUF`, `Proxy.rcvbuf`). So a stopped
 reader's backlog reaches the gateway's budget once well under 1 MB is in flight, however bursty the
@@ -49,7 +50,7 @@ stays, on the virtual clock. Production keeps both: a reader stalled for 60 real
 `1011`, which this harness leaves out. The server's per-connection frame budget (#2176) is kept
 there but refilled on the virtual clock (`_server._frames_on`), like the gateway's own inbound
 limiter; production keeps the loop clock.
-`flag_on(nodelay=True)` (scenario 3's wall-clock tests) also sets `TCP_NODELAY` on the
+`granted(nodelay=True)` (scenario 3's wall-clock tests) also sets `TCP_NODELAY` on the
 listening socket, which every accepted socket inherits: asyncio sets it only on the sockets it
 makes by host and port, so otherwise an update can wait about 40 ms on Nagle and the client's
 delayed ACK (the stall scenario 1 prints); the default is unchanged, so the other users of
@@ -64,15 +65,15 @@ a `Client.on_data` for a channel too long to keep (a `Replica` and the disclosur
 
 ## Catalogue
 
-| #   | Scenario (#410 AC)                                                  | This slice                                                    | Blocker for the end-to-end run                                                                                                                                                                                                                           |
-| --- | ------------------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Upstream kill (G3)                                                  | **runs** (gateway half): `test_s1_upstream_kill.py`           | Producer half: nothing calls `SequencingHub.upstream_desync` or `upstream_reconnect` nor publishes a book `d`: the book publisher E21-T01 #604. End to end then runs over the E08 Rig's recorded upstream (recorded here, not filed)                     |
-| 2   | Slow consumer, 60 s (G4, P6; AC-12)                                 | **runs**: `test_s2_slow_consumer.py`                          | — (flag on: `_server.flag_on`. The sleeper holds `book.BTCUSDT.50` and the tape; no bar builder is wired into this harness for `bars` or `footprint`. Step 3's redrop needs a snapshot near the budget, and none is: `test_pipeline_ladder.py` pins it.) |
-| 3   | Burst 5 000 msg/s (§8)                                              | **runs**: `test_s3_burst.py`                                  | — (flag on: `_server.flag_on`. The gateway has no book publisher, #604: `_book.Loop` plays it. Budget #6 in wall time runs nightly only (`harness`); its negative control in the PR lane too)                                                            |
-| 4   | Restart, `shutdown_notice` (§9.4)                                   | **runs**: `test_s4_restart_shutdown_notice.py`                | —                                                                                                                                                                                                                                                        |
-| 5   | Token expiry during an outage (§4.3, §9.2)                          | **runs**: `test_s5_token_expiry_outage.py`                    | —                                                                                                                                                                                                                                                        |
-| 6   | Grant revoked mid-reconnect (E17-X02)                               | **runs**: `test_s6_revocation_reconnect_race.py`              | — (SR-189 half: #2318 merged)                                                                                                                                                                                                                            |
-| 7   | Kill switch reaches every socket <= 1 s under chaos (WS-E04, AC-26) | **runs** (gateway half): `test_s7_kill_switch_propagation.py` | Producer half: nothing calls `WsEvents.kill_switch_changed` (`app.py:1050` only builds it): #956 E39-S03                                                                                                                                                 |
+| #   | Scenario (#410 AC)                                                  | This slice                                                    | Blocker for the end-to-end run                                                                                                                                                                                                                  |
+| --- | ------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Upstream kill (G3)                                                  | **runs** (gateway half): `test_s1_upstream_kill.py`           | Producer half: nothing calls `SequencingHub.upstream_desync` or `upstream_reconnect` nor publishes a book `d`: the book publisher E21-T01 #604. End to end then runs over the E08 Rig's recorded upstream (recorded here, not filed)            |
+| 2   | Slow consumer, 60 s (G4, P6; AC-12)                                 | **runs**: `test_s2_slow_consumer.py`                          | — (`_server.granted`. The sleeper holds `book.BTCUSDT.50` and the tape; no bar builder is wired into this harness for `bars` or `footprint`. Step 3's redrop needs a snapshot near the budget, and none is: `test_pipeline_ladder.py` pins it.) |
+| 3   | Burst 5 000 msg/s (§8)                                              | **runs**: `test_s3_burst.py`                                  | — (`_server.granted`. The gateway has no book publisher, #604: `_book.Loop` plays it. Budget #6 in wall time runs nightly only (`harness`); its negative control in the PR lane too)                                                            |
+| 4   | Restart, `shutdown_notice` (§9.4)                                   | **runs**: `test_s4_restart_shutdown_notice.py`                | —                                                                                                                                                                                                                                               |
+| 5   | Token expiry during an outage (§4.3, §9.2)                          | **runs**: `test_s5_token_expiry_outage.py`                    | —                                                                                                                                                                                                                                               |
+| 6   | Grant revoked mid-reconnect (E17-X02)                               | **runs**: `test_s6_revocation_reconnect_race.py`              | — (SR-189 half: #2318 merged)                                                                                                                                                                                                                   |
+| 7   | Kill switch reaches every socket <= 1 s under chaos (WS-E04, AC-26) | **runs** (gateway half): `test_s7_kill_switch_propagation.py` | Producer half: nothing calls `WsEvents.kill_switch_changed` (`app.py:1050` only builds it): #956 E39-S03                                                                                                                                        |
 
 **Scenario 1 (gateway half)** (C-13.6 #1, a public WS disconnect, "mid-snapshot" here a subscription
 attached during the outage, not a kill during an in-flight snapshot; and the gateway's reaction to
@@ -97,13 +98,13 @@ the last `d` before the kill, its `previous_seq` that `d`'s `s`, its own `s` the
 is schema-valid and `Client.gaps` is empty. A `Replica` equals the server's book after the recovery
 and after the five deltas, and one that lost a delta flags the gap and diverges. ETHUSDT and the
 orders keep their `initial` snapshot alone. The outage is 10.000 s of virtual time (asserted) and
-the recovery takes none; the snapshots land some ms after it (loop time: a few ms, flag on at times
+the recovery takes none; the snapshots land some ms after it (loop time: a few ms, on the pipeline at times
 the ~40 ms Nagle and delayed-ACK stall of the harness's accepted sockets), printed, not asserted.
 `s1b`: the upstream is down and a client attaches: `sub_ok` says `snapshot_pending`, as every attach
 does (conformance, not the outage's doing); the outage shows in each refused stray and no `snap`
 before the restore, which sends its one, `initial` (an attach is no resync: no `previous_seq`, not
 counted), equal to the book as it stands. Not covered: repeated kill and restore cycles (the "storm"
-of C-13.6 #1); a flag-on kill that lands on an open throttle window (the tick outlasts any window).
+of C-13.6 #1); a kill that lands on an open throttle window (the tick outlasts any window).
 Unit tests cover a pended subscription with a window open:
 `test_outbound.py::test_backpressure_sheds_the_window_of_a_topic_another_sender_pended` and
 `test_pacing.py::test_pacer_forced_coalescing_past_the_key_bound[re-pended]`. What none covers is a
@@ -163,8 +164,7 @@ inside the close's 2 s flush; the client backs off (§9.2 attempt 1) and re-snap
 `orders` first (§9.3), no gap.
 
 **Scenario 3** (no C-13.6 row: 23 §16.4's chaos row, "5 000 msg/s burst on one symbol; assert
-coalescing and no sequence break"; the nearest is #11, backpressure). Flag on: coalescing is flag-on
-only. The gateway has no book publisher (#604), and `Stack.book_step` sorts the book's levels four
+coalescing and no sequence break"; the nearest is #11, backpressure). On the pipeline, which coalesces. The gateway has no book publisher (#604), and `Stack.book_step` sorts the book's levels four
 times an update (about 0.5 ms) and ends with the recording after 5 399, so `_book.Loop` plays the
 publisher: the 1 000 recorded updates that move the depth-50 window (the recording's first 1 252
 deltas), built once as `window_delta` bodies (about 0.5 s), then a bridge body back to the opening
@@ -196,7 +196,7 @@ not lost. A window holds at most 181 distinct levels here, against a bound of 4 
 time is printed, not asserted: the 10 s run takes 3 to 4.5 s (14.7 s under the `py` lane's `--cov`),
 the 60 s run 20 to 26 s (85 s under `--cov`, which is why it is `harness`). `loop_feed`: no server;
 two laps of a `Loop`, from the
-opening of the recording and from one lap in (where a clone symbol would start), through a flag-off
+opening of the recording and from one lap in (where a clone symbol would start), through a bare
 emitter. At every update the replica equals the server's book, so a snapshot built then would equal
 what a client following the deltas holds, and at the end of each lap window and book are back where
 they began (the bridge has something to take back).
@@ -219,7 +219,7 @@ the burst's window is open (it opens in the first slice). The burst's frames are
 half the lump (`windows(625, n)`): the tick's own grid cannot carry them, as a stop at mid-tick
 closes the 50 ms window off the grid and leaves the next lump a leading edge. `same_frames` (ruling
 R4; 10 s in the PR lane, 60 s `harness`): on the virtual clock the nine's clients get, byte for
-byte, the frames of a control run on a second `flag_on()` stack in which the burst symbol gets one
+byte, the frames of a control run on a second `granted()` stack in which the burst symbol gets one
 update a half tick; each of the nine's updates is its own `d` (no `coalesced_count`) and arrives at
 the virtual instant of its publish (zero lateness, by construction: the clock cannot move until all
 nine have arrived), schema-valid (`BookTap`), `s` contiguous after the one `initial` snapshot, the
@@ -235,7 +235,7 @@ filed (the filing freeze).
 
 **Scenario 3, budget #6 in wall time.** `fanout_p95` (`harness`: nightly only) and its negative
 control `p95_measure_fails` (marker `chaos` alone, so the PR lane runs it, in 7 to 9 s under
-`--cov`, and the nightly again) run on fresh stacks with `TCP_NODELAY` (`flag_on(nodelay=True)`),
+`--cov`, and the nightly again) run on fresh stacks with `TCP_NODELAY` (`granted(nodelay=True)`),
 the collector off, the clients checking nothing (a schema check costs about 2 ms a frame, the
 client's, not the gateway's), and the burst's updates 5 a slice (`TIMED_SLICE`; the isolation tests
 keep 25) with a yield after each. `fanout_p95` drops a 1 s warm-up run, then runs the control and

@@ -36,7 +36,9 @@ name: perf-ws-load
 # Runs and baselines of one mode are never gated against the other.
 # The `instrumentation` input (#571) runs the same build with E17-T06's hot-path series stood in by
 # no-ops (`off`, profiles smoke, A, B and C only): the uninstrumented half of the overhead pair that
-# `bench.ws.runner overhead` compares with an `on` dispatch of the same profile, flag and feeder.
+# `bench.ws.runner overhead` compares with an `on` dispatch of the same profile and feeder.
+# The backend always runs the WS outbound pipeline: #2409 removed CV_WS_BACKPRESSURE_ENABLED and the
+# `flag` input that set it.
 # Such runs are judged in overhead mode (no budget #6), never gated and never a baseline, so the
 # gate step is skipped for them.
 on:
@@ -47,11 +49,6 @@ on:
         type: choice
         options: [smoke, A, B, C, W5, selfcheck]
         default: smoke
-      flag:
-        description: "CV_WS_BACKPRESSURE_ENABLED for the backend (on is the rollout target, off the control)"
-        type: choice
-        options: ["on", "off"]
-        default: "on"
       runs:
         description: "Runs of the profile; the gate and the reproducibility check need 3 (A, B, C, smoke only)"
         type: choice
@@ -148,12 +145,11 @@ jobs:
           tar -xzf "$tarball" --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
           ./k6 version | grep -F "k6 ${K6_VERSION} "
           echo "K6_BIN=$dir/k6" >> "$GITHUB_ENV"
-      - name: WS load run (${{ inputs.profile }}, flag ${{ inputs.flag }}, ${{ inputs.runs }} run(s), feeder ${{ inputs.feeder }}, instrumentation ${{ inputs.instrumentation }})
+      - name: WS load run (${{ inputs.profile }}, ${{ inputs.runs }} run(s), feeder ${{ inputs.feeder }}, instrumentation ${{ inputs.instrumentation }})
         id: load
         working-directory: services/api
         env:
           PROFILE: ${{ inputs.profile }}
-          FLAG: ${{ inputs.flag }}
           RUNS: ${{ inputs.runs }}
           DURATION: ${{ inputs.duration_s }}
           WS_PATH: ${{ inputs.ws_path }}
@@ -162,7 +158,6 @@ jobs:
         run: |
           set -uo pipefail
           set +e # the runner's bash -e would end the step at the first red run
-          [[ "$FLAG" =~ ^(on|off)$ ]] || { echo "flag must be on or off" >&2; exit 2; }
           [[ "$RUNS" =~ ^[1-3]$ ]] || { echo "runs must be 1, 2 or 3" >&2; exit 2; }
           [[ "$WS_PATH" =~ ^(/[A-Za-z0-9_~-][A-Za-z0-9._~-]*)*/ws$ ]] || { echo "ws_path must be /ws or a prefix and /ws" >&2; exit 2; }
           [[ "$FEEDER" =~ ^(inproc|proc)$ ]] || { echo "feeder must be inproc or proc" >&2; exit 2; }
@@ -187,7 +182,7 @@ jobs:
           for i in $(seq 1 "$RUNS"); do
             dir="$out/run-$i"
             if [ "$RUNS" -eq 1 ]; then dir="$out"; fi
-            uv run python -m bench.ws.runner "${cmd[@]}" --flag "$FLAG" "${staging[@]}" --out-dir "$dir" "${extra[@]}"
+            uv run python -m bench.ws.runner "${cmd[@]}" "${staging[@]}" --out-dir "$dir" "${extra[@]}"
             code=$?
             [ "$code" -gt "$worst" ] && worst=$code
           done
@@ -203,7 +198,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: ws-load-${{ inputs.profile }}-${{ inputs.flag }}
+          name: ws-load-${{ inputs.profile }}
           # tokens.json holds opaque session handles valid only inside the run's own process; never kept
           path: |
             ws-load/

@@ -20,6 +20,7 @@ from candleviewer.ws.sequencing import (
     OWNER_META_MAX_BYTES,
     Rendered,
     SequencingHub,
+    SnapReason,
     SnapshotBody,
     SnapshotCache,
     SnapshotSource,
@@ -399,7 +400,8 @@ def test_flag_on_a_refused_d_meta_is_contained_and_re_snapshotted(
     """The pipeline contains it, whatever the subscription's state: the update is dropped, no `s`
     is taken, nothing is queued and the connection stays open. A live subscription gets its
     `backpressure` `snap` at the writer's turn; one held back (pending, paused) keeps the mark it
-    had, and an ended one is never snapped (#2409: the deleted flag-off case's four states)."""
+    had, and an ended one is never marked nor snapped (#2409: the deleted flag-off case's four
+    states; the carry of #5117's review: an ended subscription never awaits a `snap`)."""
     hub = SequencingHub()
     pipe, asked, conn = _routed(hub)
     sub = _structured(conn, _BARS)
@@ -407,13 +409,24 @@ def test_flag_on_a_refused_d_meta_is_contained_and_re_snapshotted(
     _hold_back(sub, state)
     hub.publish(_BARS, {**_SERIES, "bars": [{**_BAR, "confirm": False}]}, meta=meta)
     assert (sub.seq, _queued(pipe), asked) == (1, [], [])
-    # An ended subscription's mark is deliberately not pinned: nothing is ever sent for it, so
-    # whether the refusal marks it is unobservable (raised on LANE-119 with #2409).
-    if state != "ended":
-        reason = "backpressure" if state == "live" else "initial"
-        assert (sub.snapshot_pending, sub.pending_reason) == (state != "paused", reason)
+    reason = "backpressure" if state == "live" else "initial"
+    assert (sub.snapshot_pending, sub.pending_reason) == (state in ("live", "pending"), reason)
     pipe.service(0.0)
     assert [(f["t"], f["s"]) for f in _queued(pipe)] == ([("snap", 2)] if state == "live" else [])
+
+
+@pytest.mark.parametrize("reason", ["initial", "backpressure", "reconfigure"])
+def test_an_ended_subscription_awaits_no_snap(reason: SnapReason) -> None:
+    """#2409 (the carry of #5117's review): ending a subscription clears its pending mark, so no
+    ended subscription awaits a `snap`; the writer's turn sends it none."""
+    pipe, asked, conn = _routed(SequencingHub())
+    sub = _structured(conn, _BARS)
+    _queued(pipe)
+    sub.snapshot_pending, sub.pending_reason = True, reason
+    assert conn.authz.unsubscribe(_BARS) is sub
+    assert (sub.ended, sub.snapshot_pending) == (True, False)
+    pipe.service(0.0)
+    assert (_queued(pipe), asked) == ([], [])
 
 
 @pytest.mark.parametrize("form", [dict, MappingProxyType])

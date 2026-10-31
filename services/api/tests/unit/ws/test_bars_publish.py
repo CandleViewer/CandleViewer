@@ -334,7 +334,8 @@ async def test_a_swap_the_store_cannot_snapshot_yet_is_flushed_on_a_later_emissi
 async def test_a_d_the_hub_failed_to_emit_gets_its_snap_at_the_next_emission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#3363, flag off: the first connection's `d` fails once (`FrameEncodeError`; every bars `d`
+    """#3363, on a bare `TopicEmitter` sink (the hub's guard, kept as defence in depth since
+    #2409): the first connection's `d` fails once (`FrameEncodeError`; every bars `d`
     carries its `include_delta` meta) and nothing reaches the emitter. The other connection gets
     that `d`; the failed one is pending `upstream_desync` and gets its `snap` at the next
     emission, with no `d` before it (`s` 3, after the 2 the failed `d` took), then `d`s again."""

@@ -153,10 +153,10 @@ async def test_a_raising_orders_build_is_logged_at_error_and_closes_the_connecti
     assert bad.pipe.terminal.bye["p"]["reason"] == "internal_error"
 
 
-def _flag_off_side(
+def _bare_side(
     hub: SequencingHub, entry: Any
 ) -> tuple[Source, Subscription, Callable[[], list[dict[str, Any]]]]:
-    """A flag-off connection on `hub`, its sink its `TopicEmitter`, subscribed to `entry` with its
+    """A connection on `hub` whose sink is its bare `TopicEmitter`, subscribed to `entry` with its
     first `snap` taken: its source, its subscription and what it was sent since the last look."""
     src = Source()
     src.bodies["orders"] = SnapshotBody({"orders": []})
@@ -167,16 +167,16 @@ def _flag_off_side(
     return src, sub, conn.take
 
 
-def test_a_flag_off_raising_orders_build_stays_pending_and_is_logged_at_error(
+def test_a_bare_emitters_raising_orders_build_stays_pending_and_is_logged_at_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """§10.1 flag off: the `TopicEmitter` has no close path, so an `orders` re-snapshot whose build
+    """§10.1: a bare `TopicEmitter` has no close path, so an `orders` re-snapshot whose build
     raises stays pending with its reason, logged once at `error`; the other connection gets its
-    `snap`. #2409: kept until the removal PR, the only cover of the hub's guard around a sink that
-    raises (`SequencingHub.resnapshot`); the pipeline twin is
-    `test_a_raising_orders_build_is_logged_at_error_and_closes_the_connection`."""
+    `snap`. The hub's guard around a sink that raises (`SequencingHub.resnapshot`), kept as
+    defence in depth since #2409 made the pipeline the gateway's one sink; the pipeline's own
+    is `test_a_raising_orders_build_is_logged_at_error_and_closes_the_connection`."""
     hub = SequencingHub()
-    (bad_source, bad, bad_sent), (_, _, good_sent) = (_flag_off_side(hub, _ORDERS) for _ in "ab")
+    (bad_source, bad, bad_sent), (_, _, good_sent) = (_bare_side(hub, _ORDERS) for _ in "ab")
     monkeypatch.setattr(bad_source, "build", _lookup_fails)
     with capture_logs() as logs:
         assert hub.instrument_revision("BTCUSDT") == 1

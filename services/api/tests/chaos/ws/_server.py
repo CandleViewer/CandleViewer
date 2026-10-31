@@ -12,13 +12,13 @@ Served as production serves it: `PlannedShutdownServer`, so a stop (`should_exit
 planned shutdown, its grace slept on the virtual clock. `restart()` boots a second server
 process behind the same proxies; the stores above survive it, as a database and the exchange do.
 
-Every stack runs with E17-T03's `CV_WS_BACKPRESSURE_ENABLED` on (#2409; `flag_on()` names it):
-the router gets the default `BackpressureConfig` (8 MiB / 2 000 frames), every socket it accepts
+Every stack runs on E17-T03's outbound pipeline, the one path since #2409 removed its flag: the
+router gets the default `BackpressureConfig` (8 MiB / 2 000 frames), every socket it accepts
 has a fixed `SEND_BUFFER`, and each of its lanes a fixed upstream receive buffer (`LANE_RCVBUF`),
 so a stopped reader's backlog reaches that budget once well under 1 MB is in flight (the
 sockets', the transport's and the proxy's buffers), not after the megabytes loopback autotuning
 holds. Its transport keepalive is off (`_boot`): it runs on wall time. Its per-connection frame
-budget (#2176) runs on the virtual clock (`_frames_on`). `flag_on(nodelay=True)`, for a wall-clock
+budget (#2176) runs on the virtual clock (`_frames_on`). `granted(nodelay=True)`, for a wall-clock
 test, also sets `TCP_NODELAY` on the listening socket, which every accepted socket inherits; the
 default stack keeps Nagle there. `trades_step` replays the recorded tape.
 """
@@ -76,8 +76,8 @@ WORKSPACES: list[list[Topic]] = [
 # §9.4: the documented grace and expected downtime (the CV_WS_SHUTDOWN_* defaults)
 GRACE_MS, DOWNTIME_MS = 5_000, 20_000
 GRACE_S = GRACE_MS / 1000
-#: The flag-on stack's `SO_SNDBUF` (the kernel doubles it), set on the listening socket, which
-#: every accepted socket inherits; fixed, so autotuning cannot grow it (`flag_on`).
+#: The stack's `SO_SNDBUF` (the kernel doubles it), set on the listening socket, which every
+#: accepted socket inherits; fixed, so autotuning cannot grow it.
 SEND_BUFFER = 32 * 1024
 #: The `SO_RCVBUF` of a flag-on lane's upstream sockets (`Proxy.rcvbuf`), fixed for the same
 #: reason. It has a floor: set after connect, as `Proxy` sets it, a receiver of 28 KiB or less
@@ -130,7 +130,7 @@ class Stack:
         self,
         clock: VirtualClock,
         *accounts: uuid.UUID,
-        backpressure: BackpressureConfig | None = _ON,
+        backpressure: BackpressureConfig = _ON,
         nodelay: bool = False,
     ) -> None:
         self.clock = clock
@@ -148,7 +148,7 @@ class Stack:
         tape = [p for f in frames("ws/clean_publicTrade_BTCUSDT.jsonl") for p in normalize(f)]
         self._tape = [p for p in tape if isinstance(p, TradePrint)]
         self._printed = itertools.count()
-        self.backpressure = backpressure  # E17-T03's flag: on with a config (`flag_on`)
+        self.backpressure = backpressure  # E17-T03's outbound budget (§8.4)
         self.clients: list[Client] = []
         self.lanes: list[Proxy] = []
         self._boot()
@@ -185,22 +185,19 @@ class Stack:
         # A short drain: the harness's clients are closed by the test itself. Set on the dict, so it
         # holds whether or not `uvicorn_kwargs` carries its own drain bound (#2565 adds one).
         kw["timeout_graceful_shutdown"] = 2
-        if self.backpressure is not None:
-            # Two clocks: uvicorn's transport keepalive (`ws_ping_interval` 15 s, then
-            # `ws_ping_timeout` 45 s and a 1011) is timed on the loop's wall clock, the scenarios on
-            # the virtual one. A paused client meets it 60 real seconds in, whatever the virtual
-            # time, so a slow run (coverage) would close it mid-scenario. Off for the flag-on stack
-            # only; the §9.1 application heartbeat stays on, on the virtual clock (production keeps
-            # both).
-            kw["ws_ping_interval"] = None
-            # The same split for the frame budget, which is kept but timed on the virtual clock.
-            kw["ws"] = _frames_on(self.clock)
+        # Two clocks: uvicorn's transport keepalive (`ws_ping_interval` 15 s, then
+        # `ws_ping_timeout` 45 s and a 1011) is timed on the loop's wall clock, the scenarios on the
+        # virtual one. A paused client meets it 60 real seconds in, whatever the virtual time, so a
+        # slow run (coverage) would close it mid-scenario. Off here; the §9.1 application heartbeat
+        # stays on, on the virtual clock (production keeps both).
+        kw["ws_ping_interval"] = None
+        # The same split for the frame budget, which is kept but timed on the virtual clock.
+        kw["ws"] = _frames_on(self.clock)
         # Merged as a dict, so it holds whether or not `uvicorn_kwargs` already sets `log_config`.
         conf = uvicorn.Config(app, **{**kw, "lifespan": "off", "log_config": None})
         self.server = PlannedShutdownServer(conf)
         self._sock = socket.create_server((HOST, 0))
-        if self.backpressure is not None:
-            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SEND_BUFFER)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SEND_BUFFER)
         if self.nodelay:  # the accepted sockets inherit it; asyncio sets it only on the sockets
             # it makes itself, by host and port (proto 6), and this one is the rig's own (proto 0)
             self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -215,7 +212,7 @@ class Stack:
 
     async def lane(self) -> Proxy:
         """A second path to the server: a fault on it hits only the clients dialled through it."""
-        lane = Proxy(self.port, None if self.backpressure is None else LANE_RCVBUF)
+        lane = Proxy(self.port, LANE_RCVBUF)
         await lane.start()
         self.lanes.append(lane)
         return lane
@@ -315,7 +312,7 @@ class Stack:
         await self.until_stopped()
 
 
-def flag_on(*, nodelay: bool = False) -> Stack:
-    """A stack with E17-T03's flag on (module docstring), accounts A and B granted. `nodelay`: a
-    wall-clock test's, so no update waits on Nagle and the client's delayed ACK (about 40 ms)."""
-    return Stack(VirtualClock(), ACC_A, ACC_B, backpressure=BackpressureConfig(), nodelay=nodelay)
+def granted(*, nodelay: bool = False) -> Stack:
+    """A stack (module docstring) with accounts A and B granted. `nodelay`: a wall-clock test's,
+    so no update waits on Nagle and the client's delayed ACK (about 40 ms)."""
+    return Stack(VirtualClock(), ACC_A, ACC_B, nodelay=nodelay)

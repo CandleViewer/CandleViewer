@@ -3,7 +3,7 @@ row of 23 §16.4, "5 000 msg/s burst on one symbol; assert coalescing and no seq
 the other nine symbols keep their frames and their fan-out budget meanwhile (06 §9's isolation
 clause, budget #6). C-13.6 has no row for it: the nearest is #11, backpressure.
 
-E17-T03's flag is on (`_server.flag_on`: coalescing is flag-on only). One client holds
+On E17-T03's pipeline (`_server.granted`), which coalesces (§8.2). One client holds
 `book.BTCUSDT.50` structured, and the hub gets 5 000 updates a second of virtual time from a
 `Loop` (`_book`): a recorded stretch of the book, as the book publisher (#604) will send it. A tick
 of 250 ms publishes its 1 250 updates in one go, moves the virtual clock, and waits until the
@@ -89,7 +89,7 @@ from candleviewer.ws.topics import effective_throttle_ms, parse_topic
 from tests.chaos.ingestion._clock import VirtualClock
 from tests.chaos.ws._book import LAP, BookTap, Delta, Loop, Replica, structured
 from tests.chaos.ws._client import TIMEOUT_S, Client, each
-from tests.chaos.ws._server import BOOK, DEPTH, SEED, SYM, Stack, flag_on
+from tests.chaos.ws._server import BOOK, DEPTH, SEED, SYM, Stack, granted
 from tests.unit.ws._seq_support import Conn, Source
 
 pytestmark = pytest.mark.chaos
@@ -387,7 +387,7 @@ async def drive(burst: int, seconds: float, *, timed: bool = False, hold_s: floa
     is checked (`Watch`); timed (wall clock), the stack has `TCP_NODELAY`, each slice of
     `TIMED_SLICE` ends in a yield (`Ten.step`), and the collector is off for the run (a full
     collection stalls the loop about 100 ms: test_flood_isolation)."""
-    async with flag_on(nodelay=timed) as stack:
+    async with granted(nodelay=timed) as stack:
         ten = await Ten.connect(stack, checked=not timed)
         before = series()
         if timed:

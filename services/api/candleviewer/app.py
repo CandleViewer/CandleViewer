@@ -1822,8 +1822,8 @@ def create_app(
     # live book and published in the publisher's own window per depth; the runtime's, as above.
     ws_book = book_topic(ctx, ws_sequencing)
     # E21-T02 (#605): the order-flow module's `heatmap` topic, built from the live book every
-    # 100 ms; its native columns go to `heatmap_cells` on the real backend. Served only with the
-    # byte budget on (G-04, `heatmap_off` below); the runtime's, as above.
+    # 100 ms; its native columns go to `heatmap_cells` on the real backend. Served under the byte
+    # budget, which every connection runs on (G-04); the runtime's, as above.
     ws_heatmap = heatmap_topic(
         ctx,
         ws_sequencing,
@@ -1860,7 +1860,6 @@ def create_app(
         bars_off=not resolved.bars_enabled,
         max_deep_book_subs=resolved.ws_max_deep_book_subs,  # E21-T01 (23 §16.2)
         depth_500=resolved.heatmap_depth_500,
-        heatmap_off=not resolved.ws_backpressure_enabled,  # E21-T02 G-04 (23 §6.1)
         machines=machine_states,
         # E17-T06: a span id (`sp`, 23 §3.1) on each sampled frame while latency telemetry is on.
         span_ids=new_span_id if resolved.telemetry_enabled else None,
@@ -1890,12 +1889,9 @@ def create_app(
         machines=machine_states,
         feeds=(ws_ticker, ws_revisions, ws_trades, ws_book, ws_heatmap, ws_liquidity),
     )
-    # E17-T03 (#412, C-4.13): the budgeted outbound pipeline, on by default since #4883 (the
-    # owner ruling of 2026-10-29). Without a config the gateway keeps its 1 024-frame push
-    # bound: the flag swaps the bound, never removes it.
-    ws_backpressure = (
-        BackpressureConfig.from_settings(resolved) if resolved.ws_backpressure_enabled else None
-    )
+    # E17-T03 (#412): every connection's outbound budget, from the `CV_WS_*` budget settings
+    # (the one outbound path since #2409 removed its flag).
+    ws_backpressure = BackpressureConfig.from_settings(resolved)
     include_ws_router(  # #3907: `/ws` and, under the server base, `/api/v1/ws`
         app,
         make_ws_router(
@@ -1925,7 +1921,7 @@ def create_app(
             # §12.1 (#4992): the `system` snap's health fields, the last frame of the health tick.
             system_baseline=health_publisher.latest,
             backpressure=ws_backpressure,
-            # #4833: one per process; it ticks only while a flag-on RTT probe reads it.
+            # #4833: one per process; it ticks only while an RTT probe reads it.
             loop_stall=LoopStall(),
             # §9.6 (#3085): an `auth` reads its session's view-as binding through the service
             # built below, read per call as S7's guard reads it, so a missing one fails the

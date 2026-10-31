@@ -1,19 +1,21 @@
-"""E17-T03 (#412): the backpressure flag and the outbound budget settings.
+"""E17-T03 (#412): the outbound budget settings.
 
-`CV_WS_BACKPRESSURE_ENABLED` (C-4.13: default on since #4883, removal
-ticket #2900) and the three `CV_WS_*` budget settings of `23-ws-protocol.md` §4.3. The queue
-budget may be lowered, never raised (the contract value is the ceiling; a raise needs a security
-review, E17 threat model §6), and the classify interval is bounded to 500..10 000 ms. Every check
-is a field check, so a refusal
-never carries another setting (#2728, C-12.6). The floors are typo guards beyond the contract.
+The three `CV_WS_*` budget settings of `23-ws-protocol.md` §4.3, and the backpressure flag's
+removal (#2409: setting `CV_WS_BACKPRESSURE_ENABLED` is refused, so the pipeline always runs).
+The queue budget may be lowered, never raised (the contract value is the ceiling; a raise needs a
+security review, E17 threat model §6), and the classify interval is bounded to 500..10 000 ms.
+Every check is a field check, so a refusal never carries another setting (#2728, C-12.6). The
+floors are typo guards beyond the contract.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
-from candleviewer.settings import Settings
+from candleviewer.settings import WS_BACKPRESSURE_FLAG_REMOVED, Settings
 from candleviewer.ws.lifecycle import LIMITS_BLOCK
 from candleviewer.ws.limits import MAX_SUBSCRIPTIONS
 from candleviewer.ws.outbound import QUEUE_BYTES, QUEUE_FRAMES, OutboundQueue, Queued
@@ -28,10 +30,10 @@ FLOOR_FRAMES = 256
 #: An inert marker standing in for a secret value; never a credential.
 _MARKER = "cv-412-marker-not-a-secret"
 _ENV = (
-    "CV_WS_BACKPRESSURE_ENABLED",
     "CV_WS_QUEUE_BYTES",
     "CV_WS_QUEUE_FRAMES",
     "CV_WS_CLASSIFY_INTERVAL_MS",
+    "CV_WS_BACKPRESSURE_ENABLED",
 )
 #: The contract ceiling and the floor of each queue budget setting, by field.
 _CEILING = {"ws_queue_bytes": QUEUE_BYTES, "ws_queue_frames": QUEUE_FRAMES}
@@ -71,18 +73,47 @@ def _refusal(monkeypatch: pytest.MonkeyPatch, env: str, value: str) -> Validatio
     return refused.value
 
 
-def test_backpressure_flag_defaults_on() -> None:
-    """The flag is on unless set off (#4883: the owner ruling of 2026-10-29, #568)."""
-    assert Settings().ws_backpressure_enabled is True
-
-
-@pytest.mark.parametrize(("raw", "expected"), [("true", True), ("false", False)])
-def test_backpressure_flag_reads_cv_ws_backpressure_enabled(
-    monkeypatch: pytest.MonkeyPatch, raw: str, expected: bool
+@pytest.mark.parametrize("value", ["true", "false", "1", ""], ids=["true", "false", "one", "empty"])
+def test_the_removed_backpressure_flag_is_refused_with_what_to_do(
+    monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
-    monkeypatch.setenv("CV_WS_BACKPRESSURE_ENABLED", raw)
+    """#2409 removed `CV_WS_BACKPRESSURE_ENABLED` (C-4.13): an environment that still sets it, to
+    anything, fails at load and says to delete the line, so no deployment believes it turned the
+    pipeline off. The refusal is a field check: it carries no other setting (C-12.6)."""
+    monkeypatch.setenv("CV_BYBIT_API_KEY", _MARKER)
 
-    assert Settings().ws_backpressure_enabled is expected
+    refused = _refusal(monkeypatch, "CV_WS_BACKPRESSURE_ENABLED", value)
+
+    (error,) = refused.errors()
+    assert (error["loc"], error["type"]) == (("ws_backpressure_enabled",), "value_error")
+    assert "removed in #2409" in str(refused) and "delete the line" in str(refused)
+    assert str(refused).count(WS_BACKPRESSURE_FLAG_REMOVED) == 1
+    assert _MARKER not in str(refused)
+    assert _MARKER not in refused.json()
+
+
+def test_the_removed_backpressure_flag_in_a_dotenv_file_is_refused_with_what_to_do(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The operator's case: a `.env` line left over from before #2409."""
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("CV_WS_BACKPRESSURE_ENABLED=false\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError) as refused:
+        Settings(_env_file=dotenv)
+
+    (error,) = refused.value.errors()
+    assert error["loc"] == ("ws_backpressure_enabled",)
+    assert WS_BACKPRESSURE_FLAG_REMOVED in str(refused.value)
+
+
+def test_the_removed_backpressure_flag_holds_no_value_and_is_never_dumped() -> None:
+    """The tombstone is unset by default, and no dump of the settings carries it."""
+    settings = Settings()
+
+    assert settings.ws_backpressure_enabled is None
+    assert "ws_backpressure_enabled" not in settings.model_dump()
+    assert "ws_backpressure_enabled" not in repr(settings)
 
 
 def test_budget_settings_default_to_the_contract_values() -> None:
@@ -201,13 +232,12 @@ def test_classify_interval_is_refused_outside_500_to_10000(
 @pytest.mark.parametrize(
     ("env", "value"),
     [
-        ("CV_WS_BACKPRESSURE_ENABLED", "maybe"),
         ("CV_WS_QUEUE_BYTES", str(QUEUE_BYTES + 1)),
         ("CV_WS_QUEUE_BYTES", "not-a-number"),
         ("CV_WS_QUEUE_FRAMES", str(QUEUE_FRAMES + 1)),
         ("CV_WS_CLASSIFY_INTERVAL_MS", "1"),
     ],
-    ids=["flag", "bytes_over", "bytes_not_int", "frames_over", "interval_under"],
+    ids=["bytes_over", "bytes_not_int", "frames_over", "interval_under"],
 )
 @pytest.mark.parametrize(
     "secret",

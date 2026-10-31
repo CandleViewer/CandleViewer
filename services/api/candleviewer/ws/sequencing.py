@@ -117,9 +117,10 @@ INCIDENT_REASONS: Final = frozenset({"upstream_desync", "backpressure"})
 SERVER_META_KEYS: Final = frozenset({"reason", "previous_seq", "source"})
 #: What a `d`'s `meta` may not name: those, and `stale`, which only a snapshot carries and a `d`
 #: never sets or clears (§7.2). A `d` that names one, is not JSON, or is over `OWNER_META_MAX_BYTES`
-#: of it is refused: a raise to the publisher with the backpressure flag off; with it on, the
-#: pipeline contains it for a paced family (drops the update, re-snapshots) and closes `orders` and
-#: `executions` with `internal_error`. An owner's `stale` on a body is dropped (`SnapshotBody`).
+#: of it is refused: the gateway's pipeline contains it for a paced family (drops the update,
+#: re-snapshots) and closes `orders` and `executions` with `internal_error`; through a bare
+#: `TopicEmitter` sink it is a raise to the publisher. An owner's `stale` on a body is dropped
+#: (`SnapshotBody`).
 DELTA_REFUSED_META_KEYS: Final = SERVER_META_KEYS | {"stale"}
 #: The most JSON an owner's `meta` may hold, on a snapshot (`SnapshotBody`) or a `d`
 #: (`TopicEmitter.delta`). Every snapshot chunk carries it, so both chunk budgets reserve its size:
@@ -256,7 +257,7 @@ def _dumps(frame: Mapping[str, Any]) -> str:
 
 
 #: `_dumps`'s options, but strict about NaN and Infinity, which JSON has no token for:
-#: `outbound.json_payload` refuses them, and the flag-off writer would send the bare words.
+#: `outbound.json_payload` refuses them, and `json.dumps` alone would write the bare words.
 _STRICT_ENCODER: Final = json.JSONEncoder(separators=(",", ":"), allow_nan=False)
 
 
@@ -267,8 +268,8 @@ def _read_delta_meta(meta: Mapping[str, Any]) -> tuple[dict[str, Any], str | Non
     over `OWNER_META_MAX_BYTES` of JSON, the bound of a snapshot's owner `meta`, counted as
     `_dumps` counts, but strict about NaN and Infinity. JSON only: `cv.v1.msgpack` also refuses an
     int outside 64 bits or a lone surrogate, which no publisher sends. An `Exception` from `meta`
-    is a refusal, not a raise from here. The emitter raises a refusal, and the hub, flag off, lets
-    that raise through: the two agree."""
+    is a refusal, not a raise from here. The emitter raises a refusal, and the hub lets that raise
+    through from a bare `TopicEmitter` sink: the two agree."""
     try:  # every read of the caller's `meta` is in here
         own = dict(meta)
         if DELTA_REFUSED_META_KEYS.intersection(own):
@@ -999,7 +1000,7 @@ class TopicEmitter:
         #: #605: subscriptions whose spread snapshot is followed by its catch-up `d` frames,
         #: a step each: until it ends no live `d` reaches them (§7.1); they are its tail.
         self._catching: set[str] = set()
-        #: #605: with the flag on, the pipeline's: queue a frame already encoded with
+        #: #605: the pipeline's: queue a frame already encoded with
         #: `encode_payload` in `wire` (`ConnectionPipeline.attach`). None: frames go as dicts.
         #: `(frame, payload, received)`, and `encode_s=`, the seconds its encode took, for the
         #: one stamped frame of a snapshot (E17-T06's encode-time sample, taken where it is built).
@@ -1010,7 +1011,7 @@ class TopicEmitter:
         #: the subscriptions it named, so a `backpressure` snapshot parked as not ready is retried.
         self.on_rebuild: Callable[[list[Subscription]], None] | None = None
         #: E17-T03: told of each `snap` once its frames are queued, with what it rendered, so the
-        #: pacer's window after it starts from that (`Pacer.snapshotted`, #3268). None: flag off.
+        #: pacer's window after it starts from that (`Pacer.snapshotted`, #3268). None: no pacer.
         self.on_snapshot: Callable[[Subscription, Rendered], None] | None = None
 
     # -- snapshots --
@@ -1373,11 +1374,11 @@ class TopicEmitter:
         release, not at its source update), and a stamped binary delta is also encoded with that
         weight (timed and sized by `cv_ws_frame_*`); the others read no clock and no timer. `meta`
         rides on the envelope (bars: the §6.1 `include_delta` echo). It is read once, into a shallow
-        copy that is checked and then sent, so its values must be immutable: the flag-off writer
-        encodes later, as `SnapshotBody` states for its own. It may not name a key the server owns,
-        or `stale` (§7.2), and must be JSON of at most `OWNER_META_MAX_BYTES`, or it is refused
-        before any `s` is taken (`_read_delta_meta`). Suppressed too once the subscription has
-        ended, as a `snap` is."""
+        copy that is checked and then sent, so its values must be immutable: a frame may be
+        encoded after this returns, as `SnapshotBody` states for its own. It may not name a key
+        the server owns, or `stale` (§7.2), and must be JSON of at most `OWNER_META_MAX_BYTES`, or
+        it is refused before any `s` is taken (`_read_delta_meta`). Suppressed too once the
+        subscription has ended, as a `snap` is."""
         own, refusal = (None, None) if meta is None else _read_delta_meta(meta)
         if refusal:  # a programming error, as on a snap
             raise ValueError(refusal)
@@ -1593,8 +1594,9 @@ def _routed(
 
 
 class Sink(Protocol):
-    """One connection's frames from the hub: its `TopicEmitter`, or with the flag on its
-    `ConnectionPipeline`, which paces the deltas (§8.1) and never raises into the fan-out."""
+    """One connection's frames from the hub. The gateway registers each connection's
+    `ConnectionPipeline`, which paces the deltas (§8.1) and never raises into the fan-out; a bare
+    `TopicEmitter` is a sink too (the hub's own tests, the benches), which may raise."""
 
     @property
     def cache(self) -> SnapshotCache: ...
@@ -1621,7 +1623,7 @@ class Sink(Protocol):
 
 
 #: The hub logs a failure it contains (`SequencingHub._log_failed`) at most once per (event, family)
-#: in this many seconds, `orders` and `executions` aside: the flag-on default classify interval.
+#: in this many seconds, `orders` and `executions` aside: the default classify interval.
 FAILURE_LOG_INTERVAL_S: Final = 1.0
 
 
@@ -1635,12 +1637,13 @@ class SequencingHub:
     the fan-out; coalescing and the overflow ladder are E17-T03). Bounded by the gateway's
     connection caps: one entry per authenticated socket. What a sink's `snapshot`, `flush_pending`
     or `delta`, or its `on_rebuild`, raises is contained to its subscription (to its connection
-    for `on_rebuild`), so no connection stops a fan-out (§10.1): the flag-on sink contains it
-    itself, and the hub contains what a `TopicEmitter` lets through (flag off: `_snapshot_failed`,
-    `_delta_failed`, which a waking publish follows with that `snap` at once). A cancellation is
-    never contained, nor, flag off, a `d` whose `meta` the emitter refuses (`_read_delta_meta`: a
-    key the server owns, not JSON, or over the byte bound): that is the caller's own error. `clock`
-    paces the failure lines."""
+    for `on_rebuild`), so no connection stops a fan-out (§10.1): the gateway's sink, the pipeline,
+    contains it itself, and the hub contains what a sink lets through, which only a bare
+    `TopicEmitter` does (`_snapshot_failed`, `_delta_failed`, which a waking publish follows with
+    that `snap` at once): defence in depth since #2409 made the pipeline the gateway's one sink. A
+    cancellation is never contained, nor, from a bare emitter, a `d` whose `meta` it refuses
+    (`_read_delta_meta`: a key the server owns, not JSON, or over the byte bound): that is the
+    caller's own error. `clock` paces the failure lines."""
 
     def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._conns: dict[int, tuple[ConnectionAuthz, Sink]] = {}
@@ -1736,7 +1739,7 @@ class SequencingHub:
         self, ch: str, reason: RevokedReason, *, resubscribe: bool, now_ms: int
     ) -> list[tuple[ConnectionAuthz, dict[str, Any]]]:
         """End every live subscription of `ch` (§6.4: its `machines` entry was removed), whatever
-        its scope, dropped first (flag on, `on_drop` discards its window), then queue its `revoked`.
+        its scope, dropped first (`on_drop` discards its window), then queue its `revoked`.
         Returns (connection, frame) pairs for the audit rows; a revoke or a push that raises is
         contained."""
         revoked: list[tuple[ConnectionAuthz, dict[str, Any]]] = []
@@ -1776,9 +1779,9 @@ class SequencingHub:
         `initial` (an attach is no resync) and `backpressure` (the ladder's hold), so a mundane
         reason never hides it. One held for its `backpressure` snapshot (`_held`) is only
         invalidated: the ladder sends it (#2831). A build that raises is contained to its
-        subscription, so the fan-out goes on (§10.1, #3262): the flag-on sink handles it as it
-        does a flushed snapshot's, and one the sink lets through (flag off) stays pending with its
-        reason, for the next `flush_pending` (`_snapshot_failed`)."""
+        subscription, so the fan-out goes on (§10.1, #3262): the pipeline handles it as it does a
+        flushed snapshot's, and one a sink lets through (a bare `TopicEmitter`) stays pending with
+        its reason, for the next `flush_pending` (`_snapshot_failed`)."""
         if reason not in SNAP_REASONS:
             raise ValueError(f"unknown snap reason {reason!r}")
         if reason == "backpressure":  # the ladder pends these, so its `drain` knows them all
@@ -1812,7 +1815,8 @@ class SequencingHub:
         of every connection, so it must be pure and total. One held for its `backpressure`
         snapshot is left to the overflow ladder, which the emitter's `on_rebuild` tells. Each
         subscription is flushed alone, as `ConnectionPipeline.flush_pending` does: a build that
-        raises through the sink (flag off) leaves it pending with its reason (`_snapshot_failed`),
+        raises through the sink (a bare emitter) leaves it pending with its reason
+        (`_snapshot_failed`),
         and the rest, and every connection's `on_rebuild` (guarded too), still run (#3363)."""
         sent = 0
         for authz, emitter in list(self._conns.values()):
@@ -1848,22 +1852,24 @@ class SequencingHub:
     # -- containment (§10.1; #3262, #3363) --
 
     def _snapshot_failed(self, authz: ConnectionAuthz, sub: Subscription, exc: Exception) -> None:
-        """A snapshot (a re-snapshot, a flush or a wake) that raised through its sink (flag off,
+        """A snapshot (a re-snapshot, a flush or a wake) that raised through its sink (a bare
         `TopicEmitter`, which has no close path): `sub` stays pending with its reason for the next
         flush (§7.1). Marked again: `TopicEmitter.snapshot` clears the mark before it queues its
-        frames, so a raise there must not leave a `d` to follow a `snap` its client may lack."""
-        sub.snapshot_pending = True
+        frames, so a raise there must not leave a `d` to follow a `snap` its client may lack. An
+        ended one is never marked: it is never snapped (#2409)."""
+        sub.snapshot_pending = not sub.ended
         self._log_failed("snapshot", authz, sub, exc)
 
     def _delta_failed(self, authz: ConnectionAuthz, sub: Subscription, exc: Exception) -> None:
-        """A `d` that raised through its sink (flag off): `TopicEmitter` queues a `d` last, so that
+        """A `d` that raised through its sink (a bare emitter): `TopicEmitter` queues a `d` last, so
+        that
         update never reached `sub`'s client, though its `s` may be taken, as by a frame lost in
         transit (§7.1). `sub` now awaits an `upstream_desync` `snap`, the §7.4 reason for a stream
         with a gap ("the only correct recovery is drop-and-rebuild"), so no `d` crosses the gap; a
         waking `publish` sends that `snap` at once, any other waits for the next flush. One already
         pending keeps its reason, as it took no `d`. Marked first, which its count and log line
-        cannot skip; counted as a malformed update, as flag on counts one (§8.6 D9)."""
-        if not sub.snapshot_pending:
+        cannot skip; counted as a malformed update, as the pipeline counts one (§8.6 D9)."""
+        if not sub.snapshot_pending and not sub.ended:  # an ended one is never snapped (#2409)
             sub.snapshot_pending, sub.pending_reason = True, "upstream_desync"
         cv_ws_malformed_updates_total.labels(topic=sub.topic.family.family).inc()
         self._log_failed("delta", authz, sub, exc)
@@ -1872,8 +1878,8 @@ class SequencingHub:
         self, what: str, authz: ConnectionAuthz, sub: Subscription | None, exc: Exception
     ) -> None:
         """`ws {what} failed`, by connection, family and error class only (C-12.6). `orders` and
-        `executions` log every line, at `error`, as flag on logs each of their closes; the other
-        families, and `rebuild` lines, which name none, log at `warning`, at most one line per
+        `executions` log every line, at `error`, as the pipeline logs each of their closes; the
+        other families, and `rebuild` lines, which name none, log at `warning`, at most one line per
         (event, family) per `FAILURE_LOG_INTERVAL_S`, with a `suppressed` count (`_quiet`). A
         failing logger or clock changes nothing (a cancellation still propagates)."""
         with contextlib.suppress(Exception):  # never into the fan-out

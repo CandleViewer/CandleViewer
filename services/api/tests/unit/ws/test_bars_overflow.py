@@ -1,4 +1,4 @@
-"""#399 (E12-T06) D7, SR-E12-07 part 3: with `CV_WS_BACKPRESSURE_ENABLED` on, a `bars` close that
+"""#399 (E12-T06) D7, SR-E12-07 part 3: on the outbound pipeline, a `bars` close that
 §8.4 step 1 drops from the queue or from a pending window, or that a window past its key bound
 refuses, is in the topic's `backpressure` snapshot (step 2) when it is among the `history` newest
 bars: every snapshot reads the series store, which each close reaches before its `d` exists (the

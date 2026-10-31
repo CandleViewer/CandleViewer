@@ -10,7 +10,7 @@ bounded outbound queue, which closes a slow consumer rather than wait (C-2.18), 
 blocks the publisher. A wake ignores `paused`, like `SequencingHub.resnapshot`; skipping a paused
 one would also need a resume to snap what was pending before its `ctl` (E17-T03's call, #412).
 
-Coalescing (§6.4), whatever the backpressure flag: with `call_later`, the first payload after a
+Coalescing (§6.4), the registry's own: with `call_later`, the first payload after a
 quiet window of `coalesce_s` (100 ms) goes out at once; a later one is recorded at once, so a `snap`
 reads it, and goes out in the call of the one timer that closes the window, the latest only.
 

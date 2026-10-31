@@ -19,8 +19,8 @@ the `trades` family's snapshot source, publisher and subscription leases, over t
   reads the symbol's `recent`, so the 200-item snapshot is warm and REST and WS start alike. On the
   bus's overflow marker each held symbol catches up from the hot tape and every live `trades`
   subscription re-snapshots (`upstream_desync`, §7.4).
-- **Frames.** At most one `d` per option tape per `window_s` (the family's 100 ms, §6.1); with
-  `CV_WS_BACKPRESSURE_ENABLED` on the pacer windows after it. A frame appends the items closed
+- **Frames.** At most one `d` per option tape per `window_s` (the family's 100 ms, §6.1); the
+  connection's pacer windows after it. A frame appends the items closed
   since the last one (a cluster closes by print time, or once the reader's clock passes its
   deadline plus `LATE_GRACE_US`), `dropped` since the last one (a frame goes out for drops alone:
   never silent; prints `min_size` filtered, plus those shed when more than `PENDING_MAX` items

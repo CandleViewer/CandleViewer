@@ -234,7 +234,6 @@ def _load(
     outputs = tmp_path / "output"
     base = {
         "PROFILE": "A",
-        "FLAG": "on",
         "RUNS": "3",
         "DURATION": "",
         "WS_PATH": "/ws",
@@ -355,7 +354,6 @@ def test_the_self_check_and_w5_run_once(
         {"WS_PATH": "/x"},
         {"WS_PATH": "/ws?a=b"},
         {"RUNS": "4"},
-        {"FLAG": "maybe"},
         {"DURATION": "9;ls"},
         {"FEEDER": "x"},
         {"FEEDER": "proc --staging"},

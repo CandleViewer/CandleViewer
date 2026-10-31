@@ -24,7 +24,7 @@ from tests.unit.ws.test_lifecycle_socket import JSON, ORIGIN, _recv
 
 #: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
 _EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
-#: #2409: the budgeted pipeline (the flag-on path) unless a test passes None.
+#: The budgeted pipeline (§8.4).
 _ON = BackpressureConfig()
 #: #2409: a clock step past a paced book window even at the `saturated` x4 (50 ms each), so
 #: every delta leaves at once as its own frame (§8.1).
@@ -33,7 +33,7 @@ _PAST_WINDOW_S = 0.25
 
 class _World:
     def __init__(
-        self, upstream: UpstreamRefs | None = None, backpressure: BackpressureConfig | None = _ON
+        self, upstream: UpstreamRefs | None = None, backpressure: BackpressureConfig = _ON
     ) -> None:
         self.source = Source()
         book = Book("BTCUSDT")

@@ -3,25 +3,18 @@
 
 `kind` is the six CVWB body kinds plus `json` and `msgpack`, a data frame as its connection's codec
 sent it (23 section 2.2). The hub stamps one data frame of a subscription in `SAMPLE_EVERY` (its
-`s` is a multiple of it): the encoder times and sizes that delta, and the writer the stamped frame
-as the connection's codec encoded it (text on `cv.v1.json`, bytes on `cv.v1.msgpack`), each with
-that weight; every other frame reads no timer. A snapshot chunk is observed exactly (weight 1). A
-`perf_counter` stand-in counts the reads and makes every duration a known number. The encode
-precedes the send, so a frame the client has received is already counted.
+`s` is a multiple of it): the encoder times and sizes that delta, each with that weight; every
+other frame reads no timer. A snapshot chunk is observed exactly (weight 1). A `perf_counter`
+stand-in counts the reads and makes every duration a known number. The `json` and `msgpack` pair,
+the stamped frame as the connection's codec encoded it, is observed by the pipeline at its one
+encode (`test_pipeline_outbound.py`'s frame cost series; #2409 removed the flag-off writer that
+this file's socket tests pinned).
 """
 
 from __future__ import annotations
 
-import asyncio
-import inspect
-import json
 from bisect import bisect_left
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeout
-from typing import Any
 
-import msgpack
 import pytest
 from prometheus_client import REGISTRY, CollectorRegistry
 
@@ -31,7 +24,7 @@ from candleviewer.observability.metrics_catalogue import (
     FRAME_ENCODE_BUCKETS,
     live_specs,
 )
-from candleviewer.ws import binary, cvwb_vectors, gateway
+from candleviewer.ws import binary, cvwb_vectors
 from candleviewer.ws._generated.cvwb_layout import KINDS
 from candleviewer.ws.binary import BOOK_DELTA, Frame, FrameEncodeError
 from candleviewer.ws.metrics import (
@@ -44,9 +37,7 @@ from candleviewer.ws.metrics import (
     cv_ws_frame_encode_seconds,
 )
 from tests.unit.ws._seq_support import ACC_A, Book, Conn, Source
-from tests.unit.ws.test_lifecycle_socket import JSON, MSGPACK, _send
 from tests.unit.ws.test_sequencing import _footprint_body
-from tests.unit.ws.test_sequencing_socket import _World
 
 ENCODE, BYTES = "cv_ws_frame_encode_seconds", "cv_ws_frame_bytes"
 _SERIES: dict[str, FastHistogram] = {ENCODE: cv_ws_frame_encode_seconds, BYTES: cv_ws_frame_bytes}
@@ -93,8 +84,9 @@ def _all() -> dict[str, tuple[tuple[float, float], tuple[float, float]]]:
 
 
 def _writer() -> dict[str, tuple[tuple[float, float], tuple[float, float]]]:
-    """The two kinds the writer observes. The CVWB kinds are the encoder's: a socket test also moves
-    `book_snapshot`, since the snapshot chunk the hub renders is observed exactly."""
+    """The two kinds a connection's codec feeds (the pipeline's encode at push). The CVWB kinds are
+    the encoder's: a socket test also moves `book_snapshot`, since the snapshot chunk the hub
+    renders is observed exactly."""
     return {k: _cost(k) for k in (JSON_KIND, MSGPACK_KIND)}
 
 
@@ -265,161 +257,3 @@ def test_every_snapshot_chunk_is_timed_and_sized_exactly() -> None:
     frames, nbytes = _encoded("footprint")
     assert chunks > 1 and (n1 - n0, c1 - c0) == (chunks, chunks)  # weight 1 each, not `n`
     assert (frames - counted[0], b1 - b0) == (chunks, nbytes - counted[1])  # the same bytes
-
-
-#: Each codec a connection can negotiate (23 section 2.2), by its subprotocol.
-CODECS = pytest.mark.parametrize("subprotocol", [JSON, MSGPACK], ids=["json", "msgpack"])
-_RECV_TIMEOUT_S = 5.0
-
-
-def _wire(ws: Any) -> str | bytes:
-    """The next message as the client's socket got it: the text of a `cv.v1.json` frame, the bytes
-    of a `cv.v1.msgpack` one. Bounded like `_recv`, so a missing frame fails fast."""
-    pool = ThreadPoolExecutor(max_workers=1)
-    try:
-        message = pool.submit(ws.receive).result(timeout=_RECV_TIMEOUT_S)
-    except FutureTimeout:
-        pytest.fail(f"no WS frame within {_RECV_TIMEOUT_S}s")
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
-    assert message["type"] == "websocket.send", message
-    payload: bytes | None = message.get("bytes")
-    text: str = message.get("text", "")
-    return text if payload is None else payload
-
-
-def _decoded(raw: str | bytes) -> dict[str, Any]:
-    frame: dict[str, Any] = msgpack.unpackb(raw) if isinstance(raw, bytes) else json.loads(raw)
-    return frame
-
-
-def _size(raw: str | bytes) -> int:
-    """Bytes on the wire: a JSON text is ASCII, so its characters are bytes."""
-    return len(raw) if isinstance(raw, bytes) else len(raw.encode())
-
-
-def _session(
-    subprotocol: list[str], deltas: int, at_rest: Callable[[_World], None] | None = None
-) -> list[str | bytes]:
-    """Every message a client gets on `subprotocol` from `hello` to the last of `deltas` deltas on
-    `CH`, as it crossed the wire: `welcome`, `auth_ok`, the `system` snap (§12.1, #4992), `sub_ok`,
-    the `snap` (`s` 1), the deltas.
-    `at_rest` runs once the last one is in, with the connection open and its writer idle."""
-    w = _World(backpressure=None)  # #2409: the flag-off writer path, until PR 2
-    with w.client, w.client.websocket_connect("/ws", subprotocols=subprotocol) as ws:
-        _send(ws, {"t": "hello", "id": "h"})
-        wire = [_wire(ws)]  # `welcome`: a control frame
-        _send(ws, {"t": "auth", "id": "a", "p": {"access_token": "good"}})
-        wire += [_wire(ws), _wire(ws)]  # `auth_ok`, then the `system` snap: control lane
-        _send(ws, {"t": "sub", "id": "s1", "p": {"topics": [{"ch": CH, "opts": {}}]}})
-        wire += [_wire(ws), _wire(ws)]  # `sub_ok`, then the `snap`: `s` 1
-        assert w.client.portal is not None
-        w.client.portal.call(lambda: [w.hub.publish(CH, BODY) for _ in range(deltas)])
-        wire += [_wire(ws) for _ in range(deltas)]
-        if at_rest is not None:
-            at_rest(w)
-    assert [_decoded(m)["t"] for m in wire[:5]] == ["welcome", "auth_ok", "snap", "sub_ok", "snap"]
-    assert _decoded(wire[2])["ch"] == "system"
-    return wire
-
-
-@CODECS
-def test_the_writer_times_and_sizes_only_the_data_frames_the_hub_stamped(
-    monkeypatch: pytest.MonkeyPatch, subprotocol: list[str]
-) -> None:
-    ticks = _Ticks(1.0)  # the writer's timer pair around the encode: exactly 1 s apart
-    monkeypatch.setattr(gateway, "perf_counter", ticks)
-    encode, send = gateway._Connection.encode_frame, gateway._Connection.send_payload
-    encoded: list[str | bytes] = []
-    sent: list[str | bytes] = []
-
-    def recording_encode(conn: Any, frame: dict[str, Any]) -> str | bytes:
-        payload = encode(conn, frame)
-        encoded.append(payload)
-        return payload
-
-    async def slow_send(conn: Any, payload: str | bytes) -> None:
-        ticks.now += 10.0  # a send takes 10 s on the stand-in clock: it is not encode time
-        sent.append(payload)
-        await send(conn, payload)
-
-    monkeypatch.setattr(gateway._Connection, "encode_frame", recording_encode)
-    monkeypatch.setattr(gateway._Connection, "send_payload", slow_send)
-    kind = MSGPACK_KIND if subprotocol == MSGPACK else JSON_KIND
-    before = _writer()
-    n = SAMPLE_EVERY
-    wire = _session(subprotocol, deltas=2 * n - 1)  # `s` 2 to 2 x `n`: the hub stamps `n`, 2 x `n`
-    after = _writer()
-    frames = [_decoded(m) for m in wire]
-    # Every frame crossed in the connection's own codec: text on `cv.v1.json`, bytes on msgpack.
-    assert {type(m) for m in wire} == {bytes if kind == MSGPACK_KIND else str}
-    # Each frame was encoded once, whatever its branch: what was timed and sized is what was sent.
-    assert encoded == sent == wire
-    stamped = [i for i, f in enumerate(frames) if f["t"] == "d" and f["s"] % n == 0]
-    assert [frames[i]["s"] for i in stamped] == [n, 2 * n]
-    assert ticks.reads == 2 * 2  # a timer pair for each stamped frame; none for any other frame
-    # Only the connection's own kind moves (never the other codec's), and only for the stamped
-    # frames: `n` times each, once. The size is the frame's length on the wire.
-    assert {k for k in after if after[k] != before[k]} == {kind}
-    (n0, t0), (c0, b0) = before[kind]
-    (n1, t1), (c1, b1) = after[kind]
-    assert (n1 - n0, c1 - c0) == (2 * n, 2 * n)
-    assert t1 - t0 == pytest.approx(2 * n * 1.0)
-    assert b1 - b0 == n * sum(_size(wire[i]) for i in stamped)
-
-
-def _idle_writer(w: _World) -> tuple[str, dict[str, Any]]:
-    """The name of the code the connection's writer task is suspended in, and what it holds there
-    (locals and free variables, by name), while it waits for a frame."""
-
-    async def look() -> tuple[str, dict[str, Any]]:
-        (task,) = [t for t in asyncio.all_tasks() if t.get_name().endswith("-writer")]
-        coro = task.get_coro()
-        assert inspect.iscoroutine(coro)  # a suspended coroutine, not a finished eager task
-        return coro.cr_code.co_name, dict(inspect.getcoroutinelocals(coro))
-
-    assert w.client.portal is not None
-    # On the app's loop, so after the writer's step has ended. Bound to a typed name: mypy --strict
-    # takes `portal.call`'s result for `Any` here, and refuses to return it from a typed function.
-    held: tuple[str, dict[str, Any]] = w.client.portal.call(look)
-    return held
-
-
-@CODECS
-def test_the_idle_writer_holds_no_encoded_payload_it_sent(
-    monkeypatch: pytest.MonkeyPatch, subprotocol: list[str]
-) -> None:
-    """The encoded payload of a stamped frame (up to 4 MiB for a snapshot chunk) is let go once it
-    is sent, not kept until the next stamped frame. By identity: no value the idle writer holds is
-    one of the payloads it sent, so an unrelated `str` or `bytes` local never fails this, and a
-    failure names the variable. The frame dict (`item`) is still held, as it is on `main`: only
-    the extra encoded copy is released."""
-    send = gateway._Connection.send_payload
-    sent: list[str | bytes] = []  # kept here, so the identity of a payload is not reused
-
-    async def recording_send(conn: Any, payload: str | bytes) -> None:
-        sent.append(payload)
-        await send(conn, payload)
-
-    monkeypatch.setattr(gateway._Connection, "send_payload", recording_send)
-    at_rest: list[tuple[str, dict[str, Any]]] = []
-    # `s` 2 to `n`: the last frame the writer sent is the stamped one, then it waits for the next.
-    _session(subprotocol, SAMPLE_EVERY - 1, at_rest=lambda w: at_rest.append(_idle_writer(w)))
-    ((code, held),) = at_rest
-    assert code == "writer"  # what was read is the writer's frame, not that of a wrapper
-    assert _decoded(sent[-1])["s"] == SAMPLE_EVERY  # and the last frame it sent is the stamped one
-    retained = sorted(name for name, value in held.items() if any(value is p for p in sent))
-    assert not retained, f"the idle writer still holds a payload it sent, in: {retained}"
-
-
-@CODECS
-def test_a_frame_the_hub_did_not_stamp_observes_nothing_and_reads_no_timer(
-    monkeypatch: pytest.MonkeyPatch, subprotocol: list[str]
-) -> None:
-    ticks = _Ticks(1.0)
-    monkeypatch.setattr(gateway, "perf_counter", ticks)
-    before = _writer()
-    n = SAMPLE_EVERY
-    wire = _session(subprotocol, deltas=n - 2)  # `s` 2 to `n` - 1: not one is stamped
-    assert [f["s"] for f in map(_decoded, wire) if f["t"] == "d"] == [*range(2, n)]
-    assert ticks.reads == 0 and _writer() == before  # neither codec observed anything

@@ -22,12 +22,11 @@ recorder topic meets it: `sub` is typed by the fields read here, and the hub's `
 - Throttle: one window of `WINDOW_S` (the family's 250 ms, §6.1) for every symbol. A change goes
   out at once when no frame went out in the last window, else at the window's close, so each
   `ticker.{symbol}` and each batched subscription gets at most one `d` per window, carrying each
-  changed symbol's latest state, whole (§8.2). With `CV_WS_BACKPRESSURE_ENABLED` off this is the
-  topics' only throttle; with it on, the pacer windows after it. A flush publishes each changed
-  symbol's item to `ticker.{symbol}`, and to the batched `ticker` one frame per group of
-  subscriptions naming the same symbols, grouped once per flush (`select` is a set lookup), with
-  the group's changed items; a publish wakes a pending subscription, which gets its `snap` instead
-  once every symbol it names is complete.
+  changed symbol's latest state, whole (§8.2). The connection's pacer windows after it. A flush
+  publishes each changed symbol's item to `ticker.{symbol}`, and to the batched `ticker` one frame
+  per group of subscriptions naming the same symbols, grouped once per flush (`select` is a set
+  lookup), with the group's changed items; a publish wakes a pending subscription, which gets its
+  `snap` instead once every symbol it names is complete.
 - Stale: a symbol whose state passes `STALE_S` with no push goes out once more, its last values and
   `stale: true` (§14.8); its next push clears the flag. A symbol the stream is rebuilding (no
   merged state) never goes out with its pre-drop values as fresh. The held symbols and the waits

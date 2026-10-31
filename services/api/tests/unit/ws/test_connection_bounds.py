@@ -3,9 +3,9 @@
 A close whose writer is still parked on a send at its flush deadline (the pipeline's, §8.4) ends
 it, and until the first `auth_ok` `auth_timeout_s` plus the flush bound from `accept` does the
 same, so the socket is torn down and its slot freed; the expiry counts
-(`cv_ws_overflow_total{reason="close_flush_deadline"}`). The rigs run the budgeted pipeline
-(#2409); the bare connection below keeps the flag-off flush timer. A socket that ends in time
-leaves no flush timer and counts nothing. An `auth` undoes only the SR-189 registration it made,
+(`cv_ws_overflow_total{reason="close_flush_deadline"}`). The rigs run the budgeted pipeline, the
+one outbound path since #2409. A socket that ends in time leaves no flush timer and counts
+nothing. An `auth` undoes only the SR-189 registration it made,
 one that finds its socket closing registers nothing, and teardown releases what was registered.
 Fake socket and clock; the bounds are short loop timers, awaited through the handler (no
 sleeps)."""
@@ -116,7 +116,7 @@ async def test_a_socket_that_ends_in_time_leaves_no_flush_timer(
 async def test_the_bound_until_auth_ok_leaves_the_close_its_flush_bound() -> None:
     """With the production auth window and close flush bound, the bound from `accept` is the window
     plus the flush bound away, so the watchdog's `auth_timeout` close at the window keeps its whole
-    flush bound; a later bound does not replace it (the earliest stands)."""
+    flush bound; a second arm does not replace it (armed once)."""
     rig, sock = Rig(), Sock()
     t0 = asyncio.get_running_loop().time()
     handler = await rig.open(sock)
@@ -127,21 +127,22 @@ async def test_the_bound_until_auth_ok_leaves_the_close_its_flush_bound() -> Non
     first = conn.flush_timer
     conn.arm_flush_deadline(100.0)  # a later bound
     assert conn.flush_timer is first and not first.cancelled()
+    conn.arm_flush_deadline(0.0)  # an earlier one: a close's own flush is the pipeline's deadline
+    assert conn.flush_timer is first and not first.cancelled()
     hang_up(sock)
     await _ended(handler)
 
 
 async def test_a_flush_bound_that_passes_after_the_writer_ended_counts_nothing() -> None:
-    """The bound can pass in the turn in which the writer ends, before teardown cancels it: that
-    writer's flush made it in time, so nothing is counted as an expired flush, and no bound is
-    armed once one has passed."""
+    """The bound from `accept` can pass in the turn in which the writer ends, a close under way,
+    before teardown cancels it: that writer's flush made it in time, so nothing is counted as an
+    expired flush or a close, and no bound is armed once one has passed."""
     conn = _Connection(
         cast(Any, Sock()),
         encoding="cv.v1.json",
         clock=lambda: 0.0,
         wall_ms=lambda: BASE_MS,
         auth_timeout_s=AUTH_TIMEOUT_S,
-        close_flush_s=0.0,
     )
     passed = asyncio.Event()
 
@@ -150,13 +151,28 @@ async def test_a_flush_bound_that_passes_after_the_writer_ended_counts_nothing()
         return False
 
     conn.end_writer = ended
+    conn.close_with("shutdown")
     flushes, slow = _expired()
-    conn.close_with("shutdown")  # its flush bound is due at once
+    conn.arm_flush_deadline(0.0)  # due at once
     async with asyncio.timeout(1.0):
         await passed.wait()
     assert (conn.flush_passed, conn.flush_timer, _expired()) == (True, None, (flushes, slow))
     conn.arm_flush_deadline(1.0)
     assert conn.flush_timer is None  # none is armed once one has passed
+
+
+def test_no_flush_bound_is_armed_without_a_running_loop() -> None:
+    """With no event loop there is no writer to end, so no bound is armed: the guard the flag-off
+    close's own arm reached from a synchronous caller (#2409), kept for any such caller."""
+    conn = _Connection(
+        cast(Any, Sock()),
+        encoding="cv.v1.json",
+        clock=lambda: 0.0,
+        wall_ms=lambda: BASE_MS,
+        auth_timeout_s=AUTH_TIMEOUT_S,
+    )
+    conn.arm_flush_deadline(0.0)
+    assert (conn.flush_timer, conn.flush_passed) == (None, False)
 
 
 @pytest.mark.parametrize("hangs", [False, True], ids=["refused", "call-timed-out"])

@@ -94,7 +94,7 @@ class _Stack:
 
 @pytest.fixture
 def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Stack]:
-    """The composed path, with `CV_WS_BACKPRESSURE_ENABLED` on (#412 S2a; #2409: flag on only)."""
+    """The composed path, on the budgeted pipeline (#412 S2a)."""
     clock = _Clock()
     auth = AuthService(session_repository=FakeSessionRepository(), clock=clock)
     cast(Any, auth)._repository = FullUsers()  # #2295: the WS classifies every session
@@ -106,7 +106,7 @@ def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Stack]:
             gateway.make_ws_router, clock=clock.monotonic, wall_ms=clock.wall_ms, tick_s=0.005
         ),
     )
-    app = app_module.create_app(Settings(allowed_origins=_ORIGIN, ws_backpressure_enabled=True))
+    app = app_module.create_app(Settings(allowed_origins=_ORIGIN))
     with TestClient(app, client=("127.0.0.1", 50000), headers={"origin": _ORIGIN}) as client:
         assert client.portal is not None
         client.portal.call(auth.start, app.state.app_context)
@@ -247,7 +247,7 @@ class _Bare:
         return self.client.portal.call(fn)
 
 
-#: The budgeted pipeline (§8.4); `None` runs a kept flag-off case (#2409).
+#: The budgeted pipeline (§8.4).
 _ON = BackpressureConfig()
 
 
@@ -257,7 +257,6 @@ def _bare_gateway(
     *,
     tick_s: float = 0.005,
     audit: Any = None,
-    backpressure: BackpressureConfig | None = _ON,
 ) -> _Bare:
     """A bare `/ws` router whose authenticator returns `result` verbatim, or
     awaits `result(token)` when `result` is an authenticator itself."""
@@ -282,7 +281,7 @@ def _bare_gateway(
             wall_ms=clock.wall_ms,
             tick_s=tick_s,
             allowed_origins=frozenset({_ORIGIN}),
-            backpressure=backpressure,  # #2409: the budgeted pipeline unless a kept case says
+            backpressure=_ON,
         )
     )
     gate = _Gate(app)
@@ -353,10 +352,6 @@ _TICK = {"kind": "notice", "message": "tick"}
 #: `system` frames queued behind the writer before an identity ends: a backlog its sealed close
 #: drops, well inside the pipeline's frame budget (§8.4).
 _BACKLOG = 1023
-#: #2409: kept flag off until the removal PR, the only cover of a flag-off branch production
-#: still takes: the writer dropping a frame its sealed identity queued, and a close's flush
-#: deadline replacing the later accept-time one.
-_KEPT_OFF = pytest.mark.parametrize("backpressure", [None, _ON], ids=["flag_off", "flag_on"])
 
 
 def _broadcast(gw: _Bare, ws: Any, clock: _Clock) -> dict[str, Any]:
@@ -383,15 +378,10 @@ def test_busy_socket_expires_with_bye_instead_of_the_first_frame_at_the_expiry()
     assert max(f["ts"] for f in data) < _ms(expiry)
 
 
-@_KEPT_OFF
-def test_expiry_drops_the_queued_backlog_and_sends_bye_next(
-    backpressure: BackpressureConfig | None,
-) -> None:
+def test_expiry_drops_the_queued_backlog_and_sends_bye_next() -> None:
     clock = _Clock()
     expiry = _T0 + timedelta(minutes=1)
-    gw = _bare_gateway(
-        ("sess", _USER, expiry), clock, tick_s=_NO_IDLE_TICK_S, backpressure=backpressure
-    )
+    gw = _bare_gateway(("sess", _USER, expiry), clock, tick_s=_NO_IDLE_TICK_S)
     with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
         assert _open(ws, "any")["t"] == "auth_ok"
 
@@ -552,10 +542,7 @@ class _SlowAudit:
         self.written.set()
 
 
-@_KEPT_OFF
-def test_third_failed_auth_is_audited_while_a_close_is_in_flight(
-    backpressure: BackpressureConfig | None,
-) -> None:
+def test_third_failed_auth_is_audited_while_a_close_is_in_flight() -> None:
     # C-2.9: a planned shutdown has queued its `bye`, but the writer is blocked
     # (the client stopped reading). The 3rd failed `auth` that lands meanwhile is
     # still counted and audited; the shutdown close then completes as queued.
@@ -565,7 +552,7 @@ def test_third_failed_auth_is_audited_while_a_close_is_in_flight(
     async def authenticate(_token: str) -> Any:
         raise PermissionError("bad token")
 
-    gw = _bare_gateway(authenticate, clock, audit=audit, backpressure=backpressure)
+    gw = _bare_gateway(authenticate, clock, audit=audit)
     before = _failures("rejected")
     with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
         assert _open(ws, "bad-1")["p"]["code"] == "auth_failed"

@@ -1,10 +1,10 @@
 """Per-connection backpressure configuration (E17-T03, `23-ws-protocol.md` §4.3, §8.3, §8.4).
 
-`BackpressureConfig` is what the composition root hands `make_ws_router` while
-`CV_WS_BACKPRESSURE_ENABLED` is on: the outbound budget (`max_bytes` or `max_frames`, whichever
-binds first), the cadence of the adaptive classification and the close flush deadline. Without one
-(`None`, the default) the gateway keeps today's 1 024-frame push bound: the flag swaps the bounding
-mechanism and never removes the bound (C-2.18).
+`BackpressureConfig` is what the composition root hands `make_ws_router`, built from the three
+`CV_WS_*` budget settings: the outbound budget (`max_bytes` or `max_frames`, whichever binds
+first), the cadence of the adaptive classification and the close flush deadline. Every connection
+runs on one (C-2.18); a router built without one gets the contract values
+(`gateway.DEFAULT_BACKPRESSURE`).
 
 The defaults are the contract values. A config is checked as it is built and fails closed with
 `ValueError` (C-2.18, WS-D01), so no consumer runs on an unchecked budget, hand-built or not:

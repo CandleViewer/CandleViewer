@@ -8,9 +8,9 @@
   request order, clamped `effective`), idempotent `unsub`, `ctl` (retune / resnapshot), the §16.2
   limits and §6.2 silent account-scope narrowing. `apply_snapshot` re-evaluates every live
   subscription after a role/grant change and returns the `revoked` frames (§9.5, S7); it
-  refuses another user's snapshot (`SnapshotUserMismatch`, #415). With the backpressure
-  flag on, `on_drop` hears of every subscription an operation ends or resets.
-  Whatever the flag, `on_purge` drops the queued frames of what a change revokes (#415).
+  refuses another user's snapshot (`SnapshotUserMismatch`, #415). From the pipeline's `attach`,
+  `on_drop` hears of every subscription an operation ends or resets, and `on_purge` drops the
+  queued frames of what a change revokes (#415).
 - `ConnectionRegistry`: live sockets per user; role/grant change, kill-switch transition and
   user-disabled fan-out. A disabled user is also remembered for one access-token lifetime, so a
   socket that registers after the per-user close is refused (#3413).
@@ -317,10 +317,6 @@ class SubscriptionServices:
     #: is offered (`heatmap_depth_500`, C-4.13, off: `book.*.500` is `invalid_topic_format`).
     max_deep_book_subs: int = MAX_DEEP_BOOK_SUBSCRIPTIONS
     depth_500: bool = False
-    #: E21-T02 (G-04, §6.1): `heatmap.*` is served only with the byte budget on
-    #: (`CV_WS_BACKPRESSURE_ENABLED`); the app sets this from it, and while it is True every
-    #: `heatmap.*` `sub`, live and replay, is refused `unknown_topic`.
-    heatmap_off: bool = False
     #: E17-T08: the `machines.{entity}.state` entries `sub` is authorised against (§6.4); `None`
     #: means no entity has an entry.
     machines: EntityScopes | None = None
@@ -571,10 +567,11 @@ class ConnectionAuthz:
         #: §6.2: how many requested accounts the last `admit` narrowed away, silently. `handle_sub`
         #: reads it right after that `admit`, for its count and record only (#415, E17-R-15).
         self.narrowed = 0
-        #: E17-T03 (flag on, the outbound pipeline): called once per operation, before its reply
-        #: or `revoked` is queued, with every subscription whose queued frames and throttle
-        #: window it made stale (§8.4 Lanes, §9.5). While it is set, a narrowing re-pends what it
-        #: kept (`settling`), for `on_settle` after the change's frames (the registry's `settle`).
+        #: E17-T03 (the outbound pipeline, from its `attach`): called once per operation, before
+        #: its reply or `revoked` is queued, with every subscription whose queued frames and
+        #: throttle window it made stale (§8.4 Lanes, §9.5). While it is set, a narrowing re-pends
+        #: what it kept (`settling`), for `on_settle` after the change's frames (the registry's
+        #: `settle`).
         self.on_drop: Callable[[list[Subscription]], None] | None = None
         self.on_settle: Callable[[list[Subscription]], None] | None = None
         self.settling: list[Subscription] = []
@@ -929,7 +926,7 @@ class ConnectionAuthz:
         elif family == "book" and (refused := self._book_refusal(sub)) is not None:
             self._drop(sub)
             return refused
-        # E21-T02: G-04, then the flag-off depth 500, before anything is held (live and replay).
+        # E21-T02: an unserved replay one, then the flag-off depth 500, before anything is held.
         elif family == "heatmap" and (refused := self._heatmap_refusal(sub)) is not None:
             self._drop(sub)
             return refused
@@ -1034,12 +1031,11 @@ class ConnectionAuthz:
         return None
 
     def _heatmap_refusal(self, sub: Subscription) -> dict[str, Any] | None:
-        """E21-T02 (§6.1, §10.2): `unknown_topic` while the byte budget is off (G-04), live and
-        replay alike, never `snapshot_pending`; `unknown_topic` too for a replay one while no
-        replay producer serves the family (§10.2's "topic not served"), never pending for good;
+        """E21-T02 (§6.1, §10.2): `unknown_topic` for a replay one while no replay producer
+        serves the family (§10.2's "topic not served"), never `snapshot_pending` for good;
         then depth 500 is `invalid_topic_format` while `heatmap_depth_500` is off (#604 BQ-9).
         The spec caps (G-02) come at the lease."""
-        if self.services.heatmap_off or sub.replay_session_id is not None:
+        if sub.replay_session_id is not None:
             return _fail(sub.ch, "unknown_topic", _UNSERVED)
         if int(sub.opts.get("depth", 0)) >= 500 and not self.services.depth_500:
             return _fail(sub.ch, "invalid_topic_format", "Heatmap depth 500 is not offered.")
@@ -1088,8 +1084,9 @@ class ConnectionAuthz:
             self.on_drop(subs)
 
     def _drop(self, sub: Subscription) -> None:
-        """Bookkeeping only: each operation that calls it reports through `_dropped`, once."""
-        sub.ended = True
+        """Bookkeeping only: each operation that calls it reports through `_dropped`, once. An
+        ended subscription is never snapped, so it awaits no `snap` either (#2409)."""
+        sub.ended, sub.snapshot_pending = True, False
         if (held := self.by_id.pop(sub.sub_id, None)) is not None:  # once, if dropped twice
             if held.topic.family.family == _ALERTS:  # with `by_id`: exact, whatever raises below
                 cv_ws_alerts_subscriptions_in_use.dec()
@@ -1400,7 +1397,8 @@ class ConnectionAuthz:
         """#415: a grant or a permission withdrawn alike, one rule at the sending boundary
         (C-12.4): the affected subscriptions' queued frames are discarded first (§9.5), then a
         narrowed one is re-pended unless paused (its resume re-snapshots it, §5.4, §8.4 step 1):
-        flag on always, flag off once its frames went."""
+        always while `on_drop` is set (the pipeline's, from `attach` to its release), else only
+        once its frames went (a bare authorisation, as the hub's own tests build)."""
         purged = self.on_purge(affected) if self.on_purge is not None and affected else set()
         self._dropped(affected)
         for sub in affected:

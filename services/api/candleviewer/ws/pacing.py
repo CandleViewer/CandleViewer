@@ -13,7 +13,7 @@ A full queue counts as `cv_ws_overflow_total{reason="drop"}`, an update that bre
 is; a malformed update is a producer bug, counted in `cv_ws_malformed_updates_total` and logged
 (family, topic and error class only), never as an overflow.
 
-With the flag on `ws/pipeline.py` routes the hub's deltas here (S3), checking the budget per update:
+`ws/pipeline.py` routes the hub's deltas here (S3), checking the budget per update:
 `pending_bytes` is a total kept as the lanes change, and open windows are armed on a heap, so the
 check, `tick` and `next_due` are O(1) until one is due (C-2.18). A window whose emit raises drops
 its topic and tells `on_error` (the pipeline's containment, §10.1). §16.1 S5 between windows (D18):
@@ -25,7 +25,7 @@ classification interval (`CV_WS_CLASSIFY_INTERVAL_MS`, `CLASSIFY_INTERVAL_S` by 
 worsens at once and improves only after two consecutive better samples. `Pacer.apply` enforces it:
 `lagging` doubles throttles and forces coalescing; `saturated` and `overflowing` quadruple them and
 hold `heatmap` and `profile` to at most one frame a second. A queue depth that is not finite reads
-as a full queue, never as a healthy one (#2552). With the flag on the pipeline's writer turn runs
+as a full queue, never as a healthy one (#2552). The pipeline's writer turn runs
 the classification and sends the probe (`ws/pipeline.py`, #412). E17-T06: a merged window that
 leaves as one frame of n updates (its `window_count`; a producer's own `coalesced_count` is not
 counted, #3268) adds n - 1 to `cv_ws_conflated_total{topic}` and observes n in
@@ -541,7 +541,8 @@ class Pacer:
     def drop(self, sub: Subscription) -> None:
         """§8.4 step 1 for one topic: discard its pending state, hold its deltas, and mark it for
         a `backpressure` snapshot. `orders` / `executions` are refused: they are never dropped,
-        so the ladder closes the connection instead (step 3)."""
+        so the ladder closes the connection instead (step 3). An ended subscription is never
+        marked: it is never snapped (#2409), and `drain` deletes its mark unsent."""
         if sub.topic.family.never_throttled:
             raise ValueError(f"{sub.ch} is never dropped (S4)")
         lane = self.lanes.get(sub.sub_id)
@@ -549,7 +550,8 @@ class Pacer:
             lane.queue.clear()
             lane.due = None
             self._account(lane)
-        sub.snapshot_pending, sub.pending_reason = True, "backpressure"
+        if not sub.ended:
+            sub.snapshot_pending, sub.pending_reason = True, "backpressure"
         self.resnapshot_required[sub.sub_id] = sub
 
     def shed(self, sub: Subscription) -> None:

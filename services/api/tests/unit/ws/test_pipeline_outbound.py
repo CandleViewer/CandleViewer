@@ -1,13 +1,12 @@
-"""E17-T03 (#412, S2a-i): the budgeted outbound pipeline and its close path, flag on and off.
+"""E17-T03 (#412, S2a-i): the budgeted outbound pipeline and its close path.
 
-With `CV_WS_BACKPRESSURE_ENABLED` on, `_Connection.push` hands every frame to
-`ws.pipeline.ConnectionPipeline`: it is encoded once in the negotiated subprotocol, queued on the
-`OutboundQueue` lanes inside the 8 MiB / 2 000-frame budget, and sent as is by the writer. A close
-takes the terminal slot and flushes under one deadline (`23-ws-protocol.md` §4.4, §8.4); a frame
-that cannot be encoded fails closed (§10.1). The one encode at push is where a frame the hub
-stamped feeds #2921's frame cost series, once. With the flag off nothing of this exists, and the
-wire is byte-for-byte what it was: `test_flag_off_wire_transcript_is_unchanged` pins a transcript
-recorded on the commit before this slice.
+`_Connection.push` hands every frame to `ws.pipeline.ConnectionPipeline`: it is encoded once in
+the negotiated subprotocol, queued on the `OutboundQueue` lanes inside the 8 MiB / 2 000-frame
+budget, and sent as is by the writer. A close takes the terminal slot and flushes under one
+deadline (`23-ws-protocol.md` §4.4, §8.4); a frame that cannot be encoded fails closed (§10.1),
+and so does a writer that raises. The one encode at push is where a frame the hub stamped feeds
+#2921's frame cost series, once. #2409 removed `CV_WS_BACKPRESSURE_ENABLED`, and with it the
+flag-off path and the transcript that pinned its wire.
 
 The real router runs on the test's own loop behind a fake socket (`_Wire`): no threads, no
 sleeps, every wait bounded. Frames are queued in one synchronous turn when a test needs the writer
@@ -27,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 import inspect
 import json
 import struct
@@ -92,7 +90,7 @@ async def _no_sleep(_s: float) -> None:
     return None
 
 
-#: #2409: the rigs run the budgeted pipeline (the flag-on path) unless a test passes None.
+#: The budget the rigs run on: the contract values (§8.4).
 _ON = BackpressureConfig()
 
 
@@ -126,8 +124,8 @@ class _Wire:
     """Starlette's `WebSocket`, the slice the handler uses: inbound frames are fed, every send is
     recorded raw (`raw`) and decoded (`sent`), and `hold()` parks sends like a peer that stopped
     reading. A server `ping` is kept out of `sent`, in `pings`, and answered at once with a `pong`
-    echoing its `id`, as §9.1 requires of a client (C6): with the flag on the RTT probe (#412)
-    pings from the first classification on. `answer = False` stops answering, a client gone slow."""
+    echoing its `id`, as §9.1 requires of a client (C6): the RTT probe (#412) pings from the
+    first classification on. `answer = False` stops answering, a client gone slow."""
 
     def __init__(self, encoding: str = _JSON) -> None:
         self.scope: dict[str, Any] = {
@@ -195,7 +193,7 @@ class _Rig:
 
     def __init__(
         self,
-        backpressure: BackpressureConfig | None = _ON,
+        backpressure: BackpressureConfig = _ON,
         *,
         system_notices: Callable[[], list[dict[str, Any]]] | None = None,
         tick_s: float = 0.005,
@@ -203,7 +201,6 @@ class _Rig:
         loop_stall: Callable[[], float] | None = None,
     ) -> None:
         self.clock = _Clock()
-        self.paced = backpressure is not None  # flag on, the hub's deltas are paced (S3)
         self.audit = _Audit()
         self.hub = _Hub()
         self.revocation = RevocationHub()
@@ -272,91 +269,13 @@ class _Rig:
         return await sock.next(2)
 
     def book_delta(self, i: int, **extra: Any) -> int:
-        """One book delta; flag on, 50 ms after the last, so it leaves at once (D12)."""
+        """One book delta, 50 ms after the last, so it leaves its window at once (D12)."""
         body = {"symbol": "BTCUSDT", "depth": 50, "bids": [[f"{100 + i}.0", "1.000"]], "asks": []}
-        self.clock.now += 0.05 if self.paced else 0.0
+        self.clock.now += 0.05
         return self.sequencing.publish(_BOOK, body | extra)
 
 
-# -- flag off: the wire is unchanged ----------------------------------------------------------
-
-
-async def _flag_off_session(encoding: str) -> list[Any]:
-    """Three connections on the flag-off path: a session ending in a planned shutdown (welcome,
-    auth, a book snapshot, 32 deltas including a sampled one and a non-finite number, a pong, a
-    `system` notice), a backlog cut by a revocation (sealed), and a frame the writer cannot
-    serialise (the fault path). Returns every send, raw, with the close code and audit row."""
-    transcript: list[Any] = []
-    for scenario in ("session", "sealed", "fault"):
-        rig, sock = _Rig(backpressure=None), _Wire(encoding)
-        async with asyncio.timeout(_DEADLINE_S):
-            handler, conn = await rig.open(sock)
-            assert getattr(conn, "pipeline", None) is None
-            await rig.sub(sock)
-            if scenario == "session":
-                for i in range(31):
-                    rig.book_delta(i)
-                rig.book_delta(31, x=float("nan"))  # flag off: written as `NaN`, not refused
-                await sock.next(32)
-                sock.feed({"t": "ping", "id": "p", "p": {"client_ms": BASE_MS - 5}})
-                await sock.next()
-                rig.hub.broadcast_system({"kind": "tick"})
-                await sock.next()
-                await rig.hub.shutdown(grace_ms=0, sleep=_no_sleep)
-            elif scenario == "sealed":
-                for i in range(5):
-                    rig.book_delta(i)
-                    rig.hub.broadcast_system({"kind": "tick", "n": i})
-                await rig.revocation.revoke(SESSION)
-            else:
-                rig.book_delta(0, bad={1, 2})  # neither codec serialises a set
-            await handler
-        sends = [[kind, _normalised(p, conn.connection_id)] for kind, p in sock.raw]
-        rows = [(r["action"], r["reason"], str(r["severity"])) for r in rig.audit.records]
-        transcript.append([scenario, sends, sock.closed_with, rows])
-    return transcript
-
-
-def _normalised(payload: str | bytes, connection_id: str) -> str:
-    """The payload with the random connection id replaced (same length, so msgpack stays valid);
-    bytes as hex."""
-    if isinstance(payload, str):
-        return payload.replace(connection_id, "ws_" + "0" * 12)
-    return payload.replace(connection_id.encode(), b"ws_" + b"0" * 12).hex()
-
-
-@_ENCODINGS
-async def test_flag_off_wire_transcript_is_unchanged(encoding: str) -> None:
-    """Flag off is byte-for-byte the gateway before #412 S2a: the transcript's digest was recorded
-    on 731f4820f, before S2a touched the gateway. Its `system` frames (the `tick`, the shutdown
-    notice) are framed by `_Connection.push_system`, so a change of production's framing of them
-    moves the digest too (#3198). #2409: kept until the removal PR, the only cover of a writer
-    that raises (`_join_writer` returns its error: the `fault` scenario)."""
-    transcript = await _flag_off_session(encoding)
-    digest = hashlib.sha256(json.dumps(transcript, sort_keys=True).encode()).hexdigest()
-    kinds = {kind for _, sends, _, _ in transcript for kind, _ in sends}
-    assert kinds == {"bytes" if encoding == _MSGPACK else "text"}
-    assert [(name, code) for name, _, code, _ in transcript] == [
-        ("session", 1001),
-        ("sealed", 4401),
-        ("fault", 1011),
-    ]
-    assert digest == _FLAG_OFF_DIGESTS[encoding], json.dumps(transcript)[:4000]
-
-
-#: Recorded with `_flag_off_session` on 731f4820f (the S1 head, before S2a-i touched the gateway),
-#: in the rebase from 65d480a2: main's #2890, in between, moved `sub_ok`'s `id` after its `p`.
-#: Re-recorded for E09-X02 F-8 (#298): `welcome` no longer carries `git_sha` and `auth_ok` does;
-#: those six frames (three of each) are the transcript's only change.
-#: Re-recorded for #4992 (§12.1): each connection's `system` snap (`s` 1) follows its `auth_ok`, so
-#: the session's `tick` and shutdown notice are `s` 2 and 3; those are the transcript's only change.
-_FLAG_OFF_DIGESTS = {
-    _JSON: "0e0e56d8bfe4ccf143b8f16fecc720d16e1f47932c5c1b2d898040e9dbf50f84",
-    _MSGPACK: "c154de2a65b88cd211517cc4a71cbebfd80f4978699dea89c5e7841f5b2e0bb5",
-}
-
-
-# -- flag on: the pipeline alone -----------------------------------------------------------------
+# -- the pipeline alone ---------------------------------------------------------------------------
 
 _MARK = "zz-payload-marker"  # only payloads carry it: no log line may
 
@@ -554,7 +473,7 @@ def test_an_unencodable_frame_fails_closed(
 def test_a_non_finite_number_fails_closed_on_either_codec(
     encoding: str, value: float, ch: str
 ) -> None:
-    """§10.1 (the 23:55Z ruling on #412): with the flag on both encoders refuse a NaN or an
+    """§10.1 (the 23:55Z ruling on #412): both encoders refuse a NaN or an
     infinity, a producer bug either way, so it is the encode failure above on either codec:
     `internal_error`, logged as `ValueError`, nothing queued. That holds at any depth, for a
     priority `orders` frame and, before `attach`, for a droppable `d` of a throttled topic (after
@@ -690,7 +609,7 @@ def test_the_budget_charges_each_codec_its_own_wire_bytes() -> None:
     assert closed == {_JSON: ["slow_consumer"], _MSGPACK: []}
 
 
-# -- flag on: through the socket -----------------------------------------------------------------
+# -- through the socket ---------------------------------------------------------------------------
 
 
 def _counter(metric: Any, **labels: str) -> float:
@@ -857,7 +776,7 @@ async def test_shutdown_notice_precedes_bye_1001_under_the_flag() -> None:
 
 
 async def test_an_eviction_sends_the_step_3_bye_under_the_flag() -> None:
-    """§8.4: with the flag on every `slow_consumer` `bye` is the step 3 one, the registry's
+    """§8.4: every `slow_consumer` `bye` is the step 3 one, the registry's
     eviction (a `permission_change` or `revoked` it could not send) included: `retry_after_ms`
     3 000 and the generic message. Both lanes are cleared, so it is next."""
     rig, sock = _Rig(BackpressureConfig()), _Wire()
@@ -1008,12 +927,9 @@ async def test_a_step_3_close_whose_flush_expires_counts_under_both_reasons() ->
 
 async def test_a_fault_flush_during_a_close_gets_what_is_left_of_its_deadline() -> None:
     """§8.4, one deadline: a fault's `bye` while a close flushes is bounded by that close's
-    deadline, not a second window; with no close under way it gets a fresh `close_flush_s`.
-    Flag off it has no bound, as before."""
+    deadline, not a second window; with no close under way it gets a fresh `close_flush_s`."""
     loop = asyncio.get_running_loop()
     kw: dict[str, Any] = {"encoding": _JSON, "clock": float, "wall_ms": int, "auth_timeout_s": 1}
-    async with gateway._fault_flush(_Connection(cast(Any, _Wire()), **kw)) as unbounded:
-        assert unbounded is None
     conn = _Connection(cast(Any, _Wire()), **kw, backpressure=BackpressureConfig(close_flush_s=0.5))
     assert conn.pipeline is not None and conn.pipeline.deadline is None
     before = loop.time()
@@ -1030,8 +946,8 @@ async def test_a_fault_flush_during_a_close_gets_what_is_left_of_its_deadline() 
 
 async def test_the_fault_bye_is_bounded_by_the_close_deadline_under_the_flag() -> None:
     """A server fault's `bye` and 1011 go out under the same deadline, so a peer that stopped
-    reading cannot park the fault path either (flag off it stays unbounded); its expiry is
-    counted and logged like the writer's."""
+    reading cannot park the fault path either; its expiry is counted and logged like the
+    writer's."""
     rig, sock = _Rig(BackpressureConfig(close_flush_s=0.01)), _Wire()
     rig.expires_at = datetime(2100, 1, 1)  # naive: an authenticator contract fault (1011)
     expired = _overflow("close_flush_deadline")
@@ -1047,6 +963,34 @@ async def test_the_fault_bye_is_bounded_by_the_close_deadline_under_the_flag() -
     assert _overflow("close_flush_deadline") == expired + 1
     (passed,) = [e for e in logs if e["event"] == "ws close deadline passed"]
     assert passed["reason"] == "internal_error"
+
+
+@_ENCODINGS
+async def test_a_writer_that_raises_ends_the_connection_internal_error(
+    encoding: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§10.1, S11: a writer that raises (here its ladder `service`, which runs before each pop) is
+    the connection's fault. The handler joins it and takes its error (`_join_writer`), then sends
+    `bye internal_error` and closes 1011 itself, and the close row says `internal_error`. #2409:
+    the deleted flag-off transcript's `fault` scenario covered this join; this is its twin."""
+    rig, sock = _Rig(), _Wire(encoding)
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, conn = await rig.open(sock)
+        service = conn.pipeline.service
+
+        def faulty(now: float) -> None:
+            service(now)
+            if len(conn.pipeline.queue):  # the turn that would pop the tick below
+                raise RuntimeError("writer")
+
+        monkeypatch.setattr(conn.pipeline, "service", faulty)
+        with capture_logs() as logs:
+            rig.hub.broadcast_system({"kind": "tick"})
+            (bye,) = await sock.next()
+            await handler
+    assert (bye["t"], bye["p"]["reason"], sock.closed_with) == ("bye", "internal_error", 1011)
+    assert _rows(rig)[-1][:2] == ("ws.connection.closed", "internal_error")
+    assert [e["log_level"] for e in logs if e["event"] == "ws connection fault"] == ["error"]
 
 
 async def test_a_fault_after_the_writers_expiry_counts_the_expiry_once(
@@ -1165,7 +1109,7 @@ async def test_an_outbound_frame_over_4_mib_is_logged_and_sent() -> None:
     assert event["size"] > MAX_OUTBOUND_FRAME_BYTES and "x" * 64 not in repr(logs)
 
 
-# -- flag on: the frame cost series (#2921) ------------------------------------------------------
+# -- the frame cost series (#2921) ----------------------------------------------------------------
 
 #: The frame cost children a connection's codec feeds (E17-T06), by a readable name.
 _COST_NAMES = {
@@ -1181,7 +1125,7 @@ _COST_NAMES = {
 def test_a_stamped_frame_is_observed_once_per_series_at_push(
     encoding: str, case: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#2921 with the flag on: the pipeline encodes a frame once, at push, so that is where a
+    """#2921: the pipeline encodes a frame once, at push, so that is where a
     frame the hub stamped (`received`) is timed, by a `perf_counter` pair around its serialiser
     alone (#3061's fourth review round), and sized at its wire length: one observation in each
     series of its codec's pair, weight `SAMPLE_EVERY`, and none anywhere else. An unstamped frame
@@ -1238,8 +1182,8 @@ def test_a_stamped_frame_is_observed_once_per_series_at_push(
 async def test_the_budgeted_writer_sends_what_push_timed_and_sized(
     encoding: str, deltas: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#2921 through the router with the flag on, as `test_frame_metrics` pins the flag-off
-    writer: every frame is encoded once, at push, and sent as encoded; each data frame the hub
+    """#2921 through the router: every frame is encoded once, at push, and sent as encoded; each
+    data frame the hub
     stamped (`s` a multiple of `SAMPLE_EVERY`) is timed and sized once, under the connection's own
     kind only, and the send is not encode time. The writer does not observe a frame again, and a
     session of unstamped frames reads no timer and observes nothing."""
@@ -1295,9 +1239,10 @@ async def test_the_budgeted_writer_sends_what_push_timed_and_sized(
 
 @_ENCODINGS
 async def test_the_idle_budgeted_writer_holds_no_payload_it_sent(encoding: str) -> None:
-    """As `test_frame_metrics` pins for the flag-off writer: a stamped frame's payload (up to 4
-    MiB for a snapshot chunk) is let go once sent, not held until the next frame. By identity:
-    no value the idle writer holds is one of the payloads it sent."""
+    """A stamped frame's payload (up to 4 MiB for a snapshot chunk) is let go once sent, not held
+    until the next frame. By identity: no value the idle writer holds is one of the payloads it
+    sent, so an unrelated `str` or `bytes` local never fails this, and a failure names the
+    variable (#2409 folded in the flag-off writer's twin from `test_frame_metrics`)."""
     rig, sock = _Rig(BackpressureConfig()), _Wire(encoding)
     async with asyncio.timeout(_DEADLINE_S):
         handler, conn = await rig.open(sock)
@@ -1306,14 +1251,12 @@ async def test_the_idle_budgeted_writer_holds_no_payload_it_sent(encoding: str) 
             rig.book_delta(i)
         frames = await sock.next(SAMPLE_EVERY - 1)
         (task,) = [t for t in asyncio.all_tasks() if t.get_name() == f"{conn.connection_id}-writer"]
-        outer = task.get_coro()
-        assert inspect.iscoroutine(outer)
-        inner = outer.cr_await  # with the flag on, `writer` awaits `budgeted_writer`
-        assert inspect.iscoroutine(inner)
-        code, held = inner.cr_code.co_name, dict(inspect.getcoroutinelocals(inner))
+        coro = task.get_coro()
+        assert inspect.iscoroutine(coro)  # a suspended coroutine, not a finished eager task
+        code, held = coro.cr_code.co_name, dict(inspect.getcoroutinelocals(coro))
         handler.cancel()
         await asyncio.wait({handler})
-    assert code == "budgeted_writer" and frames[-1]["s"] == SAMPLE_EVERY
+    assert code == "writer" and frames[-1]["s"] == SAMPLE_EVERY
     sent = [payload for _, payload in sock.raw]
     retained = sorted(name for name, value in held.items() if any(value is p for p in sent))
     assert not retained, f"the idle writer still holds a payload it sent, in: {retained}"

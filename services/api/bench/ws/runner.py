@@ -1,7 +1,7 @@
 """E17-Q03 runner: one profile run, the self-check, the W5 phases, the reproducibility check.
 
     export K6_BIN=<absolute path of the pinned k6 v2.3.0>   # run, selfcheck and w5 start it
-    uv run python -m bench.ws.runner run A --flag on --out-dir DIR [--staging]
+    uv run python -m bench.ws.runner run A --out-dir DIR [--staging]
     uv run python -m bench.ws.runner run A --ws-path /api/v1/ws   # k6 on the prefixed path
     uv run python -m bench.ws.runner run smoke --duration-s 120 --warmup-s 20
     uv run python -m bench.ws.runner selfcheck [--duration-s 180]
@@ -231,7 +231,6 @@ def _commit() -> str:
 class Plan:
     profile: str  # the key in profiles.json the backend and k6 resolve
     prof: dict[str, Any]  # that profile with this run's overrides applied
-    flag: bool
     out: Path
     staging: bool
     seed: int
@@ -283,7 +282,7 @@ def plan(
         print("::error::--trace-sp with --instrumentation off: no frame carries an sp to trace")
         raise SystemExit(2)
     return Plan(
-        profile, prof, a.flag == "on", out, a.staging, a.seed, backend, k6, a.trace_sp,
+        profile, prof, out, a.staging, a.seed, backend, k6, a.trace_sp,
         float(nominal["duration_s"]), float(nominal["warmup_s"]), feeder, feeder_cpus, mode,
     )  # fmt: skip
 
@@ -336,8 +335,6 @@ def start_backend(p: Plan) -> tuple[subprocess.Popen[str], int, int]:
         p.profile,
         "--seed",
         str(p.seed),
-        "--flag",
-        "on" if p.flag else "off",
         "--out",
         str(p.out),
         "--send-delay-ms",
@@ -529,7 +526,9 @@ def execute(p: Plan, k6: str) -> Path:
         "harness": HARNESS_VERSION,
         "profile": p.profile,
         "resolved": p.prof,
-        "flag": "on" if p.flag else "off",
+        # #2409: every run is on the outbound pipeline, so "on"; the key stays so that a run
+        # matches the baselines and reports recorded while the backpressure flag existed.
+        "flag": "on",
         "steady_s": p.duration_s,
         "steady_actual_s": actual,
         "warmup_s": float(p.prof["warmup_s"]),
@@ -1219,7 +1218,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         sp.set_defaults(fn=fn)
         sp.add_argument("--tolerance", type=float, default=TOLERANCE)
         if runs:
-            sp.add_argument("--flag", choices=("on", "off"), default="on")
             sp.add_argument("--out-dir", type=Path, default=API / "bench" / "reports" / "e17")
             sp.add_argument("--staging", action="store_true")
             sp.add_argument(

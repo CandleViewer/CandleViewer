@@ -1,11 +1,10 @@
 """E17-T03 (#412): `make_ws_router(backpressure=...)`, `BackpressureConfig` and the welcome.
 
-Without a config the router bounds a connection's outbound queue at `OUTBOUND_QUEUE_MAX` (1 024
-frames) and closes `slow_consumer`; with one, the budgeted pipeline bounds it (S2a,
-`test_pipeline_outbound.py`). A config also sets `welcome.features.coalescing`, which mirrors the
-flag (`23-ws-protocol.md` §4.2): a router built without a config now advertises `false` (it was
-hard-coded `true`). The flag's default is on since #4883 (an owner ruling of 2026-10-29 on E17-Q03
-profile B, #568).
+The budgeted pipeline bounds every connection's outbound queue (S2a, `test_pipeline_outbound.py`):
+a router built without a config runs on the contract budget (`DEFAULT_BACKPRESSURE`), and every
+welcome advertises `features.coalescing: true` (`23-ws-protocol.md` §4.2). #2409 removed
+`CV_WS_BACKPRESSURE_ENABLED` and the 1 024-frame bound it kept while off; this file was
+`test_backpressure_flag.py`.
 
 The real router runs on the test's own loop behind a fake socket: no threads, no sleeps. Frames
 are queued in one synchronous turn, so the writer cannot drain them meanwhile.
@@ -26,7 +25,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.settings import Settings
 from candleviewer.ws.backpressure_config import BackpressureConfig
-from candleviewer.ws.gateway import OUTBOUND_QUEUE_MAX, GatewayHub, make_ws_router
+from candleviewer.ws.gateway import DEFAULT_BACKPRESSURE, GatewayHub, make_ws_router
 from candleviewer.ws.outbound import QUEUE_BYTES, QUEUE_FRAMES
 from candleviewer.ws.pacing import CLASSIFY_INTERVAL_S
 from candleviewer.ws.permissions import ConnectionRegistry
@@ -36,6 +35,8 @@ from tests.unit.ws.test_gateway_teardown import _Socket
 from tests.unit.ws.test_lifecycle_socket import BASE_MS, ORIGIN, SESSION, USER
 
 _DEADLINE_S = 5.0
+#: A burst past the bound #2409 removed (1 024 frames), well inside the contract budget.
+_BURST = 1024
 
 
 class _Rig:
@@ -78,51 +79,19 @@ class _Rig:
         return handler, welcome
 
 
-async def _frames_before_the_close(**router_kwargs: Any) -> tuple[int, dict[str, Any]]:
-    """Queue one frame more than the push bound in a single turn, then read to the `bye`:
-    (the frames that came before it, the `bye`)."""
-    rig, sock = _Rig(**router_kwargs), _Socket()
+async def test_router_with_a_backpressure_config_bounds_at_its_budget() -> None:
+    """S2a: a burst within the config's budget is delivered whole, and one frame over it closes
+    the socket `slow_consumer` / 4429."""
+    rig, sock = _Rig(backpressure=BackpressureConfig(max_frames=_BURST + 2)), _Socket()
     async with asyncio.timeout(_DEADLINE_S):
         handler, _ = await rig.open(sock)
         (conn,) = rig.hub.of_user(USER)
-        for _ in range(OUTBOUND_QUEUE_MAX + 1):
-            conn.push_system({"kind": "notice", "message": "tick"})  # role-neutral
-        frames = 0
-        while (frame := await sock.sent.get())["t"] != "bye":
-            frames += 1
-        await handler
-    return frames, frame
-
-
-@pytest.mark.parametrize(
-    "router_kwargs", [{}, {"backpressure": None}], ids=["router_default", "explicit_none"]
-)
-async def test_router_without_backpressure_keeps_the_1024_frame_close(
-    router_kwargs: dict[str, Any],
-) -> None:
-    """Flag off is today's path: the 1 025th queued frame closes `slow_consumer` / 4429, with no
-    drop, no re-snapshot and no allowance for the spec's 2 000 frames (that comes with the
-    backpressure wiring). Leaving the knob out is the same path as passing `None`."""
-    frames, bye = await _frames_before_the_close(**router_kwargs)
-
-    assert OUTBOUND_QUEUE_MAX == 1024
-    assert frames == OUTBOUND_QUEUE_MAX
-    assert (bye["p"]["reason"], bye["p"]["code"]) == ("slow_consumer", 4429)
-
-
-async def test_router_with_a_backpressure_config_bounds_at_its_budget_not_at_1024() -> None:
-    """S2a: a config swaps the bound for its budget. The burst that closes a flag-off socket is
-    delivered whole, and one frame over the config's budget closes it `slow_consumer` / 4429."""
-    rig, sock = _Rig(backpressure=BackpressureConfig(max_frames=OUTBOUND_QUEUE_MAX + 2)), _Socket()
-    async with asyncio.timeout(_DEADLINE_S):
-        handler, _ = await rig.open(sock)
-        (conn,) = rig.hub.of_user(USER)
-        for _ in range(OUTBOUND_QUEUE_MAX + 1):
+        for _ in range(_BURST + 1):
             conn.push_system({"kind": "notice", "message": "tick"})
-        for _ in range(OUTBOUND_QUEUE_MAX + 1):
+        for _ in range(_BURST + 1):
             assert (await sock.sent.get())["t"] == "d"
         assert not conn.closing
-        for _ in range(OUTBOUND_QUEUE_MAX + 3):
+        for _ in range(_BURST + 3):
             conn.push_system({"kind": "notice", "message": "tick"})
         bye = await sock.sent.get()  # both lanes cleared: the `bye` is next
         await handler
@@ -131,15 +100,12 @@ async def test_router_with_a_backpressure_config_bounds_at_its_budget_not_at_102
 
 
 @pytest.mark.parametrize(
-    ("router_kwargs", "coalescing"),
-    [({}, False), ({"backpressure": None}, False), ({"backpressure": BackpressureConfig()}, True)],
-    ids=["router_default", "explicit_none", "config"],
+    "router_kwargs", [{}, {"backpressure": BackpressureConfig()}], ids=["router_default", "config"]
 )
-async def test_router_welcome_advertises_coalescing_only_with_a_backpressure_config(
-    router_kwargs: dict[str, Any], coalescing: bool
+async def test_router_welcome_advertises_coalescing_with_or_without_a_config(
+    router_kwargs: dict[str, Any],
 ) -> None:
-    """A router built without the knob is flag off: every other caller of `make_ws_router`
-    (the shared rigs, the chaos harness) gets the flag-off welcome (`coalescing: false`)."""
+    """Every router coalesces (§8.2): one built without the knob runs on the contract budget."""
     rig, sock = _Rig(**router_kwargs), _Socket()
     async with asyncio.timeout(_DEADLINE_S):
         handler, welcome = await rig.open(sock)
@@ -149,8 +115,12 @@ async def test_router_welcome_advertises_coalescing_only_with_a_backpressure_con
     assert welcome["p"]["features"] == {
         "replay": True,
         "binary_payloads": True,
-        "coalescing": coalescing,
+        "coalescing": True,
     }
+
+
+def test_a_router_without_a_config_runs_on_the_contract_budget() -> None:
+    assert DEFAULT_BACKPRESSURE == BackpressureConfig()
 
 
 def test_backpressure_config_defaults_to_the_contract_budget() -> None:

@@ -88,7 +88,7 @@ FRAME_BYTES_HELP: Final = (
     "same frame counts under both, so do not sum kinds); sampled 1 in 32 (weighted) as the "
     "encode time."
 )
-#: E17-T06 with `CV_WS_BACKPRESSURE_ENABLED` on (#412's wiring, ruling D6): per process, no
+#: E17-T06 on the outbound pipeline (#412's wiring, ruling D6): per process, no
 #: connection in any label (`ws/metrics.py` imports these). Updates per merged throttle window,
 #: from the smallest merge (2) to a whole second of chaos scenario 3's 5 000 msg/s burst.
 COALESCED_BUCKETS: Final = (2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000)
@@ -107,26 +107,26 @@ WRITER_TURN_HELP: Final = (
 )
 CONFLATED_HELP: Final = (
     "Source updates merged away in WS throttle windows, by family (topic): a window of n updates "
-    "that left as one frame adds n - 1 (23 section 8.2; flag on)."
+    "that left as one frame adds n - 1 (23 section 8.2)."
 )
 COALESCED_HELP: Final = (
-    "Source updates per merged WS throttle window that left as one frame (n >= 2; flag on)."
+    "Source updates per merged WS throttle window that left as one frame (n >= 2)."
 )
 CLASS_HELP: Final = (
     "Open client WS connections by 23 section 8.3 class (state), from the first auth_ok to the "
-    "teardown (flag on). " + WRITER_TURN_HELP
+    "teardown. " + WRITER_TURN_HELP
 )
 RTT_HELP: Final = (
     "RTT of the 23 section 9.1 probe ping, one sample per answered probe; a probe unanswered for "
-    "10 s counts its age when it is retired (flag on)."
+    "10 s counts its age when it is retired."
 )
 QUEUE_BYTES_HELP: Final = (
     "Outbound WS queue depth in bytes (queued frames plus throttle-window state), sampled per "
-    "connection at each classification (23 section 8.3, 8.4; flag on). " + WRITER_TURN_HELP
+    "connection at each classification (23 section 8.3, 8.4). " + WRITER_TURN_HELP
 )
 QUEUE_FRAMES_HELP: Final = (
     "Outbound WS queue depth in frames (both lanes), sampled per connection at each "
-    "classification (23 section 8.3, 8.4; flag on). " + WRITER_TURN_HELP
+    "classification (23 section 8.3, 8.4). " + WRITER_TURN_HELP
 )
 #: Per-engine CPU time per batch.
 ENGINE_BUCKETS: Final = (

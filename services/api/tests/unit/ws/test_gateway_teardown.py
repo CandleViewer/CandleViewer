@@ -8,7 +8,7 @@ blocked in `reader()`, behind a writer stuck sending, in the close-flush wait, i
 writer that refuses to die, in the very turn the writer ends, and a second cancel inside the close
 audit. A teardown step that raises must neither skip the rest nor replace the cancel. Waits are
 event-driven and bounded: no sleeps. Every case runs on the budgeted pipeline (#412 S2a: the
-budgeted writer, and the `pipeline` teardown step; #2409: the flag-on path only).
+writer, and the `pipeline` teardown step), the one outbound path since #2409.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ _DEADLINE_S = 5.0
 _UVICORN_CANCEL = "Task cancelled, timeout graceful shutdown exceeded"
 
 
-#: #2409: the rigs run the budgeted pipeline (the flag-on path) unless a test passes None.
+#: The budget the rigs run on: the contract values (§8.4).
 _ON = BackpressureConfig()
 
 
@@ -97,7 +97,7 @@ class _Socket:
 class _Rig:
     """One gateway on the test's loop: every collaborator the teardown tail touches."""
 
-    def __init__(self, backpressure: BackpressureConfig | None = _ON) -> None:
+    def __init__(self, backpressure: BackpressureConfig = _ON) -> None:
         self.audit = _Audit()
         self.hub = GatewayHub()
         self.hub.shutting_down = True  # uvicorn cancels handlers only inside its own shutdown
@@ -152,7 +152,7 @@ class _Rig:
             "registry": not self.registry._conns,
             "revocation": not self.revocation._sockets,
             "lifecycle": conn.lifecycle.state is ConnState.CLOSED,
-            "pipeline": conn.pipeline is None or conn.pipeline.released,
+            "pipeline": conn.pipeline.released,
         }
 
     def assert_clean(self, conn: Any, reason: str, severity: str = "info") -> None:
@@ -334,15 +334,10 @@ async def test_a_raising_teardown_step_never_skips_the_rest_or_replaces_the_canc
     )
 
 
-#: #2409: the flag-off case is kept until the removal PR, the only cover of the flag-off writer's
-#: `WebSocketDisconnect` mid-send.
-@pytest.mark.parametrize("backpressure", [None, _ON], ids=["flag_off", "flag_on"])
-async def test_a_client_that_vanishes_mid_send_is_not_audited_as_shutdown(
-    backpressure: BackpressureConfig | None,
-) -> None:
+async def test_a_client_that_vanishes_mid_send_is_not_audited_as_shutdown() -> None:
     """During the shutdown window a send to a client that left ends the writer, and no
     `websocket.disconnect` reaches the reader: the writer's error carries the close code."""
-    rig, sock = _Rig(backpressure), _Socket()
+    rig, sock = _Rig(), _Socket()
     async with asyncio.timeout(_DEADLINE_S):
         handler = await rig.authenticated(sock)
         (conn,) = rig.hub.of_user(USER)

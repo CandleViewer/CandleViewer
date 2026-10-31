@@ -14,8 +14,7 @@ Three clients hold a full workspace (the book, the tape, account A's orders filt
 symbol), a chart, and a chart of ETHUSDT, a mirror of the recorded book. Through a 10 s outage the
 venue keeps moving: each tick's delta reaches `book_step` as a stray that no subscription may take
 (a pending one takes no `d`). That is asserted at the publish, which sees what a wait on a socket
-cannot (a delta arriving late), and on the frames. On E17-T03's pipeline (#2409: the flag-off row
-went).
+cannot (a delta arriving late), and on the frames. On E17-T03's pipeline.
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ from candleviewer.ws.sequencing import cv_ws_resync_total, window_delta
 from candleviewer.ws.topics import effective_throttle_ms, parse_topic
 from tests.chaos.ws._book import replay, structured
 from tests.chaos.ws._client import Client, each
-from tests.chaos.ws._server import BOOK, DEPTH, ORDERS, SEED, SYM, TRADES, A, Stack, flag_on
+from tests.chaos.ws._server import BOOK, DEPTH, ORDERS, SEED, SYM, TRADES, A, Stack, granted
 from tests.unit.ws._seq_support import ACC_A, Book, validate
 
 pytestmark = pytest.mark.chaos
@@ -65,9 +64,8 @@ Frame = dict[str, Any]
 
 @pytest.fixture
 async def world() -> AsyncIterator[Stack]:
-    """The gateway on E17-T03's pipeline (#2409: the flag-off row, a `TopicEmitter` per
-    connection, went)."""
-    async with flag_on() as running:
+    """The gateway on E17-T03's pipeline."""
+    async with granted() as running:
         yield running
 
 

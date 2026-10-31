@@ -56,7 +56,7 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   (auth timeout, token expiry on both clocks, unsolicited `ping`, heartbeat
   timeout), so tests drive time instead of sleeping. From the first `auth_ok` a timer the
   connection owns runs the same check at the token expiry and the heartbeat deadline (#3100),
-  so those closes, and with the flag on their flush deadline, start then even while the writer
+  so those closes, and their flush deadline, start then even while the writer
   is parked in a send. A re-`auth` re-arms it; it stops at the first close; a check that raises
   on it ends the connection `internal_error` (as a writer fault does, if no close took); and
   teardown cancels it first.
@@ -84,16 +84,15 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   `cv_ws_fanout_seconds` for it, weighted, once the send has returned. Unsampled frames
   carry no stamp and read no clock. Control frames and dropped frames are not observed; a
   client's drain wait, a slow consumer's backlog and replay frames are inside the span. The
-  same stamped frame's encode time and size are observed too, in the codec its connection
-  negotiated (`kind="json"` for `json.dumps` text, `kind="msgpack"` for MessagePack bytes; timed
-  with `perf_counter`, not the injected clock), and its CVWB body was timed by the encoder.
+  same stamped frame's encode time and size are observed by the pipeline at its one encode, in
+  the codec its connection negotiated, and its CVWB body was timed by the encoder.
   While latency telemetry is on, that frame also carries a span id `sp` (23 §3.1): its bytes
   are observed without it, and once it is sent the writer logs a debug `ws frame span` record.
 
-- **Backpressure flag** (E17-T03, `CV_WS_BACKPRESSURE_ENABLED`, default on since #4883):
-  `ws/pipeline.py` replaces the outbound queue. Frames are encoded once at push (where a
-  stamped frame's encode is timed and sized), onto two lanes inside one 8 MiB / 2 000-frame
-  budget, which the §8.4 ladder holds from the first `auth_ok` (drop, `backpressure`
+- **Outbound pipeline** (E17-T03, §8): `ws/pipeline.py` is the one outbound path (#2409
+  removed `CV_WS_BACKPRESSURE_ENABLED` and its unbudgeted queue). Frames are encoded once at
+  push (where a stamped frame's encode is timed and sized), onto two lanes inside one 8 MiB /
+  2 000-frame budget, which the §8.4 ladder holds from the first `auth_ok` (drop, `backpressure`
   re-snapshot, `slow_consumer` close); the writer drains it. A control frame that ends or resets
   a subscription's stream drops what it overtakes of it (§8.4 Lanes). The `bye` takes a terminal
   slot, and every close flushes under one deadline, past which the socket goes with no `bye`
@@ -104,8 +103,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   the frame's receipt (§9.1). The idle heartbeat `ping` is unchanged; while the probe runs, the
   outbound traffic does not idle long enough for it to fire.
 
-Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
-close), or the pipeline's budget with the flag on; rate-limiter window,
+Bounds (C-2.18): the pipeline's outbound budget (§8.4 ladder, then `slow_consumer`
+close); rate-limiter window,
 `MAX_CONNECTIONS_PER_USER` per user (oldest idle connection closed),
 `MAX_AUTHS_PER_USER_PER_MIN` new sockets per user per minute (state only for users
 active in the last window), `MAX_UNAUTHENTICATED_SOCKETS` sockets awaiting auth and
@@ -125,7 +124,6 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from time import perf_counter
 from typing import Any, Final, Protocol
 
 import structlog
@@ -195,10 +193,6 @@ from candleviewer.ws.limits import (
 )
 from candleviewer.ws.metrics import (
     FANOUT_SECONDS,
-    JSON_ENCODE_SECONDS,
-    JSON_FRAME_BYTES,
-    MSGPACK_ENCODE_SECONDS,
-    MSGPACK_FRAME_BYTES,
     SAMPLE_EVERY,
     count_audit_failure,
     cv_ws_auth_failures_total,
@@ -210,10 +204,9 @@ from candleviewer.ws.metrics import (
     cv_ws_handshake_seconds,
     cv_ws_overflow_total,
     cv_ws_system_frames_withheld_total,
-    frame_bytes,
 )
 from candleviewer.ws.origin_audit import OriginRefusalAudit
-from candleviewer.ws.outbound import Key, Spanned, data_key
+from candleviewer.ws.outbound import Key, Spanned
 from candleviewer.ws.pacing import never_stalled
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
@@ -227,7 +220,6 @@ from candleviewer.ws.permissions import (
 )
 from candleviewer.ws.permissions import handle_sub as _handle_sub
 from candleviewer.ws.pipeline import (
-    CLOSE_FLUSH_DEADLINE,
     ConnectionPipeline,
     Terminal,
     slow_consumer_bye,
@@ -256,9 +248,9 @@ SYSTEM_TOPIC: Final = "system"
 #: one flag read, at most `AUTH_CALL_TIMEOUT_S`); past it the oldest goes and the newest stay
 #: (C-2.18). A socket whose principal holds no role holds nothing: it is cut every frame.
 SYSTEM_HELD_MAX: Final = 256
-OUTBOUND_QUEUE_MAX: Final = 1024
-#: The items `close_with` queues past the `push` bound: `bye`, the close sentinel and its code.
-CLOSE_ITEMS: Final = 3
+#: The outbound budget a router or connection built without one runs on: the contract values
+#: (§8.4), which `Settings`' `CV_WS_QUEUE_*` defaults equal; `create_app` passes the settings' own.
+DEFAULT_BACKPRESSURE: Final = BackpressureConfig()
 #: #2155 (§4.3): the `bye` reason of a socket shed at `GatewayHub.max_unauthenticated`.
 SHED_REASON: Final = "server_shedding_load"
 WATCHDOG_TICK_S: Final = 0.05
@@ -428,7 +420,6 @@ def _wall_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
-_CLOSE = object()  # writer sentinel: the next queue item is the close code
 #: `_Connection.decode`'s answer for a frame over its size cap or `MAX_PONG_BYTES`, whose close is
 #: already queued: the reader stops. Not `None`: `null` (JSON) and nil (msgpack) decode to `None`,
 #: and a frame that does is a non-object strike like any other malformed frame (#2905).
@@ -701,10 +692,9 @@ class _Connection:
         clock: Clock,
         wall_ms: WallClockMs,
         auth_timeout_s: float,
-        backpressure: BackpressureConfig | None = None,
+        backpressure: BackpressureConfig = DEFAULT_BACKPRESSURE,
         flag_visible: FlagVisible | None = None,
         tick_s: float = WATCHDOG_TICK_S,
-        close_flush_s: float = CLOSE_FLUSH_TIMEOUT_S,
         loop_stall: Callable[[], float] | None = None,
     ) -> None:
         self.ws = ws
@@ -731,8 +721,6 @@ class _Connection:
         #: one such frame at a time across the user's sockets, each held to the loop turn after
         #: it (the reader's `sleep(0)`).
         self.decode_turn: asyncio.Lock | None = None
-        #: Data frames stop at `OUTBOUND_QUEUE_MAX` (`push`); the `CLOSE_ITEMS` still fit (C-2.18).
-        self.outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=OUTBOUND_QUEUE_MAX + CLOSE_ITEMS)
         self.user_id: uuid.UUID | None = None
         self.session_id: str | None = None
         #: The session an `auth` in flight registered with the `RevocationHub` (#2739): it becomes
@@ -779,23 +767,20 @@ class _Connection:
         self.end_writer: Callable[[], object] = lambda: None
         self.timer_fault: BaseException | None = None
         #: #415: the flush timer (`arm_flush_deadline`), which ends a writer still running at its
-        #: deadline, and whether it fired. With the flag on a close's flush is the pipeline's.
-        self.close_flush_s = close_flush_s if backpressure is None else backpressure.close_flush_s
+        #: deadline, and whether it fired. A close's own flush is the pipeline's.
+        self.close_flush_s = backpressure.close_flush_s
         self.flush_timer: asyncio.TimerHandle | None = None
         self.flush_passed = False
         self.opened_at = now
-        #: E17-T03 (#412): the budgeted outbound path while `CV_WS_BACKPRESSURE_ENABLED` is on;
-        #: None keeps `outbound` and its `OUTBOUND_QUEUE_MAX` push bound.
-        self.pipeline: ConnectionPipeline | None = None
-        if backpressure is not None:
-            self.pipeline = ConnectionPipeline(
-                encoding=encoding,
-                config=backpressure,
-                close=self.close_with,
-                wall_ms=wall_ms,
-                connection_id=self.connection_id,
-                stalled=loop_stall or never_stalled,
-            )
+        #: E17-T03 (#412): the one outbound path, inside its budget (§8.4).
+        self.pipeline = ConnectionPipeline(
+            encoding=encoding,
+            config=backpressure,
+            close=self.close_with,
+            wall_ms=wall_ms,
+            connection_id=self.connection_id,
+            stalled=loop_stall or never_stalled,
+        )
 
     def due(self) -> str | None:
         """The watchdog verdict now. Token expiry fires on whichever clock gets
@@ -855,7 +840,7 @@ class _Connection:
         """The timer's turn: the writer's check, then the next arm while no close is under way.
         A check that raises fails closed (`internal_error`): the close first, then the log line,
         each guarded. If no close took (the fault came after `close_with` began: no `bye`, or
-        with the flag on no flush deadline), the connection ends as on a writer fault: the writer
+        no flush deadline), the connection ends as on a writer fault: the writer
         is cancelled and the handler sends `bye internal_error` + `1011` itself. A cancellation
         raised here cancels no task, so it fails closed too, then is re-raised: the check's own,
         or one raised by the fail-closed close, which the `Exception` guard on that close does not
@@ -877,8 +862,7 @@ class _Connection:
                     self.close_with("internal_error")
             except asyncio.CancelledError as stopped:
                 cancelled = stopped  # held for the fold and the log line below, then re-raised
-            pipe = self.pipeline
-            if self.bye_frame is None or (pipe is not None and pipe.deadline is None):
+            if self.bye_frame is None or self.pipeline.deadline is None:
                 self.bye_frame = None  # the close never took: the handler sends its own `bye`
                 self.timer_fault = exc
                 self.end_writer()
@@ -903,21 +887,17 @@ class _Connection:
         self.stop_flush_deadline()
 
     def arm_flush_deadline(self, delay: float) -> None:
-        """#415: end the writer `delay` s from now (loop clock) if it still runs then: flag off a
-        close's `close_flush_s`, and from `accept` to the first `auth_ok` `auth_timeout_s` plus it.
-        The earliest stands; none after teardown, after one fired, or with no loop (no writer)."""
+        """#415: end the writer `delay` s from now (loop clock) if it still runs then: armed once,
+        at `accept`, for `auth_timeout_s` plus `close_flush_s` until the first `auth_ok` (a close's
+        own flush is the pipeline's deadline). A second arm keeps the first; none after teardown,
+        after one fired, or with no loop (no writer)."""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        when = loop.time() + delay
-        if self.timer_stopped or self.flush_passed:
+        if self.timer_stopped or self.flush_passed or self.flush_timer is not None:
             return
-        if self.flush_timer is not None:
-            if self.flush_timer.when() <= when:
-                return
-            self.flush_timer.cancel()
-        self.flush_timer = loop.call_at(when, self._flush_deadline_passed)
+        self.flush_timer = loop.call_at(loop.time() + delay, self._flush_deadline_passed)
 
     def stop_flush_deadline(self) -> None:
         """#415: at the first `auth_ok` (its accept-time bound ends) and at teardown."""
@@ -928,7 +908,7 @@ class _Connection:
     def _flush_deadline_passed(self) -> None:
         """#415: the socket closes `slow_consumer` unless a close is under way, and the writer ends
         even if that raises, so the handler tears the socket down. A writer still running had a peer
-        that stopped reading: counted and logged as the flag-on path does (`abandon`)."""
+        that stopped reading: counted and logged once per connection (`abandon`)."""
         self.flush_timer, self.flush_passed = None, True
         try:
             if not self.closing:
@@ -938,35 +918,21 @@ class _Connection:
         if not running:
             return
         reason = str(self.bye_frame["p"]["reason"]) if self.bye_frame is not None else None
-        if self.pipeline is not None:  # counted once per connection, as its writer's expiry
-            self.pipeline.abandon(reason)
-        else:
-            cv_ws_overflow_total.labels(reason=CLOSE_FLUSH_DEADLINE).inc()
-            fields = {"connection_id": self.connection_id, "reason": reason}
-            _log().warning("ws close deadline passed", **fields, flush_abandoned=True)
+        self.pipeline.abandon(reason)  # counted once per connection, as its writer's expiry
 
     # -- outbound -----------------------------------------------------------
 
     def push(self, frame: dict[str, Any], received: float | None = None) -> None:
-        """Queue one frame; a full queue is a slow consumer (C-2.18 policy). A sampled data frame
-        comes with `received`, the `clock` reading at which the hub took it, and is queued with it
-        as `(received, frame)`: the writer observes `cv_ws_fanout_seconds` from that pair once the
-        socket has the frame, and times and sizes its encode (`cv_ws_frame_*`) before the send. It
-        never reaches the wire, and with the flag off a frame dropped from the queue (a seal, a
-        full queue) is never observed. Any other frame is queued bare. With the flag on the
-        pipeline queues it (`ws/pipeline.py`), the stamp on its `Queued`: it encodes the frame
-        once, at push, and times and sizes a stamped one there, so the writer observes only the
-        fan-out span, and a stamped frame that a close drops after its push is in
-        `cv_ws_frame_*` but not in `cv_ws_fanout_seconds`."""
+        """Queue one frame on the pipeline (`ws/pipeline.py`), whose budget and §8.4 ladder bound
+        it (C-2.18). A sampled data frame comes with `received`, the `clock` reading at which the
+        hub took it, which rides on its `Queued`: the pipeline encodes the frame once, at push, and
+        times and sizes a stamped one there (`cv_ws_frame_*`), and the writer observes
+        `cv_ws_fanout_seconds` from the stamp once the socket has the frame. So a stamped frame
+        that a close drops after its push is in `cv_ws_frame_*` but not in
+        `cv_ws_fanout_seconds`."""
         if self.closing:
             return
-        if self.pipeline is not None:
-            self.pipeline.push(frame, received)
-            return
-        if self.outbound.qsize() >= OUTBOUND_QUEUE_MAX:
-            self.close_with("slow_consumer")
-            return
-        self.outbound.put_nowait(frame if received is None else (received, frame))
+        self.pipeline.push(frame, received)
 
     async def send(self, frame: dict[str, Any]) -> None:
         """Registry / `handle_sub` adapter; silent before the first `auth_ok` (SR-189)."""
@@ -1056,13 +1022,11 @@ class _Connection:
         `seal=True` is for closes that end the identity (token expiry,
         revocation): every frame still queued is dropped and the `bye` is the
         next frame sent, even if another close is already under way (#2259
-        review). Otherwise the `bye` follows the frames already queued. May
-        exceed the `push` bound by exactly these items so a full queue can
-        still be closed; every later push is dropped.
+        review). Every later push is dropped.
 
-        With the flag on the `bye` takes the pipeline's terminal slot instead: a sealed or
-        `slow_consumer` close clears both lanes, any other keeps only the priority lane ahead
-        of the `bye` (`23-ws-protocol.md` §8.4)."""
+        The `bye` takes the pipeline's terminal slot, outside the budget, so a full queue can
+        still be closed: a sealed or `slow_consumer` close clears both lanes, any other keeps only
+        the priority lane ahead of the `bye` (`23-ws-protocol.md` §8.4)."""
         if self.closing:
             if seal and not self.sealed:
                 # An identity-ending event during a close already under way.
@@ -1085,20 +1049,13 @@ class _Connection:
         cv_ws_closes_total.labels(reason=close_reason_label(bye_reason)).inc()
         if self.lifecycle.can(ConnEvent.CLOSE):
             self.lifecycle.fire(ConnEvent.CLOSE)
-        if self.pipeline is not None:
-            self.sealed = seal
-            self.bye_frame = frame
-            flush = not (seal or bye_reason == "slow_consumer")
-            dropped = self.pipeline.close(frame, code, flush=flush)
-        else:
-            dropped = self._seal() if seal else 0
-            self.bye_frame = frame
-            for item in (frame, _CLOSE, code):
-                self.outbound.put_nowait(item)
-            self.arm_flush_deadline(self.close_flush_s)  # #415: the flag on's bound, flag off
+        self.sealed = seal
+        self.bye_frame = frame
+        flush = not (seal or bye_reason == "slow_consumer")
+        dropped = self.pipeline.close(frame, code, flush=flush)
         # #571: at its audit row's severity, with step 3's trigger when step 3 closed it.
-        pipe = self.pipeline
-        step3 = {} if pipe is None or pipe.trigger is None else {"trigger": pipe.trigger}
+        trigger = self.pipeline.trigger
+        step3 = {} if trigger is None else {"trigger": trigger}
         log = _log().warning if bye_reason in WARNING_CLOSES else _log().info
         log(
             "ws close",
@@ -1115,7 +1072,7 @@ class _Connection:
         """#571: `ws connection ended`, once per connection at its teardown, authenticated or
         not, whoever closed it: `warning` for `internal_error`, else `info`. The close code is
         the server's 1011 after a fault, else its `bye`'s, else the client's (None when the drop
-        carried none); the class is the pipeline's last, none with the flag off or unattached."""
+        carried none); the class is the pipeline's last, none while unattached."""
         reason = closed_reason(self, fault, server_shutting_down=server_shutting_down)
         if fault is not None:
             code: int | None = int(CLOSE_REASONS["internal_error"][0])
@@ -1123,7 +1080,7 @@ class _Connection:
             code = int(self.bye_frame["p"]["code"])
         else:
             code = self.disconnect_code
-        ladder = None if self.pipeline is None else self.pipeline.ladder
+        ladder = self.pipeline.ladder
         cls = {} if ladder is None else {"connection_class": str(ladder.pacer.cls)}
         log = _log().warning if reason == "internal_error" else _log().info
         log(
@@ -1138,22 +1095,10 @@ class _Connection:
         )
 
     def _seal(self) -> int:
-        """End the identity: drop every queued frame except a pending close
-        (`bye`, the close sentinel, its code). Returns how many were dropped."""
+        """End the identity: drop every queued frame, both lanes, except a pending close (the
+        terminal slot). Returns how many were dropped."""
         self.sealed = True
-        if self.pipeline is not None:
-            return self.pipeline.seal()
-        kept: list[Any] = []
-        dropped = 0
-        while not self.outbound.empty():
-            item = self.outbound.get_nowait()
-            if item is self.bye_frame or item is _CLOSE or isinstance(item, int):
-                kept.append(item)
-            else:
-                dropped += 1
-        for item in kept:
-            self.outbound.put_nowait(item)
-        return dropped
+        return self.pipeline.seal()
 
     async def closer(self, frame: dict[str, Any], code: int) -> None:
         """`RevocationHub` / registry hook: the session or user is gone, so the
@@ -1163,22 +1108,12 @@ class _Connection:
 
     def purge(self, subs: list[Subscription]) -> set[Key]:
         """`ConnectionAuthz.on_purge` (#415, §9.5): the queued frames of what a change revokes, a
-        grant or a permission withdrawn alike, are dropped before `permission_change` is queued,
-        whatever the flag. Every `d` and `snap` of `subs` goes, from both lanes with the flag on;
-        every other item keeps its place. Counted per frame as
-        `cv_ws_overflow_total{reason="withdrawn"}`. Returns the keys whose frames went."""
+        grant or a permission withdrawn alike, are dropped before `permission_change` is queued.
+        Every `d` and `snap` of `subs` goes, from both lanes; every other item keeps its place.
+        Counted per frame as `cv_ws_overflow_total{reason="withdrawn"}`. Returns the keys whose
+        frames went."""
         keys = {(sub.ch, sub.replay_session_id) for sub in subs}
-        gone: list[Key] = []
-        if self.pipeline is not None:
-            gone = self.pipeline.queue.purge(keys)
-        else:  # the queue's own order, as `_seal` keeps it; a sampled frame is `(received, frame)`
-            for item in [self.outbound.get_nowait() for _ in range(self.outbound.qsize())]:
-                frame = item[1] if type(item) is tuple else item
-                key = data_key(frame) if isinstance(frame, dict) else None
-                if key is not None and key in keys:
-                    gone.append(key)
-                else:
-                    self.outbound.put_nowait(item)
+        gone = self.pipeline.queue.purge(keys)
         if gone:
             cv_ws_overflow_total.labels(reason="withdrawn").inc(len(gone))
         return set(gone)
@@ -1186,11 +1121,10 @@ class _Connection:
     async def evict(self) -> None:
         """Registry hook: sending a `permission_change` or `revoked` stalled or failed, or the
         swap or the settle around them raised, so the connection closes `slow_consumer` with
-        nothing still queued ahead of its `bye` (#415, §9.5), whatever the flag: sealed with the
-        flag off; with it on, the step 3 `bye`, which clears both lanes (`retry_after_ms` 3 000 and
-        the generic message, `23-ws-protocol.md` §8.4). A close already under way stays the
-        connection's one close (§8.6): it is sealed (with the flag on, the priority lane goes too),
-        and counted and logged as no second close."""
+        nothing still queued ahead of its `bye` (#415, §9.5): the step 3 `bye`, which clears both
+        lanes (`retry_after_ms` 3 000 and the generic message, `23-ws-protocol.md` §8.4). A close
+        already under way stays the connection's one close (§8.6): it is sealed (the priority lane
+        goes too), and counted and logged as no second close."""
         if self.closing and not self.sealed:
             dropped = self._seal()
             _log().info(
@@ -1200,10 +1134,8 @@ class _Connection:
                 user_id=str(self.user_id) if self.user_id else None,
                 session_id=self.session_id,
             )
-        elif self.pipeline is not None:
-            self.close_with("slow_consumer", bye=slow_consumer_bye(self.wall_ms()))
         else:
-            self.close_with("slow_consumer", seal=True)
+            self.close_with("slow_consumer", bye=slow_consumer_bye(self.wall_ms()))
 
     # -- inbound ------------------------------------------------------------
 
@@ -1421,10 +1353,8 @@ def _step(conn: _Connection, name: str) -> Iterator[None]:
 
 
 def _fault_flush(conn: _Connection) -> contextlib.AbstractAsyncContextManager[object]:
-    """The bound on a fault's `bye` and 1011: the close flush deadline with the flag on (a peer
-    that stopped reading would park them, `_bounded_flush`), none with it off, as before."""
-    if conn.pipeline is None:
-        return contextlib.nullcontext()
+    """The bound on a fault's `bye` and 1011: the close flush deadline (a peer that stopped
+    reading would park them, `_bounded_flush`)."""
     return _bounded_flush(conn.pipeline)
 
 
@@ -1504,15 +1434,14 @@ def make_ws_router(
     # §12.1 (#4992): the latest `health` frame (`HealthSystemPublisher.latest`), `None` before the
     # first, for the `system` snap at `auth_ok`. Without it the snap carries no health fields.
     system_baseline: SystemBaseline | None = None,
-    backpressure: BackpressureConfig | None = None,
-    close_flush_s: float = CLOSE_FLUSH_TIMEOUT_S,
+    backpressure: BackpressureConfig = DEFAULT_BACKPRESSURE,
     # §9.6 (#3085): the view-as binding an `auth` reads (`ViewAsRead`). Without it no session is
     # bound to a context, as before view-as: the composition root wires it on the real backend.
     view_as: ViewAsRead | None = None,
     # §9.6: the record of a viewing session's refused action frame. Without it the frame is still
     # refused (`err`), with no record.
     view_as_refusals: ViewAsFrameRefusals | None = None,
-    # #4833: the server loop's stall to date (`LoopStall`), which the flag-on RTT probe leaves
+    # #4833: the server loop's stall to date (`LoopStall`), which the RTT probe leaves
     # out. Without it a stall of the loop counts as the client's RTT, as before #4833.
     loop_stall: Callable[[], float] | None = None,
 ) -> APIRouter:
@@ -1520,27 +1449,25 @@ def make_ws_router(
 
     `clock` (monotonic seconds) drives every deadline but one, so tests
     inject a fake clock; `tick_s` is only the poll cadence. The exception is the close flush
-    deadline with the flag on, which runs on the event loop's clock: only an `asyncio.Timeout`
+    deadline, which runs on the event loop's clock: only an `asyncio.Timeout`
     can cancel a send that a peer which stopped reading has parked (`ws/pipeline.py`). So does
     each `auth` call's bound, `auth_call_timeout_s` (#2155), for a call that never returns. The
     close timer (#3100) is a loop timer too, armed for what is left of a deadline on `clock` and
     every `CLOSE_RECHECK_TICKS` ticks at most, so a fake `clock` still drives it.
 
-    `backpressure` (E17-T03, #412) selects the budgeted outbound pipeline (`ws/pipeline.py`,
-    `23-ws-protocol.md` §8.4): its budget binds both lanes, and a close flushes under its
-    deadline. `None`, today's path, keeps the `OUTBOUND_QUEUE_MAX` push bound. A config also
-    makes the `welcome` advertise `features.coalescing` (§4.2); the default is on since #4883
-    (the owner ruling of 2026-10-29 on E17-Q03, #568; chaos scenarios 2 and 3 pass, #410). Without
-    a config the `welcome` says `coalescing: false`.
+    `backpressure` (E17-T03, #412) is each connection's outbound budget, classification cadence
+    and close flush deadline (`ws/pipeline.py`, `23-ws-protocol.md` §8.4): the budget binds both
+    lanes, and a close flushes under the deadline. Without one the contract values apply
+    (`DEFAULT_BACKPRESSURE`); `create_app` passes the `CV_WS_*` budget settings'. The `welcome`
+    advertises `features.coalescing: true` (§4.2).
 
-    #415: flag off, a close flushes within `close_flush_s` (loop clock), then a writer parked on a
-    send ends; until the first `auth_ok`, `auth_timeout_s` plus that bound from `accept` ends one,
-    flag on or off."""
+    #415: until the first `auth_ok`, `auth_timeout_s` plus the close flush deadline from `accept`
+    ends a writer parked on a send."""
     router = APIRouter()
     gateway_hub = hub if hub is not None else GatewayHub()
     killed = kill_switch or (lambda: {"engaged": False, "scope": "global"})
     refusal_log = RefusalLogLimiter()
-    features = welcome_features(coalescing=backpressure is not None)
+    features = welcome_features()
 
     def log_refusal(cause: OriginRefusal, scope: Mapping[str, Any]) -> None:
         """§2.5: a capped warning per refused upgrade; never a header value."""
@@ -1608,8 +1535,8 @@ def make_ws_router(
             return
         try:
             reason = closed_reason(conn, fault, server_shutting_down=gateway_hub.shutting_down)
-            # Flag on: the step 3 trigger and an expired flush (§4.3), when there is either.
-            state = conn.pipeline.audit_state() if conn.pipeline is not None else None
+            # The step 3 trigger and an expired flush (§4.3), when there is either.
+            state = conn.pipeline.audit_state()
             async with asyncio.timeout(CLOSE_AUDIT_TIMEOUT_S):
                 await audit.emit(
                     "ws.connection.closed",
@@ -1956,12 +1883,11 @@ def make_ws_router(
                 push_data=conn.push,
                 span_id=svc.span_ids,
             )
-            if svc.sequencing is not None:  # flag on: the pipeline paces the deltas (§8.1)
-                sink = conn.emitter if conn.pipeline is None else conn.pipeline
-                svc.sequencing.register(conn.authz, sink)
-            if conn.pipeline is not None:  # E17-T03: the §8.4 ladder, from the first auth_ok
-                conn.pipeline.attach(conn.authz, conn.emitter, conn.push_system)
-            # #415 (§9.5), whatever the flag: a change's purge, and the snapshots that follow it
+            if svc.sequencing is not None:  # the pipeline paces the deltas (§8.1)
+                svc.sequencing.register(conn.authz, conn.pipeline)
+            # E17-T03: the §8.4 ladder, from the first auth_ok
+            conn.pipeline.attach(conn.authz, conn.emitter, conn.push_system)
+            # #415 (§9.5): a change's purge, and the snapshots that follow it
             conn.authz.on_purge = conn.purge
             conn.authz.on_settle = lambda subs: settle(conn, subs)
         conn.lifecycle.fire(ConnEvent.AUTH_OK)
@@ -2075,34 +2001,18 @@ def make_ws_router(
     def flush(conn: _Connection, fresh: set[str]) -> None:
         """Snapshot the pending subscriptions after a `sub` or `ctl`; a `machines` one only when
         this frame made it pending (`fresh`). After that only a publish on its topic wakes it,
-        never an inbound frame (§6.4). Flag on, the pipeline contains a build that raises."""
+        never an inbound frame (§6.4). The pipeline contains a build that raises."""
         if conn.authz is not None and conn.emitter is not None:
             subs = conn.authz.by_id.values()
-            sink = conn.emitter if conn.pipeline is None else conn.pipeline
-            sink.flush_pending(
+            conn.pipeline.flush_pending(
                 [s for s in subs if s.topic.entity_kind is None or s.sub_id in fresh]
             )
 
     def settle(conn: _Connection, subs: list[Subscription]) -> None:
         """Once a permission change's frames are queued: the `reconfigure` snapshots of what its
         narrowing re-pended (`subs`, nothing else), built under the new scope (§9.5). One that
-        raises is contained to its subscription (§10.1): flag on, by the pipeline; flag off, as
-        the hub contains one (`SequencingHub._snapshot_failed`), left pending with its reason
-        for the next flush, and nothing closes. The flag-off `ws snapshot failed` line is the
-        settle's own: one per subscription per change, not throttled as the hub's is (§9.5)."""
-        if conn.pipeline is not None:
-            conn.pipeline.flush_pending(subs)
-        elif (emitter := conn.emitter) is not None:
-            for sub in subs:
-                try:
-                    emitter.flush_pending((sub,))
-                except Exception as exc:  # contained to `sub`, as the hub contains one
-                    sub.snapshot_pending = True  # a raise may follow the build, which cleared it
-                    fam = sub.topic.family  # by family and error class, never the text (C-12.6)
-                    fields = {"family": fam.family, "error": type(exc).__name__}
-                    with contextlib.suppress(Exception):  # a failing logger changes nothing
-                        log = _log().error if fam.never_throttled else _log().warning
-                        log("ws snapshot failed", connection_id=conn.connection_id, **fields)
+        raises is contained to its subscription by the pipeline (§10.1)."""
+        conn.pipeline.flush_pending(subs)
 
     async def dispatch(conn: _Connection, frame: Any) -> None:
         if isinstance(frame, dict) and "id" in frame and not _is_envelope_id(frame["id"]):
@@ -2139,8 +2049,8 @@ def make_ws_router(
         elif kind == "ping":
             pong(conn, frame)
         elif kind == "pong":  # a reply to a server ping; inbound traffic already recorded
-            if conn.pipeline is not None and isinstance(fid, str):  # flag on: maybe the probe's
-                conn.pipeline.pong(fid, conn.watchdog.last_inbound)  # at its receipt (§9.1)
+            if isinstance(fid, str):  # maybe the RTT probe's, at its receipt (§9.1)
+                conn.pipeline.pong(fid, conn.watchdog.last_inbound)
         elif kind == "auth":
             await do_auth(conn, frame)
         elif not conn.lifecycle.authenticated:
@@ -2195,70 +2105,13 @@ def make_ws_router(
                     await asyncio.sleep(0)  # as `receive` returns at once while frames are queued
 
     async def writer(conn: _Connection) -> None:
-        if conn.pipeline is not None:
-            await budgeted_writer(conn, conn.pipeline)
-            return
-        pings = 0
-        turn = _WriterSlice()
-        while True:
-            if conn.watch():
-                pings += 1
-                now_ms = conn.wall_ms()
-                conn.push(
-                    {"t": "ping", "id": f"s-hb-{pings}", "ts": now_ms, "p": {"server_ms": now_ms}}
-                )
-            if conn.outbound.empty():
-                turn.restart()  # the `get` below waits: the loop gets its turns
-            try:
-                item = await asyncio.wait_for(conn.outbound.get(), timeout=tick_s)
-            except TimeoutError:
-                continue
-            if item is _CLOSE:
-                code = await conn.outbound.get()
-                conn.close_code = code
-                with contextlib.suppress(Exception):
-                    await conn.ws.close(code=code)
-                return
-            conn.watch()  # the dequeue may have waited a tick; a ping is queued only above
-            if conn.sealed and item is not conn.bye_frame:
-                continue  # the identity ended while this frame was queued: never send it
-            try:
-                if type(item) is tuple:  # the hub's sampled data frame, queued with its stamp
-                    received, item = item
-                    began = perf_counter()  # its encode time and size too, with the same weight
-                    payload = conn.encode_frame(item)
-                    seconds = perf_counter() - began
-                    # The pair of the connection's codec. A JSON text is ASCII: chars are bytes.
-                    sp = item.get("sp")  # left out of the size (23 §3.1)
-                    size = frame_bytes(payload, sp, msgpack=conn.msgpack)
-                    if conn.msgpack:
-                        MSGPACK_ENCODE_SECONDS.observe(seconds, SAMPLE_EVERY)
-                        MSGPACK_FRAME_BYTES.observe(size, SAMPLE_EVERY)
-                    else:
-                        JSON_ENCODE_SECONDS.observe(seconds, SAMPLE_EVERY)
-                        JSON_FRAME_BYTES.observe(size, SAMPLE_EVERY)
-                    await conn.send_payload(payload)
-                    del payload  # the encoded copy (up to 4 MiB, a snapshot chunk) is not kept idle
-                    now = conn.clock()  # the watchdog's send time, which this frame also observes
-                    conn.watchdog.last_outbound = now
-                    FANOUT_SECONDS.observe(now - received, SAMPLE_EVERY)
-                    if sp is not None:
-                        _log_span(conn.connection_id, sp, item["ch"], item["s"], now - received)
-                else:  # every other frame: no stamp, no observation
-                    await conn.send_frame(item)
-                    conn.watchdog.last_outbound = conn.clock()
-            except WebSocketDisconnect as exc:
-                conn.disconnect_code = exc.code  # the client left mid-send; the reader saw nothing
-                raise
-            await turn.sent()
-
-    async def budgeted_writer(conn: _Connection, pipe: ConnectionPipeline) -> None:
-        """The writer with the flag on (still the one writer task, TG5): the priority lane
-        first, each payload as the pipeline encoded it; after a close, what the close kept, then
-        the `bye` and the close frame. The close's flush deadline bounds all of it: past it the
+        """The connection's one writer task (TG5): the priority lane first, each payload as the
+        pipeline encoded it; after a close, what the close kept, then the `bye` and the close
+        frame. The close's flush deadline bounds all of it: past it the
         flush is abandoned with no `bye` (§4.4), counted (`ConnectionPipeline.abandon`), and the
         handler tears the socket down. A stamped frame's encode was observed at push: the writer
         observes only its fan-out span. Before each pop it runs the ladder's `service` (`drain`)."""
+        pipe = conn.pipeline
         queue = pipe.queue
         pings = 0
         turn = _WriterSlice()
@@ -2354,7 +2207,6 @@ def make_ws_router(
             backpressure=backpressure,
             flag_visible=flag_visible,
             tick_s=tick_s,
-            close_flush_s=close_flush_s,
             loop_stall=loop_stall,
         )
         if gateway_hub.unauthenticated >= gateway_hub.max_unauthenticated:  # #2155 (§4.3)
@@ -2413,7 +2265,7 @@ def make_ws_router(
                     )
                     with contextlib.suppress(Exception):  # S11: bye before the 1011 close
                         bye = lifecycle_bye("internal_error", now_ms=wall_ms())
-                        async with _fault_flush(conn):  # flag on: the close flush deadline
+                        async with _fault_flush(conn):  # the close flush deadline
                             await conn.send_frame(bye)
                             await ws.close(code=int(CLOSE_REASONS["internal_error"][0]))
             finally:
@@ -2431,9 +2283,8 @@ def make_ws_router(
                 # path resets `authz` alone today; if one does, what was registered is released.
                 if conn.authz is None:
                     conn.authz = conn.registered
-                if conn.pipeline is not None:
-                    with _step(conn, "pipeline"):
-                        conn.pipeline.release()
+                with _step(conn, "pipeline"):
+                    conn.pipeline.release()
                 if conn.authz is not None:
                     conn.authz.on_purge = conn.authz.on_settle = None  # `on_drop`: the pipeline's
                     with _step(conn, "sequencing"):
