@@ -41,6 +41,10 @@ ALLOWED: dict[str, frozenset[str]] = {
     "app.py": frozenset({FEED}),
     "oms/stream_consumer.py": frozenset({"ws_heartbeat", "ws_dropped", "wallet_pushed"}),
     "oms_stream_wiring.py": frozenset({"ws_heartbeat", "ws_dropped", "wallet_pushed"}),
+    # E29-T06 #914: `LastMessages` stands in front of the consumer's `ServedEvidence`, marks the
+    # account's last private-stream message on a heartbeat (24 Sec.8.5 `gap_from`) and hands each
+    # call on as it is made; it originates no evidence and never reads the feed's property.
+    "oms_reconcile_wiring.py": frozenset({"ws_heartbeat", "ws_dropped", "wallet_pushed"}),
 }
 
 

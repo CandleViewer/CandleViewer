@@ -28,7 +28,7 @@ from candleviewer.oms.order_machine import Legality
 from candleviewer.statechart import build
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.registry import Registry
-from tests.unit.oms.order_rig import ACCOUNT, fill_of, order_of
+from tests.unit.oms.order_rig import ACCOUNT, build_rig, fill_of, order_of
 from tests.xstate_contract._harness import AuditTap, settle
 from tests.xstate_contract.b01_ports import Commands, Store
 
@@ -216,6 +216,52 @@ async def test_inv_b1_l_an_applied_fill_restarts_the_miss_count() -> None:
         assert (_leaf(interp), interp.context["recon_misses"]) == ("untracked", 0)
         await _send(interp, "RECON_MISS", {"pass_id": "p2"})
         assert (_leaf(interp), interp.context["recon_misses"]) == ("untracked", 1)
+
+
+async def test_an_untracked_row_holding_a_fill_ends_cancelled_with_its_protection_handed_on() -> (
+    None
+):
+    """Newly reachable in version 8 (#5157's code look): an `untracked` row that applied a partial
+    fill and then misses twice ends `cancelled`, which `starts_protection` answers yes for, as it
+    holds a fill (`_filled`): `cancelled`'s entry posts `first_fill`, then `terminal`, and nothing
+    is ever sent (INV-B1-l, INV-B1-o)."""
+    async with _discovered() as (interp, store, commands):
+        await _send(interp, "EXEC", _exec("e1", "0.4"))
+        await _send(interp, "RECON_MISS", {"pass_id": "p1"})
+        await _send(interp, "RECON_MISS", {"pass_id": "p2"})
+        assert (_leaf(interp), interp.context["filled_qty"]) == ("cancelled", "0.4")
+        assert [n["kind"] for n in interp.context["outbox"]] == ["first_fill", "terminal"]
+        steps = [(s.from_state, s.to_state) for s in store.steps[1:]]
+        assert steps == [("untracked", "untracked")] * 2 + [("untracked", "cancelled")]
+        assert commands.sent == []
+
+
+async def test_the_facade_hands_a_cancelled_untracked_rows_position_to_b8() -> None:
+    """The same trace through the facade (`OrderMachines`): the discovered order's `first_fill`
+    starts no attach, as it is not the OMS's (`discovered`), so B1's region lands in `sl_missing`
+    and the facade asks B8 for its fallback (`request_fallback_sl`), only as 24 Sec.8.8 rule 3's
+    watchdog acts; nothing is sent to the venue (C-2.6)."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(b01, "_ATTEMPTS", OrderedDict())
+        rig = build_rig()
+        try:
+            found = order_of(7, order_link_id="ext-" + "ab" * 16, exchange_order_id="x7")
+            assert await rig.facade.discover(found, environment="demo") == "untracked"
+            await rig.facade.push(ACCOUNT, found.id, "EXEC", fill_of(found, "e1", "0.4"))
+            for pass_id in ("p1", "p2"):
+                miss = {"pass_id": pass_id}
+                await rig.facade.command(ACCOUNT, found.id, "RECON_MISS", miss, actor="system")
+                await rig.quiet()
+            row = await rig.orders.get(ACCOUNT, found.id)
+            assert row is not None
+            assert (row.state, row.cum_exec_qty) == ("cancelled", Decimal("0.4"))
+            assert rig.commands.sent == []
+            assert [(n.kind, dict(n.detail)) for n in rig.notices.got] == [
+                ("alert", {"alert": "SL_ATTACH_FAILED"}),
+                ("request_fallback_sl", {}),
+            ]
+        finally:
+            await rig.facade.stop()
 
 
 async def test_a_findings_execution_is_still_only_recorded_in_untracked() -> None:
