@@ -9,10 +9,16 @@ export default defineConfig({
   testDir: ".",
   testMatch: /e05-q02-ds\.qa\.ts$/,
   outputDir: join(process.env["A11Y_OUT"] ?? join(tmpdir(), "e05-q02-ds"), "pw-test-results"),
-  timeout: 3_600_000,
-  workers: 1,
+  timeout: 600_000,
+  fullyParallel: true,
+  workers: Number(process.env["A11Y_WORKERS"] ?? "2"),
   retries: 0,
   reporter: "line",
+  // The control project runs first; the story tests depend on it, so a failed control fails the run.
+  projects: [
+    { name: "control", grep: /negative control/ },
+    { name: "matrix", grepInvert: /negative control/, dependencies: ["control"] },
+  ],
   use: { baseURL: `http://127.0.0.1:${PORT}`, screenshot: "off", video: "off", trace: "off" },
   webServer: {
     command: `python3 -m http.server ${PORT} --bind 127.0.0.1 --directory storybook-static`,

@@ -6,21 +6,25 @@
 // Stories tagged `perf` are left out, as in VR. Ordering is by story id, then theme, density, motion.
 //
 // Build, then run from apps/web (its Playwright and @axe-core/playwright are the runners; the tsconfig in
-// this directory maps them, no new dependency):
+// this directory maps them, no new dependency). One Playwright test per story plus a negative control that
+// runs first (project `control`; the run fails as A11Y-INFRA if it does not trip):
 //   pnpm --filter @candleviewer/ui run storybook:build
-//   cd apps/web && A11Y_SHA=$(git rev-parse HEAD) \
+//   cd apps/web && A11Y_SHA=$(git rev-parse HEAD) A11Y_WORKERS=4 \
 //     npx playwright test -c ../../docs/plan/a11y/_tools/e05-q02-ds.config.ts
+//   node ../../docs/plan/a11y/_tools/e05-q02-merge.mjs   # stories/*.json -> results.json + summary.md
+// Local: A11Y_WORKERS 2-4 (default 2). CI: split with Playwright's `--shard=i/n`, one A11Y_OUT per shard,
+// then `e05-q02-merge.mjs <out1> <out2> ...` merges them (and fails if a story file is missing).
 // Typecheck: cd apps/web && npx tsc -p ../../docs/plan/a11y/_tools/tsconfig.json
 //
 // Environment: A11Y_SHA (recorded), A11Y_ONLY (comma-separated story-id substrings), A11Y_THEMES,
-// A11Y_DENSITIES (comma-separated subsets), A11Y_PORT (default 4175), A11Y_OUT (default <os temp>/
-// e05-q02-ds). Writes <A11Y_OUT>/results.json (per story x cell: counts by impact, rule ids, nodes) and
-// summary.md. Network: any request to a non-loopback host is aborted and counted; the run fails if any.
-import { mkdirSync, writeFileSync } from "node:fs";
+// A11Y_DENSITIES (comma-separated subsets), A11Y_PORT (default 4175), A11Y_WORKERS, A11Y_OUT (default
+// <os temp>/e05-q02-ds). Per story writes <A11Y_OUT>/stories/<id>.json (per cell: counts by impact, rule
+// ids, nodes). Network: any request to a non-loopback host is aborted and counted; the story then fails.
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
-import { test, type Page } from "@playwright/test";
+import { test, type Browser, type Page } from "@playwright/test";
 
 const THEMES = ["dark", "light", "high-contrast"] as const;
 const DENSITIES = ["compact", "comfortable"] as const;
@@ -63,10 +67,11 @@ interface Cell {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Story ids and tags from index.json, perf-tagged stories dropped, sorted by id. */
-async function readStories(page: Page): Promise<{ ids: string[]; excluded: string[] }> {
-  const res = await page.request.get("/index.json");
-  const body: unknown = await res.json();
+/** Story ids from the built Storybook's index.json (read at load), perf-tagged dropped, sorted by id. */
+const STATIC =
+  process.env["A11Y_STATIC"] ?? resolve(process.cwd(), "../../packages/ui/storybook-static");
+function readStories(): { ids: string[]; excluded: string[] } {
+  const body: unknown = JSON.parse(readFileSync(join(STATIC, "index.json"), "utf8"));
   const entries = isRecord(body) && isRecord(body["entries"]) ? body["entries"] : {};
   const ids: string[] = [];
   const excluded: string[] = [];
@@ -170,20 +175,36 @@ async function negativeControl(page: Page, story: string): Promise<string[]> {
   return expected;
 }
 
-test("E05-Q02 design-system axe matrix", async ({ browser }) => {
+/** A context that aborts and records every non-loopback request. */
+async function isolatedPage(browser: Browser, offsite: string[]): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-  const offsite: string[] = [];
   await context.route("**/*", (route) => {
     const host = new URL(route.request().url()).hostname;
     if (host === "127.0.0.1" || host === "localhost") return route.continue();
     offsite.push(route.request().url());
     return route.abort();
   });
-  const page = await context.newPage();
-  const { ids, excluded } = await readStories(page);
-  const cells: Cell[] = [];
-  const control = ids[0] === undefined ? [] : await negativeControl(page, ids[0]);
-  for (const id of ids) {
+  return context.newPage();
+}
+
+const { ids, excluded } = readStories();
+
+test("negative control", async ({ browser }) => {
+  rmSync(join(OUT, "stories"), { recursive: true, force: true });
+  mkdirSync(join(OUT, "stories"), { recursive: true });
+  const page = await isolatedPage(browser, []);
+  const rules = ids[0] === undefined ? [] : await negativeControl(page, ids[0]);
+  await page.context().close();
+  const sha = process.env["A11Y_SHA"] ?? "unset";
+  const manifest = { sha, stories: ids, excluded, negativeControl: { tripped: true, rules } };
+  writeFileSync(join(OUT, "manifest.json"), JSON.stringify(manifest, null, 2));
+});
+
+for (const id of ids) {
+  test(`story ${id}`, async ({ browser }) => {
+    const offsite: string[] = [];
+    const page = await isolatedPage(browser, offsite);
+    const cells: Cell[] = [];
     for (const theme of subset(THEMES, process.env["A11Y_THEMES"])) {
       for (const density of subset(DENSITIES, process.env["A11Y_DENSITIES"])) {
         const first = await runCell(page, id, theme, density, MOTIONS[0]);
@@ -194,55 +215,15 @@ test("E05-Q02 design-system axe matrix", async ({ browser }) => {
         }
       }
     }
-  }
-  await context.close();
-
-  const total = { critical: 0, serious: 0, moderate: 0, minor: 0 };
-  for (const c of cells) for (const i of IMPACTS) total[i] += c.counts[i];
-  const failed = cells.filter((c) => c.error !== undefined);
-  mkdirSync(OUT, { recursive: true });
-  writeFileSync(
-    join(OUT, "results.json"),
-    JSON.stringify(
-      {
-        sha: process.env["A11Y_SHA"] ?? "unset",
-        stories: ids.length,
-        excluded,
-        negativeControl: { tripped: control.length > 0, rules: control },
-        total,
-        offsite,
-        cells,
-      },
-      null,
-      2,
-    ),
-  );
-  const rows = cells
-    .filter((c) => c.error !== undefined || IMPACTS.some((i) => c.counts[i] > 0))
-    .map(
-      (c) =>
-        `| ${c.story} | ${c.theme} | ${c.density} | ${c.motion} | ` +
-        `${IMPACTS.map((i) => c.counts[i]).join(" / ")} | ` +
-        `${c.error ?? [...new Set(c.violations.map((v) => v.id))].join(", ")} |`,
+    await page.context().close();
+    mkdirSync(join(OUT, "stories"), { recursive: true });
+    writeFileSync(
+      join(OUT, "stories", `${id}.json`),
+      JSON.stringify({ id, offsite, cells }, null, 2),
     );
-  writeFileSync(
-    join(OUT, "summary.md"),
-    [
-      `Stories ${ids.length} (excluded perf: ${excluded.length}), cells ${cells.length}, ` +
-        `errored ${failed.length}, off-site requests ${offsite.length}`,
-      `Violations: ${IMPACTS.map((i) => `${i} ${total[i]}`).join(", ")}`,
-      `Negative control: tripped (${control.join(", ")})`,
-      `Disabled page-level rules: ${PAGE_LEVEL_RULES.join(", ")} (a lone component in the isolated ` +
-        "iframe has no main landmark, h1 or region; the screens sweep, E47, covers them)",
-      "",
-      "| story | theme | density | motion | crit / ser / mod / min | rules or error |",
-      "|---|---|---|---|---|---|",
-      ...rows,
-      "",
-    ].join("\n"),
-  );
-  test.info().annotations.push({ type: "out", description: OUT });
-  if (offsite.length > 0) throw new Error(`${offsite.length} off-site request(s) were aborted`);
-  if (failed.length > 0)
-    throw new Error(`${failed.length} cell(s) did not render; see results.json`);
-});
+    const failed = cells.filter((c) => c.error !== undefined);
+    if (offsite.length > 0) throw new Error(`${offsite.length} off-site request(s) were aborted`);
+    if (failed.length > 0)
+      throw new Error(`${failed.length} cell(s) did not render; see ${id}.json`);
+  });
+}
