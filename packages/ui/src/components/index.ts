@@ -71,6 +71,16 @@ export type { DatePickerProps } from "./DatePicker.js";
 export { DateRangePicker } from "./DateRangePicker.js";
 export type { DateRangePickerProps, DateRangeValue } from "./DateRangePicker.js";
 
+export { DensityToggle, DensityToggleConnected, DENSITY_TOGGLE_COPY } from "./DensityToggle.js";
+export type {
+  DensityToggleConnectedProps,
+  DensityToggleCopy,
+  DensityToggleGlobalProps,
+  DensityTogglePanelProps,
+  DensityToggleProps,
+  DensityToggleValue,
+} from "./DensityToggle.js";
+
 export { Dialog } from "./Dialog.js";
 export type { DialogCloseReason, DialogProps, DialogRole, DialogSize } from "./Dialog.js";
 
