@@ -5,7 +5,7 @@ fill inserts it and `ux_exec_id` keeps one row, so a repeated `exec_id` never co
 (24 Sec.8.2 S4). `executions_sqlalchemy.py` is the Postgres side. Money is a `Decimal` its column
 holds exactly, `fee_rate` at numeric(18,10). A fill that moves its order's totals is written by
 `commit_fill`, the fill's write-ahead step (E29-T03), never by `insert`; B1's `apply_fill` action
-is the machine's side of that fill.
+(`apply_untracked_exec` on an `untracked` row) is the machine's side of that fill.
 """
 
 from __future__ import annotations
@@ -96,26 +96,37 @@ class FillTotals:
 
 
 _TOTALS: Final = dict.fromkeys(typed_fields(FillTotals, Decimal), (38, 18))
-#: Where a fill's step takes its order: every B1 `EXEC` arm that applies a fill (28 B1.3).
+#: Where a fill's step takes its order: every B1 `EXEC` arm that applies a fill (28 B1.3), into
+#: `partially_filled` or `filled`. Since B1 version 8 an `untracked` row's fill that leaves
+#: quantity open keeps it `untracked` (`_UNMANAGED`): the row records each fill of its own and
+#: stays unmanaged (INV-B1-l), and `check` still takes the fill that fills `qty` to `filled`.
 _FILLED: Final = frozenset[OrderState]({"partially_filled", "filled"})
+#: That one other fill step: from `untracked` to `untracked`, by a `partial_fill` (21 Sec.3.3.5).
+_UNMANAGED: Final = ("untracked", "untracked", "partial_fill")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OrderFill:
     """A fill, its order's new `totals` and `step`, the compare-and-set of the order's state with
     the fill event (24 Sec.8.2 S4, S8). The execution names the step's account and order, and the
-    step moves the order to `partially_filled` or `filled` with a fill's event."""
+    step moves the order to `partially_filled` or `filled` with a fill's event, or keeps an
+    `untracked` row `untracked` with a `partial_fill` (`_UNMANAGED`, B1 version 8)."""
 
     step: OrderTransition
     execution: NewExecution
     totals: FillTotals
 
     def __post_init__(self) -> None:
+        step = self.step
         names = (self.execution.exchange_account_id, self.execution.order_id)
-        if names != (self.step.account_id, self.step.order_id):
+        if names != (step.account_id, step.order_id):
             raise ValueError("the execution names another account or order than its step")
-        if self.step.to_state not in _FILLED or self.step.event.kind not in FILL_KINDS:
-            raise ValueError("a fill's step is to partially_filled or filled, by a fill event")
+        unmanaged = (step.from_state, step.to_state, step.event.kind) == _UNMANAGED
+        if not unmanaged and (step.to_state not in _FILLED or step.event.kind not in FILL_KINDS):
+            raise ValueError(
+                "a fill's step is to partially_filled or filled by a fill event, or keeps an "
+                "untracked row untracked by a partial_fill"
+            )
 
     def check(self, qty: Decimal, is_paper: bool) -> None:
         """`FillRefused` for what its order, locked with its `qty` and `is_paper`, cannot take: run
