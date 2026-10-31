@@ -13,12 +13,14 @@ from prometheus_client import generate_latest
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.reconcile_report import (
     EMPTY_TEXT,
+    FILLS_UNREAD,
     HANDOVER_UNREADABLE,
     NO_RECORD_IN_FORCE,
     OWNER_FIELDS,
     REPEATING_FIELDS,
     STALE_NOTICE,
     STANDING_ITEMS,
+    UNTRACKED_FILLS_UNREAD,
     Notice,
     PassError,
     PositionDrift,
@@ -44,12 +46,22 @@ def report(**over: Any) -> ReconcileReport:
 # --- The standing items and the watermark (BQ-10; the security delta's L4) ----------------------
 
 
-def test_the_standing_items_are_a_closed_list_of_two() -> None:
-    assert STANDING_ITEMS == {NO_RECORD_IN_FORCE, HANDOVER_UNREADABLE}
-    assert (NO_RECORD_IN_FORCE, HANDOVER_UNREADABLE) == (
+def test_the_standing_items_are_a_closed_list_of_three() -> None:
+    assert STANDING_ITEMS == {NO_RECORD_IN_FORCE, HANDOVER_UNREADABLE, UNTRACKED_FILLS_UNREAD}
+    assert (NO_RECORD_IN_FORCE, HANDOVER_UNREADABLE, UNTRACKED_FILLS_UNREAD) == (
         "no_record_in_force",
         "handover_unreadable",
+        "untracked_fills_unread",
     )
+
+
+def test_only_an_untracked_rows_unread_fills_stand() -> None:
+    """The orchestrator's ruling (iv), 24 Sec.8.5: an `untracked` row's `fills_unread` never holds
+    the watermark; an `unknown` or `quarantined` row's still does."""
+    untracked = report(errors=(PassError("3b", UNTRACKED_FILLS_UNREAD, "l1"),))
+    tracked = report(errors=(PassError("3a", FILLS_UNREAD, "l2"),))
+    assert (watermark_us(untracked), watermark_us(tracked)) == (WINDOW[1], None)
+    assert FILLS_UNREAD == "fills_unread" and FILLS_UNREAD not in STANDING_ITEMS
 
 
 def test_the_watermark_is_the_upper_bound_step1_read_to_never_the_reports_instant() -> None:
@@ -251,7 +263,11 @@ def test_24_names_the_standing_items_closed_list_and_the_watermarks_upper_bound(
         "above) and `untracked_fills_unread`"
     ) in section
     assert "an `unknown` or `quarantined` row's `fills_unread` among them" in section
-    assert sorted(STANDING_ITEMS) == ["handover_unreadable", "no_record_in_force"]
+    assert sorted(STANDING_ITEMS) == [
+        "handover_unreadable",
+        "no_record_in_force",
+        "untracked_fills_unread",
+    ]
     assert (
         "as the upper bound step 1's execution read covered (the window's end), never the "
         "report's own instant, so a slow pass leaves no unread slice"

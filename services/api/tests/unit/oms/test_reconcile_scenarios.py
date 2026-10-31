@@ -22,8 +22,10 @@ from prometheus_client import generate_latest
 
 from candleviewer.domain.order_entry import OrderEntryGate
 from candleviewer.domain.order_link import ext_key
+from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.models import (
     AccountRef,
+    Execution,
     Order,
     Position,
     RateHeadroom,
@@ -60,6 +62,7 @@ from tests.unit.oms.reconcile_rig import (
     ACCOUNT,
     SWEEP_ID,
     T0,
+    FakeOms,
     Marks,
     Notices,
     OmsPositions,
@@ -72,6 +75,7 @@ from tests.unit.oms.reconcile_rig import (
     ref,
     row,
     started,
+    waiting,
 )
 from tests.unit.oms.reconcile_rig import (
     rest as rest_of,
@@ -128,6 +132,24 @@ class StoreReads:
 
     async def insert(self, execution: NewExecution) -> bool:
         return await self._rig.fills.insert(execution)
+
+
+class KeptFills(FakeOms):
+    """The recording OMS whose hand-over store keeps each fill handed over, once per `exec_id`,
+    and answers it to every later pass until it is pruned, as `oms_handovers` does (21
+    Sec.3.3.12)."""
+
+    async def hand_over_execution(
+        self, account_id: AccountId, execution: Execution, *, empty_read: bool = False
+    ) -> None:
+        await super().hand_over_execution(account_id, execution, empty_read=empty_read)
+        if all(w.execution.exec_id != execution.exec_id for w in self.handed_fills):
+            entry_id = 1 + max((w.entry_id for w in self.handed_fills), default=0)
+            self.handed_fills.append(waiting(execution, entry_id=entry_id))
+
+    async def prune(self, account_id: AccountId, entry_ids: Collection[int]) -> int:
+        self.handed_fills = [w for w in self.handed_fills if w.entry_id not in entry_ids]
+        return await super().prune(account_id, entry_ids)
 
 
 class VenueStopWriter:
@@ -411,15 +433,42 @@ async def test_an_untracked_order_filled_in_several_fills_is_never_sent_a_refuse
 ) -> None:
     """B1 version 7 records an `untracked` row's `EXEC` and applies nothing, and the store takes
     `filled` only with the row's `qty` filled, so no one fill can close an order filled in two:
-    the pass sends it no finding the store would refuse and lists it, holding the watermark."""
+    the pass sends it no finding the store would refuse and lists it `untracked_fills_unread`, a
+    standing item, so the watermark advances (the orchestrator's ruling (iv), 24 Sec.8.5)."""
     s = Scenario(World(), rig)
     manual = await _filled_after_adoption(s, rig, "0.04", "0.06")
     stored = await rig.store.get_by_exchange_order_id(ACCOUNT, manual.exchange_order_id)
     assert stored is not None and stored.state == "untracked"
     assert s.record_of()["errors"] == [
-        {"step": "3b", "kind": "fills_unread", "subject": stored.order_link_id}
+        {"step": "3b", "kind": "untracked_fills_unread", "subject": stored.order_link_id}
     ]
-    assert (len(s.watermarks.advanced), rig.commands.kinds()) == (1, [])  # the adoption's only
+    assert (s.watermarks.advanced[-1], rig.commands.kinds()) == (s.world.now_us, [])
+    _only_reads(s.world)
+
+
+async def test_an_untracked_order_filled_in_several_fills_stands_and_the_window_moves_on(
+    rig: Rig,
+) -> None:
+    """The orchestrator's ruling (iv), 24 Sec.8.5: such an order is listed on every pass, a
+    standing item that never holds the watermark back, so each pass reads on from the last one's
+    end (less the 5 s overlap) and the window never grows. Its two fills stay in the hand-over
+    store, never applied, and nothing is sent to the venue."""
+    s = Scenario(World(oms=KeptFills()), rig)
+    manual = await _filled_after_adoption(s, rig, "0.04", "0.06")
+    for _ in range(3):
+        s.world.now_us += 30_000_000
+        await s.run()
+        await rig.quiet()
+    stored = await rig.store.get_by_exchange_order_id(ACCOUNT, manual.exchange_order_id)
+    assert stored is not None and stored.state == "untracked"
+    item = {"step": "3b", "kind": "untracked_fills_unread", "subject": stored.order_link_id}
+    assert [s.record_of(n)["errors"] for n in range(1, 5)] == [[item]] * 4
+    windows = [s.record_of(n)["gap_window"] for n in range(5)]
+    assert s.watermarks.advanced == [end for _, end in windows]  # every pass advanced it
+    assert [start for start, _ in windows[1:]] == [end - 5_000_000 for _, end in windows[:-1]]
+    assert sorted(w.execution.exec_id for w in s.world.oms.handed_fills) == ["m1", "m2"]
+    assert [await rig.fills.get(ACCOUNT, i) for i in ("m1", "m2")] == [None, None]
+    assert rig.commands.kinds() == []
     _only_reads(s.world)
 
 

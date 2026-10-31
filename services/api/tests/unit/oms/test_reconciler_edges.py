@@ -600,6 +600,50 @@ async def test_the_phases_hold_the_watermark_when_it_cannot_be_written(
     assert summary["outcome"] == "clean"
 
 
+async def _one_pass(job: Job) -> Any:
+    """One pass through B19's port (`ReconcilePhases`): its `oms.reconcile` record."""
+    account = str(ACCOUNT)
+    await job.phases.fetch(account, pass_id=SWEEP_ID, trigger="periodic")
+    await job.phases.diff(account, pass_id=SWEEP_ID)
+    await job.phases.remediate(account, pass_id=SWEEP_ID)
+    await job.phases.report(
+        account, pass_id=SWEEP_ID, trigger="periodic", episode_open=False, failure=None
+    )
+    return job.records.rows[-1][2]
+
+
+async def test_the_phases_hold_the_watermark_for_a_tracked_rows_unread_fills() -> None:
+    """24 Sec.8.5: an `unknown` row whose fills the pass did not read is `fills_unread`, which
+    holds the watermark, so the next pass reads that window again."""
+    job = Job()
+    job.world.oms.seed(row(1, "unknown", lifecycle_state="unknown"))
+    job.world.venue.seed_order(
+        remote(1, state="partially_filled", filled_qty=Decimal("0.8")), uid="1001"
+    )
+    state = await _one_pass(job)
+    assert state["errors"] == [{"step": "3a", "kind": "fills_unread", "subject": LINK.format(1)}]
+    assert job.watermarks.advanced == []
+
+
+async def test_the_phases_advance_the_watermark_past_an_untracked_rows_unread_fills() -> None:
+    """The orchestrator's ruling (iv), 24 Sec.8.5: an `untracked` row filled in two fills, which
+    no finding can close in B1 version 7, is listed `untracked_fills_unread`, a standing item:
+    the pass sends it nothing, keeps both fills and advances the watermark."""
+    job = Job()
+    job.world.oms.seed(row(1, "untracked", lifecycle_state="untracked"))
+    filled = remote(1, state="filled", filled_qty=Decimal(1), leaves_qty=Decimal(0))
+    job.world.venue.seed_order(filled, uid="1001")
+    for n, qty in ((1, "0.4"), (2, "0.6")):
+        job.world.venue.seed_execution(fill(f"e{n}", qty=Decimal(qty), seq=n))
+    state = await _one_pass(job)
+    assert state["errors"] == [
+        {"step": "3b", "kind": "untracked_fills_unread", "subject": LINK.format(1)}
+    ]
+    assert job.watermarks.advanced == [NOW_US]
+    assert job.world.oms.effects("command", "push") == []
+    assert [e[1] for e in job.world.oms.effects("hand_over_execution")] == ["e1", "e2"]
+
+
 def test_the_phases_observe_only_their_own_report_and_refuse_a_bad_severity() -> None:
     job = Job()
     job.phases.observe(str(ACCOUNT), pass_id=SWEEP_ID)  # none stored: nothing counted

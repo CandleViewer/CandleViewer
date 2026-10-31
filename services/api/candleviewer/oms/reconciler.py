@@ -114,8 +114,10 @@ from .ports import (
 )
 from .push_mapping import exec_payload, money_text, order_event, push_payload
 from .reconcile_report import (
+    FILLS_UNREAD,
     HANDOVER_UNREADABLE,
     NO_RECORD_IN_FORCE,
+    UNTRACKED_FILLS_UNREAD,
     PositionDrift,
     ReconcileReport,
     ReportDraft,
@@ -488,7 +490,8 @@ def found_sends(
     order closes so only when that one fill completes the row: an order filled in more executions
     than one is not sent a finding the store would refuse (B1 version 7 cannot close it). None when
     the totals the venue shows are not the fills read (they lie outside every window read), or
-    for such an order: nothing is adopted, the row is listed and the next pass reads again."""
+    for such an order: nothing is adopted, the row is listed and the next pass reads again, an
+    `untracked` row's as a standing item, its fills kept (`UNTRACKED_FILLS_UNREAD`)."""
     base: dict[str, Any] = {"exchange_order_id": order.exchange_order_id, "pass_id": pass_id}
     if order.state not in _ENDED and order.state not in _OPEN:
         return None  # a status 24 Sec.8.12 does not map: decided by no finding
@@ -1320,7 +1323,9 @@ class _OrderDiff:
         )
         sends = found_sends(row, order, fills, pass_id=self._f.pass_id, ts_event=self._f.window[1])
         if sends is None:  # the venue's totals are not the fills read: nothing is adopted
-            self._draft.error(step, "fills_unread", row.order_link_id)
+            # An `untracked` row's stands, its fills kept below (24 Sec.8.5); any other holds.
+            kind = UNTRACKED_FILLS_UNREAD if row.state == "untracked" else FILLS_UNREAD
+            self._draft.error(step, kind, row.order_link_id)
             return
         self._for_finding.pop(xid, None)
         self._waiting = [e for e in self._waiting if e.exchange_order_id != xid]
