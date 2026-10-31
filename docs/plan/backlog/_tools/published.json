@@ -2585,6 +2585,21 @@
     "number": 306,
     "subissue_done": true
   },
+  "E10-S05": {
+    "blockedby_done": [
+      "E10-S01",
+      "E10-S02",
+      "E10-T01",
+      "E10-D03",
+      "E10-D04",
+      "E05-S03"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhFCf3Y",
+    "node_id": "I_kwDOUZDkl88AAAABbeCcGQ",
+    "number": 5236,
+    "subissue_done": true
+  },
   "E10-T01": {
     "blockedby_done": [
       "E02-K01",
@@ -2638,6 +2653,16 @@
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6WS4",
     "node_id": "I_kwDOUZDkl88AAAABS4G5mA",
     "number": 237,
+    "subissue_done": true
+  },
+  "E10-T05": {
+    "blockedby_done": [
+      "E10-S02"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhFA2rs",
+    "node_id": "I_kwDOUZDkl88AAAABbcanFw",
+    "number": 5211,
     "subissue_done": true
   },
   "E10-X01": {
@@ -7601,7 +7626,8 @@
     "blockedby_done": [
       "E22-S01",
       "E22-T02",
-      "E22-D05"
+      "E22-D05",
+      "E02-T13"
     ],
     "fields_done": true,
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6l_Y",
@@ -10672,7 +10698,8 @@
   "E30-S07": {
     "blockedby_done": [
       "E30-S04",
-      "E30-S02"
+      "E30-S02",
+      "E02-T13"
     ],
     "fields_done": true,
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6qiI",
@@ -15548,7 +15575,8 @@
   "E45-S01": {
     "blockedby_done": [
       "E45-T03",
-      "E45-D02"
+      "E45-D02",
+      "E45-T12"
     ],
     "fields_done": true,
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6pMU",
