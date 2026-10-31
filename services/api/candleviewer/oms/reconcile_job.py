@@ -45,8 +45,10 @@ job, built afresh, fails its first fetch with the stale window spent (`REFUSED_S
 B19's port, `_Ports`), so B19 records `stale_lockout`, paged, which its snapshot keeps and only the
 Owner's `OPERATOR_RESOLVED` leaves; no pass runs until then. **Stop**: the timers end, then each
 job is drained to quiescence, persisted (drain, journal, sealed snapshot, then `stop`) where a
-persister is wired, else stopped, and unregistered; only then is B19's port unwired. A job whose
-refused snapshot's lock is not recorded yet persists nothing, so the next start refuses it again.
+persister is wired, else stopped, and unregistered; only then is B19's port unwired. Each persist
+is bounded (`PERSIST_TIMEOUT_S`): one that overruns is logged and paged as a failed one is, and its
+job stopped unsnapshotted, so the next start restores its last snapshot. A job whose refused
+snapshot's lock is not recorded yet persists nothing, so the next start refuses it again.
 An open the stop overtakes, at any await, registers no job and spawns no timer: it stops what it
 built and persists nothing (`_unless_stopped`).
 
@@ -125,6 +127,10 @@ _AWAIT_STEP: Final = True
 SEND_TIMEOUT_S: Final = 5.0
 QUIESCE_TIMEOUT_S: Final = 10.0
 QUIESCE_POLL_S: Final = 0.01
+#: Each job's persist at the stop (C-2.18), under the share of the runtime's stop that its
+#: reconciliation closer gets (`oms_wiring._closed`), so one that hangs is cut here, logged and
+#: paged, and the stop goes on to the next job and to B19's port, never cut whole by that share.
+PERSIST_TIMEOUT_S: Final = 0.2
 #: Each step of a job's open the driver awaits (C-2.18): its snapshot's load, its restore, which
 #: starts the machine within the factory's own 5 s (CV-C56), and a fresh build's plugins. One that
 #: hangs is a job that did not open: logged, and its account refused order entry at the start.
@@ -608,7 +614,14 @@ class ReconcileJobs:
                 self._gateway.unregister(job.key)
             pending = job.account in self._escalating  # its refused snapshot must stay
             if self._persistence is not None and leaf_of(interp) in b19.REST_STATES and not pending:
-                await self._persistence.persist(interp, job.machine_key)
+                bound = asyncio.timeout(PERSIST_TIMEOUT_S)
+                try:
+                    async with bound:
+                        await self._persistence.persist(interp, job.machine_key)
+                except TimeoutError:
+                    if bound.expired():  # it hung: paged here, as a failed persist pages itself
+                        self._pager.raise_alert("page", _UNSNAPSHOTTED, machine_kind=MACHINE)
+                    raise
                 return
         except Exception as exc:  # a faulted job: stopped without a snapshot, the next restores
             _log().error("reconcile_job_persist_failed", account_id=str(job.account),
@@ -651,6 +664,7 @@ class ReconcileJobs:
 
 
 _UNOPENED: Final = "A reconciliation job could not open: its account's order entry is refused."
+_UNSNAPSHOTTED: Final = "A reconciliation job's persist overran its bound: it stopped unsaved."
 _NONE_OPENS: Final = "no reconciliation job can open: stopping or unwired"
 
 

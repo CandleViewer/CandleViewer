@@ -1099,6 +1099,66 @@ async def test_a_persist_that_fails_stops_the_job_without_a_snapshot(
     assert not interp.is_running and not b19.ports_wired()
 
 
+async def test_a_persist_that_hangs_is_cut_and_paged_and_the_stop_goes_on_to_the_next_job(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The orchestrator's read of the wiring, L2 (C-2.18): each job's persist at the stop has its
+    own bound (`PERSIST_TIMEOUT_S`), under the reconciliation closer's share of the runtime's
+    stop. One that hangs is cut there, logged and paged as a failed persist is, and its job
+    stopped unsnapshotted; the stop goes on to the next job, which it persists, and to B19's
+    port."""
+    memory = Memory()
+    driver = _driver(job, timers, persistence=memory)
+    await driver.start([ACCOUNT, OTHER])
+    assert await _resting(driver) == "idle"
+    await _resting(driver, OTHER)  # backing off (no headroom read for it): the stop cancels it
+    interps = [driver._jobs[account].interp for account in (ACCOUNT, OTHER)]
+    persist = memory.persist
+
+    async def hangs_for_the_first(interp: Any, key: MachineKey) -> None:
+        if key.entity_id == str(ACCOUNT):  # the first job the stop closes
+            await asyncio.Event().wait()
+        await persist(interp, key)
+
+    monkeypatch.setattr(memory, "persist", hangs_for_the_first)
+    with capture_logs() as logs:
+        await asyncio.wait_for(driver.stop(), 10)  # a bound on the test, well past the persist's
+    failed = [(e["account_id"], e["failure"]) for e in logs
+              if e["event"] == "reconcile_job_persist_failed"]  # fmt: skip
+    assert failed == [(str(ACCOUNT), "TimeoutError")]
+    assert job.world.oms.pages.count(("page", rj._UNSNAPSHOTTED)) == 1
+    assert [key.entity_id for key, _ in memory.persisted] == [str(OTHER)]  # the next, persisted
+    assert not any(interp.is_running for interp in interps) and not b19.ports_wired()
+
+
+async def test_a_stop_cancelled_while_a_persist_hangs_ends_cancelled(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L2's other half: the persist's bound never swallows a cancellation, as the closer's share
+    running out cancels the stop's task; a later stop closes what that one left."""
+    memory = Memory()
+    driver = _driver(job, timers, persistence=memory)
+    await driver.start([ACCOUNT])
+    assert await _resting(driver) == "idle"
+    persist, entered = memory.persist, asyncio.Event()
+
+    async def hangs(_interp: Any, _key: MachineKey) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(memory, "persist", hangs)
+    monkeypatch.setattr(rj, "PERSIST_TIMEOUT_S", 60.0)  # the cancellation comes first
+    stopping = asyncio.ensure_future(driver.stop())
+    await asyncio.wait_for(entered.wait(), 10)  # a bound on the test
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+    monkeypatch.setattr(memory, "persist", persist)
+    await driver.stop()
+    assert [key.entity_id for key, _ in memory.persisted] == [str(ACCOUNT)]
+    assert not b19.ports_wired()
+
+
 async def test_a_refused_send_and_a_failed_timer_are_logged(
     job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
 ) -> None:
