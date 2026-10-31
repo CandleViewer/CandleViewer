@@ -12,7 +12,9 @@ The rules follow C-10.2 verbatim (scripts/tests/test_security_review_label.py pa
 - its backend prefixes in its own spelling, `services/api/<module>/`, and in the real package,
   `services/api/candleviewer/<module>/` (the gap #2708 closed in CODEOWNERS);
 - anything under `infra/`; CI workflow files: `.github/workflows/`, `.github/actions/` and GATE,
-  this rule's own code, so a PR that narrows the rule is labelled by main's copy of it;
+  this rule's own code, so a PR that narrows the rule is labelled by main's copy of it, and the
+  code that judges `ci-required` (its resolver, the proof that it judges every C-9.1 lane and the
+  tests that pin them and pr.yml's gates, #5177), so a PR that weakens the gate is labelled too;
 - authentication/session code in apps/web: WEB_AUTH_PATHS, and any `auth`, `session` or `sessions`
   directory under apps/web/src/, so a new slice counts before the list names it;
 - dependency manifests in any directory: MANIFESTS (package and lock files, and the pnpm and npm
@@ -84,7 +86,20 @@ MANIFESTS: tuple[str, ...] = ("package.json", "pnpm-lock.yaml", "pnpm-workspace.
 MANIFESTS += (".pnpmfile.cjs", "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock")
 # SR-138: the allowlist of install steps CI runs, and the runner that runs them (#1819).
 POSTINSTALL = ("tools/ci/allowed-postinstall.json", "tools/ci/run-allowed-postinstall.mjs")
-GATE = ("tools/ci/security_review_label.py", "scripts/tests/test_security_review_label.py")
+# The gate's own code, matched as CI workflow files are: this rule and its test, and (#5177) the
+# code that judges `ci-required`: its resolver, the proof that it judges every C-9.1 lane, and the
+# tests that pin that proof and pr.yml's gates. Files, not `scripts/tests/`: `_literal` would take
+# the directory by prefix, but that would label every script test, most of them no gate's.
+GATE = (
+    "tools/ci/security_review_label.py",
+    "scripts/tests/test_security_review_label.py",
+    "scripts/ci_gate_resolver.mjs",
+    "scripts/check_required_check_reconciliation.py",
+    "scripts/tests/test_pr_yml_gates.py",
+    "scripts/tests/test_pr_yml_merge_group.py",
+    "scripts/tests/test_pr_yml_path_filters.py",
+    "scripts/tests/test_check_required_check_reconciliation.py",
+)
 WORDS = ("key", "secret", "token", "crypt")
 API_ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, http.client.HTTPException)
 

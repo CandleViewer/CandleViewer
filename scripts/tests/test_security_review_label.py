@@ -53,6 +53,15 @@ SECURITY = [
     ".github/workflows/_job-js.yml",
     ".github/actions/setup/action.yml",  # a composite action runs with the calling job's token
     *s.GATE,  # this rule's own code: main's copy labels a PR that narrows it
+    # #5177: the code that judges ci-required, named here too so that dropping one from GATE fails
+    # this list, not only the list built from it: the resolver, the proof that it judges every
+    # C-9.1 lane, and the tests that pin that proof and pr.yml's gates.
+    "scripts/ci_gate_resolver.mjs",
+    "scripts/check_required_check_reconciliation.py",
+    "scripts/tests/test_pr_yml_gates.py",
+    "scripts/tests/test_pr_yml_merge_group.py",
+    "scripts/tests/test_pr_yml_path_filters.py",
+    "scripts/tests/test_check_required_check_reconciliation.py",
     "docs/a/b/c/apikey-rotation.md",  # the four globs on a file name in a deep path
     "services/api/tests/fixtures/key_verification/error_10003.json",  # and on a directory's (C-2.8)
     "packages/fixtures/accounts/expired_key/manifest.json",
@@ -76,6 +85,7 @@ NOT_SECURITY = [
     "my-infra/x.yml",
     ".github/CODEOWNERS",
     ".github/dependabot.yml",
+    "scripts/tests/test_integration_shards.py",  # #5177: the gate's tests are listed, not the dir
     "docs/package.json.md",
     "docs/requirements.md",
     "docs/ключ.md",  # the four words are ASCII: a translation does not match

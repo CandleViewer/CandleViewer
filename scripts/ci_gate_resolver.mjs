@@ -20,7 +20,8 @@
 //   - a draft-deferred lane (DRAFT_DEFERRED) applicable and skipped on a pull_request whose
 //     PR is a draft -> ok, reported as deferred: its job skips a draft by design, and the run
 //     `ready_for_review` starts, like every merge-group run, requires it. The draft flag is read
-//     on pull_request only; off it, or with the event unknown, the lane is a lane like the rest.
+//     on pull_request only, and only the boolean `true` counts as a draft; off it, or with the
+//     event unknown, the lane is a lane like the rest.
 
 /**
  * @typedef {"success"|"failure"|"cancelled"|"skipped"} LaneResult
@@ -42,7 +43,8 @@ const DRAFT_DEFERRED_REASON = "runs when the pull request leaves draft";
 
 /**
  * @param {string} name @param {LaneInput} input @param {string} [event]
- * @param {boolean} [draft] whether the pull request is a draft (PR_DRAFT); read on pull_request only
+ * @param {boolean} [draft] whether the pull request is a draft (PR_DRAFT); read on pull_request
+ *   only, and only the boolean `true` defers a lane (a truthy string, say, does not)
  * @returns {LaneOutcome}
  */
 function evaluateLane(name, { applicable, result }, event = "", draft = false) {
@@ -58,7 +60,7 @@ function evaluateLane(name, { applicable, result }, event = "", draft = false) {
     applicable &&
     result === "skipped" &&
     event === "pull_request" &&
-    draft &&
+    draft === true &&
     DRAFT_DEFERRED.has(name)
   ) {
     return { ok: true, code: null, reason: null, deferred: DRAFT_DEFERRED_REASON };
