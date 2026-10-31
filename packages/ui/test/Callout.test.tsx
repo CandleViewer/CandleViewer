@@ -50,6 +50,25 @@ describe("Callout (CMP-028)", () => {
     expect(root(host)).toHaveTextContent("Your access changed");
   });
 
+  it("id names the message, never the buttons, so a control can be described by it", async () => {
+    const host = await mount(
+      <>
+        <Callout
+          id="notice"
+          title="Read-only."
+          live="off"
+          retry={{ label: "Retry", onClick: fn() }}
+        />
+        <button type="button" aria-describedby="notice">
+          Save
+        </button>
+      </>,
+    );
+    expect(host.querySelector("#notice")).toHaveClass("cv-callout__message");
+    const save = within(host).getByRole("button", { name: "Save" });
+    expect(save).toHaveAccessibleDescription("Read-only.");
+  });
+
   it("mounts the live region empty, then inserts the words, so the entry is announced", async () => {
     const seen: string[] = [];
     function Probe(): null {

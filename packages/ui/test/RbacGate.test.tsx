@@ -1,11 +1,16 @@
 // @vitest-environment jsdom
+import { act, useState, type JSX } from "react";
+import { createPortal } from "react-dom";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
-import { describe, it } from "vitest";
+import { describe, it, vi } from "vitest";
 import {
   Button,
+  Callout,
+  FormField,
   IconButton,
   RBAC_REASONS,
   RbacGate,
+  TextInput,
   Toggle,
   formatRbacReason,
   type RbacGateProps,
@@ -159,6 +164,196 @@ describe("RbacGate (CMP-079)", () => {
       children: <Button>Save</Button>,
     };
     expect([missing, unfilled, invented]).toHaveLength(3);
+  });
+});
+
+const OWNER_ONLY = "Only the owner can change account settings.";
+
+describe("RbacGate forms (E05-D02 G15, E09-D09 §2.2)", () => {
+  it("tooltip: the icon keeps its name, badges the lock, echoes the reason on hover and focus; Esc hides it", async () => {
+    vi.useFakeTimers();
+    try {
+      const host = await mount(
+        <RbacGate
+          form="tooltip"
+          allowed={false}
+          reason="rbac.owner_only"
+          fills={{ verb: "change account settings" }}
+        >
+          <IconButton icon="settings" label="Account settings" />
+        </RbacGate>,
+      );
+      const control = within(host).getByRole("button", { name: "Account settings" });
+      const echo = (): HTMLElement | null => document.querySelector<HTMLElement>(".cv-tooltip");
+      expect(control).toHaveAttribute("aria-disabled", "true");
+      expect(control).not.toHaveAttribute("disabled");
+      expect(control).not.toHaveAttribute("title");
+      expect(control).toHaveAccessibleDescription(OWNER_ONLY);
+      expect(control.querySelector(".cv-icon-button__badge")).not.toBeNull();
+      await act(async () => {
+        fireEvent.pointerOver(control);
+        vi.advanceTimersByTime(300);
+      });
+      expect(echo()?.hidden).toBe(false);
+      expect(echo()).toHaveTextContent(OWNER_ONLY);
+      await act(async () => {
+        fireEvent.pointerOut(control);
+        vi.advanceTimersByTime(1000);
+      });
+      await act(async () => control.focus());
+      expect(echo()?.hidden).toBe(false);
+      await act(async () => {
+        fireEvent.keyDown(control, { key: "Escape" });
+      });
+      expect(echo()?.hidden).toBe(true);
+      expect(control).toHaveFocus();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("tooltip: a control with visible text warns in development", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await mount(
+        <RbacGate form="tooltip" allowed={false} reason="rbac.env">
+          <Button>Place order</Button>
+        </RbacGate>,
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("icon-only"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  const notice = (allowed: boolean): JSX.Element => {
+    const gate = { form: "notice", noticeId: "panel-notice" } as const;
+    const deny = allowed
+      ? ({ allowed: true } as const)
+      : ({
+          allowed: false,
+          reason: "rbac.owner_only",
+          fills: { verb: "change account settings" },
+        } as const);
+    return (
+      <>
+        <Callout id="panel-notice" title={OWNER_ONLY} live="off" />
+        <RbacGate {...gate} {...deny}>
+          <Button>Save</Button>
+        </RbacGate>
+        <RbacGate {...gate} {...deny}>
+          <FormField label="Display name">
+            <TextInput />
+          </FormField>
+        </RbacGate>
+      </>
+    );
+  };
+
+  it("notice: every gated control points at the one notice; no own node, no echo, the sentence once", async () => {
+    const host = await mount(notice(false));
+    const save = within(host).getByRole("button", { name: "Save" });
+    const field = within(host).getByRole("textbox", { name: "Display name" });
+    for (const control of [save, field]) {
+      expect(control).toHaveAttribute("aria-disabled", "true");
+      expect(control).not.toHaveAttribute("disabled");
+      expect(control).toHaveAttribute("aria-describedby", "panel-notice");
+      expect(control).toHaveAccessibleDescription(OWNER_ONLY);
+    }
+    expect(field).toHaveAttribute("readonly");
+    const copies = [...host.querySelectorAll("*")].filter(
+      (n) => n.childElementCount === 0 && n.textContent === OWNER_ONLY,
+    );
+    expect(copies).toHaveLength(1);
+    expect(document.querySelectorAll("#panel-notice")).toHaveLength(1);
+    await act(async () => save.focus());
+    expect(document.querySelector(".cv-tooltip")).toBeNull();
+  });
+
+  it("notice: a press still re-announces the reason once and calls nothing", async () => {
+    const onClick = fn();
+    const host = await mount(
+      <>
+        <Callout id="n" title={OWNER_ONLY} live="off" />
+        <RbacGate
+          form="notice"
+          noticeId="n"
+          allowed={false}
+          reason="rbac.owner_only"
+          fills={{ verb: "change account settings" }}
+        >
+          <Button onClick={onClick}>Save</Button>
+        </RbacGate>
+      </>,
+    );
+    await userEvent.click(within(host).getByRole("button", { name: "Save" }));
+    expect(await politeText()).toBe(OWNER_ONLY);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("notice: a portalled descendant with another reason keeps its own node", async () => {
+    const other = "Live trading isn't enabled for you.";
+    function Host({ disabledReason }: { readonly disabledReason?: string }): JSX.Element {
+      return (
+        <>
+          <Button {...(disabledReason === undefined ? {} : { disabledReason })}>Save</Button>
+          {createPortal(<Button disabledReason={other}>Send</Button>, document.body)}
+        </>
+      );
+    }
+    const host = await mount(
+      <RbacGate
+        form="notice"
+        noticeId="n"
+        allowed={false}
+        reason="rbac.owner_only"
+        fills={{ verb: "change account settings" }}
+      >
+        <Host />
+      </RbacGate>,
+    );
+    expect(within(host).getByRole("button", { name: "Save" })).toHaveAttribute(
+      "aria-describedby",
+      "n",
+    );
+    const send = within(document.body).getByRole("button", { name: "Send" });
+    expect(send.getAttribute("aria-describedby")).not.toBe("n");
+    expect(send).toHaveAccessibleDescription(other);
+  });
+
+  it("notice: a gate that flips keeps the control mounted and focused", async () => {
+    let flip: (allowed: boolean) => void = () => undefined;
+    function Panel(): JSX.Element {
+      const [allowed, setAllowed] = useState(false);
+      flip = setAllowed;
+      return notice(allowed);
+    }
+    const host = await mount(<Panel />);
+    const save = within(host).getByRole("button", { name: "Save" });
+    await act(async () => save.focus());
+    await act(async () => flip(true));
+    expect(within(host).getByRole("button", { name: "Save" })).toBe(save);
+    expect(save).toHaveFocus();
+    expect(save).not.toHaveAttribute("aria-describedby");
+    await act(async () => flip(false));
+    expect(save).toHaveFocus();
+    expect(save).toHaveAttribute("aria-describedby", "panel-notice");
+  });
+
+  it("type: notice requires noticeId; noticeId belongs to the notice form only", () => {
+    const missing = (
+      // @ts-expect-error `form="notice"` points at a notice node, so `noticeId` is required.
+      <RbacGate form="notice" allowed={false} reason="rbac.env">
+        <Button>Save</Button>
+      </RbacGate>
+    );
+    const stray = (
+      // @ts-expect-error `noticeId` only exists on the notice form.
+      <RbacGate form="tooltip" noticeId="n" allowed={false} reason="rbac.env">
+        <IconButton icon="settings" label="Settings" />
+      </RbacGate>
+    );
+    expect([missing, stray]).toHaveLength(2);
   });
 });
 

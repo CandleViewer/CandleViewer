@@ -1,4 +1,5 @@
 import type { JSX, ReactElement } from "react";
+import { useGateNoticeFor } from "./disabledReason.js";
 import { Tooltip, type TooltipTriggerProps } from "../Tooltip.js";
 
 /**
@@ -6,7 +7,8 @@ import { Tooltip, type TooltipTriggerProps } from "../Tooltip.js";
  * sighted user sees the reason on hover and on keyboard focus. The reason node from `useDisabledReason` stays the
  * accessible description; the echo is `aria-hidden`, never read twice, and `Esc` hides it with focus kept.
  * Without text (not gated) it renders no node, and the control's tree stays the same, so a gate that comes and goes
- * never remounts the control or drops its focus. `children` is the one focusable element.
+ * never remounts the control or drops its focus. `children` is the one focusable element. Under a CMP-079 gate notice
+ * carrying the same sentence the echo stays empty: the sentence shows once, in the notice.
  */
 export function ReasonEcho({
   text,
@@ -15,8 +17,9 @@ export function ReasonEcho({
   readonly text: string | undefined;
   readonly children: ReactElement<TooltipTriggerProps>;
 }): JSX.Element {
+  const noticed = useGateNoticeFor(text) !== undefined;
   return (
-    <Tooltip content={text ?? ""} mode="echo">
+    <Tooltip content={noticed ? "" : (text ?? "")} mode="echo">
       {children}
     </Tooltip>
   );

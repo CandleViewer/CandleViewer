@@ -273,7 +273,7 @@ export { RadioGroup } from "./RadioGroup.js";
 export type { RadioGroupBaseProps, RadioGroupProps, RadioOption } from "./RadioGroup.js";
 
 export { RbacGate } from "./RbacGate.js";
-export type { RbacGateChild, RbacGateProps } from "./RbacGate.js";
+export type { RbacGateChild, RbacGateForm, RbacGateIconChild, RbacGateProps } from "./RbacGate.js";
 export { RBAC_REASONS, formatRbacReason } from "./rbacReasons.js";
 export type { RbacReasonArgs, RbacReasonFills, RbacReasonKey } from "./rbacReasons.js";
 

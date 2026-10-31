@@ -18,8 +18,13 @@ It wraps one atom. Allowed renders the atom unchanged. Denied takes a key of the
 vocabulary (`RBAC_REASONS`, with `{verb}` or `{user}` fills where the string has them) and passes
 the sentence to the atom's own `disabledReason`, so the atom stays focusable with
 `aria-disabled="true"` and its reason as the accessible description. It has no keys of its own:
-Enter, Space and a click on a denied control do nothing. Only the inline form ships; the tooltip and
-notice forms follow CMP-016 Tooltip.
+Enter, Space and a click on a denied control do nothing but re-announce the reason once.
+
+Three forms (E05-D02 G15). `inline` (default): the reason is the atom's own described-by node.
+`tooltip`, for icon-only controls only: the lock badges the icon and CMP-016 echoes the reason on
+hover and focus. `notice` with `noticeId`: one notice node (a CMP-028 with `live="off"`) carries the
+sentence, and every gated control points `aria-describedby` at it, with no reason node or echo of
+its own. A visible reason line beside a control is the host's (a FormField line, a caption).
 
 ## Keyboard
 

@@ -57,6 +57,11 @@ interface CalloutBase {
   live?: CalloutLive;
   /** A registered glyph replacing the tone's. */
   icon?: IconName;
+  /**
+   * The message's id (title, body, details; never the buttons), so controls can point `aria-describedby` at it:
+   * the CMP-079 notice form's one notice (E42-D03).
+   */
+  id?: string;
   /** A CMP-001 secondary button, first in the action row (e.g. "Retry now"). */
   retry?: CalloutAction;
   /** More CMP-001 secondary buttons after `retry` (e.g. "Details", "Flatten now"). */
@@ -105,6 +110,7 @@ export function Callout(props: CalloutProps): JSX.Element {
     placement = "inline",
     live,
     icon,
+    id,
     retry,
     actions = [],
   } = props;
@@ -131,6 +137,7 @@ export function Callout(props: CalloutProps): JSX.Element {
       <div className="cv-callout__main">
         <div
           key={regionKey}
+          id={id}
           className="cv-callout__message"
           role={role}
           aria-live={role === undefined ? undefined : politeness}

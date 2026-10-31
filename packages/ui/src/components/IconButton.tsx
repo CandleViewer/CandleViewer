@@ -60,10 +60,11 @@ export function IconButton<N extends IconName>({
   const reason = useDisabledReason(disabled, disabledReason, disabledReasonId);
   const announceGated = useGatedAnnounce();
   const ring = useFocusRing();
-  // `reason.reason` is set exactly when gated: the name, then the reason, joined by " · ".
+  // `reason.reason` is set exactly when gated: the name, then the reason, joined by " · "; under a gate notice the
+  // notice carries the reason, so the echo is the name alone.
   const echo = reason.disabled
     ? undefined
-    : reason.reason === undefined
+    : reason.reason === undefined || reason.fromNotice
       ? label
       : `${label} · ${reason.reason}`;
   const handleClick = (event: MouseEvent<HTMLButtonElement>): void => {

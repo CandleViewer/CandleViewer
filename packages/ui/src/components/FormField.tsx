@@ -154,7 +154,7 @@ export function FormField({
       </label>
       <div className="cv-formfield__body">
         <FieldContext.Provider value={context}>{children}</FieldContext.Provider>
-        {reason.gated && !fromSection ? (
+        {reason.gated && !fromSection && !reason.fromNotice ? (
           <div id={reason.reasonId} className="cv-formfield__line">
             {reason.reason}
           </div>

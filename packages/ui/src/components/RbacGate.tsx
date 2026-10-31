@@ -1,21 +1,58 @@
 import { cloneElement, type JSX, type ReactElement } from "react";
+import type { IconName } from "../icons/registry.js";
+import { GateNoticeProvider } from "./internal/disabledReason.js";
 import { fillRbacReason, type RbacReasonArgs, type RbacReasonKey } from "./rbacReasons.js";
 
 /** A single atom that takes the T2 contract natively (CMP-001, 002, 004, 006, 010, …). */
 export type RbacGateChild = ReactElement<{ disabledReason?: string }>;
 
-interface GateBase {
-  /**
-   * The rendering. Only `inline` (2a) ships today; `tooltip` (2b) and `notice` (with `noticeId`) follow
-   * once CMP-016 Tooltip lands (E05-D02 G15, E09-D09 §8 DS-2).
-   */
+/**
+ * The tooltip form's child: an icon-only control (CMP-002, a toolbar segment). JSX widens every element to
+ * `ReactElement<any>`, so the compiler cannot hold this; a development warning does.
+ */
+export type RbacGateIconChild = ReactElement<{
+  disabledReason?: string;
+  icon: IconName;
+  label: string;
+}>;
+
+/** 2a (default): the reason is the atom's own described-by node, its lock leading the label. */
+interface FormInline {
   readonly form?: "inline";
+  readonly noticeId?: never;
   /** Exactly one control; the gate adds no DOM of its own. */
   readonly children: RbacGateChild;
 }
 
+/** 2b: the lock badges the icon; the reason node is visually hidden and CMP-016 echoes it on hover and focus. */
+interface FormTooltip {
+  readonly form: "tooltip";
+  readonly noticeId?: never;
+  readonly children: RbacGateIconChild;
+}
+
+/**
+ * One notice, many pointers: the control's description is the host's notice node (a CMP-028 with `live="off"`,
+ * in the DOM at mount); the control renders no reason node and no echo, and still re-announces on a press.
+ */
+interface FormNotice {
+  readonly form: "notice";
+  /** The id of the notice node, whose text is the reason sentence. */
+  readonly noticeId: string;
+  readonly children: RbacGateChild;
+}
+
+/** The rendering (E05-D02 G15); `tooltip` only for icon-only controls, `notice` only with `noticeId`. */
+export type RbacGateForm = "inline" | "tooltip" | "notice";
+
+type GateForm<F extends RbacGateForm> = F extends "tooltip"
+  ? FormTooltip
+  : F extends "notice"
+    ? FormNotice
+    : FormInline;
+
 /** T1: the session may use the control. A `reason` here is ignored, so a host may keep it computed. */
-interface Allowed extends GateBase {
+interface Allowed {
   readonly allowed: true;
   readonly reason?: RbacReasonKey;
   readonly fills?: never;
@@ -23,23 +60,46 @@ interface Allowed extends GateBase {
 
 /** T2: a D09 §3.1 key is required; a parametrised key also requires its fills. */
 type Denied = {
-  [K in RbacReasonKey]: GateBase & {
+  [K in RbacReasonKey]: {
     readonly allowed: false;
     readonly reason: K;
   } & (RbacReasonArgs<K> extends [infer F] ? { readonly fills: F } : { readonly fills?: never });
 }[RbacReasonKey];
 
-export type RbacGateProps = Allowed | Denied;
+/**
+ * Generic in the form, so the form is not crossed with the seven reasons into one flat union (a host's computed
+ * `reason` would no longer narrow): `form="notice"` requires `noticeId`, every other form forbids it.
+ */
+export type RbacGateProps<F extends RbacGateForm = "inline"> = (Allowed | Denied) & {
+  /** Default `inline`. A plain `form?: F` beside the conditional is what lets JSX infer `F`. */
+  readonly form?: F;
+} & GateForm<F>;
+
+const isIconOnly = (child: ReactElement): boolean => {
+  const props = child.props as { icon?: unknown; label?: unknown };
+  return typeof props.icon === "string" && typeof props.label === "string";
+};
 
 /**
  * CMP-079 RbacGate: a UI affordance, not an authorisation control; the server enforces RBAC (C-12.4).
  * Allowed renders the child unchanged. Denied hands the reason sentence to the child's own
  * `disabledReason`, so the atom renders T2 itself: `aria-disabled`, never `disabled`, focusable,
- * `aria-describedby` to the reason, the lock glyph; no overlay layer (E09-D09 §2.2, §9).
+ * `aria-describedby` to the reason, the lock glyph; no overlay layer (E09-D09 §2.2, §9). The three forms
+ * (E05-D02 G15): `inline` (default), `tooltip` (icon-only controls), `notice` (with `noticeId`). The notice
+ * form's provider is mounted allowed or denied, so a gate that flips never remounts the control.
  */
-export function RbacGate(props: RbacGateProps): JSX.Element {
-  if (props.allowed) return props.children;
-  return cloneElement(props.children, {
-    disabledReason: fillRbacReason(props.reason, props.fills),
-  });
+export function RbacGate<F extends RbacGateForm = "inline">(props: RbacGateProps<F>): JSX.Element {
+  // The form is a type parameter, which does not narrow; read it as the plain union it is at run time.
+  const { form, noticeId } = props as { readonly form?: RbacGateForm; readonly noticeId?: string };
+  if (form === "tooltip" && import.meta.env?.DEV && !isIconOnly(props.children)) {
+    console.warn("RbacGate: the tooltip form is for icon-only controls; use inline (CMP-079).");
+  }
+  const reason = props.allowed ? undefined : fillRbacReason(props.reason, props.fills);
+  const child =
+    reason === undefined
+      ? props.children
+      : cloneElement(props.children, { disabledReason: reason });
+  if (form !== "notice" || noticeId === undefined) return child;
+  const notice = reason === undefined ? null : { noticeId, reason };
+  return <GateNoticeProvider notice={notice}>{child}</GateNoticeProvider>;
 }
