@@ -29,7 +29,9 @@ token file and the committed PNGs; then the pack and its copy deck from the work
 5. **Pins (G-RULED-PIN).** A default-deny pin set over every unit of the pack and every deck
    entry, in PIN_REL; `--repin-ruled` is its only writer.
 6. **--self-test** applies one mutation per gate; each must add exactly one FAIL, from the gate
-   it names, and every text is restored byte-identically.
+   it names, and every text is restored byte-identically. Runtime: each mutation is a full
+   audit (about 10 s), so the run takes about 6 to 8 minutes on a laptop. It is a LOCAL check
+   for the writer and the reviewer, not a CI gate; `--check` (about 11 s) is the CI-sized run.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e08_d13_handoff_audit.py --check [SPEC] [--json] [--fill]
@@ -60,7 +62,7 @@ from typing import TypeVar
 _T = TypeVar("_T")
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "00cf90c0b4"  # every cite was read here (the pack's Inputs line)
+BASE = "fbb73c70de"  # every cite was read here (the pack's Inputs line)
 HEAD = "origin/main"  # G-VERSION: a cited range edited at origin/main FAILs
 
 SPEC_REL = "docs/design/E08/E08-D13.md"
@@ -128,7 +130,7 @@ PINNED_DOCS = {
     "E17D2": "6e9207db6d",
     "E16D5": "627f351407",
     "E16D6": "0ab68e66cb",
-    "14": "00d2418ed2",
+    "14": "8addd87a73",
     "15": "00d2418ed2",
     "D07H": "f768fbab80",
     "E08J": "fa25280b39",
@@ -335,7 +337,7 @@ ROLES = ("owner", "manager", "viewer")
 # hand-written bodies, normalised; changed only with a design and security read and a re-pin
 FROZEN_HEADS = ("6.1 The role matrix", "6.2 What is never rendered")
 FROZEN_SHA = {
-    "6.1 The role matrix": "07a5ca228e3f45b4",
+    "6.1 The role matrix": "5a7a78f1e6165fea",
     "6.2 What is never rendered": "e1be4a08f3dd986e",
 }
 # the contract, tree, catalogue and seed probes (STATUS): key -> (kind, where, needle, yes, no)
@@ -437,14 +439,15 @@ GEN_HEADS = {
     "redline": REDLINE_HEAD,
     "copycites": "7.4a The `14` cites inside the copies",
     "qacases": "5.6 QA cases per screen",
+    "components": COMP_HEAD,
+    "forced": "5.7 Forced states per screen",
+    "smap": "5.8 SCR-147's states against D09's gap ledger",
 }
 WALK_ROLES = (
     "E08-S10",
     "E08-S11",
     "E08-S08",
     "E08-S12",
-    "E08-Q05",
-    "E08-D14",
     "FE-lead read",
     "QA-lead read",
 )
@@ -1255,7 +1258,40 @@ def wire_hit(tok: str) -> tuple[str, int, str] | None:
     return None
 
 
-THRESHOLD = re.compile(r"\b\d+(?:\.\d+)?\s?(?:ms|s|%|rows?|symbols|subscriptions|min)\b|\bT[12]\b")
+THRESHOLD = re.compile(
+    r"\b\d{1,3}(?: \d{3})*(?:\.\d+)?\s?(?:ms|s|%|rows?|symbols|subscriptions|min)\b"
+    r"|\b\d+s\b|\bT[12]\b"
+)
+CLAUSE = re.compile(r";\s|,\s(?=or\b|and\b)|\s—\s|\s\(|\)\s?")
+
+
+def clip(part: str) -> str:
+    part = re.sub(r"^(?:or|and|a|the)\s+", "", part.strip(" .,;:"))
+    words = part.split()
+    return " ".join(words[:14]) + (" …" if len(words) > 14 else "")
+
+
+def first_clause(plain: str) -> str:
+    """The parent's own condition, its first clause, when it states no threshold."""
+    text = re.sub(r"`([^`]*)`", r"\1", strip_comments(plain)).replace("**", "")
+    parts = [p.strip(" .,;:") for p in CLAUSE.split(text) if p.strip(" .,;:")]
+    out: list[str] = []
+    for p in parts:
+        out.append(p)
+        if len(" ".join(out).split()) >= 5:
+            break
+    return clip("; ".join(out)) if out else "the parent's rule"
+
+
+def condition_of(plain: str) -> str:
+    """The WHOLE condition holding the first threshold (round-2 read U2): the clause it sits in,
+    with any comparison, range or duration around it ("503s for 60 s", "> 2 000 ms", "180 to
+    199 symbols"), never the first number and unit alone."""
+    text = re.sub(r"`([^`]*)`", r"\1", plain)
+    for part in CLAUSE.split(text):
+        if THRESHOLD.search(part):
+            return clip(part)
+    return ""
 
 
 def classify(trigger: str, screen: str) -> str:
@@ -1273,11 +1309,13 @@ def classify(trigger: str, screen: str) -> str:
         n = find_line("22", re.compile(rf"^\s+['\"]{st[1]}['\"]:"))
         if n:
             return f"wire: HTTP {st[1]} (`22`:{n})"
-    th = THRESHOLD.search(plain)
-    if th:
-        return f"client-computed: {th[0]}"
-    if screen == "SCR-101" or CLIENT_WORDS.search(plain):
-        return "client-computed: the parent's rule"
+    cond = condition_of(plain)
+    if cond:
+        return f"client-computed: {cond}"
+    if screen == "SCR-101" and plain == "(user-reached)":
+        return "client-computed: a user action reaches the view"
+    if CLIENT_WORDS.search(plain):
+        return f"client-computed: {first_clause(plain)}"
     m = INHERIT.search(plain)
     if m:
         return f"inherited: {m[0].strip('`')}"
@@ -1332,6 +1370,37 @@ class StateRow:
     handle: str
 
 
+# states a parent names in its own section rather than its register table (round-2 read: the
+# SCR-104 dry run): (screen, doc, heading prefix, state name)
+EXTRA_STATES: tuple[tuple[str, str, str, str], ...] = (
+    ("SCR-104", "D08", "### 5.2 The cap and its note", "Capped"),
+    ("SCR-104", "D08", "### 7.3 The stale scan", "Stale scan"),
+    ("SCR-104", "D08", "### 7.4 Stale inputs", "Inputs stale"),
+    ("SCR-104", "D08", "### 7.5 Pause", "Paused"),
+)
+# the root component a state's `data-cmp` names, per screen (PROPOSED; from §4.1's lists)
+HANDLE_ROOT = {
+    "SCR-102": "CMP-043",
+    "SCR-041": "CMP-017",
+    "SCR-103": "CMP-046",
+    "SCR-100": "CMP-049",
+    "SCR-101": "CMP-043",
+    "SCR-104": "CMP-049",
+    "SCR-147": "CMP-087",
+    "SCR-151": "CMP-026",
+    "SCR-152": "CMP-077",
+}
+
+
+def handle_of(first: str, rid: str, copy: str) -> str:
+    base = f'`data-cmp="{HANDLE_ROOT.get(first, "?")}"` `data-state="{rid}"`'
+    if copy == "—":
+        return base
+    text = str(build_deck()["strings"][copy].get("text", ""))
+    name = f'"{text}"' if len(text) <= 60 and '"' not in text else f"deck `{copy}`"
+    return f"accessible name {name}; else {base}"
+
+
 @functools.cache
 def deck_keys() -> tuple[str, ...]:
     return tuple(build_deck()["strings"])
@@ -1372,14 +1441,7 @@ def state_rows() -> tuple[StateRow, ...]:
                 copy = f"{cid.lower()}.{wn[0]}"
             elif f"{prefix}.{rid}.1" in keys:
                 copy = f"{prefix}.{rid}.1"
-            handle = "`data-cmp` + `data-state`"
-            if copy != "—":
-                text = str(build_deck()["strings"][copy].get("text", ""))
-                handle = (
-                    f'accessible name "{text}"'
-                    if len(text) <= 60 and '"' not in text
-                    else f"accessible name: deck `{copy}`"
-                )
+            handle = handle_of(first, rid, copy)
             out.append(
                 StateRow(
                     rid=f"{first}/{rid}",
@@ -1392,6 +1454,24 @@ def state_rows() -> tuple[StateRow, ...]:
                     handle=handle,
                 )
             )
+    for scr, cid, head, name in EXTRA_STATES:
+        a, _b = base_block(cid, head)
+        trigger = base_line(cid, a)
+        rid = slug(name)
+        wn = re.findall(r"\bW-\d+\b", trigger)
+        copy = f"{cid.lower()}.{wn[0]}" if wn and f"{cid.lower()}.{wn[0]}" in keys else "—"
+        out.append(
+            StateRow(
+                rid=f"{scr}/{rid}",
+                name=name,
+                cite=f"`{cid}`:{a}",
+                emitter=emitter_of(f"{scr}/{rid}", trigger, scr),
+                rank=rank_of(name),
+                copy=copy,
+                announce=ANNOUNCE.get(scr, "—"),
+                handle=handle_of(scr, rid, copy),
+            )
+        )
     return tuple(out)
 
 
@@ -1461,7 +1541,10 @@ def matrix_cells(legs: str, keys: list[str], cls: str = "T2") -> tuple[list[str]
             cells.append(("enabled; " if perms else "") + f"T2{sk} by state")
         else:
             cells.append("enabled")
-    view = "T2 `rbac.view_as`" if view_as else cells[0]
+    # E09-D09 step 3a makes every write T2 under view-as (round-2 read U7), whether or not the
+    # D12 row's legs repeat it (D13-C-13)
+    writes = any(p.endswith(":write") for p in perms)
+    view = "T2 `rbac.view_as`" if view_as or writes else cells[0]
     return [*cells, view], ", ".join(f"`{p}`" for p in perms) or "a data state"
 
 
@@ -1602,6 +1685,66 @@ def gen_qacases() -> str:
     return table(["Screen", "QA cases in `QAP` naming the screen"], rows)
 
 
+# what §4.1 adds to a screen's `14` Components line, from D12 or a parent
+ADDED_CMP = {
+    "SCR-104": "CMP-079 RbacGate, CMP-019 Icon `lock` (F-03, T2-17); `14`'s line stays its owner's",
+    "SCR-147": "the gate and view-as rows of `D09` §13.1; `D09H` §D's list",
+    "SCR-151": "CMP-023 Progress Bar for `backfill-in-progress` (`D11`:125)",
+    "SCR-152": "CMP-092 DegradedModeBanner (`E17D2` §8); the chip is CMP-076 (§4.4)",
+}
+
+
+def components_line(scr: str) -> int:
+    lines = base_lines("14")
+    cur = ""
+    for i, ln in enumerate(lines, 1):
+        m = re.match(r"^### (SCR-\d{3}) ", ln)
+        if m:
+            cur = m[1]
+        elif cur == scr and ln.startswith("- **Components:**"):
+            return i
+    return 0
+
+
+def gen_components() -> str:
+    rows = []
+    for scr in SCREENS:
+        n = components_line(scr)
+        ids = re.findall(r"CMP-\d{3}", base_line("14", n))
+        rows.append([scr, f"`14`:{n}", ", ".join(ids), ADDED_CMP.get(scr, "none")])
+    return table(
+        ["Screen", "Components line", "`15` ids (each an entry at the base)", "Added"], rows
+    )
+
+
+# the forced-state list each screen's parent names (round-2 read: E08-D14's matrix)
+FORCED = {
+    "SCR-103": "`D06`:752–761 (D06 §17.3)",
+    "SCR-104": "`D08`:418 (D08's frame register)",
+    "SCR-147": "`D09`:255–284 (D09 §5.2, by S-id)",
+}
+
+
+def gen_forced() -> str:
+    rows = []
+    for scr in SCREENS:
+        if scr in FORCED:
+            rows.append([scr, FORCED[scr], "the parent's list"])
+        else:
+            rows.append([scr, "the trigger condition of each §5.4 row", "no parent list: D13-G-7"])
+    return table(["Screen", "Forced states", "Source"], rows)
+
+
+def gen_smap() -> str:
+    rows = []
+    for line, c in first_table("D09", "### 5.2 The register"):
+        g = sorted(set(re.findall(r"D09-G\d+", " ".join(c))), key=lambda x: int(x[5:]))
+        rows.append(
+            [c[0], f"`D09`:{line}", ", ".join(g) if g else "none named in the row: D13-G-8"]
+        )
+    return table(["S-id", "Line", "G-rows the row names"], rows)
+
+
 def gen_block(key: str) -> str | None:
     if key in COPIES:
         return lift_text(key)
@@ -1612,6 +1755,9 @@ def gen_block(key: str) -> str | None:
         "redline": gen_redline,
         "copycites": gen_copycites,
         "qacases": gen_qacases,
+        "components": gen_components,
+        "forced": gen_forced,
+        "smap": gen_smap,
     }
     fn = gens.get(key)
     return fn() if fn else None
@@ -1674,6 +1820,30 @@ def owner_of(key: str) -> str:
     )
 
 
+# the literal values D06's strings carry, named as slots with their format (round-2 read U6):
+# (slot name, pattern); the format is D06 §5's number-formatting rules
+D06_LITERALS: tuple[tuple[str, str], ...] = (
+    ("symbol", r"\b[A-Z0-9]{2,}USDT\b"),
+    ("user", r"(?<=viewing as )[a-z]\w*"),
+    ("time", r"\b\d{2}:\d{2}(?::\d{2})?(?: UTC)?"),
+    ("duration", r"\b\d+(?:\.\d+)? ?(?:ms|s|min|h)\b"),
+    ("value", r"(?<![\w.])[-+]?\d+(?:[.,]\d+)*%?(?![\w.])"),
+)
+
+
+def d06_slots(text: str) -> tuple[list[str], list[str]]:
+    names: list[str] = []
+    examples: list[str] = []
+    rest = text
+    for name, pat in D06_LITERALS:
+        for m in re.finditer(pat, rest):
+            if name not in names:
+                names.append(name)
+            examples.append(m[0])
+        rest = re.sub(pat, " ", rest)
+    return names, examples
+
+
 def deck_entry(
     key: str, text: str, cid: str, line: int, status: str, var_line: int
 ) -> dict[str, object]:
@@ -1681,6 +1851,10 @@ def deck_entry(
     if status == "PROPOSED":
         entry["owner"] = owner_of(key)
     slots, examples = slots_of(text), examples_of(text)
+    if key.startswith("d06."):
+        slots, examples = d06_slots(text)
+        lo, _hi = base_block("D06", "## 5. Number formatting")
+        var_line = lo
     if slots:
         fmt = f"`{cid}`:{var_line}" if var_line else "not stated by the parent (D13-G-5)"
         entry["slots"] = [{"name": x, "format": fmt} for x in slots]
@@ -2062,7 +2236,7 @@ def wire_cell_problems(spec: str) -> list[str]:
 
 
 def g_states(t: Texts) -> list[Finding]:
-    bad = gen_findings(t, ("states", "d03map", "qacases"), "G-STATES")
+    bad = gen_findings(t, ("states", "d03map", "qacases", "forced", "smap"), "G-STATES")
     sec = spec_sec(t, STATES_HEAD)
     bad += [F("G-STATES", m, "spec", sec) for m in wire_cell_problems(t.spec)]
     body = norm_text(section(t.spec, "5.3 Test identifiers"))
@@ -2164,7 +2338,7 @@ def g_index(t: Texts) -> list[Finding]:
 
 
 def g_cmp(t: Texts) -> list[Finding]:
-    bad: list[Finding] = []
+    bad: list[Finding] = gen_findings(t, ("components",), "G-CMP")
     for head in (COMP_HEAD, NEW_HEAD):
         sec = spec_sec(t, head)
         for cmp in sorted(set(re.findall(r"CMP-\d{3}", strip_comments(section(t.spec, head))))):
@@ -2361,7 +2535,7 @@ def g_walk(t: Texts) -> list[Finding]:
         pending = r[-1] == WALK_PENDING
         if pending and STRICT_WALK:
             bad.append(F("G-WALK", f"{r[0][:20]}: still pending at READY", "spec", sec))
-        if not pending and not all(re.fullmatch(r"\d+", c) for c in r[2:6]):
+        if not pending and not all(re.fullmatch(r"\d+|—", c) for c in r[2:6]):
             bad.append(F("G-WALK", f"{r[0][:20]}: counts are not numbers", "spec", sec))
     return bad
 
@@ -2941,7 +3115,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("M-20", "G-UNTOUCHED", "a stray path", lever=lever_extra_path),
     Mutation("M-21", "G-UNTOUCHED", "a pointer line moved", lever=lever_pointer_moved),
     Mutation("M-22", "G-UNTOUCHED", "post-merge: `14` edited again", lever=lever_plan14_edit),
-    Mutation("M-23", "G-WALK", "a pending row under --strict-walk", lever=lever_strict_walk),
+    Mutation(
+        "M-23",
+        "G-WALK",
+        "a dry-run row back to pending under --strict-walk",
+        spec=cell_set("E08-S10 #4704 (SCR-103)", 6, "filled at READY by the orchestrator's deputy"),
+        lever=lever_strict_walk,
+    ),
     Mutation("M-24", "G-PNG", "a named PNG missing", lever=lever_png_missing),
     Mutation(
         "M-25",
@@ -3021,6 +3201,12 @@ MUTATIONS: tuple[Mutation, ...] = (
             r"(\| T2-08 .*?\| enabled +\| )hidden \(T3\); the sentence replaces the link",
             r"\g<1>T2",
         ),
+    ),
+    Mutation(
+        "M-39",
+        "G-STATES",
+        "read U2: a first-match threshold instead of the whole condition",
+        spec=cell_set("`SCR-102/load-failed`", 3, "client-computed: 503s"),
     ),
     Mutation(
         "M-33",

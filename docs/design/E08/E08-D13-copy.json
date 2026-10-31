@@ -1,7 +1,7 @@
 {
   "pack": "E08-D13",
   "version": "v1",
-  "base": "00cf90c0b4",
+  "base": "fbb73c70de",
   "ruling": "6544763601",
   "rule": "one entry per parent string, keyed by the parent's row id; built by the tool",
   "strings": {
@@ -210,17 +210,41 @@
     "d06.not-recorded-owner-viewing-as.1": {
       "text": "Read-only while viewing as alex.",
       "source": "`D06`:286",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "user",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["alex"]
     },
     "d06.stale-t1.1": {
       "text": "Stale 7s",
       "source": "`D06`:287",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "duration",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["7s"]
     },
     "d06.stale-t1.2": {
       "text": "Last update 06:35:46 UTC",
       "source": "`D06`:287",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "time",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["06:35:46 UTC"]
     },
     "d06.stale-t1.3": {
       "text": "Live values stale.",
@@ -235,12 +259,32 @@
     "d06.stale-t2.1": {
       "text": "Stale 15 s — new orders blocked on BTCUSDT",
       "source": "`D06`:288",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`D06`:209"
+        },
+        {
+          "name": "duration",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["BTCUSDT", "15 s"]
     },
     "d06.stale-t2.2": {
       "text": "Stale (server) — since 14:02:11",
       "source": "`D06`:288",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "time",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["14:02:11"]
     },
     "d06.exchange-feed-down.1": {
       "text": "Stale — exchange feed down",
@@ -250,7 +294,15 @@
     "d06.reconnecting-disconnected.1": {
       "text": "Disconnected — last data 00:12",
       "source": "`D06`:290",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "time",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["00:12"]
     },
     "d06.awaiting-the-first-tick.1": {
       "text": "No live values yet",
@@ -270,7 +322,15 @@
     "d06.not-trading.1": {
       "text": "No live trading data — BTCUSDT is not trading.",
       "source": "`D06`:293",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["BTCUSDT"]
     },
     "d06.not-trading.2": {
       "text": "Recorded coverage isn't available for symbols that aren't trading.",
@@ -280,12 +340,28 @@
     "d06.not-trading.3": {
       "text": "BTCUSDT is not trading on Bybit.",
       "source": "`D06`:293",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["BTCUSDT"]
     },
     "d06.not-trading.4": {
       "text": "BTCUSDT is not open for trading in CandleViewer — pre-launch on Bybit.",
       "source": "`D06`:293",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["BTCUSDT"]
     },
     "d06.not-trading.5": {
       "text": "Status: Closed.",
@@ -305,12 +381,28 @@
     "d06.catalogue-loading.1": {
       "text": "Checking Bybit for BTCUSDT…",
       "source": "`D06`:294",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["BTCUSDT"]
     },
     "d06.catalogue-loading.2": {
       "text": "CandleViewer's server is loading the instrument list from Bybit — next try in 4 s.",
       "source": "`D06`:294",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "duration",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["4 s"]
     },
     "d06.catalogue-loading.3": {
       "text": "Recorded coverage waits for the instrument list.",
@@ -320,17 +412,45 @@
     "d06.rules-changed-while-open.1": {
       "text": "Changed · was 0.01",
       "source": "`D06`:296",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "value",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["0.01"]
     },
     "d06.rules-changed-while-open.2": {
       "text": "Rules changed at 06:40 UTC (revision 7 → 8).",
       "source": "`D06`:296",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "time",
+          "format": "`D06`:209"
+        },
+        {
+          "name": "value",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["06:40 UTC", "7", "8"]
     },
     "d06.rules-changed-while-open.3": {
       "text": "Contract rules changed: tick size is now 0.005 USDT, was 0.01.",
       "source": "`D06`:296",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "value",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["0.005"]
     },
     "d06.contract-load-failed.1": {
       "text": "alert",
@@ -340,7 +460,15 @@
     "d06.contract-load-failed.2": {
       "text": "Couldn't load BTCUSDT's contract rules.",
       "source": "`D06`:297",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["BTCUSDT"]
     },
     "d06.contract-load-failed.3": {
       "text": "CandleViewer can't reach its server.",
@@ -365,7 +493,15 @@
     "d06.not-in-the-instrument-list.1": {
       "text": "BTCUSDT isn't in Bybit's instrument list as CandleViewer last read it.",
       "source": "`D06`:298",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["BTCUSDT"]
     },
     "d06.forbidden.1": {
       "text": "Your role can't see instruments.",
@@ -390,12 +526,32 @@
     "d06.clock-alarm.1": {
       "text": "at 08:00:00 UTC (in about 1 h 24 min)",
       "source": "`D06`:303",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "time",
+          "format": "`D06`:209"
+        },
+        {
+          "name": "duration",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["08:00:00 UTC", "1 h", "24 min"]
     },
     "d06.clock-alarm.2": {
       "text": "Clock skew 612 ms — the countdown may be off",
       "source": "`D06`:303",
-      "status": "verbatim"
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "duration",
+          "format": "`D06`:209"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)",
+      "examples": ["612 ms"]
     },
     "d06.opened-from-a-replay-surface.1": {
       "text": "Current market — not the replay time.",
