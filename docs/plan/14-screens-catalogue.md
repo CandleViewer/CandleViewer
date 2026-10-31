@@ -1413,6 +1413,7 @@ Drag preview                Drop zones
 
 - **Type:** Panel. **Purpose:** the fast execution surface for one account.
 - **RBAC:** `owner`, `manager` (assigned accounts, within profile limits); `viewer` sees it read-only with a lock notice.
+- **Design (hi-fi):** [E30-D02.md](../design/E30/E30-D02.md) (E30-D02; every state, the copy deck §14, the redlines §2 and §15; Penpot page by name + id in the spec); the hand-off pack [E30-D06.md](../design/E30/E30-D06.md) (E30-D06; the frozen copy deck and the state inventory).
 
 ```
 +------------- Order ticket -------------------+
@@ -1432,11 +1433,11 @@ Drag preview                Drop zones
 +----------------------------------------------+
 ```
 
-- **Components:** CMP-001 Button, CMP-075 EnvBadgeLocal, CMP-100 PriceInput, CMP-101 QtyInput, CMP-102 SideToggle, CMP-103 OrderTypeTabs, CMP-107 OrderTicket, CMP-119 BracketEditor, CMP-121 RiskCalculatorPanel, CMP-122 QuickSizeButtons, CMP-130 SlippageEstimateChip, CMP-231 TifSelect, CMP-232 LimitsChip.
+- **Components:** CMP-001 Button, CMP-075 EnvBadgeLocal, CMP-100 PriceInput, CMP-101 QtyInput, CMP-102 SideToggle, CMP-103 OrderTypeTabs, CMP-107 OrderTicket, CMP-119 BracketEditor, CMP-121 RiskCalculatorPanel, CMP-122 QuickSizeButtons, CMP-130 SlippageEstimateChip, CMP-231 TifSelect, CMP-232 LimitsChip, CMP-158 SafetyInvariantNotice, CMP-229 ArmToggle, CMP-139 EnvironmentAwareOrderGuard, CMP-078 StaleDataShade, CMP-239 FreshnessMarker, CMP-035 Countdown / Timer text, CMP-044 ConfirmDialog, CMP-027 ErrorState / InlineError, CMP-117 RiskLockoutBanner, CMP-022 Kbd, CMP-003 SegmentedControl, CMP-008 NumericStepperInput, CMP-011 Tag / Chip.
 - **Data:** `GET /api/v1/instruments/{symbol}` (tick, lot, leverage, min notional), `GET /api/v1/exchange-accounts/{accountId}/profiles` (limits, sizing rule, SL/TP offsets), WS `wallet` (equity/margin), `ticker.{symbol}` (mark/bid/ask for price helpers), submit `POST /api/v1/orders`.
 - **Interactions/hotkeys:** `B`/`S` set side; `1..4` qty presets; `Ctrl+Enter` submit; `Esc` clear; `Alt+B`/`Alt+A` snap price to bid/ask; `Alt+M` mid; `R` toggle reduce-only; `Ctrl+Shift+T` arm/disarm one-click (when armed, preset buttons fire immediately without the confirm step).
-- **States:** ready · validating · submitting (button becomes a progress state, duplicate submits blocked) · accepted (toast + ticket resets per preference) · rejected (inline error with the exchange code and a plain-language explanation) · blocked-by-profile · blocked-by-lockout ("Daily loss limit reached — trading locked until 00:00 UTC. Ask the owner to override.") · frozen · disconnected (submit disabled, "Not connected") · demo/live badge · pending-key (manager whose key is inside Bybit's 48 h restriction).
-- **Validation & messages:** price must be a tick multiple ("Price must be a multiple of 0.5."); qty ≥ min lot and a lot multiple ("Minimum 0.001, step 0.001."); notional ≥ min ("Order value must be at least 5 USDT."); leverage within profile ("Your profile caps leverage at 10x."); SL on the correct side ("Stop-loss must be below entry for a long."); TP on the correct side; reduce-only with no position ("Reduce-only needs an open position."); post-only that would cross ("Post-only would execute immediately — adjust the price or uncheck Post-only."); insufficient margin ("Not enough available margin: need 1 600, have 1 240."); **mandatory-SL invariant** — if the account profile requires a native SL and none is attached, submit is blocked: "This account requires a stop-loss on every order."
+- **States:** ready · validating · submitting (button becomes a progress state, duplicate submits blocked) · accepted (toast + ticket resets per preference) · rejected (inline error with the exchange code and a plain-language explanation) · blocked-by-profile · blocked-by-lockout ("Daily loss limit reached — trading locked until 00:00 UTC. Ask the owner to override.") · frozen · disconnected (submit disabled, "Not connected") · demo/live badge · pending-key (manager whose key is inside Bybit's 48 h restriction) · awaiting exchange confirmation (2 s) · order live, protective stop pending · stale inputs (helpers / wallet / preview) · locked · armed · unknown (the arm store) · the return from a disconnect (locked with reason) · viewer read-only.
+- **Validation & messages:** price must be a tick multiple ("Price must be a multiple of 0.5."); qty ≥ min lot and a lot multiple ("Minimum 0.001, step 0.001."); notional ≥ min ("Order value must be at least 5 USDT."); leverage within profile ("Your profile caps leverage at 10x."); SL on the correct side ("Stop-loss must be below entry for a long."); TP on the correct side; reduce-only with no position ("Reduce-only needs an open position."); post-only that would cross ("Post-only would execute immediately — adjust the price or uncheck Post-only."); insufficient margin ("Not enough available margin: need 1 600, have 1 240."); **mandatory-SL invariant** — every position-opening order, on every account, in every environment, including every leg of a trade-group fan-out, carries a native exchange-side stop-loss (C-2.6; no flag or setting disables it, C-4.14); when none is attached, submit is blocked: "Every position-opening order requires a stop-loss."
 - **A11y:** the whole ticket is a form with a fieldset per section; the submit button's accessible name states the full intent ("Submit buy 0.25 BTCUSDT limit 64 010 with stop 63 900"); errors summarised at the top with links to fields; arm state is announced when toggled.
 - **Performance:** every input recalculates risk/fee/margin in ≤8 ms (pure client-side); click→ack ≤500 ms p95; optimistic "submitting" state resolved by WS `orders` within 2 s or shown as "Awaiting exchange confirmation — reconciling".
 - **Analytics/audit:** `order.submitted` (audit: full payload, account, source=ticket), `order.rejected`, `order.arm_toggled`, `ticket.sizing_rule_used`.
@@ -1475,7 +1476,7 @@ Drag preview                Drop zones
 - **Performance:** preview ≤300 ms; fan-out send dispatches in parallel with per-account rate-limit budgeting; full group ack ≤1.5 s p95 for 5 accounts.
 - **Audit:** `tradegroup.preview`, `tradegroup.sent` (one record per account order plus a group record), `tradegroup.row_overridden`, `tradegroup.partial_failure`.
 - **Sign-off:** [ ] partial-failure UX approved by owner [ ] override is visibly exceptional [ ] rate-limit staggering explained [ ] exclusion reasons complete.
-- **Components:** CMP-075 EnvBadgeLocal, CMP-100 PriceInput, CMP-101 QtyInput, CMP-102 SideToggle, CMP-105 AccountMultiSelect, CMP-107 OrderTicket, CMP-119 BracketEditor, CMP-121 RiskCalculatorPanel, CMP-124 TradeGroupSummaryCard, CMP-158 SafetyInvariantNotice, CMP-229 ArmToggle, CMP-231 TifSelect, CMP-232 LimitsChip.
+- **Components:** CMP-075 EnvBadgeLocal, CMP-100 PriceInput, CMP-101 QtyInput, CMP-102 SideToggle, CMP-105 AccountMultiSelect, CMP-107 OrderTicket, CMP-119 BracketEditor, CMP-121 RiskCalculatorPanel, CMP-124 TradeGroupSummaryCard, CMP-158 SafetyInvariantNotice, CMP-229 ArmToggle, CMP-231 TifSelect, CMP-232 LimitsChip, CMP-079 RbacGate, CMP-019 Icon.
 - **Stories:** US-PROF-005, US-PROF-006, US-PROF-007, US-PROF-008, US-ORD-013.
 - **Design sign-off acceptance checklist:** [ ] account selector with per-account computed size, leverage and SL preview drawn [ ] partial-failure state (3 of 5 accounts filled) drawn as the primary design case, not an afterthought [ ] per-account rate-limit budget indicator [ ] aggregate vs per-account confirmation drawn [ ] mandatory native SL per leg shown before submit [ ] retry/cancel-remaining actions for a partial fan-out [ ] DEMO/LIVE badge per account row
 - **Wireframes (E28-D02):** [E28-D02.md](../design/E28/E28-D02.md) §5.6 (text-first, ruled on #821; boards pending on page `E28-D02`) — the preview half only: the columns `acct · profile · qty · lev · SL · ok` from served fields, the SL never empty, ready / warn / skipped / blocked in words with each reason, refused whole apart from a blocked leg, stale preview apart from "Profile changed — review"; the send states are E34-D02's.
@@ -1767,16 +1768,19 @@ Drag preview                Drop zones
 ### SCR-076 — Order confirmation modal
 
 - **Type:** Modal (shown when one-click is disarmed, or always in Live per preference). Full restatement: environment, account(s), side, symbol, type, qty, price, brackets, estimated cost, resulting exposure, and profile-limit check results. Countdown auto-cancel after 20 s of inactivity (configurable).
+- **States:** live-limit · live-limit-comfortable · demo-limit · live-market · live-conditional · countdown-10s · countdown-5s · timed-out · cancelled · confirmed · dont-ask-demo · dont-ask-live-disabled · preview-stale-refused · fanout · fanout-all-or-none · fanout-narrowed · replay · fanout-send-now (E30-D03 §3; frames `SCR-076/<state>`).
 - **A11y:** the confirm button's accessible name restates the whole order; `Enter` confirms only after 400 ms to prevent double-entry pass-through.
-- **Components:** CMP-036 KeyValueRow, CMP-044 ConfirmDialog, CMP-075 EnvBadgeLocal, CMP-130 SlippageEstimateChip, CMP-158 SafetyInvariantNotice, CMP-232 LimitsChip.
+- **Components:** CMP-036 KeyValueRow, CMP-044 ConfirmDialog, CMP-075 EnvBadgeLocal, CMP-130 SlippageEstimateChip, CMP-158 SafetyInvariantNotice, CMP-232 LimitsChip, CMP-049 Table, CMP-106 ProfileBadge, CMP-035 Countdown / Timer text, CMP-079 RbacGate, CMP-019 Icon.
 - **Stories:** US-ORD-011, US-SET-003, US-ORD-014.
 - **Performance:** The modal is prepared from already-loaded state (no fetch on open); it appears within 100 ms of submit and the confirm action goes straight to the order endpoint with the click->ack <=500 ms p95 budget preserved.
 - **Analytics/audit:** `order.confirmation_shown`, `order.confirmation_cancelled` (analytics); the confirm action emits the audited `order.submitted`.
 - **Design sign-off acceptance checklist:** [ ] side, symbol, quantity, notional, order type, price, leverage, SL/TP and resulting risk in account currency all restated [ ] LIVE variant is visually distinct from DEMO [ ] 'don't ask again' is available for DEMO only and never for LIVE [ ] fan-out variant lists every account leg [ ] no default-focused confirm button for LIVE market orders
+- **Design (hi-fi):** [E30-D03.md](../design/E30/E30-D03.md) §2–§3 (E30-D03; owner approval pending; the four confirm variants, the gates, the fan-out leg table; Penpot page by name + id in the spec).
 
 ### SCR-077 — Order rejection detail drawer
 
 - **Type:** Drawer. For any rejected order: the exchange error code and raw message, a plain-language explanation, what CandleViewer sent (redacted of secrets), retry guidance, and a one-click "retry with corrections" that pre-fills a fixed ticket. Includes the rate-limit budget graph for code 10018.
+- **States:** open · insufficient-margin · reduce-only · tick-lot · leverage-limit · risk-limit-tier · rate-limit · position-mode · post-only-cross · stop-missing · record-loading · record-served · record-role-unavailable · audit-link-owner · audit-link-manager · budget-graph · copied · retry-pressed (E30-D03 §4; frames `SCR-077/<state>`).
 - **Data:** `GET /api/v1/orders/{orderId}/diagnostics`.
 - **Components:** CMP-021 Link, CMP-027 ErrorState / InlineError, CMP-036 KeyValueRow, CMP-046 Drawer, CMP-068 CopyableCodeBlock.
 - **Stories:** US-ORD-012, US-OBS-005.
@@ -1784,6 +1788,7 @@ Drag preview                Drop zones
 - **Performance:** Opens from already-received rejection data; no additional fetch for the common case. The raw payload is fetched lazily only when the user expands it.
 - **Analytics/audit:** `order.rejected` is recorded backend-side with the full request/response; the drawer emits `order.rejection_viewed`, `order.rejection_payload_expanded`, `order.rejection_retried` (the retry itself emits a fresh audited `order.submitted`).
 - **Design sign-off acceptance checklist:** [ ] verbatim exchange message + plain-language translation drawn [ ] the most common rejection reasons (insufficient margin, reduce-only violation, tick/lot rounding, leverage limit, risk-limit tier, rate limit, position-mode mismatch) each have written copy [ ] retry-with-fix affordance where the fix is unambiguous [ ] correlation id copyable [ ] link to the audit record (owner)
+- **Design (hi-fi):** [E30-D03.md](../design/E30/E30-D03.md) §4–§5 (E30-D03; the nine rejection translations frozen for E30-T02, the lazy exchange record, the redaction frame).
 
 ### SCR-078 — Fills / executions detail
 
@@ -2396,12 +2401,14 @@ Drag preview                Drop zones
 
 - **Type:** Section. Default order type, TIF, default qty and preset ladder, default sizing rule (fixed qty / fixed notional / % equity / risk-based), default SL/TP offsets (ticks / % / R), confirm-before-send rules (always / live only / never when armed), one-click arm persistence across sessions, auto-reset ticket after send, sound on fill.
 - **Note:** user defaults can never exceed the per-account profile limits set by the owner — the section shows each limit inline as a ceiling ("Your profile caps leverage at 10x").
-- **Components:** CMP-040 FormField, CMP-065 FormSection, CMP-086 SettingsNav / SettingsLayout, CMP-119 BracketEditor, CMP-122 QuickSizeButtons, CMP-158 SafetyInvariantNotice, CMP-231 TifSelect.
+- **States:** default-demo · live-option-disabled · stop-clear-refused · above-ceiling · offset-zero · preset-below-min · dirty · saving · saved · reset-confirm · manager-no-live · viewer-read-only · sounds · templates-list · templates-empty · template-save-as · template-apply · template-menu · template-disabled · loading · load-error · save-failed · ceiling-unconfirmed (E30-D03 §7, §9; frames `SCR-114/<state>`; loading, load-error and save-failed per E30-D05 SD-01; ceiling-unconfirmed per SD-04).
+- **Components:** CMP-040 FormField, CMP-065 FormSection, CMP-086 SettingsNav / SettingsLayout, CMP-119 BracketEditor, CMP-122 QuickSizeButtons, CMP-158 SafetyInvariantNotice, CMP-231 TifSelect, CMP-079 RbacGate, CMP-019 Icon.
 - **Stories:** US-ORD-012, US-ORD-003, US-PROF-008.
 - **A11y:** Fieldsets per topic (default order type, default size mode and value, default leverage, default SL/TP offsets, confirmation policy, arm behaviour); every numeric field states its unit; the confirmation-policy radio group states the consequence of each option.
 - **Performance:** Defaults are applied to newly opened tickets only; existing tickets keep their state. Save round-trip <=400 ms.
 - **Analytics/audit:** `trading_defaults.changed` `{key, before, after, environment}` - **audited**; disabling LIVE order confirmation emits `trading_defaults.live_confirmation_disabled` at high severity.
 - **Design sign-off acceptance checklist:** [ ] separate DEMO and LIVE default sets drawn [ ] 'skip confirmation' is unavailable for LIVE market orders - state drawn [ ] default SL is mandatory and cannot be set to 'none' - state drawn [ ] per-account override pointer to SCR-131 [ ] validation messages [ ] reset to defaults
+- **Design (hi-fi):** [E30-D03.md](../design/E30/E30-D03.md) §7 (E30-D03; DEMO / LIVE sets, the SC-3 policy radio, the non-removable default stop, the key table PROPOSED under XG-SETTINGS).
 
 ### SCR-115 — Notifications settings
 
@@ -3110,12 +3117,14 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 ### SCR-158 — Rate-limited state
 
 - **Type:** Banner + inline. When the per-UID budget is exhausted: the affected account, the retry time, which actions are queued and which were dropped, and a link to SCR-147.
-- **Components:** CMP-023 Progress Bar, CMP-028 Callout / Banner, CMP-035 Countdown / Timer text, CMP-069 InfoPanel.
+- **States:** backend-per-user · exchange-per-uid · fanout-budget · link-owner · link-manager · held-queue · replay-previewing · send-now-previewing · fanout-served-unserved · countdown-expired · discarded (E30-D03 §6; frames `SCR-158/<state>`).
+- **Components:** CMP-023 Progress Bar, CMP-028 Callout / Banner, CMP-035 Countdown / Timer text, CMP-069 InfoPanel, CMP-044 ConfirmDialog, CMP-001 Button.
 - **Stories:** US-OBS-005, US-ORD-001.
 - **A11y:** A `role="status"` message naming which capability is throttled, the retry-after time as an absolute and relative value, and what the user can still do; countdowns are announced at most once every 10 s.
 - **Performance:** The client honours the server's retry-after and stops issuing requests; queued user actions are held, not dropped, and are replayed with explicit confirmation rather than silently.
 - **Analytics/audit:** `ratelimit.hit` `{scope, endpointClass, retryAfterMs}` (analytics + incident log); orders refused because of a rate limit are recorded as `order.blocked_ratelimited`.
 - **Design sign-off acceptance checklist:** [ ] per-scope variants drawn (exchange per-UID, backend per-user, fan-out budget) [ ] the countdown and what is still permitted [ ] the fan-out case naming which accounts were served and which were not [ ] held-action queue with explicit replay confirmation [ ] guidance on reducing the request rate (link to SCR-147)
+- **Design (hi-fi):** [E30-D03.md](../design/E30/E30-D03.md) §6 (E30-D03; the three scopes, the held-action queue with explicit replay).
 
 ### SCR-159 — Offline / shell-specific states
 
