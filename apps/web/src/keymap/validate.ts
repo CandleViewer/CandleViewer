@@ -1,5 +1,11 @@
 import reservedRaw from "./reserved-keys.json";
-import { KEYMAP, SAFETY_MODIFIER_DEFAULT, type KeymapCommand } from "./keymap";
+import {
+  KEYMAP,
+  SAFETY_MODIFIER_DEFAULT,
+  isDangerous,
+  isSingleLetter,
+  type KeymapCommand,
+} from "./keymap";
 
 /** Binding validation shared by SCR-113 rebinding and keymap-profile import (E49-S07). */
 export type BindingProblem =
@@ -7,6 +13,8 @@ export type BindingProblem =
   | { readonly kind: "invalid-binding"; readonly reason: string }
   | { readonly kind: "reserved"; readonly reason: string; readonly platform: string }
   | { readonly kind: "conflict"; readonly reason: string; readonly with: string }
+  /** AC5 (BQ-3): a single unmodified letter on a dangerous command; no acknowledgement lifts it. */
+  | { readonly kind: "accidental-trigger"; readonly reason: string }
   | { readonly kind: "unsafe-destructive"; readonly reason: string };
 
 export type KeymapProfile = Readonly<Record<string, string>>;
@@ -88,6 +96,13 @@ export function validateBinding(
   const binding = normaliseBinding(rawBinding);
   if (!binding) {
     return { kind: "invalid-binding", reason: `"${rawBinding}" is not a valid key binding` };
+  }
+  // `05` §3.3 rule 2, AC5: refused before any conflict, so the stated reason is always this one.
+  if (isDangerous(cmd) && isSingleLetter(binding)) {
+    return {
+      kind: "accidental-trigger",
+      reason: `"${cmd.label}" needs Ctrl or Alt with a letter: ${binding} alone could trigger it by accident`,
+    };
   }
   // A range is checked per atom, and against the atoms of every range already bound.
   const atoms = bindingAtoms(binding);

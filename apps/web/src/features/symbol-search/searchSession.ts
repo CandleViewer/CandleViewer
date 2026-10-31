@@ -130,10 +130,12 @@ export function noteInstrumentRevision(channel: string): void {
   revisions?.note(channel);
 }
 
-/** SCR-102's way in: the TopBar trigger today, `/` (#305) and the palette's "Search symbols" later. */
+/** SCR-102 can open: the index is in the store and a workspace has bound an opener (`/`'s `validWhen`). */
+export const canOpenSymbolSearch = (): boolean => state.index !== null && state.opener !== null;
+
+/** SCR-102's way in: the TopBar trigger, `/` (`global.symbol_search`, #305), later the palette's "Search symbols". */
 export function openSymbolSearch(): void {
-  if (!state.open && state.index !== null && state.opener !== null)
-    set({ open: true, opened: state.opened + 1 });
+  if (!state.open && canOpenSymbolSearch()) set({ open: true, opened: state.opened + 1 });
 }
 
 export function closeSymbolSearch(): void {

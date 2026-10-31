@@ -4,7 +4,7 @@
  * has bound a pane: until then it is absent, with no placeholder.
  */
 import { createRequire } from "node:module";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -342,6 +342,42 @@ describe("SCR-102 symbol search (E08-S09 PR C1)", () => {
     act(() => void (typed = fireEvent.keyDown(input(), { key: "/" })));
     expect([typed, trigger().getAttribute("aria-expanded")]).toEqual([true, "true"]); // not prevented, open
     expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull();
+  });
+
+  it("#305 (A-D05-2): `/` opens it from the shell, outside a text field; in its own field a `/` is typed", async () => {
+    await shell(CHART_1);
+    let ran = true;
+    act(() => void (ran = fireEvent.keyDown(document.body, { key: "/", code: "Slash" })));
+    expect(ran).toBe(false); // the keymap took it: `global.symbol_search`
+    expect(screen.getByRole("dialog", { name: "Symbol search" })).toBeVisible();
+    expect(input()).toHaveFocus();
+    let typed = false;
+    act(() => void (typed = fireEvent.keyDown(input(), { key: "/", code: "Slash" })));
+    expect([typed, trigger().getAttribute("aria-expanded")]).toEqual([true, "true"]);
+    key("Escape");
+    act(() => trigger().focus());
+    act(() => void fireEvent.keyDown(trigger(), { key: "/", code: "Slash" })); // from the TopBar too
+    expect(trigger()).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("#305: `/` is unregistered with the shell: a shell mounted after it registers `/` again and opens SCR-102", async () => {
+    await shell(CHART_1);
+    cleanup(); // the shell unmounts, and its SCR-102 host with it
+    stop();
+    // A registration left behind would refuse this one (a second handler for one id throws in tests).
+    await shell(CHART_1);
+    act(() => void fireEvent.keyDown(document.body, { key: "/", code: "Slash" }));
+    expect(screen.getByRole("dialog", { name: "Symbol search" })).toBeVisible();
+  });
+
+  it("#305: with no pane bound `/` opens nothing and says why, once, in the toast host", async () => {
+    await shell(undefined);
+    for (let i = 0; i < 2; i++) act(() => void fireEvent.keyDown(document.body, { key: "/" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByTestId("toast-host").childNodes).toHaveLength(1);
+    expect(screen.getByTestId("toast-host")).toHaveTextContent(
+      /^Symbol search is not available here/,
+    );
   });
 
   it("type, ↓, Enter: the target switches and its sentence is said; Recent remembers it; Shift+Enter opens a new chart", async () => {

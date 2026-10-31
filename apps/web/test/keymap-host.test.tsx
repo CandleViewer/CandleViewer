@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditRecord } from "../src/keymap/audit";
 
@@ -70,30 +70,40 @@ describe("inert press explains itself (wired host)", () => {
 });
 
 describe("SCR-113 editor", () => {
+  const row = (label: string) => screen.getByText(label).closest("tr") as HTMLElement;
+  const bind = (label: string, key: string, ctrlShift = false) => {
+    const r = row(label);
+    const inp = r.querySelector("input[type=text], input:not([type])") as HTMLInputElement;
+    fireEvent.change(inp, { target: { value: key } });
+    if (ctrlShift) {
+      r.querySelectorAll("input[type=checkbox]").forEach((c, i) => i !== 1 && fireEvent.click(c));
+    }
+    fireEvent.click(r.querySelector("button") as HTMLElement);
+  };
+
   it("refuses conflict naming both, refuses reserved with platform, audits destructive rebind", () => {
     const { HotkeyEditor, getBindings, setAuditSink } = mods;
     const audits: AuditRecord[] = [];
     setAuditSink((r) => audits.push(r));
     render(<HotkeyEditor />);
-    const row = (label: string) => screen.getByText(label).closest("tr") as HTMLElement;
-    const bind = (label: string, key: string, ctrlShift = false) => {
-      const r = row(label);
-      const inp = r.querySelector("input[type=text], input:not([type])") as HTMLInputElement;
-      fireEvent.change(inp, { target: { value: key } });
-      if (ctrlShift) {
-        r.querySelectorAll("input[type=checkbox]").forEach((c, i) => i !== 1 && fireEvent.click(c));
-      }
-      fireEvent.click(r.querySelector("button") as HTMLElement);
-    };
     bind("Cancel in-progress drawing", "I", true);
     expect(screen.getByRole("alert").textContent).toMatch(/reserved by/);
     bind("Delete selected drawing", "Esc");
     expect(screen.getByRole("alert").textContent).toMatch(/Cancel in-progress drawing/);
-    bind("Cancel all working orders for symbol", "Q");
+    bind("Cancel all working orders for symbol", "Del");
     expect(screen.getByRole("alert").textContent).toMatch(/destructive/);
     fireEvent.click(screen.getByText("I understand, bind anyway"));
-    expect(getBindings().get("dom.cancel_all")).toBe("Q");
-    expect(audits[0]).toMatchObject({ action: "hotkey.trading_binding_changed", after: "Q" });
+    expect(getBindings().get("dom.cancel_all")).toBe("Del");
+    expect(audits[0]).toMatchObject({ action: "hotkey.trading_binding_changed", after: "Del" });
+  });
+
+  it("AC5 (BQ-3): a single letter on a dangerous command is refused, with no acknowledgement to lift it", () => {
+    const { HotkeyEditor, getBindings } = mods;
+    render(<HotkeyEditor />);
+    bind("Cancel all working orders for symbol", "Q");
+    expect(screen.getByRole("alert")).toHaveTextContent(/could trigger it by accident/);
+    expect(screen.queryByText("I understand, bind anyway")).toBeNull();
+    expect(getBindings().get("dom.cancel_all")).toBe("Ctrl+Shift+X");
   });
   it("import applies safe, lists unsafe", () => {
     const { HotkeyEditor, getBindings } = mods;
@@ -211,5 +221,168 @@ describe("profile persistence + Rules-context inert explanation", () => {
       /Save draft is not available here \(Rules view\)/,
     );
     off();
+  });
+});
+
+describe("#305 PR A: the typing guard in the wired host (AC6, D6, D7, D8, G-07)", () => {
+  it("AC6: `/` opens symbol search from the page; typed in a text field it is neither prevented nor run", () => {
+    const { KeymapHost, registerCommand } = mods;
+    const open = vi.fn();
+    const off = registerCommand("global.symbol_search", open);
+    render(
+      <>
+        <button type="button">Journal row</button>
+        <input aria-label="Notes" />
+        <KeymapHost />
+      </>,
+    );
+    const row = screen.getByRole("button", { name: "Journal row" });
+    row.focus();
+    expect(fireEvent.keyDown(row, { key: "/", code: "Slash" })).toBe(false); // the keymap took it
+    const notes = screen.getByLabelText("Notes");
+    notes.focus();
+    expect(fireEvent.keyDown(notes, { key: "/", code: "Slash" })).toBe(true); // typed
+    // A key dispatched at the window reads the focused element as its target.
+    expect(fireEvent.keyDown(window, { key: "/", code: "Slash" })).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    off();
+  });
+
+  it("D6, D7: a `b` typed in a field and an Esc post nothing where nothing takes them", () => {
+    const { KeymapHost } = mods;
+    render(
+      <>
+        <input aria-label="Search journal" />
+        <button type="button">Journal row</button>
+        <KeymapHost />
+      </>,
+    );
+    const search = screen.getByLabelText("Search journal");
+    search.focus();
+    fireEvent.keyDown(search, { key: "b", code: "KeyB" });
+    const row = screen.getByRole("button", { name: "Journal row" });
+    row.focus();
+    for (let i = 0; i < 2; i++) fireEvent.keyDown(row, { key: "Escape", code: "Escape" });
+    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+  });
+
+  it("D6: in a ticket a typed `b` stays text, and so does a key a control took first or an IME composes", () => {
+    const { KeymapHost, registerCommand } = mods;
+    const side = vi.fn();
+    const off = registerCommand("ticket.side_buy", side);
+    render(
+      <div data-keymap-context="Ticket">
+        <input aria-label="Quantity" />
+        <button type="button" onKeyDown={(e) => e.preventDefault()}>
+          Buy
+        </button>
+        <button type="button">Ticket</button>
+        <KeymapHost />
+      </div>,
+    );
+    const quantity = screen.getByLabelText("Quantity");
+    quantity.focus();
+    expect(fireEvent.keyDown(quantity, { key: "b", code: "KeyB" })).toBe(true);
+    const buy = screen.getByRole("button", { name: "Buy" });
+    buy.focus();
+    fireEvent.keyDown(buy, { key: "b", code: "KeyB" });
+    const ticket = screen.getByRole("button", { name: "Ticket" });
+    ticket.focus();
+    fireEvent.keyDown(ticket, { key: "b", code: "KeyB", isComposing: true });
+    expect(side).not.toHaveBeenCalled();
+    fireEvent.keyDown(ticket, { key: "b", code: "KeyB" }); // the control: the ticket itself takes `b`
+    expect(side).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it("CR-305AD-02: through the host, a key an IME took (keyCode 229) runs nothing: Safari's Enter ending a composition", () => {
+    const { KeymapHost, registerCommand } = mods;
+    const submit = vi.fn();
+    const off = registerCommand("global.auth.submit", submit);
+    render(
+      <div data-keymap-context="Auth">
+        <input aria-label="Username" />
+        <KeymapHost />
+      </div>,
+    );
+    const username = screen.getByLabelText("Username");
+    username.focus();
+    fireEvent.keyDown(username, { key: "Enter", code: "Enter", keyCode: 229 });
+    expect(submit).not.toHaveBeenCalled();
+    fireEvent.keyDown(username, { key: "Enter", code: "Enter", keyCode: 13 }); // the control: a plain Enter submits
+    expect(submit).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it("pin: D6, ruled option (c): a focused button's Tab, Enter, Space and arrows post nothing, in any context", () => {
+    const { KeymapHost } = mods;
+    render(
+      <>
+        <button type="button">Export</button>
+        {/* Views that bind each key, so the button is in their contexts too (A11Y-305A-01). */}
+        <div data-keymap-context="Rules">
+          <div data-keymap-context="Positions">
+            <div data-keymap-context="Replay">
+              <button type="button">Bookmark</button>
+            </div>
+          </div>
+        </div>
+        <KeymapHost />
+      </>,
+    );
+    for (const name of ["Export", "Bookmark"]) {
+      const focused = screen.getByRole("button", { name });
+      focused.focus();
+      for (const key of ["Tab", "Enter", " ", "ArrowRight", "ArrowDown"]) {
+        fireEvent.keyDown(focused, { key });
+      }
+    }
+    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+  });
+
+  it("G-07: a held Ctrl+/ opens the cheatsheet once; its auto-repeat is taken, not toggled", () => {
+    const { KeymapHost } = mods;
+    render(<KeymapHost />);
+    fireEvent.keyDown(window, { key: "/", code: "Slash", ctrlKey: true });
+    for (let i = 0; i < 3; i++) {
+      const held = fireEvent.keyDown(window, {
+        key: "/",
+        code: "Slash",
+        ctrlKey: true,
+        repeat: true,
+      });
+      expect(held).toBe(false);
+    }
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+  });
+
+  it("D8: F11 in a focused panel runs the declared panel full-screen, with no Global handler and no notice", () => {
+    const { KeymapHost, registerCommand } = mods;
+    const panel = vi.fn();
+    const off = registerCommand("workspace.fullscreen_panel", panel);
+    render(
+      <div data-keymap-context="Workspace">
+        <button type="button">Chart 1</button>
+        <KeymapHost />
+      </div>,
+    );
+    const chart = screen.getByRole("button", { name: "Chart 1" });
+    chart.focus();
+    expect(fireEvent.keyDown(chart, { key: "F11", code: "F11" })).toBe(false);
+    expect(panel).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    off();
+  });
+
+  it("BQ-4: the cheatsheet shows a declared shadow's rationale beside its key", () => {
+    const { Cheatsheet } = mods;
+    render(<Cheatsheet />);
+    const workspace = screen.getByRole("table", { name: "Workspace" });
+    const row = within(workspace).getByRole("row", { name: /^Full-screen active panel/ });
+    expect(row).toHaveTextContent("F11 Active panel full-screen wins while a panel is focused");
+    const global = screen.getByRole("table", { name: "Global" });
+    const own = within(global).getByRole("row", { name: /^Full-screen workspace/ });
+    expect(own).not.toHaveTextContent("wins while");
   });
 });

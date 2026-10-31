@@ -4,20 +4,18 @@ import { getBindings, subscribeBindings } from "./profile";
 import type { KeymapCommand } from "./keymap";
 import { Cheatsheet } from "./Cheatsheet";
 import { flushAuditOutbox, recordAudit } from "./audit";
+import { isCommandValid, registerCommand, runCommand } from "./registry";
 
-/** Command handlers registered by views; a command with no handler / failing predicate is inert. */
-const handlers = new Map<string, { run: (digit?: number) => void; isValid: () => boolean }>();
-/** `run` gets the pressed digit of a range binding (`Alt+1..9` → 1..9); other bindings pass none. */
-export function registerCommand(
-  id: string,
-  run: (digit?: number) => void,
-  isValid: () => boolean = () => true,
-) {
-  handlers.set(id, { run, isValid });
-  return () => void handlers.delete(id);
-}
+/**
+ * Views register their commands' handlers through the registry's guard (#305); a command with no handler, or whose
+ * predicate fails, is inert. `run` gets the pressed digit of a range binding (`Alt+1..9` → 1..9).
+ */
+export { registerCommand };
 
-/** Active contexts come from `data-keymap-context` on the focused element's ancestors. */
+/**
+ * Active contexts come from `data-keymap-context` on the focused element's ancestors: Global first, then the rest
+ * from the innermost out, the order in which a key shared by two views resolves.
+ */
 export function activeContexts(el: Element | null = document.activeElement): Set<string> {
   const s = new Set<string>(["Global"]);
   for (let n = el; n; n = n.parentElement) {
@@ -42,7 +40,7 @@ export function KeymapHost(): JSX.Element {
   const [toasts, setToasts] = useState<readonly string[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const bindings = useSyncExternalStore(subscribeBindings, getBindings);
-  // Real command: the "?" cheatsheet (SCR-013). Other commands register from their owning views.
+  // Real command: the `Ctrl+/` cheatsheet (SCR-013). Other commands register from their owning views.
   useEffect(() => registerCommand("global.cheatsheet", () => setSheetOpen((o) => !o)), []);
   useEffect(() => {
     const on = (e: Event) => recordAudit((e as CustomEvent).detail);
@@ -59,8 +57,8 @@ export function KeymapHost(): JSX.Element {
     const dispatch = createDispatcher({
       bindings,
       now: () => Date.now(),
-      isValid: (c: KeymapCommand) => handlers.get(c.id)?.isValid() ?? false,
-      execute: (c: KeymapCommand, digit?: number) => handlers.get(c.id)?.run(digit),
+      isValid: (c: KeymapCommand) => isCommandValid(c.id),
+      execute: (c: KeymapCommand, digit?: number) => runCommand(c.id, digit),
       notify: (m) => {
         setToasts((t) => [...t, m]);
         window.setTimeout(() => setToasts((t) => t.slice(1)), 5000);
@@ -69,8 +67,26 @@ export function KeymapHost(): JSX.Element {
     const onKey = (e: KeyboardEvent) => {
       // SCR-005 (#1640): nothing that changes state runs behind the idle lock; no command lists "Locked"
       if (document.querySelector('[data-keymap-context="Locked"]') !== null) return;
-      const r = dispatch(e, activeContexts());
-      if (r.status === "executed") e.preventDefault();
+      // A-D05-2 reads the press as it reaches the window, in the bubble phase (E08-D05 §8): what a handler before it
+      // took (`defaultPrevented`), where it was typed, an IME composition (`keyCode` 229 too) and key auto-repeat.
+      const r = dispatch(
+        {
+          key: e.key,
+          code: e.code,
+          ctrlKey: e.ctrlKey,
+          metaKey: e.metaKey,
+          altKey: e.altKey,
+          shiftKey: e.shiftKey,
+          repeat: e.repeat,
+          isComposing: e.isComposing,
+          keyCode: e.keyCode,
+          defaultPrevented: e.defaultPrevented,
+          // A key dispatched at the window or the document, not by the browser, reads the focused element.
+          target: e.target instanceof Element ? e.target : document.activeElement,
+        },
+        activeContexts(),
+      );
+      if (r.status === "executed" || r.status === "repeat") e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

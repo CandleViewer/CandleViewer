@@ -36,6 +36,7 @@ import {
   type MenuItem,
 } from "@candleviewer/ui";
 import { getMeClaims } from "../../lib/auth/meCache";
+import { registerCommand } from "../../keymap/KeymapHost";
 import { COLUMNS, COPY, SEARCH_TITLE, keyHints, refreshAnswered, targetWords } from "./copy";
 import { requestRefresh, type InstrumentIndex, type RefreshAnswer } from "./instrumentIndex";
 import { stopKeys } from "./keys";
@@ -56,6 +57,7 @@ import {
   type Opened,
 } from "./searchEvents";
 import {
+  canOpenSymbolSearch,
   closeSymbolSearch,
   forgetSymbol,
   openSymbolSearch,
@@ -123,6 +125,11 @@ export function SymbolSearchHost({
   const opener = useSymbolSearch((s) => s.opener);
   const open = useSymbolSearch((s) => s.open);
   const opened = useSymbolSearch((s) => s.opened);
+  // `/` (A-D05-2): SCR-102 from anywhere but a text field. A focused chart's SCR-041 (E08-D05 D-1) is #451's port.
+  useEffect(
+    () => registerCommand("global.symbol_search", openSymbolSearch, canOpenSymbolSearch),
+    [],
+  );
   if (index === null || opener === null) return null;
   return (
     <SymbolSearchDialog key={opened} index={index} opener={opener} open={open} mainRef={mainRef} />
