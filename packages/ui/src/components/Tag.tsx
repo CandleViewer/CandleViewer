@@ -20,13 +20,14 @@ interface NeutralStatic extends TagBase {
   icon?: IconName;
   removable?: false;
   onRemove?: never;
+  removeLabel?: never;
   disabled?: never;
   disabledReason?: never;
 }
 
 /**
  * A removable neutral chip (E10: only neutral chips are removable). The remove control is a ghost CMP-002
- * named "Remove {label}". `onRemove` hands focus to the owning group (CMP-169, CMP-055): next chip's remove
+ * named "Remove {label}" (or `removeLabel`). `onRemove` hands focus to the owning group (CMP-169, CMP-055): next chip's remove
  * button, else the previous one, else its input, never `<body>`. The chip never moves focus itself.
  */
 interface NeutralRemovable extends TagBase {
@@ -34,6 +35,11 @@ interface NeutralRemovable extends TagBase {
   icon?: IconName;
   removable: true;
   onRemove: () => void;
+  /**
+   * The remove control's accessible name; default "Remove {label}". An owning group may name what the chip is:
+   * CMP-055's filter chips read "Remove filter Account: Sub-1" (E29-D02:375, E29-D05 N-03).
+   */
+  removeLabel?: string;
   /** Plain disabled remove button; dimming is the nested IconButton's only (conv. 20). */
   disabled?: boolean;
   /** Gated removal (E09-D09 §2.2 T2) through the nested CMP-002: lock badge, reason as its description. */
@@ -46,6 +52,7 @@ interface StatusTag extends TagBase {
   icon?: never;
   removable?: false;
   onRemove?: never;
+  removeLabel?: never;
   disabled?: never;
   disabledReason?: never;
 }
@@ -88,7 +95,7 @@ export function Tag(props: TagProps): JSX.Element {
       {removable ? (
         <IconButton
           icon="close"
-          label={`Remove ${label}`}
+          label={removable.removeLabel ?? `Remove ${label}`}
           variant="ghost"
           {...(density === undefined ? {} : { density })}
           {...(removable.disabled === undefined ? {} : { disabled: removable.disabled })}

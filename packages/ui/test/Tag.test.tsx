@@ -121,6 +121,29 @@ describe("Tag (CMP-011)", () => {
     expect(within(host).getByRole("button", { name: `Remove ${label}` })).toBeDefined();
   });
 
+  it("removeLabel names the remove control for its owning group (CMP-055's 'Remove filter …')", async () => {
+    const onRemove = fn();
+    const host = await mount(
+      <Tag
+        label="Account: Sub-1"
+        removable
+        onRemove={onRemove}
+        removeLabel="Remove filter Account: Sub-1"
+      />,
+    );
+    await userEvent.click(
+      within(host).getByRole("button", { name: "Remove filter Account: Sub-1" }),
+    );
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(chip(host).querySelector(".cv-tag__label")).toHaveTextContent("Account: Sub-1");
+  });
+
+  it("takes removeLabel on a removable chip only (type level)", () => {
+    // @ts-expect-error a static chip has no remove control to name
+    const onStatic = <Tag label="x" removeLabel="Remove x" />;
+    expect(onStatic).toBeDefined();
+  });
+
   it("emits the density attribute on the chip and the nested button", async () => {
     const host = await mount(
       <Tag label="Breakout" density="comfortable" removable onRemove={fn()} />,

@@ -806,3 +806,22 @@ the open trigger closes the popover. Any other host passes `expanded`, its dialo
 A host composes `id`, `tabIndex`, a `ref`, `aria-controls` and `onKeyDown`. `role`, `aria-labelledby`,
 `aria-disabled`, `aria-pressed`, `disabled` and `style` are no props and are dropped if passed, so the trigger's
 semantics and its name stay its own.
+
+### FilterBar (CMP-055, no widget pattern: a labelled group of controls)
+
+| Keys                              | Action                                                                                                         |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                   | Each chip's remove, then the host's add control, then "Clear all": one stop each, in that order.               |
+| Enter / Space (a chip's remove)   | Drops that filter; focus moves to the next chip's remove, else the previous one, else the add control.         |
+| Enter / Space ("Clear all")       | Drops every filter; focus moves to the add control. With no add control, focus lands on the group, never body. |
+| Anything while focus is elsewhere | A chip the host drops later never pulls focus back to the bar.                                                 |
+
+| Element     | Role   | Name                                          | Notes                                                                |
+| ----------- | ------ | --------------------------------------------- | -------------------------------------------------------------------- |
+| bar         | group  | "Active filters"                              | `tabindex="-1"`: the hand-off's last resort only, never a Tab stop.  |
+| chip        | text   | —                                             | CMP-011, neutral and removable: "Account: Sub-1".                    |
+| chip remove | button | "Remove filter Account: Sub-1" (E29-D05 N-03) | CMP-002, the chip's `removeLabel`.                                   |
+| "Clear all" | button | "Clear all"                                   | CMP-001 ghost, shown while two or more chips exist (E29-D04 §2.8.5). |
+
+A filter is a view choice: nothing in the bar is ever T2 (E29-D04 §4.2), and the bar has no live region; the table's
+polite line speaks the filtered result.

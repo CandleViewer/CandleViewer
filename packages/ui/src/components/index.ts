@@ -25,6 +25,9 @@ export { Tag } from "./Tag.js";
 export type { TagProps } from "./Tag.js";
 
 // E29-S01's blotter components.
+export { FilterBar } from "./FilterBar.js";
+export type { FilterBarProps, FilterChip } from "./FilterBar.js";
+
 export { PnLBadge } from "./PnLBadge.js";
 export type { PnLBadgeProps, PnLFormat } from "./PnLBadge.js";
 
