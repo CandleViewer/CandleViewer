@@ -84,7 +84,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "16d70feed9"  # the base of record: every cite was read here (the version line)
+BASE = "9518fe3cbd"  # the base of record: every cite was read here (the version line)
 HEAD_REF = "origin/main"
 VERSION_DATE = datetime.date(2026, 10, 31)  # v1's date: the design-ahead readings count from it
 ISSUE = "313"
@@ -127,6 +127,7 @@ PATHS: dict[str, str] = {
     "D08": "docs/design/E12/E12-D08.md",
     "D08H": "docs/design/E12/E12-D08-handoff.md",
     "D09": "docs/design/E12/E12-D09.md",
+    "D11": "docs/design/E12/E12-D11.md",
     "REG": "docs/design/E12/E12-D09-barmodes.json",
     "E11D04": "docs/design/E11/E11-D04.md",
     "E11D06": "docs/design/E11/E11-D06.md",
@@ -166,6 +167,8 @@ LIFTS: dict[str, tuple[tuple[str, str, str], ...]] = {
     "d09.s10_11": (("D09", "## 10. ", "## 12. "),),
     "reg": (("REG", "", ""),),
     "handoffs": tuple((k, "", "") for k in ("D03H", "D04H", "D05H", "D06H", "D07H", "D08H")),
+    **{f"d11.s{n}": (("D11", f"## {n}. ", ""),) for n in range(3, 13)},
+    "d11.s143": (("D11", "### 14.3 ", ""),),
 }  # fmt: skip
 # CITE values: key -> (source, the defining line's needle, the figure's pattern)
 CITES: dict[str, tuple[str, str, str]] = {
@@ -219,11 +222,11 @@ CITE_TEXT: dict[str, str] = {
     '02:51-56': '- [ ] Design-ready **[if labelled `design` or the Story has ',
     '02:53': '- [ ] Design has been Done for ≥2 sprints (design-ahead rule',
     '05:144': '### 6.2 Layer 2 — ARIA live regions for streaming updates',
-    '05:245': '## 9. Automated gates (CI-enforced)',
+    '05:251': '## 9. Automated gates (CI-enforced)',
     '05:35': '6. No functionality may depend on hover-only or drag-only in',
     '11:895': 'NFR: ≥55 fps at 100k bars on the reference GPU; GPU memory ≤',
-    '14:1092': '- **Performance:** Virtualised table renders 100k rows witho',
-    '14:739': '- **Performance:** ≥58 fps at 2560×1440 with 100 k bars load',
+    '14:1100': '- **Performance:** Virtualised table renders 100k rows witho',
+    '14:741': '- **Performance:** ≥58 fps at 2560×1440 with 100 k bars load',
     '14:86': '6. **WCAG 2.2 AA.** Every canvas surface has an equal-status',
     '22:11742-11747': 'ADR-0014 §2 field telemetry. One pre-bucketed payload per 10',
     '22:12757': '/me/preferences:',
@@ -238,9 +241,9 @@ CITE_TEXT: dict[str, str] = {
     '23:768': '- **Unconfirmed bars.** The last bar in any `bars`/`footprin',
     '23:770': '- **What the topic carries.** Only bars built from the recor',
     '23:774': '- **`include_delta`.** It defaults to false, unlike REST `/m',
-    '26:742': '| B1 | 100k candles, continuous pan at 1000 px/s | ≤ 12 ms |',
-    '26:750': '| B9 | Cold init to first frame with 100k bars | ≤ 900 ms | ',
-    '26:751': '| B10 | Memory soak: 30 min live feed | peak ≤ 600 MB | no m',
+    '26:744': '| B1 | 100k candles, continuous pan at 1000 px/s | ≤ 12 ms |',
+    '26:752': '| B9 | Cold init to first frame with 100k bars | ≤ 900 ms | ',
+    '26:753': '| B10 | Memory soak: 30 min live feed | peak ≤ 600 MB | no m',
     '30:114': '| **E12** | Bar builders & series rendering (time/tick/volum',
     'D02:19-39': '## 1. Decisions this spec settles',
     'D02:25': '| D-1 | A switch, build or request that fails or is cancelle',
@@ -349,6 +352,14 @@ CITE_TEXT: dict[str, str] = {
     'SEED:217': '"recording:write",',
     'SEED:240': '"marketdata:read",',
 }  # fmt: skip
+# E12-D11's tables the v1.1 chapter indexes by id per surface (RULED BQ-12): column key ->
+# (heading, the first header cell)
+D11_TABLES: dict[str, tuple[str, str]] = {
+    "kb": ("### 3.1 ", "Id"), "pp": ("### 3.2 ", "Id"), "fm": ("## 4. ", "Id"),
+    "rg": ("### 5.1 ", "Id"), "bg": ("### 7.1 ", "Id"), "ow": ("## 8. ", "Id"),
+    "t2": ("### 9.1 ", "Id"), "f": ("## 11. ", "Id"),
+}  # fmt: skip
+D11_SCREENS = ("SCR-030", "SCR-031", "SCR-041", "SCR-042", "SCR-045", "SCR-047", "SCR-048")
 # the backlog keys whose sprints the design-ahead record reads: key -> (backlog, value key)
 SPRINT_KEYS: dict[str, tuple[str, str]] = {
     "E12-S06": ("E12J", "s06"), "E12-S10": ("E12J", "s10"), "E12-S09": ("E12J", "s09"),
@@ -894,6 +905,53 @@ def copy_cites(spec: str) -> set[tuple[str, str]]:
     return out
 
 
+def compress(ids: list[str]) -> str:
+    """`KB-01..KB-03, KB-07` from a list of ids in table order."""
+    out: list[str] = []
+    run: list[tuple[str, int, str]] = []
+    for ident in ids:
+        m = re.fullmatch(r"([A-Z0-9]+-)(\d+)", ident)
+        if m and run and run[-1][0] == m[1] and run[-1][1] + 1 == int(m[2]):
+            run.append((m[1], int(m[2]), ident))
+            continue
+        if run:
+            out.append(run[0][2] if len(run) == 1 else f"{run[0][2]}..{run[-1][2]}")
+        run = [(m[1], int(m[2]), ident)] if m else []
+        if not m:
+            out.append(ident)
+    if run:
+        out.append(run[0][2] if len(run) == 1 else f"{run[0][2]}..{run[-1][2]}")
+    return ", ".join(out)
+
+
+def d11_values(env: Env) -> dict[str, str]:
+    """Per surface and D11 table, the ids of the rows that name the surface; `all` = the rows
+    that name no screen (they bind every surface); `sc` = the script's scenarios by number."""
+    vals: dict[str, str] = {}
+    text = env.show(env.base, PATHS["D11"])
+    if text is None:
+        return vals
+    for col, (head, h0) in D11_TABLES.items():
+        rows = table_after(section(text, head), h0)
+        for scr in (*D11_SCREENS, "all"):
+            ids = [r[0] for r in rows
+                   if (scr in " ".join(r) if scr != "all" else not re.search(r"SCR-\d{3}", " ".join(r)))]  # fmt: skip
+            vals[f"DXI:{scr.lower().replace('-', '')}.{col}"] = f"`{compress(ids) or '—'}`"
+    ls = text.split("\n")
+    for scr in (*D11_SCREENS, "all"):
+        nums: list[str] = []
+        for i, ln in enumerate(ls):
+            m = re.match(r"^### 6\.\d+ Scenario (\d+) ", ln)
+            if not m:
+                continue
+            body = section(text, ln.split(" — ")[0])
+            named = re.search(r"SCR-\d{3}", body) is not None
+            if (scr in body) if scr != "all" else not named:
+                nums.append(m[1])
+        vals[f"DXI:{scr.lower().replace('-', '')}.sc"] = f"`{', '.join(nums) or '—'}`"
+    return vals
+
+
 def lift_hash(t: Texts, key: str) -> str | None:
     parts: list[str] = []
     for src, head, end in LIFTS[key]:
@@ -947,6 +1005,7 @@ def compute(t: Texts) -> dict[str, str]:
         if h:
             vals[f"HASH:{k}"] = h
     vals.update(refound_values(env, t.spec))
+    vals.update(d11_values(env))
     for name in token_names(t.spec):
         vals[f"TOKEN:{name}"] = token_status(env, name)
     reg = registry(env)
@@ -1363,6 +1422,7 @@ ANCHOR_GATE = (
     ("REFOUND:", "G-COPY"),
     ("COUNT:modes", "G-MODES"),
     ("BIND:", "G-BIND"), ("COUNT:bind", "G-BIND"),
+    ("DXI:", "G-SURFACES"),
     ("TOKEN:", "G-STORYBOOK"), ("STATUS:cmp.", "G-STORYBOOK"), ("CITE:stories", "G-STORYBOOK"),
     ("COUNT:deck", "G-DECK"),
     ("COUNT:events", "G-EVENTS"),
@@ -1554,7 +1614,13 @@ def g_bind(t: Texts) -> list[Finding]:
 
 
 def g_surfaces(t: Texts) -> list[Finding]:
-    bad: list[str] = []
+    bad = anchor_problems(t, "G-SURFACES")
+    d11_rows = {r[0] for r in table_after(own_section(t.spec, "### 8.1 "), "Surface")}
+    for scr in (*D11_SCREENS, "no screen named"):
+        if scr not in d11_rows:
+            bad.append(f"§8.1 has no D11 row for {scr}")
+    if t.env.show(t.env.base, PATHS["D11"]) is None:
+        bad.append("E12-D11 is not at the base: v1.1 cannot lift it")
     e11 = {c[0]: c[1] for c in table_after(section(doc_text(t, "E11P"), "### 7.1 "), "Id")
            if len(c) > 1}  # fmt: skip
     parent_text = "\n".join(doc_text(t, p) for p in PATHS if re.fullmatch(r"D0\dH?", p))
@@ -2269,7 +2335,9 @@ def merged_and_edited(t: Texts) -> Texts:
 
 
 MUTATIONS: tuple[Mutation, ...] = (
-    Mutation("G-VALUES", "claim E12-D11's file is at the base", anchor_edit("STATUS:d11.file", "present")),
+    Mutation(
+        "G-VALUES", "claim E12-D11's file is absent", anchor_edit("STATUS:d11.file", "absent")
+    ),
     Mutation("G-LIFT", "alter a lifted block's hash", anchor_edit("HASH:d06.s14", "000000000000")),
     Mutation("G-COPY", "change one byte inside the copied D06 §6.3", copy_edit),
     Mutation("G-CITE", "point a cite past the end of its file",
