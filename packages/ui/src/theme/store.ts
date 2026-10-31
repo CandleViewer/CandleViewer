@@ -213,7 +213,8 @@ function createSwapMarker(root: HTMLElement | undefined): { mark: () => void; ca
     let frame2: number | undefined;
     const hasFrames = typeof requestAnimationFrame === "function";
     const stop = (): void => {
-      if (hasFrames) {
+      // Checked at call time: the cap timer can fire after the host has torn the frame API down.
+      if (typeof cancelAnimationFrame === "function") {
         if (frame1 !== undefined) cancelAnimationFrame(frame1);
         if (frame2 !== undefined) cancelAnimationFrame(frame2);
       }
