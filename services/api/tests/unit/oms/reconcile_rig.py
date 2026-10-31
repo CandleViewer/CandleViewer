@@ -472,6 +472,8 @@ class Job:
     marks: Marks = field(default_factory=Marks)
     watermarks: Watermarks = field(default_factory=Watermarks)
     retries: Retries = field(default_factory=Retries)
+    #: The requests the startup resumed (`ResumedRequests`), none unless a test holds some.
+    resumed: Any = None
 
     def __post_init__(self) -> None:
         self.metrics = Metrics("dev")
@@ -479,7 +481,7 @@ class Job:
             self.world.reconciler, standing=self.standing, tracker=self.tracker,
             marks=self.marks, watermarks=self.watermarks, records=self.records,
             notices=self.notices, retries=self.retries, metrics=ReconcileMetrics(self.metrics),
-            pager=self.world.oms, now_us=lambda: self.world.now_us,
+            pager=self.world.oms, now_us=lambda: self.world.now_us, resumed=self.resumed,
         )  # fmt: skip
 
 

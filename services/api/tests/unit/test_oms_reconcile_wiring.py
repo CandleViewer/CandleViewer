@@ -5,6 +5,7 @@ adapter binds a pass port to its store or writer as the runtime composes it, and
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -20,7 +21,7 @@ from candleviewer.oms.reconcile_job import ReconcileJobs
 from candleviewer.oms.reconcile_report import Notice
 from candleviewer.oms.reconciler import PositionDriftSeen
 from candleviewer.storage.repositories.positions import PositionRow
-from tests.unit.oms.reconcile_rig import ACCOUNT, position, record, remote, row
+from tests.unit.oms.reconcile_rig import ACCOUNT, OTHER, position, record, remote, row
 
 T0 = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
 RUN_ID = "00000000-0000-4000-8000-0000000000a1"
@@ -380,3 +381,120 @@ async def test_build_reconciliation_wires_the_pass_its_phases_and_the_driver() -
     assert built.phases._retries._driver is built.jobs  # the retry hop reaches the driver
     assert built.reconciler.ports.protective.__class__.__name__ == "RecordedStopWriter"
     assert built.phases._marks is built.marks
+
+
+# --- The requests the startup resumed (24 Sec.8.5, Sec.8.2 "Recovery") ---------------------------
+
+
+@dataclass
+class Facade:
+    """`ResumingOrders`: each order's lifecycle state, and a `settled` that waits at the order's
+    door until the test opens it, or raises `fails`, each wait recorded."""
+
+    states: dict[UUID, str]
+    fails: Exception | None = None
+    doors: dict[UUID, asyncio.Event] = field(default_factory=dict)
+    asked: list[tuple[UUID, UUID, str, float]] = field(default_factory=list)
+
+    def state(self, order_id: UUID) -> tuple[str, str] | None:
+        state = self.states.get(order_id)
+        return None if state is None else (state, "not_required")
+
+    async def settled(
+        self, account_id: UUID, order_id: UUID, *, leaving: str, timeout_s: float
+    ) -> str:
+        self.asked.append((account_id, order_id, leaving, timeout_s))
+        if self.fails is not None:
+            raise self.fails
+        await self.doors.setdefault(order_id, asyncio.Event()).wait()
+        return "settled"
+
+
+#: Rows 1 to 6 as the sweep hydrated them: three resumed (row 5 another account's), one live, one
+#: unsent and one with no machine.
+STATES = {
+    UUID(int=1): "submitting", UUID(int=2): "submitted", UUID(int=3): "cancel_pending",
+    UUID(int=4): "validated", UUID(int=5): "amend_pending",
+}  # fmt: skip
+
+
+def _swept(facade: Facade) -> rw.SweptRequests:
+    swept = rw.SweptRequests()
+    rows = [row(n, exchange_account_id=OTHER if n == 5 else ACCOUNT) for n in range(1, 7)]
+    swept.record(facade, rows)
+    return swept
+
+
+async def _turns() -> None:
+    for _ in range(64):
+        await asyncio.sleep(0)
+
+
+async def test_an_accounts_fetch_waits_once_for_its_own_resumed_requests_in_turn() -> None:
+    """The sweep records each order its hydration left in a state whose invoke it resumed, by
+    account. The account's next fetch waits for each of its own to leave that state, in turn,
+    through the facade's `settled` and its bound; only once, so a later fetch waits for nothing,
+    nor does an account with none; another account's wait is its own."""
+    facade = Facade(dict(STATES))
+    swept = _swept(facade)
+    waiting = asyncio.create_task(swept.answered(ACCOUNT))
+    await _turns()
+    assert facade.asked == [(ACCOUNT, UUID(int=1), "submitting", rw.RESUMED_HOLD_S)]
+    facade.doors[UUID(int=1)].set()
+    await _turns()
+    assert facade.asked[1:] == [(ACCOUNT, UUID(int=3), "cancel_pending", rw.RESUMED_HOLD_S)]
+    assert not waiting.done()
+    facade.doors[UUID(int=3)].set()
+    await waiting
+    await swept.answered(ACCOUNT)
+    await swept.answered(UUID(int=0xAB))
+    assert len(facade.asked) == 2
+    facade.doors[UUID(int=5)] = asyncio.Event()
+    facade.doors[UUID(int=5)].set()
+    await swept.answered(OTHER)
+    assert facade.asked[2:] == [(OTHER, UUID(int=5), "amend_pending", rw.RESUMED_HOLD_S)]
+
+
+async def test_a_resumed_request_past_the_bound_is_logged_and_holds_the_pass_no_longer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resumed request that has not answered within `RESUMED_HOLD_S` holds the pass no longer:
+    logged with the account and its count, never raised (INV-B19-a)."""
+    monkeypatch.setattr(rw, "RESUMED_HOLD_S", 0.0)
+    swept = _swept(Facade(dict(STATES)))
+    with capture_logs() as logs:
+        await asyncio.wait_for(swept.answered(ACCOUNT), 5)  # a bound on the test
+    [log] = [e for e in logs if e["event"] == "reconcile_resumed_unanswered"]
+    assert (log["account_id"], log["orders"]) == (str(ACCOUNT), 2)
+
+
+async def test_a_resumed_order_the_facade_cannot_read_is_logged_and_holds_the_pass_no_longer() -> (
+    None
+):
+    swept = _swept(Facade(dict(STATES), fails=ConnectionError("the order store is down")))
+    with capture_logs() as logs:
+        await swept.answered(ACCOUNT)
+    [log] = [e for e in logs if e["event"] == "reconcile_resumed_unread"]
+    assert (log["account_id"], log["failure"]) == (str(ACCOUNT), "ConnectionError")
+
+
+async def test_a_stop_cancels_a_fetch_that_waits_for_a_resumed_request() -> None:
+    waiting = asyncio.create_task(_swept(Facade(dict(STATES))).answered(ACCOUNT))
+    await _turns()
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+
+def test_the_resumed_states_are_b1s_invoking_ones_and_the_bound_one_attempt_and_its_write() -> None:
+    from candleviewer.statechart.bindings import b01_order as b01
+    from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
+
+    assert rw.RESUMED_STATES == frozenset(b01._INVOKES)
+    assert rw.RESUMED_HOLD_S == CV_COMMAND_TIMEOUT + CV_PERSIST_TIMEOUT
+
+
+def test_the_composition_holds_each_fetch_for_the_requests_the_sweep_resumed() -> None:
+    swept = rw.SweptRequests()
+    assert _build(resumed=swept).phases._resumed is swept
+    assert _build().phases._resumed is None

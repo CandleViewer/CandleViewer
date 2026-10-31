@@ -200,6 +200,7 @@ from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, Lane, LaneStopped,
 from candleviewer.oms_reconcile_wiring import (
     ReconcileReads,
     ReconcileWiring,
+    SweptRequests,
     build_reconciliation,
     job_persistence,
 )
@@ -2340,6 +2341,9 @@ class OmsRuntime:
         #: E29-T06 #914: the reconciliation standing the order-entry gate reads (`account_stale`,
         #: composed into the gate by the root), which the jobs set and clear (BQ-5, C-2.21).
         self._standing = ReconcileStanding() if standing is None else standing
+        #: E29-T06 #914: the requests the startup sweep resumed, which each account's next
+        #: reconciliation fetch waits for (24 Sec.8.5: a pass never races one in flight).
+        self._resumed = SweptRequests()
         self._trade_groups = trade_groups  # E28-T05: seeded, and handed each group write
         #: The wait of the fencing grace (SEC-S3L2-01), apart from `sleep`'s retries, and the
         #: serving loop's between its watch's reads of the lane's state (SEC-S3L2-04).
@@ -2869,7 +2873,9 @@ class OmsRuntime:
             _log().error("oms_stream_consumer_stop_failed", error=type(exc).__name__)
 
     async def _swept(self, parts: _Parts) -> bool:
-        """Steps 2 to 4; False when step 3 refuses `ready`, past `MAX_MACHINES` orders (paged)."""
+        """Steps 2 to 4; False when step 3 refuses `ready`, past `MAX_MACHINES` orders (paged).
+        Step 3's resumed requests are recorded for reconciliation, whose next pass of each
+        account reads only once its own have answered (`SweptRequests`, 24 Sec.8.5)."""
         env, machines, began = self._env, parts.machines, self._monotonic()
         accounts = await self._bounded(parts.sweep.environment_accounts(env))
         await self._bounded(parts.gate.start_floor())  # Q7: once, before this runtime writes a stop
@@ -2885,6 +2891,7 @@ class OmsRuntime:
             _page(self._pager, f"oms_startup_overflow: more than {self._max} unfinished orders")
             return False
         skipped, abandoned = await self._hydrated(machines, rows), 0
+        self._resumed.record(machines, rows)  # before any job is sent `startup`
         unsent = [r for r in rows if (machines.state(r.id) or ("",))[0] == "validated"]
         for row in unsent:  # step 4: a KILL from `validated` only, never `kill` (it may cancel)
             kill = machines.abandon(row.exchange_account_id, row.id, STARTUP_UNSENT)
@@ -3211,6 +3218,7 @@ class OmsRuntime:
                     pager=self._pager, sink=sink, persistence=job_persistence(bundle),
                     now_us=self._now_us, stale_after_s=STALE_AFTER_S,
                     remediates=lambda e: router.port_for(e).capabilities.auto_remediate,
+                    resumed=self._resumed,
                 )  # fmt: skip
                 notices.bind_reconciliation(
                     functools.partial(reconcile.jobs.trigger, trigger="unknown")
