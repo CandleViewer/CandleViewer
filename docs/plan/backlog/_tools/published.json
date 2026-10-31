@@ -354,6 +354,14 @@
     "number": 100,
     "subissue_done": true
   },
+  "E02-T13": {
+    "blockedby_done": [],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhE-Nxs",
+    "node_id": "I_kwDOUZDkl88AAAABbZtpVA",
+    "number": 5181,
+    "subissue_done": true
+  },
   "E02-X01": {
     "blockedby_done": [
       "E02-T01"
@@ -15694,6 +15702,18 @@
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6og8",
     "node_id": "I_kwDOUZDkl88AAAABS5Aflw",
     "number": 1280,
+    "subissue_done": true
+  },
+  "E45-T12": {
+    "blockedby_done": [
+      "E29-T06",
+      "E32-T02",
+      "E45-X01"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhE-NxI",
+    "node_id": "I_kwDOUZDkl88AAAABbZttbw",
+    "number": 5182,
     "subissue_done": true
   },
   "E45-X01": {
