@@ -2,4 +2,3 @@
   - heading "Page not found" [level=1]
   - paragraph: There's nothing at /404.
 - status
-- status
