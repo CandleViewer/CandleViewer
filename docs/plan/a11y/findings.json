@@ -311,7 +311,8 @@
       "importedFrom": [
         "docs/qa/a11y/e09-auth-a11y-audit.md F-01 (placeholder: not assessed); the built step is audited here"
       ],
-      "noFindings": false
+      "noFindings": false,
+      "note": "the second rater's fails, adjudicated: A11Y-F-0025 alsoOn (D-01). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-004",
@@ -402,7 +403,7 @@
         },
         "3.3.7": {
           "verdict": "pass (exception: security)",
-          "note": "BQ-17: the re-asked password is recorded under 3.3.7's security exception"
+          "note": "BQ-17: the re-asked password is recorded under 3.3.7's security exception; D-16: kept, a step of the login process (login -> challenge), so 3.3.7 applies and the security exception answers it. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
         },
         "3.3.8": {
           "verdict": "pass"
@@ -412,7 +413,7 @@
         "docs/qa/a11y/e09-auth-a11y-audit.md §1 (axe 0 serious / critical at its sha; this sweep agrees)"
       ],
       "noFindings": false,
-      "note": "extra states exercised in the deep pass: typing (requirement list live writes: on change only, not per keystroke); current password refused (DP-006); server unreachable; changed (DP-007)"
+      "note": "extra states exercised in the deep pass: typing (requirement list live writes: on change only, not per keystroke); current password refused (DP-006); server unreachable; changed (DP-007). the second rater's fails, adjudicated: A11Y-F-0025 alsoOn (D-01). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-005",
@@ -646,7 +647,7 @@
         "docs/qa/a11y/e09-auth-a11y-audit.md §1 (axe 0 serious / critical at its sha; this sweep agrees)"
       ],
       "noFindings": false,
-      "note": "extra states exercised in the deep pass: cancelled by Esc (focus returns to 'Create invitation': pass); challenge expiry (DP-010, DP-014); scrim click then Tab (DP-013); typed confirmation: 3.3.8 n/a (not an authentication step); its friction is deliberate, a note to E47-S08 #1322, never a finding (BQ-10)"
+      "note": "extra states exercised in the deep pass: cancelled by Esc (focus returns to 'Create invitation': pass); challenge expiry (DP-010, DP-014); scrim click then Tab (DP-013); typed confirmation: 3.3.8 n/a (not an authentication step); its friction is deliberate, a note to E47-S08 #1322, never a finding (BQ-10). D-19 (feature bug, BQ-24; not a WCAG finding, so not a findings row): Ctrl+A inside the step-up dialog's text field fired a global hotkey toast ('Select all is not available here') instead of selecting the field's text: the keymap's runsInEditable guard; a row in #5196 for the keymap's lane (E10-S02 #305), security-adjacent (SCR-006 is the destructive confirm). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-007",
@@ -1043,8 +1044,8 @@
           "verdict": "n/a (not applicable: not an authentication step)"
         }
       },
-      "noFindings": true,
-      "note": "no finding recorded in this run's checks; not a conformance claim; the second rater's fails in D-03 await adjudication (record §10.5)"
+      "noFindings": false,
+      "note": "the second rater's fails, adjudicated: A11Y-F-0026 (D-03); this run's own checks recorded none here. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-014",
@@ -1259,7 +1260,8 @@
       },
       "wcag22": {
         "2.4.11": {
-          "verdict": "pass"
+          "verdict": "n/a (not applicable: no focusable control on the screen)",
+          "note": "D-15: a screen with no focusable control is n/a (was pass). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
         },
         "2.5.7": {
           "verdict": "n/a (not applicable: no drag interaction on the screen)"
@@ -1277,8 +1279,8 @@
           "verdict": "n/a (not applicable: not an authentication step)"
         }
       },
-      "noFindings": true,
-      "note": "no finding recorded in this run's checks; not a conformance claim; the second rater's fails in D-05 await adjudication (record §10.5)"
+      "noFindings": false,
+      "note": "the second rater's fails, adjudicated: A11Y-F-0028 (D-05); this run's own checks recorded none here. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-016",
@@ -1433,7 +1435,8 @@
       "importedFrom": [
         "docs/qa/a11y/e09-auth-a11y-audit.md §1 (axe 0 serious / critical at its sha; this sweep agrees)"
       ],
-      "noFindings": false
+      "noFindings": false,
+      "note": "the second rater's fails, adjudicated: A11Y-F-0025 alsoOn (D-01). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-018",
@@ -1508,8 +1511,8 @@
           "verdict": "n/a (not applicable: not an authentication step)"
         }
       },
-      "noFindings": true,
-      "note": "no finding recorded in this run's checks; not a conformance claim; the second rater's fails in D-02, D-04 await adjudication (record §10.5)"
+      "noFindings": false,
+      "note": "the second rater's fails, adjudicated: A11Y-F-0027 (D-04), A11Y-F-0016 alsoOn (D-02); this run's own checks recorded none here. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-019",
@@ -1587,8 +1590,8 @@
       "importedFrom": [
         "docs/qa/a11y/e09-auth-a11y-audit.md §1 (axe 0 serious / critical at its sha; this sweep agrees)"
       ],
-      "noFindings": true,
-      "note": "no finding recorded in this run's checks; not a conformance claim; the second rater's fails in D-02, D-06 await adjudication (record §10.5)"
+      "noFindings": false,
+      "note": "the second rater's fails, adjudicated: A11Y-F-0016 alsoOn (D-02), A11Y-F-0018 alsoOn (D-06); this run's own checks recorded none here. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-020",
@@ -5704,52 +5707,56 @@
           "ref": "docs/qa/a11y/e47-t01-sweep.md#3-automated-pass",
           "ms": 1638,
           "themes": ["dark", "light", "high-contrast"],
-          "note": "axe AXE_GATE_TAGS + color-contrast, every impact: 0 violations; states default; color-contrast incomplete nodes per theme: dark 1, light 1, high-contrast 1; not resolved yet (record §3)"
+          "note": "axe AXE_GATE_TAGS + color-contrast, every impact: 0 violations; states default; color-contrast incomplete nodes per theme: dark 1, light 1, high-contrast 1; not resolved yet (record §3)",
+          "scope": "built part (the badge)"
         },
         "keyboard": {
           "verdict": "pass",
           "ref": "docs/qa/a11y/e47-t01-sweep.md#5-wcag-22",
           "note": "traversal only: 30 stops reached at 1280x800 and 200 %, none fully obscured; activation and focus-ring visibility are judged on the deep and spot screens only",
-          "ms": 596
+          "ms": 596,
+          "scope": "built part (the badge)"
         },
         "deep": {
-          "verdict": "not run (BQ-08 (b) names no deep pass or spot check for this id; open decision, record §13)"
+          "verdict": "not run (BQ-08 (b) names no deep pass or spot check for this id; decision 4 of the adjudication of record keeps the row partial, scoped to the badge)",
+          "scope": "built part (the badge)"
         },
         "sr": {
           "owner": "E47-T04",
           "proxies": {
-            "verdict": "not run (SR proxies ran on the deep and spot screens only, BQ-08 (b))"
+            "verdict": "not run (SR proxies ran on the deep and spot screens only, BQ-08 (b))",
+            "scope": "built part (the badge)"
           }
         }
       },
       "wcag22": {
         "2.4.11": {
           "verdict": "pass",
-          "scope": "built part (top-bar Demo badge only; no per-panel badges)"
+          "scope": "built part (the badge)"
         },
         "2.5.7": {
           "verdict": "n/a (not applicable: no drag interaction on the screen)",
-          "scope": "built part (top-bar Demo badge only; no per-panel badges)"
+          "scope": "built part (the badge)"
         },
         "2.5.8": {
           "verdict": "n/a (not applicable: no pointer target on the screen)",
-          "scope": "built part (top-bar Demo badge only; no per-panel badges)"
+          "scope": "built part (the badge)"
         },
         "3.2.6": {
           "verdict": "n/a (not applicable: no help mechanism is rendered on more than one page, so there is no relative order to compare)",
-          "scope": "built part (top-bar Demo badge only; no per-panel badges)"
+          "scope": "built part (the badge)"
         },
         "3.3.7": {
           "verdict": "n/a (not applicable: no multi-step process on the screen)",
-          "scope": "built part (top-bar Demo badge only; no per-panel badges)"
+          "scope": "built part (the badge)"
         },
         "3.3.8": {
           "verdict": "n/a (not applicable: not an authentication step)",
-          "scope": "built part (top-bar Demo badge only; no per-panel badges)"
+          "scope": "built part (the badge)"
         }
       },
       "noFindings": true,
-      "note": "on the deep-pass list; BQ-08 (b) gives it neither a deep pass nor a spot check (open decision); no finding recorded in this run's checks (automated and traversal only); not a conformance claim"
+      "note": "on the deep-pass list; BQ-08 (b) gives it neither a deep pass nor a spot check. Decision 4: every verdict carries scope 'built part (the badge)'; a criterion that passes on the badge is pass with that scope; the row stays partial, never a plain pass for the screen (BQ-09). No finding recorded in this run's checks (automated and traversal only); not a conformance claim. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-076",
@@ -8511,8 +8518,8 @@
       "name": "Settings home",
       "coverage": "unreachable: not built",
       "coverageReason": "not built: R-200 renders PlaceholderRoute (tree.tsx:69-70); no SCR id reference in apps/web/src (grep at 0fd9cf330)",
-      "owningTicket": "unassigned",
-      "ownerResolution": "BQ-04 amended: hand-resolved: no build ticket names SCR-110 in a title, Scope or Context, and no epic Scope names it; an owner gap",
+      "owningTicket": "E10 (epic)",
+      "ownerResolution": "decision 5 of the adjudication of record: owner E10 (epic); no Story builds SCR-110 today (E10-D03 designs it); an epic owner is allowed on an unreachable coverage row (BQ-04); the missing Story is a plan gap noted for E10's next planning, not filed. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)",
       "deepPassListed": false,
       "states": [
         {
@@ -8723,8 +8730,8 @@
       "importedFrom": [
         "docs/qa/a11y/e09-auth-a11y-audit.md F-01, F-02 (sessions section now built and audited here)"
       ],
-      "noFindings": true,
-      "note": "no finding recorded in this run's checks; not a conformance claim; the second rater's fails in D-01, D-02, D-07 await adjudication (record §10.5)"
+      "noFindings": false,
+      "note": "the second rater's fails, adjudicated: A11Y-F-0025 (D-01), A11Y-F-0016 alsoOn (D-02), A11Y-F-0029 (D-07); this run's own checks recorded none here. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-113",
@@ -9240,7 +9247,8 @@
           "verdict": "n/a (not applicable: not an authentication step)"
         }
       },
-      "noFindings": false
+      "noFindings": false,
+      "note": "the second rater's fails, adjudicated: A11Y-F-0016 alsoOn (D-02). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-118",
@@ -9671,7 +9679,8 @@
           "verdict": "n/a (not applicable: no help mechanism is rendered on more than one page, so there is no relative order to compare)"
         },
         "3.3.7": {
-          "verdict": "pass"
+          "verdict": "n/a (not applicable: a single-step form has no redundant entry)",
+          "note": "D-16 (was pass). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
         },
         "3.3.8": {
           "verdict": "n/a (not applicable: not an authentication step)"
@@ -9680,8 +9689,8 @@
       "importedFrom": [
         "docs/qa/a11y/e09-auth-a11y-audit.md §1 (axe 0 serious / critical at its sha; this sweep agrees)"
       ],
-      "noFindings": true,
-      "note": "no finding recorded in this run's checks; not a conformance claim; the second rater's fails in D-01, D-02, D-07 await adjudication (record §10.5)"
+      "noFindings": false,
+      "note": "the second rater's fails, adjudicated: A11Y-F-0025 alsoOn (D-01), A11Y-F-0016 alsoOn (D-02), A11Y-F-0029 alsoOn (D-07); this run's own checks recorded none here. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-124",
@@ -11757,7 +11766,8 @@
         },
         "2.5.8": {
           "verdict": "n/a (not applicable: no pointer target on the screen)",
-          "scope": "built part (connection region only, after a harness kill)"
+          "scope": "built part (connection region only, after a harness kill)",
+          "note": "D-17: n/a on the built part (no pointer target). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
         },
         "3.2.6": {
           "verdict": "n/a (not applicable: no help mechanism is rendered on more than one page, so there is no relative order to compare)",
@@ -12061,8 +12071,8 @@
           "verdict": "n/a (not applicable: not an authentication step)"
         }
       },
-      "noFindings": true,
-      "note": "no finding recorded in this run's checks; not a conformance claim; the second rater's fails in D-01 await adjudication (record §10.5)"
+      "noFindings": false,
+      "note": "the second rater's fails, adjudicated: A11Y-F-0025 alsoOn (D-01); this run's own checks recorded none here. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-156",
@@ -12102,6 +12112,12 @@
           "source": "derived",
           "status": "covered",
           "reason": "deep pass: Technical detail (aria-expanded true) + Copy diagnostics ('Diagnostics copied.' polite)"
+        },
+        {
+          "name": "re-check: focus after 'Reload panel' succeeds (formerly A11Y-F-0017, DP-017)",
+          "source": "derived",
+          "status": "unreachable",
+          "reason": "unreachable: needs the real shell. On the stubbed shell the auto-opened tour dialog legitimately takes focus, so the first rater's 'focus dropped' was the stub's artefact; not a failure (D-11). Re-check at the next band with a panel that does not open the tour. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
         }
       ],
       "evidence": {
@@ -12113,10 +12129,9 @@
           "note": "axe AXE_GATE_TAGS + color-contrast, every impact: 0 violations; states default; color-contrast incomplete nodes per theme: dark 7, light 7, high-contrast 7; not resolved yet (record §3)"
         },
         "keyboard": {
-          "verdict": "fail",
+          "verdict": "pass",
           "ref": "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
-          "note": "tab pass 36 stops (1280x800 and 200 %), none fully obscured; 05 §8.2 keyboard task script",
-          "findings": ["A11Y-F-0017"],
+          "note": "tab pass 36 stops (1280x800 and 200 %), none fully obscured; 05 §8.2 keyboard task script; the focus-after-reload check is a re-check row, unreachable: needs the real shell (D-11)",
           "ms": 699
         },
         "deep": {
@@ -12124,16 +12139,15 @@
           "ref": "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
           "themes": ["dark", "light", "high-contrast"],
           "note": "5 catalogue states covered, 0 unreachable, 1 extra states",
-          "findings": ["A11Y-F-0016", "A11Y-F-0017"],
+          "findings": ["A11Y-F-0016"],
           "ms": 35600
         },
         "sr": {
           "owner": "E47-T04",
           "proxies": {
-            "verdict": "fail",
+            "verdict": "unreachable (needs the real shell: the one proxy fail, the focus drop after Reload panel, is a re-check row by D-11)",
             "ref": "docs/qa/a11y/e47-t01-sweep.md#6-sr-proxies",
-            "note": "heuristic (BQ-11): ariaSnapshot names / roles, live-region writes, focus logs; no screen reader run",
-            "findings": ["A11Y-F-0017"]
+            "note": "heuristic (BQ-11): ariaSnapshot names / roles, live-region writes, focus logs; no screen reader run"
           }
         }
       },
@@ -12164,7 +12178,7 @@
         }
       },
       "noFindings": false,
-      "note": "extra states exercised in the deep pass: Reload panel succeeds (DP-017; confounded by the tour dialog)"
+      "note": "extra states exercised in the deep pass: Reload panel succeeds (DP-017; confounded by the tour dialog). A11Y-F-0017 withdrawn as a finding by D-11 and kept as the re-check state above (unreachable: needs the real shell). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     },
     {
       "id": "SCR-157",
@@ -12472,19 +12486,19 @@
           "verdict": "n/a (not applicable: not an authentication step)"
         }
       },
-      "noFindings": true,
-      "note": "no finding recorded in this run's checks; not a conformance claim; the second rater's fails in D-01 await adjudication (record §10.5)"
+      "noFindings": false,
+      "note": "the second rater's fails, adjudicated: A11Y-F-0025 alsoOn (D-01); this run's own checks recorded none here. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748)"
     }
   ],
   "patterns": [
     {
       "id": "A11Y-P-01",
       "group": "dialog focus-return",
-      "title": "Focus leaves a modal or is dropped when its host unmounts (scrim click escapes StepUpDialog; Reload panel drops to body)",
-      "componentIds": ["CMP-044", "CMP-091"],
-      "screenIds": ["SCR-006", "SCR-156"],
+      "title": "Focus leaves a modal or is not returned when it closes (scrim click escapes StepUpDialog; the guided tour drops focus to body on Finish or Escape)",
+      "componentIds": ["CMP-044"],
+      "screenIds": ["SCR-006", "SCR-018"],
       "owningTicket": "E47-S05 #1319",
-      "findings": ["A11Y-F-0013", "A11Y-F-0017"]
+      "findings": ["A11Y-F-0013", "A11Y-F-0027"]
     },
     {
       "id": "A11Y-P-02",
@@ -12498,19 +12512,19 @@
     {
       "id": "A11Y-P-03",
       "group": "label/name mismatch",
-      "title": "Toggle button changes its name and aria-pressed together (CMP-201 reveal)",
+      "title": "Toggle button changes its name and aria-pressed together (CMP-201 reveal; advisory under 4.1.2, D-10)",
       "componentIds": ["CMP-201"],
       "screenIds": ["SCR-001", "SCR-004"],
-      "owningTicket": "needs-filing-go",
+      "owningTicket": "#5196",
       "findings": ["A11Y-F-0003"]
     },
     {
       "id": "A11Y-P-04",
       "group": "other",
-      "title": "Error not identified in text or not tied to its field (3.3.1)",
+      "title": "Error not identified in text or not tied to its field (3.3.1; A11Y-F-0006 re-classed to 4.1.2 / 1.3.1 by D-09)",
       "componentIds": ["CMP-201", "CMP-204", "CMP-044"],
       "screenIds": ["SCR-004", "SCR-006"],
-      "owningTicket": "needs-filing-go",
+      "owningTicket": "#5196",
       "findings": ["A11Y-F-0006", "A11Y-F-0011", "A11Y-F-0012"]
     },
     {
@@ -12524,11 +12538,28 @@
     {
       "id": "A11Y-P-06",
       "group": "other",
-      "title": "Fixed-width card or squeezed column does not reflow at 320 CSS px (1.4.10)",
-      "componentIds": ["CMP-044", "CMP-091"],
-      "screenIds": ["SCR-005", "SCR-006", "SCR-156"],
+      "title": "Fixed-width dialog or the expanded nav rail does not reflow at 320 CSS px (1.4.10)",
+      "componentIds": ["CMP-044", "CMP-071"],
+      "screenIds": [
+        "SCR-005",
+        "SCR-006",
+        "SCR-156",
+        "SCR-018",
+        "SCR-019",
+        "SCR-112",
+        "SCR-117",
+        "SCR-123"
+      ],
       "owningTicket": "E47-T01 #1323",
       "findings": ["A11Y-F-0008", "A11Y-F-0009", "A11Y-F-0016"]
+    },
+    {
+      "id": "A11Y-P-07",
+      "group": "other",
+      "title": "Page titles: document.title is the product name on every route (2.4.2)",
+      "screenIds": ["SCR-112", "SCR-123", "SCR-004", "SCR-003", "SCR-017", "SCR-155", "SCR-159"],
+      "owningTicket": "E10-S01 #304",
+      "findings": ["A11Y-F-0025"]
     }
   ],
   "findings": [
@@ -12592,15 +12623,14 @@
         "tool": "deep pass (keyboard script + ariaSnapshot / live-region / focus proxies, BQ-11)",
         "heuristic": true
       },
-      "owningTicket": "needs-filing-go",
+      "owningTicket": "#5196",
       "status": "open",
-      "title": "DP-003: Show-password toggle flips its name and aria-pressed together ('Hide password, pressed')",
+      "title": "DP-003 (advisory, D-10: not a 4.1.2 failure): Show-password toggle flips its name and aria-pressed together ('Hide password, pressed')",
       "observed": "Before: name 'Show password', aria-pressed=false. After: name 'Hide password', aria-pressed=true. Announced as 'Hide password, toggle button, pressed', which reads as a contradiction (is the password hidden or shown?).",
-      "expected": "A toggle keeps one name and flips aria-pressed (CMP-201 states: reveal 'aria-pressed=\"true\", the name unchanged'), e.g. 'Show password' pressed/not pressed.",
+      "expected": "A toggle keeps one name and flips aria-pressed (CMP-201 states: reveal 'aria-pressed=\"true\", the name unchanged'), e.g. 'Show password' pressed/not pressed. Adjudication: D-10: name, role and value are programmatically determinable, so 4.1.2 holds; kept as a Minor (advisory) finding against 4.1.2 (the double announcement contradicts itself), routed to the component's owner as a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-03",
       "alsoOn": ["SCR-004"],
-      "needsFilingGo": true,
       "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
     },
     {
@@ -12655,7 +12685,7 @@
       "screenId": "SCR-004",
       "state": "too short; confirmation mismatch; breached; reused; current password refused",
       "componentId": "CMP-201",
-      "wcagSc": "3.3.1",
+      "wcagSc": "4.1.2",
       "level": "A",
       "severity": "moderate",
       "reproduction": "Environment: apps/web built at the audited sha, `vite preview` on <loopback>, Playwright Chromium, API stubbed with apps/web/e2e/support and the WS harness (the committed driver docs/plan/a11y/_tools/e47-sweep.qa.ts, mode deep, A11Y_ONLY=SCR-004). Open /login/change-password (signed out). Tab to each field and type stub values; press Enter. Stub PUT /api/v1/auth/password -> 401 {code: current_password_invalid}. Read the error region, aria-invalid and aria-describedby of each field.",
@@ -12664,14 +12694,13 @@
         "tool": "deep pass (keyboard script + ariaSnapshot / live-region / focus proxies, BQ-11)",
         "heuristic": false
       },
-      "owningTicket": "needs-filing-go",
+      "owningTicket": "#5196",
       "status": "open",
-      "title": "DP-006: Password-change errors are not tied to a field (no aria-invalid / describedby); a refused current password is not named",
+      "title": "DP-006 (4.1.2, with 1.3.1; re-classed from 3.3.1 by D-09): Password-change error messages are not programmatically tied to their field (no aria-invalid / aria-describedby)",
       "observed": "Errors appear in one role=alert div above the form. No field ever gets aria-invalid or an aria-describedby to the error, and focus stays in the last field typed. A server refusal of the current password shows 'That password was not accepted.', which does not say which of the three fields is wrong.",
-      "expected": "The field in error is identified: aria-invalid=true on it, the message linked by aria-describedby, focus moved to the first invalid field, and the refusal names the current password ('Current password is incorrect').",
+      "expected": "4.1.2 / 1.3.1: the field in error carries aria-invalid=true and an aria-describedby to its message, so the association the visual layout implies is programmatic; focus moves to the first invalid field. Advisory: the server refusal names the current password ('Current password is incorrect'). Adjudication: D-09: 3.3.1 passes (the error is identified and described in text in an alert region); the finding is re-classed under 4.1.2 / 1.3.1 (no programmatic association), still Level A, kept; a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-04",
-      "needsFilingGo": true,
       "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
     },
     {
@@ -12690,9 +12719,9 @@
       },
       "owningTicket": "E47-S05 #1319",
       "status": "open",
-      "title": "DP-007: 'Password changed' replaces the form with focus on body and nothing announced",
-      "observed": "The form is replaced by h1 'Password changed' and a link; focus is on <body> and nothing is announced.",
-      "expected": "Focus moves to the 'Password changed' heading (or a status announces it).",
+      "title": "DP-007 (2.4.3, with 4.1.3 secondary; D-08): 'Password changed' replaces the form with focus on body and nothing announced",
+      "observed": "The form is replaced by h1 'Password changed' and a link; focus is on <body> and nothing is announced. The second rater reproduced it (R2-F04): a live-region MutationObserver saw no write announcing the outcome (4.1.3).",
+      "expected": "Focus moves to the 'Password changed' heading (or a status announces it). Adjudication: D-08: one finding, primary SC 2.4.3 with 4.1.3 as the secondary SC (one defect, one row). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-02",
       "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
@@ -12757,13 +12786,12 @@
         "tool": "deep pass (keyboard script + ariaSnapshot / live-region / focus proxies, BQ-11)",
         "heuristic": false
       },
-      "owningTicket": "needs-filing-go",
+      "owningTicket": "#5196",
       "status": "open",
       "title": "DP-010: Step-up dialog closes at the challenge expiry with no warning and no way to continue",
       "observed": "At challenge_expires_at the dialog closes with no prior warning and no way to extend or renew; typed input is discarded, focus jumps to 'Create invitation' and only a polite 'Not sent' status is inserted. The production window is the server's (5 min in the e2e stub).",
-      "expected": "2.2.1: warn at least 20 s before the time limit and offer a simple way to continue. A remedy may only re-issue a fresh challenge on request; it never extends the old one or softens the factor (BQ-10): (a) a re-issue is a new server-issued challenge_id with the same factors; the step-up failure count (the session's failures_remaining), the read-only downgrade after the third failure and the auth.step_up_required audit continue across a re-issue, which never resets the count; (b) at expiry the typed password and code are discarded, never retained or replayed into the new challenge; only the held, non-secret action state survives; the pre-expiry warning renders only the remaining time of the server's challenge_expires_at. The TTL and the failure count never change. Note: Whether the 'essential' exception covers a security challenge window is for the second rater / security lens; no exception is claimed here (Level A cannot carry a nomination).",
+      "expected": "2.2.1: warn at least 20 s before the time limit and offer a simple way to continue. A remedy may only re-issue a fresh challenge on request; it never extends the old one or softens the factor (BQ-10): (a) a re-issue is a new server-issued challenge_id with the same factors; the step-up failure count (the session's failures_remaining), the read-only downgrade after the third failure and the auth.step_up_required audit continue across a re-issue, which never resets the count; (b) at expiry the typed password and code are discarded, never retained or replayed into the new challenge; only the held, non-secret action state survives; the pre-expiry warning renders only the remaining time of the server's challenge_expires_at. The TTL and the failure count never change. Note: Whether the 'essential' exception covers a security challenge window is for the second rater / security lens; no exception is claimed here (Level A cannot carry a nomination). Adjudication: filed in #5196 (filing go, decision 2a; owner the auth surfaces, E09). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
-      "needsFilingGo": true,
       "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
     },
     {
@@ -12780,14 +12808,13 @@
         "tool": "deep pass (keyboard script + ariaSnapshot / live-region / focus proxies, BQ-11)",
         "heuristic": false
       },
-      "owningTicket": "needs-filing-go",
+      "owningTicket": "#5196",
       "status": "open",
       "title": "DP-011: Step-up Confirm stays disabled with no text saying why; no format hint on the code field",
       "observed": "Enter does nothing; 'Confirm' stays disabled with no text saying why. The code field's label is 'Authenticator code' with no format instruction (six digits) and no description; no alert or status is written.",
-      "expected": "The required format is stated ('6-digit code from your authenticator app') and an invalid entry is described in text when the user tries to submit. Note: The typed-confirmation mismatch (case-sensitive target) behaves the same way (silent disabled Confirm). Per BQ-10 that is a note for S08 #1322, not a finding, and no remedy may relax it. Also touches SC 3.3.2.",
+      "expected": "The required format is stated ('6-digit code from your authenticator app') and an invalid entry is described in text when the user tries to submit. Note: The typed-confirmation mismatch (case-sensitive target) behaves the same way (silent disabled Confirm). Per BQ-10 that is a note for S08 #1322, not a finding, and no remedy may relax it. Also touches SC 3.3.2. Adjudication: filed in #5196 (filing go, decision 2a; owner the auth surfaces, E09). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-04",
-      "needsFilingGo": true,
       "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
     },
     {
@@ -12804,14 +12831,13 @@
         "tool": "deep pass (keyboard script + ariaSnapshot / live-region / focus proxies, BQ-11)",
         "heuristic": false
       },
-      "owningTicket": "needs-filing-go",
+      "owningTicket": "#5196",
       "status": "open",
       "title": "DP-012: Third failed step-up closes the dialog with only 'Not sent'; the error and its consequence are not described",
       "observed": "Failures 1 and 2: 'Incorrect code.' alert, code field aria-invalid, focus to Password (good). Failure 3: the dialog closes at once, focus moves to 'Create invitation', and the only text is a polite 'Not sent' status. The input error and its consequence (challenge dropped; per the catalogue a 5-minute read-only downgrade) are not described.",
-      "expected": "The third error is described in text before or as the dialog closes ('Incorrect code. Too many attempts: the invitation was not sent. ...'), announced assertively.",
+      "expected": "The third error is described in text before or as the dialog closes ('Incorrect code. Too many attempts: the invitation was not sent. ...'), announced assertively. Adjudication: filed in #5196 (filing go, decision 2a; owner the auth surfaces, E09). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-04",
-      "needsFilingGo": true,
       "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
     },
     {
@@ -12878,55 +12904,33 @@
       "status": "open",
       "title": "DP-015: Reconnection is never announced or shown after the disconnect announcement",
       "observed": "On reconnection the region disappears and the shell announcer is emptied (one write of ''); no 'Reconnected' message is announced or shown. A screen-reader user who heard 'Disconnected...' never hears that trading is back.",
-      "expected": "05 §6.2: 'WS disconnected/reconnected' are announced once each. The recovered state is deferred (ConnectionRegion.tsx), so today nothing marks the end of the episode.",
+      "expected": "05 §6.2: 'WS disconnected/reconnected' are announced once each. The recovered state is deferred (ConnectionRegion.tsx), so today nothing marks the end of the episode. Adjudication: D-12: kept (observed by the first rater; the second rater's pass is its class default, not a reproduction). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P2",
       "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
     },
     {
       "id": "A11Y-F-0016",
       "screenId": "SCR-156",
-      "state": "panel level; route level (at 320 CSS px)",
-      "componentId": "CMP-091",
+      "state": "default at 320 CSS px (panel and route level on SCR-156; default on the others)",
+      "componentId": "CMP-071",
       "wcagSc": "1.4.10",
       "level": "AA",
       "severity": "moderate",
-      "reproduction": "Environment: apps/web built at the audited sha, `vite preview` on <loopback>, Playwright Chromium, API stubbed with apps/web/e2e/support and the WS harness (the committed driver docs/plan/a11y/_tools/e47-sweep.qa.ts, mode deep, A11Y_ONLY=SCR-156). Viewport 320x640. Signed-in owner + WS harness. Panel: stub GET /api/v1/onboarding/checklist -> {items: null}; open /terminal/last. Route: stub GET /api/v1/users/invites -> {items: null}; open /admin/users/new. Measure the CMP-091 box and its children.",
+      "reproduction": "Environment: apps/web built at the audited sha, `vite preview` on <loopback>, Playwright Chromium, API stubbed with apps/web/e2e/support and the WS harness (the committed driver docs/plan/a11y/_tools/e47-sweep.qa.ts, mode deep, A11Y_ONLY=SCR-156). Viewport 320x640. Signed-in owner + WS harness. Panel: stub GET /api/v1/onboarding/checklist -> {items: null}; open /terminal/last. Route: stub GET /api/v1/users/invites -> {items: null}; open /admin/users/new. Measure the CMP-091 box and its children. Second rater (R2-F08): viewport 320x640, signed-in owner, open /admin/users/new (SCR-123), /settings/profile (SCR-112), /settings/appearance (SCR-117) and /terminal/last with the pending checklist stub (SCR-018 tour, SCR-019 checklist). Measure the Primary nav rail and main: the rail stays 240 px, main about 31 px; collapsing the rail ('Collapse navigation rail') gives main 207 px, but the default state loses content.",
       "detection": {
         "source": "manual",
         "tool": "deep pass (keyboard script + ariaSnapshot / live-region / focus proxies, BQ-11)",
         "heuristic": false
       },
-      "owningTicket": "E47-T01 #1323",
+      "owningTicket": "E10-S01 #304",
       "status": "open",
-      "title": "DP-016: Crash fallback squeezed into a 32 px column at 320 px; content needs two-dimensional scrolling",
-      "observed": "CMP-091 gets a 32 px-wide column (x 248..280) because the shell keeps the expanded rail and side panel at 320 px; its heading, body, error id and buttons overflow to x~392 and are reachable only by two-dimensional scrolling inside a content container.",
-      "expected": "At 320 CSS px the fallback reflows into the available width without two-dimensional scrolling. Note: Likely the shell layout at 320 px (SCR-010/011, outside this deep pass) rather than CMP-091 itself; SCR-152's banner slot spans the full width.",
+      "title": "DP-016 / R2-F08 (re-scoped by D-02): the nav rail stays expanded at 240 px at 320 CSS px, so main is squeezed to about 31-32 px and content needs two-dimensional scrolling or is clipped",
+      "observed": "SCR-156: CMP-091 gets a 32 px-wide column (x 248..280) because the shell keeps the expanded rail and side panel at 320 px; its heading, body, error id and buttons overflow to x~392 and are reachable only by two-dimensional scrolling. Second rater (R2-F08): on SCR-123, 112, 117, 018 and 019 the rail stays 240 px and main is about 31 px wide; headings and paragraphs are clipped mid-word (the h1 shows 2-3 letters per line).",
+      "expected": "1.4.10: at 320 CSS px the shell collapses (or overlays) the nav rail by default so main content reflows into the viewport width without two-dimensional scrolling or loss of content. Adjudication: D-02: one shell-level pattern finding (1.4.10) with alsoOn, re-scoping A11Y-F-0016 from the CMP-091 box to the shell's nav rail; owner the shell, E10-S01 #304 (open). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P2",
       "pattern": "A11Y-P-06",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
-    },
-    {
-      "id": "A11Y-F-0017",
-      "screenId": "SCR-156",
-      "state": "Reload panel succeeds (extra)",
-      "componentId": "CMP-091",
-      "wcagSc": "2.4.3",
-      "level": "A",
-      "severity": "minor",
-      "reproduction": "Environment: apps/web built at the audited sha, `vite preview` on <loopback>, Playwright Chromium, API stubbed with apps/web/e2e/support and the WS harness (the committed driver docs/plan/a11y/_tools/e47-sweep.qa.ts, mode deep, A11Y_ONLY=SCR-156). Signed-in owner + WS harness. Stub GET /api/v1/onboarding/checklist: first call {items: null}, then {items: []}. Open /terminal/last; Tab to 'Reload panel'; press Enter.",
-      "detection": {
-        "source": "manual",
-        "tool": "deep pass (keyboard script + ariaSnapshot / live-region / focus proxies, BQ-11)",
-        "heuristic": true
-      },
-      "owningTicket": "E47-S05 #1319",
-      "status": "open",
-      "title": "DP-017: After Reload panel succeeds, focus drops to body instead of the recovered panel",
-      "observed": "The focused 'Reload panel' button unmounts with the fallback. The code says focus then drops to <body> (PanelErrorBoundary.tsx: 'focus drops to the body after a reload ... nothing here moves it'). In this run the recovered checklist auto-opened the guided tour (SCR-018), which took focus, so the body drop was not observed directly.",
-      "expected": "After a successful reload focus lands on the recovered panel (its heading or first control). Note: Code evidence plus a confounded run; re-check with a panel that does not open the tour.",
-      "priority": "P1",
-      "pattern": "A11Y-P-01",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
+      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"],
+      "alsoOn": ["SCR-018", "SCR-019", "SCR-112", "SCR-117", "SCR-123"]
     },
     {
       "id": "A11Y-F-0018",
@@ -12936,7 +12940,7 @@
       "wcagSc": "1.4.3",
       "level": "AA",
       "severity": "serious",
-      "reproduction": "Environment: apps/web built at the audited sha, `vite preview` on <loopback>, Playwright Chromium, API stubbed with apps/web/e2e/support and the WS harness (the committed driver docs/plan/a11y/_tools/e47-sweep.qa.ts, mode spot, A11Y_ONLY=SCR-116). Signed in as the stub owner, open /settings/appearance (R-203) in the dark theme, then in high contrast. Read the computed colour of the links 'Accessibility statement' (a[href$=\"accessibility\"]) and 'Keyboard shortcuts (SCR-013)' (a[href$=\"hotkeys\"]) and of the nearest painted background; compute the contrast ratio. The driver's spot mode (contrastSpot) measures every axe color-contrast incomplete node from pixels and records the computed styles.",
+      "reproduction": "Environment: apps/web built at the audited sha, `vite preview` on <loopback>, Playwright Chromium, API stubbed with apps/web/e2e/support and the WS harness (the committed driver docs/plan/a11y/_tools/e47-sweep.qa.ts, mode spot, A11Y_ONLY=SCR-116). Signed in as the stub owner, open /settings/appearance (R-203) in the dark theme, then in high contrast. Read the computed colour of the links 'Accessibility statement' (a[href$=\"accessibility\"]) and 'Keyboard shortcuts (SCR-013)' (a[href$=\"hotkeys\"]) and of the nearest painted background; compute the contrast ratio. The driver's spot mode (contrastSpot) measures every axe color-contrast incomplete node from pixels and records the computed styles. SCR-019 (second rater, R2-F06): open /terminal/last with the pending checklist stub, close the tour; read the six 'Go to <item>' links' computed colour against rgb(11, 14, 17).",
       "detection": {
         "source": "manual",
         "tool": "axe-core color-contrast incomplete + contrastSpot pixel check, confirmed by computed style",
@@ -12945,10 +12949,10 @@
       "owningTicket": "E05-S04 #267",
       "status": "open",
       "title": "Two links on R-203 keep the browser's default link blue: 2.07:1 and 2.08:1 on the dark surface",
-      "observed": "Both links render rgb(0, 0, 238), the user-agent default, on rgb(11, 14, 17): 2.07:1 and 2.08:1 in the dark and high-contrast themes (normal-size text needs 4.5:1). The light theme passes. axe reports them as incomplete (background overlap), not as violations.",
-      "expected": "Link text meets 4.5:1 against its background in every theme: a link colour token applied to unstyled anchors (the token pair registered in the contrast gate). Note: no other unstyled link was found on the three spot screens; the other 24 reachable screens' incomplete nodes are not resolved yet (record §3).",
+      "observed": "Both links render rgb(0, 0, 238), the user-agent default, on rgb(11, 14, 17): 2.07:1 and 2.08:1 in the dark and high-contrast themes (normal-size text needs 4.5:1). The light theme passes. axe reports them as incomplete (background overlap), not as violations. SCR-019 (R2-F06): the six checklist 'Go to <item>' links use the same default link blue, 2.06:1 in dark and high contrast.",
+      "expected": "Link text meets 4.5:1 against its background in every theme: a link colour token applied to unstyled anchors (the token pair registered in the contrast gate). Note: no other unstyled link was found on the three spot screens; the other 24 reachable screens' incomplete nodes are not resolved yet (record §3). Adjudication: D-06: SCR-019 added to alsoOn (the same root cause: the default link blue at 2.06:1 in dark and high contrast). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P2",
-      "alsoOn": ["SCR-117"],
+      "alsoOn": ["SCR-117", "SCR-019"],
       "evidence": [
         "docs/qa/a11y/img/e47-t01/scr-116-dark-link-accessibility-statement.png",
         "docs/qa/a11y/img/e47-t01/scr-116-dark-link-keyboard-shortcuts.png",
@@ -12964,7 +12968,7 @@
       "wcagSc": "1.4.3",
       "level": "AA",
       "severity": "serious",
-      "reproduction": "Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F01) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19). The source record ranks it P1 (its ruling); BQ-14 gives P2.",
+      "reproduction": "One-line reproduction (D-18): Open SCR-153 in the light theme with a blocking (danger-tone) CMP-092 row and measure the severity word, color.status.danger.strong on its .subtle background (3.85:1 at the source sha; 6.33:1 after #5140). Source steps: docs/design/E04/E04-D02.md#12-findings (E04-D02-F01) and the sections it cites. Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F01) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19). The source record ranks it P1 (its ruling); BQ-14 gives P2. Exempt from this round's reproducibility draw (D-18; record §10.4).",
       "detection": {
         "source": "manual",
         "tool": "design-review (imported)",
@@ -12975,7 +12979,8 @@
       "title": "E04-D02-F01: Severity word (danger tone) on CMP-092 rows and the CMP-077 age line from 30 s: 3.85:1 in the light theme",
       "priority": "P2",
       "importedFrom": "docs/design/E04/E04-D02.md §12, E04-D02-F01",
-      "alsoOn": ["SCR-152"]
+      "alsoOn": ["SCR-152"],
+      "evidence": ["docs/design/E04/E04-D02.md#12-findings"]
     },
     {
       "id": "A11Y-F-0020",
@@ -12985,7 +12990,7 @@
       "wcagSc": "1.4.3",
       "level": "AA",
       "severity": "serious",
-      "reproduction": "Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F02) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19). The source record ranks it P1 (its ruling); BQ-14 gives P2.",
+      "reproduction": "One-line reproduction (D-18): Open SCR-153 in the light theme with a warning-tone CMP-092 row and measure the severity word, warning.strong on warning.subtle (4.11:1 at the source sha; 4.90:1 after #5140). Source steps: docs/design/E04/E04-D02.md#12-findings (E04-D02-F02) and the sections it cites. Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F02) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19). The source record ranks it P1 (its ruling); BQ-14 gives P2. Exempt from this round's reproducibility draw (D-18; record §10.4).",
       "detection": {
         "source": "manual",
         "tool": "design-review (imported)",
@@ -12995,7 +13000,8 @@
       "status": "fixed",
       "title": "E04-D02-F02: Severity word (warning tone) on CMP-092 rows: 4.11:1 in the light theme",
       "priority": "P2",
-      "importedFrom": "docs/design/E04/E04-D02.md §12, E04-D02-F02"
+      "importedFrom": "docs/design/E04/E04-D02.md §12, E04-D02-F02",
+      "evidence": ["docs/design/E04/E04-D02.md#12-findings"]
     },
     {
       "id": "A11Y-F-0021",
@@ -13005,7 +13011,7 @@
       "wcagSc": "1.4.3",
       "level": "AA",
       "severity": "serious",
-      "reproduction": "Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F03) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19). The source record ranks it P1 (its ruling); BQ-14 gives P2.",
+      "reproduction": "One-line reproduction (D-18): Open SCR-153 in the light theme with an info-tone CMP-092 row and measure the severity word, info.strong on info.subtle (4.34:1 at the source sha; 5.30:1 after #5140). Source steps: docs/design/E04/E04-D02.md#12-findings (E04-D02-F03) and the sections it cites. Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F03) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19). The source record ranks it P1 (its ruling); BQ-14 gives P2. Exempt from this round's reproducibility draw (D-18; record §10.4).",
       "detection": {
         "source": "manual",
         "tool": "design-review (imported)",
@@ -13015,7 +13021,8 @@
       "status": "fixed",
       "title": "E04-D02-F03: Severity word (info tone) on CMP-092 rows: 4.34:1 in the light theme",
       "priority": "P2",
-      "importedFrom": "docs/design/E04/E04-D02.md §12, E04-D02-F03"
+      "importedFrom": "docs/design/E04/E04-D02.md §12, E04-D02-F03",
+      "evidence": ["docs/design/E04/E04-D02.md#12-findings"]
     },
     {
       "id": "A11Y-F-0022",
@@ -13025,7 +13032,7 @@
       "wcagSc": "1.4.11",
       "level": "AA",
       "severity": "moderate",
-      "reproduction": "Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F04) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19). The source record ranks it P1 (its ruling); BQ-14 gives P2.",
+      "reproduction": "One-line reproduction (D-18): Open any signed-in route in the light theme and measure the status bar's CMP-210 ok glyph, success.strong on surface.sunken, as non-text contrast (2.78:1 at the source sha; 3.84:1 after #5140). Source steps: docs/design/E04/E04-D02.md#12-findings (E04-D02-F04) and the sections it cites. Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F04) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19). The source record ranks it P1 (its ruling); BQ-14 gives P2. Exempt from this round's reproducibility draw (D-18; record §10.4).",
       "detection": {
         "source": "manual",
         "tool": "design-review (imported)",
@@ -13035,7 +13042,8 @@
       "status": "fixed",
       "title": "E04-D02-F04: Status-bar ok glyph (CMP-210): 2.78:1 non-text in the light theme",
       "priority": "P2",
-      "importedFrom": "docs/design/E04/E04-D02.md §12, E04-D02-F04"
+      "importedFrom": "docs/design/E04/E04-D02.md §12, E04-D02-F04",
+      "evidence": ["docs/design/E04/E04-D02.md#12-findings"]
     },
     {
       "id": "A11Y-F-0023",
@@ -13045,7 +13053,7 @@
       "wcagSc": "1.4.11",
       "level": "AA",
       "severity": "minor",
-      "reproduction": "Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F07) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19).",
+      "reproduction": "One-line reproduction (D-18): Open any signed-in route and measure the CMP-076 connection chip's hairline border, color.border.default on color.surface.raised, in the three themes (1.41 / 1.22 / 2.86:1). Source steps: docs/design/E04/E04-D02.md#12-findings (E04-D02-F07) and the sections it cites. Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F07) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19). Exempt from this round's reproducibility draw (D-18; record §10.4).",
       "detection": {
         "source": "manual",
         "tool": "design-review (imported)",
@@ -13057,7 +13065,8 @@
       "priority": "P2",
       "importedFrom": "docs/design/E04/E04-D02.md §12, E04-D02-F07",
       "observed": "E04-D02 §12 F07: the CMP-076 connection chip's hairline border (color.border.default on color.surface.raised) measures non-text contrast 1.41 / 1.22 / 2.86 (dark / light / high contrast), below 3:1 in all three themes (E04-D02 §5).",
-      "expected": "1.4.11: if the border is needed to identify the chip as a control, it reaches 3:1 against color.surface.raised in every theme; otherwise the candidate is closed as not needed to identify the control."
+      "expected": "1.4.11: if the border is needed to identify the chip as a control, it reaches 3:1 against color.surface.raised in every theme; otherwise the candidate is closed as not needed to identify the control.",
+      "evidence": ["docs/design/E04/E04-D02.md#12-findings"]
     },
     {
       "id": "A11Y-F-0024",
@@ -13067,7 +13076,7 @@
       "wcagSc": "1.4.1",
       "level": "A",
       "severity": "minor",
-      "reproduction": "Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F10) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19).",
+      "reproduction": "One-line reproduction (D-18): Open SCR-152 and let the CMP-077 age line pass its 30 s step; compare the line before and after the step in greyscale: only the colour changes (color.status.danger.strong), no word or glyph. Source steps: docs/design/E04/E04-D02.md#12-findings (E04-D02-F10) and the sections it cites. Imported, not re-run: the steps, shots and measurements are in docs/design/E04/E04-D02.md §12 (E04-D02-F10) and the sections it cites. Its file set (apps/web/src, packages/ui tokens) has no change between the record's sha and the audited sha, so it is not re-checked here (BQ-19). Exempt from this round's reproducibility draw (D-18; record §10.4).",
       "detection": {
         "source": "manual",
         "tool": "design-review (imported)",
@@ -13079,7 +13088,122 @@
       "priority": "P1",
       "importedFrom": "docs/design/E04/E04-D02.md §12, E04-D02-F10",
       "observed": "E04-D02 §12 F10: at the 30 s step the CMP-077 age line takes color.status.danger.strong with no word change, so the step is carried by colour alone (a greyscale blind read sees only a dimmed line, E04-D02 §6).",
-      "expected": "1.4.1: the 30 s step is also carried by a word, glyph or other non-colour cue on the age line."
+      "expected": "1.4.1: the 30 s step is also carried by a word, glyph or other non-colour cue on the age line. Adjudication: D-13: the imported open status is kept (imported, not re-run, BQ-19). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
+      "evidence": ["docs/design/E04/E04-D02.md#12-findings"]
+    },
+    {
+      "id": "A11Y-F-0025",
+      "screenId": "SCR-112",
+      "state": "default",
+      "componentId": "none",
+      "wcagSc": "2.4.2",
+      "level": "A",
+      "severity": "moderate",
+      "reproduction": "Environment: apps/web built at the audited sha, `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; found by the second rater (BQ-20) with its own probe outside the repository, reproducible with the committed driver's stubs (docs/plan/a11y/_tools/e47-sweep.qa.ts). Open each route (/settings/profile, /admin/users/new, /login/change-password, /invite/<stub token>, /404, /offline) and read document.title. Static check at the audited sha: no document.title write in apps/web/src; the only title is index.html's.",
+      "detection": {
+        "source": "manual",
+        "tool": "second rater: playwright probe (R2-F09), confirmed by a static check",
+        "heuristic": false
+      },
+      "owningTicket": "#5196",
+      "status": "open",
+      "title": "D-01 / R2-F09: document.title is the product name on every route; no route sets a descriptive title",
+      "observed": "document.title is 'CandleViewer' on every sampled route; the title never describes the page's topic or purpose. No code in apps/web/src writes document.title, so every route is affected; this row lists the routed page screens the second rater observed (component and overlay screens were coded n/a, their title being the host route's).",
+      "expected": "2.4.2: each route sets a unique, descriptive title (page, then product). Adjudication: D-01: upheld as one Level A pattern finding (A11Y-P-07, page titles), owner the shell / routing (E10-S01 #304 as the open build ticket); a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
+      "priority": "P1",
+      "pattern": "A11Y-P-07",
+      "alsoOn": ["SCR-123", "SCR-004", "SCR-003", "SCR-017", "SCR-155", "SCR-159"],
+      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication"]
+    },
+    {
+      "id": "A11Y-F-0026",
+      "screenId": "SCR-013",
+      "state": "open (Ctrl+/)",
+      "componentId": "CMP-094",
+      "wcagSc": "2.4.3",
+      "level": "A",
+      "severity": "serious",
+      "reproduction": "Environment: apps/web built at the audited sha, `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; found by the second rater (BQ-20) with its own probe outside the repository, reproducible with the committed driver's stubs (docs/plan/a11y/_tools/e47-sweep.qa.ts). Signed-in owner, open /journal, press Ctrl+/. Read the 'Keyboard shortcuts' dialog's position, document.activeElement, then Tab and Escape. Note: #5160 changed SCR-013 (Cheatsheet.tsx) after the audited sha; re-check first at the next run (BQ-05).",
+      "detection": {
+        "source": "manual",
+        "tool": "second rater: playwright probe (R2-F01)",
+        "heuristic": false
+      },
+      "owningTicket": "#5196",
+      "status": "open",
+      "title": "D-03 / R2-F01: the shortcuts dialog renders below the fold, focus stays on body and Escape does not close it",
+      "observed": "The role=dialog 'Keyboard shortcuts' (aria-modal=false) renders position:static after the whole shell at y=828 on a 1280x800 viewport, below the fold and not scrolled into view; document.activeElement stays BODY; Tab walks 15 shell stops before 'Customise' / 'Close'; Escape does not close it (Ctrl+/ toggles). The overlay is also unstyled and off-screen for sighted users.",
+      "expected": "2.4.3: on open, focus moves into the dialog (CMP-094); Escape closes it and focus returns to the trigger. Adjudication: D-03: new Level A finding; owner the keymap cheatsheet (E10-S02's lane); a row in #5196 (filing go, decision 2a). #5160 changed SCR-013 after the audited sha: this row describes the audited sha and is re-checked first. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
+      "priority": "P1",
+      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication"]
+    },
+    {
+      "id": "A11Y-F-0027",
+      "screenId": "SCR-018",
+      "state": "finish / Escape",
+      "componentId": "none",
+      "wcagSc": "2.4.3",
+      "level": "A",
+      "severity": "moderate",
+      "reproduction": "Environment: apps/web built at the audited sha, `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; found by the second rater (BQ-20) with its own probe outside the repository, reproducible with the committed driver's stubs (docs/plan/a11y/_tools/e47-sweep.qa.ts). Open /terminal/last with the 6-item pending checklist stub; the tour dialog auto-opens (focus on the dialog). Press Next 7 times then Finish, or press Escape on stop 1; read document.activeElement.",
+      "detection": {
+        "source": "manual",
+        "tool": "second rater: playwright probe (R2-F02)",
+        "heuristic": false
+      },
+      "owningTicket": "#5196",
+      "status": "open",
+      "title": "D-04 / R2-F02: after Finish or Escape the guided tour removes its dialog and focus falls to body",
+      "observed": "The dialog is removed and document.activeElement is BODY; focus is not returned to 'Take the tour' or the checklist.",
+      "expected": "2.4.3: on Finish or Escape focus returns to the element that opened the tour (or the host's named fallback, the checklist). Adjudication: D-04: new Level A finding, a member of pattern A11Y-P-01 (focus return); a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
+      "priority": "P1",
+      "pattern": "A11Y-P-01",
+      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication"]
+    },
+    {
+      "id": "A11Y-F-0028",
+      "screenId": "SCR-015",
+      "state": "toast shown",
+      "componentId": "CMP-045",
+      "wcagSc": "2.2.1",
+      "level": "A",
+      "severity": "moderate",
+      "reproduction": "Environment: apps/web built at the audited sha, `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; found by the second rater (BQ-20) with its own probe outside the repository, reproducible with the committed driver's stubs (docs/plan/a11y/_tools/e47-sweep.qa.ts). Signed-in owner on /journal, press Ctrl+Shift+X (an inert destructive binding). Time the toast's removal, then repeat while hovering it.",
+      "detection": {
+        "source": "manual",
+        "tool": "second rater: playwright probe (R2-F05)",
+        "heuristic": false
+      },
+      "owningTicket": "#5197",
+      "status": "open",
+      "title": "D-05 / R2-F05: the toast auto-dismisses after about 5 s; hover does not pause it and it cannot be re-read in place (2.2.1, with 4.1.3)",
+      "observed": "The toast text is written into the polite status host (announced), but the host renders position:static below the shell (y=824 on an 800 px viewport) and is removed after about 4.6 s; hovering it does not pause the timer (removed after about 5.0 s while hovered). There is no way to extend it or re-read it in place.",
+      "expected": "2.2.1 (and 4.1.3): the DS toast pauses on hover and focus and offers a re-readable log or the shell's announcer history (CMP-045 A11y: 'pauses on hover/focus, and provides a persistent-log fallback'); none of 2.2.1's exceptions (real-time, essential, 20 hours) applies. Adjudication: D-05: an auto-dismissing toast is a content-set time limit; fail 2.2.1 (and 4.1.3); filed as #5197 for the design-system lane (filing go, decision 2b). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
+      "priority": "P1",
+      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication"]
+    },
+    {
+      "id": "A11Y-F-0029",
+      "screenId": "SCR-112",
+      "state": "default",
+      "componentId": "none",
+      "wcagSc": "2.4.5",
+      "level": "AA",
+      "severity": "minor",
+      "reproduction": "Environment: apps/web built at the audited sha, `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; found by the second rater (BQ-20) with its own probe outside the repository, reproducible with the committed driver's stubs (docs/plan/a11y/_tools/e47-sweep.qa.ts). Signed-in owner; list the ways to reach /settings/profile and /admin/users/new: only the Primary nav rail; the command palette ('Search commands Ctrl+K') is disabled ('not available in this build') and no search or site map exists.",
+      "detection": {
+        "source": "manual",
+        "tool": "second rater: inspection (R2-F10)",
+        "heuristic": true
+      },
+      "owningTicket": "E05-S03 #266",
+      "status": "open",
+      "title": "D-07 / R2-F10, fail (routed): only the nav rail reaches these pages; one way is not 'more than one way'",
+      "observed": "The nav rail is the only way to reach the page; the command palette (SCR-012) is not built (its trigger is disabled) and there is no search or site map.",
+      "expected": "2.4.5: more than one way to locate the page, e.g. the command palette / search (SCR-012). Adjudication: D-07: fail 2.4.5, routed: the row's owner is SCR-012's build ticket (E05-S03 #266, closed at the audited sha), status 'fail (routed)', not n/a; the register holds it as open until SCR-012 ships. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
+      "priority": "P2",
+      "alsoOn": ["SCR-123"],
+      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication"]
     }
   ]
 }
