@@ -84,6 +84,14 @@ describe("A11Y-305B-04: the hotkey editor at R-202 has no serious or critical ax
     expect(await serious(editor)).toEqual([]);
   });
 
+  it("with a search, a context filter and a recording row", { timeout: 30_000 }, async () => {
+    const editor = await openEditor();
+    fireEvent.change(screen.getByLabelText("Search commands"), { target: { value: "zoom" } });
+    fireEvent.change(screen.getByLabelText("Context"), { target: { value: "DOM" } });
+    fireEvent.click(inRow("Price zoom in").getByRole("button", { name: /^Record\b/ }));
+    expect(await serious(editor)).toEqual([]);
+  });
+
   it("with the profile exported and an import that failed", { timeout: 30_000 }, async () => {
     const editor = await openEditor();
     fireEvent.click(button("Export"));

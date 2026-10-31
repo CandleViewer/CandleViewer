@@ -1,6 +1,7 @@
+import "./hotkey-editor.css";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { announce, forget } from "../features/app-shell/announcer";
-import { KEYMAP, type KeymapCommand } from "./keymap";
+import { KEYMAP, eventBinding, isDangerous, type KeymapCommand } from "./keymap";
 import { reportHotkey, reportRebound } from "./analytics";
 import { applyRebind } from "./audit";
 import { getBindings, setBindings, subscribeBindings } from "./profile";
@@ -25,6 +26,10 @@ import {
 } from "./validate";
 
 const MODS = ["Ctrl", "Alt", "Shift"] as const;
+/** The search box's announcement waits for the typing to stop: one count, never one per keystroke. */
+const SEARCH_SAY_MS = 600;
+const ALL = "All";
+const CONTEXTS = [...new Set(KEYMAP.map((c) => c.context))];
 /** The editor's one key in the shell announcer (#304): each message replaces the last, none is a region of its own. */
 const SAID = "keymap:editor";
 
@@ -113,6 +118,27 @@ export function HotkeyEditor(): JSX.Element {
   const [report, setReport] = useState<readonly string[]>([]);
   const [importText, setImportText] = useState("");
   const [exported, setExported] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [ctx, setCtx] = useState(ALL);
+  const needle = query.trim().toLowerCase();
+  const shown = KEYMAP.filter(
+    (c) =>
+      (ctx === ALL || c.context === ctx) &&
+      (needle === "" ||
+        `${c.label} ${c.context} ${bindings.get(c.id) ?? c.defaultBinding}`
+          .toLowerCase()
+          .includes(needle)),
+  );
+  const count = shown.length;
+  const filtering = needle !== "" || ctx !== ALL;
+  useEffect(() => {
+    if (!filtering) return undefined;
+    const timer = setTimeout(
+      () => say(`${count} ${count === 1 ? "command matches" : "commands match"}.`),
+      SEARCH_SAY_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [count, filtering]);
   const exportRef = useRef<HTMLTextAreaElement>(null);
   const importRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -173,6 +199,15 @@ export function HotkeyEditor(): JSX.Element {
     focusIn(cmd.id, "save"); // either way the Swap button leaves the row
   }
 
+  function resetOne(cmd: KeymapCommand): void {
+    const before = getBindings();
+    const next = applyRebind(before, cmd.id, cmd.defaultBinding);
+    setBindings(next);
+    reportRebound(before, next, [cmd.id]);
+    tell(cmd.id, `${cmd.label}: back to its default, ${cmd.defaultBinding || "unbound"}`);
+    focusIn(cmd.id, "key"); // the row's Reset is now disabled
+  }
+
   function unbind(cmd: KeymapCommand): void {
     if (validateUnbind(cmd.id) !== null) return; // a locked row has no Unbind
     const before = getBindings();
@@ -210,6 +245,28 @@ export function HotkeyEditor(): JSX.Element {
     <section aria-labelledby="hk-h" data-keymap-context="Settings">
       <h1 id="hk-h">Hotkeys</h1>
       {savesToServer() ? null : <p>Saved on this device only.</p>}
+      <p>
+        Trading commands (marked in the Context column) change the risk surface of your muscle
+        memory: rebinding one is audited.
+      </p>
+      <div className="hk-noprint">
+        <label>
+          Search commands
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </label>
+        <label>
+          Context
+          <select value={ctx} onChange={(e) => setCtx(e.target.value)}>
+            <option>{ALL}</option>
+            {CONTEXTS.map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
+        </label>
+        <button type="button" onClick={() => window.print()}>
+          Print list
+        </button>
+      </div>
       <table>
         <caption>Current key bindings by context</caption>
         <thead>
@@ -217,11 +274,13 @@ export function HotkeyEditor(): JSX.Element {
             <th scope="col">Context</th>
             <th scope="col">Command</th>
             <th scope="col">Binding</th>
-            <th scope="col">Change</th>
+            <th scope="col" className="hk-noprint">
+              Change
+            </th>
           </tr>
         </thead>
         <tbody>
-          {KEYMAP.map((c) => (
+          {shown.map((c) => (
             <Row
               key={c.id}
               cmd={c}
@@ -230,10 +289,12 @@ export function HotkeyEditor(): JSX.Element {
               onBind={tryBind}
               onSwap={swap}
               onUnbind={unbind}
+              onReset={resetOne}
             />
           ))}
         </tbody>
       </table>
+      {count === 0 ? <p>No command matches.</p> : null}
       <button
         type="button"
         onClick={() => {
@@ -283,8 +344,10 @@ function Row(props: {
   onBind: (c: KeymapCommand, raw: string, ack?: boolean) => void;
   onSwap: (c: KeymapCommand, r: Refusal) => void;
   onUnbind: (c: KeymapCommand) => void;
+  onReset: (c: KeymapCommand) => void;
 }): JSX.Element {
-  const { cmd, binding, notice, onBind, onSwap, onUnbind } = props;
+  const { cmd, binding, notice, onBind, onSwap, onUnbind, onReset } = props;
+  const [recording, setRecording] = useState(false);
   const [mods, setMods] = useState<readonly string[]>([]);
   const [key, setKey] = useState("");
   const raw = [...MODS.filter((m) => mods.includes(m)), key].join("+");
@@ -293,18 +356,37 @@ function Row(props: {
   const refusal = notice?.refusal ?? null;
   return (
     <tr>
-      <td>{cmd.context}</td>
+      <td>
+        {cmd.context}
+        {isDangerous(cmd) ? <span> (trading)</span> : null}
+      </td>
       <th scope="row">{cmd.label}</th>
       <td>
         {binding === "" ? "unbound" : <kbd>{binding}</kbd>}
         {locked ? null : (
-          <button type="button" disabled={binding === ""} onClick={() => onUnbind(cmd)}>
+          <button
+            type="button"
+            className="hk-noprint"
+            disabled={binding === ""}
+            onClick={() => onUnbind(cmd)}
+          >
             Unbind
             <ForRow cmd={cmd} />
           </button>
         )}
+        {locked ? null : (
+          <button
+            type="button"
+            className="hk-noprint"
+            disabled={binding === cmd.defaultBinding}
+            onClick={() => onReset(cmd)}
+          >
+            Reset
+            <ForRow cmd={cmd} />
+          </button>
+        )}
       </td>
-      <td>
+      <td className="hk-noprint">
         {locked ? (
           "not remappable"
         ) : (
@@ -332,6 +414,35 @@ function Row(props: {
               onChange={(e) => setKey(e.target.value)}
               size={6}
             />
+            <button
+              type="button"
+              aria-pressed={recording}
+              onClick={() => {
+                setRecording(!recording);
+                if (!recording) say("Press the keys now. Esc cancels.");
+              }}
+              onBlur={() => setRecording(false)}
+              onKeyDown={(e) => {
+                if (!recording) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.key === "Escape") {
+                  setRecording(false);
+                  return say("Recording cancelled.");
+                }
+                if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return; // wait for the key
+                const hit = normaliseBinding(eventBinding(e.nativeEvent));
+                setRecording(false);
+                if (hit === null) return say("That key cannot be bound. Choose another.");
+                const prefix = MODS.filter((m) => hit.split("+").includes(m));
+                setMods(prefix);
+                setKey(hit.slice(prefix.map((m) => `${m}+`).join("").length));
+                say(`Captured ${hit}. Choose Save to apply it.`);
+              }}
+            >
+              {recording ? "Press keys now (Esc cancels)" : "Record"}
+              <ForRow cmd={cmd} />
+            </button>
             <button
               id={`hk-save-${cmd.id}`}
               type="button"
