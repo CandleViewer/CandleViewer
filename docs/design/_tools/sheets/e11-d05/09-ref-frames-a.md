@@ -44,10 +44,10 @@ Root 3200 x 2913 px at (0, 0); footer "page E11-D05 ref frames · board 09 · r1
 
 ## Validator and size
 
-- `09-ref-frames-a.json: 0 errors, 56 warnings, 140 sections, 375568 bytes` (exit 0)
-- 140 sections, 2842 shapes, 375568 bytes
+- `09-ref-frames-a.json: 0 errors, 56 warnings, 166 sections, 381750 bytes` (exit 0)
+- 166 sections, 2862 shapes, 381750 bytes
 
-## Live checks (12)
+## Live checks (13)
 
 - CMP-180 stale frame, group 'data ink · x0.85': set every body fill on color.candle.up to #27A14C, on color.candle.down to #C33D41 and every wick to #767E86 (the dim85 dark column, E11-D02 D16 L123 'stale = data-ink uniform × 0.85 (no extra pass)'; E11-D05 L279 and the dim85 rows L557-L559); read back the three hex values; these are the frame's only unbound fills
 - each of the 33 frames reads back with the exact Table 1 name 'CMP-nnn · Name — ref frame (<state>)' and a non-empty plugin-data note naming its state
@@ -55,6 +55,7 @@ Root 3200 x 2913 px at (0, 0); footer "page E11-D05 ref frames · board 09 · r1
 - watermark texts (CMP-180 streaming / replay frames): set the font size to 48 px, weight 600 after the render (no type token carries 48 px); read back 48
 - root 'E11-D05 / 09 ref-frames-a' at (0, 0) on page 'E11-D05 ref frames': read back the name exactly after the first section call (a mismatch makes a duplicate root); size 3200 x 2913
 - after touchTexts + relayout: the annotation column (estimated 3212 px) ends at least 80 px above the root's bottom (h 2913); if not, raise the root's h to the column's end + 80 and record it
+- each frame has its state caption 'state: <Table 1 state>' (type.ui.caption, color.text.secondary) 18 px above it, inside the row gap, clear of the frame (round 2, m4)
 - group 'CMP-180 ChartRoot · 10 ref frames': read back 2560 x 680 at (80, 80); its frames keep their sheet sizes after relayout (clip on, no child outside its frame)
 - group 'CMP-188 PriceAxis · 8 ref frames': read back 2040 x 300 at (80, 840); its frames keep their sheet sizes after relayout (clip on, no child outside its frame)
 - group 'CMP-189 TimeAxis · 9 ref frames': read back 2560 x 336 at (80, 1220); its frames keep their sheet sizes after relayout (clip on, no child outside its frame)
@@ -71,10 +72,11 @@ Root 3200 x 2913 px at (0, 0); footer "page E11-D05 ref frames · board 09 · r1
 - CMP-189 virtual-now: D8 names the 1 px dashed replay line and 'a clock pill' but not the pill's fill / text tokens; drawn neutral (surface.raised, text.primary) with a replay hairline
 - CMP-190 remote time pill text: E11-D02 D8 says color.text.secondary; `15` CMP-190 and E11-D05 §4.1b bind color.chart.pill.text.default (= color.text.primary); drawn per `15` / §4.1b
 
-## Deviations (3)
+## Deviations (4)
 
 - CMP-180 replay: CR-7's icon/replay is not in the local icon set; the `refresh` glyph stands in
 - CMP-180 aggregated: the chip's merge glyph is not in the local icon set; drawn text-only
+- CMP-188 last-price pill down: the seeded last bar is a down bar, so the (auto) frame already shows a down pill; in this frame the bar closes at its low (63,985.5) so the down pill sits below (auto)'s, in color.candle.down with ▼
 - CMP-190 magnet snap: icon/magnet (E11-D02 CR-7) is not in the local icon set; the 12 px glyph at the pill's left edge (E11-D02 L302) is drawn from primitives (a 12 x 12 horseshoe of three rects in the pill text colour) beside the OHLC letter H (the frame's gutter is 96 px so the wider pill fits); swap for the library icon when CR-7 lands
 
 ## Fallbacks (20)

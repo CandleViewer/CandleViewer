@@ -71,3 +71,26 @@ regeneration reproduces the drawn boards:
   labels show in the re-exported board 09 PNG and its shape count (2912 -> 2910 with the root).
 - Recorded deviations: overlaps by design 16 (board 09) + 8 (board 10); 11 watermark texts unbound at 48 / 40 px; 4
   wrapping watermarks (a spec gap: 48 px exceeds 60 % of a cropped pane).
+
+## Review fold r2 (2026-10-31, the orchestrator's ruled Minors on PR #5105)
+
+The kit now draws these; boards 09 / 10 are re-rendered from it (spec lines are E11-D02's, unchanged since e87194bb0):
+
+- m1, D5 (L205): the last-price pill suppresses every price tick label whose box comes within one label height of it
+  (`Crop.lp_box`; board 09 aggregated `64,025.0`, board 10 docked / overflow `64,000.0`, and the near ticks of the
+  other last-price frames). L206 lets pills cover tick labels only, so a strip pill never covers the zone tag's clock:
+  `Crop.strip_pill` centres a pill on its anchor, flips it left at the cluster's zone (L171 / L206) and, at the tag's
+  mirror zone (L172), flips it right and holds it at the zone's edge (CMP-197 follow / flipped above / clear of last
+  price / overflow; a spec gap in the sidecar). The crosshair-over-tick overlaps stay (by design).
+- m2, D12 (L119, L343): hidden legend rows draw eye-off, built from primitives (the `show` eye plus a 2 px diagonal
+  stroke; no eye-off in the local icon set). CMP-199 (all hidden) hides the price series too, so no candles sit behind
+  the `—` values; (one hidden) widens the crop's price range so no candle crosses the hidden row's `—`.
+- m3: every strip pill reads its value off its own axis (`Crop.minutes_at` / `clock_at`, linear through the frame's
+  time labels), so it falls between the ticks it sits between: the crosshair, remote and go-to-date pills, CMP-197's
+  box title, the virtual-now pill and CMP-189's zone tag, the maintenance band's label (the frame keeps 13:30 / 13:35 /
+  13:40 and drops the two the band label covers; boundary still drops its `time 0`), and the CMP-180 replay frame's
+  zone tag and REPLAY chip, which show the virtual now (L276). The overflow tooltip's BB and Keltner rows read upper >=
+  middle (64,003.2, the EMA 20 row) >= lower.
+- m4: each frame carries a caption `state: <Table 1 state>` (type.ui.caption, color.text.secondary) in the row gap 18
+  px above it; root and group sizes are unchanged. CMP-188 (last-price pill down) closes its last bar at the bar's low,
+  so its down pill sits below (auto)'s (the seeded bar is already down) and (up)'s.

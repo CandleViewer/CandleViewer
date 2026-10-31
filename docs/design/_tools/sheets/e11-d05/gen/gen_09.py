@@ -102,7 +102,10 @@ def f180_replay() -> k.Node:
     c.pane.append(k.rect("future dim", c.pw - xv, c.ph, k.APP, {"opacity": k.OPACITY_SCRIM}, x=xv, y=0,
                          note="one blended color.surface.app quad at opacity.scrim right of virtual-now"))
     c.pane.append(k.dashes("virtual-now line", xv, 0, c.ph, rp, vertical=True))
-    c.status_right.append(k.chip("replay chip", "REPLAY 14:32:05", stroke=rp, sw=k.FOCUS_W, glyph="refresh",
+    # m3: the virtual now is read off this frame's time axis; in replay the zone tag's clock shows it (E11-D02 L276)
+    now = c.clock_at(xv, secs=True)
+    c.zone = f"UTC {now}"
+    c.status_right.append(k.chip("replay chip", f"REPLAY {now}", stroke=rp, sw=k.FOCUS_W, glyph="refresh",
                                  gcolor=k.TEXT_1, note="the replay glyph (CR-7 icon/replay) is not in the set: refresh "
                                                        "stands in"))
     c.top.append(k.frame_rect("replay frame", c.w, c.ph + c.sh, rp, 4, x=0, y=c.st))
@@ -201,6 +204,13 @@ def f188(state: str) -> k.Node:
     c = base188()
     if state in ("last-price pill up", "last-price pill down"):
         k.force_dir(c, state.endswith("up"))
+    if state == "last-price pill down":
+        # m4: the seeded last bar is already down, so (auto) would equal this frame; here it closes at its low, so the
+        # down pill sits below (auto)'s and (up)'s
+        c.last().c = c.last().l
+        k.deviate("CMP-188 last-price pill down: the seeded last bar is a down bar, so the (auto) frame already shows "
+                  "a down pill; in this frame the bar closes at its low (" + k.f_price(c.last().l) + ") so the down "
+                  "pill sits below (auto)'s, in color.candle.down with ▼")
     if state != "dragging":
         k.last_pill(c)
     if state == "locked":
@@ -267,7 +277,7 @@ def hatch(name: str, w: int, h: int) -> k.Node:
 
 
 def f189(state: str) -> k.Node:
-    c = base189("UTC 14:32:05" if state == "virtual-now" else "UTC 13:47:05")
+    c = base189()
     cl = "paused" if state == "paused" else "following"
     if state not in ("virtual-now",):
         c.strip.append(k.cluster(cl, x=round(c.w - k.cluster_w(cl)), y=0))
@@ -284,10 +294,11 @@ def f189(state: str) -> k.Node:
         x0, bw = c.x(5), 176
         c.pane.append(dict(hatch("maintenance band", bw, c.ph), x=x0, y=0))
         c.strip.append(dict(hatch("maintenance band · strip", bw, c.sh - 1), x=x0, y=1))
-        c.strip.append(k.text("band label", "01:55 – 02:25 maintenance", k.CAPTION, k.TEXT_2, x=x0 + 6, y=5,
+        # m3: the band's times are read off this frame's axis (13:30 / 13:35 / 13:40)
+        t0, t1 = c.clock_at(x0), c.clock_at(x0 + bw)
+        c.strip.append(k.text("band label", f"{t0} – {t1} maintenance", k.CAPTION, k.TEXT_2, x=x0 + 6, y=5,
                               note="shown when the band is >= 48 px wide"))
-        c.times = ["13:30"]
-        c.drop_times = {0}  # live fold: the band label covers the only time label
+        c.drop_times = {0, 1}  # live fold: the band label covers these time labels (dropped as collisions, D8)
     elif state == "loading band":
         lw = 132
         c.first = 6  # no bar loaded left of the oldest bar
@@ -299,17 +310,19 @@ def f189(state: str) -> k.Node:
         mk = k.slot("color.chart.marker.goto")
         c.pane.append(k.dashes("go-to-date line", xg, 0, c.ph, mk, vertical=True))
         c.strip.append(k.rect("go-to-date line · strip", 1, 4, mk, x=xg, y=0))
-        c.strip.append(k.pill("go-to-date pill", "13:33", mk, k.slot("color.chart.pill.text.on-marker"),
-                              x=xg - 18, y=4, note="GL pill; until the next navigation input, no timeout"))
         c.times = ["13:40"]
+        c.strip.append(c.strip_pill(k.pill("go-to-date pill", c.clock_at(xg), mk,
+                                           k.slot("color.chart.pill.text.on-marker"), y=4,
+                                           note="GL pill; until the next navigation input, no timeout"), xg))
     elif state == "remote crosshair":
         xr = c.x(11)
         c.pane.append(k.dashes("remote crosshair", xr, 0, c.ph, k.slot("color.chart.crosshair"), vertical=True,
                                o={"opacity": k.OPACITY_MUTED}))
-        c.strip.append(k.pill("remote time pill", "13:41", k.slot("color.chart.pill.bg"), k.TEXT_2,
-                              stroke=k.slot("color.chart.pill.border"), x=xr - 18, y=4,
-                              note="neutral so it never reads as the local pill (D8: color.text.secondary)"))
         c.times = ["13:30", "13:35"]
+        c.strip.append(c.strip_pill(k.pill("remote time pill", c.clock_at(xr), k.slot("color.chart.pill.bg"),
+                                           k.TEXT_2, stroke=k.slot("color.chart.pill.border"), y=4,
+                                           note="neutral so it never reads as the local pill (D8: "
+                                                "color.text.secondary)"), xr))
     elif state == "virtual-now":
         vn = 10
         c.bars = c.bars[:vn + 1]
@@ -317,11 +330,15 @@ def f189(state: str) -> k.Node:
         xv = c.x(vn) + round(c.slot_w / 2)
         c.pane.append(k.rect("future dim", c.pw - xv, c.ph, k.APP, {"opacity": k.OPACITY_SCRIM}, x=xv, y=0))
         c.pane.append(k.dashes("virtual-now line", xv, 0, c.ph, rp, vertical=True))
-        c.strip.append(k.pill("virtual-now clock pill", "14:32:05", k.RAISED, k.TEXT_1, stroke=rp, x=xv - 28, y=4,
-                              note="the clock pill's tokens are not named in D8: neutral + replay hairline"))
+        c.times = ["13:30", "13:35", "13:40", "13:45"]
+        # m3: the virtual now is read off this frame's axis; the zone tag's clock shows it (E11-D02 L276)
+        now = c.clock_at(xv, secs=True)
+        c.zone = f"UTC {now}"
+        c.strip.append(c.strip_pill(k.pill("virtual-now clock pill", now, k.RAISED, k.TEXT_1, stroke=rp, y=4,
+                                           note="the clock pill's tokens are not named in D8: neutral + replay "
+                                                "hairline"), xv))
         k.spec_gap("CMP-189 virtual-now: D8 names the 1 px dashed replay line and 'a clock pill' but not the pill's "
                    "fill / text tokens; drawn neutral (surface.raised, text.primary) with a replay hairline")
-        c.times = ["13:30", "13:35", "13:40", "13:45"]
     elif state == "focused":
         c.top.append(k.ring("CMP-039 ring · strip", c.w, c.sh, x=0, y=c.ph))
     return c.build("f")
@@ -360,9 +377,11 @@ def f190(state: str) -> k.Node:
         return c.build("f")
     if state == "remote":
         c.pane.append(k.dashes("remote crosshair", xc, 0, c.ph, ch, vertical=True, o={"opacity": k.OPACITY_MUTED}))
-        c.strip.append(k.pill("remote time pill", "13:38", k.slot("color.chart.pill.bg"),
-                              k.slot("color.chart.pill.text.default"), stroke=k.slot("color.chart.pill.border"),
-                              x=xc - 18, y=4, note="neutral GL pill; suppressed while this chart has its own cursor"))
+        c.strip.append(c.strip_pill(k.pill("remote time pill", c.clock_at(xc), k.slot("color.chart.pill.bg"),
+                                           k.slot("color.chart.pill.text.default"),
+                                           stroke=k.slot("color.chart.pill.border"), y=4,
+                                           note="neutral GL pill; suppressed while this chart has its own cursor"),
+                                    xc))
         k.spec_gap("CMP-190 remote time pill text: E11-D02 D8 says color.text.secondary; `15` CMP-190 and E11-D05 "
                    "§4.1b bind color.chart.pill.text.default (= color.text.primary); drawn per `15` / §4.1b")
         return c.build("f")
@@ -394,7 +413,7 @@ def f190(state: str) -> k.Node:
                                 ("; the snapped OHLC letter and the 12 px magnet glyph at its left edge "
                                  "(E11-D02 L302), the glyph drawn from primitives"
                                  if state == "magnet snap" else "")))
-    c.strip.append(k.pill("time pill", "13:38", ch, inv, x=xc - 18, y=4))
+    c.strip.append(c.strip_pill(k.pill("time pill", c.clock_at(xc), ch, inv, y=4), xc))  # m3: read off the axis
     if state == "magnet snap":
         k.deviate("CMP-190 magnet snap: icon/magnet (E11-D02 CR-7) is not in the local icon set; the 12 px glyph "
                   "at the pill's left edge (E11-D02 L" + str(k.L("**Magnet affordance.**", "d02")) + ") is drawn "
