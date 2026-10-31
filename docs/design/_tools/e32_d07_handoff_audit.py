@@ -47,6 +47,9 @@ Gates (one mutation each in `--self-test`):
   G-TICKS     every evidence cite of the six `14` ticks resolves at the base: a `§n` to a heading
               of the named parent, a board to its board list, a row id to a table row (the ticks are
               a Texts field, so the self-test moves them in the tool and in `14` together).
+  G-T2        R-5 states a gated control's `aria-disabled="true"`, its `aria-describedby` reason
+              node and its CMP-079 RbacGate wrap with the CMP-019 `lock`; NR-05 carries them; both
+              component lists name CMP-079 and CMP-019 (G-T2.1c, G-T2.1d, G-T2.6).
   G-FROZEN    post-merge mode (the pack is on the merge-base): every version row of the merge-base
               stands unchanged and a new row is v1.N with N above the last.
   G-RULED     the ruling stamp in both question sections, the ruling id, BQ-01..BQ-19, no marker.
@@ -1657,6 +1660,32 @@ def g_ticks(t: Texts) -> list[Finding]:
     return one("G-TICKS", bad)
 
 
+T2_TERMS = ('`aria-disabled="true"`', "`aria-describedby`", "CMP-079 RbacGate", "CMP-019 `lock`",
+            "`decorative={false}`", '"Not available"')  # fmt: skip
+
+
+def g_t2(t: Texts) -> list[Finding]:
+    """G-T2.1c / .1d / .6 (the design-spec rules): R-5 states the gated control's attributes, its
+    reason node and its wrap; NR-05 carries them; both component lists name CMP-079 and CMP-019."""
+    bad: list[str] = []
+    m = re.search(r"^- \*\*R-5 .*?(?=^- \*\*|^\S|\Z)", t.review, re.MULTILINE | re.DOTALL)
+    r5 = " ".join(m[0].split()) if m else ""
+    for term in T2_TERMS:
+        if term not in r5:
+            bad.append(f"R-5 does not state {term}")
+    nr05 = next((ln for ln in t.review.split("\n") if ln.startswith("| NR-05 ")), "")
+    for term in ("`aria-describedby`", "CMP-079", "CMP-019 `lock`"):
+        if term not in nr05:
+            bad.append(f"NR-05 does not carry {term}")
+    for doc, text, lead in (("review", t.review, "| companions as the screens bind"),
+                            ("spec", t.spec, "| companions ")):  # fmt: skip
+        row = next((ln for ln in text.split("\n") if ln.startswith(lead)), "")
+        for cmp_id in ("CMP-019", "-079"):
+            if cmp_id not in row:
+                bad.append(f"{doc}: the component list does not name {cmp_id.lstrip('-')}")
+    return one("G-T2", bad)
+
+
 def g_pins(t: Texts) -> list[Finding]:
     pinned = parse_pins(t.pins)
     if not pinned:
@@ -1666,7 +1695,8 @@ def g_pins(t: Texts) -> list[Finding]:
 
 GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_values, g_lift, g_copy, g_cite, g_version, g_contrast, g_cvd, g_deck, g_script, g_frows,
-    g_speaker, g_events, g_ahead, g_openrows, g_untouched, g_ticks, g_frozen, g_ruled, g_hygiene,
+    g_speaker, g_events, g_ahead, g_openrows, g_untouched, g_ticks, g_t2, g_frozen, g_ruled,
+    g_hygiene,
 )  # fmt: skip
 
 
@@ -1833,6 +1863,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("G-UNTOUCHED", "edit a parent in the same tree", parent_changed),
     Mutation("G-TICKS", "point a tick's evidence at a missing section and board (tool and 14)",
              tick_moved),
+    Mutation("G-T2", "drop the reason node's `aria-describedby` link from R-5",
+             subst("and an `aria-describedby` link to its reason", "and a link to its reason", "review")),
     Mutation("G-FROZEN", "post-merge: edit a merged v1 row", merged_and_edited),
     Mutation("G-RULED", "drop the stamp's date from the review's questions heading",
              subst("## 1. The questions BQ-01..BQ-19 — RULED (orchestrator, 2026-10-31,",
