@@ -242,6 +242,11 @@ class LiquidationService:
         self._store, self._listed, self._clock_s = store, listed, clock_s
         self._scan = scan_prints
 
+    async def write(self, events: Sequence[LiquidationEvent]) -> None:
+        """The ingestion stream's write-behind: one row per print, the dedup key absorbs a replay.
+        `StorageTierUnavailable` until the hot tier is up: the stream retries, dropping nothing."""
+        await self._store.write_prints([print_of(e) for e in events])
+
     async def page(
         self,
         symbol: str,
