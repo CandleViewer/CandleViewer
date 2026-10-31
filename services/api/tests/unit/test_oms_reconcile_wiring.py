@@ -328,11 +328,11 @@ async def test_bundle_jobs_reaches_the_bundles_store_restorer_plugins_and_persis
         snapshots=Snapshots(), persister=Persister(), restorer=lambda lane: f"restorer:{lane}",
         plugins_for=plugins_for,
     )  # fmt: skip
-    jobs = rw.BundleJobs(bundle)  # type: ignore[arg-type]
-    assert await jobs.load(key) is sealed  # type: ignore[arg-type]
-    assert await jobs.restore(key, sealed) is interp  # type: ignore[arg-type]
-    assert await jobs.plugins(key) == ()  # type: ignore[arg-type]
-    await jobs.persist(interp, key)  # type: ignore[arg-type]
+    jobs = rw.BundleJobs(bundle)
+    assert await jobs.load(key) is sealed  # type: ignore[arg-type]  # object() stand-ins
+    assert await jobs.restore(key, sealed) is interp  # type: ignore[arg-type]  # object() stand-ins
+    assert await jobs.plugins(key) == ()  # type: ignore[arg-type]  # object() stand-ins
+    await jobs.persist(interp, key)  # type: ignore[arg-type]  # object() stand-ins
     assert asked == [
         ("load", key), ("restore", "restorer:order"), ("plugins", "order"), ("persist", key),
     ]  # fmt: skip
