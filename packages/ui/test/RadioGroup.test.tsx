@@ -434,7 +434,7 @@ describe("RadioGroup stories", () => {
 describe("RadioGroup gated announcement (D09 2.2)", () => {
   it("announces the group reason on a value key, Space or a row click; nothing when allowed", async () => {
     const onChange = fn();
-    const host = await mount(<Host disabledReason={REASON} value="b" onChange={onChange} />);
+    await mount(<Host disabledReason={REASON} value="b" onChange={onChange} />);
     await userEvent.tab();
     expect(await politeText()).toBe("");
     await userEvent.keyboard("{ArrowRight}");
@@ -444,7 +444,6 @@ describe("RadioGroup gated announcement (D09 2.2)", () => {
     await userEvent.click(within(again).getAllByRole("radio")[0]!);
     expect(await politeText()).toBe(REASON);
     expect(onChange).not.toHaveBeenCalled();
-    expect(host).toBeDefined();
     clearPolite();
     const open = await mount(<Host value="b" onChange={onChange} />);
     await userEvent.click(within(open).getAllByRole("radio")[0]!);

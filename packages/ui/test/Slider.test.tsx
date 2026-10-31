@@ -527,7 +527,7 @@ describe("Slider stories", () => {
 describe("Slider gated announcement (D09 2.2)", () => {
   it("announces the reason on a value key or a rail press, not on focus or a non-value key", async () => {
     const onChange = fn();
-    const host = await mount(<Host onChange={onChange} disabledReason={REASON} />);
+    await mount(<Host onChange={onChange} disabledReason={REASON} />);
     await userEvent.tab();
     await userEvent.keyboard("a");
     expect(await politeText()).toBe("");
@@ -538,7 +538,6 @@ describe("Slider gated announcement (D09 2.2)", () => {
     await userEvent.pointer({ keys: "[MouseLeft>]", target: rail(again) });
     expect(await politeText()).toBe(REASON);
     expect(onChange).not.toHaveBeenCalled();
-    expect(host).toBeDefined();
   });
 
   it("an allowed slider announces nothing", async () => {
