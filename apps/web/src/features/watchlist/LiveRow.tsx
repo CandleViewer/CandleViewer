@@ -6,7 +6,8 @@
  * States (E08-D07 §4.2, D1, D2, D7, D20; one at a time): delisted (from the instrument); not live (outside the
  * subscription); initialising (in it, no value yet: "—", then "No data yet" after T1); live, stale from T1 = 5 s with
  * no fresh value and escalated at T2 = 15 s, or "Stale (server)" for a server-stale item. While Disconnected the panel
- * demotes every row and no row shows a chip (D29): precedence, never stacked.
+ * demotes every row and no row shows a chip (D29): precedence, never stacked. Its `Del` and `Alt+↑/↓` are the
+ * Watchlist context's bindings as the profile holds them (`rowKeyOf`: remappable).
  */
 import { useCallback, useSyncExternalStore, type JSX } from "react";
 import {
@@ -20,6 +21,7 @@ import { formatUtcClock } from "../app-shell/clock";
 import type { Instrument } from "../symbol-search/ranking";
 import { COPY } from "./copy";
 import { isDelisted } from "./instruments";
+import { rowKeyOf } from "./keys";
 import { serverSkewMs, useSecondClock } from "./ticker/secondClock";
 import type { TickerHub } from "./ticker/tickerHub";
 import type { TickerEntry } from "./ticker/tickerStore";
@@ -161,6 +163,7 @@ export function LiveRow(props: LiveRowProps): JSX.Element {
       moveReason={props.moveReason}
       onRemove={props.onRemove}
       onCopy={props.onCopy}
+      keyOf={rowKeyOf}
       {...optional}
     />
   );

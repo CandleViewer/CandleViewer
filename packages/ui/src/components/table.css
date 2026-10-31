@@ -3,8 +3,14 @@
  * spinner bring CMP-015's and CMP-014's own, so reduced motion needs nothing here, the reflow included). The host sizes the table's box; the region scrolls inside it and
  * the header row sticks to its top. `separate` borders, so the sticky header keeps its rule.
  */
+/*
+ * A stacking context of its own: the sticky header's z-index (and the echo's above it) rank inside the table, so a
+ * page's table never paints over a dialog, a menu or a popover laid over it (A-5335-04: SCR-100's header band across
+ * the SCR-101 manager). Nothing inside it changes order.
+ */
 .cv-table {
   position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   min-block-size: 0;
