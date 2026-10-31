@@ -5,18 +5,18 @@ Ticket E08-D06 (#174); spec `docs/design/E08/E08-D06.md`. Five component contrac
 "Record this symbol…" for a Manager or Viewer and for the Owner viewing as another user (spec §8), uses CMP-079
 RbacGate in its sentence form (CMP-026 with `cta` omitted) with CMP-019 Icon `lock` unchanged; the sentence form draws
 no glyph (E09-D09 §2.2, §8). Tables 4, 5, Density and Essential exceptions share one shape, so they are given once with
-a component column. **Status:** text pass; the Penpot and PNG lines are PENDING (BLOCKED-PENPOT): no board is drawn
-yet, and the boards come in a later PR (page `E08-D06 SCR-103 Symbol info`, boards 1–25, spec §15); the FE ticket, not
+a component column. **Status:** text pass, then boards: eleven boards are drawn under the lever-4 cap (spec §15, §19) and
+exported to `docs/design/E08/img/` (page `E08-D06 SCR-103 Symbol info` (id `cb0c3916-2579-81a4-8008-e0296b2df58e`, file `E08-D06 boards`)); the other §15 boards are not drawn, the text binding; the FE ticket, not
 yet named (spec Q8), writes the stories, a deviation recorded in spec §17.1. Penpot token sets = `packages/ui/tokens`
 at `bf628c8c8b520309c6951e3a17b4c40329acb64d`.
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
-(docs/plan/16-design-system-brief.md §11.4, §13.3). `[ ] PENDING` marks a line the later boards PR closes.
+(docs/plan/16-design-system-brief.md §11.4, §13.3). `[ ] PENDING` marks a line still open after the boards PR.
 
 ## Handoff checklist — CMP-036 KeyValueRow (E08-D06, #174)
 
-- [ ] **Final Penpot link** — PENDING (BLOCKED-PENPOT), the boards come in a later PR: page `E08-D06 SCR-103 Symbol info`, boards 1, 9, 19 (the shared DS library file is not touched, `docs/design/README.md`); PNGs `scr-103-populated-recorded-owner-dark.png`, `scr-103-anatomy-dark.png` once exported there
-- [x] **Variants × States matrix** — table 1; Penpot variants PENDING (BLOCKED-PENPOT, a later PR); the FE ticket writes the stories
+- [x] **Final Penpot link** — page `E08-D06 SCR-103 Symbol info` (id `cb0c3916-2579-81a4-8008-e0296b2df58e`, file `E08-D06 boards`): board 1 drawn (`ab3d0859-2736-807d-8008-e02c4d2a9697`, PNG `docs/design/E08/img/scr-103-populated-recorded-owner-dark.png`, 1120 × 1756; light twin `8cfc5078-1fc2-80c7-8008-e032532fd665`, `scr-103-populated-recorded-owner-light.png`, 1120 × 1786); boards 9 and 19 not drawn — the text is binding; drawn on request (the lever-4 cap ruling, 2026-10-31; spec §15, §19.2) (the shared DS library file is not touched, `docs/design/README.md`)
+- [x] **Variants × States matrix** — table 1; the states are drawn on the boards, not as library variants (spec §19); the FE ticket writes the stories
 - [ ] **Keyboard table** — N/A — not focusable: a `dt` / `dd` pair read in the browse order (`dl` navigation); binds no key
 - [x] **Accessible name / role table** — table 3
 - [x] **Live data** — shared table 5: values are read on demand, never spoken; the band's state is spoken once by the drawer
@@ -25,7 +25,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none (shared table)
 - [ ] **Tokens used** — the entry cites `space.row.*`, which resolves (`space.row.height.compact` / `.comfortable` in `semantic-dark.tokens.json`, density aliases per `packages/ui/tokens/themes.json`), and `font.size.body/label`, which do not exist; patch A-2 binds `size.row.height` (the density-resolved alias `themes.json` names), `type.ui.body`, `type.num.base`, `type.ui.caption`, `color.text.primary` / `.secondary` / `.tertiary` and the `color.data-confidence.stale.*` set
 - [x] **Data contract confirmed** — `InstrumentDetail` fields (spec §4.1), and `TickerUpdate` fields (`ticker.{symbol}`) with the `getTicker` bootstrap (§4.2, §11.2), as decimal strings (spec F1); confirmed against `22` / `23` as shipped; fields the server leaves empty are drawn as their §4.1 / §4.2 fallbacks: 24 h high and low (CR-11), risk-limit tiers (CR-4), no WS producer yet (H-7)
-- [ ] **Contrast and CVD** — PENDING `cvd_sim.py` on the exports (the later boards PR); computed (spec §13: values, labels, units on `surface.overlay` and `surface.sunken`); the pairs went into `tools/contrast/pairs.mjs` in PR #4085 (merged), `contrast:gate` green there
+- [x] **Contrast and CVD** — computed (spec §13: values, labels, units on `surface.overlay` and `surface.sunken`); the pairs went into `tools/contrast/pairs.mjs` in PR #4085 (merged), `contrast:gate` green there; `cvd_sim.py` greyscale and deuteranopia on boards 1, 3, 6, 23 and 25 PASS (spec §13, §19.4; tritanopia deferred, spec C-9)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING: the owner's `approved` on #174 or the merge of the spec PR
 
@@ -49,7 +49,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-046 Drawer (E08-D06, #174)
 
-- [ ] **Final Penpot link** — PENDING (BLOCKED-PENPOT), a later PR: boards 1, 20, 21; PNGs `scr-103-context-min-viewport-dark.png`, `scr-103-keyboard-focus-order-dark.png` once exported there
+- [x] **Final Penpot link** — page `E08-D06 SCR-103 Symbol info` (id `cb0c3916-2579-81a4-8008-e0296b2df58e`, file `E08-D06 boards`): boards 1 (`ab3d0859-2736-807d-8008-e02c4d2a9697`, `docs/design/E08/img/scr-103-populated-recorded-owner-dark.png`, 1120 × 1756) and 21 (`8cfc5078-1fc2-80c7-8008-e030115d3392`, `docs/design/E08/img/scr-103-keyboard-focus-order-dark.png`, 1640 × 1560) drawn; board 20 not drawn — the text is binding; drawn on request (the lever-4 cap ruling, 2026-10-31; spec §15, §19.2)
 - [x] **Variants × States matrix** — table 1
 - [x] **Keyboard table** — table 2; checked against `05` §3.2 and `05` §3.3: no global override; the Accessibility bindings (`Ctrl+=`, `Ctrl+-`, `Ctrl+Shift+H`, `Ctrl+Shift+M`) and `?` run with the drawer open, every other Global `Ctrl` / `Alt` / F-key binding closes it first; `Esc` and `Ctrl+K` untouched; the root stops the keys it handles because the shipped dispatcher reports every binding (spec §10.1)
 - [x] **Accessible name / role table** — table 3
@@ -59,7 +59,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — the entry cites `elevation.3` (a primitive) and `motion.slide` (no such token); patch A-3 binds `elevation.dialog`, `color.surface.overlay`, `space.dialog.padding`, `motion.duration.normal`, `motion.easing.decelerate` / `.accelerate`, and the scrim `color.surface.sunken` at `opacity.scrim`; a width token is requested (Q7)
 - [ ] **Data contract confirmed** — N/A — the shell carries no data; its content's contracts are spec §4
-- [x] **Contrast and CVD** — `focus.ring` on `surface.overlay` 6.15 / 5.39 / 15.99 (spec §13); no colour-only state
+- [x] **Contrast and CVD** — `focus.ring` on `surface.overlay` 6.15 / 5.39 / 15.99 (spec §13); no colour-only state; CVD PASS (spec §19.4)
 - [x] **Design QA checklist (16 §12)** and the **a11y template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING
 
@@ -93,7 +93,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-125 SymbolInfoPopover (E08-D06, #174)
 
-- [ ] **Final Penpot link** — PENDING (BLOCKED-PENPOT), a later PR: board 16; PNG `cmp-125-symbol-info-popover-states-dark.png` once exported there
+- [ ] **Final Penpot link** — N/A — board 16 (`cmp-125-symbol-info-popover-states-dark.png`) not drawn — the text is binding; drawn on request (the lever-4 cap ruling, 2026-10-31; spec §15, §19.2)
 - [x] **Variants × States matrix** — table 1
 - [x] **Keyboard table** — table 2; the trigger stops the `Enter` / `Space` it handles; no hover-only opening
 - [x] **Accessible name / role table** — table 3
@@ -135,7 +135,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-126 FundingCountdown (E08-D06, #174)
 
-- [ ] **Final Penpot link** — PENDING (BLOCKED-PENPOT), a later PR: board 15; PNG `cmp-126-funding-countdown-states-dark.png` once exported there
+- [x] **Final Penpot link** — page `E08-D06 SCR-103 Symbol info` (id `cb0c3916-2579-81a4-8008-e0296b2df58e`, file `E08-D06 boards`): board 15 drawn (`ab3d0859-2736-807d-8008-e02eb219b292`, PNG `docs/design/E08/img/cmp-126-funding-countdown-states-dark.png`, 1600 × 1098)
 - [x] **Variants × States matrix** — table 1 (spec §7)
 - [ ] **Keyboard table** — N/A — not focusable: text read in the browse order; binds no key
 - [x] **Accessible name / role table** — table 3
@@ -170,7 +170,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-177 RecorderStatusRow, summary variant (E08-D06, #174)
 
-- [ ] **Final Penpot link** — PENDING (BLOCKED-PENPOT), a later PR: boards 1, 2, 12, 13, 17, 25; PNG `cmp-177-recorder-status-row-summary-states-dark.png` once exported there
+- [x] **Final Penpot link** — page `E08-D06 SCR-103 Symbol info` (id `cb0c3916-2579-81a4-8008-e0296b2df58e`, file `E08-D06 boards`): boards 1 (`ab3d0859-2736-807d-8008-e02c4d2a9697`, `docs/design/E08/img/scr-103-populated-recorded-owner-dark.png`; light twin `8cfc5078-1fc2-80c7-8008-e032532fd665`) and 25 (`8cfc5078-1fc2-80c7-8008-e0317885fbff`, `docs/design/E08/img/scr-103-not-recorded-non-owner-view-as-dark.png`, 1680 × 1549; high-contrast twin `8cfc5078-1fc2-80c7-8008-e032fd409468`, `scr-103-not-recorded-non-owner-view-as-hc.png`, 1680 × 1694) drawn; boards 2, 12, 13 and 17 (so no `cmp-177-recorder-status-row-summary-states-dark.png`) not drawn — the text is binding; drawn on request (the lever-4 cap ruling, 2026-10-31; spec §15, §19.2)
 - [x] **Variants × States matrix** — table 1 (spec §4.3, §8): for a Manager or Viewer, and for the Owner viewing as another user, the not-recorded state's Record is T2 in CMP-079 RbacGate's sentence form (CMP-026, `cta` omitted; CMP-019 `lock` listed, no glyph drawn), `rbac.view_as` first, then `rbac.owner_only`
 - [ ] **Keyboard table** — N/A — the summary row is text and binds no key; its link and button are CMP-021 and CMP-001, with their own keys; a T2 reason in the sentence form is text and takes no key (spec §8)
 - [x] **Accessible name / role table** — table 3
@@ -180,7 +180,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — the entry inherits CMP-023 for the admin row; patch A-6 binds the CMP-036 row tokens and `color.text.secondary` for the state word and the T2 sentence (E09-D09 §2.2); no new token
 - [x] **Data contract confirmed** — the E16-S02 store (`recorder` topic, `RecorderUpdate`, `23` §15.8; `GET /recording/symbols`, `RecordedSymbol`) and `GET /market/data-coverage` (`DataCoverage`, spec §4.3); `role_restricted` read as "restricted"; confirmed against `22` / `23` as shipped; what the server leaves empty or limits is drawn as its §4.3 fallback or label: first recorded time (CR-8), archive label (CR-12), not-trading coverage (CR-13), the 90-day window (#2216), no session rows yet (#2188) and the `recorder` topic's server (E16-T08, #492)
-- [x] **Contrast and CVD** — words carry every state; glyphs are decorative (spec §13); the Recorder settings link misses high contrast's 7:1 on `surface.overlay` until spec H-8's token retune
+- [x] **Contrast and CVD** — words carry every state; glyphs are decorative (spec §13); the Recorder settings link misses high contrast's 7:1 on `surface.overlay` until spec H-8's token retune; CVD PASS on boards 1 and 25 (spec §19.4)
 - [x] **Design QA checklist (16 §12)** and the **a11y template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING
 
@@ -251,7 +251,7 @@ Feature: SCR-103 symbol info drawer — accessibility acceptance criteria
     Given the drawer shows recording, stale, not-trading, 24 h change and funding sign states
     When the state is rendered
     Then bands are told apart by headings, and each state by words, glyphs or a sign, never colour alone
-    And the drawer passes deuteranopia/protanopia/tritanopia simulation review (PENDING `cvd_sim.py` on the exports, a later PR)
+    And the drawer passes deuteranopia/protanopia/tritanopia simulation review (greyscale and deuteranopia PASS on boards 1, 3, 6, 23 and 25, spec §19.4; protanopia not committed; tritanopia deferred, spec C-9)
 
   Scenario: Contrast
     Given the drawer is rendered in the dark, light and high-contrast themes
@@ -273,14 +273,14 @@ Screen reader: written, not run; the release-level pass (`05` §8) runs it. Exce
 
 ## `16` §12 design QA checklist
 
-- [ ] Published Tier-2 / Tier-3 tokens only — yes in the spec; the catalogue's missing names are patches, none invented
-      (spec §16.4); PENDING the boards' read-back (the later boards PR).
-- [ ] Three themes × two densities — contrast computed (spec §13); PENDING on the boards (board 24 and the twins), a
-      later PR.
-- [x] Contrast matrix for every pair introduced — spec §13; rows in PR #4085 (not H-8's link); script with the boards.
-- [ ] CVD simulation reviewed — no state is carried by hue (spec §13); PENDING `cvd_sim.py` on the exports (a later
-      PR).
-- [ ] A Penpot variant and a story per state — variants PENDING (BLOCKED-PENPOT: the boards, a later PR); stories
+- [x] Published Tier-2 / Tier-3 tokens only — yes in the spec; the catalogue's missing names are patches, none invented
+      (spec §16.4); read back on the eleven boards: the validator and the live lint report 0 unbound (spec §19.3).
+- [x] Three themes × two densities — contrast computed (spec §13); drawn: dark, light (board 1) and high contrast (board 25),
+      theme gates PASS (spec §19.1); comfortable density by table (board 24 not drawn — the text is binding).
+- [x] Contrast matrix for every pair introduced — spec §13; rows in PR #4085 (not H-8's link); script: the board kit's validator (`docs/design/_tools/sheets/e08-d06/`).
+- [x] CVD simulation reviewed — no state is carried by hue (spec §13); `cvd_sim.py` greyscale and deuteranopia PASS on boards 1, 3, 6, 23
+      and 25 (spec §19.4); tritanopia deferred to the tool's owner (spec C-9).
+- [ ] A Penpot variant and a story per state — PENDING: the states are drawn on the boards (spec §19), not as library variants; stories
       named above.
 - [x] Disabled-with-reason (CMP-079 RbacGate, CMP-019 Icon `lock`) for RBAC-gated actions — the SCR-140 link is a T3
       navigation affordance (hidden; its sentence "Recording is set up by the owner."); "Record this symbol…" is T2 in
@@ -298,5 +298,5 @@ Screen reader: written, not run; the release-level pass (`05` §8) runs it. Exce
       C7 (spec §4.2). Demo / Live unambiguous — the env band stays live above the scrim (spec D-14); what differs per
       environment is the spec §6 "Demo / live" row (Q10).
 - [x] Reuses existing CMP-\* — yes; no new component id.
-- [ ] Stories match the matrix — PENDING the FE ticket. Published library components only — PENDING the boards (a
-      later PR).
+- [ ] Stories match the matrix — PENDING the FE ticket. Published library components only — the boards are sheet-kit nodes on published tokens (no
+      library instance, 0 unbound; spec §19.3).
