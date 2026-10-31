@@ -205,6 +205,7 @@ from candleviewer.api.trade_group_definitions import make_trade_group_definition
 from candleviewer.api.trade_group_preview import PreviewReads, make_trade_group_preview_router
 from candleviewer.api.trade_groups import make_trade_groups_router
 from candleviewer.api.trade_groups_gate import TradeGroupsGate
+from candleviewer.api.user_settings import make_user_settings_router
 from candleviewer.api.users import (
     AccountAccessStore,
     PermissionChangeNotifier,
@@ -486,6 +487,7 @@ from candleviewer.storage.repositories.sessions_sqlalchemy import (
     SqlAlchemySessionRepository,
 )
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
+from candleviewer.storage.repositories.user_settings_sqlalchemy import SqlAlchemyUserSettings
 from candleviewer.storage.repositories.users_sqlalchemy import (
     SqlAlchemyUserAdminStore,
     SqlAlchemyUserRepository,
@@ -1776,11 +1778,25 @@ def create_app(
             clock=auth_clock or (lambda: datetime.now(UTC)),
         )
     )
+    # E02-T13 (#5181): the per-user settings store (`settings`, `scope = 'user'`) that
+    # `/settings` and `GET /me/preferences` read. Postgres on the real backend only: the fake
+    # backend answers 503 without any I/O.
+    app.state.user_settings_repository = (
+        SqlAlchemyUserSettings(
+            SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "settings")
+        )
+        if resolved.storage_backend == "real"
+        else None
+    )
     # #2713: the shell bootstrap (`/me`, `/me/preferences`, `/me/keymap`), self only. Without an
     # identity provider (fake backend) it answers 503/501 after authenticating, never unchecked.
     app.include_router(
         make_me_router(
-            ctx.auth, identity=identity, environment=resolved.environment, clock=auth_clock
+            ctx.auth,
+            identity=identity,
+            environment=resolved.environment,
+            settings=lambda: app.state.user_settings_repository,
+            clock=auth_clock,
         )
     )
     # QA #1648 d1: live WS gateway. Role changes (`PUT /users/{id}/roles`)
@@ -2242,6 +2258,15 @@ def create_app(
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))
+    # E02-T13 (#5181): `GET` and `PATCH /settings`, the caller's own (`scope: self`), over the
+    # store `GET /me/preferences` reads; each change is recorded ahead as `settings.change`.
+    app.include_router(
+        make_user_settings_router(
+            lambda: app.state.user_settings_repository,
+            audit_resolver,
+            _LazyAuditEmitter(ctx.audit),
+        )
+    )
     if auth_perf:  # #2097: owner-only Argon2id params; never mounted with the switch off
         app.include_router(make_auth_perf_router(audit_resolver))
     # E04-T06: frontend telemetry push. One facade per process on ctx.metrics

@@ -29,6 +29,8 @@ from candleviewer.settings import Environment, Settings
 from tests.openapi_helpers import deref
 from tests.unit.auth.auth_fakes import FullUsers
 from tests.unit.auth.session_fakes import FakeSessionRepository
+from tests.unit.storage.fakes_user_settings import FakeUserSettings
+from tests.unit.storage.user_settings_contract import noop
 
 _START = datetime(2026, 10, 16, 12, 0, 0, tzinfo=UTC)
 _SPEC: Any = load_openapi_spec()
@@ -97,12 +99,14 @@ class _Env:
         )
         self.identity = _Identity()
         self.auth = _Auth(self.svc)
+        self.settings: FakeUserSettings | None = FakeUserSettings()  # E02-T13's store
         app = FastAPI()
         app.include_router(
             me.make_me_router(
                 self.auth,
                 identity=self.identity if identity else None,
                 environment=environment,
+                settings=lambda: self.settings,
                 clock=lambda: self.now,
             ),
             prefix="/api/v1",
@@ -487,6 +491,57 @@ async def test_preferences_are_the_empty_effective_settings_when_nothing_is_stor
     jsonschema.validate(body, deref(_SPEC, {"$ref": "#/components/schemas/Settings"}))
     assert api.Settings.model_validate(body).field_meta == api.FieldMeta(overridden=[])
     assert body == {"_meta": {"overridden": []}}
+
+
+async def test_preferences_are_the_callers_own_overrides_from_the_settings_store(
+    env: _Env,
+) -> None:
+    """E02-T13: the store `GET /settings` reads, the caller's rows only, shaped as it does."""
+    assert env.settings is not None
+    user_id, headers, _ = await env.sign_in(roles=("manager",))
+    await env.settings.apply(
+        uuid.UUID(user_id), {"appearance.density": "compact"}, write_ahead=noop
+    )
+    await env.settings.apply(uuid.uuid4(), {"appearance.theme": "light"}, write_ahead=noop)
+    resp = env.client.get(_PREFERENCES, headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "appearance": {"density": "compact"},
+        "_meta": {"overridden": ["appearance.density"], "updated_at": "2026-10-01T00:00:00Z"},
+    }
+    assert env.settings.calls[-1] == ("read", uuid.UUID(user_id))
+
+
+async def test_preferences_answer_503_when_no_settings_store_is_wired(env: _Env) -> None:
+    _, headers, _ = await env.sign_in()
+    env.settings = None
+    body = _assert_problem(env.client.get(_PREFERENCES, headers=headers), 503, "store_unavailable")
+    assert body["detail"] and "overridden" not in body
+
+
+async def test_preferences_answer_503_when_the_settings_store_cannot_be_read(env: _Env) -> None:
+    assert env.settings is not None
+    _, headers, _ = await env.sign_in()
+    env.settings.down = True
+    with capture_logs() as logs:
+        resp = env.client.get(_PREFERENCES, headers=headers)
+    _assert_problem(resp, 503, "store_unavailable")
+    assert [(log["event"], log["error"]) for log in logs] == [
+        ("auth.me.settings_store_unavailable", "StorageTierUnavailable")
+    ]
+
+
+async def test_preferences_let_a_store_error_that_is_no_outage_propagate(env: _Env) -> None:
+    """A defect is never dressed as an outage: it reaches the server's error handling."""
+
+    class _Broken(FakeUserSettings):
+        async def read(self, user_id: uuid.UUID) -> tuple[Any, ...]:
+            raise LookupError("a defect, not an outage")
+
+    _, headers, _ = await env.sign_in()
+    env.settings = _Broken()
+    with pytest.raises(LookupError):
+        env.client.get(_PREFERENCES, headers=headers)
 
 
 async def test_keymap_is_the_empty_profile_when_no_profile_is_stored(env: _Env) -> None:

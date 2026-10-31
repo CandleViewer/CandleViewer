@@ -31,12 +31,15 @@ is operator input, so `owner@candleviewer.local` is valid data. `User.email` car
 pattern and not `format: email`, so the generated model accepts it (a refusal would turn the call
 the shell cannot start without into a 500), and no model here overrides the contract's.
 
-Preferences and keymap serve the contract's empty answer: no store for per-user overrides and
-no deployment default set exist yet (the `settings` table has no user-scope writer until
-`PATCH /me/preferences`, and `hotkey_profiles` is not migrated, E10-S02), so the effective
-settings are empty and there is no stored profile, and the client applies its built-in defaults.
-Both handlers read their data here and nowhere else, so the stores slot in without a contract
-change.
+Preferences are the caller's overrides, read from the per-user store `GET /settings` reads
+(`UserSettings`, E02-T13, #5181) and shaped by the same `user_settings_models.effective`, so the
+two answers are equal: the subject's rows (the target's on a live view, as `/settings` reads it).
+No deployment default set exists yet (E02-T13's Q1), so a leaf the caller has not overridden is
+absent and the client applies its built-in default. After the checks above, a store that is not
+wired or cannot be read is a 503 `store_unavailable` (logged by its class), never an empty answer.
+The keymap serves the contract's empty answer: `hotkey_profiles` is not migrated (E10-S02), so
+there is no stored profile and the client applies its built-in defaults. Its handler reads its
+data here and nowhere else, so the store slots in without a contract change.
 """
 
 from __future__ import annotations
@@ -54,12 +57,15 @@ from fastapi.responses import JSONResponse, Response
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.idle_lock import idle_locked_problem, store_unavailable_problem
 from candleviewer.api.query_allowlist import undeclared_query_refusal
+from candleviewer.api.storage_outage import is_storage_outage
+from candleviewer.api.user_settings_models import effective
 from candleviewer.api.view_as_subject import ViewAsUnstamped, view_as_subject
 from candleviewer.auth.errors import AuthError, SessionIdleLocked
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.step_up import grace_expires_at
 from candleviewer.settings import Environment
+from candleviewer.storage.repositories.user_settings import UserSettings
 
 SETTINGS_READ: Final = Permission.SETTINGS_READ.value
 
@@ -170,12 +176,14 @@ def make_me_router(
     *,
     identity: MeIdentity | None,
     environment: Environment,
+    settings: Callable[[], UserSettings | None],
     clock: Callable[[], datetime] | None = None,
 ) -> APIRouter:
     """`identity=None` answers 501 after authenticating, so nothing is served unchecked. The app
     wires the identity provider and the session backend together or not at all (the fake storage
     backend has neither and answers 503 first), so only a router built by hand reaches the 501.
-    `clock` defaults to UTC now; pass the auth clock where it is offset."""
+    `settings` answers the per-user settings store `GET /settings` reads (None while none is
+    wired). `clock` defaults to UTC now; pass the auth clock where it is offset."""
     router = APIRouter()
     now = clock or (lambda: datetime.now(UTC))
 
@@ -270,9 +278,17 @@ def make_me_router(
         caller = await _gate(request, permission=SETTINGS_READ, query=GET_MY_PREFERENCES_QUERY)
         if isinstance(caller, Response):
             return caller
-        settings = api.Settings.model_validate({"_meta": {"overridden": []}})
-        payload = settings.model_dump(mode="json", by_alias=True, exclude_unset=True)
-        return JSONResponse(payload, headers=_NO_STORE)
+        store = settings()
+        if store is None:
+            return _store_unavailable()
+        try:
+            rows = await store.read(caller.subject)  # `GET /settings`'s rows and answer (E02-T13)
+        except Exception as exc:  # re-raised below unless it is a store outage
+            if not is_storage_outage(exc):
+                raise
+            _log().error("auth.me.settings_store_unavailable", error=type(exc).__name__)
+            return _store_unavailable()
+        return JSONResponse(effective(rows), headers=_NO_STORE)
 
     @router.get("/me/keymap", tags=["settings"])
     async def get_my_keymap(request: Request) -> Response:
