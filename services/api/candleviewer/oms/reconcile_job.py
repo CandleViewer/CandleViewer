@@ -274,7 +274,7 @@ class ReconcileJobs:
         account with no job yet is marked stale before the loop begins, and only its job's open
         clears the mark (`_open`, its standing rebuilt from its state), so a start its caller's
         bound cuts short, its task cancelled, leaves every account it did not open refused (the
-        Opus delta's m-a on #5185, INV-B19-a). One account whose start fails, whatever the
+        delta look's m-a on the wiring, INV-B19-a). One account whose start fails, whatever the
         failure (its job not opened, or a send that did not answer), is logged, paged and refused
         order entry (its standing set, fail closed) until a later trigger opens its job or
         reaches it (`_reached`); the others start. A stop that overtakes the start ends it,
