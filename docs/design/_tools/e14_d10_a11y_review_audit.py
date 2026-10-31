@@ -20,13 +20,16 @@ Gates (each FAIL led by its code):
   and stands right after its visible value.
 - [G03-CITE] every cited endpoint resolves at the base to a non-blank line, and its pin matches.
 - [G04-PINS] the pins file and the spec's cited endpoints match both ways.
-- [G05-VERBATIM] every plain quoted string of ten characters or more in a Q07 or VC row stands,
-  a `{...}` slot matching any text, on or beside a line the row cites.
-- [G06-SCRIPT] every Q07 row has a mechanism from the vocabulary, a known host, a rate and a
-  source.
-- [G07-BUDGET] every BG row has a `max_rate` (never `n/a`), an object and a source.
-- [G08-FINDINGS] every F row has a severity from the scale, an owner, a target and the `G-T2`,
-  `Focus`, `Rate` and `Assertion` cells; no Blocking row stands while the hold reads "not armed".
+- [G05-VERBATIM] every plain quoted string in a Q07, VC or RG row stands on a line the row cites
+  (±0), a `{...}` slot matching any text, a string under ten characters as a whole word; every
+  Q07 expected cell holds a quoted string or begins "nothing is announced".
+- [G06-SCRIPT] every Q07 row has a mechanism from the vocabulary, a rate from R-2's vocabulary,
+  a source, and a host that is a live region of §5.1 for a live write, a region for focus speech
+  and "no live write" for a `none` row; every VC host is a live region; RG-04 is E17-D02's pair.
+- [G07-BUDGET] every BG row has a `max_rate` from R-2's vocabulary, an object and a source.
+- [G08-FINDINGS] every F row has a severity from the scale, a reason, one owner token (spec and
+  area, Info rows included), a target, `G-T2`, `Focus` and `Rate` from their sets and an
+  `Assertion`; the hold sentence stands if and only if a Blocking row does.
 - [G09-IDS] the ids of each table family are unique and in order.
 - [G10-HYGIENE] no word from the private list, URL, local path, uuid, colour hex or closing
   keyword in the spec, the tool or the pins.
@@ -38,7 +41,8 @@ Gates (each FAIL led by its code):
 - [G14-POINTERS] `14` differs from the base by exactly the three pointer lines, each inside its
   entry.
 - [G15-FREEZE] post-merge mode: every merged table row stands unchanged.
-- [G16-CONTRAST] the union of the parents' gated pairs has no pair under its bar in any theme.
+- [G16-CONTRAST] the union of the parents' gated pairs has no pair under its bar in any theme;
+  §13.4 states the CVD method the imported port runs; no candle ink defeats both handle tones.
 - [G17-BUDGET-SIM] the 60 s worst case keeps at most two writes in any second, drops only
   class-4 values and speaks every confirmation and the trailing flush.
 - [G18-KEYMAP] a KB row's shipped ids exist in the key map; a key a row says is not in the key
@@ -50,11 +54,14 @@ Gates (each FAIL led by its code):
 - [G22-WCAG] every WC row names an artefact, and the criteria the ticket names are all present.
 - [G23-DRAG] every DR row has both alternatives, its images exist at the base, and a row drawn
   in text only names an F row that exists.
+- [G24-T2] the T2 rule names CMP-079 RbacGate and CMP-026 with `cta` omitted; every T2 row names
+  its §3.1 key (both legs and the §3.2 verb for a role leg), its component and a rendering,
+  `Focus` and `Rate` from their sets.
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL; `--fill` writes the
 computed values into the spec's slots and markers; `--self-test` applies one mutation per gate to
-an in-memory copy and passes only when each adds FAILs of its gate's code and the base run is
-clean; `--repin-ruled` rewrites the pins file from the spec's cites and is its only writer.
+an in-memory copy (the lens round's escaped mutations included) and passes only when each adds
+FAILs of its gate's code and the base run is clean; `--repin-ruled` rewrites the pins file from the spec's cites and is its only writer.
 
 Usage: python3 -I -B docs/design/_tools/e14_d10_a11y_review_audit.py [--check] [--json] [--fill]
        [--self-test] [--repin-ruled]
@@ -116,6 +123,23 @@ ITALIC_QUOTE = re.compile(r'[*_]"[^"]*"[*_]')  # Prettier writes `_"…"_` outsi
 BRACE = re.compile(r"\{[^{}]*\}")
 
 MECHANISMS = {"name", "role", "desc", "polite", "alert", "text", "cell", "none"}
+LIVE_MECHANISMS = {"polite", "alert"}
+RATE_UNITS = (
+    "episode|entry|change|press|action|key-down|key|release|focus entry|focus|open|arm|region"
+)
+RATE = re.compile(
+    rf"^(?:never|on request|once per (?:{RATE_UNITS})\b"
+    rf"|≤ \d+ per \d+ s (?:per (?:{RATE_UNITS})\b|across RG-\d\d(?: and RG-\d\d)*))"
+)
+G_T2 = re.compile(r"^(?:n/a|T2 · (?:2a|2b|sentence)|validity|availability)$")
+T2_RENDER = re.compile(r"^T2 · (?:2a|2b|sentence)\b")
+FOCUS = re.compile(r"^(?:n/a|(?:kept|moves to|restored to|returns to) · \S.*)$")
+OWNER = re.compile(r"^`E\d\d-D\d\d · area/[a-z-]+`$")
+RG_ID = re.compile(r"RG-\d\d")
+NOTHING = "nothing is announced"
+NO_LIVE = "no live write"
+T2_KEYS = re.compile(r"`(rbac\.(?:view_as|permission|owner_only)|drawing\.locked|v\.risk\.cap)`")
+HANDLE_INKS = ("color.candle.up", "color.candle.down", "color.candle.wick")
 SEVERITIES = ("Blocking", "Major", "Minor", "Info")
 # rot13 keeps the private list out of plain text; underscores stand for spaces.
 BANNED_ROT13 = (
@@ -167,7 +191,13 @@ DEFERRED_CHAIN = "deferred, no story"
 
 def git(*args: str) -> str:
     out = subprocess.run(
-        ["git", *args], cwd=ROOT, capture_output=True, text=True, check=False, timeout=60
+        ["git", *args],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
     )
     return out.stdout if out.returncode == 0 else ""
 
@@ -184,6 +214,7 @@ def show(rev: str, rel: str) -> str | None:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
         timeout=60,
     )
@@ -560,6 +591,45 @@ def table_count(block: str) -> int:
     return max(0, sum(1 for ln in block.split("\n") if ln.startswith("| ")) - 1)
 
 
+def table_body(block: str) -> list[str]:
+    """The body rows of the first table in a block: every row after its separator line."""
+    lines = block.split("\n")
+    for i, ln in enumerate(lines):
+        if re.match(r"^\|\s*:?-{3,}", ln):
+            out = []
+            for nxt in lines[i + 1 :]:
+                if not nxt.startswith("|"):
+                    break
+                out.append(nxt)
+            return out
+    return []
+
+
+def handle_values(ctx: Ctx) -> dict[str, str]:
+    """§13.4.1: the handle's dot and ring against each candle ink, in the three themes."""
+    mod = d08()
+    env = mod.Env(ctx.base, {})
+    spec = env.at_base(D08_REL)
+    out: dict[str, str] = {}
+    both_low = 0
+    for ink in HANDLE_INKS:
+        low: dict[str, list[bool]] = {"dot": [], "ring": []}
+        for tone, tok in (("dot", "color.drawing.handle"), ("ring", "color.drawing.handle.ring")):
+            vals = []
+            for th in mod.THEMES:
+                a, b = mod.resolve_any(env, spec, th, tok), mod.resolve_any(env, spec, th, ink)
+                if not a or not b:
+                    raise ValueError(f"{tok} or {ink} does not resolve in {th}")
+                r = float(mod.contrast(a, b))
+                low[tone].append(r < 3.0)
+                vals.append(str(mod.show_ratio(r)))
+            out[f"hink.{tone}.{ink.removeprefix('color.')}"] = " / ".join(vals)
+        both_low += sum(1 for d, r in zip(low["dot"], low["ring"], strict=True) if d and r)
+    out["hink"] = str(len(HANDLE_INKS))
+    out["hink-both-low"] = str(both_low)
+    return out
+
+
 FAMILIES: dict[str, tuple[str, str]] = {
     "kw": ("3.1 ", "KW"),
     "kb": ("3.2 ", "KB"),
@@ -648,7 +718,7 @@ def compute(ctx: Ctx) -> dict[str, str]:
     wc = fam(spec, "wc")
     v["wc-none"] = str(sum(1 for r in wc if len(r) < 4 or r[3].strip() in ("", "none", "—")))
     v["clauses"] = str(sum(1 for ln in section(spec, "13.1 ").split("\n") if ln.startswith("| §")))
-    v["carriers"] = str(table_count(section(spec, "13.4 ")) - 1)
+    v["carriers"] = str(len(table_body(section(spec, "13.4 "))))
     fr = fam(spec, "f")
     for sev in SEVERITIES:
         v[f"f.{sev.lower()}"] = str(sum(1 for r in fr if len(r) > 1 and r[1] == sev))
@@ -679,6 +749,7 @@ def compute(ctx: Ctx) -> dict[str, str]:
     v["clause.contrast"] = "compliant" if ok else "at risk"
     v["wcag.143"] = v["wcag.1411"] = "compliant" if ok else "at risk"
     v.update(carrier_values(ctx))
+    v.update(handle_values(ctx))
     v.update(sprint_values(ctx))
     return v
 
@@ -715,6 +786,16 @@ def g_audit(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(("G02-AUDIT", f"{key}: the marker says {val!r}, the tool {vals[key]!r}"))
         if not ctx.spec[: m.start()].rstrip().rstrip("`").endswith(val):
             f.append(("G02-AUDIT", f"{key}: the visible value before the marker is not {val!r}"))
+    # an independent count, not the helper `compute` uses: one state per row, header excluded
+    head = section(ctx.spec, "13.4 ").split("#### ")[0]
+    states = [
+        cells(ln)[0]
+        for ln in head.split("\n")
+        if ln.startswith("| ") and not set(cells(ln)[0]) <= set("-: ")
+    ][1:]
+    shown = re.search(r"(\d+) <!-- audit:carriers=", ctx.spec)
+    if not shown or int(shown[1]) != len(states):
+        f.append(("G02-AUDIT", f"carriers: the table holds {len(states)} states, not the marker's"))
 
 
 def g_cite(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -738,11 +819,21 @@ def g_pins(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
 
 
 def hay_for(ctx: Ctx, spans: list[tuple[str, int, int]]) -> list[str]:
+    """The cited lines exactly (±0): one entry per cited span."""
     hay: list[str] = []
     for key, a, b in spans:
-        span = [ctx.base_line(key, n) or "" for n in range(max(1, a - 1), b + 2)]
+        span = [ctx.base_line(key, n) or "" for n in range(a, b + 1)]
         hay.append(norm(" ".join(span)))
     return hay
+
+
+def quote_found(q: str, hay: list[str]) -> bool:
+    """A string of ten characters or more as a substring; a shorter one as a whole word."""
+    pat = quote_pattern(q)
+    if len(norm(q)) >= 10:
+        return any(pat.search(h) for h in hay)
+    word = re.compile(rf"(?<!\w){pat.pattern}(?!\w)")
+    return any(word.search(h) for h in hay)
 
 
 def g_verbatim(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -751,24 +842,37 @@ def g_verbatim(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         if len(r) < 8:
             f.append(("G05-VERBATIM", f"{r[0]}: the row has {len(r)} cells, not 8"))
             continue
+        if (
+            not plain_quotes(r[3])
+            and not ITALIC_QUOTE.search(r[3])
+            and not r[3].startswith(NOTHING)
+        ):
+            f.append(("G05-VERBATIM", f"{r[0]}: no quoted string and no {NOTHING!r}"))
         checks.append((r[0], r[3], hay_for(ctx, cite_spans(r[-1], bare=True))))
     for r in fam(ctx.spec, "vc"):
         if len(r) < 8:
             f.append(("G05-VERBATIM", f"{r[0]}: the row has {len(r)} cells, not 8"))
             continue
         checks.append((r[0], r[2], hay_for(ctx, cite_spans(r[-1]))))
+    for r in fam(ctx.spec, "rg"):
+        if len(r) >= 6:
+            checks.append((r[0], f"{r[2]} {r[3]}", hay_for(ctx, cite_spans(r[-1]))))
     for rid, cell, hay in checks:
         for q in plain_quotes(cell):
-            if len(q) < 10:
-                continue
-            pat = quote_pattern(q)
-            if not any(pat.search(h) for h in hay):
+            if q and not quote_found(q, hay):
                 f.append(("G05-VERBATIM", f"{rid}: {q[:48]!r} stands on no line the row cites"))
+
+
+def live_regions(spec: str) -> tuple[set[str], set[str]]:
+    regions = fam(spec, "rg")
+    every = {r[0] for r in regions}
+    live = {r[0] for r in regions if len(r) > 4 and r[4] and not r[4].startswith("none")}
+    return every, live
 
 
 def g_script(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     q = q07_rows(ctx.spec)
-    hosts = {r[0] for r in fam(ctx.spec, "rg")}
+    every, live = live_regions(ctx.spec)
     if not q:
         f.append(("G06-SCRIPT", "no Q07 row found"))
     for r in q:
@@ -778,12 +882,26 @@ def g_script(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         mech = {m.strip() for m in re.split(r"[·;/]", r[4]) if m.strip()}
         if not mech or not mech <= MECHANISMS:
             f.append(("G06-SCRIPT", f"{r[0]}: mechanism {r[4]!r} is not from the vocabulary"))
-        if not set(re.findall(r"RG-\d\d", r[5])) or not set(re.findall(r"RG-\d\d", r[5])) <= hosts:
+        hosts = set(RG_ID.findall(r[5]))
+        if mech == {"none"}:
+            if r[5] != NO_LIVE:
+                f.append(("G06-SCRIPT", f"{r[0]}: a `none` row's host must read {NO_LIVE!r}"))
+        elif not hosts or not hosts <= every:
             f.append(("G06-SCRIPT", f"{r[0]}: host {r[5]!r} is not a region of §5.1"))
-        if not r[6]:
-            f.append(("G06-SCRIPT", f"{r[0]}: no rate"))
+        elif mech & LIVE_MECHANISMS and not hosts & live:
+            f.append(("G06-SCRIPT", f"{r[0]}: a live write to {r[5]!r}, which has no live region"))
+        if not RATE.match(r[6]):
+            f.append(("G06-SCRIPT", f"{r[0]}: rate {r[6]!r} is not from R-2's vocabulary"))
         if not cite_spans(r[7], bare=True):
             f.append(("G06-SCRIPT", f"{r[0]}: no source cite"))
+    for r in fam(ctx.spec, "vc"):
+        hosts = set(RG_ID.findall(r[4])) if len(r) > 4 else set()
+        if not hosts or not hosts <= live:
+            f.append(("G06-SCRIPT", f"{r[0]}: host {r[4] if len(r) > 4 else ''!r} is not live"))
+    pair = [x for x in fam(ctx.spec, "rg") if x[0] == "RG-04"]
+    line = ctx.base_line("E17-D02", 249) or ""
+    if not pair or "`E17-D02`:249" not in pair[0][-1] or "live-region pair" not in line:
+        f.append(("G06-SCRIPT", "RG-04 is not E17-D02's shell live-region pair"))
 
 
 def g_budget(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -791,8 +909,8 @@ def g_budget(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         if len(r) < 7:
             f.append(("G07-BUDGET", f"{r[0]}: {len(r)} cells"))
             continue
-        if not r[3] or r[3].strip().lower() in ("n/a", "—"):
-            f.append(("G07-BUDGET", f"{r[0]}: no enforceable max_rate"))
+        if not RATE.match(r[3]):
+            f.append(("G07-BUDGET", f"{r[0]}: max_rate {r[3]!r} is not an enforceable rate"))
         if not r[4] or not r[6]:
             f.append(("G07-BUDGET", f"{r[0]}: no object or no source"))
 
@@ -801,19 +919,28 @@ def g_findings(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     sec = section(ctx.spec, "14. ")
     fr = rows(sec, "F")
     for r in fr:
-        if len(r) < 10:
+        if len(r) < 11:
             f.append(("G08-FINDINGS", f"{r[0]}: {len(r)} cells"))
             continue
         if r[1] not in SEVERITIES:
             f.append(("G08-FINDINGS", f"{r[0]}: severity {r[1]!r}"))
-        if " · area/" not in r[4] and r[1] != "Info":
-            f.append(("G08-FINDINGS", f"{r[0]}: the owner is not a spec and its area"))
-        for i, what in ((5, "target"), (6, "G-T2"), (7, "Focus"), (8, "Rate"), (9, "Assertion")):
+        for i, what in ((2, "merged sentence"), (3, "replacement"), (4, "reason"), (6, "target")):
             if not r[i]:
                 f.append(("G08-FINDINGS", f"{r[0]}: the {what} cell is empty"))
+        if not OWNER.match(r[5]):
+            f.append(("G08-FINDINGS", f"{r[0]}: the owner is not one spec and its area"))
+        if not G_T2.match(r[7]):
+            f.append(("G08-FINDINGS", f"{r[0]}: G-T2 {r[7]!r} is not from the set"))
+        if not FOCUS.match(r[8]):
+            f.append(("G08-FINDINGS", f"{r[0]}: Focus {r[8]!r} is not from the set"))
+        if r[9] != "n/a" and not RATE.match(r[9]):
+            f.append(("G08-FINDINGS", f"{r[0]}: Rate {r[9]!r} is not from the set"))
+        if not r[10]:
+            f.append(("G08-FINDINGS", f"{r[0]}: the Assertion cell is empty"))
     blocking = any(len(r) > 1 and r[1] == "Blocking" for r in fr)
-    if blocking and "**not armed**" in sec:
-        f.append(("G08-FINDINGS", "a Blocking row stands while the hold reads not armed"))
+    armed = "cannot be Done until fixed" in sec and "**not armed**" not in sec
+    if blocking != armed:
+        f.append(("G08-FINDINGS", "the hold sentence does not match the Blocking rows"))
 
 
 def g_ids(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -923,6 +1050,15 @@ def g_contrast(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         for theme, r in ratios.items():
             if r < BAR[bar]:
                 f.append(("G16-CONTRAST", f"{fg} on {bg} ({theme}): {r:.2f}:1 under {BAR[bar]}"))
+    # the method sentence states what ran: the port's tritan is the Machado matrix
+    port = engine("e12_d06_series_audit")
+    method = section(ctx.spec, "13.4 ")
+    ran = port.LINEAR_RGB_SIMS.get("tritanopia") is port.TRITAN_MACHADO
+    for need in ("Brettel (1997) / Viénot", "Machado, Oliveira and Fernandes 2009", "is not used"):
+        if not ran or need not in method:
+            f.append(("G16-CONTRAST", f"§13.4 does not state what ran ({need!r})"))
+    if vals.get("hink-both-low", "0") != "0":
+        f.append(("G16-CONTRAST", "a candle ink defeats both tones of the handle"))
 
 
 def g_sim(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -1035,6 +1171,35 @@ def g_drag(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(("G23-DRAG", f"{r[0]}: drawn in text only and no F row named"))
 
 
+def g_t2(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
+    sec = section(ctx.spec, "12.1 ")
+    for need in ("CMP-079 RbacGate", "CMP-026 with `cta` omitted"):
+        if need not in sec:
+            f.append(("G24-T2", f"the T2 rule does not say {need!r}"))
+    t2 = fam(ctx.spec, "t2")
+    if not t2:
+        f.append(("G24-T2", "no T2 row found"))
+    for r in t2:
+        if len(r) < 10:
+            f.append(("G24-T2", f"{r[0]}: {len(r)} cells"))
+            continue
+        keys = set(T2_KEYS.findall(r[3]))
+        if not keys:
+            f.append(("G24-T2", f"{r[0]}: no §3.1 key or state key"))
+        role_leg = "view-as" in r[2] or "permission" in r[2] or r[2].startswith("as T2-")
+        if role_leg and not ({"rbac.view_as", "rbac.permission"} <= keys and QUOTE.search(r[3])):
+            f.append(("G24-T2", f"{r[0]}: a role leg names both keys and the §3.2 verb"))
+        sentence = r[6].startswith("T2 · sentence")
+        if sentence and "CMP-026 with `cta` omitted" not in r[4]:
+            f.append(("G24-T2", f"{r[0]}: a sentence form names CMP-026 with `cta` omitted"))
+        if role_leg and not sentence and "CMP-079" not in r[4]:
+            f.append(("G24-T2", f"{r[0]}: a role-gated control names CMP-079 RbacGate"))
+        if not T2_RENDER.match(r[6]):
+            f.append(("G24-T2", f"{r[0]}: rendering {r[6]!r} is not from the set"))
+        if not FOCUS.match(r[7]) or not RATE.match(r[8]):
+            f.append(("G24-T2", f"{r[0]}: Focus or Rate is not from its set"))
+
+
 GATES: list[tuple[str, Callable[[Ctx, dict[str, str], Findings], None]]] = [
     ("G01-FILLED", g_filled),
     ("G02-AUDIT", g_audit),
@@ -1059,6 +1224,7 @@ GATES: list[tuple[str, Callable[[Ctx, dict[str, str], Findings], None]]] = [
     ("G21-PARITY", g_parity),
     ("G22-WCAG", g_wcag),
     ("G23-DRAG", g_drag),
+    ("G24-T2", g_t2),
 ]
 
 
@@ -1229,6 +1395,67 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
     ("G21-PARITY", lambda c: _spec(c, set_cell(c.spec, "PA-05", 4, "gap"))),
     ("G22-WCAG", lambda c: _spec(c, set_cell(c.spec, "WC-08", 3, "none"))),
     ("G23-DRAG", lambda c: _spec(c, set_cell(c.spec, "DR-05", 6, "at risk"))),
+    ("G24-T2", lambda c: _spec(c, set_cell(c.spec, "T2-03", 3, "the one notice"))),
+    # the lens round's escaped mutations, each caught by a content gate
+    ("G06-SCRIPT", lambda c: _spec(c, set_cell(c.spec, "Q07-05", 6, "whenever"))),
+    (
+        "G05-VERBATIM",
+        lambda c: _spec(
+            c, set_cell(c.spec, "Q07-05", 3, "the anchor's place, in words of its own")
+        ),
+    ),
+    (
+        "G05-VERBATIM",
+        lambda c: _spec(
+            c, set_cell(c.spec, "Q07-01", 3, '"Pencil" · "toggle button, not pressed"')
+        ),
+    ),
+    ("G06-SCRIPT", lambda c: _spec(c, set_cell(c.spec, "Q07-05", 5, "RG-05"))),
+    ("G06-SCRIPT", lambda c: _spec(c, set_cell(c.spec, "Q07-33", 5, "RG-09"))),
+    ("G06-SCRIPT", lambda c: _spec(c, set_cell(c.spec, "VC-01", 4, "RG-05"))),
+    ("G08-FINDINGS", lambda c: _spec(c, set_cell(c.spec, "F-03", 9, "sometimes"))),
+    ("G08-FINDINGS", lambda c: _spec(c, set_cell(c.spec, "F-03", 5, "the lane · area/zzz"))),
+    (
+        "G08-FINDINGS",
+        lambda c: _spec(
+            c,
+            set_cell(
+                set_cell(
+                    set_cell(set_cell(c.spec, "F-13", 5, "whoever"), "F-13", 7, "bogus"),
+                    "F-13",
+                    8,
+                    "bogus",
+                ),
+                "F-13",
+                9,
+                "bogus",
+            ),
+        ),
+    ),
+    ("G08-FINDINGS", lambda c: _spec(c, set_cell(c.spec, "F-03", 1, "Blocking"))),
+    ("G08-FINDINGS", lambda c: _spec(c, set_cell(c.spec, "F-04", 4, ""))),
+    (
+        "G05-VERBATIM",
+        lambda c: _spec(
+            c, set_cell(c.spec, "RG-07", 3, 'the description "Page keys move items. Arrows nudge."')
+        ),
+    ),
+    (
+        "G16-CONTRAST",
+        lambda c: _spec(c, _swap(c.spec, "Machado, Oliveira and Fernandes 2009", "the research")),
+    ),
+    (
+        "G02-AUDIT",
+        lambda c: _spec(
+            c,
+            re.sub(
+                r"(\d+) <!-- audit:carriers=(\d+) -->",
+                lambda m: f"{int(m[1]) + 1} <!-- audit:carriers={int(m[2]) + 1} -->",
+                c.spec,
+                count=1,
+            ),
+        ),
+    ),
 ]
 
 
