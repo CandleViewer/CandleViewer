@@ -324,6 +324,37 @@ async def test_step5_runs_when_the_order_store_cannot_be_read() -> None:
     assert_protected(w, attached=frozenset({"BTCUSDT"}))
 
 
+async def test_step5_with_the_order_store_unread_a_foreign_stop_never_covers_the_position() -> None:
+    """C-2.6, SR-E29-06: with no row read, no open stop is shown to be the OMS's, so the records
+    alone decide. A foreign stop on the closing side leaves the position naked, and its record in
+    force is attached."""
+    w = World()
+    w.oms.records = [record()]
+    w.oms.fail["unfinished_for"] = ConnectionError("down")
+    w.venue.seed_order(_foreign_stop(), uid="1001")
+    w.venue.seed_position(position(stop_loss=None))
+    report = await w.run()
+    assert [e[0] for e in w.oms.effects("attach_recorded")] == ["attach_recorded"]
+    assert (report.sl_repaired, report.errors) == (
+        ("BTCUSDT",), (PassError("2", "ConnectionError"),),
+    )  # fmt: skip
+    assert_protected(w, attached=frozenset({"BTCUSDT"}))
+
+
+async def test_step5_with_the_order_store_unread_a_foreign_stop_never_hides_a_naked_one() -> None:
+    """The same with no record in force (BQ-9): paged once and listed, never covered."""
+    w = World()
+    w.oms.fail["unfinished_for"] = ConnectionError("down")
+    w.venue.seed_order(_foreign_stop(), uid="1001")
+    w.venue.seed_position(position(stop_loss=None))
+    report = await w.run()
+    assert report.errors == (
+        PassError("2", "ConnectionError"), PassError("5", "no_record_in_force", "BTCUSDT"),
+    )  # fmt: skip
+    assert [s for s, _ in w.oms.pages] == ["page"]
+    assert_protected(w, paged=frozenset({"BTCUSDT"}))
+
+
 async def test_step5_runs_when_the_position_store_cannot_be_read() -> None:
     w = World()
     w.oms.records = [record()]
