@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { Page, Response } from "@playwright/test";
 import { same } from "../support/real/cookies";
 import { expect, test, type AuditRow } from "../support/real/failureArtefacts";
-import { signIn } from "../support/real/signIn";
+import { answerTo, signIn } from "../support/real/signIn";
 import { TOTP_STEP_S } from "../support/totp";
 
 // E09-Q02 (#293) PR 3 (#2086): AC4's server half, in BQ-5's wording: a users-class step-up through
@@ -17,8 +17,6 @@ const MARGIN_S = 60;
 const DIALOG = "Confirm with two-factor";
 const STEP_UP = "/api/v1/auth/step-up";
 
-const answerTo = (path: string, method: string) => (r: Response) =>
-  new URL(r.url()).pathname === path && r.request().method() === method;
 const bodyOf = async (r: Response): Promise<Record<string, unknown>> =>
   (await r.json().catch(() => ({}))) as Record<string, unknown>;
 
@@ -78,6 +76,7 @@ test("E09-TC-C05 E09-TC-C06 (server half) a users step-up lapses after 5 min: th
   );
   expect(created.status(), "the held invite, re-sent once").toBe(201);
   await expect(page.getByRole("heading", { name: "Invitation link" })).toBeVisible();
+  await expect(dialog, "the grant closed SCR-006, so C06's dialog is a new one").toBeHidden();
 
   // C06: past the grace window the retry is challenged again, with a new challenge
   lane.stack.clock.advance(GRACE_S + MARGIN_S);

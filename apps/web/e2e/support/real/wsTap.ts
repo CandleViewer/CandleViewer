@@ -48,7 +48,8 @@ export async function tapWebSocket(page: Page): Promise<WsTap> {
     });
     server.onClose((code, reason) => {
       closes.push({ code, reason });
-      void ws.close(code === undefined ? {} : { code, reason: reason ?? "" });
+      // The page may be gone already (its context closing): then there is nothing left to close.
+      ws.close(code === undefined ? {} : { code, reason: reason ?? "" }).catch(() => undefined);
     });
   });
   await page.addInitScript(pageBridge, {

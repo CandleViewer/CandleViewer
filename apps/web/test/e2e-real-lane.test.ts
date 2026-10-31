@@ -2,7 +2,7 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { BrowserContext, Page, Request } from "@playwright/test";
+import type { BrowserContext, Page, Request, Response } from "@playwright/test";
 import type { UserConfig } from "vite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import stubConfig from "../e2e/playwright.config";
@@ -21,7 +21,7 @@ import {
   refreshCounter,
   refreshesInWindow,
 } from "../e2e/support/real/failureArtefacts";
-import { completeMfa, submitPassword } from "../e2e/support/real/signIn";
+import { answerTo, completeMfa, submitPassword } from "../e2e/support/real/signIn";
 import { claimFrom, parseUsers } from "../e2e/support/real/stack";
 import { tapWebSocket } from "../e2e/support/real/wsTap";
 
@@ -513,6 +513,50 @@ describe("the socket tap", () => {
       [{ code: 4401, reason: "" }],
     ]);
     expect([tap.connections(), scripts.length]).toEqual([1, 1]);
+  });
+
+  it("leaves no rejection unhandled when the page is gone before the server's close", async () => {
+    type Handler = (route: unknown) => void;
+    let route: Handler = () => undefined;
+    const page = {
+      routeWebSocket: async (_url: string, handler: Handler) => void (route = handler),
+      addInitScript: async () => undefined,
+    } as unknown as Page;
+    const tap = await tapWebSocket(page);
+    let serverClosed: (code: number | undefined, reason: string | undefined) => void = () =>
+      undefined;
+    route({
+      connectToServer: () => ({
+        onMessage: () => undefined,
+        onClose: (h: typeof serverClosed) => void (serverClosed = h),
+      }),
+      send: () => undefined,
+      close: () => Promise.reject(new Error("Target page, context or browser has been closed")),
+    });
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => void unhandled.push(reason);
+    process.on("unhandledRejection", record);
+    try {
+      serverClosed(4401, "");
+      await new Promise((done) => setImmediate(done)); // Node reports an unhandled one by now
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+    expect(unhandled).toEqual([]);
+    expect(tap.closes).toEqual([{ code: 4401, reason: "" }]);
+  });
+});
+
+// #5170's code look nit 5: every spec waits for an answer by its path and its method.
+describe("the answer a spec waits for", () => {
+  const answer = (url: string, method: string): Response =>
+    ({ url: () => url, request: () => ({ method: () => method }) }) as unknown as Response;
+
+  it("is the one to that method and path, whatever the query", () => {
+    const toInvite = answerTo("/api/v1/users", "POST");
+    expect(toInvite(answer("http://127.0.0.1:4173/api/v1/users?x=1", "POST"))).toBe(true);
+    expect(toInvite(answer("http://127.0.0.1:4173/api/v1/users", "GET"))).toBe(false);
+    expect(toInvite(answer("http://127.0.0.1:4173/api/v1/users/me", "POST"))).toBe(false);
   });
 });
 

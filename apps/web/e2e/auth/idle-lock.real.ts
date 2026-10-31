@@ -3,7 +3,7 @@ import type { Page, Response } from "@playwright/test";
 import { ABSOLUTE_LIFETIME_MS, IDLE_TIMEOUT_S } from "../support/contexts";
 import { sessionByCookie } from "../support/real/cookies";
 import { expect, test, type Lane } from "../support/real/failureArtefacts";
-import { signIn } from "../support/real/signIn";
+import { answerTo, signIn } from "../support/real/signIn";
 
 // E09-Q02 (#293) PR 3 (#2086): AC2 and the absolute lifetime on the server's own clock. The API
 // reads its auth time as UTC plus the offset `lane.stack.clock` writes (`support/serverClock.ts`),
@@ -21,7 +21,6 @@ const MARGIN_S = 60;
 const LIFETIME_S = ABSOLUTE_LIFETIME_MS / 1_000;
 const REFRESH = "/api/v1/auth/refresh";
 
-const answerTo = (path: string) => (r: Response) => new URL(r.url()).pathname === path;
 const codeOf = async (r: Response): Promise<unknown> =>
   ((await r.json().catch(() => ({}))) as { code?: unknown }).code;
 
@@ -29,7 +28,10 @@ const codeOf = async (r: Response): Promise<unknown> =>
 async function typedOnInvite(page: Page, lane: Lane): Promise<string> {
   await signIn(page, lane.stack, lane.user());
   // the lock host's first read: once answered, nothing but a call of the test's reads the session
-  await Promise.all([page.waitForResponse(answerTo("/api/v1/auth/session")), page.goto(ROUTE)]);
+  await Promise.all([
+    page.waitForResponse(answerTo("/api/v1/auth/session", "GET")),
+    page.goto(ROUTE),
+  ]);
   await expect(page.getByRole("heading", { level: 1, name: "Invite user" })).toBeVisible();
   const name = `idle-${randomBytes(4).toString("hex")}`;
   await page.getByLabel("Username").fill(name);
@@ -45,7 +47,7 @@ test("E09-TC-C02 (server half) past the idle timeout a gated call opens SCR-005 
   const username = page.getByLabel("Username");
   lane.stack.clock.advance(IDLE_TIMEOUT_S + MARGIN_S); // no extend, no unlock: nothing is activity
   const [locked] = await Promise.all([
-    page.waitForResponse(answerTo(REFRESH)),
+    page.waitForResponse(answerTo(REFRESH, "POST")),
     username.press("Enter"), // the user is back and submits
   ]);
   expect({ status: locked.status(), code: await codeOf(locked) }).toEqual({
@@ -59,8 +61,9 @@ test("E09-TC-C02 (server half) past the idle timeout a gated call opens SCR-005 
 
   await lock.getByLabel("Password").fill(lane.stack.password());
   const [unlocked, refreshed] = await Promise.all([
-    page.waitForResponse(answerTo("/api/v1/auth/unlock")),
-    page.waitForResponse(answerTo(REFRESH)), // 22 "Idle lock": the client unlocks, then refreshes
+    page.waitForResponse(answerTo("/api/v1/auth/unlock", "POST")),
+    // 22 "Idle lock": the client unlocks, then refreshes
+    page.waitForResponse(answerTo(REFRESH, "POST")),
     page.keyboard.press("Enter"),
   ]);
   expect(unlocked.status()).toBe(200);
@@ -85,7 +88,7 @@ test("E09-TC-C03 (server half) the 12 h lifetime lapsing while SCR-005 is up: un
 
   await lock.getByLabel("Password").fill(lane.stack.password());
   const [refused] = await Promise.all([
-    page.waitForResponse(answerTo("/api/v1/auth/unlock")),
+    page.waitForResponse(answerTo("/api/v1/auth/unlock", "POST")),
     page.keyboard.press("Enter"),
   ]);
   const body = (await refused.json().catch(() => ({}))) as Record<string, unknown>;
@@ -116,8 +119,8 @@ test("E09-TC-C04 (server half) a gated action 12 h + 1 min after sign-in is refu
   await page.getByLabel("Email").fill(`${name}@example.test`);
   lane.stack.clock.advance(LIFETIME_S + MARGIN_S);
   const [create, refreshed] = await Promise.all([
-    page.waitForResponse(answerTo("/api/v1/users")),
-    page.waitForResponse(answerTo(REFRESH)),
+    page.waitForResponse(answerTo("/api/v1/users", "POST")),
+    page.waitForResponse(answerTo(REFRESH, "POST")),
     page.getByRole("button", { name: "Create invitation" }).click(),
   ]);
   expect(create.status(), "the lapsed session is refused before any step-up gate").toBe(401);
