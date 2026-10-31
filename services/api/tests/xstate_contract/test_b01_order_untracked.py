@@ -301,7 +301,8 @@ async def test_a_hydrated_untracked_row_keeps_the_fill_that_restarted_its_miss_c
                 ACCOUNT, found.id, "RECON_MISS", {"pass_id": "p2"}, actor="system"
             )
             await again.quiet()
-            assert again.facade.state(found.id)[0] == "untracked"
+            states = again.facade.state(found.id)
+            assert states is not None and states[0] == "untracked"
             assert again.context(found)["recon_misses"] == 1
             assert again.commands.sent == []
         finally:

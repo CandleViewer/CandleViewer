@@ -16,7 +16,7 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.domain.primitives import AccountId
+from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.models import RateHeadroom
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms import reconcile_job as rj
@@ -32,6 +32,7 @@ from candleviewer.oms.reconcile_job import (
 )
 from candleviewer.oms.reconcile_report import STALE_NOTICE
 from candleviewer.oms.reconcile_standing import STALE_AFTER_S
+from candleviewer.statechart import build as build_chart
 from candleviewer.statechart.bindings import b19_reconciliation as b19
 from candleviewer.statechart.factory import default_clock
 from candleviewer.statechart.factory import restore as restore_chart
@@ -117,15 +118,14 @@ def _driver(
     job: Job,
     timers: Timers,
     *,
-    environment: str = "demo",
+    environment: Environment = "demo",
     persistence: Memory | None = None,
     remediates: Callable[[str], bool] = lambda _env: True,
 ) -> ReconcileJobs:
     hop = job.phases._retries
     assert isinstance(hop, RetryHop)
-    # `environment` is the tests' plain `str`, not the `Environment` literal the driver takes
     driver = ReconcileJobs(
-        job.phases, standing=job.standing, environment=environment,  # type: ignore[arg-type]
+        job.phases, standing=job.standing, environment=environment,
         remediates=remediates, metrics=job.metrics, pager=job.world.oms,
         sink=InMemoryMachineEventSink(), persistence=persistence, sleep=timers.sleep,
     )  # fmt: skip
@@ -221,11 +221,11 @@ async def test_a_trigger_for_an_account_with_no_job_opens_one(job: Job, timers: 
     driver = _driver(job, timers)
     await driver.start([])
     try:
-        assert await driver.request_reconciliation(ACCOUNT, reason="reconnected") is None
+        await driver.request_reconciliation(ACCOUNT, reason="reconnected")  # taken, no answer
         assert await _resting(driver) == "idle"
         assert [r[2]["trigger"] for r in job.records.rows] == ["reconnect"]
         with pytest.raises(ValueError):  # "bogus" is no `ResyncReason`, on purpose
-            await driver.request_reconciliation(ACCOUNT, reason="bogus")  # type: ignore[arg-type]
+            await driver.request_reconciliation(ACCOUNT, reason=cast(Any, "bogus"))
     finally:
         await driver.stop()
 
@@ -454,7 +454,7 @@ async def test_kill_is_never_sent_to_b19(
 
 @pytest.mark.parametrize("environment", ["live", "demo"])
 async def test_a_live_or_demo_record_that_does_not_remediate_refuses_start(
-    job: Job, timers: Timers, environment: str
+    job: Job, timers: Timers, environment: Environment
 ) -> None:
     driver = _driver(job, timers, environment=environment, remediates=lambda _env: False)
     with pytest.raises(ValueError, match="always remediates"):
@@ -697,10 +697,9 @@ def _held_at(
 
         monkeypatch.setattr(memory, "plugins", plugins)
     elif held == "build":
-        build = rj.build
 
         async def built(*args: Any, **kwargs: Any) -> Any:
-            out = await build(*args, **kwargs)
+            out = await build_chart(*args, **kwargs)  # the driver's own, `rj.build`
             made.append(out.interpreter)
             await pause()
             return out
@@ -826,7 +825,7 @@ async def test_an_owed_send_that_fails_still_leaves_the_restored_job_its_cadence
 
 
 async def test_the_cadence_spreads_the_accounts_under_five_seconds_apart_and_ticks(
-    job: Job, timers: Timers
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     now = [100.0]
     accounts = [AccountId(UUID(int=0xA0 + n)) for n in range(1, 4)]
@@ -842,7 +841,7 @@ async def test_the_cadence_spreads_the_accounts_under_five_seconds_apart_and_tic
         ticks.append((account, kind))
         return await trigger(account, kind)
 
-    driver.trigger = counted  # type: ignore[method-assign]  # a spy over the real trigger
+    monkeypatch.setattr(driver, "trigger", counted)  # a spy over the real trigger
     await driver.start(accounts)
     try:
         await _asked(timers, lambda asked: len(asked) >= 3)
@@ -910,7 +909,7 @@ async def test_unknown_triggers_and_accounts_are_refused(job: Job, timers: Timer
     await driver.start([ACCOUNT])
     try:
         with pytest.raises(ValueError, match="triggers"):  # "kill" is no `Trigger`, on purpose
-            await driver.trigger(ACCOUNT, "kill")  # type: ignore[arg-type]
+            await driver.trigger(ACCOUNT, cast(Any, "kill"))
         nobody = AccountId(UUID(int=7))
 
         async def never(_state: str) -> None:
