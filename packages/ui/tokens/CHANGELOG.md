@@ -13,6 +13,16 @@ now points at `palette.light.red.350`, `warning.strong` at the new `palette.ligh
 (#8A5F04), `info.strong` at `palette.cyan.700` and `success.strong` at `palette.light.green.500`.
 Dark and high-contrast are unchanged.
 
+Two adjacent token pairs that fell under the 5.0 ΔE76 CVD floor once the tritanopia simulation was
+corrected (#4639) are retuned (#4649), and the two `tritanopia` exemptions for `color.heatmap.bid.3` vs
+`.bid.4` are removed from `tools/contrast/exemptions.json`. `color.heatmap.bid.3` (dark and high
+contrast) now points at the new primitive `palette.green.550` (`#2AAF53`, was `palette.green.500`
+`#2EBD59`): `bid.3` vs `.bid.4` 4.49 to 8.65 and `bid.2` vs `.bid.3` 13.58 to 8.66 under tritanopia, every
+adjacent bid step at least 6.27 under all three simulations; `bid.3` on canvas 7.45 to 6.42:1. Light
+`palette.light.amber.900` (`color.status.warning.subtle`) moves from `#FCEECB` to `#F4F0D1`, the same
+relative luminance, so every contrast ratio on that fill is unchanged (`warning.strong` 4.90:1, text
+15.62:1) while `warning.subtle` vs `danger.subtle` under tritanopia goes from 4.67 to 7.04.
+
 ## [0.1.2] - 2026-10-30
 
 ### Added

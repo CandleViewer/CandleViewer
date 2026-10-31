@@ -321,7 +321,7 @@
   },
   "color.heatmap.bid.3": {
     "$type": "color",
-    "$value": "{palette.green.500}"
+    "$value": "{palette.green.550}"
   },
   "color.heatmap.ask.3": {
     "$type": "color",
