@@ -1,30 +1,39 @@
 /**
- * SCR-100's local-first edits of one list (E08-D07 D15, §6.2, §6.4): each change shows at once, then
- * `PUT /watchlists/{watchlistId}` replaces the whole list against the version last read (E08-T07's `If-Match`). One
- * save is in flight at a time; the edits made meanwhile go next, as one save of the latest list. A failed save rolls
- * back to the list as last saved, with the error, and Retry sends the change again (none after a refusal, a 403).
- * `Del`'s Undo stays until a change other than a removal and restores every removal since, each in its place. Each list
- * saved goes back to the host (`onSaved`), whose next read of it carries the version the server holds (C-2.12); after a
- * conflict, Reload's list read again is adopted whole.
+ * The local-first edits of one list, SCR-100's and SCR-101's (E08-D07 D15, §4.3, §6.2, §6.4): each change shows at
+ * once, then `PUT /watchlists/{watchlistId}` replaces the whole list against the version last read (E08-T07's
+ * `If-Match`). One save is in flight at a time; the edits made meanwhile go next, as one save of the latest list. A
+ * failed save rolls back to the list as last saved, with the error, and Retry sends the change again (none after a
+ * refusal, a 403). `Del`'s Undo stays until a change other than a removal and restores every removal since, each in
+ * its place. Each list saved goes back to the host (`onSaved`), whose next read of it carries the version the server
+ * holds (C-2.12); after a conflict, Reload's list read again is adopted whole, or the change undone is saved over it
+ * (SCR-101's "Overwrite with my version"). SCR-101 also renames the list: the name is one more part of the change.
  */
 import type { generated } from "@candleviewer/protocol";
 import { LIST_CAP } from "./copy";
 
 export type Watchlist = generated.rest.components["schemas"]["Watchlist"];
 
-/** A save's answer: the stored list, a version conflict (412), a refusal (403), or any other failure. */
+/** A save's answer: the stored list, a version conflict (412), a taken name (409), a refusal (403), or a failure. */
 export type SaveOutcome =
   | { readonly kind: "saved"; readonly list: Watchlist }
   | { readonly kind: "conflict" }
+  | { readonly kind: "name_taken" }
   | { readonly kind: "refused" }
   | { readonly kind: "failed" };
 
+/** Why a change was rolled back. */
+export type SaveError = Exclude<SaveOutcome["kind"], "saved">;
+
+/** What a save sends: the whole list; without `name` the name stays. */
+export interface ListContent {
+  readonly name?: string;
+  readonly symbols: readonly string[];
+  readonly columns: readonly string[];
+}
+
 export interface WatchlistSaver {
-  /** Replaces `list` (its id and version) with `next`; the name stays. */
-  replace(
-    list: Watchlist,
-    next: { readonly symbols: readonly string[]; readonly columns: readonly string[] },
-  ): Promise<SaveOutcome>;
+  /** Replaces `list` (its id and version) with `next`. */
+  replace(list: Watchlist, next: ListContent): Promise<SaveOutcome>;
 }
 
 export interface Removal {
@@ -37,12 +46,14 @@ export interface EditsState {
   /** The list as last saved (or read). */
   readonly list: Watchlist;
   /** What shows: the local edits over it. */
+  readonly name: string;
   readonly symbols: readonly string[];
   readonly columns: readonly string[];
   /** The removals Undo restores, oldest first. */
   readonly removed: readonly Removal[];
   readonly saving: boolean;
-  readonly error: null | { readonly kind: "failed" | "conflict" | "refused" };
+  /** Why the last change was rolled back; a taken name (409) names the name that was sent. */
+  readonly error: null | { readonly kind: SaveError; readonly name?: string };
 }
 
 export type AddOutcome = "added" | "on-list" | "full";
@@ -56,12 +67,20 @@ export interface ListEdits {
   /** Moves `symbol` to index `to` of the shown list. */
   move(symbol: string, to: number): void;
   add(symbol: string): AddOutcome;
+  /** Appends the symbols not on the list yet, as one change, up to the cap; returns those added. */
+  addAll(symbols: readonly string[]): readonly string[];
   setColumns(columns: readonly string[]): void;
+  /** Names the list (SCR-101): one more change, saved with the rest. */
+  rename(name: string): void;
   /** Sends the change a failed save undid, again. */
   retry(): void;
   /** The list as read again (Reload after a conflict): shown and saved against from now on; no error, no Undo. */
   adopt(list: Watchlist): void;
+  /** After a conflict: the change undone, saved over `fresh`, the list as stored now ("Overwrite with my version"). */
+  overwrite(fresh: Watchlist): void;
 }
+
+type Shown = Pick<EditsState, "name" | "symbols" | "columns">;
 
 export function createListEdits(
   initial: Watchlist,
@@ -71,15 +90,15 @@ export function createListEdits(
   const listeners = new Set<() => void>();
   let state: EditsState = {
     list: initial,
+    name: initial.name,
     symbols: initial.symbols,
     columns: initial.columns,
     removed: [],
     saving: false,
     error: null,
   };
-  /** The shown state a failed save undid: Retry applies it again. */
-  let undone: { readonly symbols: readonly string[]; readonly columns: readonly string[] } | null =
-    null;
+  /** The shown state a failed save undid: Retry (or Overwrite) applies it again. */
+  let undone: Shown | null = null;
   let dirty = false;
 
   const set = (patch: Partial<EditsState>): void => {
@@ -93,7 +112,7 @@ export function createListEdits(
       return;
     }
     dirty = false;
-    const sent = { symbols: state.symbols, columns: state.columns };
+    const sent: ListContent = { name: state.name, symbols: state.symbols, columns: state.columns };
     set({ saving: true });
     void saver
       .replace(state.list, sent)
@@ -106,23 +125,40 @@ export function createListEdits(
           return;
         }
         // Rolled back to the list as last saved: the edits since are undone, the Undo run with them.
-        undone = { symbols: state.symbols, columns: state.columns };
+        undone = { name: state.name, symbols: state.symbols, columns: state.columns };
         dirty = false;
         set({
+          name: state.list.name,
           symbols: state.list.symbols,
           columns: state.list.columns,
           removed: [],
           saving: false,
-          error: { kind: outcome.kind },
+          error:
+            outcome.kind === "name_taken"
+              ? { kind: outcome.kind, name: sent.name ?? state.list.name }
+              : { kind: outcome.kind },
         });
       });
   }
 
   /** A change that is not a removal ends the Undo run. */
-  const change = (symbols: readonly string[], columns: readonly string[] = state.columns): void => {
+  const change = (next: Partial<Shown>): void => {
     undone = null;
-    set({ symbols, columns, removed: [], error: null });
+    set({ ...next, removed: [], error: null });
     save();
+  };
+
+  const adopt = (list: Watchlist): void => {
+    undone = null;
+    dirty = false;
+    set({
+      list,
+      name: list.name,
+      symbols: list.symbols,
+      columns: list.columns,
+      removed: [],
+      error: null,
+    });
   };
 
   return {
@@ -148,7 +184,7 @@ export function createListEdits(
       const symbols = [...state.symbols];
       for (const { symbol, index } of [...removed].reverse())
         if (!symbols.includes(symbol)) symbols.splice(Math.min(index, symbols.length), 0, symbol);
-      change(symbols);
+      change({ symbols });
       return removed.map((r) => r.symbol);
     },
     move(symbol, to) {
@@ -158,26 +194,38 @@ export function createListEdits(
       const symbols = [...state.symbols];
       symbols.splice(from, 1);
       symbols.splice(target, 0, symbol);
-      change(symbols);
+      change({ symbols });
     },
     add(symbol) {
       if (state.symbols.includes(symbol)) return "on-list";
       if (state.symbols.length >= LIST_CAP) return "full";
-      change([...state.symbols, symbol]);
+      change({ symbols: [...state.symbols, symbol] });
       return "added";
     },
+    addAll(symbols) {
+      const held = new Set(state.symbols);
+      const fresh = [...new Set(symbols)].filter((s) => !held.has(s));
+      const added = fresh.slice(0, Math.max(0, LIST_CAP - state.symbols.length));
+      if (added.length > 0) change({ symbols: [...state.symbols, ...added] });
+      return added;
+    },
     setColumns(columns) {
-      change(state.symbols, columns);
+      change({ columns });
+    },
+    rename(name) {
+      if (name === state.name) return;
+      change({ name });
     },
     retry() {
       const again = undone;
       if (again === null || state.error?.kind === "refused") return;
-      change(again.symbols, again.columns);
+      change(again);
     },
-    adopt(list) {
-      undone = null;
-      dirty = false;
-      set({ list, symbols: list.symbols, columns: list.columns, removed: [], error: null });
+    adopt,
+    overwrite(fresh) {
+      const mine = undone;
+      adopt(fresh);
+      if (mine !== null) change(mine);
     },
   };
 }

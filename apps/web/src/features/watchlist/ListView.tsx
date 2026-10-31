@@ -9,7 +9,8 @@
  * - Sort (D5): a pane view setting; a live-column sort re-ranks at most every 2 s and holds while the pointer or focus
  *   is in the grid or its footer ("Sort: 24h % · paused" and "Re-sort"); a list past the live budget has no live sort.
  * - Keys (§6.2): `Enter` activates through the sync-group port, `Del` removes with Undo, `Alt+↑/↓` moves in manual
- *   order, `Ctrl+C` copies, `Ctrl+F` focuses the filter, whose `Esc` clears it and returns to the grid. A T2 key
+ *   order, `Ctrl+C` copies, `Ctrl+F` focuses the filter, whose `Esc` clears it and returns to the grid; `Del`,
+ *   `Alt+↑/↓` and `Ctrl+F` are the Watchlist context's bindings as the profile holds them (`keys`). A T2 key
  *   changes nothing and says its reason once (§6.6), through the panel's gated announcement.
  * - A button that goes with what it answered (Re-sort, Retry, Reload) hands focus to Sort or to the grid's tab stop
  *   first, never to the page (WCAG 2.4.3).
@@ -18,6 +19,8 @@
  * - Not live (§4.2): a row says why by its cause: a refused `sub`'s pause, a failed instrument index (CMP-027 with
  *   Retry in the footer: no symbol is known to trade, so none is subscribed), the share's wait, or the budget; with no
  *   WS client the panel's Disconnected says it.
+ * - A newer version of the list than the view holds (SCR-101 saved it) is adopted, so the view never saves against a
+ *   stale version (C-2.12).
  */
 import {
   useCallback,
@@ -30,6 +33,7 @@ import {
   type CSSProperties,
   type FocusEvent,
   type JSX,
+  type MouseEvent,
 } from "react";
 import {
   Button,
@@ -51,9 +55,11 @@ import { reportWatchlist } from "./analytics";
 import { COPY, LIST_CAP } from "./copy";
 import { createFocusedLast, lastWordsOf, type PricePrefs } from "./focusedLast";
 import { isDelisted, type InstrumentFacts } from "./instruments";
-import { createListEdits, type Watchlist, type WatchlistSaver } from "./listEdits";
+import { boundTo } from "./keys";
+import { createListEdits, type SaveError, type Watchlist, type WatchlistSaver } from "./listEdits";
 import { coversView, liveWindow, SETTLE_MS, type ViewRange } from "./liveWindow";
 import { LiveRow, isStale } from "./LiveRow";
+import type { ManagerIntent } from "./manager/intent";
 import type { PaneSettingsPort, PanelHostPort, SyncGroupPort } from "./ports";
 import { LIVE_SORT_MS, decodeSort, encodeSort, isLiveColumn, ranked } from "./sorting";
 import { createStaleEpisode } from "./staleEpisode";
@@ -128,14 +134,20 @@ export interface ListViewProps {
   readonly onRefresh: () => Promise<readonly Watchlist[] | null | undefined>;
   /** Retry of a failed instrument index. */
   readonly onRetryIndex: () => void;
-  /** SCR-101 (#4702 PR c): "Import a list" and the manager's other paths. */
+  /** SCR-101 on this list (#4702 PR (c)): "Import a list"'s deep link. */
   readonly managerHref: string;
+  /** SCR-101, with what the path asks of it ("Import a list", "Paste several…"). */
+  readonly onManage: (intent: ManagerIntent) => void;
 }
 
 export function ListView(props: ListViewProps): JSX.Element {
   const { list, paneId, hub, hubState, facts, down, readOnly, say, paneSettings } = props;
   const [edits] = useState(() => createListEdits(list, props.api, props.onSaved));
   const state = useSyncExternalStore(edits.subscribe, edits.getState, edits.getState);
+  // A newer version than the one the edits hold (SCR-101 saved it): shown, and saved against from now on.
+  useEffect(() => {
+    if (list.version > edits.getState().list.version) edits.adopt(list);
+  }, [list, edits]);
   const symbols = state.symbols;
   const name = list.name;
   const columns = state.columns.length > 0 ? state.columns : WATCHLIST_DEFAULT_COLUMNS;
@@ -362,7 +374,7 @@ export function ListView(props: ListViewProps): JSX.Element {
 
   // Save failures (§4.2 Errors): rolled back; said once.
   const error = state.error;
-  const sayError = useRef<(kind: "failed" | "conflict" | "refused") => void>(() => undefined);
+  const sayError = useRef<(kind: SaveError) => void>(() => undefined);
   sayError.current = (kind) => {
     if (kind === "refused") props.sayAlert(COPY.notSent);
     else say(kind === "conflict" ? COPY.conflict(name) : COPY.saveFailed(name));
@@ -588,14 +600,13 @@ export function ListView(props: ListViewProps): JSX.Element {
     });
   };
 
-  // Ctrl+F (§6.2): the footer's filter, from anywhere in the list's grid or footer. A listener on the view, not a
-  // handler on a static element: the grid's own keys reach it as they bubble.
+  // Ctrl+F (§6.2; `watchlist.filter`, as the profile binds it): the footer's filter, from anywhere in the list's grid or
+  // footer. A listener on the view, not a handler on a static element: the grid's own keys reach it as they bubble.
   useEffect(() => {
     const node = root.current;
     if (node === null) return undefined;
     const onKeyDown = (event: globalThis.KeyboardEvent): void => {
-      if (event.defaultPrevented || event.altKey || event.shiftKey) return;
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") return;
+      if (event.defaultPrevented || !boundTo(event, "watchlist.filter")) return;
       event.preventDefault();
       node.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
     };
@@ -619,17 +630,28 @@ export function ListView(props: ListViewProps): JSX.Element {
     focusedLast.focus(null, undefined, secondClock.getSnapshot());
   };
 
+  // "Import a list" is a link to SCR-101 on this list; a plain press opens it in place, with the import asked for.
+  const importFrom = (event: MouseEvent<HTMLDivElement>): void => {
+    const link = event.target instanceof Element ? event.target.closest("a") : null;
+    if (link === null || link.getAttribute("href") !== props.managerHref) return;
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
+      return;
+    event.preventDefault();
+    props.onManage({ kind: "import", listId: list.id });
+  };
   const empty =
     symbols.length === 0 ? (
       readOnly ? (
         <EmptyState title={COPY.emptyTitle} description={COPY.writeReason} />
       ) : (
-        <EmptyState
-          title={COPY.emptyTitle}
-          description={COPY.emptyBody(name)}
-          actions={[{ label: COPY.emptyAction, onClick: openAdd }]}
-          link={{ label: COPY.importList, href: props.managerHref }}
-        />
+        <div onClickCapture={importFrom}>
+          <EmptyState
+            title={COPY.emptyTitle}
+            description={COPY.emptyBody(name)}
+            actions={[{ label: COPY.emptyAction, onClick: openAdd }]}
+            link={{ label: COPY.importList, href: props.managerHref }}
+          />
+        </div>
       )
     ) : (
       <EmptyState variant="filtered-empty" title={COPY.noMatch(name, filter.trim())} />
@@ -712,6 +734,7 @@ export function ListView(props: ListViewProps): JSX.Element {
             onAdd={add}
             say={say}
             reason={addReason}
+            onPasteSeveral={() => props.onManage({ kind: "paste", listId: list.id })}
           />
           {capped && write === undefined ? (
             <span id={ids.cap} style={NOTE}>

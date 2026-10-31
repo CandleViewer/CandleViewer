@@ -1015,6 +1015,13 @@ export function Table<T>({
     if (active?.r === place.r && active.c === place.c && active.key === key) return;
     setActive({ r: place.r, c: place.c, key });
   };
+  // A reorder moves the remembered row's place with it, so a removal after the move clamps from its new place: focus
+  // goes to the row after it there, never to the row now at its old place (A-5335-09: Alt+↓, then Del).
+  useLayoutEffect(() => {
+    if (active?.key === undefined || moved < 0 || moved >= drawnCount) return;
+    const r = firstDrawn + moved;
+    if (r !== active.r) setActive({ ...active, r });
+  }, [active, moved, drawnCount, firstDrawn]);
   const stop: CellAt = {
     r: Math.min(Math.max(wanted.r, 0), bodyRows),
     c: Math.min(Math.max(wanted.c, 0), lastC),
