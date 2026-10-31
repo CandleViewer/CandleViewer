@@ -130,10 +130,15 @@ export function createChart(opts: ChartOptions): Chart {
     switch (msg.t) {
       case "ready":
         renderProfile = msg.renderProfile;
+        // A `ready` after a frame (a handoff, a restart) also moves the stats off the stale profile.
+        if (lastStats !== null) lastStats = { ...lastStats, renderProfile: msg.renderProfile };
         return;
       case "frame":
+        // The engine's own profile: a degraded-2d handoff must reach getStats() / frameStats.
+        renderProfile = msg.renderProfile;
         lastStats = {
           ...stats(),
+          renderProfile: msg.renderProfile,
           frameTimeMsP50: msg.frameTimeMs,
           frameTimeMsP95: msg.frameTimeMs,
           drawCalls: msg.drawCalls,

@@ -331,9 +331,21 @@ describe("Scenario: A permanent loss falls back rather than failing (G3)", () =>
     host.dispose();
   });
 
-  // D-01 (record §6): the facade's FrameStats keeps the first frame's renderProfile, so after the
-  // handoff `frameStats` / `getStats()` still say "full" while the engine draws degraded-2d.
-  it.todo("G3 the facade reports degraded-2d in frameStats after the handoff (defect D-01, #5230)");
+  // D-01 (record §6): the facade used to keep the first frame's renderProfile, so after the
+  // handoff `frameStats` / `getStats()` said "full" while the engine drew degraded-2d.
+  it("G3 the facade reports degraded-2d in frameStats after the handoff (defect D-01, #5230)", () => {
+    const { chart, canvas } = mountedChart();
+    const profiles: string[] = [];
+    chart.subscribe("frameStats", (s) => profiles.push(s.renderProfile));
+    frames(48);
+    expect(chart.getStats().renderProfile).toBe("full");
+    loseForGood(canvas()[0]);
+    chart.timeScale.setVisibleRange({ from: 1, to: 2 });
+    frames(200);
+    expect(chart.getStats().renderProfile).toBe("degraded-2d");
+    expect(profiles.at(-1)).toBe("degraded-2d");
+    chart.dispose();
+  });
   it.todo(
     "G3 the manual retry and the SCR-118 renderer-settings link (finding F-01, needs-owner: the SCR-118 route ticket)",
   );
