@@ -4538,6 +4538,7 @@ class ExchangeCapabilities(BaseModel):
     trigger_sources: tuple[str, ...]       # ("last","mark","index")
     order_retention_days: int | None       # demo: 7; live: None (long)
     has_public_ws: bool                    # demo: uses mainnet public
+    auto_remediate: bool = True            # §14.3: testnet False; live and demo True, always
 ```
 
 The id filters are keyword-only (#846 ruling Q5, §8.5): an implementation sends them, filters the rows again itself, and refuses an `ext-` key as a filter. The exchange's implementation is `exchange/bybit/trading.py` (G-8, #2877), with capability records for live and demo and none for testnet; `FakeTradingPort` (`exchange/base/fakes.py`) is the in-memory one, and one conformance suite runs against both.
@@ -6670,6 +6671,7 @@ This number follows `main`'s last entry, §19.60; an entry that lands first take
 - The third of the ticket's three changes (the job driver, the triggers, the routes and the wiring), with the contract lines its runtime needs.
 - §8.5, the standing items: B1 chart version 8 (#5157) applies an `untracked` row's `EXEC`, so the orchestrator's interim of 2026-10-31 ends for an order filled in more than one execution: the pass sends its fills and the order closes once the fills read complete it. `untracked_fills_unread` stays one of the closed list's three, for a row whose fills read cannot complete it (a fill outside every window the pass reads) or whose status no finding maps, as a held window would recover none of those either.
 - §8.5, a hand-over the pass cannot read: the pass pages P1 once for each such entry, when it first lists it, beside listing it on every pass.
+- §14.1: `ExchangeCapabilities` carries `auto_remediate`, which §14.3 names for testnet (`False`). Each reconciliation job takes it from its account's environment's record, and only from there, never from a setting, a flag or a role (C-4.14); a live or demo record that says `False` fails the OMS's composition closed, as a job there must remediate (§8.5 step 5, C-2.6).
 
 ### 19.70 2026-10-31 — §2.6, 22 `/market/open-interest`: the two open-interest series, their coverage and bounds (E24-T01, #665)
 
