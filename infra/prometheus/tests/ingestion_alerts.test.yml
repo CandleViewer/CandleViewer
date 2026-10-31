@@ -951,28 +951,28 @@ tests:
               summary: "Expected metric auth_owner_bootstraps is not emitted"
               runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - eval_time: 14m
-        alertname: ExpectedMetricMissingPgUp
+        alertname: ExpectedMetricMissingHealthComponentState
         exp_alerts: []
-      - eval_time: 15m
-        alertname: ExpectedMetricMissingPgUp
-        exp_alerts:
-          - exp_labels:
-              severity: "ticket"
-              component: "alerting"
-            exp_annotations:
-              summary: "Expected metric pg_up is not emitted"
-              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - eval_time: 14m
-        alertname: ExpectedMetricMissingBybitClockDriftMs
+        alertname: ExpectedMetricMissingBuildInfo
         exp_alerts: []
       - eval_time: 15m
-        alertname: ExpectedMetricMissingBybitClockDriftMs
+        alertname: ExpectedMetricMissingHealthComponentState
         exp_alerts:
           - exp_labels:
               severity: "ticket"
               component: "alerting"
             exp_annotations:
-              summary: "Expected metric bybit_clock_drift_ms is not emitted"
+              summary: "Expected metric health_component_state is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingBuildInfo
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric build_info is not emitted"
               runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - eval_time: 14m
         alertname: ExpectedMetricMissingDiskUsedRatio
@@ -1057,30 +1057,6 @@ tests:
               component: "alerting"
             exp_annotations:
               summary: "Expected metric rule_autodisarm_total is not emitted"
-              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
-      - eval_time: 14m
-        alertname: ExpectedMetricMissingEnvMismatchAttemptsTotal
-        exp_alerts: []
-      - eval_time: 15m
-        alertname: ExpectedMetricMissingEnvMismatchAttemptsTotal
-        exp_alerts:
-          - exp_labels:
-              severity: "ticket"
-              component: "alerting"
-            exp_annotations:
-              summary: "Expected metric env_mismatch_attempts_total is not emitted"
-              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
-      - eval_time: 14m
-        alertname: ExpectedMetricMissingCredentialExpiryDays
-        exp_alerts: []
-      - eval_time: 15m
-        alertname: ExpectedMetricMissingCredentialExpiryDays
-        exp_alerts:
-          - exp_labels:
-              severity: "ticket"
-              component: "alerting"
-            exp_annotations:
-              summary: "Expected metric credential_expiry_days is not emitted"
               runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - eval_time: 14m
         alertname: ExpectedMetricMissingAuthLoginFailuresTotal
@@ -1265,9 +1241,9 @@ tests:
         values: "1+0x25"
       - series: 'auth_owner_bootstraps{env="demo"}'
         values: "1+0x25"
-      - series: 'pg_up{env="demo"}'
+      - series: 'health_component_state{env="demo"}'
         values: "1+0x25"
-      - series: 'bybit_clock_drift_ms{env="demo"}'
+      - series: 'build_info{env="demo"}'
         values: "1+0x25"
       - series: 'disk_used_ratio{env="demo"}'
         values: "1+0x25"
@@ -1282,10 +1258,6 @@ tests:
       - series: 'event_loop_lag_seconds_bucket{env="demo"}'
         values: "1+0x25"
       - series: 'rule_autodisarm_total{env="demo"}'
-        values: "1+0x25"
-      - series: 'env_mismatch_attempts_total{env="demo"}'
-        values: "1+0x25"
-      - series: 'credential_expiry_days{env="demo"}'
         values: "1+0x25"
       - series: 'auth_login_failures_total{env="demo"}'
         values: "1+0x25"
@@ -1367,10 +1339,10 @@ tests:
         alertname: ExpectedMetricMissingAuthOwnerBootstraps
         exp_alerts: []
       - eval_time: 20m
-        alertname: ExpectedMetricMissingPgUp
+        alertname: ExpectedMetricMissingHealthComponentState
         exp_alerts: []
       - eval_time: 20m
-        alertname: ExpectedMetricMissingBybitClockDriftMs
+        alertname: ExpectedMetricMissingBuildInfo
         exp_alerts: []
       - eval_time: 20m
         alertname: ExpectedMetricMissingDiskUsedRatio
@@ -1392,12 +1364,6 @@ tests:
         exp_alerts: []
       - eval_time: 20m
         alertname: ExpectedMetricMissingRuleAutodisarmTotal
-        exp_alerts: []
-      - eval_time: 20m
-        alertname: ExpectedMetricMissingEnvMismatchAttemptsTotal
-        exp_alerts: []
-      - eval_time: 20m
-        alertname: ExpectedMetricMissingCredentialExpiryDays
         exp_alerts: []
       - eval_time: 20m
         alertname: ExpectedMetricMissingAuthLoginFailuresTotal

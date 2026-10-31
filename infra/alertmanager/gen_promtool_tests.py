@@ -49,14 +49,6 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
     "OmsPositionReadingOwed": (
         "oms_position_reading_owed_age_seconds", "0+0x2 60+0x10", "59+0x12", "5m", {},
     ),
-    "PostgresDown": ("pg_up", "0+0x10", "1+0x10", "5m", {}),
-    "ClockDriftBlockingTrading": (
-        "bybit_clock_drift_ms",
-        "2000+0x10",
-        "10+0x10",
-        "5m",
-        {},
-    ),
     "DiskCritical": ("disk_used_ratio", "0.97+0x10", "0.5+0x10", "5m", {}),
     "AuditChainVerificationFailed": (
         "audit_chain_verification_failures_total",
@@ -92,20 +84,6 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
     ),
     "DiskHigh": ("disk_used_ratio", "0.85+0x20", "0.5+0x20", "10m", {}),
     "RuleAutodisarm": ("rule_autodisarm_total", "0+0x10 1+0x10", "0+0x20", "15m", {}),
-    "EnvMismatchAttempt": (
-        "env_mismatch_attempts_total",
-        "0+0x10 1+0x10",
-        "0+0x20",
-        "15m",
-        {},
-    ),
-    "CredentialExpiryApproaching": (
-        "credential_expiry_days",
-        "5+0x30",
-        "60+0x30",
-        "20m",
-        {},
-    ),
     "AuthLockouts": ("auth_lockouts_total", "0+0x10 1+0x10", "0+0x20", "15m", {}),
     # #4648: one failed sign-in returned without the wait is enough.
     "AuthLoginFailureFloorMissed": (
@@ -323,6 +301,13 @@ _BOOTED = 'cv_audit_lane_anomalies_total{{env="live",' + _ON + ',reason="{}"}}'
 _GAP, _GAP_START = "0+0x5 _x30 1+0x20", "0+0x5 _x30 2160+0x20"
 _FIRST, _FIRST_START = "_x30 1+0x20", "_x30 1800+0x20"
 
+# #5174: the API's own Postgres probe (0 healthy, 1 degraded, 3 down) and the `build_info` that
+# gives it `env`; both from the one cv-api target, which is what the pages join on.
+_PG = f'health_component_state{{component="postgres",{_ON}}}'
+_BUILD = f'build_info{{commit="t",env="live",{_ON},version="t"}}'
+_UP_API = 'up{instance="172.28.0.10:9108",job="candleviewer-api"}'
+_UP_PUSH = 'up{instance="pushgateway:9091",job="pushgateway"}'
+
 # alert -> cases of (eval_time, fires, {series: values}) over several `env="live"` series.
 MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
     # #2111. Pages: last pass at 5 min; runs that keep stopping across the restart. Healthy: a
@@ -344,6 +329,26 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("28h", False, {**_RESTART, **_PASS_AT_26H}),
         ("1590m", False, {_LAST_OK: "3600+0x1590"}),
         ("1621m", True, {_LAST_OK: "3600+0x1621"}),
+    ),
+    # #5174: DOWN (3) held for the 1m `for` pages: pending at the first sample of 3, firing at
+    # 5 min. Silent: 3 from the 5th minute (pending), a DEGRADED probe (PostgresDegraded's), a
+    # healthy one, and a probe whose `build_info` is missing (the join is empty; the
+    # ExpectedMetricMissingBuildInfo guard is what says so).
+    "PostgresDown": (
+        ("5m", True, {_PG: "3+0x10", _BUILD: "1+0x10"}),
+        ("5m", False, {_PG: "0+0x4 3+0x10", _BUILD: "1+0x14"}),
+        ("10m", False, {_PG: "1+0x10", _BUILD: "1+0x10"}),
+        ("5m", False, {_PG: "0+0x10", _BUILD: "1+0x10"}),
+        ("5m", False, {_PG: "3+0x10"}),
+    ),
+    # #5174: DEGRADED (1, a probe timeout) held 5 min: fires at 5 min, silent at 4 min, silent on a
+    # brief DEGRADED that cleared, and silent on DOWN (PostgresDown's).
+    "PostgresDegraded": (
+        ("5m", True, {_PG: "1+0x10", _BUILD: "1+0x10"}),
+        ("4m", False, {_PG: "1+0x10", _BUILD: "1+0x10"}),
+        ("10m", False, {_PG: "0+0x2 1+0x2 0+0x10", _BUILD: "1+0x14"}),
+        ("10m", False, {_PG: "3+0x10", _BUILD: "1+0x10"}),
+        ("5m", False, {_PG: "1+0x10"}),
     ),
     # #3029. A ticket with no `for`: fires on the first evaluation after the step and is held past
     # the 9 h quiet-hours mute (firing at 9 h 49 m, resolved at 9 h 52 m). A flat counter never fires.
@@ -520,6 +525,16 @@ LABELLED: dict[str, tuple[tuple[str, str, str, bool, dict[str, str]], ...]] = {
         (_BOOT_STEP.format("rewrap"), _RISE, "9h49m", True, {"env": "live", "step": "rewrap"}),
         (_BOOT_STEP.format("rewrap"), _RISE, "9h52m", False, {"env": "live", "step": "rewrap"}),
         (_BOOT_STEP.format("destroy"), _FLAT, "6m", False, {"env": "live", "step": "destroy"}),
+    ),
+    # #5174 (NQ-2): a target down for the 3m `for` pages with the target's labels; 2 minutes down,
+    # a healthy scrape and a pushgateway-only `up` (the API job gone: `absent` pages, by `job`, once
+    # its own 3m has passed) are the near-misses.
+    "ApiDown": (
+        (_UP_API, "0+0x10", "5m", True, {"job": "candleviewer-api", "instance": "172.28.0.10:9108"}),
+        (_UP_API, "1+0x2 0+0x2", "4m", False, {}),
+        (_UP_API, "1+0x10", "5m", False, {}),
+        (_UP_PUSH, "1+0x10", "5m", True, {"job": "candleviewer-api"}),
+        (_UP_PUSH, "1+0x10", "2m", False, {}),
     ),
     # #966 Q16: over 26 h (93600 s) for a daily kind, over 8 days (691200 s) for config_bundle,
     # held 15 min. Each age starts 20 min under its line and grows 60 s a minute, so it is over

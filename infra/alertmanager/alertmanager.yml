@@ -62,6 +62,11 @@ inhibit_rules:
   - source_matchers: [alertname = "PostgresDown"]
     target_matchers: [severity = "ticket", component =~ "storage|oms|rules|book|audit|alerts"]
     equal: [env]
+  # #5174: a dead API raises every absent() guard and IngestionMetricsAbsent; the ApiDown page
+  # already says so. No `equal`: `up` has no env, and each stack runs its own Prometheus and
+  # Alertmanager. ApiDown inhibits no page.
+  - source_matchers: [alertname = "ApiDown"]
+    target_matchers: [severity = "ticket", alertname =~ "ExpectedMetricMissing.+|IngestionMetricsAbsent"]
   # A Page for a component suppresses its own Ticket-level sibling.
   - source_matchers: [severity = "page"]
     target_matchers: [severity = "ticket"]
