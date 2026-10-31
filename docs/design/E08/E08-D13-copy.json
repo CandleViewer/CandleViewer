@@ -1,0 +1,3388 @@
+{
+  "pack": "E08-D13",
+  "version": "v1",
+  "base": "bda5b8f3e1",
+  "ruling": "6544763601",
+  "rule": "one entry per parent string, keyed by the parent's row id; built by the tool",
+  "strings": {
+    "d05.idle.1": {
+      "text": "Recent",
+      "source": "`D05`:167",
+      "status": "verbatim"
+    },
+    "d05.idle.2": {
+      "text": "Favourites",
+      "source": "`D05`:167",
+      "status": "verbatim"
+    },
+    "d05.idle.3": {
+      "text": "Type a symbol or base asset, for example BTC.",
+      "source": "`D05`:167",
+      "status": "verbatim"
+    },
+    "d05.idle.4": {
+      "text": "Your recent symbols appear here.",
+      "source": "`D05`:167",
+      "status": "verbatim"
+    },
+    "d05.results.1": {
+      "text": "2 results",
+      "source": "`D05`:168",
+      "status": "verbatim"
+    },
+    "d05.loading.1": {
+      "text": "Loading the instrument list…",
+      "source": "`D05`:169",
+      "status": "verbatim"
+    },
+    "d05.loading.2": {
+      "text": "CandleViewer's server is loading the instrument list from Bybit — next try in 4 s.",
+      "source": "`D05`:169",
+      "status": "verbatim"
+    },
+    "d05.load-failed.1": {
+      "text": "alert",
+      "source": "`D05`:170",
+      "status": "verbatim"
+    },
+    "d05.load-failed.2": {
+      "text": "Couldn't load the instrument list.",
+      "source": "`D05`:170",
+      "status": "verbatim"
+    },
+    "d05.load-failed.3": {
+      "text": "CandleViewer can't reach its server.",
+      "source": "`D05`:170",
+      "status": "verbatim"
+    },
+    "d05.load-failed.4": {
+      "text": "The server still has no list from Bybit after a minute.",
+      "source": "`D05`:170",
+      "status": "verbatim"
+    },
+    "d05.load-failed.5": {
+      "text": "CandleViewer's server answered 500.",
+      "source": "`D05`:170",
+      "status": "verbatim"
+    },
+    "d05.load-failed.6": {
+      "text": "Next try in 30 s.",
+      "source": "`D05`:170",
+      "status": "verbatim"
+    },
+    "d05.load-failed.7": {
+      "text": "Only the owner can refresh the instrument list.",
+      "source": "`D05`:170",
+      "status": "verbatim"
+    },
+    "d05.load-failed.8": {
+      "text": "Ref <instance>",
+      "source": "`D05`:170",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "instance",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d05.refresh-answered.1": {
+      "text": "Refresh requested — updating the instrument list…",
+      "source": "`D05`:171",
+      "status": "verbatim"
+    },
+    "d05.refresh-answered.2": {
+      "text": "Too many requests — try again in 12 s.",
+      "source": "`D05`:171",
+      "status": "verbatim"
+    },
+    "d05.refresh-answered.3": {
+      "text": "Bybit is limiting requests — try again in 2 s.",
+      "source": "`D05`:171",
+      "status": "verbatim"
+    },
+    "d05.refresh-failed.1": {
+      "text": "Refresh from Bybit failed — still using the list from 13:02 UTC.",
+      "source": "`D05`:172",
+      "status": "verbatim"
+    },
+    "d05.stale.1": {
+      "text": "Instrument list updated 14 h ago — the scheduled refresh is overdue.",
+      "source": "`D05`:173",
+      "status": "verbatim"
+    },
+    "d05.refreshing.1": {
+      "text": "Updating the instrument list…",
+      "source": "`D05`:174",
+      "status": "verbatim"
+    },
+    "d05.checking-a-symbol.1": {
+      "text": "Checking Bybit for XYZZYUSDT…",
+      "source": "`D05`:175",
+      "status": "verbatim"
+    },
+    "d05.no-matches.1": {
+      "text": "No USDT perpetual matches 'xyzzy'.",
+      "source": "`D05`:176",
+      "status": "verbatim"
+    },
+    "d05.no-matches.2": {
+      "text": "v1 supports Bybit USDT linear perpetuals only.",
+      "source": "`D05`:176",
+      "status": "verbatim"
+    },
+    "d05.no-matches.3": {
+      "text": "Search by base asset, for example BTC.",
+      "source": "`D05`:176",
+      "status": "verbatim"
+    },
+    "d05.no-matches.4": {
+      "text": "Checked with the server at 13:02 UTC.",
+      "source": "`D05`:176",
+      "status": "verbatim"
+    },
+    "d05.no-matches.5": {
+      "text": "Checked a moment ago.",
+      "source": "`D05`:176",
+      "status": "verbatim"
+    },
+    "d05.no-matches.6": {
+      "text": "Couldn't check Bybit for XYZZYUSDT just now.",
+      "source": "`D05`:176",
+      "status": "verbatim"
+    },
+    "d05.status-rule.1": {
+      "text": "LUNAUSDT is not trading on Bybit.",
+      "source": "`D05`:177",
+      "status": "verbatim"
+    },
+    "d05.status-rule.2": {
+      "text": "It can't be opened as a new chart.",
+      "source": "`D05`:177",
+      "status": "verbatim"
+    },
+    "d05.status-rule.3": {
+      "text": "LUNAUSDT is no longer listed on Bybit.",
+      "source": "`D05`:177",
+      "status": "verbatim"
+    },
+    "d05.disconnected.1": {
+      "text": "Disconnected — results come from the list loaded at 13:02 UTC.",
+      "source": "`D05`:178",
+      "status": "verbatim"
+    },
+    "d05.armed-target.1": {
+      "text": "Changes Chart 1 · BTCUSDT 1m · ARMED",
+      "source": "`D05`:179",
+      "status": "verbatim"
+    },
+    "d05.armed-target.2": {
+      "text": "Switching locks chart trading on Chart 1.",
+      "source": "`D05`:179",
+      "status": "verbatim"
+    },
+    "d06.not-recorded.1": {
+      "text": "○ Not recorded",
+      "source": "`D06`:284",
+      "status": "verbatim"
+    },
+    "d06.not-recorded.2": {
+      "text": "Record this symbol…",
+      "source": "`D06`:284",
+      "status": "verbatim"
+    },
+    "d06.not-recorded-manager-or-viewer.1": {
+      "text": "○ Not recorded",
+      "source": "`D06`:285",
+      "status": "verbatim"
+    },
+    "d06.not-recorded-manager-or-viewer.2": {
+      "text": "Only the owner can start recording.",
+      "source": "`D06`:285",
+      "status": "verbatim"
+    },
+    "d06.not-recorded-manager-or-viewer.3": {
+      "text": "Recording is set up by the owner.",
+      "source": "`D06`:285",
+      "status": "verbatim"
+    },
+    "d06.not-recorded-owner-viewing-as.1": {
+      "text": "Read-only while viewing as alex.",
+      "source": "`D06`:286",
+      "status": "verbatim"
+    },
+    "d06.stale-t1.1": {
+      "text": "Stale 7s",
+      "source": "`D06`:287",
+      "status": "verbatim"
+    },
+    "d06.stale-t1.2": {
+      "text": "Last update 06:35:46 UTC",
+      "source": "`D06`:287",
+      "status": "verbatim"
+    },
+    "d06.stale-t1.3": {
+      "text": "Live values stale.",
+      "source": "`D06`:287",
+      "status": "verbatim"
+    },
+    "d06.stale-t1.4": {
+      "text": "Live values current.",
+      "source": "`D06`:287",
+      "status": "verbatim"
+    },
+    "d06.stale-t2.1": {
+      "text": "Stale 15 s — new orders blocked on BTCUSDT",
+      "source": "`D06`:288",
+      "status": "verbatim"
+    },
+    "d06.stale-t2.2": {
+      "text": "Stale (server) — since 14:02:11",
+      "source": "`D06`:288",
+      "status": "verbatim"
+    },
+    "d06.exchange-feed-down.1": {
+      "text": "Stale — exchange feed down",
+      "source": "`D06`:289",
+      "status": "verbatim"
+    },
+    "d06.reconnecting-disconnected.1": {
+      "text": "Disconnected — last data 00:12",
+      "source": "`D06`:290",
+      "status": "verbatim"
+    },
+    "d06.awaiting-the-first-tick.1": {
+      "text": "No live values yet",
+      "source": "`D06`:291",
+      "status": "verbatim"
+    },
+    "d06.live-unavailable.1": {
+      "text": "Live values unavailable — CandleViewer has reached its live-data limit.",
+      "source": "`D06`:292",
+      "status": "verbatim"
+    },
+    "d06.live-unavailable.2": {
+      "text": "Close a chart or a watchlist symbol, then try again.",
+      "source": "`D06`:292",
+      "status": "verbatim"
+    },
+    "d06.not-trading.1": {
+      "text": "No live trading data — BTCUSDT is not trading.",
+      "source": "`D06`:293",
+      "status": "verbatim"
+    },
+    "d06.not-trading.2": {
+      "text": "Recorded coverage isn't available for symbols that aren't trading.",
+      "source": "`D06`:293",
+      "status": "verbatim"
+    },
+    "d06.not-trading.3": {
+      "text": "BTCUSDT is not trading on Bybit.",
+      "source": "`D06`:293",
+      "status": "verbatim"
+    },
+    "d06.not-trading.4": {
+      "text": "BTCUSDT is not open for trading in CandleViewer — pre-launch on Bybit.",
+      "source": "`D06`:293",
+      "status": "verbatim"
+    },
+    "d06.not-trading.5": {
+      "text": "Status: Closed.",
+      "source": "`D06`:293",
+      "status": "verbatim"
+    },
+    "d06.not-trading.6": {
+      "text": "Status: Delivering.",
+      "source": "`D06`:293",
+      "status": "verbatim"
+    },
+    "d06.not-trading.7": {
+      "text": "Not trading yet — status: Pre-launch.",
+      "source": "`D06`:293",
+      "status": "verbatim"
+    },
+    "d06.catalogue-loading.1": {
+      "text": "Checking Bybit for BTCUSDT…",
+      "source": "`D06`:294",
+      "status": "verbatim"
+    },
+    "d06.catalogue-loading.2": {
+      "text": "CandleViewer's server is loading the instrument list from Bybit — next try in 4 s.",
+      "source": "`D06`:294",
+      "status": "verbatim"
+    },
+    "d06.catalogue-loading.3": {
+      "text": "Recorded coverage waits for the instrument list.",
+      "source": "`D06`:294",
+      "status": "verbatim"
+    },
+    "d06.rules-changed-while-open.1": {
+      "text": "Changed · was 0.01",
+      "source": "`D06`:296",
+      "status": "verbatim"
+    },
+    "d06.rules-changed-while-open.2": {
+      "text": "Rules changed at 06:40 UTC (revision 7 → 8).",
+      "source": "`D06`:296",
+      "status": "verbatim"
+    },
+    "d06.rules-changed-while-open.3": {
+      "text": "Contract rules changed: tick size is now 0.005 USDT, was 0.01.",
+      "source": "`D06`:296",
+      "status": "verbatim"
+    },
+    "d06.contract-load-failed.1": {
+      "text": "alert",
+      "source": "`D06`:297",
+      "status": "verbatim"
+    },
+    "d06.contract-load-failed.2": {
+      "text": "Couldn't load BTCUSDT's contract rules.",
+      "source": "`D06`:297",
+      "status": "verbatim"
+    },
+    "d06.contract-load-failed.3": {
+      "text": "CandleViewer can't reach its server.",
+      "source": "`D06`:297",
+      "status": "verbatim"
+    },
+    "d06.contract-load-failed.4": {
+      "text": "The server still has no list from Bybit after a minute.",
+      "source": "`D06`:297",
+      "status": "verbatim"
+    },
+    "d06.contract-load-failed.5": {
+      "text": "CandleViewer's server answered 500.",
+      "source": "`D06`:297",
+      "status": "verbatim"
+    },
+    "d06.contract-load-failed.6": {
+      "text": "Ref urn:cv:req:…",
+      "source": "`D06`:297",
+      "status": "verbatim"
+    },
+    "d06.not-in-the-instrument-list.1": {
+      "text": "BTCUSDT isn't in Bybit's instrument list as CandleViewer last read it.",
+      "source": "`D06`:298",
+      "status": "verbatim"
+    },
+    "d06.forbidden.1": {
+      "text": "Your role can't see instruments.",
+      "source": "`D06`:299",
+      "status": "verbatim"
+    },
+    "d06.coverage-failed.1": {
+      "text": "Couldn't load recorded coverage.",
+      "source": "`D06`:300",
+      "status": "verbatim"
+    },
+    "d06.tiers-unavailable.1": {
+      "text": "Risk-limit tiers: not available yet",
+      "source": "`D06`:301",
+      "status": "verbatim"
+    },
+    "d06.recording-restricted.1": {
+      "text": "Recording status restricted",
+      "source": "`D06`:302",
+      "status": "verbatim"
+    },
+    "d06.clock-alarm.1": {
+      "text": "at 08:00:00 UTC (in about 1 h 24 min)",
+      "source": "`D06`:303",
+      "status": "verbatim"
+    },
+    "d06.clock-alarm.2": {
+      "text": "Clock skew 612 ms — the countdown may be off",
+      "source": "`D06`:303",
+      "status": "verbatim"
+    },
+    "d06.opened-from-a-replay-surface.1": {
+      "text": "Current market — not the replay time.",
+      "source": "`D06`:304",
+      "status": "verbatim"
+    },
+    "d06.demo-live.1": {
+      "text": "Bybit live catalogue",
+      "source": "`D06`:305",
+      "status": "verbatim"
+    },
+    "d07.loading.1": {
+      "text": "Skeleton rows",
+      "source": "`D07`:204",
+      "status": "verbatim"
+    },
+    "d07.empty-list.1": {
+      "text": "No symbols on this watchlist",
+      "source": "`D07`:205",
+      "status": "verbatim"
+    },
+    "d07.empty-list.2": {
+      "text": "You haven't added any symbols to Majors yet.",
+      "source": "`D07`:205",
+      "status": "verbatim"
+    },
+    "d07.empty-list.3": {
+      "text": "Add symbols to watch",
+      "source": "`D07`:205",
+      "status": "verbatim"
+    },
+    "d07.empty-list.4": {
+      "text": "Import a list",
+      "source": "`D07`:205",
+      "status": "verbatim"
+    },
+    "d07.no-lists.1": {
+      "text": "No watchlists yet",
+      "source": "`D07`:206",
+      "status": "verbatim"
+    },
+    "d07.no-lists.2": {
+      "text": "Create watchlist",
+      "source": "`D07`:206",
+      "status": "verbatim"
+    },
+    "d07.initialising.1": {
+      "text": "No data yet",
+      "source": "`D07`:207",
+      "status": "verbatim"
+    },
+    "d07.not-live.1": {
+      "text": "Not live",
+      "source": "`D07`:208",
+      "status": "verbatim"
+    },
+    "d07.not-live.2": {
+      "text": "At most 40 symbols are live on one connection; other panels use 30.",
+      "source": "`D07`:208",
+      "status": "verbatim"
+    },
+    "d07.not-live.3": {
+      "text": "This row goes live in 23 s; the live rows change at most 4 times a minute.",
+      "source": "`D07`:208",
+      "status": "verbatim"
+    },
+    "d07.not-live.4": {
+      "text": "Live sort needs every symbol live.",
+      "source": "`D07`:208",
+      "status": "verbatim"
+    },
+    "d07.not-live.5": {
+      "text": "OI Δ sort needs a baseline for every symbol.",
+      "source": "`D07`:208",
+      "status": "verbatim"
+    },
+    "d07.not-live.6": {
+      "text": "Not live: snapshot from 10:31:02 UTC, refreshed every 5 s.",
+      "source": "`D07`:208",
+      "status": "verbatim"
+    },
+    "d07.stale-one-column.1": {
+      "text": "OI Δ 24h stale: baseline last read 12 min ago",
+      "source": "`D07`:209",
+      "status": "verbatim"
+    },
+    "d07.stale-row-t1.1": {
+      "text": "Stale 7s",
+      "source": "`D07`:210",
+      "status": "verbatim"
+    },
+    "d07.stale-row-t1.2": {
+      "text": "Stale (server)",
+      "source": "`D07`:210",
+      "status": "verbatim"
+    },
+    "d07.stale-row-t2.1": {
+      "text": "Stale 15s",
+      "source": "`D07`:211",
+      "status": "verbatim"
+    },
+    "d07.stale-row-t2.2": {
+      "text": "Stale (server)",
+      "source": "`D07`:211",
+      "status": "verbatim"
+    },
+    "d07.upstream-down.1": {
+      "text": "Exchange feed down — the server is restoring the connection",
+      "source": "`D07`:212",
+      "status": "verbatim"
+    },
+    "d07.disconnected-or-reconnecting.1": {
+      "text": "Disconnected — last data 00:12 ago",
+      "source": "`D07`:213",
+      "status": "verbatim"
+    },
+    "d07.delisted.1": {
+      "text": "Delisted by the exchange",
+      "source": "`D07`:214",
+      "status": "verbatim"
+    },
+    "d07.delisted.2": {
+      "text": "Delisted by the exchange",
+      "source": "`D07`:214",
+      "status": "verbatim"
+    },
+    "d07.cap-reached.1": {
+      "text": "Watching 200 symbols — remove some to add more",
+      "source": "`D07`:215",
+      "status": "verbatim"
+    },
+    "d07.cap-reached.2": {
+      "text": "Remove symbols",
+      "source": "`D07`:215",
+      "status": "verbatim"
+    },
+    "d07.cap-reached.3": {
+      "text": "200 / 200 symbols · 39 live",
+      "source": "`D07`:215",
+      "status": "PROPOSED"
+    },
+    "d07.near-the-cap.1": {
+      "text": "187 / 200 symbols · 39 live",
+      "source": "`D07`:216",
+      "status": "verbatim"
+    },
+    "d07.adding-from-search.1": {
+      "text": "Majors, 12 symbols",
+      "source": "`D07`:217",
+      "status": "verbatim"
+    },
+    "d07.adding-from-search.2": {
+      "text": "Majors, 12 symbols · has ETHUSDT",
+      "source": "`D07`:217",
+      "status": "verbatim"
+    },
+    "d07.adding-from-search.3": {
+      "text": "ETHUSDT is already on Majors.",
+      "source": "`D07`:217",
+      "status": "verbatim"
+    },
+    "d07.adding-from-search.4": {
+      "text": "Watching 200 symbols — remove some to add more",
+      "source": "`D07`:217",
+      "status": "verbatim"
+    },
+    "d07.adding-from-search.5": {
+      "text": "New watchlist with ETHUSDT",
+      "source": "`D07`:217",
+      "status": "verbatim"
+    },
+    "d07.adding-from-search.6": {
+      "text": "Added ETHUSDT to Majors.",
+      "source": "`D07`:217",
+      "status": "verbatim"
+    },
+    "d07.sorted.1": {
+      "text": "Sort: 24h % ▾",
+      "source": "`D07`:218",
+      "status": "verbatim"
+    },
+    "d07.sorted.2": {
+      "text": "Sort: 24h % ▾ · paused",
+      "source": "`D07`:218",
+      "status": "verbatim"
+    },
+    "d07.sorted.3": {
+      "text": "Re-sort",
+      "source": "`D07`:218",
+      "status": "verbatim"
+    },
+    "d07.sorted.4": {
+      "text": "Switch to manual order to reorder.",
+      "source": "`D07`:218",
+      "status": "verbatim"
+    },
+    "d07.adding.1": {
+      "text": "Add to Majors",
+      "source": "`D07`:219",
+      "status": "verbatim"
+    },
+    "d07.adding.2": {
+      "text": "On Majors",
+      "source": "`D07`:219",
+      "status": "verbatim"
+    },
+    "d07.adding.3": {
+      "text": "Added ETHUSDT to Majors.",
+      "source": "`D07`:219",
+      "status": "verbatim"
+    },
+    "d07.adding.4": {
+      "text": "ETHUSDT is already on Majors.",
+      "source": "`D07`:219",
+      "status": "verbatim"
+    },
+    "d07.adding.5": {
+      "text": "Paste several…",
+      "source": "`D07`:219",
+      "status": "verbatim"
+    },
+    "d07.adding.6": {
+      "text": "No USDT perpetual matches 'xyzzy'.",
+      "source": "`D07`:219",
+      "status": "verbatim"
+    },
+    "d07.adding.7": {
+      "text": "v1 supports Bybit USDT linear perpetuals only.",
+      "source": "`D07`:219",
+      "status": "verbatim"
+    },
+    "d07.filtered.1": {
+      "text": "Filter symbols",
+      "source": "`D07`:220",
+      "status": "verbatim"
+    },
+    "d07.filtered.2": {
+      "text": "Showing 3 of 187 symbols",
+      "source": "`D07`:220",
+      "status": "verbatim"
+    },
+    "d07.filtered.3": {
+      "text": "No symbol on Majors matches 'xyz'.",
+      "source": "`D07`:220",
+      "status": "verbatim"
+    },
+    "d07.filtered.4": {
+      "text": "Clear the filter to reorder.",
+      "source": "`D07`:220",
+      "status": "verbatim"
+    },
+    "d07.moved.1": {
+      "text": "SOLUSDT moved to position 3 of 12.",
+      "source": "`D07`:221",
+      "status": "verbatim"
+    },
+    "d07.moved.2": {
+      "text": "Already first.",
+      "source": "`D07`:221",
+      "status": "verbatim"
+    },
+    "d07.moved.3": {
+      "text": "Already last.",
+      "source": "`D07`:221",
+      "status": "verbatim"
+    },
+    "d07.row-menu-owner.1": {
+      "text": "Stop is available once the last chart closes.",
+      "source": "`D07`:222",
+      "status": "verbatim"
+    },
+    "d07.row-menu-owner.2": {
+      "text": "all but stopped and refused ones",
+      "source": "`D07`:222",
+      "status": "verbatim"
+    },
+    "d07.row-menu-owner.3": {
+      "text": "The symbol limit is reached.",
+      "source": "`D07`:222",
+      "status": "verbatim"
+    },
+    "d07.row-menu-owner.4": {
+      "text": "Open recorder",
+      "source": "`D07`:222",
+      "status": "verbatim"
+    },
+    "d07.row-menu-owner.5": {
+      "text": "REC ⚠",
+      "source": "`D07`:222",
+      "status": "verbatim"
+    },
+    "d07.row-menu-owner.6": {
+      "text": "Already first.",
+      "source": "`D07`:222",
+      "status": "verbatim"
+    },
+    "d07.row-menu-owner.7": {
+      "text": "Already last.",
+      "source": "`D07`:222",
+      "status": "verbatim"
+    },
+    "d07.row-menu-manager.1": {
+      "text": "Only the owner can start recording.",
+      "source": "`D07`:223",
+      "status": "verbatim"
+    },
+    "d07.row-menu-manager.2": {
+      "text": "Only the owner can change recording.",
+      "source": "`D07`:223",
+      "status": "verbatim"
+    },
+    "d07.viewer.1": {
+      "text": "No watchlists",
+      "source": "`D07`:224",
+      "status": "verbatim"
+    },
+    "d07.viewer.2": {
+      "text": "Your role can't change watchlists.",
+      "source": "`D07`:224",
+      "status": "verbatim"
+    },
+    "d07.read-only.1": {
+      "text": "Read-only — your role can't change watchlists.",
+      "source": "`D07`:225",
+      "status": "verbatim"
+    },
+    "d07.read-only.2": {
+      "text": "Read-only while viewing as {user}.",
+      "source": "`D07`:225",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "user",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d07.read-only.3": {
+      "text": "Read-only — read-only while viewing as {user}.",
+      "source": "`D07`:225",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "user",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d07.errors.1": {
+      "text": "Watchlists could not be loaded.",
+      "source": "`D07`:227",
+      "status": "verbatim"
+    },
+    "d07.errors.2": {
+      "text": "Retry",
+      "source": "`D07`:227",
+      "status": "verbatim"
+    },
+    "d07.errors.3": {
+      "text": "Could not save Majors. Your last change was undone.",
+      "source": "`D07`:227",
+      "status": "verbatim"
+    },
+    "d07.errors.4": {
+      "text": "Live prices paused — retrying in 5 s",
+      "source": "`D07`:227",
+      "status": "verbatim"
+    },
+    "d07.errors.5": {
+      "text": "The symbol limit is reached.",
+      "source": "`D07`:227",
+      "status": "verbatim"
+    },
+    "d07.errors.6": {
+      "text": "Not sent — your access changed.",
+      "source": "`D07`:227",
+      "status": "verbatim"
+    },
+    "d07.errors.7": {
+      "text": "Not sent — read-only after three wrong codes.",
+      "source": "`D07`:227",
+      "status": "verbatim"
+    },
+    "d07.density-and-zoom.1": {
+      "text": "+3 columns hidden",
+      "source": "`D07`:228",
+      "status": "PROPOSED"
+    },
+    "d07.density-and-zoom.2": {
+      "text": "Panel too small — showing compact view",
+      "source": "`D07`:228",
+      "status": "verbatim"
+    },
+    "d07m.lists.1": {
+      "text": "Watchlist 2",
+      "source": "`D07`:275",
+      "status": "verbatim"
+    },
+    "d07m.lists.2": {
+      "text": "Majors copy",
+      "source": "`D07`:275",
+      "status": "verbatim"
+    },
+    "d07m.lists.3": {
+      "text": "Saving…",
+      "source": "`D07`:275",
+      "status": "verbatim"
+    },
+    "d07m.lists.4": {
+      "text": "Saved 10:31:02 UTC",
+      "source": "`D07`:275",
+      "status": "verbatim"
+    },
+    "d07m.reorder.1": {
+      "text": "BTCUSDT moved to position 2 of 12.",
+      "source": "`D07`:276",
+      "status": "verbatim"
+    },
+    "d07m.reorder.2": {
+      "text": "Already first.",
+      "source": "`D07`:276",
+      "status": "verbatim"
+    },
+    "d07m.reorder.3": {
+      "text": "Already last.",
+      "source": "`D07`:276",
+      "status": "verbatim"
+    },
+    "d07m.paste.1": {
+      "text": "Paste symbols, one per line or separated by commas or spaces",
+      "source": "`D07`:277",
+      "status": "verbatim"
+    },
+    "d07m.paste.2": {
+      "text": "Add 12 symbols",
+      "source": "`D07`:277",
+      "status": "verbatim"
+    },
+    "d07m.import-and-export.1": {
+      "text": "Import into",
+      "source": "`D07`:278",
+      "status": "verbatim"
+    },
+    "d07m.columns.1": {
+      "text": "The symbol column is always shown.",
+      "source": "`D07`:279",
+      "status": "verbatim"
+    },
+    "d07m.columns.2": {
+      "text": "Already first.",
+      "source": "`D07`:279",
+      "status": "verbatim"
+    },
+    "d07m.columns.3": {
+      "text": "Already last.",
+      "source": "`D07`:279",
+      "status": "verbatim"
+    },
+    "d07m.delete-confirm.1": {
+      "text": "Delete Majors?",
+      "source": "`D07`:280",
+      "status": "verbatim"
+    },
+    "d07m.delete-confirm.2": {
+      "text": "The list and its 12 symbols are removed. Recordings, charts and alerts are not affected.",
+      "source": "`D07`:280",
+      "status": "verbatim"
+    },
+    "d07m.delete-confirm.3": {
+      "text": "Delete Majors",
+      "source": "`D07`:280",
+      "status": "verbatim"
+    },
+    "d07m.delete-confirm.4": {
+      "text": "Cancel",
+      "source": "`D07`:280",
+      "status": "verbatim"
+    },
+    "d07m.empty.1": {
+      "text": "No watchlists yet",
+      "source": "`D07`:281",
+      "status": "verbatim"
+    },
+    "d07m.empty.2": {
+      "text": "Create watchlist",
+      "source": "`D07`:281",
+      "status": "verbatim"
+    },
+    "d07m.empty.3": {
+      "text": "No symbols on Majors",
+      "source": "`D07`:281",
+      "status": "verbatim"
+    },
+    "d07m.empty.4": {
+      "text": "Add symbol",
+      "source": "`D07`:281",
+      "status": "verbatim"
+    },
+    "d07m.empty.5": {
+      "text": "Paste symbols",
+      "source": "`D07`:281",
+      "status": "verbatim"
+    },
+    "d07m.empty.6": {
+      "text": "Import…",
+      "source": "`D07`:281",
+      "status": "verbatim"
+    },
+    "d07m.validation.1": {
+      "text": "Name the watchlist.",
+      "source": "`D07`:282",
+      "status": "verbatim"
+    },
+    "d07m.validation.2": {
+      "text": "Use 80 characters or fewer.",
+      "source": "`D07`:282",
+      "status": "verbatim"
+    },
+    "d07m.validation.3": {
+      "text": "A watchlist named Majors already exists.",
+      "source": "`D07`:282",
+      "status": "verbatim"
+    },
+    "d07m.validation.4": {
+      "text": "12 symbols not added: a watchlist holds at most 200.",
+      "source": "`D07`:282",
+      "status": "PROPOSED"
+    },
+    "d07m.save-failed.1": {
+      "text": "Could not save Majors. Your last change was undone.",
+      "source": "`D07`:283",
+      "status": "verbatim"
+    },
+    "d07m.save-failed.2": {
+      "text": "Retry",
+      "source": "`D07`:283",
+      "status": "verbatim"
+    },
+    "d07m.save-failed.3": {
+      "text": "Majors changed in another window.",
+      "source": "`D07`:283",
+      "status": "verbatim"
+    },
+    "d07m.save-failed.4": {
+      "text": "Reload Majors",
+      "source": "`D07`:283",
+      "status": "verbatim"
+    },
+    "d07m.save-failed.5": {
+      "text": "Overwrite with my version",
+      "source": "`D07`:283",
+      "status": "verbatim"
+    },
+    "d07m.read-only.1": {
+      "text": "Your role can't change watchlists.",
+      "source": "`D07`:284",
+      "status": "verbatim"
+    },
+    "d08.W-1": {
+      "text": "24 h change % · Turnover 24 h (USDT) · Funding % · OI Δ 24 h % · Spread (bps) · Tape speed z-score · 24 h range % · Regime",
+      "source": "`D08`:297",
+      "status": "PROPOSED"
+    },
+    "d08.W-2": {
+      "text": "Tape speed z-score (estimated) · Regime (estimated)",
+      "source": "`D08`:298",
+      "status": "PROPOSED"
+    },
+    "d08.W-3": {
+      "text": "A classification from ADX, Hurst and ATR %; confidence is sub-signal agreement, not a probability of the next move. · How is this derived?",
+      "source": "`D08`:299",
+      "status": "verbatim"
+    },
+    "d08.W-4": {
+      "text": "How far the current trade rate sits from its recent baseline, in standard deviations. · How is this derived?",
+      "source": "`D08`:300",
+      "status": "PROPOSED"
+    },
+    "d08.W-5": {
+      "text": "{Funding %} ≤ {0.0100} · {24 h change %} ≥ {5.00} · {Spread (bps)} {0.50} to {2.00} · Regime is {trending} or {ranging} · {Funding %} is at most {0.0100} · {24 h change %} is at least {5.00} · {Spread (bps)} is from {0.50} to {2.00}",
+      "source": "`D08`:301",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "Funding %",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "0.0100",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "24 h change %",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "5.00",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "Spread (bps)",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "0.50",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "2.00",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "trending",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "ranging",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-6": {
+      "text": "Add filter · Min · Max · Apply · {Funding %} range · {Funding %} minimum · {Funding %} maximum · Regime classes · Remove {Funding %} filter",
+      "source": "`D08`:302",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "Funding %",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-7": {
+      "text": "{Funding %}: Minimum must be less than maximum.",
+      "source": "`D08`:303",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "Funding %",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-8": {
+      "text": "Showing results for the previous filters.",
+      "source": "`D08`:304",
+      "status": "PROPOSED"
+    },
+    "d08.W-9": {
+      "text": "Rank by · Turnover 24 h",
+      "source": "`D08`:305",
+      "status": "PROPOSED"
+    },
+    "d08.W-10": {
+      "text": "Showing the first 200 matches ranked by {Turnover 24 h}, highest first. More instruments match: add a filter or tighten a range to see the rest. Column sorting reorders these 200 only.",
+      "source": "`D08`:306",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "Turnover 24 h",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-11": {
+      "text": "{38} matches · 200+ matches · {38} live only · {143} matches · {38} live only",
+      "source": "`D08`:307",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "38",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "143",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-12": {
+      "text": "Live only · not evaluated: not recorded · Scanning is limited to live metrics for symbols we are not recording.",
+      "source": "`D08`:308",
+      "status": "PROPOSED"
+    },
+    "d08.W-13": {
+      "text": "Updated {3} s ago · Pause updates · Paused",
+      "source": "`D08`:309",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "3",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-14": {
+      "text": "Stale {15s} · Inputs stale · Computed from possibly stale inputs. Treat these results as indicative.",
+      "source": "`D08`:310",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "15s",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-15": {
+      "text": "Sort: {24 h change %} ▾ · paused · Re-sort",
+      "source": "`D08`:311",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "24 h change %",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-16": {
+      "text": "illustrative values, not a market capture",
+      "source": "`D08`:312",
+      "status": "verbatim"
+    },
+    "d08.W-17": {
+      "text": "No instruments match these filters · Try a wider range or remove a filter. · Clear filters",
+      "source": "`D08`:313",
+      "status": "PROPOSED"
+    },
+    "d08.W-18": {
+      "text": "Couldn't run the scan · The scanner didn't answer. Your filters are unchanged. · Retry",
+      "source": "`D08`:314",
+      "status": "PROPOSED"
+    },
+    "d08.W-19": {
+      "text": "Couldn't refresh · retrying in 5 s",
+      "source": "`D08`:315",
+      "status": "PROPOSED"
+    },
+    "d08.W-20": {
+      "text": "{BTCUSDT} no longer matches.",
+      "source": "`D08`:316",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "BTCUSDT",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-21": {
+      "text": "Instruments where {Funding %} is at most {0.0100} and {24 h change %} is at least {5.00}, ranked by {Turnover 24 h}, highest first.",
+      "source": "`D08`:317",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "Funding %",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "0.0100",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "24 h change %",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "5.00",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "Turnover 24 h",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-22": {
+      "text": "{38} matches. · No matches. · 200+ matches; results capped. · {143} matches, {38} live only. · 200+ matches, {38} live only; results capped. · Couldn't run the scan. · Results are stale. · Results are current again. · Computed from possibly stale inputs. · Inputs are current again.",
+      "source": "`D08`:318",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "38",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "143",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-23": {
+      "text": "Presets · Save as preset… · Save · Rename… · Set as default · Delete…",
+      "source": "`D08`:319",
+      "status": "PROPOSED"
+    },
+    "d08.W-24": {
+      "text": "A preset saves your filters and ranking, not the results.",
+      "source": "`D08`:320",
+      "status": "PROPOSED"
+    },
+    "d08.W-25": {
+      "text": "Modified",
+      "source": "`D08`:321",
+      "status": "PROPOSED"
+    },
+    "d08.W-26": {
+      "text": "No longer available · {Tape speed z-score} is no longer available, so this scan runs without it.",
+      "source": "`D08`:322",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "Tape speed z-score",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-27": {
+      "text": "Delete preset {Momentum}? · Delete · Cancel",
+      "source": "`D08`:323",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "Momentum",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-28": {
+      "text": "Send matches to watchlist… · Add {38} symbols to {Majors} ({12} already on it)",
+      "source": "`D08`:324",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "38",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "Majors",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "12",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-29": {
+      "text": "Add to watchlist… · Create alert… · Copy symbol",
+      "source": "`D08`:325",
+      "status": "PROPOSED"
+    },
+    "d08.W-30": {
+      "text": "Your role can't save workspaces. · Your role can't change alerts. · Read-only while viewing as {user}.",
+      "source": "`D08`:326",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "user",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d08.W-31": {
+      "text": "up {3.2} % over 24 h · down {1.4} % over 24 h · flat over 24 h",
+      "source": "`D08`:327",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "3.2",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "1.4",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-01": {
+      "text": "illustrative values, not a market capture",
+      "source": "`D09`:415",
+      "status": "verbatim"
+    },
+    "d09.W-02": {
+      "text": "Exchange connectivity",
+      "source": "`D09`:416",
+      "status": "PROPOSED"
+    },
+    "d09.W-03": {
+      "text": "All times UTC · as of {14:02:11}",
+      "source": "`D09`:417",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "14:02:11",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-04": {
+      "text": "as of {14:02:11} · stale since {14:02:11} · Stale {4s}",
+      "source": "`D09`:418",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "14:02:11",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "4s",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-05": {
+      "text": "Not connected yet · The backend does not serve this figure yet.",
+      "source": "`D09`:419",
+      "status": "PROPOSED"
+    },
+    "d09.W-06a": {
+      "text": "Reserved for stops and cancels · Not connected yet",
+      "source": "`D09`:420",
+      "status": "PROPOSED"
+    },
+    "d09.W-06b": {
+      "text": "Reserved for stops and cancels · {30} requests",
+      "source": "`D09`:421",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "30",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-07": {
+      "text": "Request budgets by endpoint class and account. Headroom excludes the reserve for stops and cancels.",
+      "source": "`D09`:422",
+      "status": "PROPOSED"
+    },
+    "d09.W-08": {
+      "text": "Class · Account · Limit · Used now · Window · Headroom",
+      "source": "`D09`:423",
+      "status": "PROPOSED"
+    },
+    "d09.W-09": {
+      "text": "{7} of {10} requests per second used, {0} left after the reserve",
+      "source": "`D09`:424",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "7",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "10",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "0",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-10": {
+      "text": "All classes, peak per minute",
+      "source": "`D09`:425",
+      "status": "PROPOSED"
+    },
+    "d09.W-11": {
+      "text": "Exchange · Network · Our backend",
+      "source": "`D09`:426",
+      "status": "PROPOSED"
+    },
+    "d09.W-12": {
+      "text": "Wait. The exchange sets this limit. · Wait for the reconnect, or force a reconnect. · Check the backend. The exchange is not the cause.",
+      "source": "`D09`:427",
+      "status": "PROPOSED"
+    },
+    "d09.W-13": {
+      "text": "Within budget",
+      "source": "`D09`:428",
+      "status": "PROPOSED"
+    },
+    "d09.W-14": {
+      "text": "Attention: near limit · {82} % of the spendable budget used",
+      "source": "`D09`:429",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "82",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-15": {
+      "text": "Throttled · {Main}, {order} · Limit {10} requests per second · Retry at {14:32:10} (in {42} s) · code 10006",
+      "source": "`D09`:430",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "Main",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "order",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "10",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "14:32:10",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "42",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-16": {
+      "text": "On hold — all accounts · Our hold ends at {14:42:05} (in {8m 20s}) · code 10018 · The exchange asked us to slow down across every account.",
+      "source": "`D09`:431",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "14:42:05",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "8m 20s",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-17": {
+      "text": "Banned by the exchange · All requests from this server are locked out for at least 10 minutes. · Time left: not received",
+      "source": "`D09`:432",
+      "status": "PROPOSED"
+    },
+    "d09.W-18": {
+      "text": "Disconnected · Disconnected — last data {00:12} ago",
+      "source": "`D09`:433",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "00:12",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-19": {
+      "text": "Reconnecting… · attempt {3}",
+      "source": "`D09`:434",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "3",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-20": {
+      "text": "Connection unstable",
+      "source": "`D09`:435",
+      "status": "verbatim"
+    },
+    "d09.W-21": {
+      "text": "Clock drift",
+      "source": "`D09`:436",
+      "status": "PROPOSED"
+    },
+    "d09.W-22": {
+      "text": "Order entry halted · Order entry halted until the server clock is back in sync with the exchange.",
+      "source": "`D09`:437",
+      "status": "verbatim"
+    },
+    "d09.W-23": {
+      "text": "Not measured yet · Clock offset has not been measured yet. · Order entry waits for the first measurement.",
+      "source": "`D09`:438",
+      "status": "PROPOSED"
+    },
+    "d09.W-24": {
+      "text": "Degraded",
+      "source": "`D09`:439",
+      "status": "PROPOSED"
+    },
+    "d09.W-25": {
+      "text": "Error · Our rate-limit counters did not report. · last good {14:01:58} · Usage is unknown until our counters report again.",
+      "source": "`D09`:440",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "14:01:58",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-26": {
+      "text": "Unavailable · We couldn't read the connectivity report. Figures stay unknown until it answers. · Retry",
+      "source": "`D09`:441",
+      "status": "PROPOSED"
+    },
+    "d09.W-27": {
+      "text": "The exchange refused a request because our clock was out of its window (code 10002). Order entry resumes after a successful measurement.",
+      "source": "`D09`:442",
+      "status": "PROPOSED"
+    },
+    "d09.W-28": {
+      "text": "Dropping updates · Our backend dropped {12} market-data updates in the last minute. The affected panels resync.",
+      "source": "`D09`:443",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "12",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-29": {
+      "text": "In sync · {12} ms {behind}",
+      "source": "`D09`:444",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "12",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "behind",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-30": {
+      "text": "No topics subscribed · The backend holds no market-data subscription right now.",
+      "source": "`D09`:445",
+      "status": "PROPOSED"
+    },
+    "d09.W-31": {
+      "text": "Cancel, close, flatten and stop placement use the reserved budget once it is connected. · Native stops on the exchange are unaffected.",
+      "source": "`D09`:446",
+      "status": "verbatim"
+    },
+    "d09.W-32": {
+      "text": "Charts keep showing stored data.",
+      "source": "`D09`:447",
+      "status": "PROPOSED"
+    },
+    "d09.W-33": {
+      "text": "While the hold lasts, no request from this server reaches the exchange, protective ones included. Native stops on the exchange stay active. The kill switch is a synchronous local check, not a request to the exchange.",
+      "source": "`D09`:448",
+      "status": "PROPOSED"
+    },
+    "d09.W-34": {
+      "text": "Don't retry in a loop: it extends the limit. · Don't raise the budget: it can't raise the exchange's limit. · Don't force a reconnect: it can't end the hold. · Check this server's outbound setup.",
+      "source": "`D09`:449",
+      "status": "PROPOSED"
+    },
+    "d09.W-35": {
+      "text": "Re-measure now · Measuring…",
+      "source": "`D09`:450",
+      "status": "PROPOSED"
+    },
+    "d09.W-36": {
+      "text": "All requests are on hold.",
+      "source": "`D09`:451",
+      "status": "PROPOSED"
+    },
+    "d09.W-36b": {
+      "text": "A measurement just ran. Try again in {20} s.",
+      "source": "`D09`:452",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "20",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-37": {
+      "text": "Bar boundaries and request signatures depend on this clock. Past 2 s, the exchange can refuse orders, so order entry is halted.",
+      "source": "`D09`:453",
+      "status": "PROPOSED"
+    },
+    "d09.W-38": {
+      "text": "Our clock is {0.62} s behind the exchange. · Our clock is {0.62} s ahead of the exchange.",
+      "source": "`D09`:454",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "0.62",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-39": {
+      "text": "About every 5 minutes · Last measured {14:00:03} ({2m} ago)",
+      "source": "`D09`:455",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "14:00:03",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "2m",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-40": {
+      "text": "A {5}-account fan-out with brackets costs about {15} requests — {9} % of each account's spendable budget per minute.",
+      "source": "`D09`:456",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "5",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "15",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "9",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-41": {
+      "text": "Accounts · Entry legs per account · Take-profit legs per account · Stop-loss: always counted · Fan-out policy · All or nothing · Best effort · Estimate cost",
+      "source": "`D09`:457",
+      "status": "PROPOSED"
+    },
+    "d09.W-42": {
+      "text": "Served now · Deferred · Refused — the whole group · {3} accounts served now, {2} deferred.",
+      "source": "`D09`:458",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "3",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "2",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-43": {
+      "text": "Out of date — estimate again.",
+      "source": "`D09`:459",
+      "status": "PROPOSED"
+    },
+    "d09.W-44": {
+      "text": "Subscriptions ({3} connections, {120} topics)",
+      "source": "`D09`:460",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "3",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "120",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-45": {
+      "text": "Public market data · socket {1}",
+      "source": "`D09`:461",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "1",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-46": {
+      "text": "Largest request: {10} of 10 topics · {1 840} of 21 000 characters · {120} of 500 topics on this socket",
+      "source": "`D09`:462",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "10",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "1 840",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "120",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-47": {
+      "text": "Binding: topics per request · Binding: characters per request · Binding: topics per socket",
+      "source": "`D09`:463",
+      "status": "PROPOSED"
+    },
+    "d09.W-48": {
+      "text": "{3} s ago · Gaps {0} · Last resubscribe {14:01:12} · Last re-seed {13:58:40}",
+      "source": "`D09`:464",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "3",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "0",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "14:01:12",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "13:58:40",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-50": {
+      "text": "Reconnect market data",
+      "source": "`D09`:465",
+      "status": "PROPOSED"
+    },
+    "d09.W-51": {
+      "text": "Every market-data subscription is dropped and re-established. · Charts, the order book and the tape resync for a moment. · Subscriptions come back in the usual order: your focused panel first, then the rest. · Native stops on the exchange are unaffected. · Nothing is ordered or cancelled.",
+      "source": "`D09`:466",
+      "status": "verbatim"
+    },
+    "d09.W-52": {
+      "text": "{3} connections · {120} topics",
+      "source": "`D09`:467",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "3",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "120",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-53": {
+      "text": "Reconnect order and position updates for {Main} · Order and position updates pause. We check them against the exchange when the stream is back.",
+      "source": "`D09`:468",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "Main",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-54": {
+      "text": "Step-up class: not defined yet",
+      "source": "`D09`:469",
+      "status": "PROPOSED"
+    },
+    "d09.W-55": {
+      "text": "Recorded in the audit log · Reconnect forced (pending registration)",
+      "source": "`D09`:470",
+      "status": "PROPOSED"
+    },
+    "d09.W-56": {
+      "text": "The connection budget can delay a reconnect.",
+      "source": "`D09`:471",
+      "status": "PROPOSED"
+    },
+    "d09.W-57": {
+      "text": "Wait {40} s. The connection budget allows no new connection yet.",
+      "source": "`D09`:472",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "40",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-58": {
+      "text": "Market data reconnected. {120} topics subscribed.",
+      "source": "`D09`:473",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "120",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-59": {
+      "text": "Reconnected · {40} topics · Not reconnected · {mapped reason}",
+      "source": "`D09`:474",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "40",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "mapped reason",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-60": {
+      "text": "Change budget…",
+      "source": "`D09`:475",
+      "status": "PROPOSED"
+    },
+    "d09.W-61": {
+      "text": "Allowed: {60} to {420} requests per minute",
+      "source": "`D09`:476",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "60",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "420",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-62": {
+      "text": "This changes how many requests we send for {Main}. You can change it back at any time.",
+      "source": "`D09`:477",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "Main",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-63": {
+      "text": "Recorded in the audit log · Request budget changed (pending registration)",
+      "source": "`D09`:478",
+      "status": "PROPOSED"
+    },
+    "d09.W-64": {
+      "text": "The exchange's limit for this account is the ceiling. · Raising this never raises the exchange's limit. · The reserve for stops and cancels is kept out of this budget. · This changes this account only.",
+      "source": "`D09`:479",
+      "status": "PROPOSED"
+    },
+    "d09.W-70": {
+      "text": "Usage history",
+      "source": "`D09`:480",
+      "status": "PROPOSED"
+    },
+    "d09.W-71": {
+      "text": "1 hour · 6 hours · 24 hours · View as table",
+      "source": "`D09`:481",
+      "status": "PROPOSED"
+    },
+    "d09.W-72": {
+      "text": "{order} requests, {Main}, last hour: rising, {12} to {41} per second",
+      "source": "`D09`:482",
+      "status": "PROPOSED",
+      "slots": [
+        {
+          "name": "order",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "Main",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "12",
+          "format": "not stated by the parent (D13-G-5)"
+        },
+        {
+          "name": "41",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "d09.W-73": {
+      "text": "No usage recorded in this window.",
+      "source": "`D09`:483",
+      "status": "PROPOSED"
+    },
+    "d09.W-74": {
+      "text": "Read-only while viewing as {user}.",
+      "source": "`D09`:484",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "user",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.heading.history_starts": {
+      "text": "\"History starts {ts} — recording began then.\" · \"History starts 2026-09-01 00:00 UTC — recording began then.\"",
+      "source": "`E16D5`:417",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "ts",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.heading.not_recorded": {
+      "text": "\"History starts when you record {symbol} — recording has not begun yet.\"",
+      "source": "`E16D5`:418",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.heading.no_bars_between": {
+      "text": "\"No bars for {symbol} {interval} between {from} and {to} UTC.\" · \"No bars for BTCUSDT 1m between 02:11 and 02:14 UTC.\"",
+      "source": "`E16D5`:419",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "interval",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "from",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "to",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.heading.no_bars_window": {
+      "text": "\"No bars for {symbol} {interval} in this window.\"",
+      "source": "`E16D5`:420",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "interval",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.heading.retention_trimmed": {
+      "text": "\"{symbol} history before {date} was removed by the retention policy.\" · \"BTCUSDT history before 2026-09-14 was removed by the retention policy.\"",
+      "source": "`E16D5`:421",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "date",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.heading.not_trading": {
+      "text": "\"{symbol} is not trading on Bybit.\" · \"BTCUSDT is not trading on Bybit.\"",
+      "source": "`E16D5`:422",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.heading.no_history_here": {
+      "text": "\"No history is available for {symbol} here.\"",
+      "source": "`E16D5`:423",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.cause.recorded_only": {
+      "text": "\"Nothing is missing or broken: CandleViewer keeps only what it records.\"",
+      "source": "`E16D5`:424",
+      "status": "verbatim"
+    },
+    "e16d5.empty.gap.ws_disconnect": {
+      "text": "\"Recording was interrupted (connection to the exchange lost).\"",
+      "source": "`E16D5`:425",
+      "status": "verbatim"
+    },
+    "e16d5.empty.gap.backend_restart": {
+      "text": "\"Recording was interrupted (CandleViewer restarted).\"",
+      "source": "`E16D5`:426",
+      "status": "verbatim"
+    },
+    "e16d5.empty.gap.exchange_outage": {
+      "text": "\"Recording was interrupted (exchange outage).\"",
+      "source": "`E16D5`:427",
+      "status": "verbatim"
+    },
+    "e16d5.empty.gap.backpressure_drop": {
+      "text": "\"Recording dropped data while the disk was under pressure.\"",
+      "source": "`E16D5`:428",
+      "status": "verbatim"
+    },
+    "e16d5.empty.gap.seq_jump": {
+      "text": "\"Recording lost order-book updates (sequence gap).\"",
+      "source": "`E16D5`:429",
+      "status": "verbatim"
+    },
+    "e16d5.empty.gap.retention_purge": {
+      "text": "\"Older data was removed by the retention policy ({N} days).\" · \"Older data was removed by the retention policy (30 days).\"",
+      "source": "`E16D5`:430",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "N",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.gap.unknown": {
+      "text": "\"Recording gap.\"",
+      "source": "`E16D5`:431",
+      "status": "verbatim"
+    },
+    "e16d5.empty.gap.no_trades": {
+      "text": "\"No trades were recorded in this window.\"",
+      "source": "`E16D5`:432",
+      "status": "verbatim"
+    },
+    "e16d5.empty.cause.interval_too_fine": {
+      "text": "\"No {interval} bars fit this window — pick a coarser interval.\"",
+      "source": "`E16D5`:433",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "interval",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.cause.not_trading_status": {
+      "text": "\"Status: Closed.\" · \"Status: Delivering.\" · \"Not trading yet — status: Pre-launch.\" · \"No live data will arrive.\"",
+      "source": "`E16D5`:434",
+      "status": "verbatim"
+    },
+    "e16d5.empty.status.restricted": {
+      "text": "\"Recording status restricted\"",
+      "source": "`E16D5`:435",
+      "status": "verbatim"
+    },
+    "e16d5.rbac.owner_only": {
+      "text": "\"Only the owner can change recording.\"",
+      "source": "`E16D5`:436",
+      "status": "verbatim"
+    },
+    "e16d5.rbac.view_as": {
+      "text": "\"Read-only while viewing as {user}.\" · \"Read-only while viewing as alex.\"",
+      "source": "`E16D5`:437",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "user",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.cta.record": {
+      "text": "`Record this symbol`",
+      "source": "`E16D5`:438",
+      "status": "verbatim"
+    },
+    "e16d5.empty.cta.record_now": {
+      "text": "`Record now`",
+      "source": "`E16D5`:439",
+      "status": "verbatim"
+    },
+    "e16d5.empty.cta.go_recorded": {
+      "text": "`Go to recorded history`",
+      "source": "`E16D5`:440",
+      "status": "verbatim"
+    },
+    "e16d5.empty.cta.go_latest": {
+      "text": "`Go to latest`",
+      "source": "`E16D5`:441",
+      "status": "verbatim"
+    },
+    "e16d5.empty.cta.open_symbol": {
+      "text": "`Open symbol info`",
+      "source": "`E16D5`:442",
+      "status": "verbatim"
+    },
+    "e16d5.empty.link.learn_more": {
+      "text": "`Learn more`",
+      "source": "`E16D5`:443",
+      "status": "verbatim"
+    },
+    "e16d5.empty.link.show_coverage": {
+      "text": "`Show coverage`",
+      "source": "`E16D5`:444",
+      "status": "verbatim"
+    },
+    "e16d5.empty.link.switch_symbol": {
+      "text": "`Switch symbol`",
+      "source": "`E16D5`:445",
+      "status": "verbatim"
+    },
+    "e16d5.empty.link.switch_time_bars": {
+      "text": "`Switch to time bars`",
+      "source": "`E16D5`:446",
+      "status": "verbatim"
+    },
+    "e16d5.empty.link.manage_symbols": {
+      "text": "`Manage recorded symbols`",
+      "source": "`E16D5`:447",
+      "status": "verbatim"
+    },
+    "e16d5.empty.link.retention_policy": {
+      "text": "`Retention policy`",
+      "source": "`E16D5`:448",
+      "status": "verbatim"
+    },
+    "e16d5.empty.live.now": {
+      "text": "\"Live data is streaming now.\"",
+      "source": "`E16D5`:449",
+      "status": "verbatim"
+    },
+    "e16d5.empty.live.reduced": {
+      "text": "\"Live data is streaming at a reduced rate.\"",
+      "source": "`E16D5`:450",
+      "status": "verbatim"
+    },
+    "e16d5.empty.live.resume": {
+      "text": "\"Live data will resume when the connection returns.\"",
+      "source": "`E16D5`:451",
+      "status": "verbatim"
+    },
+    "e16d5.empty.autorecord.countdown": {
+      "text": "\"Recording starts automatically in 0:42\"",
+      "source": "`E16D5`:452",
+      "status": "verbatim"
+    },
+    "e16d5.empty.outcome.started": {
+      "text": "\"Recording started {time} UTC\" · \"Recording started 10:22 UTC\"",
+      "source": "`E16D5`:453",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "time",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.empty.refused.symbol_cap": {
+      "text": "\"Recording has not started: the 20-symbol limit is reached\"",
+      "source": "`E16D5`:454",
+      "status": "verbatim"
+    },
+    "e16d5.empty.refused.disk_pressure": {
+      "text": "\"Recording has not started: the disk is nearly full\"",
+      "source": "`E16D5`:455",
+      "status": "verbatim"
+    },
+    "e16d5.empty.mirror.root": {
+      "text": "\"{symbol}, 1 minute — no bars\" · \"BTCUSDT, 1 minute — no bars\"",
+      "source": "`E16D5`:456",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "symbol",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.chip.partial": {
+      "text": "\"Partial: {n} of {m} requested days recorded\" · \"Partial: 13 of 14 requested days recorded\"",
+      "source": "`E16D5`:457",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "n",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "m",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.chip.partial.missing": {
+      "text": "\"Missing: {range} ({cause}); …\" · \"Missing: 2026-09-04 02:11–02:14 UTC (connection lost).\"",
+      "source": "`E16D5`:458",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "range",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "cause",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.profile.gaps_excluded": {
+      "text": "\"Gaps excluded: {k} ranges, {duration}\" · \"Gaps excluded: 1 range, 3 min 20 s\"",
+      "source": "`E16D5`:459",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "k",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "duration",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.gap.tooltip.title": {
+      "text": "\"Recording gap\" · \"Removed by retention\"",
+      "source": "`E16D5`:460",
+      "status": "verbatim"
+    },
+    "e16d5.gap.tooltip.range": {
+      "text": "\"{date} {from} → {to} UTC · {duration}\" · \"2026-09-04 02:11 → 02:23 UTC · 12 min\" (the AC 2 band, board 06) · \"2026-09-04 02:11 → 02:14 UTC · 3 min 20 s\" (the `22` fixture gap, SCR-103)",
+      "source": "`E16D5`:461",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "date",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "from",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "to",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "duration",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.gap.tooltip.backfilled": {
+      "text": "\"Bars from exchange klines; order flow missing.\"",
+      "source": "`E16D5`:462",
+      "status": "verbatim"
+    },
+    "e16d5.gap.band.label": {
+      "text": "\"Not recorded {from}–{to} UTC: {short cause}\" · \"Not recorded 02:11–02:23 UTC: connection lost\"",
+      "source": "`E16D5`:463",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "from",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "to",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "short cause",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.gap.band.kline_hole": {
+      "text": "\"No bars for {from}–{to} UTC\"",
+      "source": "`E16D5`:464",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "from",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "to",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.gap.axis.tag": {
+      "text": "\"{from}–{to} gap\" · \"02:11–02:23 gap\"",
+      "source": "`E16D5`:465",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "from",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "to",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.gap.seam.label": {
+      "text": "\"Recording gap {from}–{to} UTC\" · \"Series restarted {time} UTC\"",
+      "source": "`E16D5`:466",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "from",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "to",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "time",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.gap.cursor": {
+      "text": "\"after a recording gap {from}–{to} UTC\" · \"after a recording gap 02:11–02:23 UTC\"",
+      "source": "`E16D5`:467",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "from",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "to",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.gap.table.row": {
+      "text": "\"Recording gap {from}–{to} UTC · {duration} · {short cause}\" · \"Recording gap 02:11–02:23 UTC · 12 min · connection lost\"",
+      "source": "`E16D5`:468",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "from",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "to",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "duration",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "short cause",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.gap.table.retention": {
+      "text": "\"Removed by retention before {date} · {N}-day policy\" · \"Removed by retention before 2026-09-14 · 30-day policy\"",
+      "source": "`E16D5`:469",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "date",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "N",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.gap.legend.row": {
+      "text": "\"Recording gap\" · \"Removed by retention\"",
+      "source": "`E16D5`:470",
+      "status": "verbatim"
+    },
+    "e16d5.confidence.gapped": {
+      "text": "\"Reconstructed after gap\"",
+      "source": "`E16D5`:471",
+      "status": "verbatim"
+    },
+    "e16d5.confidence.backfilling": {
+      "text": "\"Loading history…\"",
+      "source": "`E16D5`:472",
+      "status": "verbatim"
+    },
+    "e16d5.empty.outcome.loaded": {
+      "text": "\"History loaded\"",
+      "source": "`E16D5`:473",
+      "status": "verbatim"
+    },
+    "e16d5.empty.announce.enter": {
+      "text": "\"{heading} {cause}\"",
+      "source": "`E16D5`:474",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "heading",
+          "format": "`E16D5`:413"
+        },
+        {
+          "name": "cause",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.strip.order_flow_from": {
+      "text": "\"Order flow from {ts}; earlier bars come from exchange klines\" · \"Order flow from 2026-09-01 00:00 UTC; earlier bars come from exchange klines\"",
+      "source": "`E16D5`:475",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "ts",
+          "format": "`E16D5`:413"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e16d5.classes.created.heading": {
+      "text": "\"No workspaces yet\" · \"No symbols on this watchlist\"",
+      "source": "`E16D5`:476",
+      "status": "verbatim"
+    },
+    "e16d5.classes.created.cause": {
+      "text": "\"You haven't created a workspace yet.\"",
+      "source": "`E16D5`:477",
+      "status": "verbatim"
+    },
+    "e16d5.classes.created.cta": {
+      "text": "`Create a workspace` · `Add symbols to watch`",
+      "source": "`E16D5`:478",
+      "status": "verbatim"
+    },
+    "e16d5.classes.filter.heading": {
+      "text": "\"No symbols match these filters\"",
+      "source": "`E16D5`:479",
+      "status": "verbatim"
+    },
+    "e16d5.classes.filter.cause": {
+      "text": "\"Widen or clear a filter to see symbols.\"",
+      "source": "`E16D5`:480",
+      "status": "verbatim"
+    },
+    "e16d5.classes.filter.cta": {
+      "text": "`Clear filters`",
+      "source": "`E16D5`:481",
+      "status": "verbatim"
+    },
+    "e16d5.rec.chip.*": {
+      "text": "\"REC · manual\" · \"Not recording · limit reached\" · \"Not recording · disk nearly full\" · \"REC gated · data dropped\" · \"REC degraded\" · \"Recording status restricted\"",
+      "source": "`E16D5`:482",
+      "status": "verbatim"
+    },
+    "e16d5.replay.absence": {
+      "text": "\"Replay availability shading is E26's (CMP-172); it will take this deck's stem and causes.\"",
+      "source": "`E16D5`:483",
+      "status": "verbatim"
+    },
+    "e17d2.A.1": {
+      "text": "Live 42 ms",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.2": {
+      "text": "Reduced rate ×4",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.3": {
+      "text": "Stale 7s",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.4": {
+      "text": "Stale 15s",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.5": {
+      "text": "Stale (server)",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.6": {
+      "text": "Stale — exchange feed down",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.7": {
+      "text": "Reconnecting (3)",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.8": {
+      "text": "~4 s",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.9": {
+      "text": "Connecting…",
+      "source": "`E17D2`:225",
+      "status": "PROPOSED"
+    },
+    "e17d2.A.10": {
+      "text": "Offline — retry stopped",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.11": {
+      "text": "last 13:42:05 UTC",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.12": {
+      "text": "Connection quality: RTT 240 ms, queue 40 %",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.13": {
+      "text": "Queue > 90 % — reduce panes",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.A.14": {
+      "text": "resync storm — 6 rebuilds in the last minute",
+      "source": "`E17D2`:225",
+      "status": "PROPOSED"
+    },
+    "e17d2.A.15": {
+      "text": "Connection: Stale 7 seconds, last data 13:42:05 UTC",
+      "source": "`E17D2`:225",
+      "status": "verbatim"
+    },
+    "e17d2.B.1": {
+      "text": "Disconnected — reconnecting (3)",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.2": {
+      "text": "Last data 00:12 ago. New orders off; cancel and close remain available, confirmed over the server.",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.3": {
+      "text": "Exchange-side stops still protect open positions; app-managed rules are paused.",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.4": {
+      "text": "Next try in ~4 s",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.5": {
+      "text": "Retry now",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.6": {
+      "text": "Details",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.7": {
+      "text": "Disconnected — reconnecting",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.8": {
+      "text": "Not connected to the tailnet — last data 00:12 ago.",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.9": {
+      "text": "You're offline — last data 00:12 ago.",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.10": {
+      "text": "Can't reach the server — last data 00:12 ago.",
+      "source": "`E17D2`:227",
+      "status": "PROPOSED"
+    },
+    "e17d2.B.11": {
+      "text": "New orders off; cancel and close remain available, confirmed over the server. Exchange-side stops still protect open positions; app-managed rules are paused.",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.12": {
+      "text": "Retry now",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.13": {
+      "text": "Details",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.14": {
+      "text": "Disconnected — retrying now…",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.15": {
+      "text": "Connection unstable — reconnecting",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.16": {
+      "text": "Offline — retry stopped",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.17": {
+      "text": "Can't connect — <§10 F sentence>. Copy details and report a bug.",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.18": {
+      "text": "Session ended",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.19": {
+      "text": "Exchange-side stops still protect open positions; app-managed rules are paused — sign in again to cancel or close.",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.20": {
+      "text": "Sign in",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.21": {
+      "text": "Continue",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.22": {
+      "text": "Last data 00:30 ago. …",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.23": {
+      "text": "Disconnected for 04:32 — escalated",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.24": {
+      "text": "Reconnected",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.25": {
+      "text": "While you were offline: 1 order filled, 1 stop moved by a rule.",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.26": {
+      "text": "Dismiss",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.B.27": {
+      "text": "Degraded — some data feeds are stale",
+      "source": "`E17D2`:227",
+      "status": "verbatim"
+    },
+    "e17d2.C.1": {
+      "text": "Disconnected — last data 00:12",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.2": {
+      "text": "Resyncing book…",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.3": {
+      "text": "Book resynchronising…",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.4": {
+      "text": "Book rebuilt",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.5": {
+      "text": "1 s refresh",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.6": {
+      "text": "Updates every 1 s, ×4 slower",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.7": {
+      "text": "N updates merged",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.8": {
+      "text": "Last update 7 s ago",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.9": {
+      "text": "Stale 7s",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.10": {
+      "text": "Stale 15 s — new orders blocked on BTCUSDT",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.11": {
+      "text": "Stale (server) — since 14:02:11",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.12": {
+      "text": "Mark 8s old",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.13": {
+      "text": "Mark 15 s old — unverified",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.14": {
+      "text": "Positions as of 00:12 ago — exchange stops still protect (native SL only)",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.15": {
+      "text": "Reconciling with the exchange…",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.16": {
+      "text": "Position data is being verified — actions temporarily limited",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.17": {
+      "text": "No longer shown — access to {account} was withdrawn.",
+      "source": "`E17D2`:229",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "account",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e17d2.C.18": {
+      "text": "No longer shown — access changed",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.19": {
+      "text": "No longer shown — rebuild budget exhausted, retry in N s",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.20": {
+      "text": "No longer shown — replay session ended",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.21": {
+      "text": "No longer shown — symbol removed",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.22": {
+      "text": "Not connected — order not sent",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.23": {
+      "text": "Not connected — new orders off; cancel and close still work.",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.24": {
+      "text": "Not sent — price feed stale 14 s",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.25": {
+      "text": "Disarmed — feed stale 7 s",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.26": {
+      "text": "Prices may lag ~1 s",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.C.27": {
+      "text": "—",
+      "source": "`E17D2`:229",
+      "status": "verbatim"
+    },
+    "e17d2.D.1": {
+      "text": "Can't reach the server — retrying in ~4 s",
+      "source": "`E17D2`:231",
+      "status": "verbatim"
+    },
+    "e17d2.D.2": {
+      "text": "Not connected to the tailnet",
+      "source": "`E17D2`:231",
+      "status": "verbatim"
+    },
+    "e17d2.D.3": {
+      "text": "You're offline",
+      "source": "`E17D2`:231",
+      "status": "verbatim"
+    },
+    "e17d2.D.4": {
+      "text": "Can't connect — <plain reason>. Copy details.",
+      "source": "`E17D2`:231",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "plain reason",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e17d2.E.1": {
+      "text": "The server is busy — reconnecting in ~5 s",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.2": {
+      "text": "This window asked for more data than it could receive — reconnecting with fewer panes in ~3 s",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.3": {
+      "text": "The server is restarting — back in ~20 s",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.4": {
+      "text": "The connection went quiet — reconnecting in ~N s",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.5": {
+      "text": "The server hit an error — reconnecting in ~N s",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.6": {
+      "text": "Can't connect — a message was too large. Copy details and report a bug.",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.7": {
+      "text": "Signed out on another device — sign in again",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.8": {
+      "text": "This account is disabled. Contact the owner.",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.9": {
+      "text": "Signing you back in…",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.10": {
+      "text": "Too many requests from this window — reconnecting in ~N s",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.11": {
+      "text": "Too many windows are open for this account — reconnecting in ~N s; close one you're not using",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.12": {
+      "text": "Switching view…",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.13": {
+      "text": "Offline",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.14": {
+      "text": "The view-as session ended — returning to your own view",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.15": {
+      "text": "Finish setting up two-factor authentication to continue",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.16": {
+      "text": "Can't connect from this origin. Copy details.",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.E.17": {
+      "text": "report a bug",
+      "source": "`E17D2`:233",
+      "status": "verbatim"
+    },
+    "e17d2.F.1": {
+      "text": "Connection closed",
+      "source": "`E17D2`:235",
+      "status": "verbatim"
+    },
+    "e17d2.F.2": {
+      "text": "The server is restarting — reconnecting in ~N s",
+      "source": "`E17D2`:235",
+      "status": "verbatim"
+    },
+    "e17d2.F.3": {
+      "text": "Can't connect — the app and the server disagree on the protocol. Copy details and report a bug.",
+      "source": "`E17D2`:235",
+      "status": "verbatim"
+    },
+    "e17d2.F.4": {
+      "text": "The server is restarting — reconnecting in ~N s",
+      "source": "`E17D2`:235",
+      "status": "verbatim"
+    },
+    "e17d2.F.5": {
+      "text": "Your access was removed — contact the owner",
+      "source": "`E17D2`:235",
+      "status": "verbatim"
+    },
+    "e17d2.F.6": {
+      "text": "report a bug",
+      "source": "`E17D2`:235",
+      "status": "verbatim"
+    },
+    "e17d2.F.7": {
+      "text": "Return to login; do not retry",
+      "source": "`E17D2`:235",
+      "status": "verbatim"
+    },
+    "e17d2.F.8": {
+      "text": "Can't connect — repeated protocol errors. Copy details and report a bug.",
+      "source": "`E17D2`:235",
+      "status": "verbatim"
+    },
+    "e17d2.F.9": {
+      "text": "~N s",
+      "source": "`E17D2`:235",
+      "status": "verbatim"
+    },
+    "e17d2.G.1": {
+      "text": "attempt 3 of ∞ · next 2 s ± 1 s",
+      "source": "`E17D2`:237",
+      "status": "verbatim"
+    },
+    "e17d2.G.2": {
+      "text": "affected: book BTCUSDT, trades BTCUSDT, ticker ×4",
+      "source": "`E17D2`:237",
+      "status": "verbatim"
+    },
+    "e17d2.G.3": {
+      "text": "last close: 1013 — the server is busy",
+      "source": "`E17D2`:237",
+      "status": "verbatim"
+    },
+    "e17d2.G.4": {
+      "text": "most expensive: heatmap.BTCUSDT, book.ETHUSDT",
+      "source": "`E17D2`:237",
+      "status": "verbatim"
+    },
+    "e17d2.G.5": {
+      "text": "Copy details",
+      "source": "`E17D2`:237",
+      "status": "verbatim"
+    },
+    "e17d2.G.6": {
+      "text": "Connection to the server is temporarily unavailable. Reconnecting automatically.",
+      "source": "`E17D2`:237",
+      "status": "verbatim"
+    },
+    "e17d2.G.7": {
+      "text": "Copy details",
+      "source": "`E17D2`:237",
+      "status": "verbatim"
+    },
+    "e17d2.R.1": {
+      "text": "Order entry off — backend restarting for release 1.0.1",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.2": {
+      "text": "Back in ~25 s. Cancel and close still work; exchange-side stops still protect open positions; app-managed rules are paused.",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.3": {
+      "text": "Order entry off — trading frozen by the owner at 14:02 UTC.",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.4": {
+      "text": "Cancel still works.",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.5": {
+      "text": "Order entry off for account Main — risk lockout until 23:59 UTC.",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.6": {
+      "text": "Cancel and close still work.",
+      "source": "`E17D2`:239",
+      "status": "PROPOSED"
+    },
+    "e17d2.R.7": {
+      "text": "Order entry off — clock drift 612 ms.",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.8": {
+      "text": "Signed requests are refused until time sync recovers.",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.9": {
+      "text": "Order entry off — private feed down; fills cannot be seen live.",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.10": {
+      "text": "Cancel and close still work, confirmed over REST.",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.11": {
+      "text": "Order entry off — kill-switch status unknown until the server reports it.",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.12": {
+      "text": "Cancel and close still work.",
+      "source": "`E17D2`:239",
+      "status": "PROPOSED"
+    },
+    "e17d2.R.13": {
+      "text": "Read-only while viewing as {user}.",
+      "source": "`E17D2`:239",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "user",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e17d2.R.14": {
+      "text": "Reads continue; every other write — cancel and close included — is refused while viewing as; a protective stop and the kill switch on an account set still work.",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.15": {
+      "text": "Maintenance mode — new orders off.",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.16": {
+      "text": "Cancel and close still work.",
+      "source": "`E17D2`:239",
+      "status": "PROPOSED"
+    },
+    "e17d2.R.17": {
+      "text": "Exchange feed down — the server is restoring the connection",
+      "source": "`E17D2`:239",
+      "status": "verbatim"
+    },
+    "e17d2.R.18": {
+      "text": "Stale (server) — since <snap ts>",
+      "source": "`E17D2`:239",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "snap ts",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e17d2.I.1": {
+      "text": "Something went wrong in the app — copy details and report a bug.",
+      "source": "`E17D2`:243",
+      "status": "verbatim"
+    },
+    "e17d2.I.2": {
+      "text": "Too many panes for this connection — close some; refresh rates were reduced automatically.",
+      "source": "`E17D2`:243",
+      "status": "verbatim"
+    },
+    "e17d2.I.3": {
+      "text": "Rebuild budget exhausted — retry in N s",
+      "source": "`E17D2`:243",
+      "status": "verbatim"
+    },
+    "e17d2.J.1": {
+      "text": "Not connected — new orders off; cancel and close still work.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.2": {
+      "text": "Can't reach the server — orders, cancel and close off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.3": {
+      "text": "Cannot reach server",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.4": {
+      "text": "Offline — cannot reach the server; use the host console (SR-086)",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.5": {
+      "text": "Price feed stale {age} — market, click and conditional off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "age",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e17d2.J.6": {
+      "text": "Price feed stale {age} — new orders off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "age",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e17d2.J.7": {
+      "text": "Book resyncing — ladder orders off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.8": {
+      "text": "Reconciling with the exchange — new orders off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.9": {
+      "text": "Position data being verified — new orders off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.10": {
+      "text": "Session ended — sign in again to trade.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.11": {
+      "text": "Backend restarting — new orders off; cancel still works.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.12": {
+      "text": "Kill-switch status unknown — new orders off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.13": {
+      "text": "Private feed down — new orders off; cancel still works.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.14": {
+      "text": "Clock drift {ms} ms — signed requests are refused.",
+      "source": "`E17D2`:245",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "ms",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e17d2.J.15": {
+      "text": "Order entry refused by the server — new orders off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.16": {
+      "text": "Maintenance mode — new orders off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.17": {
+      "text": "Database unavailable — new orders off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.18": {
+      "text": "Account health check failed — new orders off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.19": {
+      "text": "No active API key — new orders off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.20": {
+      "text": "Disabled by policy — new orders off.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.21": {
+      "text": "Frozen — only the owner can release it.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.22": {
+      "text": "Frozen — the owner closes or releases.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.23": {
+      "text": "Locked — closing and reducing still work.",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "e17d2.J.24": {
+      "text": "Read-only while viewing as {user}.",
+      "source": "`E17D2`:245",
+      "status": "verbatim",
+      "slots": [
+        {
+          "name": "user",
+          "format": "not stated by the parent (D13-G-5)"
+        }
+      ],
+      "plural": "none stated by the parent (D13-G-5)"
+    },
+    "e17d2.J.25": {
+      "text": "cancel and close …",
+      "source": "`E17D2`:245",
+      "status": "verbatim"
+    },
+    "d07.q01.stale-exit": {
+      "text": "Watchlist prices live again.",
+      "source": "`D07`:305",
+      "status": "PROPOSED"
+    },
+    "d07.q01.removal": {
+      "text": "Removed SOLUSDT. Undo is in the footer.",
+      "source": "`D07`:307",
+      "status": "PROPOSED"
+    },
+    "d07.q02.region": {
+      "text": "Watchlist Majors",
+      "source": "`D07`:203",
+      "status": "PROPOSED"
+    }
+  }
+}
