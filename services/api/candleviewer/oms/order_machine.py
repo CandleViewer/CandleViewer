@@ -55,7 +55,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections import Counter, OrderedDict, deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
@@ -242,6 +242,33 @@ _VIEW: Final = (
     "order_link_id", "symbol", "exchange_order_id", "filled_qty", "halted_by_kill", "recon_misses",
     "event_seq", "reduce_only", "recorded_stop", b01.KILL_CANCEL,
 )  # fmt: skip
+#: Why an order is in `unknown`, the closed `reason` of `oms_unknown_orders` (E29-T08 #916 BQ-7;
+#: 20 Sec.12.1): B1 keeps none, so the facade derives it from the step that moved the order in.
+type UnknownReason = Literal[
+    "already_terminal", "missing_remote", "duplicate_unverified", "transport"
+]
+UNKNOWN_REASONS: Final[tuple[UnknownReason, ...]] = get_args(UnknownReason.__value__)
+
+
+def unknown_reason(
+    trigger: str, notices: Iterable[Mapping[str, Any]], *, needs_lookup: bool
+) -> UnknownReason:
+    """The reason of the step into `unknown` (BQ-7): `already_terminal` when B1 noticed a cancel
+    the venue answered `110001` (its `order_already_terminal` alert, 24 Sec.8.6), `missing_remote`
+    for a pass's `RECON_MISS` (24 Sec.8.5 step 3b), `duplicate_unverified` for a duplicate-id
+    create the full match has not verified (`needs_lookup`, 24 Sec.8.3 rule 3), and `transport`
+    for any other outcome not known, the one the page always takes."""
+    if any(
+        n.get("kind") == "alert" and n.get("alert") == "order_already_terminal" for n in notices
+    ):
+        return "already_terminal"
+    if trigger == "RECON_MISS":
+        return "missing_remote"
+    if needs_lookup:
+        return "duplicate_unverified"
+    return "transport"
+
+
 #: The KILL cancels' outcomes (`b01.KILL_CANCEL`) that leave nothing of the order at the venue.
 _KILL_DONE: Final = frozenset({"sent", b01.ALREADY_TERMINAL})
 ANOMALY: Final = "oms.reconcile_anomaly"
@@ -439,6 +466,27 @@ def _uuid(raw: object) -> UUID | None:
         return None
 
 
+def _order_scope(o: _Order) -> dict[str, str]:
+    """BQ-9: the order's fields its facade's lines carry, `order_link_id` once its view names it;
+    ids and a state only (C-12.6)."""
+    scope = {"account_id": str(o.account_id), "state": o.lifecycle}
+    link = o.view.get("order_link_id")
+    if isinstance(link, str):
+        scope["order_link_id"] = link
+    return scope
+
+
+def _step_scope(step: b01.Step) -> dict[str, str]:
+    """BQ-9: a step's fields, each one the step names: the order, its account and the state the
+    step enters."""
+    scope = {"state": step.to_state}
+    if step.order_link_id is not None:
+        scope["order_link_id"] = step.order_link_id
+    if step.account_id is not None:
+        scope["account_id"] = str(step.account_id)
+    return scope
+
+
 def _shown(event: object) -> str:
     """A caller's event name as a refusal logs and raises it (C-12.6, C-2.18): text is cut to
     `MAX_TEXT` characters, each unprintable one shown as `?`; anything else by its type's name."""
@@ -598,7 +646,7 @@ class _Observer:
 
     def __init__(
         self,
-        stepped: Callable[[_Order, Any], None],
+        stepped: Callable[[_Order, Any, str], None],
         failed: Callable[[_Order, Any, str, Any], None],
         order: _Order,
     ) -> None:
@@ -606,8 +654,9 @@ class _Observer:
         self._failed = failed
         self._order = order
 
-    def on_transition(self, interpreter: Any, *_transition: Any) -> None:
-        self._stepped(self._order, interpreter)
+    def on_transition(self, interpreter: Any, *transition: Any) -> None:
+        trigger = getattr(transition[-1], "event", None) if transition else None
+        self._stepped(self._order, interpreter, trigger if isinstance(trigger, str) else "")
 
     def on_transition_failed(self, interpreter: Any, transition: Any, failed: Any) -> None:
         trigger = getattr(transition, "event", None)
@@ -668,11 +717,17 @@ class OrderMachines:
         self._anomalies = counter("oms_reconcile_anomaly_total").child()
         self._backstops = counter("oms_native_stop_backstop_total").child()
         unknown = specs["oms_unknown_orders"]
-        self._unknown_gauge = metrics.gauge(
+        gauge = metrics.gauge(
             unknown.name, unknown.help, unknown.labels, max_series=unknown.max_series
-        ).child()
-        #: The live orders whose machine is in `unknown`, for `oms_unknown_orders` (R13).
-        self._unknown: set[UUID] = set()
+        )
+        #: `oms_unknown_orders{reason}`, each child bound at 0, so the series exists with no order
+        #: there (BQ-7): a labelled gauge with no child exports nothing.
+        self._unknown_gauges = {reason: gauge.labels(reason) for reason in UNKNOWN_REASONS}
+        for child in self._unknown_gauges.values():
+            child.set(0)
+        #: The live orders whose machine is in `unknown`, each with its reason (R13, BQ-7).
+        self._unknown: dict[UUID, UnknownReason] = {}
+        self._unknown_counts: Counter[UnknownReason] = Counter()
         b01.set_ports(b01.OrderPorts(persist=self._persist, commands=ports.commands, now_us=now_us))
         b01.set_audit_hook(self._audited)
         b01.set_fill_core(apply_fields)
@@ -1227,8 +1282,7 @@ class OrderMachines:
         o.moved.set()  # a caller waiting on the order (`settled`) follows it, or reads its row
         self._gateway.unregister(o.key)
         if self._orders.pop(o.order_id, None) is o:
-            self._unknown.discard(o.order_id)
-            self._unknown_gauge.set(len(self._unknown))
+            self._left_unknown(o.order_id)
         if interp is not None:
             if publish:
                 self._publish(o, interp, last=True)
@@ -1469,11 +1523,14 @@ class OrderMachines:
 
     @contextlib.asynccontextmanager
     async def _holding(self, o: _Order) -> AsyncIterator[None]:
-        """The order's lock; its holder settles the order before it lets go."""
+        """The order's lock; its holder settles the order before it lets go. Every line logged
+        meanwhile carries the order's `order_link_id`, `account_id` and `state` (E29-T08 #916
+        BQ-9, 20 Sec.12.2), bound as structlog contextvars for the hold and reset after it."""
         async with o.lock:
             o.busy = True
             try:
-                yield
+                with structlog.contextvars.bound_contextvars(**_order_scope(o)):
+                    yield
             finally:
                 o.busy = False
 
@@ -1851,25 +1908,29 @@ class OrderMachines:
             logger().error("oms_invoke_result_refused", order_link_id=link, error=failure)
             b01.fail_attempt(interp.context, invoke, failure)
 
-    def _stepped(self, o: _Order, interp: Any) -> None:
+    def _stepped(self, o: _Order, interp: Any, trigger: str = "") -> None:
         """A step committed (a rolled-back one never gets here, so its notices never do, CV-C02):
         the plain view, the outbox's new notices, the publish and, unless the facade holds the
         order, a turn. The taken notices leave the outbox; its newest stays, as the next
-        notice's `seq` follows it."""
+        notice's `seq` follows it. An order that has just entered `unknown` counts under the
+        reason its `trigger` and its new notices give (BQ-7), kept while it stays there."""
         ctx = interp.context
         leaves = _leaves(interp)
         o.lifecycle = leaves.get("lifecycle", o.lifecycle)
         o.protection = leaves.get("protection", o.protection)
-        if o.lifecycle == "unknown" and self._orders.get(o.order_id) is o:
-            self._unknown.add(o.order_id)
-        else:
-            self._unknown.discard(o.order_id)
-        self._unknown_gauge.set(len(self._unknown))
-        o.view = {key: ctx.get(key) for key in _VIEW}
-        o.steps += 1
         raw = ctx.get("outbox")
         box = [dict(n) for n in raw if isinstance(n, Mapping)] if isinstance(raw, list) else []
         fresh = [n for n in box if type(n.get("seq")) is int and n["seq"] > o.cursor]
+        if o.lifecycle == "unknown" and self._orders.get(o.order_id) is o:
+            if o.order_id not in self._unknown:
+                reason = unknown_reason(
+                    trigger, fresh, needs_lookup=ctx.get("needs_lookup") is True
+                )
+                self._entered_unknown(o.order_id, reason)
+        else:
+            self._left_unknown(o.order_id)
+        o.view = {key: ctx.get(key) for key in _VIEW}
+        o.steps += 1
         if fresh:
             if o.replaying is None:  # a replayed step's notices went out when it happened
                 o.notices.extend(fresh)
@@ -1882,6 +1943,17 @@ class OrderMachines:
         self._publish(o, interp)
         if not o.busy and (o.notices or o.denied or o.held or self._kill_lost(o) or self._done(o)):
             self._schedule(o)
+
+    def _entered_unknown(self, order_id: UUID, reason: UnknownReason) -> None:
+        self._unknown[order_id] = reason
+        self._unknown_counts[reason] += 1
+        self._unknown_gauges[reason].set(self._unknown_counts[reason])
+
+    def _left_unknown(self, order_id: UUID) -> None:
+        reason = self._unknown.pop(order_id, None)
+        if reason is not None:
+            self._unknown_counts[reason] -= 1
+            self._unknown_gauges[reason].set(self._unknown_counts[reason])
 
     def _schedule(self, o: _Order) -> None:
         current = asyncio.current_task()
@@ -1929,6 +2001,9 @@ class OrderMachines:
             raise self._refuse(source, step.to_state)
         order_id = _uuid(step.order_id)
         o = None if order_id is None else self._orders.get(order_id)
+        # BQ-9: B1's actions run on its machine's own task, the step's after this persist among
+        # them, so its lines from here carry the order and the state the step enters
+        structlog.contextvars.bind_contextvars(**_step_scope(step))
         if o is not None and o.replaying is not None:
             return self._replay_step(o, step)
         seq = await self._ports.steps(step)

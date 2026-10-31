@@ -343,7 +343,7 @@
 ["oms_stuck_orders", "gauge", ["kind"], "planned", "E29"]
 ["oms_submit_rejected_total", "counter", ["code"], "planned", "E29"]
 ["oms_tier_requests_dropped_total", "counter", ["reason"], "planned", "E29"]
-["oms_unknown_orders", "gauge", [], "planned", "E29"]
+["oms_unknown_orders", "gauge", ["reason"], "planned", "E29"]
 ["oms_untracked_orders", "gauge", [], "planned", "E29"]
 ["oms_ws_position_overtakes_total", "counter", [], "planned", "E29"]
 ["order_submit_seconds", "histogram", ["transport"], "planned", "E29"]

@@ -3426,12 +3426,16 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "oms_unknown_orders",
         "gauge",
         "orders",
-        (),
+        ("reason",),
         "Live orders whose B1 machine is in unknown: the outcome of their last create or step is "
-        "not known, so nothing is sent for them until reconciliation decides (E29-T04).",
-        "> 0 for 60s (page)",
+        "not known, so nothing is sent for them until reconciliation decides (E29-T04), by why "
+        "(E29-T08 #916 BQ-7): already_terminal, missing_remote, duplicate_unverified or "
+        "transport, each child bound at 0. No account label.",
+        "> 0 for 60s on every reason but already_terminal (page); already_terminal held 5 min "
+        "(ticket)",
         _P,
         "E29",
+        max_series=4,
     ),
     _s(
         "oms_reconcile_seconds",
