@@ -7,7 +7,8 @@ fresh step-up) or `None` (401). `rules:read` gates reads, `rules:write` gates wr
 live arming additionally needs `rules:arm_live` + a fresh one-shot step-up, enforced by the
 manager's synchronous arming check (statecharts record, code enforces - C-2.21). Bodies are read
 through `api/rule_body.py` (413 `payload_too_large`) before anything parses them, and a save body
-holds only the members `22` names, with no account outside `ir` (G-12).
+holds only the members `22` names, with no account outside `ir` (G-12). A `note` or `reason` over
+its bound is refused before the scope check (G-13), and a page holds at most `MAX_PAGE` rules.
 """
 
 from __future__ import annotations
@@ -33,11 +34,15 @@ from candleviewer.rules.manager import (
     RuleError,
     RuleRefusalUnrecorded,
     RulesManager,
+    check_text_bound,
 )
 from candleviewer.rules.scope import ScopeResolver
 
 _READ = "rules:read"
 _WRITE = "rules:write"
+#: 22 `listRules`: a page holds at most this many rules whatever `limit` asks for, the stored-rule
+#: cap (#4834), so one page holds the whole set of a user's own rules.
+MAX_PAGE: Final = 200
 
 
 def _members(model: type[BaseModel]) -> frozenset[str]:
@@ -75,9 +80,10 @@ def _from_error(exc: RuleError) -> JSONResponse:
 
 
 def _unrecorded(lost: RuleRefusalUnrecorded) -> JSONResponse:
-    """A save refusal whose record the writer could not take (`AuditUnavailable`) or did not take
-    in time is `503 audit_unavailable`, as the scope check answers its own (C-2.9): nothing is
-    stored. Any other cause is a defect and propagates, never a retryable 503."""
+    """A refusal whose record the writer did not take (`AuditUnavailable`, a due record the refusal
+    budget did not write included), or did not take in time, is `503 audit_unavailable`,
+    as the scope check answers its own (C-2.9): nothing changes. Any other cause is a defect and
+    propagates, never a retryable 503."""
     if not isinstance(lost.__cause__, AuditUnavailable | TimeoutError):
         raise lost
     return _problem(503, "audit_unavailable", "Unavailable", "the refusal could not be recorded")
@@ -187,7 +193,7 @@ def make_rules_crud_router(
         if isinstance(g, JSONResponse):
             return g
         actor, mgr = g
-        page = await mgr.list_rules(actor, mode, scope, cursor, max(1, min(limit, 200)))
+        page = await mgr.list_rules(actor, mode, scope, cursor, max(1, min(limit, MAX_PAGE)))
         return JSONResponse(
             {
                 "items": page["items"],
@@ -212,12 +218,14 @@ def make_rules_crud_router(
             return _bad("body needs an 'ir' object")
         try:
             # The body's members first, so a refused one is audited whatever else the body lacks
-            # (G-12), then its shape and the bounds: the scope check below reads the scope.
+            # (G-12), then its shape and the bounds, the note's included (G-13): the scope check
+            # below reads the scope.
             await mgr.check_save_body(body, CREATE_MEMBERS, "create", actor)
             if (doc := _doc(body)) is None:
                 return _bad("body needs an 'ir' object")
             if (refused := _unstorable(body, "note")) is not None:
                 return refused
+            check_text_bound("note", body.get("note"))
             mgr.check_document(doc)
             if (denied := await _scope_check(actor, doc.get("scope"), arming=False)) is not None:
                 return denied
@@ -264,6 +272,7 @@ def make_rules_crud_router(
                 return _bad("send the version you edited in If-Match (or expected_version)")
             if (refused := _unstorable(body, "note")) is not None:
                 return refused
+            check_text_bound("note", body.get("note"))
             mgr.check_document(doc)
             denied = await _scope_check(actor, doc.get("scope"), arming=False)
             if denied is not None:
@@ -285,6 +294,8 @@ def make_rules_crud_router(
             await mgr.delete(str(ruleId), actor)
         except RuleError as exc:
             return _from_error(exc)
+        except RuleRefusalUnrecorded as lost:
+            return _unrecorded(lost)
         return Response(status_code=204)
 
     @router.get("/rules/{ruleId}/versions")
@@ -328,8 +339,10 @@ def make_rules_crud_router(
         if (refused := _unstorable(body, "note")) is not None:
             return refused
         try:
-            # Visibility first (#2574): on a rule the caller cannot see, a real version and a
-            # missing rule or version are one 404, never the scope pre-check's 403 (04 §7.3).
+            # The note's bound before anything is looked up (G-13), then visibility (#2574): on a
+            # rule the caller cannot see, a real version and a missing rule or version are one
+            # 404, never the scope pre-check's 403 (04 §7.3).
+            check_text_bound("note", body.get("note"))
             ver = await mgr.visible_version(
                 str(ruleId), body["version_id"], actor, "set_active_version"
             )
@@ -340,7 +353,9 @@ def make_rules_crud_router(
                 str(ruleId), body["version_id"], str(body.get("note", "")), actor
             )
         except RuleError as exc:
-            return _from_error(exc)
+            return _answer(exc)
+        except RuleRefusalUnrecorded as lost:
+            return _unrecorded(lost)
         return JSONResponse(out)
 
     @router.put("/rules/{ruleId}/mode")
@@ -366,6 +381,9 @@ def make_rules_crud_router(
         if (refused := _unstorable(body, "mode") or _unstorable(body, "reason")) is not None:
             return refused
         try:
+            # The reason's bound first (G-13): before the scope check and before the manager
+            # consumes a live arm's step-up, so a refused reason spends no grant.
+            check_text_bound("reason", body.get("reason"))
             if body["mode"] == "armed":
                 denied = await _scope_check(
                     actor, await mgr.active_scope(str(ruleId), actor, "set_mode"), arming=True
@@ -381,7 +399,9 @@ def make_rules_crud_router(
                 override_reason=body.get("reason") if isinstance(body.get("reason"), str) else None,
             )
         except RuleError as exc:
-            return _from_error(exc)
+            return _answer(exc)
+        except RuleRefusalUnrecorded as lost:
+            return _unrecorded(lost)
         return JSONResponse(out)
 
     return router

@@ -38,9 +38,14 @@ from candleviewer.rules.lifecycle import MODES, LifecycleError, RuleLifecycle, m
 from candleviewer.rules.limits import (
     LIMIT_CAPS,
     LIMIT_DEFAULTS,
+    MAX_NOTE_CHARS,
+    MAX_STORED_RULES_PER_USER,
+    NOTE_BOUND_DETAIL,
+    NOTE_BOUND_MESSAGE,
     above_cap,
     above_default,
     owner_only_errors,
+    stored_rules_message,
 )
 from candleviewer.rules.scope import EvaluableMode
 from candleviewer.rules.validator import validate_rule
@@ -105,10 +110,10 @@ class RuleAuditUnavailable(RuleError):
 
 
 class RuleRefusalUnrecorded(Exception):
-    """A scope or import refusal's own record was not written (C-2.9) and nothing changed: the
-    hook failed, or did not answer within `REFUSAL_AUDIT_TIMEOUT_S`; `__cause__` says which, for
-    the route to answer (`rules` may not import `audit`). A success record's failure is never
-    wrapped."""
+    """A refusal's own record (a scope, system-rule, import or mode refusal) was not written
+    (C-2.9) and nothing changed: the hook failed, or did not answer within
+    `REFUSAL_AUDIT_TIMEOUT_S`; `__cause__` says which, for the route to answer (`rules` may not
+    import `audit`). A success record's failure is never wrapped."""
 
 
 #: The bounds the authoring routes count when they refuse one (`rule_authoring_cap_refused_total`):
@@ -126,22 +131,48 @@ class RuleCapRefused(RuleError):
         self.cap = cap
 
 
+#: The registered titles (22 `x-error-codes`) of the two authoring-limit refusals below, as their
+#: examples in 22 carry them (`noteTooLong`, `storedRuleCap`); a contract test pins both.
+RULE_IR_INVALID_TITLE: Final = "Rule intermediate representation failed semantic validation"
+CONFLICT_TITLE: Final = "Concurrent modification or state conflict"
+TextField = Literal["note", "reason"]
+
+
+def check_text_bound(field: TextField, value: object) -> None:
+    """G-13 (E35, #4834): a `note` or `reason` longer than `MAX_NOTE_CHARS` code points is refused
+    whole, never shortened: `422 rule_ir_invalid` naming the field (22 `noteTooLong`), counted
+    under `cap` `field`. The routes decide it before the scope check; every write of the manager
+    decides it again first, whoever calls it. A value that is not text is the route's `400`."""
+    if isinstance(value, str) and len(value) > MAX_NOTE_CHARS:
+        why = {"field": field, "rule": "max_length", "message": NOTE_BOUND_MESSAGE}
+        raise RuleCapRefused(
+            field,
+            422,
+            "rule_ir_invalid",
+            NOTE_BOUND_DETAIL,
+            title=RULE_IR_INVALID_TITLE,
+            errors=[why],
+        )
+
+
 def _ir_invalid(issues: list[Issue]) -> RuleError:
-    """422 `rule_ir_invalid` naming every issue, the first one's message as the detail: how a save
-    answers the document bounds and the validator alike."""
-    return RuleError(
-        422, "rule_ir_invalid", issues[0].message, issues=[i.to_dict() for i in issues]
-    )
+    """422 `rule_ir_invalid` naming every issue: how a save answers the document bounds, the
+    condition-node bound and the validator alike. One shape for a refused rule document (#4834's
+    C-row), 22's `RuleIrInvalid` as its `conditionNodes` example shows it: the registered title, a
+    `detail` that counts the issues, and each one in `errors[{field, rule, message}]`, `field` its
+    path and `rule` its code."""
+    n = len(issues)
+    errors = [{"field": i.path, "rule": i.code, "message": i.message} for i in issues]
+    detail = f"{n} error{'s' if n != 1 else ''} in the rule IR."
+    return RuleError(422, "rule_ir_invalid", detail, title=RULE_IR_INVALID_TITLE, errors=errors)
 
 
 def _node_cap_refused(exc: ConditionNodeBoundError) -> RuleCapRefused:
-    """422 `rule_ir_invalid` for a document over the condition-node bound, as `22`'s
-    `conditionNodes` example answers it: one `errors[]` item (`field`, `rule`, `message`) for each
-    issue and a `detail` counting them, where `_ir_invalid` names `issues[]`."""
-    n = len(exc.issues)
-    errors = [{"field": i.path, "rule": i.code, "message": i.message} for i in exc.issues]
-    detail = f"{n} error{'s' if n != 1 else ''} in the rule IR."
-    return RuleCapRefused(exc.cap, 422, "rule_ir_invalid", detail, errors=errors)
+    """The counted refusal of a document over the condition-node bound: the one shape `_ir_invalid`
+    builds (22's `conditionNodes` example, registered title included), with `cap` for the routes
+    to count. Nothing here shapes a body of its own."""
+    refused = _ir_invalid(exc.issues)
+    return RuleCapRefused(exc.cap, refused.status, refused.code, refused.message, **refused.extra)
 
 
 @dataclass
@@ -423,6 +454,7 @@ class RulesManager:
         on_metric: Metric = _noop_metric,
         lifecycle: RuleLifecycle | None = None,
         now_us: Callable[[], int] = _now_us,
+        max_rules_per_user: int = MAX_STORED_RULES_PER_USER,
     ) -> None:
         self._s = store
         self._now_us = now_us
@@ -438,6 +470,10 @@ class RulesManager:
         self._tick_disarms: dict[str, asyncio.Task[None]] = {}
         #: Forced disarms run one at a time, so their re-read of the row and chart holds (#3232).
         self._disarming = asyncio.Lock()
+        #: G-16 (#4834): the most rules a user holds that are not deleted, and the one lock a create
+        #: holds from its count to its write, so concurrent creates never pass the count together.
+        self._max_rules = max_rules_per_user
+        self._creating = asyncio.Lock()
 
     def set_hooks(self, *, audit: Audit | None = None, broadcast: Broadcast | None = None) -> None:
         if audit is not None:
@@ -490,7 +526,7 @@ class RulesManager:
     async def _write_refusal(self, action: str, record: dict[str, Any]) -> None:
         """A refusal's own record (C-2.9), written ahead of its answer and waited for at most
         `REFUSAL_AUDIT_TIMEOUT_S`, as `set_mode`'s refusal is: a record not written is
-        `RuleRefusalUnrecorded`, before anything is stored. Every scope refusal and every import
+        `RuleRefusalUnrecorded`, before anything is stored. Every scope, system-rule and import
         refusal writes through it."""
         try:
             async with asyncio.timeout(REFUSAL_AUDIT_TIMEOUT_S):
@@ -538,10 +574,11 @@ class RulesManager:
         )
 
     async def _guard_system(self, row: RuleRow, actor: Actor, op: str) -> None:
-        """Protected built-ins can never be disabled, edited or deleted by any API path."""
+        """Protected built-ins can never be disabled, edited or deleted by any API path. The
+        refusal's record goes through `_write_refusal`, as every refusal record does."""
         if row.name not in PROTECTED_SYSTEM_RULES:
             return
-        await self._audit(
+        await self._write_refusal(
             "rule.system_rule_refused",
             {"rule_id": row.id, "name": row.name, "op": op, "actor": actor.user_id},
         )
@@ -732,7 +769,7 @@ class RulesManager:
         """The bounds compile and validate apply (`check_bounds`), first on every save and for any
         caller about to walk the document itself: the same 422 `rule_ir_invalid` as `_validated`.
         A document over the condition-node bound is a `RuleCapRefused`, which the routes count; it
-        answers as `22`'s example shows (`errors[]`), every other refusal naming its `issues[]`."""
+        answers in the shape every other refusal here does (`_ir_invalid`)."""
         try:
             check_bounds(doc, "rule")
         except ConditionNodeBoundError as exc:
@@ -789,17 +826,36 @@ class RulesManager:
 
     # ----- CRUD --------------------------------------------------------------------
     async def create(self, ir: dict[str, Any], actor: Actor, notes: str = "") -> dict[str, Any]:
+        """A new rule at version 1, disabled. Past the authorisation checks, a user who holds
+        `max_rules_per_user` rules that are not deleted, the Owner too, is refused `409 conflict`
+        (`limit_reached`, the cap in the message, never a count): the count and the write it admits
+        run under one lock, so two creates at the cap never both pass (G-16, #4834). An import
+        lands here too, and is held to the same cap."""
+        check_text_bound("note", notes)
         rid = str(uuid.uuid4())
         rule, h = self._validated({**ir, "mode": "disabled", "enabled": False}, rid)
         await self._require_grants(rule, actor, "create", rid)
         await self._require_owner_for_raised_limits(rule, actor, "create", rid)
         if is_reserved_name(rule.name):
             raise RuleError(403, "system_rule_reserved", "The 'sys.' name prefix is reserved.")
-        await self._check_name_free(rule.name, actor)
-        row = RuleRow(rid, rule.name, actor.user_id, scope=rule.scope.level)
-        v = self._new_version(row, rule, h, notes, actor)
-        row.active_version_id = v.id
-        await self._s.put(row)
+        async with self._creating:
+            rows = await self._s.all()
+            held = sum(1 for r in rows if r.owner == actor.user_id and not r.deleted)
+            if held >= self._max_rules:
+                full = stored_rules_message(self._max_rules)
+                raise RuleCapRefused(
+                    "stored_rules",
+                    409,
+                    "conflict",
+                    full,
+                    title=CONFLICT_TITLE,
+                    errors=[{"rule": "limit_reached", "message": full}],
+                )
+            await self._check_name_free(rule.name, actor, rows=rows)
+            row = RuleRow(rid, rule.name, actor.user_id, scope=rule.scope.level)
+            v = self._new_version(row, rule, h, notes, actor)
+            row.active_version_id = v.id
+            await self._s.put(row)
         created = {"rule_id": rid, "version": 1, "ir_hash": h, "actor": actor.user_id}
         await self._audit("rule.created", created | _raised_limits(rule))
         return {**await self._present(row), "version": self._version_view(v)}
@@ -847,6 +903,7 @@ class RulesManager:
         actor: Actor,
         notes: str = "",
     ) -> dict[str, Any]:
+        check_text_bound("note", notes)
         row = await self._visible_row(rule_id, actor, "update")
         await self._guard_system(row, actor, "update")
         if expected_version != row.latest_version:
@@ -885,19 +942,22 @@ class RulesManager:
     async def _check_rename(self, row: RuleRow, name: str, actor: Actor) -> None:
         """No rename into the reserved `sys.` namespace, and no rename of a `sys.*` rule."""
         if is_reserved_name(name) or is_reserved_name(row.name):
-            await self._audit(
+            await self._write_refusal(
                 "rule.system_rule_refused",
                 {"rule_id": row.id, "name": row.name, "op": "rename", "actor": actor.user_id},
             )
             raise RuleError(403, "system_rule_reserved", "The 'sys.' name prefix is reserved.")
         await self._check_name_free(name, actor, row.id)
 
-    async def _check_name_free(self, name: str, actor: Actor, rule_id: str = "") -> None:
+    async def _check_name_free(
+        self, name: str, actor: Actor, rule_id: str = "", rows: list[RuleRow] | None = None
+    ) -> None:
         """409 `name_taken` when another live rule holding `name` is the actor's own or one
         `rule_visible` lets them read (G-14): a rule they cannot read is never a conflict, so no
         answer names, counts or hints at it. Names are unique per owner in the store (21
-        `ux_rules_name`), so each of the actor's own rules counts, readable or not."""
-        for r in await self._s.all():
+        `ux_rules_name`), so each of the actor's own rules counts, readable or not. `rows`: the
+        store's rows when the caller has just read them."""
+        for r in await self._s.all() if rows is None else rows:
             clash = r.name == name and r.id != rule_id and not r.deleted
             if clash and (r.owner == actor.user_id or self._visible(r, actor)):
                 raise RuleError(409, "name_taken", f"A rule named '{name}' already exists.")
@@ -939,6 +999,7 @@ class RulesManager:
     async def set_active_version(
         self, rule_id: str, version_id: str, note: str, actor: Actor
     ) -> dict[str, Any]:
+        check_text_bound("note", note)
         row = await self._visible_row(rule_id, actor, "set_active_version")
         await self._guard_system(row, actor, "set_active_version")
         v = next((x for x in row.versions if x.id == version_id), None)
@@ -1090,9 +1151,11 @@ class RulesManager:
         visibility check, so another user's key never returns this user's result.
         `record` adds fields to the transition's audit record only, never to the broadcast:
         a lifecycle disarm's `scope` and `executed_as` (E27-S04, #898 rulings 1 and 2), which
-        replace the IR's `scope` level there (kept as `scope_level`)."""
+        replace the IR's `scope` level there (kept as `scope_level`). An `override_reason` over its
+        bound is refused before anything else is read (`check_text_bound`)."""
         if record is not None and not set(record) <= _RECORD_EXTRAS:
             raise ValueError("a transition record adds only scope, executed_as and actor_role")
+        check_text_bound("reason", override_reason)
         if not idempotency_key:
             raise RuleError(
                 400,
@@ -1129,14 +1192,14 @@ class RulesManager:
         `REFUSAL_AUDIT_TIMEOUT_S`, so a stalled writer cannot hold the request. A refusal that is
         itself `503 audit_unavailable` stands when its record cannot be written either (the
         writer is what is down): the loss is logged, not answered. Any other refusal's lost record
-        propagates."""
+        is `RuleRefusalUnrecorded`, which the route answers as it answers the scope refusals'."""
         record = {"rule_id": rule_id, "from": prev, "to": target, "code": refusal.code}
         try:
             async with asyncio.timeout(REFUSAL_AUDIT_TIMEOUT_S):
                 await self._audit("rule.mode_refused", record | {"actor": actor.user_id})
         except Exception as lost:  # the hook names no error type: `rules` may not import `audit`
             if not isinstance(refusal, RuleAuditUnavailable):
-                raise
+                raise RuleRefusalUnrecorded from lost
             _log().error(
                 "rules.mode_refusal_unrecorded", rule_id=rule_id, error=type(lost).__name__
             )

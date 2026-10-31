@@ -3917,6 +3917,20 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E35",
         max_series=2,
     ),
+    # E35 authoring limits (#4834): `api/rules_refusals.py`, a refused rule write whose record the
+    # acting user's hourly budget holds back; no label, so never a user, a rule or an account.
+    _s(
+        "rule_authoring_refusals_suppressed_total",
+        "counter",
+        "refusals",
+        (),
+        "Rule write refusals counted but not recorded past the acting user's hourly record budget; "
+        "the count rides the next record or a summary record.",
+        "ticket on sustained growth",
+        _L,
+        "E35",
+        max_series=1,
+    ),
     # E35-S03 (#863; 24 Sec.11.5, Sec.11.9): the action executor's series. Closed label sets: the
     # 25 action types, the 6 ActionResult outcomes and the 16 blocked_by values; never an account,
     # a rule, a user or a value.

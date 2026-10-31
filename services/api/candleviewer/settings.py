@@ -172,6 +172,9 @@ TRADEGROUPS_PREVIEW_RATE_PER_USER_PER_SECOND: Final = 20
 #: E35 (#4834, G-2): `CV_RULES_CHECK_RATE_PER_USER_PER_SECOND`, the rate of the per-user token
 #: bucket `validateRule` and `compileRule` share; its burst is twice the rate (22 `validateRule`).
 RULES_CHECK_RATE_PER_USER_PER_SECOND: Final = 10
+#: E35 (#4834, G-2): `CV_RULES_REFUSAL_BUDGET_PER_HOUR`, the refusal records of the rule routes a
+#: user's refused writes leave in a rolling hour, per action (22 "Rule authoring refusal records").
+RULES_REFUSAL_BUDGET_PER_HOUR: Final = 120
 
 
 class Environment(StrEnum):
@@ -624,6 +627,10 @@ class Settings(BaseSettings):
     # #3085: the view-as refusal records' own hourly cap per viewer, the Owner's too (22 "View-as
     # session"); never a slot of the budget above, whose other settings they share.
     view_as_refusal_budget_per_hour: int = Field(default=120, ge=1)
+    # E35 (#4834, G-2): the rule routes' refusal records (`rules.scope_denied`, `rules.arm`), each
+    # action's own hourly cap per acting user, every role alike (22 "Rule authoring refusal
+    # records"); never a slot of the budgets above, whose other settings they share.
+    rules_refusal_budget_per_hour: int = Field(default=RULES_REFUSAL_BUDGET_PER_HOUR, ge=1)
     # E42-T02 verify (contract #2392/#2446): the most ids one `POST /admin/audit/verify` spans.
     audit_verify_max_span: int = Field(default=1_000_000, ge=1)
     # Runs per user in a rolling hour (only runs that start count), and each run's time bounds:

@@ -25,6 +25,7 @@ from candleviewer.rules.compiler import to_graph_model
 from candleviewer.rules.ir import Rule
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RulesManager
 from candleviewer.rules.vocabulary import default_registry
+from tests.rules._check_limiter import unthrottled
 
 FIX = Path(__file__).parents[1] / "fixtures/rule_ir"
 RULE_ID = "00000000-0000-4000-8000-000000000001"  # form_simple_0's own rule_id
@@ -82,7 +83,9 @@ class _Resolver:
 
 def _compile(body: dict[str, Any], where: str) -> Response:
     app = FastAPI()
-    app.include_router(make_rules_router(lambda: REG, principal_resolver=_Resolver()))
+    app.include_router(
+        make_rules_router(lambda: REG, principal_resolver=_Resolver(), check_limiter=unthrottled())
+    )
     url = f"/rules/{RULE_ID}/compile"
     return TestClient(app).post(url, content=_raw(body, _CASES[where][0]), headers=_JSON)
 

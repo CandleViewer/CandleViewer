@@ -20,6 +20,7 @@ from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.limits import LIMIT_CAPS
 from candleviewer.rules.validator import estimate_evaluations_per_minute, validate_rule
 from candleviewer.rules.vocabulary import default_registry
+from tests.rules._check_limiter import unthrottled
 
 FIX = Path(__file__).parents[1] / "fixtures/rule_ir"
 RULE_ID = "00000000-0000-4000-8000-000000000001"
@@ -208,7 +209,11 @@ def _client(p: _P | None = None, empty: bool = False) -> TestClient:
     app = FastAPI()
     reg = None if empty else REG
     principal = _P("rules:read") if p is None else p
-    app.include_router(make_rules_router(lambda: reg, principal_resolver=_R(principal)))
+    app.include_router(
+        make_rules_router(
+            lambda: reg, principal_resolver=_R(principal), check_limiter=unthrottled()
+        )
+    )
     return TestClient(app)
 
 
@@ -287,6 +292,7 @@ def test_compile_round_trip_match_and_divergence_reported_never_reconciled() -> 
         make_rules_router(
             lambda: REG,
             principal_resolver=_R(_P("rules:read")),
+            check_limiter=unthrottled(),
             on_divergence=lambda e, n: seen.append((e, n)),
         )
     )

@@ -128,7 +128,7 @@ def make_rules_router(
     on_divergence: Callable[[str, int], Any] = lambda editor, n_diffs: None,
     scope_resolver: ScopeResolver | None = None,
     scope_refresh: Callable[[UUID], Awaitable[None]] | None = None,
-    check_limiter: PreviewLimiter | None = None,
+    check_limiter: PreviewLimiter,
     on_rate_limited: _Counter = lambda route: None,
     on_cap_refused: _Counter = lambda cap: None,
 ) -> APIRouter:
@@ -152,9 +152,8 @@ def make_rules_router(
     def _throttled(principal: _Principal, route: str) -> JSONResponse | None:
         """The check's token from the caller's bucket, else the `429`: one bucket per user, shared
         by validate and compile and across the user's sessions, and one for every principal with
-        no user id. Taken after `_authorize` and before the body is read."""
-        if check_limiter is None:
-            return None
+        no user id. Taken after `_authorize` and before the body is read. A router is never built
+        without its limiter (a required argument)."""
         caller = _caller(principal)
         wait = check_limiter.try_take(_NO_USER if caller is None else caller)
         if wait is None:

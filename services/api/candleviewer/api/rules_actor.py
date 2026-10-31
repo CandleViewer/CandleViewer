@@ -18,6 +18,7 @@ from typing import Any
 
 from fastapi import Request
 
+from candleviewer.api.rules_refusals import RuleRefusalBudgets
 from candleviewer.api.step_up import (
     AUDIT_UNAVAILABLE_TITLE,
     SESSION_READ_ONLY_DETAIL,
@@ -64,6 +65,10 @@ _DENIED = frozenset(
     {"rule.mode_refused", "rule.system_rule_refused", "rule.system_rule_tampered",
      "rule.import_refused", "rule.scope_refused"}
 )  # fmt: skip
+#: The refusals a request causes, held to the acting user's refusal budget when the app passes one
+#: (22 "Rule authoring refusal records", E35 #4834). `rule.system_rule_tampered`, the boot check's
+#: own record, is never budgeted.
+_BUDGETED = _DENIED - {"rule.system_rule_tampered"}
 
 
 def _before(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -108,23 +113,31 @@ def _unanswerable(exc: SessionReadOnly | SessionRevoked) -> RuleError:
     return RuleError(401, "unauthorized", "no verified session")
 
 
-def make_rules_audit(emitter: Any) -> Callable[[str, dict[str, Any]], Any]:
-    """Write-ahead audit callback (C-2.9) for `RulesManager`: ir_hash, environment, scope."""
+def make_rules_audit(
+    emitter: Any, *, refusals: RuleRefusalBudgets | None = None
+) -> Callable[[str, dict[str, Any]], Any]:
+    """Write-ahead audit callback (C-2.9) for `RulesManager`: ir_hash, environment, scope. With
+    `refusals`, a refusal a request caused (`_BUDGETED`) that names its actor is held to the
+    acting user's budget of its action; every other record is written as it comes."""
 
     async def audit(action: str, payload: dict[str, Any]) -> None:
         named = payload.get("actor")
         actor = None if named is None else acting_user(str(named))  # the viewer while viewing
-        await emitter.emit(
-            _ACTIONS.get(action, "rules.version_create"),
-            actor_label=str(actor or "system"),
-            actor_user_id=actor,
-            outcome=AuditOutcome.DENIED if action in _DENIED else AuditOutcome.SUCCESS,
-            object_kind="rule",
-            object_id=str(payload.get("rule_id", "")),
-            before_state=_before(payload),
-            after_state={k: v for k, v in payload.items() if k != "actor"} | {"event": action},
-            request_id=current_request_uuid(),
-        )
+        verb = _ACTIONS.get(action, "rules.version_create")
+        fields: dict[str, Any] = {
+            "actor_label": str(actor or "system"),
+            "actor_user_id": actor,
+            "outcome": AuditOutcome.DENIED if action in _DENIED else AuditOutcome.SUCCESS,
+            "object_kind": "rule",
+            "object_id": str(payload.get("rule_id", "")),
+            "before_state": _before(payload),
+            "after_state": {k: v for k, v in payload.items() if k != "actor"} | {"event": action},
+            "request_id": current_request_uuid(),
+        }
+        if refusals is not None and actor is not None and action in _BUDGETED:
+            await refusals.write(verb, actor, fields)
+            return
+        await emitter.emit(verb, **fields)
 
     return audit
 

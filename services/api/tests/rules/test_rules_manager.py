@@ -476,11 +476,13 @@ async def test_refusal_whose_record_never_arrives_raises_within_the_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Only a `503 audit_unavailable` stands without its record (route test:
-    `test_step_up_route_hardening`); any other refusal waits at most the bound for it."""
+    `test_step_up_route_hardening`); any other refusal waits at most the bound for it, and is then
+    `RuleRefusalUnrecorded` (#4834), which the route answers `503`, as a scope refusal's is."""
     m, _, _ = _mgr()
     rid = (await m.create(_ir(), OWNER))["id"]
     await m.set_mode(rid, "simulate", OWNER, "k-sim")  # no simulation yet: arming is refused 422
     m.set_hooks(audit=_stalled)
     monkeypatch.setattr(rules_manager, "REFUSAL_AUDIT_TIMEOUT_S", 0.0)
-    with pytest.raises(TimeoutError):
+    with pytest.raises(rules_manager.RuleRefusalUnrecorded) as unrecorded:
         await m.set_mode(rid, "armed", OWNER, "k-arm")
+    assert isinstance(unrecorded.value.__cause__, TimeoutError)
