@@ -570,6 +570,7 @@ from candleviewer.ws_wiring import (
     default_snapshot_router,
     heatmap_topic,
     ingestion_streams,
+    liquidations_topic,
     liquidity_engine,
     loop_call_later,
     oms_topics,
@@ -1858,6 +1859,9 @@ def create_app(
         floor=functools.partial(_catalogue_min_size_floor, ctx),
     )
     snapshot_adapters["trades"] = ws_trades
+    # E24-T03 (#667): the order-flow module's `liquidations` topics over the liquidation stream.
+    ws_liquidations = liquidations_topic(ctx, ws_sequencing)
+    snapshot_adapters["liquidations"] = ws_liquidations
     # E21-T01 (#604): the book module's `book` topics, snapped from the window each holds over the
     # live book and published in the publisher's own window per depth; the runtime's, as above.
     ws_book = book_topic(ctx, ws_sequencing)
@@ -1926,7 +1930,15 @@ def create_app(
         ws_upstream,
         resolved,
         machines=machine_states,
-        feeds=(ws_ticker, ws_revisions, ws_trades, ws_book, ws_heatmap, ws_liquidity),
+        feeds=(
+            ws_ticker,
+            ws_revisions,
+            ws_trades,
+            ws_liquidations,
+            ws_book,
+            ws_heatmap,
+            ws_liquidity,
+        ),
     )
     # E17-T03 (#412): every connection's outbound budget, from the `CV_WS_*` budget settings
     # (the one outbound path since #2409 removed its flag).
