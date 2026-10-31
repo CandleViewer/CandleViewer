@@ -307,6 +307,15 @@ class BybitRestClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    def headroom(
+        self, endpoint_class: EndpointClass = EndpointClass.MARKET_DATA
+    ) -> tuple[float, float]:
+        """`(tokens, wait_s)` of this client's next `get_public` on `endpoint_class` (its UID,
+        the `poll` lane), read from the governor without taking a token (E08-T10, #5111: the
+        catalogue refresh route refuses `429 exchange_rate_limited` before it schedules a fetch
+        the budget cannot pay; C-12.7)."""
+        return self._governor.headroom(self._uid, endpoint_class, lane="poll")
+
     async def __aenter__(self) -> BybitRestClient:
         return self
 
