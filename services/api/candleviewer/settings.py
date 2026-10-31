@@ -27,12 +27,21 @@ from collections.abc import Mapping
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import Annotated, Any, Final, Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    Field,
+    SecretStr,
+    StringConstraints,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: A linear-perpetual symbol, as `domain.primitives.Symbol` (M1 may not import `domain`).
+_PinnedSymbol = Annotated[str, StringConstraints(pattern=r"^[A-Z0-9]{4,20}$")]
 _QUESTDB_DEV_PASSWORD = "quest"  # noqa: S105 - the QuestDB OSS default, refused on live
 _REDACT_NAME_RE = re.compile(r"(key|secret|token|password|dsn)", re.IGNORECASE)
 #: QuestDB PGWire default port, for a `questdb_pg` `host[:port]` that omits the port.
@@ -751,6 +760,22 @@ class Settings(BaseSettings):
     # E21-T01 (BQ-1, C-4.13: off by default): `book.{symbol}.500` is offered and moves the symbol's
     # tier to 500; off, such a `sub` is `invalid_topic_format`. Never gates a safety invariant.
     heatmap_depth_500: bool = False
+    # E21-T04 (#710, 24 §2.11): the liquidity tracker's keys (`liquidity.*`; `*_pct` are fractions,
+    # `min_size` unset = 10 x the instrument's qty step). `liquidity_pinned_symbols` keep their
+    # heatmap native column without a viewer and are tracked: the configured stand-in for the rule
+    # engine's tracked symbols. Empty by default (no detection without a viewer's symbol pinned);
+    # more than `liquidity_pin_max` is a config error at load, never a truncation.
+    liquidity_bands_ticks: tuple[int, ...] = (5, 10, 25, 50, 100)
+    liquidity_reload_consume_pct: Decimal = Field(
+        default=Decimal("0.5"), gt=0, le=1, allow_inf_nan=False
+    )
+    liquidity_reload_replenish_pct: Decimal = Field(
+        default=Decimal("0.9"), gt=0, le=1, allow_inf_nan=False
+    )
+    liquidity_reload_window_ms: int = Field(default=5_000, gt=0, le=60_000)
+    liquidity_min_size: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
+    liquidity_pinned_symbols: tuple[_PinnedSymbol, ...] = ()
+    liquidity_pin_max: int = Field(default=8, ge=1, le=32)
     ws_shutdown_grace_ms: int = Field(default=5000, ge=0, le=60_000)
     ws_shutdown_expected_downtime_ms: int = Field(default=20_000, ge=0, le=600_000)
     # #2565: the api container's SIGTERM -> SIGKILL budget (`CV_API_STOP_BUDGET_S`; the compose
@@ -928,6 +953,23 @@ class Settings(BaseSettings):
         it is absolute and holds no `..`. The recorder WAL anchors in it (SR-097 pattern) and so
         does the lost-jobs count (E42-T05), whatever form `CV_PARQUET_ROOT` is given in."""
         return Path(self.parquet_root).expanduser().resolve().parent
+
+    @model_validator(mode="after")
+    def _check_liquidity(self) -> Settings:
+        """E21-T04: the bands ascend and are positive; the pins are distinct and within the cap
+        (over the cap is refused, never truncated)."""
+        bands = self.liquidity_bands_ticks
+        if not bands or list(bands) != sorted(set(bands)) or bands[0] <= 0:
+            raise ValueError("CV_LIQUIDITY_BANDS_TICKS must be distinct, positive and ascending")
+        pins = self.liquidity_pinned_symbols
+        if len(set(pins)) != len(pins):
+            raise ValueError("CV_LIQUIDITY_PINNED_SYMBOLS must not repeat a symbol")
+        if len(pins) > self.liquidity_pin_max:
+            raise ValueError(
+                f"CV_LIQUIDITY_PINNED_SYMBOLS holds {len(pins)} symbols; "
+                f"CV_LIQUIDITY_PIN_MAX is {self.liquidity_pin_max}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _refuse_shared_volume_outside_testnet(self) -> Settings:

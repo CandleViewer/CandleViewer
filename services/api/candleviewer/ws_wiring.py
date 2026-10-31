@@ -73,6 +73,8 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.ws_topics import OmsTopics
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.heatmap import HeatmapStore, HeatmapTopic
+from candleviewer.orderflow.liquidity_engine import LiquidityEngine
+from candleviewer.orderflow.liquidity_models import LiquidityConfig
 from candleviewer.recorder.ws_topic import RecorderTopic
 from candleviewer.rules.manager import Actor, RuleRow, rule_visible
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
@@ -382,7 +384,8 @@ def heatmap_part(
 class HeatmapDepthDemand:
     """E21-T02: a depth-500 heatmap spec's demand on the symbol's deep tier, through the live
     `BookStream` (resolved per call; without one, nothing is demanded and the spec stays
-    pending), as a `book.X.500` reference demands it (`IngestionUpstreamSink`)."""
+    pending), as a `book.X.500` reference demands it (`IngestionUpstreamSink`). E21-T04: a pin's
+    demand on the symbol's book at its depth, so a pinned symbol's book runs with no viewer."""
 
     def __init__(self, ctx: AppContext) -> None:
         self._ctx = ctx
@@ -425,6 +428,29 @@ def heatmap_topic(
         queue_frames=queue_frames,
         store=store,
         demand=HeatmapDepthDemand(ctx),
+        max_pinned=ctx.settings.liquidity_pin_max,  # E21-T04: the liquidity tracker's pins
+    )
+
+
+def liquidity_engine(ctx: AppContext, heatmap: HeatmapTopic) -> LiquidityEngine:
+    """E21-T04 (#710): the liquidity tracker of each `liquidity_pinned_symbols` symbol, sampled by
+    `heatmap`'s native deadlines (one sampler) with the `liquidity_*` keys (24 §2.11); events on
+    `{env}.md.{symbol}.liquidity`. A `WsRuntime` feed: it pins at start, un-pins at stop."""
+    s = ctx.settings
+    config = LiquidityConfig(
+        bands_ticks=s.liquidity_bands_ticks,
+        reload_consume_pct=s.liquidity_reload_consume_pct,
+        reload_replenish_pct=s.liquidity_reload_replenish_pct,
+        reload_window_ms=s.liquidity_reload_window_ms,
+        min_size=s.liquidity_min_size,
+    )
+    return LiquidityEngine(
+        ctx.bus.bus,
+        s.environment.value,
+        pins=heatmap,
+        steps=book_snapshot_source(ctx).steps,
+        symbols=s.liquidity_pinned_symbols,
+        config=config,
     )
 
 

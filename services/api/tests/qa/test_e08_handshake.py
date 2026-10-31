@@ -125,6 +125,11 @@ E08_BUS_TOPICS: Final[Mapping[tuple[str, str], str]] = {
     ("health", "book_desync"): "`{env}.health.{symbol}.book_desync`",
 }
 E08_DOMAINS: Final = frozenset(domain for domain, _ in E08_BUS_TOPICS)
+# (domain, detail) of a derived market-data topic another module publishes (24 §2.9's table, the
+# "derived" rows) -> the one module that builds it. It publishes it; it does not consume E08's.
+DERIVED_MD_TOPICS: Final[Mapping[tuple[str, str], str]] = {
+    ("md", "liquidity"): "orderflow/liquidity_engine.py",  # E21-T04 (#710), 24 §2.11
+}
 E08_MODULES: Final = ("ingestion/", "book/", "orderbook_wiring.py")
 # The WS family -> the ingestion stream that holds its upstream demand (ws_wiring, E17-S02).
 E08_FED_FAMILIES: Final = {
@@ -454,7 +459,9 @@ def test_c_e08_publishes_exactly_the_bus_topics_24_section_2_9_lists_as_shipped(
 
 
 def test_c_every_market_data_topic_another_module_uses_is_one_e08_publishes() -> None:
-    """E12's builders subscribe to the tape here; a renamed detail would leave them silent."""
+    """E12's builders subscribe to the tape here; a renamed detail would leave them silent. A
+    derived topic its owning module builds (`DERIVED_MD_TOPICS`) is that module's own, not E08's,
+    and only there; 24 §2.9 lists it."""
     foreign = {
         (_relative(path), domain, detail)
         for path in PACKAGE.rglob("*.py")
@@ -462,10 +469,18 @@ def test_c_every_market_data_topic_another_module_uses_is_one_e08_publishes() ->
         for domain, detail, _ in _topics_built(path)
         if domain in {"md", "instruments"}
     }
-    unknown = sorted(f"{path}: {d}.{x}" for path, d, x in foreign if (d, x) not in E08_BUS_TOPICS)
+    unknown = sorted(
+        f"{path}: {d}.{x}"
+        for path, d, x in foreign
+        if (d, x) not in E08_BUS_TOPICS and DERIVED_MD_TOPICS.get((d, str(x))) != path
+    )
+    table = SCHEMAS_DOC.read_text(encoding="utf-8")
 
     assert ("bars/builder_set.py", "md", "trade") in foreign
     assert not unknown, f"market-data topics no E08 module publishes: {unknown}"
+    for (domain, detail), owner in DERIVED_MD_TOPICS.items():
+        assert (owner, domain, detail) in foreign, owner
+        assert f"`{{env}}.{domain}.{{symbol}}.{detail}`" in table, detail
 
 
 def test_c_the_ws_families_e08_feeds_lease_its_ingestion_streams() -> None:

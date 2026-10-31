@@ -43,6 +43,17 @@ published state (`phase`, `depth`, `book`).
   only when every column is complete (23 §14.5) and its scales are known and fit. The ring is
   columnar (`_Ring`: one float64 buffer, a numpy vector a field, 15.6 MiB a spec at 2 000 x 512);
   a column's kind-6 part or §14.5 form is built when a reader asks, a column per snapshot step.
+- **Pins and the native sampler (E21-T04, #710).** `pin_native(symbol, depth)` keeps a symbol's
+  native state (one 100 ms column, no spec, no ring) without any lease, for at most `max_pinned`
+  symbols (`heatmap_pinned_symbols`), and demands the symbol's book at that depth itself
+  (`PIN_CONSUMER`, the same `DepthDemand`), so the book runs with no viewer; a refused demand (a
+  symbol not listed yet) leaves the pin inert and is asked again every `PIN_RETRY_MS`.
+  `unpin_native` (and `stop`) releases that demand and lets `_free` drop the state again once no
+  lease holds it. At every native deadline of a pinned symbol the `sampler` gets the levels last
+  read at or before it (instantaneous, never an averaged column): the levels when the book is
+  LIVE and the deadline is on time, else `None` (a resync, the hold of `RESYNC_ESTIMATE_MS`, or a
+  missed deadline). It is the one book sampler (no second walk), and it runs only while the
+  engine runs, that is with the public WS wired.
 - **Storage.** Each native column with a populated row is queued for the injected store, bounded
   by cells (`STORE_CELLS_MAX`, oldest dropped and logged); a size that is negative or not finite
   is never written (24 §6.5).
@@ -432,8 +443,27 @@ BodyFactory = Callable[..., Any]
 Steps = Callable[[str], tuple[Decimal, Decimal] | None]
 #: The rules side's read of live liquidity: native columns that are not estimated, only.
 Liquidity = Callable[[str, HeatmapColumn], None]
+#: A pinned symbol's native deadline (epoch ms) and its instantaneous levels, or None (module doc).
+Sampler = Callable[[str, int, "NativeLevels | None"], None]
+#: Symbols `pin_native` may hold at once (`liquidity_pin_max` may lower it, never raise it).
+MAX_PINNED: Final = 32
+
+
+class NativeLevels(Protocol):
+    """The top levels per side as last read (`price_ticks -> size`, best first; floats, C3)."""
+
+    @property
+    def bids(self) -> Mapping[int, float]: ...
+    @property
+    def asks(self) -> Mapping[int, float]: ...
+
+
 #: The consumer name a deep spec's tier demand is held under.
 DEEP_CONSUMER: Final = "ws:heatmap:500"
+#: The consumer name a pin's book demand is held under (one per pinned symbol, at its depth).
+PIN_CONSUMER: Final = "heatmap:pin"
+#: How often a pin whose book demand was refused (a symbol not listed yet) asks again.
+PIN_RETRY_MS: Final = 10_000
 
 
 @dataclass(slots=True)
@@ -845,6 +875,7 @@ class HeatmapTopic:
         clock_ms: Callable[[], float] = lambda: time.time() * 1000.0,
         max_specs_per_symbol: int = HEATMAP_MAX_SPECS_PER_SYMBOL,
         max_specs_per_server: int = HEATMAP_MAX_SPECS_PER_SERVER,
+        max_pinned: int = MAX_PINNED,
         seed_turn_s: float = SEED_TURN_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
@@ -861,6 +892,11 @@ class HeatmapTopic:
         self._clock, self._sleep = clock_ms, sleep
         self._max_symbol, self._max_server = max_specs_per_symbol, max_specs_per_server
         self._symbols: dict[str, _SymbolState] = {}
+        self._pinned: dict[str, int] = {}  # symbol -> the native depth its pin holds
+        self._pin_owed: set[str] = set()  # pins whose book demand was refused (retried)
+        self._pin_retry_at = 0.0
+        self._max_pinned = min(max_pinned, MAX_PINNED)
+        self._sampler: Sampler | None = None
         self._dirty: set[str] = set()
         self._consumers = 0
         self._stored: deque[_Cells] = deque()
@@ -921,14 +957,18 @@ class HeatmapTopic:
         if total >= self._max_server:
             raise HeatmapSpecCapError(f"At most {self._max_server} heatmap specs are served.")
 
+    def _symbol(self, symbol: str, depth: int, now: float) -> _SymbolState:
+        st = self._symbols.get(symbol)
+        if st is None:
+            native = _spec_state(HeatmapSpec(symbol, depth, 1, COLUMN_MS), now, ring=0)
+            st = _SymbolState(symbol, int(now) // COLUMN_MS * COLUMN_MS + COLUMN_MS, native)
+            self._symbols[symbol] = st
+            self._dirty.add(symbol)
+        return st
+
     def _take(self, spec: HeatmapSpec) -> _SpecState:
         now = self._clock()
-        st = self._symbols.get(spec.symbol)
-        if st is None:
-            native = _spec_state(HeatmapSpec(spec.symbol, spec.depth, 1, COLUMN_MS), now, ring=0)
-            st = _SymbolState(spec.symbol, int(now) // COLUMN_MS * COLUMN_MS + COLUMN_MS, native)
-            self._symbols[spec.symbol] = st
-            self._dirty.add(spec.symbol)
+        st = self._symbol(spec.symbol, spec.depth, now)
         state = st.specs.get(spec)
         if state is None:
             self._advance(st, now)  # close what is due first, as it was
@@ -936,7 +976,7 @@ class HeatmapTopic:
             deep = self._deep(st)
             state = st.specs[spec] = _spec_state(spec, now)
             if spec.depth >= DEEP_DEPTH and not deep:
-                self._call_demand("acquire", spec.symbol)
+                self._call_demand("acquire", spec.symbol, DEEP_CONSUMER, DEEP_DEPTH)
             self._seed(st, state)
             self._native_depth(st)
             self._observe(st, now)
@@ -997,8 +1037,8 @@ class HeatmapTopic:
             del st.specs[lease.spec]
             self._native_depth(st)
             if lease.spec.depth >= DEEP_DEPTH and not self._deep(st):
-                self._call_demand("release", lease.spec.symbol)
-        if not st.specs:
+                self._call_demand("release", lease.spec.symbol, DEEP_CONSUMER)
+        if not st.specs and lease.spec.symbol not in self._pinned:
             del self._symbols[lease.spec.symbol]
             self._dirty.discard(lease.spec.symbol)
 
@@ -1006,30 +1046,118 @@ class HeatmapTopic:
     def _deep(st: _SymbolState) -> bool:
         return any(s.depth >= DEEP_DEPTH for s in st.specs)
 
-    def _call_demand(self, what: str, symbol: str) -> None:
-        """A deep spec holds the symbol's deep tier (as `book.X.500` does); a refusal (an
-        unlisted symbol) leaves its subscriptions pending, never the loop faulted."""
+    def _call_demand(self, what: str, symbol: str, consumer: str, depth: int = 0) -> bool:
+        """A deep spec holds the symbol's deep tier (as `book.X.500` does), a pin the book at
+        its depth (`PIN_CONSUMER`); a refusal (an unlisted symbol) leaves the spec's
+        subscriptions pending or the pin inert, never the loop faulted. Whether it was taken."""
         if self._demand is None:
-            return
+            return True
         try:
             if what == "acquire":
-                self._demand.acquire_depth(DEEP_CONSUMER, symbol, DEEP_DEPTH)
+                self._demand.acquire_depth(consumer, symbol, depth)
             else:
-                self._demand.release(DEEP_CONSUMER, symbol)
+                self._demand.release(consumer, symbol)
         except Exception as exc:
             _log().warning("heatmap_depth_demand_failed", symbol=symbol, op=what,
-                           error=type(exc).__name__)  # fmt: skip
+                           consumer=consumer, error=type(exc).__name__)  # fmt: skip
+            return False
+        return True
 
     def _count(self, delta: int) -> None:
         self._consumers = max(0, self._consumers + delta)
         hm.heatmap_subscriptions_active.set(self._consumers)
 
-    @staticmethod
-    def _native_depth(st: _SymbolState) -> None:
-        """The stored column holds the deepest depth any spec of the symbol reads."""
-        depth = max((s.depth for s in st.specs), default=st.native.spec.depth)
+    # -- pins (E21-T04: the liquidity tracker's symbols) -----------------------------------------
+
+    def set_sampler(self, sampler: Sampler | None) -> None:
+        """The pinned symbols' per-deadline consumer (module doc); one, set at wiring."""
+        self._sampler = sampler
+
+    @property
+    def pinned(self) -> frozenset[str]:
+        return frozenset(self._pinned)
+
+    def pin_native(self, symbol: str, depth: int) -> None:
+        """Keep `symbol`'s native column built without a lease, reading at least `depth` levels
+        (below `DEEP_DEPTH`: a pin never demands the deep tier). The pin holds the symbol's book
+        itself (`PIN_CONSUMER` at `depth`), so the book runs with no viewer; a refused demand
+        leaves the pin inert and is asked again every `PIN_RETRY_MS`. `ValueError` past the cap."""
+        if not 0 < depth < DEEP_DEPTH:
+            raise ValueError("pin depth must be positive and below the deep tier")
+        if symbol not in self._pinned and len(self._pinned) >= self._max_pinned:
+            raise ValueError(f"At most {self._max_pinned} symbols may be pinned.")
+        self._pinned[symbol] = depth
+        self._hold_pin(symbol)
+        now = self._clock()
+        st = self._symbol(symbol, depth, now)
+        self._advance(st, now)  # close what is due first, as `_take` does
+        self._native_depth(st)
+        self._observe(st, now)  # read the book at the pin's depth now
+        hm.heatmap_pinned_symbols.set(len(self._pinned))
+
+    def unpin_native(self, symbol: str) -> None:
+        """Release a pin; with no lease left the symbol's state goes, as `_free` drops it."""
+        if self._pinned.pop(symbol, None) is None:
+            return
+        if symbol not in self._pin_owed:
+            self._call_demand("release", symbol, PIN_CONSUMER)
+        self._pin_owed.discard(symbol)
+        hm.heatmap_pinned_symbols.set(len(self._pinned))
+        st = self._symbols.get(symbol)
+        if st is None:
+            return
+        if not st.specs:
+            del self._symbols[symbol]
+            self._dirty.discard(symbol)
+        else:
+            self._native_depth(st)
+
+    def _hold_pin(self, symbol: str) -> None:
+        """Demand a pinned symbol's book at its pin depth; owed (retried) while refused."""
+        if self._call_demand("acquire", symbol, PIN_CONSUMER, self._pinned[symbol]):
+            self._pin_owed.discard(symbol)
+        else:
+            self._pin_owed.add(symbol)
+
+    def _retry_pins(self, now: float) -> None:
+        if self._pin_owed and now >= self._pin_retry_at:
+            self._pin_retry_at = now + PIN_RETRY_MS
+            for symbol in sorted(self._pin_owed):
+                self._hold_pin(symbol)
+
+    def _sample(self, st: _SymbolState, deadline: int, on_time: bool) -> None:
+        """A pinned symbol's native deadline to the sampler: the instantaneous levels read at or
+        before it when LIVE and on time, else None. Its fault is its own (logged)."""
+        sampler = self._sampler
+        if sampler is None or st.symbol not in self._pinned:
+            return
+        levels = st.levels.get(st.native.spec.depth) if on_time and st.live else None
+        try:
+            sampler(st.symbol, deadline, levels)
+        except Exception as exc:  # the tracker's fault never stops a column
+            _log().error("heatmap_sampler_failed", symbol=st.symbol, error=type(exc).__name__)
+
+    def _native_depth(self, st: _SymbolState) -> None:
+        """The stored column holds the deepest depth any spec of the symbol, or its pin, reads."""
+        pin = self._pinned.get(st.symbol, 0)
+        depth = max((s.depth for s in st.specs), default=pin or st.native.spec.depth)
+        depth = max(depth, pin)
         if depth != st.native.spec.depth:
-            st.native.spec = HeatmapSpec(st.symbol, depth, 1, COLUMN_MS)
+            # Close what is due at the old depth, then read the book at the new one, so the
+            # next deadline never finds no levels at that depth (a spurious gap).
+            # Contained to its symbol, as `tick()` is: a lease release or a pin never faults
+            # its caller (a viewer's unsubscribe still releases its upstream refs).
+            now = self._clock()
+            try:
+                try:
+                    self._advance(st, now)
+                    self._integrate(st, now, ok=True)
+                finally:
+                    st.native.spec = HeatmapSpec(st.symbol, depth, 1, COLUMN_MS)
+                self._observe(st, now)
+            except Exception as exc:
+                _log().error("heatmap_topic_symbol_failed", symbol=st.symbol,
+                             error=type(exc).__name__)  # fmt: skip
 
     # -- the engine ------------------------------------------------------------------------------
 
@@ -1098,6 +1226,7 @@ class HeatmapTopic:
                     hm.missing(st.symbol)
                 for state in states:
                     state.samples += sampled and self._deep_enough(st, state)
+                self._sample(st, deadline, on_time)
                 st.deadline += COLUMN_MS
             for state in states:
                 if state.end == t:
@@ -1445,6 +1574,7 @@ class HeatmapTopic:
                 _log().error("heatmap_topic_symbol_failed", symbol=symbol,
                              error=type(exc).__name__)  # fmt: skip
         self._dirty.clear()
+        self._retry_pins(now)
         if self._shed:
             _log().warning("heatmap_store_queue_full", dropped=self._shed)
             self._shed = 0
@@ -1481,7 +1611,10 @@ class HeatmapTopic:
             self._writer.add_done_callback(_stopped)
 
     async def stop(self) -> None:
-        """Stop building columns, drain what the store has queued (bounded), close the store."""
+        """Stop building columns, release the pins' book demand, drain what the store has
+        queued (bounded), close the store."""
+        for symbol in list(self._pinned):
+            self.unpin_native(symbol)
         task, self._task = self._task, None
         if task is not None:
             task.cancel()

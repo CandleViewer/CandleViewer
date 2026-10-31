@@ -5,7 +5,11 @@ the book every `cadence_ms` (100 ms) and feeds prints; nothing here awaits, quer
 interpreter or reads the wall clock (every time is a caller-supplied `ts_us`).
 
 Detection is L2-only inference, so every event is `estimated=True`. Per `(side, tick)`:
-- a size drop of at least `reload_consume_pct` of the previous sample (previous size at least
+- the level's **baseline** is its highest size since the baseline was set; it is re-set to the
+  current size after every consume or pull, and re-based on the previous sample once it is older
+  than `reload_window_ms` (so a gradual consume 100 -> 70 -> 40 is one drop of 60 % from 100,
+  never a later step measured from 40: the D6 carry of #4958);
+- a size drop of at least `reload_consume_pct` of the baseline (the baseline at least
   `min_size`) is CONSUMED when the tape traded at or through that price within the window is at
   least `drop x tolerance_pct` (buys through an ask, sells through a bid), else PULLED;
 - a consumed level that returns to at least `reload_replenish_pct` of its prior size within
@@ -13,6 +17,12 @@ Detection is L2-only inference, so every event is `estimated=True`. Per `(side, 
   window. Window edges are inclusive.
 - a sample while the book is not LIVE (or one-sided) is an estimated gap: pending state of every
   level is reset and nothing is emitted for the first live sample after it (BQ-4).
+- one sample emits at most `max_events` events, nearest the mid first; the rest are reported as
+  `LiquiditySample.overflow` for the caller to count (C-2.18), never published.
+
+`distance_to_liquidity_cluster` (about 1.4 ms over the default 600-column window) is computed at
+most once per sample and argument set: the first read after a sample computes and caches it, a
+later read of the same sample returns the cache, and the next sample clears it (24 §7).
 
 Memory: a preallocated ring, `buckets` rows x `ring_ms / cadence_ms` columns x (bid, ask)
 float32, rows keyed by `bucket % buckets`; a row whose bucket changes is wiped. Default
@@ -154,6 +164,10 @@ class LiquidityTracker:
         self._suspect: dict[tuple[BookSide, int], tuple[Decimal, Decimal, int]] = {}
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._mid_bucket: int | None = None
+        # D6: per-level drop baseline (highest size since it was set, and when it was set)
+        self._base: dict[BookSide, dict[int, tuple[Decimal, int]]] = {"bid": {}, "ask": {}}
+        self._distance: dict[tuple[BookSide | None, float, int], int | None] = {}
+        self.distance_computes = 0  # cache misses (the call-once rule's evidence)
 
     # ---- inputs -----------------------------------------------------------------------
 
@@ -192,6 +206,7 @@ class LiquidityTracker:
     def on_sample(self, ts_us: int, phase: BookPhase, book: BookView) -> LiquiditySample:
         """One book sample. Not LIVE (or a one-sided book) is an estimated gap, no events."""
         c = self.config
+        self._distance.clear()
         bids = list(islice(book.walk(bids=True), c.max_levels)) if phase is BookPhase.LIVE else []
         asks = list(islice(book.walk(bids=False), c.max_levels)) if bids else []
         if not bids or not asks:
@@ -223,7 +238,12 @@ class LiquidityTracker:
         self._resolve_suspects(ts_us, events)
         self._detect("bid", bids, ts_us, events, had_state)
         self._detect("ask", asks, ts_us, events, had_state)
-        return LiquiditySample(ts_us, False, bands, tuple(events))
+        overflow = len(events) - c.max_events
+        if overflow > 0:  # keep the nearest the mid (C-2.18); the caller counts the rest
+            dist = [abs(2 * ev.price_ticks - mid2) for ev in events]
+            near = sorted(range(len(events)), key=lambda i: (dist[i], i))[: c.max_events]
+            events = [events[i] for i in sorted(near)]
+        return LiquiditySample(ts_us, False, bands, tuple(events), max(0, overflow))
 
     # ---- outputs ----------------------------------------------------------------------
 
@@ -262,7 +282,17 @@ class LiquidityTracker:
         """Ticks from the mid to the nearest latest-sample cell with `heatmap_cluster_z >= z`
         (24 §7: size vs the non-zero distribution of the last `window_columns` samples).
         `None` when any of those samples is estimated (BQ-9), when there is no history,
-        or when no cell qualifies."""
+        or when no cell qualifies. Call-once: cached per sample and argument set (module doc)."""
+        key = (side, z, window_columns)
+        if key in self._distance:
+            return self._distance[key]
+        if len(self._distance) >= 8:  # a bound on distinct argument sets per sample
+            self._distance.clear()
+        self.distance_computes += 1
+        got = self._distance[key] = self._cluster_distance(side, z, window_columns)
+        return got
+
+    def _cluster_distance(self, side: BookSide | None, z: float, window_columns: int) -> int | None:
         ring = self._ring
         n = min(window_columns, ring.count)
         if n == 0 or self._mid_bucket is None:
@@ -294,6 +324,7 @@ class LiquidityTracker:
         self._pending.clear()
         self._suspect.clear()
         self._cycles.clear()
+        self._base = {"bid": {}, "ask": {}}
         self._mid_bucket = None
 
     def _scan(
@@ -340,11 +371,16 @@ class LiquidityTracker:
                 in_range = tick >= far if side == "bid" else tick <= far
                 if tick not in cur and in_range:
                     self._step(side, tick, s0, Decimal(0), ts_us, out)
+            pending = self._pending
             for tick, s1 in cur.items():
                 # a level consumed to zero and pending prior-size refill reappears from 0
-                before = prev.get(tick, Decimal(0) if (side, tick) in self._pending else None)
-                if before is not None:
+                before = prev.get(tick, Decimal(0) if (side, tick) in pending else None)
+                # an unchanged level outside a pending refill leaves its baseline as it was
+                if before is not None and (s1 != before or (side, tick) in pending):
                     self._step(side, tick, before, s1, ts_us, out)
+        base = self._base[side]
+        for tick in [t for t in base if t not in cur]:
+            del base[tick]  # a level that left the walked depth forgets its baseline
         self._prev[side] = cur
 
     def _step(
@@ -377,15 +413,25 @@ class LiquidityTracker:
                     )
                 )
             return
-        drop = s0 - s1
-        if s0 < self.min_size or drop <= 0 or drop < c.reload_consume_pct * s0:
+        bases = self._base[side]
+        base = bases.get(tick)
+        if base is None or ts_us - base[1] > self._window_us:
+            base = (s0, ts_us)  # (re)based on the previous sample
+        peak = max(base[0], s0)
+        if s1 >= peak:
+            bases[tick] = (s1, ts_us)
             return
+        bases[tick] = (peak, base[1] if peak == base[0] else ts_us)
+        drop = peak - s1
+        if peak < self.min_size or drop < c.reload_consume_pct * peak:
+            return
+        bases[tick] = (s1, ts_us)  # an event re-sets the baseline
         traded = self._traded_through(side, tick)
         if traded >= drop * c.tolerance_pct:
-            self._pending[key] = (s0, ts_us)
+            self._pending[key] = (peak, ts_us)
         else:
             # no print explains it yet: hold one sample for a late print (m1), then classify
-            self._suspect[key] = (s0, s1, ts_us)
+            self._suspect[key] = (peak, s1, ts_us)
 
     def _resolve_suspects(self, ts_us: int, out: list[LiquidityReload | LiquidityPulled]) -> None:
         c = self.config
