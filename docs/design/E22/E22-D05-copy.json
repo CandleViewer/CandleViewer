@@ -475,10 +475,10 @@
     "d05.05.range": {
       "row": "T4",
       "surface": "the threshold value field's range message",
-      "text": "\"Enter a value of 0 or more; a percentile is 0 to 100.\"",
-      "strings": ["Enter a value of 0 or more; a percentile is 0 to 100."],
+      "text": "\"Enter 0 or more; a percentile is above 0 and below 100.\"",
+      "strings": ["Enter 0 or more; a percentile is above 0 and below 100."],
       "source": "D02:218",
-      "provenance": "D02 D18 names the field's validation (a value below 0, a percentile outside 0–100) and words no message; D02:305 and D03:125 name the range message",
+      "provenance": "D02 D18 names the field's validation (a value below 0, a percentile outside 0–100) and words no message; D02:305 and D03:125 name the range message; the engine refuses a percentile of 0 or 100 (`0 < value < 100`, bigtrade_models.py), so v1.1 words the bounds as exclusive (#713 ruling 6537475047, BQ-08 rider)",
       "status": "proposed",
       "stamp": "PROPOSED by E22-D05; the orchestrator rules at the delta",
       "story": "E22-S02"
