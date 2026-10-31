@@ -24,7 +24,7 @@
 > (C1, closed by this PR) and the E16-R-05 test-coverage carry (C2). The FAIL item was closed on
 > `main` by #4940 (`a8f47b75`). Dispositions (§2): four findings fixed, E16-R-08 closed by ruling
 > (the accepted ADR-0015 d6 ladder stands), the six Lows accepted with review 2027-03-25
-> (E16-R-09's alert stays open on #567). Still open: the AC-05 / AC-06 Postgres chain-verify leg
+> (E16-R-09's alert closed by #567's `RetentionStale` and `RecorderDown` rules). Still open: the AC-05 / AC-06 Postgres chain-verify leg
 > and the E16-Q04 disk-pressure drill (§3), and the C2 carry (§5). Merged since this record
 > (#4594): the Semgrep rules (#4586), the permanent probe tests (#4593), the DAST profile
 > (#4596), and the fixes of E16-R-01 and E16-R-10 (#4597, #4622), E16-R-06 (#4626) and E16-R-07
@@ -91,7 +91,7 @@ a fixed finding may later be described here as the control its PR built.
 | E16-R-03 | Low      | 2 Audit completeness                                                          | accepted, review 2027-03-25                               | E16-T06 (#490)                                                                                                                |
 | E16-R-04 | Low      | 3 Path containment                                                            | accepted, review 2027-03-25                               | E16-T06 (#490), cross-ticket with E07                                                                                         |
 | E16-R-05 | Low      | 3 Path containment                                                            | accepted, review 2027-03-25; test-coverage carry (C2, §5) | E16-T05 (#489)                                                                                                                |
-| E16-R-09 | Low      | 6 Config gating / SR-125 detection                                            | accepted, review 2027-03-25; its alert stays open on #567 | E16-T09 (#567), E16-T07 (#491)                                                                                                |
+| E16-R-09 | Low      | 6 Config gating / SR-125 detection                                            | accepted, review 2027-03-25; alert closed by #567         | E16-T09 (#567), E16-T07 (#491)                                                                                                |
 | E16-R-11 | Low      | SR-125 detection                                                              | accepted, review 2027-03-25                               | E16-T08 (#492)                                                                                                                |
 
 By disposition: fixed 4; closed by ruling 1; accepted 6 (review 2027-03-25); open 0. The ruling
@@ -101,8 +101,8 @@ between two normative texts (SR-096, ADR-0015 d6), not a code defect alone: the 
 ADR-0015 d6 ladder stands as implemented (alert 80 / no new auto-record 90 / halt 95); SR-096's
 text is amended to the ADR's thresholds on the next `04-security-program.md` touch (#407's
 lane); E16-Q04 (#481)'s chaos acceptance (model §4.5) reads "no new auto-record within 60 s at
-90 %, halt at 95 %". Of the six accepted Lows, E16-R-09's alert stays open on #567, and
-E16-R-05 carries one test-coverage line (C2, §5): the quarantine site's containment check
+90 %, halt at 95 %". Of the six accepted Lows, E16-R-09's alert is closed by #567 (`RetentionStale`, `RecorderDown`),
+and E16-R-05 carries one test-coverage line (C2, §5): the quarantine site's containment check
 (`storage/cold/manifest.py`, §1.2 area 3) has no dedicated test yet.
 
 ## 3. DAST, drills and the repeatable checks
@@ -141,7 +141,7 @@ dispositions of §2: E16-R-08 closed by ruling (the accepted ADR-0015 d6 ladder 
 implemented; SR-096 amended to it on the next `04-security-program.md` touch, #407's lane;
 E16-Q04 (#481)'s chaos acceptance reads "no new auto-record within 60 s at 90 %, halt at 95 %"),
 and E16-R-02 / -03 / -04 / -05 / -09 / -11 (Low) accepted with review 2027-03-25 (E16-R-09's
-alert stays open on #567). C2: the quarantine site's containment check (`storage/cold/manifest.py`,
+alert, then open on #567, is closed by its `RetentionStale` and `RecorderDown` rules). C2: the quarantine site's containment check (`storage/cold/manifest.py`,
 §1.2 area 3) has no dedicated test yet; it is carried as a test-coverage line on E16-R-05's
 tracker. The 12:22Z re-read also read the DAST run evidence §3 defers here: the scheduled
 `dast-recording-nightly.yml` run on `main` of 2026-10-29 (10:50Z) succeeded with both role jobs

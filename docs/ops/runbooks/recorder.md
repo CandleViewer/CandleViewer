@@ -169,9 +169,52 @@ interval for each skipped anchor. The rule assumes `CV_RECORDER_SNAPSHOT_INTERVA
 **Do not** treat a skip as a gap or backfill rows for it; the existing gap markers cover any
 missing deltas.
 
+<a id="alert-recorderdown"></a>
+
+## RecorderDown
+
+**Symptom.** `recorder_up` has been 0, or absent, for 5 minutes. 0 means no recorder runtime runs
+in the API (it was stopped, or none is composed: the fake backend has none, so this fires there).
+Absent means Prometheus scrapes no recorder series at all: the API is down or unscraped, and
+`ApiDown` normally pages with it. Nothing is being recorded. Severity: Page.
+
+1. Check `ApiDown` and the API's scrape target: if the API is down, follow `ApiDown` first.
+2. Read `GET /api/v1/recording/status`: `overall` `not_deployed` means no runtime was composed
+   (the fake storage backend, or a dependency the composition needs was missing at boot).
+3. Check the API logs for `recorder_startup_failed`, `recorder_stop_failed` and a supervisor stop.
+
+**Remediation.** Restore the API or its storage dependencies, then restart the API so the
+supervisor starts the recorder again (the WAL replays on startup); confirm `recorder_up` reads 1
+and _Recorder write rate by symbol_ rises. Record when the page fired and when writes resumed.
+
+**Do not** clear or move the WAL to get the recorder to start without recording a gap, and do not
+delete the gap rows the outage leaves.
+
+<a id="alert-retentionstale"></a>
+
+## RetentionStale
+
+**Symptom.** The last successful retention pass (`retention_last_success_timestamp`, its maximum
+over 7 days so an API restart does not hide it) is more than 48 hours old: two nightly passes
+were missed. Recorded data past its window is not being deleted, so the disk keeps filling.
+Severity: Ticket. A reaper that has never succeeded keeps the gauge at 0 and stays silent; the
+nightly loop is not scheduled yet ([recorder-retention.md](recorder-retention.md#how-it-works)).
+
+1. On _Retention last success age (h)_, confirm the age keeps rising and when it last fell.
+2. Read the API logs for `retention_skipped_locked`, `retention_delete_failed`,
+   `retention_checkpoint_corrupt` and `retention_yield_ingest_lag`.
+3. Check _Disk used_, _Projected full date (UTC)_ and `RollOffWatermarkLag`: retention never drops
+   a day the roll-off has not archived.
+
+**Remediation.** Follow
+[Stuck reaper](recorder-retention.md#stuck-reaper-retention_last_success_timestamp-older-than-48-h)
+for the cause found, then confirm the age falls after the next pass.
+
+**Do not** delete partitions, gap rows or the reaper checkpoint by hand to catch up; move a corrupt
+checkpoint aside only as the retention runbook says.
+
 ## Related signals
 
 Disk: `DiskHigh` (80 %, `CV_DISK_WARN_PCT`) and `DiskCritical` (95 %, `CV_DISK_HALT_PCT`) in
-`docs/plan/07-release-and-prr.md`. Retention: no alert yet. The reaper sets
-`retention_last_success_timestamp`, but the series is not in the metrics catalogue, so no rule or
-panel may read it; until then follow [Stuck reaper](recorder-retention.md#stuck-reaper-retention_last_success_timestamp-older-than-48-h).
+`docs/plan/07-release-and-prr.md`. Retention: [RetentionStale](#alert-retentionstale) above, and
+the retention runbook's [Stuck reaper](recorder-retention.md#stuck-reaper-retention_last_success_timestamp-older-than-48-h).

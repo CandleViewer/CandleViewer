@@ -84,6 +84,28 @@ groups:
           runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderwritegateclosed"
           summary: "The recorder write gate is closed (disk-pressure level 3)."
           tracker: "#567"
+      # 1 from RecorderRuntime.start() to its stop(): 0 = no runtime runs (stopped, or none
+      # composed: the fake backend); absent = the API's exporter is not scraped (ApiDown too).
+      - alert: RecorderDown
+        expr: max by (env) (recorder_up) == 0 or absent(recorder_up)
+        for: 5m
+        labels: { severity: page, component: recorder }
+        annotations:
+          runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderdown"
+          summary: "The recorder runtime is not running, or its exporter is not scraped."
+      # The reaper's success time (recorder/retention.py) reads 0 until a pass succeeds and again
+      # after a restart: the 7-day maximum bridges a restart, and `> 0` keeps a reaper that never
+      # succeeded silent (its nightly loop is not scheduled yet). 48 h = two nightly intervals
+      # (RetentionConfig.interval_s, test-pinned).
+      - alert: RetentionStale
+        expr: >-
+          time() - (max by (env) (max_over_time(retention_last_success_timestamp[7d])) > 0)
+          > 172800
+        for: 0m
+        labels: { severity: ticket, component: recorder }
+        annotations:
+          runbook_url: "docs/ops/runbooks/recorder.md#alert-retentionstale"
+          summary: "The last successful recorder retention pass is more than 48 hours old."
       # Seek anchors (#2223): a skip loses no data, so only a reason other than `late` that keeps
       # rising for 10 minutes matters. `late` is the expected skip and is excluded.
       # A skip is counted once per slot, so the 5 m window assumes an interval of at most 300 s.

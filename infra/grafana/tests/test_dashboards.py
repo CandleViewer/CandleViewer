@@ -222,12 +222,14 @@ def test_recorder_board_has_the_ticket_panels_env_filtered_with_the_disk_ladder(
     for metric in ("recorder_bytes_written_total", "recorder_rows_total", "ingest_lag_seconds",
                    "trade_writes_dropped_total", "recorder_write_backlog_rows", "recorder_spill_bytes",
                    "disk_used_ratio", "recorder_projected_full_timestamp", "trade_gaps_total",
-                   "recorder_watermark_lag_days"):  # fmt: skip
+                   "recorder_watermark_lag_days", "retention_last_success_timestamp"):  # fmt: skip
         assert any(metric in e for e in exprs), metric
     assert all(e.count('env="$env"') == e.count("{") for e in exprs)
     disk = next(p for p in panels if p["title"].startswith("Disk used"))["fieldConfig"]["defaults"]
     assert [s["value"] for s in disk["thresholds"]["steps"]] == [None, 0.8, 0.9, 0.95]
     assert disk["custom"]["thresholdsStyle"] == {"mode": "dashed"}
+    age = next(p for p in panels if p["title"].startswith("Retention last success age"))
+    assert [s["value"] for s in age["fieldConfig"]["defaults"]["thresholds"]["steps"]] == [None, 48]
 
 
 def test_the_trading_board_shows_the_profile_save_series() -> None:

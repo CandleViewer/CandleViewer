@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import re
 import sys
 from pathlib import Path
@@ -15,9 +16,9 @@ ROOT = Path(__file__).resolve().parents[3]
 API = ROOT / "services/api/candleviewer"
 RUNBOOK = ROOT / "docs/ops/runbooks/recorder.md"
 #: The ticket's recorder alerts; its DiskWarn / DiskCritical are the system DiskHigh / DiskCritical.
-#: RetentionStale and `recorder_up` wait for their series to enter the metrics catalogue.
+#: RecorderDown reads the ticket's synthetic `recorder_up`.
 REQUIRED = {"RecorderSilentStop", "RecorderMessagesDropped", "RecorderSpilling"}
-REQUIRED |= {"RecorderGapBurst", "RollOffWatermarkLag"}
+REQUIRED |= {"RecorderGapBurst", "RollOffWatermarkLag", "RetentionStale", "RecorderDown"}
 #: Disk-budget sampling (#4581), the write gate (#567) and skipped seek anchors (#2223).
 TRACKERS = {
     "RecorderDiskBudgetSampleStale": "#4581",
@@ -97,3 +98,19 @@ def test_thresholds_follow_the_application_defaults() -> None:
         _rules("system_page.yml")["DiskCritical"]["expr"]
         == f"disk_used_ratio > {int(pct['halt']) / 100}"
     )
+
+
+def test_retention_stale_is_two_reaper_intervals_and_recorder_down_guards_the_exporter() -> None:
+    """RetentionStale: 48 h = twice `RetentionConfig.interval_s`, over a window that outlasts it
+    (a restart resets the gauge to 0). RecorderDown pages on 0 and on an absent exporter."""
+    block = _text(API / "recorder/retention.py").split("class RetentionConfig", 1)[1]
+    (product,) = re.findall(r"interval_s: float = ([\d. *]+)\n", block)
+    interval = math.prod(float(factor) for factor in product.split("*"))
+    rules = _rules()
+    stale = rules["RetentionStale"]["expr"]
+    assert re.search(r"\) > 0\)\s+> (\d+)$", stale)
+    assert int(stale.rsplit("> ", 1)[1]) == 2 * interval
+    assert "max_over_time(retention_last_success_timestamp[7d])" in stale
+    down = rules["RecorderDown"]
+    assert down["expr"] == "max by (env) (recorder_up) == 0 or absent(recorder_up)"
+    assert (down["for"], down["labels"]["severity"]) == ("5m", "page")

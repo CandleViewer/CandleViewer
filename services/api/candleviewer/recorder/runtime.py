@@ -22,6 +22,7 @@ import structlog
 from candleviewer.observability import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.recorder.control import HIDDEN_CAUSES
+from candleviewer.recorder.metrics import recorder_up
 from candleviewer.recorder.policy import RecordingPolicy
 from candleviewer.recorder.sessions import PositionSeed, SessionManager, startup_reconcile
 from candleviewer.recorder.writer import RecorderWalVolumeError, StreamWriter
@@ -103,6 +104,7 @@ class RecorderRuntime:
         if self._task is None:
             self._t0 = self._clock()
             self._task = spawn(self._run(), name="recorder-runtime")
+            recorder_up.set(1)  # E16-T09: the exporter says the runtime runs (RecorderDown)
 
     async def stop(self, grace_s: float) -> None:
         """Cancel the task, then stop the writer, the sessions and the policy, each within a
@@ -113,6 +115,7 @@ class RecorderRuntime:
         re-raised, as `Supervisor._stop_each` does (#3361): the sessions still close."""
         share = grace_s / 4
         held: BaseException | None = None
+        recorder_up.set(0)
         task, self._task = self._task, None
         if task is not None:
             task.cancel()

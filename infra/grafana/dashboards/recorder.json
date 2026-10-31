@@ -557,6 +557,53 @@
       ],
       "title": "Roll-off watermark lag (days)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Hours since the last successful retention pass; RetentionStale fires over 48.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#E69F00",
+                "value": 48
+              }
+            ]
+          },
+          "unit": "h"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 49
+      },
+      "id": 16,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "(time() - (max(retention_last_success_timestamp{env=\"$env\"}) > 0)) / 3600",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Retention last success age (h)",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",
