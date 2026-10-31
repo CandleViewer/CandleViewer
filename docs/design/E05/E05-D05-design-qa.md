@@ -11,10 +11,11 @@ CDO acknowledgement is **owner approval pending** (§9).
 
 - **Agent-run, not a human pass.** The rater is an agent. Nothing here is a designer's side-by-side judgement of the
   build against a board; "looks right" at a glance in light and high contrast is not claimed.
-- **Audited tree:** the E05-S04 slice H head `9a789439e14bd0503a4e4c0c430b3bc60ccfdaec` (64 component sources, 69 story
-  files, 62 component stylesheets, 4,614 VR baselines). It is ahead of `main` (`d721407c7`), which does not yet carry
-  CMP-062 ThemeSwitcher, CMP-063 DensityToggle or CMP-228 PreviewTile (their stylesheets, stories and 240 baselines for the three).
-  Line references below are to that head; rebase and re-check them at READY.
+- **Audited tree:** `main` at `16d70feed92578bd0d5583688f5d71975d4b976d` (64 component sources, 69 story
+  files, 62 component stylesheets, 4,614 VR baselines). CMP-062 ThemeSwitcher, CMP-063 DensityToggle and CMP-228
+  PreviewTile are on `main` since #5221; the parts that live only in E05-S04 slice H (#5237: the RbacGate forms, the
+  density menu, the matrix) were read from that slice and are not on `main`. Line references below are to this tree;
+  re-check them at READY.
 - **Penpot not compared.** §12 asks that every state has a Figma variant and that the component composes published
   library components only. No board was drawn for this review, so those two items are a **read of the spec documents**
   (`E05-D02*.md`, `E05-D02-boards.md`) against the build, not a canvas compare. They are marked `spec read` below.
@@ -41,8 +42,8 @@ CDO acknowledgement is **owner approval pending** (§9).
    was also checked against the generated token build (`packages/ui/build/css/tokens.*.css`) and the local `--cv-*`
    properties. The catalogue `Tokens` lines are condensed (the specs carry the full list), so "used, not in the
    catalogue line" is **not** counted as drift; "named in the catalogue, absent from the build" is.
-3. 3. **Hard-coded values.** `grep` for hex, `rgb()`, `hsl()` and every `px` literal in the stylesheets, excluding comment
-      lines and the documented `calc(var(--border-hairline) * 1px)` pattern.
+3. **Hard-coded values.** `grep` for hex, `rgb()`, `hsl()` and every `px` literal in the stylesheets, excluding comment
+   lines and the documented `calc(var(--border-hairline) * 1px)` pattern.
 4. **Variants and states versus stories.** The catalogue `Storybook` list of each entry was compared with the
    `export const` names in the component's `*.stories.tsx`. A renamed story with the same purpose counts as covered
    (listed in §4); a missing name with no equivalent is a gap.
@@ -155,8 +156,8 @@ stylesheet has a forced-colours block (60 of 62 stylesheets; the two without are
 | 050 | Card                        | P   | P   | P   | P   |                                                                           |
 | 054 | SearchBox                   | P   | P   | P   | P*  | §5                                                                        |
 | 059 | CommandPalette              | P   | G   | P*  | P   | `Grouped`, `EmptyQuery` missing; no keyboard story                        |
-| 062 | ThemeSwitcher               | P   | P   | P   | P   | not on `main`; no forced-colours block (wrapper; children carry theirs)   |
-| 063 | DensityToggle               | P   | P   | P   | P   | not on `main`; same as 062; `ChartPanelDense` is `ChartPanel`             |
+| 062 | ThemeSwitcher               | P   | P   | P   | P   | no forced-colours block (wrapper; children carry theirs)                  |
+| 063 | DensityToggle               | P   | P   | P   | P   | same as 062; `ChartPanelDense` is `ChartPanel`                            |
 | 065 | FormSection                 | P   | P   | P   | P   |                                                                           |
 | 069 | InfoPanel                   | P   | P   | P*  | P*  | no keyboard story; §5                                                     |
 | 079 | RbacGate                    | P   | G   | P*  | P   | `EnvMismatch` story missing; no keyboard story                            |
@@ -164,7 +165,7 @@ stylesheet has a forced-colours block (60 of 62 stylesheets; the two without are
 | 089 | ForbiddenState              | P   | P   | P   | P   | one stylesheet (`appstate.css`) with 090                                  |
 | 090 | NotFoundState               | P   | P   | P   | P   |                                                                           |
 | 091 | GlobalErrorBoundaryFallback | P   | P   | P   | P   | `crash.css`                                                               |
-| 228 | PreviewTile                 | P   | P   | P   | P   | not on `main`; `Error` is `ErrorState`                                    |
+| 228 | PreviewTile                 | P   | P   | P   | P   | `Error` is `ErrorState`                                                   |
 
 ### 2.3 Disabled-with-reason (§12, behaviour group)
 
@@ -275,7 +276,7 @@ for example `dialog.css:163-177`, `popover.css:97-105`). It is the strongest rec
 ## 6. Accepted deviations, with where each is written
 
 "No silent waivers" (the ticket's fourth scenario): each accepted deviation must be written where a reader of the
-component sees it, not only in a review. Result: **spec docs carry all five; Storybook notes carry none of them.**
+component sees it, not only in a review. Result: **spec docs carry all five; Storybook notes carry none in full (one partly).** The notes are written in #5237 (E05-S04 slice H, commit "write the accepted deviations into the Storybook notes"), so this scenario passes once #5237 merges.
 
 | Deviation                                                         | Written in                                                                                | In the component's Storybook notes?             |
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------- |
@@ -285,8 +286,8 @@ component sees it, not only in a review. Result: **spec docs carry all five; Sto
 | Light-theme FuzzyList hover uses `surface.selected` (D-03)        | comment at `fuzzylist.css:55`, E08-D05 §13                                                | No                                              |
 | ThemeSwitcher / DensityToggle have no disabled-with-reason (§2.3) | `15` entries CMP-062, 063                                                                 | No                                              |
 
-Proposed small code-side change (a follow-up, not done here): one `parameters.docs.description` line per component
-naming its deviation. It is a Storybook-notes edit in `packages/ui` and is outside this docs-only review.
+The code-side change (one `parameters.docs.description` line per component naming its deviation) is #5237; it is
+outside this docs-only review. #5232 also removes D-03's FuzzyList override, which moots the FuzzyList row above.
 
 ## 7. Catalogue amendments the review implies
 
@@ -307,7 +308,7 @@ Proposed rows for `docs/plan/15-component-catalogue.md`; none is applied here. "
 | 10  | CMP-026, 027, 028, 069                     | Add one choice-rule line to each: banner (028), expandable note (069), empty block (026), error block (027).                                                                                                                                     | Four near-identical-role components, no rule for choosing (§5).      |
 | 11  | `16` §12                                   | Correct the hit-target line to "24 px compact / 32 px comfortable" (D-05).                                                                                                                                                                       | The review changed a rule's reading; `E05-D02.md:428` recommends it. |
 
-Rows 7, 8 and 11 touch `16` or the token files; they need the owning ticket's and CODEOWNER's review.
+Rows 7, 8 and 11 touch `16` or the token files; they need the owner of `16` (the design-system brief, owner `basiltt`) and CODEOWNER review.
 
 ## 8. Recurring drift classes and follow-ups
 
@@ -329,7 +330,7 @@ Shape follows the E05-Q01 sign-off comments: sources, honest scope, a result tab
 human legs owed.
 
 **Sources:** `E05-D05-design-qa.md` (this document); `docs/plan/16-design-system-brief.md` §12; `15-component-catalogue.md`;
-`E05-D02*.md`; `E05-D03.md`; `packages/ui/vr/baselines`; slice H head `9a789439e`.
+`E05-D02*.md`; `E05-D03.md`; `packages/ui/vr/baselines`; `main` at `16d70feed`.
 
 **Agent-run, honest scope: not a human pass.** Rater: an agent. No Penpot compare, no browser measurement, no
 screen reader; every number marked `CSS read` was read from the stylesheet and the token build.
@@ -342,21 +343,23 @@ screen reader; every number marked `CSS read` was read from the stylesheet and t
 | No silent waivers                       | **Fail**: 5 deviations are in the specs, 0 in Storybook notes (§6); a small `packages/ui` follow-up closes it                                  |
 
 **Design QA sign-off: conditional; withheld pending the Storybook-notes follow-up ("No silent waivers" reads Fail above), otherwise yes, with open items.** Proposed line for the ticket: "E05-D05: design QA of the 62-id v0
-set against `16` §12 completed at slice H head `9a789439e`, agent-run, not a human pass; 8 drift findings (0
+set against `16` §12 completed at `main` `16d70feed`, agent-run, not a human pass; 8 drift findings (0
 serious), 15 components with story gaps; open items below; CDO acknowledgement pending (owner)"; post it only once the Storybook deviation notes (§6) land.
 
 **Open items** (none serious; all prioritised for filing):
 
 1. **D-02** (moderate, p1 Bug): Menu, Select and Combobox hover/active fill invisible in light. Fix by the token (§7 row 7) or
    one shared row (§5). The fix is open as PR #5232.
-2. **D-08** (moderate, p1): ConfirmDialog ladder (`Rung1..4`, `TwoChoice`) has no story; blocked on the E09-D09 host, so
-   file as a Task with that dependency, or amend the catalogue (§7 row 6).
-3. **D-05** (moderate, p2): correct `16` §12's 40–44 px to 24 / 32 px (§7 row 11).
+2. **D-08** (moderate, p1): ConfirmDialog ladder (`Rung1..4`, `TwoChoice`) has no story; blocked on the E09-D09 host (E09-D09 is the
+   design ticket that specifies the ladder; no E09 ticket in the backlog builds the host), so the owner is routed to the
+   coordinator: file a Task with that dependency, or amend the catalogue (§7 row 6).
+3. **D-05** (moderate, p2): correct `16` §12's 40–44 px to 24 / 32 px (§7 row 11); owed by the owner of `16`
+   (`docs/plan/16-design-system-brief.md`, owner `basiltt`).
 4. **D-01, D-03, D-04, D-06, D-07** (minor): token proposals and a keyboard story per component (§8).
 5. **Story gaps** (§4): file one Task per component group, or amend per §7 row 6.
-6. **Storybook notes** (§6): one-line deviation notes in `packages/ui`.
-7. **Rebase gate:** CMP-062, 063 and 228 are not on `main`; re-run the §3 greps and the §4 comparison on the final
-   base before READY.
+6. **Storybook notes** (§6): written in #5237; the scenario passes once it merges.
+7. **Rebase gate:** CMP-062, 063 and 228 are on `main` (#5221). Re-run the §3 greps and the §4 comparison on the final
+   base before READY; the slice-H-only parts are #5237.
 
 **Limits.** Not run: Storybook or `vr` (no render), `contrast:gate`, `storybook:test`, a computed-style probe, 100 % /
 200 % zoom, forced colours, live motion; the 84 `px` literal lines were classified by pattern, not each opened.
