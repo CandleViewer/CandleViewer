@@ -19,6 +19,7 @@ import { useExitTransition } from "./internal/motion.js";
 import { useReadableScroll } from "./internal/readableScroll.js";
 import { useScrollLock } from "./internal/scrollLock.js";
 import { tabStopAfter } from "./internal/tabbable.js";
+import { useNarrowViewport } from "./internal/useNarrowViewport.js";
 
 /** The edge it slides in from. */
 export type DrawerSide = "right" | "left";
@@ -37,7 +38,9 @@ export interface DrawerProps {
   /**
    * Default `true`: over the scrim, the page inert, Tab cycling inside. `false` beside a live chart: a
    * `role="dialog"` without `aria-modal` at `elevation.popover`, no scrim, and Tab flows on to the page
-   * after its opener (H31).
+   * after its opener (H31). At a viewport of 720 CSS px or less it covers the page, so it then acts as modal
+   * while open (the scrim, the trap, the inert page, `aria-modal`): E05-D02 conventions 39, ruling A of #5144
+   * (ledger row A54).
    */
   modal?: boolean;
   /** The host's name, over the title (SCR-077's "Order rejected - BTCUSDT - LIVE - Main"). */
@@ -94,6 +97,11 @@ export function Drawer({
   children,
 }: DrawerProps): JSX.Element | null {
   const id = useId();
+  // Conventions 39 / #5144 ruling A (ledger row A54): full width at the narrow breakpoint, a non-modal drawer
+  // covers every page stop Tab could reach (SC 2.4.11), so it is modal while open there. Every modal
+  // behaviour below reads this, not the prop; the prop keeps its meaning on wide screens.
+  const narrow = useNarrowViewport();
+  const isModal = modal || narrow;
   const titleId = `${id}-title`;
   const parent = useLayerPortal();
   const [host] = useState(() =>
@@ -151,21 +159,21 @@ export function Drawer({
 
   const layer = useLayer(open, {
     element: hostRef,
-    modal,
+    modal: isModal,
     onEscape: () => close("escape"),
     // Non-modal: `Esc` is the drawer's only while focus is inside it; on the page it stays the page's.
-    claimsEscape: modal ? undefined : () => host?.contains(document.activeElement) ?? false,
+    claimsEscape: isModal ? undefined : () => host?.contains(document.activeElement) ?? false,
   });
   // Order matters (as CMP-043's): the guard's cleanup runs before focus returns; the opener is read
   // before the page goes inert.
-  useFocusTrap(open && modal, {
+  useFocusTrap(open && isModal, {
     container: panel,
     allow: (node) => (host?.contains(node) ?? false) || layer.inLayerAbove(node),
     lastInside,
   });
   useReturnFocus(open, hostRef, fallbackFocusRef);
-  useInertOutside(open && modal, hostRef);
-  useScrollLock(open && modal);
+  useInertOutside(open && isModal, hostRef);
+  useScrollLock(open && isModal);
 
   // Focus in on open (conventions 32): `initialFocusRef`, else the heading.
   useEffect(() => {
@@ -178,9 +186,19 @@ export function Drawer({
     lastInside.current = first;
   }, [open]);
 
+  // A resize to narrow while open: the page goes inert, so focus left on it is brought in (the last stop
+  // inside, else the heading); focus already inside stays.
+  useEffect(() => {
+    const surface = panel.current;
+    if (!open || !isModal || surface === null || (host?.contains(document.activeElement) ?? false))
+      return;
+    const target = lastInside.current?.isConnected === true ? lastInside.current : heading.current;
+    (target ?? surface).focus({ preventScroll: true });
+  }, [open, isModal, host]);
+
   // The panel's own listeners: modal, the Tab trap; non-modal, the Tab path out to the page.
-  const latestModal = useRef(modal);
-  latestModal.current = modal;
+  const latestModal = useRef(isModal);
+  latestModal.current = isModal;
   useEffect(() => {
     const surface = panel.current;
     if (!open || surface === null) return undefined;
@@ -220,7 +238,7 @@ export function Drawer({
   // Non-modal: the drawer sits after its opener in the Tab order. Tab on the opener goes in; Shift+Tab
   // on the page's next stop after the opener comes back in at its last control.
   useEffect(() => {
-    if (!open || modal) return undefined;
+    if (!open || isModal) return undefined;
     const onKeyDown = (event: KeyboardEvent): void => {
       const surface = panel.current;
       const from = anchor();
@@ -237,7 +255,7 @@ export function Drawer({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, modal, host, anchor]);
+  }, [open, isModal, host, anchor]);
 
   if (host === null || !rendered) return null;
 
@@ -248,7 +266,7 @@ export function Drawer({
     : undefined;
   const content = (
     <LayerPortalProvider value={host}>
-      {modal ? (
+      {isModal ? (
         <div
           className="cv-drawer__scrim"
           aria-hidden="true"
@@ -267,7 +285,7 @@ export function Drawer({
         ref={panel}
         id={panelId}
         role="dialog"
-        aria-modal={modal ? true : undefined}
+        aria-modal={isModal ? true : undefined}
         aria-label={label}
         aria-labelledby={labelled ? titleId : undefined}
         tabIndex={-1}
@@ -275,7 +293,7 @@ export function Drawer({
         style={style}
         data-cmp="CMP-046"
         data-side={side}
-        data-modal={modal ? "" : undefined}
+        data-modal={isModal ? "" : undefined}
       >
         <div className="cv-drawer__header">
           <h2 ref={heading} id={titleId} className="cv-drawer__title" tabIndex={-1}>
