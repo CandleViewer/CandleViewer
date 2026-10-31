@@ -181,11 +181,12 @@ async def test_an_unread_account_is_held_and_a_refused_one_skipped_until_its_job
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The code look's m1 (`tradable`): an account the binding refuses (deleted or keyless) is
-    skipped, as its stream opens it; one whose read fails (`StoreUnavailable`) is no refusal, so
-    it is held, logged at WARNING, until a trigger opens its job, which rebuilds its standing."""
+    skipped, as its stream opens it; one whose read fails (`StoreUnavailable`, or any other
+    failure, the code look's m3 on the final PR) is no refusal, so it is held, logged at
+    WARNING, until a trigger opens its job, which rebuilds its standing."""
     world, standing = _world(), ReconcileStanding()
-    ok, gone, unread = (AccountId(UUID(int=n)) for n in (0xA1, 0xA2, 0xA3))
-    for account, deleted in ((ok, False), (gone, True), (unread, False)):
+    ok, gone, unread, broken = (AccountId(UUID(int=n)) for n in (0xA1, 0xA2, 0xA3, 0xA4))
+    for account, deleted in ((ok, False), (gone, True), (unread, False), (broken, False)):
         ref = AccountRef(account_id=account, uid="1", environment="demo", key_ref="k")
         InMemorySubmissionStore(world.store).seed_account(ref)
         world.accounts.append(TradingAccountRow(account, "demo", "1", deleted, KEY))
@@ -194,6 +195,8 @@ async def test_an_unread_account_is_held_and_a_refused_one_skipped_until_its_job
     async def read(self: InMemoryTradingAccountReads, account_id: UUID) -> Any:
         if account_id == unread:
             raise StorageQueryFailed(None)  # the store down: the binding answers StoreUnavailable
+        if account_id == broken:
+            raise RuntimeError("a defect, not a refusal")  # reaches `tradable` as it is
         return await real(self, account_id)
 
     monkeypatch.setattr(InMemoryTradingAccountReads, "read_account", read)
@@ -204,13 +207,16 @@ async def test_an_unread_account_is_held_and_a_refused_one_skipped_until_its_job
             jobs = runtime._composed().reconcile
             assert jobs is not None
             assert set(jobs.jobs._jobs) == {ok}  # only the account that resolved
-            assert standing.is_stale(unread) and not standing.is_stale(gone)
+            assert standing.is_stale(unread) and standing.is_stale(broken)
+            assert not standing.is_stale(gone)
             await jobs.jobs.trigger(unread, "reconnect")  # its stream's first trigger
             assert not standing.is_stale(unread)  # opened, so rebuilt from its state
     skipped = [e["account_id"] for e in logs if e["event"] == "oms_reconcile_account_skipped"]
     held = [e for e in logs if e["event"] == "oms_reconcile_account_unread"]
     assert skipped == [str(gone)]
-    assert [(e["account_id"], e["log_level"]) for e in held] == [(str(unread), "warning")]
+    assert [(e["account_id"], e["log_level"]) for e in held] == [
+        (str(unread), "warning"), (str(broken), "warning"),
+    ]  # fmt: skip
 
 
 async def test_a_start_its_bound_cuts_holds_the_accounts_it_missed_until_a_retry_opens_them(
