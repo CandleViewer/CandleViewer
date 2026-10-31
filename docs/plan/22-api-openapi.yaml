@@ -360,6 +360,24 @@ info:
       that cannot be written turns a REST refusal into `503 audit_unavailable`, and nothing
       changes. A refusal under the target's scope is recorded as any authorisation refusal is.
 
+    ### Rule authoring refusal records (E35, #4834)
+    A refused write on the rule routes that the server records (`rules.scope_denied`, and
+    `rules.arm` for a refused mode change) is held to a budget per acting user and per action,
+    across all of the user's sessions, by the mechanism of "Audit budget" in `queryAuditLog` and
+    apart from its `/admin/audit*` budget and from the view-as one: `rules.scope_denied` and
+    `rules.arm` each keep their own count, at most `rules_refusal_budget_per_hour` (default 120)
+    records of each in a rolling hour, the same for every role, the Owner included. The tracking,
+    in-flight and summary limits of that mechanism apply. Over the cap a refusal is answered with
+    its own status, unchanged (the scope refusal's `403` or `404`, a mode refusal's own `4xx`),
+    and writes no record: it is counted, and its count is carried by the user's next record of
+    that action or, when none follows, by one summary record per user, action and window
+    (`suppressed_summary`, outside the cap), so a refusal is never dropped. A due record that
+    cannot be written turns the refusal into `503 audit_unavailable`, and nothing changes. A
+    refusal of a limit writes no record and is counted: the `429` of `validateRule` and
+    `compileRule`, the condition-node bound (`RuleIr`), the `note` and `reason` bound and the
+    stored-rule cap (`createRule`). A rule action's own denial while the rule runs and the
+    boot-time check of the system rules are never held to the cap.
+
     ### RBAC
     Roles `owner` | `manager` | `viewer` map to permission codes (`orders:write`,
     `keys:manage`, …). Each operation lists them in `x-rbac.permissions`. In addition,
@@ -8135,7 +8153,8 @@ paths:
       summary: List rules
       description: |
         Each rule is presented as `getRule` presents it, so listing disarms an armed rule the
-        engine must not run, audited and broadcast the same way.
+        engine must not run, audited and broadcast the same way. A page holds at most 200 rules
+        whatever `limit` asks for (`Limit` takes up to 500), and `meta.next_cursor` carries the rest.
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
@@ -8232,6 +8251,19 @@ paths:
         name with `unknown_field`: an audited `422 rule_ir_invalid` naming each member in
         `field`, and nothing is stored. A save does not store `description`, `editor`, `tags` or
         `graph_layout` yet (`RuleInput`).
+
+        **Limits on what a save holds (E35, #4834).** A `note` is at most 280 characters, counted
+        in Unicode code points: a longer one is refused whole, never shortened, with
+        `422 rule_ir_invalid`, `errors[].field` `note` and `errors[].rule` `max_length` (example
+        `noteTooLong`), and nothing is stored; a `note` that is not storable text stays
+        `400 validation_failed`. `ir.conditions` holds at most 1,000 nodes (`RuleIr`, example
+        `conditionNodes`). Both bounds are decided before the scope check, bind every role and write
+        no audit record: the refusal is counted, not recorded ("Rule authoring refusal records" in
+        `info.description`). A caller holds at most 200 saved rules, the Owner included, counting
+        the caller's own rules that are not deleted: a save past that is refused `409 conflict` with
+        `errors[].rule` `limit_reached` and a message that names the cap (example
+        `storedRuleCap`), after the permission and scope checks, and nothing is stored. The cap of
+        200 is interim until the Owner ratifies it as a `LIMIT_CAPS` row (#2701).
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: recommended
       parameters:
@@ -8336,6 +8368,29 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Rule" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: >-
+            `conflict` with `errors[].rule` `limit_reached`: the caller holds 200 saved rules.
+            Nothing is stored.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                storedRuleCap:
+                  value:
+                    type: "https://candleviewer.local/errors/conflict"
+                    title: "Concurrent modification or state conflict"
+                    status: 409
+                    detail: "You have reached the limit of 200 saved rules. Delete one to save another."
+                    instance: "urn:cv:req:0193f2bb-999d"
+                    code: conflict
+                    errors:
+                      [
+                        {
+                          rule: limit_reached,
+                          message: "You have reached the limit of 200 saved rules. Delete one to save another.",
+                        },
+                      ]
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -8380,7 +8435,9 @@ paths:
         `If-Match` carries the rule version the client edited (a decimal version number,
         optionally quoted); without it, and without `expected_version` in the body, the answer
         is `400`. The body is held to `createRule`'s rule for accounts and members
-        (`RuleUpdateInput`).
+        (`RuleUpdateInput`). A save is held to the `note` and condition-node bounds of
+        `createRule`, with the same refusals (`422 rule_ir_invalid`, examples `noteTooLong` and
+        `conditionNodes`): a refused save writes no version.
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: optional
       parameters:
@@ -8485,6 +8542,12 @@ paths:
         a version whose `limits.max_fires_per_hour` or `limits.max_fires_per_day` is above its
         `RuleLimits` default needs the Owner role, and anyone else gets the same audited
         `403 forbidden`.
+
+        A `note` over 280 characters, counted in Unicode code points, is refused whole as
+        `createRule` refuses one: `422 rule_ir_invalid`, `errors[].field` `note`,
+        `errors[].rule` `max_length` (example `noteTooLong`), decided before the scope check, so
+        it writes no audit record, and no version is activated. A `note` that is not storable text
+        stays `400 validation_failed`.
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -8508,6 +8571,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/RuleIrInvalid" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/validate:
@@ -8521,6 +8585,18 @@ paths:
         unreachable branches, missing guards, the action-budget hard caps (`x-cv-limit-caps` on
         `RuleIr`), and the native-stop invariant (C-2.6). Returns errors **and** warnings;
         warnings do not block saving but do block arming.
+
+        **Limit (E35, #4834).** `validateRule` and `compileRule` share one token bucket per user,
+        for every role, the Owner included, across all of the user's sessions:
+        `rules_check_rate_per_user_per_second` (default 10 a second) with a burst of twice the rate
+        (20 by default). A call over it is
+        `429 rate_limited` with `Retry-After` (whole seconds, at least 1, which the body's
+        `retry_after_seconds` repeats) and writes no audit record. The bucket is taken after
+        authentication and the permission check and before the body is read, so a refused caller
+        takes no token and a throttled call's body is never read.
+        A rule over the bound of 1,000 condition nodes (`RuleIr`) is not a refusal here: it is
+        `200` with `valid: false` and one error, code `schema_error`, class `syntax`, path
+        `conditions`, found before the schema and semantic checks.
       x-rbac: { permissions: [rules:read], scope: none }
       x-idempotency: ignored
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -8573,6 +8649,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/{ruleId}/simulate:
@@ -8678,6 +8755,13 @@ paths:
         are answered. A rule armed above a hard cap before the caps existed is never clamped:
         the evaluator skips it, and it is disarmed, audited with the reason `limits_above_cap`,
         the first time it is read or evaluated.
+
+        A `reason` over 280 characters, counted in Unicode code points, is refused whole as
+        `createRule` refuses a `note`: `422 rule_ir_invalid`, `errors[].field` `reason`,
+        `errors[].rule` `max_length` (example `noteTooLong` of `RuleIrInvalid`), decided before the
+        scope check and before the live-enablement step-up is consumed, so a refused `reason` spends
+        no grant, raises no challenge and writes no audit record, and the mode does not change. A
+        `reason` that is not storable text stays `400 validation_failed`.
       x-rbac: { permissions: [rules:write, rules:arm_live], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -14421,6 +14505,11 @@ paths:
         Compiling the form model and the graph model of the same rule MUST produce an
         identical hash; that equality is the round-trip guarantee asserted by the contract
         tests in 24-internal-schemas.md section 11.4.
+
+        Limited as `validateRule` is: one token bucket per user, shared by both, past which a call
+        is `429 rate_limited` with `Retry-After` and writes no audit record. A model that would
+        compile to a rule over the bound of 1,000 condition nodes (`RuleIr`), for either editor,
+        is refused `422 rule_ir_invalid` (example `conditionNodes`).
       x-rbac: { permissions: [rules:read], scope: granted_accounts }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
@@ -14469,6 +14558,7 @@ paths:
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /journal/trades/{journalTradeId}/context:
@@ -17312,6 +17402,40 @@ components:
                       field: bindings,
                       rule: accounts_outside_scope,
                       message: "A rule's accounts go in ir.scope.account_ids, never outside ir.",
+                    },
+                  ]
+            noteTooLong:
+              summary: A `note` or `reason` over 280 characters (`createRule`, `updateRule`, `setActiveRuleVersion`, `setRuleMode`)
+              value:
+                type: "https://candleviewer.local/errors/rule_ir_invalid"
+                title: "Rule intermediate representation failed semantic validation"
+                status: 422
+                detail: "1 member of the request body is over its length bound."
+                instance: "urn:cv:req:0193f2bb-999b"
+                code: rule_ir_invalid
+                errors:
+                  [
+                    {
+                      field: note,
+                      rule: max_length,
+                      message: "At most 280 characters; the request is refused, never shortened.",
+                    },
+                  ]
+            conditionNodes:
+              summary: A rule over the bound of 1,000 condition nodes (`RuleIr`; `createRule`, `updateRule`, `compileRule`)
+              value:
+                type: "https://candleviewer.local/errors/rule_ir_invalid"
+                title: "Rule intermediate representation failed semantic validation"
+                status: 422
+                detail: "1 error in the rule IR."
+                instance: "urn:cv:req:0193f2bb-999c"
+                code: rule_ir_invalid
+                errors:
+                  [
+                    {
+                      field: conditions,
+                      rule: schema_error,
+                      message: "A rule holds at most 1000 condition nodes.",
                     },
                   ]
     RateLimited:
@@ -21238,6 +21362,14 @@ components:
         saved above one is refused (`createRule`). The server takes the caps from
         `candleviewer.rules.limits`, and a contract test keeps this member equal to them. Alerts
         reuse `RuleLimits` without the caps.
+
+        **Condition-node bound (E35, #4834).** `conditions` holds at most 1,000 nodes: every
+        comparison, boolean and temporal node counts once at each place it occurs, and operands
+        and actions are not nodes. The check runs before the schema and semantic checks and binds
+        every role. `validateRule` answers a rule over it `200` with `valid: false` and one error,
+        code `schema_error`, class `syntax`, path `conditions`; a save (`createRule`,
+        `updateRule`), an import and `compileRule` answer `422 rule_ir_invalid` (example
+        `conditionNodes`), and a save stores nothing.
       properties:
         ir_version: { type: integer, enum: [1] }
         trigger: { $ref: "#/components/schemas/RuleTrigger" }

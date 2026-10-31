@@ -5322,7 +5322,8 @@ export interface paths {
     /**
      * List rules
      * @description Each rule is presented as `getRule` presents it, so listing disarms an armed rule the
-     *     engine must not run, audited and broadcast the same way.
+     *     engine must not run, audited and broadcast the same way. A page holds at most 200 rules
+     *     whatever `limit` asks for (`Limit` takes up to 500), and `meta.next_cursor` carries the rest.
      */
     get: operations["listRules"];
     put?: never;
@@ -5365,6 +5366,19 @@ export interface paths {
      *     name with `unknown_field`: an audited `422 rule_ir_invalid` naming each member in
      *     `field`, and nothing is stored. A save does not store `description`, `editor`, `tags` or
      *     `graph_layout` yet (`RuleInput`).
+     *
+     *     **Limits on what a save holds (E35, #4834).** A `note` is at most 280 characters, counted
+     *     in Unicode code points: a longer one is refused whole, never shortened, with
+     *     `422 rule_ir_invalid`, `errors[].field` `note` and `errors[].rule` `max_length` (example
+     *     `noteTooLong`), and nothing is stored; a `note` that is not storable text stays
+     *     `400 validation_failed`. `ir.conditions` holds at most 1,000 nodes (`RuleIr`, example
+     *     `conditionNodes`). Both bounds are decided before the scope check, bind every role and write
+     *     no audit record: the refusal is counted, not recorded ("Rule authoring refusal records" in
+     *     `info.description`). A caller holds at most 200 saved rules, the Owner included, counting
+     *     the caller's own rules that are not deleted: a save past that is refused `409 conflict` with
+     *     `errors[].rule` `limit_reached` and a message that names the cap (example
+     *     `storedRuleCap`), after the permission and scope checks, and nothing is stored. The cap of
+     *     200 is interim until the Owner ratifies it as a `LIMIT_CAPS` row (#2701).
      */
     post: operations["createRule"];
     delete?: never;
@@ -5406,7 +5420,9 @@ export interface paths {
      *     `If-Match` carries the rule version the client edited (a decimal version number,
      *     optionally quoted); without it, and without `expected_version` in the body, the answer
      *     is `400`. The body is held to `createRule`'s rule for accounts and members
-     *     (`RuleUpdateInput`).
+     *     (`RuleUpdateInput`). A save is held to the `note` and condition-node bounds of
+     *     `createRule`, with the same refusals (`422 rule_ir_invalid`, examples `noteTooLong` and
+     *     `conditionNodes`): a refused save writes no version.
      */
     put: operations["updateRule"];
     post?: never;
@@ -5436,6 +5452,12 @@ export interface paths {
      *     a version whose `limits.max_fires_per_hour` or `limits.max_fires_per_day` is above its
      *     `RuleLimits` default needs the Owner role, and anyone else gets the same audited
      *     `403 forbidden`.
+     *
+     *     A `note` over 280 characters, counted in Unicode code points, is refused whole as
+     *     `createRule` refuses one: `422 rule_ir_invalid`, `errors[].field` `note`,
+     *     `errors[].rule` `max_length` (example `noteTooLong`), decided before the scope check, so
+     *     it writes no audit record, and no version is activated. A `note` that is not storable text
+     *     stays `400 validation_failed`.
      */
     put: operations["setActiveRuleVersion"];
     post?: never;
@@ -5459,6 +5481,7 @@ export interface paths {
     /**
      * Compile an editor model into canonical rule IR
      * @description Accepts either editor's native model and returns canonical IR plus its `ir_hash`. Compiling the form model and the graph model of the same rule MUST produce an identical hash; that equality is the round-trip guarantee asserted by the contract tests in 24-internal-schemas.md section 11.4.
+     *     Limited as `validateRule` is: one token bucket per user, shared by both, past which a call is `429 rate_limited` with `Retry-After` and writes no audit record. A model that would compile to a rule over the bound of 1,000 condition nodes (`RuleIr`), for either editor, is refused `422 rule_ir_invalid` (example `conditionNodes`).
      */
     post: operations["compileRule"];
     delete?: never;
@@ -5501,6 +5524,13 @@ export interface paths {
      *     are answered. A rule armed above a hard cap before the caps existed is never clamped:
      *     the evaluator skips it, and it is disarmed, audited with the reason `limits_above_cap`,
      *     the first time it is read or evaluated.
+     *
+     *     A `reason` over 280 characters, counted in Unicode code points, is refused whole as
+     *     `createRule` refuses a `note`: `422 rule_ir_invalid`, `errors[].field` `reason`,
+     *     `errors[].rule` `max_length` (example `noteTooLong` of `RuleIrInvalid`), decided before the
+     *     scope check and before the live-enablement step-up is consumed, so a refused `reason` spends
+     *     no grant, raises no challenge and writes no audit record, and the mode does not change. A
+     *     `reason` that is not storable text stays `400 validation_failed`.
      */
     put: operations["setRuleMode"];
     post?: never;
@@ -5654,6 +5684,18 @@ export interface paths {
      *     unreachable branches, missing guards, the action-budget hard caps (`x-cv-limit-caps` on
      *     `RuleIr`), and the native-stop invariant (C-2.6). Returns errors **and** warnings;
      *     warnings do not block saving but do block arming.
+     *
+     *     **Limit (E35, #4834).** `validateRule` and `compileRule` share one token bucket per user,
+     *     for every role, the Owner included, across all of the user's sessions:
+     *     `rules_check_rate_per_user_per_second` (default 10 a second) with a burst of twice the rate
+     *     (20 by default). A call over it is
+     *     `429 rate_limited` with `Retry-After` (whole seconds, at least 1, which the body's
+     *     `retry_after_seconds` repeats) and writes no audit record. The bucket is taken after
+     *     authentication and the permission check and before the body is read, so a refused caller
+     *     takes no token and a throttled call's body is never read.
+     *     A rule over the bound of 1,000 condition nodes (`RuleIr`) is not a refusal here: it is
+     *     `200` with `valid: false` and one error, code `schema_error`, class `syntax`, path
+     *     `conditions`, found before the schema and semantic checks.
      */
     post: operations["validateRule"];
     delete?: never;
@@ -10753,6 +10795,14 @@ export interface components {
      *     saved above one is refused (`createRule`). The server takes the caps from
      *     `candleviewer.rules.limits`, and a contract test keeps this member equal to them. Alerts
      *     reuse `RuleLimits` without the caps.
+     *
+     *     **Condition-node bound (E35, #4834).** `conditions` holds at most 1,000 nodes: every
+     *     comparison, boolean and temporal node counts once at each place it occurs, and operands
+     *     and actions are not nodes. The check runs before the schema and semantic checks and binds
+     *     every role. `validateRule` answers a rule over it `200` with `valid: false` and one error,
+     *     code `schema_error`, class `syntax`, path `conditions`; a save (`createRule`,
+     *     `updateRule`), an import and `compileRule` answer `422 rule_ir_invalid` (example
+     *     `conditionNodes`), and a save stores nothing.
      */
     RuleIr: {
       actions: components["schemas"]["RuleAction"][];
@@ -20503,6 +20553,15 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      /** @description `conflict` with `errors[].rule` `limit_reached`: the caller holds 200 saved rules. Nothing is stored. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["RuleIrInvalid"];
       503: components["responses"]["ServiceUnavailable"];
@@ -20647,6 +20706,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       413: components["responses"]["PayloadTooLarge"];
+      422: components["responses"]["RuleIrInvalid"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -20709,6 +20769,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["RuleIrInvalid"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -21016,6 +21077,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       413: components["responses"]["PayloadTooLarge"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
