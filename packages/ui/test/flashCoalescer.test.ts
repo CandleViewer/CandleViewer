@@ -173,4 +173,30 @@ describe("flash coalescer", () => {
     c.onTick("c", "down", 20_100);
     expect(c.frame(20_100)).toEqual([{ cellId: "c", direction: "down" }]);
   });
+  it("is fair under overload: equal-priority cells age-order, every cell starts, none exceeds 2 per second", () => {
+    const c = createFlashCoalescer();
+    const n = 100;
+    const starts = new Map<string, number[]>();
+    for (let t = 0; t <= 10_000; t += 16) {
+      for (let i = 0; i < n; i++) c.onTick(`c${i}`, "up", t);
+      for (const s of c.frame(t)) starts.set(s.cellId, [...(starts.get(s.cellId) ?? []), t]);
+    }
+    expect(starts.size).toBe(n);
+    for (const at of starts.values()) {
+      for (const t0 of at)
+        expect(at.filter((t) => t >= t0 && t < t0 + 1000).length).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("treats a net that cancels to float residue as flat", () => {
+    const c = createFlashCoalescer();
+    c.onTick("x", "up", 0);
+    c.frame(0);
+    c.onTick("x", 0.1, 10);
+    c.onTick("x", 0.2, 20);
+    c.onTick("x", -0.3, 30);
+    expect(c.frame(500)).toEqual([]);
+    c.onTick("x", 1e-7, 600); // a real tiny move still flashes: the epsilon is relative
+    expect(c.frame(1000)).toEqual([{ cellId: "x", direction: "up" }]);
+  });
 });

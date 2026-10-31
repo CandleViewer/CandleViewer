@@ -8,13 +8,17 @@
  *   flash.onTick("BTCUSDT:last", +0.5, now);       // on every value change; always update the value
  *   for (const s of flash.frame(now)) start(s);    // once per frame: s.cellId, s.direction
  *
- * Rules (HS-1; the ticket's 400 ms is superseded, 333 ms admits 4 starts in 1 000 ms, MR-1 allows 3):
- * - 500 ms per cell between starts, so at most 2 starts in any 1 000 ms window.
+ * Rules (HS-1; the ticket's 400 ms is superseded). MR-1 allows at most 3 starts in any half-open 1 000 ms
+ * window [t, t + 1 000); an interval of 333 ms admits 4 (0, 333, 666, 999), so 334 ms is the floor:
+ * - 500 ms per cell between starts (HS-1), so at most 2 starts in any half-open 1 000 ms window.
  * - Latest wins, nothing queues: one net per cell, the sum of the deltas since the last start. An idle
  *   cell flashes on its next frame (leading edge); ticks inside the window accumulate, and when the
- *   window ends one start carries their net direction. A flat net is no emphasis.
+ *   window ends one start carries their net direction. A flat net is no emphasis (flat = cancels
+ *   to within float residue, see FLAT_EPSILON).
  * - At most `maxPerFrame` (20) starts per frame, higher `priority` first (the focused symbol, open
- *   positions), then the longest waiting. A cell over the cap keeps its value and loses its emphasis.
+ *   positions), then the longest waiting
+ *   (oldest last start first; a never-started cell first). A cell over the cap keeps its value and loses
+ *   its emphasis, and its last start is unchanged, so it ranks first among its equals next frame.
  * - A cell ticking at >= 1 Hz (gaps <= 1 000 ms) for 10 s is `sustained`: no emphasis until a gap
  *   over 1 000 ms. The caller shows the sustained state, not a faster blink.
  * Values, arrows and signs always update; only the emphasis is dropped.
@@ -58,12 +62,21 @@ interface Cell {
   lastStart: number;
   /** Sum of the deltas since the last start (or since the cell went idle). */
   net: number;
+  /** Sum of the absolute deltas since the last start: the scale the net is judged flat against. */
+  mag: number;
   pending: boolean;
   priority: number;
   /** When the current unbroken >= 1 Hz run began. */
   runStart: number;
   lastTick: number;
 }
+
+/**
+ * A net is flat when |net| <= FLAT_EPSILON * mag. Relative, not absolute: the API takes float price
+ * deltas of any scale (BTC 0.5, a 1e-7 tick coin), so a fixed 1e-9 would swallow real moves on small
+ * prices; +0.1 +0.2 -0.3 leaves 5.5e-17 against mag 0.6, far under 1e-9, and counts as flat.
+ */
+const FLAT_EPSILON = 1e-9;
 
 const DEFAULTS = { windowMs: 500, maxPerFrame: 20, busyGapMs: 1000, sustainedAfterMs: 10_000 };
 
@@ -81,6 +94,7 @@ export function createFlashCoalescer(options: FlashCoalescerOptions = {}): Flash
   const pending = new Set<string>();
   let lastPrune = Number.NEGATIVE_INFINITY;
 
+  // Deliberate: frame time (nowMs) against the last TICK time, not the last start.
   const sustainedAt = (c: Cell, nowMs: number): boolean =>
     nowMs - c.lastTick <= busyGapMs && nowMs - c.runStart >= sustainedAfterMs;
 
@@ -91,6 +105,7 @@ export function createFlashCoalescer(options: FlashCoalescerOptions = {}): Flash
         c = {
           lastStart: Number.NEGATIVE_INFINITY,
           net: 0,
+          mag: 0,
           pending: false,
           priority,
           runStart: nowMs,
@@ -102,7 +117,9 @@ export function createFlashCoalescer(options: FlashCoalescerOptions = {}): Flash
       }
       c.lastTick = nowMs;
       c.priority = c.pending ? Math.max(c.priority, priority) : priority;
-      c.net += deltaOf(tick);
+      const delta = deltaOf(tick);
+      c.net += delta;
+      c.mag += Math.abs(delta);
       c.pending = true;
       pending.add(cellId);
     },
@@ -116,15 +133,22 @@ export function createFlashCoalescer(options: FlashCoalescerOptions = {}): Flash
         if (nowMs - cell.lastStart < windowMs) continue;
         due.push({ id, cell });
       }
-      // Array.prototype.sort is stable: equal priority keeps tick order (the longest waiting first).
-      due.sort((a, b) => b.cell.priority - a.cell.priority);
+      // Priority first, then the longest waiting (oldest lastStart; -Infinity = never started, first).
+      // Explicit compares: -Infinity - -Infinity is NaN. O(d log d) over the due set only.
+      due.sort((a, b) => {
+        if (a.cell.priority !== b.cell.priority) return b.cell.priority - a.cell.priority;
+        if (a.cell.lastStart < b.cell.lastStart) return -1;
+        return a.cell.lastStart > b.cell.lastStart ? 1 : 0;
+      });
       const starts: FlashStart[] = [];
       for (const { id, cell } of due) {
         pending.delete(id);
         const net = cell.net;
+        const flat = Math.abs(net) <= FLAT_EPSILON * cell.mag;
         cell.net = 0;
+        cell.mag = 0;
         cell.pending = false;
-        if (net === 0 || sustainedAt(cell, nowMs)) continue; // flat or sustained: the value only
+        if (flat || sustainedAt(cell, nowMs)) continue; // flat or sustained: the value only
         if (starts.length >= maxPerFrame) continue; // over the cap: value only, nothing queues
         cell.lastStart = nowMs;
         starts.push({ cellId: id, direction: net > 0 ? "up" : "down" });
