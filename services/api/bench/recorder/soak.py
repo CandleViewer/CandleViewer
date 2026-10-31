@@ -6,7 +6,8 @@ symbol within 20 % of the E16-K01 figure (`bench/baselines/e16/recorder_soak.jso
 until the live re-measure, #1778). The feed is the recorded corpus re-issued by `generator.Mix` at
 the 21 §11.1 reference rates (E16-K01's rows/day), the rate the E16-K01 figure is defined on.
 `--hours` is scenario time; the writer's clock is virtual, so a run takes as long as the CPU needs.
-`smoke` scales the rate to 200 msg/s for 3 s: GB/day is then reported, never gated.
+`smoke` scales the rate to 200 msg/s for 3 s: GB/day and the RSS peak are then reported, never
+gated (the smoke shares its process, e.g. a pytest session, so its RSS is not the recorder's).
 
     uv run python -m bench.recorder.soak --profile smoke
     uv run python -m bench.recorder.soak --profile full --hours 24 \\
@@ -72,7 +73,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = asyncio.run(soak(args.profile, args.hours, args.seed, Path(tmp) / "wal"))
     baseline = load_baseline(BASELINE)
     reference = float(baseline["gb_per_day_per_symbol"]["value"])
-    verdict = soak_verdict(result, reference, gate_gb=args.profile == "full")
+    verdict = soak_verdict(result, reference, at_scale=args.profile == "full")
     if args.record_baseline:
         record_baseline(verdict, baseline, args.profile)
     return finish(

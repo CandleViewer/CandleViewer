@@ -45,8 +45,11 @@ AUTO_PARTS: Final[tuple[tuple[Tier, int], ...]] = (("hot", 20),)
 
 
 class LadderRig:
-    def __init__(self, tmp_path: Path) -> None:
-        self.volume = VirtualVolume(tmp_path / "recording", TOTAL, tmp_root=tmp_path)
+    """The rig over `volume` (default: a `TOTAL`-byte `VirtualVolume` under `tmp_path`; the
+    nightly's loopback leg passes a `LoopbackVolume`). The WAL is always under `tmp_path`."""
+
+    def __init__(self, tmp_path: Path, volume: VirtualVolume | None = None) -> None:
+        self.volume = volume or VirtualVolume(tmp_path / "recording", TOTAL, tmp_root=tmp_path)
         for tier, age in PINNED_PARTS:
             self.volume.add_partition(PINNED, tier, age)
         for tier, age in AUTO_PARTS:
@@ -60,7 +63,7 @@ class LadderRig:
 
         self.budget = DiskBudget(
             meter=VolumeMeter(self.volume), events=self.retention, bus=self.bus, env="demo",
-            config=BudgetConfig(cap_bytes=TOTAL), now_us=lambda: NOW_US, pinned=pins,
+            config=BudgetConfig(cap_bytes=self.volume.total), now_us=lambda: NOW_US, pinned=pins,
             monotonic=lambda: 0.0,
         )  # fmt: skip
         r = self.retention

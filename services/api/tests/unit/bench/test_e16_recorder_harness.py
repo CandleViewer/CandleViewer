@@ -172,8 +172,27 @@ def test_soak_cli_judges_the_smoke_and_refuses_non_positive_hours(tmp_path: Path
     assert soak.main(["--profile", "smoke", "--out", str(out)]) == 0
     checks = {c["name"]: c for c in json.loads(out.read_text())["checks"]}
     assert checks["gb_per_day_per_symbol"]["hard"] is False  # a scaled run reports it
+    assert checks["rss_peak"]["hard"] is False  # and its host process's RSS
     with pytest.raises(SystemExit, match="positive"):
         soak.main(["--profile", "full", "--hours", "0"])
+
+
+def test_soak_smoke_passes_when_its_host_process_is_over_512_mib(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CI failure (py-tests rest-heavy-3): the smoke ran in a shared pytest process whose RSS
+    was 866.8 MiB. The smoke reports that peak and still passes; it is not the recorder's RSS."""
+    real = harness.run
+
+    async def heavy(cfg: LoadConfig, *, mix: Mix | None = None) -> RunResult:
+        cfg.rss = lambda: 900 * 2**20
+        return await real(cfg, mix=mix)
+
+    monkeypatch.setattr(soak, "run", heavy)
+    out = tmp_path / "soak.json"
+    assert soak.main(["--profile", "smoke", "--out", str(out)]) == 0
+    rss = {c["name"]: c for c in json.loads(out.read_text())["checks"]}["rss_peak"]
+    assert rss["passed"] is False and rss["hard"] is False and rss["measured"] == 900.0
 
 
 def test_record_baseline_keeps_the_committed_provenance(

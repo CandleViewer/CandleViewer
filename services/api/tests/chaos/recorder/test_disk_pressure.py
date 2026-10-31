@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from candleviewer.exchange.base.models import PlaceOrderRequest
+from candleviewer.oms.ports import RequestRecord
 from candleviewer.recorder.budget import SUGGESTED_ACTIONS
 from candleviewer.recorder.models import DiskPressureLevel as L
 from candleviewer.recorder.policy import user_actor
@@ -119,16 +120,29 @@ async def test_disk_ladder_pinned_bytes_identical_throughout(ladder: LadderRig) 
 
 
 async def test_order_placed_at_96_percent_succeeds_with_native_sl(ladder: LadderRig) -> None:
-    """BQ-4: the real submit pipeline over the recorded-fixture venue doubles, its stores on
-    their own (in-memory) volume, while the recording volume is at 96 %."""
+    """BQ-4: the real submit pipeline (`tests/unit/oms/submit_rig.rigged`: the OMS's in-memory
+    `FakeTradingPort` venue and in-memory stores, not `packages/fixtures` captures and not on the
+    near-full volume; SCENARIOS.md "Deviations") while the recording volume is at 96 %: the order
+    is accepted, its write-ahead audit record (C-2.9) and its row exist, and its create carries
+    the native stop (C-2.6)."""
     await ladder.at(96)
     assert ladder.budget.halted
     async with rigged() as oms:
         outcome = await oms.submit()
         [call] = [c for c in oms.port.demo.calls if c.method == "place_order"]
+        audits = oms.port.audits.actions()
+        written = oms.port.audits.written
+        orders = dict(oms.store._orders)
     assert (outcome.status, outcome.lifecycle) == (202, "submitted")
     assert isinstance(call.request, PlaceOrderRequest)
     assert call.request.stop_loss == STOP, "INVARIANT: native stop-loss on the create (C-2.6)"
+    # C-2.9: the intent and its stop are audited before the send (no exchange call before them)
+    ahead = [(r.action, r.reason) for r, sent in written if sent == 0]
+    assert ("orders.submit", "validated") in ahead and ("sl.attached", "entry_attach") in ahead
+    intent = next(r for r, _ in written if (r.action, r.reason) == ("orders.submit", "validated"))
+    assert isinstance(intent, RequestRecord) and intent.object_id == outcome.order_id
+    assert audits[-1] == ("orders.submit", "submitted"), "and the outcome is audited after"
+    assert outcome.order_id in orders, "the order row was persisted under pressure"
 
 
 async def test_pinned_assertion_fails_when_pin_predicate_removed(

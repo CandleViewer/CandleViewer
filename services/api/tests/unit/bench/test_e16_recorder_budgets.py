@@ -31,20 +31,20 @@ def _clean(**kw: object) -> RunResult:
 
 
 def test_soak_budget_passes_a_clean_run() -> None:
-    v = soak_verdict(_clean(), 14.04, gate_gb=True)
+    v = soak_verdict(_clean(), 14.04, at_scale=True)
     assert v.passed, [(c.name, c.measured) for c in v.checks if not c.passed]
 
 
 def test_soak_budget_fails_on_dropped_message() -> None:
     v = soak_verdict(
-        _clean(written_rows={"all": 2_999}, dropped_rows={"all": 1}), 14.04, gate_gb=True
+        _clean(written_rows={"all": 2_999}, dropped_rows={"all": 1}), 14.04, at_scale=True
     )
     failed = {c.name for c in v.checks if not c.passed}
     assert not v.passed and failed == {"dropped_rows"}  # accounted for by a gap, still a loss
 
 
 def test_soak_budget_fails_on_spill_bytes() -> None:
-    v = soak_verdict(_clean(spill_bytes=[0, 0, 4096, 0, 0]), 14.04, gate_gb=True)
+    v = soak_verdict(_clean(spill_bytes=[0, 0, 4096, 0, 0]), 14.04, at_scale=True)
     assert not v.passed and {c.name for c in v.checks if not c.passed} == {"spill_bytes"}
 
 
@@ -69,7 +69,7 @@ def test_soak_gb_per_day_fails_beyond_20_percent(measured: float, passed: bool) 
 
 
 def test_soak_gb_per_day_is_reported_not_gated_on_a_scaled_run() -> None:
-    v = soak_verdict(_clean(hot_bytes=1), 14.04, gate_gb=False)
+    v = soak_verdict(_clean(hot_bytes=1), 14.04, at_scale=False)
     (gb,) = [c for c in v.checks if c.name == "gb_per_day_per_symbol"]
     assert not gb.passed and not gb.hard and v.passed
 
@@ -92,6 +92,20 @@ def test_flush_budget_fails_a_run_that_wrote_nothing() -> None:
 def test_memory_ceiling_is_512_mib() -> None:
     assert check_memory([512 * 2**20]).passed
     assert not check_memory([512 * 2**20 + 1]).passed
+
+
+def test_soak_rss_peak_is_reported_not_judged_on_a_scaled_run() -> None:
+    """A smoke soak shares its process (CI's pytest session measured 866.8 MiB): its RSS peak is
+    reported, never judged; the full profile keeps the absolute 512 MiB ceiling."""
+    heavy = _clean(rss_bytes=[900 * 2**20])
+    smoke = soak_verdict(heavy, 14.04, at_scale=False)
+    (rss,) = [c for c in smoke.checks if c.name == "rss_peak"]
+    assert not rss.passed and not rss.hard and "reported, not judged" in rss.note
+    assert smoke.passed
+    full = soak_verdict(heavy, 14.04, at_scale=True)
+    assert not full.passed and {c.name for c in full.checks if not c.passed} == {"rss_peak"}
+    (full_rss,) = [c for c in full.checks if c.name == "rss_peak"]
+    assert full_rss.hard and full_rss.limit == 512.0
 
 
 def test_rate_below_95_percent_of_target_fails() -> None:

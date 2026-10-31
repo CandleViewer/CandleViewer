@@ -63,9 +63,18 @@ def check_flush(flush_ms: Sequence[float], limit_ms: float = FLUSH_P95_MS) -> Ch
     return Check("flush_p95", "E16-Q04 flush", p95, limit_ms, "ms", ok, note=note)
 
 
-def check_memory(rss_bytes: Sequence[int], ceiling_mib: float = RSS_CEILING_MIB) -> Check:
+def check_memory(
+    rss_bytes: Sequence[int], ceiling_mib: float = RSS_CEILING_MIB, *, hard: bool = True
+) -> Check:
+    """The process RSS budget (<= 512 MiB, absolute). `hard=False` reports it: a scaled smoke run
+    shares its process (a pytest session, say) with whatever else that process loaded, so its peak
+    measures the host process, not the recorder."""
     peak = max(rss_bytes, default=0) / 2**20
-    return Check("rss_peak", "E16-Q04 memory", peak, ceiling_mib, "MiB", peak <= ceiling_mib)
+    note = "" if hard else "reported, not judged: a scaled run's process RSS is not the recorder's"
+    return Check(
+        "rss_peak", "E16-Q04 memory", peak, ceiling_mib, "MiB", peak <= ceiling_mib, hard=hard,
+        note=note,
+    )  # fmt: skip
 
 
 def check_drops(dropped_rows: Mapping[str, int]) -> Check:
@@ -134,9 +143,10 @@ def ingest_verdict(r: RunResult) -> Verdict:
     return v
 
 
-def soak_verdict(r: RunResult, baseline_gb: float, *, gate_gb: bool) -> Verdict:
-    """The soak: no silent loss and the storage rate. `gate_gb` is False on a scaled run, whose
-    feed rate is not the reference one, so its GB/day is reported only."""
+def soak_verdict(r: RunResult, baseline_gb: float, *, at_scale: bool) -> Verdict:
+    """The soak: no silent loss, flush p95, memory and the storage rate. `at_scale` is False on a
+    scaled (smoke) run: its feed rate is not the reference one, so its GB/day is reported only,
+    and so is its RSS peak (see `check_memory`); the full profile judges both."""
     v = Verdict("recorder_soak")
     for c in (
         check_drops(r.dropped_rows),
@@ -144,8 +154,8 @@ def soak_verdict(r: RunResult, baseline_gb: float, *, gate_gb: bool) -> Verdict:
         check_spill(r.spill_bytes),
         check_reconciliation(r.produced_rows, r.written_rows, r.dropped_rows),
         check_flush(r.flush_ms),
-        check_memory(r.rss_bytes),
-        check_gb_per_day(r.gb_per_day_per_symbol(), baseline_gb, hard=gate_gb),
+        check_memory(r.rss_bytes, hard=at_scale),
+        check_gb_per_day(r.gb_per_day_per_symbol(), baseline_gb, hard=at_scale),
     ):
         v.add(c)
     v.metrics = _metrics(r)

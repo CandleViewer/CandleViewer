@@ -2,9 +2,10 @@
 
 `VirtualVolume` is a recording volume of `total` bytes rooted in a pytest tmp dir. Its free space
 is `total` less the bytes of every file under it, so filling it is writing real files and
-reclaiming it is deleting them: the ladder reads exactly what retention frees. No mount, no root,
-no loopback image (the brief's `_loopback.py` needs sudo; see SCENARIOS.md "Deviations"), and it
-refuses any root outside the tmp dir it was given, so a mistaken path can never fill a real disk.
+reclaiming it is deleting them: the ladder reads exactly what retention frees. No mount, no root:
+it is the PR lane's faked mount layer (the nightly's real loopback leg is `_loopback.py`; see
+SCENARIOS.md "Deviations"), and it refuses any root outside the tmp dir it was given, so a
+mistaken path can never fill a real disk.
 
 `VolumeMeter` is the `StorageMeter` `DiskBudget` samples; `VolumeRetention` is every port the
 E07 `Reaper` takes, over the same files. The volume is the whole cap (`cap == total`), so the

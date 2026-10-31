@@ -215,8 +215,12 @@ and files. No concurrency group (#3449). Cost: one job a night, capped by its 35
 (`services/api/tests/chaos/recorder`, E16-Q04; catalogue in its `SCENARIOS.md`: the disk-pressure
 ladder, the QuestDB outage and the roll-off interruption) on `main` daily at 03:33 UTC and on
 demand, the same shape as the WS chaos nightly above: one `chaos-recorder` job, one pytest call
-with `-m "chaos and not flaky"`, `--no-cov`, no retries, a 10-minute step limit and a 30-minute
-job limit. Smoke scale with fakes, so the PR lane's `db-chaos` shards run it too. Not required
+with `-m "chaos and not flaky"`, `--no-cov`, no retries, a 10-minute step limit and a 35-minute
+job limit. Smoke scale with fakes, so the PR lane's `db-chaos` shards run it too; the nightly adds
+the real-filesystem leg (`test_loopback.py`): it mounts a 64 MiB ext4 loopback image at
+`/mnt/cv-chaos-recorder` with sudo, sets `CV_CHAOS_LOOPBACK=1` and unmounts it on every exit path
+(the leg skips without the flag and fails, never skips, on a directory that is not a loop-device
+mount). Not required
 (C-9.1), but a red night blocks the next release (C-9.2) and files under the `chaos-recorder`
 signal (labels `qa`, `area/recorder-replay`, `priority/p1`). Triage from the job log (`-rA`) and
 the `chaos-recorder-junit` artifact; a failing negative control (`test_pinned_assertion_fails_*`)

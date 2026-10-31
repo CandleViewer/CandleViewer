@@ -280,7 +280,8 @@ async def test_a_gap_at_a_split_delta_resyncs_and_never_presents_the_partial_boo
     """C-2.5 / C-2.14 (the coordinator's 2026-10-31 ruling on #481): a delta the recorder's WAL
     budget split leaves its first levels written and a `backpressure_drop` gap at the same
     `exch_ts`. The gap is a resync point: the book leaves LIVE, serves no view built from the
-    partial delta, and holds the rest until the next recorded snapshot."""
+    partial delta, and holds the rest until the next recorded snapshot. Unit level: the gap is
+    `injector.reset_book`, the call `replay/runner.py` makes at a recorded gap, not a fed row."""
     bus = LoggingBus()
     books, injector = replayed(bus)
     await injector.deliver(recorded_snapshot(SECOND, 10))

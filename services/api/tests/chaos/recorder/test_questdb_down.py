@@ -22,7 +22,7 @@ from typing import Final
 
 import pytest
 
-from bench.recorder.generator import Mix
+from bench.recorder.generator import Delta, Mix
 from bench.recorder.harness import dispatch
 from candleviewer.recorder.writer import (
     GAP_CAUSE,
@@ -61,11 +61,17 @@ class Outage:
         )  # fmt: skip
         self.mix = Mix(SYMBOLS, seed=29, depth=200)
         self.ts = T0
+        #: Rows produced per (stream kind, symbol, exch_ts), counted as the mix counts them.
+        self.sent: Counter[tuple[str, str, datetime]] = Counter()
 
     async def step(self, n: int = PER_STEP) -> None:
         for _ in range(n):
             self.ts += 1_000
-            await dispatch(self.writer, *self.mix.next(self.ts))
+            kind, ev = self.mix.next(self.ts)
+            rows = len(ev.bids) + len(ev.asks) if isinstance(ev, Delta) else 1
+            at = _EPOCH + timedelta(microseconds=ev.ts_event)
+            self.sent[(STREAM_KIND[kind], ev.symbol, at)] += rows
+            await dispatch(self.writer, kind, ev)
         self.clock.advance(STEP_S)
         for stream in STREAMS:
             await self.writer.pump(stream)
@@ -126,25 +132,41 @@ async def test_wal_exhausted_writes_backpressure_drop_gap_and_critical_event(
         critical = [e for e in o.events.events if e.severity == "critical"]
         assert critical and {e.kind for e in critical} == {"recorder_wal_full"}
         assert max(_keys(rows).values()) == 1
-        written = {
-            (STREAM_KIND[table], r["symbol"], _EPOCH + timedelta(microseconds=int(str(r["ts"]))))
+        written: Counter[tuple[str, str, datetime]] = Counter(
+            (
+                STREAM_KIND[table],
+                str(r["symbol"]),
+                _EPOCH + timedelta(microseconds=int(str(r["ts"]))),
+            )
             for table, trows in o.sink.flushed.items()
             if table in STREAM_KIND
             for r in trows
-        }
-        for g in o.store.gaps:  # C-2.14, but for a message split at the gap's first instant
-            key, lo, hi = (g["stream"], g["symbol"]), g["start"], g["end"]
+        )
+        gaps: dict[tuple[str, str], list[tuple[datetime, datetime]]] = {}
+        for g in o.store.gaps:
+            lo, hi = g["start"], g["end"]
             assert isinstance(lo, datetime) and isinstance(hi, datetime)
-            # Ruled (coordinator, 2026-10-31, PR #5259): C-2.14 forbids fabricating missing
-            # history, not a split message. A delta the WAL budget splits keeps its first levels
-            # and the gap starts at the same exch_ts (a): rows at `lo` are allowed, rows after it
-            # are not. (b) the replayer treats the gap as a resync point:
-            # tests/unit/replay/test_replay_books.py::
-            # test_a_gap_at_a_split_delta_resyncs_and_never_presents_the_partial_book
-            spanned = [w for w in written if w[:2] == key and lo < w[2] <= hi]
-            assert spanned == [], f"gap {g} spans a written row"
-            at_start = [w for w in written if w[:2] == key and w[2] == lo]
-            if at_start:  # (a) a split message: its remainder is inside the gap, same exch_ts
-                assert hi >= lo, f"gap {g} must cover the split message's remainder"
+            gaps.setdefault((str(g["stream"]), str(g["symbol"])), []).append((lo, hi))
+        # C-2.14, ruled (coordinator, 2026-10-31, PR #5259): a gap may share its first exch_ts
+        # with the written prefix of a message the WAL budget split, but (a) every produced row
+        # that was not written lies inside a `backpressure_drop` gap for its (stream, symbol), and
+        # nothing is written strictly after a gap's first instant; (b) the replayer resyncs at
+        # the gap: tests/unit/replay/test_replay_books.py::
+        # test_a_gap_at_a_split_delta_resyncs_and_never_presents_the_partial_book
+        unwritten = o.sent - written
+        assert sum(unwritten.values()) == o.dropped(), "the oracle sees every dropped row"
+        split = 0
+        for (stream, symbol, at), n in unwritten.items():
+            covering = [(lo, hi) for lo, hi in gaps.get((stream, symbol), []) if lo <= at <= hi]
+            assert covering, f"{n} unwritten {stream} {symbol} row(s) at {at} are in no gap"
+            split += written[(stream, symbol, at)] > 0
+        for (stream, symbol), spans in gaps.items():
+            for lo, hi in spans:
+                inside = [w for w in written if w[:2] == (stream, symbol) and lo < w[2] <= hi]
+                assert inside == [], f"gap {(stream, symbol, lo, hi)} spans a written row"
+        produced_kinds = {k[0] for k in o.sent}
+        extra = {k: n for k, n in (written - o.sent).items() if k[0] in produced_kinds}
+        assert extra == {}, "nothing written that was not produced"
+        assert split >= 1, "seed 29 splits a delta (SCENARIOS.md Findings): the pin is exercised"
     finally:
         await o.writer.stop()

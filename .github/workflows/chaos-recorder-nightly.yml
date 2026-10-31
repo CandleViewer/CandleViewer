@@ -5,8 +5,12 @@ name: chaos-recorder-nightly
 # interruption that extends #13), every night on main and on demand. Additive to the PR lane:
 # _job-py.yml's db-chaos shards run the suite (marker `chaos`, no docker); this run repeats it,
 # picks up any `chaos` test that also carries `harness`, and is the signal C-13.6 asks for.
-# Smoke scale only (fakes and tmp_path): it runs no QuestDB, no mount and no scheduled retention,
-# so the RetentionStale `> 0` guard stays (#481 owns dropping it once a nightly runs retention).
+# Smoke scale (fakes and tmp_path), plus one real-filesystem leg (BQ-5 as re-ruled on #5259): a
+# 64 MiB ext4 loopback image mounted with sudo, as _job-integration.yml's storage chaos stack does,
+# and CV_CHAOS_LOOPBACK=1, so test_loopback.py runs the disk ladder and the WAL's real ENOSPC on it
+# (it refuses any directory that is not a loop-device mount; without the flag it skips, as in the
+# PR lane). No QuestDB and no scheduled retention, so the RetentionStale `> 0` guard stays (#481
+# owns dropping it once a nightly runs retention).
 # Not a required check (C-9.1 is unchanged), but a red night blocks the next release (C-9.2,
 # C-13.6). One pytest call; its own `-m` replaces addopts', so `not flaky` repeats the C-9.3
 # quarantine. That `-m` expression replaces addopts, which is why `harness` chaos tests are
@@ -23,7 +27,7 @@ permissions:
 jobs:
   chaos-recorder:
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # the step caps (3 + 3 + 5 + 10 + 3) plus 6 for set-up and post steps
+    timeout-minutes: 35 # the step caps (3 + 3 + 5 + 3 + 10 + 3 + 2) plus 6 for set-up and post steps
     env:
       CV_ENV: test
       CV_CI_ALLOWED_HOSTS: "" # SR-140: loopback only (the network guard reads this)
@@ -47,10 +51,22 @@ jobs:
       - name: uv sync --frozen (fails if pyproject.toml drifted from uv.lock)
         timeout-minutes: 5
         run: uv sync --frozen --all-groups
-      - name: Recorder chaos suite (the PR lane's tests and any harness-marked ones)
+      - name: Loopback image for the real-filesystem leg (64 MiB ext4, never the runner's volume)
+        timeout-minutes: 3
+        run: |
+          truncate -s 64M "$RUNNER_TEMP/cv-chaos-recorder.img"
+          mkfs.ext4 -q -F -m 0 "$RUNNER_TEMP/cv-chaos-recorder.img"
+          sudo mkdir -p /mnt/cv-chaos-recorder
+          sudo mount -o loop "$RUNNER_TEMP/cv-chaos-recorder.img" /mnt/cv-chaos-recorder
+          sudo chown "$(id -u):$(id -g)" /mnt/cv-chaos-recorder
+          df -B1 /mnt/cv-chaos-recorder
+      - name: Recorder chaos suite (the PR lane's tests, the loopback leg and harness-marked ones)
         # This limit ends a hang as a failed step, which the report job files; the job's own
         # limit would cancel the job, which it does not file.
         timeout-minutes: 10
+        env:
+          CV_CHAOS_LOOPBACK: "1"
+          CV_CHAOS_LOOPBACK_DIR: /mnt/cv-chaos-recorder
         run: |
           uv run pytest tests/chaos/recorder -m "chaos and not flaky" --no-cov -p no:randomly \
             -p no:cacheprovider -rA --durations=20 --junitxml=chaos-recorder-junit.xml
@@ -62,6 +78,10 @@ jobs:
           path: services/api/chaos-recorder-junit.xml
           if-no-files-found: warn
           retention-days: 14
+      - name: Unmount the loopback image
+        if: always()
+        timeout-minutes: 2
+        run: sudo umount /mnt/cv-chaos-recorder || true
 
   chaos-recorder-issue:
     needs: chaos-recorder
