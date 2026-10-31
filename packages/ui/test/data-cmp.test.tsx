@@ -14,6 +14,7 @@ import {
   DateRangePicker,
   Dialog,
   Drawer,
+  FilterBar,
   FormField,
   FormSection,
   IconButton,
@@ -152,6 +153,16 @@ const molecules: [string, () => JSX.Element][] = [
     ),
   ],
   ["CMP-050", () => <Card title="Accounts">Body</Card>],
+  [
+    "CMP-055",
+    () => (
+      <FilterBar
+        fields={[{ id: "role", label: "Role", options: [{ value: "viewer", label: "Viewer" }] }]}
+        value={[{ field: "role", value: "viewer" }]}
+        onChange={noop}
+      />
+    ),
+  ],
   ["CMP-088", () => <PageHeader title="Users" meta="All times UTC · as of 14:02:11" />],
   [
     "CMP-173",
