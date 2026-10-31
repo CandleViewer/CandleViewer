@@ -74,6 +74,45 @@ def test_flash_five_hz_fails_and_names_component() -> None:
     assert len(msgs) == 1 and "bubbles" in msgs[0]
 
 
+def test_flash_five_hz_message_names_component_and_rate() -> None:
+    fps = 60
+    strobe = [1.0 if (i // 6) % 2 == 0 else 0.0 for i in range(fps)]  # 5 Hz
+    rate = gates.count_flashes(strobe, fps)
+    assert rate >= 3
+    msg = gates.check_flash({"fps": fps, "components": {"liquidation-flash": strobe}})[
+        0
+    ]
+    assert "component=liquidation-flash" in msg and f"{rate} flashes/s" in msg
+
+
+def test_flash_two_per_second_passes_with_margin() -> None:
+    fps = 60  # a 100 ms flash every 500 ms: the coalescer's worst case
+    lum = [1.0 if i % 30 < 6 else 0.0 for i in range(fps * 3)]
+    assert gates.count_flashes(lum, fps) == 2
+    assert gates.check_flash({"fps": fps, "components": {"c": lum}}) == []
+
+
+def test_flash_table_lists_rate_limit_and_result() -> None:
+    fps = 60
+    strobe = [1.0 if (i // 6) % 2 == 0 else 0.0 for i in range(fps)]
+    table = gates.flash_table(
+        {"fps": fps, "components": {"b": strobe, "a": [0.5] * fps}}
+    )
+    assert table.splitlines() == [
+        "| component | max flashes/s | limit | result |",
+        "|---|---|---|---|",
+        "| a | 0 | < 3 | pass |",
+        f"| b | {gates.count_flashes(strobe, fps)} | < 3 | FAIL |",
+    ]
+
+
+def test_flash_cli_table_flag_prints_table(tmp_path, capsys) -> None:
+    cap = tmp_path / "c.json"
+    cap.write_text('{"fps": 60, "components": {"a": [0.5, 0.5]}}')
+    assert gates.main(["flash", str(cap), "--table"]) == 0
+    assert "| a | 0 | < 3 | pass |" in capsys.readouterr().out
+
+
 def test_flash_empty_capture_is_infra() -> None:
     with pytest.raises(gates.InfraError):
         gates.check_flash({"fps": 30, "components": {}})
@@ -191,3 +230,62 @@ def test_flash_high_rate_strobe_trips_and_calm_canvas_passes() -> None:
     assert gates.check_flash({"fps": 60, "components": {"canvas:strobe": strobe}})
     calm = [0.05 + 0.01 * ((i * 7) % 5) for i in range(360)]
     assert gates.check_flash({"fps": 60, "components": {"canvas:heatmap": calm}}) == []
+
+
+def _pulses(
+    per_second: int, fps: int = 60, seconds: int = 3, width: int = 6
+) -> list[float]:
+    """Dark field with `per_second` evenly spaced 100 ms bright pulses."""
+    period = fps // per_second
+    return [1.0 if i % period < width else 0.0 for i in range(fps * seconds)]
+
+
+@pytest.mark.parametrize(("per_second", "expected"), [(2, 2), (3, 3), (4, 4)])
+def test_flash_counts_each_pulse_as_one_flash(per_second: int, expected: int) -> None:
+    assert gates.count_flashes(_pulses(per_second), 60) == expected
+
+
+def test_flash_three_pulses_per_second_fails_the_gate() -> None:
+    assert gates.check_flash({"fps": 60, "components": {"price-flash": _pulses(3)}})
+
+
+def test_flash_two_pulses_per_second_passes_the_gate() -> None:
+    assert (
+        gates.check_flash({"fps": 60, "components": {"price-flash": _pulses(2)}}) == []
+    )
+
+
+def test_flash_series_starting_bright_counts_the_first_fall() -> None:
+    # Bright at frame 0, so the first qualifying change is a fall; 3 pulses still fail.
+    series = [1.0 if i % 20 < 6 else 0.0 for i in range(180)]
+    assert gates.count_flashes(series, 60) == 3
+
+
+def test_flash_cli_table_flag_keeps_the_failing_exit(tmp_path) -> None:
+    cap = tmp_path / "f.json"
+    cap.write_text(json.dumps({"fps": 60, "components": {"x": _pulses(4)}}))
+    assert gates.main(["flash", str(cap), "--table"]) == 1
+
+
+def test_flash_first_change_of_a_capture_counts() -> None:
+    # One second, dark at frame 0, three pulses: the window must include the very first
+    # rise. Counting reversals only (dropping the first change) scored this 2 and passed.
+    series = [1.0 if (i % 20) in range(10, 16) else 0.0 for i in range(60)]
+    assert gates.count_flashes(series, 60) == 3
+    assert gates.check_flash({"fps": 60, "components": {"price-flash": series}})
+
+
+def test_flash_rise_then_fall_counts_exactly_one() -> None:
+    assert gates.count_flashes([0.0] * 5 + [1.0] * 5 + [0.0] * 5, 60) == 1
+
+
+def test_flash_rise_fall_rise_counts_one_and_ignores_the_dangling_half() -> None:
+    assert gates.count_flashes([0.0] * 5 + [1.0] * 5 + [0.0] * 5 + [1.0] * 5, 60) == 1
+
+
+def test_flash_window_slides_across_a_wall_second_boundary() -> None:
+    # Three pulses straddling frame 60: wall-second buckets would split them 1 + 2 and pass.
+    series = [0.0] * 120
+    for start in (40, 60, 80):
+        series[start : start + 6] = [1.0] * 6
+    assert gates.count_flashes(series, 60) == 3

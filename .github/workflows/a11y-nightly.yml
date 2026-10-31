@@ -55,6 +55,11 @@ jobs:
           done
           python -m tools.a11y.gates flash reports/a11y/flash-canvas.json | tee -a "$GITHUB_STEP_SUMMARY"
           [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
+          python -m tools.a11y.gates flash reports/a11y/flash-coalescer.json --table | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
+          # Injected raw 5 Hz flash: the gate MUST trip on it, naming the component and rate.
+          python -m tools.a11y.gates flash reports/a11y/flash-injected.json --table | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "${PIPESTATUS[0]}" -ne 1 ]; then echo "A11Y-INFRA injected 5 Hz flash did not trip the flash gate"; fail=1; fi
           elapsed=$(( $(date +%s) - $(cat "$RUNNER_TEMP/a11y-start") ))
           python -m tools.a11y.gates budget "$elapsed" --limit 1200 | tee -a "$GITHUB_STEP_SUMMARY"
           [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
