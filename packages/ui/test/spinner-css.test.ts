@@ -49,7 +49,7 @@ describe("spinner.css contract (CMP-014)", () => {
         .map(([, body]) => body)
         .join(";");
     };
-    expect(applied("safe")).toContain("animation: cv-spin");
+    expect(applied("safe")).toContain("animation: var(--cv-recipe-spinner)");
     expect(applied("safe")).not.toMatch(/animation: none|animation-duration/);
     expect(applied(null)).toContain("animation: none");
     expect(applied("reduce")).toContain("animation: none");

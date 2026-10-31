@@ -40,9 +40,165 @@ html[data-text-scale="150"] {
 }
 
 /*
- * Motion switch for the recipes: 1 = motion-safe, 0 = reduced.
- * TODO(#3174, blocked by #162): the named motion recipes (E05-D03) land with #3174 and multiply their
- * durations by this switch. No recipe values live here.
+ * Motion recipes (E05-D03 section 2). Each recipe is a pair of custom properties: `--cv-recipe-<name>-safe` and
+ * `--cv-recipe-<name>-reduce` (literally `none`, E05-D03 section 3: the end state at frame 0), and the resolved
+ * `--cv-recipe-<name>` that components bind (`animation: var(--cv-recipe-toast-in)`). The resolved value follows the
+ * root attribute: the pair's safe value, or its reduce value under `data-motion="reduce"` and under the OS
+ * preference until the runtime has written `data-motion` (E05-D03 C-7). Components never read the OS query.
+ * Durations and easings are the seven motion tokens only. Rows without a built consumer yet (1, 3, 4b, 5a, 5b)
+ * carry their keyframes below or are transitions their consumer applies.
+ */
+:root {
+  /* Row 1: panel focus / mount: opacity 0 -> 1 and translateY(8px) -> 0. */
+  --cv-recipe-panel-in-safe: cv-panel-in var(--motion-duration-fast)
+    cubic-bezier(var(--motion-easing-decelerate));
+  --cv-recipe-panel-in-reduce: none;
+  --cv-recipe-panel-in: var(--cv-recipe-panel-in-safe);
+  /* Row 2a: dialog scrim in; the card is a cut. */
+  --cv-recipe-dialog-scrim-in-safe: cv-dialog-scrim-in var(--motion-duration-normal)
+    cubic-bezier(var(--motion-easing-standard));
+  --cv-recipe-dialog-scrim-in-reduce: none;
+  --cv-recipe-dialog-scrim-in: var(--cv-recipe-dialog-scrim-in-safe);
+  /* Row 2a, 2b: dialog scrim and card out, the drawer's scrim out (a transition). */
+  --cv-recipe-fade-out-safe: opacity var(--motion-duration-fast)
+    cubic-bezier(var(--motion-easing-accelerate));
+  --cv-recipe-fade-out-reduce: none;
+  --cv-recipe-fade-out: var(--cv-recipe-fade-out-safe);
+  /* Row 2b: drawer in from the right. */
+  --cv-recipe-drawer-in-safe: cv-drawer-in-right var(--motion-duration-normal)
+    cubic-bezier(var(--motion-easing-decelerate));
+  --cv-recipe-drawer-in-reduce: none;
+  --cv-recipe-drawer-in: var(--cv-recipe-drawer-in-safe);
+  /* Row 2b: drawer in from the left. */
+  --cv-recipe-drawer-in-left-safe: cv-drawer-in-left var(--motion-duration-normal)
+    cubic-bezier(var(--motion-easing-decelerate));
+  --cv-recipe-drawer-in-left-reduce: none;
+  --cv-recipe-drawer-in-left: var(--cv-recipe-drawer-in-left-safe);
+  /* Row 2b: a modal drawer's scrim in. */
+  --cv-recipe-drawer-scrim-in-safe: cv-drawer-scrim-in var(--motion-duration-normal)
+    cubic-bezier(var(--motion-easing-standard));
+  --cv-recipe-drawer-scrim-in-reduce: none;
+  --cv-recipe-drawer-scrim-in: var(--cv-recipe-drawer-scrim-in-safe);
+  /* Row 2b: drawer out (a transition). */
+  --cv-recipe-drawer-out-safe: transform var(--motion-duration-fast)
+    cubic-bezier(var(--motion-easing-accelerate));
+  --cv-recipe-drawer-out-reduce: none;
+  --cv-recipe-drawer-out: var(--cv-recipe-drawer-out-safe);
+  /* Row 3: value-flash overlay, peak -> 0; starts are the consumer's (HS-1: >= 500 ms per cell). */
+  --cv-recipe-value-flash-safe: cv-flash var(--motion-duration-fast)
+    cubic-bezier(var(--motion-easing-accelerate));
+  --cv-recipe-value-flash-reduce: none;
+  --cv-recipe-value-flash: var(--cv-recipe-value-flash-safe);
+  /* Row 4a: toast enter. */
+  --cv-recipe-toast-in-safe: cv-toast-in var(--motion-duration-fast)
+    cubic-bezier(var(--motion-easing-decelerate));
+  --cv-recipe-toast-in-reduce: none;
+  --cv-recipe-toast-in: var(--cv-recipe-toast-in-safe);
+  /* Row 4a: toast exit. */
+  --cv-recipe-toast-out-safe: cv-toast-out var(--motion-duration-fast)
+    cubic-bezier(var(--motion-easing-accelerate));
+  --cv-recipe-toast-out-reduce: none;
+  --cv-recipe-toast-out: var(--cv-recipe-toast-out-safe);
+  /* Row 4b: older toasts move to their new slots (a transition). */
+  --cv-recipe-toast-shift-safe: transform var(--motion-duration-normal)
+    cubic-bezier(var(--motion-easing-standard));
+  --cv-recipe-toast-shift-reduce: none;
+  --cv-recipe-toast-shift: var(--cv-recipe-toast-shift-safe);
+  /* Row 5a: node-graph connection made: the whole edge fades in. */
+  --cv-recipe-edge-in-safe: cv-edge-in var(--motion-duration-fast)
+    cubic-bezier(var(--motion-easing-standard));
+  --cv-recipe-edge-in-reduce: none;
+  --cv-recipe-edge-in: var(--cv-recipe-edge-in-safe);
+  /* Row 5b: node-graph auto-layout (a transition). */
+  --cv-recipe-layout-move-safe: transform var(--motion-duration-slow)
+    cubic-bezier(var(--motion-easing-standard));
+  --cv-recipe-layout-move-reduce: none;
+  --cv-recipe-layout-move: var(--cv-recipe-layout-move-safe);
+  /* Row 6: loading shimmer: 1 200 ms x 4, then static. */
+  --cv-recipe-skeleton-sweep-safe: cv-skeleton-sweep calc(var(--motion-duration-slow) * 3) linear 4;
+  --cv-recipe-skeleton-sweep-reduce: none;
+  --cv-recipe-skeleton-sweep: var(--cv-recipe-skeleton-sweep-safe);
+  /* Row 7: busy spinner: 800 ms x the request's life (MR-2's one exception). */
+  --cv-recipe-spinner-safe: cv-spin calc(var(--motion-duration-slow) * 2) linear infinite;
+  --cv-recipe-spinner-reduce: none;
+  --cv-recipe-spinner: var(--cv-recipe-spinner-safe);
+  /* The value-flash overlay's peak opacity (E05-D03 row 3); the motion scale makes it 0 under reduce. */
+  --cv-flash-peak: calc(0.25 * var(--cv-motion-scale));
+}
+
+:root[data-motion="reduce"] {
+  --cv-recipe-panel-in: var(--cv-recipe-panel-in-reduce);
+  --cv-recipe-dialog-scrim-in: var(--cv-recipe-dialog-scrim-in-reduce);
+  --cv-recipe-fade-out: var(--cv-recipe-fade-out-reduce);
+  --cv-recipe-drawer-in: var(--cv-recipe-drawer-in-reduce);
+  --cv-recipe-drawer-in-left: var(--cv-recipe-drawer-in-left-reduce);
+  --cv-recipe-drawer-scrim-in: var(--cv-recipe-drawer-scrim-in-reduce);
+  --cv-recipe-drawer-out: var(--cv-recipe-drawer-out-reduce);
+  --cv-recipe-value-flash: var(--cv-recipe-value-flash-reduce);
+  --cv-recipe-toast-in: var(--cv-recipe-toast-in-reduce);
+  --cv-recipe-toast-out: var(--cv-recipe-toast-out-reduce);
+  --cv-recipe-toast-shift: var(--cv-recipe-toast-shift-reduce);
+  --cv-recipe-edge-in: var(--cv-recipe-edge-in-reduce);
+  --cv-recipe-layout-move: var(--cv-recipe-layout-move-reduce);
+  --cv-recipe-skeleton-sweep: var(--cv-recipe-skeleton-sweep-reduce);
+  --cv-recipe-spinner: var(--cv-recipe-spinner-reduce);
+}
+
+/* The OS preference, only until the runtime has written `data-motion`. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) {
+    --cv-recipe-panel-in: var(--cv-recipe-panel-in-reduce);
+    --cv-recipe-dialog-scrim-in: var(--cv-recipe-dialog-scrim-in-reduce);
+    --cv-recipe-fade-out: var(--cv-recipe-fade-out-reduce);
+    --cv-recipe-drawer-in: var(--cv-recipe-drawer-in-reduce);
+    --cv-recipe-drawer-in-left: var(--cv-recipe-drawer-in-left-reduce);
+    --cv-recipe-drawer-scrim-in: var(--cv-recipe-drawer-scrim-in-reduce);
+    --cv-recipe-drawer-out: var(--cv-recipe-drawer-out-reduce);
+    --cv-recipe-value-flash: var(--cv-recipe-value-flash-reduce);
+    --cv-recipe-toast-in: var(--cv-recipe-toast-in-reduce);
+    --cv-recipe-toast-out: var(--cv-recipe-toast-out-reduce);
+    --cv-recipe-toast-shift: var(--cv-recipe-toast-shift-reduce);
+    --cv-recipe-edge-in: var(--cv-recipe-edge-in-reduce);
+    --cv-recipe-layout-move: var(--cv-recipe-layout-move-reduce);
+    --cv-recipe-skeleton-sweep: var(--cv-recipe-skeleton-sweep-reduce);
+    --cv-recipe-spinner: var(--cv-recipe-spinner-reduce);
+  }
+}
+
+/* Keyframes of the recipes whose consumer has no stylesheet of its own yet; the components own the rest. */
+@keyframes cv-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-inset-sm));
+  }
+}
+
+@keyframes cv-flash {
+  from {
+    opacity: var(--cv-flash-peak);
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes cv-toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(var(--space-inset-sm));
+  }
+}
+
+@keyframes cv-edge-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/*
+ * Motion switch: 1 = motion-safe, 0 = reduced (the in-app override, or the OS until `data-motion` is written).
+ * The value-flash peak consumes it (E05-D03 G-2).
  */
 :root {
   --cv-motion-scale: 1;
@@ -50,6 +206,24 @@ html[data-text-scale="150"] {
 
 :root[data-motion="reduce"] {
   --cv-motion-scale: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) {
+    --cv-motion-scale: 0;
+  }
+}
+
+/*
+ * A theme swap is one frame: no colour transition runs across it (the store sets `data-theme-swap` for the
+ * swap's frames), so no surface fades between two themes. It also cuts any in-flight non-colour transition
+ * for those frames (a closing dialog or drawer jumps to its end state; harmless, neither waits on transitionend).
+ */
+:root[data-theme-swap],
+:root[data-theme-swap] *,
+:root[data-theme-swap] *::before,
+:root[data-theme-swap] *::after {
+  transition: none !important;
 }
 
 /* Reduced motion (in-app override or OS): neutralises every transition and animation. */

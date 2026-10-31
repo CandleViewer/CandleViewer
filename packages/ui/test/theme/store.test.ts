@@ -38,6 +38,91 @@ const attrs = (root: HTMLElement): (string | null)[] =>
   ["theme", "density", "motion", "text-scale"].map((name) => root.getAttribute(`data-${name}`));
 
 describe("theme store attributes", () => {
+  it("marks a theme swap for its frames only (theme.css suppresses transitions under it)", () => {
+    vi.stubGlobal("requestAnimationFrame", (run: FrameRequestCallback) => {
+      frames.push(run);
+      return frames.length;
+    });
+    const frames: FrameRequestCallback[] = [];
+    const { root, store } = setup();
+    store.connect();
+    expect(root.hasAttribute("data-theme-swap")).toBe(false); // the first write is no swap
+    store.setDensity("comfortable");
+    expect(root.hasAttribute("data-theme-swap")).toBe(false); // nor is a density change
+    store.setTheme("light");
+    expect(root.hasAttribute("data-theme-swap")).toBe(true);
+    frames.shift()?.(0); // the swap's own frame: still marked
+    expect(root.hasAttribute("data-theme-swap")).toBe(true);
+    frames.shift()?.(0);
+    expect(root.hasAttribute("data-theme-swap")).toBe(false);
+  });
+
+  describe("theme-swap mark under rapid swaps", () => {
+    function fakeFrames() {
+      const pending = new Map<number, FrameRequestCallback>();
+      let next = 0;
+      vi.stubGlobal("requestAnimationFrame", (run: FrameRequestCallback) => {
+        pending.set(++next, run);
+        return next;
+      });
+      vi.stubGlobal("cancelAnimationFrame", (id: number) => void pending.delete(id));
+      const flush = (): void => {
+        const run = [...pending.entries()][0];
+        if (run === undefined) return;
+        pending.delete(run[0]);
+        run[1](0);
+      };
+      return { pending, flush };
+    }
+
+    it("an earlier swap's frames never clear a later swap's mark", () => {
+      vi.useFakeTimers();
+      const { flush } = fakeFrames();
+      const { root, store } = setup();
+      store.connect();
+      store.setTheme("light");
+      flush(); // the first swap's frame 1 has run, its frame 2 is queued
+      store.setTheme("dark"); // a second swap before that frame 2
+      flush(); // the stale chain must be gone: this is the second swap's frame 1
+      expect(root.hasAttribute("data-theme-swap")).toBe(true);
+      flush(); // the second swap's frame 2
+      expect(root.hasAttribute("data-theme-swap")).toBe(false);
+      vi.useRealTimers();
+    });
+
+    it("a timer cap clears the mark where frames never run (a hidden tab) and cancels the frames", () => {
+      vi.useFakeTimers();
+      const { pending } = fakeFrames();
+      const { root, store } = setup();
+      store.connect();
+      store.setTheme("light");
+      expect(root.hasAttribute("data-theme-swap")).toBe(true);
+      vi.advanceTimersByTime(99);
+      expect(root.hasAttribute("data-theme-swap")).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(root.hasAttribute("data-theme-swap")).toBe(false);
+      expect(pending.size).toBe(0);
+      vi.useRealTimers();
+    });
+
+    it("the frames clearing first cancel the timer, and disconnect cancels a pending clear", () => {
+      vi.useFakeTimers();
+      const { flush } = fakeFrames();
+      const { root, store } = setup();
+      const disconnect = store.connect();
+      store.setTheme("light");
+      flush();
+      flush();
+      expect(root.hasAttribute("data-theme-swap")).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      store.setTheme("dark");
+      disconnect();
+      expect(root.hasAttribute("data-theme-swap")).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      vi.useRealTimers();
+    });
+  });
+
   it.each(THEMES)("sets data-theme=%s on the root", (theme) => {
     const { root, store } = setup();
     store.connect();

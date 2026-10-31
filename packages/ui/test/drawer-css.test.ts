@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { find, loadCss } from "./css-contract.js";
+import { find, loadCss, recipeSafe } from "./css-contract.js";
 
 const { all, normal, forced } = loadCss("drawer.css");
 
@@ -74,14 +74,20 @@ describe("drawer.css contract (CMP-046)", () => {
   });
 
   it("H21: it slides in over normal / decelerate from its side; the scrim fades in", () => {
-    const motion = /prefers-reduced-motion: no-preference\)\s*\{([\s\S]*?\}\s*)\}/.exec(all)?.[1];
-    expect(find(motion ?? "", ".cv-drawer", "animation")).toContain(
-      "animation: cv-drawer-in-right var(--motion-duration-normal)",
+    expect(find(normal, ".cv-drawer", "animation")).toContain(
+      "animation: var(--cv-recipe-drawer-in)",
     );
-    expect(motion).toContain("cubic-bezier(var(--motion-easing-decelerate))");
-    expect(find(motion ?? "", '.cv-drawer[data-side="left"]', "animation-name")).toContain(
-      "cv-drawer-in-left",
+    expect(find(normal, '.cv-drawer[data-side="left"]', "animation")).toContain(
+      "var(--cv-recipe-drawer-in-left)",
     );
+    expect(find(normal, ".cv-drawer__scrim", "animation")).toContain(
+      "var(--cv-recipe-drawer-scrim-in)",
+    );
+    expect(recipeSafe("drawer-in")).toBe(
+      "cv-drawer-in-right var(--motion-duration-normal) cubic-bezier(var(--motion-easing-decelerate))",
+    );
+    expect(recipeSafe("drawer-in-left")).toContain("cv-drawer-in-left");
+    expect(recipeSafe("drawer-scrim-in")).toContain("var(--motion-easing-standard)");
     expect(all).toMatch(
       /@keyframes cv-drawer-in-right\s*\{\s*from\s*\{\s*transform: translateX\(100%\)/,
     );
@@ -95,8 +101,9 @@ describe("drawer.css contract (CMP-046)", () => {
   it("the exit slides out over fast / accelerate with no pointer events", () => {
     const exit = find(normal, '.cv-drawer-layer[data-state="closing"] > .cv-drawer', "transition");
     expect(exit).toContain("transform: translateX(100%)");
-    expect(exit).toContain(
-      "transition: transform var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate))",
+    expect(exit).toContain("transition: var(--cv-recipe-drawer-out)");
+    expect(recipeSafe("drawer-out")).toBe(
+      "transform var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate))",
     );
     expect(
       find(normal, '.cv-drawer-layer[data-state="closing"] > .cv-drawer', "pointer-events"),
@@ -110,24 +117,9 @@ describe("drawer.css contract (CMP-046)", () => {
     ).toContain("translateX(-100%)");
   });
 
-  it("reduced motion: the in-app override and the OS preference both make it a cut", () => {
-    expect(find(all, ':root[data-motion="reduce"] .cv-drawer', "animation")).toContain(
-      "animation: none",
-    );
-    expect(
-      find(
-        all,
-        ':root[data-motion="reduce"] .cv-drawer-layer[data-state="closing"] > .cv-drawer',
-        "transition",
-      ),
-    ).toContain("transition: none");
-    expect(
-      find(
-        all,
-        ':root:not([data-motion]) .cv-drawer-layer[data-state="closing"] > .cv-drawer',
-        "transition",
-      ),
-    ).toContain("transition: none");
+  it("reduced motion: no OS-query gate, the recipes resolve to none under data-motion (G-1)", () => {
+    expect(all).not.toMatch(/prefers-reduced-motion: no-preference/);
+    expect(all).not.toMatch(/:root:not\(\[data-motion\]\) \.cv-drawer/);
   });
 
   it("forced colours: CanvasText edges and rule on Canvas; the scrim keeps its black (conventions 38)", () => {

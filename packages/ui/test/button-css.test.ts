@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { recipeSafe } from "./css-contract.js";
 
 const SRC = resolve(import.meta.dirname, "../src/components");
 const BUTTON = readFileSync(resolve(SRC, "button.css"), "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -105,7 +106,10 @@ describe("button.css contract", () => {
   });
 
   it("the spinner turns at twice the slow motion token, not a hard-coded second", () => {
-    expect(SPINNER).toContain("animation: cv-spin calc(var(--motion-duration-slow) * 2) linear");
+    expect(SPINNER).toContain("animation: var(--cv-recipe-spinner)");
+    expect(recipeSafe("spinner")).toBe(
+      "cv-spin calc(var(--motion-duration-slow) * 2) linear infinite",
+    );
     expect(SPINNER).not.toMatch(/cv-spin\s+\d/);
   });
 });

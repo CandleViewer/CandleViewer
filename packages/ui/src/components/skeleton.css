@@ -31,7 +31,7 @@
   inset: 0;
   background: linear-gradient(90deg, transparent, var(--cv-skeleton-sweep), transparent);
   transform: translateX(-100%);
-  animation: cv-skeleton-sweep calc(var(--motion-duration-slow) * 3) linear 4;
+  animation: var(--cv-recipe-skeleton-sweep);
 }
 
 @keyframes cv-skeleton-sweep {
