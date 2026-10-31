@@ -4950,6 +4950,8 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 
 Changing any retention value is a dangerous action under the `recorder` step-up: a symbol's `pinned` or `retention_days` requires `recording:write` (04 §7.2.2 row 9) and the global policy set is Owner-only (`admin:write`, row 9c); each change writes a `retention.change` audit entry with before/after, and the UI shows the computed volume delta before confirmation.
 
+**Reads past the downsample boundary (E21-T03, #606).** `GET /market/heatmap` (22 `getHeatmap`) states the effective resolution of every span it serves: a span older than 180 days, where `orderbook_deltas` and `heatmap_cells` are 1 s data, is served with `effective_resolution_ms` of at least 1 000, whatever bucket was asked, and the reader never presents it as native-cadence data. The downsample job itself is E16's (`storage/cold/parquet_repository.py` `downsample`).
+
 ---
 
 ## 8. Backup & restore

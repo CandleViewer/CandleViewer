@@ -2021,32 +2021,26 @@ class OrderbookSnapshot(BaseModel):
     stale: StrictBool | None = None
 
 
-class HeatmapResponse(BaseModel):
-    symbol: Annotated[
-        str | None,
+class Sample(RootModel[JsonInt]):
+    root: Annotated[JsonInt, Field(ge=0)]
+
+
+class HeatmapSegment(BaseModel):
+    from_: Annotated[AwareDatetime, Field(alias="from")]
+    to: AwareDatetime
+    source: Annotated[
+        Literal["hot", "cold", "reconstructed", "downsampled"],
         Field(
-            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
-            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
-            pattern="^[A-Z0-9]{2,20}USDT$",
+            description="`hot` QuestDB cells, `cold` Parquet cells, `reconstructed` rebuilt from recorded book snapshots and deltas, `downsampled` older than the 180-day boundary (21 §7)."
         ),
-    ] = None
-    from_: Annotated[AwareDatetime | None, Field(alias="from")] = None
-    to: AwareDatetime | None = None
-    time_bucket_ms: JsonInt | None = None
-    price_grouping: JsonInt | None = None
-    times: list[AwareDatetime] | None = None
-    prices: list[Decimal] | None = None
-    bid_matrix: Annotated[
-        list[list[StrictFloat]] | None,
-        Field(description="Row-major [price][time] resting bid size."),
-    ] = None
-    ask_matrix: Annotated[
-        list[list[StrictFloat]] | None,
-        Field(description="Row-major [price][time] resting ask size."),
-    ] = None
-    max_value: StrictFloat | None = None
-    normalize: Literal["none", "column", "window"] | None = None
-    estimated: StrictBool = False
+    ]
+    effective_resolution_ms: Annotated[
+        JsonInt,
+        Field(
+            description="The finest time resolution the span's data holds; never finer than its source recorded.",
+            ge=100,
+        ),
+    ]
 
 
 class MetricPoint(BaseModel):
@@ -7302,6 +7296,81 @@ class KeyTestResult(BaseModel):
         KeyVerification | KeyVerificationNotRead | None,
         Field(
             description="The verification as far as the pipeline got. Omitted when the REST half reached no verdict (a timeout, an outage, a refused signature, a clock outside the `recv_window` or a rate limit): an earlier check's standing result is never shown in its place, because an outage must not read as a pass (SR-E27-18). A key the exchange refused before its rights were read is `KeyVerificationNotRead`.\n"
+        ),
+    ] = None
+
+
+class HeatmapResponse(BaseModel):
+    symbol: Annotated[
+        str | None,
+        Field(
+            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ] = None
+    from_: Annotated[AwareDatetime | None, Field(alias="from")] = None
+    to: AwareDatetime | None = None
+    time_bucket_ms: JsonInt | None = None
+    price_grouping: JsonInt | None = None
+    times: list[AwareDatetime] | None = None
+    prices: list[Decimal] | None = None
+    bid_matrix: Annotated[
+        list[list[StrictFloat]] | None,
+        Field(description="Row-major [price][time] resting bid size."),
+    ] = None
+    ask_matrix: Annotated[
+        list[list[StrictFloat]] | None,
+        Field(description="Row-major [price][time] resting ask size."),
+    ] = None
+    max_value: StrictFloat | None = None
+    normalize: Literal["none", "column", "window"] | None = None
+    estimated: StrictBool = False
+    first_available: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="Start of the symbol's earliest recorded book history (heatmap cells, book snapshots or book deltas, whichever is older); null when nothing was ever recorded (E21-T03)."
+        ),
+    ] = None
+    history: Annotated[
+        Literal["full", "partial", "none"] | None,
+        Field(
+            description="`full`: recorded history covers the requested `from`. `partial`: it starts later, and the response starts at the bucket holding `first_available`. `none`: no recorded history in the window, with empty axes and matrices (not an error)."
+        ),
+    ] = None
+    samples: Annotated[
+        list[Sample] | None,
+        Field(
+            description="One per `times` entry: the native 100 ms book samples aggregated into the column (24 §6.1). 0 is a column with no recorded data (a gap, never interpolated); a complete column holds `effective_time_bucket_ms / 100`."
+        ),
+    ] = None
+    estimated_columns: Annotated[
+        list[StrictBool] | None,
+        Field(
+            description="One per `times` entry; true for a column built from a resyncing book or an unverified snapshot (24 §6.3)."
+        ),
+    ] = None
+    effective_time_bucket_ms: Annotated[
+        Literal[100, 250, 500, 1000, 5000, 60000] | None,
+        Field(
+            description="The bucket the `times` axis is built at; coarser than `time_bucket_ms` only when `clamped`."
+        ),
+    ] = None
+    segments: Annotated[
+        list[HeatmapSegment] | None,
+        Field(
+            description="Consecutive spans of the served range, oldest first, each with its source and effective resolution."
+        ),
+    ] = None
+    clamped: Annotated[
+        StrictBool,
+        Field(description="True when the server coarsened the bucket to fit its column cap."),
+    ] = False
+    next_cursor: Annotated[
+        str | None,
+        Field(
+            description="Continues with the older remainder of the window (newest first); null when none remains.",
+            max_length=128,
         ),
     ] = None
 
