@@ -2806,26 +2806,35 @@ class OmsRuntime:
                 continue
             if swept and not self._stopping:
                 await self._seeded(parts)  # before `ready`, so before any group write (E28-T05)
-            if swept and not self._stopping:  # E29-T06: STARTUP before `ready` (BQ-14)
-                await self._reconcile_started(parts)
+            unstarted = False  # E29-T06: STARTUP before `ready` (BQ-14)
+            if swept and not self._stopping:
+                unstarted = not await self._reconcile_started(parts)
             if swept and not self._stopping:  # a stop that began meanwhile clears `ready` for good
                 self._ready.set()
                 _log().info("oms_ready")
                 if self._topics is not None:  # E29-T13: snapshots read on the lane from now on
                     self._topics.attach(OnLaneTopicReads(parts))
                 await self._stream_started(parts)
+                if unstarted:  # its entry held meanwhile (INV-B19-a), this task retries the start
+                    await self._reconcile_retried(parts)
             return
 
-    async def _reconcile_started(self, parts: _Parts) -> None:
+    async def _reconcile_started(self, parts: _Parts, *, retried: bool = False) -> bool:
         """E29-T06 #914 (24 Sec.8.5, BQ-14): the reconciliation jobs open on the lane, each sent
         `startup`, before `ready` is set; order entry never waits for their passes. The accounts
         are the environment's that resolve to a trading account; another opens on its stream's
         first trigger. The start is bounded as the seed is (`_bounded`), so it delays `ready` by
-        at most 17 s, and one that overruns has failed. A start that fails is logged CRITICAL and
-        paged, and the runtime goes on to `ready`: each account whose job did not open is refused
-        order entry (its standing set), never left unreconciled silently."""
+        at most 17 s, and one that overruns has failed, its task on the lane cancelled. A start
+        that fails holds the whole environment's order entry (the standing refuses every
+        account, `account_stale`), as an account it did not reach has no job and no standing
+        rebuilt from its restored state (INV-B19-a, C-2.21): the first is logged CRITICAL and
+        paged, a retry's failure logged. The runtime goes on to `ready`, so a cancel, a close
+        and a stop write pass (C-2.6), and the startup task retries the start
+        (`_reconcile_retried`). Whether the jobs started, or none are composed; either lifts a
+        hold an earlier start left."""
         if parts.reconcile is None or parts.tradable is None:
-            return
+            self._standing.release()
+            return True
         jobs, tradable = parts.reconcile.jobs, parts.tradable
 
         async def opened() -> None:
@@ -2837,8 +2846,29 @@ class OmsRuntime:
         except Exception as exc:
             if self._stopping:
                 raise asyncio.CancelledError from exc
+            self._standing.hold()  # first: no entry is admitted on an account not rebuilt
+            if retried:  # the first failure paged
+                _log().warning("oms_reconcile_start_retry_failed", error=type(exc).__name__)
+                return False
             _log().critical("oms_reconcile_unstarted", error=type(exc).__name__)
             _page(self._pager, "oms_reconcile_unstarted")
+            return False
+        self._standing.release()
+        return True
+
+    async def _reconcile_retried(self, parts: _Parts) -> None:
+        """#914's security look, Low 2 (24 Sec.8.5): the jobs' start again, after the sweep's
+        backoff (`SWEEP_RETRY_S`, doubling to its ceiling), until it works or the runtime stops.
+        The hold lifts once the jobs have started, each account's standing rebuilt first."""
+        delay, ceiling = SWEEP_RETRY_S
+        while not self._stopping:
+            await self._sleep(delay)
+            if self._stopping:
+                return
+            if await self._reconcile_started(parts, retried=True):
+                _log().info("oms_reconcile_started_on_retry")
+                return
+            delay = min(2 * delay, ceiling)
 
     async def _stream_started(self, parts: _Parts) -> None:
         """S8b (20 Sec.6.2, the orchestrator's Q4), where `ready` is set: account health's boot

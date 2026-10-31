@@ -19,6 +19,7 @@ from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice
 from candleviewer.oms.reconcile_standing import (
     STALE_AFTER_S,
     STALE_DETAIL,
+    UNSTARTED_DETAIL,
     FailureTracker,
     ReconcileStanding,
 )
@@ -76,6 +77,24 @@ def test_the_standing_is_rebuilt_from_the_restored_state(state: str, stale: bool
     standing.mark_stale(ACCOUNT)
     standing.restored(ACCOUNT, state)
     assert standing.is_stale(ACCOUNT) is stale
+
+
+def test_a_held_standing_refuses_every_account_until_released() -> None:
+    """24 Sec.8.5 (#914's security look, Low 2): while the jobs could not start, no account's
+    standing was rebuilt, so every account is refused; a release lifts the hold and leaves an
+    account's own lock in place."""
+    standing = ReconcileStanding()
+    standing.mark_stale(ACCOUNT)
+    standing.hold()
+    standing.hold()  # idempotent
+    held = OrderEntryRefusal("account_stale", UNSTARTED_DETAIL)
+    assert standing.held and standing.refusal(OTHER) == held
+    assert standing.refusal(UUID(int=0xF0)) == held  # an account no job has seen yet
+    assert standing.refusal(ACCOUNT) == OrderEntryRefusal("account_stale", STALE_DETAIL)
+    standing.release()
+    assert not standing.held and standing.refusal(OTHER) is None
+    assert standing.refusal(ACCOUNT) == OrderEntryRefusal("account_stale", STALE_DETAIL)
+    assert standing.stale_count == 1  # the hold counts no account: the start's page says it
 
 
 def test_protective_paths_never_consult_the_standing() -> None:
