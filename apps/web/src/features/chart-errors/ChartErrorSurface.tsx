@@ -8,6 +8,9 @@
  * unless it was inside the panes the card hides: then it goes to the card's first stop, never
  * `<body>`. On close it returns to where it was, else to the named chart region (E11-S13's plot
  * stop refines that later). A `RECREATE_KEYS` recreate (a symbol change, §12.4) clears the error.
+ * E11-T05: the degraded card names what `degraded-2d` reduces, shows once per session per profile
+ * (BQ-96), and once dismissed the corner badge (E11-D02 D16) stays while frames are `degraded-2d`;
+ * the 2D chart keeps drawing under the card and the badge (§12.4: the loop is never suspended).
  */
 import {
   useCallback,
@@ -21,11 +24,18 @@ import {
   type Ref,
 } from "react";
 import type { ChartEvents } from "@candleviewer/chart-engine";
-import { Button, Callout, CopyButton, ErrorState } from "@candleviewer/ui";
+import { Button, Callout, CopyButton, ErrorState, Icon } from "@candleviewer/ui";
 import { Chart, RECREATE_KEYS, type ChartProps } from "../../chart";
 import { THEME_ANALYTICS_EVENT } from "../../shell/bootstrap/themeStore";
-import { CHART_ERROR_COPY as COPY } from "./copy";
-import { chartErrorReducer, INITIAL, isCard, type ChartErrorState } from "./state";
+import { CHART_ERROR_COPY as COPY, noWebgl2Body } from "./copy";
+import {
+  chartErrorReducer,
+  INITIAL,
+  isCard,
+  REDUCED_ORDER,
+  type ChartErrorState,
+  type ReducedCapability,
+} from "./state";
 
 const OVERLAY: CSSProperties = { position: "absolute", top: 0, left: 0, right: 0 };
 const CARD: CSSProperties = {
@@ -53,15 +63,67 @@ const CHIP: CSSProperties = {
   userSelect: "text",
 };
 
+/** E11-D02 D16's corner badge: bottom-left of the pane, a raised pill, text beside the glyph. */
+const BADGE: CSSProperties = {
+  position: "absolute",
+  left: "var(--space-inset-sm)",
+  bottom: "var(--space-inset-sm)",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "var(--space-inset-xs)",
+  padding: "var(--space-inset-xs) var(--space-inset-sm)",
+  border: "calc(var(--border-hairline) * 1px) solid transparent", // forced colours draw it (R2)
+  borderRadius: "var(--radius-badge)",
+  background: "var(--color-surface-raised)",
+  color: "var(--color-text-primary)",
+  // E11-D02 D16: `type.ui.caption` and `radius.badge`.
+  font:
+    "var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) / " +
+    "var(--type-ui-caption-line-height) var(--type-ui-caption-font-family)",
+};
+const GLYPH: CSSProperties = {
+  color: "var(--color-status-warning-strong)",
+  display: "inline-flex",
+};
+
+/** BQ-96: the degraded card's once-per-session flag, by profile; storage may be absent or throw. */
+const SEEN_KEY = "cv.chart.degradedCardShown.";
+/** The one profile with a degraded card today; the flag API stays keyed by profile. */
+const DEGRADED: FrameProfile = "degraded-2d";
+function readSeen(profile: string): boolean {
+  try {
+    return window.sessionStorage.getItem(SEEN_KEY + profile) === "1";
+  } catch {
+    return false;
+  }
+}
+function markSeen(profile: string): void {
+  try {
+    window.sessionStorage.setItem(SEEN_KEY + profile, "1");
+  } catch {
+    // The flag then lives only in this surface: a recreate still never re-shows the card.
+  }
+}
+
 /** An engine-local reference until SCR-046's `errors[].ref` exists (E11-D04 §12.3, §23 G-1). */
 export const mintRef = (): string => `urn:cv:ui:${crypto.randomUUID()}`;
 
 type Said = { readonly text: string; readonly n: number };
 
+/** The 2D handoff's one polite announcement: §19's heading, then its body (E11-D04:800). */
+const handoverSays = (reduced: readonly ReducedCapability[]): string =>
+  `${COPY.noWebgl2.heading} ${noWebgl2Body(reduced)}`;
+
 /** The sentence a transition says once, politely; null when it says nothing. */
 function sayOnEntry(prev: ChartErrorState, next: ChartErrorState): string | null {
   if (next.kind === "restoring" && prev.kind !== "restoring") return COPY.strip.announce;
   if (next.kind === "restored" && prev.kind !== "restored") return COPY.restored;
+  // The ruled 2D handoff: the fatal card's alert spoke once; the degraded card's heading and
+  // body (§19) are said once, politely — also when the card was already seen and it goes to basic.
+  if (next.kind === "no-webgl2" && next.handover && prev.kind !== "no-webgl2")
+    return handoverSays(next.reduced);
+  if (next.kind === "basic" && (prev.kind === "failed" || prev.kind === "shader-failed"))
+    return handoverSays(REDUCED_ORDER);
   if (isCard(next) && isCard(prev) && next.retry === "failed" && prev.retry !== "failed")
     return next.kind === "no-webgl2" ? COPY.noWebgl2.retryFailed : COPY.stopped.retryFailed;
   return null;
@@ -110,6 +172,10 @@ export function ChartErrorSurface({
   const cardRef = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const profile = useRef<FrameProfile | null>(null);
+  const [shownProfile, setShownProfile] = useState<FrameProfile | null>(null);
+  // Storage is read at dispatch, so a sibling surface's card shown after this one mounted still
+  // counts (BQ-96: once per session); the ref is the fallback when storage throws.
+  const seen = useRef(false);
   const card = isCard(state);
 
   const recreateKey = JSON.stringify(RECREATE_KEYS.map((k) => chart.options[k] ?? null));
@@ -124,15 +190,30 @@ export function ChartErrorSurface({
     (error: ChartEvents["error"]) => {
       const t = Date.now();
       setNow(t);
-      dispatch({ type: "error", error, now: t, ref: mintRef() });
+      dispatch({
+        type: "error",
+        error,
+        now: t,
+        ref: mintRef(),
+        seen: seen.current || readSeen(DEGRADED),
+      });
       onError?.(error);
     },
     [onError],
   );
   const handleStats = useCallback(
     (stats: ChartEvents["frameStats"]) => {
+      // Set state only when the profile changes, never per frame.
+      if (profile.current !== stats.renderProfile) setShownProfile(stats.renderProfile);
       profile.current = stats.renderProfile;
-      dispatch({ type: "frame", profile: stats.renderProfile });
+      // Storage is read only when it decides something: a fatal card meeting a 2D frame.
+      const k = prev.current.kind;
+      const handoff = stats.renderProfile === DEGRADED && (k === "failed" || k === "shader-failed");
+      dispatch({
+        type: "frame",
+        profile: stats.renderProfile,
+        seen: handoff && (seen.current || readSeen(DEGRADED)),
+      });
       onFrameStats?.(stats);
     },
     [onFrameStats],
@@ -149,6 +230,10 @@ export function ChartErrorSurface({
       if (active !== null && stack.current?.contains(active) === true)
         cardRef.current?.querySelector("button")?.focus();
       reportShown(state, profile.current);
+    }
+    if (state.kind === "no-webgl2" && was.kind !== "no-webgl2") {
+      seen.current = true;
+      markSeen(DEGRADED);
     }
     stack.current?.toggleAttribute("inert", card);
     // A card that closed under the user's focus hands it back, never to `<body>`.
@@ -195,6 +280,14 @@ export function ChartErrorSurface({
           </Callout>
         </div>
       ) : null}
+      {shownProfile === "degraded-2d" && !card && state.kind !== "restoring" ? (
+        <div style={BADGE} data-chart-badge="degraded-2d">
+          <span style={GLYPH}>
+            <Icon name="warning" />
+          </span>
+          {COPY.badge}
+        </div>
+      ) : null}
       {card ? (
         <ErrorCard
           cardRef={cardRef}
@@ -229,7 +322,11 @@ type CardProps = {
 function ErrorCard({ cardRef, state, onRetry, onContinue }: CardProps): JSX.Element {
   const webgl = state.kind === "no-webgl2";
   const copy = webgl ? COPY.noWebgl2 : COPY.stopped;
-  const body = state.kind === "failed" || webgl ? copy.body : COPY.fatalBody;
+  const body = webgl
+    ? noWebgl2Body(state.reduced)
+    : state.kind === "failed"
+      ? COPY.stopped.body
+      : COPY.fatalBody;
   const retryLine =
     state.retry === "failed"
       ? copy.retryFailed
@@ -238,10 +335,12 @@ function ErrorCard({ cardRef, state, onRetry, onContinue }: CardProps): JSX.Elem
         : null;
   return (
     <div ref={cardRef} style={CARD} data-cmp="SCR-048">
+      {/* A handoff remounts the panel without a live role: the fatal card's alert already spoke. */}
       <ErrorState
+        key={webgl && state.handover ? "handover" : "card"}
         severity="error"
         form="panel"
-        live="assertive"
+        live={webgl && state.handover ? "off" : "assertive"}
         title={copy.heading}
         message={body}
       />
