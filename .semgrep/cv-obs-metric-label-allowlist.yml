@@ -25,6 +25,10 @@ rules:
       # action (#2914): audit action of a lost outcome record, closed set + `other`; max_series=4.
       # action, also (E42-T04, #965, cv_user_lifecycle_total): {disable}; with `result`,
       #   max_series=10 (`admin/lifecycle_metrics.ACTION_RESULTS`).
+      # blocked_type, directive (E43-T01, cv_csp_violations_total): the CSP directive name from a
+      #   closed set of 21 plus `other` and the blocked resource's closed type {inline, eval, data,
+      #   blob, http, https, ws, wss, other} (`api/csp_report.py`); never a URL, path, query or
+      #   host; max_series=200.
       # bucket (E15-T01): workspace-count buckets {1, 2-4, 5-8, 9-16, 17-32}; max_series=5.
       # cause (E42-T02): audit read over budget {budget, pool, statement_timeout}; max_series=3.
       # entity_kind (E17-T08): the closed 23 §6.4 machine kinds (`ws/topics.MACHINE_KINDS`, 13);
@@ -170,7 +174,7 @@ rules:
       #   identifier; max_series=2.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(action|bucket|builtin|cap|cause|class|code|depth|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger|trigger_mode|type|version|where|wire)$).*$"
+          regex: "^(?!(action|blocked_type|bucket|builtin|cap|cause|class|code|depth|directive|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger|trigger_mode|type|version|where|wire)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"

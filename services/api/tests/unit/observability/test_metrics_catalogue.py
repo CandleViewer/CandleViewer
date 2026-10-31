@@ -231,6 +231,7 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["cv_audit_verify_runs_total"].labels("ok").inc()
     r["cv_http_request_duration_seconds"].labels("/v1/x", "GET", "2xx").observe(0.01)
     r["authz_denied_by_route_total"].labels("orders:write", "/v1/x", "viewer").inc()
+    r["cv_csp_violations_total"].labels("script-src", "inline").inc()
     r["cv_key_verification_total"].labels("failed", "key_expired").inc()
     r["cv_key_selfcheck_runs_total"].labels("failed").inc()
     r["cv_keys_failing_policy"].labels("key_expired").set(1)

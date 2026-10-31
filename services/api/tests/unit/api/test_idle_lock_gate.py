@@ -110,6 +110,7 @@ def test_ungated_operations_are_the_four_allowed_while_locked_and_the_non_bearer
         ("POST", "/auth/mfa/verify"),
         ("POST", "/auth/mfa/recovery"),  # pre-session since #2661 (`security: []`)
         ("POST", "/auth/refresh"),
+        ("POST", "/csp-report"),  # E43-T01: a browser's report has no credential (`security: []`)
         ("GET", "/health/live"),
         ("GET", "/health/ready"),
     }

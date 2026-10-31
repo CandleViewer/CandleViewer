@@ -36,3 +36,30 @@ class NoSniff:
             await send(message)
 
         await self._app(scope, receive, stamped)
+
+
+class ContentSecurityPolicy:
+    """E43-T01 (SR-112, C-12.10): the full CSP header (and the `Reporting-Endpoints` header its
+    `report-to` names) on every HTTP response, from the one policy in `api/csp.py`. Set, not
+    appended, outermost like `NoSniff`: a guard's refusal and an unhandled `500` carry it too, and
+    a value a route sent is replaced, so a response carries one policy."""
+
+    def __init__(self, app: ASGIApp, *, policy: str, reporting_endpoints: str) -> None:
+        self._app = app
+        self._policy = policy
+        self._reporting_endpoints = reporting_endpoints
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        async def stamped(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message.setdefault("headers", [])
+                headers = MutableHeaders(scope=message)
+                headers["Content-Security-Policy"] = self._policy
+                headers["Reporting-Endpoints"] = self._reporting_endpoints
+            await send(message)
+
+        await self._app(scope, receive, stamped)

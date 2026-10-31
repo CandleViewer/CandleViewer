@@ -146,6 +146,7 @@
 ["cv_credential_outcome_audit_failures_total", "counter", [], "live", "E27"]
 ["cv_credential_rewrap_rows_total", "counter", [], "live", "E27"]
 ["cv_credential_touch_failures_total", "counter", [], "live", "E27"]
+["cv_csp_violations_total", "counter", ["directive", "blocked_type"], "live", "E43"]
 ["cv_db_guarded_privileges_held", "gauge", [], "live", "E07"]
 ["cv_dek_cache_hits_total", "counter", [], "live", "E27"]
 ["cv_drawings_batch_cap_rejected_total", "counter", [], "planned", "E14"]

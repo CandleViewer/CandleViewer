@@ -4212,6 +4212,15 @@
         }
       }
     },
+    "/csp-report": {
+      "post": {
+        "security": [],
+        "x-rbac": {
+          "permissions": [],
+          "scope": "none"
+        }
+      }
+    },
     "/detectors/config": {
       "get": {
         "x-rbac": {
