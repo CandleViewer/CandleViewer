@@ -58,15 +58,23 @@ function LowContrastTile(): JSX.Element {
   const css = getComputedStyle(document.documentElement);
   const read = (name: string): string => css.getPropertyValue(name).trim();
   return (
+    // A host image, not the theme sample (as PreviewTile's LowContrastWarning): the frame carries no text under the
+    // low-contrast pair, so the warning shows while the a11y gate stays clean.
     <PreviewTile
-      kind="theme"
       label="Preview: low contrast sample"
-      source="sample"
       tokenOverrides={{
         "color.text.primary": read("--color-border-strong"),
         "color.surface.sunken": read("--color-border-default"),
       }}
-    />
+    >
+      <div
+        aria-hidden="true"
+        style={{
+          blockSize: "var(--size-row-comfortable)",
+          background: "var(--color-surface-raised)",
+        }}
+      />
+    </PreviewTile>
   );
 }
 
