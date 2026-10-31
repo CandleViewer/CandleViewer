@@ -1,20 +1,23 @@
-/* E27-D01 research boards (#732), board script r1a: the round-3 PATCH of boards 04, 06 and 08.
+/* E27-D01 research boards (#732), board script r1a: the round-3 PATCH of boards 03, 04, 06 and 08.
  *
- * r1 drew the eight boards (sha256 in the memo's §1 register); r1a patches three of them in place, in the file
+ * r1 drew the eight boards (sha256 in the memo's §1 register); r1a patches four of them in place, in the file
  * "E27-D01 research boards", page "E27-D01", and draws nothing new. Paste this file as the body of ONE Penpot plugin
  * call with that file open. It finds every shape by board id + shape name + its words, so it is idempotent: run it
  * until it answers `stable: true` (the first run sets the words; a text's wrapped height settles after the call, so
- * the second run measures it and re-lays the AD-11 row; the third changes nothing).
+ * the second run measures it and re-lays its row; the third changes nothing).
  *
  * Patches (the words are the memo's, docs/design/research/e27-key-custody.md, as folded in round 3):
+ * - board 03: CP-1's trap cell carries the merged memo's "reveal" wording again.
  * - board 04: RA-7's response cell is restamped (OQ-5 ruled, #2701 ledger 1 row 64).
  * - board 06: the revoke dialog loses its bold lead line above the radios (the counts live only in CD-6's
  *   "Flatten first" sentence); the dialog's content moves up by the freed line and the dialog shrinks by the same.
- * - board 08: C10 quotes the catalogue's add-account line with its address elided; AD-11's two cells carry the
- *   merged memo's word ban again; a row that grows pushes every shape under it down and the board grows by the same.
+ * - board 08: C10 quotes the catalogue's add-account line with its address elided; AD-11's two cells, IM-7's two
+ *   cells and AD-16's fail cell carry the merged memo's "reveal" wording again (the boards follow the merged memo);
+ *   a row whose height changes moves every shape under it by the same and the board resizes by the same.
  * - each patched board: the subtitle's source line and the footer name r1a.
  */
 const PAGE_ID = "b96edf38-8e58-8006-8008-dd018bdbc198";
+const B03 = "b96edf38-8e58-8006-8008-dd01ad82a294";
 const B04 = "b96edf38-8e58-8006-8008-dd01b4ea5c0d";
 const B06 = "b96edf38-8e58-8006-8008-dd01c624a1cc";
 const B08 = "b96edf38-8e58-8006-8008-dd01d5b72f9e";
@@ -28,13 +31,17 @@ const RA7 =
   "not a new key on an existing account)";
 const C10 = '"IP whitelist: … [ + add ]" (14:2449)';
 const AD11 =
-  "Nothing shows a secret again: no show, copy or download for a secret or a full key id; a key id is ... " +
+  "No reveal anywhere: no show, copy or download for a secret or a full key id; a key id is ... " +
   'plus its last 4 (CMP-034 without its toggle); secret fields are type=password with "value is write-only"; ' +
-  'no control or label uses "reveal" or offers to show a secret, and if #896 defines the scope G-10 names as ' +
+  'no control or label uses "reveal", and if #896 defines reveal-scope as ' +
   "metadata only it renders as the permission list (G-10)";
 const AD11_FAIL =
-  'an eye or show toggle, first-4 plus last-4, a secret value, the word "reveal" or a label offering to show a ' +
-  "secret appears in any frame";
+  'an eye or reveal toggle, first-4 plus last-4, a secret value or the word "reveal" appears in any frame';
+const IM7 = "No reveal control anywhere";
+const IM7_WHY = "CMP-034 listed with its reveal toggle (14:2462, 14:2473; 15:355-357) → AD-11";
+const AD16_FAIL =
+  "a bare spinner, a fake staged reveal, or a lock and a reason on the busy control";
+const CP1_TRAP = "a fresh code will reveal it (step-up read as an unlock)";
 const SRC_OLD = "at 2b6993705c (blob 018ab03cbf), as folded in the boards PR";
 const SRC_NEW = "as folded in the boards PR, round 3 (§1)";
 
@@ -106,59 +113,74 @@ if (lead.length === 1) {
 }
 restamp(b06);
 
-// board 08: C10 and AD-11
+// board 08: C10; then the reveal-wording cells of boards 08 and 03
 const b08 = board(B08);
 setText(
   one(b08, "td", (t) => t.startsWith('"IP whitelist: ')),
   C10,
   "08: C10",
 );
-const ad11 = one(b08, "td", (t) => t.startsWith("Nothing shows a secret again"));
-const ad11f = one(b08, "td", (t) => t.startsWith("an eye or show toggle"));
-for (const [s, txt] of [
-  [ad11, AD11],
-  [ad11f, AD11_FAIL],
-]) {
+// a cell whose words change: set them, let the height settle (auto-height), then fix it at r1's box
+const fit = (b, s, txt, why) => {
   if (s.characters !== txt) {
-    setText(s, txt, "08: AD-11 cell");
+    setText(s, txt, why);
     s.growType = "auto-height"; // measured on the next run
   } else if (s.growType === "auto-height") {
     const lines = Math.max(1, Math.round(s.height / LINE));
     s.growType = "fixed";
     s.resize(s.width, BOX[lines]);
-    changes.push(`08: AD-11 cell fixed at ${lines} lines`);
+    changes.push(`${why} fixed at ${lines} lines`);
   } else {
     const lines = Math.max(1, Math.round((s.height - 14) / LINE));
     if (Math.abs(s.height - BOX[lines]) > 0.5) {
       s.resize(s.width, BOX[lines]);
-      changes.push(`08: AD-11 cell set to ${lines} lines`);
+      changes.push(`${why} set to ${lines} lines`);
     }
   }
-}
+};
+// re-lay a cell's row: row = tallest td + ROW_PAD; everything under it moves by the difference
+const relay = (b, cell, why) => {
+  const row = b.children.filter(
+    (s) => s.name === P + "table-row" && Math.abs(s.y + 8 - cell.y) < 1 && s.type === "rectangle",
+  )[0];
+  if (!row) throw new Error(why + ": row not found");
+  const cells = b.children.filter((s) => s.name === P + "td" && Math.abs(s.y - cell.y) < 1);
+  const grew = Math.round(Math.max(...cells.map((s) => s.height)) + ROW_PAD - row.height);
+  if (grew === 0) return;
+  if (b.id !== B08) throw new Error(why + ": row height would change by " + grew); // checked, never shifted
+  const oldBottom = row.y + row.height;
+  for (const s of b.children) if (s.y >= oldBottom - 0.5) s.y = s.y + grew;
+  row.resize(row.width, row.height + grew);
+  b.resize(b.width, b.height + grew);
+  changes.push(why + ": row and board moved " + grew);
+};
+const starts =
+  (...heads) =>
+  (t) =>
+    heads.some((h) => t.startsWith(h));
+const cellPatches = [
+  [b08, starts("No reveal anywhere", "Nothing shows a secret again"), AD11, "08: AD-11 cell"],
+  [
+    b08,
+    starts("an eye or reveal toggle", "an eye or show toggle"),
+    AD11_FAIL,
+    "08: AD-11 fail cell",
+  ],
+  [b08, (t) => t === IM7 || t === "No show-again control anywhere", IM7, "08: IM-7 cell"],
+  [b08, starts("CMP-034 listed with its "), IM7_WHY, "08: IM-7 conflict cell"],
+  [b08, starts("a bare spinner, a fake staged "), AD16_FAIL, "08: AD-16 fail cell"],
+];
+const b03 = board(B03);
+cellPatches.push([b03, starts("a fresh code will "), CP1_TRAP, "03: CP-1 trap cell"]);
+const hits = cellPatches.map(([b, test, txt, why]) => [b, one(b, "td", test), txt, why]);
+for (const [b, s, txt, why] of hits) fit(b, s, txt, why);
+const pending = hits.some(([, s]) => s.growType === "auto-height");
+if (!pending) for (const [b, s, , why] of hits) relay(b, s, why);
+restamp(b03);
 restamp(b08);
-
-// re-lay the AD-11 row: row = tallest td + ROW_PAD; everything under it moves by the difference
-const pending = [ad11, ad11f].some((s) => s.growType === "auto-height");
-const row = b08.children.filter(
-  (s) => s.name === P + "table-row" && Math.abs(s.y + 8 - ad11.y) < 1 && s.type === "rectangle",
-)[0];
-let grew = 0;
-if (!pending) {
-  if (!row) throw new Error("08: AD-11 row not found");
-  const cells = b08.children.filter((s) => s.name === P + "td" && Math.abs(s.y - ad11.y) < 1);
-  const want = Math.max(...cells.map((s) => s.height)) + ROW_PAD;
-  grew = Math.round(want - row.height);
-  if (grew !== 0) {
-    const oldBottom = row.y + row.height;
-    for (const s of b08.children) if (s.y >= oldBottom - 0.5) s.y = s.y + grew;
-    row.resize(row.width, row.height + grew);
-    b08.resize(b08.width, b08.height + grew);
-    changes.push("08: AD-11 row and board grew " + grew);
-  }
-}
 
 return {
   stable: changes.length === 0 && !pending,
   changes,
-  sizes: [b04, b06, b08].map((b) => ({ id: b.id, name: b.name, w: b.width, h: b.height })),
+  sizes: [b03, b04, b06, b08].map((b) => ({ id: b.id, name: b.name, w: b.width, h: b.height })),
 };
