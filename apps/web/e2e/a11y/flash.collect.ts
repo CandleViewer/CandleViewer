@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { test } from "@playwright/test";
+import { bounded, openScreen, STEP_TIMEOUT_MS, sweep } from "./open";
 import { REPORT_DIR, SCREENS } from "./screens";
 
 const FPS = 30;
@@ -8,12 +9,12 @@ const FRAMES = 90; // 3 s window
 // Gate 5 collector: relative-luminance series per frame. Each screen's <main>
 // is a component; any element marked data-flash-audit="<name>" (heatmap,
 // big-trade bubble, price flash - added by their tickets) is captured too.
+// Screens open as the other collectors open them (open.ts), each step bounded (#5151).
 test("collect flash luminance", async ({ page }) => {
   const components: Record<string, number[]> = {};
-  for (const s of SCREENS) {
-    await page.goto(s.path);
-    await page.getByRole("main").first().waitFor();
-    const series = await page.evaluate(
+  await sweep("flash", SCREENS, async (s) => {
+    await openScreen(page, s);
+    const capture = page.evaluate(
       async ({ frames, fps }) => {
         const lin = (c: number): number => {
           const v = c / 255;
@@ -40,10 +41,13 @@ test("collect flash luminance", async ({ page }) => {
       },
       { frames: FRAMES, fps: FPS },
     );
+    const windowMs = (FRAMES / FPS) * 1000;
+    const what = `the ${FRAMES}-frame luminance capture`;
+    const series = await bounded(what, windowMs + STEP_TIMEOUT_MS, capture);
     for (const [k, v] of Object.entries(series)) {
       components[k === "__main" ? `screen:${s.id}` : `component:${k}`] = v;
     }
-  }
+  });
   mkdirSync(REPORT_DIR, { recursive: true });
   writeFileSync(`${REPORT_DIR}/flash.json`, JSON.stringify({ fps: FPS, components }));
 });

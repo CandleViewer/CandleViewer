@@ -52,7 +52,7 @@ const UNAUTHENTICATED = json(
   401,
 );
 /** `POST /auth/refresh`'s one 401, for every cause (22 `authRefresh`; `sessions.py` `_REFRESH_INVALID`). */
-const REFRESH_INVALID = json(
+export const REFRESH_INVALID = json(
   {
     type: "about:blank",
     title: "Unauthorized",

@@ -2,6 +2,10 @@ name: a11y-nightly
 
 # E47-T02: full accessibility sweep (every manifest route) off the PR path.
 # Budget 20 min (AC); same collectors and gate logic as the per-PR job.
+# A red scheduled run comments on the one tracker issue that the repository variable
+# CV_A11Y_NIGHTLY_TRACKER_ISSUE names, or opens a P1 issue while the variable is unset, as
+# e2e-nightly.yml and storybook-nightly.yml do (#5151: this lane was red for days unreported).
+# Only the `report` job can write; it runs no checkout and no action.
 
 on:
   schedule:
@@ -61,3 +65,42 @@ jobs:
           name: a11y-sweep-reports
           path: reports/a11y/
           retention-days: 14
+
+  report:
+    name: a11y-nightly-report
+    needs: sweep
+    # always(), not !cancelled(): a job that hits its timeout ends `cancelled` and must still be
+    # reported (as in e2e-nightly.yml). A manual run is watched by whoever started it.
+    if: ${{ always() && github.event_name == 'schedule' && needs.sweep.result != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Report the red nightly on the tracker issue, or open one (C-9.2)
+        # Only the runner's preinstalled gh CLI runs beside the write token; values reach the
+        # script through env. TRACKER_ISSUE has no default: unset, it opens a P1. A set value must
+        # be an issue number of this repository, or the job fails and files nothing.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.sweep.result }}
+          TRACKER_ISSUE: ${{ vars.CV_A11Y_NIGHTLY_TRACKER_ISSUE }}
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          body="a11y-nightly (the full accessibility sweep, E47-T02) ended $RESULT on main at"
+          body+=" $GITHUB_SHA, and a red nightly blocks the next release (C-9.2). Run: $run_url."
+          body+=" Artifact: a11y-sweep-reports. Triage: docs/ci-runbook.md section 2 (nightly"
+          body+=" accessibility sweep)."
+          if [ -z "$TRACKER_ISSUE" ]; then
+            gh issue create --title "a11y: nightly accessibility sweep failed ($(date -u +%F))" \
+              --label qa --label area/frontend-platform --label priority/p1 \
+              --body "$body"
+          elif [[ "$TRACKER_ISSUE" =~ ^[1-9][0-9]*$ ]]; then
+            gh issue comment "$TRACKER_ISSUE" --body "$body"
+          else
+            echo "::error title=a11y-nightly-report::CV_A11Y_NIGHTLY_TRACKER_ISSUE is set but is" \
+              "not an issue number, so nothing was filed. Set it to a positive integer or delete" \
+              "it (docs/ci-runbook.md section 2)."
+            exit 1
+          fi
