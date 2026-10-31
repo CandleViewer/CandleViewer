@@ -326,4 +326,18 @@ describe("Button gated announcement routed by a host", () => {
     expect(announce).toHaveBeenCalledWith(REASON);
     expect(await politeText()).toBe("");
   });
+
+  it("under a no-op provider the atom announces nothing; under the default it announces once", async () => {
+    clearPolite();
+    const quiet = await mount(
+      <GatedAnnounceProvider announce={() => undefined}>
+        <Button disabledReason={REASON}>Quiet</Button>
+      </GatedAnnounceProvider>,
+    );
+    await userEvent.click(within(quiet).getByRole("button", { name: "Quiet" }));
+    expect(await politeText()).toBe("");
+    const spoken = await mount(<Button disabledReason={REASON}>Spoken</Button>);
+    await userEvent.click(within(spoken).getByRole("button", { name: "Spoken" }));
+    expect(await politeText()).toBe(REASON);
+  });
 });

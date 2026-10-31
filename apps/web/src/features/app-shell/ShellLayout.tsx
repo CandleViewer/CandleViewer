@@ -31,7 +31,8 @@ export function ShellLayout(): JSX.Element {
   const mainRef = useRef<HTMLElement>(null);
   useRouteFocus(mainRef);
   return (
-    // Surfaces own the gated announcement in their own region (G-T2.3; E17-D02 §11, the one announcer): no-op.
+    // Surfaces own the gated announcement (G-T2.3); E17-D02 §11: the shell announcer is the one region, so the
+    // atoms' own announcement is a no-op here (ruling on #5135, option A).
     <GatedAnnounceProvider announce={ignoreGatedAnnouncement}>
       <InShellProvider>
         <AppShell
