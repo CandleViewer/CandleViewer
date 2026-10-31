@@ -2,12 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState, type JSX } from "react";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import type { DensityName } from "../theme/store.js";
-import {
-  DENSITY_TOGGLE_COPY,
-  DensityToggle,
-  DensityToggleConnected,
-  type DensityToggleValue,
-} from "./DensityToggle.js";
+import { DENSITY_TOGGLE_COPY, DensityToggle, DensityToggleConnected } from "./DensityToggle.js";
 
 /** Theme and density come from the toolbars; every story renders at each of the 3 x 2 combinations. */
 const meta: Meta<typeof DensityToggle> = {
@@ -40,26 +35,16 @@ function GlobalHost({
   );
 }
 
-/** A panel's override: the host keeps it per panel; a chart panel adds Dense. */
+/** A panel's override: the host keeps it per panel, with the runtime's two densities (BQ-19). */
 function Panel({
   name,
-  chart = false,
   initial = "compact",
 }: {
   name: string;
-  chart?: boolean;
-  initial?: DensityToggleValue;
+  initial?: DensityName;
 }): JSX.Element {
-  const [value, setValue] = useState<DensityToggleValue>(initial);
-  return (
-    <DensityToggle
-      scope="panel"
-      panelName={name}
-      chartPanel={chart}
-      value={value}
-      onChange={setValue}
-    />
-  );
+  const [value, setValue] = useState<DensityName>(initial);
+  return <DensityToggle scope="panel" panelName={name} value={value} onChange={setValue} />;
 }
 
 const live = (): string => document.getElementById("cv-theme-live-region")?.textContent ?? "";
@@ -90,13 +75,13 @@ export const PanelOverride: Story = {
   },
 };
 
-/** Cell "chart panel dense": three segments on a chart panel, Dense checked (E11-D02 CR-8). */
-export const ChartPanelDense: Story = {
-  render: () => <Panel name="Chart panel" chart initial="dense" />,
+/** A chart panel offers the same two densities: J14's Dense is slice H's reconcile row (BQ-19). */
+export const ChartPanel: Story = {
+  render: () => <Panel name="Chart panel" initial="comfortable" />,
   play: async ({ canvasElement }) => {
     const group = within(canvasElement).getByRole("radiogroup", { name: "Chart panel density" });
-    await expect(within(group).getAllByRole("radio")).toHaveLength(3);
-    await expect(within(group).getByRole("radio", { name: "Dense" })).toBeChecked();
+    await expect(within(group).getAllByRole("radio")).toHaveLength(2);
+    await expect(within(group).getByRole("radio", { name: "Comfortable" })).toBeChecked();
   },
 };
 
@@ -115,20 +100,20 @@ export const Hover: Story = {
     userEvent.hover(within(canvasElement).getByRole("radio", { name: "Comfortable" })),
 };
 
-/** CMP-003's plain disabled form: no reason, no lock (J15 (a): no T2). */
+/** CMP-003's own disabled state, passed through: no reason form and no lock. */
 export const Disabled: Story = {
   render: () => <DensityToggle value="compact" onChange={fn()} disabled />,
 };
 
 /** J16: each arrow is a committed change; the region's text is replaced, so a run speaks its last value. */
 export const KeyboardCommits: Story = {
-  render: () => <Panel name="Chart panel" chart />,
+  render: () => <Panel name="Chart panel" />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.tab();
-    await userEvent.keyboard("{ArrowRight}{ArrowRight}");
-    await expect(canvas.getByRole("radio", { name: "Dense" })).toHaveFocus();
-    await waitFor(() => expect(live()).toBe("Chart panel density: dense"));
+    await userEvent.keyboard("{ArrowRight}");
+    await expect(canvas.getByRole("radio", { name: "Comfortable" })).toHaveFocus();
+    await waitFor(() => expect(live()).toBe("Chart panel density: comfortable"));
   },
 };
 
@@ -157,7 +142,7 @@ export const AllStates: Story = {
       <GlobalHost />
       <DensityToggle value="comfortable" onChange={fn()} density="comfortable" />
       <Panel name="Order book" />
-      <Panel name="Chart panel" chart initial="dense" />
+      <Panel name="Chart panel" initial="comfortable" />
       <DensityToggle value="compact" onChange={fn()} disabled />
       <DensityToggle value="compact" onChange={fn()} size="sm" />
       <Panel name={LONG_PANEL} />
@@ -173,7 +158,7 @@ export const AllStates: Story = {
 /** Reduced motion: the density swap is a cut either way; axe runs with the override on. */
 export const ReducedMotion: Story = {
   globals: { motion: "on" },
-  render: () => <Panel name="Chart panel" chart />,
+  render: () => <Panel name="Chart panel" />,
   play: async () => {
     await waitFor(() => expect(document.documentElement).toHaveAttribute("data-motion", "reduce"));
   },

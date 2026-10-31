@@ -78,7 +78,6 @@ export type {
   DensityToggleGlobalProps,
   DensityTogglePanelProps,
   DensityToggleProps,
-  DensityToggleValue,
 } from "./DensityToggle.js";
 
 export { Dialog } from "./Dialog.js";
