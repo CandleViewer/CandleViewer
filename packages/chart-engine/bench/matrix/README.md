@@ -73,7 +73,7 @@ table, change with `--degradation-tolerance`). Confirm or replace it at Architec
 
 ## In CI (E06-T02)
 
-The same runner runs per PR (Chromium) and nightly (Electron) in `.github/workflows/perf-engine-matrix.yml`,
+The same runner runs per non-draft PR touching `packages/chart-engine/**`, and at `ready_for_review` (Chromium), and nightly (Electron) in `.github/workflows/perf-engine-matrix.yml`,
 recording only; the baseline-update policy is in the package README (`packages/chart-engine/README.md`).
 `m0-report.mjs` regenerates the tables of `docs/plan/spikes/E06-M0-report.md` from `results/`.
 

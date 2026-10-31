@@ -22,7 +22,7 @@ ROOT = SCRIPTS_DIR.parent
 
 
 def _valid_desired_state() -> dict:
-    """The committed file, plus a merge queue for the ruleset tests (the file declares none)."""
+    """The committed file, its merge queue cut to one parameter for the ruleset tests."""
     data = json.loads((ROOT / ".github/branch-protection.json").read_text(encoding="utf-8"))
     return {**data, "merge_queue": {"merge_method": "SQUASH"}}
 

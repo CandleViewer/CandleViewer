@@ -575,10 +575,11 @@ missing any required field fails rather than reporting anonymous numbers.
 
 ## Matrix benchmark in CI and the baseline-update policy (E06-T02)
 
-`.github/workflows/perf-engine-matrix.yml` runs the E06-T01 matrix (`bench/matrix/`) on every PR that
-touches this package (headless Chromium, B1 B2 B3 B4 B5 B9) and nightly (Electron, the full set with
-B7 and the 30-minute B10 soak). B7 is nightly-only because it stalls on the hosted runner's software GL
-(the M0 report's U5): its first PR run hung until the harness timeout.
+`.github/workflows/perf-engine-matrix.yml` runs the E06-T01 matrix (`bench/matrix/`) on every
+non-draft PR that touches this package (`packages/chart-engine/**`), and at `ready_for_review`
+(headless Chromium, B1 B2 B3 B4 B5 B9) and nightly (Electron, the full set with B7 and the 30-minute
+B10 soak). B7 is nightly-only because it stalls on the hosted runner's software GL (the M0 report's
+U5): its first PR run hung until the harness timeout.
 
 It is **recording only** in R0: `bench/matrix/ci-compare.mjs` publishes the comparison with the
 committed baseline in the job summary and the run's report as an artefact, and a regression never
