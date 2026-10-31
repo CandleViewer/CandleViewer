@@ -250,6 +250,18 @@ describe("StepUpDialog (SCR-006, E09-D06)", () => {
     expect(password).toHaveValue("pw2");
   });
 
+  it("a press on the scrim neither cancels nor lets focus leave the dialog (A11Y-F-0013)", () => {
+    const onCancel = vi.fn();
+    render(<StepUpDialog {...base} onCancel={onCancel} />);
+    const scrim = screen.getByRole("alertdialog").parentElement as HTMLElement;
+    // a browser moves focus to body on a press over a non-focusable element unless it is prevented
+    expect(fireEvent.mouseDown(scrim)).toBe(false);
+    fireEvent.click(scrim);
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Password")).toHaveFocus();
+    expect(fireEvent.mouseDown(screen.getByLabelText("Password"))).toBe(true);
+  });
+
   it("cancels on Esc and cycles Tab inside the dialog", () => {
     const onCancel = vi.fn();
     render(<StepUpDialog {...base} onCancel={onCancel} />);

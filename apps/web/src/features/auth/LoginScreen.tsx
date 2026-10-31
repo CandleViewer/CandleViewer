@@ -114,6 +114,8 @@ export function LoginScreen(): JSX.Element {
     } else setState(out.kind);
   }
 
+  // fields and submit stay focusable while busy or locked out (readOnly / aria-disabled, A11Y-F-0001);
+  // onSubmit ignores activation then, so no second POST and the 429 lockout holds
   const busy = state === "submitting";
   const rateLimited = state === "rate_limited";
   const message =
@@ -149,7 +151,7 @@ export function LoginScreen(): JSX.Element {
           id="login-id"
           autoComplete="username"
           value={identifier}
-          disabled={busy}
+          readOnly={busy}
           aria-describedby={message ? "login-error" : undefined}
           onChange={(e) => setIdentifier(e.target.value)}
         />
@@ -159,7 +161,7 @@ export function LoginScreen(): JSX.Element {
           type={reveal ? "text" : "password"}
           autoComplete="current-password"
           value={password}
-          disabled={busy}
+          readOnly={busy}
           aria-describedby={message ? "login-error" : undefined}
           onChange={(e) => setPassword(e.target.value)}
         />
@@ -167,7 +169,7 @@ export function LoginScreen(): JSX.Element {
         <button type="button" aria-pressed={reveal} onClick={() => setReveal((r) => !r)}>
           Show password
         </button>
-        <button type="submit" disabled={busy || rateLimited}>
+        <button type="submit" aria-disabled={busy || rateLimited}>
           {busy ? "Signing in..." : "Sign in"}
         </button>
       </form>

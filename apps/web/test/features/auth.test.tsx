@@ -52,7 +52,9 @@ describe("LoginScreen (SCR-001)", () => {
     );
     render(<LoginScreen />);
     submit();
-    expect((screen.getByLabelText("Password") as HTMLInputElement).disabled).toBe(true);
+    // A11Y-F-0001: busy is read-only / aria-disabled, never `disabled`, so focus is not dropped
+    expect(screen.getByLabelText("Password")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("Password")).not.toBeDisabled();
     resolve(reply(401, {}));
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toBe(
@@ -99,9 +101,30 @@ describe("LoginScreen (SCR-001)", () => {
     render(<LoginScreen />);
     submit();
     await waitFor(() => expect(screen.getByText(/Try again in 14:32/)).toBeTruthy());
-    expect((screen.getByRole("button", { name: "Sign in" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    const button = screen.getByRole("button", { name: "Sign in" });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(button); // locked out: activation is ignored, no second POST
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps focus on the submit control while busy and through a 429 (A11Y-F-0001)", async () => {
+    let resolve: (r: Response) => void = () => undefined;
+    const f = vi.fn(() => new Promise<Response>((r) => (resolve = r)));
+    vi.stubGlobal("fetch", f);
+    render(<LoginScreen />);
+    submit();
+    const button = screen.getByRole("button", { name: "Signing in..." });
+    button.focus();
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveFocus();
+    fireEvent.click(button);
+    fireEvent.submit(screen.getByLabelText("Password"));
+    expect(f).toHaveBeenCalledTimes(1); // no duplicate POST while pending
+    resolve(reply(429, {}, { "Retry-After": "30" }));
+    await waitFor(() => expect(screen.getByText(/Try again in 0:30/)).toBeTruthy());
+    expect(button).toHaveFocus();
+    expect(document.body).not.toHaveFocus();
+    expect(await serious()).toEqual([]);
   });
 
   it("server unreachable", async () => {
@@ -131,6 +154,8 @@ describe("LoginScreen (SCR-001)", () => {
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "Two-factor code" })).toBeTruthy(),
     );
+    // A11Y-F-0001: the hand-off does not leave focus on body
+    expect(screen.getByRole("heading", { name: "Two-factor code" })).toHaveFocus();
   });
 
   it.each([
@@ -256,5 +281,10 @@ describe("ChangePasswordScreen (SCR-004)", () => {
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "Password changed" })).toBeTruthy(),
     );
+    // A11Y-F-0007: the done view takes focus on its heading, which is not left focusable
+    const heading = screen.getByRole("heading", { name: "Password changed" });
+    expect(heading).toHaveFocus();
+    fireEvent.blur(heading);
+    expect(heading).not.toHaveAttribute("tabindex");
   });
 });

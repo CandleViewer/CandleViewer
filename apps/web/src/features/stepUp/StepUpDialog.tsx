@@ -208,8 +208,17 @@ export function StepUpDialog({
         first.focus();
       }
     };
+    // a press on the scrim would blur the focused control to body (A11Y-F-0013); the dialog is modal
+    const scrimEl = node.parentElement;
+    const onScrimDown = (event: MouseEvent): void => {
+      if (event.target === scrimEl) event.preventDefault();
+    };
     node.addEventListener("keydown", onKeyDown);
-    return () => node.removeEventListener("keydown", onKeyDown);
+    scrimEl?.addEventListener("mousedown", onScrimDown);
+    return () => {
+      node.removeEventListener("keydown", onKeyDown);
+      scrimEl?.removeEventListener("mousedown", onScrimDown);
+    };
   }, []);
 
   const unmet: Missing | null =
