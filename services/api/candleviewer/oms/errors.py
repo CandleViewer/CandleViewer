@@ -304,6 +304,15 @@ class OrderInvalid(OrderRefused):
     default_detail = "The order failed validation."
 
 
+class PositionChanged(OrderInvalid):
+    """A close a close route marked `protective` that the venue's own read of its position, at
+    the size step, does not show reducing it: the position flat, on the other side, or smaller
+    than the close since the route admitted it (E29-S03 #978, BQ-7). Nothing is recorded or
+    sent, and the close is never re-sized: `errors[]` names `position_flat` or
+    `exceeds_position`, which the close routes answer `422` as their step 13 does. Its row is
+    `OrderInvalid`'s, so the pipeline records it `validation_failed`."""
+
+
 class StopUnitUnsupported(OrderInvalid):
     """R4: the stop, the request's or the profile's, is in `atr` or `r_multiple` units; S2-Q6: the
     request's take-profit too. `field` names which: `stop_loss` or `take_profit`."""

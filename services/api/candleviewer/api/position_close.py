@@ -34,7 +34,11 @@ next:
     the position's protective orders are left as they are (C-2.6). One `position.closed` record
     correlates the request with its order, and carries its size (what the body asked, the size
     sent, the size left, and whether the floor changed it), before the answer returns.
-    `oms_partial_close_total{result}` counts each close below 100 % once, from step 13 on.
+    `oms_partial_close_total{result}` counts each close below 100 % once, from step 13 on. The
+    pipeline's read of the venue's position is the guard (BQ-7): a close it does not show
+    reducing is refused there, `PositionChanged`, answered 422 as step 13's own rules are, never
+    re-sized; a close the venue rejects (`502`, its return code alone) re-reads its position once
+    (`PositionWrites.refresh`) before the answer.
 
 **closeAllPositions.** A protective write in a view-as context too, on the same terms. The
 principal, `positions:write`, the rate, the body (22: the account ids, the symbol,
@@ -119,6 +123,7 @@ from candleviewer.oms.errors import (
     OmsError,
     OmsNotReady,
     OrderInvalid,
+    PositionChanged,
     StoreUnavailable,
     problem_for,
 )
@@ -241,6 +246,7 @@ class _Positions(Protocol):
         self, account_id: uuid.UUID, order_id: uuid.UUID, *, deadline: float
     ) -> CloseFill: ...
     async def venue_position(self, row: PositionRow) -> VenuePosition: ...
+    async def refresh(self, row: PositionRow) -> bool: ...
     async def record(self, record: RequestRecord) -> bool: ...
     async def sweep_after_close(
         self, row: PositionRow, order_id: uuid.UUID, *, actor: SubmitActor,
@@ -420,6 +426,14 @@ def make_position_close_router(
             return invalid(*error.errors)
         return order_problem(error, pager=paging)
 
+    async def refreshed(oms: PositionRuntime, row: PositionRow) -> None:
+        """BQ-7: a rejected close (`110017`, the position shrank under it, among others) re-reads
+        its position once before the answer; best effort, so the answer always stands."""
+        try:
+            await oms.positions.refresh(row)
+        except OmsError as exc:  # the order lane stopped meanwhile: the stream's push follows
+            _log().warning("oms_close_refresh_unrun", error=type(exc).__name__)
+
     async def replayed(adm: _Admitted, outcome: SubmitOutcome) -> Response:
         """A decided anchor's answer: its recorded `429`/`502`, or its rows as read now."""
         if outcome.status != 202:
@@ -439,11 +453,16 @@ def make_position_close_router(
         caller, oms, full = adm.caller, adm.oms, size.full
         try:
             outcome = await oms.submission.submit(order, context)
+        except PositionChanged as exc:  # BQ-7: the venue's read refused it, nothing sent
+            count_partial(full, "position_changed")
+            return invalid(*exc.errors)  # recorded by the pipeline; step 13's own 422
         except OmsError as exc:  # recorded by the pipeline before it was raised
             count_partial(full, "rejected")
             return order_problem(exc, pager=paging)
         if outcome.status != 202:
             count_partial(full, "rejected")
+            if outcome.status == 502 and not outcome.replayed:
+                await refreshed(oms, caller.row)
             return outcome_problem(outcome)
         if outcome.replayed or outcome.written is None:
             try:

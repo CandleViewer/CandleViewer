@@ -16,6 +16,11 @@ module holds what the pipeline does not:
   pure, before any exchange call: a percent of the admitted row's size, or its `qty`, floored to
   the lot step, the whole size at 100 %; `qty_below_minimum` and `dust_remainder` refuse it. The
   instrument it reads is `PositionWrites.instrument`'s, the pipeline's own port.
+* **A rejected close's re-read** (`refresh`, E29-S03 BQ-7): one read of the account's positions
+  on the trading port (its `poll` lane), whose row for the position's key is upserted through
+  the position store, which keeps a newer row (21 Sec.3.3.7 "Writes"): the `positions` topic then
+  carries what the venue shows. A key the read does not show is left to the private stream and
+  reconciliation, never written flat on a guess (C-2.6).
 * **The group-key pre-check** (`PositionWrites.group_key_free`): a reversal whose raw key already
   anchors one of its creator's trade groups is refused 409 `idempotency_key_reuse` before its close.
 * **The native-stop pre-check** (`PositionWrites.entry_stop_ready`): a reversal is refused before
@@ -79,10 +84,11 @@ from candleviewer.oms.ports import (
     SubmitAudit,
     TradingAccounts,
 )
+from candleviewer.oms.positions import row_state
 from candleviewer.oms.submit import OrderRequest
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.orders import TimeInForce
-from candleviewer.storage.repositories.positions import PositionRow
+from candleviewer.storage.repositories.positions import PositionRow, PositionState
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from candleviewer.storage.repositories.trade_groups import GroupAnchor
 
@@ -104,6 +110,9 @@ SWEEP_WAIT_S: Final = 10.0
 #: Sweeps in flight at once (C-2.18); one more is not started, logged, and the venue's flatten
 #: and reconciliation are left to end the conditionals.
 MAX_SWEEPS: Final = 64
+#: A rejected close's re-read (`refresh`), its read and its write together: the `poll` lane's own
+#: deadline (24 Sec.8.7).
+REFRESH_WAIT_S: Final = 5.0
 _STORE_TIMEOUT_S: Final = 5.0
 _CALL_TIMEOUT_S: Final = 10.0
 _HUNDRED: Final = Decimal(100)
@@ -268,6 +277,13 @@ class LiveStops(Protocol):
     ) -> tuple[RecordedStopRow, ...]: ...
 
 
+class PositionStore(Protocol):
+    """The position store as a re-read writes it (21 Sec.3.3.7 "Writes"): a stale row changes
+    nothing and answers the stored one."""
+
+    async def upsert(self, state: PositionState) -> PositionRow: ...
+
+
 class SweepPort(Protocol):
     """The trading port's two calls the sweep makes, on the account's own environment."""
 
@@ -289,6 +305,7 @@ class PositionWritesDeps:
     audit: SubmitAudit
     environment: Environment
     instruments: Instruments
+    positions: PositionStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,12 +328,15 @@ class PositionWrites:
         call_timeout_s: float = _CALL_TIMEOUT_S,
         sweep_wait_s: float = SWEEP_WAIT_S,
         max_sweeps: int = MAX_SWEEPS,
+        refresh_wait_s: float = REFRESH_WAIT_S,
     ) -> None:
-        if min(store_timeout_s, call_timeout_s, sweep_wait_s) <= 0 or max_sweeps < 1:
+        bounds = (store_timeout_s, call_timeout_s, sweep_wait_s, refresh_wait_s)
+        if min(bounds) <= 0 or max_sweeps < 1:
             raise ValueError("every bound is above zero")
         self._deps, self._monotonic = deps, monotonic
         self._store_timeout_s, self._call_timeout_s = store_timeout_s, call_timeout_s
         self._sweep_wait_s, self._max_sweeps = sweep_wait_s, max_sweeps
+        self._refresh_wait_s = refresh_wait_s
         self._sweeps: set[asyncio.Task[None]] = set()
 
     def monotonic(self) -> float:
@@ -473,6 +493,29 @@ class PositionWrites:
         except Exception as exc:  # unread: nothing is cancelled on a guess
             _log().warning("oms_close_sweep_stops_unread", failure=type(exc).__name__)
             return None
+
+    async def refresh(self, row: PositionRow) -> bool:
+        """A rejected close's re-read (module docstring): True when the store applied the row
+        the read shows for the position's key. Best effort, within `refresh_wait_s` in all: a
+        key the read shows none of, or twice, a read or a write that fails, or a stale row,
+        changes nothing and is logged by ids alone (C-12.6)."""
+        ids = {"position_id": str(row.id)}
+        account_id = AccountId(row.exchange_account_id)
+        try:
+            async with asyncio.timeout(self._refresh_wait_s):
+                account = await self._account(account_id)
+                read = await self._deps.ports(account.environment).positions(account)
+                key = (account_id, row.symbol, row.position_idx)
+                shown = [p for p in read if (p.account_id, p.symbol, p.position_idx) == key]
+                if len(shown) != 1:
+                    _log().info("oms_close_refresh_unshown", **ids, rows=len(shown))
+                    return False
+                state = row_state(shown[0])
+                stored = await self._deps.positions.upsert(state)
+        except Exception as exc:  # best effort: the private stream and reconciliation follow
+            _log().warning("oms_close_refresh_failed", **ids, failure=type(exc).__name__)
+            return False
+        return stored.exchange_updated_ts == state.exchange_updated_ts
 
     async def venue_position(self, row: PositionRow) -> VenuePosition:
         """The venue's own read of the position's key (the read the sweep makes): `flat` when it

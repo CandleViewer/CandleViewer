@@ -113,11 +113,32 @@ async def effect_of(
 ) -> OrderEffect:
     """The order's effect, reading its exchange-truth position only when it is reduce-only (R7),
     within `timeout_s`: a read that fails or does not answer in time raises (fail closed)."""
+    effect, _position = await position_effect(
+        account_id=account_id, symbol=symbol, position_idx=position_idx, side=side, qty=qty,
+        reduce_only=reduce_only, positions=positions, timeout_s=timeout_s,
+    )  # fmt: skip
+    return effect
+
+
+async def position_effect(
+    *,
+    account_id: AccountId,
+    symbol: Symbol,
+    position_idx: int,
+    side: Side,
+    qty: Qty,
+    reduce_only: bool,
+    positions: PositionTruth,
+    timeout_s: float,
+) -> tuple[OrderEffect, ExchangePosition | None]:
+    """`effect_of`'s effect and the position it was judged on: None when the order is not
+    reduce-only (nothing read) or the exchange shows none. A close the read does not show
+    reducing is refused by that reading (`oms.submit`, E29-S03 BQ-7), never re-sized."""
     if not reduce_only:
-        return OrderEffect.ENTRY
+        return OrderEffect.ENTRY, None
     async with asyncio.timeout(timeout_s):
         position = await positions.position(account_id, symbol, position_idx)
-    return classify_effect(side=side, qty=qty, reduce_only=True, position=position)
+    return classify_effect(side=side, qty=qty, reduce_only=True, position=position), position
 
 
 def stop_errors(

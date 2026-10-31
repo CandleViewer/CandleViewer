@@ -22,7 +22,11 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
    the profile), a reduce-only order by its request's qty (`RequestQtySizer`); 3d the effect on the
    exchange-truth position (SR-E29-01, read for a reduce-only order only, within
    `position_timeout_s`), the native stop and the intent (`NativeStopGuard`, C-2.6, over the
-   sizer's own stop for an entry), the take-profit (S2-Q6), then the `SizedOrder`. Two entries on
+   sizer's own stop for an entry), the take-profit (S2-Q6), then the `SizedOrder`. A reduce-only
+   close its route marked `SubmitContext.protective` that this read does not show reducing its
+   position (flat, on the other side, or smaller than the close) is refused here,
+   `PositionChanged` naming `position_flat` or `exceeds_position`, never re-sized (E29-S03 BQ-7):
+   the close routes answer it 422, as their own step 13 does. Two entries on
    one account are sized in turn: each holds the account's turn (`ENTRY_TURNS`) through its
    answer, and once its order is recorded the account's figures are dropped
    (`OrderFigures.invalidate`), so the next one is sized against the room this one took. A stop or a
@@ -164,12 +168,20 @@ from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, St
 from candleviewer.storage.repositories.submissions import FirstPersist, FirstPersisted
 from candleviewer.storage.repositories.trade_groups import NewTradeGroup, NewTradeGroupLeg
 
-from .classify import REDUCING_INTENTS, NativeStopGuard, effect_of, take_profit_errors
+from .classify import (
+    REDUCING_INTENTS,
+    ExchangePosition,
+    NativeStopGuard,
+    position_effect,
+    take_profit_errors,
+)
 from .clock_halt import ClockHalt
 from .commands import SUBMIT_TIMEOUT_S, OmsCommandPort, PlaceWatch
 from .errors import (
     INTERNAL_ERROR,
     PROBLEMS,
+    RULE_EXCEEDS_POSITION,
+    RULE_POSITION_FLAT,
     RULE_PRICE_BAND,
     RULE_REDUCE_ONLY_TPSL,
     AnchorTaken,
@@ -182,6 +194,7 @@ from .errors import (
     OrderLinkIdExhausted,
     OrderStepRefused,
     OrderStepUnknown,
+    PositionChanged,
     ProfileNotFound,
     RateBudgetExceeded,
     RiskRefused,
@@ -299,6 +312,9 @@ _STOP_ACTIONS: Final[Mapping[StopKind, str]] = MappingProxyType(
     {"stop_loss": "sl.attached", "take_profit": "tp.modified"}
 )
 _ENTRY_ATTACH: Final = "entry_attach"
+#: A protective close the venue's read does not show reducing (E29-S03 BQ-7): its sentences.
+_NOW_FLAT: Final = "The position is flat now, so the close was not sent."
+_NOW_SMALLER: Final = "The position is now smaller than the close, so it was not sent."
 _ABANDONED: Final = "send_refused"
 _AUDIT_UNAVAILABLE: Final = PROBLEMS[AuditNotDurable].code
 _RATE_CODE: Final = OmsErrorCode.RATE_BUDGET_EXCEEDED.value
@@ -575,6 +591,21 @@ def _reduce_only_errors(**sides: Px | StopOffset | None) -> list[FieldError]:
         for side, message in _REDUCE_ONLY_SIDES.items()
         if sides.get(side) is not None
     ]
+
+
+def _position_changed(side: Side, position: ExchangePosition | None) -> PositionChanged:
+    """BQ-7 (E29-S03): a protective close the venue's read does not show reducing is refused by
+    that read, as the close route's step 13 names it: `position_flat` when no position of the side
+    it closes is held there, else `exceeds_position`, the position smaller than the close."""
+    if (
+        position is None
+        or position.side in (None, side)
+        or not (position.qty.is_finite() and position.qty > 0)
+    ):
+        error = FieldError("positionId", RULE_POSITION_FLAT, _NOW_FLAT)
+    else:
+        error = FieldError("qty", RULE_EXCEEDS_POSITION, _NOW_SMALLER)
+    return PositionChanged(error.message, errors=(error,))
 
 
 def _invalid(errors: Sequence[FieldError]) -> OrderInvalid:
@@ -918,7 +949,7 @@ class OrderSubmission:
         reading = await self._banded(request)  # the one market read of step 3a, shared below
         if request.reduce_only:
             qty = self._size(request, instrument)
-            effect = await self._effect(request, qty)
+            effect = await self._effect(trace, qty)
             reference = await self._reference(request, instrument, reading)
             stop_offset = request.stop_loss
         else:
@@ -934,7 +965,7 @@ class OrderSubmission:
                 mid=reading.mid, last=reading.last,
             )  # fmt: skip
             trace.size, qty, reference = size, size.qty, size.reference
-            effect = await self._effect(request, qty)
+            effect = await self._effect(trace, qty)
             stop_offset = StopOffset(unit="price", value=size.stop)  # the sizer's one stop
         stop, take_profit = self._protection(
             request, effect, reference, instrument, profile, bare=bare, stop=stop_offset
@@ -1009,12 +1040,14 @@ class OrderSubmission:
         except ArithmeticError:  # a quantity no step can round (`decimal.DivisionImpossible`)
             raise OrderInvalid("The quantity cannot be sized.") from None
 
-    async def _effect(self, request: OrderRequest, qty: Qty) -> OrderEffect:
+    async def _effect(self, trace: _Trace, qty: Qty) -> OrderEffect:
         """SR-E29-01: the effect on the exchange-truth position, read for a reduce-only order
         only. A read that fails or does not answer in time is no answer (Q-B): 503
-        `exchange_unavailable`, nothing recorded or sent."""
+        `exchange_unavailable`, nothing recorded or sent. A protective close the read does not
+        show reducing is `PositionChanged` (BQ-7, module docstring), never re-sized."""
+        request = trace.request
         try:
-            return await effect_of(
+            effect, position = await position_effect(
                 account_id=request.account_id,
                 symbol=request.symbol,
                 position_idx=request.position_idx,
@@ -1034,6 +1067,9 @@ class OrderSubmission:
                 failure=type(exc).__name__,
             )
             raise ExchangeUnavailable(retry_after_s=READ_RETRY_AFTER_S) from None
+        if trace.context.protective and request.reduce_only and effect is not OrderEffect.REDUCE:
+            raise _position_changed(request.side, position)
+        return effect
 
     async def _reference(
         self, request: OrderRequest, instrument: Instrument, reading: MarketReading | None
