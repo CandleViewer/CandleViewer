@@ -95,7 +95,7 @@ describe("flash coalescer", () => {
     expect(c.isSustained("c", 16_016)).toBe(false);
   });
 
-  it("decides a window by the net of its ticks, not the last one", () => {
+  it("leading + trailing: an idle cell flashes at once and the window's later ticks give one trailing start carrying their net, a coalesced update, not a queue, at most two starts per second per cell", () => {
     const c = createFlashCoalescer();
     c.onTick("c", "up", 0);
     expect(c.frame(0)).toEqual([{ cellId: "c", direction: "up" }]);
