@@ -5160,7 +5160,12 @@ class Trading(BaseModel):
 class Notifications(BaseModel):
     desktop_enabled: StrictBool | None = None
     email_enabled: StrictBool | None = None
-    webhook_url: str | None = None
+    webhook_url: Annotated[
+        str | None,
+        Field(
+            description="A credential-bearing URL, which may embed a token. `GET` answers it in full to its owner only; a view-as read answers its masked form. It is never logged. A `settings.change` record carries its masked form, its scheme and host only: `scheme://host/…`, or `…` when it lacks either."
+        ),
+    ] = None
     quiet_hours: dict[str, Any] | None = None
 
 

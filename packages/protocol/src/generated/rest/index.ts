@@ -4000,7 +4000,7 @@ export interface paths {
     /**
      * Read own effective settings
      * @description Alias of `GET /settings` scoped to the calling user; kept as a distinct operation because the app shell fetches it alongside `/me` on boot.
-     *     Self only: any query parameter is refused with `422` (SR-026). Until a store for per-user overrides and a deployment default set exist, the effective settings are empty (`_meta.overridden` is `[]`) and the client applies its built-in defaults. `503 store_unavailable`: the session backend is not active, or it raised `RuntimeError` while the access token was checked; nothing was read. `501 not_implemented`: the session backend is active but no identity provider is wired. The API wires both or neither, so the fake storage backend (no session backend) answers `503` first. A `501` is answered once the access token is accepted; nothing is read or served. The response is `Cache-Control: no-store`.
+     *     Self only: any query parameter is refused with `422` (SR-026). It reads the caller's overrides from the per-user store `GET /settings` reads (E02-T13), and answers what that operation answers: `_meta.overridden` lists the leaves the caller overrode, `[]` for none. Until a deployment default set exists (E02-T13's Q1), a leaf the caller has not overridden is absent and the client applies its built-in default. `503 store_unavailable`: the session backend is not active, or it raised `RuntimeError` while the access token was checked, or the settings store cannot be read; nothing is served. `501 not_implemented`: the session backend is active but no identity provider is wired. The API wires both or neither, so the fake storage backend (no session backend) answers `503` first. A `501` is answered once the access token is accepted; nothing is read or served. The response is `Cache-Control: no-store`.
      */
     get: operations["getMyPreferences"];
     put?: never;
@@ -5952,7 +5952,10 @@ export interface paths {
      * Get the caller's settings (merged with deployment defaults)
      * @description Returns the effective settings object: deployment defaults overlaid with user overrides.
      *     `_meta.overridden` lists which keys came from the user so the UI can show a "reset to
-     *     default" affordance.
+     *     default" affordance. `_meta.updated_at` is the latest write among the overrides that
+     *     still exist, so a reset can move it backwards (it is absent while there are none).
+     *
+     *     Self only: any query parameter is refused with `422` (SR-026).
      */
     get: operations["getSettings"];
     put?: never;
@@ -5965,6 +5968,8 @@ export interface paths {
      * @description Only leaf keys present in the body are changed. Sending `null` for a leaf resets it to
      *     the deployment default. `trading.one_click_armed` can only be set through the arming
      *     endpoint — attempting it here returns `validation_failed`.
+     *
+     *     Self only: any query parameter is refused with `422` (SR-026).
      */
     patch: operations["updateSettings"];
     trace?: never;
@@ -11506,6 +11511,7 @@ export interface components {
         quiet_hours?: {
           [key: string]: unknown;
         } | null;
+        /** @description A credential-bearing URL, which may embed a token. `GET` answers it in full to its owner only; a view-as read answers its masked form. It is never logged. A `settings.change` record carries its masked form, its scheme and host only: `scheme://host/…`, or `…` when it lacks either. */
         webhook_url?: string | null;
       };
       orderflow?: {
@@ -21410,6 +21416,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -21444,6 +21451,7 @@ export interface operations {
           "application/json": components["schemas"]["Settings"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
