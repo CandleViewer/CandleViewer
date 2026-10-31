@@ -264,8 +264,8 @@ describe("interaction", () => {
     rt.handle({ t: "input", id: 1, kind: "key", events: row(INPUT.key, 9) }); // unbound key
     frame();
     const vp = of("viewport").at(-1);
-    // The wheel zooms by e at x = 0, the key by 0.8 at the centre.
-    expect(((vp?.timeEnd ?? 0) - (vp?.timeStart ?? 0)) / 2e9).toBeCloseTo(Math.exp(1) * 0.8, 9);
+    // The wheel zooms out by e at x = 0, the key in by 1.1 (E11-S04 BQ-108).
+    expect(((vp?.timeEnd ?? 0) - (vp?.timeStart ?? 0)) / 2e9).toBeCloseTo(Math.exp(1) / 1.1, 9);
     rt.handle({ t: "input", id: 1, kind: "touch", events: row(INPUT.move, 150) });
     frame();
     expect(of("a11y")).toHaveLength(2);

@@ -13,31 +13,8 @@ export interface FakeContext2D {
 /** WebGL2 here is the E11-S02 fake with every BQ-50 floor met (the `full` profile). */
 export type FakeWebGl2 = FakeGl;
 
-export class FakeElement {
-  readonly tagName: string;
-  readonly attributes = new Map<string, string>();
-  readonly style: Record<string, string> = {};
-  readonly children: FakeElement[] = [];
-  parent: FakeElement | null = null;
-  width = 0;
-  height = 0;
-  clientWidth = 0;
-  clientHeight = 0;
-  ownerDocument: FakeDocument;
-  context2d: FakeContext2D | null = null;
-  webgl2: FakeWebGl2 | null = null;
-  blob: Blob | null = null;
-  transferred = false;
-
-  constructor(tagName: string, doc: FakeDocument) {
-    this.tagName = tagName.toUpperCase();
-    this.ownerDocument = doc;
-  }
-
-  setAttribute(name: string, value: string): void {
-    this.attributes.set(name, value);
-  }
-
+/** Listeners and a synchronous `dispatch` (elements and, for E11-S04's motion event, documents). */
+export class FakeTarget {
   readonly listeners = new Map<string, Set<(e: unknown) => void>>();
 
   addEventListener(type: string, cb: (e: unknown) => void): void {
@@ -53,19 +30,51 @@ export class FakeElement {
     this.listeners.get(type)?.delete(cb);
   }
 
-  /** Pointer ids captured by `setPointerCapture` (E11-S04), in order. */
-  readonly captured: number[] = [];
-
-  setPointerCapture(id: number): void {
-    this.captured.push(id);
-  }
-
   /** Delivers `event` to every listener; returns whether one called `preventDefault`. */
   dispatch(type: string, event: object): boolean {
     let prevented = false;
     const preventDefault = (): void => void (prevented = true);
     for (const cb of this.listeners.get(type) ?? []) cb({ type, preventDefault, ...event });
     return prevented;
+  }
+}
+
+export class FakeElement extends FakeTarget {
+  readonly tagName: string;
+  readonly attributes = new Map<string, string>();
+  readonly style: Record<string, string> = {};
+  readonly children: FakeElement[] = [];
+  parent: FakeElement | null = null;
+  width = 0;
+  height = 0;
+  clientWidth = 0;
+  clientHeight = 0;
+  ownerDocument: FakeDocument;
+  context2d: FakeContext2D | null = null;
+  webgl2: FakeWebGl2 | null = null;
+  blob: Blob | null = null;
+  transferred = false;
+  textContent = "";
+
+  constructor(tagName: string, doc: FakeDocument) {
+    super();
+    this.tagName = tagName.toUpperCase();
+    this.ownerDocument = doc;
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value);
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null;
+  }
+
+  /** Pointer ids captured by `setPointerCapture` (E11-S04), in order. */
+  readonly captured: number[] = [];
+
+  setPointerCapture(id: number): void {
+    this.captured.push(id);
   }
 
   insertBefore(child: FakeElement, ref: FakeElement): FakeElement {
@@ -131,7 +140,9 @@ export interface FakeView {
   ResizeObserver?: unknown;
 }
 
-export class FakeDocument {
+export class FakeDocument extends FakeTarget {
+  /** The root `data-motion` is read from (E11-S04, BQ-104). */
+  readonly documentElement: FakeElement = new FakeElement("html", this);
   defaultView: FakeView | null = { devicePixelRatio: 2 };
   /** Worker mode: the view has OffscreenCanvas and every canvas can transfer its control. */
   offscreenAvailable = false;

@@ -3,10 +3,12 @@
 // zooms time at the cursor on a wheel (Ctrl+wheel, a trackpad pinch, too: BQ-100); the time axis
 // changes `barSpacing` about the plot's right edge; the price axis and a vertical plot drag are
 // no-ops until E11-S05 (G-5). Two touches pinch about their midpoint. Only a one-pointer plot drag
-// coasts. DOM-free and allocation-free per row.
+// coasts. Keys go through the navigator (PR 2, BQ-106 to BQ-109); a reduced-motion release
+// never coasts (BQ-104). DOM-free and allocation-free per row.
 import { DEFAULT_BAR_SPACING, type ChartViewport } from "../viewport/Viewport.js";
 import { INPUT, INPUT_STRIDE, KEY } from "../worker/protocol.js";
 import { Momentum } from "./momentum.js";
+import { navigate, resetView } from "./navigator.js";
 import { VelocityEstimator } from "./velocity.js";
 import { axisDragFactor, MOD, REGION, regionAt, wheelFactor } from "./wheel.js";
 
@@ -24,8 +26,12 @@ const Drag = { none: 0, pan: 1, spacing: 2 } as const;
 export class Gestures {
   readonly velocity = new VelocityEstimator();
   readonly momentum: Momentum;
-  /** Set by E11-S04 PR 2's `setMotion`; a reduced-motion release never coasts. */
+  /** The app's resolved motion mode (`init` / `setMotion`): a reduce release never coasts. */
   reduce = false;
+  /** Space is held (BQ-109): the pan-drag modifier E14's tools read; cleared on blur. */
+  panModifier = false;
+  /** The pointer's last x inside the plot (NaN until it enters): the `+/-` anchor (BQ-108). */
+  pointerX = Number.NaN;
   private drag: number = Drag.none;
   private dragX = 0;
   private pinched = false;
@@ -51,6 +57,12 @@ export class Gestures {
     this.momentum.cancel();
   }
 
+  /** `setMotion`: a change to reduce stops a glide where it is (E11-D06 D21). */
+  setMotion(reduce: boolean): void {
+    this.reduce = reduce;
+    if (reduce) this.stop();
+  }
+
   apply(touch: boolean, ev: Float32Array): void {
     for (let i = 0; i < ev.length; i += INPUT_STRIDE) {
       const type = ev[i] as number;
@@ -58,13 +70,13 @@ export class Gestures {
       const y = ev[i + 2] as number;
       const b = ev[i + 3] as number;
       const dt = ev[i + 5] as number;
-      if (type === INPUT.move) this.move(touch, x, b, dt);
+      if (type === INPUT.move) this.move(touch, x, y, b, dt);
       else if (type === INPUT.down) this.down(touch, x, y, b);
       else if (type === INPUT.up || type === INPUT.cancel) {
         this.up(touch, b, type === INPUT.up ? dt : Number.NaN);
       } else if (type === INPUT.wheel) this.wheel(x, y, b, ev[i + 4] as number);
       else if (type === INPUT.dblclick) this.dblclick(x, y);
-      else if (type === INPUT.key) this.key(x);
+      else if (type === INPUT.key) this.key(x, ev[i + 4] as number);
     }
   }
 
@@ -90,7 +102,8 @@ export class Gestures {
     this.dragX = x;
   }
 
-  private move(touch: boolean, x: number, b: number, dt: number): void {
+  private move(touch: boolean, x: number, y: number, b: number, dt: number): void {
+    if (this.region(x, y) === REGION.plot) this.pointerX = x;
     if (touch) {
       const slot = this.ids[0] === b ? 0 : this.ids[1] === b ? 1 : -1;
       if (slot >= 0 && !Number.isNaN(this.ids[1 - slot] as number)) this.pinch(slot, x);
@@ -160,17 +173,24 @@ export class Gestures {
   private dblclick(x: number, y: number): void {
     this.stop();
     const vp = this.vp;
-    // The plot's reset (spacing + End) waits for PR 2's End; the price axis is E11-S05's.
-    if (this.region(x, y) === REGION.time) {
+    const r = this.region(x, y); // the price axis's reset is E11-S05's (G-5)
+    if (r === REGION.plot)
+      this.sink.moved(resetView(vp)); // as `Ctrl+Home` (BQ-107)
+    else if (r === REGION.time) {
       this.sink.moved(vp.zoomAt(vp.plotWidth, DEFAULT_BAR_SPACING / vp.barSpacing));
     }
   }
 
-  private key(code: number): void {
-    this.stop();
-    if (code === KEY.zoomIn || code === KEY.zoomOut) {
-      const vp = this.vp; // PR 2's navigator replaces these (BQ-108)
-      this.sink.moved(vp.zoomAt(vp.plotWidth / 2, code === KEY.zoomIn ? 1.25 : 0.8));
+  /**
+   * A key that moves the viewport stops a glide first (BQ-103, E11-D06 D5); Space only sets the
+   * pan-drag modifier, so releasing it after a Space+drag leaves that drag's coast running.
+   */
+  private key(code: number, mods: number): void {
+    if (code === KEY.spaceDown || code === KEY.spaceUp) {
+      this.panModifier = code === KEY.spaceDown;
+      return;
     }
+    this.stop();
+    this.sink.moved(navigate(this.vp, code, mods, this.pointerX));
   }
 }

@@ -88,6 +88,8 @@ export type Command =
   | { readonly k: "addDrawing"; readonly drawingId: string; readonly kind: string }
   | { readonly k: "setTheme"; readonly theme: ThemeLut }
   | { readonly k: "setLod"; readonly candles: 0 | 1 | 2; readonly footprint: 0 | 1 | 2 | 3 }
+  /** The app's resolved motion mode changed (E11-S04 BQ-104): `reduce` stops a glide. */
+  | { readonly k: "setMotion"; readonly reduce: boolean }
   | { readonly k: "pickAt"; readonly x: number; readonly y: number }
   | { readonly k: "export"; readonly reqId: number }
   | { readonly k: "release" };
@@ -102,6 +104,8 @@ export type ToWorker =
       readonly config: ChartConfig;
       /** The host's handoff after a compile failure or a failed restore (BQ-53): no WebGL2. */
       readonly profile?: "degraded-2d";
+      /** The app's resolved motion mode at mount (BQ-104); absent means full motion. */
+      readonly reducedMotion?: boolean;
     }
   | {
       readonly t: "resize";
@@ -211,8 +215,20 @@ export const INPUT_MAX_ROWS = 256;
  * coast; `dblclick` resets the axis it lands on. Additive §6 rows: the stride stays 6.
  */
 export const INPUT = { move: 0, down: 1, up: 2, wheel: 3, key: 4, cancel: 5, dblclick: 6 } as const;
-/** Key codes a `key` row carries in its `x` slot. */
-export const KEY = { zoomIn: 1, zoomOut: 2 } as const;
+/**
+ * Key codes a `key` row carries in its `x` slot, Shift and Ctrl in its modifiers (E11-S04 PR 2,
+ * BQ-106 to BQ-109: additive; `zoomIn` and `zoomOut` are E11-T02's).
+ */
+export const KEY = {
+  zoomIn: 1,
+  zoomOut: 2,
+  left: 3,
+  right: 4,
+  home: 5,
+  end: 6,
+  spaceDown: 7,
+  spaceUp: 8,
+} as const;
 
 // ---- validation ------------------------------------------------------------------------------
 
@@ -282,6 +298,8 @@ function validCommand(cmd: unknown): boolean {
         [0, 1, 2].includes(cmd["candles"] as number) &&
         [0, 1, 2, 3].includes(cmd["footprint"] as number)
       );
+    case "setMotion":
+      return typeof cmd["reduce"] === "boolean";
     case "pickAt":
       return finite(cmd["x"]) && finite(cmd["y"]);
     case "export":
@@ -316,7 +334,8 @@ export function rejectReason(msg: unknown): string | null {
         canvasLike(msg["canvas"]) &&
         isObj(msg["theme"]) &&
         isObj(msg["config"]) &&
-        (msg["profile"] === undefined || msg["profile"] === "degraded-2d")
+        (msg["profile"] === undefined || msg["profile"] === "degraded-2d") &&
+        (msg["reducedMotion"] === undefined || typeof msg["reducedMotion"] === "boolean")
         ? null
         : "malformed init";
     case "resize":

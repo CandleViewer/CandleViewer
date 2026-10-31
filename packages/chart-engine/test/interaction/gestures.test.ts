@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { Gestures } from "../../src/interaction/gestures.js";
 import { MOMENTUM } from "../../src/interaction/momentum.js";
+import { DEFAULT_RIGHT_OFFSET } from "../../src/interaction/navigator.js";
 import { MOD, plotWidthOf } from "../../src/interaction/wheel.js";
 import { FrameScheduler } from "../../src/scene/frame-scheduler.js";
 import { SceneGraph } from "../../src/scene/graph.js";
@@ -99,6 +100,14 @@ describe("coast cancel and no-coast cases (BQ-103)", () => {
     expect([g.momentum.active, g.momentum.cancelled]).toEqual([false, 1]);
   });
 
+  it.each([KEY.spaceDown, KEY.spaceUp])("Space (%i) leaves a glide running (D06 D5)", (code) => {
+    const { g, mouse, frames, flick } = chart();
+    flick();
+    frames(2);
+    mouse([key, code, 0, 0, 0, 0]);
+    expect([g.momentum.active, g.momentum.cancelled]).toEqual([true, 0]);
+  });
+
   it("stop() (setViewport, sync, resize, context loss) is one entry point", () => {
     const { g, flick } = chart();
     flick();
@@ -116,13 +125,27 @@ describe("coast cancel and no-coast cases (BQ-103)", () => {
     expect(g.momentum.active).toBe(false); // rested 120 ms before the up
   });
 
-  it("reduced motion stops at the release position (PR 2 sets the flag)", () => {
+  it("Scenario: Inertia respects reduced-motion settings — the release position is the rest", () => {
     const { vp, g, frames, flick } = chart();
-    g.reduce = true;
+    g.setMotion(true);
     flick();
     const at = vp.leftIndex;
+    expect([g.momentum.active, g.momentum.registered]).toEqual([false, false]); // 0 glide frames
     frames(5);
     expect([g.momentum.active, vp.leftIndex]).toEqual([false, at]);
+    g.setMotion(false);
+    flick();
+    expect(g.momentum.active).toBe(true); // full motion again: both ways (C-22)
+  });
+
+  it("a change to reduce mid-coast stops the glide where it is", () => {
+    const { vp, g, scheduler, frames, flick } = chart();
+    flick();
+    frames(2);
+    const at = vp.leftIndex;
+    g.setMotion(true);
+    for (let i = 0; i < 10 && !scheduler.parked; i += 1) frames(1);
+    expect([g.momentum.active, g.momentum.cancelled, vp.leftIndex]).toEqual([false, 1, at]);
   });
 
   it("a second glide reuses the one registered integrator", () => {
@@ -179,13 +202,20 @@ describe("axes (BQ-101): the time axis changes barSpacing at the plot's right ed
     expect(rightBar(vp)).toBeCloseTo(right, 9);
   });
 
-  it("the price axis's wheel, drag and double-click, and a plot double-click, are no-ops", () => {
+  it("the price axis's wheel, drag and double-click are no-ops", () => {
     const { vp, mouse, changes } = chart();
     const before = [vp.leftIndex, vp.barSpacing];
     mouse([wheel, 1030, 300, -100, 0, 0], [dblclick, 1030, 300, 0, 0, 0]);
     mouse([down, 1030, 300, 1, 0, 0], [move, 900, 300, 1, 0, 8], [up, 900, 300, 0, 0, 8]);
-    mouse([dblclick, 500, 300, 0, 0, 0]); // the plot's reset is PR 2's (with End)
     expect([vp.leftIndex, vp.barSpacing, changes()]).toEqual([...before, 0]);
+  });
+
+  it("a plot double-click is Ctrl+Home: the default spacing and the latest bar (BQ-107)", () => {
+    const { vp, mouse } = chart();
+    mouse([wheel, 500, 300, -300, 0, 0]);
+    mouse([dblclick, 500, 300, 0, 0, 0]);
+    expect(vp.barSpacing).toBe(DEFAULT_BAR_SPACING);
+    expect(vp.rightOffset).toBeCloseTo(DEFAULT_RIGHT_OFFSET, 9);
   });
 
   it("a pan-class wheel (Shift, or a dominant deltaX) pans the plot by its delta", () => {
@@ -193,5 +223,25 @@ describe("axes (BQ-101): the time axis changes barSpacing at the plot's right ed
     const at = vp.leftIndex;
     mouse([wheel, 500, 300, 60, MOD.shift | MOD.pan, 0]);
     expect((vp.leftIndex - at) * vp.barSpacing).toBeCloseTo(60, 9);
+  });
+});
+
+describe("keys in the worker (BQ-108, BQ-109)", () => {
+  it("+ zooms about the pointer's last plot x; a move over an axis keeps the last plot x", () => {
+    const { vp, g, mouse } = chart();
+    mouse([move, 250, 300, 0, 0, 8], [move, 1030, 300, 0, 0, 8], [move, 300, TIME_Y, 0, 0, 8]);
+    expect(g.pointerX).toBe(250);
+    const under = 250 / vp.barSpacing + vp.leftIndex;
+    mouse([key, KEY.zoomIn, 0, 0, MOD.shift, 0]);
+    expect(vp.barSpacing).toBeCloseTo(DEFAULT_BAR_SPACING * 1.25, 12);
+    expect(250 / vp.barSpacing + vp.leftIndex).toBeCloseTo(under, 9);
+  });
+
+  it("Space held sets the pan-drag modifier and its release clears it", () => {
+    const { vp, g, mouse, changes } = chart();
+    mouse([key, KEY.spaceDown, 0, 0, 0, 0]);
+    expect(g.panModifier).toBe(true);
+    mouse([key, KEY.spaceUp, 0, 0, 0, 0]);
+    expect([g.panModifier, vp.barSpacing, changes()]).toEqual([false, DEFAULT_BAR_SPACING, 0]);
   });
 });

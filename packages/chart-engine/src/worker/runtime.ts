@@ -105,7 +105,7 @@ interface Instance {
   a11yDirty: boolean;
   lod: LodLevels;
   lastFrameAt: number;
-  /** Pointer, wheel and touch routing plus the glide (E11-S04 PR 1). */
+  /** Pointer, wheel, touch and key routing plus the glide (E11-S04). */
   readonly gestures: Gestures;
   lastPick: string | null;
   readonly elements: Record<StoreId, number>;
@@ -295,6 +295,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         inst.scheduler.lod = Math.min(cmd.candles, inst.scheduler.maxLod);
         touch(inst);
         return;
+      case "setMotion":
+        inst.gestures.setMotion(cmd.reduce); // the engine never reads the media query (BQ-104)
+        return;
       case "pickAt": {
         // No HitIndex yet (E11-S08): every pick is a miss, reported once (edge-triggered).
         const key = "none";
@@ -382,6 +385,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         detach: null,
         elements: old ? { ...old.elements } : { bars: 0, footprint: 0, heatmap: 0, profile: 0 },
       };
+      inst.gestures.reduce = msg.reducedMotion === true;
       charts.set(msg.id, inst);
       touch(inst);
       return;

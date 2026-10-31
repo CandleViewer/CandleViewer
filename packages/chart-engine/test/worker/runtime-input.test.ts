@@ -3,7 +3,8 @@
 // the test-only `RuntimeDeps.timeMap` seam (BQ-111); frames and time are driven by hand.
 import { beforeEach, describe, expect, it } from "vitest";
 import { createRenderRuntime, type RenderRuntime } from "../../src/worker/runtime.js";
-import { BACKGROUND_TOKEN, INPUT, type FromWorker } from "../../src/worker/protocol.js";
+import { MOD } from "../../src/interaction/wheel.js";
+import { BACKGROUND_TOKEN, INPUT, KEY, type FromWorker } from "../../src/worker/protocol.js";
 import { FakeCtx2D } from "../canvas2d/fake-ctx2d.js";
 import { FULL } from "../gl/fake-gl.js";
 import { AT_14, MIN, minuteMap, rows } from "../interaction/fixtures.js";
@@ -22,7 +23,12 @@ const frame = (n = 1): void => {
 const viewports = (): Extract<FromWorker, { t: "viewport" }>[] =>
   out.filter((m): m is Extract<FromWorker, { t: "viewport" }> => m.t === "viewport");
 
-function make(width: number, height: number, syncGroup: string | null = null): void {
+function make(
+  width: number,
+  height: number,
+  syncGroup: string | null = null,
+  reduce = false,
+): void {
   const ctx = new FakeCtx2D();
   rt.handle({
     t: "init",
@@ -31,6 +37,7 @@ function make(width: number, height: number, syncGroup: string | null = null): v
     dpr: 1,
     theme: { [BACKGROUND_TOKEN]: "#000000" },
     config: { bench: false, syncGroup },
+    ...(reduce && { reducedMotion: true }),
   });
   rt.handle({
     t: "command",
@@ -40,7 +47,7 @@ function make(width: number, height: number, syncGroup: string | null = null): v
   frame();
 }
 
-const input = (kind: "pointer" | "wheel", ...r: number[][]): void =>
+const input = (kind: "pointer" | "wheel" | "key", ...r: number[][]): void =>
   rt.handle({ t: "input", id: 1, kind, events: rows(...r) });
 
 /** A 2 px/ms flick right, released while moving: the glide starts. */
@@ -129,5 +136,72 @@ describe("drag and coast through the runtime (BQ-103)", () => {
     const after = viewports().length;
     frame(5);
     expect(viewports().length).toBe(after); // no glide frame after the cancel
+  });
+});
+
+describe("Scenario: Every pointer gesture has a keyboard equivalent (worker key rows)", () => {
+  const last = (): Extract<FromWorker, { t: "viewport" }> => {
+    const v = viewports().at(-1);
+    if (v === undefined) throw new Error("no viewport");
+    return v;
+  };
+  const press = (code: number, mods = 0): Extract<FromWorker, { t: "viewport" }> => {
+    input("key", [INPUT.key, code, 0, 0, mods, 0]);
+    frame();
+    return last();
+  };
+
+  it("←, Shift+→, Home, End, +, − and Ctrl+Home each post one viewport", () => {
+    make(1064, 624);
+    const v0 = last();
+    expect((press(KEY.left).timeStart - v0.timeStart) / MIN).toBeCloseTo(-1, 6);
+    expect((press(KEY.right, MOD.shift).timeStart - v0.timeStart) / MIN).toBeCloseTo(9, 6);
+    expect(press(KEY.home).timeStart).toBeCloseTo(minuteMap().indexToTime(0) - MIN / 2, -1);
+    const end = press(KEY.end);
+    expect((end.timeEnd - minuteMap().indexToTime(1999)) / MIN).toBeCloseTo(12.5, 6);
+    expect(press(KEY.zoomIn).barSpacing).toBeCloseTo(end.barSpacing * 1.1, 9);
+    expect(press(KEY.zoomOut, MOD.shift).barSpacing).toBeCloseTo((end.barSpacing * 1.1) / 1.25, 9);
+    const n = viewports().length;
+    input("key", [INPUT.key, KEY.zoomIn, 0, 0, MOD.ctrl, 0]); // browser zoom: ignored
+    frame();
+    expect(viewports().length).toBe(n);
+    expect(press(KEY.home, MOD.ctrl).barSpacing).toBe(6);
+  });
+});
+
+describe("Scenario: Inertia respects reduced-motion settings (through the runtime)", () => {
+  it("init.reducedMotion: a flick stops at the release position with no glide frame", () => {
+    make(1064, 624, null, true);
+    flick();
+    frame();
+    const n = viewports().length;
+    frame(5);
+    expect([viewports().length, pending.length]).toEqual([n, 0]);
+  });
+
+  it("setMotion(reduce) mid-coast stops the glide; setMotion(false) restores it", () => {
+    make(1064, 624);
+    flick();
+    frame(2);
+    rt.handle({ t: "command", id: 1, cmd: { k: "setMotion", reduce: true } });
+    frame();
+    const n = viewports().length;
+    frame(5);
+    expect(viewports().length).toBe(n);
+    rt.handle({ t: "command", id: 1, cmd: { k: "setMotion", reduce: false } });
+    flick();
+    frame(3);
+    expect(viewports().length).toBeGreaterThan(n + 2);
+  });
+
+  it("a malformed setMotion or init.reducedMotion is rejected at the boundary", () => {
+    make(1064, 624);
+    out = [];
+    rt.handle({ t: "command", id: 1, cmd: { k: "setMotion", reduce: "yes" } });
+    const canvas = { width: 1, height: 1, getContext: () => null };
+    rt.handle({ t: "init", id: 2, canvas, dpr: 1, theme: {}, config: {}, reducedMotion: 1 });
+    expect(
+      out.filter((m) => m.t === "error").map((m) => (m as { message: string }).message),
+    ).toEqual(["malformed command", "malformed init"]);
   });
 });
