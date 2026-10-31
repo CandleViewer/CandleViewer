@@ -9,7 +9,8 @@ are the first such captures (#3447), listed here, never rewritten. The
 `rest/trading-*.json` files are transcribed from the Bybit v5 documentation
 (#2877 ruling R2), listed here and never rewritten either: the builder emits only
 their manifest entries. The `rest/risk_limit_*.json` files (S-RL, #913) are replies recorded
-by `capture_fixture.py --rest-path`, listed here and never rewritten either.
+by `capture_fixture.py --rest-path`, listed here and never rewritten either. So is
+`rest/docs-open-interest.json` (E24-T01, #665), the open-interest page's Response Example.
 Re-running is byte-identical (seeded RNG, fixed epoch).
 Run: python tools/fixtures/build_corpus.py
 """
@@ -207,6 +208,30 @@ def funding_history(symbol: str, step_h: int) -> dict[str, Any]:
     return _rest_ok({"category": "linear", "list": rows}, T0 + 30_000_000)
 
 
+#: E24-T01 (#665): `GET /v5/market/open-interest`, the docs page's row and envelope shape
+#: (`rest/docs-open-interest.json`, transcribed), values generated: 260 BTCUSDT 5min rows,
+#: newest first, over two cursor pages (limit 200), the last with an empty cursor.
+OI_ROWS = 260
+OI_T0 = KLINE_T0 - KLINE_T0 % 300_000  # on the 5min grid, like the venue's own timestamps
+OI_NOTE = ("row and envelope shape transcribed from the docs page "
+           "(rest/docs-open-interest.json); values generated (seeded)")  # fmt: skip
+
+
+def oi_pages(symbol: str) -> list[dict[str, Any]]:
+    rng = random.Random(6650)  # noqa: S311 - deterministic fixture, not crypto
+    oi, rows = Decimal("52000"), []
+    for k in range(OI_ROWS):
+        oi += Decimal(rng.randint(-400, 400)) / 4
+        rows.append({"openInterest": f"{oi:.8f}", "singleOpenInterest": f"{oi / 2:.8f}",
+                     "timestamp": str(OI_T0 + k * 300_000)})  # fmt: skip
+    rows.reverse()
+    oldest_s = (OI_T0 + (OI_ROWS - 200) * 300_000) // 1000  # page 0's last row, as the docs'
+    cursor = f"lastid%3D{OI_ROWS - 200}%26lasttime%3D{oldest_s}"
+    return [_rest_ok({"symbol": symbol, "category": "linear", "list": part,
+                      "nextPageCursor": nxt}, OI_T0 + OI_ROWS * 300_000)
+            for part, nxt in ((rows[:200], cursor), (rows[200:], ""))]  # fmt: skip
+
+
 _SRC = "documented-shape (exception #1778 A)"
 _RECORDED = {"capture_date": "2026-10-19",
              "source": "capture_fixture.py, fixture-drift run 39210373369 (redacted)"}  # fmt: skip
@@ -344,6 +369,20 @@ def build() -> list[dict[str, Any]]:
         m.append(_entry(rel, sym, "GET /v5/market/funding/history",
                         f"{step_h} h interval symbol, 4 settlements newest-first",
                         host=PUBLIC_REST_HOST, cap=4_000))  # fmt: skip
+    oi_docs = {"source_url": _DOCS_URL + "market/open-interest",
+               "source_ref": f"{_DOCS_REF}:docs/v5/market/open-interest.mdx"}  # fmt: skip
+    for i, page in enumerate(oi_pages("BTCUSDT")):
+        rel = f"rest/open_interest_BTCUSDT_5min_page{i}.json"
+        _write_json(rel, page)
+        m.append(_entry(rel, "BTCUSDT", "GET /v5/market/open-interest",
+                        f"cursor paging: page {i} of 2 (limit 200, 260 rows)",
+                        host=PUBLIC_REST_HOST, cap=32_000)
+                 | oi_docs | {"note": OI_NOTE})  # fmt: skip
+    m.append(_entry("rest/docs-open-interest.json", "BTCUSD", "GET /v5/market/open-interest",
+                    "docs Response Example: 5 inverse rows, a nextPageCursor",
+                    host="bybit-exchange.github.io", cap=4_000)
+             | _TRANSCRIBED | {"capture_date": "2026-10-31", "retrieved": "2026-10-31"}
+             | oi_docs)  # fmt: skip
     for name, after in (("instruments_before", False), ("instruments_after", True)):
         _write_json(f"rest/{name}.json", instruments(after))
         m.append(_entry(f"rest/{name}.json", "*", "GET /v5/market/instruments-info",

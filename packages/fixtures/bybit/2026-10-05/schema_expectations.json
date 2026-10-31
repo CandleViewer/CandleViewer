@@ -1235,6 +1235,92 @@
    "required": true
   }
  },
+ "rest.docs-open-interest": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.category": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].openInterest": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].singleOpenInterest": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].timestamp": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.nextPageCursor": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.symbol": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
  "rest.error": {
   "": {
    "types": [
@@ -1597,6 +1683,92 @@
    "required": true
   },
   "result.list[][]": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.symbol": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.open": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.category": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].openInterest": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].singleOpenInterest": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].timestamp": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.nextPageCursor": {
    "types": [
     "string"
    ],
