@@ -746,6 +746,10 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     # the replay, the join, the limits and the write-ahead record (`test_instruments_refresh_
     # route.py`). Outside `DANGEROUS_PATH_PATTERN`: the contract sweep finds it by permission.
     ("POST", "/instruments/refresh", "instruments"),
+    # E29-T06 (#914, BQ-7): resolveReconciliation re-opens an account's order entry, so one fresh
+    # `accounts` code bound to the request its handler validated; after RBAC and the body, before
+    # the account's read, as 22 orders it.
+    ("POST", "/admin/reconciliation/{accountId}/resolve", "accounts"),
 )
 
 #: Mounted write routes whose path matches this must be in one of the two
