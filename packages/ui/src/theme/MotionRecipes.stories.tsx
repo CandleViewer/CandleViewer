@@ -176,20 +176,22 @@ const cell = (root: HTMLElement, name: string, mode: string): HTMLElement => {
   return found;
 };
 
-/** Per recipe: the safe cell runs its animation or transition, the reduce cell has none. */
+/**
+ * Per recipe: the safe value is a real animation or transition and the reduce value is `none`. Read from the
+ * pair itself, not the cells' computed style, so the check holds whatever `data-motion` the host sets (the VR
+ * capture emulates OS reduce, which stops every animation on the page).
+ */
 export const SafeAndReduce: Story = {
   render: () => <Recipes />,
   play: async ({ canvasElement }) => {
+    const root = getComputedStyle(canvasElement.ownerDocument.documentElement);
     for (const recipe of RECIPES) {
-      const safe = getComputedStyle(cell(canvasElement, recipe.name, "safe"));
-      const reduce = getComputedStyle(cell(canvasElement, recipe.name, "reduce"));
-      if (recipe.kind === "animation") {
-        await expect(safe.animationName).not.toBe("none");
-        await expect(reduce.animationName).toBe("none");
-      } else {
-        await expect(safe.transitionProperty).not.toBe("none");
-        await expect(reduce.transitionProperty).toBe("none");
-      }
+      cell(canvasElement, recipe.name, "safe");
+      const safe = root.getPropertyValue(`--cv-recipe-${recipe.name}-safe`).trim();
+      const reduce = root.getPropertyValue(`--cv-recipe-${recipe.name}-reduce`).trim();
+      await expect(safe, recipe.name).not.toBe("");
+      await expect(safe, recipe.name).not.toBe("none");
+      await expect(reduce, recipe.name).toBe("none");
     }
   },
 };
