@@ -347,6 +347,30 @@ def test_a_snap_whose_push_raises_stays_pending_and_takes_no_d(
     assert _seen(bad) == [("snap", 3, _HELD)]
 
 
+def test_a_failed_snap_or_d_never_marks_an_ended_subscription_pending() -> None:
+    """#2409: an ended subscription is never snapped, so a failure contained on it never marks it
+    pending (as `_drop` clears the mark on end). The guards are defence in depth: the emitter
+    already sends an ended one nothing, so they are pinned here directly."""
+    hub = SequencingHub()
+    [(conn, sub), _] = _pair(hub)
+    sub.ended, sub.snapshot_pending = True, False
+    hub._snapshot_failed(conn.authz, sub, RuntimeError("snap"))
+    hub._delta_failed(conn.authz, sub, RuntimeError("d"))
+    assert sub.snapshot_pending is False
+
+
+@pytest.mark.parametrize("ended", [False, True])
+def test_a_failed_d_marks_a_live_subscription_upstream_desync_and_an_ended_one_not(
+    ended: bool,
+) -> None:
+    hub = SequencingHub()
+    [(conn, sub), _] = _pair(hub)
+    sub.ended, sub.snapshot_pending = ended, False
+    hub._delta_failed(conn.authz, sub, RuntimeError("d"))
+    assert sub.snapshot_pending is (not ended)
+    assert (sub.pending_reason == "upstream_desync") is (not ended)
+
+
 def test_a_raising_revoke_is_contained_to_its_connection(monkeypatch: pytest.MonkeyPatch) -> None:
     """`revoke_topic` (§6.4): a push that raises is contained; every frame is still returned."""
     hub = SequencingHub()
