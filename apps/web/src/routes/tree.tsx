@@ -89,6 +89,9 @@ function buildRoutes(): RouteObject[] {
       // R-005 `/locked` is an alias (#1640 ruling 4): the SCR-005 overlay host, mounted over every
       // route, reads the session and opens the lock over the default route; no page of its own.
       if (entry.id === "R-005") return redirect("/terminal");
+      // R-002 `/login/2fa`: SCR-002 is a step inside R-001 (#2711 BQ-02); its challenge handle exists
+      // only in that step's memory, so a direct load has none and starts at SCR-001, with no query.
+      if (entry.id === "R-002") return redirect("/login");
       return null;
     },
   });

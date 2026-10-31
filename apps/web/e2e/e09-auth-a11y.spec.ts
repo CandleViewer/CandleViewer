@@ -30,11 +30,11 @@ export const E09_SCREENS: ReadonlyArray<{
   scannedIn?: string;
 }> = [
   { scr: "SCR-001", path: "/login" }, // LoginScreen (#1824), R-001
+  // SCR-002 is a step inside R-001 after `mfa_required` (#2711 BQ-02); R-002 `/login/2fa` redirects to `/login`.
   {
     scr: "SCR-002",
-    shipped: false,
-    path: "/login/2fa",
-    reason: "no TOTP challenge screen in features/auth",
+    path: "/login",
+    scannedIn: "this spec (SCR-002: the step after mfa_required, its invalid and expired states)",
   },
   {
     scr: "SCR-003",
@@ -116,6 +116,39 @@ test("not-assessed screens are still placeholders (fails when one ships: audit i
   }
 });
 
+// SCR-002 has no page of its own: SCR-001's password step answered `mfa_required` brings it up in place.
+test("SCR-002 after mfa_required: axe serious/critical in idle, invalid-code and expired-challenge", async ({
+  page,
+}) => {
+  await stub(page);
+  await page.clock.install({ time: Date.UTC(2026, 0, 1, 9, 0, 0) });
+  await page.route("**/api/v1/auth/login", (r) =>
+    r.fulfill(
+      json({ status: "mfa_required", mfa_token: "t-1", methods: ["totp"], expires_in: 300 }),
+    ),
+  );
+  await page.route("**/api/v1/auth/mfa/verify", (r) =>
+    r.fulfill({ status: 401, contentType: "application/json", body: "{}" }),
+  );
+  await page.goto("/login");
+  await page.getByLabel("Username or email").fill("ann");
+  await page.getByLabel("Password", { exact: true }).fill("pw-a1");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  const scan = async (state: string): Promise<void> => {
+    expect((await seriousAxe(page)).map((v) => `${state} ${v}`)).toEqual([]);
+  };
+
+  await expect(page.getByRole("heading", { name: "Two-factor code" })).toBeFocused();
+  await scan("idle");
+  const code = page.getByRole("textbox", { name: "Two-factor code" });
+  await code.fill("123456");
+  await expect(code).toHaveAttribute("aria-invalid", "true");
+  await scan("invalid-code");
+  await page.clock.runFor(300_000);
+  await expect(page.getByRole("button", { name: "Back to login" })).toBeFocused();
+  await scan("expired-challenge");
+});
+
 // Built screens with a page of their own to scan here (a `scannedIn` one is scanned in its spec).
 const SCANNED_HERE = E09_SCREENS.filter((s) => s.shipped !== false && s.scannedIn === undefined);
 
@@ -187,7 +220,7 @@ test("every audited route sets its own page title (SC 2.4.2)", async ({ page }) 
 // ---- SCR-017 enrolment wizard: every step, not just the landing step (E09-Q04 review) ----
 // This is the only implemented enrolment flow (TOTP secret + recovery codes). It covers the
 // SR-enrolment, SC 3.3.1 (error identification), reflow/200% zoom and reduced-motion criteria
-// for what exists. SCR-002/003 remain not-assessed (not built); SCR-005 is scanned in auth/session.spec.ts.
+// for what exists. SCR-003 remains not-assessed (not built); SCR-002 is scanned above; SCR-005 in auth/session.spec.ts.
 const TOK = "tok-a11y-0123456789";
 
 async function stubWizard(page: Page, opts: { reject?: boolean } = {}): Promise<void> {

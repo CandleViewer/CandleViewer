@@ -10,6 +10,8 @@ export default defineConfig({
   // The WS fault-injection flag (E17-T04 S5e): off unless CV_ALLOW_FAULT_INJECTION=1, as in vite.config.ts.
   define: {
     __CV_ALLOW_FAULT_INJECTION__: JSON.stringify(process.env.CV_ALLOW_FAULT_INJECTION === "1"),
+    // SCR-002's recovery-code form (#2711 BQ-08 (a)): off unless CV_MFA_RECOVERY_UI=1, as in vite.config.ts.
+    __CV_MFA_RECOVERY_UI__: JSON.stringify(process.env.CV_MFA_RECOVERY_UI === "1"),
     // The status bar's version (E10-S01 S4), as in vite.config.ts.
     __CV_APP_VERSION__: JSON.stringify(
       JSON.parse(readFileSync(resolve(import.meta.dirname, "package.json"), "utf8")).version,

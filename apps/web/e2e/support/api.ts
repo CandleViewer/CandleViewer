@@ -264,6 +264,7 @@ export async function assertNoClientSecrets(
     local: JSON.stringify({ ...window.localStorage }),
     session: JSON.stringify({ ...window.sessionStorage }),
     url: window.location.href,
+    history: JSON.stringify(window.history.state ?? null),
     cookie: document.cookie,
   }));
   for (const [name, text] of Object.entries(where))
