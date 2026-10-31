@@ -21,6 +21,7 @@ import {
 } from "../../src/worker/protocol.js";
 import type { CandleData, ChartEvents, ThemeTokens } from "../../src/index.js";
 import { asHtml, FakeDocument, FakeElement, FakeOffscreen } from "../api/fake-dom.js";
+import { MOD } from "../../src/interaction/wheel.js";
 import { fakeEnv, FakeWorker } from "./fake-worker.js";
 
 const theme: ThemeTokens = {
@@ -336,6 +337,7 @@ describe("one message per frame", () => {
       metaKey: false,
       timeStamp: t,
       pointerType: "mouse",
+      pointerId: 7,
     });
     container.dispatch("pointerdown", ev(1, 10));
     container.dispatch("pointermove", {
@@ -344,7 +346,9 @@ describe("one message per frame", () => {
     });
     container.dispatch("pointermove", { ...ev(4, 13), getCoalescedEvents: () => [] });
     container.dispatch("pointerup", { ...ev(4, 14), pointerType: "touch" });
-    container.dispatch("wheel", { ...ev(5, 15), deltaY: -40 });
+    const wheel = { ...ev(5, 15), deltaX: 0, deltaY: -40, deltaMode: 0 };
+    expect(container.dispatch("wheel", wheel)).toBe(true); // non-passive, always prevented
+    expect(container.captured).toEqual([7]);
     container.clientWidth = 300;
     (onResize as (() => void) | null)?.();
     settle();
@@ -364,8 +368,9 @@ describe("one message per frame", () => {
       [INPUT.move, 3, 1, 1, 5, 1],
       [INPUT.move, 4, 1, 1, 5, 1],
     ]);
-    expect(rows("touch")).toEqual([[INPUT.up, 4, 1, 1, 5, 1]]);
-    expect(rows("wheel")).toEqual([[INPUT.wheel, 5, 1, -40, 5, 1]]);
+    // `dt` is per kind; a touch row carries its pointer id; Shift+wheel is the pan class.
+    expect(rows("touch")).toEqual([[INPUT.up, 4, 1, 7, 5, 0]]);
+    expect(rows("wheel")).toEqual([[INPUT.wheel, 5, 1, -40, 5 | MOD.pan, 0]]);
     expect(inboxOf(w, "resize")).toEqual([{ t: "resize", id: 1, width: 300, height: 100, dpr: 1 }]);
     expect(observed).toHaveLength(1);
     detach();

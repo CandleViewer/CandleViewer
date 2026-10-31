@@ -1,0 +1,197 @@
+// E11-S04 PR 1: the worker's gestures, routed by the layout's rects (BQ-100 to BQ-103), over a
+// synthetic 1-minute map (BQ-111). The glide runs on a real FrameScheduler with the TestClock.
+import { describe, expect, it } from "vitest";
+import { Gestures } from "../../src/interaction/gestures.js";
+import { MOMENTUM } from "../../src/interaction/momentum.js";
+import { MOD, plotWidthOf } from "../../src/interaction/wheel.js";
+import { FrameScheduler } from "../../src/scene/frame-scheduler.js";
+import { SceneGraph } from "../../src/scene/graph.js";
+import {
+  ChartViewport,
+  DEFAULT_BAR_SPACING,
+  indexToScreen,
+  screenToIndex,
+} from "../../src/viewport/index.js";
+import { INPUT, KEY } from "../../src/worker/protocol.js";
+import { TestClock } from "../scene/test-clock.js";
+import { minuteMap, rows } from "./fixtures.js";
+
+const SIZE = { width: 1064, height: 624 }; // a 1000 × 600 plot
+const TIME_Y = 610; // in the time-axis gutter
+const { down, move, up, cancel, wheel, dblclick, key } = INPUT;
+
+function chart() {
+  const vp = new ChartViewport(minuteMap(5000));
+  vp.setSize(plotWidthOf(SIZE.width), 600, 1);
+  vp.pan(-2000 * vp.barSpacing); // bar 2000 at the left edge: room both ways
+  const clock = new TestClock();
+  const scheduler = new FrameScheduler(new SceneGraph(), clock);
+  let changes = 0;
+  const g = new Gestures(vp, SIZE, {
+    moved: (c) => void (changes += c ? 1 : 0),
+    hover: () => undefined,
+    animate: (m) => scheduler.animate(m),
+  });
+  const mouse = (...r: number[][]): void => g.apply(false, rows(...r));
+  const touch = (...r: number[][]): void => g.apply(true, rows(...r));
+  const frames = (n: number): void => {
+    for (let i = 0; i < n; i += 1) clock.tick(16);
+  };
+  /** A 2 px/ms flick right across the plot, released while moving. */
+  const flick = (): void => {
+    mouse([down, 308, 300, 1, 0, 0]);
+    for (let x = 324; x <= 500; x += 16) mouse([move, x, 300, 1, 0, 8]);
+    mouse([up, 500, 300, 0, 0, 8]);
+  };
+  return { vp, g, scheduler, mouse, touch, frames, flick, changes: () => changes };
+}
+
+describe("drag and coast on the plot", () => {
+  it("pans time on a drag and coasts after a flick, resting v₀τ further", () => {
+    const { vp, g, scheduler, frames, flick } = chart();
+    const start = vp.leftIndex;
+    flick();
+    const released = vp.leftIndex;
+    expect((start - released) * vp.barSpacing).toBeCloseTo(192, 9); // content followed the pointer
+    expect(g.momentum.active).toBe(true);
+    const v0 = g.momentum.v;
+    expect(v0).toBeGreaterThan(MOMENTUM.minPxPerMs);
+    for (let i = 0; i < 200 && !scheduler.parked; i += 1) frames(1);
+    expect((released - vp.leftIndex) * vp.barSpacing).toBeCloseTo(v0 * MOMENTUM.tauMs, 6);
+  });
+
+  it("a vertical plot drag is inert while autoscale is always on (G-5)", () => {
+    const { vp, mouse, changes } = chart();
+    const at = vp.leftIndex;
+    mouse([down, 300, 100, 1, 0, 0], [move, 300, 400, 1, 0, 8], [up, 300, 400, 0, 0, 8]);
+    expect([vp.leftIndex, changes()]).toEqual([at, 0]);
+  });
+});
+
+describe("Scenario: A new touch cancels momentum immediately", () => {
+  it("the glide stops on that frame and the new drag begins from the current position", () => {
+    const { vp, g, mouse, touch, frames, flick } = chart();
+    flick();
+    frames(3);
+    expect(g.momentum.active).toBe(true);
+    const at = vp.leftIndex;
+    touch([down, 400, 300, 5, 0, 0]);
+    frames(1);
+    expect(vp.leftIndex).toBe(at); // no glide step ran on the frame after the down
+    touch([move, 430, 300, 5, 0, 8]);
+    expect((at - vp.leftIndex) * vp.barSpacing).toBeCloseTo(30, 9);
+    expect(g.momentum.cancelled).toBe(1);
+    mouse([down, 1, 1, 1, 0, 0]); // a pointer-down with nothing gliding cancels nothing
+    expect(g.momentum.cancelled).toBe(1);
+  });
+});
+
+describe("coast cancel and no-coast cases (BQ-103)", () => {
+  it.each([
+    ["a wheel", [wheel, 500, 300, 10, 0, 0]],
+    ["a key", [key, KEY.zoomIn, 0, 0, 0, 0]],
+    ["a double-click", [dblclick, 500, 300, 0, 0, 0]],
+  ])("%s stops a glide where it is", (_, row) => {
+    const { g, mouse, frames, flick } = chart();
+    flick();
+    frames(2);
+    mouse(row as number[]);
+    expect([g.momentum.active, g.momentum.cancelled]).toEqual([false, 1]);
+  });
+
+  it("stop() (setViewport, sync, resize, context loss) is one entry point", () => {
+    const { g, flick } = chart();
+    flick();
+    g.stop();
+    expect(g.momentum.active).toBe(false);
+  });
+
+  it("a pointercancel ends the drag with no coast; a slow or rested release does not coast", () => {
+    const { g, mouse } = chart();
+    mouse([down, 300, 300, 1, 0, 0], [move, 400, 300, 1, 0, 8], [cancel, 400, 300, 0, 0, 0]);
+    expect(g.momentum.active).toBe(false);
+    mouse([down, 300, 300, 1, 0, 0], [move, 302, 300, 1, 0, 16], [up, 302, 300, 0, 0, 16]);
+    expect(g.momentum.active).toBe(false); // 0.125 px/ms < 0.3
+    mouse([down, 300, 300, 1, 0, 0], [move, 400, 300, 1, 0, 8], [up, 400, 300, 0, 0, 120]);
+    expect(g.momentum.active).toBe(false); // rested 120 ms before the up
+  });
+
+  it("reduced motion stops at the release position (PR 2 sets the flag)", () => {
+    const { vp, g, frames, flick } = chart();
+    g.reduce = true;
+    flick();
+    const at = vp.leftIndex;
+    frames(5);
+    expect([g.momentum.active, vp.leftIndex]).toEqual([false, at]);
+  });
+
+  it("a second glide reuses the one registered integrator", () => {
+    const { g, scheduler, frames, flick } = chart();
+    flick();
+    frames(1);
+    flick();
+    expect(g.momentum.registered).toBe(true);
+    for (let i = 0; i < 200 && !scheduler.parked; i += 1) frames(1);
+    expect(g.momentum.registered).toBe(false);
+  });
+});
+
+describe("pinch (touch): time zoom about the midpoint, no coast", () => {
+  it("the bar under the midpoint follows it while the spread scales barSpacing", () => {
+    const { vp, g, touch } = chart();
+    touch([down, 400, 300, 1, 0, 0], [down, 600, 300, 2, 0, 0]);
+    const s = vp.barSpacing;
+    const bar = screenToIndex(vp, 500) + 0.5; // the bar centre nearest the midpoint
+    const offset = indexToScreen(vp, bar - 0.5) - 500;
+    touch([move, 700, 300, 2, 0, 8]); // midpoint 500 -> 550, spread 200 -> 300
+    expect(vp.barSpacing).toBeCloseTo(s * 1.5, 9);
+    expect(indexToScreen(vp, bar - 0.5) - 550).toBeCloseTo(offset * 1.5, 6);
+    g.velocity.v = 1;
+    touch([down, 800, 300, 3, 0, 0]); // a third finger is ignored: no stop, no reset
+    expect(g.velocity.v).toBe(1);
+    touch([up, 700, 300, 2, 0, 8], [move, 450, 300, 1, 0, 8]);
+    touch([up, 450, 300, 1, 0, 8]);
+    expect(g.momentum.active).toBe(false); // a pinch never coasts
+    touch([cancel, 1, 1, 9, 0, 0]); // an unknown id is ignored
+  });
+});
+
+describe("axes (BQ-101): the time axis changes barSpacing at the plot's right edge", () => {
+  const rightBar = (vp: ChartViewport): number => vp.leftIndex + vp.plotWidth / vp.barSpacing;
+
+  it("a time-axis drag right widens the bars, anchored at the right edge, and never coasts", () => {
+    const { vp, g, mouse } = chart();
+    const right = rightBar(vp);
+    mouse([down, 300, TIME_Y, 1, 0, 0], [move, 400, TIME_Y, 1, 0, 4], [up, 400, TIME_Y, 0, 0, 4]);
+    expect(vp.barSpacing).toBeCloseTo(DEFAULT_BAR_SPACING * Math.exp(0.5), 9);
+    expect(rightBar(vp)).toBeCloseTo(right, 9);
+    expect(g.momentum.active).toBe(false);
+  });
+
+  it("a time-axis wheel zooms about the right edge and a double-click restores the spacing", () => {
+    const { vp, mouse } = chart();
+    const right = rightBar(vp);
+    mouse([wheel, 100, TIME_Y, -100, 0, 0]);
+    expect(vp.barSpacing).toBeCloseTo(DEFAULT_BAR_SPACING * Math.exp(0.2), 9);
+    expect(rightBar(vp)).toBeCloseTo(right, 9);
+    mouse([dblclick, 100, TIME_Y, 0, 0, 0]);
+    expect(vp.barSpacing).toBeCloseTo(DEFAULT_BAR_SPACING, 12);
+    expect(rightBar(vp)).toBeCloseTo(right, 9);
+  });
+
+  it("the price axis's wheel, drag and double-click, and a plot double-click, are no-ops", () => {
+    const { vp, mouse, changes } = chart();
+    const before = [vp.leftIndex, vp.barSpacing];
+    mouse([wheel, 1030, 300, -100, 0, 0], [dblclick, 1030, 300, 0, 0, 0]);
+    mouse([down, 1030, 300, 1, 0, 0], [move, 900, 300, 1, 0, 8], [up, 900, 300, 0, 0, 8]);
+    mouse([dblclick, 500, 300, 0, 0, 0]); // the plot's reset is PR 2's (with End)
+    expect([vp.leftIndex, vp.barSpacing, changes()]).toEqual([...before, 0]);
+  });
+
+  it("a pan-class wheel (Shift, or a dominant deltaX) pans the plot by its delta", () => {
+    const { vp, mouse } = chart();
+    const at = vp.leftIndex;
+    mouse([wheel, 500, 300, 60, MOD.shift | MOD.pan, 0]);
+    expect((vp.leftIndex - at) * vp.barSpacing).toBeCloseTo(60, 9);
+  });
+});

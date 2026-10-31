@@ -54,6 +54,8 @@ export interface HostEnv {
 }
 
 export { RESTART_BACKOFF_MS };
+/** Wheel fold keys: 2 classes (zoom, pan) × 3 regions (plot, time axis, price axis), BQ-99. */
+export const FOLD_KEYS = 6;
 /** Unacknowledged `data` batches allowed in flight per store before conflation starts. */
 export const MAX_UNACKED = 2;
 /** Batches held back per store; beyond it the oldest is dropped (`messages_dropped`). */
@@ -299,8 +301,17 @@ export interface ChartHostOptions {
 export interface ChartHost {
   readonly runMode: RunMode;
   readonly counters: HostCounters;
-  /** Queues one packed input row; rows of a kind go out as one `input` message per frame. */
-  input(kind: InputKind, row: readonly [number, number, number, number, number, number]): void;
+  /**
+   * Queues one packed input row; rows of a kind go out as one `input` message per frame. A row
+   * with a `fold` key (0 to `FOLD_KEYS - 1`; wheel only, E11-S04 BQ-99) is summed into the
+   * batch's trailing row when that row has the same key: its delta and `dt` add (in float64), its
+   * x, y and modifiers are the newest. Any other key opens a row, so the order is kept.
+   */
+  input(
+    kind: InputKind,
+    row: readonly [number, number, number, number, number, number],
+    fold?: number,
+  ): void;
   /** Debounced to one `resize` per frame. */
   resize(width: number, height: number, dpr: number): void;
   /** Coalesced to one `sync` per frame (last wins). */
@@ -366,6 +377,9 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   let size: ResizeMsg | null = null;
   let pendingSync: ToWorker | null = null;
   const rows = new Map<InputKind, { buf: Float32Array; n: number }>();
+  // The open wheel row per fold key in the pending batch (-1: none) and its float64 sums.
+  const folded = new Int32Array(FOLD_KEYS).fill(-1);
+  const sums = new Float64Array(FOLD_KEYS * 2);
   const unacked = new Map<StoreId, number>();
   const queues = new Map<StoreId, PendingData[]>();
   const resyncAsked = new Set<StoreId>();
@@ -470,6 +484,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   function postRows(kind: InputKind, r: { buf: Float32Array; n: number }): void {
     const events = r.buf.slice(0, r.n * INPUT_STRIDE);
     r.n = 0;
+    if (kind === "wheel") folded.fill(-1);
     link.post({ t: "input", id, kind, events }, [events.buffer]);
   }
 
@@ -499,12 +514,27 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   return {
     runMode: link.runMode,
     counters: link.counters,
-    input(kind, row): void {
+    input(kind, row, fold): void {
       if (disposed) return;
       let r = rows.get(kind);
       if (r === undefined) {
         r = { buf: new Float32Array(INPUT_STRIDE * INPUT_MAX_ROWS), n: 0 };
         rows.set(kind, r);
+      }
+      const key = fold !== undefined && fold >= 0 && fold < FOLD_KEYS ? fold : -1;
+      const at = key < 0 ? -1 : (folded[key] as number);
+      // Only the trailing row folds: a class or region change opens a row, so order is kept.
+      if (at >= 0 && at === r.n - 1) {
+        // Σ posted == Σ raw: summed in float64, rounded to the row's float32 once per event.
+        const o = at * INPUT_STRIDE;
+        sums[key * 2] = (sums[key * 2] as number) + row[3];
+        sums[key * 2 + 1] = (sums[key * 2 + 1] as number) + row[5];
+        r.buf.set(row, o);
+        r.buf[o + 3] = sums[key * 2] as number;
+        r.buf[o + 5] = sums[key * 2 + 1] as number;
+        link.counters.conflated += 1;
+        schedule();
+        return;
       }
       if (r.n === INPUT_MAX_ROWS) {
         // A full batch folds a move into a trailing move (the newest position wins); any other
@@ -516,6 +546,11 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
         } else postRows(kind, r);
       }
       r.buf.set(row, r.n * INPUT_STRIDE);
+      if (key >= 0) {
+        folded[key] = r.n;
+        sums[key * 2] = row[3];
+        sums[key * 2 + 1] = row[5];
+      }
       r.n += 1;
       schedule();
     },
@@ -584,61 +619,5 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   };
 }
 
-const modifiers = (e: {
-  shiftKey: boolean;
-  ctrlKey: boolean;
-  altKey: boolean;
-  metaKey: boolean;
-}): number => (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0);
-
-/**
- * The main-thread half of the InputRouter (26 §3.11): pointer (coalesced) and wheel events on
- * `target` become packed rows, and a size change of `target` a `resize`; both reach the runtime
- * at most once per frame through `host`. Returns the detach function.
- */
-export function captureInput(target: HTMLElement, host: ChartHost): () => void {
-  let last = 0;
-  const dt = (t: number): number => {
-    const d = last === 0 ? 0 : t - last;
-    last = t;
-    return d;
-  };
-  const type = { pointerdown: INPUT.down, pointerup: INPUT.up, pointermove: INPUT.move } as const;
-  const onPointer = (e: PointerEvent): void => {
-    const kind = e.pointerType === "touch" ? "touch" : "pointer";
-    const code = type[e.type as keyof typeof type];
-    const list =
-      code === INPUT.move && typeof e.getCoalescedEvents === "function"
-        ? e.getCoalescedEvents()
-        : [];
-    for (const p of list.length > 0 ? list : [e]) {
-      host.input(kind, [code, p.offsetX, p.offsetY, p.buttons, modifiers(p), dt(p.timeStamp)]);
-    }
-  };
-  const onWheel = (e: WheelEvent): void => {
-    host.input("wheel", [
-      INPUT.wheel,
-      e.offsetX,
-      e.offsetY,
-      e.deltaY,
-      modifiers(e),
-      dt(e.timeStamp),
-    ]);
-  };
-  const names = Object.keys(type) as (keyof typeof type)[];
-  for (const n of names) target.addEventListener(n, onPointer);
-  target.addEventListener("wheel", onWheel, { passive: true });
-  const view = target.ownerDocument.defaultView;
-  const observer =
-    typeof view?.ResizeObserver === "function"
-      ? new view.ResizeObserver(() =>
-          host.resize(target.clientWidth, target.clientHeight, view.devicePixelRatio),
-        )
-      : null;
-  observer?.observe(target);
-  return () => {
-    for (const n of names) target.removeEventListener(n, onPointer);
-    target.removeEventListener("wheel", onWheel);
-    observer?.disconnect();
-  };
-}
+// E11-S04 PR 1 (README BQ-98): the DOM half of the InputRouter moved to src/host/input-router.ts.
+export { routeInput as captureInput } from "../host/input-router.js";

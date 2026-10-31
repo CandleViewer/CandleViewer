@@ -10,10 +10,13 @@
 import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
+import { Gestures } from "../interaction/gestures.js";
+import { plotWidthOf } from "../interaction/wheel.js";
 import * as scene from "../scene/index.js";
 import {
   ChartViewport,
   createPaneUniforms,
+  type IndexTimeMap,
   type PaneUniforms,
   screenToTime,
   writePaneUniforms,
@@ -22,9 +25,6 @@ import {
   BACKGROUND_TOKEN,
   ENGINE_DECODE_ERROR,
   ENGINE_NO_WEBGL2,
-  INPUT,
-  INPUT_STRIDE,
-  KEY,
   rejectReason,
   RESTART_BACKOFF_MS,
   STORE_IDS,
@@ -63,6 +63,8 @@ export interface RuntimeDeps {
   setTimer(cb: () => void, ms: number): void;
   /** The capability probe behind the `ready` report; run once, on the first frame. */
   probe(): CapabilityReport;
+  /** Test-only (E11-S04, BQ-111): bars for every chart's viewport until E12 wires the store. */
+  readonly timeMap?: IndexTimeMap;
 }
 
 export interface RenderRuntime {
@@ -103,7 +105,8 @@ interface Instance {
   a11yDirty: boolean;
   lod: LodLevels;
   lastFrameAt: number;
-  dragX: number | null;
+  /** Pointer, wheel and touch routing plus the glide (E11-S04 PR 1). */
+  readonly gestures: Gestures;
   lastPick: string | null;
   readonly elements: Record<StoreId, number>;
 }
@@ -203,6 +206,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       setTimer: (cb, ms) => deps.setTimer(cb, ms),
       park: () => {
         inst.parked = true;
+        inst.gestures.stop(); // context loss ends a glide where it is (BQ-103)
         lossy.invalidate();
       },
       rebuild: () => lossy.restore(),
@@ -249,30 +253,6 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     touch(inst);
   }
 
-  function applyInput(inst: Instance, ev: Float32Array): void {
-    for (let i = 0; i < ev.length; i += INPUT_STRIDE) {
-      const type = ev[i] as number;
-      const x = ev[i + 1] as number;
-      const buttons = ev[i + 3] as number;
-      const vp = inst.viewport;
-      // BQ-70: a factor > 1 zooms in, so a wheel down (positive delta) zooms out.
-      if (type === INPUT.down) inst.dragX = x;
-      else if (type === INPUT.up) inst.dragX = null;
-      else if (type === INPUT.wheel) moved(inst, vp.zoomAt(x, Math.exp(-buttons * 0.002)));
-      else if (type === INPUT.key) {
-        if (x === KEY.zoomIn || x === KEY.zoomOut) {
-          moved(inst, vp.zoomAt(vp.plotWidth / 2, x === KEY.zoomIn ? 1.25 : 0.8));
-        }
-      } else if (type === INPUT.move) {
-        if (inst.dragX !== null && (buttons & 1) === 1) {
-          moved(inst, vp.pan(x - inst.dragX)); // BQ-83: momentum is E11-S04's
-          inst.dragX = x;
-        }
-        crosshairAt(inst, screenToTime(vp, x));
-      }
-    }
-  }
-
   /** F-13 (BQ-92): no export while the pixels cannot be trusted; the reason, never a stale PNG. */
   function exportRefusal(inst: Instance): ExportRejectReason | null {
     const phase = inst.loss?.phase ?? "live";
@@ -302,6 +282,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   function command(inst: Instance, cmd: Command): void {
     switch (cmd.k) {
       case "setViewport":
+        inst.gestures.stop();
         moved(inst, inst.viewport.setTimeRange(cmd.timeStart, cmd.timeEnd));
         return;
       case "setTheme":
@@ -346,6 +327,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     if (msg.t === "sync") {
       for (const inst of charts.values()) {
         if (inst.config.syncGroup !== msg.groupId) continue;
+        inst.gestures.stop();
         moved(inst, inst.viewport.setTimeRange(msg.timeRange[0], msg.timeRange[1]));
         crosshairAt(inst, msg.crosshair);
       }
@@ -360,9 +342,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       // `profile` validates as the one forced value (BQ-53; the BQ-94 test hook rides it too).
       const gpu: Instance["gpu"] = { backend: undefined, forced: msg.profile !== undefined };
       const c = msg.canvas as CanvasLike;
-      const viewport = new ChartViewport();
-      viewport.setSize(c.width / msg.dpr, c.height / msg.dpr, msg.dpr);
-      viewport.setPanePlot(0, 0, c.height / msg.dpr);
+      const viewport = new ChartViewport(deps.timeMap);
+      const [w, h] = [c.width / msg.dpr, c.height / msg.dpr];
+      viewport.setSize(plotWidthOf(w), h, msg.dpr); // the plot rect, not the canvas (RULED (5))
+      viewport.setPanePlot(0, 0, h);
       const scene = createScene(
         slot,
         gpu,
@@ -371,6 +354,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         (backend) => opened(inst, backend),
         viewport,
       );
+      scene.layout.setSize(w, h);
       const inst: Instance = {
         ...scene,
         slot,
@@ -387,7 +371,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         a11yDirty: false,
         lod: { candles: 0, footprint: 0 },
         lastFrameAt: Number.NEGATIVE_INFINITY,
-        dragX: null,
+        gestures: new Gestures(viewport, scene.layout, {
+          moved: (changed) => moved(inst, changed),
+          hover: (x) => crosshairAt(inst, screenToTime(viewport, x)),
+          animate: (m) => inst.scheduler.animate(m),
+        }),
         lastPick: null,
         parked: false,
         loss: null,
@@ -407,13 +395,14 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "resize":
         inst.canvas.width = Math.max(1, Math.round(msg.width * msg.dpr));
         inst.canvas.height = Math.max(1, Math.round(msg.height * msg.dpr));
+        inst.gestures.stop();
         inst.viewport.setPanePlot(0, 0, msg.height);
-        moved(inst, inst.viewport.setSize(msg.width, msg.height, msg.dpr));
+        moved(inst, inst.viewport.setSize(plotWidthOf(msg.width), msg.height, msg.dpr));
         inst.layout.setSize(msg.width, msg.height); // LAYOUT: recomputed on the next frame only
         touch(inst);
         return;
       case "input":
-        applyInput(inst, msg.events);
+        inst.gestures.apply(msg.kind === "touch", msg.events);
         return;
       case "data": {
         // The stores are E11-T03's; until then a batch only moves the element count.
@@ -443,6 +432,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     const { width, height } = inst.canvas;
     if (backend !== null && backend.failure === null) {
       writePaneUniforms(inst.viewport, 0, inst.uniforms); // once per pane per frame (§3.5)
+      // The clip space spans the canvas; the plot is its left part, so x maps unchanged (BQ-101).
+      inst.uniforms.floats[4] = width;
       backend.setBackground(inst.theme[BACKGROUND_TOKEN]);
       const f = backend.submit(inst.builder.drawList, inst.builder.drawCount, width, height);
       // The R1 budget closes on the first complete frame after a restore (BQ-49).

@@ -160,7 +160,8 @@ describe("the WebGL2 path (E11-S02 PR2)", () => {
 
   it("Scenario: Panning does not touch GPU buffers (a 200 px drag through the runtime)", () => {
     const gl = new FakeGl({ params: ROOMY });
-    make(true, null, 1, Object.assign(canvas(), { getContext: (): unknown => gl }));
+    // 264 px wide: a 200 px plot beside the 64 px price gutter (BQ-101).
+    make(true, null, 1, Object.assign(canvas(264), { getContext: (): unknown => gl }));
     rt.handle({ t: "command", id: 1, cmd: { k: "setViewport", timeStart: 0, timeEnd: 2e9 } });
     frame();
     const at = gl.log.length;
@@ -240,7 +241,7 @@ describe("the frame scheduler in the runtime (E11-S01 PR3)", () => {
 
 describe("interaction", () => {
   it("pans on drag, zooms at the cursor, reports the crosshair and posts viewport once per frame", () => {
-    make();
+    make(false, null, 1, canvas(264)); // a 200 px plot (BQ-101)
     rt.handle({ t: "command", id: 1, cmd: { k: "setViewport", timeStart: 0, timeEnd: 2e9 } });
     rt.handle({ t: "input", id: 1, kind: "pointer", events: row(INPUT.down, 100) });
     rt.handle({ t: "input", id: 1, kind: "pointer", events: row(INPUT.move, 150, 1) });

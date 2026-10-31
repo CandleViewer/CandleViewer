@@ -53,8 +53,19 @@ export class FakeElement {
     this.listeners.get(type)?.delete(cb);
   }
 
-  dispatch(type: string, event: object): void {
-    for (const cb of this.listeners.get(type) ?? []) cb({ type, ...event });
+  /** Pointer ids captured by `setPointerCapture` (E11-S04), in order. */
+  readonly captured: number[] = [];
+
+  setPointerCapture(id: number): void {
+    this.captured.push(id);
+  }
+
+  /** Delivers `event` to every listener; returns whether one called `preventDefault`. */
+  dispatch(type: string, event: object): boolean {
+    let prevented = false;
+    const preventDefault = (): void => void (prevented = true);
+    for (const cb of this.listeners.get(type) ?? []) cb({ type, preventDefault, ...event });
+    return prevented;
   }
 
   insertBefore(child: FakeElement, ref: FakeElement): FakeElement {

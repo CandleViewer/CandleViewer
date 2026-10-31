@@ -204,8 +204,13 @@ export type FromWorker =
 export const INPUT_STRIDE = 6;
 /** Rows one `input` message may carry (a 240 Hz trackpad over a 1 s stall, rounded up). */
 export const INPUT_MAX_ROWS = 256;
-/** Row `type` codes. A wheel row carries the pixel `deltaY` in the `buttons` slot. */
-export const INPUT = { move: 0, down: 1, up: 2, wheel: 3, key: 4 } as const;
+/**
+ * Row `type` codes. A wheel row carries its folded px delta in the `buttons` slot, and its class
+ * as `MOD.pan` in `modifiers` (E11-S04, BQ-99); a `touch` row carries the `pointerId` there
+ * instead of buttons (BQ-102). `cancel` (pointercancel or a lost capture) ends a drag with no
+ * coast; `dblclick` resets the axis it lands on. Additive §6 rows: the stride stays 6.
+ */
+export const INPUT = { move: 0, down: 1, up: 2, wheel: 3, key: 4, cancel: 5, dblclick: 6 } as const;
 /** Key codes a `key` row carries in its `x` slot. */
 export const KEY = { zoomIn: 1, zoomOut: 2 } as const;
 

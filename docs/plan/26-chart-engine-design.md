@@ -222,7 +222,7 @@ percent:    sy computed against an anchor bar's close
 
 - **Bar-space vs time-space.** Panning and bar spacing operate in _bar index space_ (like every trading chart: `barSpacing` px/bar, `rightOffset` in bars) while overlays needing true time (heatmap columns, session shading) map through `time`. `BarStore` keeps a monotone index→time map, and the engine exposes both `indexToScreen` and `timeToScreen`.
 - **Zoom** is anchored at the cursor (or the pinch centroid): the world coordinate under the anchor is invariant. `barSpacing` is clamped to `[0.05, 200]` px. _Shipped: `zoomAt(anchorPx, factor)` with factor > 1 zooming in; `rightOffset ∈ [-(n-1), visibleBars-1]`, and when that clamp wins the anchor yields (BQ-69, BQ-70)._
-- **Momentum**: velocity-based with exponential decay (`v *= exp(-dt/τ)`, τ = 120 ms), terminated below 0.02 px/ms, cancelled on any new pointer-down.
+- **Momentum**: velocity-based with exponential decay (`v *= exp(-dt/τ)`, τ = 120 ms), terminated below 0.02 px/ms, cancelled on any new pointer-down. _Shipped (E11-S04 PR 1, BQ-103): integrated exactly per frame (`x += v·τ(1 − e^(−dt/τ))`) by the chart's scheduler, and the stop frame applies the remainder `v·τ`, so the rest is `x₀ + v₀τ` at any frame rate; a 50 ms EWMA release velocity, no coast after more than 100 ms still or below 0.3 px/ms, `|v₀| ≤ 1.5·W/τ`._
 - **Auto-scale** (price): computed from the visible range's min/max with a configurable margin, optionally including overlays; recomputed only when the visible bar range changes, and throttled to once per frame.
 - **Pane synchronisation**: panes in one chart share `timeStart/timeEnd` by construction; charts in a layout may share a `SyncGroup` for time range, crosshair position and/or price level, propagated once per frame after input integration (never re-entrantly).
 
@@ -308,6 +308,8 @@ Picking budget ≤ 1 ms for 200 drawings + 50 lines. Results are posted to the m
 
 All input is captured on the main thread with `setPointerCapture`, coalesced, and forwarded at most once per frame. Wheel events are accumulated and applied once per frame (trackpads emit far more than 60 events/s).
 
+_Shipped (E11-S04 PR 1, package README BQ-98 to BQ-103): routing by the layout's rects. A plot drag pans time only (a vertical drag is inert until E11-S05); every plot wheel, `Ctrl+wheel` (a trackpad pinch) included, zooms time at the cursor, and `Shift+wheel` or a dominant `deltaX` pans; no modifier+wheel zooms price (E11-D01). The time axis's drag and wheel change `barSpacing` about the plot's right edge and its double-click restores the default spacing. Price-axis gestures and the plot double-click reset are E11-S05's and PR 2's. Momentum is §3.5's with E11-D06 D2 to D5 (PROPOSED constants, one module)._
+
 ### 3.12 Plugin API (series, indicators, overlays)
 
 Third-party-shaped but first-party-used: every built-in series is written against the same API, which guarantees the API is sufficient.
@@ -376,6 +378,8 @@ Worker → main:
 | `error`    | `{ code, message, recoverable, details? }` (`details` on `ENGINE_CONTEXT_LOST` only, BQ-64)   |
 
 Shipped by E11-T02 (package README "Design deltas" BQ-10 to BQ-19): worker → main also sends `ack { id, store }` per `data` (the host keeps ≤ 2 unacknowledged per store) and `exported { id, reqId, blob }` (the `export` reply); main → worker `command { release }` deregisters a chart; `frame` carries `runMode` and `renderProfile`. Every message carries the chart `id` (`null` on a worker-wide `error`); `ready` carries `capabilities` (profile, reasons, caps; E11-S02 BQ-50, probe owned by S02 per BQ-57) beside `renderProfile`; `pick` has no `cell` before E11-S08 / E12. One dedicated worker serves every chart on the page.
+
+Shipped by E11-S04 PR 1 (package README BQ-99 and BQ-102), additive and with the row stride still 6: `INPUT.cancel` (a `pointercancel`, or a capture lost before the up: the drag ends, no coast) and `INPUT.dblclick`; a `touch` row carries the `pointerId` in the `buttons` slot; a wheel row carries its px delta, folded per frame by class and region on the host, and its class as the `pan` bit (16) of the modifiers column. Still one `input` message per kind per frame.
 
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
