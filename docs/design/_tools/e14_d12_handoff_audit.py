@@ -80,7 +80,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "16d70feed9"  # the base of record: every cite was read here (the version line)
+BASE = "9518fe3cbd"  # the base of record: every cite was read here (the version line)
 HEAD_REF = "origin/main"
 VERSION_DATE = datetime.date(2026, 10, 31)  # v1's date: the design-ahead margins count from it
 ISSUE = "355"
@@ -123,6 +123,7 @@ PATHS: dict[str, str] = {
     "D08": "docs/design/E14/E14-D08.md",
     "D08H": "docs/design/E14/E14-D08-handoff.md",
     "D09": "docs/design/E14/E14-D09.md",
+    "D10": D10_REL,
     "README": "docs/design/README.md",
     "E06-D03": "docs/design/E06/E06-D03.md",
     "CAL": "docs/plan/backlog/_tools/calendar_cv.py",
@@ -159,6 +160,16 @@ LIFTS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
     "d06h": ("D06H", (("", ""),)),
     "d07h": ("D07H", (("", ""),)),
     "d08h": ("D08H", (("", ""),)),
+    # E14-D10 (#354), merged with #5229: lifted at v1.1 (RULED BQ-09)
+    "d10.s4": ("D10", (("## 4. ", ""),)),
+    "d10.s52": ("D10", (("### 5.2 ", ""),)),
+    "d10.s6": ("D10", (("## 6. ", ""),)),
+    "d10.s7": ("D10", (("## 7. ", ""),)),
+    "d10.s82": ("D10", (("### 8.2 ", ""),)),
+    "d10.s11": ("D10", (("## 11. ", ""),)),
+    "d10.s121": ("D10", (("### 12.1 ", ""),)),
+    "d10.s14": ("D10", (("## 14. ", ""),)),
+    "d10.s15": ("D10", (("## 15. ", ""),)),
 }
 CHIPS = "Two named forms, one rule set."  # D08 §7, the chip heights' defining line
 NFR008 = "NFR: undo stack ≥50 operations per symbol"  # `11` US-DRAW-008's NFR line
@@ -214,7 +225,7 @@ DECKS: dict[str, tuple[str, str, str]] = {
     "d06": ("D06", "## 10. ", "E14-D06 (#350)"),
     "d07": ("D07", "### 12.2 ", "E14-D07 (#351)"),
 }
-FINALISER = "E14-D10 (#354), at v1.1"
+FINALISER = "E14-D10 (#354) §7, lifted at v1.1"
 # a row whose key or string carries a word of the public-text list is cited by its source row only
 CITED_ONLY = "cited only: read the row at its source"
 STORIES = {f"E14-S{n:02d}": f"US-DRAW-{n:03d}" for n in range(1, 10)} | {"E14-S10": "—"}
@@ -894,7 +905,7 @@ def derive_deck(env: Env) -> dict[str, object]:
             break
     out: dict[str, object] = {
         "pack": "E14-D12",
-        "version": "v1",
+        "version": "v1.1",
         "base": BASE,
         "note": (
             "The copy deck of the E14-D12 hand-off pack: every row of the five parents' copy "
@@ -922,6 +933,27 @@ def deck_entries(env: Env) -> dict[str, dict[str, object]]:
 
 
 # ---------------------------------------------------------------------------- the pack's tables
+
+
+def d10_values(env: Env) -> dict[str, str]:
+    """E14-D10's counts, read from its own tables and headings at the base."""
+    d10 = env.at_base(PATHS["D10"])
+    vals: dict[str, str] = {}
+    f = rows_of(section(d10, "## 14. "), "Id")
+    vals["COUNT:d10.f"] = str(len(f))
+    for s in SEVERITIES:
+        vals[f"COUNT:d10.f.{s.lower()}"] = str(sum(r[1] == s for r in f if len(r) > 1))
+    vals["COUNT:d10.fm"] = str(len(rows_of(section(d10, "## 4. "), "Id")))
+    vals["COUNT:d10.vc"] = str(len(rows_of(section(d10, "### 7.1 "), "Id")))
+    vals["COUNT:d10.ts"] = str(len(rows_of(section(d10, "## 11. "), "Id")))
+    vals["COUNT:d10.t2"] = str(len(rows_of(section(d10, "### 12.1 "), "Id")))
+    vals["COUNT:d10.c"] = str(len(rows_of(section(d10, "### 15.1 "), "Id")))
+    vals["COUNT:d10.g"] = str(len(rows_of(section(d10, "### 15.2 "), "Id")))
+    vals["COUNT:d10.scenarios"] = str(
+        len(re.findall(r"^### 6\.\d+ Scenario \d+ ", section(d10, "## 6. "), re.MULTILINE))
+    )
+    vals["COUNT:d10.q07"] = str(len(set(re.findall(r"\bQ07-\d+\b", section(d10, "## 6. ")))))
+    return vals
 
 
 def register(spec: str) -> list[list[str]]:
@@ -1000,6 +1032,8 @@ def compute(t: Texts) -> dict[str, str]:
         vals[f"COUNT:rows.{kind.lower()}"] = str(sum(r[0].startswith(kind + "-") for r in reg_rows))
     vals["COUNT:walk.items"] = str(walk_items(t.spec))
     vals["COUNT:ticks"] = str(len(t.ticks))
+    if vals.get("STATUS:d10") == "present":
+        vals.update(d10_values(env))
     vals["COUNT:index.text_only"] = str(sum("text only" in " ".join(r) for r in index_rows(t.spec)))
     return vals
 
@@ -1215,7 +1249,7 @@ ANCHOR_GATE = (
     ("COUNT:events", "G-EVENTS"),
     ("COUNT:ticks", "G-TICKS"),
     ("COUNT:index", "G-INDEX"),
-    ("STATUS:d10", "G-PENDING"),
+    ("STATUS:d10", "G-PENDING"), ("COUNT:d10", "G-PENDING"),
     ("SPRINT:", "G-AHEAD"), ("DATE:", "G-AHEAD"), ("DAYS:", "G-AHEAD"),
 )  # fmt: skip
 
@@ -1589,15 +1623,26 @@ def g_events(t: Texts) -> list[Finding]:
 
 
 def g_pending(t: Texts) -> list[Finding]:
+    """Before E14-D10 merges: it is absent, never cited and §8 says the chapter is pending.
+    Once it is on the base (v1.1): every D10 block is lifted by hash in §8, the pending sentence is
+    gone and a v1.1 version row stands."""
     bad = anchor_problems(t, "G-PENDING")
-    if t.values.get("STATUS:d10") != "absent":
-        bad.append("E14-D10 is on the base: fold it as v1.1")
+    s8 = " ".join(section(t.spec, "## 8. ").split())
+    folded = any(r[0].startswith("v1.1") for r in version_rows(t.spec))
+    if t.values.get("STATUS:d10") == "present":
+        for k in LIFTS:
+            if k.startswith("d10.") and f"<!--=HASH:{k}-->" not in s8:
+                bad.append(f"§8 does not lift E14-D10's block {k} by hash")
+        if PENDING in s8:
+            bad.append("§8 still says the chapter is pending, but E14-D10 is on the base")
+        if not folded:
+            bad.append("E14-D10 is on the base and no v1.1 version row stands")
+        return one("G-PENDING", bad)
     if "E14-D10.md" in t.spec:
         bad.append("the pack names E14-D10's file, which is not merged")
-    if PENDING not in " ".join(section(t.spec, "## 8. ").split()):
+    if PENDING not in s8:
         bad.append(f'§8 does not say "{PENDING}"')
     out = one("G-PENDING", bad)
-    folded = any(r[0].startswith("v1.1") for r in version_rows(t.spec))
     if t.env.show(HEAD_REF, D10_REL) is not None and not folded:
         out.append(Finding("WARN", "G-PENDING", f"E14-D10 is on {HEAD_REF}: v1.1 is due"))
     return out
@@ -1917,8 +1962,7 @@ MUTATIONS: tuple[Mutation, ...] = (
              subst("| CONSTITUTION C-14.2 (", "| `14` SCR-037 (")),
     Mutation("G-EVENTS", "name an event no source defines",
              subst("and `drawing.removed` for SCR-036", "and `drawing.erased` for SCR-036")),
-    Mutation("G-PENDING", "drop the pending sentence from §8",
-             subst("**pending, cited from the ticket text only**", "**pending**")),
+    Mutation("G-PENDING", "drop the v1.1 version row (re-pinned)", repinned(drop_row("| v1.1 "))),
     Mutation("G-AHEAD", "type a margin by hand", anchor_edit("DAYS:margin.s10", "99")),
     Mutation("G-UNTOUCHED", "edit a parent in the same tree", parent_changed),
     Mutation("G-TICKS", "point a tick's evidence at a missing section (tool, 14 and §15.1)",

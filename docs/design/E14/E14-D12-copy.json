@@ -1,7 +1,7 @@
 {
   "pack": "E14-D12",
-  "version": "v1",
-  "base": "16d70feed9",
+  "version": "v1.1",
+  "base": "9518fe3cbd",
   "note": "The copy deck of the E14-D12 hand-off pack: every row of the five parents' copy tables (E14-D02 §12, E14-D04 §9.5, E14-D05 §9.4, E14-D06 §10, E14-D07 §12.2) under the id `<parent>:<row number>`, with the row's keys, the String cell verbatim, the source row, the status (proposed: the parent's own proposal, owner the parent, finalised by E14-D10 at v1.1; ruled; cited: the owner its Source cell names) and the owner; a row whose key or string carries a word of the public-text list keeps its source and owner and is cited only. Checked by docs/design/_tools/e14_d12_handoff_audit.py (G-DECK).",
   "entries": {
     "d02:01": {
@@ -10,7 +10,7 @@
       "source": "D02:521",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:02": {
       "names": "armed, after",
@@ -18,7 +18,7 @@
       "source": "D02:522",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:03": {
       "names": "disarmed (T13 / T18)",
@@ -26,7 +26,7 @@
       "source": "D02:523",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:04": {
       "names": "anchor placed",
@@ -34,7 +34,7 @@
       "source": "D02:524",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:05": {
       "names": "snap candidate / snap-cycle",
@@ -42,7 +42,7 @@
       "source": "D02:525",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:06": {
       "names": "commit",
@@ -50,7 +50,7 @@
       "source": "D02:526",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:07": {
       "names": "commit, pane-local",
@@ -58,7 +58,7 @@
       "source": "D02:527",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:08": {
       "names": "commit, keep active",
@@ -66,7 +66,7 @@
       "source": "D02:528",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:09": {
       "names": "cancel, level 1 (T29)",
@@ -74,7 +74,7 @@
       "source": "D02:529",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:10": {
       "names": "cancel, level 3 (T05)",
@@ -82,7 +82,7 @@
       "source": "D02:530",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:11": {
       "names": "interrupt (T20 / T32–T34)",
@@ -90,7 +90,7 @@
       "source": "D02:531",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:12": {
       "names": "move / nudge",
@@ -98,7 +98,7 @@
       "source": "D02:532",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:13": {
       "names": "locked refusal",
@@ -106,7 +106,7 @@
       "source": "D02:533",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:14": {
       "names": "delete",
@@ -114,7 +114,7 @@
       "source": "D02:534",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:15": {
       "names": "undo / redo",
@@ -122,7 +122,7 @@
       "source": "D02:535",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:16": {
       "names": "hide-all / lock-all",
@@ -130,7 +130,7 @@
       "source": "D02:536",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:17": {
       "names": "delete-all confirmed",
@@ -138,7 +138,7 @@
       "source": "D02:537",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:18": {
       "names": "unsaved / conflict",
@@ -146,7 +146,7 @@
       "source": "D02:538",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:19": {
       "names": "magnet / keep active toggled",
@@ -154,7 +154,7 @@
       "source": "D02:539",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:20": {
       "names": "T2 press",
@@ -162,7 +162,7 @@
       "source": "D02:540",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d02:21": {
       "names": "access changed (T41 / T43)",
@@ -170,7 +170,7 @@
       "source": "D02:541",
       "status": "proposed",
       "owner": "E14-D02 (#247)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:01": {
       "names": "status.saving · status.saved",
@@ -178,7 +178,7 @@
       "source": "D04:391",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:02": {
       "names": "status.failed",
@@ -186,7 +186,7 @@
       "source": "D04:392",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:03": {
       "names": "status.offline",
@@ -194,7 +194,7 @@
       "source": "D04:393",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:04": {
       "names": "status.batch_failed",
@@ -202,7 +202,7 @@
       "source": "D04:394",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:05": {
       "names": "status.deleted_elsewhere",
@@ -210,7 +210,7 @@
       "source": "D04:395",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:06": {
       "names": "status.conflict.actions",
@@ -218,7 +218,7 @@
       "source": "D04:396",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:07": {
       "names": "drawing.locked",
@@ -226,7 +226,7 @@
       "source": "D04:397",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:08": {
       "names": "alert.quota_reached",
@@ -234,7 +234,7 @@
       "source": "D04:398",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:09": {
       "names": "template.*",
@@ -242,7 +242,7 @@
       "source": "D04:399",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:10": {
       "names": "levels.*",
@@ -250,7 +250,7 @@
       "source": "D04:400",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:11": {
       "names": "note.*",
@@ -258,7 +258,7 @@
       "source": "D04:401",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:12": {
       "names": "fill.*",
@@ -266,7 +266,7 @@
       "source": "D04:402",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d04:13": {
       "names": "popover.*",
@@ -274,7 +274,7 @@
       "source": "D04:403",
       "status": "proposed",
       "owner": "E14-D04 (#318)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d05:01": {
       "names": "",
@@ -282,7 +282,7 @@
       "source": "D05:329",
       "status": "proposed",
       "owner": "E14-D05 (#349)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d05:02": {
       "names": "",
@@ -290,7 +290,7 @@
       "source": "D05:330",
       "status": "proposed",
       "owner": "E14-D05 (#349)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d05:03": {
       "names": "",
@@ -298,7 +298,7 @@
       "source": "D05:331",
       "status": "proposed",
       "owner": "E14-D05 (#349)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d05:04": {
       "names": "",
@@ -306,7 +306,7 @@
       "source": "D05:332",
       "status": "proposed",
       "owner": "E14-D05 (#349)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d05:05": {
       "names": "",
@@ -314,7 +314,7 @@
       "source": "D05:333",
       "status": "proposed",
       "owner": "E14-D05 (#349)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d05:06": {
       "names": "",
@@ -322,7 +322,7 @@
       "source": "D05:334",
       "status": "proposed",
       "owner": "E14-D05 (#349)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d05:07": {
       "names": "",
@@ -330,7 +330,7 @@
       "source": "D05:335",
       "status": "proposed",
       "owner": "E14-D05 (#349)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:01": {
       "names": "pos.chip.long · pos.chip.short",
@@ -338,7 +338,7 @@
       "source": "D06:406",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:02": {
       "names": "pos.chip.not_saved",
@@ -346,7 +346,7 @@
       "source": "D06:407",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:03": {
       "names": "pos.chip.sent",
@@ -354,7 +354,7 @@
       "source": "D06:408",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:04": {
       "names": "pos.account.line",
@@ -369,7 +369,7 @@
       "source": "D06:410",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:06": {
       "names": "pos.zone.target",
@@ -377,7 +377,7 @@
       "source": "D06:411",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:07": {
       "names": "pos.row.risk",
@@ -385,7 +385,7 @@
       "source": "D06:412",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:08": {
       "names": "pos.row.size",
@@ -393,7 +393,7 @@
       "source": "D06:413",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:09": {
       "names": "pos.row.rr · pos.row.reward",
@@ -401,7 +401,7 @@
       "source": "D06:414",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:10": {
       "names": "pos.row.unset",
@@ -416,7 +416,7 @@
       "source": "D06:416",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:12": {
       "names": "pos.row.stop",
@@ -424,7 +424,7 @@
       "source": "D06:417",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:13": {
       "names": "pos.row.fees",
@@ -432,7 +432,7 @@
       "source": "D06:418",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:14": {
       "names": "pos.row.breakeven",
@@ -440,7 +440,7 @@
       "source": "D06:419",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:15": {
       "names": "pos.row.account",
@@ -448,7 +448,7 @@
       "source": "D06:420",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:16": {
       "names": "pos.row.cap",
@@ -456,7 +456,7 @@
       "source": "D06:421",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:17": {
       "names": "pos.row.rounded",
@@ -464,7 +464,7 @@
       "source": "D06:422",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:18": {
       "names": "readout.provisional · readout.estimated",
@@ -500,7 +500,7 @@
       "source": "D06:427",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:23": {
       "names": "v.sl.required",
@@ -536,7 +536,7 @@
       "source": "D06:432",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:28": {
       "names": "pos.switch.label · pos.switch.done",
@@ -544,7 +544,7 @@
       "source": "D06:433",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:29": {
       "names": "pos.switch.menu",
@@ -552,7 +552,7 @@
       "source": "D06:434",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:30": {
       "names": "drawing.locked",
@@ -560,7 +560,7 @@
       "source": "D06:435",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:31": {
       "names": "v.qty.lot",
@@ -575,7 +575,7 @@
       "source": "D06:437",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:33": {
       "names": "v.risk.cap",
@@ -590,7 +590,7 @@
       "source": "D06:439",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:35": {
       "names": "pos.risk.fixed_note",
@@ -598,7 +598,7 @@
       "source": "D06:440",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:36": {
       "names": "pos.profile.none",
@@ -606,7 +606,7 @@
       "source": "D06:441",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:37": {
       "names": "pos.size.no_profile",
@@ -614,7 +614,7 @@
       "source": "D06:442",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:38": {
       "names": "pos.symbol.status",
@@ -622,7 +622,7 @@
       "source": "D06:443",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:39": {
       "names": "refusal.symbol_not_allowed",
@@ -637,7 +637,7 @@
       "source": "D06:445",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:41": {
       "names": "size.unit.stale",
@@ -652,7 +652,7 @@
       "source": "D06:447",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:43": {
       "names": "refusal.account_locked",
@@ -737,7 +737,7 @@
       "source": "D06:459",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:55": {
       "names": "pos.prefill.tag · pos.prefill.confirm",
@@ -745,7 +745,7 @@
       "source": "D06:460",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:56": {
       "names": "pos.prefill.note",
@@ -753,7 +753,7 @@
       "source": "D06:461",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:57": {
       "names": "pos.group.line",
@@ -761,7 +761,7 @@
       "source": "D06:462",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:58": {
       "names": "pos.ann.handle",
@@ -769,7 +769,7 @@
       "source": "D06:463",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:59": {
       "names": "pos.ann.created",
@@ -777,7 +777,7 @@
       "source": "D06:464",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:60": {
       "names": "pos.ann.sent",
@@ -785,7 +785,7 @@
       "source": "D06:465",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:61": {
       "names": "pos.ann.armed",
@@ -793,7 +793,7 @@
       "source": "D06:466",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:62": {
       "names": "pos.name.region",
@@ -801,7 +801,7 @@
       "source": "D06:467",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d06:63": {
       "names": "pos.name.entry · pos.name.stop · pos.name.target",
@@ -809,7 +809,7 @@
       "source": "D06:468",
       "status": "proposed",
       "owner": "E14-D06 (#350)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:01": {
       "names": "tree.sync.shared",
@@ -817,7 +817,7 @@
       "source": "D07:524",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:02": {
       "names": "tree.sync.off",
@@ -825,7 +825,7 @@
       "source": "D07:525",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:03": {
       "names": "tree.sync.action",
@@ -833,7 +833,7 @@
       "source": "D07:526",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:04": {
       "names": "tree.sync.rule",
@@ -841,7 +841,7 @@
       "source": "D07:527",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:05": {
       "names": "tree.tag.pane_local",
@@ -849,7 +849,7 @@
       "source": "D07:528",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:06": {
       "names": "tree.tag.offscreen",
@@ -857,7 +857,7 @@
       "source": "D07:529",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:07": {
       "names": "tree.tag.offscreen.name",
@@ -865,7 +865,7 @@
       "source": "D07:530",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1",
       "where": "D07 §12.2: the tag button's accessible name",
       "copy": "cited only: read the row at its source"
     },
@@ -875,7 +875,7 @@
       "source": "D07:531",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:09": {
       "names": "tree.tag.unsaved · .conflict",
@@ -883,7 +883,7 @@
       "source": "D07:532",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:10": {
       "names": "tree.tag.approximate",
@@ -891,7 +891,7 @@
       "source": "D07:533",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:11": {
       "names": "tree.ordinal",
@@ -899,7 +899,7 @@
       "source": "D07:534",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:12": {
       "names": "tree.subgroup.label",
@@ -907,7 +907,7 @@
       "source": "D07:535",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:13": {
       "names": "tree.filter.count",
@@ -915,7 +915,7 @@
       "source": "D07:536",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:14": {
       "names": "tree.filter.empty",
@@ -923,7 +923,7 @@
       "source": "D07:537",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:15": {
       "names": "tree.empty.line",
@@ -931,7 +931,7 @@
       "source": "D07:538",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:16": {
       "names": "tree.empty.sentence",
@@ -939,7 +939,7 @@
       "source": "D07:539",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:17": {
       "names": "tree.menu.items",
@@ -947,7 +947,7 @@
       "source": "D07:540",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1",
       "where": "D07 §12.2: the row menu (E13-D02 §12 + D02 §8.2 — cited; C-11)",
       "copy": "cited only: read the row at its source"
     },
@@ -957,7 +957,7 @@
       "source": "D07:541",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:19": {
       "names": "bulk.bar",
@@ -965,7 +965,7 @@
       "source": "D07:542",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:20": {
       "names": "bulk.delete.name",
@@ -973,7 +973,7 @@
       "source": "D07:543",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:21": {
       "names": "confirm.delete_selected.title",
@@ -981,7 +981,7 @@
       "source": "D07:544",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:22": {
       "names": "confirm.delete_selected.body",
@@ -989,7 +989,7 @@
       "source": "D07:545",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:23": {
       "names": "confirm.delete_selected.confirm",
@@ -997,7 +997,7 @@
       "source": "D07:546",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:24": {
       "names": "confirm.delete_all",
@@ -1005,7 +1005,7 @@
       "source": "D07:547",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:25": {
       "names": "toast.removed.synced",
@@ -1013,7 +1013,7 @@
       "source": "D07:548",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:26": {
       "names": "toast.removed.local",
@@ -1021,7 +1021,7 @@
       "source": "D07:549",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:27": {
       "names": "toast.bulk.{action}",
@@ -1029,7 +1029,7 @@
       "source": "D07:550",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:28": {
       "names": "toast.bulk.deleted",
@@ -1037,7 +1037,7 @@
       "source": "D07:551",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:29": {
       "names": "announce.removed.synced",
@@ -1045,7 +1045,7 @@
       "source": "D07:552",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:30": {
       "names": "announce.undone.restored",
@@ -1053,7 +1053,7 @@
       "source": "D07:553",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:31": {
       "names": "announce.cloned",
@@ -1061,7 +1061,7 @@
       "source": "D07:554",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:32": {
       "names": "",
@@ -1069,7 +1069,7 @@
       "source": "D07:555",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1",
       "where": "D07 §12.2: §9.5",
       "copy": "cited only: read the row at its source"
     },
@@ -1079,7 +1079,7 @@
       "source": "D07:556",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:34": {
       "names": "rbac.view_as · rbac.permission · notice.panel_read_only · glyph.name",
@@ -1087,7 +1087,7 @@
       "source": "D07:557",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     },
     "d07:35": {
       "names": "drawing.locked",
@@ -1095,7 +1095,7 @@
       "source": "D07:558",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
-      "finalised_by": "E14-D10 (#354), at v1.1"
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
     }
   }
 }
