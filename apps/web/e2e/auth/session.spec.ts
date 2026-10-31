@@ -150,12 +150,13 @@ test("E09-TC-C02 a reload into an idle-locked session shows SCR-005, not /login;
 });
 
 // What this proves: the confirm sends `{all_sessions: true}` once, and the tab reaches SCR-001 through
-// `endSession()` on the 204, not through the socket. The server's `bye session_revoked` + 4401 close
-// (sent before the 204, as the hub does) is honoured: the client opens no second socket on it (`connections()`
-// counts every attempt, also one the harness refuses). A revocation from another device (4401 alone, no in-tab
-// logout) does not reach SCR-001 yet; the WS client stops on it as a fatal close (`connectionRegion.ts`, G12),
-// so that is not asserted here.
-test("E09-TC-D03 SCR-112 sign out everywhere: logout all, SCR-001, the 4401 close honoured", async ({
+// `endSession()` on the 204, not through the socket. The harness sends the server's `bye session_revoked` + 4401
+// close (before the 204, as the hub does); that the client opens no second socket on it is best-effort at e2e
+// (`connections()` counts every attempt, also one the harness refuses, but a retry may come after the check). The
+// decision itself, fatal with no refresh first, is pinned in `closePolicy.test.ts`. A revocation from another
+// device (4401 alone, no in-tab logout) does not reach SCR-001 yet; the WS client stops on it as a fatal close
+// (`connectionRegion.ts`, G12), so that is not asserted here.
+test("E09-TC-D03 SCR-112 sign out everywhere: logout all, SCR-001, no second socket on the 4401 close (best-effort)", async ({
   page,
 }) => {
   await stubSession(page, { role: "owner" });

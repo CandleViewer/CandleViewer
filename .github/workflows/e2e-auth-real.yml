@@ -1,0 +1,239 @@
+name: e2e-auth-real
+
+# E09-Q02 (#293) PR 2, #2490: the real-backend auth lane, nightly at 03:51 UTC and on dispatch, never
+# on a pull request; no required check reads it (C-9.1 is untouched: #2107 owns the `e2e-auth`
+# required job). Its specs (`apps/web/e2e/**/*.real.ts`, `e2e/playwright.real.config.ts`) sign
+# fixture users in through the real SCR-001 and the browser's own cookie jar, with MFA completed by
+# an in-page fetch until SCR-002's form lands (#2711), against a throwaway stack on this runner:
+# Postgres and QuestDB from compose (loopback), and the API on the host as dast-admin-nightly.yml
+# starts it (testnet, the real storage backend, the synthetic feed, no exchange key), with the
+# server test clock on (#2086: `CV_TEST_CLOCK`, which settings.py refuses off a keyless testnet) and
+# the preview's origin as its one allowed origin. The SPA is the built `dist/`, served by
+# `vite preview` with `e2e/vite.real.config.ts`, which proxies `/api/v1` (REST and the WebSocket)
+# to the API, so the browser sees one origin.
+# Every credential is made here, per run, masked and never echoed: no repository secret is read.
+# The fixture users (seed_fixture_user.py --totp-secret-out) share a generated password, and each
+# has a TOTP seed of its own in a mode-0600 file. The specs keep no trace, video or screenshot,
+# which would hold real session values in files no check can read: a failure keeps Playwright's
+# error context, the lane's correlation ids and a read-only audit_log slice, and the API's log.
+# They are uploaded for 14 days only if every file is text and none of the run's passwords, keys
+# and TOTP seeds reached them (check_artefact_secrets.py). Session values (the cookies, the
+# bearers) die with the stack and are not searched for (#5061's security look). The database is
+# thrown away with `down -v`, and the seeds, the lane key and the clock file with their directories.
+# A red run on main comments on, or opens, the signal's issue (_nightly-issue.yml, #1849); a
+# dispatch on a branch files nothing.
+on:
+  schedule:
+    - cron: "51 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# No workflow-level concurrency group (#3449): the report job's per-signal group serialises filing.
+jobs:
+  e2e-auth-real:
+    name: e2e-auth-real
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      FIXTURE_USERS: "24" # one per test: no two tests share a lockout counter or a TOTP step
+      CV_E2E_REAL_API: http://127.0.0.1:8000
+      CV_E2E_REAL_PREVIEW_PORT: "4173"
+      # Every compose command here, and the audit slice's `docker compose exec` in the specs.
+      COMPOSE_FILE: ${{ github.workspace }}/infra/compose/docker-compose.yml
+      COMPOSE_PROFILES: core
+      # Compose checks every service's variables on each command; these stores never start here.
+      GF_SECURITY_ADMIN_PASSWORD: unused-ci
+      MINIO_ROOT_PASSWORD: unused-ci
+      CV_ALERT_PAGE_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_TICKET_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_DEADMAN_URL: http://127.0.0.1:1/unused
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm via corepack
+        run: corepack enable && corepack prepare pnpm@12.5.1 --activate
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+
+      - name: Make this run's synthetic credentials (masked, never echoed)
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-clock"
+          secret() { v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"; }
+          for name in POSTGRES_PASSWORD CV_AUTH_PEPPER CV_AUTH_TOTP_KEY_HEX \
+            CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX CV_E2E_REAL_PASSWORD; do secret "$name"; done
+          # The audit lane key (ADR-0037 decision 6), mode 0400 in a directory of its own.
+          (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
+
+      - name: Start Postgres and QuestDB (the compose data stores, loopback only)
+        # Bounded: the slowest healthcheck (QuestDB's) gives up after about two minutes.
+        run: docker compose up -d --wait --wait-timeout 180 postgres questdb
+
+      - name: Migrate, then seed the fixture users, each with a TOTP method of its own (testnet)
+        working-directory: services/api
+        timeout-minutes: 15
+        env:
+          CV_ENVIRONMENT: testnet
+        run: |
+          set -euo pipefail
+          umask 077
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          uv sync --frozen
+          uv run --frozen alembic upgrade head
+          suffix=$(openssl rand -hex 4)
+          for i in $(seq "$FIXTURE_USERS"); do
+            CV_SEED_USERNAME="e2e-$suffix-$i" CV_SEED_PASSWORD="$CV_E2E_REAL_PASSWORD" \
+              uv run --frozen python scripts/seed_fixture_user.py --totp-secret-out "$RUNNER_TEMP/cv/e2e-$i.totp"
+            echo "::add-mask::$(cat "$RUNNER_TEMP/cv/e2e-$i.totp")"
+          done
+          # The specs' users file (support/real/stack.ts): names and seed paths, never a seed.
+          python3 -I - "$RUNNER_TEMP/cv" "$suffix" "$FIXTURE_USERS" > "$RUNNER_TEMP/cv/users.json" <<'PY'
+          import json, pathlib, sys
+          d, suffix, n = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+          print(json.dumps([{"username": f"e2e-{suffix}-{i}", "totp_file": str(d / f"e2e-{i}.totp")}
+                            for i in range(1, n + 1)]))
+          PY
+
+      - name: Start the API (testnet, real storage backend, test clock, loopback)
+        working-directory: services/api
+        env:
+          CV_ENVIRONMENT: testnet
+          CV_STORAGE_BACKEND: real
+          CV_FEED: synthetic
+          # The API runs on the host, outside the compose network: QuestDB is its loopback ports.
+          CV_QUESTDB_PG: 127.0.0.1:8812
+          CV_QUESTDB_ILP: 127.0.0.1:9009
+          CV_BIND_HOST: 127.0.0.1
+          CV_BIND_PORT: "8000"
+          CV_METRICS_BIND: 127.0.0.1:9108
+          # #2086: auth time is real UTC plus this file's offset, which the clock specs move forward.
+          CV_TEST_CLOCK: "true"
+          CV_TEST_CLOCK_FILE: ${{ runner.temp }}/cv-clock/offset
+          # SR-042: the preview's origin, which every request and the socket of the lane carry.
+          CV_ALLOWED_ORIGINS: http://127.0.0.1:${{ env.CV_E2E_REAL_PREVIEW_PORT }}
+        run: |
+          set -euo pipefail
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          export CV_AUDIT_LANE_KEY_FILE="$RUNNER_TEMP/cv-lane/lane.key"
+          export CV_AUDIT_WAL_PATH="$RUNNER_TEMP/cv/audit/audit.wal"
+          export CV_PARQUET_ROOT="$RUNNER_TEMP/cv/data/parquet" CV_BACKUP_ROOT="$RUNNER_TEMP/cv/data/backups"
+          mkdir -p -m 700 "$RUNNER_TEMP/cv/audit" "$RUNNER_TEMP/cv/data" "$CV_PARQUET_ROOT" "$CV_BACKUP_ROOT"
+          PYTHONFAULTHANDLER=1 nohup uv run --frozen python -m candleviewer.server > "$RUNNER_TEMP/cv/api.log" 2>&1 &
+          api=$!
+          for _ in $(seq 60); do
+            if curl -fsS --max-time 5 -o /dev/null "$CV_E2E_REAL_API/healthz"; then exit 0; fi
+            kill -0 "$api" 2>/dev/null || break # it exited: stop waiting
+            sleep 2
+          done
+          if kill -0 "$api" 2>/dev/null; then
+            state="still running, not answering" # it has no exit code to report
+          else
+            code=0
+            wait "$api" || code=$?
+            state="exit ${code}"
+          fi
+          echo "::error title=e2e-auth-real::the API did not answer /healthz (${state}); the last of its log follows"
+          tail -n 200 "$RUNNER_TEMP/cv/api.log"
+          exit 1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # vite resolves `@candleviewer/ui/theme.css` and the token CSS to packages/ui's built files,
+      # and pnpm runs here directly, so turbo's `^build` does not build them first (#3272).
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
+
+      - name: Build the SPA that vite preview serves (dist/)
+        working-directory: apps/web
+        run: pnpm run build
+
+      - name: Install Playwright's Chromium
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      # Project `real`, then `real-clock` (the specs that move the server clock, one at a time):
+      # the config orders them, and `real-clock` runs only once `real` passed.
+      - name: The real lane (playwright.real.config.ts)
+        working-directory: apps/web
+        timeout-minutes: 20
+        env:
+          CV_E2E_REAL_USERS_FILE: ${{ runner.temp }}/cv/users.json
+          CV_TEST_CLOCK_FILE: ${{ runner.temp }}/cv-clock/offset
+        run: npx playwright test -c e2e/playwright.real.config.ts
+
+      - name: Keep the API's log with the test results
+        if: ${{ failure() }}
+        run: |
+          mkdir -p apps/web/test-results
+          if [ -f "$RUNNER_TEMP/cv/api.log" ]; then cp "$RUNNER_TEMP/cv/api.log" apps/web/test-results/api.log; fi
+
+      - name: No secret of this run in the failure artefacts (else nothing is uploaded)
+        id: scrub
+        if: ${{ failure() }}
+        # Text only: the search reads bytes, so an image or an archive would hide what it holds.
+        # (`sed` lists the first five, not `head`: `head` quits early and `find` then exits 141
+        # under pipefail, before the message below prints.)
+        # Then each secret this run made: its passwords, pepper and keys (in $GITHUB_ENV since the
+        # credentials step; only their names are passed), the TOTP seeds and the audit lane key.
+        # No session file: `--env-dir` names a directory that does not exist.
+        run: |
+          set -euo pipefail
+          other=$(find apps/web/test-results -type f ! -name '*.json' ! -name '*.md' ! -name '*.log' ! -name '*.txt' | sed -n '1,5p')
+          if [ -n "$other" ]; then
+            echo "::error title=e2e-auth-real::a file the secret check cannot read is in the artefact: ${other//$'\n'/, }"
+            exit 1
+          fi
+          python3 -I security/zap/check_artefact_secrets.py --env-dir "$RUNNER_TEMP/cv-no-session-files" \
+            --env CV_E2E_REAL_PASSWORD --env POSTGRES_PASSWORD --env CV_AUTH_PEPPER \
+            --env CV_AUTH_TOTP_KEY_HEX --env CV_AUTH_RECOVERY_HMAC_KEY_HEX --env CV_AUTH_CSRF_KEY_HEX \
+            --secret-file "$RUNNER_TEMP/cv/*.totp" --secret-file "$RUNNER_TEMP/cv-lane/lane.key" \
+            apps/web/test-results
+
+      - name: Upload the failure artefacts (kept 14 days)
+        if: ${{ failure() && steps.scrub.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-auth-real-failure
+          path: apps/web/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Tear down (the throwaway database goes with its volume, the run's seeds and keys with theirs)
+        if: always()
+        run: |
+          docker compose down -v || true
+          rm -rf "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-clock" || true
+
+  report:
+    needs: e2e-auth-real
+    # A dispatch on a branch (an experiment) files nothing: only main's nightly is the signal.
+    if: ${{ always() && needs.e2e-auth-real.result == 'failure' && github.ref == 'refs/heads/main' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: e2e-auth-real
+      title-prefix: "test: e2e-auth-real nightly failed"
+      labels: type/test,area/auth-rbac
+      body: "e2e-auth-real (E09-Q02, the real-backend auth lane) failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Artifact: e2e-auth-real-failure (absent when the secret check refused it: the step says which file). Triage from the failed spec's error-context.md, correlation-ids.json and audit-log-slice.json, and api.log."

@@ -67,25 +67,34 @@ function watchApi(page: Page): () => string[] {
   return () => calls;
 }
 
+/** The shell's own reads after its first paint (`SessionLockHost`, `PreferencesProvider`), stubbed by `stubSession`. */
+const SHELL_READS = ["/api/v1/auth/session", "/api/v1/settings"];
+
+// Each deep link gets a page of its own: the shell's liveness probe (every 2 s) may start after a flush, and a
+// navigation of the same page would drop it before its body is read, or leave it unsettled, which the guard fails.
 test("E09-TC-E06 a viewer's deep link to a denied route fetches none of the data it guards, and no such body reaches the page", async ({
-  page,
+  context,
 }) => {
-  await stubSession(page, { role: "viewer" });
-  // were the SPA to ask, this is what a server that forgot the check would answer
-  await page.route(
-    (url) => GUARDED.test(url.pathname),
-    (r) => r.fulfill(json({ items: [{ email: SECRET }] })),
-  );
-  const guard = watchForLeaks(page, [SECRET]);
-  const calls = watchApi(page);
   for (const [path, heading] of DENIED) {
+    const page = await context.newPage();
+    await stubSession(page, { role: "viewer" });
+    // were the SPA to ask, this is what a server that forgot the check would answer
+    await page.route(
+      (url) => GUARDED.test(url.pathname),
+      (r) => r.fulfill(json({ items: [{ email: SECRET }] })),
+    );
+    const guard = watchForLeaks(page, [SECRET]);
+    const calls = watchApi(page);
     await page.goto(path);
     await expect(page.getByRole("heading", { level: 1, name: heading })).toBeVisible();
+    // the shell reads these after its heading: once it has asked, the flush waits for their bodies and checks them
+    await expect.poll(calls).toEqual(expect.arrayContaining(SHELL_READS));
+    expect(calls()).toContain("/api/v1/me"); // positive control: the watcher sees the SPA's own reads
+    expect(calls().filter((call) => GUARDED.test(call.split("?")[0] ?? ""))).toEqual([]);
+    await expect(page.getByText(SECRET)).toHaveCount(0);
+    await guard.flush();
+    await page.close();
   }
-  expect(calls()).toContain("/api/v1/me"); // positive control: the watcher sees the SPA's own reads
-  expect(calls().filter((call) => GUARDED.test(call.split("?")[0] ?? ""))).toEqual([]);
-  await expect(page.getByText(SECRET)).toHaveCount(0);
-  await guard.flush();
 });
 
 test("E09-TC-E07 the denied page makes no call that names the account id it was asked for", async ({

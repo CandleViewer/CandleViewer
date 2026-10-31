@@ -198,10 +198,11 @@ and files. No concurrency group (#3449). Cost: one job a night, capped by its 35
 `perf-e08-q04-pack`, and `perf-e08-q04-full` on a dispatch with `profile=full` and on the Sunday
 05:17 UTC `rest_k6` run),
 `dast-admin-nightly.yml` (`dast-admin`, labels `security`, `area/accounts-admin`; nightly at
-03:27 UTC and on dispatch) and `chaos-ws-nightly.yml` (`chaos-ws`, labels `qa`,
-`area/backend-platform`, `priority/p1`) report a red signal through `_nightly-issue.yml`, from
-scheduled and manual runs alike; `dast-admin` reports from `main` only, so a dispatch on a branch
-files nothing. Its `report` job comments on the
+03:27 UTC and on dispatch), `e2e-auth-real.yml` (`e2e-auth-real`, labels `type/test`,
+`area/auth-rbac`; nightly at 03:51 UTC and on dispatch) and `chaos-ws-nightly.yml` (`chaos-ws`,
+labels `qa`, `area/backend-platform`, `priority/p1`) report a red signal through
+`_nightly-issue.yml`, from scheduled and manual runs alike; `dast-admin` and `e2e-auth-real` report
+from `main` only, so a dispatch on a branch files nothing. Its `report` job comments on the
 newest open issue that `github-actions[bot]` opened with the signal's title prefix and all its
 labels, or opens one titled `<prefix> (YYYY-MM-DD)`, so a lasting drift or regression keeps one
 issue with a comment per red night. Close the issue when the cause is fixed: the next red night
@@ -240,6 +241,19 @@ recursive schemas pass the import's nesting limit). The `zap-admin-surface` arte
 role's plans, ZAP's output, the scan's own `zap.log` (`<role>-scan-zap.log`) and reports, the
 exported audit rows and the API's log. Triage each alert like any security finding: severity,
 disposition, remediation; an accepted one goes into the baseline by a reviewed PR.
+
+To triage a red `e2e-auth-real` run (#2490, E09-Q02's real-backend auth lane: Playwright against a
+throwaway stack on the runner), find the step that failed: "Start the API" as above (the test clock
+refuses to start off a keyless testnet); a red "The real lane" is a spec: the
+`e2e-auth-real-failure` artefact holds each failed test's `error-context.md`, its
+`correlation-ids.json` (every API answer its pages saw) and `audit-log-slice.json` (the rows of its
+fixture users and of those ids, read once they settled), and the API's log. The lane keeps no trace,
+video or screenshot. "No secret of this run in the failure artefacts" means a file was not text, or a
+password, key or TOTP seed the run generated reached the artefact, which is then not uploaded. A
+failure on SCR-001 with the password filled uploads nothing, because the scan refuses
+`error-context.md` (Playwright writes the typed password into it): read the job log instead, where
+the value is masked. A spec that fails on the product is a defect to file, never a test to weaken
+(#293 BQ-4).
 
 To triage a red `dast-rules` or `dast-market` run (#3991: `dast-rules-nightly.yml` and
 `dast-market-nightly.yml`, through `_dast-low-priv.yml`, as a synthetic Viewer), find the step that
