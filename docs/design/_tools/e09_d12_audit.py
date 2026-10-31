@@ -59,7 +59,9 @@ working tree.
    document, cite and pin gates run on the whole spec; the v2 gates read the v2 blocks. G-V1-FROZEN
    holds the v1 view byte-equal to v1 but for the C rows; G-REGISTER reads §17.1; G-DELTA ties the
    pin diff against v1's pins to §17.1; G-CITED-STABLE keeps the lines and section numbers other
-   files cite. A v1 cite edited at `origin/main` must be a §17.3 row.
+   files cite. A v1 cite edited at `origin/main` must be a §17.3 row. Every v2 cite must hold
+   its text recorded in CITE_TEXT_V2 (written here, never by --repin-ruled), and a quote on a v2
+   line that cites must stand in its own sources or v1's deck.
 8. **Modes, by content (never a flag).** PR mode: the spec differs from its copy at `origin/main`.
    Post-merge mode: the spec equals that copy and the copy carries the v2 version line; a cited
    range edited later is then a WARN naming the commit, never a FAIL, and G-UNTOUCHED reads
@@ -1627,6 +1629,12 @@ def cite_findings(t: Texts) -> tuple[list[Finding], int]:
             if not base[b - 1].strip():
                 fails.append(F("G-CITE", f"{where} `{cid}`:{b} is blank at {rev}", doc, sec))
                 continue
+            if rev == BASE_V2 and doc == "spec":
+                want = CITE_TEXT_V2.get(cite_label(cid, a, b))
+                if want is None or cite_line_text(base, a) != want:
+                    what = "has no recorded text" if want is None else "is not its recorded text"
+                    msg = f"{where} `{cid}`:{a}–{b} {what} at {rev}"
+                    fails.append(F("G-CITE", msg, doc, sec))
             if not head_ok():
                 continue
             head_t = git_fetch_head(rel)
@@ -1641,6 +1649,10 @@ def cite_findings(t: Texts) -> tuple[list[Finding], int]:
                 warn(f"[G-VERSION] {msg} by {drift_sha(rel, rev) or 'a later commit'}")
             else:
                 fails.append(F("G-VERSION", f"{msg}: re-read and re-point the cite", doc, sec))
+    used = {cite_label(*ref) for ref in v2_cites(t.spec)}
+    for lab in sorted(set(CITE_TEXT_V2) - used):
+        msg = f"the recorded text for {lab} is held by no v2 cite"
+        fails.append(F("G-CITE", msg, UNHELD, None))
     for rev, table in ((BASE, CITED), (BASE_V2, CITED_V2)):
         for cid, n, frag in table:
             base = base_lines(cid, rev)
@@ -1686,12 +1698,17 @@ def quoted_ok(q: str, cids: list[str], deck_texts: list[str], rev: str = "") -> 
         return True
     if any(lq == d or re.fullmatch(template(d), lq) for d in deck_texts):
         return True
+    pat = re.compile(template(lq)) if "{" in lq else None
+    v1_strings = [loose(str(e.get("string", ""))) for e in v1_deck().values()]
+    if rev == BASE_V2 and cids:  # a v2 line that cites: its own sources or v1's deck (lens M5)
+        return lq in v1_strings or any(
+            lq in (src := source_text(cid, rev)) or (pat is not None and bool(pat.search(src)))
+            for cid in cids
+        )
     if rev == BASE_V2 and (lq in loose(v1_text()) or any(lq in loose(r) for r in R2_QUOTES)):
         return True
-    v1_strings = [loose(str(e.get("string", ""))) for e in v1_deck().values()]
     if rev == BASE_V2 and lq in v1_strings:
         return True
-    pat = re.compile(template(lq)) if "{" in lq else None
     for cid in [*cids, *CORE]:
         src = source_text(cid, rev)
         if lq in src or (pat is not None and pat.search(src)):
@@ -1717,9 +1734,14 @@ def g_quote(t: Texts) -> list[Finding]:
             work = " | ".join(c for j, c in enumerate(split_row(line)) if j not in skip[line])
         cids = [c for c, _a, _b in cite_refs(work)]
         cids += re.findall(rf"\b({_BARE_IDS})\b", work)
-        for m in QUOTED.finditer(CODE.sub(" ", strip_comments(work))):
+        plain = CODE.sub(" ", strip_comments(work))
+        for m in QUOTED.finditer(plain):
             q = m[0][1:-1]
             if len(q) < QUOTE_MIN:
+                continue
+            # a v2 line may quote the v1 unit it names ("§4.1's "…"", "supersedes "…"")
+            names_v1 = rev == BASE_V2 and re.search(r"(?:supersedes|'s) $", plain[: m.start()])
+            if names_v1 and loose(q) in loose(v1_text()):
                 continue
             if not quoted_ok(q, cids, deck_texts, rev):
                 msg = f"spec:{i} {q[:50]!r} is not verbatim in a cited source"
@@ -3550,7 +3572,7 @@ def pin_findings(t: Texts) -> list[Finding]:
 # ---------------------------------------------------------------------------- v2: the delta
 
 # R2's own words the v2 blocks may quote (G-QUOTE); the ruling is a comment, not a file
-R2_QUOTES = ("(E09-D12)", "Outside", "pending", "re-sync needed: <what changed>")
+R2_QUOTES = ("(E09-D12)", "Outside", "pending")
 # v2's load-bearing fragments: (cite id, line at BASE_V2, text the line must hold)
 CITED_V2: tuple[tuple[str, int, str], ...] = (
     ("22", 1832, "operationId: authLock"),
@@ -3583,6 +3605,11 @@ CITED_V2: tuple[tuple[str, int, str], ...] = (
     ("D10", 919, "the owner MFA-reset operation"),
     ("D10", 931, "forces enrolment under a fresh password re-authentication"),
     ("E17D02", 249, "owned by the app shell"),
+    ("22", 14603, "Available to any authenticated"),
+    ("16", 631, "re-sync needed: <what changed>"),
+    ("22", 1848, "A request with only the cookie is"),
+    ("22", 1850, "`403 csrf_token_invalid` and nothing is locked"),
+    ("22", 1851, "`401 unauthenticated`, whatever cookie comes with it"),
 )
 REGISTER_HEAD = "17.1 The v2 delta register"
 MODES_HEAD = "17.2 The modes and the gates"
@@ -3631,6 +3658,8 @@ LIFTS = (
 )
 GRADES = ("Blocker", "Major", "Minor", "Info")
 D10_BLOCKERS = ("F-1", "F-2", "F-25", "F-26")
+# §9.6's carried rows, frozen: the four Blockers, D10's rows for the deck strings, and every Info
+CARRIED_F = (*D10_BLOCKERS, "F-13", "F-14", "F-49", "F-50", "F-51")
 D10_FINDINGS = (532, 588)  # D10 §12 at BASE_V2
 D10_MAP = (308, 402)  # D10 §6.2 at BASE_V2
 D10_SCRIPT = (590, 635)
@@ -3924,6 +3953,146 @@ def v2_below(spec: str) -> tuple[list[str], list[str]]:
     return below, sim
 
 
+UNHELD = "unheld"  # the doc tag of a recorded cite text no v2 cite holds
+
+
+def cite_label(cid: str, a: int, b: int) -> str:
+    return f"{cid}:{a}" if a == b else f"{cid}:{a}-{b}"
+
+
+# each v2 cite's recorded text at the v2 base (lens M5): written once here, never by
+# --repin-ruled, so a cite moved to another line or a line edited under it FAILs G-CITE
+CITE_TEXT_V2: dict[str, str] = {
+    "04:834": "| SR-014 | Login responses MUST be indistinguishable between",
+    "04:844": "sha:231ebfdea0fb",
+    "05:116": "- Demo vs Live: colour (documented owner decision: Live = re",
+    "14:143": "- **Interactions/hotkeys:** `Enter` submits; Tab order usern",
+    "14:148": "- **Analytics/audit:** `auth.login.attempt`, `auth.login.suc",
+    "14:171": '- **States:** idle · verifying · invalid code ("That code is',
+    "14:174": "- **Sign-off:** [ ] paste behaviour [ ] recovery-code path [",
+    "14:263": "- **Validation:** typed confirmation must match exactly (cas",
+    "14:468": "- **States:** invite valid · link not valid (expired, used a",
+    "14:2370": "- **Data:** `GET /api/v1/me/sessions`, `DELETE /api/v1/me/se",
+    "15:2609": "sha:8394fa59db3d",
+    "15:2646": "sha:4a31c4d92f44",
+    "15:2655-2666": "### CMP-205 QrCode",
+    "15:2660": "- **Tokens**: the card `color.surface.raised`; the bitmap an",
+    "15:2684": "- **Props**: `version: string` (before sign-in the version l",
+    "15:2687": "- **Storybook**: PreAuthVersionOnly, SignedInDemo, SignedInL",
+    "16:631": "- **Re-open, don't drift (§13.5 made operational).** A chang",
+    "22:1196-1201": "Every failed sign-in gets one answer, whatever the account's",
+    "22:1196-1205": "Every failed sign-in gets one answer, whatever the account's",
+    "22:1829": "/auth/lock:",
+    "22:1835": "Locks the calling session at once, exactly as if its idle de",
+    "22:1841-1843": "the `auth.session_locked` audit row's time. The body is the ",
+    "22:1844-1845": "Lock records no activity and never moves `expires_at`; only ",
+    "22:1848-1850": '`cv_refresh` cookie identifies no lock (see "Idle lock"). A ',
+    "22:1851": "access token past its lifetime is `401 unauthenticated`, wha",
+    "22:1852-1853": "Self only: any query parameter is refused with `422` (SR-026",
+    "22:1852": "Self only: any query parameter is refused with `422` (SR-026",
+    "22:1856": "* A session that is already idle-locked answers `200` with i",
+    "22:1859-1860": "* A revoked session, or one past its absolute lifetime, answ",
+    "22:1864-1865": "The lock's record is `auth.session_locked`, written ahead (C",
+    "22:14603-14604": "Backs the About dialog and the Electron update check. Availa",
+    "22:18510": "End of the 12 h absolute lifetime. Refresh, extend, lock and",
+    "22:24308": "version: { type: string, minLength: 1, maxLength: 32, patter",
+    "ACT:35-142": '"auth.login",',
+    "ACT:45": '"auth.idle_locked",',
+    "ACT:53": '"auth.session_locked",',
+    "CHECK:60": "{item.reason ? <span> - {item.reason}</span> : null}",
+    "D07:22": "- **BQ-2 (confirmed).** Three PRs in that order — pack, cata",
+    "D07:37": "**Nothing in the band is published.** No band component exis",
+    "D07:104-115": "## 4. The ten contracts (BQ-11 ... BQ-20)",
+    "D07:119": "- **T2** (D09:49): only CMP-097's steps meet a denied action",
+    "D07:195-209": "## 9. Design-ahead, the build owner and publication (BQ-33, ",
+    "D07:234-254": "## 11. The open-questions log (BQ-37): the union by id",
+    "D07:240": "| G-1 | a theme-invariant quiet-zone token for CMP-205 (L-17",
+    "D07:242": "| G-3 | the light danger and warning text values and the hig",
+    "D07:254": "| D05 Q-6, D10 Q-6, D12 Q-9, D12 Q-10 | the caps-lock string",
+    "D08:336": "| absolute expiry / revocation / the fifth wrong password | ",
+    "D08:340": '| step-up / unlock failure | assertive, once | "Invalid pass',
+    "D09:49": "- **T2 Disabled with a visible reason (D4).** _Semantics:_ t",
+    "D09:75": '| Onboarding task "Invite a second user", SCR-019 (CMP-097 s',
+    "D09:90": '| `rbac.owner_only` | "Only the owner can {verb}." | the ope',
+    "D09:94": '| `rbac.read_only` | "Read-only after three wrong codes." | ',
+    "D09:95": '| `rbac.view_as` | "Read-only while viewing as {user}." | `G',
+    "D09:103": '| users | `users:read` → "see users" · `users:write` → "mana',
+    "D09:204": "| T2 wrapper | CMP-079 RbacGate | `reason` required when `al",
+    "D09:207": "| T2 glyph | CMP-019 Icon `lock` | `decorative=false`, name ",
+    "D10:154": "- **R-2 Routing and the hold (RULED BQ-9).** An F-row names ",
+    "D10:237": "| 2.5.3 | `6.5` | non-compliant | F-1, F-26: the name must c",
+    "D10:304": "### 6.1 Precedence and the carried causes",
+    "D10:308-402": "### 6.2 The map",
+    "D10:406": "- **Hygiene:** per surface one pre-rendered polite region an",
+    "D10:408": "- **The auth assertive set** (RULED differently): the lock (",
+    "D10:412-428": "### 8.1 The time-limit table",
+    "D10:434-436": "| EX-1 | the absolute session lifetime (TL-2) | the expiry c",
+    "D10:509-521": "### 11.1 The copy of record (RULED BQ-17)",
+    "D10:517": '| SCR-005 and SCR-006 failure | "Invalid password or code." ',
+    "D10:518": '| the expiry announcement | "Session expired." then "Signed ',
+    "D10:532-588": "## 12. The finding register (RULED BQ-9)",
+    "D10:590-635": "## 13. The screen-reader script (RULED BQ-18, BQ-19)",
+    "D10:639-661": "## 14. The CI-checkable assertion list (RULED BQ-29)",
+    "D10:661": "Handed at merge as comments to E09-Q02 (#293) and E09-Q06 (#",
+    "D10:663-781": "## 15. The `05` §10 templates (RULED BQ-5)",
+    "D10:668": "Feature: SCR-001 sign-in — accessibility acceptance criteria",
+    "D10:682": "Feature: SCR-002 two-factor, recovery-code entry and exhaust",
+    "D10:696": "Feature: SCR-003 enrolment, its SCR-017 step 3 and SCR-112's",
+    "D10:710": "Feature: SCR-004 password change, its SCR-017 step 2 and SCR",
+    "D10:724": "Feature: SCR-005 lock with CMP-098 — accessibility acceptanc",
+    "D10:738": "Feature: SCR-006 step-up — accessibility acceptance criteria",
+    "D10:766": "Feature: the RBAC pattern — accessibility acceptance criteri",
+    "D10:912": "| G-1 | the enrolment-only session (`22`:81–84) gives no sig",
+    "D10:919": "| G-8 | the owner MFA-reset operation (Q-7 as RULED): the `r",
+    "D10:931": "| Q-7 | does re-enrolment after an owner reset ask a step-up",
+    "E17D02:249": "One live-region pair (polite + assertive) pre-rendered empty",
+    "LOGIN:4-10": 'type State = "idle" | "submitting" | "invalid" | "rate_limit',
+    "LOGIN:94-132": "return (",
+}
+# built from pieces, so this file holds none of the words the public-text rules keep out
+BANNED_WORDS = re.compile(
+    "le"
+    + "ak|expo"
+    + "sed|by"
+    + "pass|expl"
+    + "oit|att"
+    + "ack|ora"
+    + "cle|rev"
+    + "eal|unbou"
+    + "nded|flo"
+    + "od|sta"
+    + "ll|\\bD"
+    + "oS\\b|advis"
+    + "ory|GH"
+    + "SA|pre-"
+    + "auth",
+    re.IGNORECASE,
+)
+
+
+def cite_line_text(lines: list[str], n: int) -> str:
+    """The text a v2 cite is held to: its first line, normalised, its first 60 characters, or
+    `sha:` and that line's hash where the line holds a word the public-text rules keep out."""
+    line = pin_norm(lines[n - 1]) if 0 < n <= len(lines) else ""
+    if BANNED_WORDS.search(line):
+        return "sha:" + hashlib.sha256(line.encode("utf-8")).hexdigest()[:12]
+    return line[:60]
+
+
+def v2_cites(spec: str) -> list[tuple[str, int, int]]:
+    """Every distinct cite a v2 line reads at the v2 base (§17.3's v1 column excluded)."""
+    v2 = v2_line_set(spec)
+    drift_rows = {ln for ln in section(spec, DRIFT_HEAD).split("\n") if ln.startswith("| ")}
+    out: dict[tuple[str, int, int], None] = {}
+    for i, ln in enumerate(spec.split("\n"), 1):
+        if i not in v2:
+            continue
+        text = " | ".join(split_row(ln)[1:]) if ln in drift_rows else ln
+        for ref in cite_refs(text):
+            out[ref] = None
+    return list(out)
+
+
 def v2_body(t: Texts, head: str) -> tuple[str, str]:
     return section(t.spec, head), spec_sec(t, head)
 
@@ -3961,6 +4130,11 @@ def g_register(t: Texts) -> list[Finding]:
     bad: list[Finding] = []
     if not rows:
         return [F("G-REGISTER", "§17.1 has no rows", "spec", sec)]
+    pointers = plan_text("14").count(POINTER_14 + "\n")
+    if pointers and not any(unit_name(r[1]) == "`14`" and "(E09-D12)" in r[3] for r in rows):
+        bad.append(
+            F("G-REGISTER", f"`14` carries {pointers} pointer lines; no §17.1 row", "spec", sec)
+        )
     if [r[0] for r in rows] != [f"V-{n}" for n in range(1, len(rows) + 1)]:
         bad.append(F("G-REGISTER", "§17.1's ids are not V-1..V-n in order", "spec", sec))
     blocks = set()
@@ -4164,31 +4338,84 @@ def g_ops2(t: Texts) -> list[Finding]:
     return bad
 
 
+# §4.3, frozen (R2 BQ-13; lens M1): condition -> (the code its answer cell names, the `22` range
+# that holds that code at the v2 base, the deck key, the fallback, the state cell's opening)
+ERR2_ROWS: dict[str, tuple[str, int, int, str, str, str]] = {
+    "locked account": (
+        "401 unauthenticated",
+        1196,
+        1201,
+        "`auth.login.failed`",
+        "F-1",
+        "SCR-001 `error-generic`",
+    ),
+    "Lock now: revoked or expired session": (
+        "401 session_revoked",
+        1859,
+        1860,
+        "—",
+        "—",
+        "SCR-001; no reason line",
+    ),
+    "Lock now: access token past its lifetime": (
+        "401 unauthenticated",
+        1851,
+        1851,
+        "—",
+        "—",
+        "SCR-001; no reason line",
+    ),
+    "Lock now: no access token (the cookie only)": (
+        "403 csrf_token_invalid",
+        1848,
+        1850,
+        "—",
+        "—",
+        "nothing visible",
+    ),
+    "Lock now: unavailable": ("503", 1864, 1865, "`auth.unreachable`", "F-4", "the host's"),
+}
+
+
 def g_errmap2(t: Texts) -> list[Finding]:
-    """R2 BQ-13: §4.3 maps each condition onto one state, a deck key or none, a fallback of §4.2
-    or none; a supersede cell quotes a §4.1 row that stands."""
+    """R2 BQ-13: §4.3 holds exactly the frozen rows; each answer names its code at the `22`
+    range that holds it (the code's words read there), with its deck key, fallback and state;
+    a supersede cell quotes a §4.1 row that stands."""
     body, sec = v2_body(t, ERR2_HEAD)
-    view = v1_view(t.spec)
-    fbs = set(fallbacks(view))
-    keys = deck_strings(t.deck)
-    v1_conds = {r[0] for r in rows_of(view, ERR_HEAD)}
+    v1_conds = {r[0] for r in rows_of(v1_view(t.spec), ERR_HEAD)}
+    api = base_lines("22", BASE_V2)
+    rows = {r[0]: r for r in table_rows(body) if len(r) == 6}
     bad: list[Finding] = []
-    for r in table_rows(body):
-        if len(r) != 6:
+    if sorted(rows) != sorted(ERR2_ROWS):
+        bad.append(F("G-ERRMAP2", f"§4.3's conditions are not {sorted(ERR2_ROWS)}", "spec", sec))
+    for cond, (code, a, b, key, fb, state) in ERR2_ROWS.items():
+        r = rows.get(cond)
+        if r is None:
             continue
-        key = r[3].strip("`")
-        if r[3] != "—" and key not in keys:
-            bad.append(F("G-ERRMAP2", f"§4.3 {r[0]}: {r[3]} is not a deck key", "spec", sec))
-        if r[4] != "—" and r[4] not in fbs:
-            bad.append(F("G-ERRMAP2", f"§4.3 {r[0]}: {r[4]} is not a §4.2 fallback", "spec", sec))
+        words = code.split()[-1]
+        held = words in " ".join(api[a - 1 : b])
+        if (
+            f"`{code}" not in r[1]
+            and code not in r[1]
+            or ("22", a, b) not in cite_refs(r[1])
+            or not held
+        ):
+            bad.append(F("G-ERRMAP2", f"§4.3 {cond}: not {code} at `22`:{a}–{b}", "spec", sec))
+        if r[3] != key or r[4] != fb or not r[2].startswith(state):
+            bad.append(F("G-ERRMAP2", f"§4.3 {cond}: key, fallback or state moved", "spec", sec))
         if r[5] != "—" and not any(q in v1_conds for q in quoted(r[5])):
-            bad.append(F("G-ERRMAP2", f"§4.3 {r[0]} supersedes no §4.1 row", "spec", sec))
+            bad.append(F("G-ERRMAP2", f"§4.3 {cond} supersedes no §4.1 row", "spec", sec))
     return bad
+
+
+# the crosswalk's agreement, frozen (R2 BQ-17): every §9.2 row agrees with D10 but unlock
+CROSS_AGREES = {"unlock": "no (C-27)"}
 
 
 def g_crosswalk(t: Texts) -> list[Finding]:
     """R2 BQ-17: each §9.2 row appears once in §9.4, naming T-rows of D10's map at the v2 base
-    and the first one's focus target verbatim; a row that disagrees names a §15.4 C-row."""
+    and each one's focus target verbatim, in order; its agreement is the frozen one, and a row
+    that disagrees names a §15.4 C-row."""
     body, sec = v2_body(t, CROSS_HEAD)
     interim = [r[0] for r in rows_of(v1_view(t.spec), FOCUS_HEAD)]
     tmap = d10_rows(*D10_MAP, "T-")
@@ -4202,8 +4429,11 @@ def g_crosswalk(t: Texts) -> list[Finding]:
         if not tids or any(x not in tmap for x in tids):
             bad.append(F("G-CROSSWALK", f"§9.4 {r[0]}: {r[1]} not in D10's map", "spec", sec))
             continue
-        if pin_norm(r[2]) != pin_norm(tmap[tids[0]][4]):
-            bad.append(F("G-CROSSWALK", f"§9.4 {r[0]}: not {tids[0]}'s focus target", "spec", sec))
+        want = list(dict.fromkeys(pin_norm(tmap[x][4]) for x in tids))
+        if [pin_norm(x) for x in r[2].split(" · ")] != want:
+            bad.append(F("G-CROSSWALK", f"§9.4 {r[0]}: not {r[1]}'s focus targets", "spec", sec))
+        if r[3] != CROSS_AGREES.get(r[0], "yes"):
+            bad.append(F("G-CROSSWALK", f"§9.4 {r[0]}: {r[3]!r} is not the reading", "spec", sec))
         m = re.fullmatch(r"no \((C-\d+)\)", r[3])
         if r[3] != "yes" and (m is None or m[1] not in crows):
             bad.append(F("G-CROSSWALK", f"§9.4 {r[0]}: {r[3]!r} names no C-row", "spec", sec))
@@ -4217,9 +4447,10 @@ def g_findings(t: Texts) -> list[Finding]:
     d10 = d10_rows(*D10_FINDINGS, "F-")
     rows = {r[0]: r for r in table_rows(body) if re.fullmatch(r"F-\d+", r[0])}
     bad: list[Finding] = []
-    for fid in D10_BLOCKERS:
+    infos = [f for f, c in d10.items() if c[2] == "Info"]
+    for fid in (*CARRIED_F, *infos):
         if fid not in rows:
-            bad.append(F("G-FINDINGS", f"§9.6 does not carry the Blocker {fid}", "spec", sec))
+            bad.append(F("G-FINDINGS", f"§9.6 does not carry {fid}", "spec", sec))
     for fid, r in rows.items():
         src = d10.get(fid)
         if src is None or len(r) != 5:
@@ -4256,6 +4487,12 @@ def g_announcer(t: Texts) -> list[Finding]:
     body, sec = v2_body(t, LIVE_HEAD)
     text = norm_text(body)
     bad: list[Finding] = []
+    if "(SCR-001..004, SCR-017 step 1)" not in body:
+        bad_hosts = [
+            F("G-ANNOUNCER", "§9.7's hosts are not SCR-001..004, SCR-017 step 1", "spec", sec)
+        ]
+    else:
+        bad_hosts = []
     for need in ("g 14", "d10 §7", "e17 d02 §11", "unverified", "no rule is invented"):
         if need not in text:
             bad.append(F("G-ANNOUNCER", f"§9.7 lacks {need!r}", "spec", sec))
@@ -4264,12 +4501,18 @@ def g_announcer(t: Texts) -> list[Finding]:
             bad.append(
                 F("G-ANNOUNCER", f"§9.7 rules a host before sign-in: {c[:50]!r}", "spec", sec)
             )
+    bad += bad_hosts
     g14 = next((r for r in rows_of(t.spec, GROW2_HEAD) if r[0] == "G-14"), [])
     if len(g14) < 4 or g14[3] != "D10 §7 and E17-D02 §11":
         bad.append(F("G-ANNOUNCER", "G-14's owner is not D10 §7 and E17-D02 §11", "spec", sec))
     return bad
 
 
+# §6.2's T2 rows, frozen (D09:75, :95; D07:119): (control, key)
+T2_ROWS = (
+    ('SCR-019 "Invite a second user" (manager)', "rbac.owner_only"),
+    ("SCR-112 actions while viewing as a user (§12)", "rbac.view_as"),
+)
 T2_NEEDS = (
     '`aria-disabled="true"`',
     "never the `disabled` attribute",
@@ -4299,6 +4542,9 @@ def g_t2(t: Texts) -> list[Finding]:
     body, sec = v2_body(t, T2_HEAD)
     bad = [F("G-T2", f"§6.2 lacks {n!r}", "spec", sec) for n in T2_NEEDS if n not in body]
     keys = set(d09_keys())
+    got = [(r[0], r[1].split()[0].strip("`")) for r in table_rows(body) if len(r) == 4]
+    if got != list(T2_ROWS):
+        bad.append(F("G-T2", f"§6.2's T2 rows are not {list(T2_ROWS)}", "spec", sec))
     for r in table_rows(body):
         if len(r) != 4:
             continue
@@ -4308,7 +4554,7 @@ def g_t2(t: Texts) -> list[Finding]:
         verb = quoted(r[2])
         if not (r[2].startswith("none:") or (verb and verb[0] in d09_verbs())):
             bad.append(F("G-T2", f"§6.2 {r[0][:30]}: {r[2][:30]} is not a D09 verb", "spec", sec))
-        if not CMP_ID.search(r[3]):
+        if not CMP_ID.search(r[3]) and "not a band component" not in r[3]:
             bad.append(F("G-T2", f"§6.2 {r[0][:30]} names no component", "spec", sec))
     comp = section(t.spec, COMP2_HEAD)
     for cmp in ("CMP-079 RbacGate", "CMP-019 Icon"):
@@ -4453,26 +4699,73 @@ def g_story(t: Texts) -> list[Finding]:
         **d10_rows(*D10_SCRIPT, "SR-"),
         **d10_rows(*D10_ASSERT, "AS-"),
     }
+    ledger = own_row_ids(t.spec)
     for r in rows:
         for prefix in ("T", "SR", "AS"):
             for x in id_span(r[3], prefix):
                 if x not in known:
                     bad.append(F("G-STORY", f"§16.0 {r[0]}: {x} is not D10's", "spec", sec))
+        gaps = re.sub(r"\b[A-Z0-9]+'s [A-Z]-\d+(?:\.\.[A-Z]-\d+)?", " ", r[4])
+        for x in re.findall(r"\b[CGQF]-\d+\b", gaps):
+            if x not in ledger and x not in d10_rows(*D10_FINDINGS, "F-"):
+                bad.append(F("G-STORY", f"§16.0 {r[0]}: {x} is no row of the pack", "spec", sec))
     return bad
+
+
+def own_row_ids(spec: str) -> frozenset[str]:
+    """Every C-, G- and Q-row id the pack's ledgers define (v1's and v2's tables)."""
+    ids: set[str] = set()
+    for head in (CROW_HEAD, GROW_HEAD, QROW_HEAD, CROW2_HEAD, GROW2_HEAD, QROW2_HEAD):
+        ids |= {r[0] for r in rows_of(spec, head) if re.fullmatch(r"[CGQ]-\d+", r[0])}
+    return frozenset(ids)
+
+
+# §15.6, frozen and read by content (R2 BQ-29): A-row -> (status, cite id, line, the text that
+# stands at that line at the v2 base: v1's old text for an open row, the new text for an
+# applied one)
+AROW_STATUS: dict[str, tuple[str, str, int, str]] = {
+    "A-4": ("applied in part", "14", 468, "link not valid"),
+    "A-7": ("applied", "15", 2684, "`version: string`"),
+    "A-2": ("open", "14", 143, "remember"),
+    "A-3": ("open", "05", 116, "every screen"),
+    "A-5": ("open", "14", 2370, "me/sessions"),
+    "A-6": ("open", "14", 263, "Confirm disabled until"),
+    "A-8": ("open", "14", 148, "auth.login.attempt"),
+    "A-9": ("open", "14", 174, "US-AUTH-"),
+    "A-10": ("open", "14", 171, "Codes refresh every 30 s"),
+}
 
 
 def g_arows2(t: Texts) -> list[Finding]:
-    """R2 BQ-29: §15.6 gives each of v1's A-rows a status read at the v2 base, with its cite."""
+    """R2 BQ-29: §15.6 gives each of v1's A-rows its status read at the v2 base: the frozen
+    status, its cite, and the text at the cited line that shows it."""
     body, sec = v2_body(t, AROW2_HEAD)
     bad: list[Finding] = []
-    for r in table_rows(body):
-        if len(r) != 4:
-            continue
-        if not re.fullmatch(r"A-(?:[2-9]|1[01])", r[0]):
-            bad.append(F("G-AROWS2", f"§15.6 {r[0]} is not an A-row id", "spec", sec))
-        if not any(r[2].startswith(s) for s in A_STATUS) or not cite_refs(r[2]):
-            bad.append(F("G-AROWS2", f"§15.6 {r[0]}: no status with its cite", "spec", sec))
+    rows = {r[0]: r for r in table_rows(body) if len(r) == 4}
+    if "A-11" not in rows:
+        bad.append(F("G-AROWS2", "§15.6 lacks A-11", "spec", sec))
+    for aid, (status, cid, n, frag) in AROW_STATUS.items():
+        r = rows.get(aid)
+        lines = base_lines(cid, BASE_V2)
+        stands = n <= len(lines) and frag in lines[n - 1]
+        if r is None or not r[2].startswith(status) or (cid, n, n) not in cite_refs(r[2]):
+            bad.append(F("G-AROWS2", f"§15.6 {aid} is not {status} at `{cid}`:{n}", "spec", sec))
+        elif not stands:
+            bad.append(F("G-AROWS2", f"§15.6 {aid}: `{cid}`:{n} no longer shows it", "spec", sec))
+    for aid in rows:
+        if aid not in AROW_STATUS and aid != "A-11":
+            bad.append(F("G-AROWS2", f"§15.6 {aid} is not an A-row of v1", "spec", sec))
     return bad
+
+
+# §14.1's readings and owner lanes, frozen (Q-13's lane is D07's G-3 lane, D07:242)
+Q2_ROWS = {
+    "Q-12": ("closed:", "none: closed"),
+    "Q-13": (
+        "the label also carries words",
+        "E05 (E05-D01's follow-up revision), D07's G-3 lane (D07:242)",
+    ),
+}
 
 
 def g_rows2(t: Texts) -> list[Finding]:
@@ -4486,14 +4779,85 @@ def g_rows2(t: Texts) -> list[Finding]:
         if ids != want:
             bad.append(F("G-ROWS2", f"{head[:5]}'s ids are not {want}", "spec", spec_sec(t, head)))
     new_g = [r[0] for r in rows_of(t.spec, GROW2_HEAD) if r[0] not in ("G-1", "G-10")]
-    if new_g != ["G-14", "G-15"]:
+    if new_g != ["G-14", "G-15", "G-16"]:
         bad.append(
-            F("G-ROWS2", "§15.5's new ids are not G-14, G-15", "spec", spec_sec(t, GROW2_HEAD))
+            F("G-ROWS2", "§15.5's new ids are not G-14..G-16", "spec", spec_sec(t, GROW2_HEAD))
         )
+    q = {r[0]: r for r in rows_of(t.spec, QROW2_HEAD) if len(r) == 5}
+    for qid, (reading, lane) in Q2_ROWS.items():
+        r = q.get(qid)
+        if r is None or not r[2].startswith(reading) or r[3] != lane:
+            sec = spec_sec(t, QROW2_HEAD)
+            bad.append(
+                F("G-ROWS2", f"{qid}'s reading or owner lane is not the ruled one", "spec", sec)
+            )
     whole = norm_text("\n".join(section(t.spec, h) for h in (CROW2_HEAD, GROW2_HEAD, QROW2_HEAD)))
     for need in ("c 24 closed", "c 11 closed", "g 10", "q 9 and q 10"):
         if need not in whole:
             bad.append(F("G-ROWS2", f"no v2 row closes {need!r}", "spec", spec_sec(t, CROW2_HEAD)))
+    return bad
+
+
+SCREENS_HEAD = "9.8 The per-screen review rows"
+# D10 §15's Features in the band (the line of each), in order; SCR-149's is outside the pack
+D10_FEATURES = (668, 682, 696, 710, 724, 738, 766)
+
+
+def d10_screen_rows() -> list[tuple[int, str, str]]:
+    """(the Feature's line, its T-rows, the findings their verdicts name), from D10 at the v2
+    base: a Feature's own T range plus the pass-2 rows (T-81 on) whose From names its screen."""
+    lines = base_lines("D10", BASE_V2)
+    tmap = d10_rows(*D10_MAP, "T-")
+    ends = [*D10_FEATURES[1:], 782]
+    out: list[tuple[int, str, str]] = []
+    for a, b in zip(D10_FEATURES, ends, strict=True):
+        text = "\n".join(lines[a - 1 : b - 1])
+        m = re.search(r"T-(\d+)\D+T-(\d+)", text)
+        if m is None:
+            continue
+        lo, hi = int(m[1]), int(m[2])
+        scr = re.findall(r"SCR-\d{3}", lines[a - 1])[:1]
+        extra = [x for x in tmap if int(x[2:]) >= 81 and scr and scr[0] in tmap[x][1]]
+        found: set[str] = set()
+        for x in [*(f"T-{n}" for n in range(lo, hi + 1)), *extra]:
+            found |= set(re.findall(r"F-\d+", tmap.get(x, [""] * 9)[8]))
+        tcell = f"T-{lo} to T-{hi}" + "".join(f", {x}" for x in extra)
+        fcell = ", ".join(sorted(found, key=lambda f: int(f[2:])))
+        out.append((a, tcell, fcell))
+    return out
+
+
+def g_screens(t: Texts) -> list[Finding]:
+    """R2 BQ-18 (lens M4): §9.8 has one row per band Feature of D10 §15, citing its line, with
+    the Feature's T-rows and the findings their verdicts name, as D10 has them."""
+    body, sec = v2_body(t, SCREENS_HEAD)
+    rows = [r for r in table_rows(body) if len(r) == 4]
+    want = d10_screen_rows()
+    got = [(cite_refs(r[1])[0][1] if cite_refs(r[1]) else 0, r[2], r[3]) for r in rows]
+    if got != want:
+        diff = next((g for g, w in zip(got, want, strict=False) if g != w), got[len(want) :][:1])
+        return [F("G-SCREENS", f"§9.8 is not D10's per-Feature rows (first: {diff})", "spec", sec)]
+    return []
+
+
+# contract facts the v2 blocks state, tied to `22` at the v2 base (lens Minor 14): (the words in
+# the spec, the `22` line, the words there)
+FACTS = (
+    ("1 to 32 printable ASCII characters", 24308, "maxLength: 32"),
+    ("is refused with `422`", 1852, "refused with `422`"),
+    ("a session already locked answers `200` and changes nothing", 1856, "answers `200`"),
+)
+
+
+def g_facts(t: Texts) -> list[Finding]:
+    """Each contract fact of §3.4 and §4.3 stands in the spec and in `22` at the v2 base."""
+    api = base_lines("22", BASE_V2)
+    text = section(t.spec, OPS2_HEAD) + section(t.spec, ERR2_HEAD)
+    bad: list[Finding] = []
+    for words, n, there in FACTS:
+        if words not in text or n > len(api) or there not in api[n - 1]:
+            sec = spec_sec(t, OPS2_HEAD)
+            bad.append(F("G-FACTS", f"{words!r} is not `22`:{n}'s ({there!r})", "spec", sec))
     return bad
 
 
@@ -4519,6 +4883,8 @@ V2_GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_story,
     g_arows2,
     g_rows2,
+    g_screens,
+    g_facts,
 )
 
 
@@ -4618,7 +4984,8 @@ def audit(t: Texts) -> tuple[list[str], list[str], list[str], int]:
     for gate in LEXICON_GATES:
         found += gate(t)
     cf, n = cite_findings(t)
-    found += cf
+    unheld = [f for f in cf if f[2] == UNHELD]
+    found += [f for f in cf if f[2] != UNHELD]
     for gate in MEASURED_GATES:
         found += gate(t if gate in WHOLE_SPEC_GATES else v1t)
     for gate in V2_GATES:
@@ -4628,6 +4995,11 @@ def audit(t: Texts) -> tuple[list[str], list[str], list[str], int]:
     notes = [f"NOTE [{p[0]}] {p[1][:150]}" for p in pins if (p[2], p[3]) in flagged]
     found += [p for p in pins if (p[2], p[3]) not in flagged]
     flagged |= {(p[2], p[3]) for p in pins if p[2] is not None}
+    # a record no cite holds is the trace of a cite another gate already reports when one FAILs
+    if found:
+        notes += [f"NOTE [{p[0]}] {p[1][:150]}" for p in unheld]
+    else:
+        found += unheld
     held = [*g_v1_frozen(t), *g_frozen_stable(t)]
     notes += [f"NOTE [{p[0]}] {p[1][:150]}" for p in held if (p[2], p[3]) in flagged]
     found += [p for p in held if (p[2], p[3]) not in flagged]
@@ -4855,8 +5227,8 @@ def lever_merge_base() -> Callable[[], None]:
 
 
 def lever_drift_v2() -> Callable[[], None]:
-    """A range a v2 line cites (`22`:1832, §0.1) edited at `origin/main`."""
-    DRIFT.append(("docs/plan/22-api-openapi.yaml", 1832, "      operationId: authLockNow"))
+    """A range a v2 line cites (`22`:1829, §0.1 and §3.4) edited at `origin/main`."""
+    DRIFT.append(("docs/plan/22-api-openapi.yaml", 1829, "  /auth/locked:"))
     return popper(DRIFT)
 
 
@@ -5651,7 +6023,7 @@ MUTATIONS = (
         "Y-5",
         "G-DRIFT",
         "a §17.3 row for a range that is not edited",
-        spec=after_line("| `04`:831 ", "| `05`:125 | `05`:125 | nothing changed | holds |"),
+        spec=after_line("| `04`:831 ", "| `05`:116 | `05`:116 | nothing changed | holds |"),
         repin=True,
     ),
     Mutation(
@@ -5668,7 +6040,7 @@ MUTATIONS = (
         "Y-8",
         "G-LIFT",
         "a lifted range cut short",
-        spec=sub("D10:590–635", "D10:590–630"),
+        spec=drop_row("D10 §13, the screen-reader script"),
         repin=True,
     ),
     Mutation(
@@ -5799,6 +6171,105 @@ MUTATIONS = (
             "- **SCR-002 and SCR-006** (R2 BQ-22)",
             'The dialog reads "Please confirm this sensitive action now".',
         ),
+        repin=True,
+    ),
+    # Y-27..: the lens round's probes (#5252), each re-pinned so only its content gate catches it
+    Mutation(
+        "Y-27",
+        "G-ERRMAP2",
+        "the cookie-only answer given the expired token's code",
+        spec=sub(
+            "`403 csrf_token_invalid` on `authLock`; nothing is locked",
+            "`401 unauthenticated` on `authLock`; nothing is locked",
+        ),
+        repin=True,
+    ),
+    Mutation(
+        "Y-28",
+        "G-ERRMAP2",
+        "a Lock-now error row deleted",
+        spec=drop_row("Lock now: no access token"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-29",
+        "G-ERRMAP2",
+        "the unavailable row given F-1",
+        spec=cell_set("Lock now: unavailable", 4, "F-1"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-30",
+        "G-T2",
+        "the T2 rows deleted",
+        spec=both(drop_row('SCR-019 "Invite a second user"'), drop_row("SCR-112 actions while")),
+        repin=True,
+    ),
+    Mutation(
+        "Y-31",
+        "G-CROSSWALK",
+        "the unlock row's agreement flipped",
+        spec=sub("no (C-27)", "yes"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-32",
+        "G-AROWS2",
+        "an open A-row read as applied",
+        spec=sub("open: the remember line stands", "applied: the remember line stands"),
+        repin=True,
+    ),
+    Mutation("Y-33", "G-FINDINGS", "an Info row deleted", spec=drop_row("F-51"), repin=True),
+    Mutation(
+        "Y-34",
+        "G-STORY",
+        "a gap id the pack does not have",
+        spec=cell_set("E09-Q06 (#297)", 4, "G-99"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-35",
+        "G-CITE",
+        "a v2 cite moved to the next line",
+        spec=sub("(`22`:1835)", "(`22`:1836)"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-36",
+        "G-QUOTE",
+        "a quoted copy string changed to words found elsewhere",
+        spec=sub('"Invalid password or code." (D08:340', '"Invalid code, try again." (D08:340'),
+        repin=True,
+    ),
+    Mutation(
+        "Y-37",
+        "G-SCREENS",
+        "a per-screen finding that is not D10's",
+        spec=cell_set("SCR-004, SCR-017 step 2, SCR-112 password", 3, "F-22"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-38",
+        "G-FACTS",
+        "the version label's bound changed",
+        spec=sub("1 to 32 printable", "1 to 64 printable"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-39",
+        "G-ROWS2",
+        "Q-12 read as open",
+        spec=sub("closed: P-3 to P-5", "open: P-3 to P-5"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-40", "G-REGISTER", "the `14` pointer row dropped", spec=drop_row("V-33"), repin=True
+    ),
+    Mutation(
+        "Y-41",
+        "G-ANNOUNCER",
+        "a signed-in screen among the hosts before sign-in",
+        spec=sub("(SCR-001..004, SCR-017 step 1)", "(SCR-001..005, SCR-017 step 1)"),
         repin=True,
     ),
     # N-n: probes that must trip nothing (a negated or cited form of a ruled behaviour)
