@@ -34,6 +34,9 @@ export type { PnLBadgeProps, PnLFormat } from "./PnLBadge.js";
 export { PositionModeToggle } from "./PositionModeToggle.js";
 export type { PositionMode, PositionModeToggleProps } from "./PositionModeToggle.js";
 
+export { SplitButton } from "./SplitButton.js";
+export type { SplitButtonPrimary, SplitButtonProps } from "./SplitButton.js";
+
 export { ColorConventionLegend, colourName } from "./ColorConventionLegend.js";
 export type {
   ColorConventionLegendProps,

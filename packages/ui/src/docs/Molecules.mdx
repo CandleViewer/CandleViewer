@@ -825,3 +825,23 @@ semantics and its name stay its own.
 
 A filter is a view choice: nothing in the bar is ever T2 (E29-D04 §4.2), and the bar has no live region; the table's
 polite line speaks the filtered result.
+
+### SplitButton (CMP-057, two APG Buttons; the ▾ is an APG Menu Button)
+
+| Keys                    | Action                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab         | The primary, then the ▾: two stops.                                                                           |
+| Enter / Space (primary) | Runs the primary action. Busy or gated: nothing is sent; gated re-shows its reason once, politely, per press. |
+| Enter / Space / ↓ (▾)   | Opens CMP-041's menu on its first item (↑ on its last); Esc closes it and returns focus to the ▾.             |
+| Arrows in the menu      | Reach every item, gated ones too; a gated item never runs, a press re-shows its reason.                       |
+
+| Element | Role               | Name                                                    | ARIA                                                                                                    |
+| ------- | ------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| primary | button (CMP-001)   | its full label: "Close", "Cancel"                       | Gated (2b): `aria-disabled="true"`, `aria-describedby` the reason, never `disabled`. Busy: `aria-busy`. |
+| ▾       | button (CMP-002)   | `menuLabel`: "More close actions, BTCUSDT Long on Main" | `aria-haspopup="menu"`, `aria-expanded`, `aria-controls`; it names the menu.                            |
+| items   | menuitem (CMP-041) | each item's label                                       | Gated: the reason is the second line and the description.                                               |
+
+`allowed={false}` with a `reason`, or CMP-079 RbacGate's `disabledReason` (which wins: E09-D09 §2.1 checks the role
+legs first), gates the primary and gives every ▾ item the same reason, so it is never hover-only. Busy keeps the
+label (`busyLabel`, "Closing…") with a static ⟳ leading it; a gate wins over busy. The split button is built for
+E29's row actions and mounts with the ticket that wires them (E29-S01's ruling, BQ-3).
