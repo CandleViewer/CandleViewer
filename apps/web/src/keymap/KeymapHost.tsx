@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   ToastRegion,
   toggleHighContrastAnnounced,
@@ -44,6 +44,15 @@ export function activeContexts(el: Element | null = document.activeElement): Set
 export const KEYMAP_TOAST_DURATION_MS: number | null = null;
 
 /**
+ * With no timer the queue is bounded here: the newest toasts stay, the oldest drop. SCR-015's counted stack
+ * (CMP-212) is the follow-up that replaces this cap.
+ */
+export const KEYMAP_TOAST_MAX = 5;
+
+/** Module-level so an id never repeats in a page's life: the shell announcer remembers every key it has said (4.1.3). */
+let toastSeq = 0;
+
+/**
  * SCR-015 toast host: CMP-045's region (pauses on hover and focus, dismissible, never steals focus). The sentence is
  * spoken once through the shell's pre-rendered polite region (`announce`), never rendered inside the stack. The
  * region portals to `body`; the wrapper keeps `toast-host` and the inert exemption.
@@ -75,7 +84,6 @@ const announceToShell: ToastAnnounce = (politeness, text, key) => {
 
 export function KeymapHost(): JSX.Element {
   const [toasts, setToasts] = useState<readonly ToastItem[]>([]);
-  const nextToast = useRef(0);
   const [sheetOpen, setSheetOpen] = useState(false);
   const bindings = useSyncExternalStore(subscribeBindings, getBindings);
   // Real command: the `Ctrl+/` cheatsheet (SCR-013). Other commands register from their owning views.
@@ -113,9 +121,9 @@ export function KeymapHost(): JSX.Element {
       isValid: (c: KeymapCommand) => isCommandValid(c.id),
       execute: (c: KeymapCommand, digit?: number) => runCommand(c.id, digit),
       notify: (m) => {
-        nextToast.current += 1;
-        const id = `keymap-toast-${nextToast.current}`;
-        setToasts((t) => [...t, { id, title: m, tone: "info" }]);
+        toastSeq += 1;
+        const id = `keymap-toast-${toastSeq}`;
+        setToasts((t) => [...t, { id, title: m, tone: "info" as const }].slice(-KEYMAP_TOAST_MAX));
       },
       countInert: (action, view) => reportHotkey({ name: "hotkey.inert_pressed", action, view }),
     });

@@ -76,6 +76,45 @@ describe("inert press explains itself (wired host)", () => {
     expect(host.textContent).toMatch(/Cancel all working orders/);
     off();
   });
+  it("keeps a toast past 60 s until dismissed, gives each press its own id and caps the queue (#5197)", async () => {
+    vi.useFakeTimers();
+    const { KeymapHost, registerCommand, KEYMAP_TOAST_MAX } = mods;
+    const { ShellAnnouncer, clearAnnouncements } =
+      await import("../src/features/app-shell/announcer");
+    const off = registerCommand("dom.cancel_all", vi.fn(), () => false);
+    render(
+      <div data-keymap-context="DOM">
+        <input aria-label="f" />
+        <ShellAnnouncer />
+        <KeymapHost />
+      </div>,
+    );
+    screen.getByLabelText("f").focus();
+    const press = () => {
+      fireEvent.keyDown(window, { key: "X", ctrlKey: true, shiftKey: true });
+    };
+    const groups = () =>
+      within(screen.getByRole("region", { name: "Notifications" })).queryAllByRole("group");
+    press();
+    act(() => void vi.advanceTimersByTime(60_000));
+    expect(groups()).toHaveLength(1);
+    // a second press (past the dispatcher's 5 s window) is a second toast, spoken again
+    press();
+    expect(groups()).toHaveLength(2);
+    const polite = document.querySelector('[aria-live="polite"]');
+    expect(polite?.textContent).toMatch(/Cancel all working orders/);
+    fireEvent.click(within(groups()[0] as HTMLElement).getByRole("button", { name: /Dismiss/ }));
+    expect(groups()).toHaveLength(1);
+    fireEvent.click(within(groups()[0] as HTMLElement).getByRole("button", { name: /Dismiss/ }));
+    expect(screen.queryByRole("group")).toBeNull();
+    for (let i = 0; i < KEYMAP_TOAST_MAX + 2; i++) {
+      act(() => void vi.advanceTimersByTime(6000));
+      press();
+    }
+    expect(groups()).toHaveLength(KEYMAP_TOAST_MAX);
+    clearAnnouncements();
+    off();
+  });
   it("executes when valid", () => {
     const { KeymapHost, registerCommand } = mods;
     const run = vi.fn();
