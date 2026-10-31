@@ -177,7 +177,13 @@ def test_verdicts_reserved_unreachable_and_no_findings(tree: Path) -> None:
     (tree / cat.FINDINGS_REL).write_text(json.dumps(root_doc), encoding="utf-8")
     by = {s["id"]: s for s in cat.build(tree)["screens"]}
     assert by["SCR-003"]["verdict"] == "not auditable at sha"
-    assert by["SCR-002"]["verdict"] == "no findings at sha"
+    so = by["SCR-002"]["signoff"]
+    want = (
+        "no findings (static, text pass)"
+        if not so or so["checked"] == 0
+        else "no findings at sha"
+    )
+    assert by["SCR-002"]["verdict"] == want
     assert by["SCR-002"]["auditor"] and by["SCR-002"]["date"]
 
 
@@ -400,3 +406,18 @@ def test_real_attribution_leaves_only_the_unmapped_finding_and_no_blocker() -> N
     assert reg["counts"]["bySeverity"]["blocker"] == 4  # E09-D10's four Blockers
     routing = json.loads((ROOT / cat.ROUTING_REL).read_text(encoding="utf-8"))
     assert all(a["cite"] and a["screens"] for a in routing["attribution"].values())
+
+
+def test_verdict_for_marks_text_only_passes() -> None:
+    assert cat.verdict_for("built", 0, text_only=True)[0] == (
+        "no findings (static, text pass)"
+    )
+    assert cat.verdict_for("built", 0)[0] == "no findings at sha"
+    assert cat.verdict_for("built", 2, text_only=True)[0] == "findings"
+
+
+def test_render_carries_the_three_lens_notes(tree: Path) -> None:
+    md = cat.render(cat.build(tree))
+    assert "Multi-screen findings are counted on each screen" in md
+    assert "Canvas four-layer verification, and the missing-layer blocker rule" in md
+    assert "static, text pass" in md

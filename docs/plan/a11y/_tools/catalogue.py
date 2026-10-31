@@ -304,7 +304,7 @@ def t01_findings(reg: dict[str, Any], routing: dict[str, Any]) -> list[dict[str,
     return out
 
 
-def verdict_for(cov: str, n_findings: int) -> tuple[str, str]:
+def verdict_for(cov: str, n_findings: int, text_only: bool = False) -> tuple[str, str]:
     if cov.startswith("reserved"):
         return (
             "n/a (reserved)",
@@ -319,9 +319,10 @@ def verdict_for(cov: str, n_findings: int) -> tuple[str, str]:
         return "findings", f"{n_findings} finding(s){note}"
     if cov.startswith("unreachable"):
         return "not auditable at sha", cov
+    verdict = "no findings (static, text pass)" if text_only else "no findings at sha"
     if cov == "partial":
-        return "no findings at sha", "partial coverage: the built part only"
-    return "no findings at sha", "covered"
+        return verdict, "partial coverage: the built part only"
+    return verdict, "covered"
 
 
 def _check_screen_sets(cat: dict[str, Any], t01: dict[str, Any]) -> None:
@@ -391,7 +392,10 @@ def build(root: Path = ROOT) -> dict[str, Any]:
                 "canvasLayers": None,
             }
             cov = cov or "reserved: no screen"
-        verdict, why = verdict_for(cov, len(by_screen[scr]))
+        so = facts["signoff"]
+        verdict, why = verdict_for(
+            cov, len(by_screen[scr]), text_only=not so or so["checked"] == 0
+        )
         screens.append(
             {
                 "id": scr,
@@ -538,7 +542,14 @@ def render(reg: dict[str, Any]) -> str:
         "",
     ]
     lines += table(["Verdict", "Screens"], [[k, v] for k, v in c["verdicts"].items()])
-    lines.append("")
+    lines += [
+        "",
+        (
+            'A verdict marked "static, text pass" rests on reading the spec text only: the screen\'s '
+            "design sign-off checklist has no ticked item and no build was exercised."
+        ),
+        "",
+    ]
     lines += table(["Source", "Findings"], [[k, v] for k, v in c["bySource"].items()])
     lines.append("")
     lines += table(
@@ -599,6 +610,11 @@ def render(reg: dict[str, Any]) -> str:
     lines += [
         "",
         f"{zero} screens carry no finding; their verdicts are in section 3.",
+        "",
+        (
+            "Multi-screen findings are counted on each screen, so the per-screen totals sum to "
+            "more than the number of distinct findings."
+        ),
         "",
     ]
     lines += ["## 3. Screens", ""]
@@ -678,6 +694,7 @@ def render(reg: dict[str, Any]) -> str:
             "third-reviewer check, the E47-D01 blocker absorption (D01 is unmerged), the D03 to D10 "
             "lead review of the routing, CDO sign-off and the 31-sprint-plan reorder."
         ),
+        "- Canvas four-layer verification, and the missing-layer blocker rule, pending a build. Only the screens listed with a canvas check in section 3 carry one, and those come from keyword matches on the 14 A11y line.",
         "- Contrast pairs are cited from the T01 and review tables, not re-measured here.",
         "",
     ]

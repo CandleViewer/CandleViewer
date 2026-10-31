@@ -8,12 +8,14 @@ Auditor agent-run (E47-D02 lane), 2026-10-31, over the E47-T01 register at sha `
 
 159 screens, 86 findings (4 blocker, 24 major, 53 minor, 5 info).
 
-| Verdict              | Screens |
-| -------------------- | ------- |
-| findings             | 27      |
-| n/a (reserved)       | 10      |
-| no findings at sha   | 5       |
-| not auditable at sha | 117     |
+| Verdict                         | Screens |
+| ------------------------------- | ------- |
+| findings                        | 27      |
+| n/a (reserved)                  | 10      |
+| no findings (static, text pass) | 5       |
+| not auditable at sha            | 117     |
+
+A verdict marked "static, text pass" rests on reading the spec text only: the screen's design sign-off checklist has no ticked item and no build was exercised.
 
 | Source           | Findings |
 | ---------------- | -------- |
@@ -71,6 +73,8 @@ Screens with findings, ranked by blocker count, then major, minor and info. The 
 | SCR-159 | Offline / shell-specific states           | 0       | 0     | 1     | 0    | 1     | █          |
 
 132 screens carry no finding; their verdicts are in section 3.
+
+Multi-screen findings are counted on each screen, so the per-screen totals sum to more than the number of distinct findings.
 
 ## 3. Screens
 
@@ -217,7 +221,7 @@ Screens with findings, ranked by blocker count, then major, minor and info. The 
 
 ### SCR-011 Navigation rail (expanded) & workspace switcher
 
-- Verdict: no findings at sha (covered); auditor agent-run (E47-D02 lane), 2026-10-31.
+- Verdict: no findings (static, text pass) (covered); auditor agent-run (E47-D02 lane), 2026-10-31.
 - Band: Auth, app shell, global chrome, onboarding. Coverage at sha: covered. Surface: chrome. Design sign-off checklist: 0 of 4 items ticked (Design sign-off acceptance checklist). T01 owner: E10-S01 #304.
 
 ### SCR-012 Command palette
@@ -236,7 +240,7 @@ Screens with findings, ranked by blocker count, then major, minor and info. The 
 
 ### SCR-014 Notification centre (right-rail drawer)
 
-- Verdict: no findings at sha (partial coverage: the built part only); auditor agent-run (E47-D02 lane), 2026-10-31.
+- Verdict: no findings (static, text pass) (partial coverage: the built part only); auditor agent-run (E47-D02 lane), 2026-10-31.
 - Band: Auth, app shell, global chrome, onboarding. Coverage at sha: partial. Surface: chrome. Design sign-off checklist: 0 of 5 items ticked (Design sign-off acceptance checklist). T01 owner: E40-S02 #1130.
 
 ### SCR-015 Global toast host
@@ -570,7 +574,7 @@ Screens with findings, ranked by blocker count, then major, minor and info. The 
 
 ### SCR-075 Demo / Live banner & per-panel badges
 
-- Verdict: no findings at sha (partial coverage: the built part only); auditor agent-run (E47-D02 lane), 2026-10-31.
+- Verdict: no findings (static, text pass) (partial coverage: the built part only); auditor agent-run (E47-D02 lane), 2026-10-31.
 - Band: Trading. Coverage at sha: partial. Surface: chrome. Design sign-off checklist: 0 of 4 items ticked (Design sign-off acceptance checklist). T01 owner: E38-S04 #1193.
 
 ### SCR-076 Order confirmation modal
@@ -786,7 +790,7 @@ Screens with findings, ranked by blocker count, then major, minor and info. The 
 
 ### SCR-113 Hotkey editor
 
-- Verdict: no findings at sha (covered); auditor agent-run (E47-D02 lane), 2026-10-31.
+- Verdict: no findings (static, text pass) (covered); auditor agent-run (E47-D02 lane), 2026-10-31.
 - Band: Settings (user-scoped). Coverage at sha: covered. Surface: chrome. Design sign-off checklist: 0 of 7 items ticked (Design sign-off acceptance checklist). T01 owner: E30-S05 #1089.
 
 ### SCR-114 Trading defaults settings
@@ -1055,7 +1059,7 @@ Screens with findings, ranked by blocker count, then major, minor and info. The 
 
 ### SCR-157 Version mismatch / update available
 
-- Verdict: no findings at sha (covered); auditor agent-run (E47-D02 lane), 2026-10-31.
+- Verdict: no findings (static, text pass) (covered); auditor agent-run (E47-D02 lane), 2026-10-31.
 - Band: Global system states. Coverage at sha: covered. Surface: chrome. Design sign-off checklist: 0 of 5 items ticked (Design sign-off acceptance checklist). T01 owner: E10-S04 #306.
 
 ### SCR-158 Rate-limited state
@@ -1081,4 +1085,5 @@ Screens with findings, ranked by blocker count, then major, minor and info. The 
 ## 4. Open items for #1301
 
 - Routed to the coordinator and owner, not done here: Penpot frame annotations, the NVDA live pass and mirror-lag measurement, the 5-screen inter-rater calibration and third-reviewer check, the E47-D01 blocker absorption (D01 is unmerged), the D03 to D10 lead review of the routing, CDO sign-off and the 31-sprint-plan reorder.
+- Canvas four-layer verification, and the missing-layer blocker rule, pending a build. Only the screens listed with a canvas check in section 3 carry one, and those come from keyword matches on the 14 A11y line.
 - Contrast pairs are cited from the T01 and review tables, not re-measured here.
