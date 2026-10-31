@@ -958,7 +958,8 @@ def test_the_notice_stand_in_keeps_each_notice_in_order() -> None:
 
 
 async def test_no_reconciliation_refuses_every_request() -> None:
-    """24 Sec.8.12: no pass exists until E29-T06, so the consumer pages once per episode."""
+    """24 Sec.8.12: a composition with no reconciliation stores has no pass, so the consumer pages
+    once per episode."""
     with pytest.raises(ReconciliationUnavailable):
         await NoReconciliation().request_reconciliation(ACCOUNT, reason="reconnected")
 

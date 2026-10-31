@@ -101,7 +101,8 @@ __all__ = [
 #: B19's machine and lane (28 B19; the OMS's order lane, CV-C13).
 MACHINE: Final = "reconciliation"
 LANE: Final = "order"
-#: `CV_OMS_RECONCILE_INTERVAL_S`'s default (#914 Technical notes): the periodic cadence.
+#: The periodic cadence: 24 Sec.8.5's 30 s, `OmsConfig.reconcile_interval_s`'s default (24
+#: Sec.16.1), which no setting reads yet; the composition passes no `interval_s`.
 INTERVAL_S: Final = 30.0
 #: The phases of the jobs' periodic ticks are spread over this much of the cycle (under 5 s).
 JITTER_S: Final = 4.8
