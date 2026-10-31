@@ -2,13 +2,14 @@
 24-internal-schemas.md Sec.8.5 "The stale rule", 20-architecture.md Sec.6.2), on the world of
 `test_oms_runtime`.
 
-A start of the jobs that fails before any opens holds every account's order entry (the standing,
-`account_stale`) while the runtime goes on to `ready`, and the startup task retries it on the
-sweep's backoff until it works, which lifts the hold (#914's security look, Low 2; INV-B19-a); one
-that fails once the stop has begun holds and pages nothing. An account whose read fails at the
-start is held until its job opens, and a refused one skipped (the code look's m1 and M2). The
-routes reach the jobs only through `OmsRuntime.reconciliation`: each call on the order lane, its
-write-ahead record back on the serving loop, which a real `OrderLane` shows across threads."""
+A start of the jobs that fails before any opens, or that its bound cuts short, holds every
+account's order entry (the standing, `account_stale`) while the runtime goes on to `ready`, and the
+startup task retries it on the sweep's backoff until it works, which lifts the hold (#914's
+security look, Low 2; INV-B19-a); one that fails once the stop has begun holds and pages nothing.
+An account whose read fails at the start is held until its job opens, and a refused one skipped
+(the code look's m1 and M2). The routes reach the jobs only through `OmsRuntime.reconciliation`:
+each call on the order lane, its write-ahead record back on the serving loop, which a real
+`OrderLane` shows across threads."""
 
 from __future__ import annotations
 
@@ -21,13 +22,14 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer import oms_wiring
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.models import AccountRef
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import OmsNotReady, ReconciliationUnavailable
 from candleviewer.oms.fakes import InMemorySubmissionStore
-from candleviewer.oms.reconcile_job import NothingToResolve, PassTaken
+from candleviewer.oms.reconcile_job import NothingToResolve, PassTaken, ReconcileJobs
 from candleviewer.oms.reconcile_standing import UNSTARTED_DETAIL, ReconcileStanding
 from candleviewer.oms_lane import HOP_TIMEOUT_S, OrderLane, Serving
 from candleviewer.oms_wiring import OmsRuntime, OnLaneReconciliation
@@ -186,6 +188,54 @@ async def test_an_unread_account_is_held_and_a_refused_one_skipped_until_its_job
     held = [e for e in logs if e["event"] == "oms_reconcile_account_unread"]
     assert skipped == [str(gone)]
     assert [(e["account_id"], e["log_level"]) for e in held] == [(str(unread), "warning")]
+
+
+async def test_a_start_its_bound_cuts_holds_the_accounts_it_missed_until_a_retry_opens_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#914's security look, Low 2, under the start's bound (`_bounded`): a start cut short once
+    its first account's job opened is a failed start, so the whole environment is held and the
+    account it never reached, with neither a job nor a standing mark, is refused all the same. It
+    is logged CRITICAL as a `TimeoutError` and paged once; the retry opens the jobs and lifts it."""
+    monkeypatch.setattr(oms_wiring, "SWEEP_STATEMENT_TIMEOUT_MS", 0)
+    monkeypatch.setattr(oms_wiring, "SWEEP_CALL_SLACK_S", 0.3)  # real time, kept short
+    world, standing = _world(), ReconcileStanding()
+    first, cut, missed = (AccountId(UUID(int=n)) for n in (0xB1, 0xB2, 0xB3))
+    for account in (first, cut, missed):
+        ref = AccountRef(account_id=account, uid="1", environment="demo", key_ref="k")
+        InMemorySubmissionStore(world.store).seed_account(ref)
+        world.accounts.append(TradingAccountRow(account, "demo", "1", False, KEY))
+    real, hangs = ReconcileJobs.trigger, [cut]
+
+    async def trigger(self: ReconcileJobs, account: AccountId, trigger: Any) -> str | None:
+        if account in hangs and trigger == "startup":
+            hangs.clear()  # the first start's only: the retry's goes through
+            await asyncio.Event().wait()  # until the bound cancels the start's task
+        return await real(self, account, trigger)
+
+    monkeypatch.setattr(ReconcileJobs, "trigger", trigger)
+    runtime, seen = world.runtime(standing=standing), list[tuple[Any, ...]]()
+
+    async def look(n: int) -> bool:
+        if n == 3:  # the retry's read: what the cut start left
+            wiring = runtime._composed().reconcile
+            assert wiring is not None
+            held, refusal = standing.held, standing.refusal(missed)
+            seen.append((held, refusal, standing.is_stale(missed), set(wiring.jobs._jobs)))
+        return False
+
+    _accounts(world, monkeypatch, look)
+    with capture_logs() as logs:
+        async with started(runtime):
+            await _ready(runtime)
+            await until(lambda: not standing.held)
+            wiring = runtime._composed().reconcile
+            assert wiring is not None and set(wiring.jobs._jobs) == {first, cut, missed}
+            assert standing.refusal(missed) is None  # opened, so rebuilt from its state
+    assert seen == [(True, HELD, False, {first})]  # held by the environment's hold alone
+    unstarted = [e for e in logs if e["event"] == "oms_reconcile_unstarted"]
+    assert [(e["log_level"], e["error"]) for e in unstarted] == [("critical", "TimeoutError")]
+    assert world.pager.calls.count("oms_reconcile_unstarted") == 1
 
 
 async def test_a_composition_with_no_reconciliation_lifts_a_hold_an_earlier_start_left() -> None:
