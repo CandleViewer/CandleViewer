@@ -30,7 +30,7 @@ REVIEW = """# Review
 | F-2  | contrast      | Minor    | 1.4.3               | no screen named here · fix it | E09-D03 |
 | F-3  | copy          | Info     | 3.3.1               | SCR-002 and SCR-003 \\| pipe · reword | E09-D03 |
 
-Not a table row.
+Not a table row. <!-- audit:f=3/1/0/1/1 -->
 """
 SCREENS = """# 14
 
@@ -65,6 +65,7 @@ def make_tree(tmp: Path, findings: list[dict[str, Any]] | None = None) -> Path:
     real["reviews"] = [{"key": "E00-D00", "path": "docs/design/review.md"}]
     real["pendingReviews"] = ["E99-D99"]
     real["overrides"] = {}
+    real["attribution"] = {}
     (tmp / "docs/plan/a11y").mkdir(parents=True)
     (tmp / "docs/design").mkdir(parents=True)
     (tmp / "docs/plan/backlog").mkdir(parents=True)
@@ -120,7 +121,7 @@ def test_screen_facts_checklist_surface_and_layers() -> None:
         "line": "Design sign-off acceptance checklist", "checked": 1, "unchecked": 2,
     }  # fmt: skip
     assert s["SCR-001"]["surface"] == "canvas"
-    assert s["SCR-001"]["canvasLayers"]["canvasRole"] == "present"
+    assert s["SCR-001"]["canvasLayers"]["canvasRole"] == "mentioned in 14"
     assert (
         s["SCR-002"]["signoff"]["unchecked"] == 1
         and s["SCR-002"]["surface"] == "chrome"
@@ -136,9 +137,11 @@ def test_duplicate_screen_in_catalogue_fails() -> None:
 @pytest.mark.parametrize(
     ("sev", "task", "want"),
     [("serious", "", "major"), ("moderate", "", "minor"), ("minor", "", "minor"),
-     ("serious", "this is task-blocking for keyboard", "blocker")],
+     ("blocker", "", "blocker"),
+     ("serious", "this is task-blocking for keyboard", "major")],
 )  # fmt: skip
 def test_t01_severity_map(tmp_path: Path, sev: str, task: str, want: str) -> None:
+    """T01 never yields a blocker from free text; only its own severity maps."""
     root = make_tree(
         tmp_path, [_t01_finding("A11Y-F-0001", "SCR-001", sev, observed=task)]
     )
@@ -168,7 +171,9 @@ def test_verdicts_reserved_unreachable_and_no_findings(tree: Path) -> None:
     assert by["SCR-003"]["verdict"] == "findings"  # review row F-3 names it
     root_doc = json.loads((tree / cat.FINDINGS_REL).read_text(encoding="utf-8"))
     root_doc["screens"][2]["coverage"] = "unreachable: not built"
-    (tree / "docs/design/review.md").write_text("# none\n", encoding="utf-8")
+    (tree / "docs/design/review.md").write_text(
+        "# none\n<!-- audit:f=0/0/0/0/0 -->\n", encoding="utf-8"
+    )
     (tree / cat.FINDINGS_REL).write_text(json.dumps(root_doc), encoding="utf-8")
     by = {s["id"]: s for s in cat.build(tree)["screens"]}
     assert by["SCR-003"]["verdict"] == "not auditable at sha"
@@ -246,17 +251,98 @@ def test_check_mode_passes_then_fails_on_stale_and_missing(tree: Path) -> None:
     assert cat.main(["--root", str(tree), "--check"]) == 1
 
 
-def test_check_mode_fails_when_a_screen_is_missing_from_the_inputs(tree: Path) -> None:
+def test_build_fails_when_a_screen_is_missing_from_the_t01_register(tree: Path) -> None:
     doc = json.loads((tree / cat.FINDINGS_REL).read_text(encoding="utf-8"))
     doc["screens"] = [s for s in doc["screens"] if s["id"] != "SCR-159"]
     (tree / cat.FINDINGS_REL).write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(cat.CatalogueError, match="screen set"):
+        cat.build(tree)
+    assert cat.main(["--root", str(tree), "--check"]) == 2
+
+
+def test_build_fails_when_14_and_t01_disagree_on_reserved_ids(tree: Path) -> None:
+    doc = json.loads((tree / cat.FINDINGS_REL).read_text(encoding="utf-8"))
+    next(s for s in doc["screens"] if s["id"] == "SCR-159")["coverage"] = "covered"
+    (tree / cat.FINDINGS_REL).write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(cat.CatalogueError, match="reserved ids"):
+        cat.build(tree)
+    doc = json.loads((tree / cat.FINDINGS_REL).read_text(encoding="utf-8"))
+    next(s for s in doc["screens"] if s["id"] == "SCR-159")["coverage"] = "reserved: x"
+    next(s for s in doc["screens"] if s["id"] == "SCR-002")["coverage"] = "reserved: x"
+    (tree / cat.FINDINGS_REL).write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(cat.CatalogueError, match="reserved ids"):
+        cat.build(tree)
+
+
+def test_check_mode_fails_when_the_register_drops_a_screen(tree: Path) -> None:
     cat.main(["--root", str(tree)])
-    # SCR-159 has no catalogue section and no T01 row: it must still be present, as reserved.
     reg = json.loads((tree / cat.REGISTER_REL).read_text(encoding="utf-8"))
-    assert [s["id"] for s in reg["screens"]] == cat.SCR_IDS
     reg["screens"].pop()
     (tree / cat.REGISTER_REL).write_text(json.dumps(reg), encoding="utf-8")
     assert cat.main(["--root", str(tree), "--check"]) == 1
+
+
+def test_malformed_table_rows_raise() -> None:
+    short = REVIEW.replace(
+        "| F-2  | contrast      | Minor    | 1.4.3               | no screen named here · fix it | E09-D03 |",
+        "| F-2  | contrast |",
+    )
+    with pytest.raises(cat.CatalogueError, match="malformed"):
+        cat.parse_review_table(short)
+    bad_id = REVIEW.replace("| F-2  |", "| X-2  |")
+    with pytest.raises(cat.CatalogueError, match="malformed"):
+        cat.parse_review_table(bad_id)
+    dup = REVIEW.replace("| F-3  |", "| F-2  |")
+    with pytest.raises(cat.CatalogueError, match="duplicate"):
+        cat.parse_review_table(dup)
+
+
+def test_count_marker_mismatch_and_missing_marker_raise() -> None:
+    smap = {"blocker": "blocker", "minor": "minor", "info": "info", "major": "major"}
+    with pytest.raises(cat.CatalogueError, match="differ"):
+        cat.review_findings("E00-D00", REVIEW.replace("=3/1/0/1/1", "=4/1/0/1/1"), smap)
+    with pytest.raises(cat.CatalogueError, match="differ"):  # severity split off by one
+        cat.review_findings("E00-D00", REVIEW.replace("=3/1/0/1/1", "=3/0/1/1/1"), smap)
+    # a blank line inside the table truncates it: the count then disagrees
+    trunc = REVIEW.replace("| F-2  |", "\n| F-2  |", 1)
+    with pytest.raises(cat.CatalogueError, match="differ"):
+        cat.review_findings("E00-D00", trunc, smap)
+    with pytest.raises(cat.CatalogueError, match="no finding count marker"):
+        cat.review_findings(
+            "E00-D00", REVIEW.replace("<!-- audit:f=3/1/0/1/1 -->", ""), smap
+        )
+    e09 = REVIEW.replace(
+        "<!-- audit:f=3/1/0/1/1 -->",
+        "3<!--=COUNT:findings--> 1<!--=COUNT:findings.blocker--> 0<!--=COUNT:findings.major--> "
+        "1<!--=COUNT:findings.minor--> 1<!--=COUNT:findings.info-->",
+    )
+    assert len(cat.review_findings("E00-D00", e09, smap)) == 3
+
+
+def test_attribution_applies_only_without_row_text_screen(tmp_path: Path) -> None:
+    smap = {"blocker": "blocker", "minor": "minor", "info": "info", "major": "major"}
+    att = {
+        "A11Y-R-E00-D00-F-1": {"screens": ["SCR-009"], "cite": "x"},
+        "A11Y-R-E00-D00-F-2": {"screens": ["SCR-002"], "cite": "review §1 L2"},
+    }
+    got = cat.review_findings("E00-D00", REVIEW, smap, att)
+    assert got[0]["screens"] == ["SCR-001"] and got[0]["screenSource"] == "row text"
+    assert got[1]["screens"] == ["SCR-002"]
+    assert got[1]["screenSource"].endswith("review §1 L2")
+    root = make_tree(tmp_path, [])
+    routing = json.loads((root / cat.ROUTING_REL).read_text(encoding="utf-8"))
+    routing["attribution"] = {
+        "A11Y-R-E00-D00-F-99": {"screens": ["SCR-002"], "cite": "x"}
+    }
+    (root / cat.ROUTING_REL).write_text(json.dumps(routing), encoding="utf-8")
+    with pytest.raises(cat.CatalogueError, match="attribution"):
+        cat.build(root)
+    routing["attribution"] = {
+        "A11Y-R-E00-D00-F-2": {"screens": ["SCR-002"], "cite": "c"}
+    }
+    (root / cat.ROUTING_REL).write_text(json.dumps(routing), encoding="utf-8")
+    reg = cat.build(root)
+    assert reg["unattributed"] == [] and reg["counts"]["attributedByRouting"] == 1
 
 
 # ---- real inputs (committed register and merged reviews)
@@ -271,6 +357,10 @@ def test_real_review_tables_parse_to_the_documented_count(
 ) -> None:
     rows = cat.parse_review_table((ROOT / path).read_text(encoding="utf-8"))
     assert len(rows) == count
+    assert (
+        cat.expected_counts(path, (ROOT / path).read_text(encoding="utf-8"))["total"]
+        == count
+    )
     ids = [r.get("f") or r.get("id") for r in rows]
     assert len(set(ids)) == count
 
@@ -301,3 +391,12 @@ def test_real_reserved_rows_are_the_unused_ids() -> None:
 
 def test_fixture_helper_copies_cleanly(tmp_path: Path) -> None:
     shutil.rmtree(make_tree(tmp_path / "x") / "docs")
+
+
+def test_real_attribution_leaves_only_the_unmapped_finding_and_no_blocker() -> None:
+    reg = cat.build(ROOT)
+    assert [f["id"] for f in reg["unattributed"]] == ["A11Y-R-E09-D10-F-48"]
+    assert reg["counts"]["unattributedBlockers"] == 0
+    assert reg["counts"]["bySeverity"]["blocker"] == 4  # E09-D10's four Blockers
+    routing = json.loads((ROOT / cat.ROUTING_REL).read_text(encoding="utf-8"))
+    assert all(a["cite"] and a["screens"] for a in routing["attribution"].values())

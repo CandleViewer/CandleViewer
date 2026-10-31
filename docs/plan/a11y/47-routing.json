@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source": "E47-D02 (#1301) brief BQ-4, BQ-6, BQ-7; owners are the E47-D03..D10 design tickets in docs/plan/backlog/E47.json; first matching rule wins, then engineering-only with a reason",
+  "source": "E47-D02 (#1301), ticket in docs/plan/backlog/E47.json; owners are the E47-D03..D10 design tickets; first matching rule wins, then engineering-only with a reason",
   "auditor": "agent-run (E47-D02 lane)",
   "auditDate": "2026-10-31",
   "owners": {
@@ -26,97 +26,136 @@
       "major": "major",
       "minor": "minor",
       "info": "info"
-    },
-    "taskBlockingPattern": "task[- ]blocking"
+    }
   },
   "reviews": [
-    { "key": "E09-D10", "path": "docs/design/E09/E09-D10.md" },
-    { "key": "E08-D12", "path": "docs/design/E08/E08-D12.md" }
+    {
+      "key": "E09-D10",
+      "path": "docs/design/E09/E09-D10.md"
+    },
+    {
+      "key": "E08-D12",
+      "path": "docs/design/E08/E08-D12.md"
+    }
   ],
   "pendingReviews": ["E12-D11", "E14-D10", "E32-D07"],
   "rules": [
     {
-      "match": { "screen": ["SCR-117"] },
+      "match": {
+        "screen": ["SCR-117"]
+      },
       "owner": "E47-D05",
       "reason": "the accessibility settings screen is E47-D05's hi-fi"
     },
     {
-      "match": { "screen": ["SCR-116"] },
+      "match": {
+        "screen": ["SCR-116"]
+      },
       "owner": "E47-D03",
       "reason": "the theme settings screen is E47-D03's design"
     },
     {
-      "match": { "sc": ["1.4.1", "1.4.3", "1.4.11"] },
+      "match": {
+        "sc": ["1.4.1", "1.4.3", "1.4.11"]
+      },
       "owner": "E47-D03",
       "reason": "colour and contrast criteria"
     },
     {
-      "match": { "class": ["colour", "contrast"] },
+      "match": {
+        "class": ["colour", "contrast"]
+      },
       "owner": "E47-D03",
       "reason": "colour and contrast class"
     },
     {
-      "match": { "sc": ["2.4.3", "2.4.7", "2.4.11"] },
+      "match": {
+        "sc": ["2.4.3", "2.4.7", "2.4.11"]
+      },
       "owner": "E47-D04",
       "reason": "focus order and visibility criteria"
     },
     {
-      "match": { "class": ["focus", "reflow"] },
+      "match": {
+        "class": ["focus", "reflow"]
+      },
       "owner": "E47-D04",
       "reason": "focus and reflow class (focus model and landmarks)"
     },
     {
-      "match": { "sc": ["1.4.10"] },
+      "match": {
+        "sc": ["1.4.10"]
+      },
       "owner": "E47-D04",
       "reason": "reflow at 320 CSS px belongs with the layout and landmark model"
     },
     {
-      "match": { "sc": ["4.1.3"] },
+      "match": {
+        "sc": ["4.1.3"]
+      },
       "owner": "E47-D07",
       "reason": "status messages are the live-region design"
     },
     {
-      "match": { "class": ["screen reader"] },
+      "match": {
+        "class": ["screen reader"]
+      },
       "owner": "E47-D07",
       "reason": "screen-reader announcement class"
     },
     {
-      "match": { "sc": ["2.2.1", "2.3.1", "2.3.3"] },
+      "match": {
+        "sc": ["2.2.1", "2.3.1", "2.3.3"]
+      },
       "owner": "E47-D08",
       "reason": "time limits and motion criteria"
     },
     {
-      "match": { "class": ["timing"] },
+      "match": {
+        "class": ["timing"]
+      },
       "owner": "E47-D08",
       "reason": "timing class"
     },
     {
-      "match": { "class": ["keyboard"] },
+      "match": {
+        "class": ["keyboard"]
+      },
       "owner": "E47-D09",
       "reason": "keyboard operability class"
     },
     {
-      "match": { "sc": ["4.1.2", "3.3.1", "3.3.3"] },
+      "match": {
+        "sc": ["4.1.2", "3.3.1", "3.3.3"]
+      },
       "owner": "E47-D10",
       "reason": "name/role/value and error identification are a primitive and pattern contract"
     },
     {
-      "match": { "class": ["consistency"] },
+      "match": {
+        "class": ["consistency"]
+      },
       "owner": "E47-D10",
       "reason": "consistency class (primitives and patterns)"
     },
     {
-      "match": { "sc": ["2.4.2", "2.4.5"] },
+      "match": {
+        "sc": ["2.4.2", "2.4.5"]
+      },
       "owner": "engineering-only",
       "reason": "page titles and multiple ways to find a page are routing behaviour, not a design deliverable"
     },
     {
-      "match": { "class": ["copy"] },
+      "match": {
+        "class": ["copy"]
+      },
       "owner": "engineering-only",
       "reason": "copy fix lands in the owning feature's design follow-up, not an E47 design ticket"
     },
     {
-      "match": { "class": ["scope"] },
+      "match": {
+        "class": ["scope"]
+      },
       "owner": "engineering-only",
       "reason": "scope note for the reviewed epic, not an accessibility design change"
     }
@@ -142,5 +181,76 @@
       "owner": "E47-D07",
       "reason": "status announcement for the reconnecting state"
     }
-  }
+  },
+  "attribution": {
+    "A11Y-R-E09-D10-F-1": {
+      "screens": ["SCR-002"],
+      "cite": "E09-D10 §2 inventory L167 (SCR-002 two-factor, D03:129-151) and §1.2 L99 (F-26 is F-1's sibling on SCR-006)"
+    },
+    "A11Y-R-E09-D10-F-2": {
+      "screens": ["SCR-003", "SCR-017"],
+      "cite": "E09-D10 §6.2 T-28 L341 (SCR-003 any step) and §8.1 TL-3 L418 (SCR-003, SCR-017 step 3)"
+    },
+    "A11Y-R-E09-D10-F-4": {
+      "screens": ["SCR-001"],
+      "cite": "E09-D10 §6.2 T-4 L317 (SCR-001 submitting, rate-limited)"
+    },
+    "A11Y-R-E09-D10-F-5": {
+      "screens": ["SCR-149"],
+      "cite": "E09-D10 §8.1 TL-6 L421 (the admin token, SCR-149)"
+    },
+    "A11Y-R-E09-D10-F-6": {
+      "screens": ["SCR-001"],
+      "cite": "E09-D10 §6.2 T-7 L320 (SCR-001 unreachable, Retry)"
+    },
+    "A11Y-R-E09-D10-F-8": {
+      "screens": ["SCR-002"],
+      "cite": "E09-D10 §6.2 T-15 L328 (recovery-code entry, a code accepted) with §2 L167 (recovery-code entry is on SCR-002)"
+    },
+    "A11Y-R-E09-D10-F-10": {
+      "screens": ["SCR-003"],
+      "cite": "E09-D10 §9.2 P-8, P-9 L468-469 (D04's error line, the owner-reset banner) with §2 L168 (D04 is SCR-003)"
+    },
+    "A11Y-R-E09-D10-F-11": {
+      "screens": ["SCR-003"],
+      "cite": "E09-D10 §9.2 P-10, P-11 L470-471 (the codes banner, the remaining count) with §2 L168 (D04 is SCR-003)"
+    },
+    "A11Y-R-E09-D10-F-12": {
+      "screens": ["SCR-002"],
+      "cite": "E09-D10 §9.2 P-14 L474 (the recovery and back links) with §6.2 T-13, T-14 L326-327 (those links are on SCR-002)"
+    },
+    "A11Y-R-E09-D10-F-14": {
+      "screens": ["SCR-005"],
+      "cite": "E09-D10 §11.1 L521 (\"or code\" on SCR-005's password-only card) and §6.2 T-45 L358"
+    },
+    "A11Y-R-E09-D10-F-15": {
+      "screens": ["SCR-003"],
+      "cite": "E09-D10 §2 L168 (D04:69-171 is SCR-003; the cited D04:83-85 lies inside it)"
+    },
+    "A11Y-R-E09-D10-F-16": {
+      "screens": ["SCR-001"],
+      "cite": "E09-D10 §6.2 T-81 L394 (SCR-001 idle, the reveal toggled)"
+    },
+    "A11Y-R-E09-D10-F-17": {
+      "screens": ["SCR-112"],
+      "cite": "E09-D10 §1.2 P2-27 L85 and F-51 L586 (SCR-112's two-factor section, D04:166-168) with §2 L142"
+    },
+    "A11Y-R-E09-D10-F-18": {
+      "screens": ["SCR-001"],
+      "cite": "E09-D10 §6.2 T-5 L318 (SCR-001 rate-limited, the countdown reaches zero)"
+    },
+    "A11Y-R-E09-D10-F-24": {
+      "screens": ["SCR-006"],
+      "cite": "E09-D10 §6.2 T-61 L374 (SCR-006 grace, expiry)"
+    },
+    "A11Y-R-E08-D12-F-01": {
+      "screens": ["SCR-100"],
+      "cite": "E08-D12 §2 inventory L133 and L153 (SCR-100 Watchlist panel, CMP-161 WatchlistRow; D07 is the watchlist) and §11 L522's own remediation rows E08-S08 (#4702)"
+    },
+    "A11Y-R-E08-D12-F-08": {
+      "screens": ["SCR-152"],
+      "cite": "E08-D12 §2 inventory L129 (SCR-152 Disconnected / reconnecting state) and §11 L529 (E17-D02:253, the Disconnected episode's alert)"
+    }
+  },
+  "unattributedNote": "A11Y-R-E09-D10-F-48 stays unattributed: E09-D10 §6.2 T-77 L390 maps it to the RBAC pattern (a panel holding focus), not to one screen."
 }
