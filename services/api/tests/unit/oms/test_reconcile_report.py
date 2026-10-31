@@ -246,9 +246,11 @@ def test_24_names_the_standing_items_closed_list_and_the_watermarks_upper_bound(
     """The watermark test's pins: the closed list the code holds, and the bound it stores."""
     section = _section("24-internal-schemas.md", "### 8.5 Reconciliation", "### 8.6 ")
     assert (
-        "The standing items are a closed list of two, `no_record_in_force` (a naked position with "
-        "no record in force, BQ-9) and `handover_unreadable`"
+        "The standing items are a closed list of three, `no_record_in_force` (a naked position "
+        "with no record in force, BQ-9), `handover_unreadable` (a hand-over the pass cannot read, "
+        "above) and `untracked_fills_unread`"
     ) in section
+    assert "an `unknown` or `quarantined` row's `fills_unread` among them" in section
     assert sorted(STANDING_ITEMS) == ["handover_unreadable", "no_record_in_force"]
     assert (
         "as the upper bound step 1's execution read covered (the window's end), never the "
