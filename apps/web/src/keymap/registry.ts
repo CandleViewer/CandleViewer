@@ -14,6 +14,7 @@ import {
   isDangerous,
   isSingleLetter,
   rangeDigit,
+  requiresArm,
   type KeymapCommand,
   type KeymapContext,
 } from "./keymap";
@@ -36,6 +37,13 @@ export interface CommandMeta {
   readonly remappable: boolean;
   /** In BQ-3's set (`DANGEROUS_COMMANDS`): the destructive commands, `ticket.submit` and the arm toggles. */
   readonly dangerous: boolean;
+  /**
+   * BQ-5 (the dangerous set): the command declares that its handler opens the confirm flow (E30 SCR-076, E39 CMP-044);
+   * the registry runs none. A disarm never confirms.
+   */
+  readonly confirm: boolean;
+  /** BQ-5: an order entry, inert while the arm reads unarmed (`ArmPort`). */
+  readonly requiresArm: boolean;
   /** A held key runs it once: all but the steppers, and a dangerous command always. */
   readonly ignoreRepeat: boolean;
   /** Its bare key runs in a text field too. */
@@ -66,6 +74,8 @@ const META = new Map<string, CommandMeta>(
       focusContexts: contextsOf(c),
       remappable: c.editable !== false,
       dangerous: isDangerous(c),
+      confirm: c.confirm === true,
+      requiresArm: requiresArm(c),
       ignoreRepeat: ignoresRepeat(c),
       allowInEditable: runsInEditable(c),
       shadows: declared(c),
@@ -171,6 +181,34 @@ export function buildComboMap(
   };
 }
 
+/**
+ * What the UI reads of the session's one-click arm (BQ-5); E30, whose control sets the arm, injects it. The server
+ * decides the arm: a live order without a valid `X-Arm-Token` is refused `403 session_not_armed` whatever this port
+ * reads (SR-043; C-2.21, C-12.4), so the port only keeps an order entry inert on this device while it reads unarmed.
+ * Today it answers one session-level boolean; E30's arm is per account and environment, so E30 injects a port that
+ * answers for the account in scope. `ticket.submit` is arm-gated because `22`'s `ArmToken` forces `requires_arm` on
+ * every `placeOrder` submit, a ticket's included: Ctrl+Enter stays inert until that port reads armed.
+ */
+export interface ArmPort {
+  /** True only while the session is armed. */
+  readonly isArmed: () => boolean;
+}
+/** The default until E30 injects the arm: unarmed, so an order entry stays inert (fail closed). */
+export const UNARMED: ArmPort = { isArmed: () => false };
+
+/**
+ * Whether the arm lets `c` run now. A command without `requiresArm`, every protective one included, never consults the
+ * port (C-2.6); an order entry runs only while it answers exactly `true`, so a port that throws reads unarmed.
+ */
+export function armAllows(c: KeymapCommand, arm: ArmPort): boolean {
+  if (!requiresArm(c)) return true;
+  try {
+    return arm.isArmed() === true;
+  } catch {
+    return false;
+  }
+}
+
 /** A refused registration (AC1's developer-facing error). */
 export class KeymapRegistryError extends Error {
   override readonly name = "KeymapRegistryError";
@@ -190,12 +228,16 @@ export interface CommandRegistry {
   register(id: string, run: (digit?: number) => void, isValid?: () => boolean): () => void;
   /** A handler is registered and its predicate holds. */
   isValid(id: string): boolean;
-  /** Run the registered handler; `digit` is a range binding's pressed digit. */
-  run(id: string, digit?: number): void;
+  /**
+   * Run the registered handler, whatever path asks (a key, a pointer gesture, a palette); `digit` is a range binding's
+   * pressed digit. False when nothing ran: no handler, or an order entry while the arm reads unarmed (BQ-5).
+   */
+  run(id: string, digit?: number): boolean;
 }
 
 export function createCommandRegistry(
   commands: readonly KeymapCommand[] = KEYMAP,
+  arm: ArmPort = UNARMED,
 ): CommandRegistry {
   const byId = new Map(commands.map((c) => [c.id, c]));
   const globals = commands.filter((c) => c.context === "Global");
@@ -231,13 +273,30 @@ export function createCommandRegistry(
       };
     },
     isValid: (id) => handlers.get(id)?.isValid() ?? false,
-    run: (id, digit) => handlers.get(id)?.run(digit),
+    run(id, digit) {
+      const c = byId.get(id);
+      const handler = handlers.get(id);
+      if (c === undefined || handler === undefined || !armAllows(c, arm)) return false;
+      handler.run(digit);
+      return true;
+    },
   };
 }
 
-const app = createCommandRegistry();
+let injected: ArmPort = UNARMED;
+/** E30 injects the session's arm (BQ-5); the returned function puts back the default, unarmed. */
+export function setArmPort(port: ArmPort): () => void {
+  injected = port;
+  return () => {
+    if (injected === port) injected = UNARMED;
+  };
+}
+/** The app's arm: the port injected now, read at each use, so a change of the arm applies with no reload. */
+export const appArm: ArmPort = { isArmed: () => injected.isArmed() };
+
+const app = createCommandRegistry(KEYMAP, appArm);
 /** The app's registry. Views import `registerCommand` from `KeymapHost.tsx`, its one path for app code. */
 export const registerCommand: CommandRegistry["register"] = (id, run, isValid) =>
   app.register(id, run, isValid);
 export const isCommandValid = (id: string): boolean => app.isValid(id);
-export const runCommand = (id: string, digit?: number): void => app.run(id, digit);
+export const runCommand = (id: string, digit?: number): boolean => app.run(id, digit);

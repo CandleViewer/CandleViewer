@@ -1,6 +1,7 @@
 import { KEYMAP } from "./keymap";
 import { parseProfile, resetAll } from "./profileIo";
-import { keymapUser, subscribeKeymapUser } from "./session";
+import type { ProfileStorePort } from "./profileStore";
+import { keymapUser, savesToServer, subscribeKeymapUser } from "./session";
 import { importProfile, storedProfile } from "./validate";
 
 /**
@@ -73,6 +74,16 @@ function persist(user: string | null, b: ReadonlyMap<string, string>): void {
   }
 }
 
+/**
+ * The server's profile store (BQ-1): none until a server implements `22`'s `/settings/hotkeys`, so nothing is sent.
+ * The device store above stays the active one; a store set here also gets each change made by a session holding
+ * `settings:write` (A55), and the server still decides.
+ */
+let serverStore: ProfileStorePort | null = null;
+export function setProfileStore(store: ProfileStorePort | null): void {
+  serverStore = store;
+}
+
 let profileUser = keymapUser();
 let bindings: ReadonlyMap<string, string> = loadPersisted(profileUser);
 const listeners = new Set<() => void>();
@@ -89,7 +100,14 @@ export const getBindings = (): ReadonlyMap<string, string> => bindings;
 export function setBindings(next: ReadonlyMap<string, string>): void {
   bindings = next;
   persist(profileUser, next);
-  listeners.forEach((l) => l());
+  listeners.forEach((l) => l()); // the UI first: a store that throws never skips it (CR-305C-07)
+  if (serverStore !== null && profileUser !== null && savesToServer()) {
+    try {
+      serverStore.write(profileUser, next);
+    } catch {
+      /* a store that throws: the change stays on this device */
+    }
+  }
 }
 export function subscribeBindings(l: () => void): () => void {
   listeners.add(l);
