@@ -145,6 +145,31 @@ async function runCell(
   }
 }
 
+/** Must-trip negative control: axe has to flag a violation injected into a known story, else infra. */
+async function negativeControl(page: Page, story: string): Promise<string[]> {
+  const expected = ["image-alt", "button-name"];
+  await page.goto(`/iframe.html?id=${story}&viewMode=story&globals=theme:dark;density:compact`, {
+    timeout: STORY_TIMEOUT_MS,
+  });
+  await page.waitForFunction(pinnedGlobals, undefined, { polling: 50, timeout: STORY_TIMEOUT_MS });
+  await page.evaluate(() => {
+    const root = document.querySelector("#storybook-root") ?? document.body;
+    root.insertAdjacentHTML("beforeend", '<img src="data:,"><button></button>');
+  });
+  const result = await new AxeBuilder({ page })
+    .withTags(AXE_TAGS)
+    .disableRules(PAGE_LEVEL_RULES)
+    .analyze();
+  const hit = result.violations
+    .filter((v) => v.impact === "serious" || v.impact === "critical")
+    .map((v) => v.id);
+  const missing = expected.filter((id) => !hit.includes(id));
+  if (missing.length > 0) {
+    throw new Error(`A11Y-INFRA: negative control did not trip (missing ${missing.join(", ")})`);
+  }
+  return expected;
+}
+
 test("E05-Q02 design-system axe matrix", async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const offsite: string[] = [];
@@ -157,6 +182,7 @@ test("E05-Q02 design-system axe matrix", async ({ browser }) => {
   const page = await context.newPage();
   const { ids, excluded } = await readStories(page);
   const cells: Cell[] = [];
+  const control = ids[0] === undefined ? [] : await negativeControl(page, ids[0]);
   for (const id of ids) {
     for (const theme of subset(THEMES, process.env["A11Y_THEMES"])) {
       for (const density of subset(DENSITIES, process.env["A11Y_DENSITIES"])) {
@@ -182,6 +208,7 @@ test("E05-Q02 design-system axe matrix", async ({ browser }) => {
         sha: process.env["A11Y_SHA"] ?? "unset",
         stories: ids.length,
         excluded,
+        negativeControl: { tripped: control.length > 0, rules: control },
         total,
         offsite,
         cells,
@@ -204,6 +231,9 @@ test("E05-Q02 design-system axe matrix", async ({ browser }) => {
       `Stories ${ids.length} (excluded perf: ${excluded.length}), cells ${cells.length}, ` +
         `errored ${failed.length}, off-site requests ${offsite.length}`,
       `Violations: ${IMPACTS.map((i) => `${i} ${total[i]}`).join(", ")}`,
+      `Negative control: tripped (${control.join(", ")})`,
+      `Disabled page-level rules: ${PAGE_LEVEL_RULES.join(", ")} (a lone component in the isolated ` +
+        "iframe has no main landmark, h1 or region; the screens sweep, E47, covers them)",
       "",
       "| story | theme | density | motion | crit / ser / mod / min | rules or error |",
       "|---|---|---|---|---|---|",
