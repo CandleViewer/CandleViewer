@@ -16,8 +16,33 @@ const load = async () => ({
   ...(await import("../src/keymap/Cheatsheet")),
   ...(await import("../src/keymap/audit")),
   ...(await import("../src/keymap/profile")),
+  ...(await import("../src/lib/auth/meCache")),
+  ...(await import("../src/shell/bootstrap/store")),
 });
 let mods: Awaited<ReturnType<typeof load>>;
+
+/**
+ * An Owner signed in, as the bootstrap applies `/me` (#305, A55): the profile and the audit outbox are keyed by the
+ * user, and the audit is sent only for a session holding `settings:write`.
+ */
+function signIn(m: Pick<typeof mods, "setMeClaims" | "setShellState"> = mods): void {
+  const permissions = ["settings:read", "settings:write"];
+  m.setMeClaims({ authenticated: true, role: "owner", permissions });
+  m.setShellState({
+    me: {
+      accounts: [],
+      permissions,
+      role: "owner",
+      user: {
+        id: "u-1",
+        email: "u@example.test",
+        username: "u",
+        roles: ["owner"],
+        status: "active",
+      },
+    },
+  });
+}
 
 beforeEach(async () => {
   // The profile and the audit outbox persist in localStorage, and a module reads it when it loads.
@@ -70,29 +95,46 @@ describe("inert press explains itself (wired host)", () => {
 });
 
 describe("SCR-113 editor", () => {
-  const row = (label: string) => screen.getByText(label).closest("tr") as HTMLElement;
-  const bind = (label: string, key: string, ctrlShift = false) => {
-    const r = row(label);
-    const inp = r.querySelector("input[type=text], input:not([type])") as HTMLInputElement;
-    fireEvent.change(inp, { target: { value: key } });
-    if (ctrlShift) {
-      r.querySelectorAll("input[type=checkbox]").forEach((c, i) => i !== 1 && fireEvent.click(c));
-    }
-    fireEvent.click(r.querySelector("button") as HTMLElement);
+  // #305 PR B: the Esc commands are locked (BQ-7) and the shell announcer speaks a message, never a role="alert".
+  // Queries stay inside one row: the table has 75 (CR-305B-06).
+  const inRow = (label: string) => {
+    const th = screen.getByText(label, { selector: 'th[scope="row"]' });
+    return within(th.closest("tr") as HTMLElement);
+  };
+  const bind = (label: string, key: string, keys: readonly string[] = []) => {
+    const row = inRow(label);
+    for (const k of keys) fireEvent.click(row.getByRole("checkbox", { name: `${k} for ${label}` }));
+    fireEvent.change(row.getByRole("textbox", { name: `Key for ${label}` }), {
+      target: { value: key },
+    });
+    fireEvent.click(row.getByRole("button", { name: /^Save\b/ })); // `Save <label>` (A11Y-305BD-02)
   };
 
-  it("refuses conflict naming both, refuses reserved with platform, audits destructive rebind", () => {
+  it("refuses a reserved key, naming the platform", () => {
+    const { HotkeyEditor } = mods;
+    render(<HotkeyEditor />);
+    bind("Toggle footprint", "I", ["Ctrl", "Shift"]);
+    const row = inRow("Toggle footprint");
+    expect(row.getByText(/Ctrl\+Shift\+I is reserved by browser\/Electron/)).toBeVisible();
+  });
+
+  it("refuses a conflict, naming the other command", () => {
+    const { HotkeyEditor } = mods;
+    render(<HotkeyEditor />);
+    bind("Delete selected drawing", "Z", ["Ctrl"]);
+    const row = inRow("Delete selected drawing");
+    expect(row.getByText(/already bound to "Undo drawing" in the Chart context/)).toBeVisible();
+  });
+
+  it("audits a destructive rebind made on the acknowledgement", () => {
     const { HotkeyEditor, getBindings, setAuditSink } = mods;
     const audits: AuditRecord[] = [];
     setAuditSink((r) => audits.push(r));
     render(<HotkeyEditor />);
-    bind("Cancel in-progress drawing", "I", true);
-    expect(screen.getByRole("alert").textContent).toMatch(/reserved by/);
-    bind("Delete selected drawing", "Esc");
-    expect(screen.getByRole("alert").textContent).toMatch(/Cancel in-progress drawing/);
     bind("Cancel all working orders for symbol", "Del");
-    expect(screen.getByRole("alert").textContent).toMatch(/destructive/);
-    fireEvent.click(screen.getByText("I understand, bind anyway"));
+    const row = inRow("Cancel all working orders for symbol");
+    expect(row.getByText(/is destructive; a bare key needs an explicit/)).toBeVisible();
+    fireEvent.click(row.getByRole("button", { name: "I understand, bind anyway" }));
     expect(getBindings().get("dom.cancel_all")).toBe("Del");
     expect(audits[0]).toMatchObject({ action: "hotkey.trading_binding_changed", after: "Del" });
   });
@@ -101,7 +143,7 @@ describe("SCR-113 editor", () => {
     const { HotkeyEditor, getBindings } = mods;
     render(<HotkeyEditor />);
     bind("Cancel all working orders for symbol", "Q");
-    expect(screen.getByRole("alert")).toHaveTextContent(/could trigger it by accident/);
+    expect(screen.getByText(/could trigger it by accident/)).toBeVisible();
     expect(screen.queryByText("I understand, bind anyway")).toBeNull();
     expect(getBindings().get("dom.cancel_all")).toBe("Ctrl+Shift+X");
   });
@@ -112,7 +154,7 @@ describe("SCR-113 editor", () => {
     fireEvent.change(ta, {
       target: { value: JSON.stringify({ "dom.cancel_all": "Ctrl+Shift+I" }) },
     });
-    fireEvent.blur(ta);
+    fireEvent.click(screen.getByText("Import", { selector: "button" })); // #305 CR-305B-02: no apply on blur
     expect(screen.getByLabelText("Import report").textContent).toMatch(/reserved/);
     expect(getBindings().get("dom.cancel_all")).not.toBe("Ctrl+Shift+I");
   });
@@ -143,6 +185,7 @@ describe("wiring (review fixes)", () => {
     const { KeymapHost, applyRebind, auditOutbox, flushAuditOutbox, getBindings, setAuditSink } =
       mods;
     setAuditSink((r) => window.dispatchEvent(new CustomEvent("cv:audit", { detail: r })));
+    signIn();
     render(<KeymapHost />);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
     const n = auditOutbox().length;
@@ -162,6 +205,7 @@ describe("audit is transmitted server-side", () => {
     const { applyRebind, auditOutbox, recordAudit, setAuditSink } = mods;
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", fetchMock);
+    signIn();
     setAuditSink(recordAudit);
     applyRebind(new Map([["dom.cancel_all", "Ctrl+Shift+X"]]), "dom.cancel_all", "X", true);
     await vi.waitFor(() => expect(auditOutbox()).toHaveLength(0));
@@ -177,7 +221,7 @@ describe("audit is transmitted server-side", () => {
     vi.unstubAllGlobals();
   });
   it("a persisted outbox is read back when the audit module loads", async () => {
-    // Key and record shape as audit.ts persists them (STORE_KEY there; it is not exported).
+    // Key and record shape as audit.ts persists them (STORE_KEY there, per user since A55; it is not exported).
     const record: AuditRecord = {
       action: "hotkey.trading_binding_changed",
       commandId: "dom.cancel_all",
@@ -185,9 +229,10 @@ describe("audit is transmitted server-side", () => {
       after: "Q",
       acknowledgedUnsafe: true,
     };
-    window.localStorage.setItem("cv.hotkey-audit-outbox.v1", JSON.stringify([record]));
+    window.localStorage.setItem("cv.hotkey-audit-outbox.v1:u-1", JSON.stringify([record]));
     vi.resetModules();
     const { auditOutbox } = await import("../src/keymap/audit");
+    signIn(await load());
     expect(auditOutbox()).toEqual([record]);
   });
 });
@@ -195,15 +240,18 @@ describe("audit is transmitted server-side", () => {
 describe("profile persistence + Rules-context inert explanation", () => {
   it("rebinds survive a module reload (localStorage)", async () => {
     const { getBindings, setBindings } = mods;
-    act(() => setBindings(new Map(getBindings()).set("dom.cancel_all", "Q")));
+    signIn();
+    // An acknowledged bare key: a stored single letter on it would be dropped at load (#305, CR-305B-05).
+    act(() => setBindings(new Map(getBindings()).set("dom.cancel_all", "Del")));
     vi.resetModules();
     const fresh = await import("../src/keymap/profile");
-    expect(fresh.getBindings().get("dom.cancel_all")).toBe("Q");
+    signIn(await load()); // the reload's own bootstrap names the same user
+    expect(fresh.getBindings().get("dom.cancel_all")).toBe("Del");
     fresh.resetBindings();
     vi.resetModules();
-    expect((await import("../src/keymap/profile")).getBindings().get("dom.cancel_all")).toBe(
-      "Ctrl+Shift+X",
-    );
+    const again = await import("../src/keymap/profile");
+    signIn(await load());
+    expect(again.getBindings().get("dom.cancel_all")).toBe("Ctrl+Shift+X");
   });
 
   it("explains an inert Rules command when the editor context is not valid", () => {
@@ -380,7 +428,10 @@ describe("#305 PR A: the typing guard in the wired host (AC6, D6, D7, D8, G-07)"
     render(<Cheatsheet />);
     const workspace = screen.getByRole("table", { name: "Workspace" });
     const row = within(workspace).getByRole("row", { name: /^Full-screen active panel/ });
-    expect(row).toHaveTextContent("F11 Active panel full-screen wins while a panel is focused");
+    // after the key, the reviewed override's mark (E10-D04 §15, #305 DS-305B-02), then the rationale
+    expect(row).toHaveTextContent(
+      "F11 reserved by the browser or OS Active panel full-screen wins while a panel is focused",
+    );
     const global = screen.getByRole("table", { name: "Global" });
     const own = within(global).getByRole("row", { name: /^Full-screen workspace/ });
     expect(own).not.toHaveTextContent("wins while");

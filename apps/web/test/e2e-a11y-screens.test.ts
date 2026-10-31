@@ -58,4 +58,12 @@ describe("the a11y gate's screen set (#3470)", () => {
       signedIn: { role: "owner", heading: "Appearance" },
     });
   });
+
+  it("audits the hotkey editor (R-202) as a signed-in owner screen (#305, A11Y-305B-04)", () => {
+    expect(SIGNED_IN_SCREENS).toContainEqual({
+      id: "R-202",
+      path: "/settings/hotkeys",
+      signedIn: { role: "owner", heading: "Hotkeys" },
+    });
+  });
 });

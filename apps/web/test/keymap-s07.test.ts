@@ -23,9 +23,9 @@ describe("destructive defaults", () => {
 
 describe("validateBinding", () => {
   it("refuses a same-context collision naming the other command", () => {
-    const p = validateBinding("chart.delete_drawing", "Esc", cur());
+    const p = validateBinding("chart.footprint_mode", "Ctrl+Z", cur());
     expect(p?.kind).toBe("conflict");
-    expect(p?.reason).toMatch(/Cancel in-progress drawing/);
+    expect(p?.reason).toMatch(/Undo drawing/);
   });
   it("refuses a reserved key naming the platform", () => {
     const p = validateBinding("dom.cancel_all", "Ctrl+Shift+I", cur());
@@ -100,7 +100,7 @@ describe("importProfile", () => {
   it("applies safe bindings and lists unsafe ones with reasons", () => {
     const r = importProfile({
       "dom.cancel_all": "Ctrl+Alt+X",
-      "chart.delete_drawing": "Esc",
+      "chart.delete_drawing": "Ctrl+Z",
       "ticket.snap_bid": "Ctrl+Shift+I",
       "bogus.id": "Ctrl+Alt+Z",
     });

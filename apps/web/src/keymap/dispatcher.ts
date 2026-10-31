@@ -7,6 +7,7 @@ import {
   type KeymapCommand,
 } from "./keymap";
 import { buildComboMap, ignoresRepeat, runsInEditable } from "./registry";
+import { isPermanentlyReserved } from "./validate";
 
 export const INERT_NOTICE_WINDOW_MS = 5000;
 
@@ -15,6 +16,8 @@ export type DispatchResult =
   /** A held key's auto-repeat, taken and not run: its command runs once per press (`ignoreRepeat`). */
   | { readonly status: "repeat"; readonly commandId: string }
   | { readonly status: "inert"; readonly commandId: string; readonly notified: boolean }
+  /** `Ctrl+K` with no palette yet: taken (default prevented) and never reported (BQ-7, D9). */
+  | { readonly status: "reserved"; readonly binding: string }
   /** A key A-D05-2's rule leaves alone: neither run nor reported, its default not prevented. */
   | { readonly status: "ignored"; readonly reason: "composing" | "prevented" | "editable" }
   | { readonly status: "unbound" };
@@ -71,7 +74,8 @@ export function inertMessage(c: KeymapCommand): string {
  * reported and runs only if its command opts in (`allowInEditable`). Global resolves first, with a declared shadow
  * before the Global (AC1, BQ-4); the first command that can run takes the key, once per press unless it is a stepper.
  * An inert key explains itself from any context, as E49-S07 shipped, except a bare navigation key (Tab, Enter, Space,
- * the arrows: D6, ruled option (c)), Esc (D7), a range binding and a held key's repeat.
+ * the arrows: D6, ruled option (c)), Esc (D7), a range binding and a held key's repeat; `Ctrl+K`, reserved for the
+ * palette, is taken without a notice until E15 registers the palette on it (BQ-7, D9).
  */
 export function createDispatcher(deps: DispatcherDeps) {
   const lastNotified = new Map<string, number>();
@@ -96,6 +100,7 @@ export function createDispatcher(deps: DispatcherDeps) {
     if (typing) return { status: "ignored", reason: "editable" };
     const inert = hits.find((h) => h.digit === undefined)?.command ?? map.anywhere(got);
     if (inert === undefined || neverReported(got)) return { status: "unbound" };
+    if (isPermanentlyReserved(got)) return { status: "reserved", binding: got };
     if (e.repeat === true) return { status: "inert", commandId: inert.id, notified: false };
     deps.countInert?.(inert.id);
     const t = deps.now();

@@ -43,7 +43,9 @@
       "destructive": false,
       "validWhen": "always",
       "visibleControl": true,
-      "screens": ["SCR-010"]
+      "screens": ["SCR-010"],
+      "editable": false,
+      "editableException": "05 §3.3 rule 3: Ctrl+K is permanently reserved for the command palette, the way back when a user breaks their own keymap; excluded from the remap UI (#305, BQ-7)"
     },
     {
       "id": "global.account_picker",
@@ -96,6 +98,36 @@
       "destructive": false,
       "validWhen": "workspace open",
       "visibleControl": true,
+      "screens": ["SCR-010"]
+    },
+    {
+      "id": "global.region_cycle",
+      "label": "Region cycling",
+      "context": "Global",
+      "defaultBinding": "Ctrl+\\",
+      "destructive": false,
+      "validWhen": "always",
+      "visibleControl": "the skip link or the screen reader's landmark list",
+      "screens": ["SCR-010"]
+    },
+    {
+      "id": "global.toggle_high_contrast",
+      "label": "Toggle high-contrast theme",
+      "context": "Global",
+      "defaultBinding": "Ctrl+Shift+H",
+      "destructive": false,
+      "validWhen": "always",
+      "visibleControl": "Settings → Accessibility",
+      "screens": ["SCR-010"]
+    },
+    {
+      "id": "global.toggle_reduced_motion",
+      "label": "Toggle reduced-motion override",
+      "context": "Global",
+      "defaultBinding": "Ctrl+Shift+M",
+      "destructive": false,
+      "validWhen": "always",
+      "visibleControl": "Settings → Accessibility",
       "screens": ["SCR-010"]
     },
     {
@@ -253,6 +285,8 @@
       "destructive": false,
       "validWhen": "drawing in progress",
       "visibleControl": true,
+      "editable": false,
+      "editableException": "05 §3.3 rule 3: Esc, the universal cancel, is permanently reserved; excluded from the remap UI (#305, BQ-7)",
       "shadows": [
         {
           "command": "ticket.clear",
@@ -266,6 +300,7 @@
       "context": "Chart",
       "defaultBinding": "Del",
       "destructive": true,
+      "audited": true,
       "validWhen": "drawing selected",
       "visibleControl": true,
       "shadows": [
@@ -320,6 +355,7 @@
       "context": "DOM",
       "defaultBinding": "Ctrl+Shift+X",
       "destructive": true,
+      "audited": true,
       "validWhen": "working orders exist",
       "visibleControl": true,
       "decision": "E49-S07: bare Esc removed (destructive needs a modifier; Esc stays Close/Cancel). Owner approval of the replacement key is requested on PR #1768 (not yet granted); until then it is a proposed default, user-rebindable via SCR-113 and audited."
@@ -374,6 +410,7 @@
       "context": "DOM",
       "defaultBinding": "Ctrl+Shift+T",
       "destructive": false,
+      "audited": true,
       "validWhen": "always",
       "visibleControl": true,
       "shadows": [
@@ -432,6 +469,7 @@
       "context": "Ticket",
       "defaultBinding": "Ctrl+Enter",
       "destructive": false,
+      "audited": true,
       "validWhen": "always",
       "visibleControl": true,
       "shadows": [
@@ -449,6 +487,8 @@
       "destructive": false,
       "validWhen": "always",
       "visibleControl": true,
+      "editable": false,
+      "editableException": "05 §3.3 rule 3: Esc, the universal cancel, is permanently reserved; excluded from the remap UI (#305, BQ-7)",
       "allowInEditable": true,
       "shadows": [
         {
@@ -505,6 +545,7 @@
       "context": "Ticket",
       "defaultBinding": "Ctrl+Shift+T",
       "destructive": false,
+      "audited": true,
       "validWhen": "always",
       "visibleControl": true,
       "shadows": [
@@ -543,6 +584,7 @@
       "context": "Positions",
       "defaultBinding": "Ctrl+W",
       "destructive": true,
+      "audited": true,
       "validWhen": "always",
       "visibleControl": true,
       "reservedOverride": {
@@ -555,6 +597,7 @@
       "context": "Positions",
       "defaultBinding": "Ctrl+Shift+W",
       "destructive": true,
+      "audited": true,
       "validWhen": "always",
       "visibleControl": true,
       "reservedOverride": {
@@ -660,6 +703,7 @@
       "context": "Rules",
       "defaultBinding": "Del",
       "destructive": true,
+      "audited": true,
       "validWhen": "always",
       "visibleControl": true,
       "screens": ["SCR-082"],
