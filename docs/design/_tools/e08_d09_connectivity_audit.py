@@ -9,17 +9,26 @@ led by its code:
 - [G-CITE] every `KEY`:line cite (and every `C-x.y`:line cite) resolves at the base to a non-blank
   line inside its file (a rule cite inside its rule); every cite's line is pinned by its words in
   the pins file (cites by content: a moved line FAILs, naming where its words now stand); the
-  load-bearing cites (CITED) hold their words.
+  load-bearing cites (CITED) hold their words. Limit: outside CITED the gate proves a cite resolves
+  and is pinned, not that it names the right line; a re-pointed cite passes after `--repin-ruled`,
+  so the reviewer reads the pins diff.
 - [G-QUOTE] every copy-deck row is PROPOSED or verbatim; each verbatim fragment (VERBATIM) stands
-  in its string and on its cited line.
+  in its string and on its cited line; the ruled and pinned strings (EXACT) equal their deck rows.
 - [G-CARVE] the C-2.6 / C-12.7 carve-out: the two carve-out sentences verbatim; the two-condition
-  sentences, each under its own state (a per-account throttle and an exchange IP hold); never a
-  protective action said to "go through"; no protective control gated or disabled; the reserve never
-  given a percentage of its own; the stop-loss always counted by the simulator.
-- [G-NEVER] the never-show rules stand in §13.2, and no copy-deck string carries key material, a
-  UID, a host, an address, a request or trace id or a raw body.
-- [G-STATE] the register S-01 ... S-20: in order, each with a trigger, an exit, a known glyph, a
-  token, an announcement and a numeric `max_rate`; never-announced states rate `never`; every SR
+  sentences, each under its own state (a per-account throttle and an exchange IP hold); over every
+  line of both documents, no sentence presents a protective action (cancel, close, `closePosition`,
+  flatten, setting or tightening a stop) near a gating word (disabled, greyed, gated, refused,
+  hidden, `aria-disabled`, T2, blocked) and no sentence promises one succeeds ("will go through",
+  "will still succeed", "still works" and the like), unless the sentence is a negation (never,
+  no, not, none); no protective control in the T2 table; the reserve never given a percentage of
+  its own; the stop-loss always counted by the simulator.
+- [G-NEVER] the never-show rules stand in §13.2 (the served `detail` never printed verbatim among
+  them); no displayed string (a deck string, an SR string, any quoted string in either document)
+  carries key material, a UID, a host, an address or a request or trace id; no sentence outside
+  §13.2 names such content without a negation; S-17 shows a page-owned sentence, never the served
+  `detail`.
+- [G-STATE] the register S-01 ... S-20: in order, each with a trigger, an exit, a known glyph that
+  matches its tone (TONE_GLYPHS), a token, an announcement and a numeric `max_rate`; never-announced states rate `never`; every SR
   row of §17.4 carries a numeric rate.
 - [G-TOKEN] every token named in the two documents is shipped in `packages/ui/tokens` at the base.
 - [G-D12] E08-D12's pre-condition (G-01) answered by id: the ten §10.1b items with a verdict each,
@@ -43,9 +52,9 @@ led by its code:
   agent name or closing keyword in the documents; the public-text list also over the tool and pins.
 - [G-PIN] every sha and comment id in the documents is a known one.
 
-`--a-rows` prints §C as JSON, one record per row with its target file; `--self-test` applies one
-mutation per gate (MUTATIONS) and the mode probes (PROBES) to an in-memory copy and passes only when
-each mutation adds new FAILs from its own gate only, each probe gives its expected result, a re-run
+`--a-rows` prints §C as JSON, one record per row with its target file; `--self-test` applies at
+least one mutation per gate (MUTATIONS) and the mode probes (PROBES) to an in-memory copy and passes
+only when each mutation adds new FAILs from its own gate only, each probe gives its expected result, a re-run
 reproduces the base result and no file on disk changed.
 
 Usage (from the repo root):
@@ -108,6 +117,8 @@ KEYS: dict[str, str] = {
     "D11": E08 + "D11.md",
     "D12": E08 + "D12.md",
     "DS": ".claude/rules/32-design-specs.md",
+    "E42J": "docs/plan/backlog/E42.json",
+    "cal": "docs/plan/backlog/_tools/calendar_cv.py",
     "E30-D03": "docs/design/E30/E30-D03.md",
     "E42-D02": "docs/design/E42/E42-D02.md",
     "E42-D05": "docs/design/E42/E42-D05.md",
@@ -151,6 +162,8 @@ CITED: dict[tuple[str, int], str] = {
     ("E42-D02", 131): "Recorded in the audit log",
     ("14", 2988): "connectivity.reconnect_forced",
     ("D12", 197): "KB-30",
+    ("E42J", 260): "Sprint 15",
+    ("cal", 13): "datetime.date(2026, 9, 25)",
 }
 
 # (deck fragment, cite key, line, words on that line) for every verbatim fragment of the deck.
@@ -198,6 +211,24 @@ VERBATIM: dict[str, tuple[tuple[str, str, int, str], ...]] = {
     "W-74": (("Read-only while viewing as {user}.", "D12", 384, "viewing as {user}."),),
 }
 
+# The ruled and pinned strings: each deck row's string, exactly.
+EXACT: dict[str, str] = {
+    "W-06a": "Reserved for stops and cancels · Not connected yet",
+    "W-25": (
+        "Error · Our rate-limit counters did not report. · last good {14:01:58} · Usage is unknown "
+        "until our counters report again."
+    ),
+    "W-36": "All requests are on hold.",
+    "W-55": "Recorded in the audit log · Reconnect forced (pending registration)",
+    "W-57": "Wait {40} s. The connection budget allows no new connection yet.",
+    "W-63": "Recorded in the audit log · Request budget changed (pending registration)",
+    "W-64": (
+        "The exchange's limit for this account is the ceiling. · Raising this never raises the "
+        "exchange's limit. · The reserve for stops and cancels is kept out of this budget. · This "
+        "changes this account only."
+    ),
+}
+
 # The carve-out sentences (spec §7), verbatim.
 CARVE = (
     (
@@ -218,8 +249,8 @@ THROTTLE_LINE = (
 )
 HOLD_LINE = (
     "While the hold lasts, no request from this server reaches the exchange, protective ones "
-    "included. Native stops on the exchange stay active. The kill switch is a local check and "
-    "still works."
+    "included. Native stops on the exchange stay active. The kill switch is a synchronous local "
+    "check, not a request to the exchange."
 )
 CONDITIONS = (("W-31", THROTTLE_LINE, "reaches the exchange"), ("W-33", HOLD_LINE, "reserved"))
 CONDITION_BULLET = (
@@ -232,20 +263,60 @@ CONDITION_BULLET = (
 PROTECTIVE = re.compile(
     r"\b(?:cancel|close|closePosition|flatten|stop[- ]loss|stops?)\b", re.IGNORECASE
 )
-GO_THROUGH = re.compile(r"\bgo(?:es)? through\b", re.IGNORECASE)
+PROT_WORD = re.compile(
+    r"\b(?:cancel(?:s|led|ling)?|closePosition|close(?: (?:a|the|all) positions?)?|flatten\w*"
+    r"|stop[- ]loss(?:es)?|stops?|tighten\w*)\b",
+    re.IGNORECASE,
+)
+GATING = re.compile(
+    r"\b(?:disabled?|disabling|greye?d?(?: out)?|greys out|gated?|gating|refused?|refuses|hidden"
+    r"|hides?|aria-disabled|T2|blocked|blocks)\b",
+    re.IGNORECASE,
+)
+PROMISE = re.compile(
+    r"\b(?:will|would|shall) (?:still |always )?(?:succeed|work|go through|get through"
+    r"|be (?:accepted|placed|sent|filled|honou?red))\b|\bstill (?:works?|succeeds?|goes through"
+    r"|go through|gets? through|accepted|placed)\b|\bgo(?:es)? through\b|\bguaranteed\b",
+    re.IGNORECASE,
+)
+NEGATION = re.compile(r"\b(?:never|no|not|none|nothing)\b", re.IGNORECASE)
+SENTENCE = re.compile(r"(?<=[.!?;])\s+|\s+·\s+|\s*\|\s*")
 NEVER_SHOW = (
     "No API key, secret, signature, signed request content, or key id beyond a masked label.",
     "never a UID",
     "No raw exchange body.",
     "is never printed verbatim",
     "No hostname, egress address, request id or trace id as text",
+    "**The served `detail` is never printed verbatim**",
 )
+SENSITIVE = re.compile(
+    r"\brequest id\b|\btrace id\b|\bapi[ _-]?key\b|\bsecret\b|\bsignature\b|\bhostname\b"
+    r"|\begress address\b|\bUID\b|served `?detail`?",
+    re.IGNORECASE,
+)
+SHOWING = re.compile(
+    r"\b(?:show|shows|shown|display|displays|print|prints|printed|render|renders"
+    r"|rendered|label|labelled|may|appear|appears|as text)\b",
+    re.IGNORECASE,
+)
+QUOTED = re.compile(r'"([^"\n]{2,})"')
 DECK_FORBIDDEN = re.compile(
     r"\buid\b|api[ _-]?key|secret|trace id|request id|\b\d{1,3}(?:\.\d{1,3}){3}\b"
     r"|\b[a-z0-9-]+\.(?:com|net|org|io)\b",
     re.IGNORECASE,
 )
 GLYPHS = ("check", "triangle", "octagon", "clock", "ring", "—")
+# Each tone's glyphs (CMP-178's shapes, `15`:2230): a tone never wears another tone's glyph.
+TONE_GLYPHS: dict[str, tuple[str, ...]] = {
+    "color.status.success.strong": ("check",),
+    "color.status.warning.strong": ("triangle",),
+    "color.status.danger.strong": ("octagon", "clock"),
+    "color.neutral.default": ("ring",),
+    "color.data-confidence.disconnected.*": ("octagon",),
+    "color.data-confidence.reconnecting.*": ("ring",),
+    "color.data-confidence.stale.*": ("clock",),
+    "CMP-015": ("—",),
+}
 ANNOUNCE = ("never", "polite, on entry", '`role="alert"`, on entry')
 RATE = re.compile(
     r"^(?:never|once per episode(?: \(§5\.2\))?|once per press|once per change"
@@ -523,6 +594,10 @@ def quote_problems(t: Texts) -> list[str]:
             bad.append(f"{wid}: neither PROPOSED nor a verbatim string with its cite")
         if "verbatim" in (row[1] + source).lower() and wid not in VERBATIM:
             bad.append(f"{wid}: says verbatim but has no verbatim fragment pinned")
+    for wid, want in EXACT.items():
+        erow = rows.get(wid)
+        if erow is None or len(erow) < 3 or erow[2] != want:
+            bad.append(f"{wid}: its string is not the ruled one exactly")
     for wid, frags in VERBATIM.items():
         vrow = rows.get(wid)
         if vrow is None:
@@ -563,8 +638,16 @@ def carve_problems(t: Texts) -> list[str]:
         elif never in row[2]:
             bad.append(f"{wid}: carries the other condition's words ({never!r})")
     for name, text in docs(t):
-        for m in GO_THROUGH.finditer(text):
-            bad.append(f"{name}: a protective action said to 'go through' (offset {m.start()})")
+        for n, ln in enumerate(lines(text), 1):
+            for sent in SENTENCE.split(ln):
+                if NEGATION.search(sent):
+                    continue
+                m = PROT_WORD.search(sent)
+                if m and GATING.search(sent):
+                    bad.append(f"{name}:{n}: a protective action presented as gated: {sent[:60]!r}")
+                p = PROMISE.search(sent)
+                if p:
+                    bad.append(f"{name}:{n}: a promise that an action succeeds ({p.group(0)!r})")
     t2 = table_rows(section(section(t.spec, "17. Accessibility"), "17.5", 3))
     for r in t2:
         if r and len(r) > 1 and PROTECTIVE.search(r[1]):
@@ -578,13 +661,35 @@ def carve_problems(t: Texts) -> list[str]:
     return bad
 
 
+def shown_strings(t: Texts) -> list[tuple[str, str]]:
+    """Every string the page may display: the deck's, the SR rows', any quoted string."""
+    out = [(wid, r[2]) for wid, r in deck(t.spec).items() if len(r) > 2]
+    sr = table_rows(section(section(t.spec, "17. Accessibility"), "17.4", 3))
+    out += [(r[0], r[2]) for r in sr if len(r) > 2]
+    for name, text in docs(t):
+        out += [
+            (f"{name} quote", m.group(1))
+            for m in QUOTED.finditer(text)
+            if not NEGATION.search(m.group(1))  # a quoted rule ("never a UID") is not shown text
+        ]
+    return out
+
+
 def never_problems(t: Texts) -> list[str]:
     s132 = section(section(t.spec, "13. Roles"), "13.2", 3)
     bad = [f"§13.2 lacks {p!r}" for p in NEVER_SHOW if p not in s132]
-    for wid, row in deck(t.spec).items():
-        if len(row) > 2:
-            for m in DECK_FORBIDDEN.finditer(row[2]):
-                bad.append(f"{wid}: its string carries barred content ({m.group(0)!r})")
+    for where, text in shown_strings(t):
+        for m in DECK_FORBIDDEN.finditer(text):
+            bad.append(f"{where}: a displayed string carries barred content ({m.group(0)!r})")
+    for name, text in docs(t):
+        body = text.replace(s132, "") if name == "spec" else text
+        for n, ln in enumerate(lines(body), 1):
+            for sent in SENTENCE.split(ln):
+                if SENSITIVE.search(sent) and SHOWING.search(sent) and not NEGATION.search(sent):
+                    bad.append(f"{name}:{n}: barred content named as shown: {sent[:60]!r}")
+    s17 = next((r for r in register(t.spec) if r and r[0] == "S-17"), [])
+    if len(s17) < 4 or "never the served `detail`" not in s17[3]:
+        bad.append("S-17: its word cell does not say it never shows the served `detail`")
     return bad
 
 
@@ -643,6 +748,9 @@ def state_problems(t: Texts) -> list[str]:
             bad.append(f"{sid}: glyph {glyph!r} is not a known one")
         if not TOKEN_REF.search(tone) and "CMP-" not in tone:
             bad.append(f"{sid}: no token")
+        tone_key = tone.strip("`")
+        if glyph not in TONE_GLYPHS.get(tone_key, ()):
+            bad.append(f"{sid}: glyph {glyph!r} does not match its tone {tone_key!r}")
         for what, cell in (("trigger", trig), ("exit", exit_)):
             if len(cell) < 6 or cell == "—":
                 bad.append(f"{sid}: no {what}")
@@ -1017,7 +1125,10 @@ URL = re.compile(r"https?://", re.IGNORECASE)
 CLOSING = re.compile(
     r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*(?:[\w-]+/[\w-]+)?#\d+", re.IGNORECASE
 )
-AGENTS = re.compile(r"\b(?:hpe|hcl)-worker-\d\b|\bsession [0-9a-f]{8}", re.IGNORECASE)
+AGENTS = re.compile(
+    r"\b(?:" + "lch|eph"[::-1] + r")-" + "rekrow"[::-1] + r"-\d\b|\bsession [0-9a-f]{8}",
+    re.IGNORECASE,
+)
 
 
 def public_problems(t: Texts) -> list[str]:
@@ -1262,7 +1373,7 @@ MUTATIONS: tuple[tuple[str, str, Lever], ...] = (
     (
         "G-TOKEN",
         "an unshipped token",
-        _sub("spec", "`color.neutral.default`", "`color.neutral.nonesuch`"),
+        _sub("spec", "`type.num.base`, end-aligned", "`type.num.nonesuch`, end-aligned"),
     ),
     ("G-D12", "a checklist verdict outside R-3", _row("Target sizes", "compliant", "fine")),
     ("G-LEDGER", "a G-row without an owner", _row("D09-G12", "E09", " ")),
@@ -1284,6 +1395,40 @@ MUTATIONS: tuple[tuple[str, str, Lever], ...] = (
     ),
     ("G-PUBLIC", "a host name", _sub("hand", "Rule: every line", "Rule (example.com): every line")),
     ("G-PIN", "an unknown sha", _sub("spec", "`b148ca4703`", "`b148ca4704`")),
+    # Round 1's mutations: each slipped past the content gates before the fold.
+    (
+        "G-CARVE",
+        "a protective control said to be disabled (prose)",
+        _sub(
+            "spec", "**Bars step.**", "**Bars step.** While a hold lasts, Cancel order is disabled."
+        ),
+    ),
+    (
+        "G-CARVE",
+        "a promise that protective stops succeed during a hold",
+        _sub("spec", "**Bars step.**", "**Bars step.** Protective stops will still succeed then."),
+    ),
+    (
+        "G-NEVER",
+        "the request id named as shown (prose)",
+        _sub("spec", "**Bars step.**", "**Bars step.** Rows may show the request id."),
+    ),
+    (
+        "G-NEVER",
+        "a trace id inside an SR string",
+        _row("SCR-147-SR-3", "All requests on hold", "Trace id 7, all requests on hold"),
+    ),
+    (
+        "G-NEVER",
+        "the served detail on S-17",
+        _row("S-17", "never the served `detail`", "the served `detail`"),
+    ),
+    (
+        "G-QUOTE",
+        "a ruled string reworded",
+        _row("W-36", "All requests are on hold.", "Requests are paused."),
+    ),
+    ("G-STATE", "a danger state wearing the neutral glyph", _row("S-05", "octagon", "ring")),
 )
 
 
@@ -1326,8 +1471,8 @@ def self_test(t: Texts) -> list[str]:
     base_fails = {(f.gate, f.msg) for f in base if f.level == "FAIL"}
     bad: list[str] = []
     gates = [g for g, _ in GATES]
-    if sorted(g for g, _, _ in MUTATIONS) != sorted(gates):
-        bad.append("self-test: not one mutation per gate")
+    if {g for g, _, _ in MUTATIONS} != set(gates):
+        bad.append("self-test: a gate has no mutation")
     for gate, desc, lever in MUTATIONS:
         found = run(lever(t))
         new = {(f.gate, f.msg) for f in found if f.level == "FAIL"} - base_fails
@@ -1396,8 +1541,8 @@ def main(argv: list[str]) -> int:
         if args.self_test:
             out += [f"FAIL [self-test] {x}" for x in st]
             out.append(
-                f"self-test: {'ok' if not st else 'FAILED'}: {len(MUTATIONS)} mutations (one per "
-                f"gate) and {len(PROBES)} mode probes; each mutation adds FAILs from its own gate "
+                f"self-test: {'ok' if not st else 'FAILED'}: {len(MUTATIONS)} mutations (at least "
+                f"one per gate) and {len(PROBES)} mode probes; each mutation adds FAILs from its own gate "
                 "only; a re-run reproduces the base result; files on disk unchanged"
             )
         print("\n".join(out))
