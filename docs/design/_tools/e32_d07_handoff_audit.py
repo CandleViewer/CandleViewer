@@ -30,7 +30,9 @@ Gates (one mutation each in `--self-test`):
               anchored at its own table row) plus the bound `e32.sl.required`, read from E30-D06's
               deck entry; every PROPOSED entry names an owner.
   G-SCRIPT    every `dNN:key` deck reference resolves; every script id a QA line names exists.
-  G-FROWS     the findings: severity and p-scale paired (p0 Blocking ... p3 Info), the counts, the
+  G-FROWS     the findings: severity and p-scale paired (p0 Blocking ... p3 Info); each owner and
+              target a spec or an area, never an agent; every story a row targets binds it in the
+              pack's §3.1; the counts, the
               verdict vocabulary, every F id cited exists, and the "no p0, no p1" sentence stands
               exactly when no Blocking or Major row exists.
   G-SPEAKER   one region per announcement row; the placing-line simulation.
@@ -42,6 +44,9 @@ Gates (one mutation each in `--self-test`):
   G-UNTOUCHED PR-1 mode: the tree differs from the merge-base only in this pack's files and `14`,
               and `14` equals the merge-base with the six lines applied by content. Post-merge
               mode: `14` is untouched.
+  G-TICKS     every evidence cite of the six `14` ticks resolves at the base: a `§n` to a heading
+              of the named parent, a board to its board list, a row id to a table row (the ticks are
+              a Texts field, so the self-test moves them in the tool and in `14` together).
   G-FROZEN    post-merge mode (the pack is on the merge-base): every version row of the merge-base
               stands unchanged and a new row is v1.N with N above the last.
   G-RULED     the ruling stamp in both question sections, the ruling id, BQ-01..BQ-19, no marker.
@@ -116,6 +121,7 @@ PATHS: dict[str, str] = {
     "E22D04": "docs/design/E22/E22-D04.md",
     "E30D02": "docs/design/E30/E30-D02.md",
     "E30D06-copy": "docs/design/E30/E30-D06-copy.json",
+    "E33D03": "docs/design/E33/E33-D03.md",
     "E33D05": "docs/design/E33/E33-D05.md",
     "CAL": "docs/plan/backlog/_tools/calendar_cv.py",
     "E32J": "docs/plan/backlog/E32.json",
@@ -233,9 +239,10 @@ SCREENS: dict[str, tuple[str, str, str]] = {
         " (bracket half)",
         (
             "[x] entry+bracket and standalone-OCO variants drawn (E32-D03 §3, §12; E33-D03 §2–§4) [x] "
-            "'emulated - Bybit has no OCO' stated prominently (E33-D03; E32-D03 §12) [x] "
-            "race-resolution behaviour explained in the dialog (E33-D03; E32-D03 §12) [x] residual-risk "
-            "state (app offline during a fill) drawn with what the user must do (E33-D03; E32-D03 §3 "
+            "'emulated - Bybit has no OCO' stated prominently (E33-D03 §15; E32-D03 §12) [x] "
+            "race-resolution behaviour explained in the dialog (E33-D03 §15; E32-D03 §12) [x] "
+            "residual-risk "
+            "state (app offline during a fill) drawn with what the user must do (E33-D03 §15; E32-D03 §3 "
             "row 19, §12) [x] the mandatory native SL floor is shown as always-present and "
             "non-removable (E32-D03 §4.1, §12; E32-D06 §5) [x] validation messages drawn (E32-D03 §4, "
             "§12; board 03)"
@@ -599,6 +606,7 @@ class Texts:
     plan14: str
     changed: list[str] | None
     values: dict[str, str]
+    ticks: dict[str, str]  # the six ticks per screen (SCREENS), a field so a mutation can move them
 
 
 def doc_text(t: Texts, key: str) -> str:
@@ -729,7 +737,7 @@ def frames(env: Env, head: str) -> int:
 
 
 def contrast_rows(review: str) -> list[list[str]]:
-    return [c for _, c in table_after(section(review, "### 7.1 "), "C")]
+    return [c for _, c in table_after(section(review, "### 7.1 "), "CT")]
 
 
 def contrast_values(env: Env, review: str) -> dict[str, str]:
@@ -1068,11 +1076,12 @@ def copy_sources(env: Env) -> dict[str, str]:
     return out
 
 
-def apply14(base14: str) -> tuple[str, list[str]]:
+def apply14(base14: str, tick_text: dict[str, str]) -> tuple[str, list[str]]:
     """The merge-base's `14` with the six lines applied by content."""
     ls = base14.split("\n")
     bad: list[str] = []
-    for scr, (anchor, half, ticks) in SCREENS.items():
+    for scr, (anchor, half, _) in SCREENS.items():
+        ticks = tick_text[scr]
         a = next((i for i, ln in enumerate(ls) if ln.startswith(f"### {scr} ")), -1)
         if a < 0:
             bad.append(f"`14` has no {scr} entry")
@@ -1380,6 +1389,41 @@ def g_script(t: Texts) -> list[Finding]:
     return one("G-SCRIPT", bad)
 
 
+# the ruled owner form (RULED BQ-05): a spec or an area, never an agent; one token per comma
+OWNER_TOKEN = re.compile(
+    r"E\d\d-[DSQTK]\d\d(?:\.\.S\d\d)?(?:'s owner)?"
+    r"|(?:SCR|CMP)-\d{3}'s (?:`15` )?owner"
+    r"|the script's owner \(E\d\d\)"
+)
+
+
+def owner_problems(fid: str, cell: str) -> list[str]:
+    bad: list[str] = []
+    for part in re.split(r";\s*|,\s*", cell):
+        if part.strip() and not OWNER_TOKEN.fullmatch(part.strip()):
+            bad.append(f"{fid}: owner or target {part.strip()!r} is not a spec or an area (R-4)")
+    return bad
+
+
+def story_targets(cell: str) -> set[str]:
+    """The E32 stories an owner cell targets, `E32-S05..S07` expanded."""
+    out: set[str] = set()
+    for a, b in re.findall(r"E32-S(\d\d)(?:\.\.S(\d\d))?", cell):
+        for n in range(int(a), int(b or a) + 1):
+            out.add(f"E32-S{n:02d}")
+    return out
+
+
+def story_rows(spec: str) -> dict[str, str]:
+    """Pack §3.1: story id -> its Binding rows cell."""
+    out: dict[str, str] = {}
+    for _, c in table_after(section(spec, "### 3.1 "), "Story"):
+        m = re.match(r"(E32-S\d\d)", c[0])
+        if m and len(c) > 3:
+            out[m[1]] = c[3]
+    return out
+
+
 def g_frows(t: Texts) -> list[Finding]:
     bad = anchor_problems(t, "G-FROWS")
     ids: list[str] = []
@@ -1390,6 +1434,12 @@ def g_frows(t: Texts) -> list[Finding]:
             bad.append(f"{r[0]}: severity {r[1]!r} is not paired with its p-scale")
         if len(r) < 8 or not r[7].strip():
             bad.append(f"{r[0]}: no owner and target")
+            continue
+        bad += owner_problems(r[0], r[7])
+        stories = story_targets(r[7])
+        for sid, cell in story_rows(t.spec).items():
+            if sid in stories and r[0] not in re.findall(r"\bF-\d\d\b", cell):
+                bad.append(f"{r[0]} targets {sid}, whose pack §3.1 row does not bind it")
     if len(set(ids)) != len(ids):
         bad.append("an F id repeats")
     for doc, text in both(t):
@@ -1474,7 +1524,7 @@ def g_untouched(t: Texts) -> list[Finding]:
         if t.plan14 != base14:
             bad.append("`14` changed after the pack merged")
     else:
-        want, problems = apply14(base14)
+        want, problems = apply14(base14, t.ticks)
         bad += problems
         if t.plan14 != want:
             bad.append("`14` differs from the merge-base with the six lines applied")
@@ -1540,6 +1590,73 @@ def g_hygiene(t: Texts) -> list[Finding]:
     return one("G-HYGIENE", bad)
 
 
+TICK_DOCS = {
+    "E32-D02": "D02", "E32-D03": "D03", "E32-D04": "D04", "E32-D05": "D05", "E32-D06": "D06",
+    "E33-D03": "E33D03", "E32-D07-a11y": "REVIEW",
+}  # fmt: skip
+
+
+def has_section(text: str, n: str) -> bool:
+    return bool(re.search(rf"^#{{2,3}} (?:§)?{re.escape(n)}[. ]", text, re.MULTILINE))
+
+
+def has_board(text: str, n: str) -> bool:
+    ls = text.split("\n")
+    a, b = span(ls, "## 0. ")
+    return a >= 0 and any(re.match(rf"^\|\s*{n}\s*\|", ln) for ln in ls[a:b])
+
+
+def tick_problems(t: Texts, scr: str, ticks: str) -> list[str]:
+    """Every evidence cite of a tick: a `§n` is a heading of the named doc at the base, a board a
+    row of its board list, a row id a table row of the doc."""
+    bad: list[str] = []
+    for raw in ticks.split("[x] ")[1:]:
+        last = re.search(r"\(([^()]*)\)\s*$", raw)
+        item = raw[: last.start()] if last else raw
+        if not last:
+            bad.append(f"{scr} '{item.strip()[:30]}': no evidence cite")
+            continue
+        doc: str | None = None
+        first: str | None = None  # boards are the item's first parent's
+        for part in re.split(r";\s*|,\s*", last[1]):
+            part = part.split(":")[0].strip()
+            m = re.match(r"(E3\d-D0\d(?:-a11y)?)\s*(.*)$", part)
+            if m:
+                doc, part = TICK_DOCS.get(m[1]), m[2].strip()
+                first = first or doc
+                if doc is None:
+                    bad.append(f"{scr}: {m[1]} is not a known evidence source")
+                    continue
+                if not part:
+                    continue
+            if doc is None:
+                bad.append(f"{scr}: {part!r} names no source")
+                continue
+            text = doc_text(t, doc)
+            secs = re.findall(r"§(\d+(?:\.\d+)?)", part)
+            boards = re.findall(r"\b(\d\d)\b", part) if part.startswith(("board", "0")) else []
+            rows = re.findall(r"\b(D0\d-[A-Z]\d+)\b", part)
+            for n in secs:
+                if not has_section(text, n):
+                    bad.append(f"{scr} '{item.strip()[:30]}': {doc} has no §{n}")
+            for n in boards:
+                if not has_board(doc_text(t, first or doc), n):
+                    bad.append(f"{scr} '{item.strip()[:30]}': {first} has no board {n}")
+            for rid in rows:
+                if not re.search(rf"^\|\s*{re.escape(rid)}\s*\|", text, re.MULTILINE):
+                    bad.append(f"{scr} '{item.strip()[:30]}': {doc} has no row {rid}")
+    return bad
+
+
+def g_ticks(t: Texts) -> list[Finding]:
+    bad: list[str] = []
+    for scr, ticks in t.ticks.items():
+        if ticks.count("[x]") != 6:
+            bad.append(f"{scr}: {ticks.count('[x]')} ticks, six expected")
+        bad += tick_problems(t, scr, ticks)
+    return one("G-TICKS", bad)
+
+
 def g_pins(t: Texts) -> list[Finding]:
     pinned = parse_pins(t.pins)
     if not pinned:
@@ -1549,7 +1666,7 @@ def g_pins(t: Texts) -> list[Finding]:
 
 GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_values, g_lift, g_copy, g_cite, g_version, g_contrast, g_cvd, g_deck, g_script, g_frows,
-    g_speaker, g_events, g_ahead, g_openrows, g_untouched, g_frozen, g_ruled, g_hygiene,
+    g_speaker, g_events, g_ahead, g_openrows, g_untouched, g_ticks, g_frozen, g_ruled, g_hygiene,
 )  # fmt: skip
 
 
@@ -1579,7 +1696,7 @@ def load() -> Texts:
     pins = read_raw(PIN_REL) if (ROOT / PIN_REL).exists() else ""
     deck = read_raw(DECK_REL) if (ROOT / DECK_REL).exists() else "{}"
     t = Texts(env, read_raw(SPEC_REL), read_raw(REVIEW_REL), deck, pins, read_raw(PLAN14_REL),
-              changed_paths(mb), {})  # fmt: skip
+              changed_paths(mb), {}, {k: v[2] for k, v in SCREENS.items()})  # fmt: skip
     return replace(t, values=compute(t))
 
 
@@ -1654,6 +1771,26 @@ def parent_changed(t: Texts) -> Texts:
     return replace(t, changed=[*(t.changed or []), PATHS["D04"]])
 
 
+def f05_agent(t: Texts) -> Texts:
+    ls = t.review.split("\n")
+    i = next(k for k, ln in enumerate(ls) if ln.startswith("| F-05 "))
+    cells = ls[i].split("|")
+    cells[-2] = " the build agent; E32-S06 "
+    ls[i] = "|".join(cells)
+    return replace(t, review="\n".join(ls))
+
+
+def tick_moved(t: Texts) -> Texts:
+    """One tick's evidence pointed at a section and a board its parent lacks, in the tool's ticks
+    and in `14` alike (so the two still agree and only the evidence is wrong)."""
+    old, new = "(E32-D05 §8, §15; board 06)", "(E32-D05 §19, §15; board 16)"
+    ticks = dict(t.ticks)
+    if old not in ticks["SCR-064"] or old not in t.plan14:
+        raise SystemExit("self-test: the SCR-064 tick evidence is not found")
+    ticks["SCR-064"] = ticks["SCR-064"].replace(old, new)
+    return replace(t, ticks=ticks, plan14=t.plan14.replace(old, new))
+
+
 def merged_and_edited(t: Texts) -> Texts:
     """A merge-base that already holds this pack and its `14` lines (a simulated later PR)."""
     sim = "simulated-merge-base"
@@ -1673,7 +1810,7 @@ MUTATIONS: tuple[Mutation, ...] = (
              subst("(`D04`:443; inbound item 3)", "(`D04`:99999; inbound item 3)", "review")),
     Mutation("G-VERSION", "edit D04-Q3's line at origin/main", head_gone),
     Mutation("G-CONTRAST", "type a contrast ratio by hand",
-             anchor_edit("CONTRAST:c01.dark", "9.99", "review")),
+             anchor_edit("CONTRAST:ct01.dark", "9.99", "review")),
     Mutation("G-CVD", "type a simulated ratio by hand",
              anchor_edit("CVD:v1.grey.dark", "9.99", "review")),
     Mutation("G-DECK", "alter one deck string", deck_edit),
@@ -1681,6 +1818,9 @@ MUTATIONS: tuple[Mutation, ...] = (
              subst("`d05:sl.loosen.refused` once", "`d05:sl.loosen.refusedx` once", "review")),
     Mutation("G-FROWS", "pair Info with p2",
              subst("| F-11 | Info (p3) ", "| F-11 | Info (p2) ", "review")),
+    Mutation("G-FROWS", "give F-05 an agent for its owner", f05_agent),
+    Mutation("G-FROWS", "drop F-04 from S05's binding rows", subst("| F-02, F-03, F-04, F-10; HG-1",
+                                                                   "| F-02, F-03, F-10; HG-1")),
     Mutation("G-SPEAKER", "give one announcement two regions",
              subst("| AN-01 | a read-out or readout after an edit                      | 064, 065, 069 | dialog `status` (1) ",
                    "| AN-01 | a read-out or readout after an edit                      | 064, 065, 069 | dialog `status` and the shell (1) ",
@@ -1691,6 +1831,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("G-OPENROWS", "widen a parent's range past its last row",
              subst("| G-1..G-23 ", "| G-1..G-24 ")),
     Mutation("G-UNTOUCHED", "edit a parent in the same tree", parent_changed),
+    Mutation("G-TICKS", "point a tick's evidence at a missing section and board (tool and 14)",
+             tick_moved),
     Mutation("G-FROZEN", "post-merge: edit a merged v1 row", merged_and_edited),
     Mutation("G-RULED", "drop the stamp's date from the review's questions heading",
              subst("## 1. The questions BQ-01..BQ-19 — RULED (orchestrator, 2026-10-31,",
