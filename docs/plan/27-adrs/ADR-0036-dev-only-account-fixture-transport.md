@@ -154,10 +154,10 @@ invariant (C-4.14).
    decision 2's structural one (the switch CLI's `armed()`), then a fresh run directory (absolute, no link in or
    above it, owned by the effective uid with no group or other permission bit, no marker) and, over one read-only
    transaction before the first write, a database named `test` or ending `_test` that holds no user, exchange
-   account or API key. A refusal is one fixed line and exit 2, never
-   a value. No exchange-key material is generated (the transport answers only the pack's fabricated keys,
-   decision 4) and the Owner is seeded, not invited. The module imports neither `candleviewer.secrets` nor
-   `candleviewer.audit`. `E27-accounts.md` §12.3 holds the threat rows.
+   account or API key. A refusal is one fixed line and exit 2, never a value. No exchange-key material is
+   generated (the transport answers only the pack's fabricated keys, decision 4) and the Owner is seeded, not
+   invited. The module imports neither `candleviewer.secrets` nor `candleviewer.audit`. `E27-accounts.md` §12.3
+   holds the threat rows.
 10. **A test-only switch, not a C-4.13 flag,** like `CV_TEST_CLOCK` (`settings.py:264-266`), which is not in
     the flag catalogue (`admin/flags/catalogue.py:25`). A flag is runtime, Owner-toggled and in every build;
     this switch is fixed at boot and its code is not in the release image. Each slice fails closed (until S7

@@ -23,6 +23,11 @@ never a value or a traceback:
 3. One read-only transaction before the first write: the database is named `test` or ends `_test`,
    and `users`, `exchange_accounts` and `api_keys` hold no row.
 
+Every await on the database is bounded (`PROBE_TIMEOUT_S`, `SEED_TIMEOUT_S`). A failure the gate
+does not name, a `TimeoutError` included, ends the run as one fixed line that names the exception's
+class and nothing else, so an unreachable database, a missing table and a permission error read
+apart.
+
 Nothing generated is logged, printed or put in an exception. The standard library's `secrets` makes
 the passwords; neither `candleviewer.secrets` nor `candleviewer.audit` is imported (C-3.2, C-3.3).
 """
@@ -76,6 +81,11 @@ PASSWORD_BYTES: Final = 24
 PASSWORD_MODE: Final = 0o400
 PUBLIC_MODE: Final = 0o444
 GROUP_OTHER_BITS: Final = 0o077  # any of these on the run directory refuses it
+#: Bounds, in seconds, on the awaits that reach the database: one connection and one read-only
+#: transaction; one user's argon2id hash, three inserts and the audit rows (an audit insert waits on
+#: a lock). A `TimeoutError` ends the run as `main`'s catch-all line.
+PROBE_TIMEOUT_S: Final = 30
+SEED_TIMEOUT_S: Final = 60
 _CREATE_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
 _READ_ONLY: Final = sa.text("SET TRANSACTION READ ONLY")
 _FACTS: Final = sa.text(
@@ -127,7 +137,8 @@ class DatabaseFacts(NamedTuple):
 Seeder = Callable[..., Awaitable[str | None]]
 Probe = Callable[[str], Awaitable[DatabaseFacts]]
 #: A run directory that `gate` passed: the one type `seed_users` takes, made by `gate` and nowhere
-#: else, so a caller cannot reach the seed without the gate (a test pins both).
+#: else, so a type-checked caller cannot reach the seed without the gate (`NewType` is erased at
+#: runtime; a test pins both).
 RunDir = NewType("RunDir", Path)
 
 
@@ -212,19 +223,22 @@ async def seed_users(
     """Seed `ROSTER` into the stack's database and `run_dir`; the usernames, in roster order."""
     pepper, encryptor = _auth_material(settings)
     dsn = settings.pg_dsn.get_secret_value()
-    check_database(await probe(dsn))
+    async with asyncio.timeout(PROBE_TIMEOUT_S):
+        facts = await probe(dsn)
+    check_database(facts)
     for member in ROSTER:
         password = secrets.token_urlsafe(PASSWORD_BYTES)
         _create(run_dir, PW_PREFIX + member.username, password, PASSWORD_MODE)
-        created = await seeder(
-            dsn,
-            member.username,
-            password,
-            pepper,
-            role=member.role,
-            totp=encryptor,
-            totp_out=run_dir / (TOTP_PREFIX + member.username),
-        )
+        async with asyncio.timeout(SEED_TIMEOUT_S):
+            created = await seeder(
+                dsn,
+                member.username,
+                password,
+                pepper,
+                role=member.role,
+                totp=encryptor,
+                totp_out=run_dir / (TOTP_PREFIX + member.username),
+            )
         if created is None:
             raise SeedRefused(USER_EXISTS)
     roster = {"users": [{"username": m.username, "role": m.role} for m in ROSTER]}
@@ -277,8 +291,9 @@ def main(
     except SeedRefused as refused:
         sys.stderr.write(f"account-fixture: refused: {refused}\n")
         return EXIT_REFUSED
-    except Exception:  # nothing unexpected may print a traceback, path or value
-        sys.stderr.write(f"account-fixture: refused: {FAILED}\n")
+    except Exception as failure:  # nothing unexpected may print a traceback, path or value
+        name = type(failure).__name__  # the class alone: its text and arguments can hold inputs
+        sys.stderr.write(f"account-fixture: refused: {FAILED} ({name})\n")
         return EXIT_REFUSED
     sys.stdout.write(f"account-fixture: {line}\n")
     return 0

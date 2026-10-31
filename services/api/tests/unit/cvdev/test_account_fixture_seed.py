@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import asyncio
 import builtins
 import inspect
 import json
@@ -21,12 +22,13 @@ import stat
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NoReturn
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import structlog
 from pydantic import SecretStr
+from sqlalchemy.exc import ProgrammingError
 
 from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
 from candleviewer.settings import Environment, FeedMode, Settings
@@ -96,6 +98,29 @@ class FakeProbe:
         return self.facts
 
 
+def _missing_table(text: str) -> Exception:
+    """SQLAlchemy's own error for a missing table: its text carries the statement and parameters."""
+    return ProgrammingError("SELECT 1 FROM users", {"text": text}, Exception("no table"))
+
+
+class Failing:
+    """A probe or a seeder that fails as a database does: it raises `error(text)`, the text holding
+    every value it was handed, or, with none, it never answers. It then yields to the loop until
+    `asyncio.timeout` cancels it, and fails after a bounded number of yields, so a missing bound is
+    a quick failure of the run and never a hang."""
+
+    def __init__(self, error: Callable[[str], Exception] | None = None) -> None:
+        self.error, self.reached = error, False
+
+    async def __call__(self, *args: Any, **kwargs: Any) -> NoReturn:
+        self.reached = True
+        if self.error is not None:
+            raise self.error(f"failed: {args!r} {kwargs!r}")
+        for _ in range(100):
+            await asyncio.sleep(0)
+        raise AssertionError("no timeout ended this await")
+
+
 def _settings(tmp_path: Path, **fields: Any) -> Settings:
     """The armed stack's settings with `fields` changed, unvalidated so a refusal can be built."""
     base: dict[str, Any] = {
@@ -115,8 +140,8 @@ def _go(
     capsys: pytest.CaptureFixture[str],
     run_arg: str | Path,
     settings: Settings,
-    seeder: FakeSeeder | None = None,
-    probe: FakeProbe | None = None,
+    seeder: seed.Seeder | None = None,
+    probe: seed.Probe | None = None,
     command: str = "users",
 ) -> tuple[int, str, str]:
     argv = [command, "--run-dir", str(run_arg)]
@@ -401,7 +426,9 @@ def test_no_generated_value_reaches_a_log_or_output(
             )
             shown += [out, err]
             assert code == (0 if name == "good" else 2)
-            assert name != "failing" or err == f"account-fixture: refused: {seed.FAILED}\n"
+            if name == "failing":  # the line names the class only: a boolean, never the text
+                named = err == f"account-fixture: refused: {seed.FAILED} (RuntimeError)\n"
+                assert named
 
     generated = {
         p.read_text().strip()
@@ -409,8 +436,45 @@ def test_no_generated_value_reaches_a_log_or_output(
         if p.name.startswith(("pw-", "totp-"))
     }
     shown += [r.getMessage() for r in caplog.records] + [str(event) for event in events]
-    assert len(generated) >= 12  # the good run's six passwords and six secrets, and more
+    enough = len(generated) >= 12  # the good run's six passwords and six secrets, and more
+    assert enough  # a boolean: a failure never prints the generated values
     assert not any(value in text for value in generated | MARKS for text in shown)
+
+
+@pytest.mark.parametrize(
+    ("fails", "error", "named"),
+    [
+        ("probe", None, "TimeoutError"),
+        ("seeder", None, "TimeoutError"),
+        ("probe", ConnectionRefusedError, "ConnectionRefusedError"),
+        ("seeder", _missing_table, "ProgrammingError"),
+        ("seeder", PermissionError, "PermissionError"),
+    ],
+)
+def test_a_failure_the_gate_does_not_name_is_one_fixed_line_naming_its_class(
+    fails: str,
+    error: Callable[[str], Exception] | None,
+    named: str,
+    tmp_path: Path,
+    run_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unreachable database, a refused write and an await that never ends read apart by the
+    exception's class name alone; its text, which holds what the step was handed, is never shown.
+    Each await on the database has a stated bound, and a `TimeoutError` ends the run the same way.
+    The bounds are 0 in the run, so an await that never answers is cancelled at its first yield."""
+    assert (seed.PROBE_TIMEOUT_S, seed.SEED_TIMEOUT_S) == (30, 60)  # the stated bounds, in seconds
+    monkeypatch.setattr(seed, "PROBE_TIMEOUT_S", 0)
+    monkeypatch.setattr(seed, "SEED_TIMEOUT_S", 0)
+    failing = Failing(error)
+    seeder, probe = (failing, FakeProbe()) if fails == "seeder" else (FakeSeeder(), failing)
+
+    code, out, err = _go(capsys, run_dir, _settings(tmp_path), seeder, probe)
+
+    fixed = err == f"account-fixture: refused: {seed.FAILED} ({named})\n"  # a boolean: no text
+    assert (code, out, fixed) == (2, "", True)
+    assert failing.reached and not (run_dir / ".seeded").exists()
 
 
 # --- The shared seeder, the roster and the plan -----------------------------------------------
@@ -484,10 +548,15 @@ async def test_the_database_probe_reads_in_a_read_only_transaction(
     engine.dispose.assert_awaited_once()
 
 
-#: The attribute of any call that writes, makes, moves or removes a file, or opens one to do so.
-WRITE_ATTRS = frozenset(
-    "write_text write_bytes open touch mkdir rename replace symlink_to unlink".split()
+#: The module's I/O is a closed list. A call rooted at one of these modules (the builtin `open` is
+#: `io.open`) is one of the six below, the only `Path` methods it calls are the three reads, and
+#: it imports these modules in the two ways below and no other.
+IO_ROOTS = frozenset("os shutil subprocess tempfile pathlib io open".split())
+IO_CALLS = frozenset(
+    "os.path.realpath os.path.lexists os.geteuid os.open os.fdopen os.fchmod".split()
 )
+PATH_READS = frozenset({"is_absolute", "is_dir", "stat"})
+IO_IMPORTS = frozenset({"import os", "from pathlib import Path"})
 
 
 def _calls(node: ast.AST) -> list[str]:
@@ -496,19 +565,38 @@ def _calls(node: ast.AST) -> list[str]:
     return [ast.unparse(c.func) for c in sorted(calls, key=lambda c: (c.lineno, c.col_offset))]
 
 
+def _io_surface(tree: ast.AST) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    """What the module reaches the file system or a process by, in three sets: the calls rooted at
+    an I/O module, the `Path` methods called on any other value, and the imports of those modules.
+    The attribute is read from the syntax tree, so a dot inside a path literal hides nothing."""
+    funcs = [call.func for call in ast.walk(tree) if isinstance(call, ast.Call)]
+    rooted = [f for f in funcs if ast.unparse(f).split(".", 1)[0] in IO_ROOTS]
+    methods = {f.attr for f in funcs if isinstance(f, ast.Attribute) and f not in rooted}
+    imports = {ast.unparse(n) for n in ast.walk(tree) if isinstance(n, ast.Import | ast.ImportFrom)}
+    io_imports = {i for i in imports if IO_ROOTS & set(re.findall(r"\w+", i))}
+    names = frozenset(ast.unparse(f) for f in rooted)
+    return names, frozenset(methods & set(dir(Path))), frozenset(io_imports)
+
+
 def test_the_seed_gate_runs_before_any_io() -> None:
-    """In `run`, the gate comes before every call that reaches a file, a database or an event loop;
-    in `seed_users`, the probe and its check come before the first write and the shared seeder; the
-    module's own I/O sits in three functions only, and no write form appears anywhere else in the
-    module; and `seed_users` takes the gate's own result type, which only `gate` makes."""
+    """In `run`, the gate is the first call, before every call that reaches a file, a database or an
+    event loop, and in `gate` the structural gate (`armed`) is asked before the run directory; in
+    `seed_users`, the probe and its check come before the first write and the shared seeder; the
+    module's own I/O sits in three functions only and is a closed list (`IO_CALLS`, `PATH_READS`);
+    and `seed_users` takes the gate's own result type, which only `gate` makes, so a type-checked
+    caller cannot reach the seed without the gate (the type is erased at runtime)."""
     tree = ast.parse(Path(seed.__file__).read_text("utf-8"))
     functions = {
         n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
     }
-    in_run, in_users = _calls(functions["run"]), _calls(functions["seed_users"])
+    in_run, in_gate = _calls(functions["run"]), _calls(functions["gate"])
+    in_users = _calls(functions["seed_users"])
     io = {"open", "os.open", "os.fdopen", "os.mkdir", "create_async_engine", "asyncio.run"}
 
-    assert in_run.index("gate") < min(in_run.index(name) for name in ("asyncio.run", "seed_users"))
+    # no call precedes the gate (a stub command's refusal included), and `armed` precedes the run
+    # directory's checks
+    assert in_run[0] == "gate"
+    assert in_gate.index("armed") < in_gate.index("_fresh_run_dir")
     checked = max(in_users.index("probe"), in_users.index("check_database"))
     assert in_users.index("_auth_material") < in_users.index("probe")
     assert checked < min(in_users.index(name) for name in ("_create", "seeder"))
@@ -518,8 +606,9 @@ def test_the_seed_gate_runs_before_any_io() -> None:
         "probe_database": ["create_async_engine"],
         "run": ["asyncio.run"],
     }
-    # every write form of the whole module, `Path(...).write_text` and the rest included
-    assert [name for name in _calls(tree) if name.rsplit(".", 1)[-1] in WRITE_ATTRS] == ["os.open"]
+    # a closed list, whatever the route: `os.makedirs`, `shutil.copy`, `Path(...).write_text`, a
+    # `from os import makedirs` and the rest each fail it
+    assert _io_surface(tree) == (IO_CALLS, PATH_READS, IO_IMPORTS)
     taken = inspect.signature(seed.seed_users).parameters["run_dir"].annotation
     assert [n for n, f in functions.items() if "RunDir" in _calls(f)] == ["gate"]
     assert taken == inspect.signature(seed.gate).return_annotation == "RunDir"
