@@ -180,9 +180,12 @@ before the flip ("Noted" below), is unchanged by this closure.
   not exercised: neither the level nor R4 says anything about that path.
 - **Outside the figure**: the bar writer (up to about 85 MiB a process), the WS publisher, WS delivery
   (#568, #528, after #399), tape replay at restore and E13's indicators sink: E13-T02 (#3927, `4a921a101`)
-  added it to `wire_bars` after `e784738b5`, and the reading's head carries it, but the lane composes the
-  store alone (`EmitRouter([self.store])`), so the figure leaves it out. #3927 left the lane as it
-  was (none of its files is under `services/api/bench`), so a `soak_bars` reading with the sink in the lane
-  is owed before the flip (#399). A passing reading stands for the D2-G4 line while `bars/series_store.py`,
+  added it to `wire_bars` after `e784738b5`, and the reading's head carries it, but the lane at those
+  readings composed the store alone (`EmitRouter([self.store])`), so the figure leaves it out (history).
+  #399 removes the flag (D2-G4 closed on the default leg, ruled above) and the lane composes the indicators
+  sink from #399 on (`EmitRouter([store, indicators])`, no history reader, no listener). The `soak_bars`
+  reading with the sink in the lane is owed by the first host-quiet nightly after #399 merges and is
+  recorded on #399's QA record. The flip was not held for it, per the coordinator's ruling of 2026-10-31.
+  A passing reading of the earlier lane stands for the D2-G4 line while `bars/series_store.py`,
   `bars/builder_set.py` and `bars/models.py` are as at `e784738b5` and the sink list in `bars_wiring.py` is
-  as at `4a921a101`; the flip also waits for the reading with the sink in the lane.
+  as at `4a921a101`.

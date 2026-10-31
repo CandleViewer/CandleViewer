@@ -2,10 +2,11 @@
 
 With `LaneConfig.bars_specs`, each lane composes for its symbol what `create_app` composes
 (`bars_wiring.wire_bars`): a `BarBuilderSet` on the lane's bus, fed by the lane's
-`TradeStream`, emitting through an `EmitRouter` to a `SeriesStore` that holds `bars_specs` series
-(`SPECS`: the per-symbol cap of 32 at most), each hydrated with `bars_per_series` stored bars (the
-1 000-bar cap at most) through the production `BarReader.read_tail`. A system consumer hydrates
-each series (`ensure`) and registers it with the bar set (`register`): no per-user cap is measured.
+`TradeStream`, emitting through an `EmitRouter` to a `SeriesStore` and then E13's indicator engine
+(the sink, #399). The store holds `bars_specs` series (`SPECS`: the per-symbol cap of 32 at most),
+each hydrated with `bars_per_series` stored bars (the 1 000-bar cap at most) through the production
+`BarReader.read_tail`. A system consumer hydrates each series (`ensure`) and registers it with the
+bar set (`register`): no per-user cap is measured.
 
 - **Stored tail:** `_Table` answers `read_tail`'s statements as a QuestDB `bars_*` table would. Its
   rows take their values from the closed golden bars (`packages/fixtures/golden/bars`, built by the
@@ -41,8 +42,9 @@ each series (`ensure`) and registers it with the bar set (`register`): no per-us
   - `start()`: its `sweep_tmp` and its ticker (the engine drives `tick` directly);
   - the one set and one store the app shares across symbols: a lane has its own pair per symbol,
     so `CAP_GLOBAL` (512 series) is never approached;
-  - the indicators sink (E13-T02, composed by `wire_bars`): a reading with it in the lane is owed
-    before the flip (#399).
+  - the indicators sink's collaborators: the lane composes the engine as `wire_bars` does (after the
+    store, its repair hook on the store's) but with no history reader and no listener, so no
+    indicator instance is created and no frame is built.
 """
 
 from __future__ import annotations
@@ -68,6 +70,7 @@ from candleviewer.bars.spec import from_wire
 from candleviewer.bars.state_store import StateStore, StoredState, Watermark
 from candleviewer.bus.bus import Bus
 from candleviewer.domain.sql_names import ts_us_from_row
+from candleviewer.orderflow.indicators.engine import IndicatorEngine
 
 GOLDEN: Final = Path(__file__).resolve().parents[4] / "packages" / "fixtures" / "golden" / "bars"
 #: The series' epoch began a day before the feed (a cold start's generation is its wall time in
@@ -214,8 +217,18 @@ class BarsLane:
         reader = BarReader(_Table(fx.templates, symbol, fx.per_series), _no_rebuild, now_us=clock)
         self.store = SeriesStore(reader.read_tail)
         self.states = StateStore(state_root)
+        # E13-T02 (#426) as `wire_bars` composes it: the engine on the emit path after the store,
+        # primed from it, its repair hook on the store's. No history reader (no database in the
+        # lane) and no listener (no WS publisher, so no subscriber and no frame).
+        self.indicators = IndicatorEngine(self.store, now_us=clock)
+        self.store.on_repair(self.indicators.history_repair)
         self.set = BarBuilderSet(
-            bus, "demo", EmitRouter([self.store]), self.states, now_us=clock, factory=FACTORY
+            bus,
+            "demo",
+            EmitRouter([self.store, self.indicators]),
+            self.states,
+            now_us=clock,
+            factory=FACTORY,
         )
         self.holds: list[Hold] = []
 
@@ -249,6 +262,7 @@ class BarsLane:
         the stored tail and the set's health reasons, read after the drain (which can still
         quarantine a builder): one live builder folds closes whatever the others did."""
         if self._stopped is None:
+            await self.indicators.stop()
             await self.set.stop()
             reasons = tuple(str(reason) for reason in self.set.health_reasons())
             self._stopped = (self.count()[1], reasons)
