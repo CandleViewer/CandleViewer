@@ -31,7 +31,8 @@ export function parsePolicy(raw: unknown): UserPolicy {
     const { mode, holdMs } = entry;
     // `immediate` is refused at persistence (BQ-2): fail closed, the entry is dropped.
     if (mode !== "dialog" && mode !== "hold") continue;
-    out[action] = typeof holdMs === "number" ? { mode, holdMs } : { mode };
+    // Clamped on read as on write, so a legacy out-of-range value never reaches a display.
+    out[action] = typeof holdMs === "number" ? { mode, holdMs: clampHoldMs(holdMs) } : { mode };
   }
   return out;
 }
@@ -40,8 +41,9 @@ export function createConfirmPolicyStore(
   storage?: Pick<Storage, "getItem" | "setItem">,
   userId = "",
 ): ConfirmPolicyStore {
-  // L2: one copy per user; no user id means in-memory only.
-  const key = userId === "" ? undefined : confirmPolicyStorageKey(userId);
+  // L2: one copy per user; a blank user id means in-memory only. `userId` must be the server-issued
+  // /me id, never a client-chosen value.
+  const key = userId.trim() === "" ? undefined : confirmPolicyStorageKey(userId);
   let current: UserPolicy = {};
   try {
     const text = key === undefined ? null : storage?.getItem(key);
