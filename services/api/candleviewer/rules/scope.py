@@ -14,7 +14,7 @@ from uuid import UUID
 
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.evaluator.engine import scope_instance
-from candleviewer.rules.ir.models import RuleScope
+from candleviewer.rules.ir.models import Action, RuleScope
 
 SKIPPED_REASON = "scope"
 Reason = Literal[
@@ -29,6 +29,9 @@ Reason = Literal[
     "out_of_scope",
 ]
 EntityKind = Literal["open_position", "pending_order", "account"]
+#: The modes the evaluator runs a rule in (`rules.manager` imports it from here). A rule's mode is
+#: its stored row's, never the IR's own `mode` field, which can be stale (E35-S03, BQ-12).
+EvaluableMode = Literal["simulate", "armed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,14 +289,23 @@ async def fire_scoped(
     return FireOutcome(True, 1)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ActionRequest:
+    """One action of one fire on its way from the evaluator to dispatch (24 §11.9)."""
+
     rule_scope: RuleScope
-    owner: UUID
+    owner: UUID  # the rule's owner: the principal an order is sent as (24 §11.5)
     environment: str
     instance: ScopeInstanceRef
     action_type: str
-    payload: object = None
+    payload: Action
+    #: The stored row's mode when the rule was evaluated: required, with no default.
+    mode: EvaluableMode
+    rule_id: str
+    version: int
+    ir_hash: str  # the version's content hash
+    run_id: UUID  # the fire's id, shared by its actions
+    armed_by: str | None  # the row's; `None` unless the row is armed
 
 
 ActionSink = Callable[[ActionRequest], Awaitable[None]]

@@ -107,7 +107,9 @@ class Evaluator:
         return PAUSED_MESSAGE
 
     def resume(self, instance: str, trigger_type: str) -> EvaluationResult:
-        """Re-evaluate current state exactly once; missed triggers are never replayed."""
+        """Re-evaluate current state exactly once; missed triggers are never replayed. Its caller
+        must hand the result to the runner's fire hook (`on_fire`, E35-S03): this evaluator's own
+        `on_result` only records it, and `on_fire` is the one path to the action emitter."""
         self.paused = False
         return self.on_trigger(instance, trigger_type)
 

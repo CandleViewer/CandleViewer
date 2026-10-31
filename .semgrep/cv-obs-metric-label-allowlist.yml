@@ -157,6 +157,9 @@ rules:
       # type (E35-T07, #4998, rule_actions_total, rule_action_duration_seconds): a rule action's
       #   type, the closed 25 of `rules/ir/models.ActionType`, never an identifier; max_series=25
       #   alone, 150 with `result` (the six `ActionResult` outcomes, 24 Sec.11.9).
+      # reason, also (E35-T08, #4999, rule_dispatch_reread_failed_total): why a dispatch-time re-read
+      #   of a rule's row failed, {timeout, store_error} (`rules/service.RereadFailure`), never an
+      #   identifier; max_series=2.
       - metavariable-regex:
           metavariable: $LABEL
           regex: "^(?!(action|bucket|builtin|cap|cause|class|code|depth|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger|trigger_mode|type|version|where|wire)$).*$"

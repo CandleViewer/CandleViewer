@@ -42,6 +42,7 @@ from candleviewer.rules.limits import (
     above_default,
     owner_only_errors,
 )
+from candleviewer.rules.scope import EvaluableMode
 from candleviewer.rules.validator import validate_rule
 from candleviewer.rules.vocabulary import MetricRegistry
 
@@ -151,6 +152,34 @@ class RuleRow:
     #: `rules.disabled_reason`: which B9 state a `disabled` row projects (draft / disarmed /
     #: kill_switched); `rules.lifecycle` hydrates the chart from it.
     disabled_reason: str | None = None
+
+
+#: The stored modes the evaluator runs, by explicit membership (24 §11.5): a row in any other mode
+#: is never evaluated, so never dispatched, whatever `evaluable_rules` is asked for.
+_EVALUABLE_MODES: Final[Mapping[str, EvaluableMode]] = {"simulate": "simulate", "armed": "armed"}
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluableRule:
+    """A rule of the evaluator's work list with the stored facts a fire is routed by (24 §11.5):
+    the row's `mode` and `armed_by` (`None` unless the row is armed), and the active version's id
+    and content hash. The IR's own `mode` never routes a fire."""
+
+    rule: Rule
+    mode: EvaluableMode
+    armed_by: str | None
+    version_id: str
+    ir_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class StoredMode:
+    """What a dispatch reads again from a rule's row: its mode, and its active version's number
+    and content hash (`None` when the active version id names no stored version)."""
+
+    mode: str
+    version: int | None
+    ir_hash: str | None
 
 
 class RuleStore(Protocol):
@@ -926,13 +955,17 @@ class RulesManager:
         row.simulation_fires, row.simulation_hours = fires, hours
         await self._s.put(row)
 
-    async def evaluable_rules(self, modes: tuple[str, ...] = ("simulate", "armed")) -> list[Rule]:
-        """Active-version IR of every non-deleted rule in `simulate` or `armed` mode (the
-        evaluator runner's work list). Unreadable (quarantined) versions are skipped, and so is
-        an armed one above a hard cap, whose disarm starts beside the tick (#3232, decision 9)."""
-        out: list[Rule] = []
+    async def evaluable_rules(
+        self, modes: tuple[EvaluableMode, ...] = ("simulate", "armed")
+    ) -> list[EvaluableRule]:
+        """Every non-deleted rule in `simulate` or `armed` mode (the evaluator runner's work list):
+        its active-version IR with the stored row's mode, `armed_by`, version id and `ir_hash`, the
+        facts a fire is routed by (24 §11.5). Unreadable (quarantined) versions are skipped, and
+        so is an armed one above a hard cap, whose disarm starts beside the tick (#3232)."""
+        out: list[EvaluableRule] = []
         for row in await self._s.all():
-            if row.deleted or row.mode not in modes:
+            mode = _EVALUABLE_MODES.get(row.mode)  # by membership: no other stored mode runs
+            if row.deleted or mode is None or mode not in modes:
                 continue
             v = next((x for x in row.versions if x.id == row.active_version_id), None)
             if v is None or quarantine_path(v.ir):
@@ -944,8 +977,22 @@ class RulesManager:
             if row.mode == "armed" and _capped_limits(rule):
                 self._disarm_beside_tick(row)
                 continue
-            out.append(rule)
+            armed_by = row.armed_by if mode == "armed" else None
+            out.append(EvaluableRule(rule, mode, armed_by, v.id, v.ir_hash))
         return out
+
+    async def current_mode(self, rule_id: str) -> StoredMode | None:
+        """The stored row's mode and its active version's number and `ir_hash`, read again: a
+        dispatch's check that the rule is still armed, at the version and content the fire was
+        evaluated under (24 §11.5 check 1). One point read through the rule store; `None` when
+        the row is gone or deleted."""
+        row = await self._s.get(rule_id)
+        if row is None or row.deleted:
+            return None
+        v = next((x for x in row.versions if x.id == row.active_version_id), None)
+        if v is None:
+            return StoredMode(row.mode, None, None)
+        return StoredMode(row.mode, v.version, v.ir_hash)
 
     def _disarm_beside_tick(self, row: RuleRow) -> None:
         """The tick has skipped the rule, so it never waits for the disarm: that runs as a

@@ -17,6 +17,7 @@ from candleviewer.rules.scope import (
     ScopeInstanceRef,
     ScopeResolver,
 )
+from tests.rules.executor.request_builders import action_request
 from tests.rules.test_rules_routes import ARM, _Env, _ir
 from tests.rules.test_scope import OWNER as SCOPE_OWNER
 from tests.rules.test_scope import A, B, C, FakeState
@@ -146,7 +147,7 @@ def _emitter(
 
 
 def _req(inst: ScopeInstanceRef, sc: RuleScope) -> ActionRequest:
-    return ActionRequest(sc, SCOPE_OWNER, "demo", inst, "flatten_position")
+    return action_request(sc, SCOPE_OWNER, inst)
 
 
 async def test_ac_g_act_after_grant_revoked_post_arming_is_denied_and_audited() -> None:

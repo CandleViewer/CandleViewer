@@ -17,6 +17,7 @@ from candleviewer.rules.ir.models import RuleScope
 from candleviewer.rules.scope import ScopeInstanceRef, summarize_scope
 from candleviewer.rules.service import RulesService
 from candleviewer.rules.vocabulary import default_registry
+from tests.rules.executor.request_builders import action_request
 from tests.rules.test_validator_endpoints import PRICE, _cmp, _doc
 
 OWNER = uuid.UUID(int=1)
@@ -191,7 +192,7 @@ async def test_action_gate_denies_foreign_account_audits_and_follows_scope_chang
     inst = ScopeInstanceRef(f"BTCUSDT@{B}", "BTCUSDT", B)
 
     def req(scope: RuleScope, i: ScopeInstanceRef) -> ActionRequest:
-        return ActionRequest(scope, OWNER, "demo", i, "flatten_position")
+        return action_request(scope, OWNER, i)
 
     assert await emitter.emit(req(scope_a, inst)) is False  # targets B, scoped to A
     assert seen == [] and audits == ["rule_action_scope_denied:out_of_scope"]
@@ -225,8 +226,13 @@ async def _e2e(target: uuid.UUID) -> tuple[list[str], list[Any]]:
     async def sink(req: Any) -> None:
         seen.append(req)
 
+    async def no_hook(*_args: Any) -> None:
+        """No audit backend or bus here: `bind` keeps the app's hooks unless given these."""
+
     ctx = create_app(Settings(rules_evaluator_enabled=True)).state.app_context
-    ctx.rules.bind(store=InMemoryRuleStore(), action_sink=sink)
+    # The rule simulates: its in-scope action reaches the simulation sink (E35-S03, BQ-12).
+    ctx.rules.bind(store=InMemoryRuleStore(), action_sink=sink, simulation_sink=sink)
+    ctx.rules.bind(audit=no_hook, broadcast=no_hook)
     ctx.rules.wire_scope(Source(), "demo", audit)
     await ctx.rules.refresh_scope(OWNER)
     await ctx.rules.start(ctx)
@@ -252,9 +258,11 @@ async def _e2e(target: uuid.UUID) -> tuple[list[str], list[Any]]:
         runner = ctx.rules.runner
         from candleviewer.rules.evaluator.engine import scope_instance
 
-        ev_rules = await mgr.evaluable_rules(("simulate",))
-        ev = runner._factory(ev_rules[0], runner._snapshots)
-        ev.on_trigger(scope_instance("BTCUSDT", str(target)), "on_price_update")
+        (item,) = await mgr.evaluable_rules(("simulate",))
+        ev = runner._factory(item.rule, runner._snapshots)
+        result = ev.on_trigger(scope_instance("BTCUSDT", str(target)), "on_price_update")
+        assert runner._on_fire is not None
+        runner._on_fire(item, result)  # what `process` does with each result
         async with asyncio.timeout(2):
             while ctx.rules._tasks:  # noqa: ASYNC110 - drains scheduled emits
                 await asyncio.sleep(0.005)
