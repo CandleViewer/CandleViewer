@@ -158,8 +158,8 @@ running, and the measured growth decays (hours 2-12 at 0.20-0.37 MB/h, hours 12-
 
 The standing conditions below still hold at the closing reading's head and at this record's: neither
 `bars/series_store.py`, `bars/builder_set.py` nor `bars/models.py` has changed since `e784738b5`, nor the
-sink list in `bars_wiring.py` since `4a921a101`. The reading with E13's indicators sink in the lane, owed
-before the flip ("Noted" below), is unchanged by this closure.
+sink list in `bars_wiring.py` since `4a921a101`. The reading with E13's indicators sink in the lane is owed
+by the first host-quiet nightly after #399 merges, and the flip was not held for it ("Noted" below).
 
 ## Noted, not part of the verdict
 

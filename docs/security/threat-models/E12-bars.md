@@ -617,8 +617,8 @@ BR-11 / SR-E12-15 (#3867 `a5a49c4b9`) and BR-28 / RSK-059 (#4069 `e3b268931`, th
 
 ### 13.4 DoD notes
 
-- **"A deliberate breaking change fails CI" (OD3, ruled as BQ-5).** One mutation run, local (no CI run
-  id: the mutation was never committed or pushed), at this section's PR base `b0186c1ef`. With `"confirm"`
+- **"A deliberate breaking change fails CI" (OD3, ruled as BQ-5).** BQ-5 asked for a CI run id; **there is
+  none**. The one mutation run was local (the mutation was never committed or pushed), at this section's PR base `b0186c1ef`. With `"confirm"`
   dropped from the structured bar item the encoder builds (`ws/bars_wire.py`, `bar_item`), from
   `services/api`: `.venv/bin/python -m pytest tests/contract/ws/test_ws_bars_e12_q04_contract.py -q -p no:randomly --no-cov` read
   **20 failed, 12 passed, 2 errors**; the first failure is
