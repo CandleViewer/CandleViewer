@@ -474,6 +474,20 @@
       "source_ref": "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921:docs/v5/account/wallet-balance.mdx"
     },
     {
+      "path": "ws/allLiquidation_BTCUSDT_burst.jsonl",
+      "symbol": "BTCUSDT",
+      "stream": "allLiquidation.BTCUSDT",
+      "host": "stream.bybit.com",
+      "capture_date": "2026-10-05",
+      "source": "documented-shape (exception #1778 A)",
+      "notable_event": "cascade: 8 pushes @500 ms, twin prints in push 2, push 2 replayed last",
+      "http_status": 200,
+      "size_cap_bytes": 8000,
+      "source_url": "https://bybit-exchange.github.io/docs/v5/websocket/public/all-liquidation",
+      "source_ref": "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921:docs/v5/websocket/public/all-liquidation.mdx",
+      "note": "frame shape transcribed from the docs page (ws/docs-all-liquidation.jsonl); values generated (seeded)"
+    },
+    {
       "path": "ws/burst_tickers_BTCUSDT.jsonl",
       "symbol": "BTCUSDT",
       "stream": "tickers.BTCUSDT",
@@ -516,6 +530,20 @@
       "notable_event": "clean 3 h window",
       "http_status": 200,
       "size_cap_bytes": 128000
+    },
+    {
+      "path": "ws/docs-all-liquidation.jsonl",
+      "symbol": "ROSEUSDT",
+      "stream": "allLiquidation.ROSEUSDT",
+      "host": "bybit-exchange.github.io",
+      "capture_date": "2026-10-31",
+      "source": "docs-transcribed",
+      "notable_event": "docs Response Example: one Sell print",
+      "http_status": null,
+      "size_cap_bytes": 4000,
+      "retrieved": "2026-10-31",
+      "source_url": "https://bybit-exchange.github.io/docs/v5/websocket/public/all-liquidation",
+      "source_ref": "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921:docs/v5/websocket/public/all-liquidation.mdx"
     },
     {
       "path": "ws/gap_orderbook_ETHUSDT.jsonl",
