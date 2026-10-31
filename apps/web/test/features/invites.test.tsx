@@ -64,7 +64,9 @@ describe("InviteAcceptScreen (SCR-017)", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(404, { detail: "x" })));
     mount();
     expect(await screen.findByText("Invitation not valid")).toBeInTheDocument();
-    expect(screen.getByText(/re-issue it from Admin/)).toBeInTheDocument();
+    expect(
+      screen.getByText("This invitation is no longer valid. Ask the owner for a new one."),
+    ).toBeInTheDocument();
   });
 });
 

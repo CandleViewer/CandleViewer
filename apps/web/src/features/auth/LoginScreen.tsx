@@ -4,9 +4,12 @@ import { TwoFactorStep } from "./TwoFactorStep";
 
 type State = "idle" | "submitting" | "invalid" | "rate_limited" | "unreachable";
 
-/** Every failed sign-in renders the one `invalid` string, whatever the cause (SR-014, #4961). */
+/**
+ * Every failed sign-in renders the one `invalid` string, whatever the cause (SR-014, #4961): the
+ * deck's frozen `auth.login.failed` (E09-D12 §8.2 (1)), byte for byte (#5254 DF-1).
+ */
 const MESSAGES: Record<"invalid" | "unreachable", string> = {
-  invalid: "Username or password is incorrect",
+  invalid: "Couldn't sign you in. Check your details and try again.",
   unreachable: "Cannot reach the server. Check your connection and try again.",
 };
 
@@ -36,6 +39,7 @@ export function LoginScreen(): JSX.Element {
   const [returned, setReturned] = useState(0);
   const identifierField = useRef<HTMLInputElement>(null);
   const summary = useRef<HTMLDivElement>(null);
+  const rateLimitLine = useRef<HTMLParagraphElement>(null);
   const [reason] = useState(() => {
     const key = new URLSearchParams(window.location.search).get("reason");
     return key !== null && Object.hasOwn(REASONS, key) ? REASONS[key] : undefined;
@@ -62,9 +66,15 @@ export function LoginScreen(): JSX.Element {
     }
   }, [state, fieldError]);
   // the reason a session ended is read on arrival: focus moves to the summary that holds it
+  // ...otherwise R-001's arrival focuses the identifier field (E09-D10 T-1; #5254 DF-4)
   useEffect(() => {
     if (reason !== undefined) summary.current?.focus();
+    else identifierField.current?.focus();
   }, [reason]);
+  // a 429 moves focus to the rate-limit line once per episode (E09-D10 T-4; #5254 DF-5)
+  useEffect(() => {
+    if (state === "rate_limited") rateLimitLine.current?.focus();
+  }, [state]);
   // "Back to login" from SCR-002: focus returns to the form's first field
   useEffect(() => {
     if (returned > 0) identifierField.current?.focus();
@@ -129,7 +139,7 @@ export function LoginScreen(): JSX.Element {
           {message ?? reason}
         </div>
         {rateLimited ? (
-          <p role="status" aria-live="polite">
+          <p ref={rateLimitLine} tabIndex={-1} role="status" aria-live="polite">
             Too many attempts. Try again in {formatRemaining(remaining)}.
           </p>
         ) : null}

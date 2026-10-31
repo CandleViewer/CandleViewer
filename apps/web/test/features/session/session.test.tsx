@@ -216,7 +216,11 @@ describe("SessionLockHost", () => {
     fireEvent.submit(password);
     expect(unlock).toHaveBeenCalledWith("wrong");
     expect(screen.getByRole("alertdialog")).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("button", { name: "Verifying..." })).toBeDisabled();
+    // R-5 (#5254 DF-14): inert by aria-disabled, never natively disabled
+    expect(screen.getByRole("button", { name: "Verifying..." })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     await act(async () => answer({ kind: "invalid" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Incorrect password. Try again.");
     expect(password).toHaveValue("");

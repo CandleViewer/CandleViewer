@@ -324,9 +324,17 @@ test("SCR-017: reduced motion leaves no running animation on any step (SC 2.3.3)
   await stubWizard(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await walk(page, async () => {
-    const running = await page.evaluate(
-      () => document.getAnimations().filter((a) => a.playState === "running").length,
-    );
-    expect(running).toBe(0);
+    // a step change now moves focus (#5254 DF-35): the focus ring's reduced-motion transition
+    // (clamped to ~0 ms) may still be in flight at the read, so poll briefly: a looping one never
+    // settles, and the short timeout keeps a finite multi-second animation from passing
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () => document.getAnimations().filter((a) => a.playState === "running").length,
+          ),
+        { timeout: 1000 },
+      )
+      .toBe(0);
   });
 });
