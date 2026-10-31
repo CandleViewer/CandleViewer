@@ -19,9 +19,11 @@ section 5 (the gate stays at the use bar). Registration is a textual scan of
 `tools/contrast/pairs.mjs`. The "distinct ink per severity" table lists the resolved hex of each
 `color.status.*.strong` per theme and flags severities that share one ink (a colour identity).
 
-#5134 cross-reference: four light-theme pairs fall under their bar (text 3.85 / 4.11 / 4.34, and
-the non-text 2.78 glyph). Failures are findings, not script errors; `--check` only guards that
-those four ratios are still what the table computes, so a drifted table cannot pass as typed.
+#5134 cross-reference: four light-theme pairs fell under their bar at da578081 (text 3.85 / 4.11 /
+4.34, and the non-text 2.78 glyph); #5140 (370eac31) fixed them. The guard pins those four pairs at
+their post-#5140 values (text 6.33 / 4.90 / 5.30, non-text 3.84). Failures are findings, not script
+errors; `--check` only guards that those four ratios are still what the table computes, so it
+proves the table was regenerated against the current tokens and cannot pass as typed.
 
 Usage: python3 -I docs/design/_tools/e04_d02_contrast_audit.py           (Markdown)
        python3 -I docs/design/_tools/e04_d02_contrast_audit.py --json    (JSON)
@@ -244,12 +246,13 @@ def summary(rows: list[Row], ids: list[dict[str, object]]) -> dict[str, int]:
     }
 
 
-#: The #5134 pairs, light theme: (fg, bg, use) -> expected ratio, rounded to the hundredth.
+#: The #5134 pairs, light theme, pinned at their post-#5140 values (fixed by #5140 at 370eac31;
+#: pre-fix 3.85 / 4.11 / 4.34 / 2.78): (fg, bg, use) -> expected ratio, rounded to the hundredth.
 GUARD: dict[tuple[str, str, str], float] = {
-    ("color.status.danger.strong", "color.status.danger.subtle", "text"): 3.85,
-    ("color.status.warning.strong", "color.status.warning.subtle", "text"): 4.11,
-    ("color.status.info.strong", "color.status.info.subtle", "text"): 4.34,
-    ("color.status.success.strong", "color.surface.sunken", "non-text"): 2.78,
+    ("color.status.danger.strong", "color.status.danger.subtle", "text"): 6.33,
+    ("color.status.warning.strong", "color.status.warning.subtle", "text"): 4.90,
+    ("color.status.info.strong", "color.status.info.subtle", "text"): 5.30,
+    ("color.status.success.strong", "color.surface.sunken", "non-text"): 3.84,
 }
 
 
