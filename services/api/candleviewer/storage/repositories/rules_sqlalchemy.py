@@ -11,6 +11,11 @@ jsonb column on read (Postgres reorders jsonb keys). Static, parameterised SQL.
 module never logs it. `prune_unmatched` deletes only unmatched, non-error `rule_runs`; their events
 go via the FK cascade, which `rule_events_forbid_mutation()` permits only when
 the parent run is gone. No role can update or directly delete a rule event.
+
+The rule action executor's records written ahead (E35-T09; 24 Sec.11.5, 21 Sec.3.4.3) name the
+fire's own run id: `record_run(run_id=...)` inserts the run with its first events in one unit of
+work, and a repeat of the run or of an event's `seq` lands once (`ON CONFLICT ... DO NOTHING`);
+`close_run` sets a running run's status once.
 """
 
 from __future__ import annotations
@@ -18,8 +23,8 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 import sqlalchemy as sa
@@ -56,10 +61,31 @@ _INSERT_VERSION = sa.text(
 _LOCK_RULE = sa.text("SELECT 1 FROM rules WHERE id = CAST(:rule_id AS uuid) FOR UPDATE")
 _INSERT_RUN = sa.text(
     "INSERT INTO rule_runs (id, rule_id, rule_version_id, status, mode, trigger_reason, "
-    "scope_symbol, input_snapshot, matched, error_code, error_message, duration_ms) "
-    "VALUES (CAST(:id AS uuid), CAST(:rule_id AS uuid), CAST(:version_id AS uuid), "
-    "CAST(:status AS rule_run_status), CAST(:mode AS rule_mode), :trigger, :symbol, "
-    "CAST(:snapshot AS jsonb), :matched, :error_code, :error_message, :duration_ms)"
+    "scope_account_id, scope_symbol, input_snapshot, matched, error_code, error_message, "
+    "duration_ms) VALUES (CAST(:id AS uuid), CAST(:rule_id AS uuid), "
+    "CAST(:version_id AS uuid), CAST(:status AS rule_run_status), CAST(:mode AS rule_mode), "
+    ":trigger, CAST(:account_id AS uuid), :symbol, CAST(:snapshot AS jsonb), :matched, "
+    ":error_code, :error_message, :duration_ms)"
+)
+#: The write-ahead path's: the fire's own id, so a repeat of the run lands once.
+_INSERT_RUN_AHEAD = sa.text(
+    "INSERT INTO rule_runs (id, rule_id, rule_version_id, status, mode, trigger_reason, "
+    "scope_account_id, scope_symbol, input_snapshot, matched, error_code, error_message, "
+    "duration_ms) VALUES (CAST(:id AS uuid), CAST(:rule_id AS uuid), "
+    "CAST(:version_id AS uuid), CAST(:status AS rule_run_status), CAST(:mode AS rule_mode), "
+    ":trigger, CAST(:account_id AS uuid), :symbol, CAST(:snapshot AS jsonb), :matched, "
+    ":error_code, :error_message, :duration_ms) ON CONFLICT (id) DO NOTHING"
+)
+#: `UNIQUE (rule_run_id, seq)` makes an append safe to repeat; the append-only trigger never fires
+#: for a skipped insert.
+_APPEND_EVENT = sa.text(
+    "INSERT INTO rule_events (rule_run_id, seq, kind, node_ref, payload, severity) "
+    "VALUES (CAST(:run_id AS uuid), :seq, :kind, :node_ref, CAST(:payload AS jsonb), "
+    "CAST(:severity AS severity)) ON CONFLICT (rule_run_id, seq) DO NOTHING"
+)
+_CLOSE_RUN = sa.text(
+    "UPDATE rule_runs SET status = CAST(:status AS rule_run_status), finished_at = now(), "
+    "duration_ms = :duration_ms WHERE id = CAST(:id AS uuid) AND status = 'running'"
 )
 _PRUNE = sa.text(
     "DELETE FROM rule_runs WHERE NOT matched AND status <> 'error' "
@@ -73,6 +99,24 @@ class RuleVersionRow:
     version: int
     ir_hash: str
     created: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RuleEventInsert:
+    """A `rule_events` row to insert: `seq` from 1 within its run; `payload` is never logged."""
+
+    seq: int
+    kind: str
+    node_ref: str | None
+    payload: dict[str, Any] = field(repr=False)
+    severity: str = "info"
+
+
+def _event_params(run_id: str, event: RuleEventInsert) -> dict[str, Any]:
+    return {
+        "run_id": run_id, "seq": event.seq, "kind": event.kind, "node_ref": event.node_ref,
+        "payload": json.dumps(event.payload, sort_keys=True), "severity": event.severity,
+    }  # fmt: skip
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,21 +197,28 @@ class SqlAlchemyRulesRepository:
         error_code: str | None = None,
         error_message: str | None = None,
         duration_ms: int | None = None,
+        run_id: str | None = None,
+        account_id: str | None = None,
+        events: Sequence[RuleEventInsert] = (),
     ) -> str | None:
         """Persist a run only when matched, errored, or simulate+`record_all`.
 
         Returns the run id, or None when the evaluation is not persisted
-        (the caller then counts it in Prometheus only).
+        (the caller then counts it in Prometheus only). A caller that names the run (`run_id`,
+        the executor's write-ahead) has it inserted under that id, `ON CONFLICT (id) DO NOTHING`,
+        with `events` in the same unit of work; one that does not gets a minted id, as before.
         """
         reason = persist_reason(matched=matched, status=status, mode=mode, record_all=record_all)
         if reason is None:
             return None
-        run_id = str(uuid.uuid4())
+        statement = _INSERT_RUN if run_id is None else _INSERT_RUN_AHEAD
+        run_id = str(uuid.uuid4()) if run_id is None else run_id
         async with self._relational.unit_of_work() as uow:
             await uow.session.execute(
-                _INSERT_RUN,
+                statement,
                 {
                     "id": run_id,
+                    "account_id": account_id,
                     "rule_id": rule_id,
                     "version_id": version_id,
                     "status": status,
@@ -181,10 +232,30 @@ class SqlAlchemyRulesRepository:
                     "duration_ms": duration_ms,
                 },
             )
+            if events:
+                await uow.session.execute(_APPEND_EVENT, [_event_params(run_id, e) for e in events])
             await uow.commit()
         if self._on_persisted is not None:
             self._on_persisted(reason)
         return run_id
+
+    async def append_events(self, run_id: str, events: Sequence[RuleEventInsert]) -> None:
+        """Append events to a run in one unit of work; a `seq` already stored is a no-op."""
+        if not events:
+            return
+        async with self._relational.unit_of_work() as uow:
+            await uow.session.execute(_APPEND_EVENT, [_event_params(run_id, e) for e in events])
+            await uow.commit()
+
+    async def close_run(self, run_id: str, *, status: str, duration_ms: int) -> bool:
+        """Set a running run's status, `finished_at` and `duration_ms`, once: False when no
+        running row has that id (already closed, or never written)."""
+        async with self._relational.unit_of_work() as uow:
+            result = await uow.session.execute(
+                _CLOSE_RUN, {"id": run_id, "status": status, "duration_ms": duration_ms}
+            )
+            await uow.commit()
+        return bool(getattr(result, "rowcount", 0))
 
     async def prune_unmatched(self, days: int = UNMATCHED_RETENTION_DAYS) -> PruneResult:
         """Delete non-matched, non-error runs older than `days` (events cascade).

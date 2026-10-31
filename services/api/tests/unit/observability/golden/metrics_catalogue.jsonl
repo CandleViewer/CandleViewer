@@ -397,6 +397,7 @@
 ["rule_dispatch_reread_failed_total", "counter", ["reason"], "planned", "E35"]
 ["rule_evaluations_total", "counter", [], "planned", "E35"]
 ["rule_fires_total", "counter", ["rule_id"], "planned", "E35"]
+["rule_records_shed_total", "counter", ["kind"], "planned", "E35"]
 ["rule_signal_chain_truncated_total", "counter", [], "planned", "E35"]
 ["scanner_cache_hits_total", "counter", [], "live", "E08"]
 ["scanner_capped_total", "counter", [], "live", "E08"]

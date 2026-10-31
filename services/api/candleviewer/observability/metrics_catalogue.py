@@ -3967,6 +3967,21 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E35",
         max_series=2,
     ),
+    # E35-T09 (#5000, BQ-4): `kind` is a closed set of two, the record-only job the full audit queue
+    # shed: `refused_fire` (a fire the full fire queue refused) or `scope_denial`.
+    _s(
+        "rule_records_shed_total",
+        "counter",
+        "jobs",
+        ("kind",),
+        "Rule record-only jobs the full audit queue shed, never awaited, by kind: refused_fire "
+        "(a refused fire's run row and per-action records) or scope_denial (a scope-skipped "
+        "evaluation's audit records).",
+        "dashboard only",
+        _P,
+        "E35",
+        max_series=2,
+    ),
     _s(
         "rule_signal_chain_truncated_total",
         "counter",
