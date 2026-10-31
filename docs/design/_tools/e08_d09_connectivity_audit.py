@@ -46,7 +46,8 @@ led by its code:
   own paths differ. PR 2 (the spec is at the merge-base and `14` or `15` differs): `14` and `15`
   equal the merge-base with every §C row applied, re-pointed by content, plus at most a byte-exact
   pins rewrite; nothing else. Later (post-merge, e.g. the boards): the own paths, the board PNGs and
-  sheets only; `14` and `15` untouched. Fails closed when git cannot answer.
+  sheets, the sheets' manifest and the Prettier ignore list only; `14` and `15` untouched. Fails
+  closed when git cannot answer.
 - [G-AROW] §C (in the hand-off): A-1 ... A-n in order, each with a target file, line and known op,
   its Old (or anchor) equal to that line at the base and unique in its scope (or already applied).
 - [G-RULED] no BQ marker left; the twenty-six stamps in their exact form; the ruled words
@@ -55,10 +56,18 @@ led by its code:
   `e08_d09_ruled_pins.txt`. `--repin-ruled` is its only writer. When another gate FAILs, every
   G-RULED-PIN finding prints as a NOTE; the exit status stays 1.
 - [G-PUBLIC] no word on the public-text list (matched by pattern), no local path, host, uuid, URL,
-  agent name or closing keyword in the documents; the public-text list also over the tool and pins.
+  agent name or closing keyword in the documents (the uuids §0 records for the drawn page and
+  boards, PENPOT_IDS, excepted); the public-text list also over the tool and pins.
 - [G-PIN] every sha and comment id in the documents is a known one.
+- [G-CONTRAST] §16's pairs (CONTRAST_PAIRS: text at 4.5, non-text at 3) measured over
+  `packages/ui/tokens` in dark, light and high contrast through the E08-D05 audit's theme
+  resolver and `contrast_check.contrast_ratio` (both imported, never copied); every pair at or
+  above its bar except the ones UNDER_BAR names (reported, not gated: each must still measure
+  under its bar, so a fix retires its entry); §16's Contrast bullet carries the tool's line
+  (`--contrast`) byte for byte, marker `<!-- audit:contrast -->`.
 
-`--a-rows` prints §C as JSON, one record per row with its target file; `--self-test` applies at
+`--a-rows` prints §C as JSON, one record per row with its target file; `--contrast` prints
+G-CONTRAST's line; `--self-test` applies at
 least one mutation per gate (MUTATIONS) and the mode probes (PROBES) to an in-memory copy and passes
 only when each mutation adds new FAILs from its own gate only, each probe gives its expected result, a re-run
 reproduces the base result and no file on disk changed.
@@ -68,6 +77,7 @@ Usage (from the repo root):
   python3 -I -B docs/design/_tools/e08_d09_connectivity_audit.py --self-test
   python3 -I -B docs/design/_tools/e08_d09_connectivity_audit.py --repin-ruled
   python3 -I -B docs/design/_tools/e08_d09_connectivity_audit.py --a-rows
+  python3 -I -B docs/design/_tools/e08_d09_connectivity_audit.py --contrast
 Exit 0 = no FAIL; 1 = at least one FAIL.
 """
 
@@ -75,6 +85,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -93,6 +104,27 @@ TOOL_REL = "docs/design/_tools/e08_d09_connectivity_audit.py"
 PINS_REL = "docs/design/_tools/e08_d09_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, HAND_REL, TOOL_REL, PINS_REL)
 LATER_PREFIXES = ("docs/design/E08/img/E08-D09-", "docs/design/_tools/sheets/e08-d09/")
+LATER_SHARED = (
+    "docs/design/_tools/sheets/MANIFEST.sha256",
+    ".prettierignore",
+)  # the kit's lines in each
+# The Penpot ids §0 records for the drawn boards (PR 3): the page, then boards 01 ... 10
+# (G-PUBLIC's exception).
+PENPOT_IDS = frozenset(
+    {
+        "cb0c3916-2579-81a4-8008-dff246c64cab",
+        "87361a2b-660f-80a6-8008-dff2c6f4d443",
+        "f8418c06-3706-8013-8008-dffad326f2cf",
+        "f8418c06-3706-8013-8008-dffb90fede53",
+        "f8418c06-3706-8013-8008-dffcdb57706d",
+        "da02dd99-6ec0-80a6-8008-dfff5889f9f6",
+        "da02dd99-6ec0-80a6-8008-e00173e699aa",
+        "153a0723-e570-8068-8008-e005446a8262",
+        "153a0723-e570-8068-8008-e0089b68f7bd",
+        "ab3d0859-2736-807d-8008-e0138702b06f",
+        "ab3d0859-2736-807d-8008-e0158be40dab",
+    }
+)
 SCREENS_REL = "docs/plan/14-screens-catalogue.md"
 CAT_REL = "docs/plan/15-component-catalogue.md"
 TARGETS = {"14": SCREENS_REL, "15": CAT_REL}
@@ -1261,6 +1293,8 @@ def public_problems(t: Texts) -> list[str]:
     for name, text in docs(t):
         for rx, what in checks:
             for m in rx.finditer(text):
+                if rx is UUID and m.group(0) in PENPOT_IDS:
+                    continue
                 bad.append(f"{name}: {what} ({m.group(0)[:3]}…, offset {m.start()})")
     for name, text in (("tool", t.tool), ("pins", t.pins)):
         for rx, what in (checks[0], checks[6]):
@@ -1334,9 +1368,9 @@ def untouched_problems(t: Texts) -> list[str]:
     targets = [k for k, rel in TARGETS.items() if rel in t.changed]
     if not targets:  # post-merge, a later PR (the boards): own paths, PNGs and sheets only
         return [
-            f"post-merge: {p} is not an own path, a board PNG or a sheet"
+            f"post-merge: {p} is not an own path, a board PNG, a sheet or the sheets' shared lists"
             for p in t.changed
-            if p not in OWN_PATHS and not p.startswith(LATER_PREFIXES)
+            if p not in OWN_PATHS and p not in LATER_SHARED and not p.startswith(LATER_PREFIXES)
         ]
     allowed = (*TARGETS.values(), PINS_REL)
     bad = [f"PR 2 changes {p}, not `14`, `15` or the pins" for p in t.changed if p not in allowed]
@@ -1349,6 +1383,159 @@ def untouched_problems(t: Texts) -> list[str]:
             bad.append(f"PR 2: `{key}` is not the merge-base with §C applied, byte for byte")
     if PINS_REL in t.changed and t.pins != write_pins(t):
         bad.append("PR 2: the pins rewrite is not byte-exact (--repin-ruled)")
+    return bad
+
+
+# ---------------------------------------------------------------------------- G-CONTRAST
+
+DC = "color.data-confidence"
+SURFACES = (
+    "color.surface.canvas",
+    "color.surface.raised",
+)  # §16: the page and odd rows; tiles, even rows
+THEME_NAMES = ("dark", "light", "high-contrast")
+BARS = {"text": 4.5, "non-text": 3.0}
+# §16's pairs: (foreground, background, role). Text: values, labels, ages, the band, the T2 label
+# and reason, the connection rows and old values; non-text: the state glyphs, the reserve band's
+# glyph and edge (`color.neutral.default`), the connection glyphs, the meter fills on their track.
+CONTRAST_PAIRS: tuple[tuple[str, str, str], ...] = (
+    *(
+        (fg, bg, "text")
+        for fg in ("color.text.primary", "color.text.secondary", "color.text.tertiary")
+        for bg in SURFACES
+    ),
+    *(
+        (f"{DC}.{k}.text", bg, "text")
+        for k in ("disconnected", "reconnecting", "stale")
+        for bg in SURFACES
+    ),
+    (f"{DC}.stale.text", f"{DC}.stale.surface", "text"),
+    *(
+        (fg, bg, "non-text")
+        for fg in (
+            "color.status.success.strong",
+            "color.status.warning.strong",
+            "color.status.danger.strong",
+            "color.neutral.default",
+        )
+        for bg in SURFACES
+    ),
+    *(
+        (f"{DC}.{k}.indicator", bg, "non-text")
+        for k in ("disconnected", "reconnecting", "stale")
+        for bg in SURFACES
+    ),
+    (f"{DC}.stale.indicator", f"{DC}.stale.surface", "non-text"),
+    *(
+        (fg, "color.surface.hover", "non-text")
+        for fg in (
+            "color.action.primary.default",
+            "color.status.warning.strong",
+            "color.status.danger.default",
+        )
+    ),
+)
+# Reported, not gated: (foreground, background, theme) -> why. Each must still measure under its
+# bar.
+UNDER_BAR = {
+    ("color.data-confidence.reconnecting.indicator", "color.surface.raised", "light"): (
+        "E08-D04's glyph on an even row, the word carrying the state (R-5)"
+    ),
+    ("color.status.danger.default", "color.surface.hover", "dark"): (
+        "CMP-023's own danger fill on its track (`15`:282), the meter never alone (§3.2)"
+    ),
+}
+CONTRAST_MARK = "<!-- audit:contrast -->"
+
+
+@cache
+def _theme_resolver() -> object | None:
+    """The E08-D05 audit's resolver over `packages/ui/tokens` (imported, never copied); None if it
+    cannot load."""
+    path = ROOT / "docs" / "design" / "_tools" / "e08_d05_search_audit.py"
+    spec = importlib.util.spec_from_file_location("e08_d05_search_audit", path)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("e08_d05_search_audit", mod)
+    try:
+        spec.loader.exec_module(mod)
+    except (OSError, ValueError, KeyError):
+        return None
+    return mod
+
+
+@cache
+def contrast_measure() -> tuple[tuple[tuple[str, str, str, str, float], ...], tuple[str, ...]]:
+    """Every pair in every theme: (fg, bg, role, theme, ratio); the tokens that do not resolve."""
+    mod = _theme_resolver()
+    if mod is None:
+        return (), ("the E08-D05 resolver",)
+    out: list[tuple[str, str, str, str, float]] = []
+    missing: list[str] = []
+    for fg, bg, role in CONTRAST_PAIRS:
+        for th in THEME_NAMES:
+            try:
+                a, b = mod.col(th, fg), mod.col(th, bg)  # type: ignore[attr-defined]  # the imported module
+            except KeyError:
+                missing.append(f"{fg} on {bg} ({th})")
+                continue
+            out.append((fg, bg, role, th, float(mod.ratio(a, b))))  # type: ignore[attr-defined]
+    return tuple(out), tuple(missing)
+
+
+def _floor2(v: float) -> str:
+    """Two decimals, rounded down: a ratio under its bar never prints as the bar."""
+    return f"{int(v * 100) / 100:.2f}"
+
+
+def contrast_line() -> str:
+    rows, _ = contrast_measure()
+    th_short = {"dark": "dark", "light": "light", "high-contrast": "high contrast"}
+
+    def minima(role: str) -> str:
+        return " / ".join(
+            _floor2(min(r[4] for r in rows if r[2] == role and r[3] == th)) for th in THEME_NAMES
+        )
+
+    under = [r for r in rows if r[4] < BARS[r[2]]]
+    named = "; ".join(
+        f"`{fg}` on `{bg}` in {th_short[th]}, {_floor2(v)}: "
+        f"{UNDER_BAR.get((fg, bg, th), 'not exempt')}"
+        for fg, bg, _, th, v in under
+    )
+    n_text = sum(p[2] == "text" for p in CONTRAST_PAIRS)
+    return (
+        "**Measured** (the tool's G-CONTRAST over `packages/ui/tokens`, dark / light / high "
+        "contrast): "
+        f"{len(CONTRAST_PAIRS)} pairs, {len(rows)} ratios · text {n_text} pairs at 4.5, minima "
+        f"{minima('text')} · non-text {len(CONTRAST_PAIRS) - n_text} pairs at 3, minima "
+        f"{minima('non-text')} (rounded down) · under the bar: {len(under)} "
+        f"({named or 'none'}), reported, "
+        "not gated "
+        f"{CONTRAST_MARK}"
+    )
+
+
+def contrast_problems(t: Texts) -> list[str]:
+    rows, missing = contrast_measure()
+    bad = [f"a token does not resolve: {m}" for m in missing]
+    under = {(fg, bg, th) for fg, bg, role, th, v in rows if v < BARS[role]}
+    for fg, bg, th in sorted(under - set(UNDER_BAR)):
+        bad.append(f"`{fg}` on `{bg}` in {th} is under its bar and not exempt")
+    for fg, bg, th in sorted(set(UNDER_BAR) - under):
+        bad.append(
+            f"UNDER_BAR names `{fg}` on `{bg}` in {th}, which now meets its bar (retire the entry)"
+        )
+    got = [ln for ln in lines(t.spec) if CONTRAST_MARK in ln]
+    if len(got) != 1:
+        bad.append(f"§16 carries {len(got)} lines with {CONTRAST_MARK} (one wanted)")
+    else:
+        m = re.search(r"\*\*Measured\*\* .*" + re.escape(CONTRAST_MARK), got[0])
+        if m is None or m.group(0) != contrast_line():
+            bad.append("§16's measured contrast line is not the tool's (`--contrast`)")
+        if not section(t.spec, "16. Tokens, themes and contrast").count(CONTRAST_MARK):
+            bad.append("the measured contrast line is not in §16")
     return bad
 
 
@@ -1378,6 +1565,7 @@ GATES: tuple[tuple[str, Callable[[Texts], list[str]]], ...] = (
     ("G-RULED-PIN", pin_problems),
     ("G-PUBLIC", public_problems),
     ("G-PIN", pin_ref_problems),
+    ("G-CONTRAST", contrast_problems),
 )
 
 
@@ -1406,6 +1594,7 @@ def values(t: Texts) -> dict[str, int]:
         "gates": len(GATES),
         "mutations": len(MUTATIONS),
         "probes": len(PROBES),
+        "contrast_pairs": len(CONTRAST_PAIRS),
     }
 
 
@@ -1584,10 +1773,20 @@ MUTATIONS: tuple[tuple[str, str, Lever], ...] = (
         "R-9's `disabled` clause weakened",
         _sub("spec", "never the `disabled` attribute", "or the `disabled` attribute"),
     ),
+    # PR 3: §16's measured contrast line.
+    (
+        "G-CONTRAST",
+        "a measured minimum retyped",
+        _sub("spec", "pairs at 4.5, minima ", "pairs at 4.5, minima 9"),
+    ),
+    ("G-CONTRAST", "the measured line dropped", _sub("spec", " " + CONTRAST_MARK, "")),
 )
 
 
 def _pr2(t: Texts, extra: str = "") -> Texts:
+    """PR 2 replayed on PR 1's base texts of `14` and `15` (since PR 2 merged, the merge-base has
+    §C applied)."""
+    t = replace(t, mbase=tuple((k, at_base(rel) or "") for k, rel in TARGETS.items()))
     now = []
     for k in TARGETS:
         want = pr2_text(replace(t, mbase_spec=t.spec), k) or ""
@@ -1602,6 +1801,13 @@ PROBES: tuple[tuple[str, Lever, int], ...] = (
     (
         "post-merge: the boards PR",
         lambda t: replace(t, mbase_spec=t.spec, changed=(SPEC_REL, LATER_PREFIXES[0] + "01.png")),
+        0,
+    ),
+    (
+        "post-merge: the boards PR's kit, manifest and ignore lines",
+        lambda t: replace(
+            t, mbase_spec=t.spec, changed=(*LATER_SHARED, LATER_PREFIXES[1] + "BUILD.md")
+        ),
         0,
     ),
     (
@@ -1662,6 +1868,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--self-test", action="store_true", help="one mutation per gate, the probes")
     ap.add_argument("--repin-ruled", action="store_true", help="rewrite the pins file")
     ap.add_argument("--a-rows", action="store_true", help="print §C as JSON, a target per row")
+    ap.add_argument("--contrast", action="store_true", help="print G-CONTRAST's measured line")
     args = ap.parse_args(argv)
     if any(not key_text(k) for k in KEYS) or not key_text("C"):
         print(f"FAIL [G-CITE] the inputs are unreadable at {BASE} (fetch first)")
@@ -1669,6 +1876,9 @@ def main(argv: list[str]) -> int:
     t = load()
     if args.a_rows:
         print(json.dumps(export(a_rows(t.hand)[0]), ensure_ascii=False, indent=1))
+        return 0
+    if args.contrast:
+        print(contrast_line())
         return 0
     if args.repin_ruled:
         write_if_changed(PINS_REL, write_pins(t))
