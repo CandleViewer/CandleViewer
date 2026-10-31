@@ -286,6 +286,11 @@
       "path": "services/api/candleviewer/migrations/versions/0058_oms_handovers.py",
       "sha256": "86d2acff378439d7ee029b8d189357ab095ad9c88095951bfb49aa00c3f17cc2",
       "down_revision": "0057_se_component_statechart"
+    },
+    "0059_alerts_disarm_reason": {
+      "path": "services/api/candleviewer/migrations/versions/0059_alerts_disarm_reason.py",
+      "sha256": "f987a93563ad8a817d2d32575e7c05d71c42d3ea85808455b48ce4420fdb867f",
+      "down_revision": "0058_oms_handovers"
     }
   }
 }
