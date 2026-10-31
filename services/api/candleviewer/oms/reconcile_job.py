@@ -47,6 +47,8 @@ Owner's `OPERATOR_RESOLVED` leaves; no pass runs until then. **Stop**: the timer
 job is drained to quiescence, persisted (drain, journal, sealed snapshot, then `stop`) where a
 persister is wired, else stopped, and unregistered; only then is B19's port unwired. A job whose
 refused snapshot's lock is not recorded yet persists nothing, so the next start refuses it again.
+An open the stop overtakes, at any await, registers no job and spawns no timer: it stops what it
+built and persists nothing (`_unless_stopped`).
 
 **`auto_remediate`** (INV-B19-d, 24 Sec.14.3, C-4.14) comes only from the account's environment's
 capability record (`remediates`), never a setting, a flag or a role, and a live or demo record
@@ -254,6 +256,9 @@ class ReconcileJobs:
         self._spacing = SPACING_S
         self._t0 = 0.0
         self._wired = self._stopping = False
+        #: Each stop ends a life: an open begun in an earlier one registers nothing, a start
+        #: since included (`_unless_stopped`).
+        self._life = 0
 
     # --- Life -------------------------------------------------------------------------------------
 
@@ -266,11 +271,13 @@ class ReconcileJobs:
         Opus delta's m-a on #5185, INV-B19-a). One account whose start fails, whatever the
         failure (its job not opened, or a send that did not answer), is logged, paged and refused
         order entry (its standing set, fail closed) until a later trigger opens its job or
-        reaches it (`_reached`); the others start."""
+        reaches it (`_reached`); the others start. A stop that overtakes the start ends it,
+        raised: the open it meets registers nothing (`_unless_stopped`), and no account is held or
+        paged once the stop has begun (the orchestrator's read of the wiring, L1)."""
         remediate = self._remediates(self._env)
         if not remediate and self._env in _ALWAYS_REMEDIATE:  # C-2.6, C-4.14: never on live or demo
             raise ValueError("a live or demo reconciliation job always remediates (24 Sec.14.3)")
-        self._remediate, self._stopping = remediate, False
+        self._remediate, self._stopping, life = remediate, False, self._life
         b19.set_ports(self._ports)
         self._wired = True
         self._t0 = self._now()
@@ -284,6 +291,8 @@ class ReconcileJobs:
             try:
                 await self.trigger(account, "startup")
             except Exception as exc:  # any failure holds this account; the others still start
+                if self._life != life:  # a stop overtook the start: it holds and pages nothing
+                    raise
                 self._standing.mark_stale(account)  # unknown: refused until a trigger reaches it
                 self._unstarted.add(account)
                 _log().critical("reconcile_job_unopened", account_id=str(account),
@@ -292,8 +301,10 @@ class ReconcileJobs:
 
     async def stop(self) -> None:
         """The timers end, then each job is drained to quiescence and persisted (or stopped), and
-        unregistered; B19's port is unwired last, once every job is stopped and snapshotted."""
-        self._stopping = True
+        unregistered; B19's port is unwired last, once every job is stopped and snapshotted. An
+        open the stop overtakes registers nothing, and stops what it built at its next step
+        (`_unless_stopped`)."""
+        self._stopping, self._life = True, self._life + 1
         tasks = [t for t in self._tasks if not t.done()]
         for task in tasks:
             task.cancel()
@@ -426,14 +437,19 @@ class ReconcileJobs:
     async def _open(self, account: AccountId) -> _Job:
         """The account's job: restored from its sealed snapshot where one is held, else built
         afresh, only once B19's port is wired (#5121's carry: unwired, a pass locks). Restored, its
-        standing is rebuilt from its state and what the restore leaves owed is sent."""
+        standing is rebuilt from its state and what the restore leaves owed is sent. A stop that
+        begins meanwhile ends it after the await it meets (`_unless_stopped`): nothing is
+        registered, spawned or persisted, and no standing changes, once the stop has begun."""
         if self._stopping or not b19.ports_wired():
-            raise ReconciliationUnavailable("no reconciliation job can open: stopping or unwired")
-        key = MachineKey(MACHINE, str(account), self._env)
+            raise ReconciliationUnavailable(_NONE_OPENS)
+        life, key = self._life, MachineKey(MACHINE, str(account), self._env)
         try:
-            interp, owed = await self._restored(account, key)
+            interp, owed = await self._restored(account, key, life)
             if interp is None:
-                interp = await self._built(account, key)
+                interp = await self._built(account, key, life)
+        except _Overtaken:  # the stop's own end: nothing of this open outlives it
+            _log().info("reconcile_job_open_overtaken", account_id=str(account))
+            raise ReconciliationUnavailable(_NONE_OPENS) from None
         except Exception as exc:  # the store or the build: no job, the caller decides
             _log().error("reconcile_job_open_failed", account_id=str(account),
                          failure=type(exc).__name__)  # fmt: skip
@@ -454,12 +470,14 @@ class ReconcileJobs:
         job.cadence = self._spawn(self._cadence(job), "reconcile-cadence")
         for event, payload in owed:
             await self._send_job(job, event, payload)
+            if self._life != life:  # registered before the stop began, which closes it
+                raise ReconciliationUnavailable(_NONE_OPENS)
         _log().info("reconcile_job_opened", account_id=str(account), state=state,
                     restored=bool(owed) or state != "idle")  # fmt: skip
         return job
 
     async def _restored(
-        self, account: AccountId, key: MachineKey
+        self, account: AccountId, key: MachineKey, life: int
     ) -> tuple[Any | None, tuple[tuple[str, dict[str, Any]], ...]]:
         """The job restored, with what it is owed (`redrive_after_restore`), or None to build
         afresh: no persistence, no snapshot, a refused one (the `Restorer` quarantines and pages
@@ -470,27 +488,32 @@ class ReconcileJobs:
         if self._persistence is None:
             return None, ()
         sealed = await _opening_step(self._persistence.load(key))
+        await self._unless_stopped(life)
         if sealed is None:
             return None, ()
         try:
             interp = await _opening_step(self._persistence.restore(key, sealed))
         except RestoreRefusedError:  # its state unknown: refused at once, then locked by B19
+            await self._unless_stopped(life)  # stopping: the next start refuses it again
             _log().error("reconcile_job_restore_refused", account_id=str(account))
             self._standing.mark_stale(account)
             self._escalating.add(account)
             return None, ()
+        await self._unless_stopped(life, interp)
         if interp.context.get("auto_remediate") is not self._remediate:
             await interp.stop()
             raise ValueError("a restored job's auto_remediate is not its record's (24 Sec.14.3)")
         owed = b19.redrive_after_restore(leaf_of(interp), interp.context)
         if owed is None:
             await interp.stop()
+            await self._unless_stopped(life)
             return None, ()
         return interp, owed
 
-    async def _built(self, account: AccountId, key: MachineKey) -> Any:
+    async def _built(self, account: AccountId, key: MachineKey, life: int) -> Any:
         if self._persistence is not None:  # its chain seeded and the orphan scan run first
             plugins = await _opening_step(self._persistence.plugins(key))
+            await self._unless_stopped(life)
         else:
             plugins = cv_plugins(
                 machine_kind=MACHINE, lane=LANE, entity_id=str(account), env=self._env,
@@ -498,7 +521,19 @@ class ReconcileJobs:
             )  # fmt: skip
         ctx = {"account_id": str(account), "auto_remediate": self._remediate}
         built = await build(MACHINE, ctx=ctx, clock=default_clock(), lane=LANE, plugins=plugins)
+        await self._unless_stopped(life, built.interpreter)
         return built.interpreter
+
+    async def _unless_stopped(self, life: int, built: Any = None) -> None:
+        """After each await of an open (the orchestrator's read of the wiring, L1): a stop begun
+        since the open began (`life`) ends it here, so it registers no job, spawns no cadence,
+        persists nothing and changes no standing after the stop has cleared them; what it built
+        or restored is stopped, never snapshotted (`_Overtaken`)."""
+        if life == self._life:
+            return
+        if built is not None and built.is_running:
+            await built.stop()
+        raise _Overtaken
 
     async def _sent(self, job: _Job, trigger: Trigger) -> str | None:
         """The rule (module docstring), under the job's lock."""
@@ -616,6 +651,11 @@ class ReconcileJobs:
 
 
 _UNOPENED: Final = "A reconciliation job could not open: its account's order entry is refused."
+_NONE_OPENS: Final = "no reconciliation job can open: stopping or unwired"
+
+
+class _Overtaken(Exception):
+    """An open a stop overtook (`ReconcileJobs._unless_stopped`): it ends with nothing kept."""
 
 
 async def _opening_step[T](step: Awaitable[T]) -> T:

@@ -274,9 +274,9 @@ async def test_a_start_cut_while_the_snapshot_load_hangs_leaves_no_account_open_
     accounts = _seeded(world, 0xC1, 0xC2, 0xC3)
     answered, real = asyncio.Event(), ReconcileJobs._restored
 
-    async def restored(self: ReconcileJobs, account: AccountId, key: Any) -> Any:
+    async def restored(self: ReconcileJobs, account: AccountId, key: Any, life: int) -> Any:
         await rj._opening_step(answered.wait())  # the snapshot store's load, hung until answered
-        return await real(self, account, key)  # no store composed here: built afresh
+        return await real(self, account, key, life)  # no store composed here: built afresh
 
     monkeypatch.setattr(ReconcileJobs, "_restored", restored)
     runtime = world.runtime(standing=standing)

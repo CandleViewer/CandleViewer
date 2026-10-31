@@ -630,6 +630,132 @@ async def test_an_open_whose_step_hangs_is_bounded_and_refuses_the_account(
         await driver.stop()
 
 
+#: Each await of an open a stop can overtake it at (the orchestrator's read of the wiring, L1): the
+#: snapshot's load, its restore (answered, or refused), a fresh build's plugins, the build itself,
+#: and the send a restored job is owed.
+_AWAITS = ("load", "restore", "refused", "plugins", "build", "owed")
+
+
+async def _left_for(held: str, job: Job, timers: Timers, memory: Memory) -> None:
+    """What a first process leaves for an open held at `held`: a snapshot to load and restore
+    (refused, or owing `RETRY_DUE`), or none, so the open builds afresh."""
+    if held in ("plugins", "build"):
+        return
+    first = _driver(job, timers, persistence=memory)
+    await first.start([])
+    if held == "owed":  # snapshotted backing off: its restore owes `RETRY_DUE`
+        _starve(job)
+        await first.trigger(ACCOUNT, "periodic")
+        assert await _until(first, "backing_off") == "backing_off"
+        snapshotted = first._jobs.pop(ACCOUNT)  # the store's now: the stop has none to close
+        await memory.persist(snapshotted.interp, snapshotted.machine_key)
+    else:
+        await first.trigger(ACCOUNT, "periodic")
+        assert await _resting(first) == "idle"
+    await first.stop()
+    if held == "refused":
+        _refusing(memory)
+
+
+def _held_at(
+    held: str, driver: ReconcileJobs, memory: Memory, monkeypatch: pytest.MonkeyPatch,
+    gate: asyncio.Event, made: list[Any],
+) -> asyncio.Event:  # fmt: skip
+    """The open waits for `gate` at `held`, once its await has answered; what it built or
+    restored is kept in `made`. The event returned is set once the open waits."""
+    waiting = asyncio.Event()
+
+    async def pause() -> None:
+        waiting.set()
+        await gate.wait()
+
+    if held == "load":
+        load = memory.load
+
+        async def loaded(key: MachineKey) -> SealedSnapshot | None:
+            sealed = await load(key)
+            await pause()
+            return sealed
+
+        monkeypatch.setattr(memory, "load", loaded)
+    elif held in ("restore", "refused"):
+        restore = memory.restore
+
+        async def restored(key: MachineKey, sealed: SealedSnapshot) -> Any:
+            try:
+                made.append(await restore(key, sealed))
+            finally:
+                await pause()  # answered or refused, either way once the stop has run
+            return made[-1]
+
+        monkeypatch.setattr(memory, "restore", restored)
+    elif held == "plugins":
+
+        async def plugins(_key: MachineKey) -> tuple[Any, ...]:
+            await pause()
+            return ()
+
+        monkeypatch.setattr(memory, "plugins", plugins)
+    elif held == "build":
+        build = rj.build
+
+        async def built(*args: Any, **kwargs: Any) -> Any:
+            out = await build(*args, **kwargs)
+            made.append(out.interpreter)
+            await pause()
+            return out
+
+        monkeypatch.setattr(rj, "build", built)
+    else:  # the owed `RETRY_DUE`: taken by B19, its answer held
+        send = driver._gateway.send
+
+        async def sent(key: str, event: Any, *, wait: bool = False) -> Any:
+            receipt = await send(key, event, wait=wait)
+            if event["type"] == "RETRY_DUE":
+                await pause()
+            return receipt
+
+        monkeypatch.setattr(driver._gateway, "send", sent)
+    return waiting
+
+
+@pytest.mark.parametrize("held", _AWAITS)
+async def test_an_open_a_stop_overtakes_keeps_nothing_and_leaves_the_standing_as_the_stop_did(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch, held: str
+) -> None:
+    """The orchestrator's read of the wiring, L1: `stop` takes no open's lock, so an open waiting
+    at any of its awaits while the stop runs meets the stop at the next. Once the stop has
+    cleared the jobs and unwired B19's port, the open registers no job, spawns no timer, persists
+    nothing and stops what it built or restored, and the standing stays as the stop left it (the
+    start's pre-mark, never lifted by a late open); the start it served ends raised, holding and
+    paging nothing more."""
+    memory = Memory()
+    await _left_for(held, job, timers, memory)
+    fresh = Job(retries=cast(Any, RetryHop()))
+    driver = _driver(fresh, timers, persistence=memory)
+    gate, made = asyncio.Event(), list[Any]()
+    waiting = _held_at(held, driver, memory, monkeypatch, gate, made)
+    opening = asyncio.ensure_future(driver.start([ACCOUNT]))
+    try:
+        await asyncio.wait_for(waiting.wait(), 10)  # a bound on the test
+        await driver.stop()
+        standing = fresh.standing
+        left = (standing.is_stale(ACCOUNT), standing.stale_count, standing.held)
+        kept = (list(fresh.world.oms.pages), list(memory.persisted), dict(memory.repo.rows))
+        gate.set()
+        with pytest.raises(ReconciliationUnavailable):
+            await asyncio.wait_for(opening, 10)
+    finally:
+        gate.set()
+    assert (driver._jobs, driver._tasks, driver._gateway._entries) == ({}, set(), {})
+    assert (driver._unstarted, driver._escalating) == (set(), set())
+    # the start's pre-mark, which only an open clears: the owed job's, registered before the stop
+    assert left == ((False, 0, False) if held == "owed" else (True, 1, False))
+    assert (standing.is_stale(ACCOUNT), standing.stale_count, standing.held) == left
+    assert (list(fresh.world.oms.pages), list(memory.persisted), dict(memory.repo.rows)) == kept
+    assert not any(interp.is_running for interp in made) and not b19.ports_wired()
+
+
 def _failing(
     driver: ReconcileJobs, monkeypatch: pytest.MonkeyPatch, event: str, account: Any
 ) -> None:
