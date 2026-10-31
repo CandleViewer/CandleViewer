@@ -152,7 +152,6 @@
     "tests/unit/observability/test_redaction_scan_cost.py::test_perf_redact_text_scans_a_capped_pathological_string_within_budget[snake-case-runs]",
     "tests/unit/observability/test_redaction_scan_cost.py::test_perf_redact_text_scans_a_capped_pathological_string_within_budget[underscore-dash-run]",
     "tests/unit/observability/test_redaction_scan_cost.py::test_perf_redact_text_scans_a_capped_pathological_string_within_budget[url-safe-65-runs]",
-    "tests/unit/oms/test_order_lane_isolation.py::test_order_turns_on_the_lane_ride_out_a_3_s_stall_of_the_serving_loop",
     "tests/unit/oms/test_order_lane_isolation.py::test_protective_calls_on_the_lane_ride_out_a_3_s_stall_of_the_serving_loop",
     "tests/unit/oms/test_order_lane_stream_hop.py::test_the_bridges_hop_measured_under_a_fill_burst[burst-busy]",
     "tests/unit/oms/test_order_lane_stream_hop.py::test_the_bridges_hop_measured_under_a_fill_burst[burst-ticker]",
