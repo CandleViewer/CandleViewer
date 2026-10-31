@@ -303,9 +303,14 @@ jobs:
     name: py-perf
     runs-on: ubuntu-latest
     # Fixed, not CV_CI_TIMEOUT_MINUTES. The per-test C-13.9 budgets gate inside the tests; this
-    # bounds a hung run. The set is 104 tests (the 1,000-sample login-timing test alone takes 86 s)
-    # and runs 9-10 min on hosted runners, so a 10-minute bound cancelled sound runs (#4460).
-    timeout-minutes: 20
+    # bounds a hung run and is a hang guard, not a budget (#5171). The set is 155 tests (pytest -m
+    # "perf and not flaky" --collect-only, 2026-10-31); the 1,000-sample login-timing test alone
+    # takes 110 s, and collecting the whole suite to select them takes about 5 min. On 2026-10-31
+    # the merge-group job took 18.9, 16.5, 18.9 and 16.6 min (runs 41171217151, 41171215945,
+    # 41171215130, 41170388195), and run 41169089415 hit the old 20-minute bound at 98% and
+    # ejected #5093. 30 is at least 1.5x the lane's observed p95 (18.9 min), as 20 was at 9-10 min
+    # (#4460); raise it with the measurement when the lane grows, never to hide a hang.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: services/api
@@ -328,7 +333,7 @@ jobs:
       - name: Pre-pull postgres:16-alpine (CI-INFRA-001)
         working-directory: ${{ github.workspace }}
         env:
-          # 8 pulls x 45 s + 220 s of waits = 580 s, inside this job's 20-minute timeout.
+          # 8 pulls x 45 s + 220 s of waits = 580 s, inside this job's 30-minute timeout.
           PREPULL_PULL_TIMEOUT: "45"
         run: tools/ci/prepull_images.sh postgres
 
