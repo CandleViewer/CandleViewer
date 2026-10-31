@@ -6662,7 +6662,7 @@ This number follows §19.64, which #5255 (#5111) holds, after §19.63, which #51
 - §8.12, the `resyncing` row: a composition with no reconciliation stores refuses the request (`NoReconciliation`), where it said until E29-T06.
 - With them: `20-architecture.md` §6.2 names the reconciliation standing as the gate's last check, read in place, and `28-statechart-catalogue.md` B1.4's `second_consecutive_miss` row says `apply_untracked_exec` restarts `recon_misses` too (B1 chart version 8).
 
-### 19.66 2026-10-31 — §8.5, §8.10: a reconciliation start that fails holds the environment's order entry (E29-T06, #914)
+### 19.66 2026-10-31 — §8.5, §8.10: the Owner's reconciliation routes, a refused snapshot's lock, and the hold of a failed or cut start (E29-T06, #914)
 
 This number follows §19.65, which #5111 holds; an entry that lands first takes it, and this one moves to the next free number.
 
