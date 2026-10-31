@@ -326,7 +326,9 @@ def f189(state: str) -> k.Node:
         t0, t1 = c.clock_at(x0), c.clock_at(x0 + bw)
         c.strip.append(k.text("band label", f"{t0} – {t1} maintenance", k.CAPTION, k.TEXT_3, x=x0 + 6, y=5,
                               note="shown when the band is >= 48 px wide"))
-        c.drop_under = ["band label"]  # live fold: the band label's covered time labels drop as collisions (D8)
+        # live fold / live check r3 (SHEET-FIX): the band strip (its dashed left edge at x 194 and the hatch) covers
+        # 13:40 by 4 px, so 13:40 drops too (E11-D02 D4 / D8 collisions); the band label still carries both times
+        c.drop_under = ["band label", "maintenance band · strip"]
         k.live("CMP-189 maintenance band: every rect named 'hatch line · NN' (pane and strip) is rotated 45° about its "
                "centre by the post-render step (post-live.js; the post-export step's hatch line rotation); read back "
                "rotation 45 on each and 1 px lines 6 px apart across the stroke, clipped to the band")

@@ -167,3 +167,15 @@ bars` read off the axis; replay keeps the virtual now read off the axis (13:42:5
 Checks: the offline overlap check and the axis sweep stay at 0; a global value sweep (every clock, `last` / age,
 countdown, paused time, column count, last-price, crosshair price, legend value and readout against the frame's drawn
 axis and series) finds 0 of 94 checked values off; the rebuild is idempotent.
+
+## Live-check fold, round 3 (2026-10-31)
+
+- Board 10, `CMP-197 · ChartTooltip — ref frame (overflow)`: the crosshair price pill sat at y −4 (its label clipped
+  2.5 px by the gutter); the pill now stays inside the gutter near the top edge (`y = max(0, py − 8)`), clamped off its
+  crosshair line, its value still the price at the crosshair's y.
+- Board 09, `CMP-189 · TimeAxis — ref frame (maintenance band)`: the band strip (its dashed left edge at x 194 and the
+  hatch) covered "13:40" by 4 px; `drop_under` now names the strip band too, so 13:40 drops (E11-D02 D4: collisions
+  drop). The band label still carries both times (13:40 – 13:44).
+
+Both were fixed live first; the raw sheets now differ from the drawn ones by exactly those two nodes (the removed
+`time 1` text and the pill's `y`), so a rebuild matches the drawn boards.

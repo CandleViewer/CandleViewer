@@ -33,8 +33,8 @@ Root 3000 x 2566 px at (4000, 0); footer "page E11-D05 ref frames · board 10 ·
 
 ## Validator and size
 
-- `10-ref-frames-b.json: 0 errors, 20 warnings, 80 sections, 277123 bytes` (exit 0)
-- 80 sections, 2185 shapes, 277123 bytes
+- `10-ref-frames-b.json: 0 errors, 20 warnings, 80 sections, 277122 bytes` (exit 0)
+- 80 sections, 2185 shapes, 277122 bytes
 
 ## Live checks (13)
 

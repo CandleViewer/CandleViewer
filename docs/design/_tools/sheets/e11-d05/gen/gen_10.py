@@ -96,9 +96,10 @@ def f197(state: str) -> k.Node:
     c.strip.append(c.strip_pill(k.pill("time pill", when, ch, inv, y=4), xc))
     # r3b: the crosshair price pill (CMP-190's, D9) at the horizontal line, its value read off the price axis there;
     # it never covers the last-price pill (E11-D02 D5 L205)
-    c.gutter.append(k.pill("price pill", k.f_price(c.price_at(py)), ch, inv, x=4, y=py - 8,
+    # live check r3 (SHEET-FIX): near the top edge the pill stays inside the gutter (y >= 0), clamped off its line
+    c.gutter.append(k.pill("price pill", k.f_price(c.price_at(py)), ch, inv, x=4, y=max(0, py - 8),
                            note="GL text in the axis batch (A-9); tick precision; the price at the crosshair's y"))
-    if c.lp_box and not (py - 8 + 17 <= c.lp_box[0] or py - 8 >= c.lp_box[1]):
+    if c.lp_box and not (max(0, py - 8) + 17 <= c.lp_box[0] or max(0, py - 8) >= c.lp_box[1]):
         raise ValueError(f"CMP-197 {state}: the crosshair price pill covers the last-price pill")
     if c.strip[-1]["x"] != round(xc - k.est_width(c.strip[-1]) / 2):
         k.spec_gap("CMP-197: where the crosshair time pill would cover the zone tag's clock, E11-D02 L206 lets pills "
