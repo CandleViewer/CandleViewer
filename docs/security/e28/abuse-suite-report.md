@@ -64,7 +64,7 @@ group with one leg outside the grants is never sent, not even in part.
 | AC-02 | A symbol off the account's allow-list                 | SR-E28-06, SR-054         | O3, PF-T07     | The leg is not planned (`symbol_not_allowed`); the preview is recorded; nothing is sent                    |
 | AC-03 | An oversized quantity hint                            | SR-052, SR-053, D6        | O3, PF-T06     | 403 `risk_limit_breached`, never clamped; `trade_group.override_refused` ahead of the preview record       |
 | AC-04 | An alternate widening each protected cap in turn      | SR-E28-03, SR-052, SR-053 | O3, F2, PF-T03 | Notional, daily loss, leverage: 403 and `override_refused`; symbol lists: the bound list decides           |
-| AC-05 | Demo and live in one group, or a member edited across | SR-E28-16, C-2.11         | PF-T16         | Preview 400 `environment_mismatch`, recorded; definition create and replace 400 before any write († #5120) |
+| AC-05 | Demo and live in one group, or a member edited across | SR-E28-16, C-2.11         | PF-T16         | Preview 400 `environment_mismatch`, recorded; definition create and replace 400 before any write, recorded |
 | AC-06 | A preview or group read reaching an ungranted account | SR-E28-21, SR-E29-13      | F2, PF-I01/I02 | One `account_scope_denied` shape for a foreign and an absent account; `rbac.denied`; reads 404             |
 | AC-07 | A profile write without step-up                       | SR-025, SR-E28-02         | PF-S02         | 403 `step_up_required` from the production step-up service, its challenge recorded; no write               |
 | AC-08 | A wildcard pattern matching outside the listed perps  | SR-E28-06, SR-054         | PF-T07         | Seeded property test over anchored suffix patterns; bare, short or malformed patterns 422 at save          |
@@ -86,9 +86,9 @@ group with one leg outside the grants is never sent, not even in part.
 - C-4 (AC-04): a wider alternate never raises a cap; a request past the bound profile's value is
   refused and audited. For the symbol lists the bound list decides the leg (a plan refusal, not an
   `override_refused` record). `require_native_sl` is no override member at all (422).
-- C-5 (AC-05) † known gap, **#5120**: a definition refused for its environments writes no audit
-  record today. Ruled a production gap (C-2.11's class must be recorded); the suite pins the
-  absence and #5120 flips the assertion to the record.
+- C-5 (AC-05), fixed by **#5120**: a definition refused for its environments is recorded, one
+  `trade_group_definition.save_refused` with reason `environment_mismatch` under the request's id,
+  written before the `400` (C-2.9, C-2.11); unwritten, `503 audit_unavailable`.
 - C-6 (AC-09): the 409 writes no record, by design (ruled 2026-10-30); the expectation is the
   code alone.
 - C-7 (AC-10): a 422, not "ignored" (the model, section 10).
