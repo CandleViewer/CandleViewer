@@ -345,8 +345,9 @@ def test_action_request_has_no_default_mode() -> None:
     for name in ("mode", "rule_id", "version", "ir_hash", "run_id", "armed_by"):
         with pytest.raises(TypeError, match=name):
             ActionRequest(**{k: v for k, v in fields.items() if k != name})
+    build: Callable[..., ActionRequest] = ActionRequest  # typed loosely: this call must fail
     with pytest.raises(TypeError):  # keyword-only: a positional build is refused
-        ActionRequest(*fields.values())
+        build(*fields.values())
 
 
 def test_the_dispatch_reread_bound_is_the_tick_disarm_bound() -> None:
