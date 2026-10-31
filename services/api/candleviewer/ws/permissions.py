@@ -1084,8 +1084,9 @@ class ConnectionAuthz:
             self.on_drop(subs)
 
     def _drop(self, sub: Subscription) -> None:
-        """Bookkeeping only: each operation that calls it reports through `_dropped`, once."""
-        sub.ended = True
+        """Bookkeeping only: each operation that calls it reports through `_dropped`, once. An
+        ended subscription is never snapped, so it awaits no `snap` either (#2409)."""
+        sub.ended, sub.snapshot_pending = True, False
         if (held := self.by_id.pop(sub.sub_id, None)) is not None:  # once, if dropped twice
             if held.topic.family.family == _ALERTS:  # with `by_id`: exact, whatever raises below
                 cv_ws_alerts_subscriptions_in_use.dec()

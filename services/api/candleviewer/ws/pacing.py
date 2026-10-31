@@ -541,7 +541,8 @@ class Pacer:
     def drop(self, sub: Subscription) -> None:
         """§8.4 step 1 for one topic: discard its pending state, hold its deltas, and mark it for
         a `backpressure` snapshot. `orders` / `executions` are refused: they are never dropped,
-        so the ladder closes the connection instead (step 3)."""
+        so the ladder closes the connection instead (step 3). An ended subscription is never
+        marked: it is never snapped (#2409), and `drain` deletes its mark unsent."""
         if sub.topic.family.never_throttled:
             raise ValueError(f"{sub.ch} is never dropped (S4)")
         lane = self.lanes.get(sub.sub_id)
@@ -549,7 +550,8 @@ class Pacer:
             lane.queue.clear()
             lane.due = None
             self._account(lane)
-        sub.snapshot_pending, sub.pending_reason = True, "backpressure"
+        if not sub.ended:
+            sub.snapshot_pending, sub.pending_reason = True, "backpressure"
         self.resnapshot_required[sub.sub_id] = sub
 
     def shed(self, sub: Subscription) -> None:

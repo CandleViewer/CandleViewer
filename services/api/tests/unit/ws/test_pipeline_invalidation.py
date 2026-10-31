@@ -478,7 +478,8 @@ async def test_an_unencodable_frame_of_no_subscription_fails_closed() -> None:
 async def test_on_drop_fires_once_per_operation_with_every_stale_subscription() -> None:
     """§8.4 Lanes, §9.5 (every site, design risk 2): once per operation, before its reply, with
     every subscription it made stale, never for a `ctl` that resets nothing. A narrowing passes
-    the dropped and the narrowed together, the narrowed before its re-pend (§9.5)."""
+    the dropped and the narrowed together, the narrowed before its re-pend (§9.5). An ended one
+    arrives with its pending mark cleared: it awaits no `snap` (#2409)."""
     conn = Conn(Source(), ACC_A, ACC_B)
     authz, calls = conn.authz, list[list[tuple[str, str | None, bool]]]()
     authz.on_drop = lambda subs: calls.append(
@@ -500,7 +501,7 @@ async def test_on_drop_fires_once_per_operation_with_every_stale_subscription() 
     heatmap = admit({"ch": _HEATMAP, "opts": _STRUCTURED})
     authz.ctl(_HEATMAP, {"time_bucket_ms": 1000})
     authz.revoke(heatmap, "resync_rate_limited", 1)
-    assert calls[2:] == [[(_HEATMAP, None, True)]] * 2
+    assert calls[2:] == [[(_HEATMAP, None, True)], [(_HEATMAP, None, False)]]
     authz.services.bars_off = True  # any refusal of a `sub`'s upstream (one exit for all)
     bars = admit({"ch": "bars.BTCUSDT.time.1"})
     assert (await authz.subscribe_upstream(bars) or {"ok": True})["ok"] is False
@@ -511,7 +512,7 @@ async def test_on_drop_fires_once_per_operation_with_every_stale_subscription() 
     assert authz.apply_snapshot(VersionedSnapshot(principal(ACC_A), 1), 9) is not None
     assert calls[5:] == [[("orders", None, False), ("positions", None, False)]]
     authz.release_all()
-    assert calls[6:] == [[("positions", None, True), ("trades.BTCUSDT", None, False)]]
+    assert calls[6:] == [[("positions", None, False), ("trades.BTCUSDT", None, False)]]
 
 
 @pytest.mark.parametrize("pending", [None, "client_resync"])

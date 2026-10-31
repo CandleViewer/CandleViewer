@@ -1855,8 +1855,9 @@ class SequencingHub:
         """A snapshot (a re-snapshot, a flush or a wake) that raised through its sink (a bare
         `TopicEmitter`, which has no close path): `sub` stays pending with its reason for the next
         flush (§7.1). Marked again: `TopicEmitter.snapshot` clears the mark before it queues its
-        frames, so a raise there must not leave a `d` to follow a `snap` its client may lack."""
-        sub.snapshot_pending = True
+        frames, so a raise there must not leave a `d` to follow a `snap` its client may lack. An
+        ended one is never marked: it is never snapped (#2409)."""
+        sub.snapshot_pending = not sub.ended
         self._log_failed("snapshot", authz, sub, exc)
 
     def _delta_failed(self, authz: ConnectionAuthz, sub: Subscription, exc: Exception) -> None:
@@ -1868,7 +1869,7 @@ class SequencingHub:
         waking `publish` sends that `snap` at once, any other waits for the next flush. One already
         pending keeps its reason, as it took no `d`. Marked first, which its count and log line
         cannot skip; counted as a malformed update, as the pipeline counts one (§8.6 D9)."""
-        if not sub.snapshot_pending:
+        if not sub.snapshot_pending and not sub.ended:  # an ended one is never snapped (#2409)
             sub.snapshot_pending, sub.pending_reason = True, "upstream_desync"
         cv_ws_malformed_updates_total.labels(topic=sub.topic.family.family).inc()
         self._log_failed("delta", authz, sub, exc)
