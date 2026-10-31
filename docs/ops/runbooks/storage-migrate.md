@@ -39,8 +39,9 @@ writer can create a table again between a drop and its re-creation. On an instal
 no `_cv_migrations` (the case #3897 came from: ILP created them on first write), drop or rebuild those
 tables first. `CREATE TABLE IF NOT EXISTS` leaves the shape ILP inferred (no DEDUP keys) and the drift
 guard compares column names only. A plain `ADD COLUMN` of a column that exists on a table lacking its
-DDL upsert keys now stops the run at exit 9, before any drop, as it stopped at exit 7 before #3093. A
-keyless table that lacks the column still reaches `0004`'s drop: the check before the run is yours.
+DDL upsert keys, as a table ILP created does, now stops the run at exit 9, as it stopped at exit 7
+before #3093: for the `bars_*` tables that is at `0003`, before `0004` drops them. A keyless table
+that lacks the column still reaches `0004`'s drop: the check before the run is yours.
 
 ```bash
 C="docker compose -f infra/compose/docker-compose.yml"
@@ -101,7 +102,8 @@ the typed error's own fields. It holds no DSN or driver message. Exit 8 also log
 - **6 `QUESTDB_UNAVAILABLE`** (`StorageTierUnavailable`): QuestDB refused the connection or the login,
   dropped it (SQLSTATE class 08, or a connection already closed) or stopped answering. Alembic has
   already run. A drop in the middle of a DDL file leaves that file's earlier statements applied: the
-  retry finishes the file (see "After a crash"). Check `CV_QUESTDB_PG`, its login and `questdb`.
+  retry finishes the file (see "After a crash"). Keep the API and every ILP writer stopped until the
+  re-run exits 0. Check `CV_QUESTDB_PG`, its login and `questdb`.
 - **7 `DDL_REFUSED`** (`StorageQueryFailed`): QuestDB refused a statement (`sqlstate`). Files before
   it are recorded; statements of the failing file that ran before the refusal stay applied, and a
   re-run skips them (see "After a crash"). A table that ILP created before the first run (the #3897
@@ -112,7 +114,8 @@ the typed error's own fields. It holds no DSN or driver message. Exit 8 also log
   (`table`; `reason`: `timeout` after 30 s, `suspended` or `unexpected_shape`). The statement it waited
   for was not run, and a re-run finishes the file. For `suspended`, fix the cause and run
   `ALTER TABLE <table> RESUME WAL;` (`recorder-rolloff.md`). For `timeout`, check `wal_tables()`, stop
-  the API and every other ILP writer or wait for the apply to catch up, then re-run.
+  the API and every other ILP writer or wait for the apply to catch up, then re-run. Keep the API
+  and every ILP writer stopped until the re-run exits 0.
 - **9 `SCHEMA_DRIFT`** (`StorageSchemaDrift`): a live table's column names differ from its DDL's once
   QuestDB's apply settled (about 5 s); `detail` names the table and the missing and extra columns. The
   runner raises it too (`step` `questdb_ddl`) for an `ADD COLUMN` whose column exists with another
@@ -129,16 +132,19 @@ QuestDB has no transactional DDL, so a step that was killed, lost its connection
 `ADD COLUMN`, and before a `DROP TABLE` of a table the same file re-creates (`0004`), the runner waits
 for that table's WAL apply and reads the live table. A column that is there with the DDL's type is
 skipped when the table has the upsert keys its first `CREATE` declares; a table without them (ILP sets
-none) stops the run at exit 9 before any drop, as it stopped at exit 7 before #3093. A `DROP TABLE` is
+none) stops the run at exit 9, as a table ILP created stopped at exit 7 before #3093: the `bars_*`
+tables stop at `0003`, before `0004` drops them. A `DROP TABLE` is
 skipped when the table already has every column and upsert key of its re-creation, so the bars written
 since are kept; an older table is still dropped and re-created. Each skip is one
 `questdb_statement_skipped` line (`filename`, `kind`, `table`, and `column` for an `ADD COLUMN`) and a
 file with a skip logs one `questdb_migration_resumed` warning: an earlier run died, find out why.
-Neither carries a value.
+Neither carries a value. Keep the API and every ILP writer stopped until the re-run exits 0: a writer
+that runs first can add a column the file was about to add, which the guard reads as the crash's own
+effect.
 
 **Incident note (#3093, P1).** The runner recorded a file only after its last statement and checked
 none, so a re-run failed at a plain `ADD COLUMN` (exit 7) and a re-run of `0004` dropped the six
 `bars_*` tables first. Found while fixing #3064 (#3077); filed 2026-10-17 as P2, raised to P1 that
 day; reproduced on 2026-10-21 on QuestDB 8.1.1, where 10 of 11 sampled crash points failed or lost
 rows. No loss is known: this step shipped on 2026-10-21 (#3982) and the rows are derived bars. Its
-risk register entry (`32-risk-register.md`) is tracked by #4014.
+risk register entry is a bullet of RSK-012 in `32-risk-register.md`.
