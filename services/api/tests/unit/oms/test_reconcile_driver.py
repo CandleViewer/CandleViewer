@@ -416,7 +416,7 @@ async def test_kill_is_never_sent_to_b19(
             await driver.trigger(ACCOUNT, trigger)
             await _resting(driver)
         with pytest.raises(AssertionError, match="KILL is never sent"):
-            await driver._send(driver._jobs[ACCOUNT], "KILL", {})
+            await driver._send_job(driver._jobs[ACCOUNT], "KILL", {})
     finally:
         await driver.stop()
     assert "KILL" not in sent
