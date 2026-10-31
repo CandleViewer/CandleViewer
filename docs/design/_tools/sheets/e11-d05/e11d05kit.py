@@ -593,6 +593,24 @@ def frame_rect(name: str, w: float, h: float, color: str, t: int, x: float = 0, 
                w=w, h=h, x=x, y=y)
 
 
+# r3b: the board's wall clock (the zone tag's 1 Hz server time); the status-row values derive from it
+CLOCK = "13:47:05"
+
+
+def clock_minus(clock: str, secs: int) -> str:
+    """hh:mm:ss `secs` seconds before `clock`."""
+    h, m, s = (int(v) for v in clock.split(":"))
+    t = h * 3600 + m * 60 + s - secs
+    return f"{t // 3600:02d}:{t // 60 % 60:02d}:{t % 60:02d}"
+
+
+def bar_close(clock: str = CLOCK, interval_s: int = 60) -> str:
+    """CMP-226's m:ss to the close of the current `interval_s` bar at `clock` (E11-D02 D11)."""
+    h, m, s = (int(v) for v in clock.split(":"))
+    left = interval_s - (h * 3600 + m * 60 + s) % interval_s
+    return f"{left // 60}:{left % 60:02d}"
+
+
 class Crop:
     """A compact-density chart-panel crop: optional status row (24), the pane (plot + price gutter) and the time strip
     (24). Geometry from E11-D02 §2 (compact): status row 24, gutter = widest label + 8 (min 48), strip 24, axis type
@@ -601,7 +619,7 @@ class Crop:
     def __init__(self, w: int, h: int, *, status: bool = False, strip: bool = True, gutter: int = 56, n: int = 14,
                  seed: int = SEED, data: bool = True, grid: bool = True, minor: bool = True,
                  labels: bool = True, times: Iterable[str] = ("13:30", "13:35", "13:40"),
-                 zone: str | None = "UTC 13:47:05") -> None:
+                 zone: str | None = f"UTC {CLOCK}") -> None:
         self.w, self.h, self.gw = w, h, gutter
         self.st = 24 if status else 0
         self.sh = 24 if strip else 0
@@ -658,6 +676,17 @@ class Crop:
         step = t[1] - t[0] if len(t) > 1 else 5
         a, b = self.strip_area()
         return t[0] + (x - self.time_x(0)) / ((b - a) / len(t)) * step
+
+    def price_at(self, y: float) -> float:
+        """The price at pane y (the inverse of y()), on the instrument's 0.5 tick (r3b: the crosshair price pill reads
+        its value off the price axis)."""
+        return round((self.hi - y / (self.ph - 1) * (self.hi - self.lo)) * 2) / 2
+
+    def bars_per_column(self) -> int:
+        """1m bars per column on this frame's time axis (minutes per px through its labels x the column width)."""
+        t = [int(s[:2]) * 60 + int(s[3:5]) for s in self.times]
+        a, b = self.strip_area()
+        return max(1, round((t[1] - t[0]) / ((b - a) / len(t)) * self.slot_w))
 
     def clock_at(self, x: float, *, secs: bool = False) -> str:
         m = self.minutes_at(x)
@@ -856,6 +885,7 @@ def write_sheet(nn: int, groups: list[Group], ann: Node, *, notes: dict[str, Ite
     steps = ["frame notes to shared plugin data cvd02/note", "watermarks 48 / 40 px weight 600 centred under the candles"]
     steps += ["the stale x0.85 ink fills"] if "data ink · x0.85" in names else []
     steps += ["the mark pill's 3 px padding"] if "mark pill" in names else []
+    steps += ["the hatch lines rotated 45°"] if any(str(x).startswith("hatch line · ") for x in names) else []
     live(f"after the render, run {Path(sheet_name(nn)).stem}.post-live.js (the kit writes it beside this sheet) twice: "
          + ", ".join(steps) + " (the live fold, 2026-10-30)")
     bad = lint(nodes)
@@ -972,8 +1002,9 @@ def cluster_w(state: str = "following") -> float:
     return est_width(cluster(state))
 
 
-def countdown(state: str = "normal") -> Node:
-    """CMP-226 (E11-D02 D11): normal `bar close 0:41` text.secondary; warn `0:08 closing` on a warning.subtle pill,
+def countdown(state: str = "normal", clock: str | None = None) -> Node:
+    """CMP-226 (E11-D02 D11): normal `bar close 0:41` text.secondary (r3b: with a `clock`, the m:ss to the 1m bar's
+    close at that clock, so a frame with a zone tag agrees with it); warn `0:08 closing` on a warning.subtle pill,
     text.primary at medium weight, a clock glyph in warning.strong; closed `closed` and n/a `—` in text.tertiary."""
     if state == "warn":
         return hbox("CMP-226 countdown · warn", [icon("glyph", "pending", WARN_STRONG, ICON_SM),
@@ -984,7 +1015,7 @@ def countdown(state: str = "normal") -> Node:
     if state == "na":
         return text("CMP-226 countdown · n∕a", "—", NUM, TEXT_3, note="title: No countdown for tick bars")
     return hbox("CMP-226 countdown · normal", [text("label", "bar close", CAPTION, TEXT_2),
-                                               text("digits", "0:41", NUM, TEXT_2)], {"gap": INSET_XS}, h=20)
+                                               text("digits", bar_close(clock) if clock else "0:41", NUM, TEXT_2)], {"gap": INSET_XS}, h=20)
 
 
 def env_badge() -> Node:
@@ -1063,7 +1094,7 @@ const NOTES = __NOTES__;
 const STALE = { "color.candle.up": "#27A14C", "color.candle.down": "#C33D41", "color.candle.wick": "#767E86" };
 const r = penpot.currentPage.root.children.find(c => c.name === ROOT);
 if (!r) return { abort: "root", ROOT };
-const log = { notes: 0, missing: [], wm: [], stale: 0, mark: 0 };
+const log = { notes: 0, missing: [], wm: [], stale: 0, mark: 0, hatch: 0 };
 for (const f of penpotUtils.findShapes(s => s.type === "board" && / ref frame \\(/.test(s.name), r)) {
   if (NOTES[f.name]) { f.setSharedPluginData("cvd02", "note", NOTES[f.name]); log.notes++; } else log.missing.push(f.name);
   for (const t of penpotUtils.findShapes(s => s.type === "text" && s.name === "CMP-198 watermark", f)) {
@@ -1085,6 +1116,10 @@ for (const f of penpotUtils.findShapes(s => s.type === "board" && / ref frame \\
   for (const m of penpotUtils.findShapes(s => s.name === "mark pill", f)) {
     if (m.flex) { m.flex.leftPadding = 3; m.flex.rightPadding = 3; log.mark++; }
   }
+  for (const h of penpotUtils.findShapes(s => s.type === "rectangle" && /^hatch line · /.test(s.name), f)) {
+    if (h.getPluginData("cvRot45") === "1") continue;
+    h.rotate(45); h.setPluginData("cvRot45", "1"); log.hatch++;
+  }
 }
 return log;
 """
@@ -1092,7 +1127,8 @@ return log;
 
 def write_post_live(nn: int, sheet_path: Path) -> Path:
     """build/NN-<slug>.post-live.js: the frames' notes as shared plugin data cvd02/note, the watermarks at 48 / 40 px
-    weight 600 (under the candles, centred), the stale frame's x0.85 ink fills and the mark pill's 3 px padding."""
+    weight 600 (under the candles, centred), the stale frame's x0.85 ink fills, the mark pill's 3 px padding and (r3b)
+    the maintenance band's `hatch line · NN` rects rotated 45° about their centres (idempotent, plugin data cvRot45)."""
     sh = json.loads(Path(sheet_path).read_text(encoding="utf-8"))
     notes: dict[str, str] = {}
     for s in sh["sections"]:

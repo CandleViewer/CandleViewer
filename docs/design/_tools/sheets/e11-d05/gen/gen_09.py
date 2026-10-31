@@ -2,6 +2,7 @@
 CMP-190 Crosshair (6) = 33 per-state ref frames, dark, compact (the trading default). Run: python3 -I -B gen/gen_09.py"""
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -44,7 +45,7 @@ def f180_loading() -> k.Node:
 def streaming(c: k.Crop, *, wm: str = "BTCUSDT · 1m", countdown: str = "normal", cl: str = "following") -> None:
     c.pane.insert(0, k.watermark(c, wm))
     k.last_pill(c)
-    c.status_right.append(k.countdown(countdown))
+    c.status_right.append(k.countdown(countdown, clock=c.zone[4:] if c.zone else None))  # r3b: the zone tag's clock
     cw = k.cluster_w(cl)
     c.strip.append(k.cluster(cl, x=round(c.w - cw), y=0))
 
@@ -57,8 +58,14 @@ def f180_streaming() -> k.Node:
 
 def f180_stale() -> k.Node:
     c = base180()
+    # r3b: the age and the "last" time agree with the zone tag's clock (last = clock - age), and the axis puts the
+    # newest drawn bar in that last update's minute (the feed stopped before the next bar formed)
+    last = k.clock_minus(k.CLOCK, 7)
+    c.times = ["13:35", "13:40", "13:45"]
     streaming(c)
-    c.status_left.append(k.chip("feed chip · stale", "Stale 7s · last 13:42:05",
+    if c.clock_at(c.x(len(c.bars) - 1)) != last[:5]:
+        raise ValueError(f"CMP-180 stale: newest bar {c.clock_at(c.x(len(c.bars) - 1))} is not the last update's minute")
+    c.status_left.append(k.chip("feed chip · stale", f"Stale 7s · last {last}",
                                 fill="color.data-confidence.stale.surface", color="color.data-confidence.stale.text",
                                 stroke=None, dot="color.data-confidence.stale.indicator"))
     c.ink_group = "data ink · x0.85"
@@ -128,8 +135,11 @@ def f180_reduced() -> k.Node:
 
 def f180_aggregated() -> k.Node:
     c = base180(n=30)
+    # r3b: a zoomed-out axis (30-minute labels), so the newest column sits at the clock and the chip's bars per column
+    # is read off it (minutes per px x the column width)
+    c.times = ["12:30", "13:00", "13:30"]
     streaming(c)
-    c.status_left.append(k.chip("aggregation chip", "Zoomed out · 1 column = 12 bars",
+    c.status_left.append(k.chip("aggregation chip", f"Zoomed out · 1 column = {c.bars_per_column()} bars",
                                 note="disclosure button; the merge glyph is not in the local set (text carries it)"))
     k.deviate("CMP-180 aggregated: the chip's merge glyph is not in the local icon set; drawn text-only")
     return c.build("f")
@@ -211,8 +221,7 @@ def f188(state: str) -> k.Node:
         k.deviate("CMP-188 last-price pill down: the seeded last bar is a down bar, so the (auto) frame already shows "
                   "a down pill; in this frame the bar closes at its low (" + k.f_price(c.last().l) + ") so the down "
                   "pill sits below (auto)'s, in color.candle.down with ▼")
-    if state != "dragging":
-        k.last_pill(c)
+    k.last_pill(c)  # r3b: E11-D02 D5 L205 pins the last-price pill in every state, dragging included
     if state == "locked":
         lock_badge(c)
     elif state == "mode tag":
@@ -232,9 +241,13 @@ def f188(state: str) -> k.Node:
         c.top.append(k.ring("CMP-039 ring · axis", c.gw, c.ph, x=c.pw, y=0))
     elif state == "dragging":
         lock_badge(c)
+        # r3b: the cursor stand-in keeps 6 px clear of the last-price pill, which nothing covers (E11-D02 L205)
+        cy = round(c.ph / 2) - 12
+        if c.lp_box and not (cy + 24 + 6 <= c.lp_box[0] or cy >= c.lp_box[1] + 6):
+            cy = c.lp_box[1] + 6 if c.lp_box[1] + 6 + 24 <= c.ph else c.lp_box[0] - 6 - 24
         c.gutter.append(k.vbox("ns-resize cursor", [k.icon("up", "arrow-up", k.TEXT_1, k.ICON_SM),
                                                     k.icon("down", "arrow-down", k.TEXT_1, k.ICON_SM)],
-                               None, w=12, h=24, x=40, y=round(c.ph / 2) - 12,
+                               None, w=12, h=24, x=40, y=cy,
                                note="stand-in for the ns-resize cursor; the drag engages the lock; the crosshair "
                                     "and its pills are hidden while dragging"))
     return c.build("f")
@@ -257,22 +270,25 @@ W189, H189 = 480, 128
 D8 = f"E11-D02 D8 L{k.L('### 7.2 CMP-189 TimeAxis (D8)', 'd02')}"
 
 
-def base189(zone: str = "UTC 13:47:05") -> k.Crop:
+def base189(zone: str = f"UTC {k.CLOCK}") -> k.Crop:
     return k.Crop(W189, H189, gutter=72, n=16, minor=False, times=("13:30", "13:35", "13:40"), zone=zone)
 
 
 def hatch(name: str, w: int, h: int) -> k.Node:
-    """pattern.hatch.gap: 45° texture lines (color.chart.hatch.texture) drawn as 2 x 2 steps every 8 px on
-    diagonals 16 px apart, between two band edges (color.chart.boundary)."""
+    """pattern.hatch.gap (E11-D05 L327; E11-D02 D8 L140): 45° texture lines, 1 px, at a 6 px pitch
+    (color.chart.hatch.texture), clipped to the band, between two dashed 4 / 4 edges (color.chart.boundary, `dash.4-4`
+    L336). r3b: each line is a 1 px rect `hatch line · NN`, horizontal and centred on its diagonal, that the post-render
+    step rotates 45° about its centre (post-live.js and the post-export step); the lines sit 6 * sqrt(2) px apart along
+    x, so 6 px apart across the stroke."""
     tex, edge = k.slot("color.chart.hatch.texture"), k.slot("color.chart.boundary")
-    kids, i = [], 0
-    for d in range(-h, w, 16):
-        for s in range(0, h, 8):
-            x = d + s
-            if 1 <= x < w - 3:
-                kids.append(k.rect(f"t{i:03d}", 2, 2, tex, x=x, y=s))
-                i += 1
-    kids += [k.rect("edge left", 1, h, edge, x=0, y=0), k.rect("edge right", 1, h, edge, x=w - 1, y=0)]
+    ln, step = h * math.sqrt(2) + 2, 6 * math.sqrt(2)
+    kids, i, cx = [], 0, -h / 2
+    while cx < w + h / 2:
+        kids.append(k.rect(f"hatch line · {i:02d}", round(ln, 2), 1, tex, x=round(cx - ln / 2, 2),
+                           y=round(h / 2 - 0.5, 2)))
+        i, cx = i + 1, cx + step
+    kids += [k.dashes("edge left", 0, 0, h, edge, vertical=True),
+             k.dashes("edge right", w - 1, 0, h, edge, vertical=True)]
     return k.box(name, kids, {"clip": True}, w=w, h=h)
 
 
@@ -287,8 +303,9 @@ def f189(state: str) -> k.Node:
         c.strip[-1] = k.cluster(cl, x=c.strip[-1]["x"], y=0, at=c.clock_at(c.x(len(c.bars) - 1)))
     if state == "boundary":
         xb = c.x(7) - round(c.slot_w / 2)
-        c.pane.append(k.rect("session boundary", 1, c.ph, k.slot("color.chart.boundary"), x=xb, y=0,
-                             note="the D1 boundary line through every pane (US-CHART-009)"))
+        # r3b: 1 px dashed 4 / 4 (E11-D02 D1 L108 / D8; E11-D05 `dash.4-4` L336), not solid
+        c.pane.append(k.dashes("session boundary", xb, 0, c.ph, k.slot("color.chart.boundary"), vertical=True,
+                               note="the D1 boundary line through every pane (US-CHART-009), dash.4-4"))
         k.fallback("num-medium")
         c.times = ["13:35", "13:40"]
         c.drop_times = {0}  # live fold: the date replaces the time under the boundary label
@@ -302,9 +319,12 @@ def f189(state: str) -> k.Node:
         c.strip.append(dict(hatch("maintenance band · strip", bw, c.sh - 1), x=x0, y=1))
         # m3: the band's times are read off this frame's axis (13:30 / 13:35 / 13:40)
         t0, t1 = c.clock_at(x0), c.clock_at(x0 + bw)
-        c.strip.append(k.text("band label", f"{t0}–{t1} maintenance", k.CAPTION, k.TEXT_2, x=x0 + 6, y=5,
+        c.strip.append(k.text("band label", f"{t0}–{t1} maintenance", k.CAPTION, k.TEXT_3, x=x0 + 6, y=5,
                               note="shown when the band is >= 48 px wide"))
         c.drop_times = {1}  # live fold: the band label covers this time label (dropped as a collision, D8)
+        k.live("CMP-189 maintenance band: every rect named 'hatch line · NN' (pane and strip) is rotated 45° about its "
+               "centre by the post-render step (post-live.js; the post-export step's hatch line rotation); read back "
+               "rotation 45 on each and 1 px lines 6 px apart across the stroke, clipped to the band")
     elif state == "loading band":
         lw = 132
         c.first = 6  # no bar loaded left of the oldest bar

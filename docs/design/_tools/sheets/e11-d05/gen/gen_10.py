@@ -90,6 +90,12 @@ def f197(state: str) -> k.Node:
     c.pane.append(k.dashes("crosshair · horizontal", 0, py, c.pw, ch, vertical=False))
     when = c.clock_at(xc)  # m3: the time pill and the box's title read the time off the axis
     c.strip.append(c.strip_pill(k.pill("time pill", when, ch, inv, y=4), xc))
+    # r3b: the crosshair price pill (CMP-190's, D9) at the horizontal line, its value read off the price axis there;
+    # it never covers the last-price pill (E11-D02 D5 L205)
+    c.gutter.append(k.pill("price pill", k.f_price(c.price_at(py)), ch, inv, x=4, y=py - 8,
+                           note="GL text in the axis batch (A-9); tick precision; the price at the crosshair's y"))
+    if c.lp_box and not (py - 8 + 17 <= c.lp_box[0] or py - 8 >= c.lp_box[1]):
+        raise ValueError(f"CMP-197 {state}: the crosshair price pill covers the last-price pill")
     if c.strip[-1]["x"] != round(xc - k.est_width(c.strip[-1]) / 2):
         k.spec_gap("CMP-197: where the crosshair time pill would cover the zone tag's clock, E11-D02 L206 lets pills "
                    "cover tick labels only and L172 mirrors the cluster's exclusion zone at the tag; the pill flips "
@@ -154,7 +160,8 @@ C198 = {"default": f"E11-D02 D13 L{D13}", "replay suffix": f"E11-D02 D13 L{D13};
 W199, H199 = 340, 300
 D12 = k.L("### 7.5 CMP-199 ChartLegend (D12)", "d02")
 # r3 axis sweep: every value lies on the frame's visible ticks (63,960-64,040, one step of 20 either side)
-SERIES = [("BTCUSDT 1m", "64,011.0"), ("EMA 20", "64,003.2"), ("EMA 50", "63,980.5"), ("EMA 200", "63,946.0"),
+# r3b: the price row's value is bound per frame to the drawn last bar's close (f199), never a constant
+SERIES = [("BTCUSDT 1m", "<last close>"), ("EMA 20", "64,003.2"), ("EMA 50", "63,980.5"), ("EMA 200", "63,946.0"),
           ("VWAP", "63,995.0"), ("BB 20 upper", "64,052.0")]
 MORE = ["SMA 100", "Keltner up", "Keltner dn", "BB 20 lower", "Donchian hi", "Donchian lo", "Pivot P"]
 
@@ -234,7 +241,7 @@ def clear_value(c: k.Crop, rows: list[int]) -> None:
 
 def f199(state: str) -> k.Node:
     c = k.Crop(W199, H199, strip=False, gutter=72, n=14)
-    s = SERIES
+    s = [(SERIES[0][0], k.f_price(c.last().c)), *SERIES[1:]]  # r3b: the header value is the drawn last bar's close
     if state == "default":
         rows = [label_row(), *[series_row(i, n, v) for i, (n, v) in enumerate(s[:3])]]
     elif state == "one hidden":

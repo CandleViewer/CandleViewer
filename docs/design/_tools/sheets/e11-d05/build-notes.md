@@ -121,3 +121,24 @@ The round-2 live check left two overlaps open on board 09: in CMP-189 (virtual-n
 them too (`Crop.drop_times = {1, 2}`, E11-D02 D4: a label that overlaps a placed label is dropped as a collision), so
 a rebuild reproduces the drawn board: 2838 -> 2836 shapes in the sheet, root size unchanged. Board 09's overlaps are
 now 13, all by design (crosshair over tick 9, replay frame 3, watermark under the stale ink 1).
+
+## Review fold r3b (2026-10-31, the orchestrator's round-3 items on PR #5105)
+
+- Board 09, CMP-189 (boundary) and (maintenance band): the boundary line and both band edges are 1 px dashed 4 / 4
+  (`dash.4-4`; E11-D02 D1 L108 and D8, E11-D05 L336), drawn as dash rects like the crosshair. The hatch is 45° 1 px
+  lines at a 6 px pitch (E11-D05 L327, E11-D02 L140) in `color.chart.hatch.texture`, clipped to the band: each line is a
+  1 px rect `hatch line · NN` centred on its diagonal, 6 * sqrt(2) px apart along x, that the post-render step rotates
+  45° (30 lines in the pane, 21 in the strip; the 2 x 2 dot grid is gone, 2836 -> 2809 shapes). The band label is
+  `color.text.tertiary` (L140).
+- Board 10, CMP-199 (the six frames with a price value): the "BTCUSDT 1m" row reads the drawn last bar's close
+  (64,014.0, the board's ▲64,014.0 pill), not a constant.
+- Board 09, CMP-188 (dragging): the last-price pill is drawn (D5 L205); the ns-resize stand-in moves 6 px below it.
+- Board 10, CMP-197: each frame draws the crosshair price pill in the gutter at the horizontal line, its value read off
+  the price axis there (`Crop.price_at`, 0.5 tick); the kit asserts it never covers the last-price pill.
+- Board 09, the status row against the 13:47:05 clock (`CLOCK`): the stale chip reads `Stale 7s · last 13:46:58`
+  (clock - age) and its axis is 13:35 / 13:40 / 13:45, so the newest drawn bar is the 13:46 bar; `bar close 0:55` is
+  the time to the 1m bar's close at the zone tag's clock (board 10's CMP-226 frames have no clock and keep the spec's
+  `0:41`); the aggregated frame's axis is 12:30 / 13:00 / 13:30 and its chip reads `1 column = 4 bars`, read off that
+  axis (minutes per px x the column width, `Crop.bars_per_column`).
+
+Checks: the offline overlap check and the axis sweep stay at 0; the rebuild is idempotent.

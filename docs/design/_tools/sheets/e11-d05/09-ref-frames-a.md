@@ -44,12 +44,13 @@ Root 3200 x 2913 px at (0, 0); footer "page E11-D05 ref frames · board 09 · r1
 
 ## Validator and size
 
-- `09-ref-frames-a.json: 0 errors, 56 warnings, 146 sections, 376230 bytes` (exit 0)
-- 146 sections, 2836 shapes, 376230 bytes
+- `09-ref-frames-a.json: 0 errors, 57 warnings, 113 sections, 370645 bytes` (exit 0)
+- 113 sections, 2809 shapes, 370645 bytes
 
-## Live checks (13)
+## Live checks (14)
 
 - CMP-180 stale frame, group 'data ink · x0.85': set every body fill on color.candle.up to #27A14C, on color.candle.down to #C33D41 and every wick to #767E86 (the dim85 dark column, E11-D02 D16 L123 'stale = data-ink uniform × 0.85 (no extra pass)'; E11-D05 L279 and the dim85 rows L557-L559); read back the three hex values; these are the frame's only unbound fills
+- CMP-189 maintenance band: every rect named 'hatch line · NN' (pane and strip) is rotated 45° about its centre by the post-render step (post-live.js; the post-export step's hatch line rotation); read back rotation 45 on each and 1 px lines 6 px apart across the stroke, clipped to the band
 - each of the 33 frames reads back with the exact Table 1 name 'CMP-nnn · Name — ref frame (<state>)' and a non-empty plugin-data note naming its state
 - pick one bound shape per slot family (pane fill, grid major, axis label, pill text) and read back its fill token name = the alias target listed under Fallbacks
 - watermark texts (CMP-180 streaming / replay frames): set the font size to 48 px, weight 600 after the render (no type token carries 48 px); read back 48
@@ -61,7 +62,7 @@ Root 3200 x 2913 px at (0, 0); footer "page E11-D05 ref frames · board 09 · r1
 - group 'CMP-189 TimeAxis · 9 ref frames': read back 2560 x 336 at (80, 1220); its frames keep their sheet sizes after relayout (clip on, no child outside its frame)
 - group 'CMP-190 Crosshair · 6 ref frames': read back 2120 x 260 at (80, 1636); its frames keep their sheet sizes after relayout (clip on, no child outside its frame)
 - export docs/design/E11/img/E11-D05-09-ref-frames-a.png: export the root at scale 1 (dark set active) and record the board id, the PNG size (3200 x 2913) and the frame count read back
-- after the render, run 09-ref-frames-a.post-live.js (the kit writes it beside this sheet) twice: frame notes to shared plugin data cvd02/note, watermarks 48 / 40 px weight 600 centred under the candles, the stale x0.85 ink fills, the mark pill's 3 px padding (the live fold, 2026-10-30)
+- after the render, run 09-ref-frames-a.post-live.js (the kit writes it beside this sheet) twice: frame notes to shared plugin data cvd02/note, watermarks 48 / 40 px weight 600 centred under the candles, the stale x0.85 ink fills, the mark pill's 3 px padding, the hatch lines rotated 45° (the live fold, 2026-10-30)
 
 ## Spec gaps (6)
 
