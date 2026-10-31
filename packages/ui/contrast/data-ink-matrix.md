@@ -132,10 +132,10 @@ CVD transform: Brettel/Vienot dichromacy projection for protanopia and deuterano
 | light | compact | color.text.tertiary on color.surface.raised | 5.92 | 4.5 | PASS |
 | light | comfortable | color.text.primary on color.surface.selected | 12.82 | 4.5 | PASS |
 | light | compact | color.text.primary on color.surface.selected | 12.82 | 4.5 | PASS |
-| light | comfortable | color.text.primary on color.surface.hover | 14.37 | 4.5 | PASS |
-| light | compact | color.text.primary on color.surface.hover | 14.37 | 4.5 | PASS |
-| light | comfortable | color.text.secondary on color.surface.hover | 8.26 | 4.5 | PASS |
-| light | compact | color.text.secondary on color.surface.hover | 8.26 | 4.5 | PASS |
+| light | comfortable | color.text.primary on color.surface.hover | 12.82 | 4.5 | PASS |
+| light | compact | color.text.primary on color.surface.hover | 12.82 | 4.5 | PASS |
+| light | comfortable | color.text.secondary on color.surface.hover | 7.37 | 4.5 | PASS |
+| light | compact | color.text.secondary on color.surface.hover | 7.37 | 4.5 | PASS |
 | light | comfortable | color.text.secondary on color.surface.selected | 7.37 | 4.5 | PASS |
 | light | compact | color.text.secondary on color.surface.selected | 7.37 | 4.5 | PASS |
 | light | comfortable | color.text.inverse on color.data-confidence.stale.indicator | 5.65 | 4.5 | PASS |

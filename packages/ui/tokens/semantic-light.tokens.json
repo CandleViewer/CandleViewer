@@ -4,7 +4,7 @@
   "color.surface.raised": { "$type": "color", "$value": "{palette.light.neutral.100}" },
   "color.surface.overlay": { "$type": "color", "$value": "{palette.light.neutral.150}" },
   "color.surface.sunken": { "$type": "color", "$value": "{palette.light.neutral.200}" },
-  "color.surface.hover": { "$type": "color", "$value": "{palette.light.neutral.150}" },
+  "color.surface.hover": { "$type": "color", "$value": "{palette.light.neutral.200}" },
   "color.surface.selected": { "$type": "color", "$value": "{palette.light.neutral.200}" },
   "color.border.subtle": { "$type": "color", "$value": "{palette.light.neutral.150}" },
   "color.border.default": { "$type": "color", "$value": "{palette.light.neutral.200}" },
