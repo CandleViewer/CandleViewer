@@ -107,6 +107,16 @@ describe("FilterBar (CMP-055)", () => {
     expect(remove("Symbol: BTCUSDT")).toHaveFocus();
   });
 
+  it("removing a middle chip hands focus to the next chip's remove, never the previous one", async () => {
+    await mount(<Host initial={["Account: Sub-1", "Symbol: BTCUSDT", "Side: Long"]} />);
+    await userEvent.tab();
+    await userEvent.tab();
+    expect(remove("Symbol: BTCUSDT")).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(page.queryByText("Symbol: BTCUSDT")).toBeNull();
+    expect(remove("Side: Long")).toHaveFocus();
+  });
+
   it("the last chip's removal hands focus to the add control", async () => {
     await mount(<Host initial={["Account: Sub-1"]} />);
     await userEvent.click(remove("Account: Sub-1"));
@@ -158,15 +168,21 @@ describe("FilterBar (CMP-055)", () => {
     expect(remove("Symbol: BTCUSDT")).toBeDefined();
   });
 
-  it("emits density on the bar and its chips", async () => {
+  it("emits density on the bar, its chips and 'Clear all'", async () => {
     const host = await mount(
       <FilterBar
         density="comfortable"
-        filters={[{ id: "a", label: "Account: Sub-1", onRemove: fn() }]}
+        filters={[
+          { id: "a", label: "Account: Sub-1", onRemove: fn() },
+          { id: "s", label: "Symbol: BTCUSDT", onRemove: fn() },
+        ]}
+        onClearAll={fn()}
       />,
     );
     expect(within(host).getByRole("group").dataset["density"]).toBe("comfortable");
     expect(host.querySelector(".cv-tag")?.getAttribute("data-density")).toBe("comfortable");
+    const clear = within(host).getByRole("button", { name: "Clear all" });
+    expect(clear.dataset["density"]).toBe("comfortable");
   });
 
   it("has no serious or critical axe violation, empty or with chips", async () => {

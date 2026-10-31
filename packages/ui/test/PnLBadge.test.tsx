@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
 import { expect, within } from "storybook/test";
-import { describe, it } from "vitest";
-import { PnLBadge, PositionModeToggle } from "../src/components/index.js";
+import { describe, expectTypeOf, it } from "vitest";
+import { PnLBadge, PositionModeToggle, type PnLBadgeProps } from "../src/components/index.js";
 import * as pnlStories from "../src/components/PnLBadge.stories.js";
 import * as modeStories from "../src/components/PositionModeToggle.stories.js";
 import { seriousViolations } from "./axe.js";
@@ -89,6 +89,24 @@ describe("PnLBadge (CMP-116)", () => {
   it("is not interactive: no Tab stop", async () => {
     const host = await mount(<PnLBadge value="8" />);
     expect(host.querySelector("[tabindex], button, a")).toBeNull();
+  });
+
+  it("the type-level contract: currency needs its unit, pct and r carry their own (tsc checks this file)", () => {
+    expectTypeOf<{ value: string }>().toExtend<PnLBadgeProps>();
+    expectTypeOf<{ value: string; currency: string }>().toExtend<PnLBadgeProps>();
+    expectTypeOf<{
+      value: string;
+      format: "currency";
+      currency: string;
+    }>().toExtend<PnLBadgeProps>();
+    expectTypeOf<{ value: null; format: "r" }>().toExtend<PnLBadgeProps>();
+    expectTypeOf<{ value: string; format: "currency" }>().not.toExtend<PnLBadgeProps>();
+    expectTypeOf<{
+      value: string;
+      format: "pct";
+      currency: string;
+    }>().not.toExtend<PnLBadgeProps>();
+    expectTypeOf<{ value: string; format: "r"; currency: string }>().not.toExtend<PnLBadgeProps>();
   });
 
   it("has no serious or critical axe violation", async () => {
