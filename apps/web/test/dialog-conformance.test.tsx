@@ -301,12 +301,6 @@ const ROWS: readonly Row[] = [
     role: "alertdialog",
     esc: "cancels",
     scrim: "none",
-    gaps: {
-      focusIn: "no focus management: the modal mounts with focus left on the page",
-      trap: "no Tab containment under aria-modal",
-      escape: "no Esc handler: only the Dismiss button closes it",
-      return: "nothing moves focus in, so nothing returns it",
-    },
     mount: simple(() => <WsErrorHost />, {
       onOpen: () => handleWsError({ t: "err", p: { code: "auth_failed" } }),
     }),
@@ -441,9 +435,13 @@ describe.each(ROWS)("dialog conformance: $id", (row) => {
     });
   }
 
-  it("has an accessible name and a serious-free axe run", async () => {
+  it("has an accessible name, says it is modal and has a serious-free axe run", async () => {
     await openRow(row);
-    expect(screen.getByRole(row.role, { name: /\S/u })).toBeTruthy();
+    const el = screen.getByRole(row.role, { name: /\S/u });
+    // every row is a modal one but the tour, which is non-modal on purpose (see its trap gap)
+    expect(el.getAttribute("aria-modal") === "true", `${row.id}: aria-modal`).toBe(
+      row.gaps?.trap === undefined,
+    );
     const res = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
     expect(res.violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual(
       [],
