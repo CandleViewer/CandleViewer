@@ -338,25 +338,44 @@ async def test_bundle_jobs_reaches_the_bundles_store_restorer_plugins_and_persis
     ]  # fmt: skip
 
 
-async def test_build_reconciliation_wires_the_pass_its_phases_and_the_driver() -> None:
+def _build(**over: Any) -> rw.ReconcileWiring:
+    """`build_reconciliation` over the rig's doubles, `over` replacing an argument."""
     from candleviewer.observability.metrics import Metrics
     from candleviewer.oms.reconcile_standing import ReconcileStanding
     from candleviewer.statechart.plugins import InMemoryMachineEventSink
     from tests.unit.oms.reconcile_rig import World
 
-    world, standing, p = World(), ReconcileStanding(), Positions()
+    world, p = World(), Positions()
     feed = SimpleNamespace(ws_heartbeat=lambda a: None, ws_dropped=lambda a: None,
                            wallet_pushed=lambda a, s: None)  # fmt: skip
-    built = rw.build_reconciliation(
-        environment="demo", standing=standing, router=world.reconciler.ports.router,
-        accounts=world.reconciler.ports.accounts, reads=Reads(), orders=Lookups(),
-        fills=world.oms, handovers=world.oms, machines=world.oms, positions=p, published=p,  # type: ignore[arg-type]
-        snapshots=p, gate=SimpleNamespace(clear=None), audit=SimpleNamespace(),  # type: ignore[arg-type]
-        emitter=Emitter(), lockout=world.oms, exchange_placed=world.oms, hub=Hub(),
-        serving=Serving(), feed=feed, metrics=Metrics("dev"), pager=world.oms,  # type: ignore[arg-type]
-        sink=InMemoryMachineEventSink(), persistence=None, now_us=lambda: world.now_us,
-        stale_after_s=120.0, remediates=lambda _e: True,
-    )  # fmt: skip
+    given: dict[str, Any] = {
+        "environment": "demo", "standing": ReconcileStanding(),
+        "router": world.reconciler.ports.router, "accounts": world.reconciler.ports.accounts,
+        "reads": Reads(), "orders": Lookups(), "fills": world.oms, "handovers": world.oms,
+        "machines": world.oms, "positions": p, "published": p, "snapshots": p,
+        "gate": SimpleNamespace(clear=None), "audit": SimpleNamespace(), "emitter": Emitter(),
+        "lockout": world.oms, "exchange_placed": world.oms, "hub": Hub(), "serving": Serving(),
+        "feed": feed, "metrics": Metrics("dev"), "pager": world.oms,
+        "sink": InMemoryMachineEventSink(), "persistence": None,
+        "now_us": lambda: world.now_us, "stale_after_s": 120.0, "remediates": lambda _e: True,
+    }  # fmt: skip
+    return rw.build_reconciliation(**(given | over))
+
+
+@pytest.mark.parametrize("environment", ["live", "demo"])
+def test_a_live_or_demo_record_that_does_not_remediate_fails_the_composition(
+    environment: str,
+) -> None:
+    """24 Sec.14.3, C-2.6: refused while the OMS composes, so the runtime fails closed."""
+    with pytest.raises(ValueError, match="always remediates"):
+        _build(environment=environment, remediates=lambda _e: False)
+    assert isinstance(
+        _build(environment="testnet", remediates=lambda _e: False).jobs, ReconcileJobs
+    )
+
+
+async def test_build_reconciliation_wires_the_pass_its_phases_and_the_driver() -> None:
+    built = _build()
     assert isinstance(built.jobs, ReconcileJobs)
     assert built.phases._retries._driver is built.jobs  # the retry hop reaches the driver
     assert built.reconciler.ports.protective.__class__.__name__ == "RecordedStopWriter"
