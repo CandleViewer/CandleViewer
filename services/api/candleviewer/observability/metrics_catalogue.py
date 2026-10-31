@@ -2653,6 +2653,28 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=2,
     ),
     _s(
+        "cv_drawings_payload_rejected_total",
+        "counter",
+        "requests",
+        ("reason",),
+        "Drawing writes refused 413 past a body cap (reason=body_too_large) or 422 past a point "
+        "or level count bound (reason=bounds); no per-user or per-symbol label (#2727, SR-E14-11).",
+        "dashboard only",
+        _P,
+        "E14",
+        max_series=2,
+    ),
+    _s(
+        "cv_drawings_batch_cap_rejected_total",
+        "counter",
+        "requests",
+        (),
+        "POST /drawings/batch requests refused 413 over the 200-operation cap (#2727, SR-E14-11).",
+        "dashboard only",
+        _P,
+        "E14",
+    ),
+    _s(
         "cv_workspace_conflicts_total",
         "counter",
         "conflicts",

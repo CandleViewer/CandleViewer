@@ -129,6 +129,7 @@ from candleviewer.api.deny_by_default import (
     make_deny_undeclared_dependency,
     rbac_permissions,
 )
+from candleviewer.api.drawings import PAYLOAD_REFUSALS as DRAWINGS_PAYLOAD_REFUSALS
 from candleviewer.api.drawings import make_drawings_router
 from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from candleviewer.api.drawings_models import TOOLS
@@ -2360,6 +2361,15 @@ def create_app(
             "Live drawings per owner: max, p95.",
             ("kind",),
             max_series=2,
+        ),
+        payload_rejected=metrics_facade.counter(  # SR-E14-11 (#2727)
+            "cv_drawings_payload_rejected_total",
+            "Drawing writes refused past a body cap or a count bound, by reason.",
+            ("reason",),
+            max_series=len(DRAWINGS_PAYLOAD_REFUSALS),
+        ),
+        batch_cap_rejected=metrics_facade.counter(
+            "cv_drawings_batch_cap_rejected_total", "Drawing batches refused over the op cap."
         ),
     )
     app.state.drawings_write_limiter = DrawingsWriteLimiter()  # #2727: per-user write bucket
