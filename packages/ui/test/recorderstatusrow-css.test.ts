@@ -7,7 +7,7 @@ describe("recorderstatusrow.css contract (E16-D02 §11.1, §10.4, §10.5)", () =
   itIsTokenOnlyAndStatic(css);
 
   it("a stale row, in the grid or standalone, sits on surface.sunken (D02 §3.1)", () => {
-    const grid = find(css.normal, ".cv-table__row:has(.cv-rsr__state[data-stale])", "background");
+    const grid = find(css.normal, "tr.cv-rsr-row[data-stale]", "background");
     expect(grid).toContain("var(--color-surface-sunken)");
     expect(find(css.normal, ".cv-rsr[data-stale]", "background")).toContain(
       "var(--color-surface-sunken)",

@@ -334,6 +334,24 @@ export const PAIRS = [
   { fg: "color.sync.a", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.sync.b", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.sync.c", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+
+  // --- Recorder status rows (E16-D02 SCR-140 / CMP-177, §10.4; its hand-off's G-03 pairs) ----
+  // The state icons on a row (CMP-049's raised and canvas rows, and a hovered one) and a stale row (sunken), the
+  // stale row's words, and a T2 label on a hovered row. Registered above: text.secondary, text.tertiary,
+  // success.strong and warning.strong on sunken, text.tertiary on raised. danger.default on surface.hover is 2.92:1
+  // in dark: exempted (exemptions.json, owner E16-D02), the state's word and the octagon's shape carry it.
+  { fg: "color.status.success.strong", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.info.strong", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.danger.default", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.success.strong", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.warning.strong", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.info.strong", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.danger.default", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.success.default", bg: "color.surface.sunken", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.info.strong", bg: "color.surface.sunken", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.danger.default", bg: "color.surface.sunken", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.danger.default", bg: "color.surface.hover", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.text.primary", bg: "color.surface.sunken", threshold: THRESHOLD.TEXT },
 ];
 
 /**
