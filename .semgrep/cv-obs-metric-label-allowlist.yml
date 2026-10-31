@@ -162,6 +162,14 @@ rules:
       # reason, also (E35-T08, #4999, rule_dispatch_reread_failed_total): why a dispatch-time re-read
       #   of a rule's row failed, {timeout, store_error} (`rules/service.RereadFailure`), never an
       #   identifier; max_series=2.
+      # kind, result, reason, endpoint_group, also (E29-T08, #916): `oms_stuck_orders{kind}` the
+      #   three order kinds {in_flight, unknown, pending}, max_series=3; `oms_incidents_total{kind}`
+      #   the five incident kinds (`oms/incidents.KINDS`), max_series=5;
+      #   `oms_detector_scans_total{result}` {ok, failed, skipped}, max_series=3;
+      #   `oms_unknown_orders{reason}` {already_terminal, missing_remote, duplicate_unverified,
+      #   transport} (`oms/order_machine.UNKNOWN_REASONS`), max_series=4; and
+      #   `bybit_rate_remaining{endpoint_group}` emitted, the closed `RateLane` set {critical,
+      #   entry, poll}; each child bound once; no account, order or user.
       - metavariable-regex:
           metavariable: $LABEL
           regex: "^(?!(action|bucket|builtin|cap|cause|class|code|depth|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger|trigger_mode|type|version|where|wire)$).*$"

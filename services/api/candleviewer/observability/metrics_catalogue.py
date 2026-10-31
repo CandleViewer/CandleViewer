@@ -173,6 +173,8 @@ OMS_STREAM_LAG_BUCKETS: Final = (0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 1
 #: A reconciliation pass (E29-T06, 24 Sec.8.5): its fetch to its report, 2 s p95; edges past it at
 #: the 5 s lane wait, the 10 s and the 30 s cadence.
 RECONCILE_BUCKETS: Final = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0)
+#: E29-T08 (#916): one stuck-order detector scan, its reads and sinks, bounded at 4 s.
+DETECTOR_SCAN_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0)
 #: Order submit click→ack, p99 ≤ 500 ms.
 SUBMIT_BUCKETS: Final = (0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.0, 5.0)
 #: Audit page: edges at the SCR-135 filter round trip (0.4 s p95), the US-ADMIN-009 first
@@ -3493,6 +3495,68 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "> 0 (page)",
         _P,
         "E29",
+    ),
+    _s(
+        "oms_stuck_orders",
+        "gauge",
+        "orders",
+        ("kind",),
+        "Orders the stuck-order detector found stuck at its last complete scan (E29-T08, 24 "
+        "Sec.8.13), by kind: in_flight, unknown or pending, each order once. No account label.",
+        "dashboard (rules: E29-T08)",
+        _P,
+        "E29",
+        max_series=3,
+    ),
+    _s(
+        "oms_incidents_total",
+        "counter",
+        "incidents",
+        ("kind",),
+        "Incidents the stuck-order detector raised (E29-T08, 24 Sec.8.13), by kind: in_flight, "
+        "unknown, pending, naked or account_stale, a reminder after the cool-down counted again. "
+        "No account label.",
+        "rules: E29-T08",
+        _P,
+        "E29",
+        max_series=5,
+    ),
+    _s(
+        "oms_detector_scans_total",
+        "counter",
+        "scans",
+        ("result",),
+        "The stuck-order detector's scans (E29-T08, 24 Sec.8.13), by result: ok, failed (a read "
+        "failed or the 4 s bound cut it) or skipped (a tick due while a scan ran, never queued).",
+        "dashboard (rules: E29-T08)",
+        _P,
+        "E29",
+        max_series=3,
+    ),
+    _s(
+        "oms_detector_scan_seconds",
+        "histogram",
+        "seconds",
+        (),
+        "One stuck-order detector scan's time, its reads and sinks included, failed scans too "
+        "(E29-T08, 24 Sec.8.13); bounded at 4 s.",
+        "dashboard",
+        _P,
+        "E29",
+        DETECTOR_SCAN_BUCKETS,
+        max_series=1,
+    ),
+    _s(
+        "oms_detector_last_scan_age_seconds",
+        "gauge",
+        "seconds",
+        (),
+        "Seconds since the stuck-order detector's last scan ended, read at each scrape (E29-T08, "
+        "24 Sec.8.13); 0 until the runtime is ready. At 30 s /readyz's oms check is degraded.",
+        "rules: E29-T08",
+        _P,
+        "E29",
+        max_series=1,
     ),
     _s(
         "oms_native_stop_backstop_total",

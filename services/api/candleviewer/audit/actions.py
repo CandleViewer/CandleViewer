@@ -207,6 +207,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # order no row takes, recorded `untracked` with the venue's identity, written ahead of the
         # row (system actor). The only adoption v1 has: no human adopt action exists (D6, BQ-17).
         "order.adopted_untracked",
+        # E29-T08 (#916, 24 Sec.15.5, Sec.8.13; SR-E29-17: registered before its first emitter): the
+        # stuck-order detector's record of one incident, written ahead of its other sinks (system
+        # actor), the order or the exchange account its object, the incident's fields its state.
+        "oms.incident",
         # E29-T04 (#913, 24 Sec.15.5, 21 Sec.3.3.11 "Audit"): a stop request the OMS records for a
         # position, written ahead with its row (`sl.attached`; `tp.modified` for a take-profit
         # side), and a void of one (`sl.modified`, `tp.modified`). Keyed (`writer.KEYED_ACTIONS`):

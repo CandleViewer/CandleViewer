@@ -81,6 +81,11 @@ class ReconcileStanding:
     def is_stale(self, account_id: AccountId) -> bool:
         return account_id in self._stale
 
+    def stale_accounts(self) -> frozenset[AccountId]:
+        """E29-T08 (#916 BQ-2): a copy of the stale accounts, which the stuck-order detector reads
+        for its `account_stale` incidents and never writes; no second tracker exists."""
+        return frozenset(self._stale)
+
     def mark_stale(self, account_id: AccountId) -> None:
         """Before B19 is told (C-2.21); idempotent."""
         self._stale.add(account_id)
