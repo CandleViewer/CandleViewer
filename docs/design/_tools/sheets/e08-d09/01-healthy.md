@@ -18,8 +18,8 @@ Board 01 of ten (§0 L83: the whole page: band, summary strip, per-class table w
 
 ## Validator and size
 
-- `01-healthy.json: 0 errors, 26 warnings, 137 sections, 486903 bytes` (exit 0)
-- 137 sections, 486903 bytes
+- `01-healthy.json: 0 errors, 26 warnings, 137 sections, 486868 bytes` (exit 0)
+- 137 sections, 486868 bytes
 
 ## Live checks (21)
 
@@ -33,7 +33,7 @@ Board 01 of ten (§0 L83: the whole page: band, summary strip, per-class table w
 - S-01 top / middle / bottom: the page ends inside the bottom frame's view (est. page 1860 px); re-set the bottom scroll to page h − 672 if the drawn height differs
 - every budgets row: read back each cell's text; no two adjacent texts closer than 16 px
 - root 'E08-D09 / 01 healthy' at (0, 0): read back the name exactly after the first section call; size 4640 x 2758
-- after touchTexts + relayout: the annotation column (estimated 2793 px) ends inside the root (h 2758); raise the root's h to its end + 80 if not
+- after touchTexts + relayout: the annotation column (estimated 2806 px) ends inside the root (h 2758); raise the root's h to its end + 80 if not
 - frame 'SCR-147 · S-01 healthy · top · dark': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'SCR-147 · S-01 healthy · middle · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - frame 'SCR-147 · S-01 healthy · bottom · dark': read back 1280 x 800 at (2800, 80); clip on, no child spills

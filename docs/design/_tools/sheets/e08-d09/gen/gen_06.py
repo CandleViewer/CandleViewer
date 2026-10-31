@@ -40,7 +40,8 @@ def build(theme: str = "dark") -> tuple[list, dict]:
     kb_sim = "SCR-147-KB-4: Space on a checkbox, type in the number fields, arrows in the segmented control, " \
              "Enter / Space on Estimate cost (PP-3)"
     world = (f"Illustrative world: order.create {h.LIM} / s per account, reserve {h.RESERVE} requests (served form "
-             f"assumes D09-G1, D09-G14); Headroom = limit - reserve - used now")
+             f"assumes D09-G1, D09-G14); Headroom = limit - reserve - used now, share of the "
+             f"{h.LIM - h.RESERVE} spendable (§3.2 L{k.L('| Headroom |')})")
 
     # 1. the simulator in S-19: inputs live, output not connected (D09-G10)
     h.start()

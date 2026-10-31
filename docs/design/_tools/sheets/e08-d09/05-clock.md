@@ -15,8 +15,8 @@ Board 05 of ten (§0 L87: S-09 warning, S-10 alarm with order entry halted, S-11
 
 ## Validator and size
 
-- `05-clock.json: 0 errors, 1 warnings, 43 sections, 131492 bytes` (exit 0)
-- 43 sections, 131492 bytes
+- `05-clock.json: 0 errors, 1 warnings, 43 sections, 131554 bytes` (exit 0)
+- 43 sections, 131554 bytes
 
 ## Live checks (18)
 
@@ -77,7 +77,7 @@ Board 05 of ten (§0 L87: S-09 warning, S-10 alarm with order entry halted, S-11
 
 ## Copy gaps (2)
 
-- clock dl labels 'State', 'Offset', 'Measurement', 'Next due': §10 Fields L355 names the fields (offset, last measured, next due, the alarm state) but §15 gives no dt string
+- clock dl labels 'State', 'Offset', 'Last measured', 'Next due': §10 Fields L355 names the fields (offset, last measured, next due, the alarm state) but §15 gives no dt string
 - "Admin area": the band region name, from §2.1 L171 (CMP-087 own string; not in §15)
 
 ## Fallbacks (4)

@@ -3,7 +3,6 @@ section in S-13 / S-15 / S-16 / S-17 / S-18 / S-19. Builds on e08d09kit (never e
 spec through k.w() / k.state_word() / k.L()-cited prose; every figure derives from the world below."""
 from __future__ import annotations
 
-import math
 import re
 import sys
 from pathlib import Path
@@ -31,13 +30,8 @@ STALE_AGE = 9  # S-15: the budgets read is 9 s old; stale since as-of + 5 s
 LAST_GOOD = 13  # S-17: last good read 13 s before AS_OF
 
 
-def head_share(head: int, limit: int) -> int:
-    """Headroom's share of the limit, rounded down (never overstates what is left)."""
-    return math.floor(100 * head / limit)
-
-
 def order_head(used: int) -> int:
-    return LIM_O - used - RESERVE
+    return k.headroom(LIM_O, used, RESERVE)[0]
 
 
 # --- §15 string finder: which W-keys a frame's texts carry (for the per-frame "Strings" cite line)
@@ -136,25 +130,25 @@ def served_rows(*, colors: dict[str, str] | None = None, state: Node | None = No
         h = order_head(used)
         rows.append((f"{cls} · {acct}", {
             "class": cls, "account": acct, "limit": f"{LIM_O} / s", "used": str(used), "window": "1 s",
-            "headroom": f"{h} · {head_share(h, LIM_O)} %",
+            "headroom": k.headroom_cell(LIM_O, used, RESERVE),
             "meter": k.meter(used, LIM_O, valuetext=k.w("W-09", None, used, LIM_O, h)), "state": st(),
             "action": k.row_action()}, {"class": "order"}))
     for cls, adapter, acct, used in QUERY_ROWS:
-        h = LIM_R - used
+        h = k.headroom(LIM_R, used)[0]
         rows.append((f"{cls} · {acct}", {
             "class": cls, "account": acct, "limit": f"{LIM_R} / s", "used": str(used), "window": "1 s",
-            "headroom": f"{h} · {head_share(h, LIM_R)} %",
+            "headroom": k.headroom_cell(LIM_R, used),
             "meter": k.meter(used, LIM_R, valuetext=k.w("W-09", None, used, LIM_R, h)), "state": st(),
             "action": k.row_action()}, {"class": adapter}))
     lo, lc = k.LIM["ws_new_per_5min"], k.LIM["ws_concurrent"]
     rows.append(("Public WS · opened", {
         "class": "Public WS", "account": "Public", "limit": f"{lo} / 5 min", "used": str(WS_OPENED),
-        "window": "300 s", "headroom": f"{lo - WS_OPENED} · {head_share(lo - WS_OPENED, lo)} %",
+        "window": "300 s", "headroom": k.headroom_cell(lo, WS_OPENED),
         "meter": k.meter(WS_OPENED, lo), "state": st()},
         {"class": "connections opened in the last 5 minutes"}))
     rows.append(("Public WS · concurrent", {
         "class": "Public WS", "account": "Public", "limit": str(lc), "used": str(CONNS), "window": "—",
-        "headroom": f"{lc - CONNS} · {head_share(lc - CONNS, lc)} %", "meter": k.meter(CONNS, lc), "state": st()},
+        "headroom": k.headroom_cell(lc, CONNS), "meter": k.meter(CONNS, lc), "state": st()},
         {"class": "concurrent connections"}))
     for acct in ACCTS:
         rows.append((f"Private WS · {acct}", {
@@ -203,12 +197,6 @@ def reserve(served: bool, label_w: int = 344) -> Node:
                   note="separate labelled band (§7 item 1); never focusable (§17.3)")
 
 
-def clock_status(w_: int) -> Node:
-    """k.clock_ok_status wrapped to a width (the tile's 147 px inner is narrower than "In sync 12 ms behind")."""
-    n = k.clock_ok_status(CLOCK_MS)
-    return dict(n, o={**n["o"], "wrap": "wrap"}, w=w_)
-
-
 # --- the summary strip (§2.2 item 2)
 def strip(served: bool = True) -> Node:
     tw = k.tile_widths()
@@ -217,10 +205,10 @@ def strip(served: bool = True) -> Node:
         gids = ("D09-G1", "D09-G3", "D09-G1", "D09-G5", "D09-G1")
         return k.summary_strip([k.tile(H[i], None, None, w_=tw[i], gid=gids[i]) for i in range(5)])
     busiest = max(u for _c, _a, u in ORDER_ROWS)
-    tiles = [k.tile(H[0], "S-01", k.w("W-14", 1, k.pct(busiest, LIM_O - RESERVE)), w_=tw[0]),
+    tiles = [k.tile(H[0], "S-01", k.w("W-14", 1, k.headroom(LIM_O, busiest, RESERVE)[2]), w_=tw[0]),
              k.tile(H[1], "S-01", k.w("W-52", 1, TOPICS), w_=tw[1]),
              k.tile(H[2], "S-01", None, w_=tw[2]),
-             k.tile(H[3], None, None, w_=tw[3], status=clock_status(tw[3] - 32)),
+             k.tile(H[3], None, None, w_=tw[3], status=k.clock_ok_status(CLOCK_MS)),
              k.tile(H[4], "S-01", None, w_=tw[4])]
     return k.summary_strip(tiles)
 
@@ -249,15 +237,15 @@ def inspector() -> Node:
 
 
 def clock(served: bool = True) -> Node:
-    lab = ("Offset", "Last measured", "Next due")
+    lab = k.CLOCK_LABELS[1:]
     if served:
-        vals = [k.w("W-38", 0, f"{CLOCK_MS / 1000:.3f}"), k.w("W-39", 1, k.at(-CLOCK_AGE), k.ago(CLOCK_AGE)),
+        vals = [k.w("W-38", 0, k.offset_s(CLOCK_MS)), k.w("W-39", 1, k.at(-CLOCK_AGE), k.ago(CLOCK_AGE)),
                 k.w("W-39", 0)]
         rows = [k.kv_row("dl · state", "State", k.clock_ok_status(CLOCK_MS))]
         rows += [k.kv_row(f"dl · {lab[i].lower()}", lab[i], vals[i]) for i in range(3)]
     else:
         rows = [k.kv_row(f"dl · {x.lower()}", x, k.not_connected("value", "D09-G5", both=False))
-                for x in ("State", *lab)]
+                for x in k.CLOCK_LABELS]
     dl = k.vbox("CMP-036 dl", rows, None, w=k.INNER_W)
     return k.section("Clock", [dl, k.button(k.w("W-35", 0))], waits=["D09-G5", "D09-G6"])
 

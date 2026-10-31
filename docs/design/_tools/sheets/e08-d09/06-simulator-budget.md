@@ -2,7 +2,7 @@
 
 File `E08-D09 boards`, page `E08-D09 SCR-147 Connectivity`; export `docs/design/E08/img/E08-D09-06-simulator-budget.png`; sheet `06-simulator-budget.json` (validated); theme dark.
 
-Board 06 of ten (§0 L88: the simulator's result (served and deferred accounts); the Change budget dialog and its refusal). Grid (0, 3200); 4640 x 1878 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 06 · r1".
+Board 06 of ten (§0 L88: the simulator's result (served and deferred accounts); the Change budget dialog and its refusal). Grid (0, 3200); 4640 x 1918 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 06 · r1".
 
 ## Frames
 
@@ -14,8 +14,8 @@ Board 06 of ten (§0 L88: the simulator's result (served and deferred accounts);
 
 ## Validator and size
 
-- `06-simulator-budget.json: 0 errors, 13 warnings, 64 sections, 238101 bytes` (exit 0)
-- 64 sections, 238101 bytes
+- `06-simulator-budget.json: 0 errors, 13 warnings, 64 sections, 238235 bytes` (exit 0)
+- 64 sections, 238235 bytes
 
 ## Live checks (15)
 
@@ -26,8 +26,8 @@ Board 06 of ten (§0 L88: the simulator's result (served and deferred accounts);
 - T2 frame: the row menu sits under Main's row action (estimated x 760, y 266); re-anchor it to the row's bottom-right after relayout
 - simulator result: read back 5 rows, 3 'Served now' and 2 'Deferred', and the W-40 line with 15 requests and 3 %
 - Change budget dialog: read back the focus ring on Cancel; refusal frame: the ring on the field, the field's value 600 and the danger stroke
-- root 'E08-D09 / 06 simulator-budget' at (0, 3200): read back the name exactly after the first section call; size 4640 x 1878
-- after touchTexts + relayout: the annotation column (estimated 1745 px) ends inside the root (h 1878); raise the root's h to its end + 80 if not
+- root 'E08-D09 / 06 simulator-budget' at (0, 3200): read back the name exactly after the first section call; size 4640 x 1918
+- after touchTexts + relayout: the annotation column (estimated 1785 px) ends inside the root (h 1918); raise the root's h to its end + 80 if not
 - frame 'SCR-147 · S-19 not connected yet · simulator · dark': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'SCR-147 · simulator result · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - frame 'SCR-147 · Change budget dialog · dark': read back 1280 x 800 at (2800, 80); clip on, no child spills

@@ -232,10 +232,10 @@ def budget_rows(*, focus_main: bool = False) -> list[Node]:
     rows = []
     for i, acct in enumerate(k.ACCOUNTS, 1):
         used = USED_NOW[acct]
-        head = LIM - RESERVE - used
+        head = k.headroom(LIM, used, RESERVE)[0]
         rows.append(k.table_row(k.BUDGET_COLS, {
             "class": "order.create", "account": acct, "limit": f"{LIM} / s", "used": str(used), "window": "1 s",
-            "headroom": f"{head} · {k.pct(head, LIM)} %",
+            "headroom": k.headroom_cell(LIM, used, RESERVE),
             "meter": k.meter(used, LIM, valuetext=k.w("W-09", None, used, LIM, head)),
             "state": k.state_line("S-01", origin=False, w_=160), "action": k.row_action(focused=focus_main and i == 1)},
             f"row {i:02d} · order.create · {acct}", i, second={"class": "order"}))

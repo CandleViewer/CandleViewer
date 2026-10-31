@@ -12,21 +12,24 @@ NN = 3
 HOLD_SET_S, HOLD_LEN_S = -100, 600  # our hold set 100 s before AS_OF for 600 s (§6: at least 600 s, capped at 900 s)
 LEFT_S = HOLD_SET_S + HOLD_LEN_S  # 500 s left at AS_OF
 TOPICS = 120  # Public market data tile (W-52's form)
+RESERVE = 2  # requests held back per account in the 1 s order window (W-06b's slot; D09-G14 served, as on 01 and 02)
 SCROLL = 180  # band 56 + rule 4 + PageHeader 72 + three 16 px gaps: the summary strip at the top of the view
-# S-05 scrolls 30 px further (the live check's SHEET-FIX): its tiles' wrapped W-17 word grows the strip by 18 px, so
-# three account rows show under the hold panel as on S-04
-SCROLL_OF = {"S-04": SCROLL, "S-05": SCROLL + 30}
+# One scroll for both frames: the live check's SHEET-FIX scrolled S-05 30 px further because its W-17 word wrapped
+# under a glyph left alone and grew the strip 18 px; k.tile now wraps the word beside its glyph, the strip keeps its
+# height, so S-05 shows the strip's top and three account rows at S-04's scroll
+SCROLL_OF = {"S-04": SCROLL, "S-05": SCROLL}
 
 
 def tiles(sid: str) -> list[Node]:
     tw = k.tile_widths()
     ip_number = k.w("W-16", 1, k.at(LEFT_S), k.dur(LEFT_S)) if sid == "S-04" else k.w("W-17", 2)
-    wrap = sid == "S-05"  # W-17 is wider than a tile's inner width: the word wraps there (live SHEET-FIX)
-    return [k.tile(k.TILE_HEADINGS[0], sid, None, w_=tw[0], wrap_word=wrap),
+    # W-16's and W-17's words are wider than the room beside the glyph: k.tile wraps them there (the glyph stays on
+    # the word's first line; the live SHEET-FIX wrapped W-17 at the full inner width and left the glyph alone)
+    return [k.tile(k.TILE_HEADINGS[0], sid, None, w_=tw[0]),
             k.tile(k.TILE_HEADINGS[1], "S-01", k.w("W-52", 1, TOPICS), w_=tw[1]),
-            k.tile(k.TILE_HEADINGS[2], None, None, w_=tw[2], gid="D09-G1"),
+            k.tile(k.TILE_HEADINGS[2], "S-01", None, w_=tw[2]),
             k.tile(k.TILE_HEADINGS[3], None, None, w_=tw[3], status=k.clock_ok_status(12)),
-            k.tile(k.TILE_HEADINGS[4], sid, ip_number, w_=tw[4], wrap_word=wrap)]
+            k.tile(k.TILE_HEADINGS[4], sid, ip_number, w_=tw[4])]
 
 
 def hold_panel(sid: str) -> Node:
@@ -51,8 +54,8 @@ def rows(sid: str) -> list[Node]:
     for i, acct in enumerate(k.ACCOUNTS, 1):
         out.append(k.table_row(k.BUDGET_COLS, {
             "class": "order.create", "account": acct, "limit": f"{lim} / s", "used": "0", "window": "1 s",
-            "headroom": f"{lim} · {k.pct(lim, lim)} %",
-            "meter": k.meter(0, lim, valuetext=k.w("W-09", None, 0, lim, lim)),
+            "headroom": k.headroom_cell(lim, 0, RESERVE),
+            "meter": k.meter(0, lim, valuetext=k.w("W-09", None, 0, lim, k.headroom(lim, 0, RESERVE)[0])),
             "state": k.state_line(sid, origin=False, w_=160), "action": k.row_action()},
             f"row {i:02d} · order.create · {acct}", i, second={"class": "order"}))
     return out
@@ -60,10 +63,10 @@ def rows(sid: str) -> list[Node]:
 
 def frame(sid: str, theme: str) -> Node:
     fid = dict((s[0], f) for f, s in k.frames_of(NN))[sid]
-    waits = ["D09-G1"] + (["D09-G13"] if sid == "S-05" else [])
+    waits = ["D09-G1", "D09-G14"] + (["D09-G13"] if sid == "S-05" else [])
     budgets = k.section("Rate budgets", [hold_panel(sid),
                                          k.table("CMP-049 budgets", k.w("W-07"), k.budget_header(), rows(sid)),
-                                         k.reserve_band([(a, None) for a in k.ACCOUNTS])], waits=waits)
+                                         k.reserve_band([(a, RESERVE) for a in k.ACCOUNTS])], waits=waits)
     return k.window(fid, theme, [k.summary_strip(tiles(sid)), budgets], scroll=SCROLL_OF[sid])
 
 
@@ -76,19 +79,22 @@ def blocks() -> list[tuple[str, list[str]]]:
     common = [f"Scrolled {SCROLL} px: band, rule and PageHeader sit above the view; the strip leads it",
               f"Condition sentence W-33 only; W-31 (the throttle's) never prints here (§6 L{k.L('- **Two conditions')})",
               "Rows: order.create for all five accounts (scope \"all accounts\", §6 L290 table); Used now 0 (nothing "
-              "reaches the exchange), Headroom shown as served (D09-G14 assumed served), meter empty", t2]
-    b4 = k.frame_block(f4, waits=["D09-G1"], recovery=True, keyboard="Tab: tile heading links → budgets grid (one "
-                       "stop, SCR-147-KB-2); the T2 controls keep focus, their reason is the aria-describedby", lines=[
+              f"reaches the exchange), meter empty; Headroom {k.headroom_cell(k.LIM['order_per_s'], 0, RESERVE)} "
+              f"of the {k.LIM['order_per_s'] - RESERVE} spendable (§3.2 L{k.L('| Headroom |')}): D09-G1, D09-G14 "
+              "served as on 01 and 02, so Private streams reads Within budget (the hold is REST-wide, W-33)", t2]
+    b4 = k.frame_block(f4, waits=["D09-G1", "D09-G14"], recovery=True, keyboard="Tab: tile heading links → budgets "
+                       "grid (one stop, SCR-147-KB-2); the T2 controls keep focus, their reason is the "
+                       "aria-describedby", lines=[
         f"Hold set at {k.at(HOLD_SET_S)} for {HOLD_LEN_S} s (§6: at least 600 s, capped at 900 s); ends "
         f"{k.at(LEFT_S)} = as of {k.AS_OF} + {LEFT_S} s, shown as \"in {k.dur(LEFT_S)}\" (derived)",
         f"Time left is our hold's, set by our adapter, not a time the exchange states (§6 L{k.L('| Recovery time is')})",
         f'SR-3 as spoken here: "{sr3}" ({LEFT_S} s, whole minutes)',
         "W-34 pieces 1-3 (§6: retry; reconnect; raise the budget)", *common,
-        cite(["W-16", "W-33", "W-32", "W-34", "W-12", "W-52", "W-29", "W-07", "W-08", "W-09", "W-06a", "W-05"])])
-    b5 = k.frame_block(f5, waits=["D09-G1", "D09-G13"], keyboard="as S-04", lines=[
+        cite(["W-16", "W-33", "W-32", "W-34", "W-12", "W-52", "W-29", "W-07", "W-08", "W-09", "W-06b"])])
+    b5 = k.frame_block(f5, waits=["D09-G1", "D09-G14", "D09-G13"], keyboard="as S-04", lines=[
         f"Contract-first placeholder (§0 L85; D09-G13): the lockout's time left is not served, so \"{k.w('W-17', 2)}\"; "
         "no time is invented", "W-34 all four pieces (§6: as held; check the egress setup)", *common,
-        cite(["W-17", "W-33", "W-32", "W-34", "W-12", "W-52", "W-29", "W-07", "W-08", "W-09", "W-06a", "W-05"])])
+        cite(["W-17", "W-33", "W-32", "W-34", "W-12", "W-52", "W-29", "W-07", "W-08", "W-09", "W-06b"])])
     return [b4, b5]
 
 
@@ -105,8 +111,9 @@ def main() -> int:
            f"'{k.w('W-16', 1, k.at(LEFT_S), k.dur(LEFT_S))}'; the IP hold tile shows the same time")
     k.live("S-05 frame: read back 'Time left: not received' in both the panel and the IP hold tile; no W-31 text on "
            "either frame (search the frames for 'reserved budget')")
-    k.live(f"each frame: scrolled {SCROLL} px (S-05 {SCROLL_OF['S-05']} px), the summary strip's top sits at about y 16 in the main column; "
-           "three account rows show under the hold panel")
+    k.live(f"each frame: scrolled {SCROLL} px, the summary strip's top (its tiles' top borders) sits at about y 16 "
+           "in the main column; three account rows show under the hold panel; in the REST budget and IP hold tiles "
+           "the glyph sits on the first line of its wrapped word")
     k.live("each frame: the hold panel's stroke is the state's tone token (color.status.danger.strong)")
     p = k.write_sheet(NN, frames, ann)
     md = k.write_md(NN, p)

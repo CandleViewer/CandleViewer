@@ -224,3 +224,32 @@ the Account and Window cells of the S-16 … S-19 headers and rows (38 nodes); 0
 03 the root h, S-05's page y and main-column note and the two tiles' word widths (4 nodes); 04 the root h and the
 dialog's y (1 node); 06 the root h, the reserve band's label and value widths on all five frames (50 nodes) and the
 two dialogs' y (2 nodes). Every sheet's notes differ only in the live-check lines that carry the sizes.
+
+## Boards-lens fix (2026-10-31; before a partial re-render)
+
+The boards lens read the ten exports against the spec; these kit changes answer it. Every board now builds from them:
+
+- One headroom arithmetic, `k.headroom(limit, used, reserve)` and `k.headroom_cell(…)`: the count is
+  limit − used − reserve (never below 0) and the share is of the spendable budget, limit − reserve, rounded down, with
+  the used share its complement. Source: §3.2's Headroom row ("what is left after the reserve is taken out (R-4), as a
+  count and a share") and W-14's base ("% of the spendable budget used"), so Used + Headroom = 100 % on a row and the
+  REST budget tile agrees. Boards 01, 06 and 08 took the share of the limit (order.create Main 5 · 50 % → 5 · 62 %);
+  board 03 left the reserve in (10 · 100 % → 8 · 100 %); 02 and 10 already read the spendable base and keep their
+  figures. Board 03 now serves the reserve band (2 requests per account, W-06b) like 01 and 02, so its headroom is
+  derivable (reading 8 above).
+- The CMP-178 tile reads the state word, then one number with its unit (§2.2 item 2): a status's figure moves to the
+  number's line, so the clock tile reads "In sync" over "12 ms behind" on every board (it touched the padding on one
+  line on 02, 03, 04 and 10).
+- A tile's state word wider than the room beside its glyph (inner − 16 − 4 px) wraps there, so the glyph never stands
+  alone on a line: S-04 and S-05 in board 03's REST budget and IP hold tiles, S-08 in board 04's Public market data
+  tile (and, by the estimate, S-02, S-10 and S-11, which already fit). Board 03's S-05 strip keeps S-04's height, so
+  both frames scroll 180 px: the strip's top and three account rows show (the live check's +30 px is undone).
+- The clock dl reads State · Offset · Last measured · Next due on every board (`k.CLOCK_LABELS`; §10 Fields, W-39) and
+  the offset in W-38's two-decimal slot (`k.offset_s`: 12 ms → "0.01 s").
+- Private streams reads Within budget wherever the board declares D09-G1 served (01, 02, 03, 08, 10), as the REST
+  budget tile beside it does; 04, 05 and 06 keep it with the REST tile in "Not connected yet".
+- Root h: the longer annotation columns of 02, 03, 06 and 10 grow their roots by 0.9 × the estimated growth, rounded
+  up to 8 (`k.MEASURED_H`: 1958, 1527, 1918, 1989), until the re-render's live check measures them.
+
+Regenerated all ten; validator exit 0 ×10, warnings unchanged. Node by node against the sheets the boards were rendered
+from, 07 is unchanged; 01, 02, 03, 04, 05, 06, 08, 09 and 10 change and need a re-render.

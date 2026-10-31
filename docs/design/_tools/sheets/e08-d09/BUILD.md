@@ -55,15 +55,16 @@ theme; boards 08 and 09 are exported under the light set and board 10 under the 
 | Board                    | Frames | Root w × h  | Theme | Sections (packed) |
 | ------------------------ | ------ | ----------- | ----- | ----------------- |
 | 01 healthy               | 9      | 4640 × 2758 | dark  | 137               |
-| 02 approaching-throttled | 2      | 3280 × 1926 | dark  | 21                |
-| 03 held-banned           | 2      | 3280 × 1455 | dark  | 26                |
+| 02 approaching-throttled | 2      | 3280 × 1958 | dark  | 21                |
+| 03 held-banned           | 2      | 3280 × 1527 | dark  | 26                |
 | 04 ws-states             | 5      | 4640 × 2506 | dark  | 45                |
 | 05 clock                 | 6      | 4640 × 2270 | dark  | 43                |
-| 06 simulator-budget      | 5      | 4640 × 1878 | dark  | 64                |
+| 06 simulator-budget      | 5      | 4640 × 1918 | dark  | 64                |
 | 07 inspector-history     | 7      | 4640 × 2758 | dark  | 93                |
 | 08 healthy-light         | 9      | 4640 × 2758 | light | 137               |
 | 09 clock-light           | 6      | 4640 × 2244 | light | 43                |
-| 10 throttled-hc          | 2      | 3280 × 1957 | hc    | 21                |
+| 10 throttled-hc          | 2      | 3280 × 1989 | hc    | 21                |
 
-Root heights are the live-measured annotation or footer end + 80 (`k.MEASURED_H`, build-notes "Live-check fold").
+Root heights are the live-measured annotation or footer end + 80 (`k.MEASURED_H`, build-notes "Live-check fold");
+02, 03, 06 and 10 carry the estimated growth of the boards-lens fix until their re-render measures them again.
 Board ids, PNG paths and the theme-gate results are in E08-D09 §0's as-built record.

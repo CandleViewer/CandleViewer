@@ -2,7 +2,7 @@
 
 File `E08-D09 boards`, page `E08-D09 SCR-147 Connectivity`; export `docs/design/E08/img/E08-D09-02-approaching-throttled.png`; sheet `02-approaching-throttled.json` (validated); theme dark.
 
-Board 02 of ten (§0 L84: S-02 approaching limit on one account's order row; S-03 throttled with the account, class, observed limit and retry time). Grid (6000, 0); 3280 x 1926 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 02 · r1".
+Board 02 of ten (§0 L84: S-02 approaching limit on one account's order row; S-03 throttled with the account, class, observed limit and retry time). Grid (6000, 0); 3280 x 1958 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 02 · r1".
 
 ## Frames
 
@@ -11,13 +11,13 @@ Board 02 of ten (§0 L84: S-02 approaching limit on one account's order row; S-0
 
 ## Validator and size
 
-- `02-approaching-throttled.json: 0 errors, 1 warnings, 21 sections, 74885 bytes` (exit 0)
-- 21 sections, 74885 bytes
+- `02-approaching-throttled.json: 0 errors, 1 warnings, 21 sections, 74233 bytes` (exit 0)
+- 21 sections, 74233 bytes
 
 ## Live checks (10)
 
-- root 'E08-D09 / 02 approaching-throttled' at (6000, 0): read back the name exactly after the first section call; size 3280 x 1926
-- after touchTexts + relayout: the annotation column (estimated 1922 px) ends inside the root (h 1926); raise the root's h to its end + 80 if not
+- root 'E08-D09 / 02 approaching-throttled' at (6000, 0): read back the name exactly after the first section call; size 3280 x 1958
+- after touchTexts + relayout: the annotation column (estimated 1949 px) ends inside the root (h 1958); raise the root's h to its end + 80 if not
 - frame 'SCR-147 · S-02 approaching limit · dark': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'SCR-147 · S-03 throttled · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - export docs/design/E08/img/E08-D09-02-approaching-throttled.png: every frame is 1280 x 800; record the board id and the PNG size
@@ -41,7 +41,7 @@ Board 02 of ten (§0 L84: S-02 approaching limit on one account's order row; S-0
 - reserve 2 requests per account per 1 s order window: an illustrative W-06b slot; D09-G14 serves the real figure
 - meter fill for S-02 and S-03 uses the warning tone (the register's color.status.warning.strong for both states, §5.2); §16 lists CMP-023's three fills
 
-## Copy keys (19)
+## Copy keys (18)
 
 - W-09 (§15 L424; meter value text)
 - W-14 (§15 L429; S-02 (CMP-178 prefix verbatim))
@@ -53,7 +53,6 @@ Board 02 of ten (§0 L84: S-02 approaching limit on one account's order row; S-0
 - W-06a (§15 L420; reserve band, not served (S-19))
 - W-06b (§15 L421; reserve band, served)
 - W-52 (§15 L467; blast radius)
-- W-05 (§15 L419; not wired (S-19))
 - W-29 (§15 L444; clock ok)
 - W-02 (§15 L416; page `h1`; route name)
 - W-03 (§15 L417; header meta)

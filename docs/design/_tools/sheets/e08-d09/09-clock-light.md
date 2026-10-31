@@ -15,8 +15,8 @@ Board 09 of ten (§0 L91: light twin of 05). Grid (18000, 3200); 4640 x 2244 px;
 
 ## Validator and size
 
-- `09-clock-light.json: 0 errors, 1 warnings, 43 sections, 131650 bytes` (exit 0)
-- 43 sections, 131650 bytes
+- `09-clock-light.json: 0 errors, 1 warnings, 43 sections, 131712 bytes` (exit 0)
+- 43 sections, 131712 bytes
 
 ## Live checks (19)
 
@@ -78,7 +78,7 @@ Board 09 of ten (§0 L91: light twin of 05). Grid (18000, 3200); 4640 x 2244 px;
 
 ## Copy gaps (2)
 
-- clock dl labels 'State', 'Offset', 'Measurement', 'Next due': §10 Fields L355 names the fields (offset, last measured, next due, the alarm state) but §15 gives no dt string
+- clock dl labels 'State', 'Offset', 'Last measured', 'Next due': §10 Fields L355 names the fields (offset, last measured, next due, the alarm state) but §15 gives no dt string
 - "Admin area": the band region name, from §2.1 L171 (CMP-087 own string; not in §15)
 
 ## Fallbacks (4)

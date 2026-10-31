@@ -26,11 +26,15 @@ USED = {"S-02": {"Main": 7, "Swing": 4, "Scalp": 2}, "S-03": {"Main": 10, "Swing
 
 
 def headroom(used: int) -> int:
-    return max(0, SPENDABLE - used)
+    return k.headroom(LIMIT, used, RESERVE)[0]
+
+
+def head_share(used: int) -> int:
+    return k.headroom(LIMIT, used, RESERVE)[1]
 
 
 def used_share(used: int) -> int:
-    return k.pct(used, SPENDABLE)
+    return k.headroom(LIMIT, used, RESERVE)[2]
 
 
 def row_state(used: int, throttled: bool) -> str:
@@ -52,7 +56,7 @@ def budget_rows(frame_sid: str) -> tuple[list[Node], list[str]]:
         used = USED[frame_sid][acct]
         sid = row_state(used, frame_sid == "S-03" and acct == "Main")
         hr = headroom(used)
-        hr_pct = k.pct(hr, SPENDABLE)
+        hr_pct = head_share(used)
         tone = {"S-01": "normal", "S-02": "warning", "S-03": "warning"}[sid]
         vt = k.w("W-09", None, used, LIMIT, hr)
         if sid == "S-02":
@@ -64,11 +68,11 @@ def budget_rows(frame_sid: str) -> tuple[list[Node], list[str]]:
         st = k.state_line(sid, figs, origin=sid != "S-01", w_=160)
         rows.append(k.table_row(k.BUDGET_COLS, {
             "class": "order.create", "account": acct, "limit": f"{LIMIT} / s", "used": str(used),
-            "window": f"{WINDOW_S} s", "headroom": f"{hr} · {hr_pct} %",
+            "window": f"{WINDOW_S} s", "headroom": k.headroom_cell(LIMIT, used, RESERVE),
             "meter": k.meter(used, LIMIT, w_=72, tone=tone, valuetext=vt), "state": st,
             "action": k.row_action()}, f"row {i:02d} · order.create · {acct}", i, second={"class": "order"}))
         lines.append(f"Row {i:02d} {acct}: Used {used} of {LIMIT} / s; Headroom {hr} = max(0, {LIMIT} − {RESERVE} "
-                     f"reserve − {used}); share {hr_pct} % = {hr} of {SPENDABLE} spendable; {sid} "
+                     f"reserve − {used}); share {hr_pct} % of {SPENDABLE} spendable; {sid} "
                      f"({'≥' if used >= S02_LINE else '<'} {S02_LINE:g} = 80 % of {SPENDABLE}); meter "
                      f'aria-valuetext "{vt}"')
     return rows, lines

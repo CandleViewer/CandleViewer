@@ -656,6 +656,35 @@ def pct(used: float, limit: float) -> int:
     return int(round(100 * used / limit)) if limit else 0
 
 
+HEADROOM_CITE = "§3.2 Headroom row and R-4; W-14's base"  # where headroom() comes from (annotations quote L-lines)
+
+
+def headroom(limit: int, used: int, reserve: int = 0) -> tuple[int, int, int]:
+    """The one headroom arithmetic every board calls. §3.2's Headroom row: "what is left after the reserve is taken
+    out (R-4), as a count and a share"; the share is of the spendable budget (limit - reserve), the base W-14 names
+    ("% of the spendable budget used"), so on one row Used share + Headroom share = 100 % and the REST tile agrees.
+    The headroom share rounds down (it never overstates what is left); the used share is its complement.
+    Returns (headroom count = max(0, limit - used - reserve), headroom share %, used share %)."""
+    spendable = limit - reserve
+    head = max(0, spendable - used)
+    share = math.floor(100 * head / spendable) if spendable > 0 else 0
+    return head, share, 100 - share
+
+
+def offset_s(ms: int) -> str:
+    """W-38's size slot ("{0.62}" s): the clock offset in seconds, two decimals (12 ms -> "0.01"), on every board."""
+    return f"{ms / 1000:.2f}"
+
+
+CLOCK_LABELS = ("State", "Offset", "Last measured", "Next due")  # §10 Fields' words (W-39 "Last measured"), every board
+
+
+def headroom_cell(limit: int, used: int, reserve: int = 0) -> str:
+    """The Headroom cell, "count · share %" (W-08's column; §3.2 unit "requests · %"), from headroom()."""
+    head, share, _used = headroom(limit, used, reserve)
+    return f"{head} · {share} %"
+
+
 # --- the window: SCR-147 anatomy (§2.2) inside CMP-087 AdminLayout at 1280 x 800, comfortable density (§0, §2.1).
 # Chrome geometry follows the committed E42 admin kits: TopBar 48, NavRail 64 (collapsed), main 976 (944 inside
 # space.inset.lg), RightRail 240, StatusBar 48; the band 56 + the 4 px rule.
@@ -819,7 +848,7 @@ def not_connected(name: str, gid: str | Iterable[str], *, w_: int | None = None,
 
 def tile(heading: str, sid: str | None, number: str | None, *, w_: int, as_of: str | None = AS_OF,
          extra: Iterable[Node] = (), gid: str | None = None, status: Node | None = None,
-         wrap_word: bool = False) -> Node:
+         wrap_word: bool | None = None) -> Node:
     """A CMP-178 tile (§2.2 item 2): heading (a link), the state word with its glyph, one number with its unit (or
     S-19 when number is None and gid is given), "as of"; raised, radius.card, space.inset.lg."""
     inner = w_ - 2 * PX[INSET_LG]
@@ -829,8 +858,19 @@ def tile(heading: str, sid: str | None, number: str | None, *, w_: int, as_of: s
     else:
         if status is None and sid is None:
             raise ValueError(f"tile {heading!r}: sid= or status= (the clock's ok state has no S-id, §10)")
-        kids.append(dict(status, name="state") if status else state_line(sid, origin=False, w_=inner, name="state",
-                                                                         word_w=inner if wrap_word else None))
+        if status:
+            # §2.2 item 2 (the word, then one number with its unit): a status's figures leave its line for the
+            # number's, so every tile reads word over number (the clock's "In sync" / "12 ms behind" on every board)
+            figs = [c for c in status["kids"] if c["name"].startswith("figure")]
+            kids.append(dict(status, name="state", kids=[c for c in status["kids"] if c not in figs]))
+            kids += [dict(f, name="number" if i == 0 else f"number-{i + 1}", w=inner) for i, f in enumerate(figs)]
+        else:
+            # a word wider than the room beside its glyph wraps there (wrap_word None = when the estimate says so),
+            # so the glyph never sits alone on a line (§5.2: the glyph beside its word)
+            beside = inner - PX[ICON] - PX[INSET_XS]
+            if wrap_word is None:
+                wrap_word = text_w(state_word(sid), BODY_STRONG) > beside
+            kids.append(state_line(sid, origin=False, w_=inner, name="state", word_w=beside if wrap_word else None))
         if number:
             kids.append(text("number", number, NUM, TEXT_1, w=inner))
     kids += list(extra)
@@ -1200,8 +1240,11 @@ def layout(frames: list[Node], per_row: int | None = None) -> list[Node]:
 
 
 # Root h per board as drawn: the live-measured max(annotation end, footer end) + MARGIN after touchTexts + relayout
-# (the live check's SHEET-FIX; text_h over-estimates the column). board() uses it for strict boards.
-MEASURED_H = {1: 2758, 2: 1926, 3: 1455, 4: 2506, 5: 2270, 6: 1878, 7: 2758, 8: 2758, 9: 2244, 10: 1957}
+# (the live check's SHEET-FIX; text_h over-estimates the column). board() uses it for strict boards. The boards
+# lens's kit fix lengthened the annotation columns of 02, 03, 06 and 10: their roots grow by 0.9 x the estimated
+# growth, rounded up to 8 (02 +32, 03 +72, 06 +40, 10 +32), until the re-render's live check measures them again;
+# 01, 07 and 08 end on their footers.
+MEASURED_H = {1: 2758, 2: 1958, 3: 1527, 4: 2506, 5: 2270, 6: 1918, 7: 2758, 8: 2758, 9: 2244, 10: 1989}
 
 
 def board(nn: int, frames: list[Node], ann: Node, *, per_row: int | None = None, strict: bool = True,
@@ -1480,13 +1523,13 @@ def sample_frame() -> tuple[Node, tuple[str, list[str]]]:
              tile(TILE_HEADINGS[4], "S-01", None, w_=tw[4])]
     cols = BUDGET_COLS
     rows = [table_row(cols, {"class": "order.create", "account": ACCOUNTS[0], "limit": f"{lim} / s", "used": str(lim),
-                             "window": "1 s", "headroom": f"0 · {pct(0, lim)} %",
+                             "window": "1 s", "headroom": headroom_cell(lim, lim),
                              "meter": meter(lim, lim, tone="danger", valuetext=w("W-09", None, lim, lim, 0)),
                              "state": state_line("S-03", [w("W-15", 3, at(retry_s), retry_s)], w_=160),
                              "action": row_action()}, "row 01 · order.create · Main", 1,
                       second={"class": "order"}),
             table_row(cols, {"class": "order.amend", "account": ACCOUNTS[0], "limit": f"{lim} / s", "used": "2",
-                             "window": "1 s", "headroom": f"8 · {pct(8, lim)} %",
+                             "window": "1 s", "headroom": headroom_cell(lim, 2),
                              "meter": meter(2, lim, valuetext=w("W-09", None, 2, lim, 8)),
                              "state": state_line("S-01", origin=False, w_=160), "action": row_action()},
                       "row 02 · order.amend · Main", 2, second={"class": "order"})]

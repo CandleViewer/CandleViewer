@@ -75,7 +75,7 @@ def build(nn: int) -> tuple[list, dict]:
                                                           lines=[k.w("W-23", 2)])]))
     blocks.append(k.frame_block(fids[3], keyboard=kb, waits=["D09-G5", "D09-G6"], lines=[
         f"§10 L{t10['S-12']}: no number; \"{k.w('W-23', 1)}\" and W-23's second sentence ({cite('W-23')})",
-        f"Never 0, never \"In sync\" while unmeasured (§10 L{never0}); no Measurement row (nothing measured)",
+        f"Never 0, never \"In sync\" while unmeasured (§10 L{never0}); no Last measured row (nothing measured)",
         f"Warning tone, not the neutral ring (§5.2 L{_l('- **S-12 uses the warning tone**')})"]))
     # re-measure busy (during the S-10 episode)
     ms, d = S10

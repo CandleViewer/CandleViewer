@@ -2,7 +2,7 @@
 
 File `E08-D09 boards`, page `E08-D09 SCR-147 Connectivity`; export `docs/design/E08/img/E08-D09-10-throttled-hc.png`; sheet `10-throttled-hc.json` (validated); theme hc.
 
-Board 10 of ten (§0 L92: high-contrast twin of 02). Grid (24000, 3200); 3280 x 1957 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 10 · r1".
+Board 10 of ten (§0 L92: high-contrast twin of 02). Grid (24000, 3200); 3280 x 1989 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 10 · r1".
 
 ## Frames
 
@@ -11,13 +11,13 @@ Board 10 of ten (§0 L92: high-contrast twin of 02). Grid (24000, 3200); 3280 x 
 
 ## Validator and size
 
-- `10-throttled-hc.json: 0 errors, 1 warnings, 21 sections, 75149 bytes` (exit 0)
-- 21 sections, 75149 bytes
+- `10-throttled-hc.json: 0 errors, 1 warnings, 21 sections, 74497 bytes` (exit 0)
+- 21 sections, 74497 bytes
 
 ## Live checks (11)
 
-- root 'E08-D09 / 10 throttled-hc' at (24000, 3200): read back the name exactly after the first section call; size 3280 x 1957
-- after touchTexts + relayout: the annotation column (estimated 1926 px) ends inside the root (h 1957); raise the root's h to its end + 80 if not
+- root 'E08-D09 / 10 throttled-hc' at (24000, 3200): read back the name exactly after the first section call; size 3280 x 1989
+- after touchTexts + relayout: the annotation column (estimated 1953 px) ends inside the root (h 1989); raise the root's h to its end + 80 if not
 - frame 'SCR-147 · S-02 approaching limit · hc': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'SCR-147 · S-03 throttled · hc': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - theme: activate the hc token set before exporting board 10 (twin of 02); read back one bound fill (color.surface.canvas) as the hc value
@@ -42,7 +42,7 @@ Board 10 of ten (§0 L92: high-contrast twin of 02). Grid (24000, 3200); 3280 x 
 - reserve 2 requests per account per 1 s order window: an illustrative W-06b slot; D09-G14 serves the real figure
 - meter fill for S-02 and S-03 uses the warning tone (the register's color.status.warning.strong for both states, §5.2); §16 lists CMP-023's three fills
 
-## Copy keys (19)
+## Copy keys (18)
 
 - W-09 (§15 L424; meter value text)
 - W-14 (§15 L429; S-02 (CMP-178 prefix verbatim))
@@ -54,7 +54,6 @@ Board 10 of ten (§0 L92: high-contrast twin of 02). Grid (24000, 3200); 3280 x 
 - W-06a (§15 L420; reserve band, not served (S-19))
 - W-06b (§15 L421; reserve band, served)
 - W-52 (§15 L467; blast radius)
-- W-05 (§15 L419; not wired (S-19))
 - W-29 (§15 L444; clock ok)
 - W-02 (§15 L416; page `h1`; route name)
 - W-03 (§15 L417; header meta)

@@ -27,9 +27,11 @@ def budgets(state: str) -> tuple[Node, list[str]]:
     if state == "S-01":
         sec = k.section("Rate budgets", [h.budgets_table(h.served_rows()), h.reserve(True)], waits=G_BUD)
         u = h.ORDER_ROWS[0][2]
+        hd, hs, us = k.headroom(h.LIM_O, u, h.RESERVE)
         return sec, [f"Headroom = Limit − Used now − reserve {h.RESERVE} (R-4, order rows): order.create Main "
-                     f"{h.LIM_O} − {u} − {h.RESERVE} = {h.order_head(u)} · {h.head_share(h.order_head(u), h.LIM_O)} %;"
-                     f" share of the Limit, rounded down",
+                     f"{h.LIM_O} − {u} − {h.RESERVE} = {hd} · {hs} %; the share is of the spendable "
+                     f"{h.LIM_O - h.RESERVE} (§3.2 L{L('| Headroom |')}; W-14's base), so {us} % used + {hs} % = 100 %"
+                     f" (k.headroom, every board)",
                      f"Served form: D09-G1 and D09-G14 taken as served (reserve {h.RESERVE} requests per account, "
                      f"W-06b); query and WS rows hold no reserve (kit reading, §7 gives no per-class split)"]
     if state == "S-13":
@@ -116,11 +118,11 @@ def build(theme: str) -> tuple[list[Node], Node]:
         extra = [f"Scroll {scrolls[i]} px of a page about {ph:.0f} px (view {k.VIEW_H}): shows {where[i]}"]
         if i == 0:
             extra += bud_lines + [f"REST budget tile: busiest order row {h.ORDER_ROWS[0][2]} of {h.LIM_O - h.RESERVE} "
-                                  f"spendable = {k.pct(h.ORDER_ROWS[0][2], h.LIM_O - h.RESERVE)} % (W-14's figure "
+                                  f"spendable = {k.headroom(h.LIM_O, h.ORDER_ROWS[0][2], h.RESERVE)[2]} % (W-14's figure "
                                   "piece reused; S-02 starts at 80 %)",
                                   f"Public market data: {h.TOPICS} topics on {h.CONNS} sockets = W-44's slots"]
         if i == 2:
-            extra += [f"Clock: {h.CLOCK_MS} ms behind = {h.CLOCK_MS / 1000:.3f} s (W-29, W-38); last measured "
+            extra += [f"Clock: {h.CLOCK_MS} ms behind = {k.offset_s(h.CLOCK_MS)} s (W-29, W-38's two-decimal slot); last measured "
                       f"{k.at(-h.CLOCK_AGE)} = {k.AS_OF} − {h.CLOCK_AGE} s (< 300 s cadence, < 900 s stale)"]
         if i == 0:
             blocks.append(k.frame_block(fid, waits=["D09-G1", "D09-G14"], keyboard=KB,

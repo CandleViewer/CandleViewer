@@ -19,7 +19,7 @@ def cite(key: str) -> str:
 
 def secs(ms: int) -> str:
     """W-38's size slot: the offset in seconds, two decimals (620 -> '0.62'); derived from the frame's ms."""
-    return f"{ms / 1000:.2f}"
+    return k.offset_s(ms)
 
 
 def offset_sentence(ms: int, direction: str) -> str:
@@ -61,7 +61,7 @@ def remeasure(mode: str) -> Node:
     raise ValueError(mode)
 
 
-LABELS = ("State", "Offset", "Measurement", "Next due")
+LABELS = k.CLOCK_LABELS
 
 
 def clock_section(sid: str | None, *, ms: int | None, direction: str = "behind", measured_s: int | None = MEASURED_S,
@@ -79,7 +79,7 @@ def clock_section(sid: str | None, *, ms: int | None, direction: str = "behind",
     else:
         rows.append(k.kv_row("row · offset", LABELS[1], offset_sentence(ms, direction), numeric=True))
     if measured_s is not None:
-        rows.append(k.kv_row("row · measurement", LABELS[2],
+        rows.append(k.kv_row("row · last measured", LABELS[2],
                              k.w("W-39", 1, k.at(-measured_s), k.ago(measured_s)), numeric=True))
     rows.append(k.kv_row("row · next due", LABELS[3], k.w("W-39", 0)))
     dl = k.vbox("CMP-036 dl · clock", rows, None, w=k.INNER_W, note="dl of CMP-036 rows (§17.1)")

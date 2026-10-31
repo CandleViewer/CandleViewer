@@ -24,7 +24,7 @@ def tiles(frame_sid: str) -> list:
         rest = k.tile(k.TILE_HEADINGS[0], "S-03", k.w("W-15", 2, h.LIMIT), w_=tw[0])
     return [rest,
             k.tile(k.TILE_HEADINGS[1], "S-01", k.w("W-52", 1, 120), w_=tw[1]),
-            k.tile(k.TILE_HEADINGS[2], None, None, w_=tw[2], gid="D09-G1"),
+            k.tile(k.TILE_HEADINGS[2], "S-01", None, w_=tw[2]),
             k.tile(k.TILE_HEADINGS[3], None, None, w_=tw[3], status=k.clock_ok_status(12)),
             k.tile(k.TILE_HEADINGS[4], "S-01", None, w_=tw[4])]
 
@@ -58,7 +58,8 @@ def frame(fid: str, frame_sid: str, theme: str) -> tuple[dict, tuple[str, list[s
            if frame_sid == "S-02" else h.cite("W-15", k.state_word("S-03"), k.w("W-15", 2, h.LIMIT))),
         h.cite("W-07", k.w("W-07")),
         "Other tiles as board 01's served page: Public market data 120 topics (W-52 piece 2, the inspector's "
-        "board 07 count); Private streams Not connected yet (D09-G1); Clock In sync 12 ms behind (W-29); IP hold "
+        "board 07 count); Private streams Within budget (D09-G1 served, as the REST tile); Clock In sync, "
+        "12 ms behind (W-29); IP hold "
         "Within budget",
         *det_lines,
         (f"Page about {total:.0f} px for the {k.VIEW_H} px view; scroll {scroll} px "
@@ -109,12 +110,12 @@ def build(theme: str) -> tuple[list[dict], list[tuple[str, list[str]]], list[str
 
 def live_checks() -> list[str]:
     u2, u3 = h.USED["S-02"]["Main"], h.USED["S-03"]["Main"]
-    hr2, hr3 = h.headroom(u2), h.headroom(u3)
     return [
         f"frame S-02: row 01's state cell reads \"Exchange\", the warning glyph, \"{k.state_word('S-02')}\", "
-        f"\"{k.w('W-14', 1, h.used_share(u2))}\"; Headroom \"{hr2} · {k.pct(hr2, h.SPENDABLE)} %\"",
+        f"\"{k.w('W-14', 1, h.used_share(u2))}\"; Headroom \"{k.headroom_cell(h.LIMIT, u2, h.RESERVE)}\"",
         f"frame S-03: row 01's state cell reads \"{k.state_word('S-03')}\" and "
-        f"\"{k.w('W-15', 3, k.at(h.RETRY_S), h.RETRY_S)}\"; Headroom \"{hr3} · {k.pct(hr3, h.SPENDABLE)} %\"; the S-03 "
+        f"\"{k.w('W-15', 3, k.at(h.RETRY_S), h.RETRY_S)}\"; Headroom "
+        f"\"{k.headroom_cell(h.LIMIT, u3, h.RESERVE)}\"; the S-03 "
         f"detail shows \"{k.w('W-15', 1, 'Main', 'order')}\", \"{k.w('W-15', 2, h.LIMIT)}\", \"{k.w('W-15', 4)}\"",
         f"both frames: the reserve band has {len(h.ACCTS)} rows \"Reserved for stops and cancels · <alias>\" with "
         f"\"{k.w('W-06b', 1, h.RESERVE)}\"; no text overlaps a neighbour in any budgets row (cells 8 px padded a side)",

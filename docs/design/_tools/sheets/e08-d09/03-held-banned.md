@@ -2,7 +2,7 @@
 
 File `E08-D09 boards`, page `E08-D09 SCR-147 Connectivity`; export `docs/design/E08/img/E08-D09-03-held-banned.png`; sheet `03-held-banned.json` (validated); theme dark.
 
-Board 03 of ten (§0 L85: S-04 held by IP (all accounts, time left, its condition sentence W-33); S-05 banned (placeholder, contract-first) side by side). Grid (12000, 0); 3280 x 1455 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 03 · r1".
+Board 03 of ten (§0 L85: S-04 held by IP (all accounts, time left, its condition sentence W-33); S-05 banned (placeholder, contract-first) side by side). Grid (12000, 0); 3280 x 1527 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 03 · r1".
 
 ## Frames
 
@@ -11,25 +11,25 @@ Board 03 of ten (§0 L85: S-04 held by IP (all accounts, time left, its conditio
 
 ## Validator and size
 
-- `03-held-banned.json: 0 errors, 1 warnings, 26 sections, 106676 bytes` (exit 0)
-- 26 sections, 106676 bytes
+- `03-held-banned.json: 0 errors, 1 warnings, 26 sections, 100651 bytes` (exit 0)
+- 26 sections, 100651 bytes
 
 ## Live checks (9)
 
 - S-04 frame: read back the hold panel's state line 'On hold — all accounts' and 'Our hold ends at 14:10:31 (in 8m 20s)'; the IP hold tile shows the same time
 - S-05 frame: read back 'Time left: not received' in both the panel and the IP hold tile; no W-31 text on either frame (search the frames for 'reserved budget')
-- each frame: scrolled 180 px (S-05 210 px), the summary strip's top sits at about y 16 in the main column; three account rows show under the hold panel
+- each frame: scrolled 180 px, the summary strip's top (its tiles' top borders) sits at about y 16 in the main column; three account rows show under the hold panel; in the REST budget and IP hold tiles the glyph sits on the first line of its wrapped word
 - each frame: the hold panel's stroke is the state's tone token (color.status.danger.strong)
-- root 'E08-D09 / 03 held-banned' at (12000, 0): read back the name exactly after the first section call; size 3280 x 1455
-- after touchTexts + relayout: the annotation column (estimated 1430 px) ends inside the root (h 1455); raise the root's h to its end + 80 if not
+- root 'E08-D09 / 03 held-banned' at (12000, 0): read back the name exactly after the first section call; size 3280 x 1527
+- after touchTexts + relayout: the annotation column (estimated 1509 px) ends inside the root (h 1527); raise the root's h to its end + 80 if not
 - frame 'SCR-147 · S-04 held by IP · dark': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'SCR-147 · S-05 banned · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - export docs/design/E08/img/E08-D09-03-held-banned.png: every frame is 1280 x 800; record the board id and the PNG size
 
 ## G rows (3)
 
-- D09-G14 (§21.2 L712): the reserve figure per account
 - D09-G1 (§21.2 L699): a read of per-account, per-class usage, limit, window and headroom at 1 Hz, with the IP ho
+- D09-G14 (§21.2 L712): the reserve figure per account
 - D09-G13 (§21.2 L711): the IP lockout state and its time left in a read
 
 ## Spec gaps (0)
@@ -51,7 +51,7 @@ Board 03 of ten (§0 L85: S-04 held by IP (all accounts, time left, its conditio
 - W-09 (§15 L424; meter value text)
 - W-60 (§15 L475; budget row action)
 - W-06a (§15 L420; reserve band, not served (S-19))
-- W-05 (§15 L419; not wired (S-19))
+- W-06b (§15 L421; reserve band, served)
 - W-52 (§15 L467; blast radius)
 - W-13 (§15 L428; S-01)
 - W-29 (§15 L444; clock ok)
@@ -104,8 +104,8 @@ Board 03 of ten (§0 L85: S-04 held by IP (all accounts, time left, its conditio
 - color.border.default
 - color.neutral.default
 - border.thick
-- color.text.tertiary
 - type.ui.heading-sm
+- color.text.tertiary
 - color.text.link
 - color.status.success.strong
 - space.stack.md
