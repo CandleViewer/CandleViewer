@@ -1,0 +1,561 @@
+# E08-D12 pins: KEY|line|words that stand on that line at origin/main (the tool's G11-CITE).
+# Written by `--repin-ruled` only; `--check` reads it (never hand-edit).
+02|52|- [ ] Linked design ticket/artifact (hi-fi screen(s) in the relevant `
+02|53|- [ ] Design has been Done for ≥2 sprints (design-ahead rule) OR an ex
+02|76|- [ ] design handoff **[if the Story consumes a `CMP-*`/`SCR-*` design
+05|30|1. Every interactive element (buttons, chart drawing tools, DOM ladder
+05|35|6. No functionality may depend on hover-only or drag-only interaction:
+05|44|| **Global / Navigation** | Command palette / search-anything | `Ctrl+
+05|46|| | Toggle sidebar / panel focus cycle | `Ctrl+\` | Cycles focus betwe
+05|47|| | Open Watchlist / symbol search | `/` | Only active when focus is n
+05|48|| | Toggle keyboard-hotkey cheat-sheet overlay | `Shift+/` (i.e. `?`) 
+05|49|| | Escape / cancel current action | `Esc` | Universal cancel: closes 
+05|55|| | Cycle timeframe | `Alt+↑` / `Alt+↓` | |
+05|57|| | Toggle data-table alternative view (§5.4) | `Alt+T` | Screen-reade
+05|83|1. **Precedence order** when a user tries to bind an already-used key:
+05|85|3. **Reserved, non-remappable keys**: `Esc` (universal cancel) and `Ct
+05|86|4. **OS/Electron-reserved combos are blocklisted** (e.g. `Ctrl+W`, `Ct
+05|94|1. **Landmark regions**: each major panel (Chart, DOM/Heatmap, Order T
+05|95|2. **Roving tabindex** within composite widgets (DOM ladder rows, foot
+05|96|3. **Focus is never silently stolen**: a live price update, a new fill
+05|97|4. **Modal dialogs** (order confirm, flatten-all confirm, Demo→Live sw
+05|99|6. **Visible focus indicator**: WCAG 2.2 SC 2.4.11 (Focus Not Obscured
+05|100|7. **Target size**: WCAG 2.2 SC 2.5.8 (Target Size, Minimum, AA) — all
+05|101|8. **Dragging alternatives**: WCAG 2.2 SC 2.5.7 (Dragging Movements, A
+05|102|9. **Consistent help mechanism**: WCAG 2.2 SC 3.2.6 (Consistent Help, 
+05|107|**Rule (non-negotiable, applies everywhere)**: colour is always a _rei
+05|115|- Connection/health (View 15 risk dashboard, WS status chip): colour +
+05|117|2. **Deuteranopia/protanopia/tritanopia validation**: the design-syste
+05|125|1. **Text contrast (WCAG 1.4.3, AA)**: body text and labels ≥4.5:1 aga
+05|130|6. **User-adjustable contrast**: a high-contrast theme toggle (`Ctrl+S
+05|131|7. **Text resize (WCAG 1.4.4, AA)**: UI must remain usable with 200% b
+05|146|- **Price/position/order updates** are announced via `aria-live` regio
+05|147|- `aria-live="polite"` region for ambient updates (best bid/ask, mark 
+05|148|- `aria-live="assertive"` (or `role="alert"`) reserved for discrete, l
+05|150|- **Region hygiene**: live regions are pre-rendered empty containers o
+05|204|1. The app respects OS-level `prefers-reduced-motion: reduce` by defau
+05|207|- Auto-scrolling/auto-panning behaviours (e.g. chart auto-following li
+05|209|4. Reduced-motion is a **design-system token/mode**, not a per-compone
+05|217|| # | Platform + OS version | Browser/shell (pinned) | Screen reader (
+05|222|| 4 | macOS 14 Sonoma+ | Electron shell (production build) | VoiceOver
+05|230|3. **Task-based pass** — the tester performs, keyboard+SR only, each o
+05|247|1. **axe-core**: run against every screen's DOM (Playwright + `@axe-co
+05|257|## 10. Accessibility acceptance-criteria template
+05|261|```gherkin
+05|309|Each ticket also states: which screen-reader(s) it was manually spot-t
+11|750|NFR: one batched tickers subscription for the whole list; ≤10 topics p
+14|84|4. **Disconnection is global and local.** A single reconnect overlay (
+14|85|5. **RBAC denies server-side; the UI presents.** A control the session
+14|86|6. **WCAG 2.2 AA.** Every canvas surface has an equal-status non-canva
+14|300|- **Interactions/hotkeys:** `Ctrl+K` command palette (SCR-012); `Ctrl+
+14|1030|### SCR-041 — Symbol/interval quick-switcher (in-chart)
+14|1032|- **Type:** Popover, opened from the chart toolbar's symbol button or 
+14|1034|- **States:** no match ("No USDT perpetual matches 'xyz'." "v1 support
+14|1035|- **Components:** CMP-019 Icon (`lock`), CMP-048 Combobox / AutoComple
+14|1041|- **As built (E08-S09, #4703)**: CMP-017 on the chart toolbar's CMP-21
+14|1193|- **A11y:** the ladder is a real `role="grid"` — every price row is fo
+14|1274|- **A11y:** tape is a `role="log"` with `aria-live="off"` by default (
+14|1283|- **Hand-off pack:** [E22-D05.md](../design/E22/E22-D05.md) (v1, E22-D
+14|2255|### SCR-100 — Watchlist panel
+14|2272|- **Interactions:** click or `Enter` = set the symbol of the panel's s
+14|2273|- **States:** loading (skeleton rows) · empty list ("No symbols on thi
+14|2274|- **Validation:** at most 200 symbols per list.
+14|2275|- **A11y:** ARIA grid (`role="grid"`, roving tabindex, caption) with s
+14|2280|- **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; th
+14|2281|- **Design sign-off acceptance checklist:** [ ] columns (symbol, last,
+14|2283|### SCR-101 — Watchlist manager
+14|2287|- **Interactions:** move up/down buttons and `Alt+↑`/`Alt+↓`; `F2` ren
+14|2292|- **A11y:** Manager is a dialog with a list of watchlists and a symbol
+14|2295|- **Design sign-off acceptance checklist:** [ ] multiple watchlists wi
+14|2297|### SCR-102 — Symbol search (global)
+14|2299|- **Type:** Modal (`/` when no chart has focus, the top-bar trigger, o
+14|2301|- **Interactions:** `Enter` opens in the target panel named in the hea
+14|2302|- **States:** idle (recent, then favourites) · results · catalogue loa
+14|2303|- **Components:** CMP-002 IconButton, CMP-011 Tag / Chip, CMP-019 Icon
+14|2308|- **As built (E08-S09)**: opened from the TopBar trigger and from `/` 
+14|2309|- **Design sign-off acceptance checklist:** [x] fuzzy matching with th
+14|2311|### SCR-103 — Symbol info / instrument detail
+14|2322|- **Design sign-off acceptance checklist:** [ ] tick size, lot size, m
+14|2324|### SCR-104 — Scanner / screener panel
+14|2328|- **States:** no matches · too many matches (capped at 200 with a note
+14|2329|- **Components:** CMP-011 Tag / Chip, CMP-024 Sparkline, CMP-026 Empty
+14|2331|- **A11y:** Results are a sortable table with a caption stating the ac
+14|2334|- **Design sign-off acceptance checklist:** [ ] filter set drawn (chan
+14|2436|### SCR-117 — Accessibility settings
+14|2438|- **Type:** Section. Reduced motion, disable canvas animation, always 
+14|2441|- **A11y:** This screen is itself the exemplar: every control has a vi
+14|2975|### SCR-147 — Admin: exchange connectivity & rate limits
+14|2977|- **Type:** Page. Per-account REST and WS rate-limit budgets, current 
+14|2980|- **A11y:** Per-endpoint-class table (REST order, REST query, public W
+14|2983|- **Design sign-off acceptance checklist:** [ ] per-account, per-endpo
+14|3023|### SCR-151 — Empty state pattern
+14|3028|- **A11y:** The pattern mandates: a heading, one sentence of explanati
+14|3035|- **A11y review and hand-off (E16-D06):** [E16-D06.md](../design/E16/E
+14|3051|- **A11y:** `role="alert"` once, then a persistent banner; the countdo
+14|3057|- **Design (hi-fi + handoff, motion spec):** [E17-D02.md](../design/E1
+15|311|- **E08-D04**: `variant="backfill-in-progress"` (data-confidence `back
+15|313|- **A11y**: heading semantics preserved (`h3` inside panel context), C
+15|317|- **As built (E05-S02)**: `icon?` is optional over a glyph per variant
+15|335|- **E08-D04 — `connection` severity variants** (used by `SCR-152`, dat
+15|337|- **A11y**: `role="status"` (info/success/connection-reconnecting) or 
+15|338|- **Tokens**: fill `color.status.{tone}.subtle`, a 2 px `border.thick`
+15|413|- **A11y**: `aria-live="off"` visually (updates every second would flo
+15|417|- **As built (E05-S02)**: `size?` picks the digits' `type.num.*` step 
+15|422|- **Props**: `label` · `value: ReactNode` · `emphasis?: boolean` · `fr
+15|423|- **A11y**: renders as definition-list pair (`dt`/`dd`) semantics for 
+15|578|- **Props**: `columns: ColumnDef[]` · `rows: T[]` · `sort?/onSortChang
+15|581|- **A11y**: semantic `<table>` with `scope` on headers even when virtu
+15|641|- **A11y**: `role="group"` `aria-label="Active filters"`; each removab
+15|650|- **A11y**: checkbox list inside CMP-041 Menu pattern; reorder via key
+15|755|- **A11y**: native `<input type=file>` under the hood (drag-and-drop i
+15|844|### CMP-076 ConnectionStatus
+15|855|- **As built (E10-S01, #304)**: in `apps/web`, fed from the shell stor
+15|859|- **Tier**: Organism · **Purpose**: the connection **region** in the r
+15|861|- **Variants**: Owner Details · Manager / Viewer Details (two bound in
+15|863|- **A11y**: `role="region"` named "Connection"; **no `alertdialog`, no
+15|867|- **As built (E10-S04, #306; mounted by E10-S01, #304)**: in `apps/web
+15|869|### CMP-078 StaleDataShade
+15|875|- **A11y**: shading is supplemented with the visible "Last update Xs a
+15|879|- **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; th
+15|1529|### CMP-125 SymbolInfoPopover
+15|1932|### CMP-160 SymbolSearchInput
+15|1936|- **A11y**: extends CMP-048 Combobox; recent symbols shown as a labell
+15|1942|- **As built (E08-S09)**: CMP-048's combobox half (its well, the `sear
+15|1944|### CMP-161 WatchlistRow
+15|1948|- **A11y**: extends CMP-049 row contract; %chg/PnL-style values use CM
+15|1949|- **Tokens**: `font.family.mono`, `color.text.buy/sell/neutral` (E08-D
+15|1950|- **E08-D04**: each per-value cell carries an optional CMP-239 Freshne
+15|1969|### CMP-162 WatchlistGroupTabs
+15|1973|- **A11y**: the CMP-042 Tabs pattern with manual activation (arrows mo
+15|2217|### CMP-177 RecorderStatusRow
+15|2750|### CMP-213 FuzzyList
+15|2754|- **A11y**: implements the listbox half of the combobox pattern — `ari
+15|2759|- **As built (E08-S09)**: the listbox half only: the host's input keep
+15|2823|- **E08-D05 (A-D05-4)**: A11y: a button (`aria-haspopup="dialog"`), no
+15|2824|- **As built (E08-S09)**: the trigger alone, as B02 draws it (E08-D05 
+15|2906|### CMP-227 EstimatedBadge
+15|2911|- **States**: default, hover (2 px outset outline — no reflow), focus-
+15|2912|- **A11y**: a native `<button>`; the literal word "estimated" is in th
+15|2913|- **E08-D04 — composition with CMP-239 FreshnessMarker (confirmed cont
+15|2938|- **A11y**: `aria-pressed` switch whose name states the scope and stat
+15|3041|- **Tier**: Atom (cross-cutting, safety) · **Purpose**: the per-value 
+15|3043|- **Contract**: exactly one state is shown at a time (never stacked — 
+15|3044|- **Renderable as a pure CSS class change** — no extra DOM node per ce
+15|3045|- **`compact` presentation for dense grids**: the cell only swaps a cl
+15|3046|- **A11y**: never colour-only — text label (mandatory for every non-`l
+15|3052|- **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; th
+16|63|A dedicated `color.data-confidence.<state>.{text,indicator,surface}` s
+16|78|inventing a local variant (`02-definition-of-ready-done.md` §3.1).
+CAL|13|SPRINT01_START = datetime.date(2026, 9, 25) # Friday
+CAL|14|SPRINT_DAYS = 7
+D01|21|1. `delisted` — instrument removed/paused by the exchange.
+D01|30|**Rule:** a surface is in exactly one state — the highest-precedence c
+D01|31|`stale` shading on a row that is part of a `disconnected` outage; show
+D01|66|- Every degraded state carries a non-colour redundant channel: text la
+D01|67|space allows) + opacity (reinforcing only) — colour alone is rejected 
+D01|72|collapse flapping within 5 s into one "Connection unstable" announceme
+D02|121|### `SCR-147/clock-skew-and-throttle`
+D02|125|- Per-account, per-endpoint-class table row extended with a clock-skew
+D02|127|recovery time, per the catalogue's design sign-off checklist.
+D02|129|### `SCR-151/data-not-yet-recorded` and `SCR-151/backfill-in-progress`
+D02|133|- The two ingestion-relevant variants of the shared empty-state patter
+D02|135|(data-not-recorded-yet class, per catalogue's three empty-state classe
+D03|9|**Penpot page**: `E08-D03 SCR-152 Connection` in the CandleViewer team
+D03|12|**Status (updated)**: all nine states are now built as **both** dark a
+D03|70|| Frame | Title | Body line 1 | Body line 2 | Severity tokens |
+D03|74|| `degraded` (some topics stale, trading NOT disabled) | "Degraded — s
+D03|79|| `recovered` (transient confirmation) | "Reconnected" | "While you we
+D03|94|| Owner | Adapter state name (e.g. `reconnecting`), attempt count, bac
+D03|95|| Manager / Viewer | Plain sentence only: "Connection to the exchange 
+D03|101|- **`SCR-050` (DOM ladder + heatmap)** — panel-level translucent scrim
+D03|103|`color.text.primary`, showing "Resyncing…" (book invalidated) or "Disc
+D03|106|- **`SCR-053` (Tape)** — same scrim treatment; gap markers use a persi
+D03|109|backfill after a sequence gap."
+D03|114|- **Interactivity while degraded**: overlaid panels remain focus-passa
+D03|116|ticket's accessibility notes) — nothing is keyboard-trapped; underlyin
+D03|130|- **`action.primary.default` ("Retry now") on `status.danger.subtle` =
+D03|149|the same filled-button component, not plain text, in both themes) and 
+D04|39|| State | Text token | Indicator token | Surface token | Chip text | L
+D04|41|| `live` | `color.data-confidence.live.text` | `color.data-confidence.
+D04|42|| `stale` | `color.data-confidence.stale.text` | `color.data-confidenc
+D04|43|| `reconnecting` | `.reconnecting.text` | `.reconnecting.indicator` | 
+D04|46|| `gapped` | `.gapped.text` | `.gapped.indicator` | ambient | "Reconst
+D04|48|| `delisted` | `.delisted.text` | `.delisted.indicator` | ambient | "D
+D04|50|Precedence (highest wins, never stacked): `delisted > disconnected > r
+D04|51|backfilling > stale > live` (`E08-D01` §2).
+D04|55|`estimated` (CMP-227) and any data-confidence state are different clai
+D04|58|sequence ("Estimated, low confidence. Stale, 4 seconds."). See the CMP
+D04|63|- Every non-`live` state carries a mandatory text label; colour/opacit
+D04|64|signal) — `05-accessibility-standard.md` non-colour-encoding rule.
+D04|65|- `disconnected` is the only state using an assertive (`role="alert"`)
+D04|66|polite or silent, to avoid alert fatigue on transient/degraded-but-not
+D04|67|- Flapping reconnect attempts within 5s collapse into a single "Connec
+D05|168|| Results | ranked matches | count "2 results" (polite, after 300 ms);
+D05|170|| Load failed (`catalogue_load_failed`) | no list in memory, and a net
+D05|176|| No matches (`no_matches`) | a list in memory; nothing ranked, nothin
+D05|177|| Status rule (`scope_filtered`) | the query names a known non-Trading
+D05|178|| Disconnected | E17-D01 Disconnected | the SCR-152 banner stays visib
+D05|181|**PROPOSED state key** `search.check_cooldown` "Checked a moment ago."
+D05|184|(E09-D09 §2.2): the reason sits under the button. The reason names no 
+D05|187|region, after the dialog closes): "Chart 1 now shows ETHUSDT, 1 minute
+D05|197|| Add to watchlist… | ✔ | ✔ | T2 "Your role can't change watchlists." 
+D05|199|| Record this symbol… (opens M-023) | ✔ | T2 `rbac.owner_only` | T2 `r
+D05|211|A delisted Recent or Favourite shows the symbol struck through in `col
+D05|212|CMP-239 `delisted` chip "Delisted by the exchange" (glyph ⊘, `.deliste
+D05|214|sentence, present at mount. Rendering 2a, inline: while the option is 
+D05|232|For others it is T2 `rbac.owner_only` (D-7), in CMP-079 RbacGate with 
+D05|233|SCR-041's preview the reason sits beside the button; in SCR-102's menu
+D05|273|nor `defaultPrevented`. So the roots of SCR-102, SCR-041 and the actio
+D05|274|key (last column) except the four Global chords the dispatcher can run
+D05|276|and lets it through, and a command with no handler yet posts its notic
+D05|278|| Key | Where | Action | Focus after / announced | Shipped dispatcher,
+D05|280|| `/` | outside text inputs | chart focused → SCR-041; else SCR-102 | 
+D05|281|| `Ctrl+P` | — | retired (D-1) | — | reserved "browser (print)"; only 
+D05|282|| `Ctrl+K` → "Search symbols" | anywhere | SCR-102 | the input | `glob
+D05|283|| typing | input | filter | input; count after 300 ms | stopped at the
+D05|286|| `←` `→` `Home` `End` | input | caret | — | stopped at the root (Repl
+D05|287|| `Enter` | input | SCR-102 open in target; SCR-041 commit | the invok
+D05|288|| `Shift+Enter` | either input | open in new chart | the invoker; shel
+D05|289|| `Shift+F10` / Menu | SCR-102 input | action menu for the active opti
+D05|291|| `Esc` | dialog, popover, menu | close and revert; menu → back to the
+D05|292|| `Tab` / `Shift+Tab` | SCR-102 | input → `⋯` (Actions, when shown) → 
+D05|293|| `Tab` / `Shift+Tab` | SCR-041 | input → interval group → More… → Rec
+D05|294|| `←` `→` `Home` `End` | interval group | check an interval | the radi
+D05|295|| `1`–`9` | interval group only | check the nth favourite | same | mir
+D05|299|(bar and fill on ETHUSDT; its name read) → `Enter` (dialog closes; foc
+D05|303|either field leaves the toast host empty.
+D05|311|| SCR-102 dialog | `dialog`, `aria-modal="true"`, `aria-labelledby` ti
+D05|312|| SCR-041 popover | `dialog` without `aria-modal`, labelled | "Change 
+D05|313|| input | `combobox`, `aria-expanded="true"`, `aria-autocomplete="list
+D05|315|| option | `option`, `aria-selected` on the active one, `aria-posinset
+D05|317|| interval strip | `radiogroup` "Interval", `radio` items with `aria-c
+D05|318|| menu, T2 items | `menu` "Actions for ETHUSDT"; `menuitem`, `aria-dis
+D05|319|| Check again (T2) | CMP-079 `button`, `aria-disabled="true"` (never `
+D05|324|- One **polite** region per surface, empty at mount, text swapped: cou
+D05|325|checking, no matches, status rule, a failed refresh; the load failure 
+D05|326|once. Nothing in the list streams. A **shell polite region** outside a
+D05|330|- **Focus.** SCR-102 traps focus, starts in the input and returns it t
+D05|331|4), or to the target panel when the invoker is gone. SCR-041 never tra
+D05|332|re-rank never moves focus or the active option (`05` §3.4 item 3).
+D05|333|- **The TopBar stays live** (D-11): it sits outside the inert subtree 
+D05|334|scrim or the TopBar closes SCR-102 without commit, and a panic button 
+D05|340|- **Targets:** rows, `⋯` and radio items are 24 / 32 px (`size.target.
+D05|341|- **200 %** (1280 × 800 → 640 × 400 CSS px): the dialog is min(720, 10
+D05|343|and the detail bar. **320 CSS px:** rows become two lines at twice the
+D05|344|- **Motion:** SCR-102 fades in and out over `motion.duration.fast` (op
+D05|346|fade never delays the 80 ms open. SCR-041, a popover (`16` §7 has no p
+D05|347|skeleton rows are static; re-ranking is an instant swap.
+D05|349|### 9.4 High contrast and colour independence
+D05|351|The highlight is weight (600 vs 400), so it holds in high contrast, wh
+D05|352|Active row: left bar (shape) and fill; recording: word and a filled ● 
+D05|353|word and ⊘; ARMED: word and glyph (E30-D02); direction: ▲/▼ and the si
+D05|354|failure glyphs share one amber (`status.danger.strong` = `status.warni
+D05|356|### 9.5 Measured contrast and CVD (`python3 -I docs/design/_tools/e08_
+D05|362|| `text.tertiary` on `surface.selected` — rejected, never used | 3.98 
+D05|370|The rows above are the narrowest and the rejected; all 34 gated rows (
+D05|371|7:1) pass in three themes; the script prints the full matrix, hexes an
+D05|373|collapse in light only.
+D05|379|2. `↓`: "ETHUSDT, ETH / USDT, not recorded, recent, 1 of 2", then its 
+D05|381|symbol, unavailable, Only the owner can start recording." `Esc` return
+D05|386|6. On a chart, `/` opens SCR-041 with "BTCUSDT" selected; `Tab` → "Int
+D05|388|both and returns focus to the chart.
+D05|536|- [ ] Boards in both themes, tokenised (§14, drawn (r1; eight at r2, t
+D05|537|- [ ] `15` CMP-213, 219, 026, 048, 160, 041, 002 carry A-D05-3..6, 13,
+D05H|213|## `05` §10 accessibility acceptance criteria (SCR-102, SCR-041)
+D05H|244|Screen reader: written, not run; the release-level pass (`05` §8) runs
+D06|297|| **Contract load failed** (network; a status other than 503 or 404; 5
+D06|298|| **Not in the instrument list** (404) | "BTCUSDT isn't in Bybit's ins
+D06|307|Retry keeps focus on the button, sets `aria-busy` on its band and neve
+D06|320|| ≥ 1 h | `next in 01:24:13 · 08:00 UTC` (E24-D01's fixed-width form; 
+D06|322|| < 5 min | `settles in 00:04:12 · 08:00 UTC` after a ⚠ glyph in `colo
+D06|326|| clock alarm on, or offset unknown | "at 08:00:00 UTC (in about 1 h 2
+D06|344|| "Recorder settings" → SCR-140 | link | T3 hidden; the sentence "Reco
+D06|345|| "Record this symbol…" → M-023 (not recorded) | ✔ (Q6) | T2 sentence 
+D06|346|| "Record this symbol…", the Owner viewing as another user (E09-D09 st
+D06|395|| Key | Where | Action | Focus after |
+D06|397|| `Enter` on an opener | SCR-102 / SCR-041 menus, SCR-047, SCR-100 men
+D06|398|| `Tab`, `Shift+Tab` | drawer | Close → band actions (Retry, Try again
+D06|400|| `↑` `↓` `PageUp` `PageDown` `Home` `End` | tiers region | scroll | s
+D06|401|| `Esc` | anywhere in the drawer | close | the opener; if it is gone (
+D06|402|| `Ctrl+=` `Ctrl+-` `Ctrl+Shift+H` `Ctrl+Shift+M` | anywhere (`05` §3.
+D06|403|| `?` (`Shift+/`) | anywhere | opens the hotkey cheat sheet over the d
+D06|404|| any other Global `Ctrl`, `Alt` or F-key binding | anywhere | closes 
+D06|406|The drawer's root stops the propagation of the keys it handles, becaus
+D06|407|binding (E08-D05 §8); `Esc` and `Ctrl+K` keep their reserved meaning (
+D06|408|`?` pass through instead of closing the drawer: a reader who enlarges 
+D06|410|other Global binding (H-6). If a focused action disappears
+D06|411|(a status flip removes Open DOM ladder), focus moves to the status not
+D06|412|alone never moves focus (`05` §3.4 item 3). A Manager or Viewer, and t
+D06|413|Recorder settings nor Record in the Tab order: the link is hidden and 
+D06|419|| drawer | `dialog`, `aria-modal="true"`, `aria-labelledby` the title,
+D06|421|| facts | `dl` with one `dt` / `dd` pair per value (F8), units inside 
+D06|423|| band marker | CMP-239 text in the band header, part of the band's de
+D06|424|| countdown | text in `aria-live="off"` | §7 names |
+D06|426|| status region | `role="status"`, one per drawer, empty at mount | th
+D06|427|| errors | CMP-027: `role="alert"` (contract), `role="status"` (covera
+D06|429|| T2 reason | text: CMP-026 `description` in CMP-079's sentence form; 
+D06|434|- **Speech.** One polite region per drawer speaks a band state's entry
+D06|435|failures, retry outcomes and the two countdown thresholds, once each a
+D06|436|§6.2). Values, ages and countdown seconds are never spoken; SCR-152's 
+D06|438|`role="alert"`.
+D06|439|- **Targets** 24 / 32 px (`size.target.min`); no essential exception. 
+D06|441|- **Zoom.** At 200 % of the 1280 × 800 minimum (640 × 400 CSS px) the 
+D06|443|item 7).
+D06|444|- **Motion.** Slide in from the right over `motion.duration.normal` wi
+D06|445|`.accelerate` (`16` §7 drawer recipe); instant under reduced motion. C
+D06|447|"Changed" tags are static; live values swap text and never flash.
+D06|448|- **Colour.** Bands are told apart by headings; states by words and gl
+D06|449|delisted chip text), never by colour alone (`05` §4); high contrast ke
+D06|450|- **Forced colours** (`forced-colors: active`): the stale band's surfa
+D06|453|shadow, so it stays visible. The FE ticket verifies it (Q8).
+D06|502|WCAG 2.x ratios over `packages/ui/tokens` at the base commit (dark = p
+D06|507|| Pair (fg on bg; `color.` dropped) | dark | light | hc | Bar |
+D06|513|| `text.secondary` on `surface.sunken` (stale and dimmed values) | 10.
+D06|595|## 15. Boards (Penpot page `E08-D06 SCR-103 Symbol info`; every board 
+D06|691|- **H-6 E08-D05 (#126):** its §8 also closes SCR-102 and SCR-041 on th
+D06|692|carve-out (they run with the surface open) applies there too, while `?
+D06|709|| ID | Where | Change |
+D06|719|| A-9 | `12` §5 | a drawer row: "Symbol info", openers per §1, `?panel
+D06|752|### 17.3 Test ids and forced states (the ticket's QA walkthrough)
+D06|761|without the symbol; waits on E16-T08, #492).
+D06|774|| Q8 | Which FE ticket builds SCR-103? (DoD: two sprints ahead of it; 
+D06H|228|## `05` §10 accessibility acceptance criteria (SCR-103)
+D06H|254|And the drawer passes deuteranopia/protanopia/tritanopia simulation re
+D06H|272|Screen reader: written, not run; the release-level pass (`05` §8) runs
+D07|88|| D3 | `color.data-confidence.{reconnecting,disconnected}.text` resolv
+D07|89|| D4 | The panel-level indicator is a status segment in the panel head
+D07|90|| D5 | Default order is the list's saved manual order. Sort is a pane 
+D07|94|| D9 | CMP-020 tabular JetBrains Mono, right-aligned. Last at the inst
+D07|95|| D10 | At 200 symbols the add control is T2 (§6.6) with `watchlist.ca
+D07|96|| D11 | Activation (click, `Enter`) sets the symbol of the watchlist p
+D07|97|| D12 | Record/unrecord follows the session's `recording:write` permis
+D07|98|| D13 | A Viewer holds `workspaces:read`, not `workspaces:write`. With
+D07|101|| D16 | SCR-100 is an ARIA grid: `role="grid"`, roving tabindex, a cap
+D07|102|| D17 | The panel owns no live region. Per stale episode (≥1 stale row
+D07|105|| D20 | A delisted row (`Instrument.delisted`: status neither Trading 
+D07|108|| D23 | Empty list: heading "No symbols on this watchlist", cause "You
+D07|111|| D26 | Deleting a list is a CMP-044 `standard` confirm with Cancel fo
+D07|115|| D30 | Density: compact (24 px rows, default) and comfortable (32 px)
+D07|125|Silence means the default. Each question unblocks the decisions and bo
+D07|139|| Q11 | Ticker T1/T2 = 5 s/15 s, and E08-Q05's 3 s harness gap becomes
+D07|144|| Q16 | Who builds SCR-100/101 and the `/watchlists` persistence? No b
+D07|199|Under the board cap (§9), boards 01–04 and 06–08 draw this table's sta
+D07|205|| Empty list · 06 | the active list has no symbol | CMP-026 in the gri
+D07|210|| Stale row, T1 · 03 | no ticker value for the symbol for 5 s; or `met
+D07|214|| Delisted · 07 | `Instrument.delisted` is true | symbol struck throug
+D07|226|| REC · 09 (board 09 not drawn — the text binds) | the symbol's entry 
+D07|230|Every state in which a value is not live carries a word: Initialising 
+D07|233|Loading shows skeletons under `aria-busy`, no value.
+D07|278|| Import and export · 13 (board 13 not drawn — the text binds) | CMP-0
+D07|279|| Columns · 14 (board 14 not drawn — the text binds) | CMP-056 checkli
+D07|281|| Empty · 16 (board 16 not drawn — the text binds) | no list: the SCR-
+D07|303|- **Live regions (D17).** An episode is a period with at least one sta
+D07|304|only from T2 (D7). On entry one polite message: "3 watchlist symbols s
+D07|305|three names, then "and N more"); on exit: "Watchlist prices live again
+D07|306|(`15` L2315). Never announced: ticks, ages, countdowns, live-window ch
+D07|307|each, polite: adds and on-list choices (D36), moves, removals ("Remove
+D07|308|proposed), failed saves (§4.2), import results, the filter's count, th
+D07|309|price announcements on (`14` L2187), only the focused row's Last is sp
+D07|355|## 5. Component contract changes
+D07|358|"Proposed" column to `15-component-catalogue.md`.
+D07|389|tabindex in "watchlist rows" per the APG grid pattern. SCR-100 is a `<
+D07|391|(activate, menu, move, remove): a table with focusable rows would put 
+D07|392|symbol list uses the same mode. §5 (CMP-049) and §10 (`14` L2038) reco
+D07|398|| `Tab` / `Shift+Tab` | into or out of the grid; one stop: the last fo
+D07|402|| `PageUp` / `PageDown` | one viewport | |
+D07|403|| `Enter` | on a row: activate (D11); on a header: sort | delisted row
+D07|404|| `Space` | on a header: sort | SCR-100 has no row selection; a live-c
+D07|405|| `Shift+F10`, menu key | open the focused element's own menu (a row's
+D07|406|| `Del` | remove the focused row's symbol; a held key removes one (`ev
+D07|407|| `Alt+↑` / `Alt+↓` | move the row in manual order; announced | T2 (§6
+D07|408|| `Ctrl+C` | copy the focused row's symbol | |
+D07|409|| `Ctrl+F` | focus the footer's "Filter symbols" (§4.2 Filtered); `Esc
+D07|412|Conflicts checked: `Alt+↑/↓` is "Cycle timeframe" in the chart context
+D07|413|context (`docs/generated/default-keymap.md` L69-70); `Del` deletes a d
+D07|414|bound nowhere in `keymap.json`, is not in `apps/web/src/keymap/reserve
+D07|415|well (`14` L1139). Focus contexts are exclusive (`05` L83), so the wat
+D07|416|joins `apps/web/src/keymap/keymap.json` with the build, where `scripts
+D07|417|There is no single-letter key and no type-ahead in the grid, so global
+D07|421|List tabs (one stop; arrows move, `Enter` or `Space` switches) → "+" n
+D07|422|("+ Add symbol", "Columns", "Sort: Manual ▾", "Re-sort" when present, 
+D07|423|panel status has no control: Retry lives in the SCR-152 banner. The pa
+D07|424|named "Watchlist Majors" (proposed). Live updates never move focus (`0
+D07|425|symbol; removing the focused row moves focus to the next row, or to th
+D07|426|restores the rows and focuses the first one. In the add popover, `Tab`
+D07|431|- **SCR-100:** `Alt+↑`/`Alt+↓`, or "Move up"/"Move down" in the row me
+D07|432|down are T2 (§6.6) with "Already first." or "Already last." (§6.7), an
+D07|433|- **SCR-101:** "Move BTCUSDT up" and "Move BTCUSDT down" buttons on ev
+D07|434|`aria-hidden`; the buttons are the accessible path). After a move, foc
+D07|435|so repeated presses keep moving it, and one polite message gives the n
+D07|436|12." At the ends the button is T2 (§6.6, 2b) with "Already first." or 
+D07|438|- **Columns:** the same buttons in SCR-101's Columns tab, plus `Alt+↑/
+D07|442|CMP-043: focus trap; initial focus on the active list; `Esc` first can
+D07|443|returns to the trigger. Order: Lists (listbox; `F2` renames, DJ) → "+ 
+D07|445|cells reached with the arrows) → "Close". Delete opens CMP-044 with Ca
+D07|446|follows focus, `Enter` is inert and `Del` opens Delete…; in the grid, 
+D07|447|says. "+ Add symbol" opens D36's popover inside the trap, and `Esc` cl
+D07|448|to the preview heading; after "Add 12 symbols" or an import, to the fi
+D07|452|- **Rule.** Every control this spec disables, for a role, a view-as se
+D07|455|a state key; a missing step-up never disables. No account or environme
+D07|456|L11543), recording `scope: none` (L4434), and market data is environme
+D07|462|Sort headers, with no inline room, point at one footer note (DJ, after
+D07|464|- **Keys** (E09-D09 §9.3): `Enter`, `Space` or a bound hotkey (`Alt+↑/
+D07|467|cell (DJ). A screen reader hears the name, "unavailable", then the rea
+D07|483|| `rbac.permission` (L89) | Watchlist writes: "Your role can't change 
+D07|485|| `watchlist.cap_full` (PROPOSED) | "Watching 200 symbols — remove som
+D07|502|| Rows | `size.row.height` (24 compact, 32 comfortable); hover `color.
+D07|503|| Stale | cell or row `color.data-confidence.stale.surface` with `.sta
+D07|507|| REC | `color.text.primary`; ⚠ `color.status.warning.strong`; lock ic
+D07|509|| T2 (§6.6) | label and lock glyph `color.text.tertiary`; reason `colo
+D07|512|**Targets** (WCAG 2.2 SC 2.5.8, `05` L100; `16` L125): every control i
+D07|514|compact row is itself a 24 px target (D11). SCR-101's per-row CMP-002 
+D07|516|which a 32 px row cannot hold; that conflict goes to the design-system
+D07|523|decimals. "✗" marks a value below the minimum. "HC" is high contrast. 
+D07|526|| # | Pair | Foreground | Background | Dark | Light | HC | Min |
+D07|551|| 24 | Focus ring | `color.focus.ring` | raised / selected / sunken / 
+D07|558|| 31 | Focus ring, active menu item or add result | `color.focus.ring`
+D07|562|1. **DS-CR-1** (D3): rows 9–10. Disconnected and reconnecting text equ
+D07|563|Fallback while it is open (board 04, labelled "fallback"): rows keep `
+D07|565|never the row's `opacity` (the active bar and focus ring would fall to
+D07|566|DS-CR-1 merges (light `text.secondary` at 0.7 on sunken: 3.61:1). The 
+D07|567|2. **DS-CR-2:** rows 2–5. Add `color.text.buy`, `color.text.sell` and 
+D07|569|is open: numbers in `.live.text` and colour only on the ▲/▼ glyph (row
+D07|570|3. **DS-CR-3:** row 27. Light `color.surface.selected` and `color.surf
+D07|572|the difference; the request is a distinct light selected fill (E16-D02
+D07|573|4. **Not used, because they fail:** `color.text.disabled` as delisted 
+D07|577|indicator on raised or sunken (row 22). The panel status sits on canva
+D07|589|- No meaning rides on hue alone: every non-live state has a word, dire
+D07|590|has a bar.
+D07|591|- CIE76 ΔE, normal → deuteranopia (the Machado matrix of `docs/design/
+D07|593|separates them for a deuteranope, so the glyph and the sign must, and 
+D07|594|same colour in light (0.0); their words separate them. Live and discon
+D07|595|- After the build: run `cvd_sim.py` (greyscale and deuteranopia) on bo
+D07|596|the outputs beside the PNGs, and the owner checks that every state wor
+D07|598|## 8. Motion constraints
+D08|92|A workspace pane in the E15 panel chassis, of the pane kind D08-G10 as
+D08|94|### 2.2 Anatomy (top to bottom, the focus order of §12.1)
+D08|99|4. **Footer:** the count, the age (W-13), "Pause updates", the sort ho
+D08|134|- **The marker lives in the option itself:** the option's accessible n
+D08|136|- **In results:** the Tape speed z and Regime column headers embed the
+D08|142|- **Chips** (CMP-011 in CMP-055) read in plain language, W-5, the symb
+D08|143|- **Add filter** opens a CMP-041 menu of the 8<!--=COUNT:criteria--> c
+D08|147|### 4.2 The rule and the error
+D08|159|- **The hold:** D07 D5's hold applies: a re-rank at most every 2<!--=C
+D08|174|One `GET /scanner` every 5<!--=CITE:cadence--> s (0.2<!--=CITE:poll-hz
+D08|178|The footer reads "Updated 3 s ago" (W-13) on D07 D22's shared 1<!--=CI
+D08|182|No successful scan for 15<!--=CITE:t2--> s (D07's T2, D07:86) puts D04
+D08|186|When the response says its ticker or OI inputs are stale (D08-G5), the
+D08|190|A "Pause updates" toggle in the footer (`05`:207; `16`:177), `aria-pre
+D08|224|Compact by default, 24<!--=CITE:row.compact--> px rows (`16`:113; D07 
+D08|231|| No matches | a scan returns zero rows | CMP-026 `filtered-empty` (`1
+D08|236|- The empty forms follow SCR-151's anatomy: a heading, one sentence of
+D08|237|- After a scan failed, polling retries at the cadence and Retry polls 
+D08|263|| Add to watchlist… | the row menu | D07 D36's list chooser (D07:121),
+D08|265|| Create alert… | the row menu | an entry point only: opens the alert 
+D08|275|- **A grid:** `<table role="grid">` with a caption, one tab stop and a
+D08|276|- **Keys:** D07 §6.2's grid keys (D07:394–410) minus reorder, remove a
+D08|277|- **Filter bar keys:** `Enter` on a chip opens its popover with focus 
+D08|278|- **Context:** a PROPOSED `Scanner` context for KM, registered with th
+D08|279|- **Panel order:** filter bar (each chip, its remove button and its de
+D08|280|- **Targets and pointers:** every control is at least 24<!--=CITE:targ
+D08|281|- **Focus is never moved by a refresh** (`05`:96), except from a focus
+D08|282|- **Walk (the keyboard storyboard):** `Tab` to Add filter, `Enter`, `↓
+D08|286|- **Caption:** visible, plain language, built from the parsed filter a
+D08|287|- **Announced** (polite, once, after the request settles): a user-init
+D08|288|- **Silent:** count drift between polls, ages and re-ranks. The count 
+D08|289|- Through the app's polite region; the panel owns none (D07 D17, D07:1
+D08|303|| W-7 | range error | {Funding %}: Minimum must be less than maximum. 
+D08|316|| W-20 | left the set | {BTCUSDT} no longer matches. | `05`:96 |
+D08|331|## 14. Tokens, density and contrast (computed; RULED BQ-23)
+D08|346|| focus ring | `color.focus.ring` | #6EA1F5<!--=HEX:focus.ring.dark-->
+D08|349|Text pairs need 4.5:1<!--=CONTRAST:text.min--> (`05`:125); marks and b
+D08|361|| `text.tertiary` on `surface.overlay` | 5.19:1<!--=CONTRAST:tertiary-
+D08|418|### 16.1 The frame register (the tool gates every column)
+D08|424|| `results/populated · dark` | 01 | dark | filters, Rank by, caption, 
+D08|425|| `results/row-menu-viewer · dark` | 01 | dark | the row menu, a Viewe
+D08|529|| D08-C7 | `14`:2282 and T a11y "sortable table" and "result count is 
+D08H|91|| story: E08-D12 (#180) | grid semantics → §12.1 · the cells' accessib
+D11|160|One source: the resolved `16` §4 mode (`data-motion`, the in-app `syst
+D11|162|**Focus (PROPOSED, heuristic; owner E17-D02).** No motion here moves f
+D11|195|Order on every announcing row: **visual flip at 0 ms → the live-region
+D11|199|| Entering Disconnected (the first drop, and every entry after an anno
+D11|200|| Flapping — the fast tier (≥ 3 changes in 5 s) or the slow tier (≥ 3 
+D11|202|| Recovery | assertive | the frame the fill steps to `success` (D3) — 
+D11|203|| Entering Stale < T2 / Resyncing / Delayed; their exits | polite | th
+D11|204|| Entering Stale ≥ T2 | assertive, once per episode | the frame the st
+D11|208|**AC 1 timeline strip** (text form of board 07): t = 0 s drop → banner
+D11|214|| Element | Max changes / s (sustained) · worst 1 s window | Area (px²
+D11|222|| one watchlist row settle (1280 × 24) | 0.2 (ticker: the settle in, t
+D11|290|| T7 | both reduce directions of the `16` §4 override (OS reduce + ove
+D11|291|| T8 | the announcement order with a screen reader (NVDA or VoiceOver)
+D11|353|| E08-D12 accessibility review | §5, §7, §8, the vestibular self-audit
+DS|15|orchestrator's round. A **G-T2 miss is a Major** in the pre-lens; a **
+DS|17|## G-T2 — the controls E09-D09 §2.1 routes to T2 are specified as T2
+DS|31|owner-legal renderings, and the spec names which one each control uses
+DS|33|room: a glyph badge on the icon, the description node visually hidden,
+DS|49|- **G-T2.4** (§3.1–§3.2): every reason is one of §3.1's keys (`{verb}`
+DS|54|does); a screen never writes its own string.
+DS|59|- **G-T2.6** (this file; E09-D09 §7–§8 practise it): T2 is named in ev
+DS|61|covers those surfaces.
+DS|63|## Recurring items (Minors; each has been a carry more than once)
+DS|65|- **R1 Text resize** (`05` §5 item 7, WCAG 1.4.4): for every dialog, d
+DS|67|- **R2 Forced colours** (this file): name the `forced-colors` renderin
+DS|68|it to the hi-fi spec in the hand-off section.
+DS|83|assembled from split string literals).
+E09-D09|85|Every T2 reason is one of these seven keys, or a key of a registered *
+E09-D09|95|| `rbac.view_as` | "Read-only while viewing as {user}." | `GET /auth/s
+E09-D09|236|The reason node is rendered at mount and stays in the DOM while the co
+E09-D09|243|| `Enter` / `Space` / the bound hotkey (`Ctrl+Enter`, `Alt+…`) | nothi
+E09-D09|250|Announcements are §4.4 plus: a T2 keystroke → polite, the reason; the 
+E15-D15|281|1. **Name** = `{Kind}, {symbol} {interval spelled}`, plus `, {Environm
+E15-D15|282|2. **Description** = the state qualifiers in this order: sync group an
+E15-D15|285|5. **The floating window**: the environment in the window title (`15`:
+E16-D06|142|| SCR-151 Empty state pattern (the recorder-dependent variant, the chi
+E16-D06|181|| KB-19 | SCR-151 · a panel instance; the partial chip (CMP-011) | the
+E16-D06|182|| KB-20 | SCR-047 / SCR-151 · the gap band and the seam | reached by t
+E16-D06|231|| RG-14 | SCR-047's block · a SCR-151 panel's block | the block's `rol
+E17-D01|211|Follows `05-accessibility-standard.md` §6.2 and §7.3 — assertive for t
+E17-D01|215|| Entering Disconnected | `role="alert"` (assertive) | once on entry |
+E17-D01|218|| Entering Stale ≥ T2 | assertive | **once per stale episode**: every 
+E17-D01|219|| Entering Stale < T2, Stale (server), Resyncing, Delayed | `role="sta
+E17-D01|223|| One-click auto-disarm (D12) | polite | once per disarm | "One-click 
+E17-D01|224|| Reconnect attempt counter, countdown ticks, age counters, the latenc
+E17-D01|226|| Recovery | assertive (05 §6.2 lists "WS … reconnected") | once, when
+E17-D01|227|| Flapping | polite | once | "Connection unstable." (CMP-028 collapses
+E17-D01|229|Rules: no state is conveyed by colour alone (icon + text + colour); no
+E17-D01|230|(state change is a single flip; ≤3 flashes/s, `prefers-reduced-motion`
+E17-D02|41|## 0. Planned boards (BLOCKED-PENPOT; nothing drawn, no export claimed
+E17-D02|191|**Details split (E08-D03 §4; two bound instances).** Owner: adapter st
+E17-D02|203|**A11y.** The shade is `aria-hidden`; its text is exposed via `aria-de
+E17-D02|215|**A11y.** `role="status"` for info and warning rows (one polite announ
+E17-D02|249|One live-region pair (polite + assertive) pre-rendered empty at load, 
+E17-D02|253|| 1 | Entering Disconnected (`reconnecting`) | CMP-077 → the CMP-028 `
+E17-D02|256|| 4 | Entering Stale ≥ T2 | CMP-078 → the workspace's assertive region
+E17-D02|257|| 5 | Entering Stale < T2, Stale (server), Resyncing, Delayed; a CMP-0
+E17-D02|261|| 9 | One-click auto-disarm (D12) | CMP-229 → `role="status"` | once p
+E17-D02|262|| 10 | Attempt counter, countdown ticks, ages, the latency number | no
+E17-D02|264|| 12 | Recovery | CMP-077 → the callout, assertive | once, when the pr
+E17-D02|265|| 13 | Flapping (T5) | CMP-077 → the callout, polite | once | "Connect
+E17-D02|268|| 16 | A CMP-092 blocking row (a backend-health / D17 condition; §6 ro
+E17-D02|298|| CMP-076 | `Tab` / `Shift+Tab` | reach the chip (one stop in the TopB
+E17-D02|301|| CMP-076 | `Esc` | close the popover (innermost-cancel); otherwise no
+E17-D02|302|| CMP-077 | `Tab` / `Shift+Tab` | `Retry now`, then `Details` (in the 
+E17-D02|304|| CMP-077 | `Enter` / `Space` on `Details` | open the disclosure panel
+E17-D02|305|| CMP-077 | `Esc` inside Details / on `recovered` | close Details / di
+E17-D02|306|| CMP-077 | `Ctrl+\` | region cycling reaches the "Connection" region 
+E17-D02|308|| CMP-078 (the blocked ladder: Disconnected, Resyncing, Stale from T1)
+E17-D02|309|| SCR-060 submit under CMP-079 (the gated ticket) | `Enter` / `Space` 
+E17-D02|314|| all | a data update, a reconnect, a `system` frame | **never moves f
+E17-D02|316|Targets: the chip 24 × ≥72 px (compact) / 32 × ≥80 px (comfortable); t
+E17-D02|320|**13.2 200 % zoom, the in-app text scale and `forced-colors` (`05` §5 
+E17-D02|376|**14.3 Greyscale and CVD statement.** With hue removed every state kee
+PKG|28|"@axe-core/playwright": "^4.14.0",
+PREF|5|export type AnnouncePrices = "off" | "significant" | "always";
+PREF|25|announce_prices: "significant",
+PREF|86|/** Live-region throttle used by E47-S01/S02: should this price update
+PREF|94|return update.cadenceElapsed;
+README|49|Never paste the instance hostname or a team/file/workspace URL into pu
+README|50|SaaS links in merged documents are historical.
+README|78|2. `docs/design/<epic>/<ticket>.md` — spec: purpose, states, data, int
+TOK|617|"color.data-confidence.live.text": {
+TOK|620|},
