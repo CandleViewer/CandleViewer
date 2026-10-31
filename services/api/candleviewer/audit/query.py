@@ -163,6 +163,10 @@ class VerifyPlan:
     head_id: int
     truncated_at: int | None = None
     full_chain: bool = False
+    #: The walk resumes past a break an earlier walk of the same run reported first (#2904, a
+    #: break the Owner acknowledged): that walk checked every checkpoint below `from_id`, the
+    #: broken one aside, so they are not checked again and cannot re-report that break.
+    resumed: bool = False
 
 
 class VerifyRangeBeyondHead(AuditError):
@@ -587,7 +591,7 @@ class AuditQueryService:
         checkpoints = await self._repository.fetch_checkpoints(hi)
         missing, mismatch = ChainBreakKind.CHECKPOINT_MISSING, ChainBreakKind.CHECKPOINT_MISMATCH
         for head_id, head_hash, stored in checkpoints:
-            if head_id >= lo:
+            if head_id >= lo or plan.resumed:
                 break
             if stored != head_hash:
                 return _Walk(0, 0, anchor, head_id, missing if stored is None else mismatch)

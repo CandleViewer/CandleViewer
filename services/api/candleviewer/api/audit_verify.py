@@ -16,6 +16,10 @@ break sets it to 1, so a passing partial range never hides a known break. A full
 turns 1 into NaN; 0 stays until a full-range run passes. So a stop never leaves an old 1
 standing, and never clears a known break.
 
+A break also halts position-opening order entry (#2904; 04 §8.1 "Enforced posture"): the
+route and the scheduled runner call `BreakHalt.trip` synchronously, before their first await
+after the result, then write its record (`BreakHalt.record_trip`) next to the system event.
+
 A break also raises the critical `audit_chain_break` system event (`system_events`, component
 `db`), best effort as the recorder's integrity job does: bounded by `EVENT_TIMEOUT_S`, a
 failure logged with its class only, never changing the response or the record.
@@ -26,11 +30,12 @@ from __future__ import annotations
 import asyncio
 import math
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Protocol
 
 import structlog
 
 from candleviewer.api.audit_budget import WRITE_TIMEOUT_S
+from candleviewer.audit.break_halt import BreakIdentity
 from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.models import AuditOutcome, Severity, VerifyResult
 from candleviewer.observability.audit_query_metrics import (
@@ -67,6 +72,25 @@ def verify_stop(exc: Exception) -> tuple[str, str]:
     if isinstance(exc, AuditEntryTooLarge):
         reason = f"{reason}@{exc.entry_id}"
     return reason, detail
+
+
+class BreakHalt(Protocol):
+    """`audit.break_halt.AuditBreakHaltService`, as a verifier uses it (#2904)."""
+
+    def trip(self, result: VerifyResult) -> BreakIdentity | None: ...
+
+    async def record_trip(
+        self, identity: BreakIdentity, result: VerifyResult, *, trigger: str
+    ) -> bool: ...
+
+
+async def record_halt(
+    halt: BreakHalt | None, owed: BreakIdentity | None, result: VerifyResult, trigger: str
+) -> None:
+    """The halt record of a trip this run made (`owed`); nothing otherwise. Never raises but on
+    cancellation: a record that cannot be written leaves the halt engaged."""
+    if halt is not None and owed is not None:
+        await halt.record_trip(owed, result, trigger=trigger)
 
 
 def _log() -> Any:

@@ -71,9 +71,11 @@ from candleviewer.api.audit_signing_keys import signing_key_view
 from candleviewer.api.audit_verify import (
     VERIFY_DEADLINE_S,
     VERIFY_STOP_ERRORS,
+    BreakHalt,
     observe_stop,
     observe_verify,
     raise_break_event,
+    record_halt,
     result_record,
     verify_stop,
     write_verify_record,
@@ -432,8 +434,12 @@ def make_audit_router(
     signing_keys: SigningKeyDirectory | None = None,
     export_limiter: AuditVerifyLimiter | None = None,
     export_max_range_days: int = 31,
+    break_halt: BreakHalt | None = None,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
+
+    `break_halt` is the audit-chain break halt (#2904): a break an on-demand verify finds halts
+    position-opening order entry before the run's records are written.
 
     `audit_service=None` (fake/CI-default backend, mirrors `AuthService`'s
     own optionality) and `principal_resolver=None` (no session module wired
@@ -802,6 +808,7 @@ def make_audit_router(
                 after_state=span,
             )
             return _unavailable("audit verify failed")
+        owed = None if break_halt is None else break_halt.trip(result)  # #2904: before any await
         observe_verify(result)  # the chain series follow the run, recorded or not
         outcome, severity, reason, after = result_record(result)
         request_id = principal.request_id
@@ -814,6 +821,7 @@ def make_audit_router(
             await raise_break_event(
                 verify_events, result, None if request_id is None else str(request_id)
             )
+            await record_halt(break_halt, owed, result, "on_demand")
         return JSONResponse(status_code=200, content=_jsonable(result))
 
     @router.get("/signing-keys")

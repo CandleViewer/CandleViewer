@@ -89,6 +89,7 @@ def test_required_rules_present() -> None:
         "SyntheticAlert",
         "AuditChainVerificationFailed",
         "AuditVerifyNotPassing",  # #2111 R-5
+        "AuditBreakHaltEngaged",  # #2904
         "EgressIpChanged",
         "CsrfRefusalsHigh",  # #2090 SR-041
         "CsrfRefusalAuditUnavailable",

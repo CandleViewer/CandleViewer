@@ -4964,6 +4964,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_audit_break_halt_state",
+        "gauge",
+        "state",
+        (),
+        "Audit-chain break halt: 1 while position-opening order entry is halted on an "
+        "unacknowledged break or an unread halt state, else 0.",
+        "== 1 pages (AuditBreakHaltEngaged) until the Owner acknowledges the break (#2904)",
+        _L,
+        "E42",
+        max_series=1,
+        exported=True,
+    ),
+    _s(
         "cv_audit_query_duration_seconds",
         "histogram",
         "seconds",

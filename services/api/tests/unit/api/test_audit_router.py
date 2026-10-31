@@ -1763,6 +1763,39 @@ def test_verify_event_that_fails_changes_neither_the_response_nor_the_record() -
     assert _verify_records(svc)[-1][:3] == ("failure", "critical", "entry_hash_mismatch@3")
 
 
+# ---- verify break: the order-entry halt (#2904) -------------------------------------------
+
+
+class _Halt:
+    """`BreakHalt`: what was tripped, and the records written so far at each trip."""
+
+    def __init__(self, svc: _FakeAuditService) -> None:
+        self.svc = svc
+        self.tripped: list[tuple[bool, int]] = []
+        self.recorded: list[tuple[int | None, str]] = []
+
+    def trip(self, result: Any) -> Any:
+        self.tripped.append((result.verified, len(_verify_records(self.svc))))
+        return None if result.verified else result.first_bad_id
+
+    async def record_trip(self, identity: Any, result: Any, *, trigger: str) -> bool:
+        self.recorded.append((identity, trigger))
+        return True
+
+
+def test_verify_break_on_demand_halts_before_its_result_record_then_records_the_halt() -> None:
+    svc = _FakeAuditService()
+    halt = _Halt(svc)
+    app = FastAPI()
+    app.include_router(make_audit_router(svc, _FakeResolver(_owner()), break_halt=halt))
+    client = TestClient(app)
+    assert client.post(_VERIFY, json={}).status_code == 200
+    svc.query_service.verify_result = _broken()
+    assert client.post(_VERIFY, json={}).status_code == 200
+    assert halt.tripped == [(True, 1), (False, 3)]  # the break: before its result record
+    assert halt.recorded == [(3, "on_demand")]
+
+
 # ---- Validate query parameters after authorisation: 401, then 403, then 422 -------------
 
 #: Each parameter with a type beyond text, a value that does not parse as it, and the rule

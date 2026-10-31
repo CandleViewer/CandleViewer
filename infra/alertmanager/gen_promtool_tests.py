@@ -57,6 +57,10 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "15m",
         {},
     ),
+    # #2904: halted for a minute pages; a halt acknowledged within it does not.
+    "AuditBreakHaltEngaged": (
+        'cv_audit_break_halt_state{env="live"}', "0 1+0x10", "0 1 0+0x10", "5m", {"env": "live"}
+    ),
     # Starts at 1 (degraded from the first scrape) — the real boot-failure shape.
     "KekUnavailable": (
         'cv_kek_degraded_state{env="live"}', "1+0x20", "0+0x20", "5m", {"env": "live"}

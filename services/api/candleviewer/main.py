@@ -130,6 +130,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # stopped, and one never reached stays None, which the teardown skips; `WsRuntime.stop()`, for
     # one, would otherwise wait out its grace for a server that never served.
     feature_flags = scrub_task = audit_verify = disk_budget = rule_prune = funding_task = None
+    audit_halt = None
     rolloff_task: RollOffTask | None = None
     bars_runtime = kline_refresh = audit_flush = overrides = health_registry = None
     account_health = ws_runtime = lost_jobs = view_as_flush = view_as_sweeper = None
@@ -168,6 +169,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         scrub_task = getattr(app.state, "scrub_task", None)
         if scrub_task is not None:
             scrub_task.start()
+        audit_halt = getattr(app.state, "audit_break_halt", None)
+        if audit_halt is not None:  # #2904, the real backend: read before traffic, then polled
+            await audit_halt.start()  # engaged until a read succeeds (fail closed)
         audit_verify = getattr(app.state, "audit_verify_job", None)
         if audit_verify is not None:  # #2111: after `start_all`, so the audit writer is up
             audit_verify.start()
@@ -324,6 +328,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("scrub_task", scrub_task.stop)
             if audit_verify is not None:  # #2111: a run writes through the audit writer (stop_all)
                 await teardown.run("audit_verify_job", audit_verify.stop)
+            if audit_halt is not None:  # #2904: its re-reads and rewrites use the audit module
+                await teardown.run("audit_break_halt", audit_halt.stop)
             if audit_exports is not None:  # #889 S9: its sweep, before the job store it reads
                 await teardown.run("audit_exports", audit_exports.stop)
             admin_jobs = getattr(app.state, "admin_jobs", None)

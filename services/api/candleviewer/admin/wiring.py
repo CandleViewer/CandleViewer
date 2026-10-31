@@ -20,6 +20,7 @@ from typing import Any, Final, Protocol
 
 from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.audit.actions import validate_action
+from candleviewer.audit.break_halt import AuditBreakHalt, AuditBreakHaltService
 from candleviewer.audit.export_signing import (
     ExportSigningFailed,
     Signer,
@@ -146,6 +147,7 @@ class SecretsBundle:
 
 
 __all__ = [
+    "AuditBreakHaltHandle",
     "AuditHandle",
     "AuditVerifyRunner",
     "LaneAuditWriter",
@@ -161,6 +163,7 @@ __all__ = [
     "SecretsMeta",
     "audit_lane_key_id",
     "audit_writer_sink",
+    "build_audit_break_halt",
     "build_audit_service",
     "build_audit_verify_job",
     "build_lane_audit_writer",
@@ -176,6 +179,7 @@ __all__ = [
     "unclaimed_machine_events",
 ]
 AuditHandle = AuditService
+AuditBreakHaltHandle = AuditBreakHaltService
 #: The scheduled verify run's port (#2111), so `app` can type an injected runner.
 AuditVerifyRunner = VerifyRunner
 #: The `machine_events` sink (E50-T63), its metric handles and its fail-closed error, for the
@@ -391,6 +395,16 @@ def build_audit_service(
     stays the scaffold. `start()` runs `lane_keys`, the composition root's
     lane key loader, once (ADR-0037 decision 6)."""
     return AuditService(repository, lane_keys=lane_keys)
+
+
+def build_audit_break_halt(
+    audit: AuditService, *, unread: bool, on_change: Callable[[str | None], Awaitable[None]]
+) -> AuditBreakHaltService:
+    """The audit-chain break halt and its service (#2904), with no I/O: `unread` on the real
+    backend, where nothing may trade until the lifespan's `start()` has read the chain; the fake
+    backend runs no verifier, so its halt starts clear. `on_change` publishes each change of the
+    halt's reason (None when clear) to the gateway's view of the kill switch."""
+    return AuditBreakHaltService(AuditBreakHalt(unread=unread), audit, on_change=on_change)
 
 
 def build_audit_verify_job(

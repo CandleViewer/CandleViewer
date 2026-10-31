@@ -397,6 +397,30 @@ class InterimKillSwitch(Interim):
         return None
 
 
+class HaltView(Protocol):
+    """A process-wide halt read in place, never awaited: `audit.break_halt.AuditBreakHalt`
+    (#2904), which `oms` never imports (C-3.3)."""
+
+    @property
+    def engaged(self) -> bool: ...
+
+
+class HaltingKillSwitch:
+    """The B18 port with the audit-chain break halt folded in (#2904, ruling BQ-241): while the
+    halt is engaged every account is `TradingDisabled` without a `reason`, whatever `inner` says;
+    otherwise `inner`'s verdict. Releasing `inner` never clears the halt, and acknowledging the
+    break never releases `inner` (BQ-255). One instance serves every reader of the port (G-79):
+    the OMS's switches, the trade-group readiness and the gateway's view of the switch."""
+
+    def __init__(self, inner: KillSwitch, halt: HaltView) -> None:
+        self.inner, self._halt = inner, halt
+
+    def refusal(self, account_id: AccountId) -> TradingDisabled | None:
+        if self._halt.engaged:
+            return TradingDisabled()
+        return self.inner.refusal(account_id)
+
+
 class TradingSwitchesBinding:
     """`TradingSwitches` (C-2.21; 24 Sec.8.4): the route's step 10 and B1's `SEND` ask it. It reads
     memory only and never awaits, and the first refusal wins:
@@ -407,7 +431,8 @@ class TradingSwitchesBinding:
     2. live trading enabled, for a live account: the `CV_TRADING_LIVE_ENABLED` setting and the
        `trading.live_enabled` flag's view, which is off while unread, both on (rulings Q4, Q6);
        either off is `TradingDisabled` without a `reason`;
-    3. the B18 kill switch, `InterimKillSwitch` until E39-S03 (ruling Q5);
+    3. the B18 kill switch, `InterimKillSwitch` until E39-S03 (ruling Q5), with the audit-chain
+       break halt folded in (`HaltingKillSwitch`, #2904);
     4. the app's one order-entry gate (24 Sec.8.4.1): its refusal is `OrderEntryRefused`, carrying
        the gate's `reason`."""
 
@@ -438,8 +463,11 @@ class TradingSwitchesBinding:
 
     def announce(self, *, metrics: Metrics) -> None:
         """At startup (20 Sec.6.2): `oms_interim_ports{port="kill_switch"}` at 1 with one WARNING
-        while the interim serves the B18 kill switch, else at 0."""
-        announce_interim_port("kill_switch", self._kill_switch, metrics=metrics)
+        while the interim serves the B18 kill switch, else at 0; through the audit-chain break
+        halt (#2904) to the switch it wraps."""
+        switch = self._kill_switch
+        inner = switch.inner if isinstance(switch, HaltingKillSwitch) else switch
+        announce_interim_port("kill_switch", inner, metrics=metrics)
 
 
 class KeyStandingReactions(Protocol):
@@ -2284,8 +2312,11 @@ class OmsRuntime:
         watch: Callable[[float], Awaitable[None]] = asyncio.sleep,
         serving_tick: Callable[[], ServingTick] = ServingTick,
         trade_groups: GroupTopic | None = None,
+        kill_switch: KillSwitch | None = None,
     ) -> None:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
+        #: The B18 port, the composition root's one instance (#2904 G-79), else the interim.
+        self._kill_switch = InterimKillSwitch() if kill_switch is None else kill_switch
         self._trade_groups = trade_groups  # E28-T05: seeded, and handed each group write
         #: The wait of the fencing grace (SEC-S3L2-01), apart from `sleep`'s retries, and the
         #: serving loop's between its watch's reads of the lane's state (SEC-S3L2-04).
@@ -2941,7 +2972,7 @@ class OmsRuntime:
         switches = TradingSwitchesBinding(
             live_enabled=settings.trading_live_enabled,
             live_flag=self._live_enabled,
-            kill_switch=InterimKillSwitch(),
+            kill_switch=self._kill_switch,
             gate=ServedGate(self._gate, standings),
             fenced=fenced,
         )
@@ -3269,6 +3300,7 @@ def build_oms_runtime(
     lane_transport: Callable[[], httpx.AsyncBaseTransport] | None = None,
     topics: AttachedTopics | None = None,
     trade_groups: GroupTopic | None = None,
+    kill_switch: KillSwitch | None = None,
 ) -> OmsRuntime | None:
     """The process's OMS runtime, with no I/O; None on the fake backend, which composes no OMS, so
     `placeOrder` answers `501 not_implemented` there (20 Sec.6.2). Its audit writer is its order
@@ -3278,7 +3310,8 @@ def build_oms_runtime(
     what its private-stream consumer takes (E29-T05 S8b); `topics`, the gateway's `orders`,
     `executions` and `positions` topics, what its committed steps and position rows feed and its
     lane's snapshot reads serve (E29-T13); `trade_groups`, the topic it seeds and hands each
-    committed group write to (E28-T05)."""
+    committed group write to (E28-T05); `kill_switch`, the B18 port with the audit-chain break
+    halt folded in (#2904), the one instance every reader of the port shares."""
     if settings.storage_backend != "real":
         return None
     return OmsRuntime(
@@ -3287,5 +3320,5 @@ def build_oms_runtime(
         standings=standings, oms_enabled=oms_enabled, live_enabled=live_enabled,
         profiles=profiles, persistence=persistence, feed=feed, lane_signing=lane_signing,
         health=health, hub=hub, lane_transport=lane_transport, topics=topics,
-        trade_groups=trade_groups,
+        trade_groups=trade_groups, kill_switch=kill_switch,
     )  # fmt: skip

@@ -12,7 +12,11 @@ One run, in order:
    no span cap, under the request's `deadline_s`.
 3. Its end. A break (`mismatch`) sets the chain gauge to 0, counts in
    `audit_chain_verification_failures_total` and raises the critical `audit_chain_break` system
-   event (#2462, #2468), none of which waits for its result record. A pass sets the gauge to 1
+   event (#2462, #2468), none of which waits for its result record; before any of them it halts
+   order entry (#2904, `BreakHalt.trip`), whose record follows the event. A break the Owner has
+   acknowledged trips nothing, so the walk resumes past it, to the head, and the first break past
+   it that is not acknowledged trips the halt (the verifier names only the first break: without
+   this an acknowledged break would hide every later one). A pass sets the gauge to 1
    once its result record is written. Anything else is `stopped`: its stop record carries the
    reason, and a stop turns a gauge of 1 into NaN (a known break, 0, stays).
 
@@ -29,23 +33,26 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 import structlog
 
 from candleviewer.api.audit import AuditServiceLike
 from candleviewer.api.audit_verify import (
     VERIFY_STOP_ERRORS,
+    BreakHalt,
     observe_stop,
     observe_verify,
     raise_break_event,
+    record_halt,
     result_record,
     verify_stop,
     write_verify_record,
 )
 from candleviewer.audit.models import AuditOutcome, Severity, VerifyResult
+from candleviewer.audit.query import VerifyRangeBeyondHead
 from candleviewer.audit.verify_runner import (
     VerifyOutcome,
     VerifyOutcomeKind,
@@ -59,6 +66,9 @@ from candleviewer.storage.errors import AuditEntryTooLarge
 #: largest id an entry can have it always starts at the first entry: the whole chain.
 _WHOLE_CHAIN_SPAN: Final = 2**63 - 1
 _SUCCESS, _FAILURE = AuditOutcome.SUCCESS, AuditOutcome.FAILURE
+#: Bound on the walks one run resumes past acknowledged breaks (#2904); each must move past
+#: the last, so a chain with more acknowledged breaks than this is logged and looked at no further.
+_MAX_RESUMES: Final = 64
 _INFO, _WARNING = Severity.INFO, Severity.WARNING
 
 __all__ = ["ChainVerifyRunner"]
@@ -71,6 +81,13 @@ def _log() -> Any:
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+class ResumingBreakHalt(BreakHalt, Protocol):
+    """The halt as the scheduled run uses it: also whether a break is one the Owner acknowledged
+    (`AuditBreakHaltService.acknowledges`)."""
+
+    def acknowledges(self, result: VerifyResult) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +115,7 @@ class _Records:
 class ChainVerifyRunner:
     """`VerifyRunner` over the audit module (`AuditService`). `events` is the system event
     writer for a break, or `None` where none is wired: the record and the series do not
-    depend on it."""
+    depend on it; `halt`, the audit-chain break halt (#2904), likewise."""
 
     def __init__(
         self,
@@ -106,10 +123,12 @@ class ChainVerifyRunner:
         events: SystemEventWriter | None = None,
         *,
         clock: Callable[[], datetime] = _utcnow,
+        halt: ResumingBreakHalt | None = None,
     ) -> None:
         self._audit = audit
         self._events = events
         self._clock = clock
+        self._halt = halt
 
     async def run(self, request: VerifyRunRequest) -> VerifyOutcome:
         started_at = self._clock()
@@ -141,17 +160,27 @@ class ChainVerifyRunner:
             return await self._stop(
                 started_at, records, "internal_error", VerifyStopReason.INTERNAL_ERROR
             )
-        return await self._end(started_at, records, result)
+        return await self._end(started_at, records, result, query)
 
     async def _end(
-        self, started_at: datetime, records: _Records, result: VerifyResult
+        self, started_at: datetime, records: _Records, result: VerifyResult, query: Any
     ) -> VerifyOutcome:
         if not result.verified:  # a break: its series and event do not wait for the record
+            owed = None if self._halt is None else self._halt.trip(result)  # before any await
             observe_verify(result)
+            trigger = records.request.trigger.value
             try:
                 await records.write(*result_record(result))
             finally:
                 await raise_break_event(self._events, result, None)
+                await record_halt(self._halt, owed, result, trigger)
+            if self._halt is not None and self._halt.acknowledges(result):
+                later = await self._past_acknowledged(
+                    self._halt, query, result, records.request.deadline_s
+                )
+                if later is not None:
+                    owed = self._halt.trip(later)  # synchronous, as soon as it is found
+                    await record_halt(self._halt, owed, later, trigger)
             return VerifyOutcome(
                 outcome=VerifyOutcomeKind.MISMATCH,
                 started_at=started_at,
@@ -178,6 +207,40 @@ class ChainVerifyRunner:
             ended_at=self._clock(),
             entries_checked=result.entries_checked,
         )
+
+    async def _past_acknowledged(
+        self, halt: ResumingBreakHalt, query: Any, found: VerifyResult, deadline_s: float
+    ) -> VerifyResult | None:
+        """The first break past the acknowledged `found` that is not acknowledged itself (#2904),
+        or None. Each walk resumes from the id after the last break (`VerifyPlan.resumed`: its
+        anchor is that entry's stored hash) to the head, under the run's deadline; one that
+        names no break later than the last, or stops, ends the search (logged, by class): as a
+        stopped run, it never trips, and the next run looks again."""
+        current: VerifyResult = found
+        for _ in range(_MAX_RESUMES):
+            last = current.first_bad_id
+            if last is None:
+                return None
+            try:
+                plan = await query.plan_verify(
+                    from_id=last + 1, to_id=None, max_span=_WHOLE_CHAIN_SPAN
+                )
+                current = await query.run_verify(replace(plan, resumed=True), deadline_s=deadline_s)
+            except VerifyRangeBeyondHead:  # the break was the head: nothing past it
+                return None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                _log().warning("audit.verify.resume_stopped", error=type(exc).__name__)
+                return None
+            if current.verified:
+                return None
+            if not halt.acknowledges(current):
+                return current
+            if current.first_bad_id is None or current.first_bad_id <= last:  # no way past it
+                return None
+        _log().error("audit.verify.resume_capped", resumes=_MAX_RESUMES)
+        return None
 
     async def _stop(
         self,

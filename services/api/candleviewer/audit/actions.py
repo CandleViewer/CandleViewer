@@ -338,6 +338,12 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "admin.audit_verify",
         "admin.audit_export",
         "admin.audit_denied",
+        # #2904 (04 §8.1 "Enforced posture"; 24 §15.5): order entry halted on a verified chain
+        # break (system), the Owner's acknowledgement of that named break (written ahead) and a
+        # refused acknowledgement (`audit/break_halt.py`).
+        "audit.chain_break_halted",
+        "audit.chain_break_acknowledged",
+        "audit.chain_break_ack_denied",
         # E42-T01: entering any /admin/* route (allowed or denied), {route, reauth_age_s}.
         "admin.area_entered",
         # #3085 (E42 AD-F03): read-only view-as, emitted by its server slice. Their fields,

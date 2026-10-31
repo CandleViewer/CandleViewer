@@ -1073,6 +1073,18 @@ tests:
               summary: "Expected metric audit_chain_verification_failures_total is not emitted"
               runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - eval_time: 14m
+        alertname: ExpectedMetricMissingCvAuditBreakHaltState
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvAuditBreakHaltState
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_audit_break_halt_state is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
         alertname: ExpectedMetricMissingAuthAuditOutcomeLostTotal
         exp_alerts: []
       - eval_time: 15m
@@ -1323,6 +1335,8 @@ tests:
         values: "1+0x25"
       - series: 'audit_chain_verification_failures_total{env="demo"}'
         values: "1+0x25"
+      - series: 'cv_audit_break_halt_state{env="demo"}'
+        values: "0+0x25"
       - series: 'auth_audit_outcome_lost_total{env="demo"}'
         values: "1+0x25"
       - series: 'ws_connection_state{env="demo"}'
@@ -1423,6 +1437,9 @@ tests:
         exp_alerts: []
       - eval_time: 20m
         alertname: ExpectedMetricMissingAuditChainVerificationFailuresTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvAuditBreakHaltState
         exp_alerts: []
       - eval_time: 20m
         alertname: ExpectedMetricMissingAuthAuditOutcomeLostTotal

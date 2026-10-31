@@ -59,6 +59,7 @@ from candleviewer.admin.wiring import (
     SecretsBundle,
     SecretsHandle,
     audit_writer_sink,
+    build_audit_break_halt,
     build_audit_service,
     build_audit_verify_job,
     build_secrets_service,
@@ -345,6 +346,7 @@ from candleviewer.oms.service import OmsService
 from candleviewer.oms.ws_topics import FAMILIES as OMS_FAMILIES
 from candleviewer.oms_reads_wiring import oms_reads, order_versions
 from candleviewer.oms_wiring import (
+    HaltingKillSwitch,
     InterimKillSwitch,
     OmsAudit,
     OmsRuntime,
@@ -2183,6 +2185,25 @@ def create_app(
         if health_pg is not None
         else None
     )
+
+    # #2904 (04 §8.1 "Enforced posture"): the audit-chain break halt, folded into the one B18 kill
+    # switch port every reader shares (G-79): the OMS's switches, the trade-group readiness and,
+    # through each change it publishes, the gateway's view. On the real backend it is engaged until
+    # the lifespan's boot read of the chain succeeds (fail closed); a verifier's break trips it.
+    # The frame's `reason` names the cause (23 §15.9, a free string): `audit_chain_break`, or
+    # `audit_halt_unread` while the chain is unread or its last read failed (fail closed).
+    # Until E39-S03 the halt is the only producer of this view, so a clear publishes
+    # `engaged=False`; when E39-S03 lands, the gateway's view must OR the two sources (the B18
+    # engine's state and this halt), so neither's clear can release the other's engagement.
+    async def show_audit_halt(reason: str | None) -> None:
+        await ws_events.kill_switch_changed(engaged=reason is not None, reason=reason)
+
+    audit_halt = build_audit_break_halt(
+        ctx.audit, unread=resolved.storage_backend == "real", on_change=show_audit_halt
+    )
+    # the lifespan starts it (its first read, then its re-reads) on the real backend only
+    app.state.audit_break_halt = audit_halt if resolved.storage_backend == "real" else None
+    kill_switch_port = HaltingKillSwitch(InterimKillSwitch(), audit_halt.halt)
     admin_jobs = AdminJobStore()
     app.state.admin_jobs = admin_jobs  # cancelled by the lifespan at shutdown
     # #889 S9: the export files the download serves, found in the job store it shares; the
@@ -2225,6 +2246,7 @@ def create_app(
             ),
             verify_deadline_s=resolved.audit_verify_deadline_s,
             verify_events=chain_break_events,
+            break_halt=audit_halt,
             exports=audit_exports,
             step_up=ctx.auth,
             download_limiter=AuditVerifyLimiter(
@@ -2559,9 +2581,10 @@ def create_app(
         account_health.order_entry_check
     )
     # E28-T05 S2b (#909): the definition reads, readiness from each account row, that gate, the
-    # B18 kill switch (the OMS's interim) and the live gate. No rollout flag gates a read (22).
+    # B18 kill switch (the OMS's port, with the #2904 halt) and the live gate. No rollout flag
+    # gates a read (22).
     app.state.trade_group_readiness = readiness = GateReadiness(
-        app.state.order_entry_gate, kill_switch=InterimKillSwitch().refusal,
+        app.state.order_entry_gate, kill_switch=kill_switch_port.refusal,
         live_enabled=resolved.trading_live_enabled, live_flag=feature_flags.live_enabled,
         lockouts=NoLockouts(),
     )  # fmt: skip
@@ -2618,6 +2641,7 @@ def create_app(
         hub=ws_hub,
         topics=ws_oms,  # E29-T13 (#4207): its WS topics, published from its lane
         trade_groups=ws_trade_groups,
+        kill_switch=kill_switch_port,  # #2904: the halt's port, shared (G-79)
     )
     # #913 slice 3F (24 Sec.8.4): `placeOrder` over that runtime, mounted whatever
     # `trading.oms_enabled` says (it gates admission). The principal is the session's with its
@@ -2749,7 +2773,7 @@ def create_app(
     # backend runs it with the real runner (an injected one, a test's, wins); the fake backend has
     # none: no job, and the lifespan logs `audit.verify_job_not_wired`.
     if audit_verify_runner is None and resolved.storage_backend == "real":
-        audit_verify_runner = ChainVerifyRunner(ctx.audit, chain_break_events)
+        audit_verify_runner = ChainVerifyRunner(ctx.audit, chain_break_events, halt=audit_halt)
     app.state.audit_verify_job = build_audit_verify_job(
         ctx.audit, resolved, metrics_facade, audit_verify_runner
     )

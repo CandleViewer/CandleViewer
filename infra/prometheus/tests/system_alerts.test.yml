@@ -126,6 +126,30 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: cv_audit_break_halt_state{env="live"}
+    values: 0 1+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuditBreakHaltEngaged
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: audit_break_halt
+        env: live
+      exp_annotations:
+        summary: 'Order entry halted after an audit-chain break: the Owner must acknowledge
+          it'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditbreakhaltengaged
+- interval: 1m
+  input_series:
+  - series: cv_audit_break_halt_state{env="live"}
+    values: 0 1 0+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuditBreakHaltEngaged
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: cv_kek_degraded_state{env="live"}
     values: 1+0x20
   alert_rule_test:

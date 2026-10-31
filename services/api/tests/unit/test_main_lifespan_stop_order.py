@@ -218,6 +218,25 @@ async def test_lifespan_stops_the_audit_verify_job_before_the_audit_module() -> 
     assert "audit.verify_job_not_wired" not in [e["event"] for e in logs]  # a job is wired
 
 
+class _HaltStart(_AsyncStart):
+    async def start(self) -> None:
+        self.stops.started.append(self.name)
+
+
+async def test_lifespan_reads_the_audit_break_halt_before_serving_and_stops_it_before_audit() -> (
+    None
+):
+    """#2904: on the real backend the halt's first read (fail closed) runs after the audit module
+    is up and before the app serves, then its re-reads stop before the audit module does."""
+    stops = _Stops()
+    app = _app(stops)
+    app.state.audit_break_halt = _HaltStart("audit_break_halt", stops)
+    async with _lifespan(app):
+        assert stops.started.index("module:audit") < stops.started.index("audit_break_halt")
+        assert stops.started.count("audit_break_halt") == 1
+    assert stops.order.index("audit_break_halt") < stops.order.index("module:audit")
+
+
 async def test_lifespan_runs_account_health_between_the_modules_start_and_stop() -> None:
     """E27-T04 (#837): started after `start_all`, stopped (its calls drained) before `stop_all`."""
     stops = _Stops()

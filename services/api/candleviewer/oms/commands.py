@@ -197,6 +197,7 @@ from .errors import (
     StopRequestInFlight,
     StopRequestPending,
     StoreUnavailable,
+    TradingDisabled,
     problem_for,
 )
 from .order_link_resolution import (
@@ -552,6 +553,16 @@ def _price(value: Decimal) -> bool:
     return value.is_finite() and value > 0
 
 
+def _protective(row: OrderRow) -> bool:
+    """A recorded protective close (C-2.6, 24 Sec.8.10): what `closePosition` and
+    `closeAllPositions` record, a reduce-only `flatten`. Its re-send passes the switches'
+    `TradingDisabled` (live trading not enabled, the B18 kill switch, the audit-break halt, the
+    order-entry gate) as `submit`'s step 6 does; the fence's `OmsNotReady` and the clock halt
+    still refuse. The row keeps no route, so a reduce-only `flatten` `placeOrder` recorded passes
+    too: reduce-only, it can never open or add to a position."""
+    return row.reduce_only and row.intent == "flatten"
+
+
 def _check_stops(order: StoredOrder) -> None:
     """C-2.6, checked here before anything is sent, whatever the callers and the exchange port
     check: an order that is not reduce-only carries its native stop (SEC-2B1-04; `FirstPersist`
@@ -880,13 +891,13 @@ class OmsCommandPort:
     async def _resumed(
         self, account: AccountRef, port: RoutedPort, request: PlaceOrderRequest, row: OrderRow
     ) -> PlaceOutcome | _Expired:
-        """[LANE-26]'s order: the lookup whatever the switches say, the switches and the clock
-        halt, the live bounds, then `adopt_or_resend`, which looks once more just before its one
-        re-send (SR-E29-15) and applies rule 6 from the port's own retention (24 Sec.8.3: demo's 6
-        days). A refusal is `ResendRefused`; `OmsNotReady`, the switches' while the serving loop
-        stalls (#913 L4, SEC-S3L4-03) or the halt's while no clock is measured yet
-        (`ClockHalt.refusal`), is raised as it is: both are logged `oms_resend_refused`, and
-        nothing is sent."""
+        """[LANE-26]'s order: the lookup whatever the switches say, the switches (a protective
+        close's carve-out applies, `_protective`) and the clock halt, the live bounds, then
+        `adopt_or_resend`, which looks once more just before its one re-send (SR-E29-15) and
+        applies rule 6 from the port's own retention (24 Sec.8.3: demo's 6 days). A refusal is
+        `ResendRefused`; `OmsNotReady`, the switches' while the serving loop stalls (#913 L4,
+        SEC-S3L4-03) or the halt's while no clock is measured yet (`ClockHalt.refusal`), is
+        raised as it is: both are logged `oms_resend_refused`, and nothing is sent."""
         link = request.order_link_id
         try:
             found = await find_by_link_id(port, request)
@@ -901,6 +912,13 @@ class OmsCommandPort:
             refusal: OrderRefused | None = self._switches.refusal(
                 account.account_id, account.environment
             )
+            if isinstance(refusal, TradingDisabled) and _protective(row):
+                _log().info(  # C-2.6 (24 Sec.8.10): as `submit`'s step 6 carve-out
+                    "oms_resend_protective_close_admitted",
+                    order_link_id=link,
+                    code=problem_for(refusal).code,
+                )
+                refusal = None
             if refusal is None:  # SEC-2B1-01: never a re-send under a clock a `10002` tripped
                 refusal = self._clock_halt.refusal()
         except OmsNotReady as not_ready:  # a stalled serving loop (L4), or no clock measured (Q8)
