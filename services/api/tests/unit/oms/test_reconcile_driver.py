@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from itertools import pairwise
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -44,7 +44,7 @@ from candleviewer.statechart.persistence import (
 )
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
 from candleviewer.statechart.registry import default_registry
-from tests.unit.oms.reconcile_rig import ACCOUNT, Job, remote, rest, row
+from tests.unit.oms.reconcile_rig import ACCOUNT, OTHER, Job, remote, rest, row
 from tests.xstate_contract._harness import Audit, Keys, Pager, Repo
 
 WINDOW_US = round(STALE_AFTER_S * 1_000_000)
@@ -626,6 +626,72 @@ async def test_an_open_whose_step_hangs_is_bounded_and_refuses_the_account(
         assert ("page", rj._UNOPENED) in fresh.world.oms.pages
     finally:
         await driver.stop()
+
+
+def _failing(
+    driver: ReconcileJobs, monkeypatch: pytest.MonkeyPatch, event: str, account: Any
+) -> None:
+    """The driver's sends of `event` to `account`'s job do not answer (a bounded send's
+    `TimeoutError`); every other send goes through."""
+    send = driver._send_job
+
+    async def failing(job: Any, sent: str, payload: Any) -> None:
+        if (sent, job.account) == (event, account):
+            raise TimeoutError
+        await send(job, sent, payload)
+
+    monkeypatch.setattr(driver, "_send_job", failing)
+
+
+async def test_a_start_send_that_fails_holds_that_account_alone_until_a_trigger_reaches_it(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The code look's m1: any failure of an account's start, a send that does not answer
+    included, holds that account (paged) and the others still start; its job is open, so the
+    next trigger B19 takes from a rest rebuilds its standing from that state."""
+    driver = _driver(job, timers)
+    _failing(driver, monkeypatch, "STARTUP", ACCOUNT)
+    with capture_logs() as logs:
+        await driver.start([ACCOUNT, OTHER])
+    try:
+        unopened = [e for e in logs if e["event"] == "reconcile_job_unopened"]
+        assert [(e["account_id"], e["failure"]) for e in unopened] == [
+            (str(ACCOUNT), "TimeoutError")
+        ]
+        assert ("page", rj._UNOPENED) in job.world.oms.pages
+        assert job.standing.is_stale(ACCOUNT) and set(driver._jobs) == {ACCOUNT, OTHER}
+        assert OTHER in driver._pass_ids  # its STARTUP went out
+        monkeypatch.undo()
+        assert await _resting(driver) == "idle"
+        assert await driver.trigger(ACCOUNT, "periodic") is not None  # B19 takes it
+        assert not job.standing.is_stale(ACCOUNT)
+    finally:
+        await driver.stop()
+
+
+async def test_an_owed_send_that_fails_still_leaves_the_restored_job_its_cadence(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The code look's m1: the cadence is spawned before the sends a restore owes, so a job whose
+    owed `RETRY_DUE` did not answer is held (its start failed) yet still has its timer."""
+    memory = Memory()
+    first = _driver(job, timers, persistence=memory)
+    await first.start([])
+    _starve(job)
+    await first.trigger(ACCOUNT, "periodic")
+    assert await _until(first, "backing_off") == "backing_off"
+    await memory.persist(first._jobs[ACCOUNT].interp, first._jobs[ACCOUNT].machine_key)
+    await first.stop()
+    fresh = Job(retries=cast(Any, RetryHop()))  # the driver's hop, as its phases take it
+    later = _driver(fresh, timers, persistence=memory)
+    _failing(later, monkeypatch, "RETRY_DUE", ACCOUNT)
+    await later.start([ACCOUNT])
+    try:
+        restored = later._jobs[ACCOUNT]
+        assert restored.cadence is not None and not restored.cadence.done()
+        assert fresh.standing.is_stale(ACCOUNT)  # its start failed: held, fail closed
+    finally:
+        await later.stop()
 
 
 # --- The host timers: the cadence and the retry (C-12.7, A2) ---------------------------------

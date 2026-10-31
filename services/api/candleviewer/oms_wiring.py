@@ -93,6 +93,7 @@ from candleviewer.oms.errors import (
     OmsNotReady,
     OrderEntryRefused,
     OrderHistoryRefused,
+    OrderRefused,
     ReconciliationUnavailable,
     StoreUnavailable,
     TradingDisabled,
@@ -1933,8 +1934,11 @@ class _Parts:
     #: (BQ-14); None where the stores compose none.
     reconcile: ReconcileWiring | None = None
     #: The accounts a job opens for at start: the environment's that resolve to a trading
-    #: account (an active key, not deleted); the rest open on their first trigger.
-    tradable: Callable[[Sequence[UUID]], Awaitable[list[AccountId]]] | None = None
+    #: account (an active key, not deleted), and those whose read failed, which are held; the
+    #: rest open on their first trigger.
+    tradable: (
+        Callable[[Sequence[UUID]], Awaitable[tuple[list[AccountId], list[AccountId]]]] | None
+    ) = None
     #: The way back to the serving loop, where the reconciliation routes' records are written
     #: ahead (`OnLaneReconciliation`, E29-T06 #914).
     serving: Serving | None = None
@@ -2883,15 +2887,15 @@ class OmsRuntime:
         """E29-T06 #914 (24 Sec.8.5, BQ-14): the reconciliation jobs open on the lane, each sent
         `startup`, before `ready` is set; order entry never waits for their passes. The accounts
         are the environment's that resolve to a trading account; another opens on its stream's
-        first trigger. The start is bounded as the seed is (`_bounded`), so it delays `ready` by
-        at most 17 s, and one that overruns has failed, its task on the lane cancelled. A start
-        that fails holds the whole environment's order entry (the standing refuses every
-        account, `account_stale`), as an account it did not reach has no job and no standing
-        rebuilt from its restored state (INV-B19-a, C-2.21): the first is logged CRITICAL and
-        paged, a retry's failure logged. The runtime goes on to `ready`, so a cancel, a close
-        and a stop write pass (C-2.6), and the startup task retries the start
-        (`_reconcile_retried`). Whether the jobs started, or none are composed; either lifts a
-        hold an earlier start left."""
+        first trigger, and one whose read failed is held refused until then (`tradable`). The
+        start is bounded as the seed is (`_bounded`), so it delays `ready` by at most 17 s, and
+        one that overruns has failed, its task on the lane cancelled. A start that fails holds
+        the whole environment's order entry (the standing refuses every account,
+        `account_stale`), as an account it did not reach has no job and no standing rebuilt from
+        its restored state (INV-B19-a, C-2.21): the first is logged CRITICAL and paged, a retry's
+        failure logged. The runtime goes on to `ready`, so a cancel, a close and a stop write
+        pass (C-2.6), and the startup task retries the start (`_reconcile_retried`). Whether the
+        jobs started, or none are composed; either lifts a hold an earlier start left."""
         if parts.reconcile is None or parts.tradable is None:
             self._standing.release()
             return True
@@ -2899,7 +2903,10 @@ class OmsRuntime:
 
         async def opened() -> None:
             ids = await self._bounded(parts.sweep.environment_accounts(self._env))
-            await jobs.start(await tradable(ids))
+            found, unread = await tradable(ids)
+            for account in unread:  # no refusal: held until its job opens (24 Sec.8.5)
+                self._standing.mark_stale(account)
+            await jobs.start(found)
 
         try:
             await self._bounded(parts.lane.call(opened()))
@@ -3431,19 +3438,30 @@ class OmsRuntime:
                 environment=env, clock=lane_clock,
             )  # fmt: skip
 
-            async def tradable(ids: Sequence[UUID]) -> list[AccountId]:
-                """The accounts that resolve to a trading account now, each read bounded."""
+            async def tradable(
+                ids: Sequence[UUID],
+            ) -> tuple[list[AccountId], list[AccountId]]:
+                """The accounts that resolve to a trading account now, each read bounded, and
+                those whose read failed: one refused (deleted, keyless or of another environment)
+                is skipped, as its stream opens it; one unread (the store down or slow, which the
+                binding answers `StoreUnavailable`) is held (24 Sec.8.5)."""
                 found: list[AccountId] = []
+                unread: list[AccountId] = []
                 for account_id in ids:
                     try:
                         async with asyncio.timeout(ACCOUNT_READ_TIMEOUT_S):
                             found.append(
                                 (await accounts.trading_account(AccountId(account_id))).account_id
                             )
-                    except Exception as exc:  # deleted, keyless or unread: its stream opens it
-                        _log().info("oms_reconcile_account_skipped", account_id=str(account_id),
-                                    reason=type(exc).__name__)  # fmt: skip
-                return found
+                    except Exception as exc:
+                        why = {"account_id": str(account_id), "reason": type(exc).__name__}
+                        refused = not isinstance(exc, StoreUnavailable)
+                        if isinstance(exc, OrderRefused) and refused:  # its stream opens it
+                            _log().info("oms_reconcile_account_skipped", **why)
+                        else:  # unread, no refusal: held until its job opens
+                            _log().warning("oms_reconcile_account_unread", **why)
+                            unread.append(AccountId(account_id))
+                return found, unread
 
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,

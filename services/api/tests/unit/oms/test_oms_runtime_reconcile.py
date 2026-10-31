@@ -5,9 +5,10 @@
 A start of the jobs that fails before any opens holds every account's order entry (the standing,
 `account_stale`) while the runtime goes on to `ready`, and the startup task retries it on the
 sweep's backoff until it works, which lifts the hold (#914's security look, Low 2; INV-B19-a); one
-that fails once the stop has begun holds and pages nothing (the code look's M2). The routes reach
-the jobs only through `OmsRuntime.reconciliation`: each call on the order lane, its write-ahead
-record back on the serving loop, which a real `OrderLane` shows across threads."""
+that fails once the stop has begun holds and pages nothing. An account whose read fails at the
+start is held until its job opens, and a refused one skipped (the code look's m1 and M2). The
+routes reach the jobs only through `OmsRuntime.reconciliation`: each call on the order lane, its
+write-ahead record back on the serving loop, which a real `OrderLane` shows across threads."""
 
 from __future__ import annotations
 
@@ -22,15 +23,22 @@ from structlog.testing import capture_logs
 
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId
+from candleviewer.exchange.base.models import AccountRef
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import OmsNotReady, ReconciliationUnavailable
+from candleviewer.oms.fakes import InMemorySubmissionStore
 from candleviewer.oms.reconcile_job import NothingToResolve, PassTaken
 from candleviewer.oms.reconcile_standing import UNSTARTED_DETAIL, ReconcileStanding
 from candleviewer.oms_lane import HOP_TIMEOUT_S, OrderLane, Serving
 from candleviewer.oms_wiring import OmsRuntime, OnLaneReconciliation
 from candleviewer.statechart.bindings import b19_reconciliation as b19
+from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.repositories.trading_accounts import (
+    InMemoryTradingAccountReads,
+    TradingAccountRow,
+)
 from tests.unit.oms.test_handovers import _Store
-from tests.unit.oms.test_oms_runtime import Recording, World, started, until
+from tests.unit.oms.test_oms_runtime import KEY, Recording, World, started, until
 from tests.unit.test_oms_reconcile_wiring import Reads
 
 ACCOUNT = AccountId(UUID(int=0x914))
@@ -142,6 +150,42 @@ async def test_a_stop_ends_the_retry_and_only_a_start_that_works_lifts_the_hold(
     async with started(runtime):
         await _ready(runtime)
         assert not standing.held and b19.ports_wired()
+
+
+async def test_an_unread_account_is_held_and_a_refused_one_skipped_until_its_job_opens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The code look's m1 (`tradable`): an account the binding refuses (deleted or keyless) is
+    skipped, as its stream opens it; one whose read fails (`StoreUnavailable`) is no refusal, so
+    it is held, logged at WARNING, until a trigger opens its job, which rebuilds its standing."""
+    world, standing = _world(), ReconcileStanding()
+    ok, gone, unread = (AccountId(UUID(int=n)) for n in (0xA1, 0xA2, 0xA3))
+    for account, deleted in ((ok, False), (gone, True), (unread, False)):
+        ref = AccountRef(account_id=account, uid="1", environment="demo", key_ref="k")
+        InMemorySubmissionStore(world.store).seed_account(ref)
+        world.accounts.append(TradingAccountRow(account, "demo", "1", deleted, KEY))
+    real = InMemoryTradingAccountReads.read_account
+
+    async def read(self: InMemoryTradingAccountReads, account_id: UUID) -> Any:
+        if account_id == unread:
+            raise StorageQueryFailed(None)  # the store down: the binding answers StoreUnavailable
+        return await real(self, account_id)
+
+    monkeypatch.setattr(InMemoryTradingAccountReads, "read_account", read)
+    runtime = world.runtime(standing=standing)
+    with capture_logs() as logs:
+        async with started(runtime):
+            await _ready(runtime)
+            jobs = runtime._composed().reconcile
+            assert jobs is not None
+            assert set(jobs.jobs._jobs) == {ok}  # only the account that resolved
+            assert standing.is_stale(unread) and not standing.is_stale(gone)
+            await jobs.jobs.trigger(unread, "reconnect")  # its stream's first trigger
+            assert not standing.is_stale(unread)  # opened, so rebuilt from its state
+    skipped = [e["account_id"] for e in logs if e["event"] == "oms_reconcile_account_skipped"]
+    held = [e for e in logs if e["event"] == "oms_reconcile_account_unread"]
+    assert skipped == [str(gone)]
+    assert [(e["account_id"], e["log_level"]) for e in held] == [(str(unread), "warning")]
 
 
 async def test_a_composition_with_no_reconciliation_lifts_a_hold_an_earlier_start_left() -> None:
