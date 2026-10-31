@@ -14,11 +14,16 @@ type Story = StoryObj<typeof PnLBadge>;
 const row = { display: "flex", gap: "var(--space-inset-md)", alignItems: "center" } as const;
 const col = { display: "grid", gap: "var(--space-inset-sm)", justifyItems: "start" } as const;
 
-/** The one sentence assistive technology reads, and no `aria-label` anywhere (E29-D04 §2.3). */
+/**
+ * The one sentence assistive technology reads, and no `aria-label` on the badge or inside it
+ * (E29-D04 §2.3). Scoped to the badge: the preview's own mount probe is a labelled `<output>`.
+ */
 const reads = async (canvas: HTMLElement, sentence: string): Promise<void> => {
   const badge = canvas.querySelector<HTMLElement>('[data-cmp="CMP-116"]');
+  await expect(badge).not.toBeNull();
   await expect(badge?.querySelector(".cv-visually-hidden")).toHaveTextContent(sentence);
-  await expect(canvas.querySelector("[aria-label]")).toBeNull();
+  await expect(badge?.hasAttribute("aria-label")).toBe(false);
+  await expect(badge?.querySelector("[aria-label]")).toBeNull();
 };
 
 /** `CMP-116/bar-profit`: "+8.00 USDT", the bar in `color.buy.default`, read "profit 8.00 USDT". */
