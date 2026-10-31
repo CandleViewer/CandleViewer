@@ -263,11 +263,13 @@ free loopback ports: make the six credentials and the lane key, start `postgres`
 `alembic upgrade head`, seed the users with `seed_fixture_user.py --totp-secret-out` and write the
 users file, start the API with the workflow's environment (testnet, the real storage backend, the
 synthetic feed, `CV_TEST_CLOCK` with its file, the preview's origin), and build `apps/web/dist`.
-Then, from `apps/web`, run `npx playwright test -c e2e/playwright.real.config.ts` with
-`CV_E2E_REAL_API`, `CV_E2E_REAL_PREVIEW_PORT`, `CV_E2E_REAL_USERS_FILE`, `CV_E2E_REAL_PASSWORD`,
-`CV_TEST_CLOCK_FILE` and the `COMPOSE_*` variables set (`e2e/support/real/stack.ts` reads them).
-The test clock moves auth time, so the database must be a throwaway one (C-2.11): `down -v` it
-after.
+Then, from `apps/web`, run `npx playwright test -c e2e/playwright.real.config.ts` with these set:
+`CV_E2E_REAL_USERS_FILE`, `CV_E2E_REAL_PASSWORD` and `CV_TEST_CLOCK_FILE`, which
+`e2e/support/real/stack.ts` reads; `CV_E2E_REAL_API`, which `e2e/vite.real.config.ts` reads;
+`CV_E2E_REAL_PREVIEW_PORT`, which `e2e/playwright.real.config.ts` reads; and the `COMPOSE_*`
+variables, with those the compose file requires, which the audit slice's `docker compose exec` in
+`e2e/support/real/failureArtefacts.ts` reads. The test clock moves auth time, so the database must
+be a throwaway one (C-2.11): `down -v` it after.
 
 To triage a red `dast-rules` or `dast-market` run (#3991: `dast-rules-nightly.yml` and
 `dast-market-nightly.yml`, through `_dast-low-priv.yml`, as a synthetic Viewer), find the step that
