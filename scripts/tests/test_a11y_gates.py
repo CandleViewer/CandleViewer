@@ -273,3 +273,19 @@ def test_flash_first_change_of_a_capture_counts() -> None:
     series = [1.0 if (i % 20) in range(10, 16) else 0.0 for i in range(60)]
     assert gates.count_flashes(series, 60) == 3
     assert gates.check_flash({"fps": 60, "components": {"price-flash": series}})
+
+
+def test_flash_rise_then_fall_counts_exactly_one() -> None:
+    assert gates.count_flashes([0.0] * 5 + [1.0] * 5 + [0.0] * 5, 60) == 1
+
+
+def test_flash_rise_fall_rise_counts_one_and_ignores_the_dangling_half() -> None:
+    assert gates.count_flashes([0.0] * 5 + [1.0] * 5 + [0.0] * 5 + [1.0] * 5, 60) == 1
+
+
+def test_flash_window_slides_across_a_wall_second_boundary() -> None:
+    # Three pulses straddling frame 60: wall-second buckets would split them 1 + 2 and pass.
+    series = [0.0] * 120
+    for start in (40, 60, 80):
+        series[start : start + 6] = [1.0] * 6
+    assert gates.count_flashes(series, 60) == 3

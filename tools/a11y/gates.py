@@ -126,9 +126,10 @@ def check_lighthouse(scores: dict, floor: float = LIGHTHOUSE_FLOOR) -> list[str]
 def count_flashes(luminance: list[float], fps: float) -> int:
     """Max flashes in any 1 s window.
 
-    Calibration (E47-S04, WCAG 2.3.1 general flash): a flash is a PAIR of opposing
-    luminance changes, each >= FLASH_LUMINANCE_DELTA (0.1 relative luminance), so the
-    window's change count is halved. The gate fails at >= 3 flashes in any 1 s window
+    Calibration (E47-S04, WCAG 2.3.1 general flash): "a flash is a pair of opposing
+    changes in relative luminance", each >= FLASH_LUMINANCE_DELTA (0.1), so the
+    window's change count is halved and a dangling half is ignored. The window
+    slides: every change opens one, so it is any 1 s period, not wall-second buckets. The gate fails at >= 3 flashes in any 1 s window
     (WCAG's own line is "more than 3"; this is one stricter). The flash coalescer lets
     one cell start at most every 500 ms (HS-1): at most 2 flashes in any 1 s window,
     which passes with margin; the ticket's earlier 400 ms interval would admit 3 and
