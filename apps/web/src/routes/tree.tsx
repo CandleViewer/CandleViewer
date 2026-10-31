@@ -30,6 +30,7 @@ import { SessionsSection } from "../features/session/SessionsSection";
 import { getMeClaims } from "../lib/auth/meCache";
 import { ShellLayout } from "../features/app-shell/ShellLayout";
 import { ScreenRoot } from "../features/app-shell/ScreenRoot";
+import { WatchlistRoute } from "../features/watchlist/WatchlistRoute";
 
 function elementFor(routeId: string, owner: string | null): RouteObject["element"] {
   if (routeId === "R-900") return <ForbiddenState />;
@@ -56,6 +57,8 @@ function elementFor(routeId: string, owner: string | null): RouteObject["element
       </ScreenRoot>
     );
   if (routeId === "R-303") return <AdminInviteScreen />;
+  // R-111 hosts SCR-100 as a routed page until E15's pane host (#4702 pre-ruling 1); the manifest's owner stays.
+  if (routeId === "R-111") return <WatchlistRoute />;
   if (routeId === "R-101") {
     // First sign-in lands on /terminal/last -> here; the card is server-gated (401 => renders nothing).
     return (
