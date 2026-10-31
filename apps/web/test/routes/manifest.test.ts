@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
+import { ROUTE_TITLES, documentTitle } from "../../src/routes/titles";
 
 /**
  * Parses the §2 "Full route tree" table out of `12-sitemap.md` and fails
@@ -46,5 +47,16 @@ describe("route manifest coverage", () => {
         expect(entry.access).toEqual({ roles: ["owner"], denyAs: "404" });
       }
     }
+  });
+
+  it("gives every route ID a unique, non-empty page title (D-01, WCAG 2.4.2)", () => {
+    const titles = ROUTE_MANIFEST.map((entry) => ROUTE_TITLES[entry.id]);
+    for (const [i, title] of titles.entries()) {
+      expect(title?.trim(), ROUTE_MANIFEST[i]?.id).toBeTruthy();
+    }
+    expect(new Set(titles).size).toBe(titles.length);
+    expect(Object.keys(ROUTE_TITLES).sort()).toEqual(ROUTE_MANIFEST.map((e) => e.id).sort());
+    expect(documentTitle("Login")).toBe("Login - CandleViewer");
+    expect(documentTitle(undefined)).toBe("CandleViewer");
   });
 });

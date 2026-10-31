@@ -10,6 +10,7 @@
  */
 import { createBrowserRouter, redirect, type RouteObject } from "react-router";
 import { ROUTE_MANIFEST, type ManifestEntry } from "./manifest";
+import { ROUTE_TITLES, type TitleHandle } from "./titles";
 import { guardRoute, guardUnknownRoute } from "./guards";
 import { RouteErrorElement } from "./RouteErrorElement";
 import { StubRoute } from "./StubRoute";
@@ -76,6 +77,8 @@ function buildRoutes(): RouteObject[] {
     path: entry.path,
     element: elementFor(entry.id, entry.owner),
     errorElement: <RouteErrorElement />,
+    // D-01 (WCAG 2.4.2): the page title `syncDocumentTitle` applies on every navigation
+    handle: { title: ROUTE_TITLES[entry.id] } satisfies TitleHandle,
     loader: ({ request }) => {
       guardRoute(entry.id, entry.access, request.url);
       // R-100 `/terminal` always redirects to the user's last-used or
