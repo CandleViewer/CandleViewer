@@ -6,7 +6,7 @@ import { REPORT_DIR } from "./screens";
 
 // Gate 5, calibration (E47-S04 / WCAG 2.3.1): the flash coalescer is driven by the seeded 40 Hz
 // burst fixture on a FAKE clock (the schedule is deterministic); the resulting flash starts are then
-// replayed in real time on ONE harness element carrying data-flash-audit, whose composited
+// replayed on a frame-exact virtual clock on ONE harness element carrying data-flash-audit, whose composited
 // luminance is sampled at 60 Hz. A raw, uncoalesced 5 Hz flash is captured as the negative: it MUST
 // trip G005 (the job asserts that). Real consumers (price flash, liquidation) are not built here.
 const SAMPLE_HZ = 60;
@@ -89,24 +89,28 @@ async function replay(
         return 0.2126 * ch(0) + 0.7152 * ch(1) + 0.0722 * ch(2);
       };
       o.style.background = "#fff";
+      // Frame-exact virtual clock: sample k is taken at k / hz, and each flash is a paused Web
+      // Animation seeked to (sample time - its start). The browser still resolves the recipe's
+      // easing, but no timer jitter can move a start across a 1 s window edge (G005 counts frames).
       const out: number[] = [];
-      const t0 = performance.now();
       let n = 0;
-      await new Promise<void>((resolve) => {
-        const tick = (): void => {
-          const now = performance.now() - t0;
-          while (n < starts.length && (starts[n]?.tMs ?? Infinity) <= now) {
-            n++;
-            o.getAnimations().forEach((a) => a.cancel());
-            o.animate([{ opacity: peak }, { opacity: 0 }], { duration: flashMs, easing });
-          }
-          out.push(lumOf());
-          if (now >= secs * 1000) resolve();
-          else setTimeout(tick, 1000 / hz);
-        };
-        tick();
-      });
-      return { lum: out, seconds: (performance.now() - t0) / 1000 };
+      let current: { anim: Animation; at: number } | undefined;
+      for (let k = 0; k <= secs * hz; k++) {
+        const now = (k * 1000) / hz;
+        while (n < starts.length && (starts[n]?.tMs ?? Infinity) <= now + 1e-6) {
+          current?.anim.cancel();
+          const anim = o.animate([{ opacity: peak }, { opacity: 0 }], {
+            duration: flashMs,
+            easing,
+          });
+          anim.pause();
+          current = { anim, at: starts[n]?.tMs ?? now };
+          n++;
+        }
+        if (current) current.anim.currentTime = now - current.at;
+        out.push(lumOf());
+      }
+      return { lum: out, seconds: secs };
     },
     { starts, secs: seconds, hz: SAMPLE_HZ, flashMs: FLASH_MS, easing: EASING, peak: AUDIT_PEAK },
   );
@@ -132,6 +136,21 @@ test("collect flash-coalescer luminance (40 Hz fixture + injected 5 Hz negative)
     throw new Error(`A11Y-INFRA sustained behaviour not as documented: ${JSON.stringify(long)}`);
 
   const good = await replay(page, "price-flash-harness", starts, 5);
+  // The pass capture must not pass vacuously: every start has to move luminance by the G005 step.
+  // Frame 0 is measured against the dark field (a start can land on it).
+  const dark = Math.min(...good.lum);
+  const rises = good.lum.filter((v, k) => v - (k === 0 ? dark : (good.lum[k - 1] ?? v)) >= 0.1);
+  if (rises.length < starts.length)
+    throw new Error(
+      `A11Y-INFRA harness registered ${rises.length} of ${starts.length} flash starts`,
+    );
+  // Upper bound, independent of paint: a coalescer that restarts every frame would hold the overlay
+  // bright and read as 0 flashes, so no half-open 1 s window may hold more than 2 starts (HS-1).
+  const crowded = starts.findIndex((s, k) => (starts[k + 2]?.tMs ?? Infinity) - s.tMs < 1000);
+  if (crowded >= 0)
+    throw new Error(
+      `A11Y-INFRA coalescer started 3 flashes within 1 s at ${starts[crowded]?.tMs} ms`,
+    );
   // Negative: raw 5 Hz flash, no coalescer (what a liquidation flash must never do).
   const raw: Start[] = Array.from({ length: 25 }, (_, k) => ({ tMs: k * 200, direction: "up" }));
   const bad = await replay(page, "liquidation-flash-injected", raw, 5);

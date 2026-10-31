@@ -136,6 +136,8 @@ def count_flashes(luminance: list[float], fps: float) -> int:
     """
     if fps <= 0:
         raise InfraError("A11Y-INFRA fps must be positive")
+    # Every qualifying change is an event, the first one included: a pulse (rise, then
+    # fall) is two events, so N pulses in a window are 2N events and N flashes.
     events: list[int] = []
     direction = 0
     last = luminance[0] if luminance else 0.0
@@ -143,7 +145,7 @@ def count_flashes(luminance: list[float], fps: float) -> int:
         d = lum - last
         if abs(d) >= FLASH_LUMINANCE_DELTA:
             sign = 1 if d > 0 else -1
-            if direction and sign != direction:
+            if sign != direction:
                 events.append(i)
             direction = sign
             last = lum

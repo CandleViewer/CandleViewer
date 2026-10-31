@@ -230,3 +230,46 @@ def test_flash_high_rate_strobe_trips_and_calm_canvas_passes() -> None:
     assert gates.check_flash({"fps": 60, "components": {"canvas:strobe": strobe}})
     calm = [0.05 + 0.01 * ((i * 7) % 5) for i in range(360)]
     assert gates.check_flash({"fps": 60, "components": {"canvas:heatmap": calm}}) == []
+
+
+def _pulses(
+    per_second: int, fps: int = 60, seconds: int = 3, width: int = 6
+) -> list[float]:
+    """Dark field with `per_second` evenly spaced 100 ms bright pulses."""
+    period = fps // per_second
+    return [1.0 if i % period < width else 0.0 for i in range(fps * seconds)]
+
+
+@pytest.mark.parametrize(("per_second", "expected"), [(2, 2), (3, 3), (4, 4)])
+def test_flash_counts_each_pulse_as_one_flash(per_second: int, expected: int) -> None:
+    assert gates.count_flashes(_pulses(per_second), 60) == expected
+
+
+def test_flash_three_pulses_per_second_fails_the_gate() -> None:
+    assert gates.check_flash({"fps": 60, "components": {"price-flash": _pulses(3)}})
+
+
+def test_flash_two_pulses_per_second_passes_the_gate() -> None:
+    assert (
+        gates.check_flash({"fps": 60, "components": {"price-flash": _pulses(2)}}) == []
+    )
+
+
+def test_flash_series_starting_bright_counts_the_first_fall() -> None:
+    # Bright at frame 0, so the first qualifying change is a fall; 3 pulses still fail.
+    series = [1.0 if i % 20 < 6 else 0.0 for i in range(180)]
+    assert gates.count_flashes(series, 60) == 3
+
+
+def test_flash_cli_table_flag_keeps_the_failing_exit(tmp_path) -> None:
+    cap = tmp_path / "f.json"
+    cap.write_text(json.dumps({"fps": 60, "components": {"x": _pulses(4)}}))
+    assert gates.main(["flash", str(cap), "--table"]) == 1
+
+
+def test_flash_first_change_of_a_capture_counts() -> None:
+    # One second, dark at frame 0, three pulses: the window must include the very first
+    # rise. Counting reversals only (dropping the first change) scored this 2 and passed.
+    series = [1.0 if (i % 20) in range(10, 16) else 0.0 for i in range(60)]
+    assert gates.count_flashes(series, 60) == 3
+    assert gates.check_flash({"fps": 60, "components": {"price-flash": series}})
