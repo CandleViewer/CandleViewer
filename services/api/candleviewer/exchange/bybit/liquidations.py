@@ -33,6 +33,11 @@ TOPIC_PREFIX: Final = "allLiquidation."
 #: A push is one 500 ms window of one symbol; a cascade's is long, never this long.
 MAX_PRINTS_PER_PUSH: Final = 1000
 MAX_NUMBER_CHARS: Final = 32
+#: 23 §14.9 `note`, verbatim: the WS topic sends it with every batch (it names the venue, so it
+#: lives here, C-2.2, and the composition root injects it).
+LIQUIDATION_NOTE: Final = (
+    "Bybit batches at most one allLiquidation push per symbol per 500 ms; counts are lower bounds."
+)
 _SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{4,20}$")
 
 
@@ -128,6 +133,7 @@ def parse_liquidation_frame(frame: str, ts_ingest_us: int) -> list[LiquidationEv
 
 
 __all__ = [
+    "LIQUIDATION_NOTE",
     "MAX_PRINTS_PER_PUSH",
     "TOPIC_PREFIX",
     "liquidation_topic",

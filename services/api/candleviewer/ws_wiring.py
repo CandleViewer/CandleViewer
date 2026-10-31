@@ -73,6 +73,7 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.ws_topics import OmsTopics
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.heatmap import HeatmapStore, HeatmapTopic
+from candleviewer.orderflow.liquidation_topic import LiquidationsTopic
 from candleviewer.orderflow.liquidity_engine import LiquidityEngine
 from candleviewer.orderflow.liquidity_models import LiquidityConfig
 from candleviewer.recorder.ws_topic import RecorderTopic
@@ -176,6 +177,8 @@ def ingestion_streams(ctx: AppContext) -> Callable[[str], _Demand | None]:
             return ing.books
         if family == "ticker":
             return ing.tickers
+        if family == "liquidations":  # E24-T03: the allLiquidation stream's demand
+            return ing.liquidations
         return None
 
     return resolve
@@ -513,6 +516,22 @@ def ticker_topic(ctx: AppContext, hub: SequencingHub) -> TickerTopic[SnapshotBod
         bus=ctx.bus.bus,
         env=ctx.settings.environment.value,
         overdue=cv_ws_snapshot_overdue_total.labels(topic="ticker"),  # served at 0 from now
+    )
+
+
+def liquidations_topic(ctx: AppContext, hub: SequencingHub) -> LiquidationsTopic[SnapshotBody]:
+    """E24-T03 (#667): the order-flow module's `liquidations` topics: snapshots from the recent
+    prints, deltas from the ingestion stream's bus topic through `hub`, one frame per 500 ms
+    window per subscription group, the 23 §14.9 `note` from the adapter. `WsRuntime` starts and
+    stops it."""
+    return LiquidationsTopic(
+        hub.subscriptions,
+        hub.publish,
+        hub.resnapshot,
+        SnapshotBody,
+        bus=ctx.bus.bus,
+        env=ctx.settings.environment.value,
+        note=ctx.exchange_bybit.liquidation_note,
     )
 
 
