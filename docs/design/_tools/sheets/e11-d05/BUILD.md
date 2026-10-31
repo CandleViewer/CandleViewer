@@ -60,8 +60,8 @@ done
 
 | Board           | Frames | Root w × h  | At        | Theme | Board id (page `E11-D05 ref frames`)   |
 | --------------- | ------ | ----------- | --------- | ----- | -------------------------------------- |
-| 09 ref-frames-a | 33     | 3200 × 2913 | (0, 0)    | dark  | `0c4baecb-5183-80d0-8008-df897051bf16` |
-| 10 ref-frames-b | 22     | 3000 × 2566 | (4000, 0) | dark  | `c3fc69a9-a43c-8099-8008-df8e5122b161` |
+| 09 ref-frames-a | 33     | 3200 × 2913 | (0, 0)    | dark  | `3162ac14-1b61-808f-8008-dfc7698bd8d0` |
+| 10 ref-frames-b | 22     | 3000 × 2566 | (4000, 0) | dark  | `52e4d11f-ae72-803a-8008-dfcbb3023d08` |
 
 Root heights are the live-measured annotation end + 80 (`MEASURED_H`). The PNG paths, the theme gate, the live check and
 the deviations are in E11-D05 §18.
