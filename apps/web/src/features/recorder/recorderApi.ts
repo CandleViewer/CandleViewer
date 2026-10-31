@@ -1,12 +1,13 @@
 /**
- * The recorder screen's REST client (E16-S01, SCR-140; `22` tag `recording`, the job poll and the
- * coverage read): `inviteApi.ts`'s `call` / `ApiResult` shape, copied rather than shared (BQ-4),
- * over the generated `packages/protocol` types only (C-4.16). Each write carries one
- * `Idempotency-Key`, held with the request, so the re-send after a `403 step_up_required` is the
- * same submission (C-2.10); the refused request comes back held for the step-up seam, and no
- * elevation is kept here. A refusal is routed as E16-D06 §16.4 says (`route`); a problem's
- * `message` and `detail` never leave this module, and its `code` only when it is one of `22`'s
- * tokens. A read gives up after `READ_TIMEOUT_MS`; a 2xx the client cannot read is a failure.
+ * The recorder screens' REST client (E16-S01 SCR-140, E16-S03 SCR-141, E16-S04 SCR-142; `22` tag
+ * `recording`, the job poll, the coverage and the health reads): `inviteApi.ts`'s `call` /
+ * `ApiResult` shape, copied rather than shared (BQ-4), over the generated `packages/protocol` types
+ * only (C-4.16). Each write carries one `Idempotency-Key`, held with the request, so the re-send
+ * after a `403 step_up_required` is the same submission (C-2.10); the refused request comes back
+ * held for the step-up seam, and no elevation is kept here. A refusal is routed as E16-D06 §16.4
+ * says (`route`); a problem's `message` and `detail` never leave this module, and its `code` only
+ * when it is one of `22`'s tokens. A read gives up after `READ_TIMEOUT_MS`; a 2xx the client cannot
+ * read is a failure.
  */
 import { ERROR_CODES, type ErrorCode, type generated } from "@candleviewer/protocol";
 import {
@@ -18,6 +19,7 @@ import {
 } from "../stepUp/challenge";
 
 type Ops = generated.rest.operations;
+type Schemas = generated.rest.components["schemas"];
 type Json<T> = T extends { content: { "application/json": infer B } } ? B : never;
 type Query<Op extends keyof Ops> = NonNullable<Ops[Op]["parameters"]["query"]>;
 
@@ -43,9 +45,38 @@ export type SessionsQuery = Query<"listRecordingSessions">;
 export type CoverageQuery = Query<"getDataCoverage">;
 /** A stop's query: `force` alone. `purge_data` is never sent: the purge route is the one delete. */
 export type RemoveQuery = Pick<Query<"removeRecordedSymbol">, "force">;
+export type RetentionPolicyList = Json<Ops["listRetentionPolicies"]["responses"][200]>;
+/** The whole set: the PUT replaces it in one transaction. */
+export type RetentionPoliciesBody = Json<Ops["setRetentionPolicies"]["requestBody"]>;
+/** `{items, job_id}`: the sweep `apply_now` started, null without it (BQ-2). */
+export type RetentionPoliciesSaved = Json<Ops["setRetentionPolicies"]["responses"][200]>;
+export type RetentionQuery = Query<"setRetentionPolicies">;
+export type ImportBody = Json<Ops["importTradeArchive"]["requestBody"]>;
+export type HealthReport = Json<Ops["getHealth"]["responses"][200]>;
+export type RetentionSweepResult = Schemas["RetentionSweepResult"];
+export type CompactionRunResult = Schemas["CompactionRunResult"];
+export type RetentionPurgeResult = Schemas["RetentionPurgeResult"];
+export type ArchiveImportResult = Schemas["ArchiveImportResult"];
 
-/** The job a poll follows: its `unknown` line names it. */
-export type JobAction = "compact" | "purge";
+/**
+ * A succeeded job's `result`, by the action that issued its id (`22` `Job.result`, the served
+ * names, BQ-4). A compaction and an `apply_now` sweep both report `kind: retention_sweep` and share
+ * its one slot, so the action this client remembers says which it is, never `kind` (BQ-11).
+ */
+export interface JobResults {
+  readonly compact: CompactionRunResult;
+  readonly purge: RetentionPurgeResult;
+  readonly retention: RetentionSweepResult;
+  readonly import: ArchiveImportResult;
+}
+
+/** The action that issued the id a poll follows: it names the job's `unknown` line and result. */
+export type JobAction = keyof JobResults;
+
+/** A `getJob` answer, its `result` typed by the action that issued the job's id. */
+export type JobOf<A extends JobAction> = Omit<Job, "result"> & {
+  readonly result?: JobResults[A] | null;
+};
 
 /** A read with no answer by then is given up, as one with no answer at all (a hung read holds nothing). */
 export const READ_TIMEOUT_MS = 10_000;
@@ -62,6 +93,12 @@ export const REFUSAL_DECK_KEYS = [
   "storage.job.refused.running",
   "storage.compact.unknown",
   "storage.purge.unknown",
+  "storage.import.unknown",
+  "retention.refused.invalid",
+  "retention.refused.unknown",
+  "retention.refused.job_running",
+  "retention.refused.scheduler_off",
+  "retention.refused.audit",
 ] as const;
 export type RefusalDeckKey = (typeof REFUSAL_DECK_KEYS)[number];
 
@@ -103,7 +140,7 @@ export interface ApiResult<T> {
   readonly route: RefusalRoute | null;
 }
 
-/** §16.4 rows 9, 10 and 12: the codes a write answers with a deck sentence; any other is the T4. */
+/** §16.4 rows 2, 6, 8, 9, 10 and 12: the codes a write answers with a deck sentence; else T4. */
 const DECK: Partial<Record<keyof Ops, Partial<Record<ErrorCode, RefusalDeckKey>>>> = {
   purgeRecordedData: {
     retention_pinned_refused: "storage.purge.refused.pinned",
@@ -111,6 +148,24 @@ const DECK: Partial<Record<keyof Ops, Partial<Record<ErrorCode, RefusalDeckKey>>
     audit_unavailable: "storage.purge.refused.audit",
   },
   compactRecorder: { job_running: "storage.job.refused.running" },
+  setRetentionPolicies: {
+    validation_failed: "retention.refused.unknown",
+    conflict: "retention.refused.scheduler_off",
+    retention_invalid_policy: "retention.refused.invalid",
+    job_running: "retention.refused.job_running",
+    audit_unavailable: "retention.refused.audit",
+  },
+  importTradeArchive: { job_running: "storage.job.refused.running" },
+};
+/**
+ * §16.4 rows 17 and 18: a lost job's line (any `404`; its rule is `job_unknown`), by the action
+ * that issued it. A sweep has none (E16-D03 §8 draws no such line), so its loss is the generic T4.
+ */
+const UNKNOWN: Readonly<Record<JobAction, RefusalDeckKey | null>> = {
+  compact: "storage.compact.unknown",
+  purge: "storage.purge.unknown",
+  retention: null,
+  import: "storage.import.unknown",
 };
 /** An instant with an offset: how `before_in_future`'s `message` gives the server's clock. */
 const INSTANT = /\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)/;
@@ -149,7 +204,8 @@ function routeOf(
     const serverTime = instantIn(first["message"]); // rows 2, 3: it names the server's time
     if (serverTime !== null) route = deck("storage.purge.refused.before", serverTime);
   } else if (op === "getJob" && status === 404 && job !== undefined) {
-    route = deck(`storage.${job}.unknown`); // rows 17, 18: a lost job (rule `job_unknown`)
+    const key = UNKNOWN[job]; // rows 17, 18: a lost job (rule `job_unknown`)
+    if (key !== null) route = deck(key);
   } else if (code !== null) {
     const table: Partial<Record<ErrorCode, RefusalDeckKey>> = DECK[op] ?? {};
     const key = Object.hasOwn(table, code) ? table[code] : undefined;
@@ -278,8 +334,12 @@ export const recorderApi = {
     call<RecordingSessionPage>("listRecordingSessions", "GET", `/recording/sessions${qs(query)}`),
   coverage: (query: CoverageQuery) =>
     call<DataCoverage>("getDataCoverage", "GET", `/market/data-coverage${qs(query)}`),
-  job: (jobId: string, action: JobAction) =>
-    call<Job>("getJob", "GET", `/admin/jobs/${encodeURIComponent(jobId)}`, undefined, action),
+  retention: () =>
+    call<RetentionPolicyList>("listRetentionPolicies", "GET", "/recording/retention-policies"),
+  health: () => call<HealthReport>("getHealth", "GET", "/admin/health"),
+  /** `action` is the one that issued `jobId`: it types the result and names a lost job's line. */
+  job: <A extends JobAction>(jobId: string, action: A) =>
+    call<JobOf<A>>("getJob", "GET", `/admin/jobs/${encodeURIComponent(jobId)}`, undefined, action),
   add: (body: AddRecordedSymbolBody) =>
     call<AddedRecordedSymbol>("addRecordedSymbol", "POST", "/recording/symbols", body),
   update: (id: string, body: UpdateRecordedSymbolBody) =>
@@ -292,4 +352,14 @@ export const recorderApi = {
     call<JobAccepted>("compactRecorder", "POST", "/admin/recorder/compact", body),
   purge: (body: PurgeBody) =>
     call<JobAccepted>("purgeRecordedData", "POST", "/admin/recorder/purge", body),
+  /** The whole set, replaced; `apply_now` also starts a sweep, whose id the `200` carries. */
+  setRetention: (body: RetentionPoliciesBody, { apply_now }: RetentionQuery = {}) =>
+    call<RetentionPoliciesSaved>(
+      "setRetentionPolicies",
+      "PUT",
+      `/recording/retention-policies${qs({ apply_now })}`,
+      body,
+    ),
+  importArchive: (body: ImportBody) =>
+    call<JobAccepted>("importTradeArchive", "POST", "/admin/recorder/import", body),
 };
