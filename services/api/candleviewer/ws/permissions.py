@@ -60,6 +60,7 @@ from candleviewer.orderflow.errors import (
 )
 from candleviewer.orderflow.heatmap import HeatmapLease, HeatmapSpec, HeatmapSpecCapError, spec_of
 from candleviewer.orderflow.indicators.engine import Requested, resolve_instances
+from candleviewer.orderflow.liquidation_topic import note_cap_refusal
 from candleviewer.ws.errors import WsError, build_ws_error, topic_error
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
 from candleviewer.ws.limits import (
@@ -706,6 +707,7 @@ class ConnectionAuthz:
         except TopicError as exc:
             self.refusal_reason = exc.reason
             note_option_refusal(ch, exc.code, exc.field)  # SR-E22-04 on `trades` (E22-T02)
+            note_cap_refusal(entry, ch, exc.code, exc.field)  # 40-symbol cap (E24-T03)
             return _fail(ch, exc.code, exc.message, exc.field), None
 
     def _admit(
