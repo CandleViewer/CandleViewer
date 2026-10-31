@@ -136,6 +136,24 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
   const [report, setReport] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(clock.now());
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  const [refocus, setRefocus] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  // Aborted on unmount: a write or refresh that settles later changes nothing.
+  const life = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    life.current = controller;
+    return () => controller.abort();
+  }, []);
+  // After Clear the bulk bar is gone: focus goes to the table's select-all box, never to <body>.
+  useEffect(() => {
+    if (!refocus) return;
+    setRefocus(false);
+    panelRef.current?.querySelector<HTMLElement>('thead input[type="checkbox"]')?.focus();
+  }, [refocus]);
 
   // Remaining snooze time refreshes at most once a minute (T-6).
   useEffect(() => {
@@ -144,11 +162,18 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
   }, [clock]);
 
   const refresh = useCallback(
-    async (signal?: AbortSignal): Promise<void> => {
+    async (given?: AbortSignal): Promise<void> => {
+      const signal = given ?? life.current?.signal;
       const out = await api.list(signal);
       const stale = (): boolean => signal?.aborted === true;
       if (stale()) return;
-      if (out.kind !== "ok") return setLoad(out.kind);
+      if (out.kind !== "ok") {
+        setResyncing(false);
+        // Rows already on screen stay, with a notice, rather than giving way to the error state.
+        if (loadRef.current === "ready") return setRefreshFailed(true);
+        return setLoad(out.kind);
+      }
+      setRefreshFailed(false);
       store.replaceAll(out.value);
       setLoad("ready");
       setResyncing(false);
@@ -247,6 +272,7 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
   ): Promise<void> => {
     setProblem(null);
     const out = await run();
+    if (life.current?.signal.aborted === true) return;
     if (out.kind === "ok") return done(out.value as never);
     setProblem(failure(out.kind as AlertsFailure));
     if (out.kind === "not_found") void refresh();
@@ -278,12 +304,15 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
       if (out.kind !== "ok") throw new Error(failure(out.kind));
     };
     const result = await runBulkAction(action, [...selected], runner);
+    if (life.current?.signal.aborted === true) return;
     const lines = result.outcomes.flatMap((o) =>
       o.ok ? [] : [`'${names.get(o.id) ?? o.id}' — ${o.error}`],
     );
     setReport(
       `${result.summary.ok} of ${result.summary.total} ${COPY.bulkDone[action]}.` +
-        (lines.length > 0 ? ` ${lines.length} failed: ${lines.join("; ")}.` : ""),
+        (lines.length > 0
+          ? ` ${lines.length} failed: ${lines.join("; ").replace(/\.$/, "")}.`
+          : ""),
     );
     setSelected(new Set(result.failedIds));
     await refresh();
@@ -468,7 +497,7 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
       : undefined;
   const dialog = confirm === null ? null : confirmProps(confirm, selected.size);
   const panel = (
-    <>
+    <div ref={panelRef}>
       {selected.size > 0 && canWrite ? (
         <div role="toolbar" aria-label="Bulk actions">
           <span>{COPY.selected(selected.size)}</span>
@@ -487,7 +516,13 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
           <Button variant="danger" onClick={() => setConfirm({ kind: "bulk", action: "delete" })}>
             Delete…
           </Button>
-          <Button variant="ghost" onClick={() => setSelected(new Set())}>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setSelected(new Set());
+              setRefocus(true);
+            }}
+          >
             Clear
           </Button>
         </div>
@@ -534,7 +569,7 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
         onRowSelect={setSelected}
         {...(canWrite ? {} : { selectDisabledReason: READ_ONLY })}
       />
-    </>
+    </div>
   );
 
   return (
@@ -545,6 +580,7 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
       ) : null}
       {resyncing ? <p role="status">{COPY.resyncing}</p> : null}
       {vocabularyDown ? <Callout tone="warning" title={COPY.vocabularyDown} live="polite" /> : null}
+      {refreshFailed ? <Callout tone="warning" title={COPY.refreshFailed} /> : null}
       {problem === null ? null : <Callout tone="danger" title={problem} />}
       <p role="status" aria-live="polite">
         {report ?? announce}

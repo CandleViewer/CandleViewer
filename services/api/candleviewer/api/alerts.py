@@ -102,9 +102,10 @@ class AlertInput(BaseModel):
 SNOOZE_MAX = timedelta(days=30)
 
 
-#: `YYYY-MM-DDTHH:MM[:SS[.f]]` plus `Z` or `+hh:mm`: pydantic's lax parser also takes "4102444800".
+#: `YYYY-MM-DDTHH:MM[:SS[.f]]` plus a required `Z` or `+hh:mm` (offset-less is 422).
+#: Pydantic's lax parser would also take "4102444800" as an epoch.
 _ISO_INSTANT = re.compile(
-    r"\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}([.,]\d+)?)?([Zz]|[+-]\d{2}(:?\d{2})?)?"
+    r"\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}([.,]\d+)?)?([Zz]|[+-]\d{2}(:?\d{2})?)"
 )
 
 

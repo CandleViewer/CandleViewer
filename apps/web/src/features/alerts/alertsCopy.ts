@@ -26,6 +26,7 @@ export const COPY = {
   vocabularyDown:
     "Alert conditions can't be described right now: the rule engine isn't available. Your alerts are unchanged.",
   disconnected: "Disconnected — alerts may be out of date",
+  refreshFailed: "Alerts couldn't be refreshed. Showing the last data received.",
   resyncing: "Resyncing alerts…",
   estimated: "(estimated)",
   disarmTitle: (metric: string): string => `Alert disarmed: ${metric} data source unavailable`,
@@ -39,7 +40,8 @@ export const COPY = {
     `Showing the first ${shown} of ${total} — refine the filters to see the rest.`,
   truncated: "Only the newest firings are shown; the export holds the same rows.",
   /** Parser-safe: documented here and shown in the dialog, never as a comment line in the CSV. */
-  csvNote: "Values at fire time are not stored; the message text stands in for them.",
+  csvNote:
+    "One CSV row is one channel delivery. Values at fire time are not stored; the message text stands in for them.",
   selected: (n: number): string => `${n} selected`,
   bulk: {
     enable: {
