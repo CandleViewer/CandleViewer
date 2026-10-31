@@ -1,5 +1,5 @@
 """candleviewer.statechart.bindings.b01_order — MachineLogic for B1 `order`
-(#1650, E50; E29-T03 #847). Chart: `machines/B01.order.machine.json`, version 7.
+(#1650, E50; E29-T03 #847). Chart: `machines/B01.order.machine.json`, version 8.
 
 Guards are pure, total and deny by default (catalogue A6). Statecharts record, synchronous code
 enforces (C-2.21): `VALIDATE` carries the verdicts of the checks run before it (`gates`) and the
@@ -54,6 +54,12 @@ pass finds nowhere takes `RECON_MISS` into `unknown` through `record_missing_rem
 its miss count, and the second consecutive miss there ends it `rejected` with the closed
 `reject_code` that miss carries (`set_reject_unresolvable`). Nothing sends either until E29-T06's
 pass is wired.
+
+An `untracked` row's own fills (chart version 8, #914; INV-B1-l): an `EXEC` that the live states'
+guards admit is applied by `apply_untracked_exec`, so the row closes `filled` once its fills reach
+`qty`, and a fill that leaves quantity open re-enters `untracked`, whose `persist_event` writes it
+(an `untracked` to `untracked` `partial_fill`). The row stays unmanaged: no notice is posted, and
+`starts_protection` answers no while it is `untracked`, a hydration's question included.
 """
 
 from __future__ import annotations
@@ -606,7 +612,8 @@ def passes_all_gates(context: dict[str, Any], event: Any) -> bool:
 
 
 def adoption_allowed(context: dict[str, Any], event: Any) -> bool:
-    """Denies every adoption until E45-S01 records the Owner's decision D6 (B1.5, SR-E29-12)."""
+    """Denies every adoption: D6 is resolved for v1 as automatic adoption only, by the pass, so
+    no route sends `ADOPT` (BQ-17, B1.5, SR-E29-12)."""
     return False
 
 
@@ -1159,9 +1166,10 @@ async def adopt_terms(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> 
 
 
 async def adopt_untracked(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
-    """`ADOPT` passed `adoption_allowed` (deny-all until E45-S01 records D6), whose verdicts
-    include a native stop attached (C-2.6): the order is managed from here as it was discovered,
-    its stop the OMS's now; the adoption's own audit record is its route's (SR-E29-12)."""
+    """`ADOPT` passed `adoption_allowed` (deny-all: no route sends `ADOPT` in v1, BQ-17), whose
+    verdicts include a native stop attached (C-2.6): the order is managed from here as it was
+    discovered, its stop the OMS's now; the adoption's own audit record is its route's
+    (SR-E29-12)."""
     context.update(needs_lookup=False, discovered=False)
     logger().warning("b01_untracked_adopted", order_link_id=context.get("order_link_id"))
 
@@ -1181,13 +1189,26 @@ async def adopt_recon(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> 
 
 async def record_remote_state(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
     """`untracked` heard from the exchange (INV-B1-l): the order exists, so `recon_misses`
-    restarts. The fact is logged, with the `exec_id` of an `EXEC` (INV-5); no managing action runs
-    (SR-E29-12)."""
+    restarts. The fact is logged, with the `exec_id` of an `EXEC` it does not apply (a repeat,
+    another order's, or one past `qty`: INV-5); no managing action runs (SR-E29-12)."""
     context["recon_misses"] = 0
     link, exec_id = context.get("order_link_id"), _id(_fields(event).get("exec_id"))
     logger().info(
         "b01_untracked_order_seen", order_link_id=link, trigger=_name(event), exec_id=exec_id
     )
+
+
+async def apply_untracked_exec(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """Chart version 8 (INV-B1-l): an `EXEC` of an `untracked` row that `exec_new_and_closes` or
+    `exec_new_and_partial` admitted, applied as `apply_fill` applies one (S4: its totals, its
+    `exec_id` in `seen_exec_ids`), so the step's row records it with its execution. The order
+    exists, so `recon_misses` restarts, as `record_remote_state` restarts it. Nothing is managed:
+    no notice is posted, and nothing is sent (SR-E29-12)."""
+    p = _fields(event)
+    _apply(context, p)
+    context["recon_misses"] = 0
+    link, exec_id = context.get("order_link_id"), _id(p.get("exec_id"))
+    logger().info("b01_untracked_fill_applied", order_link_id=link, exec_id=exec_id)
 
 
 async def bump_recon_misses(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
@@ -1267,8 +1288,10 @@ def starts_protection(context: Mapping[str, Any], lifecycle: str | None, trigger
     execution found by reconciliation included; for an `EXEC` an S6 arm consumed; and in any
     other state when the order holds a fill (a `cancelled` or `expired` order ended with fills).
     Never for a reduce-only order: it opens no position, and C-2.6 covers position-opening
-    orders, so its exits page nothing. The OMS facade asks the same after a hydration."""
-    if context.get("reduce_only") is True:
+    orders, so its exits page nothing. Never while the order is `untracked` either (chart version
+    8): it holds its own fills there but is never managed (INV-B1-l), and its completing fill
+    enters `filled`, which starts the region. The OMS facade asks the same after a hydration."""
+    if context.get("reduce_only") is True or lifecycle == "untracked":
         return False
     return lifecycle in _FILL_STATES or trigger == "EXEC" or _filled(context)
 
@@ -1514,6 +1537,7 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "adopt_terms": adopt_terms,
     "adopt_untracked": adopt_untracked,
     "apply_fill": apply_fill,
+    "apply_untracked_exec": apply_untracked_exec,
     "arm_recon_deadline": arm_recon_deadline,
     "arm_sl_deadline": arm_sl_deadline,
     "audit_command_refused_unowned": audit_command_refused_unowned,

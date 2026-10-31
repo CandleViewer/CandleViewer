@@ -788,8 +788,10 @@ unknown           submitted         RECON_FOUND_LIVE        answered
 unknown           unknown           RECON_MISS              -
 untracked         cancelled         RECON_FOUND_CANCELLED   waiting
 untracked         cancelled         RECON_MISS              waiting
+untracked         filled            EXEC                    answered
 untracked         filled            RECON_FOUND_FILLED      answered
 untracked         submitted         ADOPT                   answered
+untracked         untracked         EXEC                    -
 untracked         untracked         RECON_MISS              -
 validated         killed            KILL                    void
 validated         submitting        SEND                    -

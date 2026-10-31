@@ -25,6 +25,8 @@ from types import SimpleNamespace
 from typing import Any, cast, get_args
 
 import pytest
+from hypothesis import example, given, settings
+from hypothesis import strategies as st
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import CheckConstraint, DateTime, Numeric, TextClause
 from sqlalchemy.engine import Dialect, make_url
@@ -39,6 +41,7 @@ from candleviewer.storage.repositories import orders as port
 from candleviewer.storage.repositories import orders_sqlalchemy as mod
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, OVERSIZE, REDACTED
+from candleviewer.storage.repositories.executions import OrderFill
 from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
     MAX_EVENT_PAGE,
@@ -634,6 +637,91 @@ def test_a_fill_its_locked_order_cannot_take_is_refused(qty: str, paper: bool, r
     with pytest.raises(FillRefused, match=reason) as err:
         _FILL.check(Decimal(qty), paper)
     assert (err.value.order_id, err.value.reason) == (ORDER, reason)
+
+
+def test_a_fill_may_keep_an_untracked_row_untracked() -> None:
+    """21 Sec.3.3.5, B1 version 8 (INV-B1-l): an `untracked` row's fill that leaves quantity open
+    is a `partial_fill` from `untracked` back to `untracked`, so its compare-and-set keeps it."""
+    untracked = cast(Any, SimpleNamespace(**(vars(_HELD) | {"state": "untracked"})))
+    bound = _bound(mod.fill_statement(fill(untracked, "E1", "0.1", to_state="untracked")))
+    assert bound[0] == "untracked" and bound.count("untracked") == 2
+
+
+@pytest.mark.parametrize(
+    ("from_state", "to_state", "kind"),
+    [("untracked", "untracked", "fill"), ("accepted", "untracked", "partial_fill"),
+     ("partially_filled", "untracked", "partial_fill"), ("untracked", "cancelled", "partial_fill")],
+)  # fmt: skip
+def test_no_other_fill_step_keeps_or_makes_a_row_untracked(
+    from_state: Any, to_state: Any, kind: Any
+) -> None:
+    """The one fill step B1 version 8 adds is an `untracked` row's `partial_fill` back into
+    `untracked`: a `fill` there, a fill that would make a managed row `untracked`, or a fill
+    into any state but `partially_filled` and `filled` is refused before any statement."""
+    moved = step(_HELD, to_state, event(kind), from_state=from_state)
+    with pytest.raises(ValueError, match="a fill's step is to partially_filled or filled"):
+        replace(_FILL, step=moved)
+
+
+_ORDER_STATES = get_args(port.OrderState)
+_EVENT_KINDS = get_args(port.OrderEventKind)
+
+
+def _before_version_8(to_state: str, kind: str) -> bool:
+    """The fill rule before B1 version 8, whatever state the step leaves: to `partially_filled` or
+    `filled`, by a fill event."""
+    return to_state in ("partially_filled", "filled") and kind in port.FILL_KINDS
+
+
+def _refusal(done: OrderFill) -> str | None:
+    """What `check` refuses on `_HELD`'s locked `qty` (0.3), live and not paper, else None."""
+    try:
+        done.check(_HELD.qty, False)
+    except FillRefused as exc:
+        return exc.reason
+    return None
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    frm=st.sampled_from(_ORDER_STATES),
+    to=st.sampled_from(_ORDER_STATES),
+    kind=st.sampled_from(_EVENT_KINDS),
+    cum=st.sampled_from(("0.1", "0.2", "0.3", "0.4")),
+)
+@example(frm="accepted", to="untracked", kind="partial_fill", cum="0.1")  # widened everywhere
+@example(frm="triggered", to="untracked", kind="fill", cum="0.3")
+@example(frm="untracked", to="untracked", kind="partial_fill", cum="0.1")  # B1 v8's one step
+@example(frm="untracked", to="untracked", kind="partial_fill", cum="0.3")  # at qty, unmoved
+@example(frm="untracked", to="filled", kind="fill", cum="0.2")  # `filled` short of qty
+@example(frm="untracked", to="filled", kind="fill", cum="0.4")  # past qty
+@example(frm="partially_filled", to="filled", kind="fill", cum="0.3")
+def test_the_fill_rule_changes_nothing_outside_untracked_property(
+    frm: Any, to: Any, kind: Any, cum: str
+) -> None:
+    """#914's Option A, the orchestrator's rider (B1 version 8). (a) A fill whose cumulative
+    quantity is not `qty` never takes its row to `filled`, and one at `qty` takes it nowhere
+    else: `check` refuses either (`above_qty`, `state_mismatch`). (b) A fill step out of any state
+    but `untracked` is admitted and checked exactly as before version 8; out of `untracked` the
+    one step more is a `partial_fill` back into `untracked`."""
+    moved = step(_HELD, to, event(kind), from_state=frm)
+    try:
+        done: OrderFill | None = replace(
+            _FILL, step=moved, totals=replace(_FILL.totals, cum_exec_qty=Decimal(cum))
+        )
+    except ValueError:
+        done = None
+    one_more = frm == "untracked" and (to, kind) == ("untracked", "partial_fill")
+    assert (done is not None) == (_before_version_8(to, kind) or one_more)  # (b): admission
+    if done is None:
+        return
+    refused, total, qty = _refusal(done), Decimal(cum), _HELD.qty
+    if total != qty and to == "filled":  # (a)
+        assert refused in ("above_qty", "state_mismatch")
+    if total == qty and to != "filled":
+        assert refused == "state_mismatch"
+    reached = (total == qty) != (to == "filled")  # (b): `check` is the rule it was, everywhere
+    assert refused == ("above_qty" if total > qty else "state_mismatch" if reached else None)
 
 
 def test_list_events_pages_by_seq_inside_the_account() -> None:

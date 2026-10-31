@@ -129,6 +129,37 @@ async def b1_order(h: Harness, *, rejected: bool) -> Row:
     return row
 
 
+async def b1_untracked(h: Harness, fills: list[tuple[str, str]]) -> Row:
+    """An order reconciliation adopted (`DISCOVERED`, an `untracked` row of `QTY`) and the fills
+    B1 version 8 applies to it (`EXEC`), each step written by B1's step writer as `persist_event`
+    hands it over: a fill that leaves quantity open re-enters `untracked`, the one that fills
+    `qty` enters `filled` (28 B1.8, INV-B1-l; 21 Sec.3.3.5)."""
+    xid = f"x-{uuid4().hex[:12]}"
+    order = h.new_order("untracked", exchange_order_id=xid, provenance="reconciliation")
+    writer = OrderStepWriter(h.orders, h.executions, clock=lambda: T0)
+    writer.expect(order)
+    ids = {"order_id": str(order.id), "order_link_id": order.order_link_id}
+    ids |= {"account_id": str(order.exchange_account_id), "symbol": order.symbol, "side": "buy"}
+    terms = {"qty": "0.3", "price": "63000", "trigger_price": None, "take_profit": None}
+    found = ids | terms | {"stop_loss": "62000", "reduce_only": False, "exchange_order_id": xid}
+    ctx: dict[str, Any] = found | {"filled_qty": "0", "cum_exec_value": "0", "fee_paid": "0"}
+    ctx |= {"avg_price": None, "reject_code": None}
+    order_ids = (ids["order_id"], ids["account_id"], ids["order_link_id"])
+    await writer(Step(*order_ids, None, "untracked", "DISCOVERED", {"order": found}, dict(ctx)))
+    for exec_id, qty in fills:
+        execution = ids | {"exec_id": exec_id, "exchange_order_id": xid, "exec_type": "trade"}
+        execution |= {"qty": qty, "price": "63000", "fee": "0", "fee_rate": "0.0002"}
+        held = {k: Decimal(ctx[k]) for k in ("qty", "filled_qty", "cum_exec_value", "fee_paid")}
+        fill = {"qty": Decimal(qty), "price": PX, "fee": Decimal(0), "fee_rate": Decimal("0.0002")}
+        after = apply_fields(held, fill)
+        ctx.update({k: str(v) for k, v in after.items() if k != "qty"})
+        to = "filled" if after["leaves_qty"] == 0 else "untracked"
+        await writer(Step(*order_ids, "untracked", to, "EXEC", execution, dict(ctx)))
+    row = await h.orders.get(order.exchange_account_id, order.id)
+    assert row is not None
+    return row
+
+
 @dataclass(frozen=True)
 class Harness:
     orders: OrderRepository
@@ -527,6 +558,40 @@ class WriteAheadContract:
         stored = await h.executions.get(row.exchange_account_id, "E1")
         assert stored is not None and (stored.order_id, stored.exec_qty) == (row.id, q)
         assert await h.stored(row) == (new, [0, 1])
+
+    async def test_an_adopted_rows_fills_keep_it_untracked_until_one_fills_it(
+        self, h: Harness
+    ) -> None:
+        """21 Sec.3.3.5, B1 version 8 (INV-B1-l): B1's step writer records each fill of an order
+        reconciliation adopted, with its execution and the row's totals, as a `partial_fill` from
+        `untracked` to `untracked` while quantity is open, so the row stays unmanaged; the fill
+        that fills `qty` takes it to `filled`, and its events still rebuild it (OM-T03)."""
+        kept = await b1_untracked(h, [("E1", "0.1")])
+        assert (kept.state, kept.lifecycle_state) == ("untracked", "untracked")
+        assert (kept.cum_exec_qty, kept.leaves_qty) == (Decimal("0.1"), Decimal("0.2"))
+        assert await h.executions.get(kept.exchange_account_id, "E1") is not None
+        row = await b1_untracked(h, [("E1", "0.1"), ("E2", "0.2")])
+        assert (row.state, row.lifecycle_state, row.cum_exec_qty) == ("filled", "filled", row.qty)
+        events = await h.events.list_for_order(row.exchange_account_id, row.id)
+        assert [(e.kind, e.source, e.from_state, e.to_state) for e in events] == [
+            ("adopt", "reconcile", None, "untracked"),
+            ("partial_fill", "ws_private", "untracked", "untracked"),
+            ("fill", "ws_private", "untracked", "filled"),
+        ]
+        assert rebuild(events) == RebuiltOrder.of_row(row)
+
+    async def test_an_untracked_fill_of_the_whole_qty_that_stays_untracked_is_refused(
+        self, h: Harness
+    ) -> None:
+        """The store's `filled` rule holds on an `untracked` row (`state_mismatch`, 21
+        Sec.3.3.5): a fill that fills `qty` must take it to `filled`, so one that would leave it
+        `untracked` is refused, and nothing is written, its execution included."""
+        row = await h.order("untracked", event("adopt", source="reconcile"))
+        whole = fill(row, "E1", "0.3", event("partial_fill"), to_state="untracked")
+        with pytest.raises(port.FillRefused, match="state_mismatch"):
+            await h.executions.commit_fill(whole)
+        assert await h.stored(row) == (row, [0])
+        assert await h.executions.get(row.exchange_account_id, "E1") is None
 
     @pytest.mark.parametrize("qty", ["0.1", "0.3"])  # a partial fill, and the one that fills
     async def test_duplicate_fill_never_double_counts(self, h: Harness, qty: str) -> None:
