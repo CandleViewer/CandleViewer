@@ -454,6 +454,42 @@ async def test_a_testnet_job_takes_auto_remediate_from_its_record(job: Job, time
         await driver.stop()
 
 
+async def test_a_snapshot_whose_auto_remediate_is_not_the_records_does_not_open(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INV-B19-d, 24 Sec.14.3: the record is `auto_remediate`'s only source, on a restore too. A
+    testnet job snapshotted while its record said `False`, restored once it says `True`, does not
+    open: the restored machine is stopped, and the start refuses the account order entry and
+    pages, as for a store that fails."""
+    memory = Memory()
+    first = _driver(job, timers, environment="testnet", persistence=memory,
+                    remediates=lambda _env: False)  # fmt: skip
+    await first.start([ACCOUNT])
+    await _resting(first)
+    await first.stop()
+    restored: list[Any] = []
+    restore = memory.restore
+
+    async def kept(key: MachineKey, sealed: SealedSnapshot) -> Any:
+        restored.append(await restore(key, sealed))
+        return restored[-1]
+
+    monkeypatch.setattr(memory, "restore", kept)
+    fresh = Job(retries=RetryHop())  # type: ignore[arg-type]  # the driver's hop, not the rig's
+    later = _driver(fresh, timers, environment="testnet", persistence=memory)
+    with capture_logs() as logs:
+        await later.start([ACCOUNT])
+    try:
+        assert later.state(ACCOUNT) is None and fresh.standing.is_stale(ACCOUNT)
+        failed = [e["failure"] for e in logs if e["event"] == "reconcile_job_open_failed"]
+        assert failed == ["ValueError"]
+        [interp] = restored
+        assert interp.context["auto_remediate"] is False and not interp.is_running
+        assert ("page", rj._UNOPENED) in fresh.world.oms.pages
+    finally:
+        await later.stop()
+
+
 # --- Stop, restore and the standing (BQ-5, INV-B19-e) --------------------------------------------
 
 
