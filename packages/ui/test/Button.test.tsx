@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
+import type { JSX } from "react";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
 import { Button, GatedAnnounceProvider } from "../src/components/index.js";
@@ -352,5 +353,60 @@ describe("Button gated announcement routed by a host", () => {
       .filter((text) => text !== "");
     expect(writes).toEqual([REASON]);
     clearPolite();
+  });
+});
+
+// E09-D09 §2.2 rendering 2a with the reason node the host's (a caption under the button, or a read-only panel's
+// one notice): E08-S08's FileDrop targets and ColumnPicker's menu button point at it.
+describe("Button disabledReasonId: the reason shown by the host (2a)", () => {
+  const Captioned = (): JSX.Element => (
+    <>
+      <Button disabledReason={REASON} disabledReasonId="save-reason">
+        Save
+      </Button>
+      <p id="save-reason">{REASON}</p>
+    </>
+  );
+
+  it("is described by the host's node alone: no copy of its own and no echo", async () => {
+    const host = await mount(<Captioned />);
+    const b = get(host, "Not available Save");
+    expect(b).toHaveAttribute("aria-disabled", "true");
+    expect(b).toHaveAttribute("aria-describedby", "save-reason");
+    expect(b).toHaveAccessibleDescription(REASON);
+    expect(within(host).getAllByText(REASON)).toHaveLength(1);
+    await userEvent.hover(b);
+    expect(document.querySelector('[data-cmp="CMP-016"]')).toBeNull();
+  });
+
+  it("its lock leads the label, named Not available, and no lock trails it", async () => {
+    const host = await mount(<Captioned />);
+    const b = get(host, "Not available Save");
+    const lock = within(b).getByRole("img", { name: "Not available" });
+    expect(b.firstElementChild).toContainElement(lock);
+    expect(b.querySelectorAll("svg")).toHaveLength(1);
+  });
+
+  it("a press changes nothing and announces the reason once", async () => {
+    const onClick = fn();
+    const announce = fn();
+    const host = await mount(
+      <GatedAnnounceProvider announce={announce}>
+        <Button disabledReason={REASON} disabledReasonId="save-reason" onClick={onClick}>
+          Save
+        </Button>
+        <p id="save-reason">{REASON}</p>
+      </GatedAnnounceProvider>,
+    );
+    await userEvent.click(get(host, "Not available Save"));
+    expect(onClick).not.toHaveBeenCalled();
+    expect(announce.mock.calls).toEqual([[REASON]]);
+  });
+
+  it("without a reason the id points at nothing: an enabled button with no description", async () => {
+    const host = await mount(<Button disabledReasonId="save-reason">Save</Button>);
+    const b = get(host);
+    expect(b).not.toHaveAttribute("aria-describedby");
+    expect(b).not.toHaveAttribute("aria-disabled");
   });
 });

@@ -4,6 +4,12 @@ import { TOKEN_SCHEMA_VERSION, Placeholder } from "../src/index.js";
 import type {
   ButtonProps,
   CardProps,
+  ColumnPickerProps,
+  FileDropProps,
+  FreshnessMarkerProps,
+  TableRowContext,
+  WatchlistGroupTabsProps,
+  WatchlistRowProps,
   CheckboxProps,
   CommandPaletteProps,
   ConfirmDialogProps,
@@ -120,6 +126,33 @@ describe("@candleviewer/ui molecules (E05-S03)", () => {
           TabItem,
           ToastProps,
           ToastRegionProps,
+        ]
+      | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui watchlist components (E08-S08)", () => {
+  it.each([
+    ["ColumnPicker", Atoms.ColumnPicker],
+    ["FileDrop", Atoms.FileDrop],
+    ["FreshnessMarker", Atoms.FreshnessMarker],
+    ["WatchlistGroupTabs", Atoms.WatchlistGroupTabs],
+    ["WatchlistRow", Atoms.WatchlistRow],
+    ["watchlistColumns", Atoms.watchlistColumns],
+  ])("exports %s from the package entry as a function", (_name, value) => {
+    expect(typeof value).toBe("function");
+  });
+
+  it("exports each one's props type and CMP-049's row contract (checked by the typechecker)", () => {
+    const props:
+      | [
+          ColumnPickerProps,
+          FileDropProps,
+          FreshnessMarkerProps,
+          TableRowContext,
+          WatchlistGroupTabsProps,
+          WatchlistRowProps,
         ]
       | null = null;
     expect(props).toBeNull();
