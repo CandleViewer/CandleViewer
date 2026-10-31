@@ -72,7 +72,7 @@ function nextTabStop(from: HTMLElement): Element | undefined {
 /** A page-level button by its text: a role query would compute the names of every row's buttons. */
 const button = (name: string): HTMLElement => screen.getByText(name, { selector: "button" });
 const importBox = (): HTMLTextAreaElement =>
-  screen.getByLabelText("Import keymap JSON") as HTMLTextAreaElement;
+  screen.getByLabelText("Import keymap (JSON)") as HTMLTextAreaElement;
 function importText(text: string): void {
   fireEvent.change(importBox(), { target: { value: text } });
   fireEvent.click(button("Import"));
@@ -255,27 +255,42 @@ describe("names and states a reader gets (A11Y-305BD-02)", () => {
   it("each row's Save and Unbind have a name of their own that starts with the visible word (WCAG 2.5.3)", () => {
     mount();
     const buttons = [...document.querySelectorAll("tbody button")].filter((b) =>
-      /^(?:Save|Unbind)$/.test(b.textContent ?? ""),
+      /^(?:Save|Unbind)\b/.test(b.textContent ?? ""),
     );
-    const names = buttons.map((b) => b.getAttribute("aria-label") ?? "");
+    const names = buttons.map((b) => b.textContent ?? "");
     expect(new Set(names).size).toBe(buttons.length);
-    buttons.forEach((b, i) => expect(names[i]).toMatch(new RegExp(`^${b.textContent ?? ""} `)));
     expect(inRow("Submit order").getByRole("button", { name: "Save Submit order" })).toBeVisible();
     expect(
       inRow("Submit order").getByRole("button", { name: "Unbind Submit order" }),
     ).toBeVisible();
   });
 
-  it("A11Y-305B-06: each row's key field and modifier boxes have names of their own", () => {
+  it("A11Y-305B-06: each row's key field and modifier boxes have a visible label and a name of their own", () => {
     mount();
     const fields = [...document.querySelectorAll("tbody input")];
-    const names = fields.map((f) => f.getAttribute("aria-label") ?? "");
+    expect(fields.every((f) => !f.hasAttribute("aria-label"))).toBe(true);
+    const names = fields.map((f) => [...((f as HTMLInputElement).labels ?? [])][0]?.textContent);
+    expect(names.every((n) => typeof n === "string" && n !== "")).toBe(true);
     expect(new Set(names).size).toBe(fields.length);
     for (const view of ["DOM", "Ticket"]) {
       const arm = `Arm/disarm one-click (${view})`;
       expect(screen.getByLabelText(`Key for ${arm}`), view).toBeInTheDocument();
       expect(screen.getByLabelText(`Ctrl for ${arm}`), view).toBeInTheDocument();
     }
+    const label = keyOf("Submit order").closest("td")?.querySelector("label[for]");
+    expect(label?.firstChild?.textContent).toBe("Key"); // the word a sighted user reads
+  });
+
+  it("typing a key says nothing; Save says the result once, politely", () => {
+    mount();
+    const field = keyOf("Price zoom in");
+    for (const v of ["F", "F1", "F13"]) fireEvent.change(field, { target: { value: v } });
+    expect(polite()).toBe("");
+    fireEvent.click(saveOf("Price zoom in"));
+    expect(polite()).toBe("Price zoom in: F13");
+    fireEvent.click(saveOf("Price zoom in"));
+    expect(document.querySelectorAll('[aria-live="polite"]').length).toBe(1);
+    expect(polite()).toBe("Price zoom in: F13");
   });
 
   it("A11Y-305B-04: 'Hotkeys' is the page's h1", () => {

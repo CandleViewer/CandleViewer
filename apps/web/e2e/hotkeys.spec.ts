@@ -101,7 +101,7 @@ test.describe("SCR-113 conflict classes", () => {
   });
 
   test("import rejects conflicting and reserved entries in a report", async ({ page }) => {
-    const box = page.getByLabel("Import keymap JSON");
+    const box = page.getByLabel("Import keymap (JSON)");
     await box.fill(JSON.stringify({ "dom.zoom_in": "C", "dom.zoom_out": "Ctrl+W" }));
     await page.getByRole("button", { name: "Import" }).click(); // #305: applied on Import, never on blur
     const report = page.getByRole("list", { name: "Import report" });
@@ -131,7 +131,7 @@ test.describe("SCR-113 conflict classes", () => {
     const exported = await page.getByLabel("Export keymap (JSON)").inputValue();
     await page.getByRole("button", { name: "Reset all" }).click();
     await expect(keyOf(page, "Price zoom in")).toHaveText("+");
-    const box = page.getByLabel("Import keymap JSON");
+    const box = page.getByLabel("Import keymap (JSON)");
     await box.fill(exported);
     await page.getByRole("button", { name: "Import" }).click();
     await expect(keyOf(page, "Price zoom in")).toHaveText("J");

@@ -87,7 +87,7 @@ describe("A11Y-305B-04: the hotkey editor at R-202 has no serious or critical ax
   it("with the profile exported and an import that failed", { timeout: 30_000 }, async () => {
     const editor = await openEditor();
     fireEvent.click(button("Export"));
-    fireEvent.change(screen.getByLabelText("Import keymap JSON"), { target: { value: "{" } });
+    fireEvent.change(screen.getByLabelText("Import keymap (JSON)"), { target: { value: "{" } });
     fireEvent.click(button("Import"));
     expect(screen.getByLabelText("Export keymap (JSON)")).toBeVisible();
     expect(within(editor).getByText("Import failed: not valid JSON")).toBeVisible();

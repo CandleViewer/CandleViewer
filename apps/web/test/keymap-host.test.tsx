@@ -189,7 +189,7 @@ describe("SCR-113 editor", () => {
   it("import applies safe, lists unsafe", () => {
     const { HotkeyEditor, getBindings } = mods;
     render(<HotkeyEditor />);
-    const ta = screen.getByLabelText("Import keymap JSON") as HTMLTextAreaElement;
+    const ta = screen.getByLabelText("Import keymap (JSON)") as HTMLTextAreaElement;
     fireEvent.change(ta, {
       target: { value: JSON.stringify({ "dom.cancel_all": "Ctrl+Shift+I" }) },
     });
@@ -210,6 +210,17 @@ describe("SCR-013 cheatsheet", () => {
       "/settings/hotkeys",
     );
     expect(screen.getAllByLabelText(/conflicting binding/).length).toBeGreaterThan(0);
+  });
+
+  it("tells the truth: a remap shows in its row, and Ctrl+/ is listed as shipped", () => {
+    const { Cheatsheet, getBindings, setBindings } = mods;
+    act(() => setBindings(new Map(getBindings()).set("chart.delete_drawing", "Alt+D")));
+    render(<Cheatsheet />);
+    const row = screen.getByText("Delete selected drawing", { selector: "th" }).closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("Alt+D")).toBeVisible();
+    const help = screen.getByText("Hotkey cheatsheet", { selector: "th" }).closest("tr");
+    expect(within(help as HTMLElement).getByText("Ctrl+/")).toBeVisible();
   });
 });
 

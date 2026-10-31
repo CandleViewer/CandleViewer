@@ -62,6 +62,15 @@ function pointerTo(problem: BindingProblem, swap: SwapPlan | null): string {
   if (swap !== null) return "Swap is available after Save.";
   return problem.kind === "unsafe-destructive" ? "The acknowledgement is after Save." : "";
 }
+/** The row a control acts on: a hidden tail after the visible word, so the name starts with it (WCAG 2.5.3). */
+function ForRow(props: { readonly cmd: KeymapCommand; readonly joiner?: string }): JSX.Element {
+  return (
+    <span className="cv-visually-hidden">
+      {props.joiner ?? " "}
+      {rowName(props.cmd)}
+    </span>
+  );
+}
 const sentence = (s: string): string => (/[.!?]$/.test(s) ? s : `${s}.`);
 /** An import replaces the profile (D4): what a file leaves out is at its default, as its message says (DS-305B-03). */
 const IMPORT_REST = "Every other binding is at its default.";
@@ -239,7 +248,6 @@ export function HotkeyEditor(): JSX.Element {
         Import keymap (JSON)
         <textarea
           ref={importRef}
-          aria-label="Import keymap JSON"
           value={importText}
           onChange={(e) => setImportText(e.target.value)}
         />
@@ -290,13 +298,9 @@ function Row(props: {
       <td>
         {binding === "" ? "unbound" : <kbd>{binding}</kbd>}
         {locked ? null : (
-          <button
-            type="button"
-            aria-label={`Unbind ${rowName(cmd)}`}
-            disabled={binding === ""}
-            onClick={() => onUnbind(cmd)}
-          >
+          <button type="button" disabled={binding === ""} onClick={() => onUnbind(cmd)}>
             Unbind
+            <ForRow cmd={cmd} />
           </button>
         )}
       </td>
@@ -309,18 +313,21 @@ function Row(props: {
               <label key={m}>
                 <input
                   type="checkbox"
-                  aria-label={`${m} for ${rowName(cmd)}`}
                   checked={mods.includes(m)}
                   onChange={(e) =>
                     setMods(e.target.checked ? [...mods, m] : mods.filter((x) => x !== m))
                   }
                 />
                 {m}
+                <ForRow cmd={cmd} joiner=" for " />
               </label>
             ))}
+            <label htmlFor={`hk-key-${cmd.id}`}>
+              Key
+              <ForRow cmd={cmd} joiner=" for " />
+            </label>
             <input
               id={`hk-key-${cmd.id}`}
-              aria-label={`Key for ${rowName(cmd)}`}
               value={key}
               onChange={(e) => setKey(e.target.value)}
               size={6}
@@ -328,11 +335,11 @@ function Row(props: {
             <button
               id={`hk-save-${cmd.id}`}
               type="button"
-              aria-label={`Save ${rowName(cmd)}`}
               disabled={!key}
               onClick={() => onBind(cmd, raw)}
             >
               Save
+              <ForRow cmd={cmd} />
             </button>
           </>
         )}
