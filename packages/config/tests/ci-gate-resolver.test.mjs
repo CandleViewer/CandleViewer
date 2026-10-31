@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { evaluateLane, MERGE_GROUP_ONLY, resolveGate } from "../../../scripts/ci_gate_resolver.mjs";
+import {
+  DRAFT_DEFERRED,
+  evaluateLane,
+  MERGE_GROUP_ONLY,
+  resolveGate,
+} from "../../../scripts/ci_gate_resolver.mjs";
 
 describe("evaluateLane", () => {
   /** @type {Array<["success"|"failure"|"cancelled"|"skipped", boolean, boolean, string|null]>} */
@@ -160,5 +165,95 @@ describe("merge-group-only lanes", () => {
     );
     expect(failures.map((f) => f.code)).toEqual(["CI-GATE-002", "CI-GATE-002"]);
     expect(deferred).toEqual([]);
+  });
+});
+
+// The e2e, a11y and engine-bench jobs skip a pull request while it is a draft; the run that
+// ready_for_review starts, and every merge-group run, executes them.
+describe("draft-deferred lanes", () => {
+  const skipped = { applicable: true, result: "skipped" };
+  const reason = "runs when the pull request leaves draft";
+
+  it("are e2e, a11y and engine-bench and no other", () => {
+    expect([...DRAFT_DEFERRED].sort()).toEqual(["a11y", "e2e", "engine-bench"]);
+  });
+
+  it("share no lane with the merge-group-only set", () => {
+    expect([...DRAFT_DEFERRED].filter((lane) => MERGE_GROUP_ONLY.has(lane))).toEqual([]);
+  });
+
+  for (const lane of [...DRAFT_DEFERRED].sort()) {
+    it(`reads a skipped ${lane} lane on a draft pull_request as deferred, not as CI-GATE-002`, () => {
+      expect(evaluateLane(lane, skipped, "pull_request", true)).toEqual({
+        ok: true,
+        code: null,
+        reason: null,
+        deferred: reason,
+      });
+      const { conclusion, failures, deferred } = resolveGate(
+        { [lane]: skipped },
+        "pull_request",
+        true,
+      );
+      expect(conclusion).toBe("success");
+      expect(failures).toEqual([]);
+      expect(deferred).toEqual([{ lane, reason }]);
+    });
+
+    it(`still requires ${lane} on a pull_request that is not a draft (CI-GATE-002)`, () => {
+      const { conclusion, failures, deferred } = resolveGate({ [lane]: skipped }, "pull_request");
+      expect(conclusion).toBe("failure");
+      expect(failures.map((f) => f.code)).toEqual(["CI-GATE-002"]);
+      expect(deferred).toEqual([]);
+      expect(resolveGate({ [lane]: skipped }, "pull_request", false).conclusion).toBe("failure");
+    });
+
+    for (const event of ["merge_group", "workflow_dispatch", "push", ""]) {
+      it(`ignores the draft flag on ${event || "an unknown event"}: ${lane} required (CI-GATE-002)`, () => {
+        const { conclusion, failures, deferred } = resolveGate({ [lane]: skipped }, event, true);
+        expect(conclusion).toBe("failure");
+        expect(failures.map((f) => f.code)).toEqual(["CI-GATE-002"]);
+        expect(deferred).toEqual([]);
+      });
+    }
+
+    for (const result of ["failure", "cancelled"]) {
+      it(`still fails a draft's run of ${lane} that ended ${result} (CI-GATE-001)`, () => {
+        const lanes = { [lane]: { applicable: true, result } };
+        const { failures } = resolveGate(lanes, "pull_request", true);
+        expect(failures.map((f) => f.code)).toEqual(["CI-GATE-001"]);
+      });
+    }
+  }
+
+  it("passes a draft's run of a deferred lane that succeeded, with nothing deferred", () => {
+    const lane = { applicable: true, result: "success" };
+    const { conclusion, deferred } = resolveGate({ e2e: lane }, "pull_request", true);
+    expect(conclusion).toBe("success");
+    expect(deferred).toEqual([]);
+  });
+
+  it("keeps a non-deferred lane required on a draft pull_request (CI-GATE-002)", () => {
+    const { conclusion, failures, deferred } = resolveGate(
+      { js: skipped, py: skipped },
+      "pull_request",
+      true,
+    );
+    expect(conclusion).toBe("failure");
+    expect(failures.map((f) => f.code)).toEqual(["CI-GATE-002", "CI-GATE-002"]);
+    expect(deferred).toEqual([]);
+  });
+
+  it("reports the merge-group reason for integration and the draft reason for e2e on one draft", () => {
+    const { conclusion, deferred } = resolveGate(
+      { integration: skipped, e2e: skipped },
+      "pull_request",
+      true,
+    );
+    expect(conclusion).toBe("success");
+    expect(deferred).toEqual([
+      { lane: "integration", reason: "runs on the merge group" },
+      { lane: "e2e", reason },
+    ]);
   });
 });
