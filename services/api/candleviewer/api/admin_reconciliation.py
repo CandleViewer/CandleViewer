@@ -325,7 +325,7 @@ def make_admin_reconciliation_router(
         kept.put(*held, StoredResponse(digest, out.status_code, bytes(out.body), None))
         return out
 
-    @router.post("/reconciliation/{accountId}", status_code=202)
+    @router.post("/reconciliation/{accountId}", status_code=202)  # nosem: no-raw-account-id reason=admin:write-scope-none-Owner-only-guard-then-OwnerScope-live-owner-gate-in-SQL-SR-051-one-404-for-absent-or-another-environment-C-2.11-#914 owner=@CandleViewer/security review=2027-04-15  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
     async def reconcile_account(
         request: Request, account_id: Annotated[uuid.UUID, Path(alias="accountId")]
     ) -> Response:
@@ -379,7 +379,7 @@ def make_admin_reconciliation_router(
         finally:
             running.discard(held)
 
-    @router.post("/reconciliation/{accountId}/resolve", status_code=200)
+    @router.post("/reconciliation/{accountId}/resolve", status_code=200)  # nosem: no-raw-account-id reason=admin:write-scope-none-Owner-only-guard-then-OwnerScope-live-owner-gate-in-SQL-SR-051-one-404-for-absent-or-another-environment-C-2.11-#914 owner=@CandleViewer/security review=2027-04-15  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
     async def resolve_reconciliation(
         request: Request, account_id: Annotated[uuid.UUID, Path(alias="accountId")]
     ) -> Response:
