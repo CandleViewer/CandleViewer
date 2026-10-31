@@ -214,12 +214,8 @@ async def test_save_limits_above_cap_is_422_for_owner_and_manager(path: str, act
     with pytest.raises(RuleError) as refused:
         await _SAVES[path](m, rid, _limited(HOUR, LIMIT_CAPS[HOUR] + 1), actor)
     assert (refused.value.status, refused.value.code) == (422, "rule_ir_invalid")
-    (issue,) = refused.value.extra["issues"]
-    assert (issue["path"], issue["code"], issue["class"]) == (
-        "limits.max_fires_per_hour",
-        "schema_error",
-        "safety",
-    )
+    (issue,) = refused.value.extra["errors"]
+    assert (issue["field"], issue["rule"]) == ("limits.max_fires_per_hour", "schema_error")
     assert audits == [] and len((await m.list_rules(OWNER))["items"]) == 1
     assert [v["version"] for v in await m.versions(rid)] == [1]
 

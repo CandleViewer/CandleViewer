@@ -28,6 +28,7 @@ from candleviewer.rules.scope import ScopeResolver
 from candleviewer.rules.scope_state import ARM_LIVE, SnapshotScopeState
 from candleviewer.rules.vocabulary import default_registry
 from candleviewer.rules.vocabulary.catalogue import ARM_LIVE_PERMISSION
+from tests.rules._check_limiter import unthrottled
 
 SEED = json.loads(
     (Path(__file__).parents[2] / "candleviewer" / "auth" / "rbac_seed.json").read_text("utf-8")
@@ -104,7 +105,11 @@ def _vocabulary(role: str) -> dict[str, Any]:
 
     app = FastAPI()
     registry = default_registry()
-    app.include_router(make_rules_router(lambda: registry, principal_resolver=_Resolver()))
+    app.include_router(
+        make_rules_router(
+            lambda: registry, principal_resolver=_Resolver(), check_limiter=unthrottled()
+        )
+    )
     response = TestClient(app).get("/rules/vocabulary")
     assert response.status_code == 200, response.text
     body: dict[str, Any] = response.json()

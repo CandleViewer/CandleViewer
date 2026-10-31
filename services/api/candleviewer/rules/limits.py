@@ -11,6 +11,10 @@ The defaults are read from `RuleLimits`, never restated. The caps live only here
 contract mirrors them as `x-cv-limit-caps` on `RuleIr`, and a contract test keeps the two equal.
 Their values are interim until the Owner ratifies them (#2701). Alerts share `RuleLimits` and are
 not held to the caps (#3259).
+
+The authoring bounds of E35 (#4834) live here too: a `note` or `reason` is at most
+`MAX_NOTE_CHARS` characters (G-13), and a user holds at most `MAX_STORED_RULES_PER_USER` rules
+that are not deleted (G-16), each as 22 `createRule` states it and a contract test pins it.
 """
 
 from __future__ import annotations
@@ -32,6 +36,21 @@ LIMIT_DEFAULTS: Final[Mapping[str, int]] = MappingProxyType(
     {name: int(RuleLimits.model_fields[name].default) for name in BUDGET_FIELDS}
 )
 _LABELS: Final = {"max_fires_per_hour": "Fires per hour", "max_fires_per_day": "Fires per day"}
+#: G-13: a save's or an activation's `note` and a mode change's `reason`, in Unicode code points
+#: (`len`, JSON Schema's `maxLength`); a longer one is refused whole, never shortened.
+MAX_NOTE_CHARS: Final = 280
+NOTE_BOUND_DETAIL: Final = "1 member of the request body is over its length bound."
+NOTE_BOUND_MESSAGE: Final = (
+    f"At most {MAX_NOTE_CHARS} characters; the request is refused, never shortened."
+)
+#: G-16: the rules a user holds, the Owner included, counting the user's own that are not deleted.
+#: Interim until the Owner ratifies it as a `LIMIT_CAPS` row (#2701).
+MAX_STORED_RULES_PER_USER: Final = 200
+
+
+def stored_rules_message(cap: int) -> str:
+    """The refusal of a save past the stored-rule cap: it names the cap, never a count."""
+    return f"You have reached the limit of {cap} saved rules. Delete one to save another."
 
 
 def above_default(limits: RuleLimits) -> dict[str, int]:
@@ -65,9 +84,14 @@ __all__ = [
     "BUDGET_FIELDS",
     "LIMIT_CAPS",
     "LIMIT_DEFAULTS",
+    "MAX_NOTE_CHARS",
+    "MAX_STORED_RULES_PER_USER",
+    "NOTE_BOUND_DETAIL",
+    "NOTE_BOUND_MESSAGE",
     "above_cap",
     "above_default",
     "cap_message",
     "owner_message",
     "owner_only_errors",
+    "stored_rules_message",
 ]

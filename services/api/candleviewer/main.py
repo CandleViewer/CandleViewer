@@ -136,7 +136,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     rolloff_task: RollOffTask | None = None
     bars_runtime = kline_refresh = audit_flush = overrides = health_registry = None
     account_health = ws_runtime = lost_jobs = view_as_flush = view_as_sweeper = None
-    audit_exports = oms_runtime = profile_notices = None
+    audit_exports = oms_runtime = profile_notices = rules_refusal_flush = None
     alert_tasks: list[Any] = []
     metrics_runtime: MetricsRuntime | None = None
     frozen = False  # #3641: set once this lifespan's own freeze is in place; only it is undone
@@ -223,6 +223,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         view_as_flush = getattr(app.state, "view_as_refusal_flush", None)
         if view_as_flush is not None:  # #3085: the view-as refusal budget's own
             view_as_flush.start()
+        rules_refusal_flush = getattr(app.state, "rules_refusal_flush", None)
+        if rules_refusal_flush is not None:  # E35 (#4834): the rule refusal budgets' own
+            rules_refusal_flush.start()
         view_as_sweeper = getattr(app.state, "view_as_sweeper", None)
         if view_as_sweeper is not None:  # #3085: once the session store and audit are up
             view_as_sweeper.start()
@@ -365,6 +368,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("audit_budget_flush", audit_flush.stop)
             if view_as_flush is not None:  # so are the view-as refusal counts (#3085)
                 await teardown.run("view_as_refusal_flush", view_as_flush.stop)
+            if rules_refusal_flush is not None:  # and the rule refusal counts (E35, #4834)
+                await teardown.run("rules_refusal_flush", rules_refusal_flush.stop)
             if account_health is not None:  # its hook calls drain before `stop_all` stops modules
                 await teardown.run("account_health", account_health.stop)
             if profile_notices is not None:  # #906 D3e: off the bus before `stop_all` drains it

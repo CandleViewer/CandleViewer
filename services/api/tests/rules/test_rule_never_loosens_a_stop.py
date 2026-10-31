@@ -71,6 +71,11 @@ def _issue(path: str, n: int = 1) -> dict[str, Any]:
     return {"path": path, "code": CODE, "message": message, "severity": "error", "class": "safety"}
 
 
+def _refused(issue: dict[str, Any]) -> dict[str, Any]:
+    """`issue` as a refused save names it in 22's `errors[]` (#4834's C-row)."""
+    return {"field": issue["path"], "rule": issue["code"], "message": issue["message"]}
+
+
 def _loosening(form: str, **over: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     """A rule whose one action is `form`, and the issue its refusal carries."""
     action, path = LOOSENING[form]
@@ -125,10 +130,10 @@ def test_save_refuses_a_rule_that_could_loosen_a_stop_for_every_role(role: str, 
     ir, issue = _loosening(form)
     created = e.c.post("/rules", json={"ir": ir})
     assert created.status_code == 422 and created.json()["code"] == "rule_ir_invalid"
-    assert created.json()["issues"] == [issue]
+    assert created.json()["errors"] == [_refused(issue)] and "issues" not in created.json()
     rid = e.create()
     updated = e.c.put(f"/rules/{rid}", json={"ir": ir}, headers={"If-Match": "1"})
-    assert updated.status_code == 422 and updated.json()["issues"] == [issue]
+    assert updated.status_code == 422 and updated.json()["errors"] == [_refused(issue)]
     assert [r["latest_version"] for r in e.c.get("/rules").json()["items"]] == [1]
     assert [a for a, _ in e.audits] == ["rule.created"]
 
@@ -179,7 +184,8 @@ async def test_import_refuses_a_rule_that_could_loosen_a_stop_and_stores_nothing
     with pytest.raises(RuleError) as refused:
         await m.import_rule({"format": "cv-rule-bundle/1", "ir": ir}, IMPORTERS[role])
     assert (refused.value.status, refused.value.code) == (422, "rule_ir_invalid")
-    assert refused.value.message == issue["message"] and refused.value.extra["issues"] == [issue]
+    assert refused.value.message == "1 error in the rule IR."
+    assert refused.value.extra["errors"] == [_refused(issue)]
     assert (await m.list_rules(IMPORTERS[role]))["items"] == [] and audits == []
 
 

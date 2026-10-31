@@ -286,12 +286,8 @@ def test_create_limits_above_the_cap_is_a_422_rule_ir_invalid_problem() -> None:
     day = "max_fires_per_day"
     r = _Env().c.post("/rules", json=_budget(day, LIMIT_CAPS[day] + 1))
     assert (r.status_code, r.json()["code"]) == (422, "rule_ir_invalid")
-    (issue,) = r.json()["issues"]
-    assert (issue["path"], issue["code"], issue["class"]) == (
-        "limits.max_fires_per_day",
-        "schema_error",
-        "safety",
-    )
+    (issue,) = r.json()["errors"]
+    assert (issue["field"], issue["rule"]) == ("limits.max_fires_per_day", "schema_error")
 
 
 def test_viewer_saving_raised_limits_is_refused_at_the_permission_gate() -> None:
