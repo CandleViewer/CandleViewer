@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { announce, forget } from "../features/app-shell/announcer";
 import { KEYMAP, type KeymapCommand } from "./keymap";
+import { reportHotkey, reportRebound } from "./analytics";
 import { applyRebind } from "./audit";
 import { getBindings, setBindings, subscribeBindings } from "./profile";
 import {
@@ -93,7 +94,8 @@ interface Notice {
  * import and export as JSON; reset all. A row's message, and the Swap or acknowledgement it offers, sits in that row
  * after Save (A11Y-305B-01). Every change goes through the audited rebind; every message through the shell announcer.
  * Every role remaps on its device (A55: WCAG 2.1.4); a session without `settings:write` reads one plain note that its
- * changes stay there, which is no T2 reason, so nothing is disabled for it.
+ * changes stay there, which is no T2 reason, so nothing is disabled for it. Analytics (BQ-10) hears each change and
+ * each blocked save: `hotkey.rebound`, `hotkey.conflict_blocked`, `hotkey.reset` and `hotkey.profile_imported`.
  */
 export function HotkeyEditor(): JSX.Element {
   const bindings = useSyncExternalStore(subscribeBindings, getBindings);
@@ -124,6 +126,13 @@ export function HotkeyEditor(): JSX.Element {
     const current = getBindings();
     const problem = validateBinding(cmd.id, raw, current, undefined, { acknowledgedUnsafe: ack });
     if (problem) {
+      if (problem.kind === "conflict") {
+        reportHotkey({
+          name: "hotkey.conflict_blocked",
+          action: cmd.id,
+          collidesWith: problem.with,
+        });
+      }
       const swap = problem.kind === "conflict" ? planSwap(cmd.id, raw, current) : null;
       const text = refusalText(cmd, problem);
       // The button it offers sits after Save: say it is there (A11Y-305B-01, A11Y-305B-05).
@@ -136,7 +145,9 @@ export function HotkeyEditor(): JSX.Element {
       );
     }
     const binding = normaliseBinding(raw) ?? raw;
-    setBindings(applyRebind(current, cmd.id, binding, ack));
+    const next = applyRebind(current, cmd.id, binding, ack);
+    setBindings(next);
+    reportRebound(current, next, [cmd.id]);
     tell(cmd.id, savedText(cmd, binding));
   }
 
@@ -144,7 +155,10 @@ export function HotkeyEditor(): JSX.Element {
     const plan = planSwap(cmd.id, r.raw, getBindings()); // re-planned: the profile may have moved
     if (plan === null) tryBind(cmd, r.raw);
     else {
-      setBindings(applySwap(getBindings(), plan));
+      const before = getBindings();
+      const next = applySwap(before, plan);
+      setBindings(next);
+      reportRebound(before, next, [plan.a, plan.b]);
       tell(cmd.id, `${labelOf(plan.a)}: ${plan.aTo}; ${labelOf(plan.b)}: ${plan.bTo}`);
     }
     focusIn(cmd.id, "save"); // either way the Swap button leaves the row
@@ -152,7 +166,10 @@ export function HotkeyEditor(): JSX.Element {
 
   function unbind(cmd: KeymapCommand): void {
     if (validateUnbind(cmd.id) !== null) return; // a locked row has no Unbind
-    setBindings(applyRebind(getBindings(), cmd.id, ""));
+    const before = getBindings();
+    const next = applyRebind(before, cmd.id, "");
+    setBindings(next);
+    reportRebound(before, next, [cmd.id]);
     tell(cmd.id, `${cmd.label}: unbound`);
     focusIn(cmd.id, "key"); // the row's Unbind is now disabled
   }
@@ -165,6 +182,7 @@ export function HotkeyEditor(): JSX.Element {
     }
     const r = importProfile(parsed.profile);
     setBindings(applyImport(getBindings(), r));
+    reportHotkey({ name: "hotkey.profile_imported" });
     setReport(r.rejected.map((x) => `${x.commandId} -> ${x.binding}: ${x.problem.reason}`));
     setImportText("");
     importRef.current?.focus(); // the emptied box, not the Import button it disables (A11Y-305BD-01)
@@ -211,6 +229,7 @@ export function HotkeyEditor(): JSX.Element {
         type="button"
         onClick={() => {
           setBindings(resetAll(getBindings()));
+          reportHotkey({ name: "hotkey.reset" });
           tellAll("Every binding is back to its default.");
         }}
       >

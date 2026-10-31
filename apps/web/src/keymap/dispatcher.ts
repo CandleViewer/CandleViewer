@@ -6,7 +6,14 @@ import {
   type KeyEventLike,
   type KeymapCommand,
 } from "./keymap";
-import { buildComboMap, ignoresRepeat, runsInEditable } from "./registry";
+import {
+  UNARMED,
+  armAllows,
+  buildComboMap,
+  ignoresRepeat,
+  runsInEditable,
+  type ArmPort,
+} from "./registry";
 import { isPermanentlyReserved } from "./validate";
 
 export const INERT_NOTICE_WINDOW_MS = 5000;
@@ -16,6 +23,8 @@ export type DispatchResult =
   /** A held key's auto-repeat, taken and not run: its command runs once per press (`ignoreRepeat`). */
   | { readonly status: "repeat"; readonly commandId: string }
   | { readonly status: "inert"; readonly commandId: string; readonly notified: boolean }
+  /** An order entry while the arm reads unarmed (BQ-5): taken (default prevented), not run, and said why. */
+  | { readonly status: "unarmed"; readonly commandId: string; readonly notified: boolean }
   /** `Ctrl+K` with no palette yet: taken (default prevented) and never reported (BQ-7, D9). */
   | { readonly status: "reserved"; readonly binding: string }
   /** A key A-D05-2's rule leaves alone: neither run nor reported, its default not prevented. */
@@ -30,8 +39,10 @@ export interface DispatcherDeps {
   /** Non-modal polite notice (toast host, role="status"); must not steal focus. */
   readonly notify: (message: string) => void;
   readonly now: () => number;
-  /** Counter of inert presses by command id (observability). */
-  readonly countInert?: (commandId: string) => void;
+  /** The arm an order entry needs (BQ-5); without one it reads unarmed (fail closed). */
+  readonly arm?: ArmPort;
+  /** Counts an inert press by command id and the view it was pressed in (`hotkey.inert_pressed`). */
+  readonly countInert?: (commandId: string, view: string) => void;
   /** Current bindings (profile); defaults to the keymap defaults. */
   readonly bindings?: ReadonlyMap<string, string>;
 }
@@ -67,6 +78,15 @@ export function inertMessage(c: KeymapCommand): string {
   return `${c.label} is not available here${ctx}: it needs ${c.validWhen}.${where}`;
 }
 
+/** An order entry while the arm reads unarmed (BQ-5). PROPOSED; owner E30-D02 §14, whose `arm.refused` it echoes. */
+export function armMessage(c: KeymapCommand): string {
+  return `${c.label} is not available: one-click trading is locked.`;
+}
+
+/** The view a key was pressed in: the innermost active context (`activeContexts` lists Global first). */
+const viewOf = (active: ReadonlySet<string>): string =>
+  [...active].find((c) => c !== "Global") ?? "Global";
+
 /**
  * Resolve key → command → `validWhen` → run, or explain why it is inert here (E49-S07), under A-D05-2's rule (#305):
  * a key an IME is composing never fires; a bare binding (no Ctrl, Alt or function key) is neither run nor reported on
@@ -75,11 +95,24 @@ export function inertMessage(c: KeymapCommand): string {
  * before the Global (AC1, BQ-4); the first command that can run takes the key, once per press unless it is a stepper.
  * An inert key explains itself from any context, as E49-S07 shipped, except a bare navigation key (Tab, Enter, Space,
  * the arrows: D6, ruled option (c)), Esc (D7), a range binding and a held key's repeat; `Ctrl+K`, reserved for the
- * palette, is taken without a notice until E15 registers the palette on it (BQ-7, D9).
+ * palette, is taken without a notice until E15 registers the palette on it (BQ-7, D9). An order entry (`requiresArm`,
+ * BQ-5) that could run takes its key while the arm reads unarmed, runs nothing and says why, as an inert key does.
  */
 export function createDispatcher(deps: DispatcherDeps) {
   const lastNotified = new Map<string, number>();
   const map = buildComboMap(KEYMAP, deps.bindings);
+  const arm = deps.arm ?? UNARMED;
+  /** Whether to say why a press did nothing: at most once per command every 5 s, and never on a held key's repeat. */
+  const tell = (c: KeymapCommand, view: string, message: string, repeat: boolean): boolean => {
+    if (repeat) return false;
+    deps.countInert?.(c.id, view);
+    const t = deps.now();
+    const prev = lastNotified.get(c.id);
+    if (prev !== undefined && t - prev < INERT_NOTICE_WINDOW_MS) return false;
+    lastNotified.set(c.id, t);
+    deps.notify(message);
+    return true;
+  };
   return (e: KeyEventLike, activeContexts: ReadonlySet<string>): DispatchResult => {
     if (e.isComposing === true || e.keyCode === 229) {
       return { status: "ignored", reason: "composing" };
@@ -89,9 +122,15 @@ export function createDispatcher(deps: DispatcherDeps) {
     if (bare && e.defaultPrevented === true) return { status: "ignored", reason: "prevented" };
     const typing = (bare || composesCharacter(e)) && isEditableTarget(e.target);
     const hits = map.resolve(got, activeContexts);
+    const repeat = e.repeat === true;
     for (const { command, digit } of hits) {
       if ((typing && !runsInEditable(command)) || !deps.isValid(command)) continue;
-      if (e.repeat === true && ignoresRepeat(command)) {
+      // BQ-5: an order entry takes its key and stays inert while the arm reads unarmed; the server decides the arm.
+      if (!armAllows(command, arm)) {
+        const notified = tell(command, viewOf(activeContexts), armMessage(command), repeat);
+        return { status: "unarmed", commandId: command.id, notified };
+      }
+      if (repeat && ignoresRepeat(command)) {
         return { status: "repeat", commandId: command.id };
       }
       deps.execute(command, digit);
@@ -101,15 +140,7 @@ export function createDispatcher(deps: DispatcherDeps) {
     const inert = hits.find((h) => h.digit === undefined)?.command ?? map.anywhere(got);
     if (inert === undefined || neverReported(got)) return { status: "unbound" };
     if (isPermanentlyReserved(got)) return { status: "reserved", binding: got };
-    if (e.repeat === true) return { status: "inert", commandId: inert.id, notified: false };
-    deps.countInert?.(inert.id);
-    const t = deps.now();
-    const prev = lastNotified.get(inert.id);
-    const notified = prev === undefined || t - prev >= INERT_NOTICE_WINDOW_MS;
-    if (notified) {
-      lastNotified.set(inert.id, t);
-      deps.notify(inertMessage(inert));
-    }
+    const notified = tell(inert, viewOf(activeContexts), inertMessage(inert), repeat);
     return { status: "inert", commandId: inert.id, notified };
   };
 }

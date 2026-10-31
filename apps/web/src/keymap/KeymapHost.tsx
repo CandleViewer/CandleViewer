@@ -5,8 +5,9 @@ import { createDispatcher } from "./dispatcher";
 import { getBindings, subscribeBindings } from "./profile";
 import type { KeymapCommand } from "./keymap";
 import { Cheatsheet } from "./Cheatsheet";
+import { reportHotkey } from "./analytics";
 import { flushAuditOutbox, recordAudit } from "./audit";
-import { isCommandValid, registerCommand, runCommand } from "./registry";
+import { appArm, isCommandValid, registerCommand, runCommand, setArmPort } from "./registry";
 import { cycleRegion, toggleReducedMotionAnnounced } from "./shellCommands";
 
 /**
@@ -14,6 +15,8 @@ import { cycleRegion, toggleReducedMotionAnnounced } from "./shellCommands";
  * predicate fails, is inert. `run` gets the pressed digit of a range binding (`Alt+1..9` → 1..9).
  */
 export { registerCommand };
+/** E30 injects the session's arm here (BQ-5); until it does, an order entry reads unarmed and stays inert. */
+export { setArmPort };
 
 /**
  * Active contexts come from `data-keymap-context` on the focused element's ancestors: Global first, then the rest
@@ -74,12 +77,14 @@ export function KeymapHost(): JSX.Element {
     const dispatch = createDispatcher({
       bindings,
       now: () => Date.now(),
+      arm: appArm, // BQ-5: whatever E30 injected, read at each press
       isValid: (c: KeymapCommand) => isCommandValid(c.id),
       execute: (c: KeymapCommand, digit?: number) => runCommand(c.id, digit),
       notify: (m) => {
         setToasts((t) => [...t, m]);
         window.setTimeout(() => setToasts((t) => t.slice(1)), 5000);
       },
+      countInert: (action, view) => reportHotkey({ name: "hotkey.inert_pressed", action, view }),
     });
     const onKey = (e: KeyboardEvent) => {
       // SCR-005 (#1640): nothing that changes state runs behind the idle lock; no command lists "Locked"
@@ -103,9 +108,9 @@ export function KeymapHost(): JSX.Element {
         },
         activeContexts(),
       );
-      if (r.status === "executed" || r.status === "repeat" || r.status === "reserved") {
-        e.preventDefault();
-      }
+      // An order entry while the arm reads unarmed is taken too, so its key does nothing else (BQ-5).
+      const taken = r.status === "executed" || r.status === "repeat" || r.status === "reserved";
+      if (taken || r.status === "unarmed") e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDispatcher, isEditableTarget } from "../src/keymap/dispatcher";
 import { KEYMAP, eventBinding, isBareBinding, type KeyEventLike } from "../src/keymap/keymap";
+import type { ArmPort } from "../src/keymap/registry";
 import { bindingAtoms } from "../src/keymap/validate";
 
 /**
@@ -21,15 +22,24 @@ const ev = (key: string, init: Partial<Omit<KeyEventLike, "key">> = {}): KeyEven
 const field = (): HTMLInputElement => document.createElement("input");
 const button = (): HTMLButtonElement => document.createElement("button");
 const ctx = (...names: string[]): ReadonlySet<string> => new Set(["Global", ...names]);
-const dispatcher = (valid: (id: string) => boolean = () => true) => {
+/** An order-entry key needs the arm (#305 PR C, BQ-5): a test of the guard or of repeat on one passes it armed. */
+const ARMED: ArmPort = { isArmed: () => true };
+const dispatcher = (valid: (id: string) => boolean = () => true, arm?: ArmPort) => {
   const execute = vi.fn();
   const notify = vi.fn();
-  const d = createDispatcher({ isValid: (c) => valid(c.id), execute, notify, now: () => 0 });
+  const armed = arm === undefined ? {} : { arm };
+  const d = createDispatcher({
+    isValid: (c) => valid(c.id),
+    execute,
+    notify,
+    now: () => 0,
+    ...armed,
+  });
   return { d, execute, notify };
 };
 /** The press, then its auto-repeat: what the second one does. */
-const heldRepeat = (e: KeyEventLike, active: ReadonlySet<string>) => {
-  const { d, execute } = dispatcher();
+const heldRepeat = (e: KeyEventLike, active: ReadonlySet<string>, arm?: ArmPort) => {
+  const { d, execute } = dispatcher(undefined, arm);
   d(e, active);
   return { result: d({ ...e, repeat: true }, active), runs: execute.mock.calls.length };
 };
@@ -276,7 +286,7 @@ describe("the dispatcher rule (A-D05-2 (a)–(c); AC6: typing is never hijacked)
   });
 
   it("(a) a bare key someone already handled (`defaultPrevented`) is neither run nor reported; a chord still runs", () => {
-    const { d, execute, notify } = dispatcher();
+    const { d, execute, notify } = dispatcher(undefined, ARMED);
     expect(d(ev("b", { code: "KeyB", defaultPrevented: true }), ctx("Ticket"))).toEqual({
       status: "ignored",
       reason: "prevented",
@@ -400,7 +410,7 @@ describe("key auto-repeat: only a stepper repeats (G-07, A11Y-305A-02 / WCAG 2.3
   });
 
   it("BQ-3: a held Ctrl+Enter submits once", () => {
-    expect(heldRepeat(ev("Enter", { ctrlKey: true }), ctx("Ticket"))).toEqual({
+    expect(heldRepeat(ev("Enter", { ctrlKey: true }), ctx("Ticket"), ARMED)).toEqual({
       result: { status: "repeat", commandId: "ticket.submit" },
       runs: 1,
     });
