@@ -28,8 +28,26 @@ _ABSENT: Final = re.compile(r"\babsent(?:_over_time)?\s*\(")
 # A comparison operator outside strings and label matchers (`{a!="b"}`); `==`, `!=`, `>=`, `<=`
 # are matched whole so the `=` of a matcher or `=~` is never read as one.
 _COMPARISON: Final = re.compile(r"(?<![=!<>~])(?:>=|<=|==|!=|>|<)(?![=~])")
+# Words the lint leaks as series when an aggregation is written `count by (x) (...)` (it skips a
+# name only when a `(` follows at once), plus the other operators and modifiers the same way.
 _PROMQL_WORDS: Final = frozenset(
-    {"unless", "offset", "bool", "ignoring", "group_left", "group_right", "vector", "time"}
+    {
+        "unless",
+        "offset",
+        "bool",
+        "ignoring",
+        "group_left",
+        "group_right",
+        "vector",
+        "time",
+        "count",
+        "count_values",
+        "group",
+        "stddev",
+        "stdvar",
+        "bottomk",
+        "quantile",
+    }
 )
 # The client library's own process series ride on every scrape of the API; they are never what
 # an alert is about, so a rule reading one beside its own series needs no guard for it.

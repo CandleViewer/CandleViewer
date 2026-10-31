@@ -33,7 +33,7 @@ from tests._alert_rules import (
 )
 
 BASELINE: Final = Path(__file__).with_name("e04_q02_alert_guard_baseline.json")
-CLASSES: Final = frozenset({"lazy-series", "module-guard", "flag-gated", "unclassified-routed"})
+CLASSES: Final = frozenset({"lazy-series", "module-guard", "flag-gated", "routed"})
 Pair = tuple[str, str]  # (alert, series)
 
 
@@ -146,6 +146,13 @@ def test_self_test_histogram_buckets_share_the_guard_of_the_family() -> None:
 )
 def test_self_test_threshold_detection(expr: str, expected: bool) -> None:
     assert is_threshold(expr) is expected
+
+
+@pytest.mark.parametrize(
+    "word", ["count", "count_values", "group", "stddev", "stdvar", "bottomk", "quantile"]
+)
+def test_self_test_aggregation_word_before_by_is_not_read_as_a_series(word: str) -> None:
+    assert series_in(f"{word} by (env) (foo_total) > 1") == {"foo_total"}
 
 
 def test_alert_rules_scan_finds_the_known_rule_population() -> None:
