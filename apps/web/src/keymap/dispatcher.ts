@@ -71,6 +71,18 @@ const NAVIGATION_KEYS = new Set(["Tab", "Enter", "Space", "←", "→", "↑", "
 const neverReported = (binding: string): boolean =>
   binding === "Esc" || NAVIGATION_KEYS.has(binding.replace(/^Shift\+/, ""));
 
+/**
+ * A text field's own editing chords (D-19, #5196): select all, clipboard, undo / redo, word moves and deletes, line
+ * ends. In a text field they are typing, as a bare key is: never reported and run only by an `allowInEditable`
+ * command, so the field keeps them (E08-D05 §8: no toast in a field). Other chords (`Ctrl+K`, `Ctrl+/`) still run.
+ */
+const TEXT_EDITING_CHORDS: ReadonlySet<string> = new Set(
+  [
+    ...["A", "C", "V", "X", "Z", "Y", "Shift+Z", "Insert", "Backspace", "Del"],
+    ...["←", "→", "↑", "↓", "Home", "End"].flatMap((k) => [k, `Shift+${k}`]),
+  ].map((k) => `Ctrl+${k}`),
+);
+
 /** Contextual explanation: what the command needs and where its visible control lives. */
 export function inertMessage(c: KeymapCommand): string {
   const where = typeof c.visibleControl === "string" ? ` Use ${c.visibleControl} instead.` : "";
@@ -90,7 +102,8 @@ const viewOf = (active: ReadonlySet<string>): string =>
 /**
  * Resolve key → command → `validWhen` → run, or explain why it is inert here (E49-S07), under A-D05-2's rule (#305):
  * a key an IME is composing never fires; a bare binding (no Ctrl, Alt or function key) is neither run nor reported on
- * a `defaultPrevented` event; in a text field a bare binding, or a character Option or AltGr composes, is never
+ * a `defaultPrevented` event; in a text field a bare binding, a field's own editing chord (`Ctrl+A`, `Ctrl+Z`, …) or a
+ * character Option or AltGr composes, is never
  * reported and runs only if its command opts in (`allowInEditable`). Global resolves first, with a declared shadow
  * before the Global (AC1, BQ-4); the first command that can run takes the key, once per press unless it is a stepper.
  * An inert key explains itself from any context, as E49-S07 shipped, except a bare navigation key (Tab, Enter, Space,
@@ -120,7 +133,8 @@ export function createDispatcher(deps: DispatcherDeps) {
     const got = eventBinding(e);
     const bare = isBareBinding(got);
     if (bare && e.defaultPrevented === true) return { status: "ignored", reason: "prevented" };
-    const typing = (bare || composesCharacter(e)) && isEditableTarget(e.target);
+    const typing =
+      (bare || composesCharacter(e) || TEXT_EDITING_CHORDS.has(got)) && isEditableTarget(e.target);
     const hits = map.resolve(got, activeContexts);
     const repeat = e.repeat === true;
     for (const { command, digit } of hits) {

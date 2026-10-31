@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
   RESEND_TIMEOUT_MS,
+  STEP_UP_WARN_MS,
   StepUpChallengeGate,
 } from "../../../src/features/stepUp/StepUpChallengeGate";
 import { holdRequest, type StepUpChallenge } from "../../../src/features/stepUp/challenge";
@@ -73,7 +74,12 @@ const calls = (suffix: string): RequestInit[] =>
 
 function mount(
   challenge: StepUpChallenge = CHALLENGE,
-  props: { readBack?: () => unknown; onResent?: (r: Response) => void } = {},
+  props: {
+    readBack?: () => unknown;
+    onResent?: (r: Response) => void;
+    onRenew?: (failures: number) => void;
+    priorFailures?: number;
+  } = {},
 ) {
   const onResent = props.onResent ?? vi.fn();
   const readBack = props.readBack ?? vi.fn();
@@ -86,6 +92,8 @@ function mount(
         onResent={onResent}
         readBack={readBack}
         outcomeWhere="Orders"
+        {...(props.onRenew ? { onRenew: props.onRenew } : {})}
+        {...(props.priorFailures === undefined ? {} : { priorFailures: props.priorFailures })}
       />
     </>,
   );
@@ -238,14 +246,117 @@ describe("StepUpChallengeGate (#2725, E09-D06)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("test_challenge_expiry_drops_held_request_and_shows_not_sent", async () => {
+  it("test_challenge_expiry_drops_held_request_and_says_why_assertively", async () => {
     stubFetch(() => json(200, GRANTED));
     mount(fakeClock());
     await act(async () => {
       await vi.advanceTimersByTimeAsync(FIVE_MINUTES);
     });
-    expect(screen.getByRole("status")).toHaveTextContent("Not sent");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Not sent: the confirmation timed out. Your entries on this page are kept.",
+    );
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.useRealTimers(); // axe schedules its own timers
+    expect(await seriousViolations()).toEqual([]);
+  });
+
+  it("test_expiry_is_warned_30_seconds_ahead_on_the_server_clock (A11Y-F-0010)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    // the client clock runs 10 minutes behind: the warning still comes 30 s before server expiry
+    const serverNow = Date.now() + 2 * FIVE_MINUTES;
+    stubFetch(() => json(200, GRANTED));
+    mount({
+      ...CHALLENGE,
+      expiresAt: new Date(serverNow + FIVE_MINUTES).toISOString(),
+      clockOffsetMs: serverNow - Date.now(),
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FIVE_MINUTES - STEP_UP_WARN_MS - 1);
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    const dialog = screen.getByRole("alertdialog");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This confirmation expires in less than 30 seconds. Nothing is sent if it expires.",
+    );
+    expect(dialog).toContainElement(screen.getByRole("alert"));
+    // without onRenew no renewal is offered
+    expect(screen.queryByRole("button", { name: "Request a new confirmation" })).toBeNull();
+    vi.useRealTimers(); // axe schedules its own timers
+    expect(await seriousViolations()).toEqual([]);
+  });
+
+  it("test_renew_abandons_the_challenge_unsent_and_asks_for_a_fresh_one (A11Y-F-0010)", async () => {
+    stubFetch(() => problem(401, "mfa_invalid"));
+    const onRenew = vi.fn();
+    mount(fakeClock(), { onRenew });
+    answer();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("Incorrect code.");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FIVE_MINUTES - STEP_UP_WARN_MS);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Request a new confirmation" }));
+    expect(onRenew).toHaveBeenCalledTimes(1);
+    expect(onRenew).toHaveBeenCalledWith(1); // the failure count carries to the next challenge
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FIVE_MINUTES);
+    });
+    expect(calls("/keys/k1/rotate")).toHaveLength(0); // the held request is never sent
+    expect(calls("/auth/step-up")).toHaveLength(1); // the old challenge is never answered again
+    expect(screen.queryByRole("alert")).toBeNull(); // no late expiry notice either
+  });
+
+  it("test_renew_waits_for_an_answer_in_flight_so_its_failure_is_carried (A11Y-F-0010)", async () => {
+    let release: (r: Response) => void = () => undefined;
+    stubFetch(() => new Promise<Response>((resolve) => (release = resolve)));
+    const onRenew = vi.fn();
+    mount(fakeClock(), { onRenew });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FIVE_MINUTES - STEP_UP_WARN_MS);
+    });
+    answer();
+    const renew = screen.getByRole("button", { name: "Request a new confirmation" });
+    expect(renew).toBeDisabled();
+    fireEvent.click(renew);
+    expect(onRenew).not.toHaveBeenCalled();
+    await act(async () => release(problem(401, "mfa_invalid")));
+    fireEvent.click(screen.getByRole("button", { name: "Request a new confirmation" }));
+    expect(onRenew).toHaveBeenCalledWith(1);
+    expect(calls("/keys/k1/rotate")).toHaveLength(0);
+  });
+
+  it("test_renew_after_expiry_from_the_notice (A11Y-F-0010)", async () => {
+    stubFetch(() => json(200, GRANTED));
+    const onRenew = vi.fn();
+    mount(fakeClock(), { onRenew, priorFailures: 2 });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FIVE_MINUTES);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Not sent: the confirmation timed out. Your entries on this page are kept.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Request a new confirmation" }));
+    expect(onRenew).toHaveBeenCalledWith(2);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("test_prior_failures_carry_into_a_renewed_challenge (A11Y-F-0012)", async () => {
+    stubFetch(() => problem(401, "mfa_invalid"));
+    mount(CHALLENGE, { priorFailures: 2 });
+    answer();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Incorrect code. Too many attempts: this was not sent, and your session is read-only for 5 minutes.",
+    );
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(calls("/keys/k1/rotate")).toHaveLength(0);
   });
 
   it("test_expiry_during_step_up_never_resends", async () => {
@@ -257,7 +368,9 @@ describe("StepUpChallengeGate (#2725, E09-D06)", () => {
       await vi.advanceTimersByTimeAsync(FIVE_MINUTES);
     });
     await act(async () => release(json(200, GRANTED)));
-    expect(screen.getByRole("status")).toHaveTextContent("Not sent");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Not sent: the confirmation timed out. Your entries on this page are kept.",
+    );
     expect(calls("/keys/k1/rotate")).toHaveLength(0);
   });
 
@@ -276,20 +389,48 @@ describe("StepUpChallengeGate (#2725, E09-D06)", () => {
     expect(calls("/keys/k1/rotate")).toHaveLength(0);
   });
 
-  it("test_third_failure_drops_held_request_and_shows_not_sent", async () => {
+  it("test_third_failure_drops_held_request_and_says_why_assertively (A11Y-F-0012)", async () => {
     stubFetch(() => problem(401, "mfa_invalid"));
     mount();
+    screen.getByRole("button", { name: "Rotate key" }).focus();
     answer();
     await screen.findByRole("alert");
     answer();
     await waitFor(() => expect(calls("/auth/step-up")).toHaveLength(2));
     answer();
-    expect(await screen.findByRole("status")).toHaveTextContent("Not sent");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Incorrect code. Too many attempts: this was not sent, and your session is read-only for 5 minutes.",
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(calls("/keys/k1/rotate")).toHaveLength(0);
+    expect(await seriousViolations()).toEqual([]);
+  });
+
+  it("test_read-only_session_drops_held_request_and_says_why_assertively (A11Y-F-0012)", async () => {
+    stubFetch(() => problem(403, "session_read_only"));
+    mount();
+    answer();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    // answered before either factor is checked: it never says this code was wrong
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Not sent: too many incorrect codes, so your session is read-only for 5 minutes.",
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Incorrect code.");
     expect(calls("/keys/k1/rotate")).toHaveLength(0);
   });
 
+  it("test_read-only_answer_to_the_third_code_says_the_code_was_wrong (A11Y-F-0012)", async () => {
+    stubFetch(() => problem(403, "session_read_only"));
+    mount(CHALLENGE, { priorFailures: 2 });
+    answer();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Incorrect code. Too many attempts: this was not sent, and your session is read-only for 5 minutes.",
+    );
+  });
+
   it.each([
-    ["read-only session", 403, "session_read_only"],
     ["idle lock", 401, "session_idle_locked"],
     ["absolute expiry", 401, "session_revoked"],
   ])("test_%s_drops_held_request_and_shows_not_sent", async (_name, status, code) => {
@@ -343,7 +484,9 @@ describe("StepUpChallengeGate (#2725, E09-D06)", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_000);
     });
-    expect(screen.getByRole("status")).toHaveTextContent("Not sent");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Not sent: the confirmation timed out. Your entries on this page are kept.",
+    );
   });
 
   it("test_typed_confirmation_must_equal_target_exactly", async () => {
@@ -357,9 +500,18 @@ describe("StepUpChallengeGate (#2725, E09-D06)", () => {
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
     fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } });
     fireEvent.change(field, { target: { value: "SUB_002" } });
-    expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(screen.getByRole("button", { name: "Confirm" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(field).toHaveAccessibleDescription("Type sub_002 exactly to confirm (case-sensitive).");
+    expect(calls("/auth/step-up")).toHaveLength(0);
     fireEvent.change(field, { target: { value: "sub_002" } });
-    expect(screen.getByRole("button", { name: "Confirm" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Confirm" })).toHaveAttribute(
+      "aria-disabled",
+      "false",
+    );
     expect(await seriousViolations()).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(onResent).toHaveBeenCalledTimes(1));
@@ -391,7 +543,7 @@ describe("StepUpChallengeGate (#2725, E09-D06)", () => {
     const password = screen.getByLabelText("Password");
     expect(password).toHaveFocus();
     fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Confirm" })).toHaveFocus();
     fireEvent.keyDown(dialog, { key: "Tab" });
     expect(password).toHaveFocus();
     answer();

@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditRecord } from "../src/keymap/audit";
@@ -171,6 +172,74 @@ describe("SCR-013 cheatsheet", () => {
       "/settings/hotkeys",
     );
     expect(screen.getAllByLabelText(/conflicting binding/).length).toBeGreaterThan(0);
+  });
+});
+
+// axe-core is a transitive dependency of @axe-core/playwright (already a devDependency).
+const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
+  "axe-core",
+) as { run: (el: Element, o?: object) => Promise<{ violations: { impact?: string | null }[] }> };
+
+describe("SCR-013 cheatsheet is a modal dialog (D-03, A11Y-F-0026)", () => {
+  function openFrom(): { opener: HTMLElement; dialog: HTMLElement } {
+    const { KeymapHost } = mods;
+    render(
+      <>
+        <button type="button">Open terminal</button>
+        <KeymapHost />
+      </>,
+    );
+    const opener = screen.getByRole("button", { name: "Open terminal" });
+    opener.focus();
+    fireEvent.keyDown(opener, { key: "/", code: "Slash", ctrlKey: true });
+    return { opener, dialog: screen.getByRole("dialog", { name: "Keyboard shortcuts" }) };
+  }
+
+  it("Ctrl+/ moves focus into the modal dialog; Esc closes it and focus returns to the trigger", async () => {
+    const { opener, dialog } = openFrom();
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    // jsdom has no layout; contrast is the real-browser collectors'
+    const res = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
+    expect(res.violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual(
+      [],
+    );
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "Escape", code: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull();
+    expect(opener).toHaveFocus();
+    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+  });
+
+  it("Tab cycles inside the dialog, and Close returns focus to the trigger", () => {
+    const { opener, dialog } = openFrom();
+    const customise = screen.getByRole("link", { name: "Customise" });
+    const close = screen.getByRole("button", { name: "Close" });
+    fireEvent.keyDown(dialog, { key: "Tab" }); // Close is the last stop
+    expect(customise).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(close).toHaveFocus();
+    fireEvent.click(close);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(opener).toHaveFocus();
+  });
+});
+
+describe("D-19 (#5196): Ctrl+A in a dialog's text field selects its text, no hotkey toast", () => {
+  it("leaves the toast host empty and the key unprevented", () => {
+    const { KeymapHost } = mods;
+    render(
+      <div data-keymap-context="Rules">
+        <div role="alertdialog" aria-label="Confirm with two-factor">
+          <input aria-label="Type sub_002 to confirm" />
+        </div>
+        <KeymapHost />
+      </div>,
+    );
+    const input = screen.getByLabelText("Type sub_002 to confirm");
+    input.focus();
+    expect(fireEvent.keyDown(input, { key: "a", code: "KeyA", ctrlKey: true })).toBe(true);
+    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
   });
 });
 

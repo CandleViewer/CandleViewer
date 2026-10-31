@@ -241,6 +241,73 @@ describe("AdminInviteScreen (SCR-123)", () => {
     expect(creates).toBe(3);
   });
 
+  it("renews an expiring challenge as a fresh create, never the held one (A11Y-F-0010)", async () => {
+    let creates = 0;
+    const f = vi.fn(async (u: string, init?: RequestInit) => {
+      if (init?.method === "POST" && u.endsWith("/users")) {
+        creates += 1;
+        return reply(403, {
+          code: "step_up_required",
+          action_class: "users",
+          challenge_id: `0c9b8a7d-6e5f-4a3b-9c2d-1e0f9a8b7c6${creates}`,
+          // inside the warning window: the warning shows at once, no fake clock needed
+          challenge_expires_at: new Date(Date.now() + 20_000).toISOString(),
+        });
+      }
+      return reply(200, { items: [] });
+    });
+    vi.stubGlobal("fetch", f);
+    render(
+      <MemoryRouter>
+        <AdminInviteScreen />
+      </MemoryRouter>,
+    );
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "annie" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
+    await screen.findByRole("alertdialog");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/This confirmation expires in/);
+    expect(await seriousViolations()).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Request a new confirmation" }));
+    await waitFor(() => expect(creates).toBe(2));
+    await screen.findByRole("alertdialog");
+    const posts = f.mock.calls.filter(([, i]) => i?.method === "POST");
+    expect(posts).toHaveLength(2); // no step-up was sent, and nothing was re-sent
+    const [first, second] = posts.map(([, i]) => i as RequestInit);
+    expect(second?.body).toBe(first?.body);
+    const key = (i?: RequestInit): string | null => new Headers(i?.headers).get("Idempotency-Key");
+    expect(key(second)).not.toBeNull();
+    expect(key(second)).not.toBe(key(first));
+  });
+
+  it("a renewal sends the form as it reads now, not the first submit's values (A11Y-F-0010)", async () => {
+    const bodies: string[] = [];
+    const f = vi.fn(async (u: string, init?: RequestInit) => {
+      if (init?.method === "POST" && u.endsWith("/users")) {
+        bodies.push(String(init.body));
+        return reply(403, {
+          code: "step_up_required",
+          action_class: "users",
+          challenge_id: `0c9b8a7d-6e5f-4a3b-9c2d-1e0f9a8b7c6${bodies.length}`,
+          challenge_expires_at: new Date(Date.now() + 20_000).toISOString(),
+        });
+      }
+      return reply(200, { items: [] });
+    });
+    vi.stubGlobal("fetch", f);
+    render(
+      <MemoryRouter>
+        <AdminInviteScreen />
+      </MemoryRouter>,
+    );
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "annie" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
+    await screen.findByRole("alertdialog");
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "bobby" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Request a new confirmation" }));
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(JSON.parse(bodies[1] ?? "{}")).toMatchObject({ username: "bobby" });
+  });
+
   it("sends no Idempotency-Key on a read", async () => {
     const f = vi.fn(async () => reply(200, { items: [] }));
     vi.stubGlobal("fetch", f);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX, type RefObject } from "react";
 
 /** SCR-018: optional 8-stop tour. Dismissible, resumable, never auto-shown twice. */
 export const TOUR_STOPS: readonly { readonly title: string; readonly body: string }[] = [
@@ -28,10 +28,21 @@ function markSeen(): void {
   }
 }
 
-export function CoachMarkTour({ onClose }: { readonly onClose: () => void }): JSX.Element {
+export interface CoachMarkTourProps {
+  readonly onClose: () => void;
+  /**
+   * Where focus goes on close when no element opened the tour (it auto-opened, so focus was on `body`) or the opener
+   * is gone: the host's "Take the tour" control (D-04 / A11Y-F-0027, pattern A11Y-P-01).
+   */
+  readonly returnFocusTo?: RefObject<HTMLElement | null>;
+}
+
+export function CoachMarkTour({ onClose, returnFocusTo }: CoachMarkTourProps): JSX.Element {
   const [i, setI] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(document.activeElement);
+  const fallback = useRef(returnFocusTo);
+  fallback.current = returnFocusTo;
   const stop = TOUR_STOPS[i] ?? TOUR_STOPS[0]!;
   const last = i === TOUR_STOPS.length - 1;
   const close = (): void => {
@@ -42,7 +53,8 @@ export function CoachMarkTour({ onClose }: { readonly onClose: () => void }): JS
     ref.current?.focus();
     const el = opener.current;
     return () => {
-      if (el instanceof HTMLElement) el.focus();
+      const real = el instanceof HTMLElement && el !== document.body && el.isConnected;
+      (real ? el : fallback.current?.current)?.focus();
     };
   }, []);
   useEffect(() => {

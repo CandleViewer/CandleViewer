@@ -117,7 +117,13 @@ describe("LoginScreen (SCR-001)", () => {
         .mockResolvedValue(reply(200, { status: "mfa_required", mfa_token: "t", methods: [] })),
     );
     render(<LoginScreen />);
-    fireEvent.click(screen.getByRole("button", { name: "Show password" }));
+    const toggle = screen.getByRole("button", { name: "Show password" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    // A11Y-F-0003: the name stays put; only aria-pressed flips (CMP-201)
+    expect(screen.getByRole("button", { name: "Show password" })).toBe(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: /Hide password/ })).toBeNull();
     expect((screen.getByLabelText("Password") as HTMLInputElement).type).toBe("text");
     submit();
     await waitFor(() =>
@@ -155,6 +161,80 @@ describe("ChangePasswordScreen (SCR-004)", () => {
     expect(await serious()).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Change password" }));
     expect(screen.getByRole("alert").textContent).toBe("Use at least 12 characters.");
+  });
+
+  it("the reveal toggle keeps one name while aria-pressed flips (A11Y-F-0003)", async () => {
+    render(<ChangePasswordScreen />);
+    const toggle = screen.getByRole("button", { name: "Show passwords" });
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "Show passwords" })).toBe(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect((screen.getByLabelText("New password") as HTMLInputElement).type).toBe("text");
+    expect(await serious()).toEqual([]);
+  });
+
+  function fill(current: string, next: string, confirm: string): void {
+    fireEvent.change(screen.getByLabelText("Current password"), { target: { value: current } });
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: next } });
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: confirm } });
+    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+  }
+
+  it("a too-short new password marks, describes and focuses that field (A11Y-F-0006)", async () => {
+    render(<ChangePasswordScreen />);
+    fill("old", "short", "short");
+    const field = screen.getByLabelText("New password");
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription(/Use at least 12 characters\./);
+    expect(field).toHaveFocus();
+    expect(screen.getByLabelText("Confirm new password")).not.toHaveAttribute("aria-invalid");
+    expect(await serious()).toEqual([]);
+  });
+
+  it("editing the field in error clears its mark and message (A11Y-F-0006)", () => {
+    render(<ChangePasswordScreen />);
+    fill("old", "short", "short");
+    const field = screen.getByLabelText("New password");
+    fireEvent.change(field, { target: { value: "shorter" } });
+    expect(field).not.toHaveAttribute("aria-invalid");
+    expect(field).not.toHaveAccessibleDescription(/Use at least 12 characters/);
+    expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+  });
+
+  it("a mismatch marks, describes and focuses the confirm field (A11Y-F-0006)", async () => {
+    render(<ChangePasswordScreen />);
+    fill("old", "correct horse battery", "correct horse batterz");
+    const field = screen.getByLabelText("Confirm new password");
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription("Passwords don't match.");
+    expect(field).toHaveFocus();
+    expect(screen.getByLabelText("New password")).not.toHaveAttribute("aria-invalid");
+    expect(await serious()).toEqual([]);
+  });
+
+  it.each([
+    ["password_reused", /last 5 passwords/],
+    ["password_breached", /known breach list/],
+  ])("a %s refusal marks and focuses the new field (A11Y-F-0006)", async (code, text) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(422, { code })));
+    render(<ChangePasswordScreen />);
+    fill("old", "correct horse battery", "correct horse battery");
+    const field = screen.getByLabelText("New password");
+    await waitFor(() => expect(field).toHaveFocus());
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription(text);
+    expect(await serious()).toEqual([]);
+  });
+
+  it("an error no field owns focuses the summary and marks no field (A11Y-F-0006)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
+    render(<ChangePasswordScreen />);
+    fill("old", "correct horse battery", "correct horse battery");
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
+    expect(screen.getByRole("alert")).toHaveTextContent(/Cannot reach/);
+    for (const name of ["Current password", "New password", "Confirm new password"]) {
+      expect(screen.getByLabelText(name)).not.toHaveAttribute("aria-invalid");
+    }
   });
 
   it("surfaces the reuse error then succeeds", async () => {

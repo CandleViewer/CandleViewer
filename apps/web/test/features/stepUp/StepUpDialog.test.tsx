@@ -9,7 +9,11 @@ import { useState, type JSX } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import {
+  STEP_UP_EXPIRED,
+  STEP_UP_EXPIRY_WARNING,
+  STEP_UP_LOCKED,
   STEP_UP_NOT_SENT,
+  STEP_UP_READ_ONLY,
   StepUpDialog,
   StepUpNotice,
   stepUpOutcomePending,
@@ -53,7 +57,13 @@ const STATES: readonly [string, JSX.Element][] = [
   ],
   ["Not sent", <StepUpNotice key="n" message={STEP_UP_NOT_SENT} />],
   ["unknown outcome", <StepUpNotice key="u" message={stepUpOutcomePending("Orders")} />],
-  ["expired", <StepUpNotice key="x" message={STEP_UP_NOT_SENT} />],
+  ["expired", <StepUpNotice key="x" message={STEP_UP_EXPIRED} assertive onRenew={() => {}} />],
+  ["locked (third failure)", <StepUpNotice key="l" message={STEP_UP_LOCKED} assertive />],
+  ["read-only session", <StepUpNotice key="r" message={STEP_UP_READ_ONLY} assertive />],
+  [
+    "expiry warning",
+    <StepUpDialog key="w" {...base} warning={STEP_UP_EXPIRY_WARNING} onRenew={() => {}} />,
+  ],
 ];
 
 describe("StepUpDialog (SCR-006, E09-D06)", () => {
@@ -85,14 +95,113 @@ describe("StepUpDialog (SCR-006, E09-D06)", () => {
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
     fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "12345" } });
     fireEvent.change(screen.getByLabelText(TYPED), { target: { value: "sub_002" } });
-    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(confirm);
+    expect(onSubmit).not.toHaveBeenCalled(); // aria-disabled still never sends
     fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } });
-    expect(confirm).toBeEnabled();
+    expect(confirm).toHaveAttribute("aria-disabled", "false");
     fireEvent.change(screen.getByLabelText(TYPED), { target: { value: "Sub_002" } });
-    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(confirm);
+    expect(onSubmit).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText(TYPED), { target: { value: "sub_002" } });
     fireEvent.click(confirm);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit).toHaveBeenCalledWith({ password: "pw", code: "123456" });
+  });
+
+  it("states the code format on the code field (A11Y-F-0011)", () => {
+    render(<StepUpDialog {...base} />);
+    expect(screen.getByLabelText("Authenticator code")).toHaveAccessibleDescription(
+      "6-digit code from your authenticator app",
+    );
+  });
+
+  it.each([
+    ["the password", "", "123456", "sub_002", "Password", "Enter your password."],
+    [
+      "the code",
+      "pw",
+      "12345",
+      "sub_002",
+      "Authenticator code",
+      /Enter the 6-digit code from your authenticator app\./,
+    ],
+    [
+      "the target",
+      "pw",
+      "123456",
+      "Sub_002",
+      TYPED,
+      "Type sub_002 exactly to confirm (case-sensitive).",
+    ],
+  ])(
+    "an incomplete submit names %s in text, marks and focuses it, sends nothing (A11Y-F-0011)",
+    async (_what, password, code, typed, label, text) => {
+      const onSubmit = vi.fn();
+      render(
+        <StepUpDialog {...base} actionSummary={ROTATE} target="sub_002" onSubmit={onSubmit} />,
+      );
+      fireEvent.change(screen.getByLabelText("Password"), { target: { value: password } });
+      fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: code } });
+      fireEvent.change(screen.getByLabelText(TYPED), { target: { value: typed } });
+      // Enter in a field submits the form: an aria-disabled default button does not block it
+      fireEvent.submit(screen.getByLabelText(TYPED));
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(screen.getByRole("alert")).toHaveTextContent(text);
+      const field = screen.getByLabelText(label);
+      expect(field).toHaveAttribute("aria-invalid", "true");
+      expect(field).toHaveAccessibleDescription(text);
+      expect(field).toHaveFocus();
+      expect(await seriousViolations()).toEqual([]);
+    },
+  );
+
+  it("shows the expiry warning and the renewal inside the dialog (A11Y-F-0010)", () => {
+    const onRenew = vi.fn();
+    const { rerender } = render(<StepUpDialog {...base} onRenew={onRenew} />);
+    expect(screen.queryByRole("button", { name: "Request a new confirmation" })).toBeNull();
+    rerender(<StepUpDialog {...base} onRenew={onRenew} warning={STEP_UP_EXPIRY_WARNING} />);
+    // fixed text that stays true while shown: no seconds count that goes stale
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This confirmation expires in less than 30 seconds. Nothing is sent if it expires.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Request a new confirmation" }));
+    expect(onRenew).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no renewal while a step-up is on the wire (A11Y-F-0010)", () => {
+    const onRenew = vi.fn();
+    render(
+      <StepUpDialog {...base} submitting onRenew={onRenew} warning={STEP_UP_EXPIRY_WARNING} />,
+    );
+    const renew = screen.getByRole("button", { name: "Request a new confirmation" });
+    expect(renew).toBeDisabled();
+    fireEvent.click(renew);
+    expect(onRenew).not.toHaveBeenCalled();
+  });
+
+  it("an empty password on a Confirm click is explained, not left to the browser (A11Y-F-0011)", () => {
+    const onSubmit = vi.fn();
+    render(<StepUpDialog {...base} onSubmit={onSubmit} />);
+    // no native validation bubble may pre-empt the explained, focused message
+    expect(screen.getByRole("alertdialog").querySelector("form")).toHaveAttribute("novalidate");
+    fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter your password.");
+    expect(screen.getByLabelText("Password")).toHaveFocus();
+  });
+
+  it("editing the named field clears its message and mark (A11Y-F-0011)", () => {
+    render(<StepUpDialog {...base} />);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    const password = screen.getByLabelText("Password");
+    expect(password).toHaveAttribute("aria-invalid", "true");
+    fireEvent.change(password, { target: { value: "pw" } });
+    expect(password).not.toHaveAttribute("aria-invalid");
+    expect(password).not.toHaveAccessibleDescription();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("never submits while submitting", () => {
@@ -146,7 +255,8 @@ describe("StepUpDialog (SCR-006, E09-D06)", () => {
     render(<StepUpDialog {...base} onCancel={onCancel} />);
     const dialog = screen.getByRole("alertdialog");
     fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    // Confirm is aria-disabled, so it stays a tab stop (A11Y-F-0011)
+    expect(screen.getByRole("button", { name: "Confirm" })).toHaveFocus();
     fireEvent.keyDown(dialog, { key: "Tab" });
     expect(screen.getByLabelText("Password")).toHaveFocus();
     fireEvent.keyDown(dialog, { key: "Tab" }); // not on the last stop: the browser moves focus

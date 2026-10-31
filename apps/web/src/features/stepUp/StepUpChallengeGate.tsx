@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import {
+  STEP_UP_EXPIRED,
+  STEP_UP_LOCKED,
+  STEP_UP_EXPIRY_WARNING,
   STEP_UP_NOT_SENT,
+  STEP_UP_READ_ONLY,
   StepUpDialog,
   StepUpNotice,
   stepUpOutcomePending,
@@ -37,6 +41,11 @@ export const STEP_UP_UNREACHABLE = "Cannot reach the server. Try again.";
  * shared HTTP timeout; this matches its other auth waits (`REFRESH_WAIT_MS`, `BOOTSTRAP_TIMEOUT_MS`).
  */
 export const RESEND_TIMEOUT_MS = 10_000;
+/**
+ * How long before `challenge_expires_at` the dialog warns (A11Y-F-0010, WCAG 2.2.1: at least 20 s
+ * to act). The warning never extends the challenge; it only offers a fresh one.
+ */
+export const STEP_UP_WARN_MS = 30_000;
 /** A timer past 2^31 ms would fire at once. */
 const MAX_DELAY_MS = 2 ** 31 - 1;
 
@@ -58,9 +67,23 @@ export interface StepUpChallengeGateProps {
   readonly readBack: () => unknown;
   /** Where the read-back shows the outcome, for "Outcome pending, see …" (E09-D06 §2 item 4). */
   readonly outcomeWhere: string;
+  /**
+   * Asks the server for a FRESH challenge (A11Y-F-0010): the caller submits its action again as a
+   * new request (new `Idempotency-Key`), whose `403 step_up_required` carries a new `challenge_id`
+   * with the same factors. This challenge is never extended and its held request is dropped
+   * unsent first. Gets the invalid codes counted so far, to seed the next gate's `priorFailures`.
+   * Without it, no renewal is offered.
+   */
+  readonly onRenew?: (failures: number) => void;
+  /** Invalid codes already counted against earlier challenges (the server's count stays truth). */
+  readonly priorFailures?: number;
 }
 
-type Stage = "dialog" | "not-sent" | "pending" | "done";
+type Stage = "dialog" | "not-sent" | "expired" | "locked" | "read-only" | "pending" | "done";
+
+/** Clamps a timer delay; an unreadable expiry fires at once. */
+const delay = (ms: number): number =>
+  Number.isNaN(ms) ? 0 : Math.min(Math.max(ms, 0), MAX_DELAY_MS);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -77,7 +100,9 @@ function endsChallenge(status: number, body: unknown): boolean {
  * Answers one `403 step_up_required` challenge (#2725): SCR-006 restates `action_summary`, the step-up
  * sends `challenge_id`, and the held request is re-sent once after a `200` for the challenged class.
  * Esc / Cancel, `challenge_expires_at`, a class mismatch, the third failure, idle lock, absolute expiry
- * and a stale-challenge `400` drop it unsent and leave "Not sent" (E09-D06 §2 item 7).
+ * and a stale-challenge `400` drop it unsent and leave "Not sent" (E09-D06 §2 item 7). The expiry
+ * is warned of `STEP_UP_WARN_MS` ahead and announced when it passes; the third failure and
+ * `session_read_only` say why and what follows (A11Y-F-0010, A11Y-F-0012).
  */
 export function StepUpChallengeGate({
   challenge,
@@ -85,19 +110,23 @@ export function StepUpChallengeGate({
   onResent,
   readBack,
   outcomeWhere,
+  onRenew,
+  priorFailures = 0,
 }: StepUpChallengeGateProps): JSX.Element | null {
   const [stage, setStage] = useState<Stage>("dialog");
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<StepUpFailure | null>(null);
   /** Set once the held request is dropped or re-sent: it is never sent (again) after that. */
   const settled = useRef(false);
-  const failures = useRef(0);
+  const failures = useRef(priorFailures);
+  const [warning, setWarning] = useState<string | null>(null);
 
-  const drop = useCallback((): void => {
+  const end = useCallback((next: Stage): void => {
     if (settled.current) return;
     settled.current = true;
-    setStage("not-sent");
+    setStage(next);
   }, []);
+  const drop = useCallback((): void => end("not-sent"), [end]);
 
   useEffect(() => {
     settled.current = false;
@@ -108,9 +137,22 @@ export function StepUpChallengeGate({
 
   useEffect(() => {
     const ms = msUntilExpiry(challenge);
-    const timer = setTimeout(drop, Number.isNaN(ms) ? 0 : Math.min(Math.max(ms, 0), MAX_DELAY_MS));
-    return () => clearTimeout(timer);
-  }, [challenge, drop]);
+    const expiry = setTimeout(() => end("expired"), delay(ms));
+    const warn = setTimeout(() => setWarning(STEP_UP_EXPIRY_WARNING), delay(ms - STEP_UP_WARN_MS));
+    return () => {
+      clearTimeout(expiry);
+      clearTimeout(warn);
+    };
+  }, [challenge, end]);
+
+  /** Abandons this challenge (its request is never sent) and asks the caller for a fresh one. */
+  function renew(): void {
+    // an answer in flight is awaited: its 401 must be counted before the count is carried
+    if (submitting) return;
+    settled.current = true;
+    setStage("done");
+    onRenew?.(failures.current);
+  }
 
   function fail(message: string, credentials: boolean): void {
     setSubmitting(false);
@@ -158,16 +200,27 @@ export function StepUpChallengeGate({
       if (granted?.action_class !== challenge.actionClass) return drop();
       return resend();
     }
+    if (response.status === 403 && isRecord(body) && body["code"] === "session_read_only") {
+      // the answer to a third invalid code, or a lock from before this attempt (another tab or
+      // gate), which checked neither factor and so never calls this code wrong
+      return end(failures.current + 1 >= MAX_STEP_UP_FAILURES ? "locked" : "read-only");
+    }
     if (endsChallenge(response.status, body)) return drop();
     if (response.status === 429 || response.status >= 500) return fail(STEP_UP_UNREACHABLE, false);
     if (response.status === 401) {
       failures.current += 1;
-      if (failures.current >= MAX_STEP_UP_FAILURES) return drop();
+      if (failures.current >= MAX_STEP_UP_FAILURES) return end("locked");
     }
     fail(STEP_UP_INVALID, true);
   }
 
+  const renewable = onRenew === undefined ? undefined : renew;
   if (stage === "not-sent") return <StepUpNotice message={STEP_UP_NOT_SENT} />;
+  if (stage === "expired") {
+    return <StepUpNotice message={STEP_UP_EXPIRED} assertive onRenew={renewable} />;
+  }
+  if (stage === "locked") return <StepUpNotice message={STEP_UP_LOCKED} assertive />;
+  if (stage === "read-only") return <StepUpNotice message={STEP_UP_READ_ONLY} assertive />;
   if (stage === "pending") return <StepUpNotice message={stepUpOutcomePending(outcomeWhere)} />;
   if (stage === "done") return null;
   return (
@@ -176,6 +229,8 @@ export function StepUpChallengeGate({
       target={challenge.target}
       submitting={submitting}
       failure={failure}
+      warning={warning}
+      onRenew={renewable}
       onSubmit={(credentials) => void submit(credentials)}
       onCancel={drop}
     />

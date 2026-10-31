@@ -129,17 +129,47 @@ test("E09-TC-C05 the step-up answers the server's challenge and the held invite 
   await guard.flush();
 });
 
-test("E09-TC-C06 at challenge_expires_at the held invite is dropped: Not sent (fake clock)", async ({
+const EXPIRED = "Not sent: the confirmation timed out. Your entries on this page are kept.";
+const LOCKED =
+  "Incorrect code. Too many attempts: this was not sent, and your session is read-only for 5 minutes.";
+
+test("E09-TC-C06 at challenge_expires_at the held invite is dropped: warned 30 s ahead, then why (fake clock)", async ({
   page,
 }) => {
   const wire = await inviteWithChallenge(page, GRANTED);
-  await expect(page.getByRole("alertdialog")).toBeVisible();
-  await page.clock.runFor(5 * MIN);
-  // The shell has other polite live regions (the SCR-015 toast host, the theme announcer).
-  await expect(page.getByRole("status").filter({ hasText: /^Not sent$/u })).toBeVisible();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toBeVisible();
+  // A11Y-F-0010 (WCAG 2.2.1): a warning 30 s before the limit, with a fresh challenge on offer
+  await page.clock.runFor(5 * MIN - 31_000);
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await page.clock.runFor(1_000);
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "This confirmation expires in less than 30 seconds. Nothing is sent if it expires.",
+  );
+  await expect(dialog.getByRole("button", { name: "Request a new confirmation" })).toBeVisible();
+  expect(await seriousAxe(page)).toEqual([]);
+  await page.clock.runFor(30_000);
+  await expect(page.getByRole("alert").filter({ hasText: EXPIRED })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Request a new confirmation" })).toBeVisible();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   expect(wire.stepUps).toEqual([]);
   expect(wire.creates).toHaveLength(1);
+});
+
+test("E09-TC-C05 Confirm with an empty password is explained, never the browser's bubble (A11Y-F-0011)", async ({
+  page,
+}) => {
+  const wire = await inviteWithChallenge(page, GRANTED);
+  // Enter in the empty required field: the form's own submit path, where a browser would
+  // otherwise show its validation bubble (Confirm is aria-disabled, so Playwright won't click it)
+  await page.getByLabel("Password", { exact: true }).press("Enter");
+  await expect(page.getByRole("alert")).toHaveText("Enter your password.");
+  await expect(page.getByLabel("Password", { exact: true })).toBeFocused();
+  await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute(
+    "aria-invalid",
+    "true",
+  );
+  expect(wire.stepUps).toEqual([]);
 });
 
 test("E09-TC-C05 rejected code keeps the dialog open with an accessible error", async ({
@@ -190,7 +220,7 @@ for (const [name, close] of CLOSERS) {
   });
 }
 
-test("E09-TC-C05 the third refused code drops the held invite unsent: three step-ups sent, Not sent, no re-send", async ({
+test("E09-TC-C05 the third refused code drops the held invite unsent: three step-ups sent, why and what follows, no re-send", async ({
   page,
 }) => {
   const wire = await inviteWithChallenge(page, { status: 401, body: { code: "mfa_invalid" } });
@@ -214,7 +244,7 @@ test("E09-TC-C05 the third refused code drops the held invite unsent: three step
   expect(await seriousAxe(page)).toEqual([]);
   await refused(3);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  await expect(NOT_SENT(page)).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: LOCKED })).toBeVisible(); // A11Y-F-0012
   const bodies = wire.stepUps.map((body) => JSON.parse(body) as { challenge_id?: string });
   expect(bodies.map((body) => body.challenge_id)).toEqual([
     CHALLENGE_ID,
@@ -239,7 +269,7 @@ const READ_ONLY: Answer = {
   },
 };
 
-test("E09-TC-C05 the server's 403 session_read_only on the third code drops the held invite unsent: Not sent, no re-send", async ({
+test("E09-TC-C05 the server's 403 session_read_only on the third code drops the held invite unsent: why and what follows, no re-send", async ({
   page,
 }) => {
   const wire = await inviteWithChallenge(page, strike(2), strike(1), READ_ONLY);
@@ -252,7 +282,7 @@ test("E09-TC-C05 the server's 403 session_read_only on the third code drops the 
     if (n < 3) await expect(password).toHaveValue(""); // the dialog stays, and the form is reset
   }
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  await expect(NOT_SENT(page)).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: LOCKED })).toBeVisible(); // A11Y-F-0012
   expect(wire.stepUps).toHaveLength(3); // no fourth step-up
   expect(wire.creates).toHaveLength(1); // the held invite is never re-sent
 });

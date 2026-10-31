@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type JSX } from "react";
+import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import {
   dismissChecklist,
   fetchChecklist,
@@ -79,6 +79,7 @@ function Step({
 export function SetupChecklistCard(): JSX.Element | null {
   const [data, setData] = useState<Checklist | null>(null);
   const [tour, setTour] = useState(false);
+  const tourButton = useRef<HTMLButtonElement>(null);
   const load = useCallback(async () => {
     const d = await fetchChecklist();
     setData(d);
@@ -110,10 +111,10 @@ export function SetupChecklistCard(): JSX.Element | null {
   return (
     <section aria-label="Setup checklist">
       <h2>Finish setting up</h2>
-      <button type="button" onClick={() => setTour(true)}>
+      <button ref={tourButton} type="button" onClick={() => setTour(true)}>
         Take the tour
       </button>
-      {tour ? <CoachMarkTour onClose={() => setTour(false)} /> : null}
+      {tour ? <CoachMarkTour onClose={() => setTour(false)} returnFocusTo={tourButton} /> : null}
       <ol>
         {data.items.map((i) => (
           <Step key={i.key} item={i} onRetry={() => void load()} />
