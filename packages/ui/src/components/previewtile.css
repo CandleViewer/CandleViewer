@@ -26,7 +26,7 @@
   color: var(--color-text-primary);
 }
 
-/* The empty state: the static CMP-015 silhouette behind the reason (decorative, aria-hidden by the atom). */
+/* The empty state: the static CMP-029 silhouette at opacity.muted behind the reason (decorative, aria-hidden by the atom). */
 .cv-preview-tile__empty {
   position: relative;
   display: grid;
@@ -39,6 +39,12 @@
   position: absolute;
   inset: 0;
   display: grid;
+  opacity: var(--opacity-muted);
+}
+
+/* Static: the atom's sweep band is not drawn here, so there is no motion to pair with reduced motion. */
+.cv-preview-tile__silhouette .cv-skeleton__block::after {
+  display: none;
 }
 
 .cv-preview-tile__empty > .cv-preview-tile__status {

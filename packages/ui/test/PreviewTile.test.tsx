@@ -134,10 +134,10 @@ describe("PreviewTile (CMP-228)", () => {
     }
   });
 
-  it("empty: the static silhouette sits behind the reason, hidden from AT; the name and description stay", async () => {
+  it("empty: the CMP-029 silhouette sits behind the reason, hidden from AT; the name and description stay", async () => {
     const host = await mount(tile({ status: "empty" }));
     const img = within(host).getByRole("img", { name: PREVIEW_TILE_COPY.unavailable });
-    const skeleton = img.querySelector('[data-cmp="CMP-015"]');
+    const skeleton = img.querySelector('[data-cmp="CMP-029"]');
     expect(skeleton).toHaveAttribute("aria-hidden", "true");
     expect(img).toHaveAccessibleDescription(PREVIEW_TILE_COPY.empty);
   });
@@ -154,6 +154,27 @@ describe("PreviewTile (CMP-228)", () => {
     try {
       const host = await mount(tile({ tokenOverrides: { [BODY.surface]: "#fff" } }));
       expect(within(host).getByText(/^Low contrast:/)).toHaveTextContent("4.48:1");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a theme flip re-measures a one-sided override, with no provider; the listener goes on unmount", async () => {
+    const theme: Record<string, string> = {
+      "--color-text-primary": "#777777",
+      "--color-text-secondary": "#777777",
+      "--color-surface-sunken": "#ffffff",
+    };
+    const spy = vi.spyOn(window, "getComputedStyle").mockReturnValue({
+      getPropertyValue: (name: string) => theme[name] ?? "",
+    } as CSSStyleDeclaration);
+    try {
+      const host = await mount(tile({ tokenOverrides: { [BODY.surface]: "#fff" } }));
+      expect(within(host).getByText(/^Low contrast:/)).toBeTruthy();
+      theme["--color-text-primary"] = "#000000";
+      theme["--color-text-secondary"] = "#000000";
+      document.dispatchEvent(new CustomEvent("candleviewer:themechange"));
+      await vi.waitFor(() => expect(within(host).queryByText(/^Low contrast:/)).toBeNull());
     } finally {
       spy.mockRestore();
     }

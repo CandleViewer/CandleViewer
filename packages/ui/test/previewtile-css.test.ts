@@ -64,8 +64,12 @@ describe("previewtile.css contract", () => {
     );
   });
 
-  it("not interactive: no hover, focus, cursor or opacity", () => {
-    expect(css.all).not.toMatch(/:hover|focus|opacity|cursor/);
+  it("not interactive: no hover, focus or cursor; opacity only on the empty silhouette, at opacity.muted", () => {
+    expect(css.all).not.toMatch(/:hover|focus|cursor/);
+    expect(find(normal, ".cv-preview-tile__silhouette", "opacity")).toContain(
+      "opacity: var(--opacity-muted)",
+    );
+    expect(css.all.match(/opacity\s*:/g)).toHaveLength(1);
   });
 
   it("forced colours: a CanvasText edge and CanvasText text and glyphs", () => {

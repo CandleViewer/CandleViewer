@@ -50,8 +50,18 @@ export const Light: Story = { args: { value: "light" }, render: controlled };
 
 export const HighContrast: Story = { args: { value: "high-contrast" }, render: controlled };
 
-/** J13 match-system cell: the switch on, the segment the system resolves to checked, still operable. */
+/** J13 match-system cell: the switch on, the segment the system resolves to checked; no interaction. */
 export const MatchSystem: Story = {
+  args: { value: "light", matchSystem: true },
+  render: controlled,
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole("switch")).toBeChecked();
+    await expect(radio(canvasElement, "Light")).toBeChecked();
+  },
+};
+
+/** With match system on, picking a segment commits it and turns the switch off. */
+export const MatchSystemThenPick: Story = {
   args: { value: "light", matchSystem: true },
   render: controlled,
   play: async ({ canvasElement, args }) => {

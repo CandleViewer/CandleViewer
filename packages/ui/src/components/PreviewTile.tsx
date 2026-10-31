@@ -2,8 +2,9 @@ import { useId, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, JSX, ReactNode } from "react";
 import { Icon } from "../icons/Icon.js";
 import { ColorSwatch } from "./ColorSwatch.js";
-import { Skeleton } from "./Skeleton.js";
+import { SkeletonChart } from "./SkeletonChart.js";
 import { contrastRatio } from "./internal/contrast.js";
+import { THEME_CHANGE_EVENT } from "../theme/store.js";
 
 /** The catalogue's kinds plus J21's `scales`, `chart` (E12-D05) and `ladder` (E32-D04). */
 export type PreviewTileKind =
@@ -147,10 +148,17 @@ export function PreviewTile({
   const [ratio, setRatio] = useState<number | null>(null);
   const overrideKey = JSON.stringify(tokenOverrides);
   // Measured after layout so an unoverridden side resolves to the active theme's value.
+  // It re-measures when the runtime reports a theme change, so a one-sided override follows the switcher
+  // with or without a ThemeProvider (the event is dispatched on `document`).
   useLayoutEffect(() => {
-    const frame = frameRef.current;
-    const overrides = JSON.parse(overrideKey) as Record<string, string>;
-    setRatio(frame === null ? null : overrideRatio(frame, overrides));
+    const measure = (): void => {
+      const frame = frameRef.current;
+      const overrides = JSON.parse(overrideKey) as Record<string, string>;
+      setRatio(frame === null ? null : overrideRatio(frame, overrides));
+    };
+    measure();
+    document.addEventListener(THEME_CHANGE_EVENT, measure);
+    return () => document.removeEventListener(THEME_CHANGE_EVENT, measure);
   }, [overrideKey]);
   const warning =
     ready && ratio !== null && ratio < PREVIEW_TILE_CONTRAST_PAIRS.min
@@ -167,7 +175,7 @@ export function PreviewTile({
     image = (
       <span className="cv-preview-tile__empty">
         <span className="cv-preview-tile__silhouette">
-          <Skeleton shape="chart" />
+          <SkeletonChart />
         </span>
         <span id={descriptionId} className="cv-preview-tile__status">
           {emptyText}
