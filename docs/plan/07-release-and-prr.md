@@ -215,7 +215,7 @@ Rules:
 
 ## 9. Alert runbooks (E04-T05)
 
-Every Prometheus alert in `infra/prometheus/alerts/` links to its section here (CI: `infra/alertmanager/check_alert_rules.py`). Two severities only: **Page** (act now, bypasses quiet hours) and **Ticket** (next working session). Payloads carry component, severity and this link only. Every section below carries the same seven elements (what fired, user impact, what is still safe, first three diagnostic commands with the healthy result, remediation, escalation, verify recovery). `Q` queries use the local Prometheus at `127.0.0.1:9090`. Runbooks never contain credentials: secrets live in the host keychain (SR-002); steps that touch keys or trading state name the required role and are audited.
+Every Prometheus alert in `infra/prometheus/alerts/` links to its section here (CI: `infra/alertmanager/check_alert_rules.py`). Two severities only: **Page** (act now, bypasses quiet hours) and **Ticket** (next working session). Quiet hours (22:00 to 07:00 UTC by default) mute a ticket: one still firing when they end is sent then, and one that fires and resolves inside them is never sent. An SR-125 security ticket (`quiet_hours: bypass` on its rule) is never muted: it goes to the ticket channel at once, day or night, and is not a page. Payloads carry component, severity and this link only. Every section below carries the same seven elements (what fired, user impact, what is still safe, first three diagnostic commands with the healthy result, remediation, escalation, verify recovery). `Q` queries use the local Prometheus at `127.0.0.1:9090`. Runbooks never contain credentials: secrets live in the host keychain (SR-002); steps that touch keys or trading state name the required role and are audited.
 
 > **Validation status (E04-T07).** Literal execution of three runbooks by a non-author against staging has **not** been performed: no staging stack exists in the agent-delivery environment. This is tracked as a follow-up on the ticket and requires an explicit owner exception or a human run before the DoD box is ticked. Findings from that run must be folded back into the affected sections.
 
@@ -1068,14 +1068,14 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 
 ### AuthLoginFailureSpike
 
-| Element               | Detail                                                                                |
-| --------------------- | ------------------------------------------------------------------------------------- |
-| 1. What fired         | More than 10 failed logins in 10 minutes. Ticket.                                     |
-| 2. User impact        | Possible brute force or a misconfigured client.                                       |
-| 3. What is still safe | Trading.                                                                              |
-| 5. Remediation        | Identify the source in logs; confirm lockouts engaged; reset only via the Owner flow. |
-| 6. Escalation         | Owner and security reviewer if unexplained.                                           |
-| 7. Verify recovery    | Failures return to baseline.                                                          |
+| Element               | Detail                                                                                                                                    |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | More than 10 failed logins in 10 minutes. Ticket, an SR-125 security signal: `quiet_hours: bypass`, so quiet hours never mute it (#2621). |
+| 2. User impact        | Possible brute force or a misconfigured client.                                                                                           |
+| 3. What is still safe | Trading.                                                                                                                                  |
+| 5. Remediation        | Identify the source in logs; confirm lockouts engaged; reset only via the Owner flow.                                                     |
+| 6. Escalation         | Owner and security reviewer if unexplained.                                                                                               |
+| 7. Verify recovery    | Failures return to baseline.                                                                                                              |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: a few at most.)
 
@@ -1089,14 +1089,14 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 
 ### AuthLockouts
 
-| Element               | Detail                                                                                  |
-| --------------------- | --------------------------------------------------------------------------------------- |
-| 1. What fired         | An account lockout occurred (`auth_lockouts_total`). Ticket.                            |
-| 2. User impact        | A user is locked out.                                                                   |
-| 3. What is still safe | Trading by other users.                                                                 |
-| 5. Remediation        | Confirm with the user; unlock via the admin Users screen (Owner, 2FA re-auth; audited). |
-| 6. Escalation         | Owner.                                                                                  |
-| 7. Verify recovery    | No new lockouts.                                                                        |
+| Element               | Detail                                                                                                                                               |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | An account lockout occurred (`auth_lockouts_total`). Ticket, an SR-125 security signal: `quiet_hours: bypass`, so quiet hours never mute it (#2621). |
+| 2. User impact        | A user is locked out.                                                                                                                                |
+| 3. What is still safe | Trading by other users.                                                                                                                              |
+| 5. Remediation        | Confirm with the user; unlock via the admin Users screen (Owner, 2FA re-auth; audited).                                                              |
+| 6. Escalation         | Owner.                                                                                                                                               |
+| 7. Verify recovery    | No new lockouts.                                                                                                                                     |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
 
@@ -1215,14 +1215,14 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 
 ### AuthzDeniedSpike
 
-| Element               | Detail                                                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------- |
-| 1. What fired         | More than 20 authorization denials in 10 minutes. Ticket.                                   |
-| 2. User impact        | Possible privilege probing or a UI bug.                                                     |
-| 3. What is still safe | Trading; RBAC held server-side.                                                             |
-| 5. Remediation        | Check which permission; confirm no IDOR attempt; fix the UI if it offers forbidden actions. |
-| 6. Escalation         | Security reviewer if unexplained.                                                           |
-| 7. Verify recovery    | Denials back to baseline.                                                                   |
+| Element               | Detail                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | More than 20 authorization denials in 10 minutes. Ticket, an SR-125 security signal: `quiet_hours: bypass`, so quiet hours never mute it (#2621). |
+| 2. User impact        | Possible privilege probing or a UI bug.                                                                                                           |
+| 3. What is still safe | Trading; RBAC held server-side.                                                                                                                   |
+| 5. Remediation        | Check which permission; confirm no IDOR attempt; fix the UI if it offers forbidden actions.                                                       |
+| 6. Escalation         | Security reviewer if unexplained.                                                                                                                 |
+| 7. Verify recovery    | Denials back to baseline.                                                                                                                         |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: low single digits.)
 
@@ -1236,14 +1236,14 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 
 ### CredentialVerificationFailures
 
-| Element               | Detail                                                                                                           |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| 1. What fired         | The hourly key check failed (`credential_verification_failures_total`). Ticket.                                  |
-| 2. User impact        | A key may be revoked or have withdrawal permission on; that account is blocked.                                  |
-| 3. What is still safe | Other accounts and existing stops.                                                                               |
-| 5. Remediation        | Read the `reason` label. If withdrawal is on, turn it off at the exchange, then rotate the key (Owner; audited). |
-| 6. Escalation         | Owner immediately if the reason is withdrawal.                                                                   |
-| 7. Verify recovery    | The next hourly check passes.                                                                                    |
+| Element               | Detail                                                                                                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | The hourly key check failed (`credential_verification_failures_total`). Ticket, an SR-125 security signal: `quiet_hours: bypass`, so quiet hours never mute it (#2621). |
+| 2. User impact        | A key may be revoked or have withdrawal permission on; that account is blocked.                                                                                         |
+| 3. What is still safe | Other accounts and existing stops.                                                                                                                                      |
+| 5. Remediation        | Read the `reason` label. If withdrawal is on, turn it off at the exchange, then rotate the key (Owner; audited).                                                        |
+| 6. Escalation         | Owner immediately if the reason is withdrawal.                                                                                                                          |
+| 7. Verify recovery    | The next hourly check passes.                                                                                                                                           |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
 
@@ -1280,14 +1280,14 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 
 ### OmsRateRejects
 
-| Element               | Detail                                                                  |
-| --------------------- | ----------------------------------------------------------------------- |
-| 1. What fired         | Exchange rate-limit rejects occurred (`oms_rate_reject_total`). Ticket. |
-| 2. User impact        | Orders delayed or refused; the reserve protects stop and cancel paths.  |
-| 3. What is still safe | Stop and cancel paths via the reserve.                                  |
-| 5. Remediation        | Reduce fan-out burst or spread legs; back-off is automatic.             |
-| 6. Escalation         | Owner if repeated.                                                      |
-| 7. Verify recovery    | No rejects for 30 minutes.                                              |
+| Element               | Detail                                                                                                                                                          |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | Exchange rate-limit rejects occurred (`oms_rate_reject_total`). Ticket, an SR-125 security signal: `quiet_hours: bypass`, so quiet hours never mute it (#2621). |
+| 2. User impact        | Orders delayed or refused; the reserve protects stop and cancel paths.                                                                                          |
+| 3. What is still safe | Stop and cancel paths via the reserve.                                                                                                                          |
+| 5. Remediation        | Reduce fan-out burst or spread legs; back-off is automatic.                                                                                                     |
+| 6. Escalation         | Owner if repeated.                                                                                                                                              |
+| 7. Verify recovery    | No rejects for 30 minutes.                                                                                                                                      |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0; remaining well above 0.)
 
@@ -1301,14 +1301,14 @@ curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=bybit_rate_
 
 ### EgressIpChanged
 
-| Element               | Detail                                                                                    |
-| --------------------- | ----------------------------------------------------------------------------------------- |
-| 1. What fired         | The host egress IP changed (`egress_ip_changes_total`). Ticket.                           |
-| 2. User impact        | Exchange API keys with an IP allowlist will fail.                                         |
-| 3. What is still safe | Existing stops.                                                                           |
-| 5. Remediation        | Add the new IP to the Bybit key allowlist at the exchange (never widen to all addresses). |
-| 6. Escalation         | Owner.                                                                                    |
-| 7. Verify recovery    | Credential verification passes.                                                           |
+| Element               | Detail                                                                                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | The host egress IP changed (`egress_ip_changes_total`). Ticket, an SR-125 security signal: `quiet_hours: bypass`, so quiet hours never mute it (#2621). |
+| 2. User impact        | Exchange API keys with an IP allowlist will fail.                                                                                                       |
+| 3. What is still safe | Existing stops.                                                                                                                                         |
+| 5. Remediation        | Add the new IP to the Bybit key allowlist at the exchange (never widen to all addresses).                                                               |
+| 6. Escalation         | Owner.                                                                                                                                                  |
+| 7. Verify recovery    | Credential verification passes.                                                                                                                         |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
 

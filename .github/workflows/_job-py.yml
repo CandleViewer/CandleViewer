@@ -121,10 +121,28 @@ jobs:
             "page_event alertname=IngestionTradeGapUnrecovered severity=page component=ingestion resolves=window" \
             "ticket severity=ticket" \
             "deadman alertname=Watchdog" \
-            "ticket severity=ticket component=auth"; do
+            "ticket severity=ticket component=auth" \
+            "ticket alertname=AuthLockouts severity=ticket component=auth quiet_hours=bypass" \
+            "ticket alertname=AuthLoginFailureSpike severity=ticket component=auth quiet_hours=bypass" \
+            "ticket alertname=AuthzDeniedSpike severity=ticket component=auth quiet_hours=bypass" \
+            "ticket alertname=CredentialVerificationFailures severity=ticket component=secrets quiet_hours=bypass" \
+            "ticket alertname=OmsRateRejects severity=ticket component=oms quiet_hours=bypass" \
+            "ticket alertname=EgressIpChanged severity=ticket component=network quiet_hours=bypass"; do
             set -- $r; recv=$1; shift
             $AM config routes test --config.file=/etc/alertmanager/alertmanager.yml --verify.receivers=$recv "$@"
           done
+          # SR-125 bypass tickets (#2621): both routes send to `ticket`, so the receiver cannot tell
+          # them apart; --tree prints the matched route. A `quiet_hours: bypass` ticket must match the
+          # bypass route (infra/alertmanager/tests pins that it has no mute) and any other ticket the
+          # general one (muted in quiet hours).
+          tree() { $AM config routes test --tree --config.file=/etc/alertmanager/alertmanager.yml "$@"; }
+          for r in \
+            "AuthLockouts auth" "AuthLoginFailureSpike auth" "AuthzDeniedSpike auth" \
+            "CredentialVerificationFailures secrets" "OmsRateRejects oms" "EgressIpChanged network"; do
+            set -- $r
+            tree alertname=$1 severity=ticket component=$2 quiet_hours=bypass | grep -qF '{quiet_hours="bypass",severity="ticket"}' || { echo "$1 does not match the bypass route" >&2; exit 1; }
+          done
+          tree alertname=PostgresDegraded severity=ticket component=storage | grep -qF '{severity="ticket"}' || { echo "a general ticket does not match the ticket route" >&2; exit 1; }
           # Notification body render: occurrence count + required fields (E04-T05 AC grouping/page content)
           out=$($AM template render --template.glob='/etc/alertmanager/templates/*.tmpl' --template.data=/etc/alertmanager/tests/data/grouped_page.json --template.text='{{ template "cv.title" . }} | {{ template "cv.body" . }}')
           echo "$out"

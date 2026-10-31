@@ -911,3 +911,82 @@ def test_ci_routes_test_loop_has_an_api_down_page_case() -> None:
     assert ("page", {"alertname": "ApiDown", "severity": "page", "component": "api"}) in (
         _ci_route_cases()
     )
+
+
+#: The SR-125 security tickets that bypass quiet hours (#2621).
+QUIET_BYPASS_TICKETS = {
+    "AuthLockouts",
+    "AuthLoginFailureSpike",
+    "AuthzDeniedSpike",
+    "CredentialVerificationFailures",
+    "OmsRateRejects",
+    "EgressIpChanged",
+}
+
+
+def test_quiet_hours_label_lint_accepts_bypass_on_a_ticket(tmp_path: Path) -> None:
+    labels = "{severity: ticket, component: c, quiet_hours: bypass}"
+    assert _bad_rule(tmp_path, labels, "{runbook_url: 'docs/plan/07-release-and-prr.md#x'}") == []
+
+
+def test_quiet_hours_label_lint_rejects_another_value(tmp_path: Path) -> None:
+    """A typo would match no bypass route and the ticket would be muted overnight again."""
+    labels = "{severity: ticket, component: c, quiet_hours: Bypass}"
+    errs = _bad_rule(tmp_path, labels, "{runbook_url: 'docs/plan/07-release-and-prr.md#x'}")
+    assert errs == ["Bad: quiet_hours label must be 'bypass'"]
+
+
+def test_quiet_hours_label_lint_rejects_a_page(tmp_path: Path) -> None:
+    """A page is never muted, so on a page the label would do nothing."""
+    labels = "{severity: page, component: c, quiet_hours: bypass}"
+    errs = _bad_rule(tmp_path, labels, "{runbook_url: 'docs/plan/07-release-and-prr.md#x'}")
+    assert errs == ["Bad: quiet_hours label is only valid on a ticket"]
+
+
+def test_quiet_hours_bypass_is_set_on_exactly_the_sr125_security_tickets() -> None:
+    labelled = {r["alert"] for r in _rules() if "quiet_hours" in r["labels"]}
+    assert labelled == QUIET_BYPASS_TICKETS
+
+
+def test_every_bypass_rule_is_a_ticket_routed_to_the_unmuted_ticket_route() -> None:
+    general = _route_for({"severity": "ticket", "component": "storage"})
+    assert general["receiver"] == "ticket"
+    assert general["mute_time_intervals"] == ["quiet_hours"]
+    bypass_rules = [r for r in _rules() if r["labels"].get("quiet_hours") == "bypass"]
+    assert bypass_rules
+    for rule in bypass_rules:
+        assert rule["labels"]["severity"] == "ticket", rule["alert"]
+        route = _route_for(_alert_labels(rule))
+        assert route["receiver"] == "ticket", rule["alert"]
+        assert "mute_time_intervals" not in route, rule["alert"]
+        assert route["repeat_interval"] == "4h", rule["alert"]
+        assert route is not general
+
+
+def test_bypass_route_sits_above_the_general_ticket_route() -> None:
+    """The first matching route wins and none sets `continue`: below the general one the
+    bypass route would never be reached."""
+    routes = AM["route"]["routes"]
+    matchers = [tuple(r["matchers"]) for r in routes]
+    bypass = matchers.index(('severity = "ticket"', 'quiet_hours = "bypass"'))
+    assert bypass < matchers.index(('severity = "ticket"',))
+
+
+def test_pages_and_other_tickets_keep_their_routes_and_mute() -> None:
+    assert _route_for({"severity": "page"})["receiver"] == "page"
+    assert "mute_time_intervals" not in _route_for({"severity": "page"})
+    for rule in _rules():
+        labels = rule["labels"]
+        if labels.get("severity") == "ticket" and "quiet_hours" not in labels:
+            route = _route_for(_alert_labels(rule))
+            assert route["mute_time_intervals"] == ["quiet_hours"], rule["alert"]
+
+
+def test_ci_routes_test_loop_has_a_ticket_case_for_each_bypass_rule() -> None:
+    """#2621: one `amtool config routes test` case per `quiet_hours: bypass` rule, with the labels
+    its rule carries, expecting the `ticket` receiver (amtool shows no mute: the tests above pin
+    that the route has none)."""
+    cases = _ci_route_cases()
+    for rule in (r for r in _rules() if r["labels"].get("quiet_hours") == "bypass"):
+        wanted = ("ticket", {**rule["labels"], "alertname": rule["alert"]})
+        assert cases.count(wanted) == 1, rule["alert"]

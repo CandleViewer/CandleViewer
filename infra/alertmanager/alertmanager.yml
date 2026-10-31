@@ -36,6 +36,14 @@ route:
     - matchers: [severity = "page"]
       receiver: page
       repeat_interval: 30m
+    # SR-125 security tickets (#2621): rules labelled `quiet_hours: bypass` (check_alert_rules.py
+    # allows it on tickets only). Same ticket channel, no mute_time_intervals: they use 10 min to
+    # 1 h `increase()` windows, so a night event would resolve inside quiet hours and never be
+    # sent. Not a page: nothing wakes the Owner. It must stay above the general ticket route:
+    # the first matching route wins and none sets `continue`.
+    - matchers: [severity = "ticket", quiet_hours = "bypass"]
+      receiver: ticket
+      repeat_interval: 4h
     # Ticket: muted during quiet hours. An alert still firing when the interval ends is sent
     # then; one that fires and resolves inside it is never sent, so an alert that must reach
     # the Owner on every occurrence (AuthRecoveryCodeUsed, SR-022) is a page.
