@@ -263,9 +263,11 @@ async def _e2e(target: uuid.UUID) -> tuple[list[str], list[Any]]:
         result = ev.on_trigger(scope_instance("BTCUSDT", str(target)), "on_price_update")
         assert runner._on_fire is not None
         runner._on_fire(item, result)  # what `process` does with each result
-        async with asyncio.timeout(2):
-            while ctx.rules._tasks:  # noqa: ASYNC110 - drains scheduled emits
-                await asyncio.sleep(0.005)
+        async with asyncio.timeout(10):  # a guard: only a regression reaches it
+            await asyncio.gather(*ctx.rules._tasks)  # the evaluation's own recording
+            for queue in (ctx.rules._dispatch, ctx.rules._audits):
+                assert queue is not None
+                await queue.idle()  # the result's actions, routed or audited
     finally:
         await ctx.rules.stop(1.0)
     return audits, seen
