@@ -26,6 +26,7 @@ import {
   SegmentedControl,
   Select,
   Slider,
+  SystemHealthTile,
   Table,
   Tabs,
   TextInput,
@@ -160,6 +161,7 @@ const molecules: [string, () => JSX.Element][] = [
       </AuditRowList>
     ),
   ],
+  ["CMP-178", () => <SystemHealthTile label="Users" href="#users" state="ready" tone="ok" />],
 ];
 
 describe("molecules carry their catalogue id", () => {
