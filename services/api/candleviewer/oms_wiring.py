@@ -3239,7 +3239,6 @@ class OmsRuntime:
                 notices.bind_reconciliation(
                     functools.partial(reconcile.jobs.trigger, trigger="unknown")
                 )
-                closers.insert(0, ("reconciliation", lambda: lane.call(reconcile.jobs.stop())))
             self._phase = "stream"
             stream = build_stream_consumer(
                 facade=machines, orders=orders, stops=stops, positions=stored_positions,
@@ -3334,6 +3333,12 @@ class OmsRuntime:
             closers.insert(0, ("exits", lambda: lane.call(exits.aclose())))
             # a full close's sweeps end before the exits, the facade and the trading port
             closers.insert(0, ("position_sweeps", lambda: lane.call(writes.aclose())))
+            if reconcile is not None:  # E29-T06: built, started only once swept (`_started`)
+                # its jobs stop before the stop gate and all they use; by name, once the inserts
+                # at fixed indexes above are in, so the sink and the ticker demand keep theirs
+                jobs = reconcile.jobs
+                at_gate = [name for name, _ in closers].index("stop_gate")
+                closers.insert(at_gate, ("reconciliation", lambda: lane.call(jobs.stop())))
             # S4-F: a fold's call still out once the machines have cut its members' invokes, as
             # theirs are, is ended before the trading port closes
             after = [name for name, _ in closers].index("machines") + 1
