@@ -163,6 +163,27 @@ for (const { scr, path } of SCANNED_HERE) {
   });
 }
 
+// D-01 (#5196, WCAG 2.4.2): each route sets its own unique, descriptive page title.
+const TITLES: ReadonlyArray<readonly [string, string]> = [
+  ["/login", "Login - CandleViewer"],
+  ["/login/change-password", "Forced password change - CandleViewer"],
+  ["/admin/users/new", "Invite user - CandleViewer"],
+  ["/invite/tok-a11y-0123456789", "Invitation acceptance - CandleViewer"],
+  ["/terminal/last", "Terminal - CandleViewer"],
+  ["/settings/profile", "Profile and security - CandleViewer"],
+  ["/403", "Forbidden - CandleViewer"],
+  ["/no-such-page", "Not found - CandleViewer"],
+];
+
+test("every audited route sets its own page title (SC 2.4.2)", async ({ page }) => {
+  await stub(page);
+  for (const [path, title] of TITLES) {
+    await page.goto(path);
+    await expect(page).toHaveTitle(title);
+  }
+  expect(new Set(TITLES.map(([, title]) => title)).size).toBe(TITLES.length);
+});
+
 // ---- SCR-017 enrolment wizard: every step, not just the landing step (E09-Q04 review) ----
 // This is the only implemented enrolment flow (TOTP secret + recovery codes). It covers the
 // SR-enrolment, SC 3.3.1 (error identification), reflow/200% zoom and reduced-motion criteria

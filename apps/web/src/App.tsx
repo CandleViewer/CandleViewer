@@ -8,6 +8,7 @@ import { SessionLockHost } from "./features/session/SessionLockHost";
 import { PreferencesProvider } from "./features/a11y-preferences/PreferencesContext";
 import { usePublishEngineFlags } from "./features/a11y-preferences/consumers";
 import { createRouteTree } from "./routes/tree";
+import { syncDocumentTitle } from "./routes/titles";
 import { APP_THEME_OPTIONS } from "./shell/bootstrap/themeStore";
 
 /**
@@ -23,6 +24,8 @@ const router = createRouteTree();
 export function App(): JSX.Element {
   // E04-T06: frontend telemetry push loop lives exactly as long as the app.
   useEffect(() => startTelemetry().stop, []);
+  // D-01 (WCAG 2.4.2): every route sets its own page title.
+  useEffect(() => syncDocumentTitle(router), []);
   const publishFlags = usePublishEngineFlags();
   return (
     <ThemeProvider options={APP_THEME_OPTIONS}>

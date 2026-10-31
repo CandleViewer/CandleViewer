@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { buildRoutes } from "../../src/routes/tree";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
+import { pageTitle, syncDocumentTitle } from "../../src/routes/titles";
 import { setMeClaims, resetMeClaims } from "../../src/lib/auth/meCache";
 import type { Role } from "../../src/routes/rbac";
 
@@ -147,5 +148,52 @@ describe("route ranking: a static path outranks its dynamic sibling", () => {
     const router = createMemoryRouter(buildRoutes(), { initialEntries: [path] });
     expect(router.state.matches.at(-1)?.route.id).toBe(routeId);
     router.dispose();
+  });
+});
+
+describe("page titles (D-01, WCAG 2.4.2)", () => {
+  beforeEach(() => {
+    resetMeClaims();
+    document.title = "CandleViewer";
+  });
+
+  it("sets the title on load and on every navigation, guard errors included", async () => {
+    claimsFor("viewer");
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/login"] });
+    const stop = syncDocumentTitle(router);
+    render(<RouterProvider router={router} />);
+    await waitFor(() => expect(document.title).toBe("Login - CandleViewer"));
+    await act(() => router.navigate("/login/change-password"));
+    expect(document.title).toBe("Forced password change - CandleViewer");
+    await act(() => router.navigate("/admin/users/new")); // a viewer: hidden as 404
+    expect(document.title).toBe("Not found - CandleViewer");
+    await act(() => router.navigate("/no-such-page"));
+    expect(document.title).toBe("Not found - CandleViewer");
+    await act(() => router.navigate("/watchlist"));
+    expect(document.title).toBe("Watchlists - CandleViewer");
+    stop();
+    await act(() => router.navigate("/login"));
+    expect(document.title).toBe("Watchlists - CandleViewer"); // unsubscribed
+  });
+
+  it("names a role-denied route Forbidden", async () => {
+    claimsFor("viewer");
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/risk"] });
+    const stop = syncDocumentTitle(router);
+    render(<RouterProvider router={router} />);
+    await waitFor(() => expect(document.title).toBe("Forbidden - CandleViewer"));
+    stop();
+  });
+
+  it.each([
+    [404, "Not found"],
+    [403, "Forbidden"],
+    [500, "Something went wrong"],
+    [503, "Something went wrong"],
+  ])("names a %i route error response %s, never Forbidden for a server error", (status, title) => {
+    const error = { status, statusText: "", internal: false, data: null };
+    type State = Parameters<typeof pageTitle>[0];
+    const state = { errors: { root: error }, matches: [] } as unknown as State;
+    expect(pageTitle(state)).toBe(title);
   });
 });
