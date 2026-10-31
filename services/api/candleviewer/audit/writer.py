@@ -135,6 +135,10 @@ KEYED_ACTIONS: Final[Mapping[str, uuid.UUID]] = MappingProxyType(
         # revoked once, never restored), so the call whose close completes writes it and every
         # repeat, after a crash or a restart too, lands on the same row.
         "api_key.revoked": uuid.UUID("05b2ed69-7564-401d-8d03-51392a7758ca"),
+        # E35-T09 (#5000): a rule action's records, each named by the action's `dedupe_key` (24
+        # Sec.11.9), so a retried write ahead of the same action, or a refusal's, lands once.
+        "rules.fired": uuid.UUID("51f5d119-a574-4365-b206-e54224c41884"),
+        "rules.blocked": uuid.UUID("74e6d147-d012-4f44-a891-c6fc0477a2bf"),
     }
 )
 

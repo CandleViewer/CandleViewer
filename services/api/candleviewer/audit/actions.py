@@ -249,6 +249,12 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "rules.version_create",
         "rules.simulate",
         "rules.delete",
+        # E35-T09 (#5000, 24 Sec.15.5): a rule action's records, written by the executor's records
+        # adapter alone (`rules_oms_wiring`), never through `make_rules_audit`: `rules.fired` ahead
+        # of the hand-over of an action the checks admit, `rules.blocked` for an action a check or
+        # the OMS refused. Keyed (`writer.KEYED_ACTIONS`) by the action's `dedupe_key`.
+        "rules.fired",
+        "rules.blocked",
         # E40-T02: every alert mutation and every cross-user denial is audited (one
         # `alert.<past-tense>` convention so prefix queries see them all).
         "alert.created",

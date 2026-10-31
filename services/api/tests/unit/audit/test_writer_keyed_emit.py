@@ -33,6 +33,9 @@ def test_writer_keyed_actions_keep_their_namespaces_for_good() -> None:
     assert KEYED_ACTIONS["tp.modified"] == uuid.UUID("0f574dd0-7558-4261-8417-7c38870c061d")
     # E27-S04 (#898 R7): a key revoke's completion record, named by the key's id.
     assert KEYED_ACTIONS["api_key.revoked"] == uuid.UUID("05b2ed69-7564-401d-8d03-51392a7758ca")
+    # E35-T09 (#5000): a rule action's records, named by the action's `dedupe_key` (24 §11.9).
+    assert KEYED_ACTIONS["rules.fired"] == uuid.UUID("51f5d119-a574-4365-b206-e54224c41884")
+    assert KEYED_ACTIONS["rules.blocked"] == uuid.UUID("74e6d147-d012-4f44-a891-c6fc0477a2bf")
     assert set(KEYED_ACTIONS) <= AUDIT_ACTIONS
     assert len(set(KEYED_ACTIONS.values())) == len(KEYED_ACTIONS)  # never two actions on one id
 
