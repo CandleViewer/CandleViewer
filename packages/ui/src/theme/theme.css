@@ -16,6 +16,28 @@
 }
 
 /*
+ * Target-size floor (WCAG 2.5.8, E47-S05): a bare control that no `.cv-*` class styles (the app's own
+ * forms use plain elements) is never smaller than the minimum target, at either density. `:where`
+ * keeps the specificity at zero, so every component rule still wins; the visually hidden pattern
+ * keeps its 1px clip, and a range input keeps its own track.
+ */
+:where(
+  button,
+  select,
+  textarea,
+  summary,
+  input:not([type="checkbox"], [type="radio"], [type="hidden"], [type="range"])
+):not(.cv-visually-hidden) {
+  box-sizing: border-box;
+  min-block-size: var(--size-target-min);
+}
+
+:where(input[type="checkbox"], input[type="radio"]):not(.cv-visually-hidden) {
+  min-inline-size: var(--size-target-min);
+  min-block-size: var(--size-target-min);
+}
+
+/*
  * Text scale (WCAG 1.4.4 and 1.4.10): the root font size scales everything sized in rem or em, and
  * `--cv-text-scale` carries the same factor for sizes that are plain px counts in the tokens and for
  * canvas text.
