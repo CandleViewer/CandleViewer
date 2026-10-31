@@ -183,7 +183,8 @@ before the flip ("Noted" below), is unchanged by this closure.
   added it to `wire_bars` after `e784738b5`, and the reading's head carries it, but the lane at those
   readings composed the store alone (`EmitRouter([self.store])`), so the figure leaves it out (history).
   #399 removes the flag (D2-G4 closed on the default leg, ruled above) and the lane composes the indicators
-  sink from #399 on (`EmitRouter([store, indicators])`, no history reader, no listener). The `soak_bars`
+  sink from #399 on (`EmitRouter([store, indicators])`, no history reader, no listener; no instances are held, so only
+  the emit-path overhead is measured). The `soak_bars`
   reading with the sink in the lane is owed by the first host-quiet nightly after #399 merges and is
   recorded on #399's QA record. The flip was not held for it, per the coordinator's ruling of 2026-10-31.
   A passing reading of the earlier lane stands for the D2-G4 line while `bars/series_store.py`,

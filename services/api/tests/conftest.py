@@ -8,6 +8,7 @@ access outside `tmp_path` (Constitution C-13.5/C-13.7).
 from __future__ import annotations
 
 import gc
+import os
 import sys
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass
@@ -62,6 +63,24 @@ class RecordingAuditSink:
 
     def actions(self) -> list[str]:
         return [c["action"] for c in self.calls]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _bars_state_root_in_tmp(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """#399: the bars runtime always runs, so every `create_app` lifespan opens the settings' bars
+    state root (default `/data/bars/state`). Point `CV_BARS_STATE_ROOT` at a session temp dir so no
+    test touches `/data`, unless the environment already names one. Session scope is early enough:
+    `Settings()` reads the environment per construction, and no test builds one at import time.
+    Tests that pass `bars_state_root=` explicitly (init kwargs outrank the environment) are
+    unaffected."""
+    if "CV_BARS_STATE_ROOT" in os.environ:
+        yield
+        return
+    os.environ["CV_BARS_STATE_ROOT"] = str(tmp_path_factory.mktemp("bars-state"))
+    try:
+        yield
+    finally:
+        os.environ.pop("CV_BARS_STATE_ROOT", None)
 
 
 @pytest.fixture(autouse=True)

@@ -85,6 +85,10 @@ WS_BACKPRESSURE_FLAG_REMOVED: Final = (
     "CV_WS_BACKPRESSURE_ENABLED was removed in #2409 (the WS outbound pipeline always runs): "
     "delete the line"
 )
+#: #399: the refusal of a `.env` or environment that still sets the removed bars flag.
+BARS_ENABLED_FLAG_REMOVED: Final = (
+    "CV_BARS_ENABLED was removed in #399 (the bar builders and writer always run): delete the line"
+)
 #: The two fixed 0.1 s ticks of the exit path: uvicorn's main loop sees the exit request within
 #: 0.1 s, and `Server.shutdown` sleeps 0.1 s before its drain. `PlannedShutdownServer`'s poll and
 #: uvicorn's drain poll add nothing to the worst case: `asyncio.wait` returns on completion and
@@ -792,6 +796,9 @@ class Settings(BaseSettings):
     # Otherwise it must be absolute and not a symlink; it is
     # normalised with expanduser().resolve() at settings load.
     bars_state_root: str = ""
+    # #399: `CV_BARS_ENABLED`, removed. A tombstone like `ws_backpressure_enabled`: any value is
+    # refused at load with `BARS_ENABLED_FLAG_REMOVED`; nothing reads it.
+    bars_enabled: None = Field(default=None, exclude=True, repr=False)
     # E42-T05 (#966 Q7): the backup volume, the only place backup artefacts are read from
     # (`storage/backup_artefacts.py`); only the backup engine writes it. Empty (default) = unwired.
     # Declared after every path `_refuse_unsafe_backup_root` compares, so they are in `info.data`.
@@ -1219,6 +1226,15 @@ class Settings(BaseSettings):
         if value is None:
             return None
         raise ValueError(WS_BACKPRESSURE_FLAG_REMOVED)
+
+    @field_validator("bars_enabled", mode="before")
+    @classmethod
+    def _refuse_the_removed_bars_flag(cls, value: object) -> None:
+        """#399: any value given at all is refused, with what to do; only the unset default,
+        `None`, passes. The message names no value (C-12.6)."""
+        if value is None:
+            return None
+        raise ValueError(BARS_ENABLED_FLAG_REMOVED)
 
     @field_validator("uvicorn_drain_timeout_s", mode="before")
     @classmethod

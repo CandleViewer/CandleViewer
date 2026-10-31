@@ -198,7 +198,10 @@ async def test_lifespan_register_publish_shutdown_flushes_blobs_and_rows(
     assert "rows" in order and order.index("stop:set") < len(order)
 
 
-def test_state_root_default_anchors_on_data_dir_not_cwd(tmp_path: Path) -> None:
+def test_state_root_default_anchors_on_data_dir_not_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CV_BARS_STATE_ROOT", raising=False)  # the conftest's session root
     s = Settings(parquet_root=str(tmp_path / "data" / "parquet"))
     assert Path(s.bars_state_root) == (tmp_path / "data" / "bars" / "state").resolve()
 
@@ -220,7 +223,7 @@ def test_state_root_symlink_rejected(tmp_path: Path) -> None:
         Settings(bars_state_root=str(link))
 
 
-async def test_writer_probe_not_deployed_off_and_degraded_when_writer_degraded(
+async def test_writer_probe_not_deployed_without_a_sink_and_degraded_when_writer_degraded(
     tmp_path: Path,
 ) -> None:
     from candleviewer.app import _bars_writer_state
