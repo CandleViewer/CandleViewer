@@ -2,7 +2,8 @@
 
 BQ-08: an alert whose series nothing produces can never fire, and reads as "healthy" (RSK-047,
 observability gaps); this is how `PostgresDown` (`pg_up`) slipped through, since the dashboard
-lint checks panels, not rules. Each series in each alert expression, guards included, must be
+lint checks panels, not rules. `PostgresDown`, `ClockDriftBlockingTrading` and the unemitted class
+behind them are #5174 (P1). Each series in each alert expression, guards included, must be
 (1) a catalogue series that is emitted: `status="live"` or `exported=True` (a `planned` entry
 records an owner epic, not an emitter; `register_r0` registers live ones only), histogram
 families by name, (2) a recorded

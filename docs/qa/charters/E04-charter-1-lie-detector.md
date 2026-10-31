@@ -2,14 +2,14 @@
 
 - Ticket: E04-Q02 (#257) · Format: session-based test management · Date: 2026-10-31
 - Plan: `docs/qa/test-plans/e04-observability-charters.md` (base, rulings, regression pack, blind-spot report, sign-off draft).
-- Tester: AI agent. **Deviation (honest scope):** an agent ran the static and in-process work. It is not a human session. There was no running stack, no docker, no browser and no Grafana. Every live technique is **not attempted — blocked on the PRR staging re-run** (BQ-01, pending ruling). Nothing here was observed on a running system.
+- Tester: AI agent. **Deviation (honest scope):** an agent ran the static and in-process work. It is not a human session. There was no running stack, no docker, no browser and no Grafana. Every live technique is **not attempted — blocked on the PRR staging re-run** (BQ-01, ruled; #210's exception is extended to these legs under the delegation). Nothing here was observed on a running system.
 - No credentials used. No network: the suites and probes ran in-process against fakes and a fake clock (C-13.5).
 
 ## Charter
 
 Explore the system's health reporting with the goal of making it report healthy while something is genuinely broken.
 
-Time box: 4 h (the ticket's). Actual: see "Session metrics". The time box is recorded as the ticket's, not claimed (BQ-15, pending ruling).
+Time box: 4 h (the ticket's). Actual: see "Session metrics". The time box is recorded as the ticket's, not claimed (BQ-15, ruled).
 
 ## Oracles (defined before probing)
 
@@ -21,7 +21,7 @@ Time box: 4 h (the ticket's). Actual: see "Session metrics". The time box is rec
 
 - The probe ticker defaults to 1.0 s (`services/api/candleviewer/observability/health_probes.py`:278). The lifespan starts it (`services/api/candleviewer/main.py`:225).
 - Each probe runs under `min(probe.timeout, deadline)` (`health_probes.py`:220). The registry deadline defaults to 1.5 s (:194). `CallableProbe`'s own default is 2.0 s (:102), but the real probes register 1.5 s or 1.0 s (`services/api/candleviewer/health_wiring.py`:346, :379, :395).
-- So the ticket's "2 s probe cache" is a 1.0 s ticker plus a probe limit of at most 1.5 s. The worst-case stale window is about 2.5 s (BQ-04, pending ruling).
+- So the ticket's "2 s probe cache" is a 1.0 s ticker plus a probe limit of at most 1.5 s. The worst-case stale window is about 2.5 s (BQ-04, ruled: what is merged wins).
 - `last_good_at` advances on `healthy` and on `not_deployed` (`health_probes.py`:228–229) and is kept after a failure (:238).
 - `/admin/health` serves the cached snapshot and never runs a probe (`services/api/candleviewer/admin/ops/health.py`:51–58). Its `server_time` is the snapshot's `taken_at` (`services/api/candleviewer/api/health_report.py`:56).
 - `not_deployed` ranks as `healthy` for `overall` (`health_probes.py`:28–29, :43–44).
@@ -50,12 +50,12 @@ The 1 Hz UI poll the ticket names does not exist for health. No UI renders `last
 - Time: about 12 minutes of agent tool time, 05:28–05:40 UTC, shared with charters 2 and 3. Times are from the agent's tool log. Not a 4 h human session.
 - Suites re-run at 05:34 (one run for all three charters): `test_e04_q01_blackbox.py`, `test_health_probes.py` and eight other observability and abuse-case files. 738 passed, 5 deselected, 18.4 s; that file list was not kept. Re-run on 2026-10-31 with ten named files (listed in plan §2): 296 passed, 5 deselected.
 - Probes: `p1` to `p4`, one scratch script outside the repo, run at 05:35. **Not kept:** every observation marked "probe" below (F1's one-hour reading, O-1, O-4) was observed with a script that is not in the repo. F1's mechanism is now reproduced by `services/api/tests/qa/test_e04_q02_probe_ticker.py`, a deterministic in-process test marked `xfail(strict=True)` (reason "F1, fix routed"); it shows the snapshot stays `healthy` across 200 ticks of a fake sleep after one raising refresh, not the hour of the probe. Promoting `p3` to a test is a follow-up.
-- Environment: a laptop with no measured profile. No E04-K01 or E04-T06 measurement was running (BQ-14, pending ruling).
+- Environment: a laptop with no measured profile. No E04-K01 or E04-T06 measurement was running (BQ-14, ruled).
 
 ## Findings
 
-**F1 — a dead probe ticker freezes the health matrix at its last state (AC1 case; proposed P1; filing waits for the coordinator's go).**
-`HealthRegistry._loop` calls `refresh()` with no exception guard (`health_probes.py`:289–292). Inside `refresh()`, the state observer runs unguarded (:259–260). Probe `p2` made the observer raise once: the task ended with `RuntimeError`, the snapshot stopped changing, and `overall` stayed `healthy` an hour later on the fake clock (observed with the script not kept; the committed test reproduces the freeze over 200 fake-sleep ticks). `/admin/health` keeps serving it (`admin/ops/health.py`:51–58). The only tell is an old `server_time`. No alert reads `health_component_state` or `health_probe_duration_seconds`, so the stop is silent. Likelihood is low: the observers set gauges. The impact is the AC1 case, "reported healthy while broken". Routed to E04 (E04-T04 code). Raised as NQ-1 in the plan.
+**F1 — a dead probe ticker freezes the health matrix at its last state (AC1 case; filed as #5173, P1, `area/backend-platform`; fix PR #5175).**
+`HealthRegistry._loop` calls `refresh()` with no exception guard (`health_probes.py`:289–292). Inside `refresh()`, the state observer runs unguarded (:259–260). Probe `p2` made the observer raise once: the task ended with `RuntimeError`, the snapshot stopped changing, and `overall` stayed `healthy` an hour later on the fake clock (observed with the script not kept; the committed test reproduces the freeze over 200 fake-sleep ticks). `/admin/health` keeps serving it (`admin/ops/health.py`:51–58). The only tell is an old `server_time`. No alert reads `health_component_state` or `health_probe_duration_seconds`, so the stop is silent. Likelihood is low: the observers set gauges. The impact is the AC1 case, "reported healthy while broken". Filed as #5173 (E04-T04 code). NQ-1 in the plan, ruled. The fix shape ruled: catch, log, mark the snapshot degraded with `last_good_at`, keep ticking.
 
 ## Observations (routed rows; no issue filed under the freeze)
 
@@ -71,6 +71,6 @@ The 1 Hz UI poll the ticket names does not exist for health. No UI renders `last
 
 ## Follow-ups
 
-1. F1: one regression test that kills the ticker and asserts the stop is visible. It belongs with the fix, in E04.
+1. F1 (#5173): one regression test that kills the ticker and asserts the stop is visible. It belongs with the fix (PR #5175).
 2. O-1: trace whether a module can stop at run time without a process exit. Then decide on a `stopped` state distinct from `not_deployed`.
 3. Run the blocked live legs at the PRR staging re-run, with this table as the script.

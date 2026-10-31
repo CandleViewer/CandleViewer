@@ -2,14 +2,14 @@
 
 - Ticket: E04-Q02 (#257) · Format: session-based test management · Date: 2026-10-31
 - Plan: `docs/qa/test-plans/e04-observability-charters.md` (base, rulings, regression pack, blind-spot report, sign-off draft).
-- Tester: AI agent. **Deviation (honest scope):** an agent ran the static and in-process work. It is not a human session. No Prometheus or Alertmanager server ran, and no notification was sent or received. Every live technique is **not attempted — blocked on the PRR staging re-run** (BQ-01, pending ruling). The two new checks run in CI as pytest; promtool and amtool run only in CI's docker.
+- Tester: AI agent. **Deviation (honest scope):** an agent ran the static and in-process work. It is not a human session. No Prometheus or Alertmanager server ran, and no notification was sent or received. Every live technique is **not attempted — blocked on the PRR staging re-run** (BQ-01, ruled; #210's exception is extended to these legs under the delegation). The two new checks run in CI as pytest; promtool and amtool run only in CI's docker.
 - No credentials used. No webhook URL or secret file was read. No network (C-13.5).
 
 ## Charter
 
 Explore the alerting path with the goal of producing a real failure that generates no notification.
 
-Time box: 4 h (the ticket's). Actual: see "Session metrics" (BQ-15, pending ruling).
+Time box: 4 h (the ticket's). Actual: see "Session metrics" (BQ-15, ruled).
 
 ## Oracles (defined before probing)
 
@@ -55,13 +55,13 @@ The promtool cases feed these series synthetically, so they pass (`infra/prometh
 
 ## Findings
 
-**F2 — nine series that nothing emits or scrapes; two pages, `PostgresDown` and `ClockDriftBlockingTrading`, can never fire (static; proposed P1, "to file on go", BQ-11).** See the table above. The series check counts a catalogue name as emitted only if its status is `live` or it is `exported` (`register_r0` registers live entries only, `metrics_catalogue.py`:5168). Shipped, 4 series: `pg_up`, `credential_expiry_days`, `env_mismatch_attempts_total`, `alertmanager_notifications_failed_total`. Planned, no emitter, 5 series: `bybit_clock_drift_ms` (E08; read by the page `ClockDriftBlockingTrading`, `system_page.yml`:50–51, and a guard, `metric_guards.yml`:198–199; the emitted series is `exchange_clock_drift_ms`, and the planned name appears only in a comment in `observability/latency.py`), and four for unshipped modules, `credential_verification_failures_total` (E27), `egress_ip_changes_total` (E43), `naked_position_alerts_total` (E32, which feeds the page `NakedPositionDetected`; its counter exists at `oms/reconcile_report.py`:351 but is not wired in the app) and `rule_autodisarm_total` (E35), RSK-047. Four catalogue entries marked `planned` are already emitted by their modules (`cv_outbox_*`, `oms_unknown_orders`, `oms_position_reading_owed_age_seconds`); the check lists them with a cite, and a test re-checks each. One issue would cover the class. It is labelled a static finding pending live confirmation. The new series-existence check now stops new cases.
+**F2 — nine series that nothing emits or scrapes; two pages, `PostgresDown` and `ClockDriftBlockingTrading`, can never fire (static; filed as #5174, P1, `area/infra-devops`, BQ-11).** See the table above. The series check counts a catalogue name as emitted only if its status is `live` or it is `exported` (`register_r0` registers live entries only, `metrics_catalogue.py`:5168). Shipped, 4 series: `pg_up`, `credential_expiry_days`, `env_mismatch_attempts_total`, `alertmanager_notifications_failed_total`. Planned, no emitter, 5 series: `bybit_clock_drift_ms` (E08; read by the page `ClockDriftBlockingTrading`, `system_page.yml`:50–51, and a guard, `metric_guards.yml`:198–199; the emitted series is `exchange_clock_drift_ms`, and the planned name appears only in a comment in `observability/latency.py`), and four for unshipped modules, `credential_verification_failures_total` (E27), `egress_ip_changes_total` (E43), `naked_position_alerts_total` (E32, which feeds the page `NakedPositionDetected`; its counter exists at `oms/reconcile_report.py`:351 but is not wired in the app) and `rule_autodisarm_total` (E35), RSK-047. Four catalogue entries marked `planned` are already emitted by their modules (`cv_outbox_*`, `oms_unknown_orders`, `oms_position_reading_owed_age_seconds`); the check lists them with a cite, and a test re-checks each. #5174 covers the class, with BS-02 (no rule reads `up`). It is labelled a static finding pending live confirmation. The new series-existence check now stops new cases.
 
 ## Observations (routed rows; no issue filed under the freeze)
 
 - **O-5 — a drill page inhibits an unrelated ticket.** `SyntheticAlert` is a page with `component: alerting` (`system_page.yml`:250–255). The drill pushes it with an `env` grouping label (`infra/alertmanager/alert_drill.py`:59–60). The second inhibit rule suppresses every ticket with the same `component` and `env` (`alertmanager.yml`:66–68). So, during a drill, `AuthBreakGlassStateReadFailing` (`system_ticket.yml`:343, `component: alerting`, summed by `env`) is suppressed in the drilled environment. That ticket says the break-glass pages cannot read their state. The 41 guards carry no `env` label, so they are not suppressed. Routed to E04 (BS-19).
 - **O-6 — a broken outbound path is silent.** The page and ticket receivers use their own webhook secrets (`alertmanager.yml`:70–90). The dead-man receiver hears only the Watchdog (:22–27, :91–94). A page channel that fails while the dead-man channel works sends nothing and raises nothing. Proposed for owner acceptance (BS-09).
-- **O-7 — no rule reads `up`.** If the API stops or cannot be scraped, its series go absent. Every threshold rule then stops, and only the guard tickets fire, after 15 minutes, muted overnight. There is no page. Routed to E04 (BS-02, NQ-2).
+- **O-7 — no rule reads `up`.** If the API stops or cannot be scraped, its series go absent. Every threshold rule then stops, and only the guard tickets fire, after 15 minutes, muted overnight. There is no page. Filed with F2 as #5174 (BS-02, NQ-2).
 - **O-8 — no rule reads `health_component_state`.** A storage dependency that is down shows in the health matrix and on the "System health" dashboard (`infra/grafana/dashboards/system-health.json`:494) but sends nothing. No rule mentions QuestDB or Parquet. A QuestDB outage notifies only once write-behind evicts rows (`RecorderMessagesDropped`). Routed to E04 (BS-05).
 
 ## Not attempted (blocked on a running stack)
@@ -71,6 +71,6 @@ The promtool cases feed these series synthetically, so they pass (`infra/prometh
 
 ## Follow-ups
 
-1. F2: file the one P1 on the coordinator's go (BQ-11).
+1. F2 and O-7: filed as #5174 (P1, BQ-11, ruled).
 2. Route the 30 `routed` rules to their owning epics as rows (blind-spot report, BS-12 to BS-18).
-3. Promtool cases for the seven rule files no test loads, and a fire case per guard (BQ-05). Proposed, not in this PR.
+3. Promtool cases for the seven rule files no test loads, and a fire case per guard (BQ-05). Ruled under BQ-05; not in this PR yet (the cases need docker).
