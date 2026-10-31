@@ -58,6 +58,7 @@ from candleviewer.admin.wiring import (
     build_lane_audit_writer,
     build_machine_event_sink,
     keyed_record_id,
+    system_event_redactor,
     unclaimed_machine_events,
 )
 from candleviewer.bus.bus import Bus
@@ -72,6 +73,7 @@ from candleviewer.exchange.base.models import (
     TickerEvent,
 )
 from candleviewer.exchange.base.ports import PrivateStream
+from candleviewer.health_wiring import PgSystemEventWriter
 from candleviewer.observability import spawn, spawn_child
 from candleviewer.observability.context import run_in_thread
 from candleviewer.observability.metrics import BoundedMetric, Metrics
@@ -201,9 +203,10 @@ from candleviewer.oms.ws_topics import (
     View,
 )
 from candleviewer.oms_detect_wiring import (
+    DETECT_POOL_NAME,
+    DETECT_POOL_SIZE,
     DetectRuntime,
     DetectStores,
-    build_detect_stores,
     build_stuck_detection,
     stop_detection,
     thresholds_of,
@@ -291,6 +294,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 )
 from candleviewer.storage.repositories.session_lock_sqlalchemy import SqlAlchemySessionLock
 from candleviewer.storage.repositories.statechart_sqlalchemy import SqlAlchemyEventStore
+from candleviewer.storage.repositories.stuck_sqlalchemy import SqlAlchemyStuckReads
 from candleviewer.storage.repositories.submissions import (
     FirstPersist,
     FirstPersisted,
@@ -1787,6 +1791,32 @@ def group_reads(settings: Settings) -> TradeGroupReads | None:
         return None
     pool = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "group-reads")
     return SqlAlchemyTradeGroupStore(pool, statement_timeout_ms=settings.oms_statement_timeout_ms)
+
+
+def build_detect_stores(settings: Settings) -> DetectStores:
+    """E29-T08 #916 (24 Sec.8.13, 20 Sec.6.2): the stuck-order detector's stores on a pool of its
+    own (`oms-detect`), each statement at the OMS stores' cap: its reads, its `system_events` rows
+    (through the redaction serializer), and for `bybit_rate_remaining` the environment's account ids
+    and their trading accounts, the principal-free reads this module alone names (C-12.4), which no
+    route reaches. Lazy: building them connects nothing; the first scan, once `ready`, does."""
+    pool = SqlAlchemyRelationalRepository(
+        settings.pg_dsn.get_secret_value(),
+        DETECT_POOL_NAME,
+        pool_size=DETECT_POOL_SIZE,
+        max_overflow=0,
+    )
+    cap = settings.oms_statement_timeout_ms
+    accounts = TradingAccountsBinding(
+        SqlAlchemyTradingAccountReads(pool, statement_timeout_ms=cap),
+        environment=settings.environment.value,
+    )
+    return DetectStores(
+        reads=SqlAlchemyStuckReads(pool, statement_timeout_ms=cap),
+        events=PgSystemEventWriter(pool, redact_details=system_event_redactor()),
+        account_ids=SqlAlchemyOrderStore(pool, statement_timeout_ms=cap).environment_accounts,
+        resolve=accounts.trading_account,
+        release=pool.dispose,
+    )
 
 
 class StandaloneSink(Interim):
@@ -3456,13 +3486,11 @@ class OmsRuntime:
             self._phase = "detect"
             detect: DetectRuntime | None = None
             if stores.detect is not None and self._bus is not None:
-                rate_accounts = TradingAccountsBinding(stores.detect.accounts, environment=env)
                 detect = running = build_stuck_detection(
                     environment=env, stores=stores.detect, thresholds=thresholds_of(settings),
                     stale=self._standing, emitter=writer, bus=self._bus, serving=serving,
                     pager=self._pager, metrics=metrics, rate=router.port_for(env),
-                    resolve=rate_accounts.trading_account, ready=self._ready.is_set,
-                    monotonic=self._monotonic, now=self._now,
+                    ready=self._ready.is_set, monotonic=self._monotonic, now=self._now,
                 )  # fmt: skip
                 named = [name for name, _ in closers]
                 ahead = named.index("reconciliation" if "reconciliation" in named else "stop_gate")

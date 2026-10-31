@@ -3505,7 +3505,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "gauge",
         "orders",
         ("kind",),
-        "Orders the stuck-order detector found stuck at its last complete scan (E29-T08, 24 "
+        "Orders the stuck-order detector found stuck at the last scan that read them (E29-T08, 24 "
         "Sec.8.13), by kind: in_flight, unknown or pending, each order once. No account label.",
         "dashboard (rules: E29-T08)",
         _P,

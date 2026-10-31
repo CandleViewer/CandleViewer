@@ -2554,7 +2554,7 @@ The `order_link_id` is the only order identifier it carries, and it is opaque; i
 
 E32-T02's watchdog reuses this port for its own `naked` incidents. The page and ticket rules over these series are this ticket's second change (BQ-1, BQ-13).
 
-**Its series and its stall.** `oms_stuck_orders{kind}` (the three order kinds' keys stuck at the last complete scan), `oms_incidents_total{kind}`, `oms_detector_scans_total{result}` (`ok`, `failed` or `skipped`), `oms_detector_scan_seconds` and `oms_detector_last_scan_age_seconds`, none labelled by account (20 §12.1). Once the runtime is `ready`, the `/readyz` `oms` check reads `degraded` while no scan has ended for 30 s (`STALL_S`) or the detector's task has ended (20 §6.2); the age gauge shows the same at each scrape.
+**Its series and its stall.** `oms_stuck_orders{kind}` (the three order kinds' orders stuck at the last scan that read them), `oms_incidents_total{kind}`, `oms_detector_scans_total{result}` (`ok`, `failed` or `skipped`), `oms_detector_scan_seconds` and `oms_detector_last_scan_age_seconds`, none labelled by account (20 §12.1). Once the runtime is `ready`, the `/readyz` `oms` check reads `degraded` while no scan has ended for 30 s (`STALL_S`) or the detector's task has ended (20 §6.2); the age gauge shows the same at each scrape.
 
 ---
 
