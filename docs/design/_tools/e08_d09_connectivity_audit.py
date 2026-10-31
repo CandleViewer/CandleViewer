@@ -28,15 +28,21 @@ led by its code:
   §13.2 names such content without a negation; S-17 shows a page-owned sentence, never the served
   `detail`.
 - [G-STATE] the register S-01 ... S-20: in order, each with a trigger, an exit, a known glyph that
-  matches its tone (TONE_GLYPHS), a token, an announcement and a numeric `max_rate`; never-announced states rate `never`; every SR
+  matches its tone (TONE_GLYPHS), a token, an announcement and a numeric `max_rate`; only S-06 is
+  assertive; every SR row writes into the shell's region pair (E17-D02 §11), only SR-5 into the
+  assertive one, and no section-level live region is named; never-announced states rate `never`; every SR
   row of §17.4 carries a numeric rate.
 - [G-TOKEN] every token named in the two documents is shipped in `packages/ui/tokens` at the base.
 - [G-D12] E08-D12's pre-condition (G-01) answered by id: the ten §10.1b items with a verdict each,
   KB-30 / PP-11 / T2-19 / SR-45 mapped to this spec's rows that exist, BG-01 / 09 / 11 / 13 / 14,
   the naming rule, R1 and R2.
-- [G-LEDGER] the C-, G- and Q-rows in order, each with a reading or an owner; every G-row with an
-  owner and no shape; every D09-Cn / D09-Gn / D09-Qn named in the documents exists.
-- [G-UNTOUCHED] by content, three modes. PR 1 (the spec is not at the merge-base): only the five
+- [G-LEDGER] §1.5's inbound ledger (BQ-03): L-1 ... L-n in order, four cells, a disposition from
+  the vocabulary, every "Here" section present, the stated counts equal to the tool's, every
+  required source (LEDGER_SOURCES) present; the C-, G- and Q-rows in order, each with a reading or
+  an owner; every G-row with an owner and no shape; every D09-Cn / D09-Gn / D09-Qn named exists.
+- [G-T2] R-9 (G-T2.1b and G-T2.1d) stands verbatim in §1.4, and every section that shows a T2
+  control (T2_SECTIONS) cites R-9.
+- [G-UNTOUCHED] by content, three modes. PR 1 (the spec is not at the merge-base): only the four
   own paths differ. PR 2 (the spec is at the merge-base and `14` or `15` differs): `14` and `15`
   equal the merge-base with every §C row applied, re-pointed by content, plus at most a byte-exact
   pins rewrite; nothing else. Later (post-merge, e.g. the boards): the own paths, the board PNGs and
@@ -79,7 +85,7 @@ from functools import cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "9751fc5fe1"  # `git merge-base HEAD origin/main` at PR 1
+BASE = "03ee085982"  # `git merge-base HEAD origin/main` at PR 1
 BQ_BASE = "b148ca4703"  # the BQ list's base
 SPEC_REL = "docs/design/E08/E08-D09.md"
 HAND_REL = "docs/design/E08/E08-D09-handoff.md"
@@ -95,6 +101,7 @@ BQ_ID = "6538955219"  # #177's BQ list
 DELEGATION_ID = "6490317249"  # the 2026-10-29 delegation directive on #2701
 D12_PRE_ID = "6538794044"  # E08-D12's pre-condition comment on #177 (G-01)
 D12_SHA = "22f9cabffc"  # E08-D12's merge (#5148)
+ORCH_R1_ID = "6542806383"  # the orchestrator's round-1 read on #5179
 STAMP = "RULED (orchestrator, 2026-10-31, #177 ruling of record — 6538955219's answer)"
 SVC = "services/api/candleviewer/"
 E08 = "docs/design/E08/E08-"
@@ -117,6 +124,8 @@ KEYS: dict[str, str] = {
     "D11": E08 + "D11.md",
     "D12": E08 + "D12.md",
     "DS": ".claude/rules/32-design-specs.md",
+    "E04-D01": "docs/design/E04/E04-D01.md",
+    "E17-D02": "docs/design/E17/E17-D02.md",
     "E42J": "docs/plan/backlog/E42.json",
     "cal": "docs/plan/backlog/_tools/calendar_cv.py",
     "E30-D03": "docs/design/E30/E30-D03.md",
@@ -144,11 +153,11 @@ TOKEN_FILES = (
 
 # The load-bearing cites: their words must stand on the cited line at the base.
 CITED: dict[tuple[str, int], str] = {
-    ("24", 2221): "`10018`",
-    ("24", 2218): "`10006`",
-    ("24", 2214): "`10002`",
-    ("24", 2300): "reserved_for_protective",
-    ("24", 2289): "80 %",
+    ("24", 2237): "`10018`",
+    ("24", 2234): "`10006`",
+    ("24", 2230): "`10002`",
+    ("24", 2316): "reserved_for_protective",
+    ("24", 2305): "80 %",
     ("20", 617): "sl_cost",
     ("22", 800): "Order entry halted until the server clock is back in sync with the exchange",
     ("22", 22774): "never a fabricated 0",
@@ -162,6 +171,8 @@ CITED: dict[tuple[str, int], str] = {
     ("E42-D02", 131): "Recorded in the audit log",
     ("14", 2988): "connectivity.reconnect_forced",
     ("D12", 197): "KB-30",
+    ("E04-D01", 168): "rule with SCR-147",
+    ("E17-D02", 249): "One live-region pair (polite + assertive)",
     ("E42J", 260): "Sprint 15",
     ("cal", 13): "datetime.date(2026, 9, 25)",
 }
@@ -258,7 +269,7 @@ CONDITION_BULLET = (
     "governor's `critical` lane when it exists (`E30-D03`:268; W-31). Under an **exchange IP hold** "
     "(S-04, and S-05 as held), no REST path reaches the venue, protective ones included; the native "
     "stops on the exchange stay active, and the kill switch is a synchronous local check, never a "
-    "REST call (`24`:2221; C-2.21; W-33)."
+    "REST call (`24`:2237; C-2.21; W-33)."
 )
 PROTECTIVE = re.compile(
     r"\b(?:cancel|close|closePosition|flatten|stop[- ]loss|stops?)\b", re.IGNORECASE
@@ -317,7 +328,38 @@ TONE_GLYPHS: dict[str, tuple[str, ...]] = {
     "color.data-confidence.stale.*": ("clock",),
     "CMP-015": ("—",),
 }
-ANNOUNCE = ("never", "polite, on entry", '`role="alert"`, on entry')
+ANNOUNCE = ("never", "polite, on entry", "assertive, on entry")
+ASSERTIVE_STATES = ("S-06",)  # E08-D04's one assertive state, entering Disconnected
+ASSERTIVE_SR = ("SCR-147-SR-5",)
+SHELL_HOSTS = ("the shell's polite region", "the shell's assertive region")
+SECTION_REGION = re.compile(
+    r"region per section|page-level `role=\"alert\"`|per section, pre-rendered|"
+    r"the section's status|the clock section's status|the simulator's status",
+    re.IGNORECASE,
+)
+R9 = (
+    "- **R-9 T2, stated once** (G-T2.1b, G-T2.1d; `DS`:29–:39). A T2 control takes "
+    '`aria-disabled="true"`, never the `disabled` attribute: it stays in the Tab order, and a menu '
+    "item stays arrow-reachable. CMP-079 RbacGate wraps it, and the CMP-019 `lock`, "
+    '`decorative={false}`, accessible name "Not available", leads the full label. Every section '
+    "that shows a T2 control cites R-9."
+)
+T2_SECTIONS = (
+    ("6. Throttled", 2),
+    ("10. Clock skew", 2),
+    ("11. Force reconnect", 2),
+    ("12. The budget change", 2),
+    ("13.1", 3),
+    ("17.5", 3),
+)
+DISPOSITIONS = ("applied as amended", "applied", "routed", "closed")
+LEDGER_SOURCES = (
+    "`E04-D01`:165–:168",
+    "`D01`:16",
+    "`D02`:125–:127",
+    "`E30-D03`:275",
+    "`E42-D05`:390",
+)
 RATE = re.compile(
     r"^(?:never|once per episode(?: \(§5\.2\))?|once per press|once per change"
     r"|≤ 1 per \d+ s per region(?: \(.+\))?)$"
@@ -756,6 +798,8 @@ def state_problems(t: Texts) -> list[str]:
                 bad.append(f"{sid}: no {what}")
         if ann not in ANNOUNCE:
             bad.append(f"{sid}: announcement {ann!r} is not a known one")
+        if (ann.startswith("assertive")) != (sid in ASSERTIVE_STATES):
+            bad.append(f"{sid}: only S-06 is assertive (E08-D04; the shell's pair)")
         if not RATE.match(rate) or (ann == "never") != (rate == "never"):
             bad.append(
                 f"{sid}: max_rate {rate!r} is not numeric or disagrees with the announcement"
@@ -768,6 +812,16 @@ def state_problems(t: Texts) -> list[str]:
     for r in sr:
         if len(r) != 7 or not RATE.match(r[6]):
             bad.append(f"{r[0] if r else '?'}: no numeric max_rate")
+            continue
+        if r[3] != "never" and r[4] not in SHELL_HOSTS:
+            bad.append(f"{r[0]}: not hosted on the shell's region pair ({r[4]!r})")
+        if (r[3] == "assertive") != (r[0] in ASSERTIVE_SR) or (r[3] == "assertive") != (
+            r[4] == SHELL_HOSTS[1]
+        ):
+            bad.append(f"{r[0]}: only SR-5 is assertive, in the shell's assertive region")
+    for name, text in docs(t):
+        for m in SECTION_REGION.finditer(text):
+            bad.append(f"{name}: a section-level live region is named ({m.group(0)!r})")
     return bad
 
 
@@ -811,8 +865,70 @@ def rows_of(spec: str, title: str, prefix: str) -> list[list[str]]:
     return [r for r in table_rows(section(section(spec, "21. Rows"), title, 3)) if r]
 
 
-def ledger_problems(t: Texts) -> list[str]:
+def ledger(spec: str) -> list[list[str]]:
+    s15 = section(section(spec, "1. Purpose"), "1.5", 3)
+    return [r for r in table_rows(s15) if r and re.fullmatch(r"L-\d+", r[0])]
+
+
+def disposition(cell: str) -> str:
+    return next((d for d in DISPOSITIONS if cell.startswith(d)), "")
+
+
+def ledger_counts(spec: str) -> dict[str, int]:
+    rows = ledger(spec)
+    out = {"ledger": len(rows)}
+    for d in DISPOSITIONS:
+        out[d] = sum(disposition(r[2]) == d for r in rows)
+    return out
+
+
+def inbound_problems(t: Texts) -> list[str]:
     bad: list[str] = []
+    rows = ledger(t.spec)
+    if not rows:
+        return ["§1.5: the inbound ledger is missing"]
+    heads = {m.group(1) for m in re.finditer(r"(?m)^#{2,3} (\d+(?:\.\d+)?)\.? ", t.spec)}
+    for n, r in enumerate(rows, 1):
+        if r[0] != f"L-{n}" or len(r) != 4:
+            bad.append(f"{r[0]}: out of order or not four cells")
+            continue
+        if not disposition(r[2]):
+            bad.append(f"{r[0]}: the disposition {r[2][:30]!r} is not in the vocabulary")
+        refs = re.findall(r"§(\d+(?:\.\d+)?)", r[3])
+        if not refs or any(x not in heads for x in refs):
+            bad.append(f"{r[0]}: a 'Here' section is missing ({r[3]!r})")
+    c = ledger_counts(t.spec)
+    want = (
+        f"{c['ledger']} rows: {c['applied']} applied, {c['applied as amended']} applied as "
+        f"amended, {c['routed']} routed and {c['closed']} closed"
+    )
+    if want not in section(section(t.spec, "1. Purpose"), "1.5", 3):
+        bad.append(f"§1.5's counts are not the tool's ({want!r})")
+    body = "\n".join(" | ".join(r) for r in rows)
+    for src in LEDGER_SOURCES:
+        if src not in body:
+            bad.append(f"§1.5 lacks the source {src}")
+    return bad
+
+
+def t2_problems(t: Texts) -> list[str]:
+    bad: list[str] = []
+    if R9 not in section(section(t.spec, "1. Purpose"), "1.4", 3):
+        bad.append("§1.4 lacks R-9 (G-T2.1b, G-T2.1d) verbatim")
+    for title, level in T2_SECTIONS:
+        body = section(t.spec, title, 2) if level == 2 else ""
+        if level == 3:
+            for top in ("13. Roles", "17. Accessibility"):
+                body += section(section(t.spec, top), title, 3)
+        if not re.search(r"\bT2\b", body):
+            bad.append(f"§{title}: shows no T2 control (update T2_SECTIONS)")
+        elif "R-9" not in body:
+            bad.append(f"§{title}: shows a T2 control without citing R-9")
+    return bad
+
+
+def ledger_problems(t: Texts) -> list[str]:
+    bad: list[str] = inbound_problems(t)
     cs = rows_of(t.spec, "21.1", "C")
     gs = rows_of(t.spec, "21.2", "G")
     for kind, rows, width in (("C", cs, 4), ("G", gs, 3)):
@@ -1155,7 +1271,7 @@ def public_problems(t: Texts) -> list[str]:
 
 SHA_OR_ID = re.compile(r"(?<![\w#/-])([0-9a-f]{10})(?![\w-])")
 KNOWN_SHAS = frozenset({BASE, BQ_BASE, D12_SHA})
-KNOWN_IDS = frozenset({RULING_ID, BQ_ID, DELEGATION_ID, D12_PRE_ID})
+KNOWN_IDS = frozenset({RULING_ID, BQ_ID, DELEGATION_ID, D12_PRE_ID, ORCH_R1_ID})
 
 
 def pin_ref_problems(t: Texts) -> list[str]:
@@ -1255,6 +1371,7 @@ GATES: tuple[tuple[str, Callable[[Texts], list[str]]], ...] = (
     ("G-TOKEN", token_problems),
     ("G-D12", d12_problems),
     ("G-LEDGER", ledger_problems),
+    ("G-T2", t2_problems),
     ("G-UNTOUCHED", untouched_problems),
     ("G-AROW", arow_problems),
     ("G-RULED", ruled_problems),
@@ -1277,6 +1394,7 @@ def values(t: Texts) -> dict[str, int]:
     rows = a_rows(t.hand)[0]
     return {
         "states": len(register(t.spec)),
+        "ledger": len(ledger(t.spec)),
         "deck_rows": len(deck(t.spec)),
         "c_rows": len(rows_of(t.spec, "21.1", "C")),
         "g_rows": len(rows_of(t.spec, "21.2", "G")),
@@ -1348,6 +1466,20 @@ def _row(rid: str, old: str, new: str) -> Lever:
         if old not in ls[k]:
             raise SystemExit(f"self-test: {old!r} not on row {rid}")
         ls[k] = ls[k][::-1].replace(old[::-1], new[::-1], 1)[::-1]
+        return replace(t, spec="\n".join(ls))
+
+    return f
+
+
+def _cell(rid: str, k: int, new: str) -> Lever:
+    """Set cell `k` of the spec's table row whose first cell is `rid`."""
+
+    def f(t: Texts) -> Texts:
+        ls = lines(t.spec)
+        i = next(i for i, ln in enumerate(ls) if re.match(rf"\| {re.escape(rid)} +\|", ln))
+        cells = split_row(ls[i])
+        cells[k] = new
+        ls[i] = "| " + " | ".join(cells) + " |"
         return replace(t, spec="\n".join(ls))
 
     return f
@@ -1429,6 +1561,29 @@ MUTATIONS: tuple[tuple[str, str, Lever], ...] = (
         _row("W-36", "All requests are on hold.", "Requests are paused."),
     ),
     ("G-STATE", "a danger state wearing the neutral glyph", _row("S-05", "octagon", "ring")),
+    # The orchestrator's round-1 read: the inbound ledger, the shell's pair, R-9.
+    (
+        "G-LEDGER",
+        "a required ledger source dropped",
+        _row("L-15", "`E30-D03`:275", "`E30-D03`:276"),
+    ),
+    ("G-LEDGER", "a ledger disposition outside the vocabulary", _row("L-1", "applied", "taken")),
+    ("G-STATE", "a throttle announced assertively", _cell("SCR-147-SR-2", 3, "assertive")),
+    (
+        "G-STATE",
+        "a section-level live region",
+        _row("SCR-147-SR-8", "the shell's polite region", "the clock section's status"),
+    ),
+    (
+        "G-T2",
+        "R-9 lost from §12",
+        _sub("spec", "(§13.1; R-9)", "(§13.1)"),
+    ),
+    (
+        "G-T2",
+        "R-9's `disabled` clause weakened",
+        _sub("spec", "never the `disabled` attribute", "or the `disabled` attribute"),
+    ),
 )
 
 
@@ -1534,7 +1689,8 @@ def main(argv: list[str]) -> int:
         out = [f"{f.level} [{f.gate}] {f.msg}" for f in found]
         v = values(t)
         out.append(
-            f"gates: {v['gates']}; FAIL {n_fail}, WARN {n_warn}; states {v['states']}; deck rows "
+            f"gates: {v['gates']}; FAIL {n_fail}, WARN {n_warn}; states {v['states']}; ledger "
+            f"{v['ledger']}; deck rows "
             f"{v['deck_rows']}; C/G/Q rows {v['c_rows']}/{v['g_rows']}/{v['q_rows']}; §C rows "
             f"{v['a_rows']} ({v['a_rows_14']} to `14`, {v['a_rows_15']} to `15`); cites {v['cites']}"
         )

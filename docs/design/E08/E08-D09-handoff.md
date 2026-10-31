@@ -6,21 +6,21 @@ Components: **CMP-178 SystemHealthTile** (the summary strip), **CMP-023 Progress
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                     | CMP-178 tiles                                            | CMP-023 meter                       | CMP-049 grids and tables                     | CMP-044 + CMP-093 dialogs                                     | CMP-024 history              |
-| ------------------------ | -------------------------------------------------------- | ----------------------------------- | -------------------------------------------- | ------------------------------------------------------------- | ---------------------------- |
-| Final Penpot link        | [ ] PR 3: page `E08-D09 SCR-147 Connectivity`, board 01  | [ ] PR 3: boards 01, 02             | [ ] PR 3: boards 01, 06, 07                  | [ ] PR 3: boards 04, 06                                       | [ ] PR 3: board 07           |
-| Variants × states        | [x] §2.2, §5.2 (S-01 … S-20 on a tile)                   | [x] §3.2 (steps, never animates)    | [x] §3, §8, §9, §14                          | [x] §11, §12 (rung 2, rung 1)                                 | [x] §14                      |
-| Keyboard table           | [x] §17.3 (the heading link)                             | [x] none: not focusable             | [x] §17.3 SCR-147-KB-2, KB-6                 | [x] §17.3 SCR-147-KB-1, KB-3                                  | [x] §17.3 SCR-147-KB-5       |
-| Accessible name and role | [x] §17.2 (`region`, units in words)                     | [x] §17.2 (`role="meter"`, W-09)    | [x] §17.1 (caption W-07, row headers)        | [x] §11 (`alertdialog`, the first consequence as description) | [x] §14 (`role="img"`, W-72) |
-| Live data                | [x] §17.4: the tile never announces; the page regions do | [x] never live (SR-1)               | [x] the 1 Hz update announces nothing (SR-1) | [x] SR-12 once per press                                      | [x] none: a disclosure       |
-| Motion pair              | [x] one flip on entry and exit (§19)                     | [x] steps per sample (§19; D09-C10) | [x] none                                     | [x] CMP-044's own                                             | [x] none                     |
-| Density notes            | [x] comfortable (CMP-087)                                | [x] comfortable                     | [x] comfortable; reflow §17.6                | [x] comfortable                                               | [x] comfortable              |
-| Essential exceptions     | [x] none                                                 | [x] none                            | [x] none                                     | [x] none                                                      | [x] none                     |
-| Tokens used              | [x] §16                                                  | [x] §16                             | [x] §16                                      | [x] §16                                                       | [x] §16                      |
-| Data contract            | [ ] NO: D09-G1, D09-G5                                   | [ ] NO: D09-G1, D09-G14             | [ ] NO: D09-G1, D09-G3, D09-G9, D09-G10      | [ ] NO: D09-G7, D09-G8, D09-G12, D09-G17                      | [ ] NO: D09-G9               |
-| Contrast                 | [ ] measured at PR 3 (§16)                               | [ ] measured at PR 3                | [ ] measured at PR 3                         | [ ] measured at PR 3                                          | [ ] measured at PR 3         |
-| Storybook                | [x] §D                                                   | [x] §D                              | [x] §D                                       | [x] §D                                                        | [x] §D                       |
-| Sign-off                 | [ ] pending (RULED BQ-24)                                | [ ] pending                         | [ ] pending                                  | [ ] pending                                                   | [ ] pending                  |
+| Item                     | CMP-178 tiles                                              | CMP-023 meter                       | CMP-049 grids and tables                     | CMP-044 + CMP-093 dialogs                                     | CMP-024 history              |
+| ------------------------ | ---------------------------------------------------------- | ----------------------------------- | -------------------------------------------- | ------------------------------------------------------------- | ---------------------------- |
+| Final Penpot link        | [ ] PR 3: page `E08-D09 SCR-147 Connectivity`, board 01    | [ ] PR 3: boards 01, 02             | [ ] PR 3: boards 01, 06, 07                  | [ ] PR 3: boards 04, 06                                       | [ ] PR 3: board 07           |
+| Variants × states        | [x] §2.2, §5.2 (S-01 … S-20 on a tile)                     | [x] §3.2 (steps, never animates)    | [x] §3, §8, §9, §14                          | [x] §11, §12 (rung 2, rung 1)                                 | [x] §14                      |
+| Keyboard table           | [x] §17.3 (the heading link)                               | [x] none: not focusable             | [x] §17.3 SCR-147-KB-2, KB-6                 | [x] §17.3 SCR-147-KB-1, KB-3                                  | [x] §17.3 SCR-147-KB-5       |
+| Accessible name and role | [x] §17.2 (`region`, units in words)                       | [x] §17.2 (`role="meter"`, W-09)    | [x] §17.1 (caption W-07, row headers)        | [x] §11 (`alertdialog`, the first consequence as description) | [x] §14 (`role="img"`, W-72) |
+| Live data                | [x] §17.4: the tile never announces; the shell's pair does | [x] never live (SR-1)               | [x] the 1 Hz update announces nothing (SR-1) | [x] SR-12 once per press                                      | [x] none: a disclosure       |
+| Motion pair              | [x] one flip on entry and exit (§19)                       | [x] steps per sample (§19; D09-C10) | [x] none                                     | [x] CMP-044's own                                             | [x] none                     |
+| Density notes            | [x] comfortable (CMP-087)                                  | [x] comfortable                     | [x] comfortable; reflow §17.6                | [x] comfortable                                               | [x] comfortable              |
+| Essential exceptions     | [x] none                                                   | [x] none                            | [x] none                                     | [x] none                                                      | [x] none                     |
+| Tokens used              | [x] §16                                                    | [x] §16                             | [x] §16                                      | [x] §16                                                       | [x] §16                      |
+| Data contract            | [ ] NO: D09-G1, D09-G5                                     | [ ] NO: D09-G1, D09-G14             | [ ] NO: D09-G1, D09-G3, D09-G9, D09-G10      | [ ] NO: D09-G7, D09-G8, D09-G12, D09-G17                      | [ ] NO: D09-G9               |
+| Contrast                 | [ ] measured at PR 3 (§16)                                 | [ ] measured at PR 3                | [ ] measured at PR 3                         | [ ] measured at PR 3                                          | [ ] measured at PR 3         |
+| Storybook                | [x] §D                                                     | [x] §D                              | [x] §D                                       | [x] §D                                                        | [x] §D                       |
+| Sign-off                 | [ ] pending (RULED BQ-24)                                  | [ ] pending                         | [ ] pending                                  | [ ] pending                                                   | [ ] pending                  |
 
 ## §B Who applies what
 
@@ -33,7 +33,7 @@ PR 2 changes `14`, `15` and, at most, a byte-exact rewrite of the pins; the tool
 
 ## §C Copy-ready A-rows (PR 2 applies them byte for byte; never in PR 1)
 
-**Rules.** Each row names its target file and line at the base `9751fc5fe1`, its op and its source, then its Old (or anchor) and its New, each a fenced block. PR 2 applies them byte for byte from the tool's `--a-rows` export, queued behind any open PR on the same lines and re-pinned by content at its open (RULED BQ-02). No `16` row: no token is added (spec §16).
+**Rules.** Each row names its target file and line at the base `03ee085982`, its op and its source, then its Old (or anchor) and its New, each a fenced block. PR 2 applies them byte for byte from the tool's `--a-rows` export, queued behind any open PR on the same lines and re-pinned by content at its open (RULED BQ-02). No `16` row: no token is added (spec §16).
 
 #### A-1 · SCR-147 · Type
 
@@ -70,7 +70,7 @@ Scope: the `Components` line under the heading `### SCR-147 — Admin: exchange 
 ```
 
 ```new
-- **A11y:** Per-endpoint-class table (REST order, REST query, public WS, private WS; REST rows named by the contract's `RateBudget.endpoint_class` values, with the adapter's class as a second line) with limit, current usage, window and headroom as numbers with units, headroom excluding the reserve for stops and cancels; per-account rows are labelled with the account alias. Meters carry `aria-valuetext` with the real numbers. Throttled, on-hold, banned, disconnected and order-entry-halted entries use `role="alert"` once per episode; degraded and recovery lines are polite, at most one per 5 s per section; usage, ages and countdowns are never announced. The sparkline has a "View as table" alternative. No key is bound by the page (E08-D09 §17).
+- **A11y:** Per-endpoint-class table (REST order, REST query, public WS, private WS; REST rows named by the contract's `RateBudget.endpoint_class` values, with the adapter's class as a second line) with limit, current usage, window and headroom as numbers with units, headroom excluding the reserve for stops and cancels; per-account rows are labelled with the account alias. Meters carry `aria-valuetext` with the real numbers. Every announcement is written into the shell's live-region pair (E17-D02 §11): entering Disconnected is the one assertive line; throttled, on-hold, banned, order-entry-halted, degraded and recovery lines are polite, once per episode and at most one per 5 s per region; usage, ages and countdowns are never announced. The sparkline has a "View as table" alternative. No key is bound by the page (E08-D09 §17).
 ```
 
 #### A-4 · SCR-147 · Performance
@@ -123,13 +123,15 @@ Scope: the `Components` line under the heading `### SCR-147 — Admin: exchange 
 
 ## §D Storybook story lists (each story in dark, light and high contrast)
 
-| Component                | Stories                                                                                                               |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| CMP-178 SystemHealthTile | the merged list (`15`:2232) + RateHeld · RateBanned · ClockHalted · NotMeasured                                       |
-| CMP-023 Progress Bar     | the merged list (`15`:283) + MeterStepped · MeterNotConnected                                                         |
-| CMP-049 Table            | the merged list (`15`:583) + BudgetGrid · BudgetGridPerMinute · InspectorVirtualised · SimulatorResult · HistoryTable |
-| CMP-044 ConfirmDialog    | the merged list (`15`:520) + ReconnectMarketData · ChangeBudget · ChangeBudgetRefused                                 |
-| CMP-079 RbacGate         | the merged list (`15`:888) + HoldReason · ConnectionBudgetWait · ViewAs                                               |
+| Component                  | Stories                                                                                                               |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| CMP-178 SystemHealthTile   | the merged list (`15`:2232) + RateHeld · RateBanned · ClockHalted · NotMeasured                                       |
+| CMP-023 Progress Bar       | the merged list (`15`:283) + MeterStepped · MeterNotConnected                                                         |
+| CMP-049 Table              | the merged list (`15`:583) + BudgetGrid · BudgetGridPerMinute · InspectorVirtualised · SimulatorResult · HistoryTable |
+| CMP-044 ConfirmDialog      | the merged list (`15`:520) + ReconnectMarketData · ChangeBudget · ChangeBudgetRefused                                 |
+| CMP-079 RbacGate           | the merged list (`15`:888) + HoldReason · ConnectionBudgetWait · ViewAs                                               |
+| CMP-024 Sparkline          | the merged list (`15`:293) + UsageHistory · UsageHistoryEmpty                                                         |
+| CMP-093 AuditActionTrigger | the merged list (`15`:1029) + MarkerPendingRegistration                                                               |
 
 ## §E Owner walkthrough checklist (each frame a 1280 × 800 window, comfortable density)
 
