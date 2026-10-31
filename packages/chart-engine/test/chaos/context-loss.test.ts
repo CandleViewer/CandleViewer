@@ -188,7 +188,7 @@ describe("Scenario: Context loss restores a correct scene within the budget (G1)
   it.todo("G1 golden: the post-restore frame matches the pre-loss frame (pending: E11-T08 #391)");
   it.todo("G1 loss during SDF atlas generation (pending: E11-S11 #336)");
   it.todo(
-    "G1 SCR-048 announces the loss through role=alert in a mounted chart (pending: E11-S02 #334 SCR-048, once a route mounts it)",
+    "G1 SCR-048 announces the loss through role=alert in a mounted chart (pending: needs-owner, once a route mounts the chart)",
   );
 });
 
@@ -335,6 +335,6 @@ describe("Scenario: A permanent loss falls back rather than failing (G3)", () =>
   // handoff `frameStats` / `getStats()` still say "full" while the engine draws degraded-2d.
   it.todo("G3 the facade reports degraded-2d in frameStats after the handoff (defect D-01, #5230)");
   it.todo(
-    "G3 the manual retry and the SCR-118 renderer-settings link (finding F-01, E11-S02 #334)",
+    "G3 the manual retry and the SCR-118 renderer-settings link (finding F-01, needs-owner: the SCR-118 route ticket)",
   );
 });

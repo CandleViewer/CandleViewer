@@ -173,9 +173,9 @@ describe("Scenario: Backgrounding and restoring does not corrupt state (G6, stor
   });
 
   it.todo(
-    "G6 engine visibility handling: no replay of ten minutes of animation on foreground (pending: E17-T05 #570)",
+    "G6 engine visibility handling: no replay of ten minutes of animation on foreground (pending: needs-owner, a row on #516's record for the E11 epic)",
   );
-  it.todo("G6 the data-layer catch-up fetch after foregrounding (pending: E17-T05 #570)");
+  it.todo("G6 the data-layer catch-up fetch after foregrounding (pending: E12-T06 #399)");
 });
 
 describe("Scope: worker starvation, the main thread blocked for 5 s (H-14)", () => {
