@@ -175,6 +175,8 @@ export type {
   AdminStripKind,
   AdminStripSeverity,
 } from "./AdminLayout.js";
+export { AUDIT_ACTION_LABELS, AUDIT_ROW_COPY, AuditRow, AuditRowList } from "./AuditRow.js";
+export type { AuditRowListProps, AuditRowProps } from "./AuditRow.js";
 
 export { Avatar } from "./Avatar.js";
 export type { AvatarProps, AvatarSize } from "./Avatar.js";
@@ -238,6 +240,9 @@ export type { NotFoundStateProps, TryRoute } from "./NotFoundState.js";
 
 export { NumericStepperInput } from "./NumericStepperInput.js";
 export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
+
+export { PageHeader } from "./PageHeader.js";
+export type { PageHeaderProps } from "./PageHeader.js";
 
 export { Popover } from "./Popover.js";
 export type {

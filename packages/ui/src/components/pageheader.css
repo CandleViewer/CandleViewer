@@ -1,0 +1,74 @@
+/*
+ * CMP-088 PageHeader (E42-D03 §4, §16, Appendix A; board 09, board 10 row G). Tokens only and static: no hover,
+ * focus or motion of its own (the actions own theirs). The `h1` is `type.ui.heading-md` in `color.text.primary`;
+ * `meta` and `marker` are `type.ui.caption` in `color.text.tertiary`, `space.stack.sm` under the line above;
+ * `space.inset.lg` above and below. DOM order is breadcrumb, `h1`, actions, meta, marker; a two-column grid puts
+ * the actions at the end of the title row, spanning the text lines (`data-lines`), as board 09 draws them.
+ * At 200 % zoom or the in-app text scale every line wraps and the actions wrap among themselves: their column
+ * takes at most half the width (`fit-content(50%)`, never less than the widest action), so the title keeps the
+ * other half however many actions there are. Nothing truncates and the header has no fixed height.
+ */
+.cv-page-header {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) fit-content(50%);
+  align-items: center;
+  min-width: 0;
+  padding-block: var(--space-inset-lg);
+  color: var(--color-text-primary);
+}
+
+.cv-page-header__breadcrumb {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin-block-end: var(--space-stack-sm);
+}
+
+.cv-page-header__title {
+  grid-column: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font: var(--type-ui-heading-md-font-weight) var(--type-ui-heading-md-font-size) /
+    var(--type-ui-heading-md-line-height) var(--type-ui-heading-md-font-family);
+}
+
+/* The actions: the title row's end, `space.inset.lg` clear of the text, `space.inset.xs` apart, wrapping. */
+.cv-page-header__actions {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-inset-xs);
+  margin-inline-start: var(--space-inset-lg);
+}
+
+.cv-page-header[data-lines="2"] > .cv-page-header__actions {
+  grid-row: span 2;
+}
+
+.cv-page-header[data-lines="3"] > .cv-page-header__actions {
+  grid-row: span 3;
+}
+
+.cv-page-header__meta,
+.cv-page-header__marker {
+  grid-column: 1;
+  min-width: 0;
+  margin: var(--space-stack-sm) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-tertiary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/* No colour carries meaning here: the text takes CanvasText, the actions their own forced rendering. */
+@media (forced-colors: active) {
+  .cv-page-header__title,
+  .cv-page-header__meta,
+  .cv-page-header__marker {
+    color: CanvasText;
+  }
+}
