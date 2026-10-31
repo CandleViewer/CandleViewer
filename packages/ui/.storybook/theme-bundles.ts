@@ -38,6 +38,7 @@ import "../src/components/emptystate.css";
 import "../src/components/errorstate.css";
 import "../src/components/fields.css";
 import "../src/components/filedrop.css";
+import "../src/components/filterbar.css";
 import "../src/components/formfield.css";
 import "../src/components/formsection.css";
 import "../src/components/freshness.css";
