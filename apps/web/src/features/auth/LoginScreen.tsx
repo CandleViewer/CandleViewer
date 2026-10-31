@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import { formatRemaining, login } from "./authApi";
 import { TwoFactorStep } from "./TwoFactorStep";
+import "./login.css";
 
 type State = "idle" | "submitting" | "invalid" | "rate_limited" | "unreachable";
 
@@ -38,8 +39,13 @@ export function LoginScreen(): JSX.Element {
   const [challenge, setChallenge] = useState<{ id: number; deadline: number } | null>(null);
   const [returned, setReturned] = useState(0);
   const identifierField = useRef<HTMLInputElement>(null);
+  // the polite announcement is a sentence set when a lockout ends, never per tick
+  const [announce, setAnnounce] = useState("");
+  // synchronous in-flight guard: two submits in one macrotask see the same render's state
+  const inFlight = useRef(false);
   const summary = useRef<HTMLDivElement>(null);
   const rateLimitLine = useRef<HTMLParagraphElement>(null);
+  const submitButton = useRef<HTMLButtonElement>(null);
   const [reason] = useState(() => {
     const key = new URLSearchParams(window.location.search).get("reason");
     return key !== null && Object.hasOwn(REASONS, key) ? REASONS[key] : undefined;
@@ -52,6 +58,11 @@ export function LoginScreen(): JSX.Element {
         if (r <= 1) {
           clearInterval(timer);
           setState("idle");
+          setAnnounce("You can try signing in again.");
+          // the focused lockout line unmounts with the lockout: keep focus on the form's action,
+          // but never take it from a control the user moved to
+          const at = document.activeElement;
+          if (at === rateLimitLine.current || at === document.body) submitButton.current?.focus();
           return 0;
         }
         return r - 1;
@@ -93,12 +104,19 @@ export function LoginScreen(): JSX.Element {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (state === "submitting" || state === "rate_limited") return;
+    if (inFlight.current || state === "submitting" || state === "rate_limited") return;
     if (identifier.trim() === "") return setFieldError("Enter your username.");
     if (password === "") return setFieldError("Enter your password.");
     setFieldError(null);
+    setAnnounce("");
+    inFlight.current = true;
     setState("submitting");
-    const out = await login(identifier.trim(), password);
+    let out: Awaited<ReturnType<typeof login>>;
+    try {
+      out = await login(identifier.trim(), password);
+    } finally {
+      inFlight.current = false;
+    }
     setPassword("");
     if (out.kind === "mfa_required") {
       handle.current = out.mfaToken;
@@ -134,17 +152,13 @@ export function LoginScreen(): JSX.Element {
   }
 
   return (
-    <main>
+    <main className="cv-login">
       <h1>Sign in to CandleViewer</h1>
       <form onSubmit={(e) => void onSubmit(e)} noValidate aria-busy={busy}>
         <div ref={summary} tabIndex={-1} role="alert" id="login-error">
           {message ?? reason}
         </div>
-        {rateLimited ? (
-          <p ref={rateLimitLine} tabIndex={-1} role="status" aria-live="polite">
-            Too many attempts. Try again in {formatRemaining(remaining)}.
-          </p>
-        ) : null}
+        <div aria-live="polite">{announce}</div>
         <label htmlFor="login-id">Username or email</label>
         <input
           ref={identifierField}
@@ -169,7 +183,24 @@ export function LoginScreen(): JSX.Element {
         <button type="button" aria-pressed={reveal} onClick={() => setReveal((r) => !r)}>
           Show password
         </button>
-        <button type="submit" aria-disabled={busy || rateLimited}>
+        {rateLimited ? (
+          <p
+            ref={rateLimitLine}
+            id="login-lockout"
+            className="cv-login__lockout"
+            tabIndex={-1}
+            role="status"
+            aria-live="polite"
+          >
+            Too many attempts. Try again in {formatRemaining(remaining)}.
+          </p>
+        ) : null}
+        <button
+          ref={submitButton}
+          type="submit"
+          aria-disabled={busy || rateLimited}
+          aria-describedby={rateLimited ? "login-lockout" : undefined}
+        >
           {busy ? "Signing in..." : "Sign in"}
         </button>
       </form>

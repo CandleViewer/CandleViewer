@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { resolve } from "node:path";
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { LoginScreen } from "../../src/features/auth/LoginScreen";
 import { ChangePasswordScreen } from "../../src/features/auth/ChangePasswordScreen";
 import { formatRemaining, login } from "../../src/features/auth/authApi";
@@ -107,7 +109,7 @@ describe("LoginScreen (SCR-001)", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps focus on the submit control while busy and through a 429 (A11Y-F-0001)", async () => {
+  it("keeps focus on the page while busy and lands it on the rate-limit line at a 429 (A11Y-F-0001)", async () => {
     let resolve: (r: Response) => void = () => undefined;
     const f = vi.fn(() => new Promise<Response>((r) => (resolve = r)));
     vi.stubGlobal("fetch", f);
@@ -122,9 +124,94 @@ describe("LoginScreen (SCR-001)", () => {
     expect(f).toHaveBeenCalledTimes(1); // no duplicate POST while pending
     resolve(reply(429, {}, { "Retry-After": "30" }));
     await waitFor(() => expect(screen.getByText(/Try again in 0:30/)).toBeTruthy());
-    expect(button).toHaveFocus();
+    // E09-D10 T-4 (#5254 DF-5): focus moves to the rate-limit line, never to the body
+    expect(screen.getByRole("status")).toHaveFocus();
     expect(document.body).not.toHaveFocus();
     expect(await serious()).toEqual([]);
+  });
+
+  it("shows a disabled look and the lockout text next to the button (A11Y-F-0001)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(429, {}, { "Retry-After": "30" })));
+    render(<LoginScreen />);
+    submit();
+    const lockout = await screen.findByText(/Try again in 0:30/);
+    const button = screen.getByRole("button", { name: "Sign in" });
+    expect(button).toHaveAccessibleDescription(/Try again in 0:30/);
+    expect(button.previousElementSibling).toBe(lockout); // adjacent to the button
+    const css = readFileSync(resolve(process.cwd(), "src/features/auth/login.css"), "utf8");
+    expect(css).toMatch(/button\[aria-disabled="true"\][^}]*opacity: var\(--opacity-disabled\)/u);
+  });
+
+  it("two submits in one macrotask send one POST (A11Y-F-0001)", async () => {
+    const f = vi.fn(() => new Promise<Response>(() => undefined));
+    vi.stubGlobal("fetch", f);
+    render(<LoginScreen />);
+    fireEvent.change(screen.getByLabelText("Username or email"), { target: { value: "ann" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
+    const form = screen.getByLabelText("Password").closest("form") as HTMLFormElement;
+    act(() => {
+      form.requestSubmit();
+      form.requestSubmit();
+    });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("announces the end of a lockout in a polite region (A11Y-F-0001)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(429, {}, { "Retry-After": "5" })));
+      render(<LoginScreen />);
+      submit();
+      await screen.findByText(/Try again in 0:05/);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5500);
+      });
+      const end = await screen.findByText("You can try signing in again.");
+      expect(end).toHaveAttribute("aria-live", "polite");
+      expect(screen.getByRole("button", { name: "Sign in" })).toHaveAttribute(
+        "aria-disabled",
+        "false",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("moves focus to Sign in when the lockout ends under the focused lockout line", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(429, {}, { "Retry-After": "5" })));
+      render(<LoginScreen />);
+      submit();
+      const line = await screen.findByText(/Try again in 0:05/);
+      expect(line).toHaveFocus();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5500);
+      });
+      await screen.findByText("You can try signing in again.");
+      expect(screen.getByRole("button", { name: "Sign in" })).toHaveFocus();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves focus on the identifier field when the lockout ends", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(429, {}, { "Retry-After": "5" })));
+      render(<LoginScreen />);
+      submit();
+      await screen.findByText(/Try again in 0:05/);
+      const field = screen.getByLabelText("Username or email");
+      field.focus();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5500);
+      });
+      await screen.findByText("You can try signing in again.");
+      expect(field).toHaveFocus();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("server unreachable", async () => {

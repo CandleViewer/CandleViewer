@@ -12578,7 +12578,7 @@
         "heuristic": false
       },
       "owningTicket": "E47-S05 #1319",
-      "status": "fixed",
+      "status": "in-progress",
       "title": "DP-001: Sign-in disables the focused fields and button while busy; focus drops to body, and stays there on 429 and mfa_required",
       "observed": "Both fields and the submit button are disabled while focused (fields_disabled=2, aria-busy=true), so focus drops to <body>. On 401/503 the error summary takes focus; on 429 (rate-limited) and on mfa_required focus stays on <body>.",
       "expected": "Focus stays on (or returns to) a meaningful element: keep the submit control focusable (aria-disabled instead of disabled, with the submit handler ignoring activation while a request is pending or the 429 lockout is active, so no duplicate POSTs) or move focus to the status/summary on every outcome.",
@@ -12586,7 +12586,7 @@
       "pattern": "A11Y-P-02",
       "evidence": [
         "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
-        "fixed-in: E47-S05 #1319 slice 1 (merge sha added when it lands)"
+        "pending merge: E47-S05 #1319 slice 1"
       ]
     },
     {
@@ -12730,7 +12730,7 @@
         "heuristic": false
       },
       "owningTicket": "E47-S05 #1319",
-      "status": "fixed",
+      "status": "in-progress",
       "title": "DP-007 (2.4.3, with 4.1.3 secondary; D-08): 'Password changed' replaces the form with focus on body and nothing announced",
       "observed": "The form is replaced by h1 'Password changed' and a link; focus is on <body> and nothing is announced. The second rater reproduced it (R2-F04): a live-region MutationObserver saw no write announcing the outcome (4.1.3).",
       "expected": "Focus moves to the 'Password changed' heading (or a status announces it). Adjudication: D-08: one finding, primary SC 2.4.3 with 4.1.3 as the secondary SC (one defect, one row). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
@@ -12738,7 +12738,7 @@
       "pattern": "A11Y-P-02",
       "evidence": [
         "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
-        "fixed-in: E47-S05 #1319 slice 1 (merge sha added when it lands)"
+        "pending merge: E47-S05 #1319 slice 1"
       ]
     },
     {
@@ -12879,7 +12879,7 @@
         "heuristic": false
       },
       "owningTicket": "E47-S05 #1319",
-      "status": "fixed",
+      "status": "in-progress",
       "title": "DP-013: A scrim click moves focus out of the step-up modal to the page behind it",
       "observed": "The click moves focus to <main> behind the aria-modal dialog (outside it). Tab brings focus back into the dialog. SessionLockDialog has a focusin guard for this; StepUpDialog does not.",
       "expected": "Focus stays inside the modal dialog (focusin guard or inert background), as SCR-005 does.",
@@ -12887,7 +12887,7 @@
       "pattern": "A11Y-P-01",
       "evidence": [
         "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
-        "fixed-in: E47-S05 #1319 slice 1 (merge sha added when it lands)"
+        "pending merge: E47-S05 #1319 slice 1"
       ]
     },
     {

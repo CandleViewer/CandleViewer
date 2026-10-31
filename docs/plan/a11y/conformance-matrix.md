@@ -10,7 +10,7 @@ Generated, do not edit: regenerate with `python3 docs/plan/a11y/_tools/register.
 - States: 812 (145 on reachable screens); 63 covered, 704 unreachable, 45 not run.
 - Deep pass: 12 of 33 listed ids auditable; 8 run.
 - WCAG 2.2 cells (6 per non-reserved row): n/a 109, pass 41, pass (exception) 12, unreachable 732 (unreachable counted apart from n/a).
-- Findings: 28 in all, 11 open (Level A 2, AA 9; P0 0, P1 6, P2 5, P3 0; needs filing go 0); explicit no-findings rows: 6 (no finding recorded in this run's checks; not a conformance claim; 0 of them have second-rater disagreements pending adjudication, record §10.5).
+- Findings: 28 in all, 14 open (Level A 5, AA 9; P0 0, P1 9, P2 5, P3 0; needs filing go 0); explicit no-findings rows: 6 (no finding recorded in this run's checks; not a conformance claim; 0 of them have second-rater disagreements pending adjudication, record §10.5).
 - Patterns: A11Y-P-01 (2), A11Y-P-02 (4), A11Y-P-03 (1), A11Y-P-04 (3), A11Y-P-05 (2), A11Y-P-06 (3), A11Y-P-07 (1).
 - Screen reader: the sign-off passes are E47-T04's; this sweep records proxies only.
 
@@ -18,7 +18,7 @@ Generated, do not edit: regenerate with `python3 docs/plan/a11y/_tools/register.
 
 | Band         | Area                                       | Reachable | Rows | Open findings |
 | ------------ | ------------------------------------------ | --------- | ---- | ------------- |
-| SCR-001..019 | Auth, app shell, global chrome, onboarding | 14        | 19   | 8             |
+| SCR-001..019 | Auth, app shell, global chrome, onboarding | 14        | 19   | 11            |
 | SCR-020..029 | Workspaces, dockable panel system, layouts | 0         | 10   | 0             |
 | SCR-030..049 | Charting                                   | 0         | 20   | 0             |
 | SCR-050..059 | Order flow                                 | 0         | 10   | 0             |
@@ -37,12 +37,12 @@ Automated `pass (0 violations; N unresolved)`: axe found no violation, but N col
 
 | ID      | Name                                              | Coverage                        | States covered | Automated (axe)                    | Keyboard              | 2.4.11      | 2.5.7       | 2.5.8            | 3.2.6       | 3.3.7            | 3.3.8       | Deep pass      | SR      | Findings A / AA | Owning ticket  |
 | ------- | ------------------------------------------------- | ------------------------------- | -------------- | ---------------------------------- | --------------------- | ----------- | ----------- | ---------------- | ----------- | ---------------- | ----------- | -------------- | ------- | --------------- | -------------- |
-| SCR-001 | Login                                             | covered                         | 6 / 6          | pass                               | fail                  | n/a         | n/a         | pass (exception) | n/a         | pass             | pass        | fail           | E47-T04 | 0 / 1           | E09-S01 #228   |
+| SCR-001 | Login                                             | covered                         | 6 / 6          | pass                               | fail                  | n/a         | n/a         | pass (exception) | n/a         | pass             | pass        | fail           | E47-T04 | 1 / 1           | E09-S01 #228   |
 | SCR-002 | Two-factor (TOTP) challenge                       | partial                         | 1 / 5          | pass                               | fail                  | n/a         | n/a         | n/a              | n/a         | n/a              | n/a         | fail           | E47-T04 | 1 / 0           | E09-S02 #229   |
 | SCR-003 | TOTP enrolment (first login / re-enrol)           | partial                         | 4 / 4          | pass                               | fail                  | n/a         | n/a         | pass (exception) | n/a         | pass             | pass        | fail           | E47-T04 | 0 / 0           | E09-S02 #229   |
-| SCR-004 | Forced password change                            | covered                         | 5 / 5          | pass                               | fail                  | n/a         | n/a         | pass (exception) | n/a         | pass (exception) | pass        | fail           | E47-T04 | 0 / 0           | E09-S01 #228   |
+| SCR-004 | Forced password change                            | covered                         | 5 / 5          | pass                               | fail                  | n/a         | n/a         | pass (exception) | n/a         | pass (exception) | pass        | fail           | E47-T04 | 1 / 0           | E09-S01 #228   |
 | SCR-005 | Session expired / re-auth modal                   | covered                         | 5 / 6          | pass                               | pass                  | pass        | n/a         | pass             | n/a         | n/a              | pass        | fail           | E47-T04 | 0 / 1           | E09-S03 #230   |
-| SCR-006 | Step-up authentication modal (S)                  | covered                         | 8 / 9          | pass (0 violations; 8 unresolved)  | fail                  | pass        | n/a         | pass             | n/a         | pass (exception) | pass        | fail           | E47-T04 | 0 / 2           | E09-S04 #231   |
+| SCR-006 | Step-up authentication modal (S)                  | covered                         | 8 / 9          | pass (0 violations; 8 unresolved)  | fail                  | pass        | n/a         | pass             | n/a         | pass (exception) | pass        | fail           | E47-T04 | 1 / 2           | E09-S04 #231   |
 | SCR-007 | (reserved)                                        | reserved: no screen             | 0 / 0          | n/a                                | n/a                   | reserved    | reserved    | reserved         | reserved    | reserved         | reserved    | n/a            | E47-T04 | 0 / 0           | unassigned     |
 | SCR-008 | (reserved)                                        | reserved: no screen             | 0 / 0          | n/a                                | n/a                   | reserved    | reserved    | reserved         | reserved    | reserved         | reserved    | n/a            | E47-T04 | 0 / 0           | unassigned     |
 | SCR-009 | (reserved)                                        | reserved: no screen             | 0 / 0          | n/a                                | n/a                   | reserved    | reserved    | reserved         | reserved    | reserved         | reserved    | n/a            | E47-T04 | 0 / 0           | unassigned     |
