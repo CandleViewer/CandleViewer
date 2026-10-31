@@ -77,15 +77,20 @@ def test_the_standing_is_rebuilt_from_the_restored_state(state: str, stale: bool
 
 
 def test_protective_paths_never_consult_the_standing() -> None:
-    """C-2.6, BQ-5: only the order-entry gate reads the standing (its call site is the wiring's);
-    the stop writers, the cancel and close paths and the exits never name it. Its writers are the
-    pass's own modules."""
+    """C-2.6, BQ-5: only the order-entry gate reads the standing; the stop writers, the cancel
+    and close paths and the exits never name it. Its writers are the pass's own modules (the
+    phases, and the driver, which rebuilds it from a restored job and refuses an account whose
+    job did not open), and the composition hands the one standing on: `app.py` composes it into
+    the gate and gives it to the runtime, which gives it to reconciliation's composition (PR 2b)."""
     naming = {
         path.relative_to(PACKAGE).as_posix()
         for path in sorted(PACKAGE.rglob("*.py"))
         if "ReconcileStanding" in path.read_text(encoding="utf-8")
     }
-    assert naming == {"oms/reconcile_standing.py", "oms/reconcile_phases.py"}
+    assert naming == {
+        "oms/reconcile_standing.py", "oms/reconcile_phases.py", "oms/reconcile_job.py",
+        "oms_reconcile_wiring.py", "oms_wiring.py", "app.py",
+    }  # fmt: skip
 
 
 # --- The tracker (BQ-4) ---------------------------------------------------------------------------
