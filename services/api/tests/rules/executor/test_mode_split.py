@@ -26,6 +26,7 @@ from candleviewer.observability.health import HealthStatus
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.rules import service as rules_service
 from candleviewer.rules.evaluator.engine import EvaluationResult
+from candleviewer.rules.executor.dispatch import FireDispatch
 from candleviewer.rules.ir.models import MetricRef, RuleScope
 from candleviewer.rules.manager import (
     TICK_DISARM_TIMEOUT_S,
@@ -86,8 +87,13 @@ class Rig:
         row.versions[0].ir["mode"] = ir_mode
         return rid
 
+    @property
+    def dispatch(self) -> FireDispatch:
+        assert self.svc._dispatch is not None
+        return self.svc._dispatch
+
     async def fire(self, price: str = "150") -> None:
-        """One tick: the rules evaluate and their actions are scheduled, not yet run."""
+        """One tick: the rules evaluate and their fires are queued, not yet run."""
         self.clock.t += 2_000  # past the default cooldown
         assert self.svc.metric_source is not None
         self.svc.metric_source.push(PRICE, Decimal(price), self.clock.t)
@@ -95,6 +101,8 @@ class Rig:
 
     async def settle(self) -> None:
         await asyncio.gather(*self.svc._tasks)
+        async with asyncio.timeout(2):  # a guard: a fire that never ends fails the test
+            await self.dispatch.idle()
 
 
 @pytest.fixture
@@ -175,8 +183,8 @@ async def test_a_mode_change_between_evaluation_and_dispatch_is_honoured_at_disp
 ) -> None:
     """Scenario: a mode change between evaluation and dispatch is honoured (edge case)."""
     rid = await rig.add("armed")
-    await rig.fire()  # evaluated as armed: its action's task is scheduled and has not run
-    assert rig.svc._tasks and rig.executor == []
+    await rig.fire()  # evaluated as armed: its fire is queued and has not run
+    assert rig.dispatch.queued == 1 and rig.executor == []
     (await rig.row(rid)).mode = target  # the stored row is switched before dispatch
     with capture_logs() as logs:
         await rig.settle()
@@ -220,7 +228,7 @@ async def test_a_changed_row_between_evaluation_and_dispatch_drops_the_fire(
 
 async def test_an_action_in_flight_when_the_service_stops_drops(rig: Rig) -> None:
     """A stopped service has no manager to read the row with: the action drops as `mode_changed`.
-    (`stop()` runs a queued action before it clears the manager; K1b's workers reach this arm.)"""
+    (`stop()` drains the queued fires before it clears the manager: only this reaches the arm.)"""
     await rig.add("armed")
     await rig.fire()
     manager, rig.svc._manager = rig.svc._manager, None
@@ -235,13 +243,13 @@ def _fail_the_dispatch_read(
     store: InMemoryRuleStore,
     failure: Callable[[], Awaitable[None]],
 ) -> None:
-    """The store's point read runs `failure` first inside the task that emits an action, the
-    dispatch's re-read; the evaluation's own recording, a task of its own, reads as usual."""
+    """The store's point read runs `failure` first inside a dispatch worker, the dispatch's
+    re-read; the evaluation's own recording, a task of its own, reads as usual."""
     read = store.get
 
     async def get(rule_id: str) -> RuleRow | None:
         task = asyncio.current_task()
-        if task is not None and task.get_name() == "rule-action-emit":
+        if task is not None and task.get_name() == "rule-dispatch-worker":
             await failure()
         return await read(rule_id)
 
@@ -280,7 +288,7 @@ async def test_a_failed_reread_at_dispatch_sends_nothing_and_is_counted(
     """Fail closed (24 §11.5 check 1): the action reaches neither sink and is counted under its
     reason, logged once with the rule id and that reason only; nothing raises out of its task."""
     rid = await rig.add("armed")
-    await rig.fire()  # evaluated as armed: its action's task is scheduled and has not run
+    await rig.fire()  # evaluated as armed: its fire is queued and has not run
     _fail_the_dispatch_read(monkeypatch, rig.store, failure)
     monkeypatch.setattr(rules_service, "REREAD_TIMEOUT_S", bound)
     with capture_logs() as logs:
@@ -297,20 +305,22 @@ async def test_a_failed_reread_at_dispatch_sends_nothing_and_is_counted(
 async def test_a_cancelled_reread_is_never_swallowed(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Cancellation is no failed read: the emit task ends cancelled, nothing sent or counted."""
+    """Cancellation is no failed read: the worker ends cancelled, nothing sent or counted."""
     await rig.add("armed")
     await rig.fire()
+    workers: list[asyncio.Task[Any]] = []
 
     async def cancelled_mid_read() -> None:
         task = asyncio.current_task()
         assert task is not None
+        workers.append(task)
         task.cancel()  # delivered at the read's next wait, as any cancel of the task is
         await asyncio.Event().wait()
 
     _fail_the_dispatch_read(monkeypatch, rig.store, cancelled_mid_read)
-    (emit,) = [t for t in rig.svc._tasks if t.get_name() == "rule-action-emit"]
-    await asyncio.gather(*rig.svc._tasks, return_exceptions=True)
-    assert emit.cancelled()
+    await rig.settle()  # the cancelled worker leaves its rule's lane whole: the queue is idle
+    (worker,) = workers
+    assert worker.cancelled()
     assert rig.executor == [] and rig.simulated == []
     assert not rig.svc.dispatch_reread_failed_total and not rig.svc.actions_blocked_total
 
