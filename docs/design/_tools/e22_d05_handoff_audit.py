@@ -418,6 +418,51 @@ def merge_base() -> str:
     return git_out("merge-base", "HEAD", HEAD).strip()
 
 
+POST_MERGE_OVERRIDE: list[bool] = []  # self-test lever: force one mode (True = post-merge)
+
+
+def post_merge() -> bool:
+    """Post-merge mode, by content: the pack and `14`'s pointer line already ship at the merge-base
+    (PR 1 is merged), so a later PR is a versioned delta on the pack's own files only."""
+    if POST_MERGE_OVERRIDE:
+        return POST_MERGE_OVERRIDE[-1]
+    ref = merge_base()
+    if not ref:
+        return False
+    spec = git_show(ref, SPEC_REL)
+    plan = git_show(ref, PLAN14_REL)
+    return spec is not None and plan is not None and POINTER_14 in plan.split("\n")
+
+
+def delta_rows(rows: list[list[str]]) -> tuple[list[list[str]], list[list[str]]]:
+    return [r for r in rows if r[0] == "v1"], [r for r in rows if r[0] != "v1"]
+
+
+def post_merge_version_problems(spec: str) -> list[str]:
+    ref = merge_base()
+    old_spec = git_show(ref, SPEC_REL) or ""
+    old_v1, _ = delta_rows(rows_of(old_spec, VERSION_HEAD))
+    now = rows_of(spec, VERSION_HEAD)
+    v1, later = delta_rows(now)
+    bad: list[str] = []
+    if v1 != old_v1:
+        bad.append("a v1 row differs from the merge-base (post-merge: v1 rows are frozen)")
+    if now[: len(v1)] != v1:
+        bad.append("a later row sits among the v1 rows")
+    last = 0
+    for r in later:
+        m = re.fullmatch(r"v1\.(\d+)", r[0])
+        if not m or int(m[1]) <= last:
+            bad.append(f"version {r[0]!r} is not a v1.N with N above {last}")
+            continue
+        last = int(m[1])
+        if r[1] != f"`{BASE}`":
+            bad.append(f"{r[0]} does not name the base {BASE}")
+        if len(r) < 5 or not r[3].strip() or not r[4].strip():
+            bad.append(f"{r[0]} lacks affected stories or an owner")
+    return bad
+
+
 @functools.cache
 def tree_paths(prefix: str) -> tuple[str, ...]:
     ok, out = git_ok("ls-tree", "-r", "--name-only", BASE, "--", prefix)
@@ -1026,7 +1071,9 @@ def g_version(t: Texts) -> list[Finding]:
         bad.append(F("G-VERSION", f"the Inputs line does not name {BASE} twice", "spec", sec))
     vsec = spec_sec(t, VERSION_HEAD)
     rows = rows_of(t.spec, VERSION_HEAD)
-    if not rows or any(r[0] != "v1" or r[1] != f"`{BASE}`" for r in rows):
+    if post_merge():
+        bad += [F("G-VERSION", m, "spec", vsec) for m in post_merge_version_problems(t.spec)]
+    elif not rows or any(r[0] != "v1" or r[1] != f"`{BASE}`" for r in rows):
         bad.append(F("G-VERSION", "a versions row is not v1 at the base", "spec", vsec))
     body = norm_text(section(t.spec, VERSION_HEAD))
     for need in ("re-sync needed", "posted once on each affected consumer", "affected story"):
@@ -1659,13 +1706,17 @@ def pointer_problems(text: str, base: str) -> list[str]:
     return out
 
 
+def own_paths() -> tuple[str, ...]:
+    return tuple(p for p in OWN_PATHS if p != PLAN14_REL) if post_merge() else OWN_PATHS
+
+
 def stray_paths_at(ref: str) -> tuple[str, ...] | None:
     ok_diff, diff = git_ok("diff", "--name-only", ref)
     ok_new, new = git_ok("ls-files", "--others", "--exclude-standard")
     if not (ok_diff and ok_new):
         return None
     names = [*diff.split("\n"), *new.split("\n")]
-    return tuple(sorted({n for n in names if n and n not in OWN_PATHS}))
+    return tuple(sorted({n for n in names if n and n not in own_paths()}))
 
 
 def g_untouched(t: Texts) -> list[Finding]:
@@ -1673,13 +1724,14 @@ def g_untouched(t: Texts) -> list[Finding]:
     if not ref:
         return [F("G-UNTOUCHED", f"no merge-base with {HEAD}: nothing compared", None, None)]
     bad: list[Finding] = []
+    post = post_merge()  # `14` already carries the pointer and ticks: it must equal the merge-base
     override = dict(PLAN_OVERRIDE)
     for cid, text in t.plans:
         text = override.get(cid, text)
         base = git_show(ref, CITE_FILES[cid])
         if base is None:
             bad.append(F("G-UNTOUCHED", f"{cid} is not readable at {ref[:10]}", None, None))
-        elif cid == "14":
+        elif cid == "14" and not post:
             bad += [F("G-UNTOUCHED", m, None, None) for m in pointer_problems(text, base)]
         elif text != base:
             bad.append(F("G-UNTOUCHED", f"{cid} differs from {ref[:10]}", None, None))
@@ -2148,6 +2200,13 @@ def lever_extra_path() -> Callable[[], None]:
     return popper(EXTRA_PATHS)
 
 
+def lever_plan14_edit() -> Callable[[], None]:
+    """Post-merge mode: `14` carries one stray line over the merge-base."""
+    text = (ROOT / PLAN14_REL).read_text(encoding="utf-8")
+    PLAN_OVERRIDE.append(("14", text + "\nA stray line.\n"))
+    return popper(PLAN_OVERRIDE)
+
+
 def lever_head_edit() -> Callable[[], None]:
     rel = CITE_FILES["D02"]
     text = (git_show(BASE, rel) or "").split("\n")
@@ -2179,6 +2238,20 @@ def word_mutation() -> Edit:
 
 
 MUTATIONS: tuple[Mutation, ...] = (
+    # M-46 to M-48 exercise post-merge mode (by content; this tree carries the merged pack).
+    Mutation("M-46", "G-UNTOUCHED", "post-merge: `14` changed", lever=lever_plan14_edit),
+    Mutation(
+        "M-47",
+        "G-VERSION",
+        "post-merge: a v1 row edited",
+        spec=sub("two stale lines (D05-C-1, D05-C-2)", "two stale lines (D05-C-1, D05-C-3)"),
+    ),
+    Mutation(
+        "M-48",
+        "G-VERSION",
+        "post-merge: a later row not numbered v1.N",
+        spec=cell_set("v1.1", 0, "v2"),
+    ),
     Mutation(
         "M-1",
         "G-ANCHOR",
@@ -2415,7 +2488,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "the proposed range sentence past 60 characters",
         deck=deck_text(
             "d05.05.range",
-            '"Enter a value of 0 or more; a percentile is between 0 and 100 inclusive."',
+            '"Enter a value of 0 or more; a percentile is above 0 and below 100 exclusive."',
         ),
     ),
     Mutation(
