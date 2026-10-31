@@ -201,9 +201,11 @@ class HandoverUnavailable(OmsError):
 
 
 class ReconciliationUnavailable(OmsError):
-    """No REST reconciliation pass can be asked for until E29-T06 lands one (`NoReconciliation`,
-    24 Sec.8.12): the consumer logs, counts and pages once per episode. A live process refuses to
-    start with that stand-in (`refuse_live_without_reconciliation`, C-2.21)."""
+    """No REST reconciliation pass can be asked for: the composition has no reconciliation stores
+    (`NoReconciliation`, 24 Sec.8.12), or no job takes the request (`ReconcileJobs`: stopping,
+    unwired, or its open failed). The private-stream consumer logs, counts and pages it once per
+    episode. A live process refuses to start with that stand-in
+    (`refuse_live_without_reconciliation`, C-2.21)."""
 
 
 class ProtectionReadingsUnavailable(OmsError):

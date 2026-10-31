@@ -882,8 +882,10 @@ class OmsAudit:
             await self._writer.emit(record.action, **fields)
 
 
-#: The notices whose owners have not landed: an ERROR and a page each until they do.
-#: `request_reconciliation` is E29-T06's once the runtime binds its jobs (`bind_reconciliation`).
+#: The notices no owner takes, by the ticket that owns each: an ERROR and a page each.
+#: `request_reconciliation` is E29-T06's reconciliation jobs' wherever the runtime binds them
+#: (`bind_reconciliation`), so it goes unowned only where the stores compose no reconciliation;
+#: `request_fallback_sl` waits for E32.
 UNOWNED_NOTICES: Final = MappingProxyType(
     {"request_reconciliation": "E29-T06", "request_fallback_sl": "E32"}
 )
@@ -976,6 +978,8 @@ class OrderNoticesRouter:
             if reason == ALREADY_TERMINAL and notice.detail.get("alerted") is True:
                 return  # its case's `order_already_terminal` alert is the one ticket (14:30Z)
             summary = f"order notice {kind} has no owner until {owner}"
+            if kind == "request_reconciliation":  # E29-T06 has landed: unbound, none is composed
+                summary = f"order notice {kind} has no owner: no reconciliation is composed"
             if refused:
                 summary = f"order notice {kind} was refused: no reconciliation job took it"
             self._raise("alert" if reason == ALREADY_TERMINAL else "page", summary)
@@ -2889,13 +2893,15 @@ class OmsRuntime:
         are the environment's that resolve to a trading account; another opens on its stream's
         first trigger, and one whose read failed is held refused until then (`tradable`). The
         start is bounded as the seed is (`_bounded`), so it delays `ready` by at most 17 s, and
-        one that overruns has failed, its task on the lane cancelled. A start that fails holds
-        the whole environment's order entry (the standing refuses every account,
-        `account_stale`), as an account it did not reach has no job and no standing rebuilt from
-        its restored state (INV-B19-a, C-2.21): the first is logged CRITICAL and paged, a retry's
-        failure logged. The runtime goes on to `ready`, so a cancel, a close and a stop write
-        pass (C-2.6), and the startup task retries the start (`_reconcile_retried`). Whether the
-        jobs started, or none are composed; either lifts a hold an earlier start left."""
+        one that overruns has failed, its task on the lane cancelled: an account it did not open
+        keeps the stale mark `ReconcileJobs.start` sets on each before its loop, which only the
+        account's open clears. A start that fails also holds the whole environment's order entry
+        (the standing refuses every account, `account_stale`), as one that fails before the jobs'
+        start marks no account (INV-B19-a, C-2.21): the first is logged CRITICAL and paged, a
+        retry's failure logged. The runtime goes on to `ready`, so a cancel, a close and a stop
+        write pass (C-2.6), and the startup task retries the start (`_reconcile_retried`).
+        Whether the jobs started, or none are composed; either lifts a hold an earlier start
+        left, never an account's stale mark."""
         if parts.reconcile is None or parts.tradable is None:
             self._standing.release()
             return True
