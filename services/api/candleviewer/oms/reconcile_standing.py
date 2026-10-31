@@ -15,6 +15,9 @@ records; this enforces:
   #2204).
 * **Rebuilt at start-up** from each account's restored B19 state (`restored`), as a static restore
   runs no entry action: a restart never unlocks a stale account.
+* **Held whole while the jobs cannot start** (`hold`, 24 Sec.8.5, INV-B19-a): a start that fails
+  before any job opens rebuilds no account's standing, so every account is refused until a retry
+  starts the jobs (`release`); a restored lock is then in place before the hold lifts.
 * **Heard as it is gained** (E29-S07, 23 Sec.15.9). Its one listener (`listen`, the runtime's)
   hears each account the set gains, after the set holds it, on the writer's thread, so a lock with
   no notice of its own (a restored one, or one set ahead of B19's) reaches the sockets already
@@ -48,6 +51,7 @@ __all__ = [
     "STALE_AFTER_S",
     "STALE_DETAIL",
     "STALE_STATE",
+    "UNSTARTED_DETAIL",
     "Failure",
     "FailureTracker",
     "LockGained",
@@ -62,6 +66,8 @@ STALE_STATE: Final = "stale_lockout"
 STALE_DETAIL: Final = (
     "Order entry on this account is paused: reconciliation has failed for 2 minutes."
 )
+#: The refusal's text while the jobs could not start (`hold`), a constant likewise.
+UNSTARTED_DETAIL: Final = "Order entry is paused: reconciliation has not started yet."
 #: The standing's listener (E29-S07): called with each account the set gains, once it holds it.
 LockGained = Callable[[AccountId], None]
 
@@ -76,6 +82,7 @@ class ReconcileStanding:
 
     def __init__(self) -> None:
         self._stale: set[AccountId] = set()
+        self._held = False
         self._gained: LockGained | None = None
 
     def listen(self, gained: LockGained | None) -> None:
@@ -83,11 +90,13 @@ class ReconcileStanding:
         self._gained = gained
 
     def refusal(self, account_id: UUID) -> OrderEntryRefusal | None:
-        """`OrderEntryCheck`: refuses a stale account's entry with `account_stale` (24 Sec.8.10).
-        A set read, O(1) and in memory, from the serving loop, while the order lane writes the
-        set (C-2.20, C-2.21)."""
+        """`OrderEntryCheck`: refuses a stale account's entry with `account_stale` (24 Sec.8.10),
+        and every account's while the standing is held. A set read and a flag read, O(1) and in
+        memory, from the serving loop, while the order lane writes the set (C-2.20, C-2.21)."""
         if account_id in self._stale:
             return OrderEntryRefusal("account_stale", STALE_DETAIL)
+        if self._held:
+            return OrderEntryRefusal("account_stale", UNSTARTED_DETAIL)
         return None
 
     def is_stale(self, account_id: AccountId) -> bool:
@@ -124,6 +133,19 @@ class ReconcileStanding:
             self.mark_stale(account_id)
         else:
             self._stale.discard(account_id)
+
+    def hold(self) -> None:
+        """Every account refused until `release`: the jobs could not start, so no account's
+        standing was rebuilt from its restored state (24 Sec.8.5, INV-B19-a). Idempotent."""
+        self._held = True
+
+    def release(self) -> None:
+        """The jobs started, each account's standing rebuilt: the hold lifts. Idempotent."""
+        self._held = False
+
+    @property
+    def held(self) -> bool:
+        return self._held
 
     @property
     def stale_count(self) -> int:
