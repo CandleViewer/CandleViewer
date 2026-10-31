@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import * as Atoms from "../src/index.js";
 import { TOKEN_SCHEMA_VERSION, Placeholder } from "../src/index.js";
 import type {
+  AdminGrace,
+  AdminLayoutProps,
+  AdminStripItem,
   ButtonProps,
   CardProps,
   ColumnPickerProps,
@@ -155,6 +158,18 @@ describe("@candleviewer/ui watchlist components (E08-S08)", () => {
           WatchlistRowProps,
         ]
       | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui organisms (E42-S01)", () => {
+  it("exports AdminLayout, its strip order, its copy and its types (the typechecker checks them)", () => {
+    expect([typeof Atoms.AdminLayout, typeof Atoms.sortAdminStrip]).toEqual([
+      "function",
+      "function",
+    ]);
+    expect(Atoms.ADMIN_COPY.bandName).toBe("Admin area");
+    const props: [AdminLayoutProps, AdminStripItem, AdminGrace] | null = null;
     expect(props).toBeNull();
   });
 });

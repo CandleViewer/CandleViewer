@@ -2,6 +2,7 @@
 import type { JSX } from "react";
 import { describe, expect, it } from "vitest";
 import {
+  AdminLayout,
   Button,
   Card,
   Checkbox,
@@ -268,6 +269,17 @@ describe("E08-S08's watchlist components carry their catalogue id", () => {
   ];
 
   it.each(watchlist)("%s marks exactly one root with data-cmp", async (id, render) => {
+    const host = await mount(render());
+    expect(host.querySelectorAll(`[data-cmp="${id}"]`)).toHaveLength(1);
+  });
+});
+
+const organisms: [string, () => JSX.Element][] = [
+  ["CMP-087", () => <AdminLayout routeLabel="Users">Body</AdminLayout>],
+];
+
+describe("organisms carry their catalogue id", () => {
+  it.each(organisms)("%s marks exactly one root with data-cmp", async (id, render) => {
     const host = await mount(render());
     expect(host.querySelectorAll(`[data-cmp="${id}"]`)).toHaveLength(1);
   });
