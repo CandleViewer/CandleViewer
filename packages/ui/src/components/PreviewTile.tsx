@@ -1,3 +1,4 @@
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, JSX, ReactNode } from "react";
 import { Icon } from "../icons/Icon.js";
 import { ColorSwatch } from "./ColorSwatch.js";
@@ -17,14 +18,21 @@ export const PREVIEW_TILE_COPY = {
   error: "Preview unavailable — chart error; settings still apply",
   sample: "Sample bars: not this chart",
   contrastWarning: (ratio: string): string =>
-    `Low contrast: body text on this preview measures ${ratio}:1, below 4.5:1`,
+    `Low contrast: text on this preview measures ${ratio}:1, below 4.5:1`,
   themeSample: { bid: "Bid 64,210.5", ask: "Ask 64,211.0", position: "BTCUSDT long 0.500 BTC" },
 } as const;
 
-/** The pair the BQ-18 warning measures: the tile's body text on its own surface. */
-export const PREVIEW_TILE_CONTRAST_PAIR = {
-  text: "color.text.primary",
-  surface: "color.surface.sunken",
+/**
+ * The pairs the BQ-18 warning measures, each at `min`: the body text (the theme sample, the ladder
+ * value) and the secondary text (the empty and error reason) on the tile's own surface. A side the host
+ * does not override is read from the frame's computed custom property (the active theme). Only opaque
+ * `#RGB` / `#RRGGBB` values are measured: an `rgb()`, `hsl()`, `var()` or alpha value is not checked.
+ */
+export const PREVIEW_TILE_CONTRAST_PAIRS = {
+  pairs: [
+    { text: "color.text.primary", surface: "color.surface.sunken" },
+    { text: "color.text.secondary", surface: "color.surface.sunken" },
+  ],
   min: 4.5,
 } as const;
 
@@ -44,6 +52,7 @@ export interface PreviewTileProps {
   /**
    * Token name -> value, applied as scoped custom properties on the tile only (BQ-18):
    * `{ "color.surface.sunken": "#0B0E13" }` sets `--color-surface-sunken`. Invalid names are ignored.
+   * Overriding a side of a `PREVIEW_TILE_CONTRAST_PAIRS` pair arms the warning; only opaque hex is measured.
    */
   readonly tokenOverrides?: Readonly<Record<string, string>>;
   readonly emptyText?: string;
@@ -54,22 +63,42 @@ export interface PreviewTileProps {
   readonly themeSample?: { readonly bid: string; readonly ask: string; readonly position: string };
 }
 
+/** `color.text.primary` -> `--color-text-primary`. */
+const cssName = (token: string): string => `--${token.replace(/\./g, "-")}`;
+
 const TOKEN_NAME = /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+$/;
 
 /** The overrides as `--a-b-c` custom properties; a name outside the token grammar is dropped. */
 function scopedProperties(overrides: Readonly<Record<string, string>>): CSSProperties {
   const style: Record<string, string> = {};
   for (const [name, value] of Object.entries(overrides)) {
-    if (TOKEN_NAME.test(name)) style[`--${name.replace(/\./g, "-")}`] = value;
+    if (TOKEN_NAME.test(name)) style[cssName(name)] = value;
   }
   return style as CSSProperties;
 }
 
-/** The pair's ratio when both sides are overridden with opaque hex values; otherwise no check. */
-function overrideRatio(overrides: Readonly<Record<string, string>>): number | null {
-  const text = overrides[PREVIEW_TILE_CONTRAST_PAIR.text];
-  const surface = overrides[PREVIEW_TILE_CONTRAST_PAIR.surface];
-  return text === undefined || surface === undefined ? null : contrastRatio(text, surface);
+/**
+ * The lowest ratio over the pairs with at least one overridden side; the other side is the frame's
+ * computed value. `null` when no pair is overridden or no side is an opaque hex.
+ */
+function overrideRatio(
+  frame: HTMLElement,
+  overrides: Readonly<Record<string, string>>,
+): number | null {
+  let computed: CSSStyleDeclaration | null = null;
+  const read = (token: string): string => {
+    const own = overrides[token];
+    if (own !== undefined) return own;
+    computed ??= getComputedStyle(frame);
+    return computed.getPropertyValue(cssName(token));
+  };
+  let lowest: number | null = null;
+  for (const { text, surface } of PREVIEW_TILE_CONTRAST_PAIRS.pairs) {
+    if (overrides[text] === undefined && overrides[surface] === undefined) continue;
+    const ratio = contrastRatio(read(text), read(surface));
+    if (ratio !== null && (lowest === null || ratio < lowest)) lowest = ratio;
+  }
+  return lowest;
 }
 
 /**
@@ -96,49 +125,75 @@ export function PreviewTile({
   const ready = status === "ready";
   const collapsed = ready && kind === "ladder" && Array.isArray(value);
   const state = ready ? (collapsed ? "collapsed" : source) : status;
-  const ratio = overrideRatio(tokenOverrides);
+  const descriptionId = useId();
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [ratio, setRatio] = useState<number | null>(null);
+  const overrideKey = JSON.stringify(tokenOverrides);
+  // Measured after layout so an unoverridden side resolves to the active theme's value.
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    const overrides = JSON.parse(overrideKey) as Record<string, string>;
+    setRatio(frame === null ? null : overrideRatio(frame, overrides));
+  }, [overrideKey]);
   const warning =
-    ratio !== null && ratio < PREVIEW_TILE_CONTRAST_PAIR.min
+    ratio !== null && ratio < PREVIEW_TILE_CONTRAST_PAIRS.min
       ? contrastWarning(ratio.toFixed(2))
       : null;
 
   let image: ReactNode = children;
-  if (status === "empty") image = <span className="cv-preview-tile__status">{emptyText}</span>;
+  // Content inside a role="img" is not exposed, so the reason and the theme sample are referenced as
+  // the image's description: the name stays "Preview unavailable" (J21) and the words still reach AT.
+  let description: string | undefined = descriptionId;
+  if (status === "empty")
+    image = (
+      <span id={descriptionId} className="cv-preview-tile__status">
+        {emptyText}
+      </span>
+    );
   else if (status === "error")
     image = (
-      <span className="cv-preview-tile__status">
+      <span id={descriptionId} className="cv-preview-tile__status">
         <span className="cv-preview-tile__glyph">
           <Icon name="error" />
         </span>
         {errorText}
       </span>
     );
-  else if (kind === "ladder" && value !== undefined)
+  else if (kind === "ladder" && value !== undefined) {
+    // The ladder value is repeated by the normative totals row (E32-D04 D04-A2), not described here.
+    description = undefined;
     image = (
       <span className="cv-preview-tile__value">
         {typeof value === "string" ? value : value.join(" · ")}
       </span>
     );
-  else if (kind === "theme" && children === undefined)
+  } else if (kind === "theme" && children === undefined) {
+    // One id per row, so the description reads the rows as separate words ("… 64,210.5 Ask …").
+    description = ["bid", "ask", "position"].map((row) => `${descriptionId}-${row}`).join(" ");
     image = (
       <span className="cv-preview-tile__sample">
-        <span className="cv-preview-tile__row">
+        <span id={`${descriptionId}-bid`} className="cv-preview-tile__row">
           <ColorSwatch decorative color="var(--color-buy-default)" label="" />
           {themeSample.bid}
         </span>
-        <span className="cv-preview-tile__row">
+        <span id={`${descriptionId}-ask`} className="cv-preview-tile__row">
           <ColorSwatch decorative color="var(--color-sell-default)" label="" />
           {themeSample.ask}
         </span>
-        <span className="cv-preview-tile__row">{themeSample.position}</span>
+        <span id={`${descriptionId}-position`} className="cv-preview-tile__row">
+          {themeSample.position}
+        </span>
       </span>
     );
+  } else description = undefined;
 
   return (
     <div className="cv-preview-tile" data-cmp="CMP-228" data-kind={kind} data-state={state}>
       <div
         role="img"
         aria-label={ready ? label : unavailableName}
+        aria-describedby={description}
+        ref={frameRef}
         aria-live="off"
         className="cv-preview-tile__frame"
         style={scopedProperties(tokenOverrides)}

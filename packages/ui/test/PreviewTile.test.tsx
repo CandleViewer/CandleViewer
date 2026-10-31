@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { expect, userEvent, within } from "storybook/test";
-import { describe, it } from "vitest";
+import { describe, it, vi } from "vitest";
 import {
-  PREVIEW_TILE_CONTRAST_PAIR,
+  PREVIEW_TILE_CONTRAST_PAIRS,
   PREVIEW_TILE_COPY,
   PreviewTile,
   type PreviewTileProps,
@@ -12,6 +12,7 @@ import { mount } from "./theme/mount.js";
 
 const LABEL = "Preview: BTCUSDT 1 minute, logarithmic scale, UTC";
 const tile = (props: Partial<PreviewTileProps> = {}) => <PreviewTile label={LABEL} {...props} />;
+const [BODY, SECONDARY] = PREVIEW_TILE_CONTRAST_PAIRS.pairs;
 const root = (host: HTMLElement): HTMLElement =>
   host.querySelector<HTMLElement>('[data-cmp="CMP-228"]') ?? host;
 
@@ -50,6 +51,7 @@ describe("PreviewTile (CMP-228)", () => {
     const host = await mount(tile({ status: "empty", children: <span>host image</span> }));
     const img = within(host).getByRole("img", { name: PREVIEW_TILE_COPY.unavailable });
     expect(img).toHaveTextContent(PREVIEW_TILE_COPY.empty);
+    expect(img).toHaveAccessibleDescription(PREVIEW_TILE_COPY.empty);
     expect(img).not.toHaveTextContent("host image");
     expect(root(host).dataset["state"]).toBe("empty");
   });
@@ -58,6 +60,7 @@ describe("PreviewTile (CMP-228)", () => {
     const host = await mount(tile({ status: "error", errorText: "Chart failed" }));
     const img = within(host).getByRole("img", { name: PREVIEW_TILE_COPY.unavailable });
     expect(img).toHaveTextContent("Chart failed");
+    expect(img).toHaveAccessibleDescription("Chart failed");
     expect(img.querySelector("svg")).not.toBeNull();
     expect(host.querySelector('[role="progressbar"], [role="status"]')).toBeNull();
   });
@@ -65,6 +68,7 @@ describe("PreviewTile (CMP-228)", () => {
   it("ladder: the value as text; an array is the collapsed form joined by ' · '", async () => {
     const one = await mount(tile({ kind: "ladder", value: "2.500 BTC", caption: "Total qty" }));
     expect(within(one).getByRole("img")).toHaveTextContent("2.500 BTC");
+    expect(within(one).getByRole("img")).not.toHaveAttribute("aria-describedby");
     expect(within(one).getByText("Total qty").tagName).toBe("P");
     document.body.replaceChildren();
     const many = await mount(tile({ kind: "ladder", value: ["2.500 BTC", "64,180.2"] }));
@@ -77,6 +81,8 @@ describe("PreviewTile (CMP-228)", () => {
     const img = within(host).getByRole("img");
     for (const text of Object.values(PREVIEW_TILE_COPY.themeSample))
       expect(img).toHaveTextContent(text);
+    const { bid, ask, position } = PREVIEW_TILE_COPY.themeSample;
+    expect(img).toHaveAccessibleDescription(`${bid} ${ask} ${position}`);
     expect(img.querySelectorAll('[data-cmp="CMP-031"][aria-hidden="true"]')).toHaveLength(2);
   });
 
@@ -94,34 +100,53 @@ describe("PreviewTile (CMP-228)", () => {
 
   it("warns in text plus a glyph when the overridden body text is below 4.5:1", async () => {
     const host = await mount(
-      tile({
-        tokenOverrides: {
-          [PREVIEW_TILE_CONTRAST_PAIR.text]: "#777777",
-          [PREVIEW_TILE_CONTRAST_PAIR.surface]: "#ffffff",
-        },
-      }),
+      tile({ tokenOverrides: { [BODY.text]: "#777777", [BODY.surface]: "#ffffff" } }),
     );
     const warning = within(host).getByText(/^Low contrast:/);
     expect(warning).toHaveTextContent("4.48:1, below 4.5:1");
     expect(warning.querySelector("svg")).not.toBeNull();
   });
 
+  it("warns on the secondary (reason) text pair too, at its lower ratio", async () => {
+    const host = await mount(
+      tile({
+        status: "empty",
+        tokenOverrides: {
+          [BODY.text]: "#000000",
+          [SECONDARY.text]: "#888888",
+          [SECONDARY.surface]: "#ffffff",
+        },
+      }),
+    );
+    expect(within(host).getByText(/^Low contrast:/)).toHaveTextContent("3.54:1");
+  });
+
+  it("a one-sided override is measured against the theme's computed value", async () => {
+    const theme: Record<string, string> = {
+      "--color-text-primary": " #777777",
+      "--color-text-secondary": "#777777",
+      "--color-surface-sunken": "#ffffff",
+    };
+    const spy = vi.spyOn(window, "getComputedStyle").mockReturnValue({
+      getPropertyValue: (name: string) => theme[name] ?? "",
+    } as CSSStyleDeclaration);
+    try {
+      const host = await mount(tile({ tokenOverrides: { [BODY.surface]: "#fff" } }));
+      expect(within(host).getByText(/^Low contrast:/)).toHaveTextContent("4.48:1");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("no warning at 4.5:1 or above, or when a side is not an opaque hex", async () => {
     for (const text of ["#767676", "var(--x)", "#77777780"]) {
       const host = await mount(
-        tile({
-          tokenOverrides: {
-            [PREVIEW_TILE_CONTRAST_PAIR.text]: text,
-            [PREVIEW_TILE_CONTRAST_PAIR.surface]: "#fff",
-          },
-        }),
+        tile({ tokenOverrides: { [BODY.text]: text, [BODY.surface]: "#fff" } }),
       );
       expect(within(host).queryByText(/^Low contrast:/)).toBeNull();
     }
-    const one = await mount(
-      tile({ tokenOverrides: { [PREVIEW_TILE_CONTRAST_PAIR.text]: "#777" } }),
-    );
-    expect(within(one).queryByText(/^Low contrast:/)).toBeNull();
+    const unrelated = await mount(tile({ tokenOverrides: { "color.border.default": "#fff" } }));
+    expect(within(unrelated).queryByText(/^Low contrast:/)).toBeNull();
   });
 
   it("takes every string as a prop", async () => {

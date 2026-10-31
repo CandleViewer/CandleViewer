@@ -213,7 +213,7 @@ export type {
   PopoverProps,
 } from "./Popover.js";
 
-export { PreviewTile, PREVIEW_TILE_CONTRAST_PAIR, PREVIEW_TILE_COPY } from "./PreviewTile.js";
+export { PreviewTile, PREVIEW_TILE_CONTRAST_PAIRS, PREVIEW_TILE_COPY } from "./PreviewTile.js";
 export type {
   PreviewTileKind,
   PreviewTileProps,
