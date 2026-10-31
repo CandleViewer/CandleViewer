@@ -15,15 +15,19 @@ Usage::
     python3 docs/plan/a11y/_tools/catalogue.py --counts   # print the totals
 
 Stdlib only. ``--check`` compares the Markdown modulo table padding, so a Prettier reflow is not
-"stale". Design reviews are spec-level: they are cited as findings, never counted as conformance
+"stale". The register records the git blob of ``14`` and of ``findings.json`` it was generated from;
+``--check`` regenerates against those pinned blobs (``git show``), so an edit to either file on
+``main`` (a sign-off tick, a status flip) is a WARN/pending line and never reds an unrelated PR. Design reviews are spec-level: they are cited as findings, never counted as conformance
 evidence (BQ-19 of E47-T01).
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -40,6 +44,28 @@ ROUTING_REL = "docs/plan/a11y/47-routing.json"
 E47_REL = "docs/plan/backlog/E47.json"
 REGISTER_REL = "docs/plan/a11y/47-audit-register.json"
 CATALOGUE_OUT_REL = "docs/plan/a11y/47-audit-catalogue.md"
+
+
+def _levels(level: str, criteria: str) -> dict[str, str]:
+    return dict.fromkeys(criteria.split(), level)
+
+
+WCAG_LEVELS = {
+    **_levels(
+        "A",
+        "1.1.1 1.2.1 1.2.2 1.2.3 1.3.1 1.3.2 1.3.3 1.4.1 1.4.2 2.1.1 2.1.2 2.1.4 2.2.1 2.2.2 2.3.1 2.4.1 2.4.2 2.4.3 2.4.4 2.5.1 2.5.2 2.5.3 2.5.4 3.1.1 3.2.1 3.2.2 3.2.6 3.3.1 3.3.2 3.3.7 4.1.1 4.1.2",
+    ),
+    **_levels(
+        "AA",
+        "1.2.4 1.2.5 1.3.4 1.3.5 1.4.3 1.4.4 1.4.5 1.4.10 1.4.11 1.4.12 1.4.13 2.4.5 2.4.6 2.4.7 2.4.11 2.5.7 2.5.8 3.1.2 3.2.3 3.2.4 3.3.3 3.3.4 3.3.8 4.1.3",
+    ),
+    **_levels(
+        "AAA",
+        "1.2.6 1.2.7 1.2.8 1.2.9 1.3.6 1.4.6 1.4.7 1.4.8 1.4.9 2.1.3 2.2.3 2.2.4 2.2.5 2.2.6 2.3.2 2.3.3 2.4.8 2.4.9 2.4.10 2.4.12 2.4.13 2.5.5 2.5.6 3.1.3 3.1.4 3.1.5 3.1.6 3.2.5 3.3.5 3.3.6 3.3.9",
+    ),
+}
+# inputs outside this pack: pinned by git blob sha so a tick in another lane never reds `--check`
+PINNED_INPUTS = (CATALOGUE_REL, FINDINGS_REL)
 LAYERS = (
     ("canvasRole", r'role="img"|aria-label|accessible name|\blabel\b'),
     ("domMirror", r"mirror|real `?role=|role=\"(?:grid|table|tree|list)\"|keyboard"),
@@ -135,8 +161,17 @@ def split_row(line: str) -> list[str]:
     return [c.strip() for c in re.split(r"(?<!\\)\|", inner)]
 
 
-def parse_review_table(text: str) -> list[dict[str, str]]:
-    """The finding table of a design review: header ``| F|Id | ... Severity ... Sentence ... |``."""
+def clean_severity(raw: str) -> str:
+    """``Minor (p2)`` -> ``Minor``: a review's priority suffix is not part of the severity word."""
+    return re.sub(r"\s*\(.*?\)\s*$", "", raw).strip()
+
+
+def parse_review_table(text: str, need_sentence: bool = True) -> list[dict[str, str]]:
+    """The finding table of a design review: header ``| F|Id | ... Severity ... Sentence ... |``.
+
+    The severity column may read ``Sev (p)``; every row also carries a clean ``severity`` key.
+    ``need_sentence=False`` reads tables with no sentence column (counting only).
+    """
     lines = text.splitlines()
     for i, line in enumerate(lines[:-2]):
         if not line.startswith("|"):
@@ -145,8 +180,8 @@ def parse_review_table(text: str) -> list[dict[str, str]]:
         if (
             len(head) >= 3
             and head[0] in ("f", "id")
-            and "severity" in head
-            and any("sentence" in h for h in head)
+            and any(h.startswith("sev") for h in head)
+            and (not need_sentence or any("sentence" in h for h in head))
             and re.match(r"^\|[\s:|-]+\|$", lines[i + 1].strip())
         ):
             rows: list[dict[str, str]] = []
@@ -160,7 +195,10 @@ def parse_review_table(text: str) -> list[dict[str, str]]:
                     )
                 if any(r[head[0]] == cells[0] for r in rows):
                     raise CatalogueError(f"duplicate finding id {cells[0]}")
-                rows.append(dict(zip(head, cells, strict=False)))
+                row = dict(zip(head, cells, strict=False))
+                sev_col = next(h for h in head if h.startswith("sev"))
+                row["severity"] = clean_severity(row[sev_col])
+                rows.append(row)
             return rows
     return []
 
@@ -176,7 +214,14 @@ def expected_counts(key: str, text: str) -> dict[str, int]:
         ("total", "findings"),
         *((k, f"findings.{k}") for k in SEVERITIES),
     ):
-        c = re.search(rf"(\d+)<!--=COUNT:{re.escape(label)}-->", text)
+        alts = [label, label.replace("findings", "f", 1)]
+        if name == "total":
+            alts.append("f.total")
+        if name == "blocker":
+            alts += ["findings.blocking", "f.blocking"]
+        c = re.search(
+            r"(\d+)<!--=COUNT:(?:" + "|".join(re.escape(a) for a in alts) + ")-->", text
+        )
         if not c:
             raise CatalogueError(f"{key}: no finding count marker ({label})")
         out[name] = int(c.group(1))
@@ -215,15 +260,13 @@ def review_findings(
                 f"{key} {fid}: severity {row['severity']!r} has no mapping"
             )
         clause = row.get("clause", "")
-        plain = re.sub(r"`[^`]*`", "", clause)
+        plain = re.sub(r"`[^`]*`", "", clause or row.get("wcag", ""))
         scs = re.findall(r"\b[1-4]\.\d\.\d{1,2}\b", plain) or re.findall(
             r"WCAG (\d\.\d\.\d{1,2})", sentence
         )
-        scr = [
-            s
-            for s in sorted(set(re.findall(r"SCR-\d{3}", " ".join(row.values()))))
-            if s in SCR_IDS
-        ]
+        # a review with its own Screen column is read from that column alone
+        scope = row["screen"] if "screen" in row else " ".join(row.values())
+        scr = [s for s in sorted(set(re.findall(r"SCR-\d{3}", scope))) if s in SCR_IDS]
         fin_id = f"A11Y-R-{key}-{fid}"
         how = "row text"
         mapped = (attribution or {}).get(fin_id)
@@ -237,6 +280,7 @@ def review_findings(
                 "sourceId": fid,
                 "screens": scr,
                 "sc": scs,
+                "clause": re.sub(r"`", "", clause).strip(),
                 "level": None,
                 "severity": sev_map[sev_word],
                 "sourceSeverity": row["severity"],
@@ -244,10 +288,36 @@ def review_findings(
                 "pattern": None,
                 "title": sentence,
                 "remedy": remedy,
-                "remediation": row.get("owner", ""),
+                "remediation": row.get("owner") or row.get("owner; target", ""),
+                "status": "open (spec-level)",
             }
         )
     return out
+
+
+def cited_review(root: Path, rv: dict[str, Any]) -> dict[str, Any] | None:
+    """A merged a11y review that is cited, not joined row by row: counts read from its own table."""
+    path = root / rv["path"]
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
+    rows = parse_review_table(text, need_sentence=False)
+    title = re.sub(r"^#\s*\S+\s*[—-]\s*", "", text.splitlines()[0]).strip()
+    issue = re.search(r"\(#(\d+)\)", text)
+    return {
+        "key": rv["key"],
+        "path": rv["path"],
+        "issue": issue.group(1) if issue else None,
+        "scope": title,
+        "total": len(rows),
+        **{
+            k: sum(
+                {"blocking": "blocker"}.get(w := r["severity"].lower(), w) == k
+                for r in rows
+            )
+            for k in SEVERITIES
+        },
+    }
 
 
 # ---------------------------------------------------------------- routing and join
@@ -267,11 +337,37 @@ def route(f: dict[str, Any], routing: dict[str, Any]) -> tuple[str, str]:
             continue
         if "pattern" in m and f.get("pattern") not in m["pattern"]:
             continue
+        if "text" in m and not re.search(
+            "|".join(m["text"]),
+            f"{f.get('title', '')} {f.get('remedy', '')}",
+            re.IGNORECASE,
+        ):
+            continue
         return rule["owner"], rule["reason"]
-    return (
-        ENGINEERING_ONLY,
-        "no design-ticket rule matches this finding's criterion or class",
+    why = (
+        "no design-ticket rule matches this finding's criterion or class "
+        f"(SC {', '.join(f['sc']) or 'none'}; class {f.get('class') or 'none'}) "
+        "and no override gives it a reason"
     )
+    return ENGINEERING_ONLY, why
+
+
+def levels_for(scs: list[str]) -> str | None:
+    found = [WCAG_LEVELS[s] for s in scs if s in WCAG_LEVELS]
+    return " / ".join(dict.fromkeys(found)) or None
+
+
+def sc_reason(f: dict[str, Any]) -> str:
+    """Why a row has no SC, or no level: stated, never left blank."""
+    if f["sc"] and f["level"]:
+        return ""
+    if f["sc"]:
+        return "the cited criterion is not in the WCAG 2.2 A/AA/AAA table"
+    if f.get("clause"):
+        return f"the review cites `05` clause {f['clause']} only, no WCAG criterion"
+    if f.get("class"):
+        return f"class {f['class']}: the review row cites no WCAG criterion"
+    return "the source row cites no WCAG criterion"
 
 
 def t01_findings(reg: dict[str, Any], routing: dict[str, Any]) -> list[dict[str, Any]]:
@@ -299,30 +395,77 @@ def t01_findings(reg: dict[str, Any], routing: dict[str, Any]) -> list[dict[str,
                 "title": f.get("title", ""),
                 "remedy": f.get("expected", ""),
                 "remediation": f.get("owningTicket", ""),
+                "status": f.get("status", "open"),
             }
         )
     return out
 
 
-def verdict_for(cov: str, n_findings: int, text_only: bool = False) -> tuple[str, str]:
+def extra_findings(routing: dict[str, Any]) -> list[dict[str, Any]]:
+    """The G-T2 rows of this audit itself (modelled on E08-D12 F-03), carried in the routing."""
+    smap = routing["severityMap"]["review"]
+    out = []
+    for x in routing.get("extraFindings", []):
+        sev = x["severity"]
+        if sev.lower() not in smap:
+            raise CatalogueError(f"{x['id']}: severity {sev!r} has no mapping")
+        out.append(
+            {
+                "id": x["id"],
+                "screenSource": "this audit's G-T2 pass",
+                "source": "E47-D02 G-T2 pass",
+                "sourceId": x["id"],
+                "screens": x["screens"],
+                "sc": [],
+                "clause": x.get("clause", ""),
+                "level": None,
+                "severity": smap[sev.lower()],
+                "sourceSeverity": sev,
+                "class": x.get("class"),
+                "pattern": None,
+                "title": x["title"],
+                "remedy": x["remedy"],
+                "remediation": x["remediation"],
+                "status": "open (spec-level)",
+            }
+        )
+    return out
+
+
+def verdict_for(cov: str, n_live: int, n_fixed: int = 0) -> tuple[str, str]:
+    """A screen's verdict, from the T01 register's coverage and the live (not fixed) findings."""
     if cov.startswith("reserved"):
         return (
             "n/a (reserved)",
             "reserved id: no screen exists to audit (14 section 0.2)",
         )
-    if n_findings:
+    fixed = f"; {n_fixed} T01 finding(s) fixed since the audit" if n_fixed else ""
+    if n_live:
         note = (
             "; spec-level only, screen is " + cov
             if cov.startswith("unreachable")
             else ""
         )
-        return "findings", f"{n_findings} finding(s){note}"
+        return "findings", f"{n_live} open finding(s){note}{fixed}"
     if cov.startswith("unreachable"):
-        return "not auditable at sha", cov
-    verdict = "no findings (static, text pass)" if text_only else "no findings at sha"
+        return "not auditable at sha", cov + fixed
     if cov == "partial":
-        return verdict, "partial coverage: the built part only"
-    return verdict, "covered"
+        return "no findings at sha", "partial coverage: the built part only" + fixed
+    return "no findings at sha", "covered" + fixed
+
+
+def evidence_note(t: dict[str, Any]) -> str:
+    """What the T01 run actually exercised on this screen (register coverage, not sign-off ticks)."""
+    ev = t.get("evidence") or {}
+    auto, kb = ev.get("automated") or {}, ev.get("keyboard") or {}
+    bits = []
+    if auto.get("verdict"):
+        bits.append(
+            f"axe {auto['verdict']} in {', '.join(auto.get('themes', [])) or 'one theme'}"
+        )
+    if kb.get("verdict"):
+        bits.append(f"keyboard {kb['verdict']}")
+    return "; ".join(bits)
 
 
 def _check_screen_sets(cat: dict[str, Any], t01: dict[str, Any]) -> None:
@@ -345,16 +488,57 @@ def _check_screen_sets(cat: dict[str, Any], t01: dict[str, Any]) -> None:
         )
 
 
-def build(root: Path = ROOT) -> dict[str, Any]:
-    """The derived register. Raises CatalogueError on a join that cannot be made honestly."""
+def blob_sha(data: bytes) -> str:
+    """The git blob id of ``data`` (what ``git hash-object`` prints)."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def git_show(root: Path, blob: str) -> str | None:
+    """A pinned input as text, or None when the object is not in this checkout."""
+    try:
+        res = subprocess.run(
+            ["git", "show", blob],
+            cwd=root,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return res.stdout.decode("utf-8") if res.returncode == 0 else None
+
+
+def read_input(root: Path, rel: str, over: dict[str, str] | None) -> str:
+    if over and rel in over:
+        return over[rel]
+    try:
+        return (root / rel).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CatalogueError(f"cannot read {rel}: {exc}") from exc
+
+
+def build(root: Path = ROOT, over: dict[str, str] | None = None) -> dict[str, Any]:
+    """The derived register. Raises CatalogueError on a join that cannot be made honestly.
+
+    ``over`` maps an input path to the text to use instead of the working-tree file: the pinned
+    blob, when ``--check`` regenerates against the base the committed output was built from.
+    """
     routing = load_json(root / ROUTING_REL)
-    reg = load_json(root / FINDINGS_REL)
-    cat = parse_screens((root / CATALOGUE_REL).read_text(encoding="utf-8"))
+    try:
+        reg = json.loads(read_input(root, FINDINGS_REL, over))
+    except json.JSONDecodeError as exc:
+        raise CatalogueError(f"cannot read findings.json: {exc}") from exc
+    cat_text = read_input(root, CATALOGUE_REL, over)
+    cat = parse_screens(cat_text)
     t01_screens = {s["id"]: s for s in reg["screens"]}
     _check_screen_sets(cat, t01_screens)
     attribution = routing.get("attribution", {})
     findings = t01_findings(reg, routing)
     used, pending = [], list(routing.get("pendingReviews", []))
+    inputs = {
+        CATALOGUE_REL: blob_sha(cat_text.encode("utf-8")),
+        FINDINGS_REL: blob_sha(read_input(root, FINDINGS_REL, over).encode("utf-8")),
+    }
     for rv in routing["reviews"]:
         path = root / rv["path"]
         if not path.is_file():
@@ -365,13 +549,33 @@ def build(root: Path = ROOT) -> dict[str, Any]:
             rv["key"], text, routing["severityMap"]["review"], attribution
         )
         used.append(rv["key"])
+    cited = [
+        c for rv in routing.get("citedReviews", []) if (c := cited_review(root, rv))
+    ]
+    pending += [
+        rv["key"]
+        for rv in routing.get("citedReviews", [])
+        if not (root / rv["path"]).is_file()
+    ]
+    findings += extra_findings(routing)
+    notes = routing.get("remedyNotes", {})
+    vehicles = routing.get("vehicles", {})
     for f in findings:
         f["designOwner"], f["ownerReason"] = route(f, routing)
         canvas = any(cat.get(s, {}).get("surface") == "canvas" for s in f["screens"])
         f["surface"] = "both" if canvas else "chrome"
-    stale = sorted(set(attribution) - {f["id"] for f in findings})
+        if not f.get("level"):
+            f["level"] = levels_for(f["sc"])
+        f["scReason"] = sc_reason(f)
+        f["remedyNote"] = notes.get(f["id"], "")
+        f["vehicle"] = vehicles.get(f["id"], "")
+    stale = sorted(
+        (set(attribution) | set(notes) | set(vehicles)) - {f["id"] for f in findings}
+    )
     if stale:
-        raise CatalogueError(f"routing attribution names no parsed finding: {stale}")
+        raise CatalogueError(
+            f"routing attribution, remedy note or vehicle names no parsed finding: {stale}"
+        )
     unattributed = [f for f in findings if not f["screens"]]
     findings = [f for f in findings if f["screens"]]
     by_screen: dict[str, list[dict[str, Any]]] = {s: [] for s in SCR_IDS}
@@ -392,16 +596,15 @@ def build(root: Path = ROOT) -> dict[str, Any]:
                 "canvasLayers": None,
             }
             cov = cov or "reserved: no screen"
-        so = facts["signoff"]
-        verdict, why = verdict_for(
-            cov, len(by_screen[scr]), text_only=not so or so["checked"] == 0
-        )
+        live = [f for f in by_screen[scr] if not f["status"].startswith("fixed")]
+        verdict, why = verdict_for(cov, len(live), len(by_screen[scr]) - len(live))
         screens.append(
             {
                 "id": scr,
                 "name": facts["name"],
                 "band": band_of(scr),
                 "coverage": cov,
+                "evidence": evidence_note(t),
                 "verdict": verdict,
                 "verdictReason": why,
                 "auditor": routing["auditor"],
@@ -414,11 +617,13 @@ def build(root: Path = ROOT) -> dict[str, Any]:
             }
         )
     return {
-        "schema": 1,
+        "schema": 2,
         "derivedFrom": {
             "t01Register": FINDINGS_REL,
             "auditedSha": reg.get("auditedSha"),
+            "inputs": inputs,
             "reviews": used,
+            "citedReviews": cited,
             "pendingReviews": sorted(set(pending)),
             "routing": ROUTING_REL,
         },
@@ -432,11 +637,16 @@ def build(root: Path = ROOT) -> dict[str, Any]:
     }
 
 
+def is_fixed(f: dict[str, Any]) -> bool:
+    return f["status"].startswith("fixed")
+
+
 def counts(
     screens: list[dict[str, Any]],
     findings: list[dict[str, Any]],
     unattributed: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    live = [f for f in findings if not is_fixed(f)]
     return {
         "attributedByRouting": sum(
             f["screenSource"].startswith("routing attribution") for f in findings
@@ -446,11 +656,11 @@ def counts(
         "screens": len(screens),
         "verdicts": dict(sorted(Counter(s["verdict"] for s in screens).items())),
         "findings": len(findings),
-        "bySeverity": {
-            k: sum(f["severity"] == k for f in findings) for k in SEVERITIES
-        },
+        "fixed": len(findings) - len(live),
+        "open": len(live),
+        "bySeverity": {k: sum(f["severity"] == k for f in live) for k in SEVERITIES},
         "bySource": dict(sorted(Counter(f["source"] for f in findings).items())),
-        "byOwner": dict(sorted(Counter(f["designOwner"] for f in findings).items())),
+        "byOwner": dict(sorted(Counter(f["designOwner"] for f in live).items())),
     }
 
 
@@ -529,15 +739,21 @@ def render(reg: dict[str, Any]) -> str:
             "spec-level a11y design reviews, joined per screen, normalised to four severities and "
             "routed to one design owner (E47-D03 to E47-D10) or to engineering-only with a reason. "
             "Design reviews are spec-level: cited as findings, never counted as conformance evidence. "
-            "Partial against #1301: the open items are listed in section 4."
+            "Partial against #1301: the open items are listed in section 4. Inputs pinned by git "
+            f"blob: `14` at `{d['inputs'][CATALOGUE_REL][:12]}`, `findings.json` at "
+            f"`{d['inputs'][FINDINGS_REL][:12]}`; `--check` regenerates against those blobs, so a "
+            "later edit to either file is reported as pending drift, folded at the pack's next "
+            "touch, and never a failure."
         ),
         "",
         "## 1. Coverage summary",
         "",
         (
-            f"{c['screens']} screens, {c['findings']} findings "
+            f"{c['screens']} screens, {c['findings']} findings, of which {c['fixed']} are marked "
+            f"fixed in the T01 register and {c['open']} are open "
             f"({sev['blocker']} blocker, {sev['major']} major, {sev['minor']} minor, "
-            f"{sev['info']} info)."
+            f"{sev['info']} info). Counts by severity and owner, and the heat map, are of the "
+            "open rows; fixed rows stay in the per-screen tables with their status."
         ),
         "",
     ]
@@ -545,13 +761,37 @@ def render(reg: dict[str, Any]) -> str:
     lines += [
         "",
         (
-            'A verdict marked "static, text pass" rests on reading the spec text only: the screen\'s '
-            "design sign-off checklist has no ticked item and no build was exercised."
+            "A verdict rests on the E47-T01 register's coverage for the screen (axe in three themes "
+            "and the keyboard traversal, named per screen in section 3), never on the design "
+            "sign-off ticks in `14`; those ticks are listed per screen as a separate fact. A "
+            "screen that is not built is not auditable at the sha, and its rows are spec-level."
         ),
         "",
     ]
     lines += table(["Source", "Findings"], [[k, v] for k, v in c["bySource"].items()])
     lines.append("")
+    if d.get("citedReviews"):
+        lines += [
+            (
+                "Other merged a11y design reviews, cited and not joined row by row (the verdicts "
+                "and the owner counts above do not include their rows; they are spec-level "
+                "findings against screens this audit already lists, and they join at the pack's "
+                "next touch):"
+            ),
+            "",
+        ]
+        lines += table(
+            ["Review", "Scope", "Findings (blocker / major / minor / info)"],
+            [
+                [
+                    f"{r['key']} (#{r['issue']})" if r["issue"] else r["key"],
+                    r["scope"],
+                    f"{r['total']} ({r['blocker']} / {r['major']} / {r['minor']} / {r['info']})",
+                ]
+                for r in d["citedReviews"]
+            ],
+        )
+        lines.append("")
     lines += table(
         ["Design owner", "Findings"], [[k, v] for k, v in c["byOwner"].items()]
     )
@@ -581,11 +821,15 @@ def render(reg: dict[str, Any]) -> str:
         ),
         "",
     ]
+    live_ids = {
+        s["id"]: [i for i in s["findings"] if not is_fixed(fmap[i])]
+        for s in reg["screens"]
+    }
     ranked = sorted(
-        (s for s in reg["screens"] if s["findings"]),
+        (s for s in reg["screens"] if live_ids[s["id"]]),
         key=lambda s: (
             *[
-                -sum(fmap[i]["severity"] == k for i in s["findings"])
+                -sum(fmap[i]["severity"] == k for i in live_ids[s["id"]])
                 for k in SEVERITIES
             ],
             s["id"],
@@ -593,23 +837,16 @@ def render(reg: dict[str, Any]) -> str:
     )
     rows = []
     for s in ranked:
-        n = [sum(fmap[i]["severity"] == k for i in s["findings"]) for k in SEVERITIES]
-        rows.append(
-            [
-                s["id"],
-                s["name"],
-                *n,
-                len(s["findings"]),
-                "█" * min(len(s["findings"]), 10),
-            ]
-        )
+        live = live_ids[s["id"]]
+        n = [sum(fmap[i]["severity"] == k for i in live) for k in SEVERITIES]
+        rows.append([s["id"], s["name"], *n, len(live), "█" * min(len(live), 10)])
     lines += table(
         ["Screen", "Name", "Blocker", "Major", "Minor", "Info", "Total", "Bar"], rows
     )
-    zero = sum(1 for s in reg["screens"] if not s["findings"])
+    zero = sum(1 for s in reg["screens"] if not live_ids[s["id"]])
     lines += [
         "",
-        f"{zero} screens carry no finding; their verdicts are in section 3.",
+        f"{zero} screens carry no open finding; their verdicts are in section 3.",
         "",
         (
             "Multi-screen findings are counted on each screen, so the per-screen totals sum to "
@@ -633,10 +870,12 @@ def render(reg: dict[str, Any]) -> str:
             ),
             (
                 f"- Band: {s['band']}. Coverage at sha: {s['coverage'] or '-'}. Surface: "
-                f"{s['surface']}. Design sign-off checklist: {so_text}. T01 owner: "
-                f"{s['t01Owner'] or '-'}."
+                f"{s['surface']}. Design sign-off checklist in 14 (a separate fact from the "
+                f"verdict): {so_text}. T01 owner: {s['t01Owner'] or '-'}."
             ),
         ]
+        if s["evidence"]:
+            lines.append(f"- T01 run on this screen: {s['evidence']}.")
         if s["canvasLayers"]:
             lay = ", ".join(f"{k} {v}" for k, v in s["canvasLayers"].items())
             lines.append(
@@ -647,22 +886,32 @@ def render(reg: dict[str, Any]) -> str:
             rows = []
             for i in s["findings"]:
                 f = fmap[i]
+                rem = f["remedy"] + (
+                    f" Catalogue note: {f['remedyNote']}" if f["remedyNote"] else ""
+                )
+                story = f["remediation"] + (
+                    f"; vehicle: {f['vehicle']}" if f["vehicle"] else ""
+                )
                 rows.append(
                     [
                         f["id"],
                         f["source"],
-                        ", ".join(f["sc"]) or "-",
-                        f["level"] or "-",
+                        f["status"],
+                        f["title"],
+                        ", ".join(f["sc"]) or f"none ({f['scReason']})",
+                        f["level"] or ("-" if not f["sc"] else f"- ({f['scReason']})"),
                         f"{f['severity']} (source: {f['sourceSeverity']})",
-                        f["remedy"],
+                        rem,
                         f"{f['designOwner']}: {f['ownerReason']}",
-                        f["remediation"],
+                        story,
                     ]
                 )
             lines += table(
                 [
                     "Id",
                     "Source",
+                    "Status",
+                    "Finding",
                     "SC",
                     "Level",
                     "Severity",
@@ -723,19 +972,66 @@ def e47_keys(root: Path) -> set[str] | None:
     return {t["key"] for t in load_json(path)}
 
 
+def pinned_inputs(
+    root: Path, committed: dict[str, Any]
+) -> tuple[dict[str, str], list[str], bool]:
+    """The pinned blobs the committed register was built from.
+
+    Returns the text overrides to regenerate with, one WARN line per input that has moved since,
+    and whether a moved input could not be recovered from this checkout (no git object).
+    """
+    over: dict[str, str] = {}
+    warns: list[str] = []
+    missing = False
+    for rel, blob in (committed.get("derivedFrom", {}).get("inputs") or {}).items():
+        try:
+            now = blob_sha((root / rel).read_bytes())
+        except OSError:
+            now = ""
+        if now == blob:
+            continue
+        text = git_show(root, blob)
+        if text is None:
+            missing = True
+            warns.append(
+                f"WARN {rel} moved since the catalogue base (pinned blob {blob[:12]}, now "
+                f"{now[:12] or 'absent'}) and the pinned blob is not in this checkout: only "
+                "the committed outputs' internal consistency is checked"
+            )
+            continue
+        over[rel] = text
+        warns.append(
+            f"WARN pending: {rel} moved since the catalogue base (pinned blob {blob[:12]}, now "
+            f"{now[:12] or 'absent'}); checked against the pinned blob, fold at the pack's next touch"
+        )
+    return over, warns, missing
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument(
-        "--check", action="store_true", help="exit 1 if a screen is missing or stale"
+        "--check",
+        action="store_true",
+        help="exit 1 if a screen is missing or the outputs are stale against their pinned base",
     )
     mode.add_argument("--counts", action="store_true", help="print the totals as JSON")
     ap.add_argument("--root", type=Path, default=ROOT, help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     root: Path = args.root
     reg_path, md_path = root / REGISTER_REL, root / CATALOGUE_OUT_REL
+    over: dict[str, str] | None = None
+    missing = False
+    if args.check:
+        try:
+            committed = json.loads(reg_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            committed = {}
+        over, warns, missing = pinned_inputs(root, committed)
+        for w in warns:
+            print(f"catalogue.py: {w}", file=sys.stderr)
     try:
-        reg = build(root)
+        reg = build(root, over)
     except (CatalogueError, KeyError) as exc:
         print(f"catalogue.py: {exc}", file=sys.stderr)
         return 2
@@ -750,6 +1046,14 @@ def main(argv: list[str] | None = None) -> int:
     reg_text = json.dumps(reg, indent=2, ensure_ascii=False) + "\n"
     md = render(reg)
     if args.check:
+        if missing:
+            # the pinned base is unavailable: the committed register must still render its own md
+            try:
+                have = json.loads(reg_path.read_text(encoding="utf-8"))
+                reg_text = json.dumps(have, indent=2, ensure_ascii=False) + "\n"
+                md = render(have)
+            except (OSError, json.JSONDecodeError, KeyError):
+                pass
         stale = []
         for path, want, norm in ((reg_path, reg_text, None), (md_path, md, normalise)):
             try:

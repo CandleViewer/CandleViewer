@@ -66,6 +66,10 @@ def make_tree(tmp: Path, findings: list[dict[str, Any]] | None = None) -> Path:
     real["pendingReviews"] = ["E99-D99"]
     real["overrides"] = {}
     real["attribution"] = {}
+    real["citedReviews"] = []
+    real["extraFindings"] = []
+    real["vehicles"] = {}
+    real["remedyNotes"] = {}
     (tmp / "docs/plan/a11y").mkdir(parents=True)
     (tmp / "docs/design").mkdir(parents=True)
     (tmp / "docs/plan/backlog").mkdir(parents=True)
@@ -177,13 +181,9 @@ def test_verdicts_reserved_unreachable_and_no_findings(tree: Path) -> None:
     (tree / cat.FINDINGS_REL).write_text(json.dumps(root_doc), encoding="utf-8")
     by = {s["id"]: s for s in cat.build(tree)["screens"]}
     assert by["SCR-003"]["verdict"] == "not auditable at sha"
-    so = by["SCR-002"]["signoff"]
-    want = (
-        "no findings (static, text pass)"
-        if not so or so["checked"] == 0
-        else "no findings at sha"
-    )
-    assert by["SCR-002"]["verdict"] == want
+    # the verdict follows the T01 coverage, never the sign-off ticks (SCR-002 has none ticked)
+    assert by["SCR-002"]["signoff"]["checked"] == 0
+    assert by["SCR-002"]["verdict"] == "no findings at sha"
     assert by["SCR-002"]["auditor"] and by["SCR-002"]["date"]
 
 
@@ -356,7 +356,11 @@ def test_attribution_applies_only_without_row_text_screen(tmp_path: Path) -> Non
 
 @pytest.mark.parametrize(
     ("path", "count"),
-    [("docs/design/E09/E09-D10.md", 51), ("docs/design/E08/E08-D12.md", 8)],
+    [
+        ("docs/design/E09/E09-D10.md", 51),
+        ("docs/design/E08/E08-D12.md", 8),
+        ("docs/design/E32/E32-D07-a11y.md", 11),
+    ],
 )
 def test_real_review_tables_parse_to_the_documented_count(
     path: str, count: int
@@ -380,7 +384,7 @@ def test_real_register_covers_every_screen_and_matches_the_committed_output() ->
     mine = {f["id"] for f in reg["findings"] if f["source"] == "E47-T01 register"}
     assert mine == {f["id"] for f in t01["findings"]}
     assert all(
-        re.fullmatch(r"A11Y-(F-\d{4}|R-[A-Z0-9]+-D\d+-F-\d+)", f["id"])
+        re.fullmatch(r"A11Y-(F-\d{4}|R-[A-Z0-9]+-D\d+-F-\d+|D02-T2-SCR-\d{3})", f["id"])
         for f in reg["findings"]
     )
     assert cat.main(["--check"]) == 0
@@ -408,16 +412,181 @@ def test_real_attribution_leaves_only_the_unmapped_finding_and_no_blocker() -> N
     assert all(a["cite"] and a["screens"] for a in routing["attribution"].values())
 
 
-def test_verdict_for_marks_text_only_passes() -> None:
-    assert cat.verdict_for("built", 0, text_only=True)[0] == (
-        "no findings (static, text pass)"
-    )
-    assert cat.verdict_for("built", 0)[0] == "no findings at sha"
-    assert cat.verdict_for("built", 2, text_only=True)[0] == "findings"
+def test_verdict_for_follows_coverage_and_live_findings() -> None:
+    assert cat.verdict_for("covered", 0)[0] == "no findings at sha"
+    assert cat.verdict_for("partial", 0)[1].startswith("partial coverage")
+    assert cat.verdict_for("covered", 2)[0] == "findings"
+    assert cat.verdict_for("unreachable: not built", 0)[0] == "not auditable at sha"
+    # fixed rows are not live: all-fixed is a clean screen that still names the fixes
+    v, why = cat.verdict_for("covered", 0, 3)
+    assert v == "no findings at sha" and "3 T01 finding(s) fixed" in why
 
 
 def test_render_carries_the_three_lens_notes(tree: Path) -> None:
     md = cat.render(cat.build(tree))
     assert "Multi-screen findings are counted on each screen" in md
     assert "Canvas four-layer verification, and the missing-layer blocker rule" in md
-    assert "static, text pass" in md
+    assert "static, text pass" not in md
+    assert "never on the design sign-off ticks" in md
+
+
+def test_fixed_t01_rows_are_not_live_and_status_is_carried(tmp_path: Path) -> None:
+    fixed = _t01_finding("A11Y-F-0001", "SCR-001", "serious", status="fixed")
+    open_ = _t01_finding("A11Y-F-0002", "SCR-002", "serious", status="open")
+    reg = cat.build(make_tree(tmp_path, [fixed, open_]))
+    by = {f["id"]: f for f in reg["findings"]}
+    assert (
+        by["A11Y-F-0001"]["status"] == "fixed" and by["A11Y-F-0002"]["status"] == "open"
+    )
+    assert reg["counts"]["fixed"] == 1
+    s1 = next(s for s in reg["screens"] if s["id"] == "SCR-001")
+    assert "A11Y-F-0001" in s1["findings"]
+    assert "A11Y-R-E00-D00-F-1" in s1["findings"]  # the review row stays open
+    md = cat.render(reg)
+    assert "| fixed |" in md
+    assert reg["counts"]["bySeverity"]["major"] == 1  # only the open serious row
+
+
+def test_levels_and_sc_reasons_are_derived_or_explained() -> None:
+    assert cat.levels_for(["4.1.2", "1.4.3"]) == "A / AA"
+    assert cat.levels_for(["9.9.9"]) is None
+    f = {"sc": [], "level": None, "clause": "6.5", "class": "copy"}
+    assert "`05` clause 6.5" in cat.sc_reason(f)
+    assert cat.sc_reason(
+        {"sc": [], "level": None, "clause": "", "class": "copy"}
+    ).startswith("class copy")
+    assert cat.sc_reason({"sc": ["1.4.3"], "level": "AA"}) == ""
+
+
+def test_review_severity_suffix_and_wcag_column_and_screen_column() -> None:
+    text = """| Id | Sev (p) | Screen | WCAG | Merged sentence (cite) | Replacement | Owner; target |
+| -- | -- | -- | -- | -- | -- | -- |
+| F-01 | Minor (p2) | SCR-065 | 1.3.1; 4.1.2 | names SCR-063 too | fix | E32-D04; S06 |
+| F-02 | Info (p3) | all three | 2.1.1 | x | none | Q07 |
+
+<!--=COUNT:f.total-->2<!--=COUNT:f.blocking-->0<!--=COUNT:f.major-->0<!--=COUNT:f.minor-->1<!--=COUNT:f.info-->
+"""
+    text = (
+        "2<!--=COUNT:f.total--> 0<!--=COUNT:f.blocking--> 0<!--=COUNT:f.major--> "
+        "1<!--=COUNT:f.minor--> 1<!--=COUNT:f.info-->\n" + text
+    )
+    smap = {"minor": "minor", "info": "info", "major": "major", "blocker": "blocker"}
+    got = cat.review_findings("E00-D01", text, smap)
+    assert got[0]["screens"] == [
+        "SCR-065"
+    ]  # the Screen column only, not SCR-063 in prose
+    assert got[0]["sc"] == ["1.3.1", "4.1.2"] and got[0]["sourceSeverity"] == "Minor"
+    assert got[0]["remediation"] == "E32-D04; S06"
+    assert got[1]["screens"] == []  # "all three" needs a routing attribution
+
+
+def test_cited_review_counts_come_from_its_own_table(tmp_path: Path) -> None:
+    (tmp_path / "r.md").write_text(
+        "# E00-D09 \u2014 A review of things\n\n**Ticket:** E00-D09 (#77)\n\n"
+        "| F | Severity | Clause |\n| - | - | - |\n"
+        "| F-01 | Blocking | 1 |\n| F-02 | Major | 2 |\n| F-03 | Minor | 3 |\n",
+        encoding="utf-8",
+    )
+    got = cat.cited_review(tmp_path, {"key": "E00-D09", "path": "r.md"})
+    assert got and got["issue"] == "77" and got["scope"] == "A review of things"
+    assert (got["total"], got["blocker"], got["major"], got["minor"], got["info"]) == (
+        3,
+        1,
+        1,
+        1,
+        0,
+    )
+    assert cat.cited_review(tmp_path, {"key": "x", "path": "missing.md"}) is None
+
+
+def test_real_cited_reviews_and_e32_d07_are_in_the_register() -> None:
+    reg = cat.build(ROOT)
+    keys = {c["key"] for c in reg["derivedFrom"]["citedReviews"]}
+    assert keys >= {
+        "E15-D15",
+        "E16-D06",
+        "E22-D04",
+        "E29-D05",
+        "E30-D05",
+        "E33-D05",
+        "E35-D04",
+    }
+    assert reg["derivedFrom"]["pendingReviews"] == []
+    assert "E32-D07" in reg["derivedFrom"]["reviews"]
+    e15 = next(c for c in reg["derivedFrom"]["citedReviews"] if c["key"] == "E15-D15")
+    assert (e15["total"], e15["blocker"]) == (
+        12,
+        3,
+    )  # its Blocking rows are never hidden
+    assert "E15-D15 (#369)" in cat.render(reg)
+
+
+def test_real_blockers_name_the_fix_vehicle_and_held_review() -> None:
+    reg = cat.build(ROOT)
+    blockers = [f for f in reg["findings"] if f["severity"] == "blocker"]
+    assert len(blockers) == 4
+    for f in blockers:
+        assert "#5254" in f["vehicle"] and "#193" in f["vehicle"]
+
+
+def test_real_g_t2_rows_and_f32_note() -> None:
+    reg = cat.build(ROOT)
+    by = {f["id"]: f for f in reg["findings"]}
+    note = by["A11Y-R-E09-D10-F-32"]["remedyNote"]
+    for token in ("CMP-079", "CMP-019", "lock", "reason node", "rbac.read_only"):
+        assert token in note
+    for scr in ("SCR-001", "SCR-112"):
+        row = by[f"A11Y-D02-T2-{scr}"]
+        assert row["screens"] == [scr] and "CMP-079" in row["title"]
+
+
+def test_real_routing_reasons_and_levels() -> None:
+    reg = cat.build(ROOT)
+    for f in reg["findings"]:
+        if f["designOwner"] == cat.ENGINEERING_ONLY:
+            assert "no override gives it a reason" not in f["ownerReason"], f["id"]
+        assert f["level"] or not f["sc"] or f["scReason"], f["id"]
+        assert f["sc"] or f["scReason"], f["id"]
+
+
+def test_canvas_text_routes_to_e47_d06() -> None:
+    routing = json.loads((ROOT / cat.ROUTING_REL).read_text(encoding="utf-8"))
+    f = {"id": "x", "screens": ["SCR-030"], "sc": [], "class": None, "pattern": None,
+         "title": "the canvas has no DOM mirror", "remedy": ""}  # fmt: skip
+    assert cat.route(f, routing)[0] == "E47-D06"
+
+
+def test_check_pins_14_and_findings_so_main_drift_is_a_warning(
+    tree: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cat.main(["--root", str(tree)]) == 0
+    reg = json.loads((tree / cat.REGISTER_REL).read_text(encoding="utf-8"))
+    pins = reg["derivedFrom"]["inputs"]
+    assert set(pins) == {cat.CATALOGUE_REL, cat.FINDINGS_REL}
+    old14 = (tree / cat.CATALOGUE_REL).read_text(encoding="utf-8")
+    by_blob = {cat.blob_sha(old14.encode()): old14}
+    monkeypatch.setattr(cat, "git_show", lambda _root, blob: by_blob.get(blob))
+    # another lane ticks a sign-off in 14: pending WARN, still exit 0
+    (tree / cat.CATALOGUE_REL).write_text(
+        old14.replace("[ ] two", "[x] two"), encoding="utf-8"
+    )
+    assert cat.main(["--root", str(tree), "--check"]) == 0
+    assert "WARN pending" in capsys.readouterr().err
+    # but a stale committed output is still a failure against the pinned base
+    md = tree / cat.CATALOGUE_OUT_REL
+    md.write_text(md.read_text(encoding="utf-8") + "\nstale edit\n", encoding="utf-8")
+    assert cat.main(["--root", str(tree), "--check"]) == 1
+
+
+def test_check_without_the_pinned_blob_checks_consistency_only(
+    tree: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cat.main(["--root", str(tree)])
+    monkeypatch.setattr(cat, "git_show", lambda _root, _blob: None)
+    p = tree / cat.CATALOGUE_REL
+    p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    assert cat.main(["--root", str(tree), "--check"]) == 0
+    assert "not in this checkout" in capsys.readouterr().err
+    md = tree / cat.CATALOGUE_OUT_REL
+    md.write_text(md.read_text(encoding="utf-8") + "\nstale edit\n", encoding="utf-8")
+    assert cat.main(["--root", str(tree), "--check"]) == 1

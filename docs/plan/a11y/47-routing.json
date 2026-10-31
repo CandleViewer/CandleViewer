@@ -36,9 +36,13 @@
     {
       "key": "E08-D12",
       "path": "docs/design/E08/E08-D12.md"
+    },
+    {
+      "key": "E32-D07",
+      "path": "docs/design/E32/E32-D07-a11y.md"
     }
   ],
-  "pendingReviews": ["E12-D11", "E14-D10", "E32-D07"],
+  "pendingReviews": [],
   "rules": [
     {
       "match": {
@@ -53,6 +57,20 @@
       },
       "owner": "E47-D03",
       "reason": "the theme settings screen is E47-D03's design"
+    },
+    {
+      "match": {
+        "text": [
+          "canvas",
+          "DOM mirror",
+          "surrogate",
+          "table alternative",
+          "role=\"img\"",
+          "hit-test"
+        ]
+      },
+      "owner": "E47-D06",
+      "reason": "the finding concerns a canvas surface, its DOM mirror, a surrogate control or a table alternative (the four-layer canvas model)"
     },
     {
       "match": {
@@ -180,6 +198,42 @@
     "A11Y-R-E08-D12-F-08": {
       "owner": "E47-D07",
       "reason": "status announcement for the reconnecting state"
+    },
+    "A11Y-R-E09-D10-F-17": {
+      "owner": "engineering-only",
+      "reason": "the hidden-versus-disabled treatment of a gated control is already ruled by E09-D09 section 2.2 (T2); the fix is E09-D04's frames and the build, not a new E47 design deliverable"
+    },
+    "A11Y-R-E08-D12-F-03": {
+      "owner": "engineering-only",
+      "reason": "the finding's own words: a catalogue-documentation miss in 14's component list, not a G-T2 behaviour miss; fixed by 14's owner via #2701"
+    },
+    "A11Y-R-E08-D12-F-06": {
+      "owner": "engineering-only",
+      "reason": "the pane's landmark name comes from the E15 chassis kind rule (E15-D15 R-5), which E08-D08's next text touch follows; no E47 design ticket owns a chassis label"
+    },
+    "A11Y-R-E08-D12-F-07": {
+      "owner": "engineering-only",
+      "reason": "a process finding: SCR-102 and SCR-041 were built before the design-ahead review; it is carried by E08-Q05 as its a11y charter and the waiver line on #4703, not a design change"
+    },
+    "A11Y-R-E32-D07-F-05": {
+      "owner": "engineering-only",
+      "reason": "the row's accessible name gains a column, a text change to E32-D04's spec and E32-S06's build (PROPOSED in the review), not a new E47 design deliverable"
+    },
+    "A11Y-R-E32-D07-F-07": {
+      "owner": "engineering-only",
+      "reason": "an Info row with no design change: the scripts state the screen-reader mode and E32-Q07 records the unverified rows"
+    },
+    "A11Y-R-E32-D07-F-08": {
+      "owner": "engineering-only",
+      "reason": "an Info row with no design change: the drag gestures stay PROPOSED until E31-D01 merges, then an E31 delta row"
+    },
+    "A11Y-D02-T2-SCR-001": {
+      "owner": "engineering-only",
+      "reason": "a documentation fix to 14's component list by 14's owner (#2701), modelled on E08-D12 F-03, not a design deliverable"
+    },
+    "A11Y-D02-T2-SCR-112": {
+      "owner": "engineering-only",
+      "reason": "a documentation fix to 14's component list by 14's owner (#2701), modelled on E08-D12 F-03, not a design deliverable"
     }
   },
   "attribution": {
@@ -250,7 +304,88 @@
     "A11Y-R-E08-D12-F-08": {
       "screens": ["SCR-152"],
       "cite": "E08-D12 §2 inventory L129 (SCR-152 Disconnected / reconnecting state) and §11 L529 (E17-D02:253, the Disconnected episode's alert)"
+    },
+    "A11Y-R-E32-D07-F-04": {
+      "screens": ["SCR-064", "SCR-065", "SCR-069"],
+      "cite": "E32-D07 section 11 F-04 Screen cell 'all three' (the three screens of the review's title: SCR-064, SCR-065, SCR-069)"
+    },
+    "A11Y-R-E32-D07-F-07": {
+      "screens": ["SCR-064", "SCR-065", "SCR-069"],
+      "cite": "E32-D07 section 11 F-07 Screen cell 'all three' (SCR-064, SCR-065, SCR-069)"
+    },
+    "A11Y-R-E32-D07-F-11": {
+      "screens": ["SCR-064", "SCR-065", "SCR-069"],
+      "cite": "E32-D07 section 11 F-11 Screen cell 'all three' (SCR-064, SCR-065, SCR-069)"
     }
   },
-  "unattributedNote": "A11Y-R-E09-D10-F-48 stays unattributed: E09-D10 §6.2 T-77 L390 maps it to the RBAC pattern (a panel holding focus), not to one screen."
+  "unattributedNote": "A11Y-R-E09-D10-F-48 stays unattributed: E09-D10 §6.2 T-77 L390 maps it to the RBAC pattern (a panel holding focus), not to one screen.",
+  "citedReviews": [
+    {
+      "key": "E12-D11",
+      "path": "docs/design/E12/E12-D11.md"
+    },
+    {
+      "key": "E14-D10",
+      "path": "docs/design/E14/E14-D10.md"
+    },
+    {
+      "key": "E15-D15",
+      "path": "docs/design/E15/E15-D15.md"
+    },
+    {
+      "key": "E16-D06",
+      "path": "docs/design/E16/E16-D06.md"
+    },
+    {
+      "key": "E22-D04",
+      "path": "docs/design/E22/E22-D04.md"
+    },
+    {
+      "key": "E29-D05",
+      "path": "docs/design/E29/E29-D05.md"
+    },
+    {
+      "key": "E30-D05",
+      "path": "docs/design/E30/E30-D05.md"
+    },
+    {
+      "key": "E33-D05",
+      "path": "docs/design/E33/E33-D05.md"
+    },
+    {
+      "key": "E35-D04",
+      "path": "docs/design/E35/E35-D04.md"
+    }
+  ],
+  "vehicles": {
+    "A11Y-R-E09-D10-F-1": "#5254 (the fix issue for the E09 Blocking rows); the E09-D10 delta re-review is held at #193",
+    "A11Y-R-E09-D10-F-2": "#5254 (the fix issue for the E09 Blocking rows); the E09-D10 delta re-review is held at #193",
+    "A11Y-R-E09-D10-F-25": "#5254 (the fix issue for the E09 Blocking rows); the E09-D10 delta re-review is held at #193",
+    "A11Y-R-E09-D10-F-26": "#5254 (the fix issue for the E09 Blocking rows); the E09-D10 delta re-review is held at #193"
+  },
+  "remedyNotes": {
+    "A11Y-R-E09-D10-F-32": "on SCR-006's read-only window Buy and Sell are CMP-079 RbacGate in its T2 treatment (E09-D09 section 2.2): `aria-disabled=\"true\"`, never `disabled`; a leading CMP-019 Icon `lock` named \"Not available\"; `aria-describedby` on the reason node that is in the DOM at mount; the reason string is the section 3.1 key `rbac.read_only` (\"Read-only after three wrong codes.\")."
+  },
+  "extraFindings": [
+    {
+      "id": "A11Y-D02-T2-SCR-001",
+      "screens": ["SCR-001"],
+      "severity": "Minor",
+      "class": "RBAC",
+      "clause": "14:141; E09-D09 2.2 (T2) and 3.1",
+      "title": "`14`:141 lists SCR-001's components without CMP-079 RbacGate or CMP-019 Icon (`lock`), while the Sign in button is blocked while rate-limited (`14` SCR-001 states; E09-D10 F-4; A11Y-F-0001): a state-driven T2 treatment with no component or reason node listed. A catalogue-documentation miss, as E08-D12 F-03 is for SCR-104, not a behaviour finding",
+      "remedy": "`14`:141 gains \"CMP-079 RbacGate, CMP-019 Icon (`lock`)\"; the blocked Sign in is `aria-disabled` with `aria-describedby` on the rate-limit line (`Too many attempts. Try again in {mm:ss}.`), which is a state vocabulary entry for E09-D03 to register because no section 3.1 key (`rbac.*`) applies to an unauthenticated user",
+      "remediation": "`14`'s owner via #2701; E09-S01 (#228)"
+    },
+    {
+      "id": "A11Y-D02-T2-SCR-112",
+      "screens": ["SCR-112"],
+      "severity": "Minor",
+      "class": "RBAC",
+      "clause": "14:2389; E09-D09 2.2 (T2), 3.1 and 4",
+      "title": "`14`:2389 lists SCR-112's components without CMP-079 RbacGate or CMP-019 Icon (`lock`), while its write controls (change password, re-enrol, regenerate recovery codes, disable two-factor, revoke) degrade in place under E09-D09 section 4 and take T2 reasons when the session is read-only or viewing as another user. A catalogue-documentation miss (as E08-D12 F-03), not a G-T2 behaviour miss",
+      "remedy": "`14`:2389 gains \"CMP-079 RbacGate, CMP-019 Icon (`lock`)\"; the write controls are `aria-disabled` with `aria-describedby` on the reason node (in the DOM at mount), with section 3.1 keys `rbac.read_only` (\"Read-only after three wrong codes.\") and `rbac.view_as` (\"Read-only while viewing as {user}.\")",
+      "remediation": "`14`'s owner via #2701; E09-D12 (#194) hand-off; #1640"
+    }
+  ]
 }
