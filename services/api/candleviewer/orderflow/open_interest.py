@@ -206,7 +206,7 @@ class OiBackfill:
         return written
 
     async def _job(self, symbol: str, interval: str, window: TimeWindow) -> tuple[int, bool]:
-        """`(rows written, completed)`; not completed when a page failed or was rejected."""
+        """`(rows written, completed)`; not completed on a failed or rejected page, or page cap."""
         label, started, written, cursor = symbol_label(symbol), self._clock(), 0, None
         completed = True
         try:
@@ -225,6 +225,8 @@ class OiBackfill:
                 cursor = page.next_cursor
                 if cursor is None or not page:
                     break
+            else:  # page budget spent with a cursor still present: more history is unfetched
+                completed = False
         finally:
             deriv_oi_backfill_latency_seconds.observe(max(0.0, self._clock() - started))
         return written, completed

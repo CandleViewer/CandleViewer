@@ -17,6 +17,7 @@ from candleviewer.exchange.bybit.open_interest import parse_oi_page
 from candleviewer.orderflow.deriv_limits import DerivInvalidRequest, DerivSymbolUnlisted
 from candleviewer.orderflow.open_interest import (
     MAX_ATTEMPTS,
+    MAX_PAGES_PER_JOB,
     OiBackfill,
     OpenInterestService,
     TickerDownsampler,
@@ -215,6 +216,22 @@ async def test_oi_backfill_job_raising_keeps_the_worker_and_the_floor() -> None:
         await _drain(backfill)
     assert [e["event"] for e in logs if e["log_level"] == "error"] == ["oi_backfill_job_failed"]
     assert backfill.request("BTCUSDT", "5min", WINDOW)  # the store error raised no floor
+
+
+async def test_oi_backfill_page_budget_exhausted_with_cursor_is_not_completed() -> None:
+    class _Endless(_Fetcher):
+        async def __call__(
+            self, symbol: str, interval: str, start_us: int, end_us: int, cursor: str | None
+        ) -> OiPage:
+            self.calls.append(cursor)
+            return PAGES[0]  # always carries a next cursor
+
+    fetcher = _Endless()
+    backfill = _backfill(InMemoryOiStore(), fetcher)
+    assert await backfill.run_once("BTCUSDT", "5min", WINDOW) is False
+    assert len(fetcher.calls) == MAX_PAGES_PER_JOB
+    assert backfill._floor == {}  # the floor does not rise
+    assert backfill.request("BTCUSDT", "5min", WINDOW)  # so the next request re-queues
 
 
 def test_find_gaps_reports_inner_leading_and_open_tail_spans() -> None:
