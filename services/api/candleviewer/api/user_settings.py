@@ -236,7 +236,7 @@ def make_user_settings_router(
             raise _Problem("store_unavailable", STORE_UNAVAILABLE_DETAIL)
         return repo
 
-    def record(p: AuditPrincipal, changed: list[str]) -> UserSettingsWriteAhead:
+    def audit_hook(p: AuditPrincipal, changed: list[str]) -> UserSettingsWriteAhead:
         """The write-ahead `settings.change` of one request, awaited before the commit."""
 
         async def hook(changes: tuple[LeafChange, ...]) -> None:
@@ -271,7 +271,8 @@ def make_user_settings_router(
             raise _Problem("validation_failed", "The request is invalid.",
                            errors=refused.errors) from None  # fmt: skip
         changed: list[str] = []
-        rows = await repo.apply(principal.user_id, patch, write_ahead=record(principal, changed))
+        hook = audit_hook(principal, changed)  # `settings.change`, ahead of the commit (C-2.9)
+        rows = await repo.apply(principal.user_id, patch, write_ahead=hook)
         if changed:
             _log().info("user_settings_changed", user_id=str(principal.user_id), keys=changed)
         return JSONResponse(effective(rows, viewing=_viewing(principal)))
