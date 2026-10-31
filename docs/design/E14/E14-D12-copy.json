@@ -860,12 +860,13 @@
       "finalised_by": "E14-D10 (#354), at v1.1"
     },
     "d07:07": {
-      "names": "",
+      "names": "tree.tag.offscreen.name",
       "text": null,
       "source": "D07:530",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
       "finalised_by": "E14-D10 (#354), at v1.1",
+      "where": "D07 §12.2: the tag button's accessible name",
       "copy": "cited only: read the row at its source"
     },
     "d07:08": {
@@ -941,12 +942,13 @@
       "finalised_by": "E14-D10 (#354), at v1.1"
     },
     "d07:17": {
-      "names": "",
+      "names": "tree.menu.items",
       "text": null,
       "source": "D07:540",
       "status": "proposed",
       "owner": "E14-D07 (#351)",
       "finalised_by": "E14-D10 (#354), at v1.1",
+      "where": "D07 §12.2: the row menu (E13-D02 §12 + D02 §8.2 — cited; C-11)",
       "copy": "cited only: read the row at its source"
     },
     "d07:18": {
@@ -1068,6 +1070,7 @@
       "status": "proposed",
       "owner": "E14-D07 (#351)",
       "finalised_by": "E14-D10 (#354), at v1.1",
+      "where": "D07 §12.2: §9.5",
       "copy": "cited only: read the row at its source"
     },
     "d07:33": {

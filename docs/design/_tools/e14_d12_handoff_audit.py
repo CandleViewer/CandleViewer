@@ -124,6 +124,7 @@ PATHS: dict[str, str] = {
     "D08H": "docs/design/E14/E14-D08-handoff.md",
     "D09": "docs/design/E14/E14-D09.md",
     "README": "docs/design/README.md",
+    "E06-D03": "docs/design/E06/E06-D03.md",
     "CAL": "docs/plan/backlog/_tools/calendar_cv.py",
     "E14J": "docs/plan/backlog/E14.json",
 }
@@ -159,6 +160,8 @@ LIFTS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
     "d07h": ("D07H", (("", ""),)),
     "d08h": ("D08H", (("", ""),)),
 }
+CHIPS = "Two named forms, one rule set."  # D08 §7, the chip heights' defining line
+NFR008 = "NFR: undo stack ≥50 operations per symbol"  # `11` US-DRAW-008's NFR line
 # CITE values: key -> (source, the defining line's needle, the figure's pattern)
 CITES: dict[str, tuple[str, str, str]] = {
     "b8.frame_ms": ("26", "| B8  | Drawing interaction", r"\|\s*≤ (\d+) ms\s*\|"),
@@ -174,14 +177,21 @@ CITES: dict[str, tuple[str, str, str]] = {
     "d08.glyph_px": ("D08", "| glyph ", r"(\d+) px two-tone"),
     "d08.target_px": ("D08", "| target and tolerance", r"(\d+) × \d+ CSS px"),
     "d08.snap_px": ("D08", "| snap ", r"the (\d+) px TP-13 ring"),
-    "d08.magnet_px": ("D08", "| E14-T04 (#359)", r"the (\d+) px magnet radius"),
-    "d08.fill": ("D08", "| E14-T04 (#359)", r"the ([\d.]+) default fill opacity"),
-    "d08.stroke": ("D08", "| E14-T04 (#359)", r"with the ([\d /]+) px stroke scale"),
-    "d08.chip1": ("D08", "| E14-T04 (#359)", r"chip heights ([\d /]+) and"),
-    "d08.chip2": ("D08", "| E14-T04 (#359)", r"and ([\d /]+) as `EngineTheme"),
-    "d08.label_px": ("D08", "Two named forms, one rule set.", r"minimum (\d+) px CSS at 100 %"),
+    "d08.magnet_px": ("D08", "| snap marker ", r"(\d+) px magnet radius"),
+    "d08.fill": ("D08", "| fill ", r"`style\.fill_opacity`, default ([\d.]+)"),
+    "d08.stroke.thin": ("D08", "| stroke ", r"= (\d+) / \d+ / \d+ "),
+    "d08.stroke.regular": ("D08", "| stroke ", r"= \d+ / (\d+) / \d+ "),
+    "d08.stroke.bold": ("D08", "| stroke ", r"= \d+ / \d+ / (\d+) "),
+    "d08.chip1.compact": ("D08", CHIPS, r"— (\d+) compact / \d+ comfortable"),
+    "d08.chip1.comfortable": ("D08", CHIPS, r"— \d+ compact / (\d+) comfortable"),
+    "d08.chip1.dense": ("D08", CHIPS, r"comfortable / (\d+) dense for one line"),
+    "d08.chip2.compact": ("D08", CHIPS, r"one line, (\d+) / \d+ / \d+ for two"),
+    "d08.chip2.comfortable": ("D08", CHIPS, r"one line, \d+ / (\d+) / \d+ for two"),
+    "d08.chip2.dense": ("D08", CHIPS, r"one line, \d+ / \d+ / (\d+) for two"),
+    "d08.label_px": ("D08", CHIPS, r"minimum (\d+) px CSS at 100 %"),
     "d04.width": ("D04", "| trendline        | `trendline`", r"`style\.width` (\d+\.\.\d+)"),
-    "tree.rows": ("D07", "| 500  | 315", r"^\| (\d+)\s"),
+    "tree.nfr": ("11", NFR008, r"virtualised for ≥(\d+) objects"),
+    "tree.threshold": ("D07", "| Q13 | the virtualisation threshold", r"the shell's (\d+)"),
 }  # fmt: skip
 # the device-pixel values: key -> (the CITE key, the factor)
 DPX = {"glyph": "d08.glyph_px", "target": "d08.target_px", "pointer": "tol.pointer",
@@ -239,12 +249,38 @@ OWNER_SPEC = re.compile(
     r"|`\d\d` (?:CMP|SCR)-\d{3}'s owner"
     r"|E05 \(`15`'s owner\)"
 )
-DUE = re.compile(r"Sprint \d\d|at #5229's merge|at once|before READY")
+DUE = re.compile(r"Sprint (\d\d)|at #5229's merge|at once|before READY")
 REQUIRED_ROWS = {"C-1": "token id", "C-2": "pitchfork", "C-3": "audit", "C-4": "glyph"}
-T2_KEYS: dict[str, tuple[str, ...]] = {"rbac.view_as": (), "rbac.permission": ("save workspaces",
-           "change settings"), "drawing.locked": (), "v.risk.cap": ()}  # fmt: skip
+ROLE_KEYS = ("rbac.view_as", "rbac.permission")
+STATE_KEYS = ("drawing.locked", "v.risk.cap", "pos.profile.none", "pos.symbol.status",
+              "pos.wallet.stale", "lockout", "refusal.kill_switch_engaged")  # fmt: skip
+T2_KEYS = (*ROLE_KEYS, *STATE_KEYS)
+# the §3.2 verb of each permission leg (E09-D09 §3.2, as the parents state it)
+LEG_VERB = {"workspaces:write": "save workspaces", "settings:write": "change settings",
+            "alerts:write": "change alerts"}  # fmt: skip
+# the parents' gated-control lists: (the pack row's Control prefix, the parent, its line, the
+# needle on that line that names the control) — every one must have a row in §6.2's table
+T2_EXPECTED: tuple[tuple[str, str, int, str], ...] = (
+    ("rail drawing tools", "D03", 297, "on the drawing tools, lock-all, delete-all"),
+    ("rail magnet mode", "D03", 297, "for magnet mode, keep tool active"),
+    ("`[Draw]` menu", "D03", 297, '"Show tool rail"'),
+    ("context menu Set as default", "D03", 297, "for the context menu's Set as default"),
+    ("SCR-045 row action", "D02", 424, "a session without `workspaces:write`, or under view-as"),
+    ("popover fields and actions", "D04", 281, "`workspaces:write` for every drawing field"),
+    ("popover alert toggle", "D04", 281, "the alert toggle, once live, `alerts:write`"),
+    ("popover flatten switch", "D04", 281, "the flatten switch"),
+    ("popover on a locked drawing", "D04", 281, "`drawing.locked`"),
+    ("tree row writes", "D07", 380, "By row kind:"),
+    ("a locked row", "D07", 380, "a locked drawing's Move up"),
+    ("measure Pin", "D05", 277, "Pin under view-as"),
+    ("position tool on a locked drawing", "D06", 226, "SCR-037/position-locked"),
+    ("Send to ticket, risk over", "D06", 262, "risk over the headroom"),
+    ("Send to ticket, no active profile", "D06", 263, "no active profile"),
+)  # fmt: skip
 T2_TERMS = ('`aria-disabled="true"`', "`aria-describedby`", "CMP-079 RbacGate", "CMP-019 `lock`",
-            "`decorative={false}`", '"Not available"')  # fmt: skip
+            "`decorative={false}`", '"Not available"', "`readonly`")  # fmt: skip
+# the budgets §9.2 must carry, each by its CITE value
+BUDGET_KEYS = ("scr037.fps", "b8.frame_ms", "b8.pick_ms", "text.calls", "vwap.ms", "tree.nfr")
 PENDING = "pending, cited from the ticket text only"
 OWNER_PENDING = "owner approval pending (#2701)"
 
@@ -845,7 +881,14 @@ def derive_deck(env: Env) -> dict[str, object]:
                 if status == "proposed":
                     entry["finalised_by"] = FINALISER
                 if WORDS.search(str(entry["names"]) + str(entry["text"])):
-                    entry["names"], entry["text"] = "", None
+                    wcol = hdr.index("Where") if "Where" in hdr else None
+                    wc = cells[wcol] if wcol is not None and wcol < len(cells) else ""
+                    sec = "§" + head.strip("# ").rstrip(". ")
+                    entry["names"] = " · ".join(k for k in keys if not WORDS.search(k))
+                    entry["text"] = None
+                    entry["where"] = f"{src} {sec}" + (
+                        f": {wc}" if wc and not WORDS.search(wc) else ""
+                    )
                     entry["copy"] = CITED_ONLY
                 entries[f"{prefix}:{n:02d}"] = entry
             break
@@ -1420,6 +1463,11 @@ def owner_problems(rid: str, cell: str) -> list[str]:
     return bad
 
 
+def first_consumer(t: Texts) -> int:
+    sp = sprints(t.env)
+    return min((sp[k] for k in MARGINS if k in sp), default=0)
+
+
 def g_rows(t: Texts) -> list[Finding]:
     bad = anchor_problems(t, "G-ROWS")
     ids: list[str] = []
@@ -1435,8 +1483,11 @@ def g_rows(t: Texts) -> list[Finding]:
         if r[2] not in SEVERITIES:
             bad.append(f"{rid}: grade {r[2]!r} is not one of the four")
         bad += owner_problems(rid, r[4])
-        if not DUE.match(r[5]):
+        due = DUE.match(r[5])
+        if not due:
             bad.append(f"{rid}: due {r[5]!r} is not a ruled form")
+        elif due[1] and int(due[1]) < first_consumer(t):
+            bad.append(f"{rid}: due Sprint {due[1]} is before the first consumer's sprint")
         if not cites_in(raw.get(rid, "")):
             bad.append(f"{rid}: no cite")
     if len(set(ids)) != len(ids):
@@ -1470,9 +1521,14 @@ def g_t2(t: Texts) -> list[Finding]:
         keys = [k for k in re.findall(r"`([a-z_.]+)`", r[3]) if k in T2_KEYS]
         if not keys:
             bad.append(f"T2 row {r[0][:20]!r}: no ruled §3.1 key")
-        for k in keys:
-            if T2_KEYS[k] and not any(v in r[4] for v in T2_KEYS[k]):
-                bad.append(f"T2 row {r[0][:20]!r}: `{k}` without its §3.2 verb")
+        legs = {LEG_VERB[x] for x in re.findall(r"`([a-z]+:write)`", r[1]) if x in LEG_VERB}
+        verbs = {v for v in LEG_VERB.values() if v in r[4]}
+        if "rbac.permission" in keys and (not legs or verbs != legs):
+            bad.append(f"T2 row {r[0][:20]!r}: the §3.2 verb is not its leg's ({sorted(legs)})")
+        if "rbac.permission" not in keys and verbs:
+            bad.append(f"T2 row {r[0][:20]!r}: a verb with no permission leg")
+        if any(k in STATE_KEYS for k in keys) and "PROPOSED" in r[3] and "owner" not in r[3]:
+            bad.append(f"T2 row {r[0][:20]!r}: a PROPOSED key with no owner")
         if "CMP-019 `lock`" not in r[5]:
             bad.append(f"T2 row {r[0][:20]!r}: no CMP-019 `lock`")
         role = any(k.startswith("rbac.") for k in keys)
@@ -1480,6 +1536,12 @@ def g_t2(t: Texts) -> list[Finding]:
             bad.append(f"T2 row {r[0][:20]!r}: CMP-079 RbacGate must wrap role legs only")
         if not cites_in(r[6]):
             bad.append(f"T2 row {r[0][:20]!r}: no source cite")
+    for prefix, key, line, needle in T2_EXPECTED:
+        ls = t.env.lines(t.env.base, PATHS[key])
+        if not (0 < line <= len(ls)) or needle not in ls[line - 1]:
+            bad.append(f"`{key}`:{line} no longer names {needle[:30]!r}: re-derive the T2 rows")
+        if not any(r[0].startswith(prefix) for r in rows):
+            bad.append(f"the gated control {prefix!r} (`{key}`:{line}) has no T2 row")
     comp = next(
         (ln for ln in section(t.spec, "### 6.1 ").split("\n") if ln.startswith("| companions ")), ""
     )
@@ -1499,14 +1561,18 @@ def g_mnr(t: Texts) -> list[Finding]:
             bad.append(f"budget {c[0][:30]!r}: no CITE value, owner or cite")
         if "CITE:scr037.fps" in ln and ("C-14.2" not in c[2] or "`26`:" not in ln):
             bad.append("the 58-fps row does not name C-14.2 as its owner and cite `26`")
-    if not any("CITE:scr037.fps" in ln for ln in section(t.spec, "### 9.2 ").split("\n")):
-        bad.append("§9.2 has no 58-fps row")
+    s92 = section(t.spec, "### 9.2 ")
+    for key in BUDGET_KEYS:
+        if f"<!--=CITE:{key}-->" not in s92:
+            bad.append(f"§9.2 has no budget row carrying CITE:{key}")
     for n, ln in enumerate(t.spec.split("\n"), 1):
         if "hard-disabled" in re.sub(r"\"[^\"]*\"", "", ln):
             bad.append(f"spec:{n}: 'hard-disabled' outside a quote of the ticket")
     s91 = collapse_copies(section(t.spec, "### 9.1 "))
     if "{{COPY:d06.s64}}" not in s91:
         bad.append("§9.1 does not carry D06 §6.4's sentence as a byte copy")
+    if "`/trade-groups/preview`" not in s91 or "`D06`:316" not in s91:
+        bad.append("§9.1 does not read the ticket's preview re-run on open (D06 §6.5)")
     mnr2 = next((ln for ln in s91.split("\n") if ln.startswith("| MNR-2 ")), "")
     if '`aria-disabled="true"`' not in mnr2 or "T2" not in mnr2:
         bad.append('MNR-2 does not read the over-cap send as T2 `aria-disabled="true"`')
@@ -1783,8 +1849,46 @@ def merged_and_edited(t: Texts) -> Texts:
     )
 
 
+def drop_row(lead: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        ls = t.spec.split("\n")
+        hits = [i for i, ln in enumerate(ls) if ln.startswith(lead)]
+        if len(hits) != 1:
+            raise SystemExit(f"self-test: {len(hits)} rows start with {lead!r}")
+        del ls[hits[0]]
+        return replace(t, spec="\n".join(ls))
+
+    return f
+
+
+def repinned(f: Callable[[Texts], Texts]) -> Callable[[Texts], Texts]:
+    """The mutation with the pins re-derived after it, so the frozen-text pin cannot be the gate
+    that catches it (a completeness gate must)."""
+
+    def g(t: Texts) -> Texts:
+        t2 = f(t)
+        t2 = replace(t2, values=compute(t2))
+        return replace(t2, pins=write_pins(all_units(t2)))
+
+    return g
+
+
+def defining_row_moved(t: Texts) -> Texts:
+    """D08's fill row (the definition of the default opacity) changes at the base and at
+    origin/main alike: G-VALUES must re-read it there, not at a restating line."""
+    rel = PATHS["D08"]
+    ls = t.env.lines(t.env.base, rel)
+    i = next(k for k, ln in enumerate(ls) if ln.startswith("| fill "))
+    ls[i] = ls[i].replace("default 0.05", "default 0.07")
+    t2 = with_text(t, t.env.base, rel, "\n".join(ls))
+    t2 = with_text(t2, HEAD_REF, rel, "\n".join(ls))
+    return replace(t2, values=compute(t2))
+
+
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation("G-VALUES", "type a handle size by hand", anchor_edit("CITE:d08.glyph_px", "9")),
+    Mutation("G-VALUES", "change the fill default at its defining row (base and origin/main)",
+             defining_row_moved),
     Mutation("G-LIFT", "alter a lifted block's hash", anchor_edit("HASH:d08.s5_7", "000000000000")),
     Mutation("G-COPY", "change one byte inside the copied D06 §6.4", copy_edit),
     Mutation("G-CITE", "point a cite past the end of its file",
@@ -1797,10 +1901,18 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("G-INDEX", "map E14-S04 to the wrong user story",
              subst("| E14-S04 (#473) | US-DRAW-004 |", "| E14-S04 (#473) | US-DRAW-005 |")),
     Mutation("G-DECK", "alter one deck string", deck_edit),
+    Mutation("G-ROWS", "a due sprint before the first consumer's (re-pinned)",
+             repinned(subst("| Sprint 06<!--=SPRINT:t02--> | open; routed by D08 G-1",
+                            "| Sprint 02 | open; routed by D08 G-1"))),
     Mutation("G-ROWS", "grade a row outside the four",
              subst("| C-8 | contradiction | Info ", "| C-8 | contradiction | Note ")),
+    Mutation("G-T2", "drop the measure Pin row (re-pinned)", repinned(drop_row("| measure Pin "))),
+    Mutation("G-T2", "give the settings row the workspaces verb (re-pinned)",
+             repinned(subst('| "change settings" |', '| "save workspaces" |'))),
     Mutation("G-T2", "drop the lock glyph's `decorative={false}`",
              subst("glyph (`decorative={false}`, accessible name", "glyph (accessible name")),
+    Mutation("G-MNR", "drop the anchored-VWAP budget row (re-pinned)",
+             repinned(drop_row("| anchored VWAP update "))),
     Mutation("G-MNR", "own the 58-fps row by `14` instead of C-14.2",
              subst("| CONSTITUTION C-14.2 (", "| `14` SCR-037 (")),
     Mutation("G-EVENTS", "name an event no source defines",
@@ -1931,7 +2043,8 @@ def main(argv: list[str]) -> int:
         notes = sum(f.level == "NOTE" for f in found)
         mode = "post-merge" if post_merge(t) else "PR-1"
         print(
-            f"{len(fails)} FAIL / {warns} WARN / {notes} NOTE ({len(GATES) + 1} gates, {mode} mode)"
+            f"{len(fails)} FAIL / {warns} WARN / {notes} NOTE ({len(GATES) + 1} gates, "
+            f"{len(all_cites(t))} cites, {mode} mode)"
         )
     return 1 if fails else 0
 
