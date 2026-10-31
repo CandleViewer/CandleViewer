@@ -217,8 +217,10 @@ and files. No concurrency group (#3449). Cost: one job a night, capped by its 35
 05:17 UTC `rest_k6` run),
 `dast-admin-nightly.yml` (`dast-admin`, labels `security`, `area/accounts-admin`; nightly at
 03:27 UTC and on dispatch), `e2e-auth-real.yml` (`e2e-auth-real`, labels `type/test`,
-`area/auth-rbac`; nightly at 03:51 UTC and on dispatch) and `chaos-ws-nightly.yml` (`chaos-ws`,
-labels `qa`, `area/backend-platform`, `priority/p1`) report a red signal through
+`area/auth-rbac`; nightly at 03:51 UTC and on dispatch), `chaos-ws-nightly.yml` (`chaos-ws`,
+labels `qa`, `area/backend-platform`, `priority/p1`) and `perf-recorder-nightly.yml`
+(`perf-recorder`, labels `perf`, `area/recorder-replay`; nightly at 02:47 UTC and on dispatch,
+E16-Q04) report a red signal through
 `_nightly-issue.yml`, from scheduled and manual runs alike; `dast-admin` and `e2e-auth-real` report
 from `main` only, so a dispatch on a branch files nothing. Its `report` job comments on the
 newest open issue that `github-actions[bot]` opened with the signal's title prefix and all its
