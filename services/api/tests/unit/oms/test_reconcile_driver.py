@@ -437,6 +437,60 @@ async def test_a_decision_whose_record_fails_changes_nothing(job: Job, timers: T
         await driver.stop()
 
 
+async def test_a_manual_pass_b19_does_not_take_is_unavailable_and_runs_no_pass(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The code look's n1 and the security look's nit on the final PR: a manual pass whose
+    `SWEEP_DUE` B19 refuses, the job still resting in `idle` (read by its state, CV-C06), is
+    `ReconciliationUnavailable`, so the route answers 503 and keeps nothing; the request's record,
+    written ahead, stands, and no pass runs."""
+    driver = _driver(job, timers)
+    await driver.start([ACCOUNT])
+    assert await _resting(driver) == "idle"
+    reported, written = list(job.records.rows), list[PassTaken]()
+
+    async def write_ahead(taken: PassTaken) -> None:
+        written.append(taken)
+
+    try:
+        monkeypatch.setattr(driver._gateway, "send", _refused)
+        with pytest.raises(ReconciliationUnavailable):
+            await driver.reconcile_now(ACCOUNT, write_ahead=write_ahead)
+        [taken] = written
+        assert driver._pass_ids[ACCOUNT] != taken.pass_id and await _resting(driver) == "idle"
+        assert job.records.rows == reported
+    finally:
+        monkeypatch.undo()
+        await driver.stop()
+
+
+async def test_a_decision_b19_does_not_take_is_unavailable_and_unlocks_nothing(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same for the Owner's decision: an `OPERATOR_RESOLVED` B19 refuses leaves the job
+    locked and the account refused, and is `ReconciliationUnavailable`, never answered
+    `resolved`; its record stands. The next decision B19 takes unlocks it."""
+    driver = _driver(job, timers)
+    await driver.start([])
+    await _locked(job, driver, timers)
+    seen: list[str] = []
+
+    async def write_ahead(state: str) -> None:
+        seen.append(state)
+
+    try:
+        monkeypatch.setattr(driver._gateway, "send", _refused)
+        with pytest.raises(ReconciliationUnavailable):
+            await driver.resolve(ACCOUNT, decided_by="owner", write_ahead=write_ahead)
+        assert seen == ["stale_lockout"] and job.standing.is_stale(ACCOUNT)
+        assert await _resting(driver) == "stale_lockout"
+        monkeypatch.undo()
+        resolved = await driver.resolve(ACCOUNT, decided_by="owner", write_ahead=write_ahead)
+        assert resolved == "stale_lockout" and not job.standing.is_stale(ACCOUNT)
+    finally:
+        await driver.stop()
+
+
 async def test_kill_is_never_sent_to_b19(
     job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
 ) -> None:
