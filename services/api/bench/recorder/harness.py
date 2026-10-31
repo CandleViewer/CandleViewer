@@ -11,7 +11,9 @@ hot-tier bytes of each row (the E16-K01 on-disk model, `bench/storage_measure.py
 a QuestDB ILP port on loopback instead (the CI pipeline's container), still counted the same way.
 The store and the event sink are in memory: dropped rows come from the writer's own counters, so
 the reconciliation (`budgets.check_reconciliation`) reads produced, written and gap-accounted rows
-from three independent places.
+from three independent places. The counter the writer persists as `messages_dropped` counts rows,
+not messages: both of its drop paths (the disk gate and a refused WAL append) add one per row they
+put in a `backpressure_drop` gap, so it is in the same unit as the written rows it is added to.
 """
 
 from __future__ import annotations
@@ -97,10 +99,11 @@ class TimingSink:
 
 
 class MemStore:
-    """`RecorderStore` in memory: one live session per symbol, counters summed."""
+    """`RecorderStore` in memory: one live session per symbol, counters summed. `dropped_rows` is
+    the writer's `messages_dropped`, which counts rows (module docstring)."""
 
     def __init__(self) -> None:
-        self.dropped: dict[str, int] = {}
+        self.dropped_rows: dict[str, int] = {}
         self.received: dict[str, int] = {}
         self.gaps: list[tuple[str, str, datetime, datetime, str]] = []
 
@@ -109,7 +112,7 @@ class MemStore:
         bytes_written: int, reconnect_count: int,
     ) -> bool:  # fmt: skip
         self.received[symbol] = self.received.get(symbol, 0) + messages_received
-        self.dropped[symbol] = self.dropped.get(symbol, 0) + messages_dropped
+        self.dropped_rows[symbol] = self.dropped_rows.get(symbol, 0) + messages_dropped
         return True
 
     async def record_live_gap(
@@ -152,6 +155,8 @@ class LoadConfig:
     seed: int = 7
     depth: int = 200
     ilp: str | None = None  # "host:port" on loopback; None: the counting sink
+    #: The E16-T07 write gate; open in every script, closed by the reconciliation's own test.
+    disk_gate: DiskGate = OPEN_GATE
     rss: Callable[[], int] = field(default=lambda: psutil.Process(os.getpid()).memory_info().rss)
 
 
@@ -169,7 +174,8 @@ async def _ilp_sinks(target: str) -> dict[Stream, Any]:
     return sinks
 
 
-async def _dispatch(w: StreamWriter, kind: str, ev: Trade | Delta | Liquidation) -> None:
+async def dispatch(w: StreamWriter, kind: str, ev: Trade | Delta | Liquidation) -> None:
+    """Hand one mix message to the writer's handler for its kind (the chaos rigs use it too)."""
     if isinstance(ev, Trade):
         await w.on_trade(ev)
     elif isinstance(ev, Delta):
@@ -197,7 +203,7 @@ async def run(cfg: LoadConfig, *, mix: Mix | None = None) -> RunResult:
     )
     writer = StreamWriter(
         lambda s: sinks[s], store, events, WriterConfig(wal_dir=cfg.wal_dir, env="demo"),
-        clock=clock, wall_clock_us=wall_us, disk_gate=OPEN_GATE,
+        clock=clock, wall_clock_us=wall_us, disk_gate=cfg.disk_gate,
     )  # fmt: skip
     await writer.open()
     writer.seed(cfg.symbols)
@@ -213,7 +219,7 @@ async def run(cfg: LoadConfig, *, mix: Mix | None = None) -> RunResult:
     result.produced_msgs = mix.produced_msgs
     result.produced_rows = {"all": sum(mix.produced_rows.values())}
     result.written_rows = {"all": sum(sum(s.rows.values()) for s in sinks.values())}
-    result.dropped_rows = {"all": sum(store.dropped.values())}
+    result.dropped_rows = {"all": sum(store.dropped_rows.values())}
     result.flush_ms = [ms for s in sinks.values() for ms in s.flush_ms]
     result.hot_bytes = sum(s.hot_bytes for s in sinks.values())
     result.critical_events = sum(1 for e in events.events if e.severity == "critical")
@@ -241,7 +247,7 @@ async def _drive_virtual(
         n, carry = int(carry + 1e-9), carry - int(carry + 1e-9)
         for k in range(n):
             ts = T0_US + int((start + step * k / n) * 1e6)
-            await _dispatch(writer, *mix.next(ts))
+            await dispatch(writer, *mix.next(ts))
         clock.t = start + step + BOUNDARY_NUDGE_S
         for stream in STREAMS:
             await writer.pump(stream)
@@ -266,7 +272,7 @@ async def _drive_real(
         due = int(cfg.msgs_per_s * min(elapsed + REAL_SLICE_S, cfg.duration_s))
         for _ in range(due - sent):
             last_ts = max(last_ts + 1, time.time_ns() // 1000)
-            await _dispatch(writer, *mix.next(last_ts))
+            await dispatch(writer, *mix.next(last_ts))
         sent = max(sent, due)
         if elapsed >= next_sample:
             _sample(cfg, writer, r)

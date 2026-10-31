@@ -66,6 +66,10 @@ from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import WsRuntime, default_snapshot_router, recorder_topic
+
+# A test double in bench code, on purpose and as `bench.ws.fixture_app` (E17) already does: the
+# load target needs an in-memory session store, and this one is the double the auth suites keep
+# true to `SessionRepository` (~30 importers). Moving it out of `tests/` is its own refactor.
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 READY: Final = "CV_BENCH_RECORDER_READY"

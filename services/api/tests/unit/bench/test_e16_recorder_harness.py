@@ -14,10 +14,11 @@ import pytest
 
 from bench.ingestion.budgets import Check, Verdict
 from bench.recorder import HARNESS_VERSION, harness, ingest_load, soak
-from bench.recorder.budgets import RunResult
+from bench.recorder.budgets import RunResult, check_reconciliation
 from bench.recorder.generator import Delta, Liquidation, Mix, Trade, reference_phase
 from bench.recorder.harness import CountingSink, LoadConfig, TimingSink, assert_loopback, finish
 from bench.storage_measure import REFERENCE_ROWS_DAY
+from candleviewer.recorder.writer import DiskGate
 
 SYMBOLS = ("BTCUSDT", "ETHUSDT")
 
@@ -100,6 +101,18 @@ async def test_soak_smoke_two_symbols_reconciles(tmp_path: Path) -> None:
     assert r.produced_rows == {"all": r.written_rows["all"]} and r.dropped_rows == {"all": 0}
     assert set(r.backlog_rows) == {0} and set(r.spill_bytes) == {0}  # sampled at flush bounds
     assert r.flush_ms and r.hot_bytes > 0 and r.critical_events == 0
+
+
+async def test_reconciliation_counts_gated_drops_in_rows_and_balances(tmp_path: Path) -> None:
+    """The writer's `messages_dropped` is a row count (the disk gate adds one per row it drops),
+    so produced == written + dropped holds with drops, not only at zero (r1 review)."""
+    gate = DiskGate(halted=lambda: True, position_open=lambda s: s == "BTCUSDT")
+    cfg = LoadConfig("smoke", 200, 1, SYMBOLS, tmp_path / "wal", clock="virtual", rss=_rss,
+                     disk_gate=gate)  # fmt: skip
+    r = await harness.run(cfg)
+    assert 0 < r.dropped_rows["all"] < r.produced_rows["all"]
+    assert r.produced_rows["all"] == r.written_rows["all"] + r.dropped_rows["all"]
+    assert check_reconciliation(r.produced_rows, r.written_rows, r.dropped_rows).passed
 
 
 def _verdict(passed: bool) -> Verdict:
