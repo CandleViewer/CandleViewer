@@ -37,4 +37,5 @@ Source: `CONSTITUTION.md` §5 (C-5.1 to C-5.9), §9 #17; `docs/plan/21-database-
 - **Applied QuestDB DDL files are immutable (C-5.4).** `backend/db/questdb/NNNN_*.sql` is never edited, deleted
   or renamed once on `main`; fix forward with a new file. `backend/db/questdb/lockfile.json` pins each file's
   bytes, and CI (`migrations`, `tools/ci/verify_questdb_ddl_lock.py`) also compares the tree with the merge
-  base. A new file adds its entry in the same PR: `sha256sum` the file; nothing rewrites an entry.
+  base. A new file adds its entry in the same PR: `sha256sum` the file; nothing rewrites an entry. The edit
+  hook blocks an Edit or Write of an applied file; a shell edit (`sed -i`) never reaches it, so CI is the gate.
