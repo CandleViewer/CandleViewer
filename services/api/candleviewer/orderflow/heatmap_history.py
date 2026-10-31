@@ -22,6 +22,8 @@ a symbol and a time range.
 - **Clamp and paging.** At most `MAX_COLUMNS` columns: the bucket is coarsened along `BUCKETS`
   (`clamped`); past 60 000 ms, or when the price span exceeds `ROWS` rows, the newest columns
   that fit are served and `remainder` names the older rest (newest first).
+- **Bounds (C-2.18).** The reader yields cells a page at a time (`CELL_SPAN_ROWS`), folded and
+  dropped before the next; a reconstructed minute holds at most `BOOK_CHANGE_ROWS` deltas.
 - **Downsample.** A span older than `DOWNSAMPLE_AGE_US` is 1 s data (21 §7): its segment states
   `max(bucket, 1000)` and its rows weigh the native columns they stand for.
 
@@ -34,7 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import zlib
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final, Literal, Protocol
@@ -65,10 +67,19 @@ ANCHOR_STEP_US: Final = 60 * 1_000_000
 ANCHOR_LOOKBACK_US: Final = 300 * 1_000_000
 #: Snapshots skipped for a checksum mismatch before a minute is given up (left `samples = 0`).
 MAX_ANCHOR_TRIES: Final = 4
+#: C-2.18: no `CellSpan` a reader yields holds more rows; the adapters page by it, so a read
+#: never holds more than one page of stored rows (the grid it folds into is bounded by its axes).
+CELL_SPAN_ROWS: Final = 32_768
+#: C-2.18: the most recorded deltas one reconstructed minute may hold.
+BOOK_CHANGE_ROWS: Final = 262_144
 
 
 class HeatmapQueryError(ValueError):
     """A query outside 22's parameter ranges; the HTTP edge validates first, so this is a bug."""
+
+
+class HeatmapReadLimit(RuntimeError):
+    """A page or a minute of recorded rows past `CELL_SPAN_ROWS` / `BOOK_CHANGE_ROWS`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,8 +133,9 @@ class HeatmapHistoryReader(Protocol):
         """µs of the oldest recorded heatmap cell, book snapshot or delta; None if none (BQ-3)."""
         ...
 
-    async def cells(self, symbol: str, lo_us: int, hi_us: int) -> Sequence[CellSpan]:
-        """Stored cells in `[lo_us, hi_us)`, one span per tier read, oldest first."""
+    def cells(self, symbol: str, lo_us: int, hi_us: int) -> AsyncIterator[CellSpan]:
+        """Stored cells in `[lo_us, hi_us)` as contiguous spans, oldest first, each at most
+        `CELL_SPAN_ROWS` rows and never splitting a native column."""
         ...
 
     async def book_anchor(
@@ -135,7 +147,8 @@ class HeatmapHistoryReader(Protocol):
     async def book_changes(
         self, symbol: str, depth: int, lo_us: int, hi_us: int
     ) -> Sequence[BookChange]:
-        """`depth` deltas in `[lo_us, hi_us)`, in recorded order."""
+        """`depth` deltas in `[lo_us, hi_us)`, in recorded order; past `BOOK_CHANGE_ROWS` it
+        raises `HeatmapReadLimit`."""
         ...
 
 
@@ -230,6 +243,9 @@ def _plan(q: HeatmapQuery, lo_us: int) -> _Plan:
         c0, end = lo_us // bus * bus, -(-q.to_us // bus) * bus
         if (end - c0) // bus <= MAX_COLUMNS:
             return _Plan(bucket, c0, end, bucket != q.time_bucket_ms, None)
+    bucket = BUCKETS[-1]
+    bus = bucket * _US_PER_MS
+    end = -(-q.to_us // bus) * bus
     start = end - MAX_COLUMNS * bus
     return _Plan(bucket, start, end, bucket != q.time_bucket_ms, (lo_us, start))
 
@@ -504,17 +520,19 @@ async def read_heatmap_history(
     grid = _Grid(plan.c0_us, plan.bucket_ms, columns, q.price_grouping, q.tick_size)
     downsampled_before = now_us - DOWNSAMPLE_AGE_US
     await _checkpoint(checkpoint)
-    spans = await reader.cells(q.symbol, plan.c0_us, plan.end_us)
     pieces: list[tuple[int, int, SegmentSource]] = []
-    unverified = 0
-    if any(span.rows for span in spans):
-        for span in spans:
-            await _checkpoint(checkpoint)
+    unverified, held = 0, False
+    async for span in reader.cells(q.symbol, plan.c0_us, plan.end_us):
+        if len(span.rows) > CELL_SPAN_ROWS:
+            raise HeatmapReadLimit("a stored-cell span holds more rows than one page may")
+        if span.rows:
+            held = True
             await asyncio.to_thread(grid.fold_cells, span.rows, downsampled_before)
-            pieces.append((span.lo_us, span.hi_us, span.tier))
-    else:  # BQ-3: the recorded book only where no cell was stored
+        pieces.append((span.lo_us, span.hi_us, span.tier))
+        await _checkpoint(checkpoint)
+    if not held:  # BQ-3: the recorded book only where no cell was stored
         unverified = await _reconstruct(reader, q, grid, checkpoint)
-        pieces.append((plan.c0_us, plan.end_us, "reconstructed"))
+        pieces = [(plan.c0_us, plan.end_us, "reconstructed")]
     page = await asyncio.to_thread(grid.page)
     bid, ask, peak = await asyncio.to_thread(_normalize, page, q.normalize)
     c0 = plan.c0_us + page.first_col * bus
@@ -543,7 +561,9 @@ async def read_heatmap_history(
 
 
 __all__ = [
+    "BOOK_CHANGE_ROWS",
     "BUCKETS",
+    "CELL_SPAN_ROWS",
     "DOWNSAMPLE_AGE_US",
     "MAX_COLUMNS",
     "BookAnchor",
@@ -554,6 +574,7 @@ __all__ = [
     "HeatmapHistoryReader",
     "HeatmapQuery",
     "HeatmapQueryError",
+    "HeatmapReadLimit",
     "Segment",
     "book_checksum",
     "read_heatmap_history",

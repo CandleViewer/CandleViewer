@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import itertools
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -18,6 +19,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from candleviewer.orderflow.heatmap_history import (
+    CELL_SPAN_ROWS,
     DOWNSAMPLE_AGE_US,
     MAX_COLUMNS,
     BookAnchor,
@@ -26,6 +28,7 @@ from candleviewer.orderflow.heatmap_history import (
     CellSpan,
     HeatmapQuery,
     HeatmapQueryError,
+    HeatmapReadLimit,
     book_checksum,
     read_heatmap_history,
 )
@@ -113,15 +116,22 @@ class FakeReader:
     async def first_available(self, symbol: str) -> int | None:
         return self.first
 
-    async def cells(self, symbol: str, lo_us: int, hi_us: int) -> Sequence[CellSpan]:
+    async def cells(self, symbol: str, lo_us: int, hi_us: int) -> AsyncIterator[CellSpan]:
         self.calls.append(("cells", lo_us, hi_us))
         cut = hi_us if self.hot_from_us is None else min(max(self.hot_from_us, lo_us), hi_us)
-        spans: list[CellSpan] = []
         for a, b, tier in ((lo_us, cut, "cold"), (cut, hi_us, "hot")):
-            if b > a:
-                rows = [r for r in self.rows if a <= r.ts_us < b]
-                spans.append(CellSpan(a, b, "cold" if tier == "cold" else "hot", rows))
-        return spans
+            if b > a:  # pages of whole native columns, as the adapters serve them (C-2.18)
+                side: Literal["hot", "cold"] = "cold" if tier == "cold" else "hot"
+                start, page = a, list[CellRow]()
+                for ts, group in itertools.groupby(
+                    (r for r in self.rows if a <= r.ts_us < b), key=lambda r: r.ts_us
+                ):
+                    column = list(group)
+                    if page and len(page) + len(column) > CELL_SPAN_ROWS:
+                        yield CellSpan(start, ts, side, page)
+                        start, page = ts, []
+                    page += column
+                yield CellSpan(start, b, side, page)
 
     async def book_anchor(
         self, symbol: str, depth: int, at_us: int, *, not_before_us: int
@@ -391,3 +401,19 @@ async def test_every_snapshot_failing_its_checksum_leaves_the_minute_empty() -> 
     out = await read_heatmap_history(reader, _q(lo, hi), now_us=hi)
     assert out.samples == (0,) and out.prices == ()
     assert not [c for c in reader.calls if c[0] == "changes"]
+
+
+async def test_a_span_past_the_page_bound_is_refused() -> None:
+    """C-2.18: a reader yielding more than `CELL_SPAN_ROWS` rows in one span is refused."""
+    lo = BASE_US
+    rows = [CellRow(lo, 1.0, 1.0, 0.0, 1, False)] * (CELL_SPAN_ROWS + 1)
+    with pytest.raises(HeatmapReadLimit):
+        await read_heatmap_history(FakeReader(rows, first=lo), _q(lo, lo + MIN_US), now_us=lo)
+
+
+async def test_clamp_past_every_bucket_pages_at_the_coarsest() -> None:
+    """Review r1: past 60 000 ms the plan is the coarsest bucket, clamped, the newest page."""
+    hi = BASE_US + 48 * HOUR_US
+    out = await read_heatmap_history(FakeReader(first=BASE_US), _q(BASE_US, hi), now_us=hi)
+    assert out.effective_bucket_ms == 60000 and out.clamped
+    assert len(out.times_us) == MAX_COLUMNS and out.remainder == (BASE_US, out.from_us)
