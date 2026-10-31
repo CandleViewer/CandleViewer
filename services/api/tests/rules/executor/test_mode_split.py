@@ -26,7 +26,7 @@ from candleviewer.observability.health import HealthStatus
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.rules import service as rules_service
 from candleviewer.rules.evaluator.engine import EvaluationResult
-from candleviewer.rules.executor.dispatch import FireDispatch
+from candleviewer.rules.executor.dispatch import AuditDispatch, FireDispatch
 from candleviewer.rules.ir.models import MetricRef, RuleScope
 from candleviewer.rules.manager import (
     TICK_DISARM_TIMEOUT_S,
@@ -74,13 +74,15 @@ class Rig:
         *,
         ir_mode: str = "simulate",
         actions: Sequence[dict[str, Any]] = ONE_ACTION,
+        accounts: Sequence[uuid.UUID] = (ACCOUNT,),
     ) -> str:
-        """A rule on ACCOUNT whose stored row is in `mode` while its stored IR says `ir_mode`."""
+        """A rule on `accounts` whose stored row is in `mode` while its stored IR says `ir_mode`."""
         raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
         raw["name"] = f"rule-{len(await self.store.all())}"
         raw["conditions"]["right"]["const"] = 100
         raw["actions"] = [dict(a) for a in actions]
-        raw["scope"] = {"level": "account", "account_ids": [str(ACCOUNT)], "symbols": ["BTCUSDT"]}
+        ids = [str(a) for a in accounts]
+        raw["scope"] = {"level": "account", "account_ids": ids, "symbols": ["BTCUSDT"]}
         rid = str((await self.mgr.create(raw, ACTOR))["id"])
         row = await self.row(rid)
         row.mode, row.armed_by = mode, (str(OWNER) if mode == "armed" else None)
@@ -92,6 +94,11 @@ class Rig:
         assert self.svc._dispatch is not None
         return self.svc._dispatch
 
+    @property
+    def audit_queue(self) -> AuditDispatch:
+        assert self.svc._audits is not None
+        return self.svc._audits
+
     async def fire(self, price: str = "150") -> None:
         """One tick: the rules evaluate and their fires are queued, not yet run."""
         self.clock.t += 2_000  # past the default cooldown
@@ -101,8 +108,9 @@ class Rig:
 
     async def settle(self) -> None:
         await asyncio.gather(*self.svc._tasks)
-        async with asyncio.timeout(2):  # a guard: a fire that never ends fails the test
+        async with asyncio.timeout(10):  # a guard: a fire that never ends fails the test
             await self.dispatch.idle()
+            await self.audit_queue.idle()
 
 
 @pytest.fixture
@@ -249,7 +257,7 @@ def _fail_the_dispatch_read(
 
     async def get(rule_id: str) -> RuleRow | None:
         task = asyncio.current_task()
-        if task is not None and task.get_name() == "rule-dispatch-worker":
+        if task is not None and task.get_name().startswith("rule-dispatch-worker"):
             await failure()
         return await read(rule_id)
 
@@ -305,7 +313,8 @@ async def test_a_failed_reread_at_dispatch_sends_nothing_and_is_counted(
 async def test_a_cancelled_reread_is_never_swallowed(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Cancellation is no failed read: the worker ends cancelled, nothing sent or counted."""
+    """Cancellation is no failed read: the worker ends cancelled, nothing sent or counted. A
+    cancel neither `stop()` nor the group issued costs the pool that worker: logged by its name."""
     await rig.add("armed")
     await rig.fire()
     workers: list[asyncio.Task[Any]] = []
@@ -318,9 +327,12 @@ async def test_a_cancelled_reread_is_never_swallowed(
         await asyncio.Event().wait()
 
     _fail_the_dispatch_read(monkeypatch, rig.store, cancelled_mid_read)
-    await rig.settle()  # the cancelled worker leaves its rule's lane whole: the queue is idle
+    with capture_logs() as logs:
+        await rig.settle()  # the cancelled worker leaves its rule's lane whole: the queue is idle
     (worker,) = workers
     assert worker.cancelled()
+    lost = {"event": "rules.dispatch_worker_lost", "log_level": "error"}
+    assert [e for e in logs if e["log_level"] == "error"] == [lost | {"worker": worker.get_name()}]
     assert rig.executor == [] and rig.simulated == []
     assert not rig.svc.dispatch_reread_failed_total and not rig.svc.actions_blocked_total
 
