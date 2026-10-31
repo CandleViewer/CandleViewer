@@ -2452,13 +2452,13 @@ Drag preview                Drop zones
 
 ### SCR-116 — Appearance & density settings
 
-- **Type:** Section. Theme (dark / light / high-contrast / CVD-safe deuteranopia & protanopia / tritanopia), accent, chart palette, density (compact / cosy / comfortable), font size scale (100/112/125/150 %), grid line intensity, and a live preview tile showing a chart cell, a ladder row and a positions row under the current choice.
+- **Type:** Section. Theme (dark / light / high-contrast, with a separate "match system" switch; the colour-vision-safe options are a chart-palette choice, not a theme), accent, chart palette (including the colour-vision-safe presets), density (compact / comfortable, the runtime's two, BQ-19; the chart-only `dense` is a per-panel override set in SCR-031, not offered here), font size scale (100/112/125/150 %), grid line intensity, and a live preview tile showing a chart cell, a ladder row and a positions row under the current choice.
 - **A11y:** contrast of every chosen combination is validated at selection time; a warning appears if a custom palette falls below 4.5:1 ("This combination fails contrast — text may be hard to read.").
 - **Components:** CMP-003 SegmentedControl, CMP-006 RadioGroup, CMP-031 ColorSwatch / ThemeChip, CMP-037 SwatchLegendItem, CMP-062 ThemeSwitcher, CMP-063 DensityToggle, CMP-086 SettingsNav / SettingsLayout, CMP-228 PreviewTile.
 - **Stories:** US-SET-004, US-SET-005.
 - **Performance:** Theme and density changes are CSS custom-property swaps applied within one frame; they never remount panels or drop GL contexts. Font-size changes trigger a single layout pass.
 - **Analytics/audit:** `appearance.theme_changed`, `appearance.density_changed`, `appearance.font_size_changed`, `appearance.chart_palette_changed` (analytics).
-- **Design sign-off acceptance checklist:** [ ] dark, light and high-contrast themes drawn [ ] compact / comfortable / spacious density drawn on a real grid [ ] font-size scale with the 125% and 200% zoom cases checked [ ] chart palette selection incl. colour-vision-safe presets, previewed on real footprint and heatmap samples [ ] 'follow system theme' option [ ] reset
+- **Design sign-off acceptance checklist:** [ ] dark, light and high-contrast themes drawn [ ] compact / comfortable density drawn on a real grid [ ] font-size scale with the 125% and 200% zoom cases checked [ ] chart palette selection incl. colour-vision-safe presets, previewed on real footprint and heatmap samples [ ] 'follow system theme' option [ ] reset
 
 ### SCR-117 — Accessibility settings
 
