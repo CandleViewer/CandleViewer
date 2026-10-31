@@ -4483,7 +4483,9 @@ CREATE TABLE funding_rates (
   DEDUP UPSERT KEYS(ts, symbol);
 ```
 
-`open_interest` takes two writers that never collide on the dedup key (E24-T01, #665): the ticker tap writes `interval='1s'`, `source='ws_ticker'` (the first ticker per symbol per second that carries both `oi` and `oi_value`; a ticker without them writes nothing, never 0), and the REST backfill writes `interval` in `5min`…`1d`, `source='rest'`, with `oi_value` NULL (Bybit's history carries no USD value). A re-run backfill rewrites the same keys. `/market/open-interest` reads one `(symbol, interval, source)` series per request (22).
+`open_interest` takes two writers that never collide on the dedup key (E24-T01, #665): the ticker tap writes `interval='1s'`, `source='ws_ticker'` (the first ticker per symbol per second that carries `oi`; a ticker without it writes nothing, never 0, and one without `oi_value` writes that column NULL), and the REST backfill writes `interval` in `5min`…`1d`, `source='rest'`, with `oi_value` NULL (Bybit's history carries no USD value). A re-run backfill rewrites the same keys. `/market/open-interest` reads one `(symbol, interval, source)` series per request (22).
+
+`open_interest` keeps `PARTITION BY MONTH` from `0001_core_tables.sql`, where `60-database-migrations.md` names DAY: the series is sparse (at most one row per symbol per second, and one per 5 min or more for the history), so a day's partition would hold little, and changing it is a storage migration E24-T01 does not carry (no migration, BQ-8 of the ruling on #665). The dedup key is the four columns above; the six-column key is `liquidations`' (§4.6).
 
 ### 4.8 `bars_<type>` — locally built bars
 

@@ -12,7 +12,11 @@ Invariants (STRIDE `docs/security/threat-models/E24-derivatives.md` D5/D8/D12):
 - a request can only queue a backfill for a listed symbol, once per `(symbol, interval)` and
   older window, into a bounded queue drained by one worker (concurrency 1 per symbol);
 - the "older window" floor is raised only when a job completes, so a failed job (retries
-  exhausted, page rejected, store error) lets the next request queue it again.
+  exhausted, page rejected, store error) lets the next request queue it again;
+- a request queues only the span older than the oldest stored point, so a page-capped job is
+  resumed below what it wrote and each cycle makes progress;
+- every fetcher and store await has its own timeout (`FETCH_TIMEOUT_S`, `STORE_TIMEOUT_S`): a
+  fetch that times out is a retryable failure, a store write that does fails the job.
 """
 
 from __future__ import annotations
@@ -70,6 +74,9 @@ JITTER_FRACTION: Final = 0.2
 #: Bounded work queue and bounded set of `(symbol, interval)` keys a request may register.
 QUEUE_MAX: Final = 64
 MAX_KEYS: Final = 512
+#: Per-await bounds in the backfill (C-2.18): one venue page, one store call.
+FETCH_TIMEOUT_S: Final = 30.0
+STORE_TIMEOUT_S: Final = 30.0
 #: A ticker series has a gap when two points are further apart than this.
 TICKER_GAP_US: Final = 10_000_000
 
@@ -145,8 +152,11 @@ class OiBackfill:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         random_fn: Callable[[], float],
         clock_s: Callable[[], float] = time.monotonic,
+        fetch_timeout_s: float = FETCH_TIMEOUT_S,
+        store_timeout_s: float = STORE_TIMEOUT_S,
     ) -> None:
         self._store, self._fetcher = store, fetcher
+        self._fetch_timeout_s, self._store_timeout_s = fetch_timeout_s, store_timeout_s
         self._sleep, self._random, self._clock = sleep, random_fn, clock_s
         self._queue: asyncio.Queue[tuple[str, str, TimeWindow]] = asyncio.Queue(QUEUE_MAX)
         self._pending: set[tuple[str, str]] = set()
@@ -219,7 +229,8 @@ class OiBackfill:
                 for reason in page.rejected_reasons:
                     deriv_upstream_schema_rejected_total.labels("open_interest", reason).inc()
                 rows = [p for p in page if window.start_us <= p.ts_us <= window.end_us]
-                await self._store.write_points(rows)
+                async with asyncio.timeout(self._store_timeout_s):
+                    await self._store.write_points(rows)
                 deriv_oi_rows_written_total.labels("rest").inc(len(rows))
                 written += len(rows)
                 cursor = page.next_cursor
@@ -238,7 +249,19 @@ class OiBackfill:
         label = symbol_label(symbol)
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
-                return await self._fetcher(symbol, interval, window.start_us, window.end_us, cursor)
+                async with asyncio.timeout(self._fetch_timeout_s):
+                    return await self._fetcher(
+                        symbol, interval, window.start_us, window.end_us, cursor
+                    )
+            except TimeoutError:
+                deriv_oi_backfill_pages_total.labels(label, interval, "error").inc()
+                logger().warning(
+                    "oi_backfill_timeout", symbol=label, interval=interval, attempt=attempt
+                )
+                if attempt == MAX_ATTEMPTS:
+                    return None
+                await self._sleep(self.backoff_s(attempt))
+                continue
             except OiRowRejected as exc:
                 deriv_upstream_schema_rejected_total.labels("open_interest", exc.reason).inc()
                 deriv_oi_backfill_pages_total.labels(label, interval, "rejected").inc()
@@ -344,7 +367,10 @@ class OpenInterestService:
         has_more = len(rows) > limit
         rows = rows[:limit]
         if listed and self.backfill is not None and (coverage is None or start < coverage[0]):
-            self.backfill.request(symbol, interval, TimeWindow(start, end))
+            # Only the span below the oldest stored point: a page-capped job leaves its rows,
+            # so the next request resumes under them and the floor rises, never from the top.
+            older_end = end if coverage is None else min(end, coverage[0] - 1)
+            self.backfill.request(symbol, interval, TimeWindow(start, older_end))
         gaps = find_gaps(
             rows,
             start_us=read_from,

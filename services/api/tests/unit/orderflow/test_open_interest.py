@@ -334,3 +334,100 @@ async def test_oi_unlisted_symbol_raises_and_first_request_queues_one_backfill()
         )
         assert series.points == () and series.coverage is None and series.gaps
         assert backfill._queue.qsize() == queued
+
+
+async def test_oi_requeue_after_coverage_asks_only_the_span_older_than_the_stored_floor() -> None:
+    store = InMemoryOiStore()
+    await _backfill(store, _Fetcher()).run_job("BTCUSDT", "5min", WINDOW)
+    backfill = _backfill(InMemoryOiStore(), _Fetcher())
+    await _service(store, backfill=backfill).series(
+        "BTCUSDT", interval="5min", start_us=FIRST - 10 * STEP, end_us=LAST + 1, limit=10,
+        cursor=None,
+    )  # fmt: skip
+    queued = backfill._queue.get_nowait()  # up to, not including, the oldest stored point
+    assert queued == ("BTCUSDT", "5min", TimeWindow(FIRST - 10 * STEP, FIRST - 1))
+
+
+class _Venue:
+    """A long newest-first history that honours `[start_us, end_us]`, `per_page` rows a page."""
+
+    def __init__(self, rows: int, per_page: int) -> None:
+        self.ts = [k * STEP for k in range(1, rows + 1)]
+        self.per_page = per_page
+        self.calls = 0
+
+    async def __call__(
+        self, symbol: str, interval: str, start_us: int, end_us: int, cursor: str | None
+    ) -> OiPage:
+        self.calls += 1
+        hits = [t for t in reversed(self.ts) if start_us <= t <= end_us]
+        at = int(cursor or 0)
+        more = at + self.per_page < len(hits)
+        return OiPage(
+            [OiPoint(t, symbol, Decimal(t // STEP), None, interval, "rest")
+             for t in hits[at : at + self.per_page]],
+            next_cursor=str(at + self.per_page) if more else None,
+        )  # fmt: skip
+
+
+async def test_oi_page_capped_backfill_resumes_from_the_oldest_stored_point_and_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A capped job leaves its rows; the next request resumes below them, never from the top."""
+    monkeypatch.setattr("candleviewer.orderflow.open_interest.MAX_PAGES_PER_JOB", 2)
+    venue, store = _Venue(rows=50, per_page=5), InMemoryOiStore()
+    backfill = OiBackfill(store=store, fetcher=venue, sleep=_Sleep(), random_fn=lambda: 0.5)
+    svc = OpenInterestService(
+        store=store, listed=lambda s: True, backfill=backfill, clock_s=lambda: 60 * STEP / S
+    )
+    floors: list[int] = []
+    for _ in range(5):  # 50 rows / (2 pages x 5 rows) = 5 capped jobs at most
+        await svc.series(
+            "BTCUSDT", interval="5min", start_us=0, end_us=55 * STEP, limit=1, cursor=None
+        )
+        await _drain(backfill)
+        cov = await store.coverage("BTCUSDT", "5min", "rest")
+        assert cov is not None
+        floors.append(cov[0])
+    assert floors == [41 * STEP, 31 * STEP, 21 * STEP, 11 * STEP, STEP]  # progress every cycle
+    assert len(store) == 50
+    await svc.series("BTCUSDT", interval="5min", start_us=0, end_us=55 * STEP, limit=1, cursor=None)
+    await _drain(backfill)  # one more short job reaches the venue's end and completes
+    calls = venue.calls
+    await svc.series("BTCUSDT", interval="5min", start_us=0, end_us=55 * STEP, limit=1, cursor=None)
+    assert backfill._queue.qsize() == 0 and venue.calls == calls  # the floor holds: no re-fetch
+
+
+class _Hang(_Fetcher):
+    async def __call__(
+        self, symbol: str, interval: str, start_us: int, end_us: int, cursor: str | None
+    ) -> OiPage:
+        self.calls.append(cursor)
+        await asyncio.Event().wait()  # never answers; the per-await timeout ends it
+        raise AssertionError("unreachable")
+
+
+async def test_oi_backfill_fetch_timeout_is_a_retryable_failure_that_completes_nothing() -> None:
+    fetcher, sleep, store = _Hang(), _Sleep(), InMemoryOiStore()
+    backfill = OiBackfill(
+        store=store, fetcher=fetcher, sleep=sleep, random_fn=lambda: 0.5, fetch_timeout_s=0
+    )
+    with capture_logs() as logs:
+        assert await backfill.run_once("BTCUSDT", "5min", WINDOW) is False
+    assert len(fetcher.calls) == MAX_ATTEMPTS and len(sleep.delays) == MAX_ATTEMPTS - 1
+    assert [e["event"] for e in logs] == ["oi_backfill_timeout"] * MAX_ATTEMPTS
+    assert backfill._floor == {} and len(store) == 0
+
+
+async def test_oi_backfill_store_timeout_fails_the_job_and_raises_no_floor() -> None:
+    class _Stuck(InMemoryOiStore):
+        async def write_points(self, rows: Sequence[OiPoint]) -> None:
+            await asyncio.Event().wait()
+
+    backfill = OiBackfill(
+        store=_Stuck(), fetcher=_Fetcher(), sleep=_Sleep(), random_fn=lambda: 0.5,
+        store_timeout_s=0,
+    )  # fmt: skip
+    with pytest.raises(TimeoutError):
+        await backfill.run_once("BTCUSDT", "5min", WINDOW)
+    assert backfill._floor == {}

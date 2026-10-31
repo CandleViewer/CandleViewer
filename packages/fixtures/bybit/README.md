@@ -192,8 +192,10 @@ account id.
 No recording holds a `GET /v5/market/open-interest` reply yet. `rest/docs-open-interest.json` is
 the docs page's Response Example (`market/open-interest`, at `bybit-exchange/docs` commit
 `19518b90fb36`), keys and values unchanged (whitespace compacted): an inverse `BTCUSD` page, so
-evidence of the documented shape only. The two `open_interest_BTCUSDT_5min_page*.json` files take
-that row and envelope shape with generated (seeded) linear values, built by `build_corpus.py`.
+evidence of the documented shape only. The two `open_interest_BTCUSDT_5min_page*.json` files are
+documented-shape (exception #1778 A), not docs-transcribed: they take that row and envelope shape,
+read from the page retrieved 2026-10-31, with generated (seeded) linear values, built by
+`build_corpus.py`.
 A recording made with `capture_fixture.py --rest-path` replaces all three.
 
 - `docs-open-interest.json`: source: docs-transcribed, `market/open-interest`; 2026-10-31; symbol BTCUSD (inverse); env none; redaction none.

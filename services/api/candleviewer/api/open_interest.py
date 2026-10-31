@@ -2,7 +2,9 @@
 
 Contract-exact: top-level `symbol`, `items` `{t, open_interest, open_interest_value, interval,
 source}` ascending by `t`, and `OpenInterestPageMeta` (`Page` meta plus `coverage`). RBAC, the
-problem documents and the 501/401/403 order mirror `api/funding.py` (C-12.4). Bounds,
+problem documents and the 501/401/403 order mirror `api/funding.py` (C-12.4); `symbol` and
+`limit` are taken as optional text and checked after them, so a missing or malformed one is
+400 `validation_failed` (22), not the global 422 ahead of the RBAC checks. Bounds,
 `invalid_time_range` / `invalid_cursor` and the unlisted symbol are refused by
 `OpenInterestService` BEFORE any storage query (STRIDE D12).
 """
@@ -10,6 +12,7 @@ problem documents and the 501/401/403 order mirror `api/funding.py` (C-12.4). Bo
 from __future__ import annotations
 
 import inspect
+import re
 from collections.abc import Callable
 from typing import Protocol
 
@@ -37,6 +40,9 @@ from candleviewer.orderflow.open_interest import OiSeries
 from candleviewer.storage.errors import StorageTierUnavailable
 
 _REQUIRED_PERMISSION = "marketdata:read"
+#: `limit` arrives as text and is parsed after the RBAC checks, so a malformed one is 22's
+#: 400 `validation_failed` behind the 401 / 403, never the framework's global 422 before them.
+_LIMIT_RE = re.compile(r"^-?[0-9]{1,9}$")
 _ENDPOINT = "open_interest"
 
 
@@ -100,12 +106,12 @@ def make_open_interest_router(
     @router.get("/market/open-interest")
     async def get_open_interest(
         request: Request,
-        symbol: str,
+        symbol: str | None = Query(default=None),
         interval: str = Query(default="5min"),
         from_: str | None = Query(default=None, alias="from"),
         to: str | None = Query(default=None, alias="to"),
         cursor: str | None = Query(default=None),
-        limit: int = Query(default=DEFAULT_LIMIT),
+        limit: str | None = Query(default=None),
     ) -> JSONResponse:
         if principal_resolver is None:
             return _problem(
@@ -117,8 +123,10 @@ def make_open_interest_router(
             return _problem(401, "unauthenticated", "Unauthorized", "no verified session")
         if not principal.has(_REQUIRED_PERMISSION):
             return _problem(403, "forbidden", "Forbidden", f"requires {_REQUIRED_PERMISSION}")
-        if not _SYMBOL_RE.fullmatch(symbol):
+        if symbol is None or not _SYMBOL_RE.fullmatch(symbol):
             return _bad("validation_failed", "invalid symbol")
+        if limit is not None and not _LIMIT_RE.fullmatch(limit):
+            return _bad("validation_failed", "limit must be an integer")
         reader = reader_provider()
         if reader is None:
             return _problem(
@@ -130,7 +138,7 @@ def make_open_interest_router(
                 interval=interval,
                 start_us=_parse_time(from_),
                 end_us=_parse_time(to),
-                limit=limit,
+                limit=DEFAULT_LIMIT if limit is None else int(limit),
                 cursor=cursor,
             )
         except ValueError:  # malformed from/to timestamp

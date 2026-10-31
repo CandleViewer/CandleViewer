@@ -16,6 +16,9 @@ MAX_WINDOW_DAYS_OI: Final = 400
 MAX_WINDOW_DAYS_LIQ: Final = 31
 MAX_LIMIT: Final = 500
 DEFAULT_LIMIT: Final = 100
+#: Not read here: the enforced TTL is `funding.CURSOR_TTL_S`, which `funding.decode_cursor`
+#: (the one cursor codec both derivatives routes share) applies; `test_deriv_limits.py` pins
+#: the two equal, so this module stays the one place the bound is stated.
 CURSOR_TTL_S: Final = 3600
 CURSOR_MAX_LEN: Final = 512
 #: REST `cluster_window_ms` ceiling; WS keeps the 23 topic registry's 5000 (`ws/topics.py`).

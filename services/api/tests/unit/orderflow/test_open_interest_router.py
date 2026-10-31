@@ -195,3 +195,33 @@ def test_oi_403_without_marketdata_read() -> None:
         URL, params=_PARAMS
     )
     assert (r.status_code, r.json()["code"], store.queries) == (403, "forbidden", 0)
+
+
+_NO_SYMBOL = {k: v for k, v in _PARAMS.items() if k != "symbol"}
+
+
+@pytest.mark.parametrize(
+    "params",
+    [_NO_SYMBOL, {**_PARAMS, "limit": "ten"}, {**_PARAMS, "limit": "1.5"}],
+    ids=["missing-symbol", "word-limit", "fractional-limit"],
+)
+def test_oi_malformed_query_is_401_403_before_400_never_the_global_422(
+    params: dict[str, object],
+) -> None:
+    """22: a malformed parameter is 400 `validation_failed`, and only after the RBAC checks."""
+    store = _SpyStore()
+    r = _client(_service(store), None).get(URL, params=params)
+    assert (r.status_code, r.json()["code"]) == (401, "unauthenticated")
+    r = _client(_service(store), _Principal(frozenset())).get(URL, params=params)
+    assert (r.status_code, r.json()["code"]) == (403, "forbidden")
+    r = _client(_service(store)).get(URL, params=params)
+    assert (r.status_code, r.json()["code"]) == (400, "validation_failed")
+    assert r.headers["content-type"].startswith("application/problem+json")
+    assert store.queries == 0
+
+
+async def test_oi_limit_absent_takes_the_default_and_a_signed_integer_is_range_checked() -> None:
+    store = await _seeded()
+    assert _client(_service(store)).get(URL, params=_PARAMS).status_code == 200
+    r = _client(_service(store)).get(URL, params={**_PARAMS, "limit": "-1"})
+    assert (r.status_code, r.json()["code"]) == (400, "validation_failed")

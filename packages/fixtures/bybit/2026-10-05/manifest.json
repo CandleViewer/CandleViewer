@@ -140,7 +140,8 @@
       "size_cap_bytes": 32000,
       "source_url": "https://bybit-exchange.github.io/docs/v5/market/open-interest",
       "source_ref": "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921:docs/v5/market/open-interest.mdx",
-      "note": "row and envelope shape transcribed from the docs page (rest/docs-open-interest.json); values generated (seeded)"
+      "retrieved": "2026-10-31",
+      "note": "documented-shape, not docs-transcribed and not a live capture: the row and envelope shape follow the docs page retrieved 2026-10-31 (rest/docs-open-interest.json, the transcription); every value is generated (seeded)"
     },
     {
       "path": "rest/open_interest_BTCUSDT_5min_page1.json",
@@ -154,7 +155,8 @@
       "size_cap_bytes": 32000,
       "source_url": "https://bybit-exchange.github.io/docs/v5/market/open-interest",
       "source_ref": "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921:docs/v5/market/open-interest.mdx",
-      "note": "row and envelope shape transcribed from the docs page (rest/docs-open-interest.json); values generated (seeded)"
+      "retrieved": "2026-10-31",
+      "note": "documented-shape, not docs-transcribed and not a live capture: the row and envelope shape follow the docs page retrieved 2026-10-31 (rest/docs-open-interest.json, the transcription); every value is generated (seeded)"
     },
     {
       "path": "rest/recent_trade_BTCUSDT.json",

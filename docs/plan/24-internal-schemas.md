@@ -384,6 +384,8 @@ class OpenInterestEvent(MarketEvent):
 
 Live OI arrives on `tickers.{symbol}` (100 ms) → `interval="tick"`, `origin="ws_ticker"`. History comes from `GET /v5/market/open-interest` (`intervalTime` 5min…1d, `limit` 1–200 default 50, cursor-paginated) → `origin="rest_history"`. **Units matter:** for `linear`, `openInterest` is denominated in base coin and must be multiplied by price for USD; `openInterestValue` is already USD. Inverse is USD-denominated — out of scope but the field comment states it so a future adapter does not get it wrong.
 
+**As built (E24-T01, #665).** The stored and served series (21 §4.7, 22 `getOpenInterestHistory`) name the ticker series `interval="1s"`, `source="ws_ticker"` (at most one point per symbol per second; a ticker without OI writes nothing, never 0, and one without the USD value writes it `null`), and the history `5min`…`1d`, `source="rest"`, whose `open_interest_value` is `null` because the venue's history carries none. The adapter's history fetcher returns one newest-first page of those points with the venue's cursor (`OiPage`, `domain/open_interest.py`), not `OpenInterestEvent`s; this sketch's `tick` and `rest_history` names are on no wire and in no table.
+
 ### 2.7 FundingEvent
 
 ```python
@@ -6652,3 +6654,11 @@ This number follows `main`'s last entry, §19.61; an entry that lands first take
 This number follows §19.62, as the orchestrator renumbered it on 2026-10-31 (21:21Z): #5185 (#914 PR2b) takes the next free number at its final rebase.
 
 - §15.5: `trade_group_definition.save_refused` joins the closed set and is registered: a definition create or replace refused for a membership across environments is recorded before its `400 environment_mismatch` (C-2.9, C-2.11), unbudgeted as the scope refusals are today; one unwritten is `503 audit_unavailable`, which 22 already declares. No operation changes. `21-database-schema.md` §3.10.1 lists it.
+
+### 19.63 2026-10-31 — §2.6, 22 `/market/open-interest`: the two open-interest series, their coverage and bounds (E24-T01, #665)
+
+This number follows `main`'s last entry, §19.62; an entry that lands first takes it, and this one moves to the next free number (#5000 and #5111 hold the two ahead of it, so it takes the next free number at its final rebase).
+
+- The orchestrator's ruling of record on #665 and #667 (BQ-3 to BQ-5, BQ-12), contract first (C-6.1), additive: 22 `getOpenInterestHistory` gains `interval=1s` (the ticker series) beside `5min`…`1d`, and every item an `interval` and a `source` (`ws_ticker` or `rest`) in the new `OpenInterestPoint`, whose `open_interest_value` is `null` on a `rest` point; `meta` becomes `OpenInterestPageMeta`, `PageMeta` plus `coverage` (`from`, `to`, `native_interval`, `source`, `gaps[]`), so a missing span is reported, never filled; and the operation gains `400` (`invalid_time_range` over 400 days or unordered, `validation_failed` for `limit` outside 1–500 or a malformed `symbol`, `invalid_cursor`) and `422` for a well-formed symbol that is not listed, as on `/market/data-coverage`.
+- 22 `getLiquidations` gains the same `400` and `422` answers, `LiquidationsPageMeta` (`coverage`: `first_available_ts`, `covered_from`, `covered_to`, `no_coverage`), the cluster rule and `cluster_window_ms` 0–60000 on REST (WS stays 0–5000, the 23 topic registry); the code is E24-T03's (#667).
+- §2.6 states the series as built (`1s` / `ws_ticker`, `5min`…`1d` / `rest`) beside the sketch, whose `tick` and `rest_history` names are on no wire. `21-database-schema.md` §4.6 and §4.7 note the liquidations dedup key and the two `open_interest` writers. No WS frame, table, column, chart or `machine_hash` change, and no migration.

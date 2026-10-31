@@ -213,8 +213,9 @@ def funding_history(symbol: str, step_h: int) -> dict[str, Any]:
 #: newest first, over two cursor pages (limit 200), the last with an empty cursor.
 OI_ROWS = 260
 OI_T0 = KLINE_T0 - KLINE_T0 % 300_000  # on the 5min grid, like the venue's own timestamps
-OI_NOTE = ("row and envelope shape transcribed from the docs page "
-           "(rest/docs-open-interest.json); values generated (seeded)")  # fmt: skip
+OI_NOTE = ("documented-shape, not docs-transcribed and not a live capture: the row and envelope"
+           " shape follow the docs page retrieved 2026-10-31 (rest/docs-open-interest.json, the"
+           " transcription); every value is generated (seeded)")  # fmt: skip
 
 
 def oi_pages(symbol: str) -> list[dict[str, Any]]:
@@ -377,7 +378,7 @@ def build() -> list[dict[str, Any]]:
         m.append(_entry(rel, "BTCUSDT", "GET /v5/market/open-interest",
                         f"cursor paging: page {i} of 2 (limit 200, 260 rows)",
                         host=PUBLIC_REST_HOST, cap=32_000)
-                 | oi_docs | {"note": OI_NOTE})  # fmt: skip
+                 | oi_docs | {"retrieved": "2026-10-31", "note": OI_NOTE})  # fmt: skip
     m.append(_entry("rest/docs-open-interest.json", "BTCUSD", "GET /v5/market/open-interest",
                     "docs Response Example: 5 inverse rows, a nextPageCursor",
                     host="bybit-exchange.github.io", cap=4_000)
