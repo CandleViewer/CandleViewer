@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal, Protocol
 
 from candleviewer.orderflow.heatmap_history import (
@@ -96,7 +97,8 @@ def _split(lo_us: int, hi_us: int, cold: Sequence[TimeRange]) -> list[tuple[int,
 def _rows(cells: Sequence[HeatmapCell]) -> list[CellRow]:
     """Worker thread: one `CellRow` per `(ts, price)`, the copy read last winning."""
     last = {(c[0], c[1]): c for c in cells}
-    return [CellRow(*c) for c in last.values()]
+    # 24 §6.5: a stored DOUBLE reads back as `Decimal(str(x))`; sizes are not prices and stay float.
+    return [CellRow(c[0], Decimal(str(c[1])), c[2], c[3], c[4], c[5]) for c in last.values()]
 
 
 def _anchor(event: RecordedEvent | None) -> BookAnchor | None:

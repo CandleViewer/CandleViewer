@@ -28,7 +28,7 @@ import inspect
 import re
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Final, Protocol
 
@@ -60,6 +60,7 @@ from candleviewer.storage.errors import StorageError
 
 _REQUIRED_PERMISSION: Final = "marketdata:read"
 _SYMBOL: Final = re.compile(r"^[A-Z0-9]{2,20}USDT$")
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _NORMALIZE: Final[tuple[Normalize, ...]] = ("none", "column", "window")
 #: 22 `getHeatmap`: at most 2 backfills per user at once.
 MAX_PER_USER: Final = 2
@@ -96,7 +97,14 @@ def _ts_us(value: str) -> int:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return int(parsed.timestamp() * 1_000_000)
+    return (parsed - _EPOCH) // timedelta(microseconds=1)
+
+
+def _int(value: str) -> int | None:
+    """An ASCII decimal integer (optional sign), else `None`; no float, no underscores."""
+    text = value.strip()
+    digits = text[1:] if text[:1] in "+-" else text
+    return int(text) if digits.isascii() and digits.isdigit() and len(digits) <= 19 else None
 
 
 def _z(us: int) -> str:
@@ -170,9 +178,9 @@ def make_market_heatmap_router(
         from_: str | None = Query(default=None, alias="from"),
         to: str | None = Query(default=None),
         cursor: str | None = Query(default=None),  # length enforced by decode_cursor
-        time_bucket_ms: int = Query(default=1000),
-        price_grouping: int = Query(default=1),
-        depth: int = Query(default=200),
+        time_bucket_ms: str = Query(default="1000"),
+        price_grouping: str = Query(default="1"),
+        depth: str = Query(default="200"),
         normalize: str = Query(default="window"),
     ) -> Response:
         if principal_resolver is None:
@@ -187,9 +195,13 @@ def make_market_heatmap_router(
             return problem(403, "forbidden", "Forbidden", detail)
         if not _SYMBOL.fullmatch(symbol):
             return _invalid("symbol must be a USDT linear perpetual code.")
-        if time_bucket_ms not in BUCKETS or depth not in DEPTHS:
+        bucket, grouping, book_depth = _int(time_bucket_ms), _int(price_grouping), _int(depth)
+        if bucket is None or grouping is None or book_depth is None:
+            return _invalid("time_bucket_ms, price_grouping and depth must be integers.")
+        time_bucket_ms_, price_grouping_, depth_ = bucket, grouping, book_depth
+        if time_bucket_ms_ not in BUCKETS or depth_ not in DEPTHS:
             return _invalid("time_bucket_ms or depth is not one of the listed values.")
-        if not 1 <= price_grouping <= MAX_GROUPING or normalize not in _NORMALIZE:
+        if not 1 <= price_grouping_ <= MAX_GROUPING or normalize not in _NORMALIZE:
             return _invalid("price_grouping must be 1..1000 and normalize none, column or window.")
         if from_ is None:
             return _invalid("'from' is required.")
@@ -201,7 +213,7 @@ def make_market_heatmap_router(
         if start_us >= end_us:
             return _invalid("'from' must be before 'to'.")
         mode = next(m for m in _NORMALIZE if m == normalize)
-        series = f"{start_us}:{time_bucket_ms}:{price_grouping}:{depth}:{mode}"
+        series = f"{start_us}:{time_bucket_ms_}:{price_grouping_}:{depth_}:{mode}"
         scope = cursor_scope("heatmap", symbol, series)
         if cursor is not None:
             try:
@@ -227,7 +239,7 @@ def make_market_heatmap_router(
             if await request.is_disconnected():
                 raise _ClientGone
 
-        query = HeatmapQuery(symbol, start_us, end_us, time_bucket_ms, price_grouping, depth,
+        query = HeatmapQuery(symbol, start_us, end_us, time_bucket_ms_, price_grouping_, depth_,
                              mode, tick)  # fmt: skip
         started = time.perf_counter()
         try:

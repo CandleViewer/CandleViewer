@@ -53,7 +53,7 @@ def _cells_at(ts_us: int, column: dict[str, Any], *, estimated: bool = False) ->
     column at `ts_us` (21 §4.12: one row a populated level, its column's fields repeated)."""
     base, step = Decimal(column["price_min"]), Decimal(column["price_step"])
     return [
-        CellRow(ts_us, float(base + i * step), b, a, 1, estimated)
+        CellRow(ts_us, base + i * step, b, a, 1, estimated)
         for i, (b, a) in enumerate(zip(column["bids"], column["asks"], strict=True))
         if b or a
     ]
@@ -406,7 +406,7 @@ async def test_every_snapshot_failing_its_checksum_leaves_the_minute_empty() -> 
 async def test_a_span_past_the_page_bound_is_refused() -> None:
     """C-2.18: a reader yielding more than `CELL_SPAN_ROWS` rows in one span is refused."""
     lo = BASE_US
-    rows = [CellRow(lo, 1.0, 1.0, 0.0, 1, False)] * (CELL_SPAN_ROWS + 1)
+    rows = [CellRow(lo, Decimal("1.0"), 1.0, 0.0, 1, False)] * (CELL_SPAN_ROWS + 1)
     with pytest.raises(HeatmapReadLimit):
         await read_heatmap_history(FakeReader(rows, first=lo), _q(lo, lo + MIN_US), now_us=lo)
 

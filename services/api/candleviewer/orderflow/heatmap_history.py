@@ -87,7 +87,7 @@ class CellRow:
     """One stored `heatmap_cells` row (21 §4.12); `samples`/`estimated` NULL before E21-T02."""
 
     ts_us: int
-    price: float
+    price: Decimal
     bid_size: float
     ask_size: float
     samples: int | None
@@ -272,7 +272,6 @@ class _Grid:
     samples: list[int] = field(default_factory=list)
     estimated: list[bool] = field(default_factory=list)
     _seen: set[int] = field(default_factory=set)
-    _ticks_f: dict[float, int] = field(default_factory=dict)
     _ticks_d: dict[Decimal, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -292,14 +291,6 @@ class _Grid:
         if ticks is None:
             ticks = int(price.quantize(self.tick) / self.tick)
             self._ticks_d[price] = ticks
-        return ticks
-
-    def _ticks_of_float(self, price: float) -> int:
-        """24 §6.5: a stored DOUBLE reads back as `Decimal(str(x)).quantize(tick)`."""
-        ticks = self._ticks_f.get(price)
-        if ticks is None:
-            ticks = self._ticks_of_decimal(Decimal(str(price)))
-            self._ticks_f[price] = ticks
         return ticks
 
     def _add(self, gticks: int, col: int, bid: float, ask: float) -> None:
@@ -323,7 +314,7 @@ class _Grid:
                 self.samples[col] = min(natives, self.samples[col] + held)
                 self.estimated[col] = self.estimated[col] or bool(r.estimated)
             weight = (coarse if r.ts_us < downsampled_before_us else 1) / natives
-            g = self._ticks_of_float(r.price) // grouping * grouping
+            g = self._ticks_of_decimal(r.price) // grouping * grouping
             self._add(g, col, r.bid_size * weight, r.ask_size * weight)
 
     def fold_book(

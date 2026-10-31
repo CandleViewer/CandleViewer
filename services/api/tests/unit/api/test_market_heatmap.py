@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncIterator, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -122,7 +122,7 @@ def _get(app: FastAPI, **params: Any) -> httpx.Response:
 
 
 def _rows(lo: int, hi: int) -> list[CellRow]:
-    return [CellRow(t, 100.0 + k % 3, 1.0 + k, 0.5, 1, False)
+    return [CellRow(t, Decimal(100 + k % 3), 1.0 + k, 0.5, 1, False)
             for k, t in enumerate(range(lo, hi, S))]  # fmt: skip
 
 
@@ -146,6 +146,32 @@ def test_unauthorised_without_marketdata_read_is_403() -> None:
     assert reader.calls == 0
 
 
+def test_unauthenticated_is_401_before_any_storage_read() -> None:
+    reader = Reader()
+    r = _get(_app(reader, None))
+    assert r.status_code == 401 and r.json()["code"] == "unauthenticated"
+    assert reader.calls == 0
+
+
+@pytest.mark.parametrize("name", ["time_bucket_ms", "price_grouping", "depth"])
+def test_non_integer_parameter_is_the_problem_shaped_422(name: str) -> None:
+    r = _get(_app(Reader()), **{name: "abc"})
+    assert r.status_code == 422 and r.json()["code"] == "validation_failed"
+    assert r.headers["content-type"].startswith("application/problem+json")
+
+
+def test_ts_us_is_exact_where_the_float_path_rounds_wrong() -> None:
+    from candleviewer.api.market_heatmap import _ts_us
+
+    value = "9999-10-01T00:00:00.000001Z"
+    exact = (datetime(9999, 10, 1, tzinfo=UTC) - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(
+        microseconds=1
+    ) + 1
+    assert _ts_us(value) == exact
+    float_path = int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1_000_000)
+    assert float_path != exact
+
+
 @pytest.mark.parametrize("symbol", ["NOPEUSDT", "btcusdt", "BTCUSD", "../etc"])
 def test_unknown_symbol_422_before_storage_read(symbol: str) -> None:
     reader = Reader()
@@ -163,6 +189,9 @@ def test_unknown_symbol_422_before_storage_read(symbol: str) -> None:
         {"price_grouping": 0},
         {"price_grouping": 1001},
         {"from": "yesterday"},
+        {"time_bucket_ms": "abc"},
+        {"price_grouping": "1.5"},
+        {"depth": ""},
         {"from": _iso(T0 + 20 * S)},
     ],
 )
