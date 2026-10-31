@@ -18,7 +18,7 @@ import { ForbiddenState, NotFoundState } from "./ErrorStates";
 import { PlaceholderRoute } from "./PlaceholderRoute";
 import { PanelErrorBoundary } from "../features/system-states/PanelErrorBoundary";
 import { BackendUnreachable } from "../features/system-states/BackendUnreachable";
-import { AdminInviteScreen } from "../features/invites/AdminInviteScreen";
+import { AdminRouteElement, isAdminRoute } from "../features/admin/AdminRouteElement";
 import { LoginScreen } from "../features/auth/LoginScreen";
 import { ChangePasswordScreen } from "../features/auth/ChangePasswordScreen";
 import { InviteAcceptScreen } from "../features/invites/InviteAcceptScreen";
@@ -55,7 +55,8 @@ function elementFor(routeId: string, owner: string | null): RouteObject["element
         <SessionsSection />
       </ScreenRoot>
     );
-  if (routeId === "R-303") return <AdminInviteScreen />;
+  // E42-S01: each admin route inside CMP-087, its code loaded once the guard let the session in.
+  if (isAdminRoute(routeId)) return <AdminRouteElement routeId={routeId} owner={owner} />;
   if (routeId === "R-101") {
     // First sign-in lands on /terminal/last -> here; the card is server-gated (401 => renders nothing).
     return (
