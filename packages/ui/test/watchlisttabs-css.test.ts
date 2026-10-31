@@ -28,6 +28,8 @@ describe("watchlisttabs.css contract", () => {
     expect(ghosts).toContain("position: absolute");
     expect(ghosts).toContain("visibility: hidden");
     expect(ghosts).toContain("pointer-events: none");
+    expect(ghosts).toContain("inline-size: 0");
+    expect(find(css.normal, ".cv-wltabs__measure > *", "flex")).toContain("flex: none");
   });
 
   it("the row's rule is border.default; CanvasText in forced colours", () => {

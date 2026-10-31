@@ -23,6 +23,12 @@ export interface ButtonProps extends Omit<
   disabled?: boolean;
   /** The visible reason a control is denied (RBAC, environment, risk): disabled-with-reason (T2). */
   disabledReason?: string;
+  /**
+   * The id of the node in which the host already shows `disabledReason` (E09-D09 §2.2 rendering 2a: a caption under
+   * the button, or a read-only panel's one notice): the button is described by it alone and renders no copy and no
+   * echo of its own, and its lock leads the label, named "Not available" (E09-D09 §10 `glyph.name`).
+   */
+  disabledReasonId?: string;
   fullWidth?: boolean;
   /** Emits `data-density` so `theme.css` re-points the control height; absent = inherit. */
   density?: "comfortable" | "compact";
@@ -36,6 +42,7 @@ export function Button({
   loading = false,
   disabled,
   disabledReason,
+  disabledReasonId,
   fullWidth = false,
   density,
   iconLeft,
@@ -45,8 +52,10 @@ export function Button({
   "aria-describedby": describedBy,
   ...rest
 }: ButtonProps): JSX.Element {
-  const reason = useDisabledReason(disabled, disabledReason);
+  const reason = useDisabledReason(disabled, disabledReason, disabledReasonId);
   const announceGated = useGatedAnnounce();
+  // 2a with the host's reason node: the lock leads the label, named; no copy and no echo here.
+  const inline = reason.external;
   const ring = useFocusRing();
   const side = variant === "buy" || variant === "sell";
   const leading =
@@ -64,7 +73,7 @@ export function Button({
   };
   return (
     <>
-      <ReasonEcho text={reason.reason}>
+      <ReasonEcho text={inline ? undefined : reason.reason}>
         <button
           {...rest}
           type={type}
@@ -82,6 +91,11 @@ export function Button({
           aria-describedby={cx(describedBy, reason.ariaDescribedBy) || undefined}
           onClick={handleClick}
         >
+          {inline ? (
+            <span className="cv-button__glyph">
+              <Icon name="lock" decorative={false} label="Not available" />
+            </span>
+          ) : null}
           {leading === undefined ? null : (
             <span className="cv-button__icon">
               <Icon name={leading} />
@@ -94,14 +108,14 @@ export function Button({
             </span>
           )}
           {loading ? <Spinner size="sm" /> : null}
-          {reason.gated ? (
+          {reason.gated && !inline ? (
             <span className="cv-button__glyph">
               <Icon name="lock" />
             </span>
           ) : null}
         </button>
       </ReasonEcho>
-      <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
+      {inline ? null : <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>}
     </>
   );
 }

@@ -1,0 +1,105 @@
+/*
+ * CMP-067 FileDrop / Import control (E08-D07 D14; E15-D09 §3.3's anatomy): the zone around the button is a box with
+ * no role, a hairline edge, never dashed (`color.border.dashed` is not a shipped token), its words in
+ * type.ui.body + text.secondary. A drag over it changes the words and the edge, never colour alone. A T2 reason
+ * (E09-D09 §2.2 rendering 2a) is a caption line under its control: the zone's, or an apply target's. Static.
+ */
+.cv-filedrop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-sm);
+  min-inline-size: 0;
+}
+
+.cv-filedrop__zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-stack-md);
+  padding: var(--space-inset-xl);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-card);
+  text-align: center;
+}
+
+/* One file it may take: the words, the selected edge and the hover fill (E15-D09 `SCR-026/drag-over`). */
+.cv-filedrop__zone[data-state="active"] {
+  border-color: var(--color-border-selected);
+  background: var(--color-surface-hover);
+}
+
+.cv-filedrop__hint,
+.cv-filedrop__help {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.cv-filedrop__hint {
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-filedrop__help {
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/* A T2 reason (2a): the zone's in place of its drop words, or under its own apply target. */
+.cv-filedrop__reason {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-filedrop__preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-sm);
+}
+
+.cv-filedrop__preview > :first-child:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * 1px);
+}
+
+.cv-filedrop__preview-body {
+  overflow-wrap: anywhere;
+}
+
+.cv-filedrop__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-sm);
+}
+
+/* A row with a T2 target lines its buttons up at the top: the reason hangs under its own button. */
+.cv-filedrop__actions[data-gated] {
+  align-items: flex-start;
+}
+
+/* Each target: its button, then (T2) its reason under it. */
+.cv-filedrop__action {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-stack-xs);
+}
+
+@media (forced-colors: active) {
+  .cv-filedrop__zone {
+    border-color: CanvasText;
+  }
+
+  .cv-filedrop__zone[data-state="active"] {
+    border-color: Highlight;
+  }
+
+  .cv-filedrop__preview > :first-child:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .cv-filedrop__reason {
+    color: CanvasText;
+  }
+}

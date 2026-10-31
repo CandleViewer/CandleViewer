@@ -1915,6 +1915,50 @@
       "pass": true
     },
     {
+      "kind": "text",
+      "theme": "dark",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.inverse on color.data-confidence.stale.indicator",
+      "key": "dark:comfortable:color.text.inverse on color.data-confidence.stale.indicator",
+      "ratio": 12.31,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.inverse on color.data-confidence.stale.indicator",
+      "key": "dark:compact:color.text.inverse on color.data-confidence.stale.indicator",
+      "ratio": 12.31,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.hover",
+      "key": "dark:comfortable:color.text.tertiary on color.surface.hover",
+      "ratio": 4.79,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.hover",
+      "key": "dark:compact:color.text.tertiary on color.surface.hover",
+      "ratio": 4.79,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
       "kind": "cvd",
       "cvdKind": "buy-sell",
       "theme": "dark",
@@ -4321,6 +4365,50 @@
       "pass": true
     },
     {
+      "kind": "text",
+      "theme": "light",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.inverse on color.data-confidence.stale.indicator",
+      "key": "light:comfortable:color.text.inverse on color.data-confidence.stale.indicator",
+      "ratio": 5.65,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.inverse on color.data-confidence.stale.indicator",
+      "key": "light:compact:color.text.inverse on color.data-confidence.stale.indicator",
+      "ratio": 5.65,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.hover",
+      "key": "light:comfortable:color.text.tertiary on color.surface.hover",
+      "ratio": 5.44,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.hover",
+      "key": "light:compact:color.text.tertiary on color.surface.hover",
+      "ratio": 5.44,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
       "kind": "cvd",
       "cvdKind": "buy-sell",
       "theme": "light",
@@ -6723,6 +6811,50 @@
       "id": "color.text.secondary on color.surface.selected",
       "key": "high-contrast:compact:color.text.secondary on color.surface.selected",
       "ratio": 10.17,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.inverse on color.data-confidence.stale.indicator",
+      "key": "high-contrast:comfortable:color.text.inverse on color.data-confidence.stale.indicator",
+      "ratio": 12.31,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.inverse on color.data-confidence.stale.indicator",
+      "key": "high-contrast:compact:color.text.inverse on color.data-confidence.stale.indicator",
+      "ratio": 12.31,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.hover",
+      "key": "high-contrast:comfortable:color.text.tertiary on color.surface.hover",
+      "ratio": 9.54,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.hover",
+      "key": "high-contrast:compact:color.text.tertiary on color.surface.hover",
+      "ratio": 9.54,
       "threshold": 7,
       "pass": true
     },

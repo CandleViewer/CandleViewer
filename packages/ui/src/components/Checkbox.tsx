@@ -29,6 +29,12 @@ export interface CheckboxProps extends Omit<
   disabled?: boolean;
   /** The visible reason a control is denied (RBAC, environment, risk): disabled-with-reason (T2). */
   disabledReason?: string;
+  /**
+   * The id of the node in which the host already shows `disabledReason` (E09-D09 §2.2 rendering 2a: a caption under
+   * the row, or a read-only panel's one notice): the box is described by it alone and renders no copy and no echo of
+   * its own, and its lock leads the label, named "Not available" (E09-D09 §10 `glyph.name`).
+   */
+  disabledReasonId?: string;
   /** Emits `data-density` so `theme.css` re-points the row height; absent = inherit. */
   density?: "comfortable" | "compact";
 }
@@ -42,6 +48,7 @@ export function Checkbox({
   onChange,
   disabled,
   disabledReason,
+  disabledReasonId,
   density,
   id,
   "aria-describedby": describedBy,
@@ -49,7 +56,7 @@ export function Checkbox({
 }: CheckboxProps): JSX.Element {
   const generated = useId();
   const controlId = id ?? generated;
-  const reason = useDisabledReason(disabled, disabledReason);
+  const reason = useDisabledReason(disabled, disabledReason, disabledReasonId);
   const announceGated = useGatedAnnounce();
   const [checked, setChecked] = useControllable(controlled, defaultChecked);
   const ref = useRef<HTMLInputElement>(null);
@@ -64,7 +71,7 @@ export function Checkbox({
       className="cv-checkbox"
       data-state={indeterminate ? "mixed" : checked ? "checked" : "unchecked"}
     >
-      <ReasonEcho text={reason.reason}>
+      <ReasonEcho text={reason.external ? undefined : reason.reason}>
         <input
           {...rest}
           ref={ref}

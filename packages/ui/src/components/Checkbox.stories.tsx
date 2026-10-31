@@ -14,6 +14,11 @@ export default meta;
 type Story = StoryObj<typeof Checkbox>;
 
 const col = { display: "grid", gap: "var(--space-inset-sm)", justifyItems: "start" } as const;
+/** A host's 2a caption: the reason under its control, text.secondary in the caption type (E09-D09 §2.2). */
+const caption = {
+  color: "var(--color-text-secondary)",
+  font: "var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) / var(--type-ui-caption-line-height) var(--type-ui-caption-font-family)",
+} as const;
 const get = (canvas: HTMLElement): HTMLInputElement =>
   within(canvas).getByRole("checkbox", { name: "Apply to every selected account" });
 
@@ -46,6 +51,38 @@ export const DisabledWithReason: Story = {
     await userEvent.click(box);
     await expect(args.onChange).not.toHaveBeenCalled();
     await expect(box.checked).toBe(true);
+  },
+};
+
+/**
+ * Disabled with the reason shown by the host (E09-D09 §2.2 rendering 2a, `disabledReasonId`): a caption under the
+ * row, its one description; the lock leads the label, named "Not available"; no echo of its own.
+ */
+export const DisabledWithReasonInline: Story = {
+  args: { disabledReason: REASON, disabledReasonId: "checkbox-reason", defaultChecked: true },
+  render: (args) => (
+    <div style={{ ...col, gap: 0 }}>
+      <Checkbox {...args} />
+      <span
+        id="checkbox-reason"
+        style={{
+          ...caption,
+          paddingInlineStart: "calc(var(--size-control-height) + var(--space-field-gap))",
+        }}
+      >
+        {REASON}
+      </span>
+    </div>
+  ),
+  play: async ({ canvasElement, args }) => {
+    const box = within(canvasElement).getByRole("checkbox", {
+      name: "Not available Apply to every selected account",
+    });
+    await userEvent.tab();
+    await expect(box).toHaveFocus();
+    await expect(box).toHaveAccessibleDescription(REASON);
+    await userEvent.keyboard(" ");
+    await expect(args.onChange).not.toHaveBeenCalled();
   },
 };
 

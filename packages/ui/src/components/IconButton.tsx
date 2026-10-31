@@ -18,6 +18,12 @@ interface IconButtonBase<N extends IconName> extends Omit<
   disabled?: boolean;
   /** The visible reason a control is denied (RBAC, environment, risk): disabled-with-reason (T2). */
   disabledReason?: string;
+  /**
+   * The id of the node in which the host already shows `disabledReason` (E09-D09 §2.2 "one notice, many pointers":
+   * a read-only panel's notice): the button is described by it and renders no hidden copy; the lock badge and the
+   * echo stay (2b).
+   */
+  disabledReasonId?: string;
   /** Emits `data-density` so `theme.css` re-points the control height; absent = inherit. */
   density?: "comfortable" | "compact";
 }
@@ -43,13 +49,14 @@ export function IconButton<N extends IconName>({
   pressed,
   disabled,
   disabledReason,
+  disabledReasonId,
   density,
   onClick,
   type = "button",
   "aria-describedby": describedBy,
   ...rest
 }: IconButtonProps<N>): JSX.Element {
-  const reason = useDisabledReason(disabled, disabledReason);
+  const reason = useDisabledReason(disabled, disabledReason, disabledReasonId);
   const announceGated = useGatedAnnounce();
   const ring = useFocusRing();
   // `reason.reason` is set exactly when gated: the name, then the reason, joined by " · ".
@@ -94,7 +101,7 @@ export function IconButton<N extends IconName>({
           ) : null}
         </button>
       </ReasonEcho>
-      <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
+      {reason.external ? null : <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>}
     </>
   );
 }
