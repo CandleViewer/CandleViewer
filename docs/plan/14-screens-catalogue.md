@@ -2298,7 +2298,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `watchlist.created`, `watchlist.renamed`, `watchlist.deleted`, `watchlist.duplicated`, `watchlist.imported`, `watchlist.exported`, `watchlist.bulk_added` `{count}` (analytics).
 - **Design sign-off acceptance checklist:** [ ] multiple watchlists with create/rename/duplicate/delete [ ] bulk add by paste [ ] import/export [ ] delete confirmation [ ] empty state [ ] per-list column configuration
 - **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; the manager's dialog focus order, the Move up / Move down path beside the hidden drag handle, the native file input for imports; owner approval pending).
-- **Hand-off pack:** [E08-D13.md](../design/E08/E08-D13.md) v1 (E08-D13; states, the copy deck and the gated controls, the E08-D07 hand-off file to follow; owner approval pending; a11y contract: E08-D12).
+- **Hand-off pack:** [E08-D13.md](../design/E08/E08-D13.md) v1 (E08-D13; states, the copy deck and the gated controls, beside E08-D07's hand-off checklist; owner approval pending; a11y contract: E08-D12).
 
 ### SCR-102 — Symbol search (global)
 

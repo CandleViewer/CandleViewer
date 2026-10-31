@@ -60,7 +60,7 @@ from typing import TypeVar
 _T = TypeVar("_T")
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "bda5b8f3e1"  # every cite was read here (the pack's Inputs line)
+BASE = "00cf90c0b4"  # every cite was read here (the pack's Inputs line)
 HEAD = "origin/main"  # G-VERSION: a cited range edited at origin/main FAILs
 
 SPEC_REL = "docs/design/E08/E08-D13.md"
@@ -90,6 +90,7 @@ CITE_FILES: dict[str, str] = {
     "D06": "docs/design/E08/E08-D06.md",
     "D06H": "docs/design/E08/E08-D06-handoff.md",
     "D07": "docs/design/E08/E08-D07.md",
+    "D07H": "docs/design/E08/E08-D07-handoff.md",
     "D08": "docs/design/E08/E08-D08.md",
     "D08H": "docs/design/E08/E08-D08-handoff.md",
     "D09": "docs/design/E08/E08-D09.md",
@@ -127,13 +128,14 @@ PINNED_DOCS = {
     "E17D2": "6e9207db6d",
     "E16D5": "627f351407",
     "E16D6": "0ab68e66cb",
-    "14": "29e78678d2",
-    "15": "bb89e41ffa",
+    "14": "00d2418ed2",
+    "15": "00d2418ed2",
+    "D07H": "f768fbab80",
     "E08J": "fa25280b39",
     "SEED": "8f282aa07d",
     "TOK": "aef2cc150b",
 }
-NAMED_ONLY = ("#5198", "#5146", "#178", "DS-CR-1")
+NAMED_ONLY = ("#5146", "#178", "DS-CR-1")
 # the ruling's and the parents' own words (G-QUOTE accepts them verbatim)
 RULING_QUOTES = (
     "Hand-off pack:",
@@ -166,7 +168,7 @@ SCREENS = (
 POINTER_CLAUSES = {
     "SCR-041": "the built quick-switcher's acceptance record, its rows to E08-Q05",
     "SCR-100": "states with backend triggers, the role matrix, F-01's build rule, Q-01 and Q-02",
-    "SCR-101": "states, the copy deck and the gated controls, the E08-D07 hand-off file to follow",
+    "SCR-101": "states, the copy deck and the gated controls, beside E08-D07's hand-off checklist",
     "SCR-102": "the built search's acceptance record, the forced-colours rendering to E08-Q05",
     "SCR-103": "states, E08-D06's ten test ids and forced states, boards pending with E08-D06",
     "SCR-104": "states, the rate as a number, the gated actions and the pane name",
@@ -1538,7 +1540,22 @@ def refind_14(n: int) -> int:
     old = (git_show(D12_BASE, PLAN14_REL) or "").split("\n")
     text = old[n - 1] if 1 <= n <= len(old) else ""
     hits = [i for i, ln in enumerate(base_lines("14"), 1) if text.strip() and ln == text]
-    return hits[0] if len(hits) == 1 else 0
+    if len(hits) == 1:
+        return hits[0]
+    # a line its owner has since reworded: the same field of the same screen (by label)
+    want = field_key(old, n)
+    lines = base_lines("14")
+    same = [i for i in range(1, len(lines) + 1) if want[1] and field_key(lines, i) == want]
+    return same[0] if len(same) == 1 else 0
+
+
+def field_key(lines: list[str], n: int) -> tuple[str, str]:
+    scr = next(
+        (m[1] for i in range(n, 0, -1) if (m := re.match(r"^### (SCR-\d{3}) ", lines[i - 1]))),
+        "",
+    )
+    f = re.match(r"^- \*\*([^*]+?)\*\*", lines[n - 1]) if 1 <= n <= len(lines) else None
+    return scr, f[1] if f else ""
 
 
 def line_label(n: int) -> str:

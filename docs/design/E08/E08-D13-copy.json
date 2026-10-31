@@ -1,7 +1,7 @@
 {
   "pack": "E08-D13",
   "version": "v1",
-  "base": "bda5b8f3e1",
+  "base": "00cf90c0b4",
   "ruling": "6544763601",
   "rule": "one entry per parent string, keyed by the parent's row id; built by the tool",
   "strings": {
