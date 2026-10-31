@@ -190,3 +190,11 @@ export function usePreferences(): PreferencesValue {
   if (!v) throw new Error("usePreferences requires PreferencesProvider");
   return v;
 }
+
+/**
+ * The preferences while the app's provider is mounted, else `null`: for a surface that also renders without it (a
+ * route rendered on its own, as the route tests render one), which then reads `DEFAULT_PREFERENCES` rather than throw.
+ */
+export function usePreferencesIfMounted(): PreferencesValue | null {
+  return useContext(Ctx);
+}

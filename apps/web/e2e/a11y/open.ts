@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { stubSession, stubSessionsList } from "../support/api";
+import { stubSession, stubSessionsList, stubWatchlists } from "../support/api";
 import { REFRESH_INVALID } from "../support/contexts";
 import type { A11yScreen } from "./screens";
 
@@ -18,6 +18,7 @@ const PACE_SAMPLE = 5;
 /** Per-screen data stubs, so the collectors audit the populated state, not an error. */
 const SCREEN_STUBS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
   "R-201": stubSessionsList, // SCR-112 sessions: the table with the current session marked
+  "R-111": stubWatchlists, // SCR-100: a list and its instruments
 };
 
 /**
@@ -57,6 +58,12 @@ export async function openScreen(page: Page, s: A11yScreen): Promise<void> {
   if (s.id === "R-201") {
     const table = page.getByRole("table"); // the list state, not loading
     await expect(table, `${s.id}: its table did not render`).toBeVisible({
+      timeout: STEP_TIMEOUT_MS,
+    });
+  }
+  if (s.id === "R-111") {
+    const grid = page.getByRole("grid", { name: /^Watchlist Majors/ }); // the list, not loading
+    await expect(grid, `${s.id}: its grid did not render`).toBeVisible({
       timeout: STEP_TIMEOUT_MS,
     });
   }
