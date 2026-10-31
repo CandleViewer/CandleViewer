@@ -16,6 +16,26 @@ from apply_branch_protection import ApplyError, Diff, compare_view, load_desired
 from check_branch_protection_drift import render_findings
 
 FILE = str(SCRIPTS_DIR.parent / ".github/branch-protection.json")
+#: The rulesets API's `merge_queue` parameters (#5177): the file's block names exactly these, so a
+#: misspelt one cannot hide drift, or report it, once the weekly run has its token.
+MERGE_QUEUE_PARAMETERS = {
+    "merge_method",
+    "grouping_strategy",
+    "max_entries_to_build",
+    "min_entries_to_merge",
+    "max_entries_to_merge",
+    "min_entries_to_merge_wait_minutes",
+    "check_response_timeout_minutes",
+}
+
+
+def _declared_rules(desired: dict) -> dict:
+    """The rules on main when they are exactly what the file declares: its merge queue."""
+    return {"merge_queue": dict(desired["merge_queue"])}
+
+
+def test_the_committed_merge_queue_block_uses_the_rulesets_api_parameter_names() -> None:
+    assert set(load_desired_state(FILE)["merge_queue"]) == MERGE_QUEUE_PARAMETERS
 
 
 # Regression: encodes E01-Q01 case 1.10 (originating case id) -- drift between
@@ -73,7 +93,7 @@ def test_main_compares_every_setting_and_proves_c91(
     else:
         live_change(live)
         monkeypatch.setattr(drift, "fetch_live_state", lambda *a: live)
-    monkeypatch.setattr(drift, "fetch_branch_rules", lambda *a: {})
+    monkeypatch.setattr(drift, "fetch_branch_rules", lambda *a: _declared_rules(desired))
     monkeypatch.setenv("CV_TEST_TOKEN", token)
     root = SCRIPTS_DIR.parent
     argv = ["--repo", "o/r", "--token-env", "CV_TEST_TOKEN", "--desired-state", str(path), "--json"]
@@ -85,21 +105,51 @@ def test_main_compares_every_setting_and_proves_c91(
     assert [f["kind"] for f in findings][:1] == ([kind] if kind else [])
 
 
-# Security review round 5 of #3103: the rules on main are read on every run, so a merge queue (or
-# any ruleset rule) the file does not declare is drift, as an undeclared protection setting is.
+# Security review round 5 of #3103: the rules on main are read on every run, so a ruleset rule the
+# file does not declare is drift, as an undeclared protection setting is. #5177: the live ruleset
+# on main carries one, `required_status_checks` beside its merge queue, which the file cannot
+# declare, so the weekly run reports it (rules.required_status_checks) once it has its token.
 def test_main_reports_a_rule_on_main_the_file_does_not_declare(
     tmp_path, monkeypatch, capsys
 ) -> None:
     desired = load_desired_state(FILE)
+    live_rules = _declared_rules(desired) | {
+        "required_status_checks": {
+            "strict_required_status_checks_policy": False,
+            "do_not_enforce_on_create": False,
+            "required_status_checks": [{"context": "ci-required"}],
+        }
+    }
     monkeypatch.setattr(drift, "fetch_live_state", lambda *a: compare_view(desired))
-    monkeypatch.setattr(drift, "fetch_branch_rules", lambda *a: {"merge_queue": {"x": 1}})
+    monkeypatch.setattr(drift, "fetch_branch_rules", lambda *a: live_rules)
     monkeypatch.setenv("CV_TEST_TOKEN", "t")
     argv = ["--repo", "o/r", "--token-env", "CV_TEST_TOKEN", "--desired-state", FILE, "--json"]
     argv += ["--constitution", str(SCRIPTS_DIR.parent / "CONSTITUTION.md")]
     argv += ["--workflows-glob", str(SCRIPTS_DIR.parent / ".github/workflows/*.yml")]
     assert drift.main(argv) == 1
     (finding,) = json.loads(capsys.readouterr().out)
-    assert (finding["kind"], finding["key"]) == ("unexpected_on_live", "rules.merge_queue")
+    assert (finding["kind"], finding["key"]) == (
+        "unexpected_on_live",
+        "rules.required_status_checks",
+    )
+
+
+# #5177: the queue's rule is declared, so a queue that differs from the file is `changed` drift.
+def test_main_reports_a_merge_queue_that_differs_from_the_file(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    desired = load_desired_state(FILE)
+    live_queue = {**desired["merge_queue"], "grouping_strategy": "HEADGREEN"}
+    monkeypatch.setattr(drift, "fetch_live_state", lambda *a: compare_view(desired))
+    monkeypatch.setattr(drift, "fetch_branch_rules", lambda *a: {"merge_queue": live_queue})
+    monkeypatch.setenv("CV_TEST_TOKEN", "t")
+    argv = ["--repo", "o/r", "--token-env", "CV_TEST_TOKEN", "--desired-state", FILE, "--json"]
+    argv += ["--constitution", str(SCRIPTS_DIR.parent / "CONSTITUTION.md")]
+    argv += ["--workflows-glob", str(SCRIPTS_DIR.parent / ".github/workflows/*.yml")]
+    assert drift.main(argv) == 1
+    (finding,) = json.loads(capsys.readouterr().out)
+    assert (finding["kind"], finding["key"]) == ("changed", "rules.merge_queue")
+    assert finding["live"]["grouping_strategy"] == "HEADGREEN"
 
 
 # Code review round 5 of #3103: a proof that cannot run exits 2 and says why, like a missing token.

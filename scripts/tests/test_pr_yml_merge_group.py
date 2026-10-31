@@ -432,8 +432,8 @@ def test_paths_filter_diffs_a_merge_group_against_main_from_their_merge_base() -
     # as the change step leaves them on a PR. On a merge group they win over its defaults (the
     # group's base_sha and head_sha), and a branch base takes its merge-base path: it fetches
     # `main` and the head itself and diffs `main...head`, every entry ahead in the queue included.
-    # With grouping HEADGREEN (.github/branch-protection.json) the queue merges a failed entry with
-    # a later one that passed, so the later run must have chosen its lanes for both changes.
+    # The queue builds each entry on the entries ahead of it and may merge up to 5 together
+    # (.github/branch-protection.json), so a run's lanes must be chosen for all of those changes.
     step = job["steps"][ids.index("filter")]
     assert step["uses"] == PATHS_FILTER
     assert {key: step["with"][key] for key in ("base", "ref")} == {
@@ -615,6 +615,14 @@ def test_the_draft_deferred_lanes_are_the_ones_whose_job_skips_a_draft() -> None
     assert set(DRAFT_DEFERRED) == {"e2e", "a11y", "engine-bench"}
     assert RESOLVER["env"]["PR_DRAFT"] == "${{ " + DRAFT_FLAG + " }}"
     assert 'process.env.PR_DRAFT === "true"' in script
+
+
+def test_the_engine_matrix_reruns_when_a_draft_becomes_ready() -> None:
+    """`perf-engine-matrix.yml` skips a draft's `chromium` job, and `ready_for_review` is not in
+    GitHub's default `pull_request` types: without it in the trigger a draft-first chart-engine PR
+    would lose its matrix run, not defer it (#5156's round-1 finding, #5177)."""
+    on = _load("perf-engine-matrix.yml")[True]
+    assert on["pull_request"]["types"] == ["opened", "synchronize", "reopened", "ready_for_review"]
 
 
 def _strings(node: object) -> Iterator[str]:
