@@ -1183,7 +1183,7 @@ export interface paths {
     put?: never;
     /**
      * Compact Parquet cold-tier partitions
-     * @description Merges small files produced by the export job into target-sized partitions (21-database-schema.md section 5.4). Asynchronous; poll `GET /admin/jobs/{jobId}`. One compaction at a time (`409 job_running`); a key reused with another body is `422 idempotency_key_reused`.
+     * @description Merges small files produced by the export job into target-sized partitions (21-database-schema.md section 5.4). Asynchronous; poll `GET /admin/jobs/{jobId}`. The job reports `kind: retention_sweep` (compaction has no kind of its own) and shares that kind, and its one slot, with an `apply_now` sweep (`setRetentionPolicies`); its `result` is a `CompactionRunResult`. One compaction at a time (`409 job_running`, also while such a sweep runs); a key reused with another body is `422 idempotency_key_reused`.
      */
     post: operations["compactRecorder"];
     delete?: never;
@@ -1203,7 +1203,7 @@ export interface paths {
     put?: never;
     /**
      * Import public trade archives into the cold tier (E16-T10)
-     * @description Downloads the exchange's public daily trade archives for `symbol` over `[from, to]` (inclusive UTC dates, at most 366 days), verifies each file, and writes trades to the Parquet cold tier. Recorded data wins: rows inside a recorded window are discarded and reported. Imported windows are labelled archive-derived and cover `trades` only. Resumable and idempotent per day: a re-run skips finished days. Asynchronous; poll `GET /admin/jobs/{jobId}` (`kind: archive_import`); `result` carries the import summary. One import at a time (409 `job_running`). Audited as `recorder.import`.
+     * @description Downloads the exchange's public daily trade archives for `symbol` over `[from, to]` (inclusive UTC dates, at most 366 days), verifies each file, and writes trades to the Parquet cold tier. Recorded data wins: rows inside a recorded window are discarded and reported. Imported windows are labelled archive-derived and cover `trades` only. Resumable and idempotent per day: a re-run skips finished days. Asynchronous; poll `GET /admin/jobs/{jobId}` (`kind: archive_import`); `result` carries the import summary, an `ArchiveImportResult`. One import at a time (409 `job_running`). Audited as `recorder.import`.
      */
     post: operations["importTradeArchive"];
     delete?: never;
@@ -1228,6 +1228,7 @@ export interface paths {
      *     **Window.** `before` is required: the exclusive upper bound of the purge window `[earliest, before)`, an RFC 3339 instant with an offset, normally the time the client showed the Owner when they confirmed. Data recorded at or after `before` is never deleted by this request or by any retry of it. A `before` later than the server's clock is `422 validation_failed` with `errors: [{field: before, rule: before_in_future}]`, decided with the body; the error's `message` carries the server's current time (RFC 3339) so the client can resubmit with a bound at or before it. There is no clock-skew tolerance. QuestDB DAY partitions shared with other symbols are left to the nightly roll-off.
      *     **Idempotency.** The `Idempotency-Key` is anchored for the caller together with the request's fingerprint and its `before`, as a permanent anchor scoped to the caller and this operation (21-database-schema.md section 3.3.10): it answers at any age and outlives the job store and a restart of the service. The anchor is created with the write-ahead `retention.purge` record, so a refusal or a `503` anchors nothing. A retry with the same key is compared on `before` first, as an instant: when it differs the answer is `409 idempotency_key_reuse` whose `errors[0]` names `before` and gives the anchored bound in `message`, whatever else differs; nothing is deleted. A retry with the same key, the same `before` and another difference in the body is `422 idempotency_key_reused`. A retry with the same key and the same body never purges past the anchored bound: while the job is known it is that job, and after a restart it is a new purge of the same window, answered `202` with a new job.
      *     The audit record (`retention.purge`, exact window, partition count, rows, bytes) is written BEFORE the job exists; if it cannot be written the answer is 503 and no job starts.
+     *     **Result.** The job (`kind: retention_purge`, polled at `GET /admin/jobs/{jobId}`) ends with a `RetentionPurgeResult`, which lists the partitions it kept and why.
      */
     post: operations["purgeRecordedData"];
     delete?: never;
@@ -5010,9 +5011,9 @@ export interface paths {
      *     an unknown field is `422 validation_failed`. Owner-only (`admin:write`, the E16 threat
      *     model's R-T1 class): any other caller is refused with 403, audited as `rbac.denied`. Always
      *     needs the `recorder` step-up (`403 step_up_required`). Changes apply at the next nightly sweep; `apply_now=true` also
-     *     starts one `retention_sweep` job: `409 job_running` while one is queued or running, and
-     *     `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
-     *     request stores nothing.
+     *     starts one `retention_sweep` job (the `200`'s `job_id`): `409 job_running` while one is
+     *     queued or running (a compaction counts), and `409 conflict` while the retention scheduler
+     *     is off (`CV_RETENTION_ENABLED`). A refused request stores nothing.
      *     Audited as `retention.change` (the set before and after), written before the new set is
      *     stored; if it cannot be written the answer is `503 audit_unavailable` and nothing changes.
      */
@@ -7482,6 +7483,72 @@ export interface components {
       key: components["schemas"]["ApiKey"];
       verification: components["schemas"]["KeyVerificationPassed"];
     };
+    /** @description `Job.result` of a succeeded `archive_import` job (`importTradeArchive`): the summary of one run over the requested range, null until the job has succeeded (`Job.progress_pct` is what moves while it runs). Recorded data wins: rows inside a recorded window are discarded, counted in `rows_discarded_overlap`, and those windows are listed in `overlap`. A file that fails is skipped and named in `files_skipped`, and the import goes on. Files are named by their archive name, never a path. */
+    ArchiveImportResult: {
+      /** @description The row counts the earlier runs recorded for the files in `files_already_imported`. */
+      already_imported: {
+        rows_discarded_duplicate: number;
+        rows_discarded_overlap: number;
+        rows_written: number;
+      };
+      /**
+       * Format: int64
+       * @description Archive bytes this run downloaded.
+       */
+      bytes_downloaded: number;
+      /** @description Files an earlier run finished, which this run did not download again; their rows are counted in `already_imported`. */
+      files_already_imported: number;
+      /** @description Files this run downloaded, verified and wrote. */
+      files_processed: number;
+      /** @description Files this run skipped, sorted by name, at most 400 (the server reports no more); the next run tries them again. */
+      files_skipped: {
+        /** @description The archive file's name. */
+        file: string;
+        /**
+         * @description Why: it failed its checksum, could not be parsed, could not be downloaded, is not in the archive, or is over the size cap. **Open-ended for readers:** adding a reason is an additive change (C-6.3).
+         * @enum {string}
+         */
+        reason:
+          | "import_checksum_failed"
+          | "import_parse_failed"
+          | "import_download_failed"
+          | "import_file_not_found"
+          | "import_file_too_large";
+      }[];
+      /** @description Daily archive files in the range. */
+      files_total: number;
+      /**
+       * Format: date
+       * @description First requested UTC date, inclusive.
+       */
+      from: string;
+      /** @description The recorded windows that took rows out of this run, merged, in UTC. */
+      overlap: {
+        /** Format: date-time */
+        from: string;
+        /** Format: date-time */
+        to: string;
+      }[];
+      /** @description Rows already in the cold tier under the same trade, not written again. */
+      rows_discarded_duplicate: number;
+      /** @description Rows inside a recorded window, discarded because recorded data wins. */
+      rows_discarded_overlap: number;
+      /** @description Rows this run wrote. */
+      rows_written: number;
+      /**
+       * @description Labels the imported windows archive-derived.
+       * @enum {string}
+       */
+      source: "archive";
+      /** @description The streams imported: `trades` only. */
+      streams: components["schemas"]["StreamKind"][];
+      symbol: components["schemas"]["Symbol"];
+      /**
+       * Format: date
+       * @description Last requested UTC date, inclusive.
+       */
+      to: string;
+    };
     /** @description #2097: the Argon2id parameters new password hashes use (SR-011 floor: m ≥ 65536, t ≥ 3, p ≥ 4). Not secret: every stored hash embeds them. */
     Argon2Params: {
       /** @description Memory cost in KiB (65536 = 64 MiB). */
@@ -7891,6 +7958,17 @@ export interface components {
       price?: components["schemas"]["Decimal"];
       qty?: components["schemas"]["Decimal"];
       time_in_force?: components["schemas"]["TimeInForce"];
+    };
+    /** @description `Job.result` of a succeeded compaction (`compactRecorder`), which reports `kind: retention_sweep` and takes that kind's one slot, as an `apply_now` sweep does; a `RetentionSweepResult` has other keys (`skipped_locked`, where this has `compacted`). Partitions are named by their key relative to the cold tier's root, never a host path. */
+    CompactionRunResult: {
+      /** @description Partitions whose files were merged. */
+      compacted: number;
+      /** @description Partitions an active replay session was reading, left for a later run. */
+      deferred: string[];
+      /** @description Partitions whose merge failed its row-count check, left as they were. */
+      failed: string[];
+      /** @description Partitions left as they were, with nothing to merge. */
+      skipped: number;
     };
     /**
      * @description `not_deployed` = module not built yet; ranks as healthy for `overall`. Rank: down > warning > degraded > healthy.
@@ -8929,9 +9007,13 @@ export interface components {
         | "archive_import"
         | "retention_purge";
       progress_pct?: number;
-      /** @description Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then` below); other kinds carry their own object. For `kind: backup` it is `{backup_id}`, plus `audit: "unavailable"` when the run's `stage: finished` record could not be written (`createBackup`), and for `kind: backup_verify` it is `{backup_id, verify_method}`, where `verify_method` is `restore_smoke`, `checksum`, `pg_verifybackup` or `duckdb_scan` (the values of `backups.verify_method`, E42-T05); a `backup_restore` result is defined with the restore contract (#3084). */
+      /** @description Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then` below); other kinds carry their own object. For `kind: backup` it is `{backup_id}`, plus `audit: "unavailable"` when the run's `stage: finished` record could not be written (`createBackup`), and for `kind: backup_verify` it is `{backup_id, verify_method}`, where `verify_method` is `restore_smoke`, `checksum`, `pg_verifybackup` or `duckdb_scan` (the values of `backups.verify_method`, E42-T05); a `backup_restore` result is defined with the restore contract (#3084). For `kind: retention_sweep` it is a `RetentionSweepResult` when `setRetentionPolicies` started the sweep (`apply_now=true`) and a `CompactionRunResult` when `compactRecorder` did, which reports the same kind and takes the same one slot: a client that asked for the job knows which it is, and otherwise reads it from the keys (`skipped_locked` or `compacted`). For `kind: retention_purge` it is a `RetentionPurgeResult` (`purgeRecordedData`), and for `kind: archive_import` an `ArchiveImportResult` (`importTradeArchive`). */
       result?:
         | components["schemas"]["AuditExportResult"]
+        | components["schemas"]["RetentionSweepResult"]
+        | components["schemas"]["CompactionRunResult"]
+        | components["schemas"]["RetentionPurgeResult"]
+        | components["schemas"]["ArchiveImportResult"]
         | {
             [key: string]: unknown;
           }
@@ -10496,6 +10578,21 @@ export interface components {
     };
     /** @enum {string} */
     RetentionAction: "drop" | "archive_parquet" | "downsample" | "pin";
+    /** @description A partition a retention purge kept, and why (`RetentionPurgeResult`). `partition` is its key: a QuestDB day (`YYYY-MM-DD`) or a Parquet partition directory relative to the cold tier's root, never a host path. */
+    RetentionHold: {
+      partition: string;
+      /**
+       * @description Why it was kept: its symbol is pinned (`pinned`), a replay session leases it (`leased`), it is still inside its hot window or total horizon (`hot_window`), it is not archived to Parquet yet (`not_archived`), the archive no longer matches the day's rows (`archive_mismatch`), or another symbol shares its QuestDB day (`shared_partition`). **Open-ended for readers:** adding a reason is an additive change (C-6.3).
+       * @enum {string}
+       */
+      reason:
+        | "pinned"
+        | "leased"
+        | "hot_window"
+        | "not_archived"
+        | "archive_mismatch"
+        | "shared_partition";
+    };
     RetentionPolicy: components["schemas"]["RetentionPolicyInput"] & {
       /** Format: uuid */
       id?: string;
@@ -10510,6 +10607,38 @@ export interface components {
       stream: components["schemas"]["StreamKind"];
       /** @description Null = global default. */
       symbol?: components["schemas"]["Symbol"] | null;
+    };
+    /** @description `Job.result` of a succeeded `retention_purge` job (`purgeRecordedData`): what the purge did to the window it audited, counted in partitions (a QuestDB day or a Parquet partition directory). The partitions it kept are listed in `skipped` and `protected`, and are not in any count. */
+    RetentionPurgeResult: {
+      /** @description Partitions the purge removed. */
+      deleted: number;
+      /** @description Partitions whose delete was attempted and failed. */
+      failed: number;
+      /**
+       * Format: int64
+       * @description Bytes the removed partitions held.
+       */
+      freed_bytes: number;
+      /** @description Partitions held while planning, which never became part of the purge. */
+      protected: components["schemas"]["RetentionHold"][];
+      /** @description Partitions kept because the check made just before deleting one found a blocker that planning had not. */
+      skipped: components["schemas"]["RetentionHold"][];
+    };
+    /** @description `Job.result` of a succeeded `retention_sweep` job that `setRetentionPolicies` started with `apply_now=true`: what that one retention pass did, counted in partitions (a QuestDB day or a Parquet partition directory). A compaction (`compactRecorder`) reports the same `kind`, with a `CompactionRunResult`; the keys tell the two apart (`skipped_locked` here, `compacted` there). `skipped` is a count here, where a `RetentionPurgeResult` lists its partitions. */
+    RetentionSweepResult: {
+      /** @description Partitions the pass removed. */
+      deleted: number;
+      /** @description Partitions whose delete was attempted and failed; each stays pending. */
+      failed: number;
+      /**
+       * Format: int64
+       * @description Bytes the removed partitions held.
+       */
+      freed_bytes: number;
+      /** @description Partitions the pass kept because the check made just before deleting one found a blocker that planning had not (a `RetentionHold` reason). */
+      skipped: number;
+      /** @description True when another retention pass or a purge held the volume lock, so nothing was swept and every count is 0. */
+      skipped_locked: boolean;
     };
     /** @description `reversePosition`'s `202` (#915): the close it sent, the entry it sent if any, and how the reversal ended. Besides each order's own submit audit record (C-2.9), one `position.reversed` record correlates the pair and the outcome. */
     ReverseAcceptance: {
@@ -19957,7 +20086,12 @@ export interface operations {
         };
         content: {
           "application/json": {
-            items?: components["schemas"]["RetentionPolicy"][];
+            items: components["schemas"]["RetentionPolicy"][];
+            /**
+             * Format: uuid
+             * @description The id of the `retention_sweep` job that `apply_now=true` started, to poll with `getJob`; null without `apply_now`, and the same id on a replay of the `Idempotency-Key`.
+             */
+            job_id: string | null;
           };
         };
       };

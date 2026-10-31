@@ -105,7 +105,7 @@ def test_with_the_step_up_the_owner_replaces_the_set(world: World, store: _Store
     assert resp.status_code == 200 and store.replaced == 1
     validate_example(_OK.format("put"), resp.json())
     listed = world.client.get(_PATH, headers=bearer("viewer"))
-    assert listed.status_code == 200 and listed.json() == resp.json()
+    assert listed.status_code == 200 and listed.json() == {"items": resp.json()["items"]}
     validate_example(_OK.format("get"), listed.json())
     assert [r["action"] for r in world.audit.records] == ["retention.change"]
 

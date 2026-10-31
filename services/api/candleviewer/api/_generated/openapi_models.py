@@ -6,6 +6,7 @@ Source: docs/plan/22-api-openapi.yaml, via datamodel-code-generator.
 
 from __future__ import annotations
 
+from datetime import date
 from ipaddress import IPv4Address, IPv6Address
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -5556,6 +5557,178 @@ class AuditExportResult(BaseModel):
     ]
 
 
+class RetentionSweepResult(BaseModel):
+    deleted: Annotated[JsonInt, Field(description="Partitions the pass removed.", ge=0)]
+    freed_bytes: Annotated[JsonInt, Field(description="Bytes the removed partitions held.", ge=0)]
+    skipped: Annotated[
+        JsonInt,
+        Field(
+            description="Partitions the pass kept because the check made just before deleting one found a blocker that planning had not (a `RetentionHold` reason).",
+            ge=0,
+        ),
+    ]
+    failed: Annotated[
+        JsonInt,
+        Field(
+            description="Partitions whose delete was attempted and failed; each stays pending.",
+            ge=0,
+        ),
+    ]
+    skipped_locked: Annotated[
+        StrictBool,
+        Field(
+            description="True when another retention pass or a purge held the volume lock, so nothing was swept and every count is 0."
+        ),
+    ]
+
+
+class RetentionHold(BaseModel):
+    partition: str
+    reason: Annotated[
+        Literal[
+            "pinned", "leased", "hot_window", "not_archived", "archive_mismatch", "shared_partition"
+        ],
+        Field(
+            description="Why it was kept: its symbol is pinned (`pinned`), a replay session leases it (`leased`), it is still inside its hot window or total horizon (`hot_window`), it is not archived to Parquet yet (`not_archived`), the archive no longer matches the day's rows (`archive_mismatch`), or another symbol shares its QuestDB day (`shared_partition`). **Open-ended for readers:** adding a reason is an additive change (C-6.3)."
+        ),
+    ]
+
+
+class RetentionPurgeResult(BaseModel):
+    deleted: Annotated[JsonInt, Field(description="Partitions the purge removed.", ge=0)]
+    freed_bytes: Annotated[JsonInt, Field(description="Bytes the removed partitions held.", ge=0)]
+    skipped: Annotated[
+        list[RetentionHold],
+        Field(
+            description="Partitions kept because the check made just before deleting one found a blocker that planning had not."
+        ),
+    ]
+    protected: Annotated[
+        list[RetentionHold],
+        Field(description="Partitions held while planning, which never became part of the purge."),
+    ]
+    failed: Annotated[
+        JsonInt, Field(description="Partitions whose delete was attempted and failed.", ge=0)
+    ]
+
+
+class CompactionRunResult(BaseModel):
+    compacted: Annotated[JsonInt, Field(description="Partitions whose files were merged.", ge=0)]
+    skipped: Annotated[
+        JsonInt, Field(description="Partitions left as they were, with nothing to merge.", ge=0)
+    ]
+    deferred: Annotated[
+        list[str],
+        Field(description="Partitions an active replay session was reading, left for a later run."),
+    ]
+    failed: Annotated[
+        list[str],
+        Field(description="Partitions whose merge failed its row-count check, left as they were."),
+    ]
+
+
+class FilesSkippedItem(BaseModel):
+    file: Annotated[str, Field(description="The archive file's name.")]
+    reason: Annotated[
+        Literal[
+            "import_checksum_failed",
+            "import_parse_failed",
+            "import_download_failed",
+            "import_file_not_found",
+            "import_file_too_large",
+        ],
+        Field(
+            description="Why: it failed its checksum, could not be parsed, could not be downloaded, is not in the archive, or is over the size cap. **Open-ended for readers:** adding a reason is an additive change (C-6.3)."
+        ),
+    ]
+
+
+class OverlapItem(BaseModel):
+    from_: Annotated[AwareDatetime, Field(alias="from")]
+    to: AwareDatetime
+
+
+class AlreadyImported(BaseModel):
+    rows_written: Annotated[JsonInt, Field(ge=0)]
+    rows_discarded_overlap: Annotated[JsonInt, Field(ge=0)]
+    rows_discarded_duplicate: Annotated[JsonInt, Field(ge=0)]
+
+
+class ArchiveImportResult(BaseModel):
+    symbol: Annotated[
+        str,
+        Field(
+            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ]
+    from_: Annotated[date, Field(alias="from", description="First requested UTC date, inclusive.")]
+    to: Annotated[date, Field(description="Last requested UTC date, inclusive.")]
+    files_total: Annotated[JsonInt, Field(description="Daily archive files in the range.", ge=0)]
+    files_processed: Annotated[
+        JsonInt, Field(description="Files this run downloaded, verified and wrote.", ge=0)
+    ]
+    files_already_imported: Annotated[
+        JsonInt,
+        Field(
+            description="Files an earlier run finished, which this run did not download again; their rows are counted in `already_imported`.",
+            ge=0,
+        ),
+    ]
+    files_skipped: Annotated[
+        list[FilesSkippedItem],
+        Field(
+            description="Files this run skipped, sorted by name, at most 400 (the server reports no more); the next run tries them again."
+        ),
+    ]
+    rows_written: Annotated[JsonInt, Field(description="Rows this run wrote.", ge=0)]
+    rows_discarded_overlap: Annotated[
+        JsonInt,
+        Field(
+            description="Rows inside a recorded window, discarded because recorded data wins.", ge=0
+        ),
+    ]
+    rows_discarded_duplicate: Annotated[
+        JsonInt,
+        Field(
+            description="Rows already in the cold tier under the same trade, not written again.",
+            ge=0,
+        ),
+    ]
+    overlap: Annotated[
+        list[OverlapItem],
+        Field(description="The recorded windows that took rows out of this run, merged, in UTC."),
+    ]
+    bytes_downloaded: Annotated[
+        JsonInt, Field(description="Archive bytes this run downloaded.", ge=0)
+    ]
+    already_imported: Annotated[
+        AlreadyImported,
+        Field(
+            description="The row counts the earlier runs recorded for the files in `files_already_imported`."
+        ),
+    ]
+    streams: Annotated[
+        list[
+            Literal[
+                "trades",
+                "orderbook_delta",
+                "orderbook_snapshot",
+                "tickers",
+                "klines",
+                "liquidations",
+                "open_interest",
+                "funding",
+            ]
+        ],
+        Field(description="The streams imported: `trades` only."),
+    ]
+    source: Annotated[
+        Literal["archive"], Field(description="Labels the imported windows archive-derived.")
+    ]
+
+
 class AuditSigningKey(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -7541,9 +7714,15 @@ class Job(BaseModel):
     started_at: AwareDatetime | None = None
     finished_at: AwareDatetime | None = None
     result: Annotated[
-        AuditExportResult | dict[str, Any] | None,
+        AuditExportResult
+        | RetentionSweepResult
+        | CompactionRunResult
+        | RetentionPurgeResult
+        | ArchiveImportResult
+        | dict[str, Any]
+        | None,
         Field(
-            description='Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then` below); other kinds carry their own object. For `kind: backup` it is `{backup_id}`, plus `audit: "unavailable"` when the run\'s `stage: finished` record could not be written (`createBackup`), and for `kind: backup_verify` it is `{backup_id, verify_method}`, where `verify_method` is `restore_smoke`, `checksum`, `pg_verifybackup` or `duckdb_scan` (the values of `backups.verify_method`, E42-T05); a `backup_restore` result is defined with the restore contract (#3084).'
+            description='Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then` below); other kinds carry their own object. For `kind: backup` it is `{backup_id}`, plus `audit: "unavailable"` when the run\'s `stage: finished` record could not be written (`createBackup`), and for `kind: backup_verify` it is `{backup_id, verify_method}`, where `verify_method` is `restore_smoke`, `checksum`, `pg_verifybackup` or `duckdb_scan` (the values of `backups.verify_method`, E42-T05); a `backup_restore` result is defined with the restore contract (#3084). For `kind: retention_sweep` it is a `RetentionSweepResult` when `setRetentionPolicies` started the sweep (`apply_now=true`) and a `CompactionRunResult` when `compactRecorder` did, which reports the same kind and takes the same one slot: a client that asked for the job knows which it is, and otherwise reads it from the keys (`skipped_locked` or `compacted`). For `kind: retention_purge` it is a `RetentionPurgeResult` (`purgeRecordedData`), and for `kind: archive_import` an `ArchiveImportResult` (`importTradeArchive`).'
         ),
     ] = None
     error: Annotated[
