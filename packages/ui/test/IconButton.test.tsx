@@ -166,3 +166,30 @@ describe("IconButton gated announcement (D09 2.2)", () => {
     expect(await politeText()).toBe("");
   });
 });
+
+// E09-D09 §2.2 "one notice, many pointers": a read-only panel's one notice describes every gated control;
+// E08-S08's WatchlistGroupTabs "+" and ColumnPicker's move buttons point at it. 2b stays: the badge and the echo.
+describe("IconButton disabledReasonId: the reason shown by the host's notice", () => {
+  it("is described by the notice alone, keeps its name, badge and echo, and renders no hidden copy", async () => {
+    const host = await mount(
+      <>
+        <p id="notice">{REASON}</p>
+        <IconButton
+          icon="plus"
+          label="New watchlist"
+          disabledReason={REASON}
+          disabledReasonId="notice"
+        />
+      </>,
+    );
+    const b = get(host, "New watchlist");
+    expect(b).toHaveAttribute("aria-disabled", "true");
+    expect(b).toHaveAttribute("aria-describedby", "notice");
+    expect(b).toHaveAccessibleDescription(REASON);
+    expect(within(host).getAllByText(REASON)).toHaveLength(1);
+    expect(b.querySelector(".cv-icon-button__badge svg")).not.toBeNull();
+    expect(document.querySelector('[data-cmp="CMP-016"]')).toHaveTextContent(
+      `New watchlist · ${REASON}`,
+    );
+  });
+});

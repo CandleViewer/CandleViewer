@@ -276,6 +276,55 @@ export const PAIRS = [
   },
   { fg: "color.border.selected", bg: "color.surface.selected", threshold: THRESHOLD.NON_TEXT },
 
+  // --- Watchlist grid (E08-D07 SCR-100, spec §7.2; CMP-049 grid, CMP-161, CMP-239 compact) --
+  // The pairs above already cover the stale tint, the T1 chip's text, the active bar and the dash on row fills.
+  // Held in packages/ui/test/contrast/watchlist-pairs.test.ts instead: §7.3 item 1's Disconnected fallback,
+  // `color.text.primary` at `opacity.muted` on `color.surface.sunken` (an alpha this registry cannot express).
+  {
+    fg: "color.data-confidence.stale.text",
+    bg: "color.surface.selected",
+    threshold: THRESHOLD.TEXT,
+  },
+  {
+    fg: "color.text.inverse",
+    bg: "color.data-confidence.stale.indicator",
+    threshold: THRESHOLD.TEXT,
+  },
+  {
+    fg: "color.data-confidence.delisted.text",
+    bg: "color.surface.raised",
+    threshold: THRESHOLD.TEXT,
+  },
+  { fg: "color.text.tertiary", bg: "color.surface.hover", threshold: THRESHOLD.TEXT },
+  { fg: "color.buy.default", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.sell.default", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.buy.default", bg: "color.surface.hover", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.sell.default", bg: "color.surface.hover", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.buy.default", bg: "color.surface.selected", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.sell.default", bg: "color.surface.selected", threshold: THRESHOLD.NON_TEXT },
+  {
+    fg: "color.data-confidence.stale.indicator",
+    bg: "color.surface.hover",
+    threshold: THRESHOLD.NON_TEXT,
+  },
+  {
+    fg: "color.data-confidence.stale.indicator",
+    bg: "color.status.warning.subtle",
+    threshold: THRESHOLD.NON_TEXT,
+  },
+  {
+    fg: "color.data-confidence.delisted.indicator",
+    bg: "color.surface.raised",
+    threshold: THRESHOLD.NON_TEXT,
+  },
+  { fg: "color.status.warning.strong", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.warning.strong", bg: "color.surface.hover", threshold: THRESHOLD.NON_TEXT },
+  {
+    fg: "color.status.warning.strong",
+    bg: "color.surface.selected",
+    threshold: THRESHOLD.NON_TEXT,
+  },
+
   // --- Dock sync-group edges (E15-D13 §6 P-1 … P-6) --------------------
   // The tile edge sits on the panel header (`raised`) or a grid cell's header (`canvas`);
   // the group letter always carries the group, the hue only repeats it.

@@ -28,7 +28,15 @@ import {
   Toast,
   Toggle,
 } from "../src/index.js";
-import type { SegmentedOptions } from "../src/index.js";
+import {
+  ColumnPicker,
+  FileDrop,
+  FreshnessMarker,
+  WatchlistGroupTabs,
+  WatchlistRow,
+  watchlistColumns,
+} from "../src/index.js";
+import type { SegmentedOptions, WatchlistRowData } from "../src/index.js";
 import { mount } from "./theme/mount.js";
 
 const options = [
@@ -191,5 +199,76 @@ describe("molecules carry their catalogue id", () => {
       />,
     );
     expect(document.querySelectorAll('[data-cmp="CMP-041"]')).toHaveLength(1);
+  });
+});
+
+describe("E08-S08's watchlist components carry their catalogue id", () => {
+  const BTC: WatchlistRowData = { symbol: "BTCUSDT", priceScale: 2, lastPrice: 64012.5 };
+  const watchlist: [string, () => JSX.Element][] = [
+    [
+      "CMP-056",
+      () => (
+        <ColumnPicker
+          label="Columns"
+          columns={[{ id: "last", label: "Last", visible: true }]}
+          onChange={noop}
+          onReorder={noop}
+        />
+      ),
+    ],
+    [
+      "CMP-067",
+      () => (
+        <FileDrop
+          label="Import…"
+          accept=".txt"
+          maxBytes={65536}
+          oversizedMessage={() => "Too big."}
+          notTextMessage="Not text."
+          onText={noop}
+        />
+      ),
+    ],
+    [
+      "CMP-161",
+      () => (
+        <Table<WatchlistRowData>
+          grid
+          caption="Watchlist Majors"
+          columns={watchlistColumns(["symbol", "last"])}
+          rows={[BTC]}
+          rowKey={(row) => row.symbol}
+          renderRow={(row, grid) => (
+            <WatchlistRow grid={grid} row={row} columns={["symbol", "last"]} />
+          )}
+        />
+      ),
+    ],
+    [
+      "CMP-162",
+      () => (
+        <WatchlistGroupTabs
+          aria-label="Watchlists"
+          groups={[{ id: "majors", name: "Majors" }]}
+          counts={{ majors: 12 }}
+          activeId="majors"
+          onSwitch={noop}
+          onCreate={noop}
+          onRename={noop}
+          onDuplicate={noop}
+          onDelete={noop}
+          onManage={noop}
+        />
+      ),
+    ],
+    [
+      "CMP-239",
+      () => <FreshnessMarker presentation="compact" state="stale" lastUpdatedAgeMs={7000} />,
+    ],
+  ];
+
+  it.each(watchlist)("%s marks exactly one root with data-cmp", async (id, render) => {
+    const host = await mount(render());
+    expect(host.querySelectorAll(`[data-cmp="${id}"]`)).toHaveLength(1);
   });
 });

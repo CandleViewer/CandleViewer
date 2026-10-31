@@ -1,16 +1,22 @@
 import {
+  Fragment,
+  useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type FocusEvent,
   type JSX,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "../icons/Icon.js";
+import type { IconName } from "../icons/registry.js";
 import { Checkbox } from "./Checkbox.js";
 import { EmptyState } from "./EmptyState.js";
 import { ErrorState } from "./ErrorState.js";
@@ -19,6 +25,12 @@ import { Menu, type MenuItem } from "./Menu.js";
 import { Skeleton } from "./Skeleton.js";
 import { Spinner } from "./Spinner.js";
 import { NumericText, type NumericFormat } from "./Typography.js";
+import { LEAVE_GRACE_MS } from "./Tooltip.js";
+import { cx } from "./internal/cx.js";
+import { useGatedAnnounce } from "./internal/disabledReason.js";
+import { useLayerPortal } from "./internal/layers.js";
+import { leadingSpacers, rowsInView } from "./internal/tableWindow.js";
+import { useAnchoredPosition } from "./internal/useAnchoredPosition.js";
 
 export type TableSortDirection = "ascending" | "descending";
 
@@ -26,6 +38,16 @@ export type TableSortDirection = "ascending" | "descending";
 export interface TableSort {
   readonly columnId: string;
   readonly direction: TableSortDirection;
+}
+
+/** A status after a header's label: SCR-100's stale OI Δ column, "⚠" and "stale" (E08-D07 §4.2). */
+export interface TableHeaderStatus {
+  /** A registry glyph, decorative: the word carries the status. */
+  readonly icon: IconName;
+  /** The word, visually hidden after the label, so it joins the header's name ("OI Δ 24h % stale"). */
+  readonly label: string;
+  /** `stale` draws the glyph in `color.data-confidence.stale.indicator`; absent, the header's text colour. */
+  readonly tone?: "stale";
 }
 
 interface TableColumnBase {
@@ -40,6 +62,16 @@ interface TableColumnBase {
    * its columns' minimums, so the threshold tracks text scale and zoom. Default 8.
    */
   readonly minWidthEm?: number;
+  /** The column's width, in `em` of the table's font size (a `<col>`), in the table layout; stacked, it is dropped. */
+  readonly widthEm?: number;
+  /**
+   * The column's sort is gated (T2, E08-D07 §6.6; SCR-100's live sort past the budget, D5): the header keeps its
+   * button, label and `aria-sort`, takes `aria-disabled`, the CMP-019 `lock` before the label and this reason as its
+   * description (the table's `sortReasonId` note, or a node of its own). A press sorts nothing and re-shows it.
+   */
+  readonly sortDisabledReason?: string;
+  /** A glyph and a word after the label (E08-D07 §4.2: a stale column's "⚠", named "stale"). */
+  readonly headerStatus?: TableHeaderStatus;
 }
 
 /** A text column: the cell truncates with an ellipsis and keeps its full text in the DOM. */
@@ -47,6 +79,8 @@ export interface TableTextColumn<T> extends TableColumnBase {
   readonly cell: (row: T) => ReactNode;
   readonly numeric?: undefined;
   readonly precision?: never;
+  /** `end` aligns the header and the cells as numbers are (a column of preformatted figures, CMP-161's). */
+  readonly align?: "start" | "end";
   /**
    * The cell holds controls (an inline control): the table becomes a grid. Its controls leave the Tab order; on the
    * focused cell `Enter` or `F2` moves focus to the first of them and `Esc` brings it back to the cell.
@@ -61,6 +95,7 @@ export interface TableNumericColumn<T> extends TableColumnBase {
   /** Decimals; NumericText's default for the format when omitted. */
   readonly precision?: number;
   readonly interactive?: never;
+  readonly align?: never;
 }
 
 export type TableColumn<T> = TableTextColumn<T> | TableNumericColumn<T>;
@@ -71,9 +106,87 @@ export interface TableError {
   readonly onRetry: () => void;
 }
 
+/** The host's window of a long list (virtualised rendering): `rows` start `offset` rows into a list of `total`. */
+export interface TableRowWindow {
+  /** The index, in the whole list, of the first drawn row. */
+  readonly offset: number;
+  /** The whole list's length. */
+  readonly total: number;
+}
+
+/** How a custom row's cell takes part in the grid (`TableRowContext.cellProps`). */
+export interface TableCellOptions {
+  /** The row's header: a `th scope="row"` (`rowheader`), as CMP-161's symbol. */
+  readonly header?: boolean;
+  /** Merges the cell with the next `span - 1` columns: a native `colspan`, one cell to the arrows. */
+  readonly span?: number;
+  /** A number: end-aligned, never wrapped. */
+  readonly numeric?: boolean;
+  /**
+   * Words the table's one CMP-016 echo shows on keyboard focus and hover (`aria-hidden`: the cell already carries
+   * them for assistive technology, E09-D09 2b), such as a stale row's "Last update 10:31:02 UTC".
+   */
+  readonly echo?: string | undefined;
+  /**
+   * The cell's whole text where the cell may cut it with an ellipsis (CMP-161's symbol): while the cell is cut, the
+   * echo shows it on keyboard focus and hover (E08-D07 §4.1 pairs every cut with the echo). The cell keeps its whole
+   * text in the DOM, so its name is never cut.
+   */
+  readonly cut?: string | undefined;
+  /** The cell's description ids (`aria-describedby`). */
+  readonly describedBy?: string | undefined;
+  readonly className?: string | undefined;
+}
+
+/** Spread on a custom row's cell (`td`, or `th` for the row's header). */
+export interface TableCellProps {
+  readonly className: string;
+  readonly role?: string | undefined;
+  readonly scope?: "row" | undefined;
+  readonly colSpan?: number | undefined;
+  readonly tabIndex?: 0 | -1 | undefined;
+  readonly "aria-describedby"?: string | undefined;
+  readonly "data-cv-r"?: number | undefined;
+  readonly "data-cv-c"?: number | undefined;
+  readonly "data-cv-span"?: number | undefined;
+  readonly "data-numeric"?: "" | undefined;
+  readonly "data-heading"?: "" | undefined;
+  readonly "data-cv-echo"?: string | undefined;
+  readonly "data-cv-cut"?: string | undefined;
+}
+
+/** Spread on a custom row's `<tr>`. */
+export interface TableRowProps {
+  readonly className: string;
+  readonly role?: string | undefined;
+  readonly "aria-rowindex": number;
+}
+
+/** CMP-049's row contract for a row the host draws (`renderRow`; CMP-161 WatchlistRow). */
+export interface TableRowContext {
+  /** The row's index in the whole list, from 0. */
+  readonly index: number;
+  /** For the `<tr>`: its absolute `aria-rowindex` and, stacked, its explicit role. */
+  readonly rowProps: TableRowProps;
+  /** For the cell of data column `column` (an index into `columns`): its grid place, role and roving `tabindex`. */
+  readonly cellProps: (column: number, options?: TableCellOptions) => TableCellProps;
+  /** Stacked, the visible header label a cell leads with (none for the first column), hidden from AT. */
+  readonly label: (column: number) => ReactNode;
+  readonly stacked: boolean;
+  /**
+   * A T2 key on the row (E08-D07 §6.6, E09-D09 §9.3): call it from the row's key handler after `preventDefault()`,
+   * once per press (a held key's repeats are the row's to drop). Nothing changes; `reason` shows in the CMP-016 echo
+   * on the focused cell and is said once, politely, through the gated announcement (`GatedAnnounceProvider`).
+   */
+  readonly refuse: (reason: string) => void;
+}
+
 export interface TableProps<T> {
   readonly columns: readonly TableColumn<T>[];
-  /** The rows, in display order: the consumer sorts. v0 renders every row; above 200 it warns in development. */
+  /**
+   * The rows, in display order: the consumer sorts. Without `rowWindow` every row is drawn (above 200 it warns in
+   * development); with it, these are the drawn window.
+   */
   readonly rows: readonly T[];
   /** A stable, unique key per row. */
   readonly rowKey: (row: T) => string;
@@ -119,9 +232,41 @@ export interface TableProps<T> {
    * number, else the row's key.
    */
   readonly rowLabel?: ((row: T) => string) | undefined;
+  /**
+   * The host's window of a long list (grid mode; SCR-100 windows past 60 rows, E08-D07 D6): `rows` are the drawn
+   * rows. Spacer rows hold the others' height, `aria-rowcount` counts the whole list and each row's `aria-rowindex`
+   * is absolute. A key that moves focus past the window asks for its row through `onRowsInView`; focus lands once
+   * the host draws it, and the one Tab stop stays on a drawn row meanwhile.
+   */
+  readonly rowWindow?: TableRowWindow | undefined;
+  /**
+   * The absolute rows the scroll region shows below the sticky header, first and last inclusive, once per change:
+   * as it scrolls or resizes, and for the row a key moves focus to outside the window. The host draws a window that
+   * holds them.
+   */
+  readonly onRowsInView?: ((first: number, last: number) => void) | undefined;
+  /**
+   * Draws each body row itself (CMP-161 WatchlistRow): the `<tr>` and its cells spread the row contract `grid` gives
+   * (`rowProps`, `cellProps`), one cell per column. The table then draws no select or actions column: `rowActions`
+   * opens as the context menu alone.
+   */
+  readonly renderRow?: ((row: T, grid: TableRowContext) => ReactNode) | undefined;
+  /**
+   * The host's polite region says the table's lines (sort, load and selection results, a row menu's re-shown reason)
+   * and the table renders none: SCR-100 owns no live region (E08-D07 D17). A T2 sort header's or row key's reason is
+   * the gated announcement's (`GatedAnnounceProvider`, #5135), said once, never here as well.
+   */
+  readonly announce?: ((text: string) => void) | undefined;
+  /** The host's note every T2 sort header points at (E09-D09 §2.2: one notice, many pointers). */
+  readonly sortReasonId?: string | undefined;
+  /**
+   * What a grid becomes when it stacks: `table` (the default), a table whose controls are each a Tab stop; `grid`,
+   * one card per row that keeps the grid's roles, its one Tab stop and its keys (SCR-100 at 200 %, E08-D07 D30).
+   */
+  readonly reflow?: "table" | "grid";
 }
 
-/** The v0 bound (#266 out of scope: no virtualised rendering). */
+/** The v0 bound of a table drawn whole (#266); a longer list takes the host's window (`rowWindow`). */
 const MAX_ROWS = 200;
 const SKELETON_ROWS = 5;
 /** A column's `minWidthEm` when it gives none: room for a short label or an 8-digit number. */
@@ -337,6 +482,11 @@ interface CellAt {
   readonly c: number;
 }
 
+/** The remembered cell: its last place and, on a drawn body row, that row's key. */
+interface Remembered extends CellAt {
+  readonly key?: string | undefined;
+}
+
 /** What a cell holds: a built-in control focused in its place, plain content, or a consumer's controls. */
 type CellKind = "widget" | "cell" | "interactive";
 
@@ -352,6 +502,113 @@ const placeOf = (cell: HTMLElement): CellAt => ({
   c: Number(cell.dataset["cvC"]),
 });
 
+/** The columns a cell covers: 1, or a merged cell's span. */
+const spanOf = (cell: HTMLElement): number => Math.max(1, Number(cell.dataset["cvSpan"] ?? 1) || 1);
+
+/** The drawn cell of row `r` that covers column `c` (a merged cell covers its span), or null. */
+const cellCovering = (table: HTMLElement | null, r: number, c: number): HTMLElement | null => {
+  if (table === null) return null;
+  for (const cell of table.querySelectorAll<HTMLElement>(`[data-cv-r="${r}"]`)) {
+    const start = Number(cell.dataset["cvC"]);
+    if (c >= start && c < start + spanOf(cell)) return cell;
+  }
+  return null;
+};
+
+/** Keyboard focus shows a cell's echo at once; an engine without `:focus-visible` counts every focus. */
+const focusVisible = (element: Element): boolean => {
+  try {
+    return element.matches(":focus-visible");
+  } catch {
+    return true;
+  }
+};
+
+/** One step of layout's own precision (a `LayoutUnit`, 1/64 px): a difference of one step is rounding, not overflow. */
+const LAYOUT_STEP = 1 / 64;
+
+/** A computed length in px: "8px" is 8, and the empty string of an unstyled node (jsdom) is 0. */
+const pixels = (length: string): number => Number.parseFloat(length) || 0;
+
+/**
+ * How wide `node`'s line is, to the fraction, which no whole-pixel property reads: the union of the boxes and text runs
+ * of its in-flow content. An absolutely positioned descendant, a visually hidden note, takes no room in the line, so it
+ * and what it holds are skipped. `undefined` where the engine has no geometry for a `Range` (jsdom).
+ */
+function lineWidth(node: HTMLElement): number | undefined {
+  const range = node.ownerDocument.createRange();
+  if (typeof range.getClientRects !== "function") return undefined;
+  let start = Infinity;
+  let end = -Infinity;
+  const take = (rects: Iterable<DOMRect>): void => {
+    for (const rect of rects) {
+      start = Math.min(start, rect.left);
+      end = Math.max(end, rect.right);
+    }
+  };
+  const walker = node.ownerDocument.createTreeWalker(
+    node,
+    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+    (child) =>
+      child instanceof Element && ["absolute", "fixed"].includes(getComputedStyle(child).position)
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
+  );
+  for (let child = walker.nextNode(); child !== null; child = walker.nextNode()) {
+    if (child instanceof Element) {
+      take(child.getClientRects());
+    } else {
+      range.selectNodeContents(child);
+      take(range.getClientRects());
+    }
+  }
+  return end - start;
+}
+
+/** `node`'s content width, to the fraction: its border box less its padding and borders. */
+function contentWidth(node: HTMLElement): number {
+  const style = getComputedStyle(node);
+  return (
+    node.getBoundingClientRect().width -
+    pixels(style.paddingLeft) -
+    pixels(style.paddingRight) -
+    pixels(style.borderLeftWidth) -
+    pixels(style.borderRightWidth)
+  );
+}
+
+/**
+ * Whether `node` draws an ellipsis. `scrollWidth` and `clientWidth` are whole pixels: they read a cut of a pixel or
+ * more, but a text 0.4 px wider than its box reads as none while the ellipsis is still drawn (E08-D07 §4.1 pairs every
+ * cut with the echo). So the line is also measured to the fraction against the box's content width, within one
+ * layout step.
+ */
+const isCut = (node: HTMLElement): boolean => {
+  if (node.scrollWidth > node.clientWidth) return true;
+  const line = lineWidth(node);
+  return line !== undefined && line - contentWidth(node) > LAYOUT_STEP;
+};
+
+/**
+ * A cut text's whole words in `cell` (E08-D07 §4.1 pairs every cut with the echo): the cell's own `cut` text or its
+ * header label's, while that box is narrower than its text, to the fraction of a pixel (`isCut`). Read on focus and
+ * hover only, never per render.
+ */
+const cutWords = (cell: HTMLElement): string | undefined => {
+  const node = cell.hasAttribute("data-cv-cut")
+    ? cell
+    : cell.querySelector<HTMLElement>("[data-cv-cut]");
+  const words = node?.dataset["cvCut"]?.trim();
+  if (node == null || words === undefined || words === "") return undefined;
+  return isCut(node) ? words : undefined;
+};
+
+/** What a cell's echo shows on focus and hover: its own words, else a cut text's whole words. */
+const echoWords = (cell: HTMLElement): string | undefined => {
+  const own = cell.dataset["cvEcho"];
+  return own !== undefined && own !== "" ? own : cutWords(cell);
+};
+
 /** Where focus goes for a cell: its built-in control (checkbox, sort or actions button), else the cell. */
 const focusTargetOf = (cell: HTMLElement): HTMLElement =>
   cell.hasAttribute("data-cv-widget")
@@ -365,6 +622,16 @@ function defaultRowLabel<T>(columns: readonly TableColumn<T>[], row: T, key: str
   const value: unknown = first.cell(row);
   return typeof value === "string" || typeof value === "number" ? String(value) : key;
 }
+
+/** A column's T2 sort reason, trimmed; none when blank (a blank reason would show nothing and read nothing). */
+const reasonOf = (column: TableColumnBase): string | undefined => {
+  const reason = column.sortDisabledReason?.trim();
+  return reason === undefined || reason === "" ? undefined : reason;
+};
+
+/** Numbers, and text columns of preformatted figures, end-align under an end-aligned header. */
+const endAligned = <T,>(column: TableColumn<T>): boolean =>
+  column.numeric !== undefined || column.align === "end";
 
 /**
  * One page of rows for Page Up / Page Down: the rows that fit the visible part of the scroll region (or of the
@@ -399,6 +666,139 @@ function useTamedControls(table: RefObject<HTMLTableElement | null>, roving: boo
       }
     }
   });
+}
+
+interface RowsInViewHandle {
+  /** Measures the region and reports a changed view. */
+  readonly measure: () => void;
+  /** Asks the host for absolute row `index`, outside the window, and forgets the last view reported. */
+  readonly want: (index: number) => void;
+}
+
+/**
+ * The rows the region shows, reported once per change: on scroll (the region's `onScroll`), as the region resizes
+ * and after a mount. Measured from layout (`rowsInView`): the body's top, the sticky header's and one drawn row's
+ * height. Nothing is reported while no row has a height.
+ */
+function useRowsInView(
+  region: RefObject<HTMLDivElement | null>,
+  tbody: RefObject<HTMLTableSectionElement | null>,
+  total: number,
+  onRowsInView: ((first: number, last: number) => void) | undefined,
+): RowsInViewHandle {
+  const report = useRef(onRowsInView);
+  report.current = onRowsInView;
+  const count = useRef(total);
+  count.current = total;
+  const said = useRef("");
+  const measure = useCallback((): void => {
+    const box = region.current;
+    const body = tbody.current;
+    if (report.current === undefined || box === null || body === null) return;
+    const view = rowsInView({
+      scrollTop: box.scrollTop,
+      viewHeight: box.clientHeight,
+      bodyTop: body.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop,
+      headerHeight: box.querySelector("thead")?.getBoundingClientRect().height ?? 0,
+      rowHeight: body.querySelector("tr[aria-rowindex]")?.getBoundingClientRect().height ?? 0,
+      total: count.current,
+    });
+    if (view === undefined) return;
+    const key = `${view.first}:${view.last}`;
+    if (key === said.current) return;
+    said.current = key;
+    report.current(view.first, view.last);
+  }, [region, tbody]);
+  const watching = onRowsInView !== undefined;
+  useEffect(() => {
+    const box = region.current;
+    if (!watching || box === null) return undefined;
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [region, watching, measure]);
+  const want = useCallback((index: number): void => {
+    said.current = "";
+    report.current?.(index, index);
+  }, []);
+  return { measure, want };
+}
+
+/** The table's one echo: its words, the cell it sits on, and a count that re-mounts it on every show. */
+interface EchoState {
+  readonly text: string;
+  readonly anchor: HTMLElement;
+  readonly n: number;
+}
+
+/** The hover delay of a cell's echo, as CMP-016's; keyboard focus shows it at once. */
+const ECHO_DELAY_MS = 300;
+
+/** The pointer on a shown echo (it stays, WCAG 1.4.13 hoverable) and off it (CMP-016's leave grace starts). */
+interface EchoHover {
+  readonly onPointerEnter: () => void;
+  readonly onPointerLeave: () => void;
+}
+
+/** One shown echo: positioned on its anchor cell by CMP-016's primitive while it is mounted. */
+function EchoSurface({
+  echo,
+  hover,
+}: {
+  readonly echo: EchoState;
+  readonly hover: EchoHover;
+}): JSX.Element {
+  const surface = useRef<HTMLDivElement>(null);
+  const anchor = useRef<HTMLElement | null>(echo.anchor);
+  useAnchoredPosition({ open: true, reference: anchor, floating: surface, side: "top" });
+  return (
+    <div
+      ref={surface}
+      role="tooltip"
+      className="cv-tooltip cv-table__echo"
+      data-cmp="CMP-016"
+      data-mode="echo"
+      aria-hidden="true"
+      onPointerEnter={hover.onPointerEnter}
+      onPointerLeave={hover.onPointerLeave}
+    >
+      {echo.text}
+    </div>
+  );
+}
+
+/**
+ * The table's one CMP-016 echo (E09-D09 2b; E08-D07 §6.6): a cell's words on keyboard focus and hover, or a T2
+ * reason on a refused press. `aria-hidden`: the cell's own text and description carry the words, so nothing is read
+ * twice. One node per table, however many cells have words: no extra DOM per cell. A hover echo stays while the
+ * pointer is on its cell or on the echo, and goes CMP-016's leave grace after it leaves both.
+ */
+function TableEcho({
+  echo,
+  hover,
+}: {
+  readonly echo: EchoState | null;
+  readonly hover: EchoHover;
+}): JSX.Element | null {
+  const root = useLayerPortal();
+  if (root === null) return null;
+  return createPortal(
+    echo === null ? (
+      <div
+        role="tooltip"
+        className="cv-tooltip cv-table__echo"
+        data-cmp="CMP-016"
+        data-mode="echo"
+        aria-hidden="true"
+        hidden
+      />
+    ) : (
+      <EchoSurface key={echo.n} echo={echo} hover={hover} />
+    ),
+    root,
+  );
 }
 
 interface RowMenuProps {
@@ -450,7 +850,15 @@ function RowMenu({ items, label, tabIndex, announceReason, onKeyDown }: RowMenuP
  * below the sticky header (`scroll-margin-top`). Reflow: below the sum of the columns' `minWidthEm` (at its own font
  * size, so at 200 % zoom too) it stacks, one block per row: the first data cell is the heading line, the others
  * header–value pairs, with explicit table roles kept; a grid then degrades to a table whose controls are each a Tab
- * stop, in order (arrow navigation needs a layout of rows and columns).
+ * stop, in order (arrow navigation needs a layout of rows and columns), unless `reflow="grid"` keeps it a grid of
+ * cards (E08-D07 D30). E08-D07's grid additions (§5, D16): a host's window of a long list (`rowWindow`, absolute
+ * `aria-rowcount` / `aria-rowindex`, spacer rows, `onRowsInView`, keys that cross the window); custom rows over the
+ * row contract (`renderRow`: CMP-161) with row headers and merged cells, one cell to the arrows; a T2 sort header
+ * and a T2 key on a row, which change nothing and re-show the reason in the table's one CMP-016 echo, said once; a
+ * cell's words in that echo on keyboard focus and hover (a hover echo stays while the pointer is on it), and a cut
+ * header label's or `cut` text's whole words; focus kept through a commit: a reorder leaves it on the moved row,
+ * and a removed row hands it to the next row, else the previous (E08-D07 §6.3); `announce` for a host that owns the
+ * live region.
  */
 export function Table<T>({
   columns,
@@ -471,25 +879,46 @@ export function Table<T>({
   onRowSelect,
   rowActions,
   rowLabel,
+  rowWindow,
+  onRowsInView,
+  renderRow,
+  announce,
+  sortReasonId,
+  reflow = "table",
 }: TableProps<T>): JSX.Element {
   const captionId = useId();
+  const reasonBase = useId();
+  const announceGated = useGatedAnnounce();
   const shell = useRef<HTMLDivElement>(null);
   const probe = useRef<HTMLSpanElement>(null);
   const region = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
   const tbody = useRef<HTMLTableSectionElement>(null);
+  // The whole list and the drawn window of it: without `rowWindow` the window is every row.
+  const total = Math.max(0, rowWindow?.total ?? rows.length);
+  const offset = Math.min(Math.max(0, rowWindow?.offset ?? 0), total);
+  const drawnCount = Math.min(rows.length, total - offset);
   const state = loading
     ? "loading"
     : error !== undefined
       ? "error"
-      : rows.length === 0
+      : total === 0
         ? "empty"
         : "populated";
-  const selectable = onRowSelect !== undefined;
+  const custom = renderRow !== undefined;
+  // T2 sort headers (E08-D07 §6.6): each distinct reason; without the host's note each has a hidden node to point at.
+  const gatedReasons =
+    onSortChange === undefined
+      ? []
+      : [...new Set(columns.filter((c) => c.sortable === true).flatMap((c) => reasonOf(c) ?? []))];
+  const sortReasonIdOf = (reason: string): string =>
+    `${reasonBase}-sort-${gatedReasons.indexOf(reason)}`;
+  // A custom row draws the data cells alone: no select column, and the row menu opens as the context menu only.
+  const selectable = onRowSelect !== undefined && !custom;
   const gridColumns: readonly GridColumn<T>[] = [
     ...(selectable ? [{ kind: "select" } as const] : []),
     ...columns.map((column, index) => ({ kind: "data", column, index }) as const),
-    ...(rowActions === undefined ? [] : [{ kind: "actions" } as const]),
+    ...(rowActions === undefined || custom ? [] : [{ kind: "actions" } as const]),
   ];
   const gridMode =
     grid ||
@@ -503,11 +932,13 @@ export function Table<T>({
     columns.reduce((sum, column) => sum + (column.minWidthEm ?? DEFAULT_MIN_WIDTH_EM), 0) +
       (gridColumns.length - columns.length) * CONTROL_COLUMN_EM,
   );
-  /** Arrow navigation and one Tab stop: grid mode, laid out as rows and columns. */
-  const roving = gridMode && !stacked;
+  /** Arrow navigation and one Tab stop: grid mode laid out as rows and columns, or stacked as cards (`reflow`). */
+  const roving = gridMode && (!stacked || reflow === "grid");
   // Explicit roles: `grid` / `gridcell` while roving; while stacked, the table roles, because `display: block`
   // strips native table semantics in some engines.
-  const role = (name: "table" | "rowgroup" | "row" | "columnheader" | "cell"): { role?: string } =>
+  const role = (
+    name: "table" | "rowgroup" | "row" | "columnheader" | "rowheader" | "cell",
+  ): { role?: string } =>
     roving && name === "table"
       ? { role: "grid" }
       : roving && name === "cell"
@@ -519,7 +950,7 @@ export function Table<T>({
   const keys = state === "populated" ? rows.map(rowKey) : [];
   const { line, retryStarted, nonce, say } = useResultLine({
     columns,
-    rowCount: rows.length,
+    rowCount: total,
     sort,
     sortPending,
     loading,
@@ -530,21 +961,156 @@ export function Table<T>({
         ? keys.filter((key) => selection.has(key)).length
         : undefined,
   });
+  // With `announce` the host's region says each line, and the table renders none (E08-D07 D17).
+  const announceRef = useRef(announce);
+  announceRef.current = announce;
+  useEffect(() => {
+    if (line !== "") announceRef.current?.(line);
+  }, [line, nonce]);
   useTamedControls(tableRef, roving);
+  const view = useRowsInView(region, tbody, total, onRowsInView);
 
   // The remembered cell (the Tab stop), clamped to the grid as rows come and go; at first the first body cell.
-  const [active, setActive] = useState<CellAt | undefined>(undefined);
-  const bodyRows = state === "populated" ? rows.length : 0;
+  // Body rows are numbered in the whole list: `r` 1 is its first row, whether drawn or not. A drawn body row is
+  // remembered by its key too, so a reorder carries the Tab stop with its row (E08-D07 §6.3: a re-rank keeps focus
+  // on the same symbol); a row gone leaves its place, clamped: the next row, else the previous.
+  const [active, setActive] = useState<Remembered | undefined>(undefined);
+  const bodyRows = state === "populated" ? total : 0;
+  const firstDrawn = offset + 1;
+  const lastDrawn = offset + drawnCount;
+  const drawn = (r: number): boolean => r === 0 || (r >= firstDrawn && r <= lastDrawn);
   const lastC = gridColumns.length - 1;
-  const wanted = active ?? { r: bodyRows > 0 ? 1 : 0, c: 0 };
+  const keyAt = (r: number): string | undefined =>
+    r >= firstDrawn && r <= lastDrawn ? keys[r - firstDrawn] : undefined;
+  const moved = active?.key === undefined ? -1 : keys.indexOf(active.key);
+  const wanted: CellAt =
+    active === undefined
+      ? { r: bodyRows > 0 ? firstDrawn : 0, c: 0 }
+      : moved >= 0 && moved < drawnCount
+        ? { r: firstDrawn + moved, c: active.c }
+        : active;
+  /** Remembers the cell at `place`, with its row's key while that row is drawn. */
+  const remember = (place: CellAt): void => {
+    const key = keyAt(place.r);
+    if (active?.r === place.r && active.c === place.c && active.key === key) return;
+    setActive({ r: place.r, c: place.c, key });
+  };
   const stop: CellAt = {
     r: Math.min(Math.max(wanted.r, 0), bodyRows),
     c: Math.min(Math.max(wanted.c, 0), lastC),
   };
+  // The Tab stop is always drawn: a remembered row outside the window lends it to the nearest drawn row.
+  const tabStop: CellAt = drawn(stop.r)
+    ? stop
+    : drawnCount > 0
+      ? { r: Math.min(Math.max(stop.r, firstDrawn), lastDrawn), c: stop.c }
+      : { r: 0, c: stop.c };
   // The context menu's row: the remembered body row (the header row keeps the last; the keys open it from the body).
-  const activeRow = state === "populated" ? rows[Math.max(stop.r, 1) - 1] : undefined;
+  const menuR = stop.r >= firstDrawn && stop.r <= lastDrawn ? stop.r : firstDrawn;
+  const activeRow = state === "populated" && drawnCount > 0 ? rows[menuR - firstDrawn] : undefined;
   // The context menu is controlled so its items are asked for only while it is open.
   const [contextOpen, setContextOpen] = useState(false);
+  // A cell a key moves focus to outside the window: focused once the host draws it.
+  const pending = useRef<CellAt | null>(null);
+  useLayoutEffect(() => {
+    const want = pending.current;
+    if (want === null || !drawn(want.r)) return;
+    pending.current = null;
+    const target = cellCovering(tableRef.current, want.r, want.c);
+    if (target !== null) focusTargetOf(target).focus({ preventScroll: true });
+  });
+  // A windowed list's spacers are counted in its drawn rows' measured height (`size.row.height` until laid out),
+  // measured again as the window, the density or the layout changes.
+  const [rowPx, setRowPx] = useState(0);
+  const windowed = rowWindow !== undefined;
+  useLayoutEffect(() => {
+    if (!windowed) return;
+    const height =
+      tbody.current?.querySelector("tr[aria-rowindex]")?.getBoundingClientRect().height ?? 0;
+    if (height > 0 && Math.abs(height - rowPx) > 0.5) setRowPx(height);
+  }, [windowed, rowPx, offset, drawnCount, stacked, density]);
+
+  // The element that holds focus in the grid, from focus landing there until focus leaves the table.
+  const held = useRef<HTMLElement | null>(null);
+  const lastTotal = useRef(total);
+  // After each commit (E08-D07 §6.3): a reorder keeps focus on the moved row (React gives a moved node its focus
+  // back) and the Tab stop follows its key; a removal (`Del`) unmounts the focused cell, so focus goes to the
+  // clamped Tab-stop cell: the next row, else the previous. A windowed list also unmounts a row scrolled out of its
+  // window: only a list that shrank restores. Focus elsewhere on purpose is never taken back.
+  useLayoutEffect(() => {
+    const was = lastTotal.current;
+    lastTotal.current = total;
+    const element = held.current;
+    const table = tableRef.current;
+    if (element === null || table === null || element.isConnected) return;
+    held.current = null;
+    const now = document.activeElement;
+    if (!roving || (now !== null && now !== document.body) || (windowed && total >= was)) return;
+    const target = cellCovering(table, tabStop.r, tabStop.c);
+    if (target !== null) focusTargetOf(target).focus({ preventScroll: true });
+  });
+
+  // The one echo (CMP-016): a cell's words on keyboard focus and hover, a T2 reason on a refused press.
+  const [echo, setEcho] = useState<EchoState | null>(null);
+  const echoRef = useRef<EchoState | null>(null);
+  echoRef.current = echo;
+  const echoCount = useRef(0);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const showEcho = (anchor: HTMLElement, text: string): void => {
+    clearTimeout(leaveTimer.current);
+    echoCount.current += 1;
+    setEcho({ text, anchor, n: echoCount.current });
+  };
+  const hideEcho = (): void => {
+    clearTimeout(leaveTimer.current);
+    setEcho((shown) => (shown === null ? shown : null));
+  };
+  /**
+   * The pointer left a hover echo's cell, or the echo: it goes after CMP-016's leave grace unless the pointer reaches
+   * the echo or its cell first (WCAG 1.4.13, Tooltip's own rule). Keyboard focus on its cell keeps it.
+   */
+  const leaveEcho = (): void => {
+    const shown = echoRef.current;
+    if (shown === null || shown.anchor.contains(document.activeElement)) return;
+    clearTimeout(leaveTimer.current);
+    leaveTimer.current = setTimeout(hideEcho, LEAVE_GRACE_MS);
+  };
+  const echoHover: EchoHover = {
+    onPointerEnter: () => clearTimeout(leaveTimer.current),
+    onPointerLeave: leaveEcho,
+  };
+  useEffect(
+    () => () => {
+      clearTimeout(hoverTimer.current);
+      clearTimeout(leaveTimer.current);
+    },
+    [],
+  );
+  // `Esc` hides a shown echo and stops there, focus kept, as CMP-016's own does; the next `Esc` is the host's.
+  useLayoutEffect(() => {
+    if (echo === null) return undefined;
+    const onKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setEcho(null);
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [echo]);
+  /**
+   * A T2 press (E09-D09 §9.3): nothing changes; the reason shows in the echo at the point of action and is said once,
+   * through the gated announcement the ui atoms use (#5135), never the table's own line as well.
+   */
+  const refuse = (reason: string, at?: Element | null): void => {
+    const text = reason.trim();
+    if (text === "") return;
+    const anchor =
+      at instanceof HTMLElement ? at : cellOf(tableRef.current, document.activeElement);
+    if (anchor !== null) showEcho(anchor, text);
+    announceGated(text);
+  };
 
   useEffect(() => {
     if (!import.meta.env?.DEV || rows.length <= MAX_ROWS) return;
@@ -579,8 +1145,8 @@ export function Table<T>({
   };
 
   /** A cell's grid attributes: its place, what it holds, and its roving `tabindex` (a widget carries its own). */
-  const tabFor = (r: number, c: number): 0 | -1 | undefined =>
-    roving ? (stop.r === r && stop.c === c ? 0 : -1) : undefined;
+  const tabFor = (r: number, c: number, span = 1): 0 | -1 | undefined =>
+    roving ? (tabStop.r === r && tabStop.c >= c && tabStop.c < c + span ? 0 : -1) : undefined;
   const at = (r: number, c: number, kind: CellKind): Record<string, string | number | undefined> =>
     gridMode
       ? {
@@ -595,13 +1161,48 @@ export function Table<T>({
 
   const onGridFocus = (event: FocusEvent<HTMLTableElement>): void => {
     if (!gridMode) return;
+    // Focus that lands in the grid supersedes a key's wait for an undrawn row: it never jumps there later.
+    pending.current = null;
     const cell = cellOf(tableRef.current, event.target);
     if (cell === null) return;
-    const place = placeOf(cell);
-    if (active?.r !== place.r || active.c !== place.c) setActive(place);
+    remember(placeOf(cell));
+    if (roving && event.target instanceof HTMLElement) held.current = event.target;
     // `nearest` honours the cell's `scroll-margin-top`, so it is never left under the sticky header.
     if (roving && event.target === focusTargetOf(cell))
       cell.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    // Keyboard focus (on the cell or its control) shows the cell's words in the echo at once; any other cell's goes.
+    const words = echoWords(cell);
+    const by = event.target instanceof Element ? event.target : cell;
+    if (words !== undefined && focusVisible(by)) showEcho(cell, words);
+    else if (echoRef.current?.anchor !== cell) hideEcho();
+  };
+
+  /** Focus leaving the table takes the echo with it, and leaves nothing for a later commit to restore. */
+  const onGridBlur = (event: FocusEvent<HTMLTableElement>): void => {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    held.current = null;
+    hideEcho();
+  };
+
+  /**
+   * Hover shows a cell's words (or a cut text's whole words) after CMP-016's delay; a hover echo goes CMP-016's leave
+   * grace after the pointer leaves its cell, unless it reaches the echo or comes back.
+   */
+  const onGridPointerOver = (event: PointerEvent<HTMLTableElement>): void => {
+    const cell = cellOf(tableRef.current, event.target);
+    if (cell !== null && echoRef.current?.anchor === cell) {
+      clearTimeout(leaveTimer.current);
+      return;
+    }
+    clearTimeout(hoverTimer.current);
+    leaveEcho();
+    const words = cell === null ? undefined : echoWords(cell);
+    if (cell === null || words === undefined) return;
+    hoverTimer.current = setTimeout(() => showEcho(cell, words), ECHO_DELAY_MS);
+  };
+  const onGridPointerLeave = (): void => {
+    clearTimeout(hoverTimer.current);
+    leaveEcho();
   };
 
   /**
@@ -610,14 +1211,31 @@ export function Table<T>({
    * cell's padding, the box's plate) focuses that control instead of losing focus to the page.
    */
   const onGridMouseDown = (event: MouseEvent<HTMLTableElement>): void => {
+    // A press supersedes a key's wait for an undrawn row, as focus moving does.
+    pending.current = null;
     const cell = cellOf(tableRef.current, event.target);
     if (cell === null) return;
-    const place = placeOf(cell);
-    if (active?.r !== place.r || active.c !== place.c) setActive(place);
+    remember(placeOf(cell));
     const target = focusTargetOf(cell);
     if (!roving || !(event.target instanceof Node) || target.contains(event.target)) return;
     event.preventDefault();
     target.focus({ preventScroll: true });
+  };
+
+  /**
+   * Focus to the cell covering (r, c). A row outside the window is asked of the host (`onRowsInView`); focus lands
+   * once it is drawn, and meanwhile the Tab stop stays on a drawn row.
+   */
+  const moveTo = (next: CellAt): void => {
+    if (drawn(next.r)) {
+      const target = cellCovering(tableRef.current, next.r, next.c);
+      if (target !== null) focusTargetOf(target).focus({ preventScroll: true });
+      return;
+    }
+    if (onRowsInView === undefined) return;
+    pending.current = next;
+    setActive(next);
+    view.want(next.r - 1);
   };
 
   const onGridKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
@@ -642,7 +1260,8 @@ export function Table<T>({
     } else if (event.key === "ArrowUp") next = { r: Math.max(r - 1, 0), c };
     else if (event.key === "ArrowDown") next = { r: Math.min(r + 1, bodyRows), c };
     else if (event.key === "ArrowLeft") next = { r, c: Math.max(c - 1, 0) };
-    else if (event.key === "ArrowRight") next = { r, c: Math.min(c + 1, lastC) };
+    // A merged cell is one cell: → leaves it past its span.
+    else if (event.key === "ArrowRight") next = { r, c: Math.min(c + spanOf(cell), lastC) };
     else if (event.key === "Home") next = { r, c: 0 };
     else if (event.key === "End") next = { r, c: lastC };
     else if (event.key === "PageUp")
@@ -667,17 +1286,15 @@ export function Table<T>({
       ) {
         // A widget cell's own Space (the box, a button) acts natively.
         event.preventDefault();
-        const row = rows[r - 1];
+        const row = rows[r - firstDrawn];
         if (row !== undefined) setRow(rowKey(row), !selection.has(rowKey(row)));
       }
       return;
     }
     // A handled key never scrolls the region itself: focus moves, and the cell scrolls into view.
     event.preventDefault();
-    const target = tableRef.current?.querySelector<HTMLElement>(
-      `[data-cv-r="${next.r}"][data-cv-c="${next.c}"]`,
-    );
-    if (target != null) focusTargetOf(target).focus({ preventScroll: true });
+    hideEcho();
+    moveTo(next);
   };
 
   const stateRow = (content: ReactNode): JSX.Element => (
@@ -730,7 +1347,7 @@ export function Table<T>({
       <td
         key={column.id}
         className={`cv-table__cell${ring}`}
-        data-numeric={column.numeric === undefined ? undefined : ""}
+        data-numeric={endAligned(column) ? "" : undefined}
         data-heading={index === 0 ? "" : undefined}
         {...role("cell")}
         {...at(r, c, interactive ? "interactive" : "cell")}
@@ -750,6 +1367,50 @@ export function Table<T>({
       </td>
     );
   };
+
+  /** The row contract a custom row spreads (`renderRow`): its place, its cells' roles and the roving tabindex. */
+  const contextOf = (r: number): TableRowContext => ({
+    index: r - 1,
+    rowProps: { className: "cv-table__row", "aria-rowindex": r + 1, ...role("row") },
+    cellProps: (column, options = {}) => {
+      const index = Math.min(Math.max(Math.trunc(column), 0), columns.length - 1);
+      const span = Math.max(1, Math.min(Math.trunc(options.span ?? 1), columns.length - index));
+      const words = options.echo?.trim();
+      const cut = options.cut?.trim();
+      return {
+        className: cx(
+          "cv-table__cell",
+          roving && "cv-focus-ring cv-focus-ring--inset",
+          options.className,
+        ),
+        ...(options.header === true
+          ? { scope: "row" as const, ...role("rowheader") }
+          : role("cell")),
+        colSpan: span > 1 ? span : undefined,
+        "aria-describedby": options.describedBy,
+        "data-numeric": options.numeric === true ? "" : undefined,
+        "data-heading": index === 0 ? "" : undefined,
+        "data-cv-echo": words === undefined || words === "" ? undefined : words,
+        "data-cv-cut": cut === undefined || cut === "" ? undefined : cut,
+        ...(gridMode
+          ? {
+              "data-cv-r": r,
+              "data-cv-c": index,
+              "data-cv-span": span > 1 ? span : undefined,
+              tabIndex: tabFor(r, index, span),
+            }
+          : {}),
+      };
+    },
+    label: (column) =>
+      stacked && column > 0 ? (
+        <span className="cv-table__cell-label" aria-hidden="true">
+          {columns[column]?.header}
+        </span>
+      ) : null,
+    stacked,
+    refuse: (reason) => refuse(reason),
+  });
 
   let body: ReactNode;
   if (state === "loading") {
@@ -780,20 +1441,41 @@ export function Table<T>({
   } else if (state === "empty") {
     body = stateRow(emptyState ?? <EmptyState title="No rows to show" />);
   } else {
-    body = rows.map((row, i) => {
-      const key = rowKey(row);
-      return (
-        <tr
-          key={key}
-          className="cv-table__row"
-          aria-rowindex={i + 2}
-          aria-selected={selectable ? selection.has(key) : undefined}
-          {...role("row")}
-        >
-          {gridColumns.map((gc, c) => bodyCell(row, key, i + 1, gc, c))}
-        </tr>
-      );
-    });
+    // The undrawn rows' height, in their measured height once laid out (`size.row.height` before).
+    const rowsTall = (count: number): string =>
+      rowPx > 0 ? `${count * rowPx}px` : `calc(${count} * var(--size-row-height))`;
+    const spacer = (key: string, count: number): JSX.Element => (
+      <tr key={key} className="cv-table__spacer" aria-hidden="true">
+        <td colSpan={gridColumns.length} style={{ blockSize: rowsTall(count) }} />
+      </tr>
+    );
+    const leading = leadingSpacers(offset);
+    const after = total - offset - drawnCount;
+    body = [
+      // An empty row first when the offset is even, so each drawn row keeps its absolute row's zebra.
+      ...(leading === 2
+        ? [<tr key="cv-pad" className="cv-table__spacer" aria-hidden="true" />]
+        : []),
+      ...(leading > 0 ? [spacer("cv-before", offset)] : []),
+      ...rows.slice(0, drawnCount).map((row, i) => {
+        const key = rowKey(row);
+        const r = offset + i + 1;
+        if (renderRow !== undefined)
+          return <Fragment key={key}>{renderRow(row, contextOf(r))}</Fragment>;
+        return (
+          <tr
+            key={key}
+            className="cv-table__row"
+            aria-rowindex={r + 1}
+            aria-selected={selectable ? selection.has(key) : undefined}
+            {...role("row")}
+          >
+            {gridColumns.map((gc, c) => bodyCell(row, key, r, gc, c))}
+          </tr>
+        );
+      }),
+      ...(after > 0 ? [spacer("cv-after", after)] : []),
+    ];
   }
 
   const headerCell = (gc: GridColumn<T>, c: number): JSX.Element => {
@@ -835,12 +1517,26 @@ export function Table<T>({
     const sortable = column.sortable === true && onSortChange !== undefined;
     const direction = sort?.columnId === column.id ? sort.direction : undefined;
     const pending = sortable && sortPending === column.id;
+    const gated = sortable ? reasonOf(column) : undefined;
+    // A block that ellipsises when the column is narrower than its words; in a grid the echo shows them whole.
+    const label = (
+      <span className="cv-table__label" data-cv-cut={column.header}>
+        {column.header}
+      </span>
+    );
+    const status =
+      column.headerStatus === undefined ? null : (
+        <span className="cv-table__header-status" data-tone={column.headerStatus.tone}>
+          <Icon name={column.headerStatus.icon} />
+          <span className="cv-visually-hidden"> {column.headerStatus.label}</span>
+        </span>
+      );
     return (
       <th
         key={column.id}
         scope="col"
         className={`cv-table__header${sortable ? "" : ring}`}
-        data-numeric={column.numeric === undefined ? undefined : ""}
+        data-numeric={endAligned(column) ? "" : undefined}
         aria-sort={sortable ? (direction ?? "none") : undefined}
         {...role("columnheader")}
         {...at(0, c, sortable ? "widget" : "cell")}
@@ -850,20 +1546,39 @@ export function Table<T>({
             type="button"
             className="cv-table__sort cv-focus-ring cv-focus-ring--inset"
             aria-busy={pending ? true : undefined}
+            aria-disabled={gated === undefined ? undefined : true}
+            aria-describedby={
+              gated === undefined ? undefined : (sortReasonId ?? sortReasonIdOf(gated))
+            }
             tabIndex={tabFor(0, c)}
-            onClick={() => press(column)}
+            onClick={(event) =>
+              gated === undefined ? press(column) : refuse(gated, event.currentTarget.closest("th"))
+            }
           >
-            <span className="cv-table__label">{column.header}</span>
+            {gated === undefined ? null : (
+              <span className="cv-table__lock">
+                <Icon name="lock" decorative={false} label="Not available" />
+              </span>
+            )}
+            {label}
+            {status}
             <SortGlyph direction={direction} pending={pending} />
           </button>
+        ) : status === null ? (
+          label
         ) : (
-          <span className="cv-table__label">{column.header}</span>
+          <span className="cv-table__head">
+            {label}
+            {status}
+          </span>
         )}
       </th>
     );
   };
 
-  const rowCount = state === "loading" ? -1 : state === "populated" ? rows.length + 1 : 2;
+  const rowCount = state === "loading" ? -1 : state === "populated" ? total + 1 : 2;
+  // The echo exists for a grid's cells and for T2 sort headers; a plain table renders none.
+  const echoes = gridMode || gatedReasons.length > 0;
 
   return (
     <div
@@ -879,6 +1594,7 @@ export function Table<T>({
       <div
         ref={region}
         className="cv-table__region"
+        onScroll={onRowsInView === undefined ? undefined : view.measure}
         {...(scrolls
           ? { role: "region", "aria-labelledby": captionId, ...(roving ? {} : { tabIndex: 0 }) }
           : {})}
@@ -893,9 +1609,18 @@ export function Table<T>({
           aria-multiselectable={roving && selectable ? true : undefined}
           {...role("table")}
           // Grid mode only: the grid's keys while it roves (role="grid"), and the remembered cell (which the
-          // stacked layout's context menu reads too). A table-mode table listens to nothing.
+          // stacked layout's context menu reads too), the cells' echo on focus and hover, focus leaving it (the
+          // echo goes; nothing is restored). A table-mode table listens to nothing, but for a shown echo's blur.
           {...(roving ? { onKeyDown: onGridKeyDown } : {})}
-          {...(gridMode ? { onFocus: onGridFocus, onMouseDown: onGridMouseDown } : {})}
+          {...(gridMode
+            ? {
+                onFocus: onGridFocus,
+                onMouseDown: onGridMouseDown,
+                onPointerOver: onGridPointerOver,
+                onPointerLeave: onGridPointerLeave,
+              }
+            : {})}
+          {...(gridMode || echo !== null ? { onBlur: onGridBlur } : {})}
         >
           <caption className="cv-table__caption">
             <span id={captionId} className={captionHidden ? "cv-visually-hidden" : undefined}>
@@ -903,6 +1628,21 @@ export function Table<T>({
             </span>
             {loading ? <span className="cv-table__loading">{loadingText}</span> : null}
           </caption>
+          {/* Column widths in `em` of the table's own font (a `<col>` inherits it), in the table layout. */}
+          {columns.some((column) => column.widthEm !== undefined) ? (
+            <colgroup>
+              {gridColumns.map((gc, c) => (
+                <col
+                  key={c}
+                  style={
+                    gc.kind === "data" && gc.column.widthEm !== undefined
+                      ? { width: `${gc.column.widthEm}em` }
+                      : undefined
+                  }
+                />
+              ))}
+            </colgroup>
+          ) : null}
           <thead {...role("rowgroup")}>
             <tr aria-rowindex={1} {...role("row")}>
               {gridColumns.map(headerCell)}
@@ -923,15 +1663,25 @@ export function Table<T>({
           announceReason={say}
         />
       ) : null}
-      <div
-        className="cv-visually-hidden cv-table__live"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        {/* Re-keyed per `say`, so the same reason pressed twice is said twice. */}
-        <span key={nonce}>{line}</span>
-      </div>
+      {sortReasonId === undefined
+        ? gatedReasons.map((reason) => (
+            <span key={reason} id={sortReasonIdOf(reason)} className="cv-visually-hidden">
+              {reason}
+            </span>
+          ))
+        : null}
+      {echoes ? <TableEcho echo={echo} hover={echoHover} /> : null}
+      {announce === undefined ? (
+        <div
+          className="cv-visually-hidden cv-table__live"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {/* Re-keyed per `say`, so the same reason pressed twice is said twice. */}
+          <span key={nonce}>{line}</span>
+        </div>
+      ) : null}
     </div>
   );
 }

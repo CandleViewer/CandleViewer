@@ -55,8 +55,8 @@ export interface TooltipProps {
   children: ReactElement<TooltipTriggerProps>;
 }
 
-/** Leave grace (H10): the pointer may cross the gap to the tooltip. */
-const LEAVE_GRACE_MS = 100;
+/** Leave grace (H10): the pointer may cross the gap to the tooltip. CMP-049's echo shares it. */
+export const LEAVE_GRACE_MS = 100;
 /** Skip window: hovering to a second trigger this soon after a tooltip hid shows its tooltip at once. */
 const SKIP_WINDOW_MS = 300;
 /**

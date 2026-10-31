@@ -1,0 +1,174 @@
+/*
+ * CMP-161 WatchlistRow (E08-D07 §4.1, §4.2, §7.1, D30): SCR-100's rows over CMP-049's grid. Tokens only; static: a
+ * state change is one flip, never an animation (E08-D07 §8; the tick emphasis is E08-D11's, not drawn here).
+ * DS-CR-1 and DS-CR-2 are open, so §7.3's fallbacks bind: the sign's colour rides on ▲/▼ alone, and Disconnected
+ * demotes the text with `opacity.muted` on the text only.
+ */
+
+/* The grid body: surface.raised, no zebra (§7.1 "Panel"); hover surface.hover; the active row CMP-049's fill. */
+.cv-wl-row:nth-child(n) {
+  background: var(--color-surface-raised);
+}
+
+.cv-wl-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.cv-wl-row[aria-current="true"],
+.cv-wl-row[aria-current="true"]:hover {
+  background: var(--color-surface-selected);
+}
+
+/* Symbols in type.ui.label, cut with an ellipsis (the whole symbol stays its text and name). */
+.cv-wl__symbol {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+}
+
+/* Numbers: tabular mono, type.num.sm when compact and type.num.base when comfortable (§7.1 "Type"). */
+.cv-wl__num {
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+[data-density="comfortable"] .cv-wl__num {
+  font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
+    var(--type-num-base-line-height) var(--type-num-base-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-table[data-density="compact"] .cv-wl__num {
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+/* D9 with DS-CR-2 open (§7.3 item 2): the value stays live text, the ▲/▼ glyph alone takes buy or sell (3:1). */
+.cv-wl__glyph[data-sign="positive"] {
+  color: var(--color-buy-default);
+}
+
+.cv-wl__glyph[data-sign="negative"] {
+  color: var(--color-sell-default);
+}
+
+/* "—" and the state tags (Not live, No data yet) in text.secondary (§7.1 "No value, not live"). */
+.cv-wl__dash {
+  color: var(--color-text-secondary);
+}
+
+.cv-wl__tag {
+  display: inline-flex;
+  align-items: center;
+  padding-inline: var(--space-inset-xs);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-badge);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+  white-space: nowrap;
+}
+
+/* A stale row (D2): every cell's text demoted, the tint unless it is the active row, the glyph's hue dropped. */
+.cv-wl-row[data-freshness="stale"] > * {
+  color: var(--color-data-confidence-stale-text);
+}
+
+.cv-wl-row[data-freshness="stale"]:not([aria-current="true"]) > * {
+  background: var(--color-data-confidence-stale-surface);
+}
+
+.cv-wl-row[data-freshness="stale"] .cv-wl__glyph {
+  color: inherit;
+}
+
+/* Delisted (D20, §7.1): the symbol struck and its lock in delisted.text; the merged cell's glyph the indicator. */
+.cv-wl-row[data-row-state="delisted"] .cv-wl__symbol {
+  color: var(--color-data-confidence-delisted-text);
+}
+
+.cv-wl-row[data-row-state="delisted"] .cv-wl__symbol-text {
+  text-decoration: line-through;
+}
+
+.cv-wl__lock,
+.cv-wl__delisted-glyph,
+.cv-wl__rec-lock,
+.cv-wl__rec-warning {
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.cv-wl__lock {
+  margin-inline-end: var(--space-inset-xs);
+}
+
+.cv-wl__delisted {
+  color: var(--color-data-confidence-delisted-text);
+}
+
+.cv-wl__delisted-glyph {
+  color: var(--color-data-confidence-delisted-indicator);
+}
+
+/* Rec (§7.1 "REC"): the text text.primary, the ⚠ warning.strong, the restricted lock text.secondary. */
+.cv-wl__rec-chip {
+  color: var(--color-text-primary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+  white-space: nowrap;
+}
+
+.cv-wl__rec-warning {
+  color: var(--color-status-warning-strong);
+}
+
+.cv-wl__rec-lock {
+  color: var(--color-text-secondary);
+}
+
+/*
+ * Disconnected (D4, D29) is one attribute on an ancestor, never a class per row: every cell on surface.sunken with
+ * text.primary at opacity.muted on the text alone, never the row's opacity (§7.3 item 1, the fallback until DS-CR-1);
+ * no Status chip, no cell marker, the glyph's hue dropped. The panel status carries the state.
+ */
+[data-cv-feed="disconnected"] .cv-wl-row > * {
+  background: var(--color-surface-sunken);
+  color: color-mix(
+    in srgb,
+    var(--color-text-primary) calc(var(--opacity-muted) * 100%),
+    transparent
+  );
+}
+
+[data-cv-feed="disconnected"] .cv-wl__cell.cv-freshness {
+  box-shadow: none;
+}
+
+[data-cv-feed="disconnected"] .cv-wl__status > [data-cmp],
+[data-cv-feed="disconnected"] .cv-wl__status > .cv-wl__tag {
+  display: none;
+}
+
+[data-cv-feed="disconnected"] :is(.cv-wl__glyph, .cv-wl__rec-warning) {
+  color: inherit;
+}
+
+@media (forced-colors: active) {
+  /* Tints drop out; the words, the lock and the glyphs carry each state; chips keep a 1 px edge (D30). */
+  .cv-wl__tag,
+  .cv-wl__rec-chip {
+    border: 1px solid CanvasText;
+  }
+
+  .cv-wl__glyph,
+  .cv-wl__delisted-glyph,
+  .cv-wl__rec-warning {
+    color: CanvasText;
+  }
+}

@@ -23,6 +23,9 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Esc (reason echo)            | Hides the reason echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host. |
 
 With a reason, hover and keyboard focus show it in a CMP-016 echo; the reason node stays the description.
+With `disabledReasonId` the host already shows the reason (E09-D09 §2.2 rendering 2a: a caption under the button,
+or a read-only panel's one notice): that node is the description, the button renders no copy and no echo, and its
+lock leads the label, named "Not available".
 
 ### IconButton (CMP-002, APG Button; toggle button when `pressed` is set)
 
@@ -36,6 +39,8 @@ With a reason, hover and keyboard focus show it in a CMP-016 echo; the reason no
 Hover and keyboard focus show the name in a CMP-016 echo (D10); with a reason, one echo shows the name, then the
 reason. The name stays the `aria-label` and the reason the description. Plain disabled has no echo. The echo joins
 the name and the reason with " · ", e.g. "Panel settings · Owner only: your role can't use this action."
+With `disabledReasonId` (a read-only panel's one notice) the notice is the description and no hidden copy renders;
+the badge and the echo stay.
 
 ### NumericStepperInput (CMP-008, APG Spin Button)
 
@@ -67,6 +72,10 @@ the name and the reason with " · ", e.g. "Panel settings · Owner only: your ro
 | Space                 | Toggles and emits a boolean; from indeterminate it emits `true` and the consumer clears `indeterminate`. |
 | Enter                 | Not handled: it is the enclosing form's implicit submission, as for a native checkbox.                   |
 | Space (with a reason) | No change, even when mixed; the box stays focusable and its reason is the accessible description.        |
+
+With `disabledReasonId` the host already shows the reason (2a: a caption under the row, or a panel's one notice):
+that node is the description, the box renders no copy and no echo, and its lock leads the label, named "Not
+available".
 
 ### RadioGroup (CMP-006, APG Radio Group)
 
@@ -393,6 +402,19 @@ Known residuals (G19's defaults, ruling 12; E05-X02 signs off):
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | None | Not focusable; never moves focus. The digits are hidden and a twin reads the words on demand (`aria-live="off"`); a polite status speaks each threshold once. In a grid column, nothing. |
 
+### FreshnessMarker (CMP-239, compact: static text and a cell class)
+
+| Keys | Action                                                                                                                                               |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable. The chip draws "Stale 7s" (`aria-hidden`) and reads "Stale, 7 seconds"; the cells it describes point at its id by `aria-describedby`. |
+
+The compact presentation (E08-D07 §5) is two halves: `freshnessClassName(state)` is the one className a degraded
+cell swaps in, never a node of its own, and the chip is the age, drawn once per row (CMP-161's Status slot) or
+once per panel. It owns no live region: an age change is never announced (E08-D07 D17), and `freshnessOf` picks
+the one state shown (E08-D01 §2's precedence), never two stacked. Past T2 the chip is the strong one
+(`escalated`); a server's flag reads "Stale (server)" (`label`). The chip form with every state's word is
+CMP-239's base, built with its first consumer.
+
 ### ColorSwatch / ThemeChip (CMP-031, APG Radio Group in the picker; a static `img` otherwise)
 
 | Keys                           | Action                                                                                                                         |
@@ -436,7 +458,6 @@ The body is part of the announced message, so it holds no focusable content: lin
 message, body included, so it is announced again.
 Flap-collapse (reconnect attempts within 5 s read as one "Connection unstable") is the host's (CMP-077), which
 owns the connection state; the callout announces each state entry it is given once.
-
 
 ### EmptyState (CMP-026, a static block; its actions and link follow APG Button and APG Link)
 
