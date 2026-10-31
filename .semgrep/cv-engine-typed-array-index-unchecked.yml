@@ -1,0 +1,82 @@
+# E11-X02 (#392; CE-T01, CE-T02, CE-D01, BQ-161): in the engine's decode and ingest paths
+# (`src/worker/**`, `src/model/**`) a value read from a message (an `msg[...]` read, `event.data`, a
+# `DataView` getter, a `layout` field) must be bounded before it indexes an array or a typed array.
+# A typed array reads `undefined` past its end and drops a write there silently, so an unchecked
+# index is a wrong chart, not a crash. Intra-procedural taint: a value checked by a helper
+# (`layoutBytes` in `rejectReason`) and used in another function is not followed; such a site takes
+# a CI-SEC-006 justification (`nosemgrep: <id> reason= owner= review=`), never a silent `todook`.
+# Non-blocking (WARNING) while it reports on main: docs/plan/security/ci-gates-e11.md lists them.
+rules:
+  - id: cv-engine-typed-array-index-unchecked
+    languages: [typescript]
+    severity: WARNING
+    mode: taint
+    message: >-
+      CE-T01 / CE-T02 / CE-D01 (E11-X01): a value decoded from a worker message (a `msg[...]`
+      read, `event.data`, a `DataView` getter or a `layout` field) indexes an array with no bounds
+      check before it. Compare it with the array's length or a cap and refuse (throw, return or
+      continue) first, call `assertFits(count, stride, available, what)` or `layoutBytes`, or
+      clamp it with `Math.min`. A deliberate exception needs a CI-SEC-006 justification inline.
+      Rule doc: docs/plan/security/ci-gates-e11.md#cv-engine-typed-array-index-unchecked.
+    metadata:
+      rule-id: cv-engine-typed-array-index-unchecked
+      threat: CE-T01, CE-T02, CE-D01
+      references:
+        - docs/security/threat-models/E11-chart-engine.md CE-T01, CE-T02, CE-D01 (section 6)
+        - .semgrep/cv-ws-wire-count-alloc-ts.yml
+    pattern-sources:
+      - patterns:
+          - pattern: $V.$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^get(Big)?(Uint|Int|Float)(8|16|32|64)$
+      - pattern: $EV.data
+      - patterns:
+          - pattern: $M[$K]
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(msg|message|payload|raw|cmd)$
+      - pattern: $X.layout.$F
+      - pattern: layout.$F
+    pattern-sanitizers:
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: assertFits($N, ...)
+              - pattern: layoutBytes($N, ...)
+          - focus-metavariable: $N
+      - pattern: Math.min(...)
+      - pattern: $X & $MASK
+      # A guard: the value compared with a bound in an `if` whose body refuses; clean from there on.
+      - by-side-effect: true
+        patterns:
+          - pattern: $N
+          - pattern-either:
+              - pattern-inside: "if (<... $N >= $B ...>) $BODY"
+              - pattern-inside: "if (<... $N > $B ...>) $BODY"
+              - pattern-inside: "if (<... $B <= $N ...>) $BODY"
+              - pattern-inside: "if (<... $B < $N ...>) $BODY"
+              - pattern-inside: "if (<... !($N < $B) ...>) $BODY"
+          - metavariable-regex:
+              metavariable: $N
+              regex: ^[A-Za-z_$][\w$]*$
+          - metavariable-regex:
+              metavariable: $BODY
+              regex: (?s).*\b(?:throw|return|continue)\b
+      - patterns:
+          - pattern: $N
+          - pattern-either:
+              - pattern-inside: "<... $N < $B ...> ? $X : $Y"
+              - pattern-inside: "<... $N <= $B ...> ? $X : $Y"
+    pattern-sinks:
+      # The index of an element read or write, `at` and the start of a `subarray`.
+      - patterns:
+          - pattern-either:
+              - pattern: $A[$I]
+              - pattern: $A.at($I)
+              - pattern: $A.subarray($I, ...)
+          - focus-metavariable: $I
+    paths:
+      include:
+        - "packages/chart-engine/src/worker/**"
+        - "packages/chart-engine/src/model/**"

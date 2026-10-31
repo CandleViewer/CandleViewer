@@ -1,0 +1,100 @@
+# E11-X02 (#392; F-15, CE-E02): no prototype write and no merge of an external object in the engine.
+# The worker and the host receive structured-clone payloads from the page; a deep merge or a keyed
+# copy of one (`t[k] = s[k]` over `for...in`) writes `__proto__` the moment a key is named so, and
+# then alters every object of the realm. Syntactic: the shapes are flagged whatever they copy. An
+# `Object.assign` from an object literal (`Object.assign(e, { type, t0 })`) names its keys and stays
+# quiet.
+rules:
+  - id: cv-engine-proto-pollution
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      CE-E02 (E11-X01 F-15): a prototype write or a merge of an object the engine did not build. The
+      worker and the host hold structured-clone payloads from the page; copying one key by key
+      (`for...in`, `Object.keys`, a recursive merge, `Object.assign` from a variable) writes
+      `__proto__` when a key is so named and poisons every object in the realm. Read the fields
+      you need by name, or build a fresh object literal (`{ a: src.a, b: src.b }`); never set a
+      prototype or write one (`X.prototype.y =`), and never key a write by a received field. Rule doc: docs/plan/security/ci-gates-e11.md#cv-engine-proto-pollution.
+    metadata:
+      rule-id: cv-engine-proto-pollution
+      threat: CE-E02
+      finding: F-15
+      references:
+        - docs/security/threat-models/E11-chart-engine.md CE-E02 (section 6), F-15 (section 7)
+    pattern-either:
+      - pattern: $X.__proto__
+      - pattern: $X["__proto__"]
+      - pattern: "{..., __proto__: $V, ...}"
+      - pattern: Object.setPrototypeOf(...)
+      - pattern: Reflect.setPrototypeOf(...)
+      - patterns:
+          - pattern: Object.assign($T, ..., $SRC, ...)
+          - metavariable-pattern:
+              metavariable: $SRC
+              patterns:
+                - pattern-not: "{...}"
+      # A keyed copy: each key of a source written into a target, which `__proto__` subverts.
+      - pattern: |
+          for (const $K in $S) { ... $T[$K] = $V; ... }
+      - pattern: |
+          for (let $K in $S) { ... $T[$K] = $V; ... }
+      - pattern: |
+          for (const $K of Object.keys($S)) { ... $T[$K] = $V; ... }
+      - pattern: |
+          for (const [$K, $V] of Object.entries($S)) { ... $T[$K] = $W; ... }
+      - pattern: Object.keys($S).forEach(($K) => { ... $T[$K] = $V; ... })
+      - pattern: Object.keys($S).forEach(($K) => $T[$K] = $V)
+      - pattern: Object.entries($S).forEach(([$K, $V]) => { ... $T[$K] = $W; ... })
+      - pattern: Object.entries($S).forEach(([$K, $V]) => $T[$K] = $W)
+      # A reduce that builds an object key by key from another.
+      - pattern: "$S.reduce(($ACC, $K, ...) => { ... $ACC[$K] = $V; ... }, ...)"
+      - pattern: "$S.reduce(($ACC: $TY, $K, ...) => { ... $ACC[$K] = $V; ... }, ...)"
+      - pattern: "$S.reduce(($ACC, [$K, $V], ...) => { ... $ACC[$K] = $W; ... }, ...)"
+      # A direct prototype write (review m5): `X.prototype.y = v`, `X.prototype = v`, and the
+      # constructor's prototype however reached.
+      - pattern: $X.prototype.$P = $V
+      - pattern: $X.prototype[$P] = $V
+      - pattern: $X.prototype = $V
+      - pattern: $X.constructor.prototype
+      # A reflective or a defined write whose key is not a literal the code names.
+      - pattern: Reflect.set(...)
+      - patterns:
+          - pattern-either:
+              - pattern: Object.defineProperty($T, $K, ...)
+              - pattern: Reflect.defineProperty($T, $K, ...)
+          - metavariable-pattern:
+              metavariable: $K
+              patterns:
+                - pattern-not: '"..."'
+      - pattern: Object.defineProperties($T, $S)
+      # A computed write keyed by a field of a received message (`target[msg.key] = v`).
+      - patterns:
+          - pattern-either:
+              - pattern: $T[$M.$F] = $V
+              - pattern: $T[$M[$I]] = $V
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(msg|message|payload|raw|cmd|data)$
+      # A recursive merge: a function that walks an object's keys and calls itself.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  function $F(...) { ... }
+              - pattern-inside: |
+                  const $F = (...) => { ... }
+          - pattern-either:
+              - pattern: |
+                  for (const $K in $S) { ... $F(...); ... }
+              - pattern: |
+                  for (const $K of Object.keys($S)) { ... $F(...); ... }
+    paths:
+      include:
+        - "packages/chart-engine/src/**"
+      exclude:
+        # Pure re-export barrels: Semgrep 1.181's TypeScript parser cannot read `export type * from`
+        # (TS 5.0) and reports a PartialParsing error, which fails the CI gate (CI-SEC-005, #3549).
+        # Neither file holds a statement this rule matches; tsc and ESLint still read both.
+        # Both files hold only re-exports. Revisit: drop these two excludes once the pinned Semgrep
+        # parses `export type *`.
+        - "packages/chart-engine/src/scene/index.ts"
+        - "packages/chart-engine/src/viewport/index.ts"
