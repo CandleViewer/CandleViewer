@@ -77,7 +77,7 @@ Board 03 of ten (§0 L85: S-04 held by IP (all accounts, time left, its conditio
 
 ## Sources (1)
 
-- spec E08-D09.md md5 30646600 (§0 L85, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 e6bb50a9
+- spec E08-D09.md md5 9146d4d4 (§0 L85, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
 
 ## Tokens (35)
 

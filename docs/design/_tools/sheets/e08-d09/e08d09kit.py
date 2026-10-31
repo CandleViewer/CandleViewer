@@ -50,7 +50,7 @@ TOKENS_FILE = SHEETS_DIR / "tools" / "token-sync.json"
 REPO = KIT_DIR.parents[4]  # the checkout's root: every spec read is REPO / <repo-relative path>, md5-pinned below
 SPEC = REPO / "docs/design/E08/E08-D09.md"
 HANDOFF = REPO / "docs/design/E08/E08-D09-handoff.md"
-SPEC_MD5 = {SPEC.name: "30646600b93afe1aab40333d48e62a6b", HANDOFF.name: "e6bb50a9c674f186db6128ac5b5431a0"}
+SPEC_MD5 = {SPEC.name: "9146d4d4d487bdecbdda4696c3559016", HANDOFF.name: "3dc8240e5e2f88fb640cfb7ce06b8d7d"}
 
 FILE_NAME = "E08-D09 boards"
 PAGE = "E08-D09 SCR-147 Connectivity"
@@ -141,7 +141,9 @@ class Board:
         return self.twin or self.nn
 
 
-_B_ROW = re.compile(r"^\|\s*(\d{2})\s*\|\s*`(E08-D09 / (\d{2}) ([a-z0-9-]+))`\s*\|(.*)\|\s*(dark|light|hc)\s*\|\s*$")
+# §0's board row: number, name, Draws, Theme, then (since PR 3) the As built cell, which the kit does not read
+_B_ROW = re.compile(r"^\|\s*(\d{2})\s*\|\s*`(E08-D09 / (\d{2}) ([a-z0-9-]+))`\s*\|([^|]*)\|\s*(dark|light|hc)\s*\|"
+                    r"(?:[^|]*\|)?\s*$")
 _TWIN = re.compile(r"^(light|high-contrast) twin of (\d{2})$")
 
 

@@ -1,9 +1,12 @@
 # E08-D09 board kit: build notes (#177 PR 3, the ten boards)
 
 Kit `e08d09kit.py` (this folder). Spec, binding, every string from it: `docs/design/E08/E08-D09.md` and
-`E08-D09-handoff.md`, read from this checkout by repo-relative path (md5 pinned in `SPEC_MD5`: spec `30646600…`,
-hand-off `e6bb50a9…`, the texts the boards were drawn from; the kit refuses drifted bytes). Every `L<n>` cite is
-looked up with `k.L()`, never typed.
+`E08-D09-handoff.md`, read from this checkout by repo-relative path (md5 pinned in `SPEC_MD5`: spec `9146d4d4…`,
+hand-off `3dc8240e…`, the texts as PR 3 commits them; the kit refuses drifted bytes). Every `L<n>` cite is looked up
+with `k.L()`, never typed. The boards were drawn at spec `30646600…` and hand-off `e6bb50a9…`, before §0's as-built
+record and the hand-off's ticks, which PR 3 made in place (no line added or removed, so every cite holds); §0's board
+table gained its As built column, which the kit's row pattern skips. A rebuild differs from the drawn sheets in the
+two md5s of `notes.sources` only (checked node by node).
 
 ## Pipeline
 

@@ -78,7 +78,7 @@ Board 02 of ten (§0 L84: S-02 approaching limit on one account's order row; S-0
 
 ## Sources (1)
 
-- spec E08-D09.md md5 30646600 (§0 L84, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 e6bb50a9
+- spec E08-D09.md md5 9146d4d4 (§0 L84, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
 
 ## Tokens (36)
 
