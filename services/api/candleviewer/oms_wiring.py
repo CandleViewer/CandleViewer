@@ -2071,6 +2071,9 @@ class OnLanePositions:
 
     parts: _Parts
 
+    async def instrument(self, symbol: Symbol) -> Instrument:
+        return await _on_lane(self.parts, self.parts.positions.instrument(symbol))
+
     async def entry_stop_ready(self, account_id: AccountId) -> None:
         await _on_lane(self.parts, self.parts.positions.entry_stop_ready(account_id), None)
 
@@ -3214,6 +3217,7 @@ class OmsRuntime:
             writes = PositionWrites(PositionWritesDeps(
                 accounts=accounts, profiles=profiles, machines=machines, stops=stops,
                 groups=stores.groups, ports=router.port_for, audit=audit, environment=env,
+                instruments=instruments,
             ), monotonic=self._monotonic)  # fmt: skip
             self._phase = "audit_start"
             await writer.start()

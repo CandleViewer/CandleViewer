@@ -49,7 +49,15 @@ from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from candleviewer.storage.repositories.trade_groups import GroupAnchor
 from tests.unit.api.oms_reads_world import position
 from tests.unit.oms import command_rig as cr
-from tests.unit.oms.submit_rig import SYMBOL, SubmitRig, context, entry, instrument, rigged
+from tests.unit.oms.submit_rig import (
+    SYMBOL,
+    Instruments,
+    SubmitRig,
+    context,
+    entry,
+    instrument,
+    rigged,
+)
 
 ACCOUNT = cr.ACCOUNT
 ACTOR = SubmitActor(user_id=uuid.uuid4(), role="owner")
@@ -245,6 +253,7 @@ class Rig:
     stops: Stops = field(default_factory=Stops)
     accounts: Accounts = field(default_factory=Accounts)
     groups: GroupKeys = field(default_factory=GroupKeys)
+    instruments: Instruments = field(default_factory=Instruments)
     clock: list[float] = field(default_factory=lambda: [0.0])
     audit: Audit = field(init=False)
 
@@ -255,7 +264,7 @@ class Rig:
         deps = PositionWritesDeps(
             accounts=self.accounts, profiles=self.profiles, machines=self.machines,
             stops=self.stops, groups=self.groups, ports=lambda env: self.port, audit=self.audit,
-            environment="demo",
+            environment="demo", instruments=self.instruments,
         )  # fmt: skip
         return PositionWrites(deps, monotonic=lambda: self.clock[0], **kw)
 
