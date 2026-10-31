@@ -441,12 +441,12 @@ def delta_rows(rows: list[list[str]]) -> tuple[list[list[str]], list[list[str]]]
 def post_merge_version_problems(spec: str) -> list[str]:
     ref = merge_base()
     old_spec = git_show(ref, SPEC_REL) or ""
-    old_v1, _ = delta_rows(rows_of(old_spec, VERSION_HEAD))
+    old_rows = rows_of(old_spec, VERSION_HEAD)
     now = rows_of(spec, VERSION_HEAD)
     v1, later = delta_rows(now)
     bad: list[str] = []
-    if v1 != old_v1:
-        bad.append("a v1 row differs from the merge-base (post-merge: v1 rows are frozen)")
+    if now[: len(old_rows)] != old_rows:
+        bad.append("a row merged at the merge-base differs (post-merge: merged rows are frozen)")
     if now[: len(v1)] != v1:
         bad.append("a later row sits among the v1 rows")
     last = 0
