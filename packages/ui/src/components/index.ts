@@ -467,6 +467,7 @@ export type {
   WatchlistOptionalColumnId,
   WatchlistRec,
   WatchlistRowData,
+  WatchlistRowKey,
   WatchlistRowProps,
   WatchlistRowState,
   WatchlistTickerFreshness,

@@ -93,6 +93,7 @@
       - option "Positions"
       - option "Rules"
       - option "Replay"
+      - option "Watchlist"
     - button "Print list"
     - table "Current key bindings by context":
       - caption: Current key bindings by context
@@ -1512,6 +1513,74 @@
             - textbox "Key for Next bookmark"
             - button "Record Next bookmark"
             - button "Save Next bookmark" [disabled]
+        - row "Watchlist Remove symbol Del Unbind Remove symbol Reset Remove symbol Ctrl for Remove symbol Alt for Remove symbol Shift for Remove symbol Key for Remove symbol Record Remove symbol Save Remove symbol":
+          - cell "Watchlist"
+          - rowheader "Remove symbol"
+          - cell "Del Unbind Remove symbol Reset Remove symbol":
+            - text: Del
+            - button "Unbind Remove symbol"
+            - button "Reset Remove symbol" [disabled]
+          - cell "Ctrl for Remove symbol Alt for Remove symbol Shift for Remove symbol Key for Remove symbol Record Remove symbol Save Remove symbol":
+            - checkbox "Ctrl for Remove symbol"
+            - text: Ctrl for Remove symbol
+            - checkbox "Alt for Remove symbol"
+            - text: Alt for Remove symbol
+            - checkbox "Shift for Remove symbol"
+            - text: Shift for Remove symbol Key for Remove symbol
+            - textbox "Key for Remove symbol"
+            - button "Record Remove symbol"
+            - button "Save Remove symbol" [disabled]
+        - row "Watchlist Move row up Alt+↑ Unbind Move row up Reset Move row up Ctrl for Move row up Alt for Move row up Shift for Move row up Key for Move row up Record Move row up Save Move row up":
+          - cell "Watchlist"
+          - rowheader "Move row up"
+          - cell "Alt+↑ Unbind Move row up Reset Move row up":
+            - text: Alt+↑
+            - button "Unbind Move row up"
+            - button "Reset Move row up" [disabled]
+          - cell "Ctrl for Move row up Alt for Move row up Shift for Move row up Key for Move row up Record Move row up Save Move row up":
+            - checkbox "Ctrl for Move row up"
+            - text: Ctrl for Move row up
+            - checkbox "Alt for Move row up"
+            - text: Alt for Move row up
+            - checkbox "Shift for Move row up"
+            - text: Shift for Move row up Key for Move row up
+            - textbox "Key for Move row up"
+            - button "Record Move row up"
+            - button "Save Move row up" [disabled]
+        - row "Watchlist Move row down Alt+↓ Unbind Move row down Reset Move row down Ctrl for Move row down Alt for Move row down Shift for Move row down Key for Move row down Record Move row down Save Move row down":
+          - cell "Watchlist"
+          - rowheader "Move row down"
+          - cell "Alt+↓ Unbind Move row down Reset Move row down":
+            - text: Alt+↓
+            - button "Unbind Move row down"
+            - button "Reset Move row down" [disabled]
+          - cell "Ctrl for Move row down Alt for Move row down Shift for Move row down Key for Move row down Record Move row down Save Move row down":
+            - checkbox "Ctrl for Move row down"
+            - text: Ctrl for Move row down
+            - checkbox "Alt for Move row down"
+            - text: Alt for Move row down
+            - checkbox "Shift for Move row down"
+            - text: Shift for Move row down Key for Move row down
+            - textbox "Key for Move row down"
+            - button "Record Move row down"
+            - button "Save Move row down" [disabled]
+        - row "Watchlist Filter symbols Ctrl+F Unbind Filter symbols Reset Filter symbols Ctrl for Filter symbols Alt for Filter symbols Shift for Filter symbols Key for Filter symbols Record Filter symbols Save Filter symbols":
+          - cell "Watchlist"
+          - rowheader "Filter symbols"
+          - cell "Ctrl+F Unbind Filter symbols Reset Filter symbols":
+            - text: Ctrl+F
+            - button "Unbind Filter symbols"
+            - button "Reset Filter symbols" [disabled]
+          - cell "Ctrl for Filter symbols Alt for Filter symbols Shift for Filter symbols Key for Filter symbols Record Filter symbols Save Filter symbols":
+            - checkbox "Ctrl for Filter symbols"
+            - text: Ctrl for Filter symbols
+            - checkbox "Alt for Filter symbols"
+            - text: Alt for Filter symbols
+            - checkbox "Shift for Filter symbols"
+            - text: Shift for Filter symbols Key for Filter symbols
+            - textbox "Key for Filter symbols"
+            - button "Record Filter symbols"
+            - button "Save Filter symbols" [disabled]
     - button "Reset all"
     - text: Import keymap (JSON)
     - textbox "Import keymap (JSON)"

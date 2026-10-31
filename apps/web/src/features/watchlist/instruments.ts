@@ -23,6 +23,11 @@ export type InstrumentSource = Pick<
 
 /** Lookups a list may ask for at once: a list holds at most 200 symbols, and few of them stop trading. */
 const MAX_LOOKUPS = 20;
+/**
+ * Lookups one preview may ask for in all (C-5335-02): its tokens are the user's text, not a list, and each unknown one
+ * costs the server an on-demand catalogue read; past it a token reads "Not found" without a request.
+ */
+export const PREVIEW_LOOKUPS = 20;
 
 /** The shell's running index, else the page's own, started while the page shows. */
 export function useWatchlistIndex(): InstrumentSource {
@@ -61,23 +66,29 @@ export const isDelisted = (instrument: Instrument | undefined): boolean =>
       instrument.status !== "Trading" &&
       instrument.status !== "PreLaunch"));
 
-/** Looks up, once while the page shows, the list symbols the listing lacks; the answers join the index's caches. */
+/**
+ * Looks up, once while the page shows, the list symbols the listing lacks, at most `MAX_LOOKUPS` at a time and `limit`
+ * in all; the answers join the index's caches.
+ */
 export function useListLookups(
   source: InstrumentSource,
   facts: InstrumentFacts,
   symbols: readonly string[],
+  limit = Number.POSITIVE_INFINITY,
 ): void {
   const asked = useRef(new Set<string>());
   const inFlight = useRef(new Set<AbortController>());
+  const unlisted = useMemo(() => new Set(facts.snapshot.unlisted), [facts.snapshot.unlisted]);
   const missing =
     facts.snapshot.phase === "ready"
-      ? symbols.filter((s) => !facts.bySymbol.has(s) && !facts.snapshot.unlisted.includes(s))
+      ? symbols.filter((s) => !facts.bySymbol.has(s) && !unlisted.has(s))
       : [];
   const key = missing.slice(0, MAX_LOOKUPS).join(",");
   useEffect(() => {
     if (key === "") return;
     for (const symbol of key.split(",")) {
       if (asked.current.has(symbol)) continue;
+      if (asked.current.size >= limit) return; // the bound in all, not a window that slides as answers land
       asked.current.add(symbol);
       const controller = new AbortController();
       inFlight.current.add(controller);
@@ -88,7 +99,7 @@ export function useListLookups(
         .catch(() => undefined) // no usable answer: the row stays as it is
         .finally(() => inFlight.current.delete(controller));
     }
-  }, [key, source]);
+  }, [key, source, limit]);
   useEffect(() => {
     const held = inFlight.current;
     return () => {
