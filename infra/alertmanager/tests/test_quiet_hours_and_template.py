@@ -67,6 +67,7 @@ PAGE = {"severity": "page", "component": "oms"}
 SECURITY_PAGE = {"severity": "page", "component": "audit"}
 EVENT_PAGE = {"severity": "page", "component": "auth_recovery", "resolves": "window"}  # #2931
 TICKET = {"severity": "ticket", "component": "auth"}
+BYPASS_TICKET = {"severity": "ticket", "component": "auth", "quiet_hours": "bypass"}  # #2621
 
 
 def test_render_default_equals_committed_config() -> None:
@@ -81,6 +82,22 @@ def test_quiet_hours_mute_ticket_never_page(spec: str) -> None:
     assert not _muted(cfg, PAGE, inside)
     assert not _muted(cfg, SECURITY_PAGE, inside)
     assert not _muted(cfg, EVENT_PAGE, inside)
+
+
+def test_quiet_hours_bypass_ticket_not_muted_at_2300_while_general_ticket_is() -> None:
+    """#2621 (SR-125): at 23:00, inside the default window, a `quiet_hours: bypass` ticket is
+    sent at once while a general ticket is muted."""
+    cfg = _cfg(rc.DEFAULT)
+    assert _muted(cfg, TICKET, time(23, 0))
+    assert not _muted(cfg, BYPASS_TICKET, time(23, 0))
+
+
+@pytest.mark.parametrize("spec", ["22:00-07:00", "01:00-05:30", "23:30-00:00"])
+def test_quiet_hours_never_mute_a_bypass_ticket(spec: str) -> None:
+    cfg = _cfg(spec)
+    inside = time(*map(int, spec.split("-")[0].split(":")))
+    assert _muted(cfg, TICKET, inside)
+    assert not _muted(cfg, BYPASS_TICKET, inside)
 
 
 def test_quiet_hours_window_bounds_honour_env() -> None:

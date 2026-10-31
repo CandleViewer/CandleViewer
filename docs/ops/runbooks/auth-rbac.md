@@ -141,11 +141,10 @@ account**: the login rows in step 1 carry only a redacted identifier (first thre
 length; an `unlock_failed` row has the user id), and the lock itself is `users.locked_until`. Locks
 in one burst arrive as one message (grouped by alert, component and environment). Two limits:
 
-- **Quiet hours.** A `ticket` notification inside quiet hours (22:00-07:00 UTC by default,
-  `CV_ALERT_QUIET_HOURS`) is muted, not queued, and the alert stays active for only 10 minutes after
-  the last lock. So a lock during quiet hours is not delivered, except one in the last 10 minutes
-  before the window ends (#2621). The audit log and `auth_lockouts_total` still show it: check them
-  in the morning.
+- **Quiet hours.** A general `ticket` notification inside quiet hours (22:00-07:00 UTC by default,
+  `CV_ALERT_QUIET_HOURS`) is muted, not queued. `AuthLockouts` is an SR-125 security ticket
+  (`quiet_hours: bypass` on its rule, #2621): it is never muted, so a lock during quiet hours goes
+  to the ticket channel at once, day or night. It is still a ticket, not a page.
 - **Delivery is not exercised by any test**: it needs the compose stack and a receiver
   (environment-only, #2105). Offline, `tests/security/auth/test_lockout_owner_alert.py` proves that
   one lock moves the series the rule reads, once, next to the audit rows, and the promtool cases in
@@ -1754,7 +1753,6 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 | Disable-user drill on staging (SR-029)                                    | #2298          |
 | No B16 record of a lost disable commit's sessions if not read back        | #2710, #3445   |
 | Session rotation on role change and step-up                               | #2101          |
-| Lock alerts lost inside quiet hours                                       | #2621          |
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746          |
 | No alert rule reads the enrolment-only refusal series (section 7)         | #2746          |
 | `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747          |

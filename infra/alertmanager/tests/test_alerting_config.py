@@ -966,7 +966,8 @@ def test_every_bypass_rule_is_a_ticket_routed_to_the_unmuted_ticket_route() -> N
         assert route["receiver"] == "ticket", rule["alert"]
         assert "mute_time_intervals" not in route, rule["alert"]
         assert route["repeat_interval"] == "4h", rule["alert"]
-        assert route is not general
+        assert route["matchers"] == ['severity = "ticket"', 'quiet_hours = "bypass"']
+        assert route != general, rule["alert"]
 
 
 def test_bypass_route_sits_above_the_general_ticket_route() -> None:
@@ -986,6 +987,40 @@ def test_pages_and_other_tickets_keep_their_routes_and_mute() -> None:
         if labels.get("severity") == "ticket" and "quiet_hours" not in labels:
             route = _route_for(_alert_labels(rule))
             assert route["mute_time_intervals"] == ["quiet_hours"], rule["alert"]
+
+
+def _ci_tree_cases() -> list[tuple[str, str]]:
+    """The cases of the CI `--tree` loop (`for r in "<alertname> <component>" ...; do set -- $r;
+    tree alertname=$1 severity=ticket component=$2 quiet_hours=bypass ...`): each as
+    (alertname, component)."""
+    jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    scripts = [
+        step["run"]
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if "config routes test --tree" in step.get("run", "")
+    ]
+    assert len(scripts) == 1, "one CI step runs the amtool --tree check"
+    after = scripts[0].split("tree() {", 1)[1]
+    loop = re.search(r"\bfor r in (.*?); do\b", after, re.DOTALL)
+    assert loop is not None, "the --tree loop"
+    assert "quiet_hours=bypass" in after[loop.end() :].split("done", 1)[0]
+    pairs = [tuple(word.split()) for word in re.findall(r'"([^"]*)"', loop[1])]
+    assert all(len(p) == 2 for p in pairs), pairs
+    return [(p[0], p[1]) for p in pairs]
+
+
+def test_ci_tree_loop_lists_exactly_the_bypass_rules_with_their_components() -> None:
+    """#2621 review: the `--tree` loop proves each bypass rule matches the unmuted route only if
+    it lists every one of them, with the component its rule carries, and nothing else."""
+    cases = _ci_tree_cases()
+    wanted = sorted(
+        (r["alert"], r["labels"]["component"])
+        for r in _rules()
+        if r["labels"].get("quiet_hours") == "bypass"
+    )
+    assert sorted(cases) == wanted
+    assert len(cases) == len(set(cases)) == len(QUIET_BYPASS_TICKETS)
 
 
 def test_ci_routes_test_loop_has_a_ticket_case_for_each_bypass_rule() -> None:
