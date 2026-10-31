@@ -73,6 +73,10 @@ function LowContrastTile(): JSX.Element {
 const noop = (): void => undefined;
 const LADDER = ["63 118.5", "63 118.0", "12.4k", "8.1k", "+4.3k"];
 
+/**
+ * A visual-regression fixture, not a page: the components' own `h1`s (no heading-level prop) repeat
+ * on purpose, and the skip-link target is a plain focusable div.
+ */
 function E05S04Matrix(): JSX.Element {
   return (
     <div style={grid}>
@@ -117,7 +121,9 @@ function E05S04Matrix(): JSX.Element {
       </Cell>
       <Cell title="Skip link">
         <SkipLink targets={[{ id: "matrix-main", label: SKIP_LINK_COPY.main }]} />
-        <main id="matrix-main">Main content</main>
+        <div id="matrix-main" tabIndex={-1}>
+          Main content
+        </div>
       </Cell>
       <Cell title="Forbidden state">
         <ForbiddenState
@@ -161,7 +167,9 @@ const played =
     await expect(root.dataset["density"]).toMatch(/^(compact|comfortable)$/);
     await expect(ui.getAllByRole("radiogroup", { name: "Theme" }).length).toBeGreaterThan(0);
     await expect(ui.getAllByRole("radiogroup", { name: "Density" }).length).toBeGreaterThan(0);
-    await expect(ui.getByRole("button", { name: /^Density: / })).toBeVisible();
+    const menuTriggers = ui.getAllByRole("button", { name: /^Density: / });
+    await expect(menuTriggers).toHaveLength(2);
+    for (const trigger of menuTriggers) await expect(trigger).toBeVisible();
     await expect(ui.getAllByRole("img", { name: /^Preview/ }).length).toBeGreaterThanOrEqual(3);
     await expect(ui.getByRole("button", { name: "Save layout" })).toHaveAttribute(
       "aria-disabled",
@@ -173,9 +181,13 @@ const played =
     );
     await expect(ui.getByRole("link", { name: SKIP_LINK_COPY.main })).toBeInTheDocument();
     await expect(ui.getAllByRole("heading", { level: 1 }).length).toBeGreaterThanOrEqual(3);
-    await expect(
-      ui.getAllByRole("alert").length + ui.getAllByRole("region").length,
-    ).toBeGreaterThan(0);
+    const errors = within(ui.getByRole("region", { name: "Error fallback" }));
+    await expect(errors.getByText("err-0001")).toBeVisible();
+    await expect(errors.getByText("err-0002")).toBeVisible();
+    const forbidden = within(ui.getByRole("region", { name: "Forbidden state" }));
+    await expect(forbidden.getByRole("status")).toBeInTheDocument();
+    const notFound = within(ui.getByRole("region", { name: "Not found state" }));
+    await expect(notFound.getByRole("link", { name: "Charts" })).toBeVisible();
     // Every portalled menu is closed at rest.
     await expect(document.querySelector('[role="menu"]:not([hidden])')).toBeNull();
     await expect(document.querySelector('[role="listbox"]')).toBeNull();

@@ -79,7 +79,7 @@ export const NoRemount: Story = {
     const row = canvasElement.querySelectorAll("tbody tr")[250];
     const tile = ui.getByRole("img", { name: TILE_LABEL });
     const renders = tableRenders;
-    await expect(row).toBeDefined();
+    await expect(row).toBeInstanceOf(HTMLElement);
 
     await userEvent.click(ui.getByRole("radio", { name: "High contrast" }));
     await rafs();

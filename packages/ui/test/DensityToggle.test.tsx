@@ -190,6 +190,31 @@ describe("DensityToggle (CMP-063)", () => {
       },
     );
 
+    it("re-picking the checked item is no change: no onChange, no sentence, closes, refocuses", async () => {
+      const onChange = fn();
+      const host = await mount(<MenuHost onChange={onChange} />);
+      await clearPolite();
+      trigger(host).focus();
+      await userEvent.keyboard("{Enter}");
+      const checked = within(document.body).getByRole("menuitemradio", { name: "Compact" });
+      expect(checked).toHaveFocus();
+      await userEvent.keyboard("{Enter}");
+      expect(onChange).not.toHaveBeenCalled();
+      expect(await politeText()).toBe("");
+      expect(within(document.body).queryByRole("menu")).toBeNull();
+      expect(trigger(host)).toHaveFocus();
+    });
+
+    it("Esc closes the open menu and returns focus to the trigger", async () => {
+      const host = await mount(<MenuHost onChange={fn()} />);
+      trigger(host).focus();
+      await userEvent.keyboard("{Enter}");
+      expect(within(document.body).getByRole("menu")).toBeInTheDocument();
+      await userEvent.keyboard("{Escape}");
+      expect(within(document.body).queryByRole("menu")).toBeNull();
+      expect(trigger(host)).toHaveFocus();
+    });
+
     it("has no serious or critical axe violations with the menu open", async () => {
       const host = await mount(<MenuHost onChange={fn()} />);
       await userEvent.click(trigger(host));

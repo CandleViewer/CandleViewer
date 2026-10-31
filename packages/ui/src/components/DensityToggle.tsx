@@ -74,6 +74,9 @@ const option = (copy: DensityToggleCopy, value: DensityName): SegmentedOption =>
  * `menuitemradio` items behind a button that names the group and shows the current value.
  * A menu pick closes the menu through Menu's controlled `open` (Space keeps a radio item open in
  * Menu itself; the spec closes on Enter and Space), and focus returns to the trigger.
+ * Re-picking the checked item only closes the menu (no change, no sentence), as the segmented
+ * form does. The trigger's name ("Density: Comfortable") equals the polite sentence, so a screen
+ * reader may say it twice after a pick; this is the APG menu-button-with-value pattern, accepted.
  * Props only: it emits no analytics (the store is the one emitter, BQ-16). A committed user change
  * speaks one polite sentence (J16); a new `value` from the host (initial load, a server-fed apply)
  * speaks nothing, because only the change handler announces. Global offers exactly the runtime's
@@ -114,7 +117,7 @@ export function DensityToggle(props: DensityToggleProps): JSX.Element {
       checked: v === props.value,
       group: { id: "density", label: groupLabel },
       onSelect: () => {
-        onChange(v);
+        if (v !== props.value) onChange(v);
         setMenuOpen(false);
       },
     }));
