@@ -130,7 +130,7 @@ invariant (C-4.14).
    file format in `CV_ACCOUNT_FIXTURE_DIR` (`clock`, signed decimal seconds; `keys/<key id>.json`,
    `{"scenario", "overlays", "started"}`, written to a temporary file and renamed), and the S14 command line
    over the same calls (`python -m cvdev.account_fixture.cli clock set|advance`, `switch <key id> [--to S]
-   [--overlay O ...]`, default target the stored scenario's `switch_to`), run in the api container of the
+[--overlay O ...]`, default target the stored scenario's `switch_to`), run in the api container of the
    fixture compose override (`infra/compose/docker-compose.account-fixture.yml`). The CLI refuses unless the
    fixture is armed in a non-live environment. A switch restarts the key's scenario time at the switch.
 8. **Scope 10 is verified (S15, ruling 8).** main-orchestrator checked the pack's codes against the official
@@ -145,6 +145,18 @@ invariant (C-4.14).
    `e27-accounts-test-plan.md:708-728`). Until then the slices meet acceptance 1, 2 and 4 at the transport and
    pipeline level (S13), and acceptance 5 except decision 4's residual (S8, S7), which ruling 9 counted as
    full; #2893 stays open until S16.
+   _As built (2026-10-31, closure PR 1):_ the stack's users come from a seed command,
+   `python -m cvdev.account_fixture.seed users --run-dir <dir>` (`cvdev/account_fixture/seed.py`). It calls the
+   nightly seeder's `seed()` (`scripts/seed_fixture_user.py`, unchanged) once per roster user with a password it
+   generates; that seeder's own `main()` accepts testnet only, which decision 2 excludes, and its `seed()` has no
+   gate. The roster is the test plan's four fixtures and two more Owners. Each password, TOTP secret, the roster
+   and a marker go into the run directory as new files of fixed modes. There is no `CV_ENV=dev`: the gate is
+   decision 2's structural one (the switch CLI's `armed()`), then a fresh run directory (absolute, no link in or
+   above it, no marker) and, over one read-only transaction before the first write, a database named `test` or
+   ending `_test` that holds no user, exchange account or API key. A refusal is one fixed line and exit 2, never
+   a value. No exchange-key material is generated (the transport answers only the pack's fabricated keys,
+   decision 4) and the Owner is seeded, not invited. The module imports neither `candleviewer.secrets` nor
+   `candleviewer.audit`. `E27-accounts.md` §12.3 holds the threat rows.
 10. **A test-only switch, not a C-4.13 flag,** like `CV_TEST_CLOCK` (`settings.py:264-266`), which is not in
     the flag catalogue (`admin/flags/catalogue.py:25`). A flag is runtime, Owner-toggled and in every build;
     this switch is fixed at boot and its code is not in the release image. Each slice fails closed (until S7
