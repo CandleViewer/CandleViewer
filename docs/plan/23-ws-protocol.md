@@ -3348,6 +3348,8 @@ stay optional, so a merged state is complete without them (24 §2.3).
 }
 ```
 
+**As built (E24-T03, #667).** The order-flow module owns the adapter (`orderflow/liquidation_topic.py`); the gateway only wires it. An item is one print or, with `cluster_window_ms` above 0, one cluster grouped as `/market/liquidations` groups it (22): the prints of one `side` of one symbol within `cluster_window_ms` of its first print, `size` and `notional_usd` their sums, `ts_ms` and `price` the first print's, `cluster_size` the member count. A cluster goes out once it is closed, by a later print of its side at or past its end or by the server clock 500 ms past it, so no item is estimated and none carries such a flag. `side` is the side of the liquidated position's closing order, as on REST (`sell`: a long was liquidated). `notional_usd` is `price × size` from ingest and is always present; `min_notional_usd` drops an item below it. Every snapshot and `d` carries `note`, the sentence of its description. The snapshot is the last 100 items of the symbols served, oldest first; a `d` carries the items closed since the previous one, at most one per 500 ms, appended and never merged (§8.2).
+
 ### 14.10 `IndicatorSeriesBatch`
 
 ```json
