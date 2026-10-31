@@ -18,13 +18,17 @@ Gates (each FAIL led by its code):
   and stands right after its visible value.
 - [G03-CITE] every cited endpoint resolves at the base to a non-blank line, and its pin matches.
 - [G04-PINS] the pins file and the spec's cited endpoints match both ways.
-- [G05-VERBATIM] every quoted string in a CP row's Built cell stands on a line the row cites.
+- [G05-VERBATIM] every quoted string in a CP row's Built cell stands whole (a full string literal or
+  JSX text run) on a line the row cites.
 - [G06-COPY] the CP rows list every deck key that differs on a built screen, once; the FZ rows'
-  statuses equal the recomputed ones; a CP finding is a DF row or "no divergence:" with a reason.
+  statuses equal the recomputed ones, and a matching FZ row's cites hold the deck string; a CP
+  finding is a DF row or "no divergence:" with a reason.
 - [G07-TOKEN] TK-1 and TK-2 cite exactly the literal hits of the scan; no reference is unresolved.
-- [G08-CONTRAST] a CN pair under its bar in any theme names a DF row; a pair at the bar names none.
+- [G08-CONTRAST] a CN pair under its bar in any theme names a DF row; a pair at the bar names none;
+  every "CN-n = P-m" claim names an E09-D12 pair with the same foreground and background.
 - [G09-STATES] the ST rows are the states matrix of E09-D02, once each, with a ruled status; a
-  removed state cites a merged design text; an unreachable state names a DF row.
+  removed state cites a merged design text; a reached state cites built code or a stub-run row;
+  an unreachable state names a DF row.
 - [G10-MAP] the OB rows cover E09-D10's map rows once each; a fail, unreachable or not-comparable
   row names a DF row, a known row a DF or F row, an owner-run row an OR row.
 - [G11-SCRIPT] the SR rows are E09-D10's script steps once each, with a ruled status.
@@ -43,12 +47,17 @@ Gates (each FAIL led by its code):
 - [G19-RULED] section R lists BQ-01..BQ-28 once each with the ruling stamp; every "RULED BQ-nn"
   names a listed BQ.
 - [G20-SCOPE] the changed paths are the own files and `14` only.
-- [G21-P14] `14` differs from the base by the accepted rows' lines alone, each inside its entry.
+- [G21-P14] `14` differs from the base by the accepted rows' lines alone, each inside its entry:
+  the States and Validation lines equal E09-D12's A-2 and A-6 text in full, and each design-QA line
+  names the accepted DF rows of its entry.
 - [G22-FREEZE] post-merge mode: every merged table row stands unchanged.
 - [G23-WALK] the owner checklist holds at most ten items.
 - [G24-SECRET] no secret-shaped value (a base32 run, a six-digit code, an otpauth URI) in the
   own files.
 - [G25-AXE] the AX rows are the a11y gate's screens in order; "no" exactly where not shipped.
+- [G26-SECURITY] a security-bearing row (a DF row whose clause is a frozen entry, `T Sec` or the
+  never-list, and every CP, FZ, ST, OB, RN or SR row that names one or differs on a frozen entry)
+  carries no built-code cite and no quoted string: id, class, clause and owner only (BQ-20).
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL; `--fill` writes the
 computed values into the spec's slots and markers; `--self-test` applies one mutation per gate to
@@ -110,6 +119,8 @@ CODE = {
     "TREE": "apps/web/src/routes/tree.tsx",
     "FOCUS": FEAT + "app-shell/useRouteFocus.ts",
     "A11Y": "apps/web/e2e/e09-auth-a11y.spec.ts",
+    "SHELL": FEAT + "app-shell/shellMode.ts",
+    "RBACR": "apps/web/src/routes/rbac.ts",
 }
 KEYS = {**DESIGN, "S03": "docs/design/E09/E09-S03.md", **CODE}
 KEY_RE = "|".join(sorted(KEYS, key=len, reverse=True)) + r"|\d\d"
@@ -188,7 +199,7 @@ OB_STATUS = (
     "out-of-band",
 )
 SR_STATUS = ("tree-checked", "unreachable-owned", "known-gap", "owner-run")
-FZ_OTHER = ("pass", "owner-run", "not-comparable-yet")
+FZ_OTHER = ("pass", "pass (source)", "owner-run", "not-comparable-yet")
 # rot13 keeps the private list out of plain text; underscores stand for spaces.
 BANNED_ROT13 = (
     "yrnx rkcbfrq olcnff rkcybvg nggnpx benpyr erirny haobhaqrq sybbq fgnyy qbf nqivfbel tufn "
@@ -199,6 +210,7 @@ URL = re.compile(r"https?://|\bwww\.", re.IGNORECASE)
 UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
 LOCAL_PATH = re.compile("|".join("/" + w + "/" for w in ("home", "mnt", "tmp")))
 CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #\d+", re.IGNORECASE)
+SECURITY_CLAUSE = re.compile(r"frozen|T Sec|never-list")
 SECRET = re.compile(r"\b[A-Z2-7]{16,}\b|(?<![\w.-])\d{6}(?![\w.-])|otpauth:")
 
 
@@ -772,11 +784,11 @@ def g_verbatim(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(("G05-VERBATIM", f"{r[0]}: {len(r)} cells"))
             continue
         hay = [
-            norm(" ".join(ctx.base_line(k, n) or "" for n in range(a, b + 1)))
+            " ".join(ctx.base_line(k, n) or "" for n in range(a, b + 1))
             for k, a, b in cite_spans(r[3])
         ]
         for q in QUOTE.findall(r[3]):
-            if not any(norm(q) in h for h in hay):
+            if not any(f'"{q}"' in h or f">{q}<" in h for h in hay):
                 f.append(("G05-VERBATIM", f"{r[0]}: {q[:40]!r} stands on no line the row cites"))
 
 
@@ -815,6 +827,16 @@ def g_copy(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(("G06-COPY", f"{r[0]}: status {r[3]!r} is not from the set"))
         if want == "differs" and not (len(r) > 5 and re.fullmatch(r"DF-\d+", r[5])):
             f.append(("G06-COPY", f"{r[0]}: a frozen difference names no DF row"))
+        if want == "match":
+            text = strip_code(
+                " ".join(
+                    "\n".join(ctx.base_line(k, n) or "" for n in range(a, b + 1))
+                    for k, a, b in cite_spans(r[4])
+                )
+            )
+            for key in re.findall(r"`([a-z_]+(?:\.[a-z_]+)+)`", r[2]):
+                if key in ctx.deck and not deck_pattern(str(ctx.deck[key]["string"])).search(text):
+                    f.append(("G06-COPY", f"{r[0]}: {key} does not stand on the lines cited"))
 
 
 def cited_lines(text: str) -> set[tuple[str, int]]:
@@ -860,6 +882,21 @@ def g_contrast(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(("G08-CONTRAST", f"{r[0]}: under the bar and no DF row named"))
         if not low and r[8] != "—":
             f.append(("G08-CONTRAST", f"{r[0]}: at the bar but a finding is named"))
+    d12 = {
+        m[1]: (m[2], m[3])
+        for m in re.finditer(
+            r"^\| (P-\d+) [^|]*\| `([\w.-]+)`\s*\| `([\w.-]+)`",
+            section(ctx.base_text("D12") or "", "7.2 "),
+            re.MULTILINE,
+        )
+    }
+    claims = re.findall(r"\bCN-(\d+) = (P-\d+)\b", section(ctx.spec, "3.2 "))
+    if not claims:
+        f.append(("G08-CONTRAST", "no CN pair is mapped to an E09-D12 pair"))
+    for n, pid in claims:
+        fg, bg, _ = CN_PAIRS.get(f"cn{n}", ("", "", ""))
+        if d12.get(pid) != (fg, bg):
+            f.append(("G08-CONTRAST", f"CN-{n} is not E09-D12's {pid}"))
 
 
 def g_states(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -881,7 +918,7 @@ def g_states(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         keys = {k for k, _, _ in cite_spans(r[4])}
         if r[3] == "removed-by-design" and not keys & set(DESIGN):
             f.append(("G09-STATES", f"{r[0]}: removed with no merged design cite"))
-        if r[3] == "reached" and not keys & set(CODE):
+        if r[3] == "reached" and not (keys & set(CODE) or re.search(r"\bRN-\d+\b", r[4])):
             f.append(("G09-STATES", f"{r[0]}: reached with no built-code cite"))
         if r[3] == "unreachable-owned" and not re.search(r"\bDF-\d+\b", r[5]):
             f.append(("G09-STATES", f"{r[0]}: unreachable and no DF row named"))
@@ -998,7 +1035,7 @@ def g_class(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
 
 
 def security(r: list[str]) -> bool:
-    return "frozen" in r[3] or "T Sec" in r[3]
+    return bool(SECURITY_CLAUSE.search(r[3]))
 
 
 def g_route(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -1083,6 +1120,7 @@ ID_FAMILIES = {
     "IS": "14.2 ",
     "CO": "17. ",
     "OR": "18. ",
+    "RN": "1.1 ",
 }
 
 
@@ -1194,6 +1232,34 @@ def g_p14(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     for e in ("SCR-001", "SCR-006"):
         if not any(x == e and ln.startswith(DQA_MARK) for x, ln in added):
             f.append(("G21-P14", f"{e} has no design-QA line"))
+    d12 = ctx.base_text("D12") or ""
+    a2 = re.search(r'^\| A-2 .*States: "([^"]+)"', d12, re.MULTILINE)
+    a6 = re.search(r'^\| A-6 [^|]*\|[^|]*\| "([^"]+)"', d12, re.MULTILINE)
+    want_lines = {
+        "SCR-001": f"- **States:** {a2[1]}." if a2 else "",
+        "SCR-006": (
+            "- **Validation:** typed confirmation must match exactly (case-sensitive); " f"{a6[1]}."
+            if a6
+            else ""
+        ),
+    }
+    for e, want in want_lines.items():
+        lead = want.split(" ", 2)[0] + " " + want.split(" ", 2)[1] if want else "?"
+        got = [ln for x, ln in added if x == e and ln.startswith(lead)]
+        if not want or got != [want]:
+            f.append(("G21-P14", f"{e}: the accepted line is not E09-D12's A-row text in full"))
+    base_entry = entry_of(base)
+    owed: dict[str, set[str]] = {}
+    for r in rows(section(ctx.spec, "15. "), "DF"):
+        for n in re.findall(r"`14`:(\d+)", r[1] if len(r) > 1 else ""):
+            idx = int(n) - 1
+            if 0 <= idx < len(base_entry):
+                owed.setdefault(base_entry[idx], set()).add(r[0])
+    for e, ids in owed.items():
+        line = next((ln for x, ln in added if x == e and ln.startswith(DQA_MARK)), "")
+        for i in sorted(ids):
+            if not re.search(rf"\b{i}\b", line):
+                f.append(("G21-P14", f"{e}: its design-QA line does not name {i}"))
 
 
 def g_freeze(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -1232,6 +1298,31 @@ def g_axe(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         )
 
 
+def g_security(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
+    df = df_rows(ctx.spec)
+    sec_ids = {r[0] for r in df if len(r) > 3 and security(r)}
+    if not sec_ids:
+        f.append(("G26-SECURITY", "no security-bearing row found"))
+    checked: list[tuple[str, str]] = [(r[0], " | ".join(r)) for r in df if r[0] in sec_ids]
+    for fam, sec in (
+        ("CP", "5.2 "),
+        ("FZ", "5.1 "),
+        ("ST", "4. "),
+        ("OB", "7.1 "),
+        ("SR", "7.3 "),
+        ("RN", "1.1 "),
+    ):
+        for r in rows(section(ctx.spec, sec), fam):
+            named = set(re.findall(r"\bDF-\d+\b", " ".join(r)))
+            if named & sec_ids or (fam == "FZ" and len(r) > 3 and r[3] == "differs"):
+                checked.append((r[0], " | ".join(r)))
+    for rid, text in checked:
+        if any(k in CODE for k, _, _ in cite_spans(text)):
+            f.append(("G26-SECURITY", f"{rid}: a security-bearing row cites built code"))
+        if QUOTE.search(text):
+            f.append(("G26-SECURITY", f"{rid}: a security-bearing row quotes a string"))
+
+
 GATES: list[tuple[str, Callable[[Ctx, dict[str, str], Findings], None]]] = [
     ("G01-FILLED", g_filled),
     ("G02-AUDIT", g_audit),
@@ -1258,6 +1349,7 @@ GATES: list[tuple[str, Callable[[Ctx, dict[str, str], Findings], None]]] = [
     ("G23-WALK", g_walk),
     ("G24-SECRET", g_secret),
     ("G25-AXE", g_axe),
+    ("G26-SECURITY", g_security),
 ]
 
 
@@ -1351,14 +1443,14 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
         lambda c: dataclasses.replace(
             c,
             pins=re.sub(
-                r"^(LOGIN:8) [0-9a-f]{16}$", r"\1 0000000000000000", c.pins, flags=re.MULTILINE
+                r"^(LOGIN:130) [0-9a-f]{16}$", r"\1 0000000000000000", c.pins, flags=re.MULTILINE
             ),
         ),
     ),
     ("G04-PINS", spec_mut(lambda s: s + "\nSee `D03`:5.\n")),
     (
         "G05-VERBATIM",
-        spec_mut(lambda s: _swap(s, '"Username or password is incorrect"', '"Username is wrong"')),
+        spec_mut(lambda s: _swap(s, '"Authenticator code"', '"Authentication code"')),
     ),
     (
         "G06-COPY",
@@ -1402,6 +1494,30 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
     ),
     ("G24-SECRET", spec_mut(lambda s: s + "\nABCDEFGHABCDEFGH\n")),
     ("G25-AXE", spec_mut(lambda s: set_cell(s, "AX-2", 2, "yes"))),
+    (
+        "G26-SECURITY",
+        spec_mut(
+            lambda s: _swap(s, "`auth.login.failed` (`D12`:325)", "`auth.login.failed` (`LOGIN`:8)")
+        ),
+    ),
+    (
+        "G21-P14",
+        lambda c: dataclasses.replace(
+            c,
+            p14=_swap(
+                c.p14, "rate-limited (from `Retry-After`) · server unreachable.", "server down."
+            ),
+        ),
+    ),
+    (
+        "G21-P14",
+        lambda c: dataclasses.replace(
+            c, p14=_swap(c.p14, "(DF-47, accepted under", "(accepted under")
+        ),
+    ),
+    ("G05-VERBATIM", spec_mut(lambda s: _swap(s, '"Signing in..."', '"Signing in"'))),
+    ("G08-CONTRAST", spec_mut(lambda s: _swap(s, "CN-4 = P-6", "CN-4 = P-3"))),
+    ("G06-COPY", spec_mut(lambda s: set_cell(s, "FZ-9", 4, "`SESS`:285"))),
 ]
 
 
