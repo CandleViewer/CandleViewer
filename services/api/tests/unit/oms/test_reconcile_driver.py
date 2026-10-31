@@ -532,6 +532,39 @@ async def test_a_job_that_cannot_open_at_start_is_refused_order_entry_and_paged(
         await driver.stop()
 
 
+@pytest.mark.parametrize("step", ["load", "restore", "plugins"])
+async def test_an_open_whose_step_hangs_is_bounded_and_refuses_the_account(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch, step: str
+) -> None:
+    """C-2.18: each step of a job's open the driver awaits (its snapshot's load, its restore, a
+    fresh build's plugins) is bounded (`OPEN_TIMEOUT_S`, spent at once here), so one that hangs is
+    logged by its class, and the start refuses the account order entry and pages, as a store that
+    fails would: fail closed, never a start that waits on it in silence."""
+    memory = Memory()
+    if step != "plugins":  # a snapshot to load and restore; with none, a fresh build's plugins
+        first = _driver(job, timers, persistence=memory)
+        await first.start([ACCOUNT])
+        await _resting(first)
+        await first.stop()
+
+    async def hangs(*_args: Any) -> Any:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(memory, step, hangs)
+    monkeypatch.setattr(rj, "OPEN_TIMEOUT_S", 0.0)
+    fresh = Job(retries=RetryHop())  # type: ignore[arg-type]  # the driver's hop, not the rig's
+    driver = _driver(fresh, timers, persistence=memory)
+    with capture_logs() as logs:
+        await asyncio.wait_for(driver.start([ACCOUNT]), 10)  # a bound on the test
+    try:
+        assert driver.state(ACCOUNT) is None and fresh.standing.is_stale(ACCOUNT)
+        failed = [e["failure"] for e in logs if e["event"] == "reconcile_job_open_failed"]
+        assert failed == ["TimeoutError"]
+        assert ("page", rj._UNOPENED) in fresh.world.oms.pages
+    finally:
+        await driver.stop()
+
+
 # --- The host timers: the cadence and the retry (C-12.7, A2) ---------------------------------
 
 
