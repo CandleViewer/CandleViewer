@@ -14,10 +14,10 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy.engine import Dialect, make_url
-from sqlalchemy.sql.elements import TextClause
 
 from candleviewer.storage.repositories import reconcile_sqlalchemy as mod
 from candleviewer.storage.repositories.orders import OrderRow
+from candleviewer.storage.repositories.orders_sqlalchemy import _SET_TIMEOUT
 from candleviewer.storage.repositories.recorded_stops_sqlalchemy import STOP_FIELDS
 
 ACCOUNT = UUID(int=0xA1)
@@ -59,7 +59,7 @@ class _Rel:
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
         async def execute(stmt: Any, params: Any = None) -> _Result:
-            if isinstance(stmt, TextClause):  # the store's statement cap
+            if stmt is _SET_TIMEOUT:  # the store's statement cap
                 return _Result()
             self.statements.append(stmt)
             return self.script.pop(0)
@@ -107,8 +107,9 @@ def test_live_for_account_reads_pending_and_in_force_rows_oldest_first() -> None
 
 def test_the_watermark_only_moves_forward() -> None:
     sql = _sql(mod.advance_statement(ACCOUNT, AT))
-    assert "SET last_reconciled_at=greatest(coalesce(exchange_accounts.last_reconciled_at" in sql
+    assert "SET last_reconciled_at = GREATEST(COALESCE(exchange_accounts.last_reconciled_at" in sql
     assert "RETURNING exchange_accounts.id" in sql
+    assert set(_bound(mod.advance_statement(ACCOUNT, AT))) == {ACCOUNT, AT}  # bound, never text
 
 
 # --- The store over a scripted unit of work ------------------------------------------------------

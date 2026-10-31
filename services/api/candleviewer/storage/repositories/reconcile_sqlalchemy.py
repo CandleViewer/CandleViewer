@@ -81,15 +81,22 @@ def last_reconciled_statement(account_id: UUID) -> sa.Select[Any]:
     return sa.select(_A.last_reconciled_at).where(_A.id == account_id, _A.deleted_at.is_(None))
 
 
-def advance_statement(account_id: UUID, to: datetime) -> sa.Update:
+#: The watermark's one write: a static string, so the accounts table's write-once scan reads it
+#: (`test_account_env_write_once_surface.py`, #2333, #3968): it sets `last_reconciled_at` alone,
+#: never an identity column, and no Core statement in this module writes the table.
+_ADVANCE: Final = sa.text(
+    "UPDATE exchange_accounts SET last_reconciled_at = GREATEST("
+    "COALESCE(exchange_accounts.last_reconciled_at, :to), :to) "
+    "WHERE exchange_accounts.id = :account_id AND exchange_accounts.deleted_at IS NULL "
+    "RETURNING exchange_accounts.id"
+)
+
+
+def advance_statement(account_id: UUID, to: datetime) -> sa.TextClause:
     """The watermark moved to `to`, never back (`GREATEST` over its current value)."""
-    at = sa.bindparam("to", to, type_=sa.TIMESTAMP(timezone=True))
-    forward = sa.func.greatest(sa.func.coalesce(_A.last_reconciled_at, at), at)
-    return (
-        sa.update(exchange_accounts)
-        .where(_A.id == account_id, _A.deleted_at.is_(None))
-        .values(last_reconciled_at=forward)
-        .returning(_A.id)
+    return _ADVANCE.bindparams(
+        sa.bindparam("account_id", account_id, type_=sa.Uuid),
+        sa.bindparam("to", to, type_=sa.TIMESTAMP(timezone=True)),
     )
 
 
