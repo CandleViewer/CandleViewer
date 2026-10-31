@@ -75,6 +75,7 @@ export function AlertHistoryDialog({
       }
     >
       {rows === null ? <p role="status">{H.loading}</p> : null}
+      {firings.length > 0 ? <p>{COPY.csvNote}</p> : null}
       {truncated ? <p role="note">{COPY.truncated}</p> : null}
       {rows === "error" ? <p role="alert">{H.error}</p> : null}
       {loaded !== null && firings.length === 0 ? <p>{H.empty}</p> : null}

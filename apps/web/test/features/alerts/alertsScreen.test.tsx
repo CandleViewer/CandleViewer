@@ -239,23 +239,16 @@ describe("row actions", () => {
     await waitFor(() => expect(screen.queryByRole("row", { name: /Alert 1/ })).toBeNull());
   });
 
-  it("offers show on chart and a duplicate that is disabled with its reason", async () => {
+  it("offers show on chart, and renders no New alert or Duplicate until Part B", async () => {
     const onShowOnChart = vi.fn();
     setup([alert(1)], { onShowOnChart });
+    expect(await screen.findByRole("row", { name: /Alert 1/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /New alert/ })).toBeNull();
     await menuFor("Alert 1", "Show on chart");
     expect(onShowOnChart).toHaveBeenCalledWith(expect.objectContaining({ name: "Alert 1" }));
     fireEvent.click(await screen.findByRole("button", { name: "Actions for Alert 1" }));
-    expect(await screen.findByRole("menuitem", { name: /Duplicate/ })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-  });
-
-  it("states the reason on the disabled New alert button", async () => {
-    setup([alert(1)]);
-    const button = await screen.findByRole("button", { name: /New alert/ });
-    expect(button).toHaveAttribute("aria-disabled", "true");
-    expect(button).toHaveAccessibleDescription(/isn't available yet/);
+    expect(await screen.findByRole("menuitem", { name: "View history" })).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: /Duplicate/ })).toBeNull();
   });
 });
 
@@ -373,9 +366,7 @@ describe("read-only and 403", () => {
     const toggle = screen.getByRole("switch", { name: "Active: Alert 1" });
     expect(toggle).toHaveAttribute("aria-disabled", "true");
     expect(toggle).toHaveAccessibleDescription(reason);
-    const create = screen.getByRole("button", { name: /New alert/ });
-    expect(create).toHaveAttribute("aria-disabled", "true");
-    expect(create).toHaveAccessibleDescription(reason);
+    expect(screen.queryByRole("button", { name: /New alert/ })).toBeNull();
     fireEvent.click(toggle);
     expect(api.setEnabled).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Actions for Alert 1" }));
@@ -422,7 +413,7 @@ describe("visible-set rules", () => {
       name: `Many ${i}`,
     }));
     setup(many);
-    expect(await screen.findByText(/Showing first 200 of 205/)).toBeVisible();
+    expect(await screen.findByText(/Showing the first 200 of 205/)).toBeVisible();
     expect(screen.getByText(/refine the filters/)).toBeVisible();
     await waitFor(() => expect(screen.getByText("Showing 200 of 205 alerts")).toBeVisible());
     expect(screen.getAllByRole("row").length).toBeLessThanOrEqual(202);
