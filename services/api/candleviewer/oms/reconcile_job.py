@@ -236,6 +236,9 @@ class ReconcileJobs:
         self._opening = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
         self._pass_ids: dict[AccountId, str] = {}
+        #: The accounts held refused since their start failed (`start`): each until a trigger
+        #: opens its job or reaches it (`_reached`), which rebuilds its standing.
+        self._unstarted: set[AccountId] = set()
         self._remediate = True
         self._spacing = SPACING_S
         self._t0 = 0.0
@@ -246,8 +249,9 @@ class ReconcileJobs:
     async def start(self, accounts: Iterable[AccountId]) -> None:
         """Wires B19's port, then opens each account's job (restored, or built afresh) and sends
         it `startup` (BQ-14: the caller reports ready after it, never after the pass). One
-        account whose job cannot open is logged, paged and refused order entry (its standing
-        set, fail closed) until a later trigger opens it; the others start."""
+        account whose start fails, whatever the failure (its job not opened, or a send that did
+        not answer), is logged, paged and refused order entry (its standing set, fail closed)
+        until a later trigger opens its job or reaches it (`_reached`); the others start."""
         remediate = self._remediates(self._env)
         if not remediate and self._env in _ALWAYS_REMEDIATE:  # C-2.6, C-4.14: never on live or demo
             raise ValueError("a live or demo reconciliation job always remediates (24 Sec.14.3)")
@@ -261,9 +265,11 @@ class ReconcileJobs:
         for account in ordered:
             try:
                 await self.trigger(account, "startup")
-            except ReconciliationUnavailable:
-                self._standing.mark_stale(account)  # unknown: refused until a job opens it
-                _log().critical("reconcile_job_unopened", account_id=str(account), cv_page=True)
+            except Exception as exc:  # any failure holds this account; the others still start
+                self._standing.mark_stale(account)  # unknown: refused until a trigger reaches it
+                self._unstarted.add(account)
+                _log().critical("reconcile_job_unopened", account_id=str(account),
+                                failure=type(exc).__name__, cv_page=True)  # fmt: skip
                 self._pager.raise_alert("page", _UNOPENED, machine_kind=MACHINE)
 
     async def stop(self) -> None:
@@ -277,6 +283,7 @@ class ReconcileJobs:
         for job in list(self._jobs.values()):
             await self._close(job)
         self._jobs.clear()
+        self._unstarted.clear()  # the standing keeps their marks until a start rebuilds them
         self._gauge(lambda: 0.0)
         if self._wired:  # a stopped driver never unwires the port of the one after it
             self._wired = False
@@ -323,6 +330,7 @@ class ReconcileJobs:
             await write_ahead(taken)
             await self._send_job(job, "SWEEP_DUE", {"trigger": "manual", "pass_id": taken.pass_id})
             self._pass_ids[account] = taken.pass_id
+            self._reached(job, state)
             return taken
 
     async def resolve(
@@ -418,12 +426,14 @@ class ReconcileJobs:
         self._jobs[account] = job
         state = leaf_of(interp)
         self._standing.restored(account, state)  # a restart never unlocks (BQ-5)
+        self._unstarted.discard(account)  # its standing is its job's now
         pass_id = interp.context.get("pass_id")
         if isinstance(pass_id, str):
             self._pass_ids[account] = pass_id
+        # the cadence first: an owed send that fails still leaves the job ticking
+        job.cadence = self._spawn(self._cadence(job), "reconcile-cadence")
         for event, payload in owed:
             await self._send_job(job, event, payload)
-        job.cadence = self._spawn(self._cadence(job), "reconcile-cadence")
         _log().info("reconcile_job_opened", account_id=str(account), state=state,
                     restored=bool(owed) or state != "idle")  # fmt: skip
         return job
@@ -487,7 +497,16 @@ class ReconcileJobs:
             payload["trigger"] = trigger
         await self._send_job(job, event, payload)
         self._pass_ids[job.account] = pass_id
+        self._reached(job, state)
         return pass_id
+
+    def _reached(self, job: _Job, state: str) -> None:
+        """A trigger the job took from `state`, a rest: an account held since its start failed
+        (`start`) has its standing rebuilt from that state, as an open rebuilds it, once B19 has
+        moved on from it, so took the event; a job still there lifts nothing."""
+        if job.account in self._unstarted and leaf_of(job.interp) != state:
+            self._unstarted.discard(job.account)
+            self._standing.restored(job.account, state)
 
     def _skipped(self, job: _Job, trigger: Trigger, state: str, why: str) -> None:
         """A trigger that finds a pass running, or the job locked, is logged, never sent (24
