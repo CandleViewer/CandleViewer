@@ -5,6 +5,7 @@ Except `bar-store-mutations.ts`: E11-T03 production bench code over `src/model`,
 Except `viewport-transform.ts`: E11-S03 production bench code over `src/viewport`, driven by Vitest (BQ-80).
 Except `input-router.ts`: E11-S04 production bench code over `src/interaction`, driven by Vitest (BQ-112).
 Except `scale-mode-switch.ts` and `autoscale-fit.ts`: E11-S05 production bench code over `src/viewport`, driven by Vitest (BQ-126).
+Except `hit-pick.ts`: E11-S08 production bench code over `src/hit`, driven by Vitest (BQ-141).
 
 This directory is **throwaway prototype code** for the M0 spike ticket E06-K02
 ("Prototype scene A: 100k-bar model, visible-window draw and LOD ladder"). It
