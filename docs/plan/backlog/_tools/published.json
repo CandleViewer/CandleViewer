@@ -1887,6 +1887,19 @@
     "number": 4705,
     "subissue_done": true
   },
+  "E08-S12": {
+    "blockedby_done": [
+      "E08-D09",
+      "E08-T02",
+      "E42-S01",
+      "E34-T02"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhFAZVA",
+    "node_id": "I_kwDOUZDkl88AAAABbb71gQ",
+    "number": 5207,
+    "subissue_done": true
+  },
   "E08-T01": {
     "blockedby_done": [
       "E02-K01",
