@@ -15,6 +15,7 @@ from candleviewer.observability.health import HealthReport, HealthStatus
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
     from candleviewer.orderflow.funding import FundingService
+    from candleviewer.orderflow.liquidations import LiquidationService
     from candleviewer.orderflow.open_interest import OpenInterestService
 
 
@@ -27,12 +28,17 @@ class OrderflowService:
         self.funding: FundingService | None = None
         #: E24-T01: attached by the composition root (`oi_wiring`).
         self.open_interest: OpenInterestService | None = None
+        #: E24-T03: attached by the composition root (`liquidations_wiring`).
+        self.liquidations: LiquidationService | None = None
 
     def attach_funding(self, service: FundingService) -> None:
         self.funding = service
 
     def attach_open_interest(self, service: OpenInterestService) -> None:
         self.open_interest = service
+
+    def attach_liquidations(self, service: LiquidationService) -> None:
+        self.liquidations = service
 
     async def start(self, ctx: AppContext) -> None:
         """Start the module. No-op until the owning epic implements it."""
