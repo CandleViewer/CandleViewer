@@ -1,0 +1,1930 @@
+{
+  "pack": "E32-D07",
+  "version": "v1",
+  "base": "fd96d4bdb0",
+  "note": "The copy deck of the E32-D07 hand-off pack: every row of the four parents' decks (E32-D02 §3.8, E32-D03 §10, E32-D04 §12, E32-D05 §13) under the id `<parent>:<first key>` (`#2` on a first key the parent repeats), the row's names, the String cell verbatim, the source row, the status (proposed: the parent's own proposal, owner the parent; reused: the owner its Source cell names), the native-SL flag; and the bound `e32.sl.required` (RULED BQ-12). Checked by docs/design/_tools/e32_d07_handoff_audit.py (G-DECK).",
+  "entries": {
+    "d02:e32.title.*": {
+      "names": "e32.title.*",
+      "text": "\"Manage {symbol} {side} {size} · {account} · {env}\" · \"Scaled entry · {symbol} · {account} · {env}\" · \"Bracket · {symbol} · {account} · {env}\"",
+      "source": "D02:341",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:e32.sl.note.draft": {
+      "names": "e32.sl.note.draft",
+      "text": "\"Every position keeps a native stop — you can move it, not delete it.\" + \"It is placed with the order, not after it.\"",
+      "source": "D02:342",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:sltp.v.sl_side": {
+      "names": "sltp.v.sl_side",
+      "text": "\"Stop-loss must be below the {trigger} price ({value}) for a long.\" / \"Stop-loss must be above the {trigger} price ({value}) for a short.\"",
+      "source": "D02:343",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:sltp.v.tp_side": {
+      "names": "sltp.v.tp_side",
+      "text": "\"Take-profit must be above the {trigger} price ({value}) for a long.\" / \"Take-profit must be below the {trigger} price ({value}) for a short.\"",
+      "source": "D02:344",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:ladder.v.orders": {
+      "names": "ladder.v.orders",
+      "text": "\"Orders must be 2 to 50.\"",
+      "source": "D02:345",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:sltp.loading": {
+      "names": "sltp.loading · sltp.label.naked · sltp.naked.recorded · sltp.trail.atr",
+      "text": "\"Loading the position…\" · \"Stop-loss · none at the exchange\" · \"Recorded stop {stop} — attach it or a tighter one.\" · \"ATR(14) × 2.0 · (app-managed) · only tightens\"",
+      "source": "D02:346",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:sltp.readout": {
+      "names": "sltp.readout · e32.be.line",
+      "text": "\"risk {risk} USDT ({pct} % of equity) = 1 R · excl. fees\" · \"→ stop to {price} (+{n} ticks)\"",
+      "source": "D02:347",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:sltp.loosen": {
+      "names": "sltp.loosen · sltp.loosen.route",
+      "text": "\"Loosen stop…\" with \"owner only · opens a confirmation\" · \"To widen it, use Loosen stop…\"",
+      "source": "D02:348",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:sltp.trail.refused": {
+      "names": "sltp.trail.refused",
+      "text": "\"Not applied — a {distance} trail would widen the stop. This trail can only be tightened here.\" / \"Not applied — removing the trail would widen the stop, and no role can remove a trail yet. This trail can only be tightened here.\" / \"Not applied — activating at {price} would arm the trail later or set its trigger further from the market. This trail can only be tightened here.\"",
+      "source": "D02:349",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:sltp.liq.beyond": {
+      "names": "sltp.liq.beyond · sltp.liq.unavailable",
+      "text": "\"Stop {stop} is beyond liquidation ({liq}) — the position would be liquidated first. Tighten above {liq}.\" · \"Liquidation price not available — this check is off.\"",
+      "source": "D02:350",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:e32.tp.below_min": {
+      "names": "e32.tp.below_min · e32.tp.single · e32.tp.merged",
+      "text": "\"TP 1 and TP 2 are below the 0.001 minimum — use a single target instead.\" · \"Use a single target at {r} R ({price})\" · \"TP {a} merged into TP {b}: below the {min} minimum\"",
+      "source": "D02:351",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:sltp.apply.stop_only": {
+      "names": "sltp.apply.stop_only · sltp.applied.none · sltp.tp.removed · sltp.applied.partial",
+      "text": "\"Apply stop only\" · \"No changes to apply\" · \"Take-profit removed · stop {stop} unchanged\" · \"Stop moved to {stop} · TP ladder not applied: {reason}\"",
+      "source": "D02:352",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:sltp.pending.held": {
+      "names": "sltp.pending.held · sltp.pending.acked · sltp.frozen",
+      "text": "\"Held by Bybit now: {stop}.\" · \"Accepted by Bybit — waiting for the position read.\" · \"Kill switch engaged — new orders are off, but tightening still works; your stop {stop} stays held by Bybit.\"",
+      "source": "D02:353",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:sltp.apply.attach": {
+      "names": "sltp.apply.attach · sltp.applying · sltp.moving · e32.close",
+      "text": "\"Attach stop\" · \"Applying…\" · \"Moving…\" · \"Close\"",
+      "source": "D02:354",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:sltp.rejected": {
+      "names": "sltp.rejected · sltp.closed",
+      "text": "\"Not applied — Bybit refused the stop change · {detail} · code {code} · Attempt recorded\" + \"Your stop {stop} is still held by Bybit.\" · \"This position was closed — nothing was sent.\"",
+      "source": "D02:355",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:ladder.empty": {
+      "names": "ladder.empty · ladder.empty.reason · ladder.stop.none",
+      "text": "\"Enter a price range, an order count and a total to preview the ladder.\" · \"Nothing to place yet\" · \"No stop yet — a stop is required\"",
+      "source": "D02:356",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:ladder.stop.source": {
+      "names": "ladder.stop.source",
+      "text": "\"{pct} % below the far end {price}\" / DCA \"{pct} % below the base order {price}\"",
+      "source": "D02:357",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:ladder.totals": {
+      "names": "ladder.totals · ladder.stop.line · ladder.risk.line",
+      "text": "\"Σ {qty} BTC · {notional} USDT · avg entry {avg} · worst case {risk} USDT ({pct} % of equity) (first order alone {first}) · {k} → Bybit · {q} → queue\" · \"Stop {stop} on the resulting position · held by Bybit (exchange) · attached to every order\" · \"Risk vs cap: worst case {risk} USDT · {left} USDT of today's loss budget left (profile) · {n} batch request now, {m} later (the plan's cap: {batch} a request) · {k} of {rate} orders a minute (profile)\"; with a queue the requests read \"{n} batch request now ({r} orders) + up to {q} single placements later\"",
+      "source": "D02:358",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:ladder.tiles.name": {
+      "names": "ladder.tiles.name · ladder.row.name",
+      "text": "\"Ladder summary: {qty} BTC, average {avg}, worst case {risk} USDT, {n} request now\" · \"Level {n}, {price}, {qty} BTC, cumulative {cum}, average {avg}, stop {stop}, to Bybit\"",
+      "source": "D02:359",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:ladder.note.*": {
+      "names": "ladder.note.*",
+      "text": "\"+{qty} added to level 1 (nearest {price})\" · \"level {n} dropped: below {min}, redistributed\" · \"levels {a} and {b} merged at {price}\"",
+      "source": "D02:360",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:ladder.where.*": {
+      "names": "ladder.where.* · ladder.custody.result",
+      "text": "preview \"→ Bybit\" · \"→ queue (CandleViewer)\" · \"fills at once\" · \"dropped\"; result \"placing…\" · \"resting at Bybit · id …{id}\" · \"queued in CandleViewer\" · \"failed · code {code}\" · \"{k} resting · {q} queued — queued levels are placed only while CandleViewer runs\"",
+      "source": "D02:361",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:ladder.reduce_only": {
+      "names": "ladder.reduce_only · ladder.crosses",
+      "text": "\"closes up to {qty} BTC · no new risk\" · \"{n} levels are above the mark ({mark}) — they fill at once instead of resting.\"",
+      "source": "D02:362",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:ladder.no_viable": {
+      "names": "ladder.no_viable · ladder.one_order",
+      "text": "\"No ladder fits: all {n} orders would be below the {min} minimum. Use fewer orders or a larger total — or place one order.\" · \"Place one order instead\"",
+      "source": "D02:363",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:ladder.cap.headroom": {
+      "names": "ladder.cap.headroom · ladder.reduce",
+      "text": "\"Worst case {risk} USDT for the fully-filled ladder; {left} USDT of today's loss budget is left.\" · \"Reduce size\"",
+      "source": "D02:364",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:refusal.insufficient_margin": {
+      "names": "refusal.insufficient_margin",
+      "text": "\"Not enough available margin — {rejection.message}\"",
+      "source": "D02:365",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:ladder.placing": {
+      "names": "ladder.placing",
+      "text": "\"Placing {n} orders — {k} of {n} resting at Bybit\"",
+      "source": "D02:366",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:ladder.place": {
+      "names": "ladder.place · bkt.place · e32.placing",
+      "text": "\"Place {n} orders, {qty} BTC total\" · \"Place bracket: {side} {qty} BTC, stop {stop}, target {target} · risk {risk} USDT\" · \"Placing…\"",
+      "source": "D02:367",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:ladder.partial": {
+      "names": "ladder.partial · ladder.retry · ladder.cancel_all",
+      "text": "\"{k} of {n} placed — {f} failed: {rejected_reason} · code {code} · Attempt recorded · Details\" + \"The placed orders stand; each carries the stop {stop}.\" · \"Retry failed levels\" · \"Cancel all levels\"",
+      "source": "D02:368",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:ladder.cancel.confirm": {
+      "names": "ladder.cancel.confirm · ladder.cancelled",
+      "text": "\"Cancel {k} resting levels? The filled {qty} BTC stays open with its stop {stop}.\" with \"Keep levels\" / \"Cancel {k} levels\" · \"Cancelled {k} levels — the filled {qty} BTC keeps its stop {stop}, held by Bybit.\"",
+      "source": "D02:369",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:ladder.not_recorded": {
+      "names": "ladder.not_recorded · e32.awaiting.reason",
+      "text": "\"Not sent — the order could not be recorded, so nothing reached Bybit. Try again.\" · \"Waiting for the exchange's answer — check Orders\"",
+      "source": "D02:370",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:e32.stop.server": {
+      "names": "e32.stop.server",
+      "text": "\"server {price}\"",
+      "source": "D02:371",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d02:e32.offline.age": {
+      "names": "e32.offline.age",
+      "text": "\"Not connected — last update {age} ago; the result is confirmed over the server.\"",
+      "source": "D02:372",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:bkt.empty.reason": {
+      "names": "bkt.empty.reason · bkt.preview",
+      "text": "\"Enter an entry price and a size\" · \"Preview: risk {risk} USDT ({pct} % of equity) = 1 R · reward {reward} USDT = {r} R\"",
+      "source": "D02:373",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:bkt.ladder.offline": {
+      "names": "bkt.ladder.offline · bkt.filled_offline",
+      "text": "\"If CandleViewer is offline when the entry first fills, the targets are placed once it is back — check them in Orders; the stop is held by Bybit throughout.\" · \"Entry filled at {time} while CandleViewer was offline — targets placed at {time} on reconnect; check them.\"",
+      "source": "D02:374",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:bkt.liq.beyond": {
+      "names": "bkt.liq.beyond",
+      "text": "\"Stop {stop} is beyond the estimated liquidation ({liq}) — the position would be liquidated first.\"",
+      "source": "D02:375",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:bkt.placing": {
+      "names": "bkt.placing · bkt.targets.later · bkt.targets.sized",
+      "text": "\"Placing the bracket — entry filled {qty} · stop {stop} held by Bybit · targets {k} of {n} resting\" · \"Targets are placed when the entry first fills.\" · \"Targets sized on the filled {qty}; resized as the rest fills.\"",
+      "source": "D02:376",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:bkt.partial": {
+      "names": "bkt.partial · bkt.retry",
+      "text": "\"TP {n} not placed: {LegError.message} · code {code} · Attempt recorded · Details\" + \"The stop {stop} and TP {a}, TP {b} stand.\" · \"Retry TP {n}\"",
+      "source": "D02:377",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": false
+    },
+    "d02:bkt.stop_in_flight": {
+      "names": "bkt.stop_in_flight",
+      "text": "\"Not sent — another stop request is in flight on this position; retry allowed at {hh:mm:ss} (in {n} s)\"",
+      "source": "D02:378",
+      "status": "proposed",
+      "owner": "E32-D02 (#855)",
+      "native_sl": true
+    },
+    "d03:e32.title.*": {
+      "names": "e32.title.*",
+      "text": "\"Bracket · {symbol} · {account} · {env}\"",
+      "source": "D03:366",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :341",
+      "native_sl": false
+    },
+    "d03:e32.sl.note.draft": {
+      "names": "e32.sl.note.draft",
+      "text": "\"Every position keeps a native stop — you can move it, not delete it.\" + \"It is placed with the order, not after it.\"",
+      "source": "D03:367",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :342",
+      "native_sl": true
+    },
+    "d03:e32.tp.below_min": {
+      "names": "e32.tp.below_min",
+      "text": "\"TP 1 and TP 2 are below the 0.001 minimum — use a single target instead.\"",
+      "source": "D03:368",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :351",
+      "native_sl": false
+    },
+    "d03:e32.tp.single": {
+      "names": "e32.tp.single",
+      "text": "\"Use a single target at {r} R ({price})\"",
+      "source": "D03:369",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :351",
+      "native_sl": false
+    },
+    "d03:e32.tp.merged": {
+      "names": "e32.tp.merged",
+      "text": "\"TP {a} merged into TP {b}: below the {min} minimum\"",
+      "source": "D03:370",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :351",
+      "native_sl": false
+    },
+    "d03:e32.close": {
+      "names": "e32.close",
+      "text": "\"Close\"",
+      "source": "D03:371",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :354",
+      "native_sl": false
+    },
+    "d03:bkt.place": {
+      "names": "bkt.place",
+      "text": "\"Place bracket: {side} {qty} BTC, stop {stop}, target {target} · risk {risk} USDT\"",
+      "source": "D03:372",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :367",
+      "native_sl": false
+    },
+    "d03:e32.placing": {
+      "names": "e32.placing",
+      "text": "\"Placing…\"",
+      "source": "D03:373",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :367",
+      "native_sl": false
+    },
+    "d03:e32.awaiting.reason": {
+      "names": "e32.awaiting.reason",
+      "text": "\"Waiting for the exchange's answer — check Orders\"",
+      "source": "D03:374",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :370",
+      "native_sl": false
+    },
+    "d03:e32.offline.age": {
+      "names": "e32.offline.age",
+      "text": "\"Not connected — last update {age} ago; the result is confirmed over the server.\"",
+      "source": "D03:375",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :372",
+      "native_sl": false
+    },
+    "d03:bkt.empty.reason": {
+      "names": "bkt.empty.reason",
+      "text": "\"Enter an entry price and a size\"",
+      "source": "D03:376",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :373",
+      "native_sl": false
+    },
+    "d03:bkt.preview": {
+      "names": "bkt.preview",
+      "text": "\"Preview: risk {risk} USDT ({pct} % of equity) = 1 R · reward {reward} USDT = {r} R\"",
+      "source": "D03:377",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :373",
+      "native_sl": false
+    },
+    "d03:bkt.ladder.offline": {
+      "names": "bkt.ladder.offline",
+      "text": "\"If CandleViewer is offline when the entry first fills, the targets are placed once it is back — check them in Orders; the stop is held by Bybit throughout.\"",
+      "source": "D03:378",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :374",
+      "native_sl": false
+    },
+    "d03:bkt.filled_offline": {
+      "names": "bkt.filled_offline",
+      "text": "\"Entry filled at {time} while CandleViewer was offline — targets placed at {time} on reconnect; check them.\"",
+      "source": "D03:379",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :374",
+      "native_sl": false
+    },
+    "d03:bkt.liq.beyond": {
+      "names": "bkt.liq.beyond",
+      "text": "\"Stop {stop} is beyond the estimated liquidation ({liq}) — the position would be liquidated first.\"",
+      "source": "D03:380",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :375",
+      "native_sl": false
+    },
+    "d03:bkt.placing": {
+      "names": "bkt.placing",
+      "text": "\"Placing the bracket — entry filled {qty} · stop {stop} held by Bybit · targets {k} of {n} resting\"",
+      "source": "D03:381",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :376",
+      "native_sl": false
+    },
+    "d03:bkt.targets.later": {
+      "names": "bkt.targets.later",
+      "text": "\"Targets are placed when the entry first fills.\"",
+      "source": "D03:382",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :376",
+      "native_sl": false
+    },
+    "d03:bkt.targets.sized": {
+      "names": "bkt.targets.sized",
+      "text": "\"Targets sized on the filled {qty}; resized as the rest fills.\"",
+      "source": "D03:383",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :376",
+      "native_sl": false
+    },
+    "d03:bkt.partial": {
+      "names": "bkt.partial",
+      "text": "\"TP {n} not placed: {LegError.message} · code {code} · Attempt recorded · Details\" + \"The stop {stop} and TP {a}, TP {b} stand.\"",
+      "source": "D03:384",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :377",
+      "native_sl": false
+    },
+    "d03:bkt.retry": {
+      "names": "bkt.retry",
+      "text": "\"Retry TP {n}\"",
+      "source": "D03:385",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :377",
+      "native_sl": false
+    },
+    "d03:bkt.stop_in_flight": {
+      "names": "bkt.stop_in_flight",
+      "text": "\"Not sent — another stop request is in flight on this position; retry allowed at {hh:mm:ss} (in {n} s)\"",
+      "source": "D03:386",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :378",
+      "native_sl": true
+    },
+    "d03:e32.be.line": {
+      "names": "e32.be.line",
+      "text": "\"→ stop to {price} (+{n} ticks)\"",
+      "source": "D03:387",
+      "status": "reused",
+      "owner": "E32-D02 §3.8 :347",
+      "native_sl": false
+    },
+    "d03:refusal.insufficient_margin": {
+      "names": "refusal.insufficient_margin",
+      "text": "\"Not enough available margin — {rejection.message}\"",
+      "source": "D03:388",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d03:refusal.insufficient_margin#2": {
+      "names": "refusal.insufficient_margin",
+      "text": "\"Not enough available margin.\"",
+      "source": "D03:389",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d03:v.sl.side.long": {
+      "names": "v.sl.side.long · .short",
+      "text": "\"Stop-loss must be below entry for a long.\" / \"Stop-loss must be above entry for a short.\"",
+      "source": "D03:390",
+      "status": "reused",
+      "owner": "E30-D02 §14 :377 (`14` :1391 for the long sentence)",
+      "native_sl": true
+    },
+    "d03:v.tp.side.long": {
+      "names": "v.tp.side.long · .short",
+      "text": "\"Take-profit must be above entry for a long.\" / \"Take-profit must be below entry for a short.\"",
+      "source": "D03:391",
+      "status": "reused",
+      "owner": "E30-D02 §14 :378",
+      "native_sl": false
+    },
+    "d03:v.sl.required": {
+      "names": "v.sl.required",
+      "text": "\"This account requires a stop-loss on every order.\"",
+      "source": "D03:392",
+      "status": "reused",
+      "owner": "E30-D02 §14 :382",
+      "native_sl": true
+    },
+    "d03:sl.source.profile": {
+      "names": "sl.source.profile · .fallback",
+      "text": "\"from your profile: {n} ticks\" / \"fallback 2 % — ATR warming up\"",
+      "source": "D03:393",
+      "status": "reused",
+      "owner": "E30-D02 §14 :392",
+      "native_sl": true
+    },
+    "d03:sl.note": {
+      "names": "sl.note",
+      "text": "\"Every entry carries a native exchange stop: typed here, else your profile's {n} ticks, else the 2 % fallback. It is placed with the order, not after it.\"",
+      "source": "D03:394",
+      "status": "reused",
+      "owner": "E30-D02 §14 :394",
+      "native_sl": true
+    },
+    "d03:arm.refused": {
+      "names": "arm.refused",
+      "text": "\"One-click trading is locked\"",
+      "source": "D03:395",
+      "status": "reused",
+      "owner": "E30-D02 §14 :406",
+      "native_sl": false
+    },
+    "d03:arm.locked": {
+      "names": "arm.locked",
+      "text": "\"one-click off — Ctrl+Shift+T to arm\"",
+      "source": "D03:396",
+      "status": "reused",
+      "owner": "E30-D02 §14 (its description; E32-D02 §3.6 :279)",
+      "native_sl": false
+    },
+    "d03:arm.unknown": {
+      "names": "arm.unknown",
+      "text": "\"Arm state unknown — submit off\"",
+      "source": "D03:397",
+      "status": "reused",
+      "owner": "E30-D02 §14 (E32-D02 §3.6 :281)",
+      "native_sl": false
+    },
+    "d03:submit.awaiting": {
+      "names": "submit.awaiting",
+      "text": "\"Awaiting exchange confirmation — reconciling\"",
+      "source": "D03:398",
+      "status": "reused",
+      "owner": "E30-D02 §14 :415",
+      "native_sl": false
+    },
+    "d03:submit.not_connected": {
+      "names": "submit.not_connected",
+      "text": "\"Not connected\"",
+      "source": "D03:399",
+      "status": "reused",
+      "owner": "E30-D02 §14 (E32-D02 §3.6 :286)",
+      "native_sl": false
+    },
+    "d03:accepted.partial": {
+      "names": "accepted.partial",
+      "text": "\"Partially filled {filled} of {qty} — stop {stop} held by the exchange\"",
+      "source": "D03:400",
+      "status": "reused",
+      "owner": "E30-D02 §14 :417",
+      "native_sl": false
+    },
+    "d03:accepted": {
+      "names": "accepted",
+      "text": "\"Accepted — stop {stop} held by the exchange\"",
+      "source": "D03:401",
+      "status": "reused",
+      "owner": "E30-D02 §14 :418",
+      "native_sl": false
+    },
+    "d03:lockout": {
+      "names": "lockout",
+      "text": "\"Daily loss limit reached — trading locked until 00:00 UTC. Ask the owner to override.\" (the banner) · \"Locked out — reduce through Close position\" (the reason) · \"Close position…\" (the button)",
+      "source": "D03:402",
+      "status": "reused",
+      "owner": "E30-D02 §14 :421",
+      "native_sl": false
+    },
+    "d03:frozen": {
+      "names": "frozen",
+      "text": "\"Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel and close still work.\"",
+      "source": "D03:403",
+      "status": "reused",
+      "owner": "E30-D02 §14 :422",
+      "native_sl": false
+    },
+    "d03:bracket.rounded": {
+      "names": "bracket.rounded",
+      "text": "\"(rounded away from entry to the {tick} tick)\"",
+      "source": "D03:404",
+      "status": "reused",
+      "owner": "E30-D02 §14 :450",
+      "native_sl": false
+    },
+    "d03:pending_key": {
+      "names": "pending_key · refusal.key_invalid · refusal.symbol_not_allowed · refusal.leverage_unavailable",
+      "text": "the registered lines, as E32-D02 §3.6 :287 cites them",
+      "source": "D03:405",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d03:notice.panel_read_only": {
+      "names": "notice.panel_read_only",
+      "text": "\"Read-only — your role can't place orders.\" / \"Read-only — you can view this account, not trade it.\" / \"Read-only — this account isn't assigned to you.\"",
+      "source": "D03:406",
+      "status": "reused",
+      "owner": "E09-D09 §10 :252 (as E32-D02 row 14 :751 quotes it)",
+      "native_sl": false
+    },
+    "d03:rbac.view_as": {
+      "names": "rbac.view_as",
+      "text": "\"Read-only while viewing as {user}.\"",
+      "source": "D03:407",
+      "status": "reused",
+      "owner": "E09-D09 §3.1 :95",
+      "native_sl": false
+    },
+    "d03:rbac.permission": {
+      "names": "rbac.permission",
+      "text": "\"Your role can't place orders.\"",
+      "source": "D03:408",
+      "status": "reused",
+      "owner": "E09-D09 §3.1 :89 (`orders:write` → \"place orders\", §3.2 :110)",
+      "native_sl": false
+    },
+    "d03:rbac.account": {
+      "names": "rbac.account",
+      "text": "\"This account isn't assigned to you.\"",
+      "source": "D03:409",
+      "status": "reused",
+      "owner": "E09-D09 §3.1 :91",
+      "native_sl": false
+    },
+    "d03:rbac.account_read_only": {
+      "names": "rbac.account_read_only",
+      "text": "\"You can view this account, not trade it.\"",
+      "source": "D03:410",
+      "status": "reused",
+      "owner": "E09-D09 §3.1 :92",
+      "native_sl": false
+    },
+    "d03:rbac.env": {
+      "names": "rbac.env",
+      "text": "\"Live trading isn't enabled for you.\"",
+      "source": "D03:411",
+      "status": "reused",
+      "owner": "E09-D09 §3.1 :93",
+      "native_sl": false
+    },
+    "d03:E17-D01 §7 line": {
+      "names": "E17-D01 §7 line",
+      "text": "\"Order entry off — {message}. Cancel and close still work.\"",
+      "source": "D03:412",
+      "status": "reused",
+      "owner": "E17-D01 §7 (as E32-D02 §3.6 :285 quotes it)",
+      "native_sl": false
+    },
+    "d03:tag.emulated": {
+      "names": "tag.emulated",
+      "text": "\"Emulated\" · name \"Emulated — run by CandleViewer, not Bybit\"",
+      "source": "D03:413",
+      "status": "reused",
+      "owner": "E33-D02 §8 :338",
+      "native_sl": false
+    },
+    "d03:cls.emulated": {
+      "names": "cls.emulated",
+      "text": "\"Emulated — run by CandleViewer, not Bybit\"",
+      "source": "D03:414",
+      "status": "reused",
+      "owner": "RULED (2026-10-24, lane-wide; E33-D03 §13 :358 `tag.emulated`'s registered name, byte-equal; HA-14)",
+      "native_sl": false
+    },
+    "d03:cls.emulated.sentence": {
+      "names": "cls.emulated.sentence",
+      "text": "\"Emulated — run by CandleViewer, not Bybit: moves the stop to breakeven at +1 R only while CandleViewer runs; if it stops, the stop stays at {stop}, held by Bybit.\"",
+      "source": "D03:415",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d03:sl.label": {
+      "names": "sl.label · sl.kept",
+      "text": "\"Stop-loss · held by Bybit (exchange)\" · \"Kept at 63,900.0 — every position keeps a native stop. Move it instead.\"",
+      "source": "D03:416",
+      "status": "reused",
+      "owner": "E32-D01 §5.3 :114, :116",
+      "native_sl": true
+    },
+    "d03:14": {
+      "names": "14",
+      "text": "\"Ladder totals 110 % — reduce a step.\"",
+      "source": "D03:417",
+      "status": "reused",
+      "owner": "`14` :1498 (verbatim, E32-D02 D21)",
+      "native_sl": false
+    },
+    "d03:bkt.trigger.pending": {
+      "names": "bkt.trigger.pending",
+      "text": "\"contract pending — G-23\"",
+      "source": "D03:418",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d03:bkt.leg.status": {
+      "names": "bkt.leg.status",
+      "text": "\"Entry · filled {qty} · Bybit\" · \"Stop · {stop} · held by Bybit (exchange)\" · \"Stop · {stop} · placing…\" · \"TP {n} · resting at Bybit, managed by CandleViewer\" · \"TP {n} · placing…\" · \"TP {n} · not placed · code {code}\"",
+      "source": "D03:419",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d03:bkt.ladder.row": {
+      "names": "bkt.ladder.row",
+      "text": "\"TP {n}, {pct} % of position, +{r} R, {price}, {qty} BTC, +{usdt} USDT, resting at Bybit, managed by CandleViewer, placed when the entry first fills\"",
+      "source": "D03:420",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d03:bkt.risk.fees": {
+      "names": "bkt.risk.fees",
+      "text": "\"(incl. est. fees {fee} USDT)\"",
+      "source": "D03:421",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d03:bracket.rounded.toward": {
+      "names": "bracket.rounded.toward",
+      "text": "\"(rounded toward entry to the {tick} tick)\"",
+      "source": "D03:422",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d03:bracket.rounded.note": {
+      "names": "bracket.rounded.note",
+      "text": "\"rounding the distance up to the tick moves the trigger at most one tick further from entry\"",
+      "source": "D03:423",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d03:bkt.retry.note": {
+      "names": "bkt.retry.note",
+      "text": "\"retry lands with G-12 (E32-S05)\"",
+      "source": "D03:424",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d03:bkt.slot.note": {
+      "names": "bkt.slot.note",
+      "text": "\"OCO half: E33 extension point — nothing drawn, nothing focusable\"",
+      "source": "D03:425",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d03:bkt.place#2": {
+      "names": "bkt.place",
+      "text": "\"Place bracket: {side} {qty} BTC, stop —, target {target} · risk —\" — \"—\" for each missing figure",
+      "source": "D03:426",
+      "status": "proposed",
+      "owner": "E32-D03 (#923)",
+      "native_sl": false
+    },
+    "d04:e32.title.*": {
+      "names": "e32.title.*",
+      "text": "\"Scaled entry · {symbol} · {account} · {env}\"",
+      "source": "D04:452",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:e32.sl.note.draft": {
+      "names": "e32.sl.note.draft",
+      "text": "\"Every position keeps a native stop — you can move it, not delete it.\" + \"It is placed with the order, not after it.\"",
+      "source": "D04:453",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": true
+    },
+    "d04:ladder.empty": {
+      "names": "ladder.empty",
+      "text": "\"Enter a price range, an order count and a total to preview the ladder.\"",
+      "source": "D04:454",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.empty.reason": {
+      "names": "ladder.empty.reason",
+      "text": "\"Nothing to place yet\"",
+      "source": "D04:455",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.stop.none": {
+      "names": "ladder.stop.none",
+      "text": "\"No stop yet — a stop is required\"",
+      "source": "D04:456",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": true
+    },
+    "d04:ladder.stop.source": {
+      "names": "ladder.stop.source",
+      "text": "\"{pct} % below the far end {price}\" / \"{pct} % below the base order {price}\"",
+      "source": "D04:457",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": true
+    },
+    "d04:ladder.totals": {
+      "names": "ladder.totals",
+      "text": "\"Σ {qty} BTC · {notional} USDT · avg entry {avg} · worst case {risk} USDT ({pct} % of equity) (first order alone {first}) · {k} → Bybit · {q} → queue\"",
+      "source": "D04:458",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.stop.line": {
+      "names": "ladder.stop.line",
+      "text": "\"Stop {stop} on the resulting position · held by Bybit (exchange) · attached to every order\"",
+      "source": "D04:459",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": true
+    },
+    "d04:ladder.risk.line": {
+      "names": "ladder.risk.line",
+      "text": "\"Risk vs cap: worst case {risk} USDT · {left} USDT of today's loss budget left (profile) · {n} batch request now, {m} later (the plan's cap: {batch} a request) · {k} of {rate} orders a minute (profile)\"",
+      "source": "D04:460",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.tiles.name": {
+      "names": "ladder.tiles.name",
+      "text": "\"Ladder summary: {qty} BTC, average {avg}, worst case {risk} USDT, {n} request now\"",
+      "source": "D04:461",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.row.name": {
+      "names": "ladder.row.name",
+      "text": "\"Level {n}, {price}, {qty} BTC, cumulative {cum}, average {avg}, stop {stop}, to Bybit\"",
+      "source": "D04:462",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.note.*": {
+      "names": "ladder.note.*",
+      "text": "\"+{qty} added to level 1 (nearest {price})\" · \"level {n} dropped: below {min}, redistributed\" · \"levels {a} and {b} merged at {price}\"",
+      "source": "D04:463",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.where.*": {
+      "names": "ladder.where.*",
+      "text": "\"→ Bybit\" · \"→ queue (CandleViewer)\" · \"fills at once\" · \"dropped\" · \"placing…\" · \"resting at Bybit · id …{id}\" · \"queued in CandleViewer\" · \"failed · code {code}\"",
+      "source": "D04:464",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.custody.result": {
+      "names": "ladder.custody.result",
+      "text": "\"{k} resting · {q} queued — queued levels are placed only while CandleViewer runs\"",
+      "source": "D04:465",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.reduce_only": {
+      "names": "ladder.reduce_only",
+      "text": "\"closes up to {qty} BTC · no new risk\"",
+      "source": "D04:466",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:sl.reduce_only": {
+      "names": "sl.reduce_only",
+      "text": "\"Reduce-only: cannot open a position — no new stop; the position's stop stays\"",
+      "source": "D04:467",
+      "status": "reused",
+      "owner": "E32-D02 §3.2",
+      "native_sl": true
+    },
+    "d04:ladder.crosses": {
+      "names": "ladder.crosses",
+      "text": "\"{n} levels are above the mark ({mark}) — they fill at once instead of resting.\"",
+      "source": "D04:468",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.v.orders": {
+      "names": "ladder.v.orders",
+      "text": "\"Orders must be 2 to 50.\"",
+      "source": "D04:469",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.no_viable": {
+      "names": "ladder.no_viable",
+      "text": "\"No ladder fits: all {n} orders would be below the {min} minimum. Use fewer orders or a larger total — or place one order.\"",
+      "source": "D04:470",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.one_order": {
+      "names": "ladder.one_order",
+      "text": "\"Place one order instead\"",
+      "source": "D04:471",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.cap.headroom": {
+      "names": "ladder.cap.headroom",
+      "text": "\"Worst case {risk} USDT for the fully-filled ladder; {left} USDT of today's loss budget is left.\"",
+      "source": "D04:472",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.reduce": {
+      "names": "ladder.reduce",
+      "text": "\"Reduce size\"",
+      "source": "D04:473",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.placing": {
+      "names": "ladder.placing",
+      "text": "\"Placing {n} orders — {k} of {n} resting at Bybit\"",
+      "source": "D04:474",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.place": {
+      "names": "ladder.place",
+      "text": "\"Place {n} orders, {qty} BTC total\"",
+      "source": "D04:475",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:e32.placing": {
+      "names": "e32.placing",
+      "text": "\"Placing…\"",
+      "source": "D04:476",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:e32.close": {
+      "names": "e32.close",
+      "text": "\"Close\"",
+      "source": "D04:477",
+      "status": "reused",
+      "owner": "E32-D02 §5.4",
+      "native_sl": false
+    },
+    "d04:ladder.partial": {
+      "names": "ladder.partial",
+      "text": "\"{k} of {n} placed — {f} failed: {rejected_reason} · code {code} · Attempt recorded · Details\" + \"The placed orders stand; each carries the stop {stop}.\"",
+      "source": "D04:478",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.retry": {
+      "names": "ladder.retry",
+      "text": "\"Retry failed levels\"",
+      "source": "D04:479",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.cancel_all": {
+      "names": "ladder.cancel_all",
+      "text": "\"Cancel all levels\"",
+      "source": "D04:480",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.cancel.confirm": {
+      "names": "ladder.cancel.confirm",
+      "text": "\"Cancel {k} resting levels? The filled {qty} BTC stays open with its stop {stop}.\" with \"Keep levels\" / \"Cancel {k} levels\"",
+      "source": "D04:481",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.cancelled": {
+      "names": "ladder.cancelled",
+      "text": "\"Cancelled {k} levels — the filled {qty} BTC keeps its stop {stop}, held by Bybit.\"",
+      "source": "D04:482",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:ladder.not_recorded": {
+      "names": "ladder.not_recorded",
+      "text": "\"Not sent — the order could not be recorded, so nothing reached Bybit. Try again.\"",
+      "source": "D04:483",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:e32.awaiting.reason": {
+      "names": "e32.awaiting.reason",
+      "text": "\"Waiting for the exchange's answer — check Orders\"",
+      "source": "D04:484",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:e32.stop.server": {
+      "names": "e32.stop.server",
+      "text": "\"server {price}\"",
+      "source": "D04:485",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": true
+    },
+    "d04:e32.offline.age": {
+      "names": "e32.offline.age",
+      "text": "\"Not connected — last update {age} ago; the result is confirmed over the server.\"",
+      "source": "D04:486",
+      "status": "reused",
+      "owner": "E32-D02 §3.8",
+      "native_sl": false
+    },
+    "d04:refusal.rate_budget_exhausted": {
+      "names": "refusal.rate_budget_exhausted",
+      "text": "\"Rate budget exhausted — retry allowed at 14:32:10\"",
+      "source": "D04:487",
+      "status": "reused",
+      "owner": "E32-D02 §5.4",
+      "native_sl": false
+    },
+    "d04:child.below_min": {
+      "names": "child.below_min",
+      "text": "\"Child 5 is below the minimum — reduce the order count\"",
+      "source": "D04:488",
+      "status": "reused",
+      "owner": "14 :1530",
+      "native_sl": false
+    },
+    "d04:v.sl.required": {
+      "names": "v.sl.required",
+      "text": "\"This account requires a stop-loss on every order.\"",
+      "source": "D04:489",
+      "status": "reused",
+      "owner": "14 :1393",
+      "native_sl": true
+    },
+    "d04:readout.provisional": {
+      "names": "readout.provisional",
+      "text": "\"(provisional)\"",
+      "source": "D04:490",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d04:helper.rounded": {
+      "names": "helper.rounded",
+      "text": "\"rounded to the {tick} tick\"",
+      "source": "D04:491",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d04:refusal.cap_breached": {
+      "names": "refusal.cap_breached",
+      "text": "\"Blocked by profile cap — {rejection.message}\"",
+      "source": "D04:492",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d04:refusal.account_locked": {
+      "names": "refusal.account_locked",
+      "text": "\"Trading locked on {account} until {time}\"",
+      "source": "D04:493",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d04:rejected.class.*": {
+      "names": "rejected.class.*",
+      "text": "\"Not sent — rate limited, retry allowed at 14:32:10 (in 42 s)\"",
+      "source": "D04:494",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d04:submit.awaiting": {
+      "names": "submit.awaiting",
+      "text": "\"Awaiting exchange confirmation — reconciling\"",
+      "source": "D04:495",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d04:arm.locked": {
+      "names": "arm.locked",
+      "text": "\"one-click off — Ctrl+Shift+T to arm\"",
+      "source": "D04:496",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d04:arm.unknown": {
+      "names": "arm.unknown",
+      "text": "\"Arm state unknown — submit off\"",
+      "source": "D04:497",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d04:lockout": {
+      "names": "lockout",
+      "text": "\"Daily loss limit reached — trading locked until 00:00 UTC. Ask the owner to override.\" · \"Locked out — reduce through Close position\"",
+      "source": "D04:498",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d04:frozen": {
+      "names": "frozen",
+      "text": "\"Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel and close still work.\"",
+      "source": "D04:499",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d04:submit.not_connected": {
+      "names": "submit.not_connected",
+      "text": "\"Not connected\"",
+      "source": "D04:500",
+      "status": "reused",
+      "owner": "E30-D02 §14",
+      "native_sl": false
+    },
+    "d04:frozen.reason": {
+      "names": "frozen.reason",
+      "text": "\"Trading frozen by the owner — new orders off.\"",
+      "source": "D04:501",
+      "status": "reused",
+      "owner": "E30-D04 §2.5",
+      "native_sl": false
+    },
+    "d04:account_stale.reason": {
+      "names": "account_stale.reason",
+      "text": "\"Account data stale — new orders off.\"",
+      "source": "D04:502",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:confirm.preview_wait": {
+      "names": "confirm.preview_wait",
+      "text": "\"Preview updating…\"",
+      "source": "D04:503",
+      "status": "reused",
+      "owner": "E30-D04 §2.5",
+      "native_sl": false
+    },
+    "d04:pending_key.reason": {
+      "names": "pending_key.reason",
+      "text": "\"API key pending — new orders off.\"",
+      "source": "D04:504",
+      "status": "reused",
+      "owner": "E30-D04 §2.5",
+      "native_sl": false
+    },
+    "d04:notice.panel_read_only": {
+      "names": "notice.panel_read_only",
+      "text": "\"Read-only — your role can't place orders.\" / \"Read-only — you can view this account, not trade it.\"",
+      "source": "D04:505",
+      "status": "reused",
+      "owner": "E30-D04 §2.5",
+      "native_sl": false
+    },
+    "d04:rbac.permission": {
+      "names": "rbac.permission",
+      "text": "\"Your role can't place orders.\"",
+      "source": "D04:506",
+      "status": "reused",
+      "owner": "E09-D09 §3.1",
+      "native_sl": false
+    },
+    "d04:rbac.account_read_only": {
+      "names": "rbac.account_read_only",
+      "text": "\"You can view this account, not trade it.\"",
+      "source": "D04:507",
+      "status": "reused",
+      "owner": "E09-D09 §3.1",
+      "native_sl": false
+    },
+    "d04:rbac.view_as": {
+      "names": "rbac.view_as",
+      "text": "\"Read-only while viewing as {user}.\"",
+      "source": "D04:508",
+      "status": "reused",
+      "owner": "E09-D09 §3.1",
+      "native_sl": false
+    },
+    "d04:rbac.account": {
+      "names": "rbac.account",
+      "text": "\"This account isn't assigned to you.\"",
+      "source": "D04:509",
+      "status": "reused",
+      "owner": "E09-D09 §3.1",
+      "native_sl": false
+    },
+    "d04:rbac.env": {
+      "names": "rbac.env",
+      "text": "\"Live trading isn't enabled for you.\"",
+      "source": "D04:510",
+      "status": "reused",
+      "owner": "E09-D09 §3.1",
+      "native_sl": false
+    },
+    "d04:tag.emulated": {
+      "names": "tag.emulated",
+      "text": "\"Emulated\" · name \"Emulated — run by CandleViewer, not Bybit\"",
+      "source": "D04:511",
+      "status": "reused",
+      "owner": "E33-D03 §13 (registered; BQ-17); E32-D02 D10 / D2 follow via D04-A7",
+      "native_sl": false
+    },
+    "d04:ladder.stop.line.draft": {
+      "names": "ladder.stop.line.draft",
+      "text": "\"Stop {stop} on the resulting position · held by Bybit once placed · attached to every order\"",
+      "source": "D04:512",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": true
+    },
+    "d04:ladder.stop.line.mixed": {
+      "names": "ladder.stop.line.mixed",
+      "text": "\"Stop {stop} on the resulting position · held by Bybit (exchange) on {k} resting · once placed on {q}\"",
+      "source": "D04:513",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": true
+    },
+    "d04:ladder.holder.draft": {
+      "names": "ladder.holder.draft",
+      "text": "\"stop {stop} held by Bybit once placed · attached to every order\"",
+      "source": "D04:514",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.holder.none": {
+      "names": "ladder.holder.none",
+      "text": "\"no stop: Place blocked\"",
+      "source": "D04:515",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.row.name.queue": {
+      "names": "ladder.row.name.queue",
+      "text": "\"Level {n}, {price}, {qty} BTC, cumulative {cum}, average {avg}, stop {stop}, to the queue\"",
+      "source": "D04:516",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.caption": {
+      "names": "ladder.caption",
+      "text": "\"Ladder preview, {n} levels\"",
+      "source": "D04:517",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.skew.label": {
+      "names": "ladder.skew.label",
+      "text": "\"Far-end weight ×{skew}\"",
+      "source": "D04:518",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.skew.valuetext": {
+      "names": "ladder.skew.valuetext",
+      "text": "\"far-end weight {skew} times the near end\"",
+      "source": "D04:519",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.skew.none": {
+      "names": "ladder.skew.none",
+      "text": "\"Equal sizes — no far-end weight.\"",
+      "source": "D04:520",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.budget.reason": {
+      "names": "ladder.budget.reason",
+      "text": "\"{n} orders would exceed this account's {m} a minute — the ladder is placed in {b} requests; try fewer levels or wait.\"",
+      "source": "D04:521",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.retry_after": {
+      "names": "ladder.retry_after",
+      "text": "\"Not sent — retry in {s} s\"",
+      "source": "D04:522",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.retry.absent": {
+      "names": "ladder.retry.absent",
+      "text": "\"Retry waits for a retry operation; the failed levels stand recorded.\"",
+      "source": "D04:523",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.contract_pending": {
+      "names": "ladder.contract_pending",
+      "text": "\"Not sendable yet — the DCA fields are not on the wire (G-21).\"",
+      "source": "D04:524",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.over_by": {
+      "names": "ladder.over_by",
+      "text": "\"over by {amount} USDT\"",
+      "source": "D04:525",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d04:ladder.tiles.name.ext": {
+      "names": "ladder.tiles.name.ext",
+      "text": "\"…, risk {risk} of {cap} USDT today, {n} of {m} requests this minute\"",
+      "source": "D04:526",
+      "status": "proposed",
+      "owner": "E32-D04 (#924)",
+      "native_sl": false
+    },
+    "d05:e32.title.*": {
+      "names": "e32.title.*",
+      "text": "\"Manage {symbol} {side} {size} · {account} · {env}\"",
+      "source": "D05:364",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": false
+    },
+    "d05:sl.label": {
+      "names": "sl.label · sltp.label.naked",
+      "text": "\"Stop-loss · held by Bybit (exchange)\" · \"Stop-loss · none at the exchange\"",
+      "source": "D05:365",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": true
+    },
+    "d05:sl.note": {
+      "names": "sl.note",
+      "text": "\"Every position keeps a native stop — you can move it, not delete it.\" + \"Tightening is never blocked by order-entry limits; the stop is held by Bybit, not by this app.\"",
+      "source": "D05:366",
+      "status": "reused",
+      "owner": "E32-D02 (`14` :1498 + E30-D02)",
+      "native_sl": true
+    },
+    "d05:sltp.readout": {
+      "names": "sltp.readout",
+      "text": "\"risk {risk} USDT ({pct} % of equity) = 1 R · excl. fees\"",
+      "source": "D05:367",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": true
+    },
+    "d05:preview.slippage": {
+      "names": "preview.slippage",
+      "text": "\"slippage ≈ {n} ticks (estimated)\"",
+      "source": "D05:368",
+      "status": "reused",
+      "owner": "E30-D02",
+      "native_sl": false
+    },
+    "d05:sltp.loosen": {
+      "names": "sltp.loosen · sltp.loosen.route",
+      "text": "\"Loosen stop…\" with \"owner only · opens a confirmation\" · \"To widen it, use Loosen stop…\"",
+      "source": "D05:369",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": true
+    },
+    "d05:sl.kept": {
+      "names": "sl.kept",
+      "text": "\"Kept at 63,900.0 — every position keeps a native stop. Move it instead.\"",
+      "source": "D05:370",
+      "status": "reused",
+      "owner": "E32-D01",
+      "native_sl": true
+    },
+    "d05:sl.loosen.refused": {
+      "names": "sl.loosen.refused",
+      "text": "\"Not applied — 63,800.0 would widen the stop (risk 27.50 → 52.50 USDT). This stop can only be tightened here.\"",
+      "source": "D05:371",
+      "status": "reused",
+      "owner": "E32-D01",
+      "native_sl": true
+    },
+    "d05:sltp.trail.refused": {
+      "names": "sltp.trail.refused",
+      "text": "\"Not applied — a {distance} trail would widen the stop. This trail can only be tightened here.\" / \"Not applied — removing the trail would widen the stop, and no role can remove a trail yet. This trail can only be tightened here.\" / \"Not applied — activating at {price} would arm the trail later or set its trigger further from the market. This trail can only be tightened here.\"",
+      "source": "D05:372",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": true
+    },
+    "d05:sltp.v.sl_side": {
+      "names": "sltp.v.sl_side · sltp.v.tp_side",
+      "text": "\"Stop-loss must be below the {trigger} price ({value}) for a long.\" / \"… above … for a short.\" · \"Take-profit must be above the {trigger} price ({value}) for a long.\" / \"… below … for a short.\"",
+      "source": "D05:373",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": true
+    },
+    "d05:sltp.liq.beyond": {
+      "names": "sltp.liq.beyond · sltp.liq.unavailable",
+      "text": "\"Stop {stop} is beyond liquidation ({liq}) — the position would be liquidated first. Tighten above {liq}.\" · \"Liquidation price not available — this check is off.\"",
+      "source": "D05:374",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": true
+    },
+    "d05:14": {
+      "names": "14",
+      "text": "\"Ladder totals 110 % — reduce a step.\"",
+      "source": "D05:375",
+      "status": "reused",
+      "owner": "`14` :1498",
+      "native_sl": false
+    },
+    "d05:e32.tp.below_min": {
+      "names": "e32.tp.below_min · e32.tp.single",
+      "text": "\"TP 1 and TP 2 are below the 0.001 minimum — use a single target instead.\" · \"Use a single target at {r} R ({price})\"",
+      "source": "D05:376",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": false
+    },
+    "d05:sltp.apply.stop_only": {
+      "names": "sltp.apply.stop_only · sltp.applied.none · sltp.tp.removed · sltp.applied.partial",
+      "text": "\"Apply stop only\" · \"No changes to apply\" · \"Take-profit removed · stop {stop} unchanged\" · \"Stop moved to {stop} · TP ladder not applied: {reason}\"",
+      "source": "D05:377",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": true
+    },
+    "d05:v.submit.reason": {
+      "names": "v.submit.reason",
+      "text": "\"Fix {n} problems to submit\"",
+      "source": "D05:378",
+      "status": "reused",
+      "owner": "E30-D02",
+      "native_sl": false
+    },
+    "d05:sltp.loading": {
+      "names": "sltp.loading · sltp.moving · sltp.applying · e32.close · sltp.apply.attach",
+      "text": "\"Loading the position…\" · \"Moving…\" · \"Applying…\" · \"Close\" · \"Attach stop\"",
+      "source": "D05:379",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": true
+    },
+    "d05:sl.tighten.pending": {
+      "names": "sl.tighten.pending · sltp.pending.held · sltp.pending.acked",
+      "text": "\"Moving the stop to 63,950.0 — waiting for Bybit…\" · \"Held by Bybit now: {stop}.\" · \"Accepted by Bybit — waiting for the position read.\"",
+      "source": "D05:380",
+      "status": "reused",
+      "owner": "E32-D01; E32-D02",
+      "native_sl": true
+    },
+    "d05:sltp.pending.held.read": {
+      "names": "sltp.pending.held.read",
+      "text": "\"— last confirmed by the position read\" (appended to `sltp.pending.held` once the 200 is in: \"Held by Bybit now: 63,900.0 — last confirmed by the position read.\")",
+      "source": "D05:381",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": true
+    },
+    "d05:sl.ws_down.acked": {
+      "names": "sl.ws_down.acked · sl.ws_down.unanswered",
+      "text": "\"Bybit accepted the move to 63,950.0 — the position read that confirms it is waiting for the connection. Last confirmed stop 63,900.0.\" · \"Moving the stop to 63,950.0 — connection lost before Bybit answered; it is read back after reconnect. Until then the stop held by Bybit is the last confirmed 63,900.0.\"",
+      "source": "D05:382",
+      "status": "reused",
+      "owner": "E32-D01",
+      "native_sl": true
+    },
+    "d05:sl.tighten.pending.ladder": {
+      "names": "sl.tighten.pending.ladder · sl.tighten.partial.ladder",
+      "text": "\"Moving the stop to 62,476.0 — 2 of 3 resting levels carry 62,476.0 · position pending…\" · \"Level 4 could not be re-stamped — the position's stop stays at 62,426.0 until it is. Retry · Cancel level 4\" (D05-A7: \"updated\")",
+      "source": "D05:383",
+      "status": "reused",
+      "owner": "E32-D01",
+      "native_sl": true
+    },
+    "d05:sl.tighten.done": {
+      "names": "sl.tighten.done",
+      "text": "\"Stop moved to 63,950.0 — tighter by 50.0 (500 ticks) · risk now 15.00 USDT · held by Bybit (exchange).\" (D05-A6 adds \"· excl. fees\")",
+      "source": "D05:384",
+      "status": "reused",
+      "owner": "E32-D01",
+      "native_sl": true
+    },
+    "d05:sltp.rejected": {
+      "names": "sltp.rejected · sltp.closed",
+      "text": "\"Not applied — Bybit refused the stop change · {detail} · code {code} · Attempt recorded\" + \"Your stop {stop} is still held by Bybit.\" · \"This position was closed — nothing was sent.\"",
+      "source": "D05:385",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": true
+    },
+    "d05:sl.naked.attach": {
+      "names": "sl.naked.attach · sltp.naked.recorded · stop_pending.*",
+      "text": "\"No stop at the exchange — attach one now.\" · \"Recorded stop {stop} — attach it or a tighter one.\" · \"Stop not attached — retrying now (attempt 2 of 3)\"",
+      "source": "D05:386",
+      "status": "reused",
+      "owner": "E32-D01; E32-D02; E30-D02",
+      "native_sl": true
+    },
+    "d05:sltp.frozen": {
+      "names": "sltp.frozen · sl.lockout · sl.reconciling · sl.trail.paused",
+      "text": "\"Kill switch engaged — new orders are off, but tightening still works; your stop {stop} stays held by Bybit.\" · \"Trading is locked — tightening the stop is still allowed.\" · \"Position being verified — tightening is sent; confirmation may take longer.\" · \"Trail paused at your {stop} — resumes when it would be tighter.\"",
+      "source": "D05:387",
+      "status": "reused",
+      "owner": "E32-D02; E32-D01",
+      "native_sl": true
+    },
+    "d05:e32.be.line": {
+      "names": "e32.be.line",
+      "text": "\"→ stop to {price} (+{n} ticks)\"",
+      "source": "D05:388",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": false
+    },
+    "d05:e32.offline.age": {
+      "names": "e32.offline.age",
+      "text": "\"Not connected — last update {age} ago; the result is confirmed over the server.\"",
+      "source": "D05:389",
+      "status": "reused",
+      "owner": "E32-D02",
+      "native_sl": false
+    },
+    "d05:frozen": {
+      "names": "frozen",
+      "text": "\"Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel and close still work.\"",
+      "source": "D05:390",
+      "status": "reused",
+      "owner": "E30-D02",
+      "native_sl": false
+    },
+    "d05:lockout": {
+      "names": "lockout",
+      "text": "\"Daily loss limit reached — trading locked until 00:00 UTC. Ask the owner to override.\" · reason \"Locked out — reduce through Close position\"",
+      "source": "D05:391",
+      "status": "reused",
+      "owner": "E30-D02",
+      "native_sl": false
+    },
+    "d05:arm.locked": {
+      "names": "arm.locked · arm.unknown",
+      "text": "\"one-click off — Ctrl+Shift+T to arm\" · \"Arm state unknown — submit off\"",
+      "source": "D05:392",
+      "status": "reused",
+      "owner": "E30-D02",
+      "native_sl": false
+    },
+    "d05:submit.not_connected": {
+      "names": "submit.not_connected",
+      "text": "\"Not connected\"",
+      "source": "D05:393",
+      "status": "reused",
+      "owner": "E30-D02",
+      "native_sl": false
+    },
+    "d05:— (E17-D01's Read-only overlay, the placeholder form)": {
+      "names": "— (E17-D01's Read-only overlay, the placeholder form)",
+      "text": "\"Order entry off — <message>. <what still works>\"",
+      "source": "D05:394",
+      "status": "reused",
+      "owner": "E17-D01 :103, :152 (quoted; instantiated by `e32.stale.entry_off`)",
+      "native_sl": false
+    },
+    "d05:e32.stale.entry_off": {
+      "names": "e32.stale.entry_off",
+      "text": "\"Order entry off — {message}. Tightening the stop still works.\"",
+      "source": "D05:395",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:rbac.view_as": {
+      "names": "rbac.view_as",
+      "text": "\"Read-only while viewing as {user}.\"",
+      "source": "D05:396",
+      "status": "reused",
+      "owner": "E09-D09",
+      "native_sl": false
+    },
+    "d05:rbac.permission": {
+      "names": "rbac.permission",
+      "text": "\"Your role can't change positions.\"",
+      "source": "D05:397",
+      "status": "reused",
+      "owner": "E09-D09",
+      "native_sl": false
+    },
+    "d05:rbac.owner_only": {
+      "names": "rbac.owner_only",
+      "text": "\"Only the owner can loosen a stop.\"",
+      "source": "D05:398",
+      "status": "reused",
+      "owner": "E09-D09 (the verb E32-D02 A-26)",
+      "native_sl": false
+    },
+    "d05:rbac.account": {
+      "names": "rbac.account",
+      "text": "\"This account isn't assigned to you.\"",
+      "source": "D05:399",
+      "status": "reused",
+      "owner": "E09-D09",
+      "native_sl": false
+    },
+    "d05:rbac.account_read_only": {
+      "names": "rbac.account_read_only",
+      "text": "\"You can view this account, not trade it.\"",
+      "source": "D05:400",
+      "status": "reused",
+      "owner": "E09-D09",
+      "native_sl": false
+    },
+    "d05:rbac.env": {
+      "names": "rbac.env",
+      "text": "\"Live trading isn't enabled for you.\"",
+      "source": "D05:401",
+      "status": "reused",
+      "owner": "E09-D09",
+      "native_sl": false
+    },
+    "d05:notice.panel_read_only": {
+      "names": "notice.panel_read_only",
+      "text": "\"Read-only — your role can't change positions.\" · \"Read-only — you can view this account, not trade it.\"",
+      "source": "D05:402",
+      "status": "reused",
+      "owner": "E09-D09",
+      "native_sl": false
+    },
+    "d05:tag.emulated": {
+      "names": "tag.emulated",
+      "text": "\"Emulated\" · name \"Emulated — run by CandleViewer, not Bybit\"",
+      "source": "D05:403",
+      "status": "reused",
+      "owner": "E33-D02 :338 (the memo SC-6); its accessible name keeps the registered em dash — the drawn class word is `e32.class.emulated`'s middle-dot form (BQ-12)",
+      "native_sl": false
+    },
+    "d05:e32.class.emulated": {
+      "names": "e32.class.emulated",
+      "text": "\"Emulated · run by CandleViewer, not Bybit: moves the exchange-held stop up as price rises — only while CandleViewer is running. If it stops, the stop stays where it last was, never lower.\"",
+      "source": "D05:404",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.kind.fixed": {
+      "names": "trail.kind.fixed · trail.kind.percent · trail.kind.atr · trail.kind.structure",
+      "text": "\"Fixed\" · \"Percent\" · \"ATR\" · \"Structure\"",
+      "source": "D05:405",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.unit.distance": {
+      "names": "trail.unit.distance · trail.unit.percent · trail.unit.atr · trail.unit.bars",
+      "text": "\"distance\" · \"%\" · \"× ATR(14)\" · \"bars (swing low)\"",
+      "source": "D05:406",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.arms_at": {
+      "names": "trail.arms_at · trail.arms_now",
+      "text": "\"arms at {r} R ({price})\" · \"arms at once\"",
+      "source": "D05:407",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.readout.fixed": {
+      "names": "trail.readout.fixed",
+      "text": "\"150.0 distance · arms at 64,120.0 (+1.0 R) · first trigger 63,970.0 · held by Bybit (exchange)\"",
+      "source": "D05:408",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.readout.percent": {
+      "names": "trail.readout.percent",
+      "text": "\"1.5 % of mark 64,012.5 = 960.2 distance (rounded up to the 0.1 tick) · arms at 64,120.0 (+1.0 R) · first trigger 63,159.8\"",
+      "source": "D05:409",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.readout.percent.tighter": {
+      "names": "trail.readout.percent.tighter",
+      "text": "\"0.15 % of mark 64,012.5 = 96.1 distance (rounded up to the 0.1 tick) · arms at 64,120.0 (+1.0 R) · first trigger 64,023.9\"",
+      "source": "D05:410",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.echo": {
+      "names": "trail.echo",
+      "text": "\"Bybit holds {distance} (echoed by the server).\"",
+      "source": "D05:411",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.estimated": {
+      "names": "trail.estimated",
+      "text": "CMP-227 `inline sm` \"(estimated)\" · name \"Estimated, trailing-stop translation\"",
+      "source": "D05:412",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.honesty": {
+      "names": "trail.honesty",
+      "text": "\"Bybit holds a distance, not a percentage: 1.5 % is converted once, when the trail arms; the distance then stays fixed unless CandleViewer re-bases it (Emulated · run by CandleViewer, not Bybit).\"",
+      "source": "D05:413",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.only_tighten": {
+      "names": "trail.only_tighten",
+      "text": "\"Only tightens: a wider distance or a later activation is not applied.\"",
+      "source": "D05:414",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.atr": {
+      "names": "trail.atr",
+      "text": "\"ATR(14) 320.0 (illustrative) × 2.0 = 640.0 · first trigger 63,372.5 · tightens the stop only once the mark is past 64,540.0 (+4.82 R)\"",
+      "source": "D05:415",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.structure": {
+      "names": "trail.structure",
+      "text": "\"Swing low · lookback 5 bars · the stop follows each confirmed swing low, never lower\"",
+      "source": "D05:416",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.arming_unknown": {
+      "names": "trail.arming_unknown",
+      "text": "\"arming level not reported\"",
+      "source": "D05:417",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.validity": {
+      "names": "trail.validity",
+      "text": "\"Enter a distance to arm the trail.\"",
+      "source": "D05:418",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:trail.contract_pending": {
+      "names": "trail.contract_pending",
+      "text": "\"contract pending\"",
+      "source": "D05:419",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:e32.be.fee": {
+      "names": "e32.be.fee",
+      "text": "\"Add fees (+{n} ticks)\"",
+      "source": "D05:420",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": false
+    },
+    "d05:sltp.loosen.confirm.title": {
+      "names": "sltp.loosen.confirm.title",
+      "text": "\"Loosen the stop on BTCUSDT long 0.250 · Main · LIVE?\"",
+      "source": "D05:421",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": true
+    },
+    "d05:sltp.loosen.confirm.body": {
+      "names": "sltp.loosen.confirm.body",
+      "text": "\"Stop now 63,900.0 (risk 27.50 USDT = 1 R) → 63,800.0 (risk 52.50 USDT = 1.91 R; +25.00 USDT, 0.42 % of equity). Bybit will hold the wider stop. CandleViewer records this loosening under your name before it is sent.\"",
+      "source": "D05:422",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": true
+    },
+    "d05:sltp.loosen.confirm.keep": {
+      "names": "sltp.loosen.confirm.keep · sltp.loosen.confirm.go",
+      "text": "\"Keep 63,900.0\" · \"Loosen to 63,800.0…\"",
+      "source": "D05:423",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": true
+    },
+    "d05:sltp.loosen.confirm.field": {
+      "names": "sltp.loosen.confirm.field · sltp.loosen.confirm.v.tighter",
+      "text": "\"New stop\" · \"A tighter stop goes in the stop field — this flow only widens it.\"",
+      "source": "D05:424",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": true
+    },
+    "d05:sltp.loosen.stepup": {
+      "names": "sltp.loosen.stepup · sltp.loosen.stepup.reason",
+      "text": "\"Confirm: loosen the stop on BTCUSDT long 0.250, Main, to 63,800.0\" · \"Loosening a stop needs a fresh code each time.\"",
+      "source": "D05:425",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": true
+    },
+    "d05:sltp.loosen.pending": {
+      "names": "sltp.loosen.pending · sltp.loosen.audit",
+      "text": "\"Loosening the stop to 63,800.0 — waiting for Bybit…\" · \"Recorded under your name before sending.\"",
+      "source": "D05:426",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": true
+    },
+    "d05:sltp.loosen.rechallenge": {
+      "names": "sltp.loosen.rechallenge",
+      "text": "\"Not applied — the code expired or was wrong. Loosen stop… asks for a new one.\" + \"Your stop 63,900.0 is still held by Bybit.\"",
+      "source": "D05:427",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": true
+    },
+    "d05:sltp.loosen.done": {
+      "names": "sltp.loosen.done",
+      "text": "\"Stop loosened to 63,800.0 — wider by 100.0 (1,000 ticks) · risk now 52.50 USDT · recorded under your name · held by Bybit (exchange).\"",
+      "source": "D05:428",
+      "status": "proposed",
+      "owner": "E32-D05 (#925)",
+      "native_sl": true
+    },
+    "e32:e32.sl.required": {
+      "names": "e32.sl.required",
+      "text": "Every position-opening order requires a stop-loss.",
+      "source": "E30D06-copy:4097",
+      "status": "bound",
+      "owner": "E30-D02's owner (E30-D02 §14); ruled as A50 item 10",
+      "native_sl": true,
+      "code": "NATIVE_SL_REQUIRED",
+      "code_status": "pending #931"
+    }
+  }
+}
