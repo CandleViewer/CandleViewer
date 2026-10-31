@@ -638,8 +638,10 @@ _REFUSED_3C = [
 def test_deployed_app_refuses_an_unelevated_slice_3c_write_rbac_refuses_without_a_challenge(
     deployed: SimpleNamespace, operation: str, actor: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#2304 slice 3c: RBAC comes before the step-up, so a Manager (a Viewer for the recorder's
-    `recording:write`, which a Manager holds) gets the audited 403, never a challenge."""
+    """#2304 slice 3c: RBAC comes before the step-up, so a caller without the write's permission
+    gets the audited 403, never a challenge: a Viewer for every write, a Manager for each but the
+    retention set (`admin:write`, Owner-only, 04 row 9c), whose Manager cell the route matrix
+    holds. No Manager holds the recorder's `recording:write` either since G-04 (#484)."""
     audited = len(deployed.audit.records)
     resp = _slice_3c(deployed, monkeypatch, actor, operation)
     assert (resp.status_code, resp.json()["code"]) == (403, "forbidden"), resp.text

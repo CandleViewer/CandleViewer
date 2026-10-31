@@ -50,8 +50,9 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     # 04 row 52 gates restore and delete only (`restoreBackup`, `deleteBackup`).
     ("POST", "/admin/backups"): "createBackup: triggers a backup run",
     ("POST", "/admin/backups/{backupId}/verify"): "verifyBackup: restores into a scratch namespace",
-    # #2738: `recording:write` without step-up for Owner and Manager (04 §7.2.2 row 51); neither
-    # changes retention or deletes recorded data (addRecordedSymbol can: it is handler-gated).
+    # #2738: `recording:write` without step-up (04 §7.2.2 row 51), which only the Owner holds since
+    # G-04 (#484); neither changes retention or deletes recorded data (addRecordedSymbol can: it is
+    # handler-gated).
     ("POST", "/admin/recorder/compact"): "compactRecorder: merges cold-tier files (04 row 51)",
     ("POST", "/admin/recorder/import"): "importTradeArchive: adds archive trades (04 row 51)",
     # #492 (E16-T08, 04 §7.2.2 row 8): a stop changes no retention and deletes nothing.

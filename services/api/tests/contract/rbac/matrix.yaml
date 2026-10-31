@@ -199,13 +199,13 @@ operations:
     scope: none
     public: false
     state: executed
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /admin/recorder/import:
     permissions: ['recording:write']
     scope: none
     public: false
     state: executed
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /admin/recorder/purge:
     permissions: ['recording:write']
     scope: none
@@ -871,7 +871,7 @@ operations:
     public: false
     state: not_mounted
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /market/funding:
     permissions: ['marketdata:read']
     scope: none
@@ -1193,7 +1193,7 @@ operations:
     scope: none
     public: false
     state: executed
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /recording/symbols/{recordedSymbolId}:
     permissions: ['recording:read']
     scope: none
@@ -1205,19 +1205,19 @@ operations:
     scope: none
     public: false
     state: executed
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   PATCH /recording/symbols/{recordedSymbolId}:
     permissions: ['recording:write']
     scope: none
     public: false
     state: executed
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   PUT /recording/symbols/{recordedSymbolId}/pin:
     permissions: ['recording:write']
     scope: none
     public: false
     state: executed
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /replay/sessions:
     permissions: ['replay:read']
     scope: self
