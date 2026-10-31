@@ -117,6 +117,17 @@ describe("ThemeSwitcher (CMP-062)", () => {
     expect(status(host)).toHaveTextContent("Theme changed to Dark");
   });
 
+  it("two commits ending on the same theme each change the region, so both are spoken (J16)", async () => {
+    const host = await mount(<Host />);
+    await act(async () => userEvent.click(within(host).getByRole("radio", { name: "Dark" })));
+    await act(async () => userEvent.click(within(host).getByRole("radio", { name: "Light" })));
+    const first = status(host).textContent;
+    // Match system on resolves to light here: the same sentence, a new DOM text.
+    await act(async () => userEvent.click(within(host).getByRole("switch")));
+    expect(status(host)).toHaveTextContent("Theme changed to Light");
+    expect(status(host).textContent).not.toBe(first);
+  });
+
   it("disabled: neither control changes anything", async () => {
     const onChange = vi.fn();
     const onMatch = vi.fn();
