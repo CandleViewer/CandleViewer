@@ -21,15 +21,24 @@ from tests.unit.ws._seq_support import USER
 BOOK, HEAT = "book.BTCUSDT.50", "heatmap.BTCUSDT"
 
 
-def _until_pong(c: Client) -> list[dict[str, Any]]:
-    """Every frame the server sent before it answered a fence ping, but a `system` notice of a
+def _through(c: Client, t: str) -> list[dict[str, Any]]:
+    """Every frame read up to and including the next one of type `t`, but a `system` notice of a
     change in the connection's class (§8.3), which the clock steps of `World.advance` can cause."""
-    c.send({"t": "ping", "id": "fence"})
     out: list[dict[str, Any]] = []
-    while (frame := c.recv())["t"] != "pong":
+    while True:
+        frame = c.recv()
         if frame.get("ch") != "system":
             out.append(frame)
-    return out
+        if frame["t"] == t:
+            return out
+
+
+def _until_pong(c: Client) -> list[dict[str, Any]]:
+    """Every frame `_through` keeps before the server answered a fence ping. The `pong` rides the
+    priority lane, so it fences only priority frames: a `d` or `snap` may still be queued (§8.4
+    Lanes, #5139, #5172)."""
+    c.send({"t": "ping", "id": "fence"})
+    return _through(c, "pong")[:-1]
 
 
 def _owed(frames: list[dict[str, Any]]) -> int:
@@ -63,9 +72,13 @@ def test_a_resync_loop_is_revoked_and_its_topic_cannot_restart_within_the_window
     w = World()
     with connect(w, offer) as c:
         c.sub(BOOK)
+        frames = list[dict[str, Any]]()
         for i in range(6):
+            # The `revoked` drops a `snap` still queued on the normal lane, so each `resync` waits
+            # for the `snap` before it: the initial one, then the last accepted `resync`'s (#5172).
+            frames += _through(c, "snap")
             c.send({"t": "resync", "id": f"r{i}", "ch": BOOK, "p": {"reason": "manual"}})
-        frames = _until_pong(c)
+        frames += _until_pong(c)
         assert [f["t"] for f in frames] == ["snap"] * 6 + ["err", "revoked"]  # AC-17
         assert frames[-1]["p"]["reason"] == "resync_rate_limited"
         assert frames[-2]["p"]["message"] == ERROR_META[ErrorCode.RESYNC_RATE_LIMITED].title
@@ -73,8 +86,10 @@ def test_a_resync_loop_is_revoked_and_its_topic_cannot_restart_within_the_window
         assert (refused["ok"], refused["error"]["code"]) == (False, "resync_rate_limited")
         w.advance(c, 60.0)
         assert c.sub(BOOK)["p"]["results"][0]["ok"]
+        frames = _through(c, "snap")
         c.send({"t": "resync", "id": "r6", "ch": BOOK, "p": {"reason": "manual"}})
-        assert [f["meta"]["reason"] for f in _until_pong(c)] == ["initial", "client_resync"]
+        frames += _through(c, "snap") + _until_pong(c)
+        assert [f["meta"]["reason"] for f in frames] == ["initial", "client_resync"]
 
 
 @pytest.mark.parametrize("offer", OFFERS.values(), ids=OFFERS.keys())
@@ -117,8 +132,9 @@ def test_ac30_a_ctl_loop_and_a_50_topic_churn_for_60_s_stay_within_the_budget(
         assert (err["id"], err["ch"], err["p"]["retryable"]) == ("k5", HEAT, True)
         c.send({"t": "resync", "id": "r", "ch": HEAT, "p": {"reason": "manual"}})
         assert [f["t"] for f in _until_pong(c)] == ["err"]  # spent by `ctl`: not revoked
-        publish(w, "heatmap", HEAT)
-        assert [f["t"] for f in _until_pong(c)] == ["d"]  # the refused `ctl`s changed nothing
+        publish(w, "heatmap", HEAT)  # its `d` rides the normal lane, so it is read first (#5172)
+        frames = _through(c, "d") + _until_pong(c)
+        assert [f["t"] for f in frames] == ["d"]  # the refused `ctl`s changed nothing
         w.advance(c, 70.0)  # the socket stayed open, and the window slides
         mark = len(c.seen)
         c.send({"t": "ctl", "id": "k-last", "ch": HEAT, "p": {"time_bucket_ms": 5000}})
@@ -142,12 +158,14 @@ def test_ac31_a_user_s_sockets_share_one_rebuild_limit_that_outlives_them(offer:
             a, b = Client(ws_a), Client(ws_b)
             a.open()
             b.open()
+            heads = len(a.seen), len(b.seen)
             assert all(r["ok"] for r in a.sub(*mine)["p"]["results"])
             results = b.sub(*theirs)["p"]["results"]
             assert [r.get("error", {}).get("message") for r in results] == [None] * 4 + [
                 f"{told} not subscribed."
             ] * 4
-            _until_pong(a), _until_pong(b)
+            # Each socket reads the `snap`s its `sub_ok` owes before the `err`s are read (#5172).
+            assert [_owed(_settled(s, h)) for s, h in zip((a, b), heads, strict=True)] == [8, 4]
             b.send({"t": "resync", "id": "r", "ch": theirs[0], "p": {"reason": "manual"}})
             assert [(f["t"], f["p"]["code"]) for f in _until_pong(b)] == [
                 ("err", "resync_rate_limited")
