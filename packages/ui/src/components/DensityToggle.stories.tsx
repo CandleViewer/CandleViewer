@@ -7,6 +7,14 @@ import { DENSITY_TOGGLE_COPY, DensityToggle, DensityToggleConnected } from "./De
 /** Theme and density come from the toolbars; every story renders at each of the 3 x 2 combinations. */
 const meta: Meta<typeof DensityToggle> = {
   title: "Molecules/DensityToggle",
+  parameters: {
+    docs: {
+      description: {
+        component:
+          "No disabled-with-reason form: J15 (a) is built (every role changes the appearance on this device, no T2); (b), T2 through CMP-079, is the gated alternative pending the owner on #2701.",
+      },
+    },
+  },
   component: DensityToggle,
 };
 export default meta;

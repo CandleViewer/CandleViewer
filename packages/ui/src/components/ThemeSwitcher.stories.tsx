@@ -11,6 +11,14 @@ import { ThemeSwitcher, ThemeSwitcherConnected, type ThemeSwitcherProps } from "
  */
 const meta: Meta<typeof ThemeSwitcher> = {
   title: "Molecules/ThemeSwitcher",
+  parameters: {
+    docs: {
+      description: {
+        component:
+          "No disabled-with-reason form: J15 (a) is built (every role changes the appearance on this device, no T2); (b), T2 through CMP-079, is the gated alternative pending the owner on #2701.",
+      },
+    },
+  },
   component: ThemeSwitcher,
   args: { value: "dark", onChange: fn(), onMatchSystemChange: fn() },
 };

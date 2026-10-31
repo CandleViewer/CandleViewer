@@ -9,6 +9,14 @@ const REASON = "Owner only: your role can't use this action.";
 /** Theme and density come from the toolbars; every state below renders at each of the 3 x 2 combinations. */
 const meta: Meta<typeof Button> = {
   title: "Atoms/Button",
+  parameters: {
+    docs: {
+      description: {
+        component:
+          "The comfortable target is 32 px (`size.control.comfortable`), not 40-44 px; `16` section 3 is amended (E05-D02 lines 426-428).",
+      },
+    },
+  },
   component: Button,
   args: { children: "Save", onClick: fn() },
 };
