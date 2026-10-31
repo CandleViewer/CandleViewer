@@ -46,7 +46,7 @@ function focusTarget(target: HTMLElement): void {
 
 /**
  * CMP-085: "Skip to main content" and its siblings (WCAG 2.4.1). Each link is visually hidden until
- * focused, then shown as a pill at the top-left of the positioned host. Activation (click, or Enter,
+ * focused, then shown as a pill in its own row at the top-left of the host, pushing the content down. Activation (click, or Enter,
  * which arrives as a click) focuses the target in script and prevents the default, so the hash never
  * reaches the router; a modified click is left to the browser. Never gated; no motion; no live region.
  */

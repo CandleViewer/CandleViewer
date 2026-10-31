@@ -13,18 +13,16 @@
   border: 0;
 }
 
-/* Focused: the pill at the host's top-left (an 8px inset leaves the 2px ring clear of a clipping host), at least the control height, grown with its label. */
+/* Focused: the pill takes its own row in the flow at the host's top-left (WCAG 2.5.8: it never overlays another target, it pushes the content below it down by its height; an 8px margin keeps the 2px ring clear of a clipping host), at least the control height, grown with its label. */
 .cv-skip-link:focus {
-  top: var(--space-inset-sm);
-  left: var(--space-inset-sm);
-  z-index: 1;
+  position: relative;
   box-sizing: border-box;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  width: auto;
+  width: fit-content;
   height: auto;
   min-height: var(--size-control-height);
-  margin: 0;
+  margin: var(--space-inset-sm);
   padding-inline: var(--space-button-paddingX);
   overflow: visible;
   clip-path: none;
