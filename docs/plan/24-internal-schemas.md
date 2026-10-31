@@ -6665,9 +6665,9 @@ This number follows §19.62, as the orchestrator renumbered it on 2026-10-31 (21
 
 - §15.5: `trade_group_definition.save_refused` joins the closed set and is registered: a definition create or replace refused for a membership across environments is recorded before its `400 environment_mismatch` (C-2.9, C-2.11), unbudgeted as the scope refusals are today; one unwritten is `503 audit_unavailable`, which 22 already declares. No operation changes. `21-database-schema.md` §3.10.1 lists it.
 
-### 19.65 2026-10-31 — 22 `refreshInstruments`, `authStepUp`, §15.5: the instrument refresh route's contract and its step-up class (E08-T10, #5111)
+### 19.64 2026-10-31 — 22 `refreshInstruments`, `authStepUp`, §15.5: the instrument refresh route's contract and its step-up class (E08-T10, #5111)
 
-This number follows `main`'s last entry, §19.62, past §19.63 and §19.64, which in-flight changes hold; an entry that lands first takes a number, and this one moves to the next free one.
+This number follows §19.63 (#5163), as the orchestrator renumbered it on 2026-10-31 (21:21Z).
 
 - The orchestrator's rulings on #5111 (Q1 to Q6 of 2026-10-30), contract first (C-6.1), in the first change of the route's PR; nothing in it changes runtime behaviour.
 - 22 `refreshInstruments`: a request while a refresh is queued or running joins it (`202` with that job's `job_id`, never `409`, Q1); one accepted refresh per environment per 60 s, `429 rate_limited` with `Retry-After` beyond it, a join never refused or counted by it (Q2); the job is polled through `getJob` in the job store's existing envelope, `kind: instrument_refresh` (Q4); the request is audited ahead and a record that cannot be written is `503 audit_unavailable` (Q3).
