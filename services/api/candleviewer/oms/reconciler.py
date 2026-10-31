@@ -328,8 +328,9 @@ class PositionTruth(Protocol):
     async def apply(self, position: Position, *, pass_id: str) -> PositionDriftSeen | None: ...
 
 
-#: What a step-5 stop write did: sent and answered, refused by the venue, no longer looser on the
-#: writer's own re-read (a restore), or not sent (the writer refused before any send).
+#: What a step-5 stop write did: sent and answered, refused by the venue, no longer needed on the
+#: writer's own re-read (a restore's stop no longer looser, an attach's position flat or
+#: protected), or not sent (the writer refused before any send).
 StopWrite = Literal["sent", "refused", "not_looser", "not_sent"]
 
 
@@ -1895,6 +1896,8 @@ class _Remediation:
         outcome = await _bounded(call, FACADE_TIMEOUT_S)
         if outcome == "sent":
             self._list("sl_repaired", position.symbol)
+            return
+        if outcome == "not_looser":  # the writer's own read: flat or protected since step 1
             return
         self._draft.error("5", f"attach_{outcome}", position.symbol)
         self._r.page_once(
