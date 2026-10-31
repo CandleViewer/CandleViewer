@@ -34,6 +34,8 @@ from httpx import ASGITransport, AsyncClient
 from starlette.types import ASGIApp
 
 from candleviewer.accounts.key_age import KeyRotationPolicy
+from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
+from candleviewer.api.admin_reconciliation import make_admin_reconciliation_router
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.exchange_keys import make_exchange_keys_router
@@ -64,6 +66,7 @@ from tests.rules.test_rules_routes import LIVE, _ir
 from tests.unit.accounts.test_key_import import ACCT
 from tests.unit.accounts.test_key_selfcheck import EGRESS
 from tests.unit.api import position_writes_world as writes
+from tests.unit.api import test_admin_reconciliation as recon
 from tests.unit.api import test_order_amend_route as amend
 from tests.unit.api import test_order_cancel_all_route as cancel_all
 from tests.unit.api import test_order_exits_route as exits
@@ -400,6 +403,55 @@ async def _rotate_signing_key(env: _Env, gate: str) -> _Case:
     return _Case(send, executed, records, 200, step_up, lock)
 
 
+async def _reconciliation(
+    w: _World, locks: _Locks, stack: AsyncExitStack, gate: str, *, resolve: bool
+) -> _Case:
+    """E29-T06 #914's two routes on the harness app, behind its guard and the idle lock, over the
+    fakes of `test_admin_reconciliation` (B19's state per account, what it was told). The resolve
+    spends a fresh `accounts` code bound to its request, so for the idle-lock case the code is
+    earned first, by the request's own challenge; nothing is kept or told by that refusal."""
+    service, cache = recon.Service(), IdempotencyCache()
+    service.states[recon.ACCOUNT] = "stale_lockout" if resolve else "idle"
+    app = w.client.app
+    assert isinstance(app, FastAPI)  # not yet serving: routes may be added
+    app.add_exception_handler(AdminAreaRefused, admin_area_refused_handler)
+    app.include_router(
+        make_admin_reconciliation_router(
+            recon.Accounts(recon._account(recon.ACCOUNT)), lambda: recon.Runtime(service),
+            environment="demo", auth=w.auth, resolver=recon.Principals(w), audit=w.audit,
+            replays=cache,
+        )
+    )  # fmt: skip
+    gated = IdleLockMiddleware(app, sessions=lambda: locks, spec=_SPEC)  # the guard is mounted
+    client = await stack.enter_async_context(_client(gated))
+    path = (recon.RESOLVE if resolve else recon.RUN).format(recon.ACCOUNT)
+    body = recon.BODY if resolve else None
+
+    async def send() -> httpx.Response:
+        return await client.post(path, headers=w.h("owner"), json=body)
+
+    def executed() -> int:  # each event B19 was told
+        return len(service.told)
+
+    case = _case(w, locks, client, send, executed, cache.__len__, 200 if resolve else 202)
+    if resolve and gate == "idle_lock":
+        challenge = (await send()).json()
+        assert challenge["code"] == "step_up_required", challenge
+        granted = await case.step_up(challenge_id=challenge["challenge_id"])
+        assert granted.status_code == 200, granted.text
+    return case
+
+
+async def _reconcile_account(w: _World, locks: _Locks, stack: AsyncExitStack, gate: str) -> _Case:
+    return await _reconciliation(w, locks, stack, gate, resolve=False)
+
+
+async def _resolve_reconciliation(
+    w: _World, locks: _Locks, stack: AsyncExitStack, gate: str
+) -> _Case:
+    return await _reconciliation(w, locks, stack, gate, resolve=True)
+
+
 def _router_level(build: _Builder) -> Callable[[_Env, str], Awaitable[_Case]]:
     @functools.wraps(build)
     async def built(env: _Env, gate: str) -> _Case:
@@ -426,6 +478,8 @@ _CASES: dict[tuple[str, str], Callable[[_Env, str], Awaitable[_Case]]] = {
     ("POST", CLOSE_ALL_PATH): _router_level(_position_write(CLOSE_ALL_PATH, {})),
     ("PUT", "/rules/{ruleId}/mode"): _router_level(_set_rule_mode),
     ("POST", _ROTATE): _rotate_signing_key,
+    ("POST", "/admin/reconciliation/{accountId}"): _router_level(_reconcile_account),
+    ("POST", "/admin/reconciliation/{accountId}/resolve"): _router_level(_resolve_reconciliation),
 }
 _STEP_UP_CASES = sorted(op for op in _CASES if _step_up_gated(*op))
 _IDS = {op: f"{op[0]} {op[1]}" for op in _CASES}
@@ -447,9 +501,11 @@ def test_every_mounted_keyed_operation_has_a_case() -> None:
 
 def test_the_step_up_cases_are_the_gated_keyed_operations() -> None:
     """The registry decides which keyed operations take a step-up; today the key import, the
-    signing-key rotation (path rows, `keys`) and the rule mode (handler row, `live_enablement`)."""
+    signing-key rotation (path rows, `keys`), the rule mode (handler row, `live_enablement`) and
+    the reconciliation's resolve (handler row, `accounts`, E29-T06 #914)."""
     assert _STEP_UP_CASES == [
         ("POST", "/admin/keys/audit-signing/rotate"),
+        ("POST", "/admin/reconciliation/{accountId}/resolve"),
         ("POST", "/exchange-accounts/{accountId}/keys"),
         ("PUT", "/rules/{ruleId}/mode"),
     ]
