@@ -297,8 +297,9 @@ def _legs(axis: object, inputs: dict[str, object]) -> int:
     # on the e2e filter (5 / 19 / 19 / 39). #3881 shards the four py-tests lanes into sixteen (+12)
     # and leaves `integration / integration` to the merge group, which a PR no longer runs (-1):
     # 5 / 30 / 30 / 50. #270 adds the vr job's ten compare shards beside `storybook` on the e2e
-    # filter (the vr_update dispatch's single shard never runs on a PR): 5 / 30 / 30 / 60.
-    [("docs", 5), ("py", 30), ("py,infra", 30), ("all", 60)],
+    # filter (the vr_update dispatch's single shard never runs on a PR): 5 / 30 / 30 / 60. #5193
+    # shards `py-perf` in three (+2) and adds `py-perf-index` (+1): 5 / 33 / 33 / 63.
+    [("docs", 5), ("py", 33), ("py,infra", 33), ("all", 63)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))

@@ -17,7 +17,8 @@
 #
 # Worst case per image, with T = PREPULL_PULL_TIMEOUT: source 5T + (10+20+40+60) s of waits, then
 # mirror 3T + (30+60) s, so 8T + 220 s. T=120 gives 1180 s (the 20-minute job default covers one
-# image); py-perf sets T=45: 580 s, inside its 10-minute timeout. Fast failures return at once.
+# image); each py-perf shard sets T=45: 580 s, inside its 16-minute timeout (#5193). Fast
+# failures return at once.
 # The source of each image and its digest go to $GITHUB_STEP_SUMMARY.
 set -euo pipefail
 

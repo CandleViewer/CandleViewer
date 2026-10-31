@@ -368,6 +368,15 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   not `integration` itself. Each job's `timeout-minutes` is its measured worst plus 10 (shards 19,
   stack 13), not `CV_CI_TIMEOUT_MINUTES`. When a shard's pytest time creeps toward its timeout,
   re-measure the table: `python tools/ci/integration_shards.py weigh <shard job logs...>`.
+- #5193: the `py` lane's C-13.9 wall-clock budgets run as `py-perf (N/3)`, three shards of the
+  committed perf index `tools/ci/py-perf-index.json` (the node ids `pytest -m "perf and not flaky"`
+  collects, and each test file's measured seconds), so no shard collects the whole suite (about
+  5 minutes on a hosted runner) to select them. Expected about 6 minutes a shard (16-minute hang
+  guard), 16.5-18.9 minutes in one job before (#5171). `py-perf-index`, beside them, collects the
+  suite and fails when the index differs, naming each test: regenerate with
+  `cd services/api && uv run python ../../tools/ci/py_perf_index.py write` and commit the index;
+  add a shard's job log (`--durations=0`) to that command to re-weigh the files when a shard's time
+  creeps up. `ci-required` judges the `py` workflow, whose conclusion includes every shard.
 - A gate inside `gates` reports under its own lane name: read the `gates` step named after it
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
   means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`
@@ -555,7 +564,8 @@ index alone, removing nothing.
   in one PR. QuestDB and Grafana have no mirror, so only a re-run helps there. A green run's
   step summary lists which registry served each image and its digest. A `429` or `Rate exceeded` from
   the mirror is a re-run case too. Each pull is bounded to 120 s
-  (`PREPULL_PULL_TIMEOUT`; `py-perf` sets 45 s to fit its job timeout). For the compose Postgres
+  (`PREPULL_PULL_TIMEOUT`; each `py-perf (N/3)` shard sets 45 s, 580 s at worst, inside its
+  16-minute timeout). For the compose Postgres
   the mirror holds only where the daemon records a digest on `docker tag` (the containerd image
   store); on a daemon that does not, the step fails with the code, naming the compose reference
   that does not resolve, and a re-run is the answer.
