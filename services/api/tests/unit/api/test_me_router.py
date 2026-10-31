@@ -39,6 +39,12 @@ _ROUTES = [_ME, _PREFERENCES, _KEYMAP]
 _SETTINGS_ROUTES = [_PREFERENCES, _KEYMAP]
 _VIEWER = ["accounts:read", "settings:read"]
 _ACCOUNT = "00000000-0000-4000-8000-00000000000a"
+#: `GET /settings`' own problem for a settings store not wired or not serving (E02-T13).
+_SETTINGS_DOWN = {
+    "title": "QuestDB / Postgres / Parquet tier unavailable",
+    "detail": "The settings store is unavailable.",
+    "retry_after_seconds": 5,
+}
 
 
 def _assert_problem(resp: Any, status: int, code: str) -> dict[str, Any]:
@@ -512,11 +518,17 @@ async def test_preferences_are_the_callers_own_overrides_from_the_settings_store
     assert env.settings.calls[-1] == ("read", uuid.UUID(user_id))
 
 
+def _assert_settings_store_down(resp: Any) -> None:
+    """The problem `/settings` answers, never the session store's text, and when to retry."""
+    body = _assert_problem(resp, 503, "store_unavailable")
+    assert {key: body[key] for key in _SETTINGS_DOWN} == _SETTINGS_DOWN
+    assert resp.headers["retry-after"] == "5" and "overridden" not in body
+
+
 async def test_preferences_answer_503_when_no_settings_store_is_wired(env: _Env) -> None:
     _, headers, _ = await env.sign_in()
     env.settings = None
-    body = _assert_problem(env.client.get(_PREFERENCES, headers=headers), 503, "store_unavailable")
-    assert body["detail"] and "overridden" not in body
+    _assert_settings_store_down(env.client.get(_PREFERENCES, headers=headers))
 
 
 async def test_preferences_answer_503_when_the_settings_store_cannot_be_read(env: _Env) -> None:
@@ -525,7 +537,7 @@ async def test_preferences_answer_503_when_the_settings_store_cannot_be_read(env
     env.settings.down = True
     with capture_logs() as logs:
         resp = env.client.get(_PREFERENCES, headers=headers)
-    _assert_problem(resp, 503, "store_unavailable")
+    _assert_settings_store_down(resp)
     assert [(log["event"], log["error"]) for log in logs] == [
         ("auth.me.settings_store_unavailable", "StorageTierUnavailable")
     ]

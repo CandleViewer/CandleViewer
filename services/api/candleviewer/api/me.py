@@ -37,7 +37,9 @@ two answers are equal: the subject's rows (the target's on a live view, as `/set
 with a credential-class leaf masked on a view, as `/settings` masks it (Q3, as ruled).
 No deployment default set exists yet (E02-T13's Q1), so a leaf the caller has not overridden is
 absent and the client applies its built-in default. After the checks above, a store that is not
-wired or cannot be read is a 503 `store_unavailable` (logged by its class), never an empty answer.
+wired or cannot be read is a 503 `store_unavailable` (logged by its class), never an empty answer:
+the problem `/settings` answers for it (`user_settings.settings_store_unavailable`, its title and
+detail, `Retry-After: 5`), not the session store's.
 The keymap serves the contract's empty answer: `hotkey_profiles` is not migrated (E10-S02), so
 there is no stored profile and the client applies its built-in defaults. Its handler reads its
 data here and nowhere else, so the store slots in without a contract change.
@@ -59,6 +61,7 @@ from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.idle_lock import idle_locked_problem, store_unavailable_problem
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.storage_outage import is_storage_outage
+from candleviewer.api.user_settings import settings_store_unavailable
 from candleviewer.api.user_settings_models import effective
 from candleviewer.api.view_as_subject import ViewAsUnstamped, view_as_subject
 from candleviewer.auth.errors import AuthError, SessionIdleLocked
@@ -281,14 +284,14 @@ def make_me_router(
             return caller
         store = settings()
         if store is None:
-            return _store_unavailable()
+            return settings_store_unavailable()
         try:
             rows = await store.read(caller.subject)  # `GET /settings`'s rows and answer (E02-T13)
         except Exception as exc:  # re-raised below unless it is a store outage
             if not is_storage_outage(exc):
                 raise
             _log().error("auth.me.settings_store_unavailable", error=type(exc).__name__)
-            return _store_unavailable()
+            return settings_store_unavailable()
         return JSONResponse(effective(rows, viewing=caller.viewing), headers=_NO_STORE)
 
     @router.get("/me/keymap", tags=["settings"])

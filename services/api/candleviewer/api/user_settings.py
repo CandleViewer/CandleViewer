@@ -73,6 +73,8 @@ _STATUS: Final = {
 }  # fmt: skip
 _RETRY_AFTER_S: Final = 5
 _PERMISSIONS: Final = {p.value: p for p in Permission}
+#: The detail of the `503 store_unavailable` for a store not wired or not serving the call.
+STORE_UNAVAILABLE_DETAIL: Final = "The settings store is unavailable."
 #: SR-026: the query parameters each operation declares (22): none, so any key is refused.
 GET_SETTINGS_QUERY: frozenset[str] = frozenset()
 UPDATE_SETTINGS_QUERY: frozenset[str] = frozenset()
@@ -149,9 +151,16 @@ class _ProblemRoute(APIRoute):
                     raise
                 # class name only: str(exc) of a SQLAlchemy error embeds bound parameters
                 _log().error("user_settings_store_unavailable", error=type(exc).__name__)
-            return _Problem("store_unavailable", "The settings store is unavailable.").response()
+            return settings_store_unavailable()
 
         return handler
+
+
+def settings_store_unavailable() -> JSONResponse:
+    """`503 store_unavailable` for a settings store that is not wired or cannot serve the call:
+    the registry's title, `STORE_UNAVAILABLE_DETAIL`, and when to retry (`Retry-After` and
+    `retry_after_seconds`). `GET /me/preferences` answers this same problem (E02-T13)."""
+    return _Problem("store_unavailable", STORE_UNAVAILABLE_DETAIL).response()
 
 
 def _snapshot(p: AuditPrincipal) -> PrincipalSnapshot:
@@ -224,7 +233,7 @@ def make_user_settings_router(
     def store() -> UserSettings:
         repo = store_provider()
         if repo is None:
-            raise _Problem("store_unavailable", "The settings store is unavailable.")
+            raise _Problem("store_unavailable", STORE_UNAVAILABLE_DETAIL)
         return repo
 
     def record(p: AuditPrincipal, changed: list[str]) -> UserSettingsWriteAhead:
@@ -270,4 +279,4 @@ def make_user_settings_router(
     return router
 
 
-__all__ = ["SettingsAuditRefused", "make_user_settings_router"]
+__all__ = ["SettingsAuditRefused", "make_user_settings_router", "settings_store_unavailable"]
