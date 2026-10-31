@@ -852,9 +852,12 @@ def write_sheet(nn: int, groups: list[Group], ann: Node, *, notes: dict[str, Ite
     board_, nodes = board(nn, groups, ann)
     live(f"export {export_path(nn)}: export the root at scale 1 (dark set active) and record the board id, the PNG "
          f"size ({board_['w']} x {board_['h']}) and the frame count read back")
+    names = {n.get("name") for top in nodes for _p, n in walk(top)}
+    steps = ["frame notes to shared plugin data cvd02/note", "watermarks 48 / 40 px weight 600 centred under the candles"]
+    steps += ["the stale x0.85 ink fills"] if "data ink · x0.85" in names else []
+    steps += ["the mark pill's 3 px padding"] if "mark pill" in names else []
     live(f"after the render, run {Path(sheet_name(nn)).stem}.post-live.js (the kit writes it beside this sheet) twice: "
-         f"frame notes to shared plugin data cvd02/note, watermarks 48 / 40 px weight 600 centred under the candles, "
-         f"the stale x0.85 ink fills, the mark pill's 3 px padding (the live fold, 2026-10-30)")
+         + ", ".join(steps) + " (the live fold, 2026-10-30)")
     bad = lint(nodes)
     for kind, lines in (notes or {}).items():
         for ln in [lines] if isinstance(lines, str) else lines:
