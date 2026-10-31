@@ -2,9 +2,11 @@
 import { composeStories } from "@storybook/react-vite";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
-import { Button } from "../src/components/index.js";
+import { Button, GatedAnnounceProvider } from "../src/components/index.js";
+import { mountLiveRegion } from "../src/theme/a11y.js";
 import * as stories from "../src/components/Button.stories.js";
 import { mount } from "./theme/mount.js";
+import { clearPolite, politeText } from "./theme/polite.js";
 
 const REASON = "Owner only";
 // exactOptionalPropertyTypes rejects a literal `iconLeft={undefined}`; callers forwarding an optional prop do this.
@@ -266,5 +268,89 @@ describe("Button stories", () => {
   it.each(Object.entries(composeStories(stories)))("%s renders", async (_name, Story) => {
     const host = await mount(<Story />);
     expect(within(host).getAllByRole("button").length).toBeGreaterThan(0);
+  });
+});
+
+describe("Button gated announcement (D09 2.2)", () => {
+  it("click, Enter and Space each announce the reason once and never call the handler", async () => {
+    const onClick = fn();
+    const host = await mount(
+      <Button disabledReason={REASON} onClick={onClick}>
+        Save
+      </Button>,
+    );
+    const b = within(host).getByRole("button", { name: "Save" });
+    expect(await politeText()).toBe("");
+    await userEvent.click(b);
+    expect(await politeText()).toBe(REASON);
+    clearPolite();
+    await userEvent.keyboard("{Enter}");
+    expect(await politeText()).toBe(REASON);
+    clearPolite();
+    await userEvent.keyboard(" ");
+    expect(await politeText()).toBe(REASON);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("a repeat press clears the region first, so the same sentence announces again", async () => {
+    const host = await mount(<Button disabledReason={REASON}>Save</Button>);
+    const b = within(host).getByRole("button", { name: "Save" });
+    fireEvent.click(b);
+    expect(document.getElementById("cv-theme-live-region")?.textContent).toBe("");
+    expect(await politeText()).toBe(REASON);
+  });
+
+  it("focus and hover announce nothing, and an allowed activation announces nothing", async () => {
+    const onClick = fn();
+    const gated = await mount(<Button disabledReason={REASON}>Save</Button>);
+    await userEvent.tab();
+    await userEvent.hover(within(gated).getByRole("button"));
+    expect(await politeText()).toBe("");
+    const open = await mount(<Button onClick={onClick}>Go</Button>);
+    await userEvent.click(within(open).getByRole("button", { name: "Go" }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(await politeText()).toBe("");
+  });
+});
+
+describe("Button gated announcement routed by a host", () => {
+  it("a provider's announce receives the reason, and the default region stays empty", async () => {
+    clearPolite();
+    const announce = fn();
+    const host = await mount(
+      <GatedAnnounceProvider announce={announce}>
+        <Button disabledReason={REASON}>Save</Button>
+      </GatedAnnounceProvider>,
+    );
+    await userEvent.click(within(host).getByRole("button"));
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith(REASON);
+    expect(await politeText()).toBe("");
+  });
+
+  it("under a no-op provider the atom announces nothing; under the default it announces once", async () => {
+    clearPolite();
+    const quiet = await mount(
+      <GatedAnnounceProvider announce={() => undefined}>
+        <Button disabledReason={REASON}>Quiet</Button>
+      </GatedAnnounceProvider>,
+    );
+    await userEvent.click(within(quiet).getByRole("button", { name: "Quiet" }));
+    expect(await politeText()).toBe("");
+    const spoken = await mount(<Button disabledReason={REASON}>Spoken</Button>);
+    // Count the region's non-empty writes: the text is replaced, so reading it alone can't tell once from twice.
+    const region = mountLiveRegion();
+    const records: MutationRecord[] = [];
+    const watch = new MutationObserver((batch) => records.push(...batch));
+    watch.observe(region, { childList: true });
+    await userEvent.click(within(spoken).getByRole("button", { name: "Spoken" }));
+    expect(await politeText()).toBe(REASON);
+    records.push(...watch.takeRecords());
+    watch.disconnect();
+    const writes = records
+      .flatMap((r) => [...r.addedNodes].map((n) => n.textContent ?? ""))
+      .filter((text) => text !== "");
+    expect(writes).toEqual([REASON]);
+    clearPolite();
   });
 });

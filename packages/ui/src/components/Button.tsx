@@ -1,7 +1,7 @@
 import type { ComponentPropsWithoutRef, JSX, MouseEvent, ReactNode } from "react";
 import { Icon } from "../icons/Icon.js";
 import type { IconName } from "../icons/registry.js";
-import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonText, useDisabledReason, useGatedAnnounce } from "./internal/disabledReason.js";
 import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { cx } from "./internal/cx.js";
 import { useFocusRing } from "./FocusRing.js";
@@ -46,6 +46,7 @@ export function Button({
   ...rest
 }: ButtonProps): JSX.Element {
   const reason = useDisabledReason(disabled, disabledReason);
+  const announceGated = useGatedAnnounce();
   const ring = useFocusRing();
   const side = variant === "buy" || variant === "sell";
   const leading =
@@ -56,6 +57,7 @@ export function Button({
     // Enter and Space reach here as clicks: a gated or busy button stays focusable but does nothing.
     if (reason.gated || loading) {
       event.preventDefault();
+      if (reason.gated) announceGated(reason.reason);
       return;
     }
     onClick?.(event);

@@ -6,6 +6,7 @@ import { describe, it } from "vitest";
 import { Checkbox } from "../src/components/index.js";
 import * as stories from "../src/components/Checkbox.stories.js";
 import { mount } from "./theme/mount.js";
+import { clearPolite, politeText } from "./theme/polite.js";
 
 const REASON = "Owner only";
 const get = (host: HTMLElement, name = "Agree"): HTMLInputElement =>
@@ -164,5 +165,27 @@ describe("Checkbox stories", () => {
   it.each(Object.entries(composeStories(stories)))("%s renders", async (_name, Story) => {
     const host = await mount(<Story />);
     expect(within(host).getAllByRole("checkbox").length).toBeGreaterThan(0);
+  });
+});
+
+describe("Checkbox gated announcement (D09 2.2)", () => {
+  it("announces the reason on a gated click or Space, announces nothing when allowed", async () => {
+    const onChange = fn();
+    const host = await mount(
+      <Checkbox label="Agree" disabledReason={REASON} onChange={onChange} />,
+    );
+    await userEvent.click(within(host).getByRole("checkbox", { name: "Agree" }));
+    expect(await politeText()).toBe(REASON);
+    clearPolite();
+    await mount(<Checkbox label="Agree" disabledReason={REASON} onChange={onChange} />);
+    await userEvent.tab();
+    await userEvent.keyboard(" ");
+    expect(await politeText()).toBe(REASON);
+    expect(onChange).not.toHaveBeenCalled();
+    clearPolite();
+    const open = await mount(<Checkbox label="Agree" onChange={onChange} />);
+    await userEvent.click(within(open).getByRole("checkbox"));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(await politeText()).toBe("");
   });
 });

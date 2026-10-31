@@ -1,6 +1,6 @@
 import { useId, type JSX, type MouseEvent } from "react";
 import { Icon } from "../icons/Icon.js";
-import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonText, useDisabledReason, useGatedAnnounce } from "./internal/disabledReason.js";
 import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { cx } from "./internal/cx.js";
 import { useRoving, type RovingItemProps } from "./internal/useRoving.js";
@@ -55,6 +55,7 @@ function RadioRow({
   onPick,
 }: RadioRowProps): JSX.Element {
   const reason = useDisabledReason(option.disabled, option.disabledReason);
+  const announceGated = useGatedAnnounce();
   const labelId = useId();
   const disabled = groupDisabled || (option.disabled === true && !reason.gated);
   const gated = !disabled && (reason.gated || groupReasonId !== undefined);
@@ -69,6 +70,7 @@ function RadioRow({
     : undefined;
   const handleClick = (event: MouseEvent<HTMLElement>): void => {
     // The whole row is the target. A refused row takes focus (to show its reason) and changes nothing.
+    if (gated) announceGated(groupReason ?? reason.reason);
     if (disabled || gated) return;
     event.currentTarget.focus();
     onPick(option.value);
@@ -121,6 +123,7 @@ export function RadioGroup({
   ...name
 }: RadioGroupProps): JSX.Element {
   const group = useDisabledReason(disabled, disabledReason);
+  const announceGated = useGatedAnnounce();
   const groupDisabled = group.disabled;
   const refused = groupDisabled || group.gated;
   const onPick = (next: string): void => {
@@ -135,6 +138,8 @@ export function RadioGroup({
     checked: value,
     onSelect: onPick,
     gated: refused,
+    onRefused: (v) =>
+      announceGated(group.reason ?? options.find((o) => o.value === v)?.disabledReason?.trim()),
   });
   return (
     <>

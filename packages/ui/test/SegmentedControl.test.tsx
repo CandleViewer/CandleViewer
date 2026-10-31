@@ -10,6 +10,7 @@ import {
 } from "../src/components/index.js";
 import * as stories from "../src/components/SegmentedControl.stories.js";
 import { mount } from "./theme/mount.js";
+import { clearPolite, politeText } from "./theme/polite.js";
 
 const REASON = "Owner only";
 const OPTIONS = [
@@ -367,5 +368,26 @@ describe("SegmentedControl stories", () => {
   it.each(Object.entries(composeStories(stories)))("%s renders", async (_name, Story) => {
     const host = await mount(<Story />);
     expect(within(host).getAllByRole("radio").length).toBeGreaterThan(0);
+  });
+});
+
+describe("SegmentedControl gated announcement (D09 2.2)", () => {
+  it("announces the group reason on a value key or a segment click; nothing when allowed", async () => {
+    const onChange = fn();
+    await mount(<Host disabledReason={REASON} value="b" onChange={onChange} />);
+    await userEvent.tab();
+    expect(await politeText()).toBe("");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(await politeText()).toBe(REASON);
+    clearPolite();
+    const again = await mount(<Host disabledReason={REASON} value="b" onChange={onChange} />);
+    await userEvent.click(within(again).getAllByRole("radio")[0]!);
+    expect(await politeText()).toBe(REASON);
+    expect(onChange).not.toHaveBeenCalled();
+    clearPolite();
+    const open = await mount(<Host value="b" onChange={onChange} />);
+    await userEvent.click(within(open).getAllByRole("radio")[0]!);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(await politeText()).toBe("");
   });
 });

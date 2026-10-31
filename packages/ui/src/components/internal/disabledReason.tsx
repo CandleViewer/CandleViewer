@@ -1,4 +1,5 @@
-import { useId, type JSX } from "react";
+import { createContext, useCallback, useContext, useId, type JSX, type ReactNode } from "react";
+import { announcePolite } from "../../theme/a11y.js";
 
 export interface DisabledReasonAttrs {
   /** True when a non-empty reason is given: the control is gated (T2), not natively disabled. */
@@ -28,6 +29,44 @@ export function useDisabledReason(
     ariaDisabled: gated ? true : undefined,
     ariaDescribedBy: gated ? reasonId : undefined,
   };
+}
+
+/**
+ * D09 2.2: a refused activation re-shows the reason with one polite announcement. The region is cleared, then set
+ * in a microtask: an unchanged sentence would not announce again on a repeat press, and a microtask (unlike a
+ * frame) runs deterministically under fake timers. Best effort: whether a reader re-speaks an identical sentence
+ * set in the same task is the reader's; real-reader checks are E05-Q02's.
+ */
+function announceInOwnRegion(reason: string): void {
+  announcePolite("");
+  queueMicrotask(() => announcePolite(reason));
+}
+
+const GatedAnnounceContext = createContext<(reason: string) => void>(announceInOwnRegion);
+
+export interface GatedAnnounceProviderProps {
+  /** Receives the reason of a refused activation instead of this package's own polite region. */
+  readonly announce: (reason: string) => void;
+  readonly children?: ReactNode;
+}
+
+/** A host that owns one announcer (the app shell) routes the gated announcement there, or passes a no-op. */
+export function GatedAnnounceProvider({
+  announce,
+  children,
+}: GatedAnnounceProviderProps): JSX.Element {
+  return <GatedAnnounceContext.Provider value={announce}>{children}</GatedAnnounceContext.Provider>;
+}
+
+/** The announce function each gated atom calls on a refused activation; a no-op for an undefined reason. */
+export function useGatedAnnounce(): (reason: string | undefined) => void {
+  const announce = useContext(GatedAnnounceContext);
+  return useCallback(
+    (reason: string | undefined) => {
+      if (reason !== undefined) announce(reason);
+    },
+    [announce],
+  );
 }
 
 /**

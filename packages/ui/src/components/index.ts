@@ -118,6 +118,9 @@ export type { FormSectionProps } from "./FormSection.js";
 export { FuzzyList, fuzzyOptionId } from "./FuzzyList.js";
 export type { FuzzyListColumns, FuzzyListItem, FuzzyListProps, FuzzyListTag } from "./FuzzyList.js";
 
+export { GatedAnnounceProvider } from "./internal/disabledReason.js";
+export type { GatedAnnounceProviderProps } from "./internal/disabledReason.js";
+
 export {
   GlobalErrorAnnouncement,
   GlobalErrorBoundaryFallback,
