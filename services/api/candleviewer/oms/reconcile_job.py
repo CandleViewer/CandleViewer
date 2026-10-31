@@ -106,6 +106,10 @@ JITTER_S: Final = 4.8
 SPACING_S: Final = 0.2
 #: A failed fetch's retry backs off from the first to the second (seconds), host-timed.
 RETRY_S: Final = (1.0, 30.0)
+#: Await each send's macrostep, so the next judgement reads the state it left. Safe: the driver
+#: sends from its own calls and host timers, never from a B19 action, so the CV-C51 self-receipt
+#: hang cannot arise (as the order facade and `rules.lifecycle` do).
+_AWAIT_STEP: Final = True
 #: Each send to a job, and each wait for its quiescence at the stop (C-2.18).
 SEND_TIMEOUT_S: Final = 5.0
 QUIESCE_TIMEOUT_S: Final = 10.0
@@ -309,7 +313,7 @@ class ReconcileJobs:
                 return taken
             taken = PassTaken(str(uuid4()), joined=False)
             await write_ahead(taken)
-            await self._send(job, "SWEEP_DUE", {"trigger": "manual", "pass_id": taken.pass_id})
+            await self._send_job(job, "SWEEP_DUE", {"trigger": "manual", "pass_id": taken.pass_id})
             self._pass_ids[account] = taken.pass_id
             return taken
 
@@ -328,7 +332,7 @@ class ReconcileJobs:
             if state not in RESOLVABLE or not quiescent(job.interp):
                 raise NothingToResolve(str(account))
             await write_ahead(state)
-            await self._send(job, "OPERATOR_RESOLVED", {"decided_by": decided_by[:64]})
+            await self._send_job(job, "OPERATOR_RESOLVED", {"decided_by": decided_by[:64]})
             return state
 
     def state(self, account: AccountId) -> str | None:
@@ -354,7 +358,7 @@ class ReconcileJobs:
         await self._sleep(delay)
         async with job.lock:
             if leaf_of(job.interp) == "backing_off" and quiescent(job.interp):
-                await self._send(job, "RETRY_DUE", {})
+                await self._send_job(job, "RETRY_DUE", {})
 
     async def _cadence(self, job: _Job) -> None:
         """The periodic trigger at the job's fixed phase in each cycle (module docstring); a tick
@@ -401,8 +405,8 @@ class ReconcileJobs:
             raise ReconciliationUnavailable("the job did not open") from None
         job = _Job(account, f"{MACHINE}:{account}", key, interp, slot=len(self._jobs))
         recorder = CvMetricsPlugin(machine_kind=MACHINE, metrics=self._metrics)
-        self._gateway.register(job.key, interp, kind=MACHINE, lane=LANE, metrics=recorder,
-                               machine_key=key)  # fmt: skip
+        self._gateway.register(job.key, interp, kind="reconciliation", lane=LANE,
+                               metrics=recorder, machine_key=key)  # fmt: skip
         self._jobs[account] = job
         state = leaf_of(interp)
         self._standing.restored(account, state)  # a restart never unlocks (BQ-5)
@@ -410,7 +414,7 @@ class ReconcileJobs:
         if isinstance(pass_id, str):
             self._pass_ids[account] = pass_id
         for event, payload in owed:
-            await self._send(job, event, payload)
+            await self._send_job(job, event, payload)
         job.cadence = self._spawn(self._cadence(job), "reconcile-cadence")
         _log().info("reconcile_job_opened", account_id=str(account), state=state,
                     restored=bool(owed) or state != "idle")  # fmt: skip
@@ -460,14 +464,14 @@ class ReconcileJobs:
             if trigger != "reconnect":
                 self._skipped(job, trigger, state, "locked")
                 return None
-            await self._send(job, "RECONNECTED", {})  # recorded; clears nothing (INV-B19-b)
+            await self._send_job(job, "RECONNECTED", {})  # recorded; clears nothing (INV-B19-b)
             return None
         pass_id = str(uuid4())
         event = b19.TRIGGER_EVENTS[trigger] if state == "idle" else "SWEEP_DUE"
         payload: dict[str, Any] = {"pass_id": pass_id}
         if event == "SWEEP_DUE":
             payload["trigger"] = trigger
-        await self._send(job, event, payload)
+        await self._send_job(job, event, payload)
         self._pass_ids[job.account] = pass_id
         return pass_id
 
@@ -487,13 +491,15 @@ class ReconcileJobs:
         running = job.interp.context.get("pass_id")
         return known if known is not None else str(running)
 
-    async def _send(self, job: _Job, event: str, payload: Mapping[str, Any]) -> None:
+    async def _send_job(self, job: _Job, event: str, payload: Mapping[str, Any]) -> None:
         """Through the gateway, the only send path (BQ-1), bounded (C-2.18). A refusal is logged
         by the event and the account; `KILL` is a defect and is never sent (BQ-13)."""
         if event == "KILL":
             raise AssertionError("KILL is never sent to B19 (BQ-13)")
         async with asyncio.timeout(SEND_TIMEOUT_S):
-            receipt = await self._gateway.send(job.key, {"type": event, **payload}, wait=True)
+            receipt = await self._gateway.send(
+                job.key, {"type": event, **payload}, wait=_AWAIT_STEP
+            )
         if receipt_is_conclusive(receipt) and getattr(receipt, "error", None) is not None:
             _log().error("reconcile_send_refused", account_id=str(job.account), sent=event)
 
@@ -504,7 +510,7 @@ class ReconcileJobs:
         try:
             try:
                 if leaf_of(interp) in ("fetching", "backing_off"):
-                    await self._send(job, "CANCEL", {})
+                    await self._send_job(job, "CANCEL", {})
                 await self._quiesced(interp)
             finally:
                 self._gateway.unregister(job.key)
