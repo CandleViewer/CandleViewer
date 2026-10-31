@@ -242,6 +242,7 @@ CITE_TEXT: dict[str, str] = {
     '23:770': '- **What the topic carries.** Only bars built from the recor',
     '23:774': '- **`include_delta`.** It defaults to false, unlike REST `/m',
     '26:744': '| B1 | 100k candles, continuous pan at 1000 px/s | ≤ 12 ms |',
+    '26:748': '| B5 | Combined: candles + footprint + heatmap + 3 indicator',
     '26:752': '| B9 | Cold init to first frame with 100k bars | ≤ 900 ms | ',
     '26:753': '| B10 | Memory soak: 30 min live feed | peak ≤ 600 MB | no m',
     '30:114': '| **E12** | Bar builders & series rendering (time/tick/volum',
@@ -272,19 +273,26 @@ CITE_TEXT: dict[str, str] = {
     'D02:479-494': '| OQ-1 | G-1a: sub-minute (1–30 s), non-whole-minute (90 s) ',
     'D03:182-231': '## 5. Copy deck (exact strings; `{...}` is data)',
     'D03:209': '| C-24 | Mode row reason | Needs recorded prints: none yet |',
+    'D03:210': '| C-25 | Volume and Delta reason | Lot size not known yet | ',
     'D03:29': '| V-3 | AC 2 and `14`: the words "Needs recorded ticks" | "N',
     'D03:444': '| `chart.interval_favourites_saved` (proposed) | `slots_chan',
     'D03:462-480': '| CR-1 | G-1b: a custom whole-minute interval and the Recent',
     'D03:475': '| X-1 | E09-D09 applies "`recording:write` is owner-only" ov',
+    'D03:479': '| X-5 | E09-D09 §3.1 registers only E30-D02 §14 and E17-D01 ',
+    'D03:50': '| D3-5 | **Greyed is tone, glyph and words, never lost contr',
     'D03:52': '| D3-7 | **Recording route.** SCR-042 holds no record action',
+    'D03:54': '| D3-9 | **Favourites** persist per user (G-3); slot N is di',
     'D03:60-85': '## 2. Per-mode specification (AC 1; the design source for CM',
     'D03:81-83': '- **Only canonical values leave the client:** whole digits, ',
+    'D04:123': 'A non-time slot keeps its literal parameter (D3-9). While ET',
+    'D04:141': '| `Enter` on a slot unavailable for the active symbol | stri',
     'D04:260': '| Every role | changes symbol, interval and mode for its own',
     'D04:260-263': '| Every role | changes symbol, interval and mode for its own',
     'D04:261': '| Owner | "Record this symbol..." opens M-023 (E08-D05:199),',
     'D04:261-263': '| Owner | "Record this symbol..." opens M-023 (E08-D05:199),',
     'D04:368': '| `chart.bar_mode_fallback` (proposed) | `from_bar_type, to,',
     'D04:564-566': '- **D04-G1** The favourites and recents stores (§3.3): PROPO',
+    'D04:97': "CMP-017 popover with CMP-219's trigger (E08-D05:29), the CMP",
     'D04:99-372': '## 3. The strip: parity with SCR-042 (RULED BQ-6)',
     'D05:291-293': '| Owner, Manager | full (`SEED`:210–211, :233, :235) |',
     'D05:292-293': "| Viewer (`SEED`:251–252) | E11-D09 C-14's PROPOSED treatmen",
@@ -1869,7 +1877,7 @@ ROLE_FROZEN: tuple[tuple[str, ...], ...] = (
     (
         "R-06",
         "`Cancel` a build (SCR-030 strip)",
-        "the rebuild registry's owner check",
+        "the rebuild registry's owner check; no route exists in `22` yet (D08-G1)",
         "enabled, any build",
         "own build only",
         "own build only",
@@ -1909,6 +1917,50 @@ ROLE_FROZEN: tuple[tuple[str, ...], ...] = (
         "T2 (W-26; PROPOSED, `D05`)",
         '`rbac.permission` · "change settings" · "Your role can\'t change settings."; W-26 (viewing as) · CMP-079 RbacGate, CMP-019 `lock`',
         "`D05`:292-293; `E09D09`:89, :115",
+    ),
+    (
+        "R-10",
+        "a mode row with no recorded prints (SCR-042, SCR-031)",
+        "none: a client-known state",
+        "T2 (state)",
+        "T2 (state)",
+        "T2 (state)",
+        "T2 (state)",
+        '`barmode.no_prints` (PROPOSED; owner: E12-D03 (#201), `D03`:479) · C-24 "Needs recorded prints: none yet" · CMP-079 RbacGate, CMP-019 `lock`',
+        "`D03`:50, :209, :479",
+    ),
+    (
+        "R-11",
+        "Volume and Delta with the lot size unknown (SCR-042, SCR-031)",
+        "none: a client-known state",
+        "T2 (state)",
+        "T2 (state)",
+        "T2 (state)",
+        "T2 (state)",
+        '`barmode.lot_unknown` (PROPOSED; owner: E12-D03 (#201), `D03`:479) · C-25 "Lot size not known yet" · CMP-079 RbacGate, CMP-019 `lock`',
+        "`D03`:50, :210, :479",
+    ),
+    (
+        "R-12",
+        "a favourite slot unavailable for the active symbol (SCR-041 strip)",
+        "none: a client-known state",
+        "T2 (state)",
+        "T2 (state)",
+        "T2 (state)",
+        "T2 (state)",
+        "`barmode.no_prints` or `barmode.lot_unknown` (PROPOSED; owner: E12-D03 (#201), `D03`:479) · C-24 or C-25 · CMP-079 RbacGate, CMP-019 `lock`",
+        "`D04`:97, :123, :141; `D03`:479",
+    ),
+    (
+        "R-13",
+        '"Edit favourites..." (SCR-042)',
+        "`settings:write`",
+        "enabled",
+        "enabled",
+        "T2",
+        "not stated",
+        '`rbac.permission` · "change settings" · "Your role can\'t change settings." · CMP-079 RbacGate, CMP-019 `lock`',
+        "`D03`:54; `E09D09`:89, :115",
     ),
 )
 
@@ -1982,6 +2034,17 @@ def g_t2(t: Texts) -> list[Finding]:
     for r in role_rows(t.spec):
         if len(r) < 9 or not any(re.search(r"\bT2\b|sentence", c) for c in r[3:7]):
             continue
+        state = re.match(r"`(barmode\.[a-z_]+)`", r[7])
+        if state:
+            if "(PROPOSED; owner: E12-D03 (#201)" not in r[7] or not re.search(
+                r"\bC-2[45]\b", r[7]
+            ):
+                bad.append(
+                    f"{r[0]}: a state T2 key must be PROPOSED with its owner and its C-n reason"
+                )
+            if "CMP-079 RbacGate, CMP-019 `lock`" not in r[7]:
+                bad.append(f"{r[0]}: a T2 row without CMP-079 RbacGate and the CMP-019 `lock`")
+            continue
         key = re.match(r"`(rbac\.[a-z_]+)` · ", r[7])
         if not key or key[1] not in keys:
             bad.append(f"{r[0]}: a T2 row without an E09-D09 §3.1 key")
@@ -1994,6 +2057,8 @@ def g_t2(t: Texts) -> list[Finding]:
             bad.append(f"{r[0]}: only `rbac.view_as` takes no verb")
         if "CMP-079 RbacGate" not in r[7]:
             bad.append(f"{r[0]}: a T2 row without CMP-079 RbacGate")
+        elif "sentence" not in " ".join(r[3:7]) and "CMP-019 `lock`" not in r[7]:
+            bad.append(f"{r[0]}: a T2 row without the CMP-019 `lock`")
     cmp = {r[0] for r in table_after(own_section(t.spec, "## 3. "), "CMP")}
     for c in ("CMP-079", "CMP-019"):
         if c not in cmp:
