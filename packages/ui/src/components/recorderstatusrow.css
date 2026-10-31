@@ -1,0 +1,152 @@
+/*
+ * CMP-177 RecorderStatusRow (E16-D02 §4, §10.4, §10.5, §11.1); tokens only. The table variant's cells sit in CMP-049's
+ * grid; the standalone row (SCR-103) is a card. State words stay text.primary: the tone is the icon's (§10.4 finding 1).
+ */
+.cv-rsr {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-stack-sm);
+  padding: var(--space-inset-md);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+/* Stale (no `recorder` frame for 2 s, §3.1): the sunken background, the words, icon and "stale" tag kept; the grid
+   row's out-specifies CMP-049's zebra and hover. */
+.cv-rsr[data-stale],
+tr.cv-rsr-row[data-stale] {
+  background: var(--color-surface-sunken);
+}
+
+.cv-rsr__title,
+.cv-rsr__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inset-sm);
+}
+
+.cv-rsr__symbol {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+}
+
+.cv-rsr__words {
+  color: var(--color-text-primary);
+}
+
+/* The icon's shape and tone (§11.1): a dot, a triangle, an octagon or an info circle beside the words. */
+.cv-rsr__icon {
+  display: inline-flex;
+  margin-inline-end: var(--space-inset-xs);
+  vertical-align: middle;
+}
+
+.cv-rsr__icon[data-tone="warning"] {
+  color: var(--color-status-warning-strong);
+}
+
+.cv-rsr__icon[data-tone="danger"] {
+  color: var(--color-status-danger-default);
+}
+
+.cv-rsr__icon[data-tone="info"] {
+  color: var(--color-status-info-strong);
+}
+
+.cv-rsr__icon .cv-badge[data-tone] {
+  --cv-badge-dot: var(--color-status-success-strong);
+}
+
+/* On the sunken stale background the dot is success.default (§10.4 finding 5). */
+[data-stale] .cv-rsr__icon .cv-badge[data-tone] {
+  --cv-badge-dot: var(--color-status-success-default);
+}
+
+.cv-rsr__state > .cv-tag {
+  margin-inline-start: var(--space-inset-xs);
+  vertical-align: middle;
+}
+
+.cv-rsr__num,
+.cv-rsr__meta {
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-rsr__meta,
+.cv-rsr__why {
+  margin: 0;
+}
+
+.cv-rsr__meta {
+  color: var(--color-text-secondary);
+}
+
+/* A T2 reason inline (2a) and the read-only notice (§10.5): text.secondary; an empty line takes no room. */
+.cv-rsr__reason {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-rsr__reason:empty {
+  display: none;
+}
+
+.cv-rsr__gated {
+  display: inline-grid;
+  justify-items: start;
+  gap: var(--space-stack-xs);
+}
+
+/* T2 (§10.5, E09-D09 §2.2): the raised fill with a border.default hairline; label and lock tertiary, never dimmed. */
+.cv-rsr__action.cv-button[aria-disabled="true"] {
+  background: var(--color-surface-raised);
+  border-color: var(--color-border-default);
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.cv-rsr__lock {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  color: var(--color-text-tertiary);
+}
+
+.cv-rsr__keep[data-gated] .cv-choice__label {
+  color: var(--color-text-tertiary);
+}
+
+@media (forced-colors: active) {
+  .cv-rsr {
+    border-color: CanvasText;
+  }
+
+  /* Every carrier is a word, a border or a glyph (D02 §1): words and glyphs CanvasText. */
+  .cv-rsr__words,
+  .cv-rsr__icon[data-tone],
+  .cv-rsr__lock,
+  .cv-rsr__reason,
+  .cv-rsr__meta,
+  .cv-rsr__keep[data-gated] .cv-choice__label {
+    color: CanvasText;
+  }
+
+  .cv-rsr__action.cv-button[aria-disabled="true"] {
+    border-color: GrayText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+}
