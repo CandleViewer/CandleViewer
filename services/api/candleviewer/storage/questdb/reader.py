@@ -165,6 +165,23 @@ def build_read_heatmap_trail(sym: str, since_ts_us: int) -> QueryBuilder:
     return QueryBuilder(sql, (sym, ts_param(since_ts_us)))
 
 
+def build_read_heatmap_cells(sym: str, rng: TimeRange) -> QueryBuilder:
+    """E21-T03 (#606) recorded heatmap read: the stored native columns of `sym` in `rng`,
+    ts-ordered: the level, its two sizes and the column's own `samples` and `estimated` (NULL
+    on rows recorded before E21-T02, 21 Sec.4.12)."""
+    sql = (
+        "SELECT ts, price, bid_size, ask_size, samples, estimated FROM heatmap_cells "
+        "WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
+    )
+    return _checked(sql, (sym, ts_param(rng.start_us), ts_param(rng.end_us)))
+
+
+def build_first_heatmap_cell(sym: str) -> QueryBuilder:
+    """Oldest stored `heatmap_cells` row of `sym` (one row; designated-timestamp ordered): the
+    hot half of `first_available` (E21-T03)."""
+    return _checked("SELECT ts FROM heatmap_cells WHERE symbol = $1 ORDER BY ts LIMIT 1", (sym,))
+
+
 def build_read_book_snapshot_at(sym: str, ts_us: int) -> QueryBuilder:
     """Shape #7 (replay seek), snapshot half: nearest snapshot at/before
     `ts_us`."""
