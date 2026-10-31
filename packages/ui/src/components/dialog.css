@@ -127,7 +127,13 @@
 
 /* 200 % zoom on the 1280 x 800 frame: the card fills the viewport; the header and footer stay, the body scrolls. */
 @media (max-width: 40rem), (max-height: 25rem) {
+  /*
+   * The layer's row is auto-height, so `max-height: 100%` on the card never resolved and a tall card overflowed
+   * the viewport with its footer unreachable. A `minmax(0, 1fr)` row is as tall as the layer's content box (its
+   * insets and padding already taken off), so the percentage resolves against that and the body scrolls.
+   */
   .cv-dialog-layer {
+    grid-template-rows: minmax(0, 1fr);
     padding: var(--space-inset-sm);
   }
 
