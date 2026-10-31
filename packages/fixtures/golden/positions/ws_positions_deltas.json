@@ -1,0 +1,63 @@
+[
+  {
+    "case": "update",
+    "body": {
+      "positions": [
+        {
+          "id": "0d000000-0000-4000-8000-000000000001",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+          "symbol": "BTCUSDT",
+          "side": "long",
+          "position_idx": 0,
+          "size": "0.25",
+          "liq_price": "57901.9",
+          "bust_price": null,
+          "take_profit": null,
+          "stop_loss": "63880",
+          "environment": "live",
+          "is_paper": false,
+          "updated_at_ms": 1793455332000,
+          "avg_price": "63980",
+          "mark_price": "64112",
+          "leverage": "10",
+          "unrealised_pnl": "33"
+        }
+      ]
+    }
+  },
+  {
+    "case": "late",
+    "body": {
+      "positions": [
+        {
+          "id": "0d000000-0000-4000-8000-000000000003",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000002",
+          "symbol": "ETHUSDT",
+          "side": "short",
+          "position_idx": 0,
+          "size": "1.5",
+          "liq_price": "2591.6",
+          "bust_price": null,
+          "take_profit": null,
+          "stop_loss": "2575",
+          "environment": "live",
+          "is_paper": false,
+          "updated_at_ms": 1793455330000,
+          "avg_price": "2480",
+          "mark_price": "2500",
+          "leverage": "20",
+          "unrealised_pnl": "-30"
+        }
+      ]
+    }
+  },
+  {
+    "case": "flat",
+    "body": {
+      "positions": [],
+      "removed": [
+        "0d000000-0000-4000-8000-000000000005"
+      ]
+    }
+  }
+]
