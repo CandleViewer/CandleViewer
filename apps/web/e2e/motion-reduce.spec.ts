@@ -110,7 +110,8 @@ test.describe("OS asks for reduced motion", () => {
     await openTerminal(page);
     await expect(page.getByTestId("toast-host")).toBeAttached();
     await page.keyboard.press("Control+Shift+X"); // an inert chord: the shell explains it in a toast
-    const toast = page.getByTestId("toast-host").locator("p");
+    // SCR-015 renders through ToastRegion (#5215): the stack is the Notifications region, a toast its group.
+    const toast = page.getByRole("region", { name: "Notifications" }).getByRole("group").first();
     await expect(toast).toContainText("Cancel all working orders for symbol is not available");
     const motion = await motionOf(toast);
     expect(motion.animationName).toBe("none");
@@ -136,5 +137,15 @@ test.describe("no reduced-motion request (control)", () => {
     const drawer = await motionOf(panel(page));
     expect(drawer.inline).toContain("transform");
     expect(Math.max(...drawer.durations)).toBeGreaterThan(INSTANT);
+  });
+
+  test("the same toast carries its entry animation", async ({ page }) => {
+    await openTerminal(page);
+    await expect(page.getByTestId("toast-host")).toBeAttached();
+    await page.keyboard.press("Control+Shift+X");
+    const toast = page.getByRole("region", { name: "Notifications" }).getByRole("group").first();
+    await expect(toast).toContainText("Cancel all working orders for symbol is not available");
+    // The toast enters by a CSS animation (the toast-in recipe), not a transition, so its name is the signal.
+    expect((await motionOf(toast)).animationName).not.toBe("none");
   });
 });
