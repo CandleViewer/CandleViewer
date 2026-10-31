@@ -15,6 +15,12 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  componentCss,
+  componentCssFiles,
+  shippedComponentsCss,
+  storybookComponentCss,
+} from "../componentsCss.js";
 
 const UI_ROOT = resolve(import.meta.dirname, "../..");
 const COPY_SCRIPT = join(UI_ROOT, "scripts/copy-css.mjs");
@@ -82,5 +88,19 @@ describe("components.css package export", () => {
     expect(css.indexOf(".cv-focus-ring:focus-visible")).toBeLessThan(css.indexOf(".cv-spinner {"));
     expect(css.indexOf(".cv-spinner {")).toBeLessThan(css.indexOf(".cv-button {"));
     expect(css).toContain(".cv-visually-hidden");
+  });
+});
+
+// Storybook is where the VR baselines are taken, the app imports the shipped components.css: one cascade, so a
+// rule that wins in a story wins in the app (#5146's stale cell lost its colour to table.css in the app alone).
+describe("the Storybook bundle (.storybook/theme-bundles.ts)", () => {
+  it("imports every component CSS file in the order copy-css concatenates them into components.css", () => {
+    const shipped = shippedComponentsCss();
+    const files = componentCssFiles();
+    const order = [...files].sort(
+      (a, b) => shipped.indexOf(componentCss(a)) - shipped.indexOf(componentCss(b)),
+    );
+    expect(storybookComponentCss()).toEqual(order);
+    expect(storybookComponentCss().map(componentCss).join("\n")).toBe(shipped);
   });
 });
