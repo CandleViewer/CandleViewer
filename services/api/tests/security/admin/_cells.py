@@ -182,6 +182,12 @@ GATE_REQUESTS: dict[str, dict[str, Any]] = {
     "POST /admin/audit/export": {
         "json": {"from": "2026-10-01T00:00:00Z", "to": "2026-10-02T00:00:00Z"},
     },
+    # E29-T06 (#914): the resolve checks its key and body before its no-grace `accounts` gate
+    # (22), so a cell sends a valid request; past the gate the CI app has no accounts store (503).
+    "POST /admin/reconciliation/{accountId}/resolve": {
+        "json": {"reason": "E42-X03 RBAC cell"},
+        "headers": {"Idempotency-Key": "00000000-0000-4000-8000-00000000914a"},
+    },
 }
 #: The class a handler-gated cell demands, where its route has several (`setFeatureFlag`).
 GATE_CLASS: dict[str, str] = {"PUT /admin/feature-flags/{flagKey}": "flags"}

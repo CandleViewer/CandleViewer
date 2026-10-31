@@ -733,6 +733,10 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("DELETE", "/exchange-accounts/{accountId}", "accounts"),  # deleteExchangeAccount
     ("DELETE", "/exchange-accounts/{accountId}/keys/{keyId}", "keys"),  # revokeApiKey
     ("DELETE", "/exchange-accounts/{accountId}/keys/{keyId}", "accounts"),  # revokeApiKey
+    # E29-T06 (#914, BQ-7): resolveReconciliation re-opens an account's order entry, so one fresh
+    # `accounts` code bound to the request its handler validated; after RBAC and the body, before
+    # the account's read, as 22 orders it.
+    ("POST", "/admin/reconciliation/{accountId}/resolve", "accounts"),
 )
 
 #: Mounted write routes whose path matches this must be in one of the two

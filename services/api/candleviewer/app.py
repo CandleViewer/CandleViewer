@@ -110,6 +110,7 @@ from candleviewer.api.admin_jobs import LostJobsCount, make_admin_jobs_router
 from candleviewer.api.admin_kek import make_admin_kek_router
 from candleviewer.api.admin_ops import make_admin_incident_ack_router, make_admin_ops_router
 from candleviewer.api.admin_overview import make_admin_overview_router
+from candleviewer.api.admin_reconciliation import make_admin_reconciliation_router
 from candleviewer.api.admin_statecharts import make_statechart_router
 from candleviewer.api.alert_deliveries import make_alert_deliveries_router
 from candleviewer.api.alerts import make_alerts_router
@@ -2751,6 +2752,21 @@ def create_app(
             oms_enabled=feature_flags.oms_enabled,
             metrics=metrics_facade,
             auth=ctx.auth,
+        )
+    )
+    # E29-T06 #914 (22 `reconcileAccount`, `resolveReconciliation`; BQ-7): the Owner's on-demand
+    # pass and the operator's unlock on the audited admin router (`admin:write`), the account read
+    # in the Owner's scope from the M13 store (real backend only; else 503), each call on the OMS
+    # runtime's lane and its record written ahead on this loop; the resolve behind one fresh
+    # `accounts` code bound to its request (`HANDLER_GATED_ROUTES`).
+    app.include_router(
+        make_admin_reconciliation_router(
+            accounts_store,
+            lambda: oms_runtime_of(app.state),
+            environment=resolved.environment.value,
+            auth=ctx.auth,
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
         )
     )
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). #2966: the real
