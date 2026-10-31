@@ -1,10 +1,18 @@
-# promtool test rules for the E08-T06 ingestion alert set and the E16-T09 (#567) recorder set
-# (hand-written; the E04-T05 generator covers system_*.yml only). The recorder cases share this
-# file because the venue-outage case needs both sets, and CI already runs it. Run:
+# promtool test rules for the E08-T06 ingestion alert set and the E16-T09 (#567) recorder set, and
+# (E04-Q02, #257) the near-miss and guard cases of seven rule files no other test loads: auth_csrf,
+# clock_sync, ga_defects, meta, metric_guards, support_bundle, ws_origin (hand-written; the E04-T05 generator covers
+# system_*.yml only). The recorder cases share this file because the venue-outage case needs both sets, and CI already runs it. Run:
 #   promtool test rules infra/prometheus/tests/ingestion_alerts.test.yml
 rule_files:
   - ../alerts/ingestion.yml
   - ../alerts/recorder.yml
+  - ../alerts/auth_csrf.yml
+  - ../alerts/clock_sync.yml
+  - ../alerts/ga_defects.yml
+  - ../alerts/meta.yml
+  - ../alerts/metric_guards.yml
+  - ../alerts/support_bundle.yml
+  - ../alerts/ws_origin.yml
 evaluation_interval: 1m
 tests:
   - interval: 1m
@@ -336,3 +344,1094 @@ tests:
               runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderanchorskipped"
               summary: "Book seek anchors keep being skipped for reason no_book."
               tracker: "#2223"
+  # === BQ-05 near-miss cases for the seven rule files no promtool test loaded (E04-Q02, #257) ===
+  # Counter alerts: the series steps once; `increase` over a window of 1 m samples is exactly the step
+  # (no extrapolation), so a step AT the threshold stays silent and one above it fires. Guard
+  # alerts: no series at all for `for`, then the guard fires.
+  # --- CsrfRefusalsHigh: 20 refusals in the 10 m window is not above the line (`> 20`).
+  - interval: 1m
+    input_series:
+      - series: 'auth_csrf_refused_total{env="demo",reason="origin_mismatch"}'
+        values: "0+0x14 20+0x25"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CsrfRefusalsHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: CsrfRefusalsHigh
+        exp_alerts: []
+  # CsrfRefusalsHigh: 21 refusals fire after `for: 5m` (true from 15 m: pending at 19 m, firing at 20 m).
+  - interval: 1m
+    input_series:
+      - series: 'auth_csrf_refused_total{env="demo",reason="origin_mismatch"}'
+        values: "0+0x14 21+0x25"
+    alert_rule_test:
+      - eval_time: 19m
+        alertname: CsrfRefusalsHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: CsrfRefusalsHigh
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "auth"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh"
+              summary: "State-changing requests refused by the SR-041 CSRF guard"
+              description: "More than 20 CSRF refusals in 10 minutes. Check auth.csrf_refused audit rows by reason and source IP; see docs/ops/runbooks/auth-rbac.md (CSRF)."
+  # --- CsrfRefusalAuditUnavailable: no increase stays silent; the audit reasons that do not match stay silent.
+  - interval: 1m
+    input_series:
+      - series: 'auth_csrf_refused_total{env="demo",reason="audit_unavailable"}'
+        values: "0+0x40"
+      - series: 'auth_csrf_refused_total{env="demo",reason="audit_slow"}'
+        values: "0+0x14 5+0x25"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CsrfRefusalAuditUnavailable
+        exp_alerts: []
+  # CsrfRefusalAuditUnavailable: a single refusal that could not be audited fires on the first evaluation (no `for`).
+  - interval: 1m
+    input_series:
+      - series: 'auth_csrf_refused_total{env="demo",reason="audit_unavailable"}'
+        values: "0+0x14 1+0x25"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: CsrfRefusalAuditUnavailable
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: CsrfRefusalAuditUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "auth"
+              env: "demo"
+              reason: "audit_unavailable"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh"
+              summary: "CSRF refusals could not be audited (C-2.9)"
+              description: "The guard refused requests but an auth.csrf_refused audit write failed: at once, after the guard stopped waiting for it (2 s), or it was still running at shutdown. Requests stayed refused; the audit trail has gaps. Check the audit WAL."
+  # --- CsrfRefusalAuditDegraded: flat audit_slow and audit_saturated counters stay silent.
+  - interval: 1m
+    input_series:
+      - series: 'auth_csrf_refused_total{env="demo",reason="audit_slow"}'
+        values: "0+0x40"
+      - series: 'auth_csrf_refused_total{env="demo",reason="audit_saturated"}'
+        values: "0+0x40"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CsrfRefusalAuditDegraded
+        exp_alerts: []
+  # CsrfRefusalAuditDegraded: one slow audit write fires on the first evaluation, grouped by env.
+  - interval: 1m
+    input_series:
+      - series: 'auth_csrf_refused_total{env="demo",reason="audit_slow"}'
+        values: "0+0x14 1+0x25"
+      - series: 'auth_csrf_refused_total{env="demo",reason="audit_saturated"}'
+        values: "0+0x40"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: CsrfRefusalAuditDegraded
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: CsrfRefusalAuditDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "auth"
+              env: "demo"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh"
+              summary: "CSRF refusal audit writes are slow or backed up (C-2.9)"
+              description: "A refusal's audit write took over 2 s (audit_slow; it may still land) or 64 were already in flight so it was not attempted (audit_saturated). Both mean the audit WAL is stalled, which delays every other audited action. Requests stayed refused. Check disk latency and the audit WAL."
+  # --- BybitClockDriftWarning: 500 ms is not above the line (`> 500`), even for hours.
+  - interval: 1m
+    input_series:
+      - series: 'exchange_clock_drift_ms{env="demo"}'
+        values: "500+0x30"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: BybitClockDriftWarning
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: BybitClockDriftWarning
+        exp_alerts: []
+  # BybitClockDriftWarning: 501 ms fires after `for: 2m` (pending at 1 m, firing at 2 m).
+  - interval: 1m
+    input_series:
+      - series: 'exchange_clock_drift_ms{env="demo"}'
+        values: "501+0x30"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: BybitClockDriftWarning
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: BybitClockDriftWarning
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "clock"
+              env: "demo"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-bybitclockdriftwarning"
+              summary: "Bybit clock offset drift is warning-level (501 ms)"
+              description: 'The measured offset to Bybit server time has exceeded 500 ms (E08-S07 acceptance criterion "Drift alarm"). Trading is not blocked yet. See docs/plan/runbooks/clock-sync.md.'
+      - eval_time: 10m
+        alertname: BybitClockDriftWarning
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "clock"
+              env: "demo"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-bybitclockdriftwarning"
+              summary: "Bybit clock offset drift is warning-level (501 ms)"
+              description: 'The measured offset to Bybit server time has exceeded 500 ms (E08-S07 acceptance criterion "Drift alarm"). Trading is not blocked yet. See docs/plan/runbooks/clock-sync.md.'
+  # BybitClockDriftWarning upper edge: 2000 ms is still warning-level (`<= 2000`) ...
+  - interval: 1m
+    input_series:
+      - series: 'exchange_clock_drift_ms{env="demo"}'
+        values: "2000+0x30"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: BybitClockDriftWarning
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "clock"
+              env: "demo"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-bybitclockdriftwarning"
+              summary: "Bybit clock offset drift is warning-level (2000 ms)"
+              description: 'The measured offset to Bybit server time has exceeded 500 ms (E08-S07 acceptance criterion "Drift alarm"). Trading is not blocked yet. See docs/plan/runbooks/clock-sync.md.'
+  # ... and 2001 ms is the critical band, so the warning goes silent.
+  - interval: 1m
+    input_series:
+      - series: 'exchange_clock_drift_ms{env="demo"}'
+        values: "2001+0x30"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: BybitClockDriftWarning
+        exp_alerts: []
+  # --- BybitClockDriftCritical: 2000 ms is not above the line (`> 2000`).
+  - interval: 1m
+    input_series:
+      - series: 'exchange_clock_drift_ms{env="demo"}'
+        values: "2000+0x30"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: BybitClockDriftCritical
+        exp_alerts: []
+  # BybitClockDriftCritical: 2001 ms pages after `for: 1m` (pending at 0 m, firing at 1 m); a negative offset counts by magnitude.
+  - interval: 1m
+    input_series:
+      - series: 'exchange_clock_drift_ms{env="demo"}'
+        values: "-2001+0x30"
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: BybitClockDriftCritical
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: BybitClockDriftCritical
+        exp_alerts:
+          - exp_labels:
+              severity: "page"
+              component: "clock"
+              env: "demo"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-bybitclockdriftcritical"
+              summary: "Bybit clock offset drift is critical (2001 ms)"
+              description: "The measured offset exceeds the hard threshold (2000 ms, recv_window/2 per docs/plan/24-internal-schemas.md §14.3). assert_healthy() now raises ClockDriftError; E29 must refuse to place orders. See docs/plan/runbooks/clock-sync.md."
+  # --- BybitClockOffsetStale: an offset 900 s old is not above the line (`> 900`).
+  - interval: 1m
+    input_series:
+      - series: 'clock_offset_age_seconds{env="demo"}'
+        values: "900+0x30"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: BybitClockOffsetStale
+        exp_alerts: []
+  # BybitClockOffsetStale: 901 s fires after `for: 1m`.
+  - interval: 1m
+    input_series:
+      - series: 'clock_offset_age_seconds{env="demo"}'
+        values: "901+0x30"
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: BybitClockOffsetStale
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: BybitClockOffsetStale
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "clock"
+              env: "demo"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-bybitclockoffsetstale"
+              summary: "Clock offset has not been re-measured in over 15 minutes"
+              description: 'The last known offset is still being applied per the "Exchange time endpoint unavailable" scenario, but its age must be investigated — GET /v5/market/time may be failing repeatedly. See docs/plan/runbooks/clock-sync.md.'
+  # --- GADefectArrivalExceedsClosure: arrivals equal to closures (5 and 5) are not above the line. The push-time
+  #   guard reads `time()` against a push at 0 s, so it holds until 7200 s (120 m).
+  - interval: 1m
+    input_series:
+      - series: "ga_defects_arrived_7d"
+        values: "5+0x110"
+      - series: "ga_defects_closed_7d"
+        values: "5+0x110"
+      - series: 'push_time_seconds{job="ga_defects"}'
+        values: "0+0x110"
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: GADefectArrivalExceedsClosure
+        exp_alerts: []
+  # GADefectArrivalExceedsClosure: 6 arrivals against 5 closures fire after `for: 1h` (pending at 59 m, firing at 60 m);
+  #   with no ga_defects_open_by_component series the topk range renders empty.
+  - interval: 1m
+    input_series:
+      - series: "ga_defects_arrived_7d"
+        values: "6+0x110"
+      - series: "ga_defects_closed_7d"
+        values: "5+0x110"
+      - series: 'push_time_seconds{job="ga_defects"}'
+        values: "0+0x110"
+    alert_rule_test:
+      - eval_time: 59m
+        alertname: GADefectArrivalExceedsClosure
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: GADefectArrivalExceedsClosure
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "release"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-gadefectarrivalexceedsclosure"
+              summary: "Defect arrivals exceed closures over 7 days (6 arrived)"
+              description: "The 7-day arrival rate is above the 7-day closure rate, so the open curve cannot converge. Top components by open defects: . Walk the By-component view in the triage ritual (docs/plan/backlog/artifacts/e49-triage-ritual.md)."
+  # --- GADefectSLABreached: no P0/P1 defect in sla-breached (0) is silent.
+  - interval: 1m
+    input_series:
+      - series: 'ga_defects_sla_state{state="sla-breached",severity="P1"}'
+        values: "0+0x110"
+      - series: 'push_time_seconds{job="ga_defects"}'
+        values: "0+0x110"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: GADefectSLABreached
+        exp_alerts: []
+  # GADefectSLABreached: one P1 defect in sla-breached fires after `for: 5m` (pending at 4 m, firing at 5 m).
+  - interval: 1m
+    input_series:
+      - series: 'ga_defects_sla_state{state="sla-breached",severity="P1"}'
+        values: "1+0x110"
+      - series: 'push_time_seconds{job="ga_defects"}'
+        values: "0+0x110"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: GADefectSLABreached
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: GADefectSLABreached
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "release"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-gadefectslabreached"
+              summary: "1 P0/P1 defect(s) have breached their triage SLA"
+              description: "At least one untriaged P0/P1 bug is past its business-time SLA window. Triage it now per docs/plan/backlog/artifacts/e49-triage-ritual.md."
+  # --- Watchdog (meta.yml): always firing from the first evaluation (`vector(1)`, `for: 0m`).
+  - interval: 1m
+    input_series:
+      - series: 'up{job="dummy"}'
+        values: "1+0x10"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels:
+              severity: "none"
+              component: "alerting"
+            exp_annotations:
+              summary: "Always-firing deadman switch; its absence means the pipeline is dead"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-watchdog"
+      - eval_time: 5m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels:
+              severity: "none"
+              component: "alerting"
+            exp_annotations:
+              summary: "Always-firing deadman switch; its absence means the pipeline is dead"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-watchdog"
+  # --- SupportBundleSecretDetected: clean bundles (result="ok" steps) do not fire; secret_detected stays flat.
+  - interval: 1m
+    input_series:
+      - series: 'support_bundle_generations_total{result="secret_detected"}'
+        values: "0+0x40"
+      - series: 'support_bundle_generations_total{result="ok"}'
+        values: "0+3x40"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SupportBundleSecretDetected
+        exp_alerts: []
+  # SupportBundleSecretDetected: a single secret_detected generation fires on the first evaluation (no `for`).
+  - interval: 1m
+    input_series:
+      - series: 'support_bundle_generations_total{result="secret_detected"}'
+        values: "0+0x14 1+0x25"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: SupportBundleSecretDetected
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: SupportBundleSecretDetected
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "secrets"
+              result: "secret_detected"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-supportbundlesecretdetected"
+              summary: "Support bundle generation aborted: secret detected"
+              description: "The bundle scan found secret-shaped content and failed closed. The redaction filter missed it at the source; find and fix the leak. See docs/plan/04-security-program.md SR-124."
+  # --- WsOriginRefusalsHigh: 20 refused upgrades in the 10 m window is not above the line; other close reasons
+  #   do not count.
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_closes_total{env="demo",reason="origin_forbidden"}'
+        values: "0+0x14 20+0x25"
+      - series: 'cv_ws_closes_total{env="demo",reason="normal"}'
+        values: "0+50x40"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: WsOriginRefusalsHigh
+        exp_alerts: []
+  # WsOriginRefusalsHigh: 21 refused upgrades fire after `for: 5m` (pending at 19 m, firing at 20 m).
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_closes_total{env="demo",reason="origin_forbidden"}'
+        values: "0+0x14 21+0x25"
+    alert_rule_test:
+      - eval_time: 19m
+        alertname: WsOriginRefusalsHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: WsOriginRefusalsHigh
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "auth"
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-wsoriginrefusalshigh"
+              summary: "WebSocket upgrades refused by the SR-042 Origin check"
+              description: "More than 20 WS upgrades refused in 10 minutes. Group the `ws upgrade refused` warnings by `check` and `source_ip`; see 23-ws-protocol.md section 2.5."
+  # --- metric_guards.yml: all 41 `absent()` guards. No series of any guarded metric for the `for: 15m`: every
+  #   guard is pending at 14 m and fires at 15 m. (The dummy series only gives the case an input.)
+  - interval: 1m
+    input_series:
+      - series: 'up{job="dummy"}'
+        values: "1+0x20"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingNakedPositionAlertsTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingNakedPositionAlertsTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric naked_position_alerts_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingOmsUnknownOrders
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingOmsUnknownOrders
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric oms_unknown_orders is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingOmsPositionReadingOwedAgeSeconds
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingOmsPositionReadingOwedAgeSeconds
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric oms_position_reading_owed_age_seconds is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvKekDegradedState
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvKekDegradedState
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_kek_degraded_state is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvAuditSigningKeyUnavailableState
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvAuditSigningKeyUnavailableState
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_audit_signing_key_unavailable_state is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvAuditSigningKeyBootFailuresTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvAuditSigningKeyBootFailuresTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_audit_signing_key_boot_failures_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvKeysFailingPolicy
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvKeysFailingPolicy
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_keys_failing_policy is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvKeySelfcheckLatchState
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvKeySelfcheckLatchState
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_key_selfcheck_latch_state is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvKeySelfcheckMissedRunsTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvKeySelfcheckMissedRunsTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_key_selfcheck_missed_runs_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingNetBindingSafe
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingNetBindingSafe
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric net_binding_safe is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthRecoveryCodesUsedTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthRecoveryCodesUsedTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric auth_recovery_codes_used_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthDisabledUserSessionsRevokedTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthDisabledUserSessionsRevokedTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric auth_disabled_user_sessions_revoked_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthRevocationLatencySecondsBucket
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthRevocationLatencySecondsBucket
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric auth_revocation_latency_seconds_bucket is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingWsSessionRevocationCloseFailuresTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingWsSessionRevocationCloseFailuresTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric ws_session_revocation_close_failures_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvAuditVerifyLastOkTimestampSeconds
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvAuditVerifyLastOkTimestampSeconds
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_audit_verify_last_ok_timestamp_seconds is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthBreakGlassUnresolvedEvents
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthBreakGlassUnresolvedEvents
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric auth_break_glass_unresolved_events is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthBreakGlassAttempts
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthBreakGlassAttempts
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric auth_break_glass_attempts is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthOwnerBootstraps
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthOwnerBootstraps
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric auth_owner_bootstraps is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingPgUp
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingPgUp
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric pg_up is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingBybitClockDriftMs
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingBybitClockDriftMs
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric bybit_clock_drift_ms is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingDiskUsedRatio
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingDiskUsedRatio
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric disk_used_ratio is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuditChainVerificationFailuresTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuditChainVerificationFailuresTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric audit_chain_verification_failures_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthAuditOutcomeLostTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthAuditOutcomeLostTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric auth_audit_outcome_lost_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingWsConnectionState
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingWsConnectionState
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric ws_connection_state is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingBookResyncTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingBookResyncTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric book_resync_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingEventLoopLagSecondsBucket
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingEventLoopLagSecondsBucket
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric event_loop_lag_seconds_bucket is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingRuleAutodisarmTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingRuleAutodisarmTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric rule_autodisarm_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingEnvMismatchAttemptsTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingEnvMismatchAttemptsTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric env_mismatch_attempts_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCredentialExpiryDays
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCredentialExpiryDays
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric credential_expiry_days is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthLoginFailuresTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthLoginFailuresTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric auth_login_failures_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthLockoutsTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthLockoutsTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric auth_lockouts_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthLoginFailureFloorMissedTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthLoginFailureFloorMissedTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric auth_login_failure_floor_missed_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthLoginVerifyRefusedTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthLoginVerifyRefusedTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric auth_login_verify_refused_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingAuthzDeniedTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingAuthzDeniedTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric authz_denied_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCredentialVerificationFailuresTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCredentialVerificationFailuresTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric credential_verification_failures_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingOmsRateRejectTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingOmsRateRejectTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric oms_rate_reject_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingEgressIpChangesTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingEgressIpChangesTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric egress_ip_changes_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvUserLifecycleStepsTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvUserLifecycleStepsTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_user_lifecycle_steps_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvAccountHealthState
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvAccountHealthState
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_account_health_state is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvAccountHealthTransitionsTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvAccountHealthTransitionsTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_account_health_transitions_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvKeyRotationNoticesTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvKeyRotationNoticesTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_key_rotation_notices_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+  # metric_guards.yml: every guarded metric present (any value): no guard fires after 20 m.
+  - interval: 1m
+    input_series:
+      - series: 'naked_position_alerts_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'oms_unknown_orders{env="demo"}'
+        values: "1+0x25"
+      - series: 'oms_position_reading_owed_age_seconds{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_kek_degraded_state{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_audit_signing_key_unavailable_state{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_audit_signing_key_boot_failures_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_keys_failing_policy{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_key_selfcheck_latch_state{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_key_selfcheck_missed_runs_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'net_binding_safe{env="demo"}'
+        values: "1+0x25"
+      - series: 'auth_recovery_codes_used_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'auth_disabled_user_sessions_revoked_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'auth_revocation_latency_seconds_bucket{env="demo"}'
+        values: "1+0x25"
+      - series: 'ws_session_revocation_close_failures_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_audit_verify_last_ok_timestamp_seconds{env="demo"}'
+        values: "1+0x25"
+      - series: 'auth_break_glass_unresolved_events{env="demo"}'
+        values: "1+0x25"
+      - series: 'auth_break_glass_attempts{env="demo"}'
+        values: "1+0x25"
+      - series: 'auth_owner_bootstraps{env="demo"}'
+        values: "1+0x25"
+      - series: 'pg_up{env="demo"}'
+        values: "1+0x25"
+      - series: 'bybit_clock_drift_ms{env="demo"}'
+        values: "1+0x25"
+      - series: 'disk_used_ratio{env="demo"}'
+        values: "1+0x25"
+      - series: 'audit_chain_verification_failures_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'auth_audit_outcome_lost_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'ws_connection_state{env="demo"}'
+        values: "1+0x25"
+      - series: 'book_resync_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'event_loop_lag_seconds_bucket{env="demo"}'
+        values: "1+0x25"
+      - series: 'rule_autodisarm_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'env_mismatch_attempts_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'credential_expiry_days{env="demo"}'
+        values: "1+0x25"
+      - series: 'auth_login_failures_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'auth_lockouts_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'auth_login_failure_floor_missed_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'auth_login_verify_refused_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'authz_denied_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'credential_verification_failures_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'oms_rate_reject_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'egress_ip_changes_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_user_lifecycle_steps_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_account_health_state{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_account_health_transitions_total{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_key_rotation_notices_total{env="demo"}'
+        values: "1+0x25"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingNakedPositionAlertsTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingOmsUnknownOrders
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingOmsPositionReadingOwedAgeSeconds
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvKekDegradedState
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvAuditSigningKeyUnavailableState
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvAuditSigningKeyBootFailuresTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvKeysFailingPolicy
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvKeySelfcheckLatchState
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvKeySelfcheckMissedRunsTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingNetBindingSafe
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthRecoveryCodesUsedTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthDisabledUserSessionsRevokedTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthRevocationLatencySecondsBucket
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingWsSessionRevocationCloseFailuresTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvAuditVerifyLastOkTimestampSeconds
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthBreakGlassUnresolvedEvents
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthBreakGlassAttempts
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthOwnerBootstraps
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingPgUp
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingBybitClockDriftMs
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingDiskUsedRatio
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuditChainVerificationFailuresTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthAuditOutcomeLostTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingWsConnectionState
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingBookResyncTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingEventLoopLagSecondsBucket
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingRuleAutodisarmTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingEnvMismatchAttemptsTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCredentialExpiryDays
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthLoginFailuresTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthLockoutsTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthLoginFailureFloorMissedTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthLoginVerifyRefusedTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingAuthzDeniedTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCredentialVerificationFailuresTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingOmsRateRejectTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingEgressIpChangesTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvUserLifecycleStepsTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvAccountHealthState
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvAccountHealthTransitionsTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvKeyRotationNoticesTotal
+        exp_alerts: []
