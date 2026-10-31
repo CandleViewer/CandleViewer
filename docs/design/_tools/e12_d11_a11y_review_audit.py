@@ -40,6 +40,8 @@ Gates (each FAIL led by its code):
   class-4 text.
 - [G18-KEYMAP] a KB row's shipped ids exist in the key map; a key a row says is not in the key map
   is bound by no command of the Chart or Global context.
+- [G19-T2] section 9.1 states CMP-079's wrap and the CMP-026 sentence form; every T2 row
+  names its section 3.1 key, a section 3.2 verb where the key takes one, and its component.
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL; `--fill` writes the
 computed values into the spec's slots and markers; `--self-test` applies one mutation per gate to
@@ -150,7 +152,13 @@ CONSUMER_SPRINTS = {"s06": 6, "s07": 7, "s08": 8, "s09": 9}
 
 def git(*args: str) -> str:
     out = subprocess.run(
-        ["git", *args], cwd=ROOT, capture_output=True, text=True, check=False, timeout=60
+        ["git", *args],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
     )
     return out.stdout if out.returncode == 0 else ""
 
@@ -167,6 +175,7 @@ def show(rev: str, rel: str) -> str | None:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
         timeout=60,
     )
@@ -697,7 +706,7 @@ def g_script(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         host = HOST.match(r[5])
         if host and host[1] not in regions:
             f.append(("G06-SCRIPT", f"{r[0]}: host {host[1]} is not a region of section 5.1"))
-        if not host and not (r[5] == "—" and mech == {"none"}):
+        if not host and not (r[5] == "no live write" and mech == {"none"}):
             f.append(("G06-SCRIPT", f"{r[0]}: host {r[5]!r} names no region"))
     shell = rows(section(ctx.spec, "5.1 "), "RG")
     pair = [x for x in shell if x[0] == "RG-06"]
@@ -730,6 +739,8 @@ def g_findings(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(("G08-FINDINGS", f"{r[0]}: the owner is not one spec and its area"))
         if not r[5]:
             f.append(("G08-FINDINGS", f"{r[0]}: the target cell is empty"))
+        if r[1] in ("Blocking", "Major") and (len(r) < 10 or r[9] in ("", "—")):
+            f.append(("G08-FINDINGS", f"{r[0]}: a {r[1]} row has no reason cell"))
         if not G_T2.match(r[6]):
             f.append(("G08-FINDINGS", f"{r[0]}: G-T2 {r[6]!r} is not from the set"))
         if not FOCUS.match(r[7]):
@@ -765,6 +776,32 @@ def g_ids(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     q = [r[0] for r in q07_rows(ctx.spec)]
     if len(q) != len(set(q)):
         f.append(("G09-IDS", "a Q07 id repeats"))
+
+
+T2_KEY = re.compile(r"^`(?:rbac\.(?:view_as|permission|owner_only)|barmode\.[a-z_]+)`")
+T2_VERB = re.compile(r'(?:→ |· )"[a-z][^"]*"')
+
+
+def g_t2(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
+    sec = section(ctx.spec, "9.1 ")
+    if "CMP-079 RbacGate wraps every gated control" not in sec or "`cta` omitted" not in sec:
+        f.append(
+            ("G19-T2", "section 9.1 does not state CMP-079's wrap and CMP-026's sentence form")
+        )
+    t2 = rows(sec, "T2")
+    if not t2:
+        f.append(("G19-T2", "no T2 row found"))
+    for r in t2:
+        cell = r[4] if len(r) > 4 else ""
+        if not T2_KEY.match(cell):
+            f.append(("G19-T2", f"{r[0]}: no E09-D09 section 3.1 key"))
+        if re.match(r"^`rbac\.(?:permission|owner_only)`", cell) and not T2_VERB.search(cell):
+            f.append(("G19-T2", f"{r[0]}: no section 3.2 verb"))
+        sentence = len(r) > 5 and r[5] == "sentence"
+        if sentence and "CMP-026" not in cell:
+            f.append(("G19-T2", f"{r[0]}: the sentence form is not CMP-026"))
+        if not sentence and "CMP-079" not in cell:
+            f.append(("G19-T2", f"{r[0]}: the control is not wrapped by CMP-079"))
 
 
 def g_hygiene(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -905,6 +942,7 @@ GATES: list[tuple[str, Callable[[Ctx, dict[str, str], Findings], None]]] = [
     ("G16-CONTRAST", g_contrast),
     ("G17-BUDGET-SIM", g_sim),
     ("G18-KEYMAP", g_keymap),
+    ("G19-T2", g_t2),
 ]
 
 
@@ -1084,6 +1122,16 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
     (
         "G05-VERBATIM",
         lambda c: dataclasses.replace(c, spec=set_cell(c.spec, "Q07-65", 3, '"Back"', 4)),
+    ),
+    (
+        "G19-T2",
+        lambda c: dataclasses.replace(c, spec=set_cell(c.spec, "T2-05", 4, "CMP-079 RbacGate")),
+    ),
+    (
+        "G19-T2",
+        lambda c: dataclasses.replace(
+            c, spec=set_cell(c.spec, "T2-06", 4, "`rbac.owner_only` · CMP-079")
+        ),
     ),
     ("G09-IDS", lambda c: dataclasses.replace(c, spec=_swap(c.spec, "| KB-03 |", "| KB-02 |"))),
     (
