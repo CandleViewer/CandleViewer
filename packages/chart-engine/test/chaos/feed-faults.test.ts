@@ -193,7 +193,7 @@ describe("Scenario: Malformed frames are rejected without collateral damage (G4,
   });
 
   it.todo(
-    "G4 hostile values reach the store through the runtime's data path (pending: runtime-to-DataModel wiring, no owner named)",
+    "G4 hostile values reach the store through the runtime's data path (pending: E12-T06 #399, bars seam wiring)",
   );
   it.todo("G4 the memoryBudgetMb ceiling holds under adversarial input (pending: E11-S15 #448)");
   it.todo(
@@ -270,10 +270,10 @@ describe("Scenario: A sequence gap resyncs rather than drawing wrong data (G5, e
   });
 
   it.todo(
-    "G5 a socket sequence gap requests a snapshot before later frames apply (pending: WS client to chart wiring, no owner named)",
+    "G5 a socket sequence gap requests a snapshot before later frames apply (pending: E12-T06 #399, socket-gap wiring)",
   );
   it.todo(
-    "G5 the per-pane stale indicator shows until the resync completes (pending: F-05, no owner named)",
+    "G5 the per-pane stale indicator shows until the resync completes (pending: F-05, E12-S10 #396)",
   );
 });
 

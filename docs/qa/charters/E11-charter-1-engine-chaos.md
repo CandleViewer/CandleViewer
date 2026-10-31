@@ -1,8 +1,9 @@
 # E11-C1 Charter: chart-engine chaos (environment disturbances)
 
 - Ticket: E11-Q04 (#516) · Format: session-based test management · Written: 2026-10-31
-- Status: **not executed.** This file is the charter and its session sheet. No manual result is
-  claimed anywhere in the record (`docs/qa/e11-chaos-charter.md`).
+- Status: **session 1 run (2026-10-31), scripted cases only.** This file is the charter and its
+  session sheet; session 1's results are in the record (`docs/qa/e11-chaos-charter.md` §4). The
+  physical disturbances M1 to M7 are not run; no manual result is claimed for them.
 - Cadence (ticket Test plan): once per release train, on the reference machine, by the owner or QA.
 - Automated half: `packages/chart-engine/test/chaos/` (seeded, fake GL, fake clock) and the
   evidence-only browser lane `packages/chart-engine/test/chaos/browser/context-loss-lane.mjs`.
@@ -59,6 +60,18 @@ header of each session.
 - Time box: 90 min. Start / end (UTC):
 - Build sha, machine, GPU and driver:
 - Disturbances run, findings filed (as rows in the record's §6, priority per the ticket):
+
+### Session 1 (2026-10-31)
+
+- Executor: the E11-Q04 agent, ruling BQ-15. Build: this PR's head, `pnpm --filter
+@candleviewer/chart-engine build`.
+- Machine: WSL2 laptop; GPU NVIDIA RTX PRO 500 (Blackwell, laptop) through Mesa D3D12 and ANGLE's
+  OpenGL backend (renderer string in the record §4). Not the reference machine; not a native driver.
+- Target: the browser lane's page (same built engine as the bench matrix page), headless.
+- Run: real `WEBGL_lose_context` at idle, mid-pan, three in 10 s, and the two F-14 fallbacks; all
+  restored with each code once. Heap over 100 cycles: pending (API unavailable headless).
+- M1 to M7: not run (each needs a headed window and a physical or OS-level disturbance).
+- Findings: none new; D-01 (#5230) is a facade fault the lane does not observe.
 
 ## Debrief prompts
 
