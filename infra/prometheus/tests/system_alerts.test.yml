@@ -271,6 +271,7 @@ tests:
     - exp_labels:
         severity: ticket
         component: rules
+        quiet_hours: bypass
       exp_annotations:
         summary: A rule was auto-disarmed
         runbook_url: docs/plan/07-release-and-prr.md#alert-ruleautodisarm
@@ -293,6 +294,7 @@ tests:
     - exp_labels:
         severity: ticket
         component: auth
+        quiet_hours: bypass
       exp_annotations:
         summary: Account lockout occurred
         runbook_url: docs/plan/07-release-and-prr.md#alert-authlockouts
@@ -340,7 +342,8 @@ tests:
         component: auth
         env: live
       exp_annotations:
-        summary: Sign-in attempts were refused because sign-in verification was at capacity
+        summary: Sign-in attempts were refused because sign-in verification was at
+          capacity
         runbook_url: docs/plan/07-release-and-prr.md#alert-authloginverifyrefused
 - interval: 1m
   input_series:
@@ -650,6 +653,7 @@ tests:
     - exp_labels:
         severity: ticket
         component: secrets
+        quiet_hours: bypass
       exp_annotations:
         summary: Exchange credential verification failed
         runbook_url: docs/plan/07-release-and-prr.md#alert-credentialverificationfailures
@@ -672,6 +676,7 @@ tests:
     - exp_labels:
         severity: ticket
         component: oms
+        quiet_hours: bypass
       exp_annotations:
         summary: Rate-limit rejections in OMS
         runbook_url: docs/plan/07-release-and-prr.md#alert-omsraterejects
@@ -694,6 +699,7 @@ tests:
     - exp_labels:
         severity: ticket
         component: network
+        quiet_hours: bypass
       exp_annotations:
         summary: Egress IP changed
         runbook_url: docs/plan/07-release-and-prr.md#alert-egressipchanged

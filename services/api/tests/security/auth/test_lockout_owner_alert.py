@@ -194,5 +194,9 @@ async def test_neither_the_alert_series_nor_the_audit_rows_carry_a_credential() 
 
 def test_the_alert_rule_is_a_ticket_for_auth_and_reads_a_series_the_application_serves() -> None:
     rule = _alert_rule()
-    assert rule["labels"] == {"severity": "ticket", "component": "auth"}
+    assert rule["labels"] == {
+        "severity": "ticket",
+        "component": "auth",
+        "quiet_hours": "bypass",
+    }
     assert _alert_series() in AUTH_EXPORTED_NAMES  # an unserved series is a rule that never fires

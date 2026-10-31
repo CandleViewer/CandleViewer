@@ -228,15 +228,8 @@ def _pg_rule() -> dict[str, Any]:
 
 
 def _inhibited(component: str) -> bool:
-    import re
-
     labels = {"severity": "ticket", "component": component}
-    for m in _pg_rule()["target_matchers"]:
-        k, op, v = re.match(r'(\w+)\s*(=~|=)\s*"?([^"]*)"?$', m).groups()  # type: ignore[union-attr]
-        ok = re.fullmatch(v, labels.get(k, "")) if op == "=~" else labels.get(k) == v
-        if not ok:
-            return False
-    return True
+    return all(_matcher_holds(m, labels) for m in _pg_rule()["target_matchers"])
 
 
 def test_postgres_inhibits_db_dependent_tickets() -> None:
@@ -633,6 +626,18 @@ def test_event_type_page_is_not_a_target_of_any_inhibit_rule() -> None:
             assert not hidden, (rule["alert"], inhibit)
 
 
+def test_only_the_same_component_page_sibling_rule_can_target_a_bypass_ticket() -> None:
+    """#2621: an SR-125 bypass ticket must never be inhibited by a dependency outage (PostgresDown,
+    ApiDown): only a page for the same component, which says the same thing, may hide it."""
+    for rule in (r for r in _rules() if r["labels"].get("quiet_hours") == "bypass"):
+        labels = _alert_labels(rule)
+        for inhibit in AM["inhibit_rules"]:
+            if not all(_matcher_holds(m, labels) for m in inhibit["target_matchers"]):
+                continue
+            assert inhibit["source_matchers"] == ['severity = "page"'], (rule["alert"], inhibit)
+            assert "component" in inhibit["equal"], (rule["alert"], inhibit)
+
+
 def test_resolves_label_lint_accepts_window_on_a_page(tmp_path: Path) -> None:
     labels = "{severity: page, component: c, resolves: window}"
     assert _bad_rule(tmp_path, labels, "{runbook_url: 'docs/plan/07-release-and-prr.md#x'}") == []
@@ -921,6 +926,7 @@ QUIET_BYPASS_TICKETS = {
     "CredentialVerificationFailures",
     "OmsRateRejects",
     "EgressIpChanged",
+    "RuleAutodisarm",
 }
 
 

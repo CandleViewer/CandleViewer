@@ -64,11 +64,13 @@ time_intervals:
 # END quiet_hours
 
 inhibit_rules:
-  # A Postgres outage suppresses DB-dependent Tickets only. Security signals (auth, secrets,
-  # network/egress) are deliberately NOT inhibited so SR-125 stays visible during a DB outage.
+  # A Postgres outage suppresses DB-dependent Tickets only. SR-125 security signals (auth, secrets,
+  # network/egress, and the `quiet_hours: bypass` tickets such as OmsRateRejects and RuleAutodisarm,
+  # whose components are listed below but which do not depend on Postgres) are NOT inhibited, so
+  # they stay visible during a DB outage. Only the same-component page rule below may hide one.
   # The alerts module's security tickets (webhook egress, key checks) carry component network or auth, never alerts, so this matcher misses them.
   - source_matchers: [alertname = "PostgresDown"]
-    target_matchers: [severity = "ticket", component =~ "storage|oms|rules|book|audit|alerts"]
+    target_matchers: [severity = "ticket", component =~ "storage|oms|rules|book|audit|alerts", quiet_hours != "bypass"]
     equal: [env]
   # #5174: a dead API raises every absent() guard and IngestionMetricsAbsent; the ApiDown page
   # already says so. No `equal`: `up` has no env, and each stack runs its own Prometheus and

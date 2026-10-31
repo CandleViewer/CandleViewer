@@ -57,6 +57,7 @@ groups:
         labels:
           severity: ticket
           component: rules
+          quiet_hours: bypass
         annotations:
           summary: "A rule was auto-disarmed"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-ruleautodisarm"

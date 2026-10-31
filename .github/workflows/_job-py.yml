@@ -127,7 +127,8 @@ jobs:
             "ticket alertname=AuthzDeniedSpike severity=ticket component=auth quiet_hours=bypass" \
             "ticket alertname=CredentialVerificationFailures severity=ticket component=secrets quiet_hours=bypass" \
             "ticket alertname=OmsRateRejects severity=ticket component=oms quiet_hours=bypass" \
-            "ticket alertname=EgressIpChanged severity=ticket component=network quiet_hours=bypass"; do
+            "ticket alertname=EgressIpChanged severity=ticket component=network quiet_hours=bypass" \
+            "ticket alertname=RuleAutodisarm severity=ticket component=rules quiet_hours=bypass"; do
             set -- $r; recv=$1; shift
             $AM config routes test --config.file=/etc/alertmanager/alertmanager.yml --verify.receivers=$recv "$@"
           done
@@ -138,7 +139,8 @@ jobs:
           tree() { $AM config routes test --tree --config.file=/etc/alertmanager/alertmanager.yml "$@"; }
           for r in \
             "AuthLockouts auth" "AuthLoginFailureSpike auth" "AuthzDeniedSpike auth" \
-            "CredentialVerificationFailures secrets" "OmsRateRejects oms" "EgressIpChanged network"; do
+            "CredentialVerificationFailures secrets" "OmsRateRejects oms" "EgressIpChanged network" \
+            "RuleAutodisarm rules"; do
             set -- $r
             tree alertname=$1 severity=ticket component=$2 quiet_hours=bypass | grep -qF '{quiet_hours="bypass",severity="ticket"}' || { echo "$1 does not match the bypass route" >&2; exit 1; }
           done

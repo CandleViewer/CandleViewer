@@ -1005,14 +1005,14 @@ docker system df
 
 ### RuleAutodisarm
 
-| Element               | Detail                                                                                           |
-| --------------------- | ------------------------------------------------------------------------------------------------ |
-| 1. What fired         | A rule disarmed itself (`rule_autodisarm_total` increased). Ticket.                              |
-| 2. User impact        | That rule no longer acts; the strategy it implements is idle.                                    |
-| 3. What is still safe | Orders already placed and their stops.                                                           |
-| 5. Remediation        | Read the disarm reason, fix the cause, re-arm from the Rules screen (Owner or Manager; audited). |
-| 6. Escalation         | Rule owner.                                                                                      |
-| 7. Verify recovery    | Rule is armed and no new increase.                                                               |
+| Element               | Detail                                                                                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | A rule disarmed itself (`rule_autodisarm_total` increased). Ticket, an SR-125 security signal: `quiet_hours: bypass`, so quiet hours never mute it (#2621). |
+| 2. User impact        | That rule no longer acts; the strategy it implements is idle.                                                                                               |
+| 3. What is still safe | Orders already placed and their stops.                                                                                                                      |
+| 5. Remediation        | Read the disarm reason, fix the cause, re-arm from the Rules screen (Owner or Manager; audited).                                                            |
+| 6. Escalation         | Rule owner.                                                                                                                                                 |
+| 7. Verify recovery    | Rule is armed and no new increase.                                                                                                                          |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
 
