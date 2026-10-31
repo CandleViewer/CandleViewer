@@ -40,6 +40,12 @@ export interface AccountMultiSelectProps {
    * (E29-D04 board 05). Its own `onClick` and `onKeyDown` run first.
    */
   readonly trigger: ReactElement<AccountMultiSelectTriggerProps>;
+  /**
+   * The list's name, when the trigger's words don't name the choice: a "+ Filter" menu whose Account item opens the
+   * picker (E29-D02 §9.1). Absent or blank, the trigger names the list, as it names the panel. The words are the copy
+   * owner's (E29-D03).
+   */
+  readonly listLabel?: string;
   /** The server-scoped accounts: a Manager's assigned ones only, set server-side, so no option carries a reason. */
   readonly accounts: readonly AccountOption[];
   /** Includes or drops one account (Space, or a press on its row). */
@@ -60,7 +66,8 @@ const NONE = (): boolean => false;
 
 /**
  * CMP-105 AccountMultiSelect, the account filter use (E29-D04 §2.6, D04H A-7; E30-D04 §8's keyboard): its trigger
- * opens a CMP-017 popover holding a `listbox` with `aria-multiselectable="true"` and a distinct "Select all".
+ * opens a CMP-017 popover holding a `listbox` with `aria-multiselectable="true"` and a distinct "Select all"; the
+ * trigger names both, unless the host's `listLabel` names the list.
  * `Alt+↓` or `Enter` on the trigger opens it with focus on the list, the active option the first selected one;
  * `↑` / `↓`, `Home` / `End` move the active option (`aria-activedescendant`); `Space` includes or drops it; `Enter`
  * closes; `Esc` closes and returns focus to the trigger. Each option is `role="option"` with `aria-selected`, its
@@ -71,6 +78,7 @@ const NONE = (): boolean => false;
 export function AccountMultiSelect({
   mode,
   trigger,
+  listLabel,
   accounts,
   onToggle,
   onSelectAll,
@@ -81,6 +89,9 @@ export function AccountMultiSelect({
 }: AccountMultiSelectProps): JSX.Element {
   const id = useId();
   const triggerId = trigger.props.id ?? `${id}-trigger`;
+  const named = listLabel?.trim();
+  /** The host's name for the list; none, or a blank one, leaves the trigger naming it. */
+  const listName = named === "" ? undefined : named;
   const list = useRef<HTMLDivElement>(null);
   const [open, setHeld] = useControllable(openProp, defaultOpen);
   /** The active option by account id, so it survives a change of `accounts`; null: the default. */
@@ -172,7 +183,8 @@ export function AccountMultiSelect({
           ref={list}
           role="listbox"
           aria-multiselectable="true"
-          aria-labelledby={triggerId}
+          aria-label={listName}
+          aria-labelledby={listName === undefined ? triggerId : undefined}
           aria-activedescendant={current >= 0 ? optionId(current) : undefined}
           tabIndex={0}
           className="cv-account-multi-select__list"

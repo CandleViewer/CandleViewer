@@ -63,6 +63,38 @@ const activeName = (): string => {
   return document.getElementById(id)?.textContent ?? "";
 };
 
+/** Four accounts, so a fallback to the chosen one and to the first one land on different options. */
+const FOUR = [...ACCOUNTS, { id: "sub-3", label: "Sub-3" }];
+
+/** An open picker whose list loses accounts under it: "Revoke {label}" drops one (a scope change, server-side). */
+function Revoking({ chosen = [] }: { readonly chosen?: readonly string[] }): JSX.Element {
+  const [accounts, setAccounts] = useState(FOUR);
+  return (
+    <>
+      <AccountMultiSelect
+        mode="account"
+        trigger={<Button>Filter</Button>}
+        accounts={accounts.map((a) => ({ ...a, selected: chosen.includes(a.id) }))}
+        onToggle={fn()}
+        onSelectAll={fn()}
+        defaultOpen
+      />
+      {FOUR.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          onClick={() => setAccounts((all) => all.filter((x) => x.id !== a.id))}
+        >
+          {`Revoke ${a.label}`}
+        </button>
+      ))}
+    </>
+  );
+}
+/** A programmatic press: no pointer, so no outside press closes the picker, and focus stays in the list. */
+const revoke = async (label: string): Promise<void> =>
+  act(async () => page.getByRole("button", { name: `Revoke ${label}` }).click());
+
 describe("AccountMultiSelect (CMP-105, the account filter use)", () => {
   it("marks exactly one root with data-cmp, open or closed", async () => {
     await mount(<Host spies={spies()} />);
@@ -169,30 +201,31 @@ describe("AccountMultiSelect (CMP-105, the account filter use)", () => {
   });
 
   it("keeps the active account when the list changes under it, and falls back when it leaves", async () => {
-    function Changing(): JSX.Element {
-      const [accounts, setAccounts] = useState(ACCOUNTS);
-      return (
-        <>
-          <AccountMultiSelect
-            mode="account"
-            trigger={<Button>Filter</Button>}
-            accounts={accounts.map((a) => ({ ...a, selected: false }))}
-            onToggle={fn()}
-            onSelectAll={fn()}
-            defaultOpen
-          />
-          <button type="button" onClick={() => setAccounts((all) => all.slice(1))}>
-            Revoke Main
-          </button>
-        </>
-      );
-    }
-    await mount(<Changing />);
+    await mount(<Revoking chosen={["sub-3"]} />);
     await waitFor(() => expect(list()).toHaveFocus());
-    await userEvent.keyboard("{ArrowDown}");
+    expect(activeName()).toBe("Sub-3");
+    await userEvent.keyboard("{ArrowUp}{ArrowUp}");
     expect(activeName()).toBe("Sub-1");
-    await act(async () => page.getByRole("button", { name: "Revoke Main" }).click());
+    await revoke("Main");
     expect(activeName()).toBe("Sub-1");
+    // The active account leaves: the active option falls to the chosen one (not the first, Sub-2), and the list
+    // keeps DOM focus, so the keys go on working there.
+    await revoke("Sub-1");
+    expect(activeName()).toBe("Sub-3");
+    expect(list()).toHaveFocus();
+    await userEvent.keyboard("{ArrowUp}");
+    expect(activeName()).toBe("Sub-2");
+  });
+
+  it("with nothing chosen, an active account that leaves hands the active option to the first one", async () => {
+    await mount(<Revoking />);
+    await waitFor(() => expect(list()).toHaveFocus());
+    await userEvent.keyboard("{End}");
+    expect(activeName()).toBe("Sub-3");
+    await revoke("Sub-3");
+    // The first account, not the departed one's neighbour (Sub-2).
+    expect(activeName()).toBe("Main");
+    expect(list()).toHaveFocus();
   });
 
   it("a controlled open follows the host and reports each change", async () => {
@@ -216,13 +249,14 @@ describe("AccountMultiSelect (CMP-105, the account filter use)", () => {
     expect(list()).toBeDefined();
   });
 
-  it("an empty account list still opens and takes focus", async () => {
+  it("an empty account list still opens and takes focus; its keys move and toggle nothing", async () => {
+    const onToggle = fn();
     await mount(
       <AccountMultiSelect
         mode="account"
         trigger={<Button>Filter</Button>}
         accounts={[]}
-        onToggle={fn()}
+        onToggle={onToggle}
         onSelectAll={fn()}
         defaultOpen
       />,
@@ -230,6 +264,107 @@ describe("AccountMultiSelect (CMP-105, the account filter use)", () => {
     await waitFor(() => expect(list()).toHaveFocus());
     expect(list()).not.toHaveAttribute("aria-activedescendant");
     await userEvent.keyboard("{ArrowDown} ");
+    expect(onToggle).not.toHaveBeenCalled();
+    expect(list()).not.toHaveAttribute("aria-activedescendant");
+  });
+
+  it("leaves a modified key in the list to the host: Ctrl+↓ moves nothing, Ctrl+Space toggles nothing", async () => {
+    const s = spies();
+    await mount(<Host spies={s} initial={[]} />);
+    await userEvent.click(trigger());
+    await waitFor(() => expect(list()).toHaveFocus());
+    expect(activeName()).toBe("Main");
+    await userEvent.keyboard("{Control>}{ArrowDown} {/Control}");
+    expect(activeName()).toBe("Main");
+    expect(s.onToggle).not.toHaveBeenCalled();
+  });
+
+  it("the trigger's own onKeyDown runs first: a host that takes Alt+↓ keeps the picker closed", async () => {
+    const onOpenChange = fn();
+    await mount(
+      <AccountMultiSelect
+        mode="account"
+        trigger={<Button onKeyDown={(event) => event.preventDefault()}>Filter</Button>}
+        accounts={[{ id: "main", label: "Main", selected: false }]}
+        onToggle={fn()}
+        onSelectAll={fn()}
+        onOpenChange={onOpenChange}
+      />,
+    );
+    trigger().focus();
+    await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(page.queryByRole("listbox")).toBeNull();
+  });
+
+  it("Alt+↓ on the trigger of a picker already open opens nothing twice", async () => {
+    const onOpenChange = fn();
+    await mount(
+      <AccountMultiSelect
+        mode="account"
+        trigger={<Button>Filter</Button>}
+        accounts={[{ id: "main", label: "Main", selected: false }]}
+        onToggle={fn()}
+        onSelectAll={fn()}
+        open
+        onOpenChange={onOpenChange}
+      />,
+    );
+    // Focus leaving the panel for the trigger reports a close; the host keeps it open (controlled).
+    await act(async () => trigger().focus());
+    onOpenChange.mockClear();
+    await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(list()).toBeDefined();
+  });
+
+  it("emits density on the portalled list and its 'Select all'", async () => {
+    await mount(
+      <AccountMultiSelect
+        mode="account"
+        trigger={<Button>Filter</Button>}
+        accounts={[{ id: "main", label: "Main", selected: false }]}
+        onToggle={fn()}
+        onSelectAll={fn()}
+        density="comfortable"
+        defaultOpen
+      />,
+    );
+    expect(list().dataset["density"]).toBe("comfortable");
+    expect(page.getByRole("button", { name: "Select all" }).dataset["density"]).toBe("comfortable");
+  });
+
+  it("listLabel names the list when the trigger's words don't name the choice; the trigger still names the panel", async () => {
+    await mount(
+      <AccountMultiSelect
+        mode="account"
+        trigger={<Button>Filter</Button>}
+        listLabel="Accounts"
+        accounts={[{ id: "main", label: "Main", selected: false }]}
+        onToggle={fn()}
+        onSelectAll={fn()}
+        defaultOpen
+      />,
+    );
+    const named = page.getByRole("listbox", { name: "Accounts" });
+    expect(named).not.toHaveAttribute("aria-labelledby");
+    expect(page.getByRole("dialog", { name: "Filter" })).toBeDefined();
+    await waitFor(() => expect(named).toHaveFocus());
+  });
+
+  it("a blank listLabel leaves the trigger naming the list, as with none", async () => {
+    await mount(
+      <AccountMultiSelect
+        mode="account"
+        trigger={<Button>Filter</Button>}
+        listLabel="  "
+        accounts={[{ id: "main", label: "Main", selected: false }]}
+        onToggle={fn()}
+        onSelectAll={fn()}
+        defaultOpen
+      />,
+    );
+    expect(list()).not.toHaveAttribute("aria-label");
   });
 
   it("has no serious or critical axe violation, closed and open", async () => {

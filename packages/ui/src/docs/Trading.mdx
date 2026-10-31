@@ -36,12 +36,17 @@ variant ships with the ticket that hosts it.
 | Tab / Shift+Tab       | "Select all", then out of the popover (it closes); Shift+Tab back to the trigger.      |
 | Esc                   | Closes and returns focus to the trigger.                                               |
 
-| Element      | Role    | Name                | ARIA                                                        |
-| ------------ | ------- | ------------------- | ----------------------------------------------------------- |
-| trigger      | button  | its label: "Filter" | `aria-haspopup="dialog"`, `aria-expanded`, `aria-controls`. |
-| panel        | dialog  | the trigger         | CMP-017, non-modal.                                         |
-| list         | listbox | the trigger         | `aria-multiselectable="true"`, `aria-activedescendant`.     |
-| account      | option  | its label: "Sub-1"  | `aria-selected`; the drawn check box is `aria-hidden`.      |
-| "Select all" | button  | "Select all"        | A distinct labelled control (`15` CMP-105 A11y).            |
+| Element      | Role    | Name                                     | ARIA                                                        |
+| ------------ | ------- | ---------------------------------------- | ----------------------------------------------------------- |
+| trigger      | button  | its label: "Filter"                      | `aria-haspopup="dialog"`, `aria-expanded`, `aria-controls`. |
+| panel        | dialog  | the trigger                              | CMP-017, non-modal.                                         |
+| list         | listbox | the host's `listLabel`, else the trigger | `aria-multiselectable="true"`, `aria-activedescendant`.     |
+| account      | option  | its label: "Sub-1"                       | `aria-selected`; the drawn check box is `aria-hidden`.      |
+| "Select all" | button  | "Select all"                             | A distinct labelled control (`15` CMP-105 A11y).            |
 
-The list is the server's scope: a Manager's assigned accounts only. A filter is a view choice, never T2.
+The list is the server's scope: a Manager's assigned accounts only. A filter is a view choice, never T2. `listLabel`
+names the list when the trigger's words don't name the choice, as when a "+ Filter" menu's Account item opens the
+picker; its words are the copy owner's (E29-D03).
+
+Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): the panel is CMP-017's capped surface, so at 200 %
+the list scrolls under the pinned "Select all" footer, and a long account label wraps rather than truncate.
