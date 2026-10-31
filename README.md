@@ -274,7 +274,7 @@ Desktop's WSL integration. The default market-data feed is synthetic: it replays
 from `packages/fixtures/raw/`, so development never needs exchange credentials. A new joiner's
 walkthrough is [`docs/plan/qa/first-hour-checklist.md`](docs/plan/qa/first-hour-checklist.md).
 
-**The quality bar.** One ticket, one branch, one PR, with a conventional-commit title and
+**The quality bar.** One ticket, one branch, one PR by default (C-4.6), with a conventional-commit title and
 `Closes #N`, ideally under 400 changed lines (C-4.8). A PR merges only when every required check is
 green, and the check names and what each enforces live in one place only, CONSTITUTION §9 (C-9.1).
 Coverage stays at or above floors that are never lowered in the PR that fails them (C-9.4). Every

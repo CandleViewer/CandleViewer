@@ -1,6 +1,6 @@
 # CandleViewer Constitution
 
-> **Status:** Ratified 2026-09-14 · **Version:** 2.0.0 · **Owner:** @basiltt
+> **Status:** Ratified 2026-09-14 · **Version:** 2.1.0 · **Owner:** @basiltt
 > **Applies to:** every human contributor and every AI coding agent working in this repository.
 > **Authority:** This document outranks any other document, README, comment, habit, skill, agent prompt or
 > tool default in this repository. Where another document conflicts with the Constitution, the Constitution
@@ -393,7 +393,12 @@ code may be merged only after being rewritten under a `feat/` ticket with full q
 
 ### 4.3 One ticket, one branch, one PR
 
-**C-4.6** Exactly one GitHub issue ⇄ one branch ⇄ one pull request. No "and while I was in there" work.
+**C-4.6** One GitHub issue ⇄ one branch ⇄ one pull request by default. **Bundling:** while an owner
+delivery-speed directive is in force (recorded on the owner's thread, #2701), a PR may close several tickets
+that share a module, an epic or a chain — consecutive slices of one ticket, a ticket and the contract commit
+only it consumes, sibling tasks of one epic — with `Closes #N` for each; every closed ticket keeps its own
+acceptance table in the PR body and its own QA record at merge. No "and while I was in there" work outside
+the tickets named.
 
 **C-4.7** Every PR description must contain `Closes #N` (or `Fixes #N`) referencing its issue. A PR without
 a linked issue fails the `pr-metadata` check.
@@ -401,7 +406,8 @@ a linked issue fails the `pr-metadata` check.
 **C-4.8** **Preferred diff size ≤400 changed LOC** (excluding lockfiles, generated code, snapshots and
 fixtures, which must be listed in `.gitattributes` as `linguist-generated`). CI warns above 400 and fails
 above 800 unless the PR carries the `large-pr-approved` label applied by a CODEOWNER with a written
-justification comment.
+justification comment. A bundled PR (C-4.6) carries `large-pr-approved` with the directive named in its
+justification; reviewers may require a split above ≈1,500 changed LOC.
 
 **C-4.9** Scope discipline: if a PR touches files unrelated to its issue, either revert them or split them
 into a follow-up ticket. Reviewers must reject on this alone.
@@ -1145,6 +1151,7 @@ A PR that copies any of these lists into a second file is rejected; replace the 
 | 1.1.0 | 2026-09-25 | C-10.1: agent-delivery review mode — two independent agent reviews + delegated merge of code PRs; design PRs and §16/C-16.2/C-15.9 stay owner-only. Owner decision (chat, 2026-09-25: "I authorise you to do full git operations"). Original text: "2 approving reviews, ≥1 CODEOWNER, approvals come from humans". | @basiltt |
 | 1.1.1 | merge of #4603 | C-13.5: the recorded Bybit fixtures live in `packages/fixtures/bybit/`, where the corpus has been since E08-T05; the docs and agent rules that named the old path were corrected by #4016 (#1849 items 2–4). Patch: a clarification (C-16.1 step 5); no rule changes (issue #1849). Original text: "Fixtures live in `tests/fixtures/bybit/`". | @basiltt |
 | 2.0.0 | merge of #3949 | C-12.9: cookie attributes. The text now names the one cookie that is not `HttpOnly`, the CSRF double-submit cookie `__Host-cv_csrf` (true since #2238), and allows one exception to `SameSite=Strict`: a response to a request whose `Origin` is exactly `app://candleviewer` (the desktop shell) and is on the backend's `Origin` allow-list may set `cv_refresh` and `__Host-cv_csrf` with `SameSite=None`, expiry included; no other attribute, cookie or origin is relaxed. Major: weakens a guardrail (C-16.1 step 5). Decision D2 of ADR-0038 (4b), taken by the delivery orchestrator under the owner's delegation (#2701 comments 6284192190 and 6290430849) and approved by the owner on #3949 (issue #3947). Original text: "TLS terminates inside the tailnet; cookies are `Secure`, `HttpOnly`, `SameSite=Strict`." | @basiltt |
+| 2.1.0 | merge of #5223 | C-4.6 / C-4.8: bundled PRs. While an owner delivery-speed directive is in force (recorded on #2701), a PR may close several tickets that share a module, an epic or a chain, each with its own acceptance table and QA record; a bundle carries `large-pr-approved` naming the directive, split above ≈1,500 LOC. Minor: a process rule relaxed under the owner's written directive of 2026-10-31 (#2701 comment 6546079373; issue #5222), the C-16.1 discussion period treated as waived by the orchestrator under the owner's 2026-10-29 delegation (#2701 6490317249), pending the owner's ratification or reversal on return. Original text: "Exactly one GitHub issue ⇄ one branch ⇄ one pull request. No \"and while I was in there\" work." | @basiltt |
 
 ---
 
@@ -1170,8 +1177,8 @@ Fast lookup for automated compliance checks.
 | C-2.21 | Statecharts record and orchestrate; synchronous flags/functions enforce safety decisions |
 | C-2.22 | `xstate-statemachine==0.9.1` is ADOPTED (ADR-0016 Accepted) as the sole statechart executor via `cv.statechart.factory`; no shim, no dual-runtime; CV-C60/62/63/65′/66′/67/68/69 etc. bind the implementation |
 | C-4.4 | Branch `<type>/<epic-key>-<slug>` |
-| C-4.6 / C-4.7 | One ticket = one branch = one PR with `Closes #N` |
-| C-4.8 | Prefer ≤400 LOC diff; >800 needs `large-pr-approved` |
+| C-4.6 / C-4.7 | One ticket = one branch = one PR with `Closes #N` by default; bundles only under an owner delivery-speed directive, each ticket with its own acceptance table and QA record |
+| C-4.8 | Prefer ≤400 LOC diff; >800 needs `large-pr-approved`; a bundle names the directive, split above ≈1,500 |
 | C-4.10 | Conventional commits with an allowed scope |
 | C-4.12 | Rebase, never merge; squash into `main`; never force-push shared branches |
 | C-4.13 | Incomplete features behind default-off flags |

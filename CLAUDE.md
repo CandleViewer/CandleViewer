@@ -99,8 +99,9 @@ Full flow: `AGENTS.md` §3 (flowchart) and `docs/plan/01-sdlc-and-branching.md` 
 - **Trunk-based.** `main` is the only long-lived branch, protected, linear history, always releasable;
   no direct/force pushes (C-4.1–4.3). Unfinished multi-PR work ships behind a feature flag (C-4.13);
   **flags never gate a safety invariant** (C-4.14).
-- **One ticket = one branch = one PR**, preferred **≤400 changed LOC** excluding generated/lockfiles/
-  snapshots; larger needs a "why this can't be split" note (C-4.8).
+- **One ticket = one branch = one PR** by default — bundles only while an owner delivery-speed directive is in
+  force, each ticket with its own acceptance table and QA record (C-4.6); preferred **≤400 changed LOC** excluding
+  generated/lockfiles/snapshots; larger needs a "why this can't be split" note, a bundle names the directive (C-4.8).
 - **Conventional commits**: `type(scope): summary`;
   types `feat fix chore docs test refactor perf build ci`; scope = the `area/*` slug without prefix
   (`chart-engine`, `charting-ui`, `order-flow`,

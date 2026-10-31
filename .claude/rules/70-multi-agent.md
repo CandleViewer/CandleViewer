@@ -13,7 +13,7 @@ Several AI agents work tickets in parallel. Source: `CONSTITUTION.md` §4 (C-4.6
 3. Claim atomically: assign yourself (`gh issue edit N --add-assignee @me --add-label in-progress`) and post a
    comment `Claimed by <agent-id> on branch <branch>`. If someone else claimed first (check comments after
    posting), release and pick another.
-4. One agent = one ticket at a time.
+4. One agent = one ticket at a time by default; an agent bundling under C-4.6 claims each ticket of the bundle.
 
 ## 2. File ownership
 - Your ticket's *Files / Scope* section is your write set. Touch nothing else (C-4.9).
