@@ -71,7 +71,7 @@ export function groupFirings(rows: readonly DeliveryRow[]): readonly Firing[] {
 }
 
 /** A cell starting with one of these is a formula to a spreadsheet; a leading `'` defuses it. */
-const FORMULA_START = /^[=+\-@\t\r]/;
+const FORMULA_START = /^\s*[=+\-@]|^[\t\r]/;
 
 export function csvCell(value: string): string {
   const safe = FORMULA_START.test(value) ? `'${value}` : value;

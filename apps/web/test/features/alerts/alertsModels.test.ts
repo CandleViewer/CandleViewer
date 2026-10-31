@@ -135,6 +135,8 @@ describe("history", () => {
     expect(csvCell('say "hi", ok')).toBe('"say ""hi"", ok"');
     expect(csvCell("=SUM(A1)")).toBe("'=SUM(A1)");
     expect(csvCell("@cmd")).toBe("'@cmd");
+    expect(csvCell("  =1+1")).toBe("'  =1+1");
+    expect(csvCell("\t=1")).toBe("'\t=1");
     const csv = historyCsv([delivery(1, "a", "2026-10-31T13:00:00Z", { message: "x,y" })]);
     expect(csv).toBe(
       'fired_at,channel,status,reason,message\r\n2026-10-31T13:00:00Z,in_app,sent,,"x,y"\r\n',

@@ -25,6 +25,15 @@ describe("alertsApi", () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/v1/alerts?limit=500&cursor=c%201");
   });
 
+  it("flags a read that hit the page cap while more rows remain", async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(json({ items: [{ id: 1 }], meta: { has_more: true, next_cursor: "n" } })),
+    );
+    const out = await alertsApi.deliveries({ alertId: "x" });
+    expect(out).toMatchObject({ kind: "ok", truncated: true });
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+  });
+
   it("reads deliveries by alert and by failed status", async () => {
     fetchMock.mockResolvedValue(json({ items: [], meta: { has_more: false } }));
     await alertsApi.deliveries({ alertId: "x" });
