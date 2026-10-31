@@ -23,7 +23,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 ## Handoff checklist — CMP-200 AuthCard (E09-D07, #190)
 
 - [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-200 · AuthCard`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
-- [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (`15`:2567 (unchanged))
+- [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (`15`:2597 (unchanged))
 - [x] **Keyboard table** — table 2
 - [x] **Accessible name / role table** — table 3
 - [x] **Live data** — table 5
@@ -96,7 +96,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 - [x] **Motion pair** — N/A — none animated (E09-D08 S3 for secrets and factors)
 - [x] **Density notes** — the density table
 - [x] **Essential-exceptions log** — none
-- [x] **Tokens used** — equal to the entry's Tokens field after PR 2 (inherits CMP-007 (`15`:2575, unchanged)); the Penpot sets equal the token JSON under `packages/ui` at `a0132de011`
+- [x] **Tokens used** — equal to the entry's Tokens field after PR 2 (inherits CMP-007 (`15`:2610, unchanged)); the Penpot sets equal the token JSON under `packages/ui` at `a0132de011`
 - [x] **Data contract confirmed** — N/A — pure chrome; the host binds the operation
 - [x] **Contrast and CVD** — computed by the tool (the pack's §6: P-4, P-5); no new colour pair is introduced, so `tools/contrast/pairs.mjs` gains none
 - [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3, on the boards
@@ -353,7 +353,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 ## Handoff checklist — CMP-205 QrCode (E09-D07, #190)
 
 - [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-205 · QrCode`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
-- [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (`15`:2612 (unchanged))
+- [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (`15`:2661 (unchanged))
 - [x] **Keyboard table** — N/A — not focusable (table 2 lists no key)
 - [x] **Accessible name / role table** — table 3
 - [x] **Live data** — N/A — static chrome, no streaming value
@@ -548,7 +548,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 - [x] **Motion pair** — N/A — none animated (E09-D08 S3 for secrets and factors)
 - [x] **Density notes** — the density table
 - [x] **Essential-exceptions log** — none
-- [x] **Tokens used** — equal to the entry's Tokens field after PR 2 (inherits CMP-066 (`15`:1049, unchanged)); the Penpot sets equal the token JSON under `packages/ui` at `a0132de011`
+- [x] **Tokens used** — equal to the entry's Tokens field after PR 2 (inherits CMP-066 (`15`:1064, unchanged)); the Penpot sets equal the token JSON under `packages/ui` at `a0132de011`
 - [x] **Data contract confirmed** — `OnboardingChecklist` (`22-api-openapi.yaml`): `key`, `state`, `unblock_at`, `action_route`; `reason` never rendered
 - [x] **Contrast and CVD** — computed by the tool (the pack's §6: P-13); no new colour pair is introduced, so `tools/contrast/pairs.mjs` gains none
 - [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3, on the boards
@@ -613,7 +613,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 - [x] **Motion pair** — table 4
 - [x] **Density notes** — the density table
 - [x] **Essential-exceptions log** — none
-- [x] **Tokens used** — equal to the entry's Tokens field after PR 2 (inherits CMP-043 (`15`:1058, unchanged)); the Penpot sets equal the token JSON under `packages/ui` at `a0132de011`
+- [x] **Tokens used** — equal to the entry's Tokens field after PR 2 (inherits CMP-043 (`15`:1076, unchanged)); the Penpot sets equal the token JSON under `packages/ui` at `a0132de011`
 - [x] **Data contract confirmed** — `authExtendSession`, `authLock` and `SessionState`'s `idle_deadline` (`22-api-openapi.yaml`)
 - [x] **Contrast and CVD** — computed by the tool (the pack's §6: P-11, P-12); no new colour pair is introduced, so `tools/contrast/pairs.mjs` gains none
 - [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3, on the boards

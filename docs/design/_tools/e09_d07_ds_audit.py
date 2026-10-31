@@ -41,8 +41,9 @@ working tree.
    from `git merge-base HEAD origin/main` but `15` does, `15` must equal the merge-base with every
    §C row not in HELD applied, each re-pointed by content (a replace finds its Old, an insert its
    anchor line), with no other byte (files read with no newline translation). A row whose source
-   cell reads `applied by #N` (A-1 since #5025) already stands at the base, New for Old: G-AROW
-   reads its New there and PR 2 skips it; it is not a HELD entry. G-UNTOUCHED reads
+   cell reads `applied by #N` (A-1 since #5025, every other row since #5058) already stands at the
+   base: G-AROW reads a replace row's New on its line and an insert row's bullets right after its
+   anchor line, and PR 2 skips it; it is not a HELD entry. G-UNTOUCHED reads
    committed and uncommitted paths against the merge-base, failing closed when it does not
    resolve or a git call fails: in PR 1 only the pack's five files may differ. G-EDGE matches
    patterns, never literals (S-22, S-23): an all-caps cite key the key table does not declare, a
@@ -93,7 +94,7 @@ from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "a6cee49297"  # `git merge-base HEAD origin/main` at the re-pin (#5045's merge)
+BASE = "16d70feed9"  # `git merge-base HEAD origin/main` at the re-pin (#5221's merge)
 HEAD_REF = "origin/main"  # drift inside a cited range FAILs (G-VERSION)
 SPEC_REL = "docs/design/E09/E09-D07.md"
 HAND_REL = "docs/design/E09/E09-D07-handoff.md"
@@ -167,8 +168,8 @@ VERSION_PINS: dict[str, str] = {
     "S03": "2fd29ecc34",
     "D12": "67ab4aa8a5",
     "D10": "ccaad0fea6",
-    "15": "ae63372b70",
-    "22": "595be3eff9",
+    "15": "00d2418ed2",
+    "22": "1e2fd89746",
 }
 # inputs that feed computed values but are cited by no line range: a commit to one after the base
 # is a late change (G-VERSION). The backlog JSON and the calendar are not listed: most ticket edits
@@ -687,33 +688,33 @@ def cites_in(text: str, doc: str = "spec") -> list[Cite]:
 
 # Load-bearing fragments: each must sit on the cited line at the base.
 CITED: dict[tuple[str, int], tuple[str, ...]] = {
-    ("15", 31): ("241–242 and 244–247 unassigned",),
+    ("15", 31): ("241–242, 244–247 unassigned",),
     ("15", 392): ("never contains the copied value",),
-    ("15", 1047): ("`steps: {id,label,done,onGo,disabledReason?}[]`",),
-    ("15", 1048): ("aria-disabled",),
-    ("15", 1055): ("one-click extend",),
-    ("15", 2557): ("## 7A.",),
-    ("15", 2563): ("every pre-auth screen",),
-    ("15", 2565): ("receives focus on appearance",),
-    ("15", 2601): ("Six-digit authentication code",),
-    ("15", 2619): ('"Print"',),
-    ("15", 3044): ("**242",),
-    ("15", 3056): ("244–247 are held",),
-    ("15", 3058): ("Decision",),
-    ("16", 604): ("the catalogue itself if the catalogue was wrong",),
+    ("15", 1062): ("`steps: {id, label, state:",),
+    ("15", 1063): ("aria-disabled",),
+    ("15", 1073): ("one-click extend",),
+    ("15", 2587): ("## 7A.",),
+    ("15", 2593): ("every pre-auth screen",),
+    ("15", 2595): ("receives focus on appearance",),
+    ("15", 2646): ("whose name contains its visible heading",),
+    ("15", 2672): ('"Print"',),
+    ("15", 3191): ("**247",),
+    ("15", 3203): ("244–247 are held",),
+    ("15", 3209): ("Decision",),
+    ("16", 632): ("the catalogue itself if the catalogue was wrong",),
     ("14", 124): ("node name",),
     ("14", 199): ("100 ms",),
-    ("22", 1383): ("shown exactly once",),
-    ("22", 1700): ("authExtendSession",),
-    ("22", 1810): ("authLock",),
-    ("22", 1811): ('CMP-098 "Lock now"',),
-    ("22", 13266): ("secret_base32",),
-    ("22", 17987): ("otpauth_uri",),
-    ("22", 22822): ("environment",),
-    ("22", 22860): ("not_applicable",),
-    ("22", 22861): ("reason",),
-    ("22", 22862): ("unblock_at",),
-    ("22", 23841): ("built_at",),
+    ("22", 1405): ("shown exactly once",),
+    ("22", 1722): ("authExtendSession",),
+    ("22", 1832): ("authLock",),
+    ("22", 1833): ('CMP-098 "Lock now"',),
+    ("22", 13435): ("secret_base32",),
+    ("22", 18394): ("otpauth_uri",),
+    ("22", 23291): ("environment",),
+    ("22", 23329): ("not_applicable",),
+    ("22", 23330): ("reason",),
+    ("22", 23331): ("unblock_at",),
+    ("22", 24310): ("built_at",),
     ("D03", 158): ("Verification code",),
     ("D04", 73): ("untinted",),
     ("D04", 83): ("6-digit authentication code",),
@@ -865,7 +866,7 @@ STORY_ROWS = {
     "CMP-206": "A-45",
     "CMP-207": "A-50",
 }
-STORY_BASE = {"CMP-200": 2567, "CMP-205": 2612}  # unchanged entries: `15` at the base
+STORY_BASE = {"CMP-200": 2597, "CMP-205": 2661}  # unchanged entries: `15` at the base
 
 
 def parse_stories(line: str) -> list[str]:
@@ -1387,7 +1388,7 @@ def all_cites(t: Texts) -> list[Cite]:
     return cites_in(t.spec, "spec") + cites_in(t.hand, "hand")
 
 
-NARROW = 26  # `22`:1807–1832, the authLock block, is the widest load-bearing cite
+NARROW = 26  # `22`:1829–1854, the authLock block, is the widest load-bearing cite
 
 
 def g_cite(t: Texts) -> list[Finding]:
@@ -1799,8 +1800,11 @@ def g_arow(t: Texts) -> list[Finding]:
             bad.append(f"{aid}: New is empty, unchanged or unfilled")
         if CITE.search(new_u):
             bad.append(f"{aid}: New carries a line cite (it would rot in `15`)")
-        if applied_by(src) and op != "replace":
-            bad.append(f"{aid}: an applied-by marker is for a replace row only")
+        if op != "replace" and applied_by(src):
+            # an insert applied by another PR: its bullets stand right after its anchor line
+            parts = new_u.split(BR)
+            if old != "—" or base[n : n + len(parts)] != parts:
+                bad.append(f"{aid}: New does not follow `15`:{n} at the base (applied)")
         elif op == "replace" and applied_by(src):
             # Old is left unchecked on purpose: the row was applied by another PR,
             # so its Old no longer stands at the base; its New must stand there.
@@ -2046,13 +2050,13 @@ def g_idband(t: Texts) -> list[Finding]:
     bad: list[str] = []
     for doc, text in (*docs(t), ("comp", t.comp)):
         for m in re.finditer(r"\bCMP-(\d{3})\b", text):
-            if int(m[1]) > 248:
+            if int(m[1]) > 253:
                 bad.append(f"{doc}: CMP-{m[1]} is outside the catalogue's ids (no new id)")
     for r in c_rows(t.spec):
         if len(r) >= 6 and ("### CMP-" in r[5] or "CMP-247" in r[5]):
             bad.append(f"{r[0]}: a New cell adds an entry or an id")
-        if len(r) >= 3 and r[2] in ("`15`:31", "`15`:3043", "`15`:3044"):
-            bad.append(f"{r[0]}: the band row or the tally changes (it stays 242)")
+        if len(r) >= 3 and r[2] in ("`15`:31", "`15`:3190", "`15`:3191"):
+            bad.append(f"{r[0]}: the band row or the tally changes (it stays 247)")
     return one("G-IDBAND", bad)
 
 
@@ -2507,7 +2511,7 @@ def g_entry(t: Texts) -> list[Finding]:
 
 # §4 / §9: an operation a design-ahead consumer still builds is never "served" (lens 3, M-2)
 SERVED = re.compile(r"\b(?:served|live|shipped) (?:since|as of|from) #\d+|\bserved by #(\d+)")
-AHEAD_LOCK = "(`authLock`, `22`:1810, declared by #4941, to be served by #4743)"
+AHEAD_LOCK = "(`authLock`, `22`:1832, declared by #4941, to be served by #4743)"
 
 
 def g_ahead(t: Texts) -> list[Finding]:
@@ -2869,8 +2873,8 @@ def in_row(aid: str, old: str, new: str) -> Callable[[Texts], Texts]:
     return f
 
 
-def in_source(aid: str, suffix: str) -> Callable[[Texts], Texts]:
-    """Append `suffix` to one §C row's source cell (column 7) only."""
+def in_source(aid: str, suffix: str, drop: bool = False) -> Callable[[Texts], Texts]:
+    """Append `suffix` to one §C row's source cell (column 7) only, or (`drop`) cut it off."""
 
     def f(t: Texts) -> Texts:
         out = []
@@ -2878,7 +2882,9 @@ def in_source(aid: str, suffix: str) -> Callable[[Texts], Texts]:
         for ln in t.spec.split("\n"):
             if ln.startswith("| A-") and split_row(ln)[0] == aid and not done:
                 cells = split_row(ln)
-                cells[6] = cells[6] + suffix
+                if drop and not cells[6].endswith(suffix):
+                    raise SystemExit(f"self-test: {aid}'s source cell lacks {suffix!r}")
+                cells[6] = cells[6].removesuffix(suffix) if drop else cells[6] + suffix
                 ln = "| " + " | ".join(cells) + " |"
                 done = True
             out.append(ln)
@@ -2910,6 +2916,45 @@ def with_env(tweak: Callable[[Env], None]) -> Callable[[Texts], Texts]:
         return replace(t, env=e)
 
     return f
+
+
+def base_edit(rel: str, n: int, old: str, new: str) -> Callable[[Env], None]:
+    """`rel` at the base with `old` replaced by `new` on line `n` only."""
+
+    def f(e: Env) -> None:
+        lines = lines_of(e.base(rel))
+        if old not in lines[n - 1]:
+            raise SystemExit(f"self-test: {rel}:{n} lacks {old[:50]!r}")
+        lines[n - 1] = lines[n - 1].replace(old, new, 1)
+        e.base_cache[rel] = e.head_override[rel] = "\n".join(lines)
+
+    return f
+
+
+def carry_new(t: Texts, t0: Texts) -> Texts:
+    """`t` with every applied §C row whose New differs from `t0`'s planted in `15` at the base
+    too: the row stands applied, so a mutation of its New tests the gate it names, never the
+    lockstep G-AROW keeps between §C and `15` (a G-AROW mutation is never carried)."""
+    was = {r[0]: r for r in c_rows(t0.spec) if len(r) == 7}
+    plan: list[tuple[int, int, list[str]]] = []
+    for r in c_rows(t.spec):
+        w = was.get(r[0])
+        m = FIELD.fullmatch(r[2]) if len(r) == 7 else None
+        if not w or not m or not applied_by(r[6]) or r[5] == w[5]:
+            continue
+        n, k = int(m[1]), len(unescape(w[5]).split(BR))
+        parts = unescape(r[5]).split(BR) if r[3] != "replace" else [unescape(r[5])]
+        if len(parts) != k:  # line for line: no later `15` line moves
+            parts = [*parts[: k - 1], BR.join(parts[k - 1 :])] if len(parts) > k else parts + [""]
+        plan.append((n - 1, 1, parts) if r[3] == "replace" else (n, k, parts))
+    if not plan:
+        return t
+    e = copy_env(t.env)
+    lines = lines_of(e.base(CAT_REL))
+    for i, k, parts in sorted(plan, key=lambda p: -p[0]):
+        lines[i : i + k] = parts
+    e.base_cache[CAT_REL] = e.head_override[CAT_REL] = "\n".join(lines)
+    return replace(t, env=e)
 
 
 def head_edit(key: str, n: int) -> Callable[[Env], None]:
@@ -3180,7 +3225,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     M(
         "G-LEDGER",
         "misspell L-5's disposition",
-        subst("| CMP-203 Purpose (`15`:2590) | applied", "| CMP-203 Purpose (`15`:2590) | aplied"),
+        subst("| CMP-203 Purpose (`15`:2632) | applied", "| CMP-203 Purpose (`15`:2632) | aplied"),
     ),
     M(
         "G-LEDGER",
@@ -3189,13 +3234,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     M(
         "G-AROW",
-        "alter one byte of A-14's Old",
-        subst("| - **Tokens**: `color.surface.raised`, `space.6`", "| - **Tokens**: `space.8`"),
+        "alter A-14's applied New in `15` at the base (the row no longer stands)",
+        with_env(base_edit(CAT_REL, 2596, "**Tokens**", "**Token**")),
     ),
     M(
         "G-AROW",
         "give A-12 an op the tool does not know",
-        subst("| `15`:2564 | replace |", "| `15`:2564 | swap |"),
+        subst("| `15`:2594 | replace |", "| `15`:2594 | swap |"),
     ),
     M(
         "G-TOKEN",
@@ -3207,7 +3252,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "bind an unshipped token in CMP-204",
         in_row("A-35", "digits `type.num.base`", "digits `color.text.muted`"),
     ),
-    M("G-PAIRS", "drop P-2's route", subst("| G-3 (F-10; D12 Q-9) |", "| — |")),
+    M("G-PAIRS", "drop P-3's route", subst("| G-3 (F-12) |", "| — |")),
     M(
         "G-CVD-SRC",
         "simulate a drifted RGB_TO_LMS constant in the research script",
@@ -3241,7 +3286,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     M(
         "G-IDBAND",
         "name a new id in §3",
-        subst("| the lock card (SCR-005)", "| the lock card (SCR-005, CMP-249)"),
+        subst("| the lock card (SCR-005)", "| the lock card (SCR-005, CMP-254)"),
     ),
     M(
         "G-LOG",
@@ -3339,8 +3384,11 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     M(
         "G-PAIRS",
-        "garble P-2's reading cell around its anchored value",
-        subst("`below: light`<!--=PAIR:p2-->", "below: `below: light`<!--=PAIR:p2-->"),
+        "garble P-3's reading cell around its anchored value",
+        subst(
+            "`below: high contrast`<!--=PAIR:p3-->",
+            "below: `below: high contrast`<!--=PAIR:p3-->",
+        ),
     ),
     M("G-UNTOUCHED", "simulate a failed `git status` (fail closed)", with_env(status_fails)),
     M(
@@ -3414,8 +3462,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-LOCK",
         "let Escape keep the session alive in BQ-20's precision",
         subst(
-            "`22`:1807–1832); Esc dismisses and extends nothing;",
-            "`22`:1807–1832); Esc dismisses and extends nothing; pressing Escape keeps the session "
+            "`22`:1829–1854); Esc dismisses and extends nothing;",
+            "`22`:1829–1854); Esc dismisses and extends nothing; pressing Escape keeps the session "
             "alive;",
         ),
     ),
@@ -3423,9 +3471,9 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-LOCK",
         "let Escape keep the session alive in §4's CMP-098 contract (prose is read)",
         subst(
-            "(`authLock`, `22`:1810, declared by #4941, to be served by #4743); Esc dismisses and "
+            "(`authLock`, `22`:1832, declared by #4941, to be served by #4743); Esc dismisses and "
             "extends nothing;",
-            "(`authLock`, `22`:1810, declared by #4941, to be served by #4743); Esc dismisses and "
+            "(`authLock`, `22`:1832, declared by #4941, to be served by #4743); Esc dismisses and "
             "extends nothing; pressing Escape keeps the session alive;",
         ),
     ),
@@ -3507,12 +3555,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     M(
         "G-ENTRY",
-        "give CMP-098 an undeclared Motion field again",
-        in_row(
-            "A-10",
-            "- **Forbidden**: an extend",
-            "- **Motion**: a fade. <br> - **Forbidden**: an extend",
-        ),
+        "give CMP-098 an undeclared Motion field again, in its Performance line's place",
+        in_row("A-10", "- **Performance**: no engine", "- **Motion**: no engine"),
     ),
     M(
         "G-ENTRY",
@@ -3582,7 +3626,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     M(
         "G-VERSION",
         "edit a cited `15` line whose text repeats elsewhere, in place, at origin/main",
-        with_env(head_edit("15", 1051)),
+        with_env(head_edit("15", 1066)),
     ),
     M(
         "G-VERSION",
@@ -3602,8 +3646,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     M(
         "G-AROW",
-        "mark A-2's source cell applied by #5025 (its New does not stand at the base)",
-        in_source("A-2", " · applied by #5025"),
+        "drop A-2's applied-by marker (its Old no longer stands at the base)",
+        in_source("A-2", " · applied by #5058", drop=True),
+    ),
+    M(
+        "G-AROW",
+        "point A-5's field one line up (its applied bullets no longer follow it)",
+        subst("| `15`:1066 | insert bullets after |", "| `15`:1065 | insert bullets after |"),
     ),
 )
 
@@ -3669,7 +3718,8 @@ def selftest() -> tuple[bool, list[str]]:
     for f in base_found:
         out.append(ascii_line(f"  baseline {f.gate}: {f.msg}"))
     for i, m in enumerate(MUTATIONS, 1):
-        found = audit(m.apply(base))
+        planted = m.apply(base)
+        found = audit(planted if m.gate == "G-AROW" else carry_new(planted, base))
         fails = [f for f in found if f.level == "FAIL"]
         hits = [f for f in found if f.level == m.level]
         gates = sorted({f.gate for f in hits})
