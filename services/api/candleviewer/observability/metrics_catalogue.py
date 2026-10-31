@@ -3811,16 +3811,6 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=1,
     ),
     _s(
-        "bybit_clock_drift_ms",
-        "gauge",
-        "milliseconds",
-        (),
-        "Local vs exchange clock drift (SR-125).",
-        "> 1500",
-        _P,
-        "E08",
-    ),
-    _s(
         "rule_evaluations_total",
         "counter",
         "evaluations",

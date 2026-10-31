@@ -80,6 +80,8 @@ def test_required_rules_present() -> None:
         "NakedPositionDetected",
         "OmsUnknownOrders",
         "PostgresDown",
+        "PostgresDegraded",  # #5174
+        "ApiDown",  # #5174 (NQ-2)
         "DiskCritical",
         "DiskHigh",
         "Watchdog",
@@ -149,7 +151,7 @@ def test_promtool_cases_cover_every_new_page_rule() -> None:
     )
     covered |= {a["alertname"] for t in extra["tests"] for a in t["alert_rule_test"]}
     page = {r["alert"] for r in _rules() if r["labels"]["severity"] == "page"}
-    assert page - {"BybitClockDriftCritical"} <= covered
+    assert page <= covered
 
 
 #: The child routes by their whole matcher list (see `_routes_by_matchers`).
@@ -579,7 +581,7 @@ def test_event_type_page_goes_to_the_page_channel_without_a_resolved_message() -
 
 def test_pages_not_classified_as_event_pages_keep_their_resolved_notification() -> None:
     """#2931: a page without `resolves: window` keeps `page` and its [RESOLVED]. For a condition
-    page (`pg_up == 0`, an unknown-order gauge, the mesh guard) that is right: it resolves
+    page (`PostgresDown`, an unknown-order gauge, the mesh guard) that is right: it resolves
     because the condition cleared, which the Owner wants to read. `NakedPositionDetected` is in
     this group only because it is not classified yet (see EVENT_TYPE_PAGES)."""
     pages = [
@@ -807,7 +809,7 @@ def _inhibits(source: dict[str, str], target: dict[str, str]) -> bool:
     return any(
         _matches(rule["source_matchers"], source)
         and _matches(rule["target_matchers"], target)
-        and all(source.get(k, "") == target.get(k, "") for k in rule["equal"])
+        and all(source.get(k, "") == target.get(k, "") for k in rule.get("equal", []))
         for rule in AM["inhibit_rules"]
     )
 
@@ -841,6 +843,71 @@ def test_every_system_page_rule_has_an_absent_guard_on_its_series() -> None:
         for g in yaml.safe_load(page_file.read_text(encoding="utf-8"))["groups"]
         for r in g["rules"]
         if r["alert"] != "SyntheticAlert"
+        # #5174: a rule whose own expression carries an `absent(` arm guards itself (ApiDown).
+        and "absent(" not in r["expr"]
         and not any(re.search(rf"\b{m}\b", r["expr"]) for m in guarded)
     ]
     assert unguarded == []
+
+
+def test_postgres_pages_read_the_probe_joined_to_build_info_for_env() -> None:
+    """#5174: `health_component_state` has no `env`; `build_info` carries it. Without the join the
+    page has no `env` label and the PostgresDown inhibit rule (`equal: [env]`) never matches."""
+    rules = {r["alert"]: r for r in _rules()}
+    joined = (
+        'max by (env) (health_component_state{component="postgres"} '
+        "* on (job, instance) group_left (env) build_info) == "
+    )
+    for name, state, hold in (("PostgresDown", "3", "1m"), ("PostgresDegraded", "1", "5m")):
+        rule = rules[name]
+        assert " ".join(rule["expr"].split()).replace("( ", "(").replace(" )", ")") == joined + state
+        assert rule["for"] == hold
+        assert rule["labels"] == {"severity": "page", "component": "postgres"}
+    pg = {"severity": "ticket", "component": "storage", "env": "live"}
+    assert _inhibits({"alertname": "PostgresDown", "env": "live"}, pg)
+    assert not _inhibits({"alertname": "PostgresDown", "env": "demo"}, pg)
+
+
+def test_api_down_pages_on_a_failed_or_missing_scrape_of_the_api_job() -> None:
+    """#5174 (NQ-2): `up == 0` for 3 minutes, or no `up` for the job at all (a renamed or removed
+    scrape job); the job it names is a scrape job of prometheus.yml."""
+    rule = {r["alert"]: r for r in _rules()}["ApiDown"]
+    assert rule["expr"] == 'up{job="candleviewer-api"} == 0 or absent(up{job="candleviewer-api"})'
+    assert rule["for"] == "3m"
+    assert rule["labels"] == {"severity": "page", "component": "api"}
+    prom = yaml.safe_load((INFRA / "prometheus" / "prometheus.yml").read_text(encoding="utf-8"))
+    assert "candleviewer-api" in {j["job_name"] for j in prom["scrape_configs"]}
+
+
+def test_api_down_inhibits_the_absent_guard_tickets_and_nothing_else() -> None:
+    """#5174: a dead API raises every guard and IngestionMetricsAbsent; they are muted while the
+    page stands. No other ticket, and no page, is hidden by it."""
+    down = {"alertname": "ApiDown", "severity": "page", "component": "api"}
+    for name in ("ExpectedMetricMissingDiskUsedRatio", "IngestionMetricsAbsent"):
+        ticket = {"alertname": name, "severity": "ticket", "component": "alerting", "env": "live"}
+        assert _inhibits(down, ticket), name
+    other = {"alertname": "KeySelfCheckFailed", "severity": "ticket", "component": "auth"}
+    assert not _inhibits(down, other)
+    for page in (
+        {"alertname": "ExpectedMetricMissingX", "severity": "page", "component": "alerting"},
+        {"alertname": "PostgresDown", "severity": "page", "component": "postgres", "env": "live"},
+    ):
+        assert not _inhibits(down, page)
+    rule = next(r for r in AM["inhibit_rules"] if r["source_matchers"] == ['alertname = "ApiDown"'])
+    assert "equal" not in rule, "`up` has no env label"
+
+
+def test_prometheus_scrapes_alertmanager_where_it_sends_alerts() -> None:
+    """#5174: AlertmanagerNotificationsFailed reads Alertmanager's own series, so Prometheus must
+    scrape the service it already sends alerts to."""
+    prom = yaml.safe_load((INFRA / "prometheus" / "prometheus.yml").read_text(encoding="utf-8"))
+    sent_to = prom["alerting"]["alertmanagers"][0]["static_configs"][0]["targets"]
+    job = next(j for j in prom["scrape_configs"] if j["job_name"] == "alertmanager")
+    assert job["static_configs"][0]["targets"] == sent_to == ["alertmanager:9093"]
+
+
+def test_ci_routes_test_loop_has_an_api_down_page_case() -> None:
+    """#5174: ApiDown reaches the page receiver."""
+    assert ("page", {"alertname": "ApiDown", "severity": "page", "component": "api"}) in (
+        _ci_route_cases()
+    )

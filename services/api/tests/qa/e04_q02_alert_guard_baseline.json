@@ -16,7 +16,7 @@
       "alert": "AlertmanagerNotificationsFailed",
       "series": "alertmanager_notifications_failed_total",
       "class": "routed",
-      "reason": "Alertmanager is not a scrape target in prometheus.yml, so nothing supplies it; absent() would fire for good (see the series baseline)"
+      "reason": "Alertmanager's own series, scraped since #5174 (job alertmanager); a guard is declined: a dead Alertmanager is caught by the Watchdog dead-man, and an absent() ticket is one the dead Alertmanager cannot deliver"
     },
     {
       "alert": "AuditLaneAnomaly",

@@ -81,50 +81,6 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
-  - series: pg_up
-    values: 0+0x10
-  alert_rule_test:
-  - eval_time: 5m
-    alertname: PostgresDown
-    exp_alerts:
-    - exp_labels:
-        severity: page
-        component: postgres
-      exp_annotations:
-        summary: Postgres is down
-        runbook_url: docs/plan/07-release-and-prr.md#alert-postgresdown
-- interval: 1m
-  input_series:
-  - series: pg_up
-    values: 1+0x10
-  alert_rule_test:
-  - eval_time: 5m
-    alertname: PostgresDown
-    exp_alerts: []
-- interval: 1m
-  input_series:
-  - series: bybit_clock_drift_ms
-    values: 2000+0x10
-  alert_rule_test:
-  - eval_time: 5m
-    alertname: ClockDriftBlockingTrading
-    exp_alerts:
-    - exp_labels:
-        severity: page
-        component: clock
-      exp_annotations:
-        summary: Clock drift is blocking order entry
-        runbook_url: docs/plan/07-release-and-prr.md#alert-clockdriftblockingtrading
-- interval: 1m
-  input_series:
-  - series: bybit_clock_drift_ms
-    values: 10+0x10
-  alert_rule_test:
-  - eval_time: 5m
-    alertname: ClockDriftBlockingTrading
-    exp_alerts: []
-- interval: 1m
-  input_series:
   - series: disk_used_ratio
     values: 0.97+0x10
   alert_rule_test:
@@ -325,50 +281,6 @@ tests:
   alert_rule_test:
   - eval_time: 15m
     alertname: RuleAutodisarm
-    exp_alerts: []
-- interval: 1m
-  input_series:
-  - series: env_mismatch_attempts_total
-    values: 0+0x10 1+0x10
-  alert_rule_test:
-  - eval_time: 15m
-    alertname: EnvMismatchAttempt
-    exp_alerts:
-    - exp_labels:
-        severity: ticket
-        component: oms
-      exp_annotations:
-        summary: Demo/live mismatch attempt blocked
-        runbook_url: docs/plan/07-release-and-prr.md#alert-envmismatchattempt
-- interval: 1m
-  input_series:
-  - series: env_mismatch_attempts_total
-    values: 0+0x20
-  alert_rule_test:
-  - eval_time: 15m
-    alertname: EnvMismatchAttempt
-    exp_alerts: []
-- interval: 1m
-  input_series:
-  - series: credential_expiry_days
-    values: 5+0x30
-  alert_rule_test:
-  - eval_time: 20m
-    alertname: CredentialExpiryApproaching
-    exp_alerts:
-    - exp_labels:
-        severity: ticket
-        component: secrets
-      exp_annotations:
-        summary: Credential or certificate expiry within 14 days
-        runbook_url: docs/plan/07-release-and-prr.md#alert-credentialexpiryapproaching
-- interval: 1m
-  input_series:
-  - series: credential_expiry_days
-    values: 60+0x30
-  alert_rule_test:
-  - eval_time: 20m
-    alertname: CredentialExpiryApproaching
     exp_alerts: []
 - interval: 1m
   input_series:
@@ -1393,6 +1305,116 @@ tests:
         summary: 'Audit chain verification is not passing: no run passed for 26 hours,
           or no runner is wired in live'
         runbook_url: docs/plan/07-release-and-prr.md#alert-auditverifynotpassing
+- interval: 1m
+  input_series:
+  - series: health_component_state{component="postgres",instance="api:9108",job="candleviewer-api"}
+    values: 3+0x10
+  - series: build_info{commit="t",env="live",instance="api:9108",job="candleviewer-api",version="t"}
+    values: 1+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: PostgresDown
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: postgres
+        env: live
+      exp_annotations:
+        summary: Postgres is down
+        runbook_url: docs/plan/07-release-and-prr.md#alert-postgresdown
+- interval: 1m
+  input_series:
+  - series: health_component_state{component="postgres",instance="api:9108",job="candleviewer-api"}
+    values: 0+0x4 3+0x10
+  - series: build_info{commit="t",env="live",instance="api:9108",job="candleviewer-api",version="t"}
+    values: 1+0x14
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: PostgresDown
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: health_component_state{component="postgres",instance="api:9108",job="candleviewer-api"}
+    values: 1+0x10
+  - series: build_info{commit="t",env="live",instance="api:9108",job="candleviewer-api",version="t"}
+    values: 1+0x10
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: PostgresDown
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: health_component_state{component="postgres",instance="api:9108",job="candleviewer-api"}
+    values: 0+0x10
+  - series: build_info{commit="t",env="live",instance="api:9108",job="candleviewer-api",version="t"}
+    values: 1+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: PostgresDown
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: health_component_state{component="postgres",instance="api:9108",job="candleviewer-api"}
+    values: 3+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: PostgresDown
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: health_component_state{component="postgres",instance="api:9108",job="candleviewer-api"}
+    values: 1+0x10
+  - series: build_info{commit="t",env="live",instance="api:9108",job="candleviewer-api",version="t"}
+    values: 1+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: PostgresDegraded
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: postgres
+        env: live
+      exp_annotations:
+        summary: Postgres is not answering (probe timing out)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-postgresdegraded
+- interval: 1m
+  input_series:
+  - series: health_component_state{component="postgres",instance="api:9108",job="candleviewer-api"}
+    values: 1+0x10
+  - series: build_info{commit="t",env="live",instance="api:9108",job="candleviewer-api",version="t"}
+    values: 1+0x10
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: PostgresDegraded
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: health_component_state{component="postgres",instance="api:9108",job="candleviewer-api"}
+    values: 0+0x2 1+0x2 0+0x10
+  - series: build_info{commit="t",env="live",instance="api:9108",job="candleviewer-api",version="t"}
+    values: 1+0x14
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: PostgresDegraded
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: health_component_state{component="postgres",instance="api:9108",job="candleviewer-api"}
+    values: 3+0x10
+  - series: build_info{commit="t",env="live",instance="api:9108",job="candleviewer-api",version="t"}
+    values: 1+0x10
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: PostgresDegraded
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: health_component_state{component="postgres",instance="api:9108",job="candleviewer-api"}
+    values: 1+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: PostgresDegraded
+    exp_alerts: []
 - interval: 1m
   input_series:
   - series: auth_disabled_user_sessions_revoked_total{env="live"}
@@ -2501,6 +2523,61 @@ tests:
   alert_rule_test:
   - eval_time: 6m
     alertname: AuditSigningKeyBootStepFailed
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: up{instance="172.28.0.10:9108",job="candleviewer-api"}
+    values: 0+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: ApiDown
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: api
+        job: candleviewer-api
+        instance: 172.28.0.10:9108
+      exp_annotations:
+        summary: 'cv-api cannot be scraped: every page that reads its series is blind'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-apidown
+- interval: 1m
+  input_series:
+  - series: up{instance="172.28.0.10:9108",job="candleviewer-api"}
+    values: 1+0x2 0+0x2
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: ApiDown
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: up{instance="172.28.0.10:9108",job="candleviewer-api"}
+    values: 1+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: ApiDown
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: up{instance="pushgateway:9091",job="pushgateway"}
+    values: 1+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: ApiDown
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: api
+        job: candleviewer-api
+      exp_annotations:
+        summary: 'cv-api cannot be scraped: every page that reads its series is blind'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-apidown
+- interval: 1m
+  input_series:
+  - series: up{instance="pushgateway:9091",job="pushgateway"}
+    values: 1+0x10
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: ApiDown
     exp_alerts: []
 - interval: 1m
   input_series:

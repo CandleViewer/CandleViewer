@@ -251,7 +251,7 @@ chronyc tracking | grep -E 'System time|Leap'
 | 3. What is still safe | Existing positions and their native exchange stop-losses are unaffected. Read-only screens still work.                                                              |
 | 5. Remediation        | Resync the host clock per `docs/plan/runbooks/clock-sync.md`. Do not edit `recv_window_ms`. No role is needed for a host resync; any restart of the api is audited. |
 | 6. Escalation         | Owner immediately; if not fixed in 15 minutes, manage open positions directly on the exchange.                                                                      |
-| 7. Verify recovery    | Drift back under 1500 ms (the `ClockDriftBlockingTrading` clear point) and a test order on demo succeeds.                                                           |
+| 7. Verify recovery    | Drift back under 2000 ms (the clock guard's block point) and a test order on demo succeeds.                                                                         |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: `value` within -500..500; clock synchronized.)
 
@@ -388,9 +388,9 @@ curl -s http://127.0.0.1:8000/metrics | grep -c '^<metric>'
 grep -n '<metric>' services/api/candleviewer/observability/metrics_catalogue.py
 ```
 
-<a id="alert-expectedmetricmissingpgup"></a>
+<a id="alert-expectedmetricmissinghealthcomponentstate"></a>
 
-### ExpectedMetricMissingPgUp
+### ExpectedMetricMissingHealthComponentState
 
 | Element               | Detail                                                                                                             |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -409,9 +409,9 @@ curl -s http://127.0.0.1:8000/metrics | grep -c '^<metric>'
 grep -n '<metric>' services/api/candleviewer/observability/metrics_catalogue.py
 ```
 
-<a id="alert-expectedmetricmissingbybitclockdriftms"></a>
+<a id="alert-expectedmetricmissingbuildinfo"></a>
 
-### ExpectedMetricMissingBybitClockDriftMs
+### ExpectedMetricMissingBuildInfo
 
 | Element               | Detail                                                                                                             |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -538,48 +538,6 @@ grep -n '<metric>' services/api/candleviewer/observability/metrics_catalogue.py
 <a id="alert-expectedmetricmissingruleautodisarmtotal"></a>
 
 ### ExpectedMetricMissingRuleAutodisarmTotal
-
-| Element               | Detail                                                                                                             |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 1. What fired         | `absent()` guard: a catalogued metric is not emitted (all `ExpectedMetricMissing*` rules). Ticket.                 |
-| 2. User impact        | The alert that depends on that metric is blind.                                                                    |
-| 3. What is still safe | Trading.                                                                                                           |
-| 5. Remediation        | Expected until the owning epic ships (catalogue status `planned`). Otherwise fix the emitter or its scrape target. |
-| 6. Escalation         | Owner of the emitting epic.                                                                                        |
-| 7. Verify recovery    | Guard clears within 15 minutes.                                                                                    |
-
-**4. First three diagnostic commands** (run from the repo root; expected healthy result: empty vector; count above 0.)
-
-```bash
-curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=absent(<metric from the alert name>)'
-curl -s http://127.0.0.1:8000/metrics | grep -c '^<metric>'
-grep -n '<metric>' services/api/candleviewer/observability/metrics_catalogue.py
-```
-
-<a id="alert-expectedmetricmissingenvmismatchattemptstotal"></a>
-
-### ExpectedMetricMissingEnvMismatchAttemptsTotal
-
-| Element               | Detail                                                                                                             |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 1. What fired         | `absent()` guard: a catalogued metric is not emitted (all `ExpectedMetricMissing*` rules). Ticket.                 |
-| 2. User impact        | The alert that depends on that metric is blind.                                                                    |
-| 3. What is still safe | Trading.                                                                                                           |
-| 5. Remediation        | Expected until the owning epic ships (catalogue status `planned`). Otherwise fix the emitter or its scrape target. |
-| 6. Escalation         | Owner of the emitting epic.                                                                                        |
-| 7. Verify recovery    | Guard clears within 15 minutes.                                                                                    |
-
-**4. First three diagnostic commands** (run from the repo root; expected healthy result: empty vector; count above 0.)
-
-```bash
-curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=absent(<metric from the alert name>)'
-curl -s http://127.0.0.1:8000/metrics | grep -c '^<metric>'
-grep -n '<metric>' services/api/candleviewer/observability/metrics_catalogue.py
-```
-
-<a id="alert-expectedmetricmissingcredentialexpirydays"></a>
-
-### ExpectedMetricMissingCredentialExpiryDays
 
 | Element               | Detail                                                                                                             |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -770,14 +728,14 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 
 ### OmsPositionReadingOwed
 
-| Element               | Detail                                                                                                                                                                                                                                                                                                                                                                                       |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. What fired         | A position reading has been owed to protection for 60 s or more (`oms_position_reading_owed_age_seconds` >= 60): the private-stream consumer has not handed it to the orders that protect the position nor to `ProtectionReadings`, or the position store holds the row as dated ahead of its clock. Page.                                                                                   |
-| 2. User impact        | A stop lost on that position may be going undetected (C-2.6). At 120 s the `oms` check of `/readyz` reads `degraded`; order entry is not refused for it.                                                                                                                                                                                                                                     |
-| 3. What is still safe | Native stop-losses already on the exchange, and every other account's readings.                                                                                                                                                                                                                                                                                                              |
-| 5. Remediation        | If `ClockDriftBlockingTrading` is firing too, fix the clock first: a row held as dated ahead of the store's clock is applied again once the exchange clock is back in sync. Otherwise open the account's positions in the web app and on Bybit, and attach or tighten the stop on any position without one (Owner or the assigned Manager; audited). Never cancel a stop to clear the alert. |
-| 6. Escalation         | Owner immediately; never ticket-priority.                                                                                                                                                                                                                                                                                                                                                    |
-| 7. Verify recovery    | The gauge reads 0 and the `oms` check of `/readyz` is `ok`.                                                                                                                                                                                                                                                                                                                                  |
+| Element               | Detail                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1. What fired         | A position reading has been owed to protection for 60 s or more (`oms_position_reading_owed_age_seconds` >= 60): the private-stream consumer has not handed it to the orders that protect the position nor to `ProtectionReadings`, or the position store holds the row as dated ahead of its clock. Page.                                                                                 |
+| 2. User impact        | A stop lost on that position may be going undetected (C-2.6). At 120 s the `oms` check of `/readyz` reads `degraded`; order entry is not refused for it.                                                                                                                                                                                                                                   |
+| 3. What is still safe | Native stop-losses already on the exchange, and every other account's readings.                                                                                                                                                                                                                                                                                                            |
+| 5. Remediation        | If `BybitClockDriftCritical` is firing too, fix the clock first: a row held as dated ahead of the store's clock is applied again once the exchange clock is back in sync. Otherwise open the account's positions in the web app and on Bybit, and attach or tighten the stop on any position without one (Owner or the assigned Manager; audited). Never cancel a stop to clear the alert. |
+| 6. Escalation         | Owner immediately; never ticket-priority.                                                                                                                                                                                                                                                                                                                                                  |
+| 7. Verify recovery    | The gauge reads 0 and the `oms` check of `/readyz` is `ok`.                                                                                                                                                                                                                                                                                                                                |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: value 0; no lines; `oms` ok.)
 
@@ -793,12 +751,14 @@ curl -s http://127.0.0.1:8000/readyz
 
 | Element               | Detail                                                                                                                                                                 |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. What fired         | `pg_up` == 0 for 1 minute. Page.                                                                                                                                       |
+| 1. What fired         | The api's own Postgres probe reads `down` (`health_component_state{component="postgres"}` == 3, a failed `SELECT 1`) for 1 minute. Page.                               |
 | 2. User impact        | Auth, audit and OMS state cannot be written; order entry fails closed.                                                                                                 |
 | 3. What is still safe | Native exchange stop-losses; market-data recording to QuestDB.                                                                                                         |
 | 5. Remediation        | `docker compose -f infra/compose/docker-compose.yml --profile core up -d postgres`. If the volume is damaged restore per section 5.3. Never delete `cv-postgres-data`. |
 | 6. Escalation         | Owner immediately.                                                                                                                                                     |
-| 7. Verify recovery    | `pg_up` returns 1 and the api `/healthz` returns 200.                                                                                                                  |
+| 7. Verify recovery    | The probe reads 0 (`/readyz` `postgres` check `ok`) and the api `/healthz` returns 200.                                                                                |
+
+The page is the API's view of its database, so it is blind while the API is down: `ApiDown` covers that (see `#alert-apidown`).
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: `healthy`; log shows `ready to accept connections`; `accepting connections`.)
 
@@ -808,25 +768,46 @@ docker compose -f infra/compose/docker-compose.yml --profile core logs --tail 30
 docker compose -f infra/compose/docker-compose.yml --profile core exec postgres pg_isready
 ```
 
-<a id="alert-clockdriftblockingtrading"></a>
+<a id="alert-postgresdegraded"></a>
 
-### ClockDriftBlockingTrading
+### PostgresDegraded
 
-| Element               | Detail                                                                    |
-| --------------------- | ------------------------------------------------------------------------- |
-| 1. What fired         | Drift above 1500 ms for 1 minute (`bybit_clock_drift_ms`). Page.          |
-| 2. User impact        | Order entry is blocked until time sync recovers.                          |
-| 3. What is still safe | Existing positions and native stop-losses.                                |
-| 5. Remediation        | Resync per `docs/plan/runbooks/clock-sync.md`. Never widen `recv_window`. |
-| 6. Escalation         | Owner immediately.                                                        |
-| 7. Verify recovery    | Drift under 500 ms; a demo test order is accepted.                        |
+| Element               | Detail                                                                                                                                                                                                                                    |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | The Postgres probe reads `degraded` (`health_component_state{component="postgres"}` == 1, a `SELECT 1` that timed out at 1.5 s) for 5 minutes. Page.                                                                                      |
+| 2. User impact        | The database accepts connections but answers nothing in time (a black hole, a stalled disk, a saturated host): the same as `PostgresDown` for trading. A DEGRADED of under 5 minutes is not paged.                                        |
+| 3. What is still safe | Native exchange stop-losses; market-data recording to QuestDB.                                                                                                                                                                            |
+| 5. Remediation        | Find what is stalling it (`pg_stat_activity`, disk and host load, the network path to `postgres`). Restart the service only if it will not recover: `docker compose -f infra/compose/docker-compose.yml --profile core restart postgres`. |
+| 6. Escalation         | Owner immediately.                                                                                                                                                                                                                        |
+| 7. Verify recovery    | The probe reads 0 (`/readyz` `postgres` check `ok`).                                                                                                                                                                                      |
 
-**4. First three diagnostic commands** (run from the repo root; expected healthy result: value within -500..500; synchronized yes.)
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: `healthy`; no waiting queries; `accepting connections`.)
 
 ```bash
-curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=bybit_clock_drift_ms'
-timedatectl status | grep -E 'synchronized|NTP'
-chronyc tracking | grep 'System time'
+docker compose -f infra/compose/docker-compose.yml --profile core ps postgres
+docker compose -f infra/compose/docker-compose.yml --profile core exec postgres psql -U postgres -c "select pid, state, wait_event, now() - query_start as age from pg_stat_activity where state <> 'idle' order by age desc limit 10"
+docker compose -f infra/compose/docker-compose.yml --profile core exec postgres pg_isready
+```
+
+<a id="alert-apidown"></a>
+
+### ApiDown
+
+| Element               | Detail                                                                                                                                                                                                                                                                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | Prometheus cannot scrape the api (`up{job="candleviewer-api"}` == 0 for 3 minutes), or has no `up` for that job at all (the job was renamed or removed in `prometheus.yml`). Page.                                                                                                                            |
+| 2. User impact        | The api is down, hung or unreachable on its metrics bind, so every alert that reads its series is blind, including `PostgresDown`. The guard tickets (`ExpectedMetricMissing*`, `IngestionMetricsAbsent`) are held back while this stands.                                                                    |
+| 3. What is still safe | Native exchange stop-losses on the exchange. Positions are not managed by the app until it is back.                                                                                                                                                                                                           |
+| 5. Remediation        | Check Postgres first: with the database down the api may not start (`docker compose -f infra/compose/docker-compose.yml --profile core ps postgres`; `#alert-postgresdown`). Then the api container and its logs. If `up` is absent, restore the `candleviewer-api` job in `infra/prometheus/prometheus.yml`. |
+| 6. Escalation         | Owner immediately; if not back in 15 minutes, manage open positions directly on the exchange.                                                                                                                                                                                                                 |
+| 7. Verify recovery    | `up{job="candleviewer-api"}` reads 1 and `/readyz` returns 200.                                                                                                                                                                                                                                               |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: `up` 1; the api `healthy`; `postgres` `healthy`.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=up{job="candleviewer-api"}'
+docker compose -f infra/compose/docker-compose.yml --profile core ps api postgres
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | tail -30
 ```
 
 <a id="alert-diskcritical"></a>
@@ -1043,44 +1024,44 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 
 <a id="alert-envmismatchattempt"></a>
 
-### EnvMismatchAttempt
+### EnvMismatchAttempt (withdrawn)
 
-| Element               | Detail                                                                                                    |
-| --------------------- | --------------------------------------------------------------------------------------------------------- |
-| 1. What fired         | A demo/live environment mismatch was attempted (`env_mismatch_attempts_total` increased). Ticket.         |
-| 2. User impact        | The isolation guard (C-2.11) blocked it; no order was sent.                                               |
-| 3. What is still safe | All accounts; the guard worked.                                                                           |
-| 5. Remediation        | Identify the actor from the audit record; correct the account/environment binding. Never relax the guard. |
-| 6. Escalation         | Owner and security reviewer.                                                                              |
-| 7. Verify recovery    | No new increase.                                                                                          |
+| Element               | Detail                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1. What fired         | Nothing: the rule was withdrawn under #5174 because no module emits `env_mismatch_attempts_total` and none is planned, so it could never fire. It was never the control.                                                                                                                                                                                                                                                                                                                                                                               |
+| 2. User impact        | None from the withdrawal. The demo/live isolation (C-2.11) is enforced in code: the secrets broker and key candidate refuse a credential of the wrong environment (`secrets/broker.py`, `secrets/candidate.py`: `CredentialUnavailable("environment_mismatch")`), the trade-group preview and definition writes answer 400 `environment_mismatch` (`api/trade_group_preview.py`, `api/trade_group_definition_writes.py`), and the Bybit reads drop rows of another environment (`bybit_rows_refused_total{{reason="environment"}}`, silent by design). |
+| 3. What is still safe | All accounts; the guards above are unchanged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 5. Remediation        | None. A real `env_mismatch_attempts_total` is a post-freeze feature. Record: `docs/qa/e04-blind-spots.md` (BS-22).                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 6. Escalation         | Owner and security reviewer, for any change to the guards above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 7. Verify recovery    | Not applicable; refused attempts stay visible in the logs and in `cv_tradegroup_preview_total{outcome="environment_mismatch"}` (a dashboard series, not an alert).                                                                                                                                                                                                                                                                                                                                                                                     |
 
-**4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: no lines on a correctly bound stack.)
 
 ```bash
-curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=increase(env_mismatch_attempts_total[15m])'
-docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'env_mismatch' | tail -20
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -E 'key_selfcheck_env_mismatch|account_health.env_mismatch' | tail -20
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=increase(cv_tradegroup_preview_total{outcome="environment_mismatch"}[15m])'
 docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'audit' | tail -20
 ```
 
 <a id="alert-credentialexpiryapproaching"></a>
 
-### CredentialExpiryApproaching
+### CredentialExpiryApproaching (withdrawn)
 
-| Element               | Detail                                                                                                                                                                             |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. What fired         | An exchange credential expires in under 14 days (`credential_expiry_days`). Ticket.                                                                                                |
-| 2. User impact        | Trading on that account stops when it expires.                                                                                                                                     |
-| 3. What is still safe | Existing stops.                                                                                                                                                                    |
-| 5. Remediation        | Rotate the key in the admin Accounts screen (Owner; audited). Withdrawal permission must be off. Never paste a key in chat or tickets; secrets live in the host keychain (SR-002). |
-| 6. Escalation         | Owner.                                                                                                                                                                             |
-| 7. Verify recovery    | `credential_expiry_days` min above 14.                                                                                                                                             |
+| Element               | Detail                                                                                                                                                                                              |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | Nothing: the rule was withdrawn under #5174. It read `credential_expiry_days`, which nothing emits, and duplicated `KeyExpiringWithin14Days`, `KeyExpiringWithin7Days` and `KeyExpiringWithin1Day`. |
+| 2. User impact        | Trading on an account stops when its key expires; the `KeyExpiringWithin*` tickets warn at 14, 7 and 1 day.                                                                                         |
+| 3. What is still safe | Existing stops.                                                                                                                                                                                     |
+| 5. Remediation        | Follow `#alert-keyexpiring`.                                                                                                                                                                        |
+| 6. Escalation         | Owner.                                                                                                                                                                                              |
+| 7. Verify recovery    | As `#alert-keyexpiring`.                                                                                                                                                                            |
 
-**4. First three diagnostic commands** (run from the repo root; expected healthy result: min above 14.)
+**4. First three diagnostic commands** (see `#alert-keyexpiring`; expected healthy result: a soonest expiry above 14 days.)
 
 ```bash
-curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=credential_expiry_days'
-docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'credential' | tail -20
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=cv_key_soonest_expiry_seconds'
 docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'expiry' | tail -20
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'credential' | tail -20
 ```
 
 <a id="alert-authloginfailurespike"></a>

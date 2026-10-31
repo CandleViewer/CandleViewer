@@ -108,6 +108,7 @@ jobs:
           # with the labels its rule carries; infra/alertmanager/tests pins that the list has them.
           for r in \
             "page severity=page" \
+            "page alertname=ApiDown severity=page component=api" \
             "page_event severity=page resolves=window" \
             "page_event alertname=AuditChainVerificationFailed severity=page component=audit resolves=window" \
             "page_event alertname=AuthAuditOutcomesLostBurst severity=page component=auth_audit resolves=window" \

@@ -39,7 +39,14 @@ groups:
           summary: "A position reading has been owed to protection for a minute or more"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-omspositionreadingowed"
       - alert: PostgresDown
-        expr: pg_up == 0
+        # #5174: the API's own Postgres probe (health_wiring.py: SELECT 1 each second), 3 = down.
+        # `build_info` supplies `env`, so the PostgresDown inhibit rule (equal: [env]) can match.
+        # Blind while the API is down: ApiDown covers that (its runbook says to check Postgres).
+        expr: >-
+          max by (env) (
+            health_component_state{component="postgres"}
+            * on (job, instance) group_left (env) build_info
+          ) == 3
         for: 1m
         labels:
           severity: page
@@ -47,15 +54,33 @@ groups:
         annotations:
           summary: "Postgres is down"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-postgresdown"
-      - alert: ClockDriftBlockingTrading
-        expr: abs(bybit_clock_drift_ms) > 1500
-        for: 1m
+      - alert: PostgresDegraded
+        # #5174: the same probe reading 1 (degraded) is a probe timeout (1.5 s): a black-holed
+        # database answers nothing. Held for 5 minutes it is a timeout streak, so the DB is unusable
+        # for trading; a brief DEGRADED stays silent.
+        expr: >-
+          max by (env) (
+            health_component_state{component="postgres"}
+            * on (job, instance) group_left (env) build_info
+          ) == 1
+        for: 5m
         labels:
           severity: page
-          component: clock
+          component: postgres
         annotations:
-          summary: "Clock drift is blocking order entry"
-          runbook_url: "docs/plan/07-release-and-prr.md#alert-clockdriftblockingtrading"
+          summary: "Postgres is not answering (probe timing out)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-postgresdegraded"
+      - alert: ApiDown
+        # #5174 (NQ-2): Prometheus cannot scrape cv-api (process down, hung, its metrics bind gone),
+        # or the job is missing from prometheus.yml. Every page that reads its series is blind then.
+        expr: up{job="candleviewer-api"} == 0 or absent(up{job="candleviewer-api"})
+        for: 3m
+        labels:
+          severity: page
+          component: api
+        annotations:
+          summary: "cv-api cannot be scraped: every page that reads its series is blind"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-apidown"
       - alert: DiskCritical
         expr: disk_used_ratio > 0.95
         for: 2m
