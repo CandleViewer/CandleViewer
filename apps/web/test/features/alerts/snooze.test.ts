@@ -14,6 +14,7 @@ describe("snooze math", () => {
     const got = SNOOZE_PRESETS.map((p) => snoozeFromPreset(p, clock));
     expect(got).toEqual([
       { ok: true, until: "2026-10-31T12:15:00.000Z" },
+      { ok: true, until: "2026-10-31T12:30:00.000Z" },
       { ok: true, until: "2026-10-31T13:00:00.000Z" },
       { ok: true, until: "2026-10-31T16:00:00.000Z" },
       { ok: true, until: "2026-11-01T12:00:00.000Z" },
