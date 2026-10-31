@@ -13,6 +13,7 @@ const load = async () => ({
   ...(await import("../src/keymap/Cheatsheet")),
   ...(await import("../src/keymap/keymap")),
   ...(await import("../src/keymap/registry")),
+  ...(await import("../src/keymap/shellCommands")),
   ...(await import("../src/keymap/profile")),
   ...(await import("../src/features/app-shell/announcer")),
   ...(await import("../src/shell/bootstrap/themeStore")),
@@ -248,6 +249,27 @@ describe("Ctrl+Shift+M toggles reduced motion to an explicit choice (E10-D04 G-0
     expect(appThemeStore().getSnapshot().motion).toBe("reduce");
     press(rm);
     expect(appThemeStore().getSnapshot()).toMatchObject({ motionOverride: "off", motion: "safe" });
+  });
+
+  it("a held chord flips once: the repeat does nothing", () => {
+    const { KeymapHost, appThemeStore } = m;
+    render(<KeymapHost />);
+    press(rm);
+    press({ ...rm, repeat: true });
+    press({ ...rm, repeat: true });
+    expect(appThemeStore().getSnapshot()).toMatchObject({ motionOverride: "on", motion: "reduce" });
+    expect(themeRegion()).toBe("Reduced motion on");
+  });
+
+  it("announces once per press, through one say call, and the handler returns the new state", () => {
+    const { appThemeStore, toggleReducedMotionAnnounced } = m;
+    const say = vi.fn();
+    expect(toggleReducedMotionAnnounced(appThemeStore(), say)).toBe(true);
+    expect(say).toHaveBeenCalledTimes(1);
+    expect(say).toHaveBeenLastCalledWith("Reduced motion on");
+    expect(toggleReducedMotionAnnounced(appThemeStore(), say)).toBe(false);
+    expect(say).toHaveBeenCalledTimes(2);
+    expect(say).toHaveBeenLastCalledWith("Reduced motion off");
   });
 
   it("does nothing while the idle lock is up", () => {
