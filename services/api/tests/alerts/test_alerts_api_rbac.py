@@ -14,6 +14,7 @@ ROUTES: list[tuple[str, str, Any, str]] = [
     ("PUT", "/alerts/{id}", PRICE_CROSS, "alerts:write"),
     ("DELETE", "/alerts/{id}", None, "alerts:write"),
     ("PUT", "/alerts/{id}/enabled", {"enabled": False}, "alerts:write"),
+    ("PUT", "/alerts/{id}/snooze", {"until": None}, "alerts:write"),
 ]
 
 

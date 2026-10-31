@@ -1265,7 +1265,11 @@ alerts = Table(
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("deleted_at", TIMESTAMP(timezone=True)),
+    Column("disarm_reason", Text),
     CheckConstraint("cooldown_seconds BETWEEN 0 AND 86400", name="al_cooldown"),
+    CheckConstraint(
+        "disarm_reason IS NULL OR disarm_reason IN ('source_unavailable')", name="al_disarm_reason"
+    ),
     CheckConstraint("array_length(channels,1) BETWEEN 1 AND 5", name="al_channels"),
     CheckConstraint(
         "NOT ('webhook' = ANY(channels)) OR webhook_url_enc IS NOT NULL", name="al_webhook"

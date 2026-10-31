@@ -3068,7 +3068,9 @@ CREATE TABLE alerts (
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
   deleted_at     timestamptz,
+  disarm_reason  text,                    -- why the server disarmed it (0059); NULL when re-enabled
   CONSTRAINT al_cooldown CHECK (cooldown_seconds BETWEEN 0 AND 86400),
+  CONSTRAINT al_disarm_reason CHECK (disarm_reason IS NULL OR disarm_reason IN ('source_unavailable')),
   CONSTRAINT al_channels CHECK (array_length(channels,1) BETWEEN 1 AND 5),
   CONSTRAINT al_webhook  CHECK (NOT ('webhook' = ANY(channels)) OR webhook_url_enc IS NOT NULL)
 );

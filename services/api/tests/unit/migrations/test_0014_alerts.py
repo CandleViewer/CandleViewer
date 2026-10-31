@@ -52,7 +52,7 @@ def _checks(table: object) -> set[str]:
 
 def test_check_constraint_names_match_sql() -> None:
     assert _checks(models.alerts) == {
-        f"ck_alerts_{n}" for n in ("al_cooldown", "al_channels", "al_webhook")
+        f"ck_alerts_{n}" for n in ("al_cooldown", "al_channels", "al_webhook", "al_disarm_reason")
     }
     assert _checks(models.alert_deliveries) == {"ck_alert_deliveries_ad_attempt"}
 

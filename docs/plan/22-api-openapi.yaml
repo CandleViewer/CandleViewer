@@ -9069,6 +9069,40 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /alerts/{alertId}/snooze:
+    parameters: [{ $ref: "#/components/parameters/AlertId" }]
+    put:
+      tags: [alerts]
+      operationId: setAlertSnooze
+      summary: Snooze an alert, or clear its snooze
+      description: |
+        `until` is a future tz-aware instant (snoozed until then) or `null` (snooze cleared); a
+        past or offset-less instant, or one more than 30 days ahead (rule `until_too_far`), is
+        `422 validation_failed`; a non-string `until` (e.g. a numeric epoch) is refused too. Audited as `alert.snoozed` /
+        `alert.unsnoozed` (C-2.9). Another user's alert is `404`.
+      x-rbac: { permissions: [alerts:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [until]
+              properties: { until: { type: ["string", "null"], format: date-time } }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alert" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /alerts/deliveries:
     get:
       tags: [alerts]
@@ -21687,9 +21721,21 @@ components:
             description: "Mustache-style placeholders resolved from the rule context.",
           }
         severity: { $ref: "#/components/schemas/Severity" }
-        expires_at: { type: ["string", "null"], format: date-time }
+        expires_at:
+          {
+            type: ["string", "null"],
+            format: date-time,
+            description: "A past instant is refused with `422 validation_failed` (E40-D02 CC-10).",
+          }
         webhook_url: { type: ["string", "null"], format: uri }
         enabled: { type: boolean, default: true }
+        cooldown_seconds:
+          {
+            type: integer,
+            minimum: 0,
+            maximum: 86400,
+            description: "Minimum seconds between two firings; omitted on create = 60, omitted on replace = unchanged (E40-D02 CC-5).",
+          }
     Alert:
       allOf:
         - $ref: "#/components/schemas/AlertInput"
@@ -21699,6 +21745,19 @@ components:
             owner_user_id: { type: string, format: uuid }
             fire_count: { type: integer }
             last_fired_at: { type: ["string", "null"], format: date-time }
+            cooldown_seconds: { type: integer, minimum: 0, maximum: 86400 }
+            snoozed_until:
+              {
+                type: ["string", "null"],
+                format: date-time,
+                description: "UTC instant until which firings are suppressed; null = not snoozed (CC-3).",
+              }
+            disarm_reason:
+              {
+                type: ["string", "null"],
+                enum: [source_unavailable, null],
+                description: "Why the server disarmed the alert (`enabled=false`); null otherwise. Cleared when the alert is re-enabled (CC-3).",
+              }
             created_at: { type: string, format: date-time }
             updated_at: { type: string, format: date-time }
     AlertDelivery:

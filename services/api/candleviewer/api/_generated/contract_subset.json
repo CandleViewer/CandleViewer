@@ -3964,6 +3964,16 @@
         }
       }
     },
+    "/alerts/{alertId}/snooze": {
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "alerts:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
     "/auth/_perf/argon2-params": {
       "get": {
         "x-rbac": {

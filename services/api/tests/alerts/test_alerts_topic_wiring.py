@@ -24,7 +24,7 @@ _FIRING: dict[str, Any] = {
     "alert_id": "alert-1", "user_id": "user-1", "channels": ("in_app", "desktop"),
     "status": "queued", "title": "BTC reclaims 64k", "body": "BTCUSDT crossed 64000",
     "context": {"symbol": "BTCUSDT"}, "fired_at": _FIRED, "once": False, "bump": True,
-    "disable": False,
+    "disarm_reason": None,
 }  # fmt: skip
 
 
@@ -64,22 +64,23 @@ async def test_nothing_to_deliver_wakes_nothing(ids: list[int] | None, status: s
 
 @pytest.mark.parametrize(
     "over",
-    [{}, {"once": True}, {"disable": True}, {"bump": False},
-     {"once": True, "disable": True, "bump": False}],
+    [{}, {"once": True}, {"disarm_reason": "source_unavailable"}, {"bump": False},
+     {"once": True, "disarm_reason": "source_unavailable", "bump": False}],
 )  # fmt: skip
 async def test_the_wrapper_forwards_every_argument_unchanged(over: dict[str, Any]) -> None:
-    """`once` and `disable` carry the conditional-disarm semantics (the inner store's `UPDATE ...
-    WHERE enabled` decides who won): a dropped or defaulted one changes what a firing does."""
+    """`once` and `disarm_reason` carry the conditional-disarm semantics (the inner store's
+    `UPDATE ... WHERE enabled` decides who won): a dropped or defaulted one changes what a firing
+    does."""
     inner = _Store([1])
     assert await _fire(WakingFiringStore(inner, lambda: None), **over) == [1]
     assert inner.seen == [_FIRING | over]
 
 
-async def test_a_firing_without_disable_forwards_the_protocols_default() -> None:
+async def test_a_firing_without_a_disarm_reason_forwards_the_protocols_default() -> None:
     inner = _Store([1])
-    kw = {k: v for k, v in _FIRING.items() if k != "disable"}
+    kw = {k: v for k, v in _FIRING.items() if k != "disarm_reason"}
     await WakingFiringStore(inner, lambda: None).record_firing(**kw)
-    assert inner.seen == [kw | {"disable": False}]
+    assert inner.seen == [kw | {"disarm_reason": None}]
 
 
 def test_the_wrapper_has_every_parameter_of_the_store_protocol() -> None:

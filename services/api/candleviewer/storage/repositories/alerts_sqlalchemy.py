@@ -39,7 +39,7 @@ ALERT_COLUMNS = (
     "condition_hash::text AS condition_hash, enabled, trigger_mode::text AS trigger_mode, "
     "cooldown_seconds, snoozed_until, expires_at, severity::text AS severity, "
     "channels::text[] AS channels, (webhook_url_enc IS NOT NULL) AS has_webhook, "
-    "message_template, last_fired_at, fire_count, created_at, updated_at"
+    "message_template, last_fired_at, fire_count, created_at, updated_at, disarm_reason"
 )
 
 
@@ -113,7 +113,7 @@ _INSERT = sa.text(
     "condition_hash::text AS condition_hash, enabled, trigger_mode::text AS trigger_mode, "
     "cooldown_seconds, snoozed_until, expires_at, severity::text AS severity, "
     "channels::text[] AS channels, (webhook_url_enc IS NOT NULL) AS has_webhook, "
-    "message_template, last_fired_at, fire_count, created_at, updated_at"
+    "message_template, last_fired_at, fire_count, created_at, updated_at, disarm_reason"
 )
 _GET = sa.text(
     "SELECT "
@@ -122,7 +122,7 @@ _GET = sa.text(
     "condition_hash::text AS condition_hash, enabled, trigger_mode::text AS trigger_mode, "
     "cooldown_seconds, snoozed_until, expires_at, severity::text AS severity, "
     "channels::text[] AS channels, (webhook_url_enc IS NOT NULL) AS has_webhook, "
-    "message_template, last_fired_at, fire_count, created_at, updated_at"
+    "message_template, last_fired_at, fire_count, created_at, updated_at, disarm_reason"
     " FROM alerts WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL"
 )
 _LIST = sa.text(
@@ -132,7 +132,7 @@ _LIST = sa.text(
     "condition_hash::text AS condition_hash, enabled, trigger_mode::text AS trigger_mode, "
     "cooldown_seconds, snoozed_until, expires_at, severity::text AS severity, "
     "channels::text[] AS channels, (webhook_url_enc IS NOT NULL) AS has_webhook, "
-    "message_template, last_fired_at, fire_count, created_at, updated_at"
+    "message_template, last_fired_at, fire_count, created_at, updated_at, disarm_reason"
     " FROM alerts WHERE owner_user_id = CAST(:owner AS uuid) "
     "AND deleted_at IS NULL AND (CAST(:enabled AS boolean) IS NULL OR enabled = :enabled) "
     "AND (CAST(:symbol AS text) IS NULL OR symbol = :symbol) "
@@ -142,7 +142,8 @@ _LIST = sa.text(
 )
 _UPDATE = sa.text(
     "UPDATE alerts SET name = :name, symbol = :symbol, scope_account_id = CAST(:account AS uuid), "
-    "enabled = :enabled, condition_ir = CAST(:ir AS jsonb), condition_hash = :hash, "
+    "enabled = :enabled, disarm_reason = CASE WHEN :enabled THEN NULL ELSE disarm_reason END, "
+    "condition_ir = CAST(:ir AS jsonb), condition_hash = :hash, "
     "trigger_mode = CAST(:mode AS alert_trigger_mode), cooldown_seconds = :cooldown, "
     "expires_at = :expires_at, severity = CAST(:severity AS severity), "
     "channels = CAST(CAST(:channels AS text) AS alert_channel[]), message_template = :template, "
@@ -153,21 +154,22 @@ _UPDATE = sa.text(
     "condition_hash::text AS condition_hash, enabled, trigger_mode::text AS trigger_mode, "
     "cooldown_seconds, snoozed_until, expires_at, severity::text AS severity, "
     "channels::text[] AS channels, (webhook_url_enc IS NOT NULL) AS has_webhook, "
-    "message_template, last_fired_at, fire_count, created_at, updated_at"
+    "message_template, last_fired_at, fire_count, created_at, updated_at, disarm_reason"
 )
 _SOFT_DELETE = sa.text(
     "UPDATE alerts SET deleted_at = now(), enabled = false, updated_at = clock_timestamp() "
     "WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL"
 )
 _SET_ENABLED = sa.text(
-    "UPDATE alerts SET enabled = :enabled, updated_at = clock_timestamp() "
-    "WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL RETURNING "
+    "UPDATE alerts SET enabled = :enabled, "
+    "disarm_reason = CASE WHEN :enabled THEN NULL ELSE disarm_reason END, "
+    "updated_at = clock_timestamp() WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL RETURNING "
     "id::text AS id, owner_user_id::text AS owner_user_id, name, symbol, "
     "scope_account_id::text AS scope_account_id, condition_ir, "
     "condition_hash::text AS condition_hash, enabled, trigger_mode::text AS trigger_mode, "
     "cooldown_seconds, snoozed_until, expires_at, severity::text AS severity, "
     "channels::text[] AS channels, (webhook_url_enc IS NOT NULL) AS has_webhook, "
-    "message_template, last_fired_at, fire_count, created_at, updated_at"
+    "message_template, last_fired_at, fire_count, created_at, updated_at, disarm_reason"
 )
 _SET_SNOOZE = sa.text(
     "UPDATE alerts SET snoozed_until = :until, updated_at = clock_timestamp() "
@@ -177,7 +179,7 @@ _SET_SNOOZE = sa.text(
     "condition_hash::text AS condition_hash, enabled, trigger_mode::text AS trigger_mode, "
     "cooldown_seconds, snoozed_until, expires_at, severity::text AS severity, "
     "channels::text[] AS channels, (webhook_url_enc IS NOT NULL) AS has_webhook, "
-    "message_template, last_fired_at, fire_count, created_at, updated_at"
+    "message_template, last_fired_at, fire_count, created_at, updated_at, disarm_reason"
 )
 _BUMP = sa.text(
     "UPDATE alerts SET fire_count = fire_count + 1, last_fired_at = :fired_at "
@@ -190,7 +192,7 @@ _ARMED = sa.text(
     "condition_hash::text AS condition_hash, enabled, trigger_mode::text AS trigger_mode, "
     "cooldown_seconds, snoozed_until, expires_at, severity::text AS severity, "
     "channels::text[] AS channels, (webhook_url_enc IS NOT NULL) AS has_webhook, "
-    "message_template, last_fired_at, fire_count, created_at, updated_at"
+    "message_template, last_fired_at, fire_count, created_at, updated_at, disarm_reason"
     " FROM alerts WHERE symbol = :symbol AND enabled AND deleted_at IS NULL"
 )
 _COUNT_ENABLED = sa.text(

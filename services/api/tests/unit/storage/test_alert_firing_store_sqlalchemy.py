@@ -22,11 +22,13 @@ class _Rel:
     def __init__(self, *results: _Result) -> None:
         self.results = list(results)
         self.sql: list[str] = []
+        self.params: list[dict[str, Any] | None] = []
         self.commits = 0
 
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
         async def execute(stmt: Any, params: dict[str, Any] | None = None) -> _Result:
+            self.params.append(params)
             self.sql.append(str(stmt).split()[0] + " " + str(stmt).split()[2])
             return self.results.pop(0) if self.results else _Result([], 1)
 
@@ -68,7 +70,7 @@ async def test_firing_store_once_lost_race_commits_nothing() -> None:
 async def test_firing_store_suppressed_never_enqueues_outbox_and_disable_disarms() -> None:
     rel = _Rel(_Result([], 1), _Result([5]))
     ids = await _fire(_store(rel), status="suppressed", channels=("in_app",), bump=False,
-                      disable=True)  # fmt: skip
+                      disarm_reason="source_unavailable")  # fmt: skip
     assert ids == [5] and not any("outbox" in s for s in rel.sql) and rel.commits == 1
 
 
@@ -88,7 +90,7 @@ async def test_firing_store_load_live_and_get() -> None:
 
 async def test_firing_store_disable_already_disarmed_commits_nothing() -> None:
     rel = _Rel(_Result([], 0))
-    assert await _fire(_store(rel), bump=False, disable=True) is None
+    assert await _fire(_store(rel), bump=False, disarm_reason="source_unavailable") is None
     assert rel.commits == 0 and rel.sql == ["UPDATE SET"]
 
 
@@ -105,3 +107,22 @@ async def test_firing_store_rows_carry_last_bar_open_ms() -> None:
     rel = _Rel(_Result([dict(_mapping(1)) | {"last_bar_open_ms": 300_000}]))
     [r] = await _store(rel).load_live()
     assert r.last_bar_open_ms == 300_000 and r.id == "id-1"
+
+
+async def test_firing_store_disarm_reason_is_a_bound_parameter_not_a_literal() -> None:
+    from candleviewer.storage.repositories import alert_firing_sqlalchemy as m
+
+    assert "disarm_reason = :reason" in str(m._DISARM_SOURCE)
+    assert "source_unavailable" not in str(m._DISARM_SOURCE)
+    rel = _Rel(_Result([], 1), _Result([5]))
+    await _fire(_store(rel), channels=("in_app",), status="suppressed", bump=False,
+                disarm_reason="source_unavailable")  # fmt: skip
+    assert rel.params[0] == {"id": "a", "reason": "source_unavailable"}
+
+
+def test_re_enable_clears_the_disarm_reason_in_sql() -> None:
+    from candleviewer.storage.repositories import alerts_sqlalchemy as m
+
+    sql = str(m._SET_ENABLED)
+    assert "disarm_reason = CASE WHEN :enabled THEN NULL ELSE disarm_reason END" in sql
+    assert "disarm_reason = CASE WHEN :enabled THEN NULL" in str(m._UPDATE)

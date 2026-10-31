@@ -32,7 +32,7 @@ _LIVE = sa.text(
     "condition_hash::text AS condition_hash, enabled, trigger_mode::text AS trigger_mode, "
     "cooldown_seconds, snoozed_until, expires_at, severity::text AS severity, "
     "channels::text[] AS channels, (webhook_url_enc IS NOT NULL) AS has_webhook, "
-    "message_template, last_fired_at, fire_count, created_at, updated_at, "
+    "message_template, last_fired_at, fire_count, created_at, updated_at, disarm_reason, "
     "(SELECT (d.context->>'bar_open_ms')::bigint FROM alert_deliveries d "
     "WHERE d.alert_id = alerts.id AND d.context->>'bar_open_ms' IS NOT NULL "
     "ORDER BY d.queued_at DESC, d.id DESC LIMIT 1) AS last_bar_open_ms "
@@ -45,7 +45,7 @@ _GET = sa.text(
     "condition_hash::text AS condition_hash, enabled, trigger_mode::text AS trigger_mode, "
     "cooldown_seconds, snoozed_until, expires_at, severity::text AS severity, "
     "channels::text[] AS channels, (webhook_url_enc IS NOT NULL) AS has_webhook, "
-    "message_template, last_fired_at, fire_count, created_at, updated_at, "
+    "message_template, last_fired_at, fire_count, created_at, updated_at, disarm_reason, "
     "(SELECT (d.context->>'bar_open_ms')::bigint FROM alert_deliveries d "
     "WHERE d.alert_id = alerts.id AND d.context->>'bar_open_ms' IS NOT NULL "
     "ORDER BY d.queued_at DESC, d.id DESC LIMIT 1) AS last_bar_open_ms "
@@ -55,6 +55,11 @@ _GET = sa.text(
 _DISARM_ONCE = sa.text(
     "UPDATE alerts SET enabled = false, updated_at = clock_timestamp() "
     "WHERE id = CAST(:id AS uuid) AND enabled AND deleted_at IS NULL"
+)
+#: The same conditional disarm, recording why the server (not the user) did it (CC-3).
+_DISARM_SOURCE = sa.text(
+    "UPDATE alerts SET enabled = false, disarm_reason = :reason, "
+    "updated_at = clock_timestamp() WHERE id = CAST(:id AS uuid) AND enabled AND deleted_at IS NULL"
 )
 _BUMP = sa.text(
     "UPDATE alerts SET fire_count = fire_count + 1, last_fired_at = :fired_at "
@@ -122,13 +127,20 @@ class SqlAlchemyAlertFiringStore:
         fired_at: datetime,
         once: bool,
         bump: bool,
-        disable: bool = False,
+        disarm_reason: str | None = None,
     ) -> list[int] | None:
         ids: list[int] = []
         async with self._relational.unit_of_work() as uow:
             run = uow.session.execute
-            if once or disable:  # both conditional on `enabled`: never interleave
-                res = await run(_DISARM_ONCE, {"id": alert_id})
+            if once or disarm_reason is not None:  # both conditional on `enabled`: never interleave
+                res = await run(
+                    _DISARM_ONCE if disarm_reason is None else _DISARM_SOURCE,
+                    (
+                        {"id": alert_id}
+                        if disarm_reason is None
+                        else {"id": alert_id, "reason": disarm_reason}
+                    ),
+                )
                 if not int(getattr(res, "rowcount", 0) or 0):
                     return None  # already disarmed/fired elsewhere; nothing committed
             if bump:

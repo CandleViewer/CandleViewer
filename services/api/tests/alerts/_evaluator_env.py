@@ -84,9 +84,9 @@ class FakeStore:
     async def record_firing(self, *, alert_id: str, user_id: str, channels: Sequence[str],
                             status: str, title: str, body: str, context: dict[str, Any],
                             fired_at: datetime, once: bool, bump: bool,
-                            disable: bool = False) -> list[int] | None:  # fmt: skip
+                            disarm_reason: str | None = None) -> list[int] | None:  # fmt: skip
         r = self.rows[alert_id]
-        if once or disable:
+        if once or disarm_reason is not None:
             if not r.enabled:
                 return None
             r = replace(r, enabled=False)

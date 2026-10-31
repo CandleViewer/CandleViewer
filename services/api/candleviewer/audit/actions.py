@@ -259,6 +259,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # E40-T03: evaluator firings and auto-disarms (system actor, C-2.9).
         "alert.fired",
         "alert.disarmed",
+        "alert.snoozed",
+        "alert.unsnoozed",
         # E40-T04: the delivery inbox (ack, ack-all) and the desktop shell's report-back;
         # a foreign delivery id reuses `alert.denied`.
         "alert.delivery_acked",

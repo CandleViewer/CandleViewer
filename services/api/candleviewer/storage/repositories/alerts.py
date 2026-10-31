@@ -41,6 +41,7 @@ class AlertRow:
     fire_count: int
     created_at: datetime
     updated_at: datetime
+    disarm_reason: str | None = None
 
     @property
     def etag(self) -> str:
@@ -108,3 +109,5 @@ class AlertRepository(Protocol):
     async def soft_delete(self, alert_id: str) -> bool: ...
 
     async def set_enabled(self, alert_id: str, enabled: bool) -> AlertRow | None: ...
+
+    async def set_snooze(self, alert_id: str, until: datetime | None) -> AlertRow | None: ...
