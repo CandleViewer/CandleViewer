@@ -6643,8 +6643,8 @@ This number follows `main`'s last entry, §19.61; an entry that lands first take
 - §15.5: one sentence states that the `rules.scope_denied` and `rules.arm` refusal records are held to that budget per acting user and per action, with an over-cap refusal counted and its count carried by the next record or a `suppressed_summary` record, and that a rule action's own denial and the boot-time system-rule record are never held to it. No action is registered or removed: the closed set is unchanged, and the refusals of a limit write no record.
 - No new `x-error-codes` entry, schema member, `RuleValidationIssue.code` value or operation, so the `openapi_pending` baselines do not move; no WS, table, column, chart or `machine_hash` change. The code that holds each bound follows in the two later changes of #4834, each with the test that ties its number to 22's text.
 
-### 19.64 2026-10-31 — §15.5: `trade_group_definition.save_refused` (#5120)
+### 19.63 2026-10-31 — §15.5: `trade_group_definition.save_refused` (#5120)
 
-This number follows §19.63 (#914 PR2b), after §19.62, as the orchestrator assigned on 2026-10-31; until §19.63 lands, the §19 `1..N` pin is red on this PR alone.
+This number follows §19.62, as the orchestrator renumbered it on 2026-10-31 (21:21Z): #5185 (#914 PR2b) takes the next free number at its final rebase.
 
 - §15.5: `trade_group_definition.save_refused` joins the closed set and is registered: a definition create or replace refused for a membership across environments is recorded before its `400 environment_mismatch` (C-2.9, C-2.11), unbudgeted as the scope refusals are today; one unwritten is `503 audit_unavailable`, which 22 already declares. No operation changes. `21-database-schema.md` §3.10.1 lists it.
