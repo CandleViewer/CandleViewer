@@ -76,6 +76,17 @@ describe("dialog.css contract (CMP-043)", () => {
     expect(card).toContain("max-height: 100%");
   });
 
+  it("in the narrow query the layer has a definite row, so the card's max-height: 100% resolves (#5143)", () => {
+    const reflow = /@media \(max-width: 40rem\), \(max-height: 25rem\)\s*\{([\s\S]*?\}\s*)\}/.exec(
+      normal,
+    )?.[1];
+    const layer = find(reflow ?? "", ".cv-dialog-layer", "grid-template-rows");
+    expect(layer).toContain("grid-template-rows: minmax(0, 1fr)");
+    // The base layer keeps its auto row and centring: only the narrow query changes the row.
+    expect(find(normal, ".cv-dialog-layer", "place-items")).not.toContain("grid-template-rows");
+    expect(find(normal, ".cv-dialog-layer", "place-items")).toContain("place-items: center");
+  });
+
   it("H21: the scrim fades in over normal / standard while the card is a cut", () => {
     expect(all).toMatch(
       /prefers-reduced-motion: no-preference\)\s*\{\s*\.cv-dialog__scrim\s*\{\s*animation: cv-dialog-scrim-in var\(--motion-duration-normal\)\s*cubic-bezier\(var\(--motion-easing-standard\)\)/,
