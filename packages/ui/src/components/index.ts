@@ -118,6 +118,14 @@ export type {
   InlineErrorProps,
 } from "./ErrorState.js";
 
+export { FilterBar } from "./FilterBar.js";
+export type {
+  FilterBarField,
+  FilterBarFilter,
+  FilterBarOption,
+  FilterBarProps,
+} from "./FilterBar.js";
+
 export { createFlashCoalescer } from "./flashCoalescer.js";
 export type {
   FlashCoalescer,
