@@ -52,6 +52,9 @@ const isTheme = (value: string): value is ThemeName =>
  * switch (J13). Props only; it emits no analytics (the store is the only emitter). A committed change
  * (a segment, an arrow, the switch) speaks once in its own polite region, naming the theme in effect
  * after the host applied it; a `value` that changes any other way (load, server, OS) speaks nothing (J16).
+ * The host must apply a change synchronously (in the `onChange` / `onMatchSystemChange` call, as the theme
+ * store does): the sentence is read from `value` on the commit's render, so a deferred apply (a server round
+ * trip) would name the old theme.
  */
 export function ThemeSwitcher({
   value,
@@ -69,7 +72,11 @@ export function ThemeSwitcher({
   latest.current = { value, announce: copy.announce };
   useEffect(() => {
     // Runs after the commit's render, so it names what the host applied (a refused change names the unchanged theme).
-    if (commits > 0) setSpoken(latest.current.announce[latest.current.value]);
+    // A trailing zero-width space on every other commit makes a repeated sentence a DOM change, so it is re-announced.
+    if (commits > 0)
+      setSpoken(
+        latest.current.announce[latest.current.value] + (commits % 2 === 0 ? "\u200B" : ""),
+      );
   }, [commits]);
   const commit = (): void => setCommits((n) => n + 1);
   const dense = density === undefined ? {} : { density };
