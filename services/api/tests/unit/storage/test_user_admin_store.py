@@ -30,7 +30,11 @@ from sqlalchemy.exc import IntegrityError
 
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
-from candleviewer.storage.errors import StorageConstraintViolated, WriteAheadTimeout
+from candleviewer.storage.errors import (
+    ActorNotAuthorised,
+    StorageConstraintViolated,
+    WriteAheadTimeout,
+)
 from candleviewer.storage.repositories import identity_sqlalchemy as identity
 from candleviewer.storage.repositories import owner_floor_sqlalchemy as f
 from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as lifecycle
@@ -82,6 +86,7 @@ class _Db:
         self.sqlstate = "23503"
         self.constraint: str | None = None
         self.read_misses = False  # the `User` read finds nothing (a row the read filters out)
+        self.revoked_actors: set[uuid.UUID] = set()  # #2593: demoted since their request's entry
 
     def owners(self, rows: Mapping[uuid.UUID, dict[str, Any]] | None = None) -> int:
         rows = self.users if rows is None else rows
@@ -112,6 +117,10 @@ class _Db:
                 return rows([])
             if stmt is f.COUNT_OWNERS:
                 return rows([(self.owners(work),)])
+            if stmt is f.ACTOR_IS_ACTIVE_OWNER:  # #2593: an actor with no row here is an owner
+                actor = uuid.UUID(p["id"])
+                held = user is None or (user["status"] == "active" and "owner" in user["roles"])
+                return rows([] if actor in self.revoked_actors or not held else [(1,)])
             if stmt is f.ROLES:
                 return rows([] if user is None else [_mapping(roles=sorted(user["roles"]))])
             if stmt is identity._USER_SQL:
@@ -219,7 +228,7 @@ async def _update(
     )
 
 
-_LOCKED = [f.LOCK_USER, f.LOCK_OWNERS, f.COUNT_OWNERS, identity._USER_SQL]
+_LOCKED = [f.LOCK_USER, f.LOCK_OWNERS, f.COUNT_OWNERS, f.ACTOR_IS_ACTIVE_OWNER, identity._USER_SQL]
 
 
 async def test_role_change_statement_order_lock_read_check_dml_constraints_read_audit_commit() -> (
@@ -591,3 +600,40 @@ def test_owner_always_remains(
 
     asyncio.run(run())
     assert not db.trigger_fired
+
+
+# -- #2593: the actor re-read after the owner lock ---------------------------------------------
+
+_REFUSED_AT = [f.LOCK_USER, f.LOCK_OWNERS, f.COUNT_OWNERS, f.ACTOR_IS_ACTIVE_OWNER]
+
+
+@pytest.mark.parametrize(
+    ("target", "patch"),
+    [
+        (_B, UserPatch(roles=frozenset({"manager"}))),  # a change
+        (_B, UserPatch(roles=frozenset({"viewer"}))),  # no change: the early return
+        (_C, UserPatch(roles=frozenset({"manager"}))),  # no such user: the not-found answer
+    ],
+    ids=["change", "no-change", "missing"],
+)
+async def test_an_actor_no_longer_an_owner_is_refused_before_any_answer(
+    target: uuid.UUID, patch: UserPatch
+) -> None:
+    """Refused after the owner lock and before the not-found answer, the precondition, the
+    no-change answer, any write and the audit; nothing commits."""
+    db = _Db(a=("active", ("owner",)), b=("active", ("viewer",)))
+    db.revoked_actors.add(_ACTOR)
+    kept, hook, checked = copy.deepcopy(db.users), _Hook(db), list[object]()
+    with pytest.raises(ActorNotAuthorised):
+        await _update(db, target, patch, hook, check=checked.append)
+    assert db.ran == _REFUSED_AT and hook.calls == [] and checked == []
+    assert db.commits == 0 and db.users == kept
+
+
+async def test_an_owner_actor_disabled_since_entry_is_refused() -> None:
+    """The fresh statement reads the actor's `users` row, so a disable (the grant untouched) is
+    seen as a demotion is."""
+    db = _Db(a=("active", ("owner",)), b=("active", ("viewer",)), f=("disabled", ("owner",)))
+    with pytest.raises(ActorNotAuthorised):
+        await _update(db, _B, UserPatch(roles=frozenset({"manager"})))
+    assert db.ran == _REFUSED_AT and db.commits == 0

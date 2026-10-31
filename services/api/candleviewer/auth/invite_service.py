@@ -227,8 +227,10 @@ class InviteService:
             created_at=record.created_at,
         )
 
-    async def revoke(self, user_id: uuid.UUID, *, audit: InviteAudit) -> None:
-        if not await self._repo.revoke_open(user_id, now=self._clock(), audit=audit):
+    async def revoke(self, user_id: uuid.UUID, *, actor: uuid.UUID, audit: InviteAudit) -> None:
+        """Raises `InviteNotFound`, what `audit` raises, or the store's refusal of an `actor` who
+        is no longer an active owner (#2593)."""
+        if not await self._repo.revoke_open(user_id, actor=actor, now=self._clock(), audit=audit):
             raise InviteNotFound("no pending invite for this user")
         users_invites_pending.dec()
 

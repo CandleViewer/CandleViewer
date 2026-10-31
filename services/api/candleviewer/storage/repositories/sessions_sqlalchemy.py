@@ -38,6 +38,10 @@ from typing import Any
 import sqlalchemy as sa
 
 from candleviewer.storage.repositories.invites_sqlalchemy import RESOLVE_BOOTSTRAP_EVENT
+from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
+    LOCK_USER,
+    require_active_owner,
+)
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     constraint_of,
@@ -143,12 +147,21 @@ _REVOKE_SQL = _sql(
     "UPDATE sessions SET revoked_at = :now, revoked_reason = :reason "
     "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL RETURNING @COLS@"
 )
+#: #2593: the live session of one user, locked for an Owner's revoke.
+_LOCK_LIVE_OF_USER_SQL = _sql(
+    "SELECT @COLS@ FROM sessions WHERE id = CAST(:id AS uuid) AND user_id = CAST(:u AS uuid) "
+    "AND revoked_at IS NULL FOR NO KEY UPDATE"
+)
+#: #2593: a session's user, read without a lock (it never changes) to name a view-as's viewer.
+_SESSION_USER_SQL = sa.text("SELECT user_id FROM sessions WHERE id = CAST(:id AS uuid)")
 _REVOKE_ALL_SQL = _sql(
     "UPDATE sessions SET revoked_at = :now, revoked_reason = :reason "
     "WHERE user_id = CAST(:u AS uuid) AND revoked_at IS NULL "
     "AND (CAST(:except_id AS uuid) IS NULL OR id <> CAST(:except_id AS uuid)) "
     "RETURNING @COLS@"
 )
+#: #2593: the owner TOTP reset's session revoke, in its own unit of work (`owner_totp_reset_*`).
+REVOKE_ALL_SQL = _REVOKE_ALL_SQL
 # #2304: the step-up columns are only ever rewritten from a read taken under the row lock, in the
 # same transaction (`update_step_up_state`). `FOR NO KEY UPDATE` is the lock an UPDATE of non-key
 # columns takes, so every other write of the row (a grant consume, an idle unlock, a revoke)
@@ -493,6 +506,35 @@ class SqlAlchemySessionRepository:
     async def revoke(self, session_id: str, *, reason: str, now: datetime) -> Any:
         return await self._one(_REVOKE_SQL, {"id": session_id, "reason": reason, "now": now})
 
+    async def revoke_by_owner(
+        self,
+        session_id: str,
+        *,
+        user_id: str,
+        actor_user_id: str,
+        reason: str,
+        now: datetime,
+        write_ahead: Callable[[Any], Awaitable[None]],
+        audit_timeout_s: float,
+    ) -> Any:
+        """See `SessionRepository.revoke_by_owner` (#2593): the user row, the owner lock and the
+        actor's re-read, then the session's row lock, the hook and the revoke, one commit."""
+        async with self._relational.unit_of_work() as uow:
+            s = uow.session
+            await s.execute(LOCK_USER, {"id": user_id})
+            await require_active_owner(s, actor_user_id)
+            params = {"id": session_id, "u": user_id}
+            if (row := (await s.execute(_LOCK_LIVE_OF_USER_SQL, params)).first()) is None:
+                return None
+            await bounded_write_ahead(
+                write_ahead(self._make(**row_to_fields(row))), audit_timeout_s
+            )
+            ended = {"id": session_id, "reason": reason, "now": now}
+            if (revoked := (await s.execute(_REVOKE_SQL, ended)).first()) is None:
+                raise RuntimeError("the locked session row refused its revoke")
+            await uow.commit()
+        return self._make(**row_to_fields(revoked))
+
     async def revoke_all_for_user(
         self, user_id: str, *, reason: str, now: datetime, except_session_id: str | None = None
     ) -> tuple[Any, ...]:
@@ -579,6 +621,12 @@ class SqlAlchemySessionRepository:
         async with self._relational.unit_of_work() as uow:
             s = uow.session
             params = {"id": session_id, "now": now}
+            # #2593: the viewer re-read as an active owner under the owner lock, taken before the
+            # row's (the disable's order: owners, then sessions), ahead of every other answer.
+            viewer = (await s.execute(_SESSION_USER_SQL, {"id": session_id})).first()
+            if viewer is None:
+                return None, None
+            await require_active_owner(s, str(viewer[0]))
             row = (await s.execute(_VIEW_AS_START_LOCK_SQL, params)).first()
             if row is None:
                 return None, None

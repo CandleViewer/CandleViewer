@@ -26,7 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.audit.writer import AuditUnavailable
-from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
+from candleviewer.auth.owner_floor import assert_owner_floor
+from candleviewer.storage.errors import ActorNotAuthorised
 from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as lifecycle
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -286,17 +287,21 @@ async def test_disable_rolls_back_when_a_cascade_statement_fails(db: Any, table:
     assert hook.calls == [] and await _snapshot(engine, user) == before
 
 
-async def test_disable_last_active_owner_refused_under_lock(db: Any) -> None:
-    """The owner floor: refused by the count read under the owner lock, before the deferred
-    trigger, with nothing changed and no audit."""
+async def test_disable_of_the_last_active_owner_by_a_disabled_owner_is_refused_first(
+    db: Any,
+) -> None:
+    """#2593: with the actor itself disabled, the target is the last active owner; the actor's
+    re-read under the owner lock refuses before the floor and the deferred trigger, with
+    nothing changed and no audit. (An active actor other than the target is a second active
+    owner, so the floor cannot trip on a disable any more; it stays as the backstop.)"""
     rel, engine = db
     actor, owner = await _user(engine, "owner"), await _user(engine, "owner")
     await _session(engine, owner)
     await _exec(engine, _ONLY_OWNERS, keep=[str(owner)])
     before, hook = await _snapshot(engine, owner), _Hook()
-    with pytest.raises(OwnerFloorError) as refused:
+    with pytest.raises(ActorNotAuthorised) as refused:
         await _store(rel).disable(owner, actor=actor, now=_NOW, audit=hook)
-    assert refused.value.__context__ is None
+    assert refused.value.actor_id == str(actor)
     assert hook.calls == [] and await _snapshot(engine, owner) == before
     assert await _active_owners(engine) == [owner]
 
@@ -304,9 +309,10 @@ async def test_disable_last_active_owner_refused_under_lock(db: Any) -> None:
 async def test_concurrent_demote_and_disable_keep_owner(db: Any) -> None:
     """AC6, 10 rounds: of the last two owners one is demoted while the other is disabled. A
     third connection holds every owner grant until both callers queue on it; the first to
-    queue wins, and the other is refused by the count it read under the lock (not by the
-    deferred trigger) and writes no audit. Who is demoted and who queues first alternate, so
-    the demotion wins in some rounds and the disable in others; one active owner remains."""
+    queue wins, and the other, whose own actor the winner has just demoted or disabled, is
+    refused by its actor's re-read under the lock (#2593; before the floor and the deferred
+    trigger) and writes no audit. Who is demoted and who queues first alternate, so the
+    demotion wins in some rounds and the disable in others; one active owner remains."""
     rel, engine = db
     roles, store = SqlAlchemyUserRoleStore(rel, owner_floor=_floor), _store(rel)
     survivor = await _user(engine, "owner")
@@ -332,7 +338,7 @@ async def test_concurrent_demote_and_disable_keep_owner(db: Any) -> None:
                 won, lost = await asyncio.gather(first, second, return_exceptions=True)
         winner, loser = ("demote", "disable") if demote_first else ("disable", "demote")
         assert not isinstance(won, BaseException), (i, won)
-        assert isinstance(lost, OwnerFloorError) and lost.__context__ is None, (i, lost)
+        assert isinstance(lost, ActorNotAuthorised) and lost.__context__ is None, (i, lost)
         assert len(audits[winner].calls) == 1 and audits[loser].calls == [], i
         survivor = disabled if demote_first else demoted
         assert await _active_owners(engine) == [survivor], i

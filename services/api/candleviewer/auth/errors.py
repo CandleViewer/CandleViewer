@@ -257,6 +257,11 @@ class SelfResetRefused(AuthError):
     HTTP edge answers a plain `403 forbidden`, never a challenge (#2304)."""
 
 
+class ResetTargetNotFound(AuthError):
+    """The owner TOTP reset's target was gone (or deleted) when its unit of work locked it
+    (#2593): nothing was changed or recorded; the HTTP edge answers the lookup's `404`."""
+
+
 class InviteRejected(AuthError):
     """An invite token that cannot be used (E09-S05). `reason` is one of
     `unknown | expired | redeemed | revoked | enrollment_invalid` and is for

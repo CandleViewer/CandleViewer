@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 
-from candleviewer.auth.models import MfaMethodKind, UserRecord, UserStatus
+from candleviewer.auth.mfa_repository import MfaRepository
+from candleviewer.auth.models import MfaMethodKind, SessionRecord, UserRecord, UserStatus
 from candleviewer.auth.repository import UserRepository
+from candleviewer.auth.session_repository import SessionRepository
+from candleviewer.auth.step_up import ResetAudit
+from candleviewer.storage.errors import ActorNotAuthorised
 
 
 async def no_wait(_delay: float) -> None:
@@ -128,3 +132,43 @@ class FullUsers:
 
 #: `record_login_failure`'s stand-in for an id with no row: a user shaped like `make_user`'s.
 _ABSENT_ROW = make_user(password_hash="unused").model_copy(update={"id": uuid.UUID(int=0)})
+
+
+class InMemoryOwnerReset:
+    """`auth.step_up.OwnerTotpReset` over the in-memory repositories (#2593): `active_owner` is
+    the actor's re-read (every actor passes by default), refused with the store's
+    `ActorNotAuthorised` before anything; then the audit with the counts, then the writes, through
+    the repositories' own methods (a test's holds on them still apply). No transaction exists in
+    memory, so the record goes ahead of the writes; the Postgres store's one unit of work is
+    covered by its integration test."""
+
+    def __init__(
+        self,
+        users: UserRepository,
+        mfa: MfaRepository,
+        sessions: SessionRepository,
+        *,
+        active_owner: Callable[[str], bool] = lambda _actor: True,
+    ) -> None:
+        self._users, self._mfa, self._sessions = users, mfa, sessions
+        self.active_owner = active_owner
+
+    async def reset_totp(
+        self,
+        target_user_id: str,
+        *,
+        actor_user_id: str,
+        now: datetime,
+        reason: str,
+        audit: ResetAudit,
+    ) -> tuple[int, tuple[SessionRecord, ...]] | None:
+        if not self.active_owner(actor_user_id):
+            raise ActorNotAuthorised(actor_user_id)
+        methods = await self._mfa.find_active_methods(target_user_id)
+        live = await self._sessions.find_live_by_user(target_user_id)
+        await audit(len(methods), len(live))
+        await self._users.set_mfa_required(target_user_id)
+        for method in methods:
+            await self._mfa.revoke_method(str(method.id), now=now)
+        revoked = await self._sessions.revoke_all_for_user(target_user_id, reason=reason, now=now)
+        return len(methods), revoked

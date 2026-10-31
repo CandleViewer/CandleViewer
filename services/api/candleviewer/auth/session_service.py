@@ -81,7 +81,11 @@ from candleviewer.auth.models import (
     UserRecord,
     UserStatus,
 )
-from candleviewer.auth.session_repository import LockWriteAhead, SessionRepository
+from candleviewer.auth.session_repository import (
+    LockWriteAhead,
+    OwnerRevokeWriteAhead,
+    SessionRepository,
+)
 from candleviewer.auth.view_as import ViewAsState
 from candleviewer.observability.context import spawn
 
@@ -158,6 +162,9 @@ BackstopAuditSink = Callable[[BackstopRevocation], Awaitable[None]]
 #: longest a cancelled one still waits for its backstop to finish (#3332). The record may still
 #: land (the real port shields its write), and the revocation never depends on it.
 BACKSTOP_AUDIT_TIMEOUT_S = 2.0
+#: #2593: bounds the records of an Owner's revoke, awaited under the user, owner and session locks
+#: (the role store's write-ahead bound, `WRITE_AHEAD_TIMEOUT_S`).
+OWNER_REVOKE_AUDIT_TIMEOUT_S = 5.0
 
 
 def _utc_now() -> datetime:
@@ -939,6 +946,35 @@ class SessionService:
     async def revoke(self, session_id: str, *, reason: str) -> SessionRecord | None:
         """Single-session revoke (SCR-112 per-row "revoke", or `LOGOUT`)."""
         revoked = await self._revoke_row(session_id, reason=reason)
+        await self._publish_row(revoked, reason)
+        return revoked
+
+    async def revoke_by_owner(
+        self,
+        session_id: str,
+        *,
+        user_id: str,
+        actor_user_id: str,
+        reason: str,
+        write_ahead: OwnerRevokeWriteAhead,
+    ) -> SessionRecord | None:
+        """An Owner's revoke of a live session of `user_id` (E42-T09, #2593): the repository's
+        one unit of work re-reads `actor_user_id` as an active owner under the owner lock before
+        anything (its typed refusal is raised, nothing written or recorded), then awaits
+        `write_ahead` and revokes the row; its sockets are closed after the commit. `None` when
+        the session is no longer a live session of the user."""
+        revoked = await self._repository.revoke_by_owner(
+            session_id,
+            user_id=user_id,
+            actor_user_id=actor_user_id,
+            reason=reason,
+            now=self._clock(),
+            write_ahead=write_ahead,
+            audit_timeout_s=OWNER_REVOKE_AUDIT_TIMEOUT_S,
+        )
+        if revoked is not None:
+            auth_sessions_active.dec()
+            auth_session_revocations_total.labels(reason=normalise_reason(reason)).inc()
         await self._publish_row(revoked, reason)
         return revoked
 

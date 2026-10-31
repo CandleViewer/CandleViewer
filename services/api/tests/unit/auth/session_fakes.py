@@ -136,6 +136,25 @@ class FakeSessionRepository:
         self.sessions[session_id] = updated
         return updated
 
+    async def revoke_by_owner(
+        self,
+        session_id: str,
+        *,
+        user_id: str,
+        actor_user_id: str,
+        reason: str,
+        now: datetime,
+        write_ahead: Callable[[SessionRecord], Awaitable[None]],
+        audit_timeout_s: float,
+    ) -> SessionRecord | None:
+        """No owner lock in memory: the actor's re-read (#2593) is the Postgres store's, covered
+        by its integration test; a test that needs a refusal overrides this."""
+        session = self.sessions.get(session_id)
+        if session is None or session.revoked_at is not None or str(session.user_id) != user_id:
+            return None
+        await write_ahead(session)
+        return await self.revoke(session_id, reason=reason, now=now)
+
     async def update_step_up_state(
         self, session_id: str, change: StepUpChange
     ) -> SessionRecord | None:

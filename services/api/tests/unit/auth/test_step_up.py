@@ -10,6 +10,8 @@ import pytest
 
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
+    AuthServiceUnavailable,
+    ResetTargetNotFound,
     SelfResetRefused,
     SessionReadOnly,
     SessionRevoked,
@@ -22,7 +24,8 @@ from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, SessionRecord
 from candleviewer.auth.step_up import NO_GRACE_ACTION_CLASSES, StepUpService
 from candleviewer.auth.totp import generate_code, time_step_for
-from tests.unit.auth.auth_fakes import no_wait
+from candleviewer.storage.errors import ActorNotAuthorised
+from tests.unit.auth.auth_fakes import InMemoryOwnerReset, no_wait
 
 from .auth_fakes import FakeUserRepository, make_user
 from .mfa_fakes import FakeMfaRepository
@@ -89,7 +92,10 @@ async def _setup() -> tuple[StepUpService, _Clock, bytes, uuid.UUID, FakeSession
         sessions.sessions[alias] = _session(user)
     users = FakeUserRepository()
     users.add(make_user(password_hash=await _pw_hash()).model_copy(update={"id": user}))
-    svc = StepUpService(repo, sessions, enc, users, _HASHER, clock=clock, sleep=no_wait)
+    reset = InMemoryOwnerReset(users, repo, sessions)
+    svc = StepUpService(
+        repo, sessions, enc, users, _HASHER, clock=clock, sleep=no_wait, owner_reset=reset
+    )
     return svc, clock, seed, user, sessions
 
 
@@ -443,3 +449,68 @@ async def test_step_up_on_a_locked_account_does_not_move_the_lockout_counter() -
     with pytest.raises((StepUpCodeInvalid, SessionReadOnly)):
         await svc.step_up(str(user), "o1", "keys", "000000", "bad-again")
     assert _sample("auth_lockouts_total") == locked
+
+
+# -- #2593: the reset is the `OwnerTotpReset` store's one unit of work ------------------------
+
+
+async def test_owner_reset_refused_at_the_effect_changes_and_records_nothing() -> None:
+    """The store re-reads the actor as an active owner before anything: its refusal reaches the
+    route as raised (`ActorNotAuthorised`), with no record, no revoke and no `mfa_required`."""
+    svc, clock, seed, owner, sessions = await _setup()
+    target = make_user(password_hash="unused", username="t", email="t@example.test")
+    svc._users.add(target.model_copy(update={"mfa_required": False}))  # type: ignore[attr-defined]  # the fake
+    s = _session(target.id)
+    await sessions.create_session(s)
+    await svc.step_up(str(owner), "o1", "users", _code(seed, clock), PASSWORD)
+    reset = svc._owner_reset
+    assert isinstance(reset, InMemoryOwnerReset)
+    reset.active_owner = lambda actor: actor != str(owner)  # demoted after the gate
+    recorded: list[tuple[int, int]] = []
+
+    async def audit(methods: int, live: int, /) -> None:
+        recorded.append((methods, live))
+
+    with pytest.raises(ActorNotAuthorised):
+        await svc.reset_totp(
+            actor_session_id="o1",
+            actor_user_id=str(owner),
+            target_user_id=str(target.id),
+            audit=audit,
+        )
+
+    assert recorded == []
+    assert sessions.sessions[str(s.id)].revoked_at is None
+    stored = await svc._users.find_by_id(str(target.id))
+    assert stored is not None and stored.mfa_required is False
+
+
+async def test_owner_reset_without_a_reset_store_fails_closed() -> None:
+    svc, clock, seed, owner, _ = await _setup()
+    svc._owner_reset = None
+    await svc.step_up(str(owner), "o1", "users", _code(seed, clock), PASSWORD)
+    with pytest.raises(AuthServiceUnavailable):
+        await svc.reset_totp(
+            actor_session_id="o1",
+            actor_user_id=str(owner),
+            target_user_id=str(uuid.uuid4()),
+            audit=_noop,
+        )
+
+
+async def test_owner_reset_of_a_target_gone_under_the_lock_is_not_found() -> None:
+    svc, clock, seed, owner, _ = await _setup()
+
+    class _Gone:
+        async def reset_totp(self, target_user_id: str, **_kw: object) -> None:
+            return None
+
+    svc._owner_reset = _Gone()  # type: ignore[assignment]  # a store that finds no target
+    await svc.step_up(str(owner), "o1", "users", _code(seed, clock), PASSWORD)
+    with pytest.raises(ResetTargetNotFound):
+        await svc.reset_totp(
+            actor_session_id="o1",
+            actor_user_id=str(owner),
+            target_user_id=str(uuid.uuid4()),
+            audit=_noop,
+        )

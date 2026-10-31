@@ -28,6 +28,7 @@ from candleviewer.auth.models import MintedSession
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.auth.view_as import ViewAsEndReason, ViewAsStartResult, ViewAsState
+from candleviewer.storage.errors import ActorNotAuthorised
 from tests.unit.admin.test_view_as_service import _TARGET, _VIEWER, _at, _Rig
 from tests.unit.api._fakes import BASE, HASHER, RecordingWriter
 from tests.unit.api.test_view_as_routes import Store
@@ -663,3 +664,42 @@ async def test_the_reason_reaches_only_the_started_record() -> None:
     assert _REASON not in "".join(n.message for n in w.repo.notices)
     (record,) = [c for c in w.ports.calls if c["action"] == "admin.view_as_started"]
     assert record["after_state"]["reason"] == _REASON
+
+
+# -- #2593: the viewer re-read at the effect, in the start's unit of work ---------------------
+
+
+def _viewer_revoked(w: World) -> None:
+    """The start's unit of work re-reads the viewer under the owner lock: no active owner."""
+
+    async def refused(session_id: str, *_args: Any, **_kw: Any) -> Any:
+        raise ActorNotAuthorised(str(_VIEWER))
+
+    w.repo.start_view_as_unit = refused  # type: ignore[method-assign]  # the store's re-read
+
+
+async def test_a_viewer_demoted_since_entry_gets_the_guards_403_and_nothing_starts() -> None:
+    w = World()
+    await w.sign_in()
+    _viewer_revoked(w)
+    r = await w.start()
+    fresh = World()
+    await fresh.sign_in()
+    fresh.permissions = frozenset()
+    entry = await fresh.start()
+    assert (r.status_code, entry.status_code) == (403, 403) and r.json() == entry.json()
+    assert "challenge_id" not in r.json()
+    assert w.held() is None and w.repo.notices == [] and w.refused() == []
+    assert w.audit.of("admin.view_as_started") == []
+    (denied,) = w.audit.of("rbac.denied")
+    assert (denied["reason"], denied["object_id"]) == ("actor_role_revoked", str(_TARGET))
+    assert denied["session_id"] == w.minted.session_id  # type: ignore[union-attr]
+
+
+async def test_a_viewer_refused_at_the_effect_unrecorded_answers_503() -> None:
+    w = World()
+    await w.sign_in()
+    _viewer_revoked(w)
+    w.audit.refuses.add("rbac.denied")
+    assert _code(await w.start()) == (503, "audit_unavailable")
+    assert w.held() is None

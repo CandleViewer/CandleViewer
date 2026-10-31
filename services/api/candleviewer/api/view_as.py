@@ -51,7 +51,13 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from candleviewer.admin.errors import ViewAsStartUnavailable
-from candleviewer.admin.http import AuditEmitter, PrincipalResolver, admin_router
+from candleviewer.admin.http import (
+    AdminAreaRefused,
+    AuditEmitter,
+    PrincipalResolver,
+    admin_area_refused_handler,
+    admin_router,
+)
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.idle_lock import idle_locked_problem, problem
@@ -63,11 +69,13 @@ from candleviewer.api.step_up import (
 from candleviewer.api.step_up_challenge import ChallengeText, quote_label
 from candleviewer.api.view_as_refusals import StartReason, ViewAsRefusalUnrecorded, Viewer
 from candleviewer.audit.access import AuditPrincipal
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import AuthError, SessionIdleLocked
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import UnviewableTarget, unviewable_target
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase, ViewAsStartResult, ViewAsState
+from candleviewer.storage.errors import ACTOR_ROLE_REVOKED, ActorNotAuthorised
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 PATH: Final = "/auth/session/view-as"
@@ -328,6 +336,38 @@ async def _refuse(
     return _problem(code, START_REFUSALS[reason], ERROR_META[code].title)
 
 
+async def _refused_at_effect(
+    request: Request, audit: AuditEmitter | None, who: AuditPrincipal, target: UUID
+) -> JSONResponse:
+    """#2593: the start's unit of work re-read the viewer after the owner lock and found no
+    active owner: nothing started or recorded. One `rbac.denied` after the rollback, then the
+    admin-area guard's own 403 (`AdminAreaRefused`, rendered as the guard renders it), which a
+    fresh request from the demoted viewer gets at entry; `503` when the record cannot be
+    written (C-2.9)."""
+    try:
+        if audit is None:
+            raise RuntimeError("audit not started")
+        await audit.emit(
+            "rbac.denied",
+            actor_label=who.actor_name,
+            actor_user_id=who.actor_id,
+            actor_ip=who.ip,
+            session_id=who.session_id,
+            object_kind="user",
+            object_id=str(target),
+            outcome=AuditOutcome.DENIED,
+            severity=Severity.WARNING,
+            reason=ACTOR_ROLE_REVOKED,
+            after_state={},
+            request_id=who.request_id,
+        )
+    except Exception as exc:  # any audit failure: the refusal is unrecorded
+        _log().error("admin.view_as.refusal_unrecorded", error=type(exc).__name__)
+        return _problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "The refusal could not be recorded.")
+    entry = AdminAreaRefused(403, f"requires {Permission.USERS_WRITE}")
+    return await admin_area_refused_handler(request, entry)
+
+
 def make_view_as_start_router(
     auth: StepUpAuth,
     *,
@@ -409,6 +449,8 @@ def make_view_as_start_router(
             return _unwired()
         try:
             result = await service.start(record, target, reason=body.reason, now=clock(), ip=who.ip)
+        except ActorNotAuthorised:  # #2593: refused at the effect, nothing started
+            return await _refused_at_effect(request, audit, who, target)
         except ViewAsStartUnavailable as exc:  # no id and no reason in the line
             cause = type(exc.__cause__).__name__ if exc.__cause__ is not None else None
             _log().error("admin.view_as.start_unavailable", code=exc.code, error=cause)

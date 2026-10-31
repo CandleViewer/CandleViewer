@@ -41,7 +41,7 @@ from candleviewer.auth.session_service import (
     SessionService,
     classify_session,
 )
-from candleviewer.auth.step_up import StepUpService
+from candleviewer.auth.step_up import OwnerTotpReset, StepUpService
 from candleviewer.auth.totp_skew import TotpSkewReporter
 from candleviewer.auth.view_as import ViewAsSessionStore
 from candleviewer.observability.health import HealthReport, HealthStatus
@@ -90,8 +90,11 @@ class AuthService:
         break_glass_events: BreakGlassEvents | None = None,
         login_failure_floor: timedelta = LOGIN_FAILURE_FLOOR,
         login_verify_concurrency: int = LOGIN_VERIFY_CONCURRENCY,
+        owner_reset: OwnerTotpReset | None = None,
     ) -> None:
         self._started = False
+        #: #2593: the owner TOTP reset's one unit of work (the step-up service refuses without it).
+        self._owner_reset = owner_reset
         #: #4648: the minimum time a failed sign-in takes (`CV_AUTH_LOGIN_FAILURE_FLOOR_MS`);
         #: #4664: also a refused second factor, recovery code and step-up.
         self._login_failure_floor = login_failure_floor
@@ -346,6 +349,7 @@ class AuthService:
                     chart=SessionChart(feed=self._machine_feed),
                     skew_reporter=skew_reporter,
                     failure_floor=self._login_failure_floor,
+                    owner_reset=self._owner_reset,
                 )
         await self._break_glass_notice.start()  # read before cv-api serves, then every minute
         self._started = True

@@ -739,3 +739,28 @@ def test_a_purge_defect_is_a_500_that_names_no_id(spec: dict[str, Any]) -> None:
     store, _ = _purging(w, ("disabled", None, None), ValueError("bad"))
     r = _purge_delete(w, spec, store)
     assert r.status_code == 500 and str(TARGET) not in r.text
+
+
+# -- #2593: the actor re-read at the effect, in the store's transaction -----------------------
+
+
+@pytest.mark.parametrize("status", ["active", "disabled"], ids=["change", "repeat"])
+def test_an_owner_demoted_since_entry_gets_the_entry_403(status: str, spec: dict[str, Any]) -> None:
+    """The store refuses before any write, a repeat's no-op included (a revoked actor is never
+    told a no-op succeeded): the 403 a fresh request from the demoted caller gets at the guard,
+    never a challenge, and one `rbac.denied` (`actor_role_revoked`) after the rollback."""
+    w = _World(_Rel(status=status, actor_owner=False))
+    r = _client(w, _principal("owner", spec)).delete(_PATH.format(TARGET))
+    entry = _client(_World(), _principal("manager", spec)).delete(_PATH.format(TARGET))
+    assert (r.status_code, entry.status_code) == (403, 403) and r.json() == entry.json()
+    _conforms(spec, r)
+    assert not w.rel.committed and not w.of("users.disable") and not w.post_commit()
+    denied = w.of("rbac.denied")
+    assert [(c["reason"], c["actor_user_id"]) for c in denied] == [("actor_role_revoked", CALLER)]
+
+
+def test_an_owner_demoted_since_entry_unrecorded_is_503(spec: dict[str, Any]) -> None:
+    w = _World(_Rel(actor_owner=False), fail={"rbac.denied": [AuditUnavailable("down")]})
+    r = _client(w, _principal("owner", spec)).delete(_PATH.format(TARGET))
+    assert r.status_code == 503 and r.json()["code"] == "audit_unavailable"
+    assert not w.rel.committed

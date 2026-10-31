@@ -19,8 +19,8 @@ from sqlalchemy.dialects.postgresql import asyncpg
 
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.view_as import ViewAsEndReason, ViewAsState
-from candleviewer.storage.errors import StorageConstraintViolated
-from candleviewer.storage.repositories import sessions_sqlalchemy
+from candleviewer.storage.errors import ActorNotAuthorised, StorageConstraintViolated
+from candleviewer.storage.repositories import owner_floor_sqlalchemy, sessions_sqlalchemy
 from candleviewer.storage.repositories.sessions_sqlalchemy import (
     _COLUMNS,
     SqlAlchemySessionRepository,
@@ -73,14 +73,17 @@ class _Result:
     def all(self) -> list[SimpleNamespace]:
         return self._rows
 
+    def scalar_one(self) -> Any:
+        return self._rows[0][0]  # type: ignore[index]  # a tuple row of a scalar statement
+
 
 class _Session:
     def __init__(self, rows: list[SimpleNamespace]) -> None:
         self.rows = rows
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def execute(self, stmt: Any, params: dict[str, Any]) -> _Result:
-        self.calls.append((str(stmt), params))
+    async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _Result:
+        self.calls.append((str(stmt), params or {}))
         return _Result(self.rows)
 
 
@@ -404,7 +407,7 @@ def test_every_statement_on_sessions_selects_the_columns_or_builds_no_record() -
         if isinstance(value, sa.TextClause)
         and re.search(r"\b(?:FROM|UPDATE|INTO) sessions\b", str(value))
     }
-    build_none = {"_INSERT_SQL", "_LOCK_STEP_UP_SQL"}
+    build_none = {"_INSERT_SQL", "_LOCK_STEP_UP_SQL", "_SESSION_USER_SQL"}
     assert build_none < set(statements)
     assert {name for name, sql in statements.items() if _COLUMNS not in sql} == build_none
     assert all(column in _COLUMNS for column in _VIEW_AS_COLUMNS)
@@ -542,7 +545,7 @@ class _Refusing(_Session):
         super().__init__([])
         self._error = error
 
-    async def execute(self, stmt: Any, params: dict[str, Any]) -> _Result:
+    async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _Result:
         await super().execute(stmt, params)
         raise self._error
 
@@ -670,6 +673,9 @@ def test_a_statement_states_the_clauses_only_the_postgres_table_proves(name: str
 # where the write-ahead hooks run, and each branch (Postgres: the store scenarios, in CI).
 
 _FRESH = ViewAsState.start(uuid.UUID(int=3), uuid.UUID(int=2), now=_T0)
+#: #2593: the viewer's id, the owner lock, the count after it and the viewer's re-read.
+_VIEWER = ["_SESSION_USER_SQL", "LOCK_OWNERS", "COUNT_OWNERS", "ACTOR_IS_ACTIVE_OWNER"]
+_VIEWER_ID = uuid.UUID(int=9)
 _NOTICE = SimpleNamespace(target_user_id=_FRESH.target_user_id, message="m", correlation_id=None)
 
 
@@ -680,11 +686,12 @@ class _Scripted(_Session):
         super().__init__([])
         self.script, self.log = script, log
 
-    async def execute(self, stmt: Any, params: dict[str, Any]) -> _Result:
+    async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _Result:
         await super().execute(stmt, params)
         name = next(
             n
-            for n, v in vars(sessions_sqlalchemy).items()
+            for module in (sessions_sqlalchemy, owner_floor_sqlalchemy)
+            for n, v in vars(module).items()
             if isinstance(v, sa.TextClause) and str(v) == str(stmt)
         )
         self.log.append(name)
@@ -699,7 +706,10 @@ def _unit(
     log: list[str] = []
     rel = _Relational([])
     started = _row(**_view_as_columns(_FRESH))
-    script = {
+    script: dict[str, list[Any]] = {
+        "_SESSION_USER_SQL": [(_VIEWER_ID,)],
+        "COUNT_OWNERS": [(1,)],
+        "ACTOR_IS_ACTIVE_OWNER": [(1,)],
         "_VIEW_AS_START_LOCK_SQL": [_row(**_view_as_columns(held), **row)],
         "_VIEW_AS_START_SQL": [started],
     }
@@ -729,9 +739,12 @@ def _unit(
 async def test_the_start_unit_locks_then_writes_the_notice_the_record_ahead_and_the_start() -> None:
     _repo, rel, log, call = _unit(None)
     started, held = await call()
-    assert log == ["_VIEW_AS_START_LOCK_SQL", "_VIEW_AS_NOTICE_SQL", "ahead", "_VIEW_AS_START_SQL"]
+    assert log == [
+        *_VIEWER, "_VIEW_AS_START_LOCK_SQL", "_VIEW_AS_NOTICE_SQL", "ahead", "_VIEW_AS_START_SQL",
+    ]  # fmt: skip
     assert held is None and started.view_as == _FRESH and (rel.units, rel.commits) == (1, 1)
-    lock, notice, start = rel.session.calls
+    viewer, _, _, actor, lock, notice, start = rel.session.calls
+    assert viewer[1] == {"id": "sid"} and actor[1] == {"id": str(_VIEWER_ID)}
     assert lock[1] == {"id": "sid", "now": _T0} and "FOR NO KEY UPDATE" in lock[0]
     assert notice[1] == {
         "message": "m",
@@ -762,8 +775,8 @@ async def test_the_start_unit_writes_a_pending_ends_record_late_and_marks_it_fir
     _repo, rel, log, call = _unit(_STATES["pending-end"])
     started, _held = await call()
     assert log == [
-        "_VIEW_AS_START_LOCK_SQL", "flush", "_VIEW_AS_RECORDED_SQL", "_VIEW_AS_NOTICE_SQL",
-        "ahead", "_VIEW_AS_START_SQL",
+        *_VIEWER, "_VIEW_AS_START_LOCK_SQL", "flush", "_VIEW_AS_RECORDED_SQL",
+        "_VIEW_AS_NOTICE_SQL", "ahead", "_VIEW_AS_START_SQL",
     ]  # fmt: skip
     assert started is not None and rel.commits == 1
 
@@ -771,7 +784,9 @@ async def test_the_start_unit_writes_a_pending_ends_record_late_and_marks_it_fir
 async def test_the_start_unit_replaces_a_cleared_and_recorded_context_with_no_flush() -> None:
     _repo, rel, log, call = _unit(_STATES["cleared"])
     started, held = await call()
-    assert log == ["_VIEW_AS_START_LOCK_SQL", "_VIEW_AS_NOTICE_SQL", "ahead", "_VIEW_AS_START_SQL"]
+    assert log == [
+        *_VIEWER, "_VIEW_AS_START_LOCK_SQL", "_VIEW_AS_NOTICE_SQL", "ahead", "_VIEW_AS_START_SQL",
+    ]  # fmt: skip
     assert started is not None and held is None and rel.commits == 1
 
 
@@ -780,20 +795,36 @@ async def test_the_start_unit_answers_a_context_it_cannot_replace_as_held(state:
     _repo, rel, log, call = _unit(_STATES[state])
     started, held = await call()
     assert started is None and held.view_as == _STATES[state]
-    assert log == ["_VIEW_AS_START_LOCK_SQL"] and rel.commits == 0
+    assert log == [*_VIEWER, "_VIEW_AS_START_LOCK_SQL"] and rel.commits == 0
 
 
 async def test_the_start_unit_of_a_gone_or_revoked_row_writes_nothing() -> None:
     _repo, rel, log, call = _unit(None)
     cast(_Scripted, rel.session).script["_VIEW_AS_START_LOCK_SQL"] = []  # the lock reads no row
-    assert await call() == (None, None) and log == ["_VIEW_AS_START_LOCK_SQL"]
+    assert await call() == (None, None) and log == [*_VIEWER, "_VIEW_AS_START_LOCK_SQL"]
+
+
+async def test_the_start_unit_of_an_unknown_session_writes_nothing() -> None:
+    _repo, rel, log, call = _unit(None)
+    cast(_Scripted, rel.session).script["_SESSION_USER_SQL"] = []  # no such session row
+    assert await call() == (None, None) and log == ["_SESSION_USER_SQL"] and rel.commits == 0
+
+
+async def test_the_start_unit_of_a_viewer_no_longer_an_owner_is_refused_first() -> None:
+    """#2593: the viewer re-read under the owner lock, taken before the row's: refused before the
+    row lock, any answer, the hooks and any write."""
+    _repo, rel, log, call = _unit(None)
+    cast(_Scripted, rel.session).script["ACTOR_IS_ACTIVE_OWNER"] = []
+    with pytest.raises(ActorNotAuthorised):
+        await call()
+    assert log == _VIEWER and rel.commits == 0
 
 
 async def test_the_start_unit_refuses_a_self_targeting_state_before_any_write() -> None:
     _repo, rel, log, call = _unit(None, user_id=str(_FRESH.target_user_id))
     with pytest.raises(ValueError, match="its own user"):
         await call()
-    assert log == ["_VIEW_AS_START_LOCK_SQL"] and rel.commits == 0
+    assert log == [*_VIEWER, "_VIEW_AS_START_LOCK_SQL"] and rel.commits == 0
 
 
 async def test_the_start_unit_refuses_a_notice_to_another_user_before_any_statement() -> None:
@@ -822,7 +853,8 @@ async def test_a_failing_write_ahead_commits_nothing() -> None:
             "sid", _FRESH, now=_T0, notice=_NOTICE, flush_pending_end=fails,
             write_ahead=fails, audit_timeout_s=1.0,
         )  # fmt: skip
-    assert log == ["_VIEW_AS_START_LOCK_SQL", "_VIEW_AS_NOTICE_SQL"] and rel.commits == 0
+    assert log == [*_VIEWER, "_VIEW_AS_START_LOCK_SQL", "_VIEW_AS_NOTICE_SQL"]
+    assert rel.commits == 0
 
 
 # -- #4743: `POST /auth/lock`'s unit of work (`lock_session`), offline: the statements in order,

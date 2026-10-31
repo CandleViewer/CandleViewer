@@ -587,3 +587,28 @@ def test_store_failure_is_503_and_re_evaluates_the_sockets(rel: dict[str, Any]) 
     for leak in ("57P01", "08006", "drawdown", "database down"):  # no driver text, no SQLSTATE
         assert leak not in r.text
     assert [user for user, _ in w.notifier.pushes] == [TARGET]
+
+
+# -- #2593: the actor re-read at the effect, in the store's transaction -----------------------
+
+
+def test_owner_demoted_since_entry_gets_the_entry_403_and_one_record_after_the_rollback() -> None:
+    """The store re-reads the actor after the user lock and the owner lock and finds no active
+    owner: nothing written, recorded ahead or pushed; one `rbac.denied` (`actor_role_revoked`)
+    naming the target and the elevated session, then the 403 a fresh request gets at entry."""
+    w = _World(st._Rel(rows=_HELD_A, actor_owner=False))
+    r = w.put(_body((_A, "trade")))
+    assert r.status_code == 403 and r.json() == _FORBIDDEN | {"reason": "missing_permission"}
+    assert "challenge_id" not in r.json()
+    (record,) = w.emitter.calls
+    assert (record["action"], record["reason"]) == ("rbac.denied", "actor_role_revoked")
+    assert (record["object_id"], record["session_id"]) == (str(TARGET), _SESSION)
+    assert w.unchanged()
+
+
+def test_owner_demoted_since_entry_whose_refusal_cannot_be_recorded_is_503() -> None:
+    w = _World(st._Rel(rows=_HELD_A, actor_owner=False))
+    w.emitter.error = RuntimeError("AuditService.start() has not wired a real backend")
+    r = w.put(_body((_A, "trade")))
+    assert r.status_code == 503 and r.json()["code"] == "audit_unavailable"
+    assert w.unchanged()

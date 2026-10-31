@@ -24,9 +24,10 @@ from sqlalchemy.exc import DBAPIError
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.writer import AuditWriter
-from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.errors import ActorNotAuthorised, StorageQueryFailed
 from candleviewer.storage.repositories import account_access_sqlalchemy as m
 from candleviewer.storage.repositories import onboarding_sqlalchemy as onboarding
+from candleviewer.storage.repositories import owner_floor_sqlalchemy as f
 from candleviewer.storage.repositories.account_access import (
     AccessAuditEmitter,
     AccessAuditUnavailableError,
@@ -58,7 +59,9 @@ _SET: dict[uuid.UUID, AccessLevel] = {_B: "read", _C: "trade", _D: "read"}
 #: Both counts read and zero: a removal needs no acknowledgement.
 _KNOWN = RemovalContext(open_position_count=0, open_order_count=0)
 #: What a replacement naming accounts runs first: the wait bound, then the locks in order.
-_LOCKED_READS = [m._LOCK_TIMEOUT, m._LOCK_USER, m._KNOWN_ACCOUNTS, m._CURRENT]
+#: #2593: the owner lock, the count after it and the actor's re-read, right after the user lock.
+_OWNER_LOCK = [f.LOCK_OWNERS, f.COUNT_OWNERS, f.ACTOR_IS_ACTIVE_OWNER]
+_LOCKED_READS = [m._LOCK_TIMEOUT, m._LOCK_USER, *_OWNER_LOCK, m._KNOWN_ACCOUNTS, m._CURRENT]
 #: Bounds every wait on a fake: a regression fails fast instead of hanging CI.
 _WAIT_S = 5.0
 _CLOSE_FAILED = "account access closing audit record not written"
@@ -85,11 +88,13 @@ class _Rel:
         on_close: Exception | None = None,
         on_enter: Exception | None = None,
         listing: tuple[_ListedRow, ...] = (),
+        actor_owner: bool = True,
     ) -> None:
         self.status, self.rows, self.unknown = status, rows, unknown
         self.fail_on, self.error = fail_on, error
         self.on_commit, self.on_close, self.on_enter = on_commit, on_close, on_enter
         self.listing = listing
+        self.actor_owner = actor_owner  # #2593: the actor's re-read after the owner lock
         self.log: list[tuple[Any, Any]] = []
         self.committed = False
 
@@ -98,6 +103,10 @@ class _Rel:
             raise self.error or RuntimeError("deadlock detected")
         if stmt is m._LOCK_USER:
             return [] if self.status is None else [(self.status,)]
+        if stmt is f.COUNT_OWNERS:
+            return [(1,)]
+        if stmt is f.ACTOR_IS_ACTIVE_OWNER:
+            return [(1,)] if self.actor_owner else []
         if stmt is m._USER_EXISTS:
             return [] if self.status is None else [(1,)]
         if stmt is m._LIST_GRANTS:  # what the read selects, ids as the driver returns them
@@ -121,7 +130,11 @@ class _Rel:
         async def execute(stmt: Any, params: Any = None) -> Any:
             self.log.append((stmt, params))
             rows = self._result(stmt, params)
-            return SimpleNamespace(first=lambda: rows[0] if rows else None, all=lambda: rows)
+            return SimpleNamespace(
+                first=lambda: rows[0] if rows else None,
+                all=lambda: rows,
+                scalar_one=lambda: rows[0][0],
+            )
 
         async def commit() -> None:
             if self.on_commit is not None:
@@ -282,7 +295,8 @@ async def test_replace_with_no_grants_soft_revokes_every_live_grant() -> None:
     rel = _Rel(rows=_MIXED)
     change = await _replace(rel, _Audit(rel), {})
     assert change.after == {} and change.changed and rel.committed
-    assert rel.ran() == [m._LOCK_TIMEOUT, m._LOCK_USER, m._CURRENT, m._REVOKE, m._IMMEDIATE]
+    held = [m._LOCK_TIMEOUT, m._LOCK_USER, *_OWNER_LOCK]
+    assert rel.ran() == [*held, m._CURRENT, m._REVOKE, m._IMMEDIATE]
     assert rel.params(m._REVOKE)["revoked"] == [str(_A), str(_B)]
 
 
@@ -326,7 +340,19 @@ async def test_replace_for_a_missing_or_inactive_user_changes_nothing(
     with pytest.raises(error) as err:
         await _replace(rel, audit, {})
     assert getattr(err.value, "status", None) == status
-    assert rel.ran() == [m._LOCK_TIMEOUT, m._LOCK_USER] and not audit.calls
+    assert rel.ran() == [m._LOCK_TIMEOUT, m._LOCK_USER, *_OWNER_LOCK] and not audit.calls
+    assert not rel.committed
+
+
+@pytest.mark.parametrize("status", ["active", "disabled", None], ids=["change", "inactive", "gone"])
+async def test_replace_by_an_actor_no_longer_an_owner_changes_nothing(status: str | None) -> None:
+    """#2593: the actor re-read after the user lock and the owner lock is no active owner:
+    refused before the not-found and not-active answers, any write and the write-ahead record."""
+    rel = _Rel(status=status, rows=_LIVE_A, actor_owner=False)
+    audit = _Audit(rel)
+    with pytest.raises(ActorNotAuthorised):
+        await _replace(rel, audit, {_B: "trade"})
+    assert rel.ran() == [m._LOCK_TIMEOUT, m._LOCK_USER, *_OWNER_LOCK] and not audit.calls
     assert not rel.committed
 
 
@@ -343,7 +369,8 @@ async def test_replace_naming_an_unknown_account_rolls_back_the_whole_set() -> N
     audit = _Audit(rel)
     with pytest.raises(AccessUnknownAccountError):
         await _replace(rel, audit, {_B: "trade", _C: "read"})
-    assert rel.ran() == [m._LOCK_TIMEOUT, m._LOCK_USER, m._KNOWN_ACCOUNTS] and not audit.calls
+    held = [m._LOCK_TIMEOUT, m._LOCK_USER, *_OWNER_LOCK]
+    assert rel.ran() == [*held, m._KNOWN_ACCOUNTS] and not audit.calls
     assert not rel.committed
 
 

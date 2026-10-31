@@ -31,7 +31,7 @@ from candleviewer.auth.service import AuthService
 from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.ws.gateway import make_ws_router
 from tests.csrf_helpers import csrf_headers
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, InMemoryOwnerReset, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.auth.test_invite_service import FakeRepo as FakeInviteRepository
@@ -206,16 +206,17 @@ def open_stack(
     started here, so it keeps the value it is given (S3's seam, ADR-0038 2e)."""
     clock = Clock()
     monkeypatch.setenv("CV_ALLOWED_ORIGINS", ",".join((ORIGIN, *listed)))
-    users = FakeUserRepository()
+    users, mfa, sessions = FakeUserRepository(), FakeMfaRepository(), FakeSessionRepository()
     auth = AuthService(
         users,
         pepper=_PEPPER,
-        mfa_repository=FakeMfaRepository(),
+        mfa_repository=mfa,
         totp_encryption_key=bytes(range(32)),  # fixed test keys (determinism)
         recovery_code_hmac_key=bytes(range(32, 64)),
-        session_repository=FakeSessionRepository(),
+        session_repository=sessions,
         invite_repository=FakeInviteRepository(),
         clock=clock,
+        owner_reset=InMemoryOwnerReset(users, mfa, sessions),  # #2593: the reset's unit of work
     )
     monkeypatch.setattr(appmod, "build_auth_service", lambda *_a, **_k: auth)
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _s: Identity())

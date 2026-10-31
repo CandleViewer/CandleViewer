@@ -51,10 +51,18 @@ run every change is refused (O6), an enable included: 409 `conflict`, recorded a
 is, nothing changed. `GET /users/{userId}/sessions` lists
 the user's live sessions as `listMySessions` does (no token material);
 `DELETE /users/{userId}/sessions/{sessionId}` addresses only a live session of that user (404
-otherwise, IDOR, before the step-up), writes the acting Owner's `users.session_revoked`, then
-records B16 REVOKE, whose action writes the one `auth.session_revoked` (R5), both ahead of the
-change, then revokes the row, which closes its sockets 4401; a session that ended in between is
-404. No runtime flag gates the lock, the step-up or the audit (C-4.14).
+otherwise, IDOR, before the step-up); then one unit of work under the user, owner and session
+locks writes the acting Owner's `users.session_revoked`, then records B16 REVOKE, whose action
+writes the one `auth.session_revoked` (R5), both ahead of the change, then revokes the row, which
+closes its sockets 4401 after the commit; a session that ended in between is 404. No runtime flag
+gates the lock, the step-up or the audit (C-4.14).
+
+#2593: every owner-only write here re-checks its actor at the effect. Each store re-reads the
+actor as an active owner in the change's own transaction, after the owner lock and before any
+write or answer (`require_active_owner`), so of a revoke and an in-flight write exactly one is
+ordered first. A refusal (`ActorNotAuthorised`) rolls back with nothing written or recorded ahead;
+the route writes one `rbac.denied` after the rollback (503 `audit_unavailable` if it cannot) and
+answers the 403 a fresh request from the demoted actor gets at entry, never a challenge.
 """
 
 from __future__ import annotations
@@ -77,6 +85,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from candleviewer.admin.account_access import AccountAccessService, GrantStore
 from candleviewer.admin.errors import (
     LastOwnerError,
+    LifecycleActorRevokedError,
     LifecycleAuditUnavailableError,
     LifecycleForbiddenError,
     PositionsUnknownError,
@@ -113,10 +122,15 @@ from candleviewer.auth.errors import AuthError
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
-from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
+from candleviewer.auth.scopes import DenyReason, ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.auth.session_chart import SessionChartError
 from candleviewer.observability.context import current_request_id, current_request_uuid
-from candleviewer.storage.errors import StorageQueryFailed, WriteAheadTimeout
+from candleviewer.storage.errors import (
+    ACTOR_ROLE_REVOKED,
+    ActorNotAuthorised,
+    StorageQueryFailed,
+    WriteAheadTimeout,
+)
 from candleviewer.storage.repositories import account_access as aa
 from candleviewer.storage.repositories.user_lifecycle import (
     UserPatch,
@@ -220,10 +234,11 @@ class UserRoleStore(Protocol):
         actor: uuid.UUID,
         audit: Callable[[frozenset[str]], Awaitable[None]],
     ) -> bool:
-        """Atomically (one transaction, owner rows locked) enforce the owner
-        floor via `assert_owner_floor`, write `roles` granted by `actor`, then
-        await `audit(roles read under lock)` before committing (C-2.9
-        write-ahead). Raises `OwnerFloorError` or what `audit` raises, with
+        """Atomically (one transaction, owner rows locked) re-read `actor` as an
+        active owner (#2593: `ActorNotAuthorised` before any write or answer),
+        enforce the owner floor via `assert_owner_floor`, write `roles` granted by
+        `actor`, then await `audit(roles read under lock)` before committing
+        (C-2.9 write-ahead). Raises `OwnerFloorError` or what `audit` raises, with
         nothing changed (or `WriteAheadTimeout`, #2510); False if no such user."""
         ...
 
@@ -298,6 +313,40 @@ def _forbidden(reason: str) -> JSONResponse:
         },
         media_type="application/problem+json",
     )
+
+
+#: #2593: the answer of a write refused at the effect: the 403 a fresh request from the demoted
+#: actor gets at entry (`enforce` refuses `users:write`), so the two cannot be told apart.
+_ENTRY_REFUSAL: Final = DenyReason.MISSING_PERMISSION.value
+
+
+async def _refused_at_effect(
+    emitter: _Emitter,
+    actor: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID | None,
+    who: Mapping[str, Any],
+) -> JSONResponse:
+    """#2593: the store re-read the actor in the change's own transaction, after the owner lock,
+    and found no active owner, so it rolled back with nothing written. One `rbac.denied` after the
+    rollback (reason `actor_role_revoked`, an audit field only), then the entry refusal; `503
+    audit_unavailable` when that record cannot be written (C-2.9)."""
+    try:
+        await emitter.emit(
+            "rbac.denied",
+            actor_label=str(actor),
+            actor_user_id=actor,
+            session_id=session_id,
+            object_kind="user",
+            object_id=str(user_id),
+            outcome=AuditOutcome.DENIED,
+            severity=Severity.WARNING,
+            reason=ACTOR_ROLE_REVOKED,
+            **who,
+        )
+    except (AuditError, RuntimeError):  # RuntimeError: audit not started
+        return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
+    return _forbidden(_ENTRY_REFUSAL)
 
 
 def _registered(code: ErrorCode, status: int, detail: str) -> JSONResponse:
@@ -702,6 +751,8 @@ def make_users_router(
             except (AuditError, RuntimeError):  # RuntimeError: audit not started
                 return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
             return _registered(ErrorCode.CONFLICT, 409, _LAST_OWNER)
+        except ActorNotAuthorised:  # #2593: refused at the effect, nothing written
+            return await _refused_at_effect(emitter, principal.user_id, user_id, record.id, who)
         except (_AuditRefused, WriteAheadTimeout):  # the store bounds the hook (#2510)
             return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
         if not found:
@@ -817,6 +868,8 @@ def make_users_router(
                 actor_ip=ip,
                 session_id=session,
             )
+        except ActorNotAuthorised:  # #2593: refused at the effect, nothing written
+            return await _refused_at_effect(emitter, principal.user_id, user_id, session, who)
         except _REFUSALS as exc:
             return _refusal(exc)
         except (StorageQueryFailed, OSError) as exc:
@@ -921,9 +974,10 @@ class UserAdminStore(Protocol):
         check: UserPrecondition,
         audit: UserUpdateAudit,
     ) -> UserUpdate | None:
-        """One transaction under the user-row and owner locks: `check` on the representation read
-        under them, the change, the owner floor, then `audit` ahead of the commit. Raises what
-        `check`, the floor or `audit` raises, `PurgeUserAnonymisedError` for any change to an
+        """One transaction under the user-row and owner locks: `actor` re-read as an active owner
+        (#2593: `ActorNotAuthorised` before any write or answer), `check` on the representation
+        read under them, the change, the owner floor, then `audit` ahead of the commit. Raises
+        what `check`, the floor or `audit` raises, `PurgeUserAnonymisedError` for any change to an
         anonymised user (E42-T10 #2650), or `WriteAheadTimeout`, with nothing changed; `None` if
         no such user."""
         ...
@@ -1192,6 +1246,8 @@ def make_user_admin_router(
                 precondition=None if expected is None else unchanged,
                 session_id=session,
             )
+        except LifecycleActorRevokedError:  # #2593: recorded by the service; this route's 403
+            return _forbidden(_ENTRY_REFUSAL)
         except UserLifecycleError as exc:
             return _lifecycle_problem(exc)
         except Exception as exc:  # a store outage is a 503; anything else is a defect (a 500)
@@ -1315,6 +1371,8 @@ def make_user_admin_router(
             except (AuditError, RuntimeError):
                 return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
             return _registered(ErrorCode.CONFLICT, 409, _ANONYMISED)
+        except ActorNotAuthorised:  # #2593: refused at the effect, nothing written
+            return await _refused_at_effect(emitter, principal.user_id, user_id, session, who)
         except _Stale:
             return _registered(ErrorCode.VERSION_CONFLICT, 412, _STALE)
         except _StatusRefused as exc:
@@ -1369,17 +1427,34 @@ def make_user_admin_router(
         if isinstance(elevated := await _elevated(auth, request, restated), JSONResponse):
             return elevated
         who = _who(request)
-        try:  # the acting Owner's record first: unwritable, nothing is recorded or revoked
-            await _audit_owner_revoke(emitter, principal, elevated, user_id, record.id, who)
-        except (AuditError, RuntimeError):  # RuntimeError: audit not started
-            return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
-        try:
-            await _audit_revoke_ahead(auth, record, auth.sessions.now())
-        except SessionChartError:
-            return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
+        sessions = auth.sessions
+
+        async def write_ahead(row: SessionRecord) -> None:
+            """Under the user, owner and session locks, after the actor's re-read (#2593): the
+            acting Owner's record first, then B16 REVOKE, whose action writes the one
+            `auth.session_revoked` (R5); either unwritable rolls the revoke back."""
+            try:
+                await _audit_owner_revoke(emitter, principal, elevated, user_id, row.id, who)
+            except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
+                raise _AuditRefused from exc
+            try:
+                await _audit_revoke_ahead(auth, row, sessions.now())
+            except SessionChartError as exc:
+                raise _AuditRefused from exc
+
         try:  # the row, then its sockets (4401, 23 section 9.5) through the revocation sink
-            revoked = await auth.sessions.revoke(str(session_id), reason=ADMIN_REVOKE_REASON)
-        except Exception as exc:  # recorded, not revoked: the trail over-reports, never under
+            revoked = await sessions.revoke_by_owner(
+                str(session_id),
+                user_id=str(user_id),
+                actor_user_id=str(principal.user_id),
+                reason=ADMIN_REVOKE_REASON,
+                write_ahead=write_ahead,
+            )
+        except ActorNotAuthorised:  # #2593: refused before anything was recorded or revoked
+            return await _refused_at_effect(emitter, principal.user_id, user_id, elevated, who)
+        except (_AuditRefused, WriteAheadTimeout):  # rolled back: nothing revoked
+            return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
+        except Exception as exc:  # a store outage: rolled back, or the trail over-reports
             if not is_storage_outage(exc):
                 raise
             _log().error("users.session_revoke store unavailable", error=type(exc).__name__)

@@ -52,7 +52,8 @@ class InviteRepository(Protocol):
         """One transaction: `users` (status invited, mfa_required), the
         `user_roles` row, the `user_invites` row. Zero `user_account_access`
         rows. Returns False (nothing written) when the email/username is
-        already taken; otherwise `audit` runs before the commit."""
+        already taken; otherwise `audit` runs before the commit. Refused before
+        any write when `invited_by` is no longer an active owner (#2593)."""
         ...
 
     async def find_by_token_hash(self, token_hash: str) -> InviteRecord | None: ...
@@ -112,11 +113,15 @@ class InviteRepository(Protocol):
         audit: InviteAudit,
     ) -> InviteRecord | None:
         """For a user still `invited`: revoke every open invite and insert a
-        fresh one, then `audit`. None when the user is not an invited user."""
+        fresh one, then `audit`. None when the user is not an invited user. Refused
+        before any answer when `invited_by` is no longer an active owner (#2593)."""
         ...
 
-    async def revoke_open(self, user_id: uuid.UUID, *, now: datetime, audit: InviteAudit) -> bool:
-        """Revoke the open invites, `audit` first; False (no audit) if none."""
+    async def revoke_open(
+        self, user_id: uuid.UUID, *, actor: uuid.UUID, now: datetime, audit: InviteAudit
+    ) -> bool:
+        """Revoke the open invites, `audit` first; False (no audit) if none. Refused before any
+        answer when `actor` is no longer an active owner (#2593; the store's typed error)."""
         ...
 
     async def list_pending(self, *, now: datetime) -> tuple[InviteRecord, ...]:

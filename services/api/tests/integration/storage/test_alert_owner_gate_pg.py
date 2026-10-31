@@ -128,7 +128,8 @@ async def test_disabled_owner_alert_neither_fires_nor_delivers_and_a_reenable_re
         assert _alert_state(pg_dsn, alert) == (queued, 1)
 
         lifecycle = SqlAlchemyUserLifecycleStore(rel, owner_floor=_floor)
-        await lifecycle.disable(owner, actor=uuid.uuid4(), now=datetime.now(UTC), audit=_noop)
+        acting = uuid.UUID(_perms._BASELINE)  # #2593: the actor must be an active owner
+        await lifecycle.disable(owner, actor=acting, now=datetime.now(UTC), audit=_noop)
         cache_clock.now += 2  # past the evaluator's cache of the owner's status
         await ev.process(tick)  # due again, and the owner is disabled
         assert _alert_state(pg_dsn, alert) == (queued, 1)  # no firing, the alert row untouched
@@ -139,7 +140,7 @@ async def test_disabled_owner_alert_neither_fires_nor_delivers_and_a_reenable_re
         assert _alert_state(pg_dsn, alert) == (dropped, 1) and relay.keys == []
 
         admin = SqlAlchemyUserAdminStore(rel, owner_floor=_floor)
-        await admin.update_user(owner, UserPatch(enable=True), actor=uuid.uuid4(),
+        await admin.update_user(owner, UserPatch(enable=True), actor=acting,
                                 check=lambda _user: None, audit=_noop)  # fmt: skip
         cache_clock.now += 2
         await ev.process(tick)

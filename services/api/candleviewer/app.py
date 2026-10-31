@@ -458,6 +458,7 @@ from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOn
 from candleviewer.storage.repositories.order_path_symbols_sqlalchemy import (
     SqlAlchemyOrderPathSymbols,
 )
+from candleviewer.storage.repositories.owner_totp_reset_sqlalchemy import SqlAlchemyOwnerTotpReset
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
 from candleviewer.storage.repositories.recording_reads_sqlalchemy import SqlAlchemyRecordingReads
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -856,6 +857,8 @@ def build_auth_service(
         login_failure_floor=timedelta(milliseconds=settings.auth_login_failure_floor_ms),
         # #4663: sign-in verifications at a time, held to 1-32 by `Settings`.
         login_verify_concurrency=settings.auth_login_verify_concurrency,
+        # #2593: the owner TOTP reset's one unit of work, its actor re-read under the owner lock.
+        owner_reset=SqlAlchemyOwnerTotpReset(relational, _record_factory(SessionRecord)),
     )
 
 
@@ -2806,10 +2809,12 @@ def create_app(
     # E42-T07: the statechart inspector read API behind the same audited admin-area guard. Each
     # row's scope is the one its owning module bound in the `machines.{entity}.state` registry.
     inspector = build_statechart_inspector(
-        store=None
-        if persistence is None
-        else RegistryScopedStore(
-            persistence.snapshots, machine_states.scope, env=resolved.environment.value
+        store=(
+            None
+            if persistence is None
+            else RegistryScopedStore(
+                persistence.snapshots, machine_states.scope, env=resolved.environment.value
+            )
         ),
         keys=None if persistence is None else hmac_keys,
         metrics=metrics_facade,

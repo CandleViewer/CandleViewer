@@ -52,6 +52,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from candleviewer.auth.errors import (
+    AuthServiceUnavailable,
+    ResetTargetNotFound,
     SelfResetRefused,
     SessionReadOnly,
     SessionRevoked,
@@ -387,9 +389,33 @@ class ResetResult:
 
 class ResetAudit(Protocol):
     """Write-ahead audit of an owner TOTP reset (C-2.9, #2510), given the methods and live
-    sessions about to be revoked, before the first revoke; a raise changes nothing."""
+    sessions it revokes, awaited in its unit of work before the commit; a raise changes
+    nothing."""
 
     async def __call__(self, methods: int, sessions: int, /) -> None: ...
+
+
+#: #2593: what an owner TOTP reset revoked: the count of methods, and the sessions.
+OwnerResetDone = tuple[int, tuple[SessionRecord, ...]]
+
+
+class OwnerTotpReset(Protocol):
+    """The owner TOTP reset as one unit of work (#2593, BQ-05 (a)), in the disable's lock order:
+    lock the target user, then every active-owner grant, and re-read the actor as an active owner
+    (refused before anything with the store's typed error: `auth` may not import storage); set
+    `mfa_required`; revoke the target's confirmed methods and live sessions; await `audit` with
+    their counts, bounded; commit. Any raise before the commit changes nothing. `None` when the
+    target does not exist (or is deleted)."""
+
+    async def reset_totp(
+        self,
+        target_user_id: str,
+        *,
+        actor_user_id: str,
+        now: datetime,
+        reason: str,
+        audit: ResetAudit,
+    ) -> OwnerResetDone | None: ...
 
 
 class StepUpService:
@@ -408,7 +434,10 @@ class StepUpService:
         failure_floor: timedelta = FAILURE_MINIMUM,
         monotonic: MonotonicClock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
+        owner_reset: OwnerTotpReset | None = None,
     ) -> None:
+        #: #2593: the reset's one unit of work; none wired refuses every reset (fail closed).
+        self._owner_reset = owner_reset
         #: #4664: refuses a minimum time below the setting's lowest value (ValueError).
         self._failure_hold = FailureHold(failure_floor, monotonic=monotonic, sleep=sleep)
         self._chart = chart if chart is not None else SessionChart()
@@ -756,23 +785,28 @@ class StepUpService:
         (which ends their elevations too), nothing else. Requires a live
         `users` elevation; touches no OMS surface and returns no secret.
         Self-reset is refused, before the elevation check: no step-up can cure it.
-        It cannot be undone, so `audit` is written ahead of the first revoke
-        (C-2.9): if it raises, nothing changes. It sets the target's
-        `mfa_required` first (#2295, Q9), so even a partial reset leaves a next
-        sign-in that must enrol TOTP."""
+        #2593: the change is the `OwnerTotpReset` store's one unit of work, which
+        re-reads the actor as an active owner under the owner lock (its typed
+        refusal is raised with nothing changed or recorded), sets the target's
+        `mfa_required` (#2295, Q9), revokes, and writes `audit` ahead of the commit
+        (C-2.9): if it raises, nothing changes. `AuthServiceUnavailable` when no
+        store is wired; `ResetTargetNotFound` when the target is gone."""
         if actor_user_id == target_user_id:
             raise SelfResetRefused("the owner cannot reset their own TOTP")
         await self.require_elevation(actor_session_id, "users")
+        if self._owner_reset is None:
+            raise AuthServiceUnavailable("no owner TOTP reset store wired")
         now = self._clock()
-        methods = await self._mfa.find_active_methods(target_user_id)
-        live = await self._sessions.find_live_by_user(target_user_id)
-        await audit(len(methods), len(live))
-        await self._users.set_mfa_required(target_user_id)
-        for method in methods:
-            await self._mfa.revoke_method(str(method.id), now=now)
-        revoked = await self._sessions.revoke_all_for_user(
-            target_user_id, reason="mfa_reset_by_owner", now=now
+        done = await self._owner_reset.reset_totp(
+            target_user_id,
+            actor_user_id=actor_user_id,
+            now=now,
+            reason="mfa_reset_by_owner",
+            audit=audit,
         )
+        if done is None:
+            raise ResetTargetNotFound("the reset's target does not exist")
+        methods, revoked = done
         # #2272: close the target's sockets first, before the chart records.
         await publish_revoked(
             self._publish_revocation, (str(gone.id) for gone in revoked), "mfa_reset_by_owner"
@@ -780,4 +814,4 @@ class StepUpService:
         for gone in revoked:  # revoked by the row update above; B16 records it
             await self._chart.revoke(gone, now, "mfa_reset_by_owner")
         auth_mfa_resets_total.inc()
-        return ResetResult(uuid.UUID(target_user_id), len(methods), len(revoked))
+        return ResetResult(uuid.UUID(target_user_id), methods, len(revoked))

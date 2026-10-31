@@ -3,7 +3,8 @@ revocation sink, after the row update (23-ws-protocol.md §9.5). A refresh-token
 publishes nothing: the client re-`auth`s its socket in place (§4.1).
 
 The call-site scan finds every revoking `SessionRepository` call in production code by its
-`now=` keyword, and every call of `SessionService._revoke_row`, which revokes a row and leaves
+`now=` keyword (and the owner TOTP reset store's, #2593, which revokes in its own unit of work),
+and every call of `SessionService._revoke_row`, which revokes a row and leaves
 the publish to its caller (#3029); a new one without a driver below fails it. Two tests pin the
 first premise to the Protocol: every revoking method is listed, and takes `reason` and `now`
 keyword-only, so a call that type-checks or runs names `now=`. A `**kwargs` splat or `getattr` is
@@ -44,7 +45,7 @@ from candleviewer.auth.session_service import (
     SessionService,
 )
 from candleviewer.auth.step_up import GRACE_WINDOW, StepUpService
-from tests.unit.auth.auth_fakes import no_wait
+from tests.unit.auth.auth_fakes import InMemoryOwnerReset, no_wait
 
 from .auth_fakes import FakeUserRepository
 from .mfa_fakes import FakeMfaRepository
@@ -94,15 +95,17 @@ class _World:
         self.sessions = SessionService(
             self.repo, self.hasher, clock=self.clock, publish_revocation=self.sink
         )
+        mfa, users = FakeMfaRepository(), FakeUserRepository()
         self.step_up = StepUpService(
-            FakeMfaRepository(),
+            mfa,
             self.repo,
             TotpEncryptor(os.urandom(32)),
-            FakeUserRepository(),
+            users,
             self.hasher,
             clock=self.clock,
             publish_revocation=self.sink,
             sleep=no_wait,
+            owner_reset=InMemoryOwnerReset(users, mfa, self.repo),
         )
 
     async def mint(self, user: str | None = None) -> str:
@@ -222,6 +225,19 @@ async def _owner_totp_reset(w: _World) -> Calls:
     return {(sid, "mfa_reset_by_owner") for sid in targets}
 
 
+async def _revoke_by_owner(w: _World) -> Calls:
+    """#2593: an Owner's revoke of one session, its actor re-read in the unit of work."""
+    sid = await w.mint()
+
+    async def ahead(_row: Any) -> None:
+        return None
+
+    await w.sessions.revoke_by_owner(
+        sid, user_id=w.user, actor_user_id=str(uuid.uuid4()), reason="admin", write_ahead=ahead
+    )
+    return {(sid, "admin")}
+
+
 #: (enclosing `Class.method`, `reason=`) of each revoke call site -> its driver.
 _PATHS: dict[tuple[str, str], Callable[[_World], Awaitable[Calls]]] = {
     ("SessionService.refresh", "rotation_reuse"): _refresh_reuse,
@@ -233,12 +249,16 @@ _PATHS: dict[tuple[str, str], Callable[[_World], Awaitable[Calls]]] = {
     ("SessionService.revoke", _CALLER): _revoke,
     ("SessionService._revoke_row", _CALLER): _revoke_row,
     ("SessionService.revoke_all", _CALLER): _revoke_all,
+    ("SessionService.revoke_by_owner", _CALLER): _revoke_by_owner,
     ("StepUpService.reset_totp", "mfa_reset_by_owner"): _owner_totp_reset,
 }
 
 
 #: The `SessionRepository` methods that revoke a row: the scan looks for their calls.
-_REVOKING = frozenset({"revoke", "revoke_all_for_user"})
+_REVOKING = frozenset({"revoke", "revoke_all_for_user", "revoke_by_owner"})
+#: #2593: `OwnerTotpReset.reset_totp`, the store's one unit of work that revokes the target's
+#: sessions; its call passes `now=` too, so the scan follows it.
+_STORE_REVOKERS = frozenset({"reset_totp"})
 #: `SessionService` helpers that revoke a row and leave its publish to the caller: the scan looks
 #: for their calls too, and each caller needs a driver.
 _ROW_REVOKERS = frozenset({"_revoke_row"})
@@ -269,7 +289,8 @@ class _RevokeSites(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         func, kwargs = node.func, {k.arg: k.value for k in node.keywords if k.arg}
         if isinstance(func, ast.Attribute) and (
-            (func.attr in _REVOKING and "now" in kwargs) or func.attr in _ROW_REVOKERS
+            (func.attr in _REVOKING | _STORE_REVOKERS and "now" in kwargs)
+            or func.attr in _ROW_REVOKERS
         ):
             reason = kwargs.get("reason")
             label = reason.value if isinstance(reason, ast.Constant) else _CALLER
@@ -382,11 +403,13 @@ async def test_failed_publish_neither_skips_the_other_sessions_nor_undoes_the_re
 
 async def test_auth_service_publishes_through_the_sink_attached_after_start() -> None:
     clock, repo = _Clock(), FakeSessionRepository()
+    users, mfa = FakeUserRepository(), FakeMfaRepository()
     auth = AuthService(
-        FakeUserRepository(),
-        mfa_repository=FakeMfaRepository(),
+        users,
+        mfa_repository=mfa,
         session_repository=repo,
         clock=clock,
+        owner_reset=InMemoryOwnerReset(users, mfa, repo),
     )
     ctx: Any = None  # no settings: not a live environment, so process-local keys are used
     await auth.start(ctx)

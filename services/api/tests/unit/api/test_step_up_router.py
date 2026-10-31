@@ -24,7 +24,7 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.statechart.bindings import b16_session
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
+from tests.unit.auth.auth_fakes import FakeUserRepository, InMemoryOwnerReset, make_user, no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -120,6 +120,8 @@ async def _build(
     audit_ok: bool = True,
     target: Any = None,
     gated_stub: bool = True,
+    actor_owner: bool = True,
+    reset_store: bool = True,
 ) -> tuple[TestClient, _Emitter, bytes, _Clock, uuid.UUID]:
     """`gated_stub` mounts a stand-in for a `users` write gated in its handler (the invite
     re-issue, #2304 slice 3c); a caller mounting the real invite router turns it off."""
@@ -143,7 +145,18 @@ async def _build(
     hasher = Hasher()
     users = FakeUserRepository()
     users.add(make_user(password_hash=await hasher.hash(_PW)).model_copy(update={"id": user}))
-    svc = StepUpService(repo, rows, enc, users, hasher, clock=clock, sleep=no_wait)
+    # #2593: the reset's unit of work; `actor_owner` is the actor's re-read under the owner lock
+    owner_reset = InMemoryOwnerReset(users, repo, rows, active_owner=lambda _actor: actor_owner)
+    svc = StepUpService(
+        repo,
+        rows,
+        enc,
+        users,
+        hasher,
+        clock=clock,
+        sleep=no_wait,
+        owner_reset=owner_reset if reset_store else None,
+    )
     auth = _Auth(svc, _Sessions({"tok": record}))
     emitter = _Emitter()
     b16_session.set_audit_sink(emitter)  # B16 chart audits land with the router's
@@ -467,3 +480,45 @@ async def test_step_up_failure_is_audited() -> None:
         json={"code": _code(seed, clock), "password": "nope", "action_class": "users"},
     )
     assert "auth.step_up_failed" in em.actions()
+
+
+# -- #2593: the actor re-read at the effect, in the reset's unit of work ----------------------
+
+
+def _elevate(c: TestClient, seed: bytes, clock: _Clock) -> None:
+    body = {"code": _code(seed, clock), "password": _PW, "action_class": "users"}
+    assert c.post("/auth/step-up", headers=_H, json=body).status_code == 200
+
+
+async def test_reset_by_an_owner_demoted_since_entry_is_the_entry_403_with_nothing_reset() -> None:
+    """The reset's unit of work re-reads the actor after the owner lock: refused, it changes and
+    records nothing ahead; the route writes one `rbac.denied` after the rollback and answers
+    `_owner`'s 403, never a challenge."""
+    target = uuid.uuid4()
+    c, em, seed, clock, _ = await _build(target=target, actor_owner=False)
+    _elevate(c, seed, clock)
+    r = c.post(f"/users/{target}/mfa/reset", headers=_H)
+    entry, *_ = await _build(owner_role=False)
+    fresh = entry.post(f"/users/{target}/mfa/reset", headers=_H)
+    assert (r.status_code, fresh.status_code) == (403, 403) and r.json() == fresh.json()
+    assert "challenge_id" not in r.json()
+    assert "auth.mfa_reset_by_owner" not in em.actions()
+    assert "auth.step_up_required" not in em.actions()  # no new challenge
+    [denied] = [call for call in em.calls if call["action"] == "rbac.denied"]
+    assert (denied["reason"], denied["object_id"]) == ("actor_role_revoked", str(target))
+
+
+async def test_reset_refused_at_the_effect_unrecorded_is_503() -> None:
+    target = uuid.uuid4()
+    c, em, seed, clock, _ = await _build(target=target, actor_owner=False)
+    _elevate(c, seed, clock)
+    em.fail_on = frozenset({"rbac.denied"})
+    r = c.post(f"/users/{target}/mfa/reset", headers=_H)
+    assert r.status_code == 503 and r.json()["code"] == "audit_unavailable"
+
+
+async def test_reset_with_no_reset_store_wired_fails_closed_with_503() -> None:
+    c, em, seed, clock, _ = await _build(reset_store=False)
+    _elevate(c, seed, clock)
+    r = c.post(f"/users/{uuid.uuid4()}/mfa/reset", headers=_H)
+    assert r.status_code == 503 and "auth.mfa_reset_by_owner" not in em.actions()

@@ -134,7 +134,9 @@ class FakeRepo:
         self.rows[kw["token_hash"]] = fresh
         return fresh
 
-    async def revoke_open(self, user_id: uuid.UUID, *, now: datetime, audit: Any) -> bool:
+    async def revoke_open(
+        self, user_id: uuid.UUID, *, actor: uuid.UUID, now: datetime, audit: Any
+    ) -> bool:
         hits = self._open(user_id)
         if hits:
             await audit(user_id, self.rows[hits[0]].role)  # write-ahead: before any mutation
@@ -375,12 +377,12 @@ async def test_concurrent_redemptions_exactly_one_wins() -> None:
 async def test_revoked_token_rejected_and_revoke_unknown_not_found() -> None:
     svc, _, _ = _make()
     inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
-    await svc.revoke(inv.user_id, audit=ok_audit)
+    await svc.revoke(inv.user_id, actor=uuid.uuid4(), audit=ok_audit)
     with pytest.raises(InviteRejected) as e:
         await svc.inspect(inv.token, source_ip="1.1.1.1")
     assert e.value.reason == "revoked"
     with pytest.raises(InviteNotFound):
-        await svc.revoke(uuid.uuid4(), audit=ok_audit)
+        await svc.revoke(uuid.uuid4(), actor=uuid.uuid4(), audit=ok_audit)
 
 
 async def test_repeated_rejections_trip_ip_throttle() -> None:

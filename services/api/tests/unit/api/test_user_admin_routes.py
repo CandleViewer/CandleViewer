@@ -44,9 +44,14 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
-from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.errors import ActorNotAuthorised, WriteAheadTimeout
 from candleviewer.storage.repositories import identity_sqlalchemy
-from candleviewer.storage.repositories.owner_floor_sqlalchemy import LOCK_USER
+from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
+    ACTOR_IS_ACTIVE_OWNER,
+    COUNT_OWNERS,
+    LOCK_OWNERS,
+    LOCK_USER,
+)
 from candleviewer.storage.repositories.user_lifecycle import (
     UserPatch,
     UserPrecondition,
@@ -69,6 +74,8 @@ _PATH = "/users/{}"
 _ROLES = ("owner", "manager", "viewer")
 #: A fixed session id: a parameter id must be the same in every collection (the QA pack).
 _ANY_SESSION = uuid.UUID(int=0x5E55)
+#: #2593: the owner lock, the count after it and the actor's re-read, before any read or answer.
+_OWNER_LOCK = [LOCK_OWNERS, COUNT_OWNERS, ACTOR_IS_ACTIVE_OWNER]
 
 
 def _user(uid: uuid.UUID, roles: tuple[str, ...], status: str = "active") -> dict[str, Any]:
@@ -1113,7 +1120,7 @@ def test_a_role_change_before_the_disable_lock_is_412(
     r = env.patch(M, {"status": "disabled"}, headers={"If-Match": tag})
     _conforms(spec, "/users/{userId}", "patch", r)
     assert (r.status_code, r.json()["code"]) == (412, "version_conflict")
-    assert w.rel.order() == [LOCK_USER, identity_sqlalchemy._USER_SQL]  # nothing written
+    assert w.rel.order() == [LOCK_USER, *_OWNER_LOCK, identity_sqlalchemy._USER_SQL]  # no write
     assert not w.rel.committed and w.calls == [] and w.post_commit() == []
     assert (_calls("version_conflict"), _calls("error")) == (stale + 1, errors)
 
@@ -1127,7 +1134,7 @@ def test_an_unchanged_user_under_the_disable_lock_is_disabled(
     w.rel.rows[identity_sqlalchemy._USER_SQL] = [_read_under_the_lock(_user(M, ("manager",)))]
     r = env.patch(M, {"status": "disabled"}, headers={"If-Match": tag})
     assert r.status_code == 200 and r.json()["status"] == "disabled" and w.rel.committed
-    assert w.rel.order()[:2] == [LOCK_USER, identity_sqlalchemy._USER_SQL]
+    assert w.rel.order()[:5] == [LOCK_USER, *_OWNER_LOCK, identity_sqlalchemy._USER_SQL]
     assert len(w.of("users.disable")) == 1
 
 
@@ -1450,3 +1457,75 @@ def test_a_session_row_that_cannot_be_revoked_is_503_for_an_outage_else_500(
     r = env.client.delete(f"/users/{M}/sessions/{first.id}")
     assert r.status_code == status and env.closed == {}
     assert [c["action"] for c in b16_audit.calls] == ["auth.session_revoked"]
+
+
+# -- #2593: the actor re-read at the effect, in the change's own transaction --------------------
+
+
+def _entry_403(b16: RecordingAuditSink, spec: Any, method: str, path: str, **kw: Any) -> Any:
+    """What a fresh request from the demoted caller (now a manager) gets at entry."""
+    fresh = _Env(b16, _principal("manager", spec), _user(M, ("manager",)))
+    r = fresh.client.request(method, path, **kw)
+    assert r.status_code == 403, r.text
+    return r.json()
+
+
+def test_patch_by_an_owner_demoted_since_entry_is_the_entry_403_unchanged(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    env = _Env(b16_audit, _principal("owner", spec), _user(M, ("manager",)))
+    env.store.update_error = ActorNotAuthorised(str(CALLER))  # the store's re-read refused
+    r = env.patch(M, {"roles": ["viewer"]})
+    _conforms(spec, "/users/{userId}", "patch", r)
+    entry = _entry_403(b16_audit, spec, "PATCH", _PATH.format(M), json={"roles": ["viewer"]})
+    assert r.status_code == 403 and r.json() == entry and "challenge_id" not in r.json()
+    assert env.store.users[M]["roles"] == ["manager"] and env.pushed == []
+    [denied] = env.emitter.calls
+    assert (denied["action"], denied["reason"]) == ("rbac.denied", "actor_role_revoked")
+    assert (denied["session_id"], denied["object_id"]) == (_SESSION, str(M))
+
+
+def test_patch_refused_at_the_effect_unrecorded_is_503(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    env = _Env(b16_audit, _principal("owner", spec), _user(M, ("manager",)), fail_audit=True)
+    env.store.update_error = ActorNotAuthorised(str(CALLER))
+    r = env.patch(M, {"roles": ["viewer"]})
+    assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
+
+
+def test_patch_disable_by_an_owner_demoted_since_entry_is_the_patchs_entry_403(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """The cascade's store refuses under the owner lock: the PATCH answers its own entry
+    refusal (`missing_permission`), not the DELETE's, and the service records the one
+    `rbac.denied` after the rollback."""
+    env, w = _disable_env(b16_audit, spec, rel={"actor_owner": False})
+    r = env.patch(M, {"status": "disabled"})
+    entry = _entry_403(b16_audit, spec, "PATCH", _PATH.format(M), json={"status": "disabled"})
+    assert r.status_code == 403 and r.json() == entry
+    assert not w.rel.committed and not w.of("users.disable") and not w.post_commit()
+    assert [c["reason"] for c in w.of("rbac.denied")] == ["actor_role_revoked"]
+
+
+def test_session_revoke_by_an_owner_demoted_since_entry_records_and_revokes_nothing(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """The unit of work re-reads the caller under the owner lock before the records ahead: no
+    `users.session_revoked`, no B16 REVOKE, the session live and its socket open; one
+    `rbac.denied` after the rollback, then the entry 403."""
+    env, first, _, _ = _with_sessions(b16_audit, spec)
+
+    async def refused(session_id: str, **kw: Any) -> Any:
+        raise ActorNotAuthorised(kw["actor_user_id"])
+
+    env.rows.revoke_by_owner = refused  # type: ignore[method-assign]  # the store's re-read
+    path = f"/users/{M}/sessions/{first.id}"
+    r = env.client.delete(path)
+    _conforms(spec, "/users/{userId}/sessions/{sessionId}", "delete", r)
+    assert r.status_code == 403 and r.json() == _entry_403(b16_audit, spec, "DELETE", path)
+    assert b16_audit.actions().count("auth.session_revoked") == 0 and env.closed == {}
+    assert env.rows.sessions[str(first.id)].revoked_at is None
+    [denied] = env.emitter.calls
+    assert (denied["action"], denied["reason"]) == ("rbac.denied", "actor_role_revoked")
+    assert (denied["session_id"], denied["object_id"]) == (_SESSION, str(M))

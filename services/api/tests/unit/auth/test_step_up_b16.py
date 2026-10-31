@@ -229,7 +229,13 @@ async def test_owner_reset_refused_by_its_write_ahead_audit_keeps_chart_and_sock
         raise RuntimeError("WAL unwritable")
 
     deps = (base._mfa, sessions, base._encryptor, base._users, base._hasher)
-    svc = StepUpService(*deps, clock=clock, publish_revocation=sink, sleep=no_wait)
+    svc = StepUpService(
+        *deps,
+        clock=clock,
+        publish_revocation=sink,
+        sleep=no_wait,
+        owner_reset=base._owner_reset,  # #2593: the same unit of work, over the same fakes
+    )
     target = uuid.uuid4()
     sessions.sessions["t1"] = _session(target)
     await svc.record_pending("t1", "keys")  # target has a live chart

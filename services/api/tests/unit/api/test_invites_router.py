@@ -23,7 +23,7 @@ from candleviewer.auth.invite_service import INVITE_TTL, InviteService, hash_tok
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability import logging as logging_mod
 from candleviewer.observability.correlation import CorrelationMiddleware
-from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.errors import ActorNotAuthorised, WriteAheadTimeout
 from tests.unit.api.test_step_up_router import _H, _build, _code, _Emitter
 from tests.unit.auth.test_invite_service import (
     GOOD_PW,
@@ -633,3 +633,52 @@ async def test_a_reissue_wired_without_a_user_store_fails_closed() -> None:
     assert (r.status_code, r.json()["detail"]) == (503, "the user store is not wired")
     assert "challenge_id" not in r.json() and len(repo.rows) == 1
     assert "users.invite_reissued" not in em.actions()
+
+
+# -- #2593: the actor re-read at the effect, in the store's transaction -----------------------
+
+
+def _refuse_actor(repo: FakeRepo, method: str) -> None:
+    """The Postgres store's re-read after the owner lock finds the actor no longer an owner."""
+
+    async def refused(*_args: Any, **kw: Any) -> Any:
+        raise ActorNotAuthorised(str(kw.get("invited_by") or kw.get("actor")))
+
+    setattr(repo, method, refused)
+
+
+@pytest.mark.parametrize(
+    ("method", "call"),
+    [
+        ("create_user_with_invite", lambda c, uid: c.post("/users", headers=_H, json=_BODY)),
+        ("reissue", lambda c, uid: c.post(f"/users/{uid}/invite", headers=_H)),
+        ("revoke_open", lambda c, uid: c.delete(f"/users/{uid}/invite", headers=_H)),
+    ],
+    ids=["create", "reissue", "revoke"],
+)
+async def test_an_owner_demoted_since_entry_gets_the_entry_403_and_nothing_changes(
+    method: str, call: Callable[[TestClient, str], Any]
+) -> None:
+    c, em, seed, clock, repo, _ = await _setup(auth=_SessionAuth)
+    await _invite(c, seed, clock)
+    uid = c.get("/users/invites", headers=_H).json()["items"][0]["user_id"]
+    rows, before = dict(repo.rows), list(em.actions())
+    _refuse_actor(repo, method)
+    r = call(c, uid)
+    viewer, *_ = await _setup(role="viewer")
+    entry = call(viewer, uid)
+    assert (r.status_code, entry.status_code) == (403, 403) and r.json() == entry.json()
+    assert "challenge_id" not in r.json() and repo.rows == rows
+    # B16 records the grace use before the effect (C-2.21: the chart records, the store refuses)
+    added = [(a["action"], a.get("reason")) for a in em.calls[len(before) :]]
+    assert added == [("auth.step_up_grace_used", "users"), ("rbac.denied", "actor_role_revoked")]
+    assert em.calls[-1]["session_id"] == _SESSION
+
+
+async def test_an_invite_write_refused_at_the_effect_unrecorded_is_503() -> None:
+    c, em, seed, clock, repo, _ = await _setup()
+    _elevate(c, seed, clock)
+    _refuse_actor(repo, "create_user_with_invite")
+    em.fail_on = frozenset({"rbac.denied"})
+    r = c.post("/users", headers=_H, json=_BODY)
+    assert r.status_code == 503 and r.json()["detail"] == _AUDIT_DOWN

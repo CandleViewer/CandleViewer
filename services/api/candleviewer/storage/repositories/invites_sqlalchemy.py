@@ -8,6 +8,8 @@ bindings; E27/E39 grant them). The raw token never reaches this layer.
 Owner actions (create, reissue, revoke) await the caller's write-ahead audit hook
 in their transaction, after staging and before commit (C-2.9, #2510), bounded as
 in `user_roles_sqlalchemy`: a raise or a `WriteAheadTimeout` rolls every row back.
+Each first locks its target user (a re-issue, a revoke), then the owner lock, and re-reads
+its actor as an active owner (#2593): `ActorNotAuthorised` before any answer or write.
 `activate_bootstrap_owner` (#4479) is the one path that grants `owner` at redemption: READ
 COMMITTED, the bootstrap lock, the marked invite and its user locked, no active Owner, then the
 grant, the activation, the critical `auth`/`owner_bootstrapped` event and its write-ahead record,
@@ -27,7 +29,11 @@ from sqlalchemy.exc import IntegrityError
 
 from candleviewer.storage.repositories.incident_grouping import incident_occurrence
 from candleviewer.storage.repositories.incidents_sqlalchemy import record_occurrence
-from candleviewer.storage.repositories.owner_floor_sqlalchemy import COUNT_OWNERS
+from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
+    COUNT_OWNERS,
+    LOCK_USER,
+    require_active_owner,
+)
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -205,6 +211,7 @@ class SqlAlchemyInviteRepository:
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session
+                await require_active_owner(s, str(invited_by))  # #2593: before any write
                 await s.execute(
                     INSERT_INVITED_USER,
                     {
@@ -361,6 +368,8 @@ class SqlAlchemyInviteRepository:
     ) -> Any:
         async with self._relational.unit_of_work() as uow:
             s = uow.session
+            await s.execute(LOCK_USER, {"id": str(user_id)})
+            await require_active_owner(s, str(invited_by))  # #2593: before any answer or write
             row = (await s.execute(_IS_INVITED, {"id": str(user_id)})).first()
             if row is None:
                 return None
@@ -389,8 +398,12 @@ class SqlAlchemyInviteRepository:
             await uow.commit()
         return self._make(fresh) if fresh is not None else None
 
-    async def revoke_open(self, user_id: uuid.UUID, *, now: datetime, audit: AuditHook) -> bool:
+    async def revoke_open(
+        self, user_id: uuid.UUID, *, actor: uuid.UUID, now: datetime, audit: AuditHook
+    ) -> bool:
         async with self._relational.unit_of_work() as uow:
+            await uow.session.execute(LOCK_USER, {"id": str(user_id)})
+            await require_active_owner(uow.session, str(actor))  # #2593: before any answer
             rows = (await uow.session.execute(_REVOKE, {"id": str(user_id), "now": now})).all()
             if not rows:
                 return False

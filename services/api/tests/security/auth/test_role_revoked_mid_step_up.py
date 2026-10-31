@@ -13,6 +13,13 @@ awaits (no sleeps, fixed clock, no network: C-13.5, C-13.7). The audit stand-in 
 unregistered action exactly like `AuditWriter.emit`, so every asserted row is one production could
 write, and it stamps each row with its position in the log: "in order" means ascending `seq`.
 
+#2593: the role is re-checked at the effect, in the change's own transaction: an action already
+past its authorisation when the revoke lands is refused with the 403 a fresh request gets at entry
+(never a challenge), nothing changed, one `rbac.denied` after the revoke; and an action that
+committed first stands, the revoke ordered after its effect. The stores' fakes mirror the
+Postgres re-read (`require_active_owner`); the real locks are
+`tests/integration/auth/test_owner_actor_recheck_pg.py`'s, in CI.
+
 Not asserted here: whether a role change also rotates the session id (SR-013, #2101). These tests
 pin authority and audit order, so they keep the session the step-up started on.
 """
@@ -46,7 +53,7 @@ from candleviewer.auth.service import AuthService
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.contract.rbac.rbac_harness import UserStore
 from tests.csrf_helpers import csrf_headers
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, InMemoryOwnerReset, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -109,7 +116,9 @@ class _MfaRepository(FakeMfaRepository):
 
 class _Directory(UserStore):
     """The role store: two owners and a viewer. `get_roles` is the first store call a handler
-    makes after RBAC and the step-up gate, so a hold there parks it past authorisation."""
+    makes after RBAC and the step-up gate, so a hold there parks it past authorisation. A user in
+    `disabled` holds no counted owner grant (#2593: the actor's re-read reads the user's status
+    too, as `ACTOR_IS_ACTIVE_OWNER` does)."""
 
     def __init__(self, owners: tuple[uuid.UUID, uuid.UUID], viewer: uuid.UUID) -> None:
         super().__init__()
@@ -117,12 +126,20 @@ class _Directory(UserStore):
             viewer: frozenset({"viewer"})
         }
         self.roles = dict(self.initial_roles)
+        self.disabled: set[uuid.UUID] = set()
         self.hold: _Hold | None = None
 
     async def get_roles(self, user_id: uuid.UUID) -> frozenset[str] | None:
         if self.hold is not None:
             await self.hold.pause(user_id)
         return await super().get_roles(user_id)
+
+    async def get_status(self, user_id: uuid.UUID) -> str | None:
+        found = await super().get_status(user_id)
+        return "disabled" if found is not None and user_id in self.disabled else found
+
+    def is_active_owner(self, user_id: uuid.UUID) -> bool:
+        return user_id not in self.disabled and super().is_active_owner(user_id)
 
 
 def _role_permissions() -> dict[str, frozenset[Permission]]:
@@ -155,7 +172,7 @@ class _Resolver:
         scheme, _, token = request.headers.get("authorization", "").partition(" ")
         user_id = self.by_token.get(token.strip()) if scheme.lower() == "bearer" else None
         roles = None if user_id is None else self._directory.roles.get(user_id)
-        if user_id is None or roles is None:
+        if user_id is None or roles is None or user_id in self._directory.disabled:
             return None
         return PrincipalSnapshot(user_id, roles, _permissions(roles))
 
@@ -215,6 +232,15 @@ class World:
         self.mfa_repo = _MfaRepository()
         self.sessions_repo = FakeSessionRepository()
         self.audit = _AuditLog()
+        ids = (uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
+        self.directory = _Directory((ids[0], ids[1]), ids[2])
+        # #2593: the reset's actor re-read, against the same directory the role store keeps
+        owner_reset = InMemoryOwnerReset(
+            self.users,
+            self.mfa_repo,
+            self.sessions_repo,
+            active_owner=lambda actor: self.directory.is_active_owner(uuid.UUID(actor)),
+        )
         self.auth = AuthService(
             self.users,
             mfa_repository=self.mfa_repo,
@@ -223,9 +249,8 @@ class World:
             session_repository=self.sessions_repo,
             pepper=_PEPPER,
             clock=_Clock(),
+            owner_reset=owner_reset,
         )
-        ids = (uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
-        self.directory = _Directory((ids[0], ids[1]), ids[2])
         self.resolver = _Resolver(self.directory)
         self.client: httpx.AsyncClient
         self.owner_a: _Actor
@@ -509,35 +534,97 @@ async def test_role_revoked_while_the_action_awaits_authorisation_is_refused(
     )
 
 
+async def _park_past_authorisation(
+    w: World, action: _Action
+) -> tuple[asyncio.Task[httpx.Response], _Hold]:
+    """A's request, parked in the handler's first role-store read: RBAC has authorised it and the
+    step-up gate has let it in, but nothing has been changed yet. Released by the caller."""
+    hold = _Hold(w.target.user_id)
+    w.directory.hold = hold
+    acting = asyncio.create_task(w.act(w.owner_a, action))
+    await _until_parked(hold, acting)
+    w.directory.hold = None
+    return acting, hold
+
+
+async def _entry_refusal(w: World, action: _Action) -> dict[str, Any]:
+    """What a fresh request from the demoted A gets at entry (the body the effect must match)."""
+    fresh = await w.act(w.owner_a, action)
+    assert fresh.status_code == 403, fresh.text
+    body: dict[str, Any] = fresh.json()
+    return body
+
+
 @pytest.mark.parametrize("action", ACTIONS, ids=lambda a: a.id)
-async def test_role_revoked_after_the_action_was_authorised_leaves_an_atomic_effect_in_order(
+async def test_role_revoked_after_the_action_was_authorised_is_refused_at_the_effect(
     world: World, action: _Action
 ) -> None:
-    """The handler authorised A at entry; the revoke lands before the effect. The ticket allows
-    "refused or completed atomically", so this pins the invariants and not which of the two the
-    handler picks: all of the effect or none of it, the response agreeing with the state, and
-    nothing A's request audits ahead of the revoke it raced."""
+    """#2593: the handler authorised A at entry; the revoke commits before the effect. The
+    effect's own re-read refuses it: the entry's 403 byte for byte (never a challenge), none of
+    the effect, and one `rbac.denied` after the revoke it raced."""
     a, b, log = world.owner_a, world.owner_b, world.audit
     await world.elevate(b)
     await world.elevate(a)
 
-    # Park A in the handler's first role-store read: RBAC has authorised it and the step-up gate
-    # has let it in, but nothing has been changed yet.
-    hold = _Hold(world.target.user_id)
-    world.directory.hold = hold
-    acting = asyncio.create_task(world.act(a, action))
-    await _until_parked(hold, acting)
+    acting, parked = await _park_past_authorisation(world, action)
     revoked = await world.revoke_owner_role(b, a)
     assert revoked.status_code == 200, revoked.text
-    hold.release()
+    parked.release()
     response = await acting
 
-    applied, untouched = action.applied(world), action.untouched(world)
-    assert applied != untouched, "partially applied effect"
-    assert response.status_code in (200, 403)
-    assert (response.status_code == 200) == applied
+    _assert_refused_without_effect(world, action, response)
+    assert "challenge_id" not in response.json()
+    denied = log.find("rbac.denied", actor=a.user_id)
+    assert [r["reason"] for r in denied] == ["actor_role_revoked"]
+    assert denied[0]["object_id"] == str(world.target.user_id)
+    _in_order(log.find("auth.step_up_granted", actor=a.user_id), _revocation_rows(world), denied)
+    assert response.json() == await _entry_refusal(world, action)
+
+
+@pytest.mark.parametrize("action", ACTIONS, ids=lambda a: a.id)
+async def test_owner_disabled_after_the_action_was_authorised_is_refused_at_the_effect(
+    world: World, action: _Action
+) -> None:
+    """#2593 (BQ-03): the owner grant stays, but A's user is disabled while A's action is in
+    flight: the re-read reads the user's status too, so A is refused as a demoted owner is."""
+    a, b, log = world.owner_a, world.owner_b, world.audit
+    await world.elevate(b)
+    await world.elevate(a)
+
+    acting, parked = await _park_past_authorisation(world, action)
+    world.directory.disabled.add(a.user_id)  # B's disable committed: A's grant row untouched
+    parked.release()
+    response = await acting
+
+    _assert_refused_without_effect(world, action, response)
+    assert "owner" in world.directory.roles[a.user_id]
+    assert [r["reason"] for r in log.find("rbac.denied", actor=a.user_id)] == ["actor_role_revoked"]
+
+
+@pytest.mark.parametrize("action", ACTIONS, ids=lambda a: a.id)
+async def test_action_that_committed_before_the_revoke_stands_and_the_revoke_follows_it(
+    world: World, action: _Action
+) -> None:
+    """#2593, the other serial order: B's revoke is past its own authorisation but has not
+    changed anything when A's action runs; A's effect commits whole, then B's revoke lands after
+    it, and nothing of A's is refused."""
+    a, b, log = world.owner_a, world.owner_b, world.audit
+    await world.elevate(b)
+    await world.elevate(a)
+
+    hold = _Hold(a.user_id)  # B's handler reads its target's roles (A's) before its change
+    world.directory.hold = hold
+    revoking = asyncio.create_task(world.revoke_owner_role(b, a))
+    await _until_parked(hold, revoking)
+    world.directory.hold = None
+    response = await world.act(a, action)
+    hold.release()
+    revoked = await revoking
+
+    assert response.status_code == 200, response.text
+    assert revoked.status_code == 200, revoked.text
+    assert action.applied(world)
     effect_rows = [row for name in action.effect_audit for row in log.find(name, actor=a.user_id)]
-    assert len(effect_rows) == (len(action.effect_audit) if applied else 0)
-    last_revocation_row = max(r["seq"] for r in _revocation_rows(world))
-    caused_by_a = effect_rows + log.find("rbac.denied", actor=a.user_id)
-    assert all(r["seq"] > last_revocation_row for r in caused_by_a)
+    assert len(effect_rows) == len(action.effect_audit)
+    assert not log.find("rbac.denied", actor=a.user_id)
+    _in_order(effect_rows, _revocation_rows(world))

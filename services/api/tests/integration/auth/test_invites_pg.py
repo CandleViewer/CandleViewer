@@ -195,7 +195,7 @@ async def test_refused_or_hung_write_ahead_audit_rolls_each_invite_action_back(
             with pytest.raises(raised):
                 await repo.reissue(uid, **again, invited_by=by, now=now, audit=hook)
             with pytest.raises(raised):
-                await repo.revoke_open(uid, now=now, audit=hook)
+                await repo.revoke_open(uid, actor=by, now=now, audit=hook)
         old = await repo.find_by_token_hash(th)
         assert old is not None and old.revoked_at is None  # the old link stays valid
         assert await repo.find_by_token_hash(th2) is None

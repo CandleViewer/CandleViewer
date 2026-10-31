@@ -29,6 +29,10 @@ LockDecision = Callable[[SessionRecord], bool]
 LockWriteAhead = Callable[[SessionRecord], Awaitable[None]]
 
 
+#: #2593: the records of an Owner's revoke of one session, awaited under its locks before the write.
+OwnerRevokeWriteAhead = Callable[[SessionRecord], Awaitable[None]]
+
+
 class SessionRepository(Protocol):
     """Everything `SessionService` needs from the relational tier for
     `sessions`/`sessions_rotation` (`21-database-schema.md` §3.1.4)."""
@@ -113,6 +117,25 @@ class SessionRepository(Protocol):
         already revoked (idempotent — a session is never un-revoked, INV-
         B16-d). Returns the updated row, or `None` if it was already
         revoked or does not exist."""
+        ...
+
+    async def revoke_by_owner(
+        self,
+        session_id: str,
+        *,
+        user_id: str,
+        actor_user_id: str,
+        reason: str,
+        now: datetime,
+        write_ahead: OwnerRevokeWriteAhead,
+        audit_timeout_s: float,
+    ) -> SessionRecord | None:
+        """An Owner's revoke of one session of `user_id` (E42-T09, #2593): one unit of work that
+        locks the user row, then every active-owner grant, and re-reads `actor_user_id` as an
+        active owner (refused before any answer or write: the store's typed error), then locks
+        the session if it is a live session of `user_id` (else `None`, nothing written), awaits
+        `write_ahead(row)` and revokes it. A hook past `audit_timeout_s` raises
+        `WriteAheadTimeout`, a hook that fails raises its error; each rolls everything back."""
         ...
 
     async def update_step_up_state(

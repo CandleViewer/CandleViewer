@@ -18,6 +18,7 @@ from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories import mfa_sqlalchemy
 from candleviewer.storage.repositories.mfa_sqlalchemy import SqlAlchemyMfaRepository
+from candleviewer.storage.repositories.owner_totp_reset_sqlalchemy import SqlAlchemyOwnerTotpReset
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -270,6 +271,8 @@ def test_build_auth_service_real_backend_wires_repositories() -> None:
     svc = build_auth_service(_real_settings())
     assert svc._repository is not None and svc._mfa_repository is not None
     assert svc._session_repository is not None
+    # #2593: the owner TOTP reset's one unit of work (without it every reset fails closed)
+    assert isinstance(svc._owner_reset, SqlAlchemyOwnerTotpReset)
 
 
 def test_build_auth_service_live_without_keys_refuses() -> None:
