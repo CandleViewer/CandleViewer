@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 import candleviewer.app as appmod
 from candleviewer.api.csp import (
     CspConfigError,
+    backend_origin_for,
     build_csp_policy,
     build_reporting_endpoints,
     parse_tailnet_host,
@@ -42,6 +43,23 @@ def test_every_golden_variant_matches() -> None:
     assert build_csp_policy(tailnet_host="box.tail1234.ts.net:8443") == GOLDEN["tailnet_port"]
     assert build_csp_policy("https://localhost:9000") == GOLDEN["https_loopback_origin"]
     assert build_csp_policy("http://evil.example") == GOLDEN["non_loopback_origin_falls_back"]
+
+
+def test_reports_go_to_the_tailnet_origin_when_set_else_the_backend_origin() -> None:
+    tailnet = build_reporting_endpoints(tailnet_host="box.tail1234.ts.net")
+    assert tailnet == GOLDEN["reporting_endpoints_tailnet"]
+    assert build_reporting_endpoints("http://127.0.0.1:8080") == GOLDEN["reporting_endpoints_8080"]
+    assert build_csp_policy("http://127.0.0.1:8080") == GOLDEN["bind_8080"]
+    assert "report-uri https://box.tail1234.ts.net/api/v1/csp-report" in GOLDEN["tailnet"]
+
+
+def test_the_api_builds_from_its_own_bind_port_not_the_shells_default() -> None:
+    assert backend_origin_for(Settings()) == "http://127.0.0.1:8080"
+    assert backend_origin_for(Settings(bind_port=9000)) == "http://127.0.0.1:9000"
+    app = appmod.create_app(Settings())
+    r = TestClient(app, client=("127.0.0.1", 50000)).get("/health/live")
+    assert r.headers["content-security-policy"] == GOLDEN["bind_8080"]
+    assert r.headers["reporting-endpoints"] == GOLDEN["reporting_endpoints_8080"]
 
 
 @pytest.mark.parametrize("host", GOLDEN["invalid_tailnet_hosts"])
@@ -102,14 +120,20 @@ def test_the_header_is_set_on_every_answer_replacing_a_route_value() -> None:
 def test_the_deployed_app_sends_the_policy_on_every_answer(path: str) -> None:
     app = appmod.create_app(Settings())
     r = TestClient(app, client=("127.0.0.1", 50000)).get(path)
-    assert r.headers.get_list("content-security-policy") == [GOLDEN["header"]]
-    assert r.headers.get_list("reporting-endpoints") == [GOLDEN["reporting_endpoints"]]
+    assert r.headers.get_list("content-security-policy") == [GOLDEN["bind_8080"]]
+    assert r.headers.get_list("reporting-endpoints") == [GOLDEN["reporting_endpoints_8080"]]
 
 
 def test_the_deployed_app_adds_the_configured_tailnet_host() -> None:
     app = appmod.create_app(Settings(csp_tailnet_host="box.tail1234.ts.net"))
     r = TestClient(app, client=("127.0.0.1", 50000)).get("/health/live")
-    assert r.headers["content-security-policy"] == GOLDEN["tailnet"]
+    assert r.headers["content-security-policy"] == build_csp_policy(
+        "http://127.0.0.1:8080", "box.tail1234.ts.net"
+    )
+    assert (
+        "report-uri https://box.tail1234.ts.net/api/v1/csp-report"
+        in r.headers["content-security-policy"]
+    )
 
 
 async def test_a_non_http_scope_is_not_stamped() -> None:

@@ -125,11 +125,13 @@ from candleviewer.api.auth_perf import auth_perf_enabled, make_auth_perf_router
 from candleviewer.api.contract_conformance import load_contract_subset
 from candleviewer.api.cors import CorsGateMiddleware, CorsPolicy
 from candleviewer.api.csp import (
+    backend_origin_for,
     build_csp_policy,
     build_reporting_endpoints,
     tailnet_host_from,
 )
 from candleviewer.api.csp_report import METRIC_NAME as CSP_VIOLATIONS_METRIC
+from candleviewer.api.csp_report import REFUSED_METRIC_NAME as CSP_REFUSED_METRIC
 from candleviewer.api.csp_report import CspReportReceiver, make_csp_report_router
 from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
 from candleviewer.api.deny_by_default import (
@@ -1525,7 +1527,9 @@ class _StampedApp(FastAPI):
         csp = getattr(self.state, "csp", None)
         if csp is None:
             return NoSniff(stack)
-        report = CspReportReceiver(stack, counter=csp.counter, enabled=csp.report_enabled)
+        report = CspReportReceiver(
+            stack, counter=csp.counter, refused_counter=csp.refused, enabled=csp.report_enabled
+        )
         return NoSniff(
             ContentSecurityPolicy(
                 report, policy=csp.policy, reporting_endpoints=csp.reporting_endpoints
@@ -1542,6 +1546,7 @@ class _CspWiring:
     reporting_endpoints: str
     report_enabled: bool
     counter: Any
+    refused: Any
 
 
 def create_app(
@@ -3687,11 +3692,13 @@ def create_app(
     # #902: counts each denied request by route and role; inside HttpDuration, outside the trio.
     app.add_middleware(AuthzDenialMiddleware, counter=metrics_facade.get(AUTHZ_DENIALS_METRIC))
     # E43-T01: the CSP header + report receiver (an invalid `CV_CSP_TAILNET_HOST` refuses boot).
+    csp_tailnet = tailnet_host_from(resolved)
     app.state.csp = _CspWiring(
-        policy=build_csp_policy(tailnet_host=tailnet_host_from(resolved)),
-        reporting_endpoints=build_reporting_endpoints(),
+        policy=build_csp_policy(backend_origin_for(resolved), csp_tailnet),
+        reporting_endpoints=build_reporting_endpoints(backend_origin_for(resolved), csp_tailnet),
         report_enabled=resolved.csp_report_enabled,
         counter=metrics_facade.get(CSP_VIOLATIONS_METRIC),
+        refused=metrics_facade.get(CSP_REFUSED_METRIC),
     )
     # #2421: outermost (added last), outside the Correlation -> MeshOnly -> Csrf guard trio, which
     # must stay adjacent and in that order. Times every request, mesh/CSRF refusals included; it

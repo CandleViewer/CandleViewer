@@ -31,10 +31,17 @@ from fastapi import APIRouter, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 METRIC_NAME: Final = "cv_csp_violations_total"
+REFUSED_METRIC_NAME: Final = "cv_csp_reports_refused_total"
+REFUSAL_REASONS: Final = (
+    "body_too_large", "rate_ip", "rate_global", "bad_type", "malformed",
+)  # fmt: skip
 REPORT_PATHS: Final = frozenset({"/api/v1/csp-report", "/csp-report"})
 MAX_BODY_BYTES: Final = 8 * 1024
 MAX_REPORTS_PER_WINDOW: Final = 30
 WINDOW_S: Final = 60.0
+MAX_REPORTS_PER_WINDOW_GLOBAL: Final = (
+    300  # across all clients: the ceiling a spoof-rich flood meets
+)
 MAX_TRACKED_CLIENTS: Final = 512
 MAX_ENTRIES_PER_REQUEST: Final = 10
 ACCEPTED_MEDIA_TYPES: Final = frozenset(
@@ -142,6 +149,26 @@ class _ClientWindows:
         return None
 
 
+class _GlobalWindow:
+    """One fixed window over every client: a ceiling per-IP limits cannot give."""
+
+    def __init__(self, clock: Callable[[], float]) -> None:
+        self._clock = clock
+        self._started = clock()
+        self._count = 0
+
+    def retry_after(self) -> float | None:
+        now = self._clock()
+        if now - self._started >= WINDOW_S:
+            self._started, self._count = now, 0
+        if self._count >= MAX_REPORTS_PER_WINDOW_GLOBAL:
+            return max(1.0, self._started + WINDOW_S - now)
+        return None
+
+    def record(self) -> None:
+        self._count += 1
+
+
 async def _respond(
     send: Send, status: int, *, title: str | None = None, retry_after: float | None = None
 ) -> None:
@@ -165,13 +192,20 @@ class CspReportReceiver:
         app: ASGIApp,
         *,
         counter: ViolationCounter | None,
+        refused_counter: ViolationCounter | None = None,
         enabled: bool = True,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._app = app
         self._counter = counter
         self._enabled = enabled
+        self._refused = refused_counter
         self._windows = _ClientWindows(clock)
+        self._global = _GlobalWindow(clock)
+
+    def _refuse(self, reason: str) -> None:
+        if self._refused is not None:
+            self._refused.labels(reason).inc()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (
@@ -182,26 +216,38 @@ class CspReportReceiver:
         ):
             await self._app(scope, receive, send)
             return
+        # The per-IP key is the socket peer (`scope["client"]`), never a forwarded header a
+        # caller could vary; the global ceiling bounds a flood that spreads across peers.
         client = (scope.get("client") or ("unknown", 0))[0]
-        if (retry := self._windows.admit(str(client))) is not None:
+        if (retry := self._global.retry_after()) is not None:
+            self._refuse("rate_global")
             await _respond(send, 429, title="Too many reports", retry_after=retry)
             return
+        if (retry := self._windows.admit(str(client))) is not None:
+            self._refuse("rate_ip")
+            await _respond(send, 429, title="Too many reports", retry_after=retry)
+            return
+        self._global.record()
         headers = {k.lower(): v for k, v in scope["headers"]}
         media = headers.get(b"content-type", b"").decode("latin-1").split(";")[0].strip().lower()
         if media not in ACCEPTED_MEDIA_TYPES:
+            self._refuse("bad_type")
             await _respond(send, 415, title="Unsupported media type")
             return
         declared = headers.get(b"content-length", b"0")
         if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+            self._refuse("body_too_large")
             await _respond(send, 413, title="Report too large")
             return
         body = await self._read_capped(receive)
         if body is None:
+            self._refuse("body_too_large")
             await _respond(send, 413, title="Report too large")
             return
         try:
             payload = json.loads(body)
         except ValueError:  # UnicodeDecodeError is one
+            self._refuse("malformed")
             await _respond(send, 400, title="Malformed report")
             return
         for directive, blocked_type, host in extract_violations(payload):

@@ -9,4 +9,7 @@ export function buildCspPolicy(options?: {
   tailnetHost?: string | null;
   surface?: "header" | "meta";
 }): string;
-export function buildReportingEndpoints(backendOrigin?: string): string;
+export function buildReportingEndpoints(
+  backendOrigin?: string,
+  tailnetHost?: string | null,
+): string;

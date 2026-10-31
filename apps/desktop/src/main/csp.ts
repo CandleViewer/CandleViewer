@@ -69,14 +69,20 @@ export function buildCsp(
     "frame-ancestors 'none'",
     "base-uri 'none'",
     "form-action 'none'",
-    `report-uri ${safeOrigin}${CSP_REPORT_PATH}`,
+    `report-uri ${reportOrigin(safeOrigin, tailnet)}${CSP_REPORT_PATH}`,
     `report-to ${CSP_REPORT_GROUP}`,
   ].join("; ");
+}
+
+function reportOrigin(origin: string, tailnet: string | null): string {
+  return tailnet === null ? origin : `https://${tailnet}`;
 }
 
 /** Value of the `Reporting-Endpoints` header that `report-to` names. */
 export function buildReportingEndpoints(
   backendOrigin: string = process.env["CV_BACKEND_ORIGIN"] ?? DEFAULT_BACKEND_ORIGIN,
+  tailnetHost: string | undefined = process.env["CV_CSP_TAILNET_HOST"],
 ): string {
-  return `${CSP_REPORT_GROUP}="${resolveBackendOrigin(backendOrigin)}${CSP_REPORT_PATH}"`;
+  const origin = reportOrigin(resolveBackendOrigin(backendOrigin), parseTailnetHost(tailnetHost));
+  return `${CSP_REPORT_GROUP}="${origin}${CSP_REPORT_PATH}"`;
 }

@@ -17,7 +17,9 @@ import candleviewer.app as appmod
 from candleviewer.api.csp_report import (
     MAX_BODY_BYTES,
     MAX_REPORTS_PER_WINDOW,
+    MAX_REPORTS_PER_WINDOW_GLOBAL,
     MAX_TRACKED_CLIENTS,
+    REFUSAL_REASONS,
     WINDOW_S,
     CspReportReceiver,
     classify_blocked,
@@ -302,3 +304,64 @@ def test_the_metric_is_catalogued_with_the_two_closed_labels() -> None:
     metric = registered["cv_csp_violations_total"]
     metric.labels("script-src", "inline").inc()
     assert metric.series_count == 1
+
+
+def _refusals(**kw: Any) -> tuple[TestClient, _Counter]:
+    refused = _Counter()
+    app = CspReportReceiver(FastAPI(), counter=None, refused_counter=refused, clock=_Clock(), **kw)
+    return TestClient(app, client=("10.0.0.1", 5000)), refused
+
+
+def test_every_refusal_reason_is_counted_once_under_its_closed_label() -> None:
+    client, refused = _refusals()
+    good: dict[str, Any] = {"content": SCRIPT_INLINE, "headers": {"content-type": LEGACY}}
+    client.post("/csp-report", content=b"x" * (MAX_BODY_BYTES + 1), headers=good["headers"])
+    client.post("/csp-report", content=SCRIPT_INLINE, headers={"content-type": "text/plain"})
+    client.post("/csp-report", content=b"{nope", headers=good["headers"])
+    client.post("/csp-report", content=iter([b"x" * MAX_BODY_BYTES, b"y"]), headers=good["headers"])
+    for _ in range(MAX_REPORTS_PER_WINDOW):  # the per-IP window: 4 above already used 4 slots
+        client.post("/csp-report", **good)
+    reasons = [c[0] for c in refused.calls]
+    assert reasons[:4] == ["body_too_large", "bad_type", "malformed", "body_too_large"]
+    assert reasons[4:] == ["rate_ip"] * 4  # the four requests above already took four slots
+    assert set(c[0] for c in refused.calls) <= set(REFUSAL_REASONS)
+
+
+def test_the_global_ceiling_refuses_across_clients_and_counts_rate_global() -> None:
+    clock = _Clock()
+    refused = _Counter()
+    app = CspReportReceiver(FastAPI(), counter=None, refused_counter=refused, clock=clock)
+    kw: dict[str, Any] = {"content": SCRIPT_INLINE, "headers": {"content-type": LEGACY}}
+    statuses = []
+    for i in range(MAX_REPORTS_PER_WINDOW_GLOBAL + 2):
+        client = TestClient(app, client=(f"10.2.{i // 250}.{i % 250}", 1))  # one report per IP
+        statuses.append(client.post("/csp-report", **kw))
+    assert [r.status_code for r in statuses[:MAX_REPORTS_PER_WINDOW_GLOBAL]] == [204] * (
+        MAX_REPORTS_PER_WINDOW_GLOBAL
+    )
+    last = statuses[-1]
+    assert last.status_code == 429 and int(last.headers["retry-after"]) >= 1
+    assert refused.calls == [("rate_global",)] * 2
+    clock.now += WINDOW_S
+    assert TestClient(app, client=("10.9.9.9", 1)).post("/csp-report", **kw).status_code == 204
+
+
+def test_a_globally_refused_report_does_not_use_up_the_clients_window() -> None:
+    clock = _Clock()
+    app = CspReportReceiver(FastAPI(), counter=None, clock=clock)
+    kw: dict[str, Any] = {"content": SCRIPT_INLINE, "headers": {"content-type": LEGACY}}
+    for i in range(MAX_REPORTS_PER_WINDOW_GLOBAL):
+        TestClient(app, client=(f"10.3.{i // 250}.{i % 250}", 1)).post("/csp-report", **kw)
+    victim = TestClient(app, client=("10.8.8.8", 1))
+    assert victim.post("/csp-report", **kw).status_code == 429
+    clock.now += WINDOW_S
+    assert [
+        victim.post("/csp-report", **kw).status_code for _ in range(MAX_REPORTS_PER_WINDOW)
+    ] == [204] * MAX_REPORTS_PER_WINDOW
+
+
+def test_the_deployed_app_counts_refusals_on_the_catalogued_metric() -> None:
+    app = appmod.create_app(Settings())
+    client = TestClient(app, client=("127.0.0.1", 50000))
+    client.post("/api/v1/csp-report", content=b"{", headers={"content-type": LEGACY})
+    assert app.state.csp.refused.series_count == 1

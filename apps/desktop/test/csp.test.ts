@@ -33,6 +33,16 @@ describe("CSP string builder", () => {
     );
   });
 
+  it("sends reports to the tailnet origin when set, else the backend origin (golden)", () => {
+    expect(buildReportingEndpoints("http://127.0.0.1:8000", "box.tail1234.ts.net")).toBe(
+      golden["reporting_endpoints_tailnet"],
+    );
+    expect(buildReportingEndpoints("http://127.0.0.1:8080", undefined)).toBe(
+      golden["reporting_endpoints_8080"],
+    );
+    expect(buildCsp("http://127.0.0.1:8080", undefined)).toBe(golden["bind_8080"]);
+  });
+
   it.each(golden["invalid_tailnet_hosts"] as string[])(
     "ignores the invalid tailnet host %j",
     (host) => {

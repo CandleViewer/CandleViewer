@@ -87,15 +87,29 @@ def build_csp_policy(
             "frame-ancestors 'none'",
             "base-uri 'none'",
             "form-action 'none'",
-            f"report-uri {origin}{CSP_REPORT_PATH}",
+            f"report-uri {_report_origin(origin, tailnet_host)}{CSP_REPORT_PATH}",
             f"report-to {CSP_REPORT_GROUP}",
         ]
     )
 
 
-def build_reporting_endpoints(backend_origin: str = DEFAULT_BACKEND_ORIGIN) -> str:
+def _report_origin(origin: str, tailnet_host: str | None) -> str:
+    """Where reports go: the tailnet https origin when a valid one is set, else the backend."""
+    tailnet = parse_tailnet_host(tailnet_host)
+    return origin if tailnet is None else f"https://{tailnet}"
+
+
+def build_reporting_endpoints(
+    backend_origin: str = DEFAULT_BACKEND_ORIGIN, tailnet_host: str | None = None
+) -> str:
     """Value of the `Reporting-Endpoints` header that `report-to` names."""
-    return f'{CSP_REPORT_GROUP}="{resolve_backend_origin(backend_origin)}{CSP_REPORT_PATH}"'
+    origin = _report_origin(resolve_backend_origin(backend_origin), tailnet_host)
+    return f'{CSP_REPORT_GROUP}="{origin}{CSP_REPORT_PATH}"'
+
+
+def backend_origin_for(settings: Settings) -> str:
+    """The API's own loopback origin from its bind port (not the desktop shell's default 8000)."""
+    return f"http://127.0.0.1:{settings.bind_port}"
 
 
 def tailnet_host_from(settings: Settings) -> str | None:

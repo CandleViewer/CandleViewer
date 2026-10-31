@@ -63,12 +63,24 @@ export function buildCspPolicy(options = {}) {
   if (header) directives.push("frame-ancestors 'none'");
   directives.push("base-uri 'none'", "form-action 'none'");
   if (header) {
-    directives.push(`report-uri ${origin}${CSP_REPORT_PATH}`, `report-to ${CSP_REPORT_GROUP}`);
+    directives.push(
+      `report-uri ${reportOrigin(origin, tailnet)}${CSP_REPORT_PATH}`,
+      `report-to ${CSP_REPORT_GROUP}`,
+    );
   }
   return directives.join("; ");
 }
 
+/** Where reports go: the tailnet https origin when one is configured, else the backend origin. */
+function reportOrigin(origin, tailnet) {
+  return tailnet === null ? origin : `https://${tailnet}`;
+}
+
 /** Value of the `Reporting-Endpoints` header that `report-to` names. */
-export function buildReportingEndpoints(backendOrigin = DEFAULT_BACKEND_ORIGIN) {
-  return `${CSP_REPORT_GROUP}="${resolveBackendOrigin(backendOrigin)}${CSP_REPORT_PATH}"`;
+export function buildReportingEndpoints(
+  backendOrigin = DEFAULT_BACKEND_ORIGIN,
+  tailnetHost = null,
+) {
+  const origin = resolveBackendOrigin(backendOrigin);
+  return `${CSP_REPORT_GROUP}="${reportOrigin(origin, parseTailnetHost(tailnetHost))}${CSP_REPORT_PATH}"`;
 }

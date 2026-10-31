@@ -4992,6 +4992,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=200,
     ),
     _s(
+        "cv_csp_reports_refused_total",
+        "counter",
+        "reports",
+        ("reason",),
+        "CSP report requests refused, by closed reason (E43-T01).",
+        "sustained rate_ip or rate_global refusals: a report flood on the public receiver",
+        _L,
+        "E43",
+        # Five closed reasons (`api/csp_report.REFUSAL_REASONS`); nothing else makes a series.
+        max_series=5,
+    ),
+    _s(
         "authz_denied_by_route_total",
         "counter",
         "requests",

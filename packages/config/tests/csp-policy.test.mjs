@@ -21,6 +21,16 @@ describe("buildCspPolicy", () => {
     expect(buildReportingEndpoints()).toBe(golden.reporting_endpoints);
   });
 
+  it("sends reports to the tailnet origin when set, else the backend origin", () => {
+    expect(buildReportingEndpoints("http://127.0.0.1:8000", "box.tail1234.ts.net")).toBe(
+      golden.reporting_endpoints_tailnet,
+    );
+    expect(buildReportingEndpoints("http://127.0.0.1:8080")).toBe(golden.reporting_endpoints_8080);
+    expect(golden.tailnet).toContain("report-uri https://box.tail1234.ts.net/api/v1/csp-report");
+    expect(buildCspPolicy({ backendOrigin: "http://127.0.0.1:8080" })).toBe(golden.bind_8080);
+    expect(golden.bind_8080).toContain("report-uri http://127.0.0.1:8080/api/v1/csp-report");
+  });
+
   it("never contains unsafe-inline, unsafe-eval or a wildcard", () => {
     for (const policy of [golden.header, golden.meta, golden.tailnet, golden.tailnet_port]) {
       expect(policy).not.toMatch(/unsafe-inline|unsafe-eval|\*/);

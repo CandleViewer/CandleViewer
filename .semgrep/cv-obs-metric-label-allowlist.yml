@@ -29,6 +29,8 @@ rules:
       #   closed set of 21 plus `other` and the blocked resource's closed type {inline, eval, data,
       #   blob, http, https, ws, wss, other} (`api/csp_report.py`); never a URL, path, query or
       #   host; max_series=200.
+      # reason, also (E43-T01, cv_csp_reports_refused_total): {body_too_large, rate_ip,
+      #   rate_global, bad_type, malformed} (`api/csp_report.REFUSAL_REASONS`); max_series=5.
       # bucket (E15-T01): workspace-count buckets {1, 2-4, 5-8, 9-16, 17-32}; max_series=5.
       # cause (E42-T02): audit read over budget {budget, pool, statement_timeout}; max_series=3.
       # entity_kind (E17-T08): the closed 23 §6.4 machine kinds (`ws/topics.MACHINE_KINDS`, 13);

@@ -77,8 +77,11 @@ HEADER_ONLY_EXACT: dict[str, str] = {
     "frame-ancestors": "'none'",
     "report-to": "csp-endpoint",
 }
+REPORT_PATH = "/api/v1/csp-report"
+# report-uri is the connect-src's tailnet https origin when it has one, else its backend origin.
 REPORT_URI_RE = re.compile(
-    r"^https?://(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]{1,5})?/api/v1/csp-report$"
+    r"^(?:https?://(?:127\.0\.0\.1|localhost|\[::1\])|https://[a-z0-9.-]+)"
+    r"(?::[0-9]{1,5})?" + re.escape(REPORT_PATH) + r"$"
 )
 HEADER_ONLY = frozenset({*HEADER_ONLY_EXACT, "report-uri"})
 _ALLOWED_DIRECTIVES = frozenset({*SR112_EXACT, *HEADER_ONLY, "connect-src"})
@@ -404,9 +407,21 @@ def check_csp(source: str, csp: str, surface: str = "header") -> list[Violation]
                 Violation(
                     "SR-112",
                     source,
-                    f"report-uri '{d['report-uri']}' is not the loopback /api/v1/csp-report URL",
+                    f"report-uri '{d['report-uri']}' is not an origin's /api/v1/csp-report URL",
                 )
             )
+        elif "connect-src" in d:
+            rest = d["connect-src"].split()[1:]
+            want = rest[2] if len(rest) == 4 else (rest[0] if rest else "")
+            if d["report-uri"] != want + REPORT_PATH:
+                vs.append(
+                    Violation(
+                        "SR-112",
+                        source,
+                        f"report-uri '{d['report-uri']}' must be '{want}{REPORT_PATH}' (the "
+                        "tailnet origin when connect-src has one, else the backend origin)",
+                    )
+                )
     if "unsafe-eval" in csp:
         vs.append(Violation("SR-112", source, "CSP contains 'unsafe-eval' (forbidden)"))
     if "unsafe-inline" in csp:

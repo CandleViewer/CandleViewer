@@ -1322,7 +1322,10 @@ def _header_with(replacement: str) -> str:
 def test_a_tailnet_https_wss_pair_is_allowed_in_the_header_and_the_meta(
     tree: Tree,
 ) -> None:
-    ok = _header_with(f"{LOOPBACK_CONNECT} {TAILNET}")
+    ok = _header_with(f"{LOOPBACK_CONNECT} {TAILNET}").replace(
+        "report-uri http://127.0.0.1:8000/api/v1/csp-report",
+        "report-uri https://box.tail1234.ts.net/api/v1/csp-report",
+    )
     tree.facts["cspHeader"] = ok
     tree.files["web/index.html"] = (
         '<meta http-equiv="Content-Security-Policy" content="'
@@ -1435,3 +1438,27 @@ def test_a_bybit_host_in_any_web_dist_js_fails_sr119(tree: Tree, rel: str) -> No
     vs = tree.violations()
     assert "SR-119" in srs(vs)
     assert any(Path(rel).name in v.render() for v in vs if v.sr == "SR-119")
+
+
+def test_report_uri_must_follow_the_tailnet_origin_when_connect_src_has_one(
+    tree: Tree,
+) -> None:
+    # tailnet pair in connect-src but reports still going to the loopback origin: drift.
+    tree.facts["cspHeader"] = _header_with(f"{LOOPBACK_CONNECT} {TAILNET}")
+    vs = tree.violations()
+    assert any(
+        "must be 'https://box.tail1234.ts.net/api/v1/csp-report'" in v.render()
+        for v in vs
+    )
+
+
+def test_report_uri_must_follow_the_backend_origin_without_a_tailnet(
+    tree: Tree,
+) -> None:
+    tree.facts["cspHeader"] = GOOD_CSP.replace(
+        "report-uri http://127.0.0.1:8000", "report-uri http://localhost:8000"
+    )
+    vs = tree.violations()
+    assert any(
+        "must be 'http://127.0.0.1:8000/api/v1/csp-report'" in v.render() for v in vs
+    )
