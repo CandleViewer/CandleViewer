@@ -135,10 +135,16 @@ async def test_wal_exhausted_writes_backpressure_drop_gap_and_critical_event(
         for g in o.store.gaps:  # C-2.14, but for a message split at the gap's first instant
             key, lo, hi = (g["stream"], g["symbol"]), g["start"], g["end"]
             assert isinstance(lo, datetime) and isinstance(hi, datetime)
-            # OPEN FINDING for the recorder owner (SCENARIOS.md Findings): a split message can share
-            # the gap's first instant. Escalated to the coordinator on PR #481; tighten to
-            # lo <= w[2] once ruled.
+            # Ruled (coordinator, 2026-10-31, PR #5259): C-2.14 forbids fabricating missing
+            # history, not a split message. A delta the WAL budget splits keeps its first levels
+            # and the gap starts at the same exch_ts (a): rows at `lo` are allowed, rows after it
+            # are not. (b) the replayer treats the gap as a resync point:
+            # tests/unit/replay/test_replay_books.py::
+            # test_a_gap_at_a_split_delta_resyncs_and_never_presents_the_partial_book
             spanned = [w for w in written if w[:2] == key and lo < w[2] <= hi]
             assert spanned == [], f"gap {g} spans a written row"
+            at_start = [w for w in written if w[:2] == key and w[2] == lo]
+            if at_start:  # (a) a split message: its remainder is inside the gap, same exch_ts
+                assert hi >= lo, f"gap {g} must cover the split message's remainder"
     finally:
         await o.writer.stop()

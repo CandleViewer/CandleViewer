@@ -60,7 +60,10 @@ Validation section's 85/91/96 does not and is left for an ADR follow-up.
   (`writer._drain_spill_buf`, `records[:written]`), a message can be split, its first levels
   written and the rest dropped into a gap that starts at the same instant. Rows still balance
   exactly (produced == written + dropped). Whether C-2.14 ("a gap never contains written data")
-  should hold at message granularity is for the recorder's owner; the test pins today's behaviour
-  (nothing written strictly inside a gap) and does not change production code.
-  **OPEN FINDING** for the recorder owner: escalated to the coordinator on PR #481; tighten to
-  `lo <= w[2]` once ruled.
+  should hold at message granularity was escalated and **ruled** (coordinator, 2026-10-31, PR
+  #5259): C-2.14 is about never fabricating missing history, not per-message atomicity. A split
+  is accepted because (a) the `backpressure_drop` gap covers the remainder at the same `exch_ts`,
+  (b) the replayer treats a gap as a resync point (C-2.5), pinned by
+  `tests/unit/replay/test_replay_books.py::test_a_gap_at_a_split_delta_resyncs_and_never_presents_the_partial_book`,
+  and (c) the chaos test pins the split (nothing written strictly inside a gap). No production
+  change.

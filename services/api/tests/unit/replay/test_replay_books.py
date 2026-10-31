@@ -276,6 +276,28 @@ async def test_ten_recording_gaps_never_leave_the_replay_book_degraded() -> None
     await holds_updates_until_a_snapshot(bus, books, injector, last_u=100, at=11 * SECOND)
 
 
+async def test_a_gap_at_a_split_delta_resyncs_and_never_presents_the_partial_book() -> None:
+    """C-2.5 / C-2.14 (the coordinator's 2026-10-31 ruling on #481): a delta the recorder's WAL
+    budget split leaves its first levels written and a `backpressure_drop` gap at the same
+    `exch_ts`. The gap is a resync point: the book leaves LIVE, serves no view built from the
+    partial delta, and holds the rest until the next recorded snapshot."""
+    bus = LoggingBus()
+    books, injector = replayed(bus)
+    await injector.deliver(recorded_snapshot(SECOND, 10))
+    await injector.deliver(recorded_update(2 * SECOND, 11))
+    await injector.deliver(recorded_update(3 * SECOND, 12))  # the written part of the split delta
+    engine = books.engine(SYM, 200)
+    assert engine is not None and engine.phase is BookPhase.LIVE
+    await injector.reset_book(SYM)  # the gap, starting at the split message's exch_ts
+    assert engine.phase is BookPhase.SNAPSHOT_PENDING
+    assert engine.live_snapshot() is None and engine.anchor_snapshot() is None
+    assert (bus.statuses()[-1].state, bus.statuses()[-1].reason) == (
+        BookPhase.DESYNCED,
+        "recording_gap",
+    )
+    await holds_updates_until_a_snapshot(bus, books, injector, last_u=12, at=4 * SECOND)
+
+
 async def test_the_replay_book_reads_replay_time_never_the_wall_clock() -> None:
     bus = LoggingBus()
     books = ReplayBooks(bus, SESSION)
