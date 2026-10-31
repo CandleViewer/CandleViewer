@@ -37,7 +37,7 @@ MAX_BATCHES_PER_RUN = 100
 
 @dataclass(frozen=True, slots=True)
 class DrawingsMetrics:
-    """The three E14-T01 series; the purge task records `purged`, the router the others."""
+    """The E14-T01 series; the purge task records `purged` and the gauges, the router the rest."""
 
     batch_ops: BoundedMetric
     conflicts: BoundedMetric
@@ -45,6 +45,9 @@ class DrawingsMetrics:
     rows: BoundedMetric  # cv_drawings_rows{tool}: live drawings per tool (set by the purge task)
     #: cv_drawings_rows_per_user{kind}: max and p95 of live drawings per owner (#2727)
     rows_per_user: BoundedMetric | None = None
+    #: SR-E14-11 (#2727), recorded by the router: 413/422 refusals by `reason`, and batch-cap 413s
+    payload_rejected: BoundedMetric | None = None
+    batch_cap_rejected: BoundedMetric | None = None
 
 
 class _Purger(Protocol):

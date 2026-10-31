@@ -151,6 +151,8 @@ rules:
       #   `ws_wiring.TradeGroupFrameCounts`; never an account or a user; max_series=2.
       # kind, also (#2727, cv_drawings_rows_per_user): {max, p95} of live drawings per owner,
       #   set by the drawings purge task; never a user; max_series=2.
+      # reason, also (#2727, cv_drawings_payload_rejected_total): {body_too_large, bounds}
+      #   (`api/drawings.PAYLOAD_REFUSALS`); never a user or a symbol; max_series=2.
       # trigger (E29-T06 #914, oms_reconcile_seconds, oms_reconcile_passes_total): what started a
       #   reconciliation pass, the five of 20 Sec.12.1 {startup, reconnect, periodic, manual,
       #   unknown}; never an account (BQ-11); max_series=5, or 30 with `result`.

@@ -23,7 +23,11 @@ transaction (422 `layout_not_found`, the same for unknown, foreign and deleted l
 #357 orders `immutable_field` (clarification 3).
 
 #2727: every write takes a token of the caller's `DrawingsWriteLimiter` after the permission
-check (429 `rate_limited`); the repository refuses a create past a quota (409).
+check (429 `rate_limited`); the repository refuses a create past a quota (409). SR-E14-11's
+counters: a 413 past a body cap or a 422 past a point or level count bound moves
+`cv_drawings_payload_rejected_total{reason}`, a batch past the op cap
+`cv_drawings_batch_cap_rejected_total` (once each, in `_ProblemRoute`, never changing the answer);
+a denial, a 403 or a foreign-id probe, moves the generic `authz_denied_total` (SR-125).
 """
 
 import base64
@@ -33,7 +37,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Coroutine
 from datetime import datetime
-from typing import Annotated, Any, Final, Protocol
+from typing import Annotated, Any, ClassVar, Final, Protocol
 from uuid import UUID
 
 import structlog
@@ -76,6 +80,7 @@ from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.ingestion.ticker_stream import uuid7
 from candleviewer.observability.metrics import BoundedMetric
@@ -126,6 +131,11 @@ _BATCH_RULES: Final = {
     "version_conflict": "The drawing was changed by another session; reload and retry.",
     "id_unavailable": "This id is already used; create the drawing under a new id.",
 }
+#: `cv_drawings_payload_rejected_total{reason}` (SR-E14-11): the closed label set, max_series=2.
+PAYLOAD_REFUSALS: Final = ("body_too_large", "bounds")
+#: The 422 rules that are a per-request count bound: points per tool, levels (24) and bands (3).
+_BOUND_RULES: Final = frozenset({"tool_point_count", "too_long"})
+_BATCH_CAP: Final = "batch_cap"
 
 
 class _Emitter(Protocol):
@@ -139,13 +149,19 @@ class LayoutProbe(Protocol):
 
 
 class DrawingsMetricsLike(Protocol):
-    """C4's `DrawingsMetrics` (`app.state.drawings_metrics`); the router records these two."""
+    """C4's `DrawingsMetrics` (`app.state.drawings_metrics`); the router records these four."""
 
     @property
     def batch_ops(self) -> BoundedMetric: ...  # cv_drawings_batch_ops (histogram)
 
     @property
     def conflicts(self) -> BoundedMetric: ...  # cv_drawings_conflicts_total{rule}
+
+    @property
+    def payload_rejected(self) -> BoundedMetric | None: ...  # ..._payload_rejected_total{reason}
+
+    @property
+    def batch_cap_rejected(self) -> BoundedMetric | None: ...  # ..._batch_cap_rejected_total
 
 
 class _Resolver(Protocol):
@@ -168,10 +184,11 @@ def _snapshot(p: AuditPrincipal) -> PrincipalSnapshot:
 class _Problem(Exception):
     """RFC 9457 problem for a registered code; status and title come from `_CODES`."""
 
-    def __init__(self, code: str, detail: str, **extra: Any) -> None:
+    def __init__(self, code: str, detail: str, *, refusal: str | None = None, **extra: Any) -> None:
         super().__init__(detail)
         self.status, self.title = _CODES[code]
         self.code, self.detail, self.extra = code, detail, extra
+        self.refusal = refusal  # a `PAYLOAD_REFUSALS` value or `_BATCH_CAP`: counted, never sent
 
     def response(self) -> JSONResponse:
         body = {"type": f"https://candleviewer.local/errors/{self.code}", "title": self.title,
@@ -187,13 +204,19 @@ class _ProblemRoute(APIRoute):
     (`AuditUnavailable`, `AuditWriterStopped`: the request fails closed) -> 503 `store_unavailable`.
     """
 
+    #: Set on the router's own subclass (`make_drawings_router`): where refusals are counted.
+    metrics: ClassVar[DrawingsMetricsLike | None] = None
+
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         inner = super().get_route_handler()
+        metrics = type(self).metrics
 
         async def handler(request: Request) -> Response:
             try:
                 return await inner(request)
             except _Problem as p:
+                if p.refusal is not None:
+                    _count_refusal(metrics, p.refusal)
                 return p.response()
             except (AuditUnavailable, AuditWriterStopped) as exc:  # fails closed: logged apart
                 _log().error("drawings_audit_unavailable", error=type(exc).__name__)
@@ -212,13 +235,28 @@ def _log() -> Any:
     return structlog.get_logger("candleviewer.api.drawings")
 
 
+def _count_refusal(metrics: DrawingsMetricsLike | None, refusal: str) -> None:
+    """SR-E14-11: one refusal, once, after the decision and before the answer; a failing
+    metric is logged and never changes the answer."""
+    if metrics is None:
+        return
+    try:
+        if refusal == _BATCH_CAP:
+            if (cap := metrics.batch_cap_rejected) is not None:
+                cap.child().inc()
+        elif (rejected := metrics.payload_rejected) is not None:
+            rejected.labels(refusal).inc()
+    except Exception as exc:  # a metric never fails a refusal (it is already decided)
+        _log().warning("drawings_refusal_metric_failed", refusal=refusal, error=type(exc).__name__)
+
+
 def _rule(field: str, rule: str, message: str) -> dict[str, str]:
     return {"field": field, "rule": rule, "message": message}
 
 
-def _invalid(errors: list[dict[str, str]]) -> _Problem:
+def _invalid(errors: list[dict[str, str]], refusal: str | None = None) -> _Problem:
     """422 with at most 20 field errors, passed through the shared redaction rule set."""
-    return _Problem("validation_failed", "The request is invalid.",
+    return _Problem("validation_failed", "The request is invalid.", refusal=refusal,
                     errors=redact_structure(errors[:20]))  # fmt: skip
 
 
@@ -250,7 +288,8 @@ def _declared_length(raw: str) -> int | None:
 
 async def _read_capped(request: Request, cap: int) -> bytes:
     """The raw body, refused with 413 past `cap` bytes before it is fully buffered."""
-    too_large = _Problem("payload_too_large", f"The request body exceeds {cap} bytes.")
+    msg = f"The request body exceeds {cap} bytes."
+    too_large = _Problem("payload_too_large", msg, refusal="body_too_large")
     declared = _declared_length(request.headers.get("content-length", ""))
     if declared is not None and declared > cap:
         raise too_large
@@ -278,7 +317,9 @@ def _parse[M: BaseModel](model: type[M], text: str) -> M:
     try:
         return model.model_validate_json(text)
     except ValidationError as exc:
-        raise _invalid(format_errors(exc)) from None
+        errors = format_errors(exc)
+        bounds = any(e["rule"] in _BOUND_RULES for e in errors)
+        raise _invalid(errors, "bounds" if bounds else None) from None
 
 
 def _count_ops(text: str) -> None:
@@ -290,7 +331,7 @@ def _count_ops(text: str) -> None:
     ops = decoded.get("operations") if isinstance(decoded, dict) else None
     if isinstance(ops, list) and len(ops) > MAX_BATCH_OPS:
         msg = f"Batch carries {len(ops)} operations; the maximum is {MAX_BATCH_OPS}."
-        raise _Problem("payload_too_large", msg)
+        raise _Problem("payload_too_large", msg, refusal=_BATCH_CAP)
 
 
 def _op(op: BatchCreateIn | BatchUpdateIn | BatchDeleteIn, new_id: Callable[[], UUID]) -> BatchOp:
@@ -403,7 +444,12 @@ def make_drawings_router(
     write bucket (#2727); `None` uses one bucket set owned by this router."""
     if audit is None:
         raise TypeError("make_drawings_router: an audit emitter is required")
-    router = APIRouter(tags=["workspaces"], route_class=_ProblemRoute)
+
+    class _Route(_ProblemRoute):  # this router's refusals go to this router's metrics
+        pass
+
+    _Route.metrics = metrics
+    router = APIRouter(tags=["workspaces"], route_class=_Route)
     cache = IdempotencyCache() if idempotency is None else idempotency
     own_limiter = DrawingsWriteLimiter()
     limiter = write_limiter or (lambda: own_limiter)
@@ -448,7 +494,9 @@ def make_drawings_router(
         return repo
 
     async def audit_not_owner(p: AuditPrincipal, did: str) -> None:
-        """`rbac.denied` for a write aimed at a drawing id that is not the caller's (SR-062)."""
+        """`rbac.denied` for a write aimed at a drawing id that is not the caller's (SR-062),
+        counted first as a denial (SR-125, SR-E14-11), as a foreign id is in `oms_reads`."""
+        count_authz_denial(Permission.WORKSPACES_WRITE.value, _snapshot(p).roles)
         await audit.emit(
             "rbac.denied", actor_label=str(p.user_id), actor_user_id=p.user_id, actor_ip=p.ip,
             session_id=p.session_id, request_id=p.request_id, object_kind="drawing",
@@ -618,7 +666,8 @@ def make_drawings_router(
 __all__ = [
     "CURSOR_TTL_S", "IDEMPOTENCY_ENTRY_OVERHEAD", "IDEMPOTENCY_MAX_BYTES",
     "IDEMPOTENCY_MAX_ENTRIES", "IDEMPOTENCY_MAX_ENTRY_BYTES", "IDEMPOTENCY_TTL_S",
-    "IDEMPOTENCY_USER_MAX_BYTES", "IDEMPOTENCY_USER_MAX_ENTRIES", "DrawingsMetricsLike",
+    "IDEMPOTENCY_USER_MAX_BYTES", "IDEMPOTENCY_USER_MAX_ENTRIES", "PAYLOAD_REFUSALS",
+    "DrawingsMetricsLike",
     "IdempotencyCache", "LayoutProbe", "StoredResponse", "decode_cursor", "encode_cursor",
     "make_drawings_router",
 ]  # fmt: skip

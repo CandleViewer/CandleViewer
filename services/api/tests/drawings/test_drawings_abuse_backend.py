@@ -1,7 +1,7 @@
 """E14-X02 (#474) abuse cases, part C: the backend items the 2026-10-20 QA record left open.
 
 The abuse table (every 22 `/drawings*` operation names its cases); server signals per abuse class
-(SR-E14-11; missing counters are #2727 tripwires); mass assignment; IDOR under dead or downgraded
+(SR-E14-11; #2727's counters); mass assignment; IDOR under dead or downgraded
 sessions (real `create_app`); the batch 422/413 literal differential; hostile keys in
 `errors[].field`; SR-E14-06's log half (analytics and journal: #4602). Router-level cases use the
 in-memory repository; findings and SR coverage: `qa/security/e14-abuse-cases.md`."""
@@ -15,7 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import _drawings_api_env as fakes
 import pytest
@@ -163,9 +163,9 @@ def test_a_viewer_write_moves_the_denied_counter_once_and_leaves_one_record(op: 
 
 
 @pytest.mark.parametrize("op", ["put", "delete"])
-def test_a_foreign_id_probe_is_audited_but_counted_nowhere_tripwire_2727(op: str) -> None:
-    """Finding F-02: a scope denial (404 to a foreign id) writes `rbac.denied` and moves no counter;
-    SR-E14-11's denied counter is #2727's. When it lands, assert it here instead."""
+def test_a_foreign_id_probe_is_audited_and_counted_as_one_denial(op: str) -> None:
+    """Finding F-02, closed by #2727 (SR-E14-11): a scope denial (404 to a foreign id) writes
+    `rbac.denied` and moves `authz_denied_total` once, as a 403 does; no conflict counter."""
     metrics = MagicMock()
     env = Env(metrics=metrics)
     mine = env.create()
@@ -173,16 +173,17 @@ def test_a_foreign_id_probe_is_audited_but_counted_nowhere_tripwire_2727(op: str
     r = _write(env, op, mine)
     assert r.status_code == 404
     assert [c["reason"] for c in env.audit.denied()] == ["not_owner:workspaces:write:self"]
-    assert _denied_total() == before and metrics.conflicts.labels.call_args_list == []
+    assert _denied_total() == before + 1 and metrics.conflicts.labels.call_args_list == []
 
 
 def test_a_foreign_batch_target_moves_the_conflict_counter_and_leaves_one_record() -> None:
     metrics = MagicMock()
     env = Env(metrics=metrics)
     mine = env.create()
-    env.user = USER_B
+    env.user, before = USER_B, _denied_total()
     r = _write(env, "batch", mine)
     assert r.status_code == 409 and r.json()["errors"][0]["rule"] == "target_unavailable"
+    assert _denied_total() == before + 1  # F-02: counted as a denial too (#2727)
     metrics.conflicts.labels.assert_called_once_with("target_unavailable")
     metrics.conflicts.labels.return_value.inc.assert_called_once_with()
     assert [c["object_id"] for c in env.audit.denied()] == [mine["id"]]
@@ -199,18 +200,25 @@ OVERSIZE = {  # abuse class -> (path, body)
 }
 
 
+#: abuse class -> the one SR-E14-11 counter call it makes (#2727)
+OVERSIZE_COUNTED = {
+    "single_body": call.payload_rejected.labels("body_too_large"),
+    "batch_ops": call.batch_cap_rejected.child(),
+}
+
+
 @pytest.mark.parametrize("kind", list(OVERSIZE))
-def test_an_oversize_or_over_cap_refusal_leaves_no_drawings_signal_tripwire_2727(kind: str) -> None:
-    """Finding F-03: a 413 leaves no drawings counter, no audit record and no log line; only the
-    route's `cv_http_request_duration_seconds{status_class="4xx"}` moves (next test). SR-E14-11's
-    oversize and batch-cap counters are #2727's: when they land, assert them here instead."""
+def test_an_oversize_or_over_cap_refusal_moves_its_one_drawings_counter(kind: str) -> None:
+    """Finding F-03, closed by #2727 (SR-E14-11): a 413 moves its refusal counter once, and still
+    no audit record and no log line."""
     metrics = MagicMock()
     env = Env(metrics=metrics)
     path, body = OVERSIZE[kind]
     with capture_logs() as logs:
         r = env.c.post(path, content=body)
     assert r.status_code == 413 and r.json()["code"] == "payload_too_large"
-    assert metrics.mock_calls == [] and env.audit.calls == [] and logs == []
+    assert metrics.mock_calls == [OVERSIZE_COUNTED[kind], OVERSIZE_COUNTED[kind].inc()]
+    assert env.audit.calls == [] and logs == []
     assert env.repo.calls == []
 
 
@@ -236,8 +244,17 @@ def _series(app: Any, prefix: str) -> dict[str, float]:
     return {name: float(value) for name, _, value in rows}
 
 
+#: abuse class -> the exported series the real app moves (#2727, SR-E14-11)
+OVERSIZE_SERIES = {
+    "single_body": 'cv_drawings_payload_rejected_total{env="demo",reason="body_too_large"}',
+    "batch_ops": 'cv_drawings_batch_cap_rejected_total{env="demo"}',
+}
+
+
 @pytest.mark.parametrize("kind", list(OVERSIZE))
-def test_the_only_trace_of_an_oversize_refusal_is_the_routes_4xx_duration_series(kind: str) -> None:
+def test_an_oversize_refusal_moves_its_counter_and_the_routes_4xx_series_in_the_app(
+    kind: str,
+) -> None:
     app, c = _app()
     path, body = OVERSIZE[kind]
     count = f'cv_http_request_duration_seconds_count{{env="demo",method="POST",route="{path}",'
@@ -245,7 +262,28 @@ def test_the_only_trace_of_an_oversize_refusal_is_the_routes_4xx_duration_series
     r = c.post(path, content=body, headers={"Authorization": "Bearer tok-a"})
     assert r.status_code == 413
     assert _series(app, count) == {count + 'status_class="4xx"}': 1.0}
-    assert _series(app, "cv_drawings_") == before
+    after = _series(app, "cv_drawings_")
+    moved = {k: v - before.get(k, 0.0) for k, v in after.items() if v != before.get(k, 0.0)}
+    assert {k: v for k, v in moved.items() if "_total{" in k} == {OVERSIZE_SERIES[kind]: 1.0}
+
+
+class _ReadOnly(fakes.Identity):  # a session holding `workspaces:read` only
+    async def session_info(self, _user_id: str) -> dict[str, Any]:
+        return {"permissions": ["workspaces:read"], "account_scope": []}
+
+
+def test_a_denied_drawings_write_is_counted_once_under_its_route_in_the_app() -> None:
+    """SR-E14-11's denied counter is the generic SR-125 pair, not a drawings series: the real
+    app labels the 403 with the route template (`authz_denied_by_route_total`)."""
+    app, c = _app(identity=_ReadOnly())
+    prefix = "authz_denied_by_route_total{"
+    before = _series(app, prefix)
+    r = c.post("/drawings", json=wire(TRENDLINE), headers={"Authorization": "Bearer tok-a"})
+    assert (r.status_code, r.json()["code"]) == (403, "forbidden")
+    after = _series(app, prefix)
+    moved = {k: v - before.get(k, 0.0) for k, v in after.items() if v != before.get(k, 0.0)}
+    assert [(k.count('route="/drawings"'), k.count('permission="workspaces:write"'), v)
+            for k, v in moved.items()] == [(1, 1, 1.0)]  # fmt: skip
 
 
 # --- mass assignment ----------------------------------------------------------------------------
