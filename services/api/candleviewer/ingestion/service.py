@@ -26,6 +26,7 @@ from candleviewer.ingestion.instruments import utc_now_us
 from candleviewer.ingestion.instruments_refresh import InstrumentsRefreshScheduler
 from candleviewer.ingestion.kline_backfill import KlineBackfillService
 from candleviewer.ingestion.kline_read import KlineReadService
+from candleviewer.ingestion.liquidation_stream import LiquidationStream
 from candleviewer.ingestion.rejection import RejectionLog
 from candleviewer.ingestion.synthetic_feed import (
     SyntheticFeedGenerator,
@@ -125,6 +126,8 @@ class IngestionService:
         self.trades: TradeStream | None = None
         #: E08-S05: reconstructed L2 book, attached with the public WS.
         self.books: BookSink | None = None
+        #: E24-T03: allLiquidation demand/parse/publish/write-behind, attached with the public WS.
+        self.liquidations: LiquidationStream | None = None
         self._pump: asyncio.Task[None] | None = None
         self._pump_rejects = RejectionLog("pump")
         self.pump_breaker_trips = 0
@@ -191,6 +194,9 @@ class IngestionService:
     def attach_books(self, stream: BookSink) -> None:
         self.books = stream
 
+    def attach_liquidations(self, stream: LiquidationStream) -> None:
+        self.liquidations = stream
+
     def attach_router(
         self,
         route: Callable[[str], tuple[str, str, str] | None],
@@ -252,11 +258,13 @@ class IngestionService:
             self.trades.mark_gap(reason, route.symbol)
         elif route.stream == "book" and self.books is not None:
             await self.books.invalidate_symbol(route.symbol, reason)
+        elif route.stream == "liquidation" and self.liquidations is not None:
+            self.liquidations.note_gap(reason, route.symbol)  # no REST history to heal it
         # ticker: snapshot+delta merge, the next full snapshot heals it
 
     async def _dispatch(self, frame: str) -> bool:
         ok = True
-        for stream in (self.trades, self.tickers, self.books):
+        for stream in (self.trades, self.tickers, self.books, self.liquidations):
             if stream is None:
                 continue
             try:
@@ -298,7 +306,7 @@ class IngestionService:
     async def prune_unlisted(self) -> None:
         """#1913: after each catalogue swap, every stream drops (and
         unsubscribes) symbols that are no longer `trading`."""
-        for stream in (self.trades, self.tickers, self.books):
+        for stream in (self.trades, self.tickers, self.books, self.liquidations):
             if stream is not None:
                 await stream.prune_unlisted()
 
@@ -345,7 +353,9 @@ class IngestionService:
             await self.trades.start()
         if self.books is not None:
             await self.books.start()
-        if self.tickers is not None or self.trades is not None or self.books is not None:
+        if self.liquidations is not None:
+            await self.liquidations.start()
+        if any(s is not None for s in (self.tickers, self.trades, self.books, self.liquidations)):
             self._pump = spawn(self._pump_frames(), name="ws-frame-pump")
         self._started = True
 
@@ -386,6 +396,8 @@ class IngestionService:
             await self.trades.stop()
         if self.books is not None:
             await self.books.stop()
+        if self.liquidations is not None:
+            await self.liquidations.stop()
         if self.ws is not None:
             async with asyncio.timeout(grace_s):
                 await self.ws.stop()
