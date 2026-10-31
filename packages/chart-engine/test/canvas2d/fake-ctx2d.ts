@@ -78,6 +78,18 @@ export class FakeCtx2D implements Ctx2DLike {
     const style = String(this.strokeStyle);
     this.paths.push({ op: "stroke", style, lineWidth: this.lineWidth, parts: this.parts });
   }
+  /** The padded store's clip (BQ-149): `rect` then `clip`, between `save` and `restore`. */
+  save(): void {
+    this.log.push("save");
+  }
+  clip(): void {
+    this.log.push("clip");
+    this.clips.push(this.parts.join(" "));
+  }
+  restore(): void {
+    this.log.push("restore");
+  }
+  readonly clips: string[] = [];
   /** Not part of `Ctx2DLike`: present so a call would be caught (S4: no cell text in 2D). */
   fillText(): void {
     this.log.push("fillText");
