@@ -739,6 +739,11 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("DELETE", "/exchange-accounts/{accountId}", "accounts"),  # deleteExchangeAccount
     ("DELETE", "/exchange-accounts/{accountId}/keys/{keyId}", "keys"),  # revokeApiKey
     ("DELETE", "/exchange-accounts/{accountId}/keys/{keyId}", "accounts"),  # revokeApiKey
+    # refreshInstruments (E08-T10, #5111; 04 §7.2.2 row 5a, SR-025): `instruments`, a grace
+    # class, demanded by the handler after RBAC, the scheduler's 503 and the key's shape, before
+    # the replay, the join, the limits and the write-ahead record (`test_instruments_refresh_
+    # route.py`). Outside `DANGEROUS_PATH_PATTERN`: the contract sweep finds it by permission.
+    ("POST", "/instruments/refresh", "instruments"),
 )
 
 #: Mounted write routes whose path matches this must be in one of the two

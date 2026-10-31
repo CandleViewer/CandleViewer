@@ -28,6 +28,10 @@ import asyncio
 import base64
 import binascii
 import inspect
+import math
+import time
+import uuid
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -39,6 +43,11 @@ from fastapi.responses import JSONResponse
 
 from candleviewer.api.market_bars import RecordingStart
 from candleviewer.api.market_response import iso_us
+from candleviewer.api.recorder_admin import AdminJobStore, Job
+from candleviewer.api.step_up import RequestElevation, demand_elevation
+from candleviewer.api.step_up_challenge import ChallengeText
+from candleviewer.audit.access import AuditPrincipal
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.domain.events import Instrument
 from candleviewer.exchange.base.models import RiskLimitTier
 from candleviewer.ingestion.instruments import CatalogueSnapshot, utc_now_us
@@ -310,10 +319,302 @@ def make_instruments_router(
     return router
 
 
+# -- `POST /instruments/refresh` (`refreshInstruments`, E08-T10, #5111) -------------------------
+
+REFRESH_PERMISSION: Final = "instruments:write"
+REFRESH_JOB_KIND: Final = "instrument_refresh"
+#: The step-up class `refreshInstruments` demands (22 `authStepUp`; 04 §7.2.2 row 5a, SR-025): a
+#: grace class, registered in `api.step_up.HANDLER_GATED_ROUTES`.
+REFRESH_STEP_UP_CLASS: Final = "instruments"
+#: Q2: one accepted refresh per environment per this many seconds.
+REFRESH_WINDOW_S: Final = 60.0
+#: 22 "Idempotency": a key replays its `202` for 24 h; at most this many keys are kept (C-2.18).
+IDEMPOTENCY_TTL_S: Final = 86_400.0
+IDEMPOTENCY_MAX_KEYS: Final = 256
+_LIVE = ("queued", "running")
+
+
+class CatalogueRefresher(Protocol):
+    """What the refresh route needs of `InstrumentsRefreshScheduler` (M6): never the adapter."""
+
+    @property
+    def stopped(self) -> bool: ...
+
+    async def refresh_now(self) -> None: ...
+
+
+class RefreshPrincipalResolver(Protocol):
+    """The session-backed resolver the deployed app wires (#2561); the audit record needs the
+    whole `AuditPrincipal`, not only `has`."""
+
+    async def resolve(self, request: Request) -> AuditPrincipal | None: ...
+
+
+class RefreshAudit(Protocol):
+    async def emit(self, action: str, **kwargs: object) -> None: ...
+
+
+#: `(tokens, wait_s)` of the venue budget the refresh's fetches draw (`MARKET_DATA`), read
+#: without taking a token.
+VenueHeadroom = Callable[[], tuple[float, float]]
+#: Takes one token of `user`'s bucket: None when one was there, else whole seconds to wait.
+UserBucket = Callable[[uuid.UUID], int | None]
+
+
+def _coded(
+    status: int, code: str, title: str, detail: str, retry_s: int | None = None
+) -> JSONResponse:
+    body: dict[str, object] = {
+        "type": f"https://candleviewer.local/errors/{code}",
+        "title": title,
+        "status": status,
+        "code": code,
+        "detail": detail,
+    }
+    headers = None
+    if retry_s is not None:
+        body["retry_after_seconds"], headers = retry_s, {"Retry-After": str(retry_s)}
+    return JSONResponse(body, status, headers=headers, media_type="application/problem+json")
+
+
+def _whole_s(seconds: float) -> int:
+    return max(1, math.ceil(seconds))
+
+
+def refresh_instruments_text(environment: str) -> ChallengeText:
+    """What the `instruments` challenge restates: a fixed template over the server's own
+    environment, nothing from the client."""
+    return ChallengeText(f"Refresh the {environment} instrument catalogue from Bybit")
+
+
+def make_instruments_refresh_router(
+    refresher_provider: Callable[[], CatalogueRefresher | None],
+    jobs: AdminJobStore,
+    *,
+    audit: RefreshAudit | None,
+    environment: str,
+    principal_resolver: RefreshPrincipalResolver | None = None,
+    venue_headroom: VenueHeadroom | None = None,
+    user_bucket: UserBucket | None = None,
+    elevation: RequestElevation | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> APIRouter:
+    """`POST /instruments/refresh` (22 `refreshInstruments`): schedules one catalogue refresh as
+    an `instrument_refresh` job in `jobs`, polled through `getJob`, and never awaits the fetch.
+    RBAC is fail-closed as the reads' (501, 401, 403); CSRF is the edge middleware's (SR-041).
+    After the scheduler's 503 and the key's shape, `elevation` demands the `instruments` step-up
+    (none wired: 503, nothing runs; C-2.21), so a challenge goes only to a caller the route would
+    otherwise admit. The order after it (22, Q1 and Q2 of #5111): the idempotency replay, the
+    join of a job queued or running, the 60 s limit, the per-user bucket, the venue budget, then
+    the write-ahead `instruments.refresh.requested` record (C-2.9), then the job. The accept path
+    runs under one lock, so two requests never start two jobs."""
+    router = APIRouter(tags=["instruments"])
+    accept = asyncio.Lock()
+    current: list[str | None] = [None]  # the last job this route started
+    scheduled: dict[str, str] = {}  # job id -> its `scheduled_at`, while the store holds the job
+    last_accepted: list[float | None] = [None]
+    replays: OrderedDict[tuple[uuid.UUID, str], tuple[dict[str, str], float]] = OrderedDict()
+
+    def remember(actor: uuid.UUID, key: str | None, body: dict[str, str]) -> None:
+        if key is None:
+            return
+        replays[(actor, key)] = (body, monotonic())
+        replays.move_to_end((actor, key))
+        while len(replays) > IDEMPOTENCY_MAX_KEYS:
+            replays.popitem(last=False)
+
+    def replayed(actor: uuid.UUID, key: str) -> dict[str, str] | None:
+        hit = replays.get((actor, key))
+        if hit is None:
+            return None
+        if monotonic() - hit[1] >= IDEMPOTENCY_TTL_S:
+            del replays[(actor, key)]
+            return None
+        return hit[0]
+
+    def running() -> Job | None:
+        job = jobs.get(current[0]) if current[0] is not None else None
+        return job if job is not None and job.status in _LIVE else None
+
+    async def record(
+        sink: RefreshAudit, principal: AuditPrincipal, job_id: str, *, joined: bool
+    ) -> bool:
+        try:
+            await sink.emit(
+                "instruments.refresh.requested",
+                actor_label=principal.actor_name,
+                actor_user_id=principal.actor_id,
+                actor_ip=principal.ip,
+                session_id=principal.session_id,
+                request_id=principal.request_id,
+                object_kind=REFRESH_JOB_KIND,
+                object_id=job_id,
+                after_state={
+                    "env": environment,
+                    "role": "owner" if principal.is_owner else "user",
+                    "joined": joined,
+                },
+            )
+        except Exception as exc:
+            _log().error("instruments_refresh_audit_failed", error=type(exc).__name__)
+            return False
+        return True
+
+    def accepted(body: dict[str, str], *, replay: bool = False) -> JSONResponse:
+        headers = {"Idempotency-Replayed": "true"} if replay else None
+        return JSONResponse(status_code=202, content=body, headers=headers)
+
+    def audit_unavailable() -> JSONResponse:
+        return _coded(
+            503,
+            "audit_unavailable",
+            "Audit unavailable",
+            "The request could not be recorded; no refresh was started.",
+        )
+
+    @router.post("/instruments/refresh")
+    async def refresh_instruments(request: Request) -> JSONResponse:
+        if principal_resolver is None:
+            return _coded(
+                501, "not_implemented", "Not implemented", "No principal resolver is wired."
+            )
+        principal = await principal_resolver.resolve(request)
+        if principal is None:
+            return _coded(401, "unauthenticated", "Unauthorized", "No verified session.")
+        if not principal.has(REFRESH_PERMISSION):
+            return _coded(403, "forbidden", "Forbidden", f"Requires {REFRESH_PERMISSION}.")
+        refresher = refresher_provider()
+        if refresher is None or refresher.stopped or audit is None:
+            return _coded(
+                503,
+                "instrument_cache_unavailable",
+                "Service unavailable",
+                "The instrument catalogue scheduler is not running.",
+            )
+        raw_key = request.headers.get("idempotency-key")
+        key: str | None = None
+        if raw_key is not None:
+            try:
+                key = str(uuid.UUID(raw_key))
+            except ValueError:
+                return _coded(
+                    400, "validation_failed", "Bad request", "Idempotency-Key must be a UUID."
+                )
+        restated = refresh_instruments_text(environment)
+        if (refused := await demand_elevation(elevation, request, restated)) is not None:
+            return refused
+        actor = principal.actor_id
+        async with accept:
+            if key is not None and (body := replayed(actor, key)) is not None:
+                return accepted(body, replay=True)
+            if (job := running()) is not None:  # Q1: join it; not counted by the limit (Q2)
+                body = {"job_id": job.id, "scheduled_at": scheduled[job.id]}
+                if not await record(audit, principal, job.id, joined=True):
+                    return audit_unavailable()
+                remember(actor, key, body)
+                return accepted(body)
+            now = monotonic()
+            if last_accepted[0] is not None and now - last_accepted[0] < REFRESH_WINDOW_S:
+                wait = _whole_s(REFRESH_WINDOW_S - (now - last_accepted[0]))
+                return _coded(
+                    429,
+                    "rate_limited",
+                    "Instrument refresh rate limited",
+                    f"One refresh per {int(REFRESH_WINDOW_S)} s.",
+                    wait,
+                )
+            if user_bucket is not None and (wait_user := user_bucket(actor)) is not None:
+                return _coded(
+                    429,
+                    "rate_limited",
+                    "Per-user API rate limit exceeded",
+                    "Too many requests.",
+                    _whole_s(wait_user),
+                )
+            if venue_headroom is not None:
+                tokens, wait_s = venue_headroom()
+                if tokens < 1.0:
+                    return _coded(
+                        429,
+                        "exchange_rate_limited",
+                        "The exchange's rate budget is exhausted",
+                        "No market-data budget for a refresh now.",
+                        _whole_s(wait_s),
+                    )
+            job_id = str(uuid.uuid4())
+            # Write-ahead (C-2.9): recorded BEFORE the job exists; on failure nothing starts.
+            if not await record(audit, principal, job_id, joined=False):
+                return audit_unavailable()
+            stamp = iso_us(int(wall_clock().timestamp() * 1_000_000))
+            job = jobs.submit(
+                REFRESH_JOB_KIND,
+                (str(actor), key or f"none:{job_id}", ""),
+                _work(refresher),
+                _done(principal, audit, environment),
+                job_id=job_id,
+            )
+            for stale in [j for j in scheduled if jobs.get(j) is None]:
+                del scheduled[stale]
+            scheduled[job.id], current[0], last_accepted[0] = stamp, job.id, now
+            body = {"job_id": job.id, "scheduled_at": stamp}
+            remember(actor, key, body)
+            _log().info("instruments_refresh_scheduled", job_id=job.id)
+            return accepted(body)
+
+    return router
+
+
+def _work(
+    refresher: CatalogueRefresher,
+) -> Callable[[Callable[[float], None]], Awaitable[dict[str, object]]]:
+    async def work(_progress: Callable[[float], None]) -> dict[str, object]:
+        # Serialised with every other refresh by the scheduler's lock; a spent retry budget
+        # raises `InstrumentRefreshError` (catalogue kept, marked stale, counted).
+        await refresher.refresh_now()
+        return {}
+
+    return work
+
+
+def _done(
+    principal: AuditPrincipal, audit: RefreshAudit, environment: str
+) -> Callable[[Job], Awaitable[None]]:
+    async def done(job: Job) -> None:
+        """Q3: the job's end, `succeeded` or `failed` (a cancel runs no `on_done`)."""
+        ok = job.status == "succeeded"
+        try:
+            await audit.emit(
+                "instruments.refresh.completed",
+                actor_label=principal.actor_name,
+                actor_user_id=principal.actor_id,
+                actor_ip=principal.ip,
+                session_id=principal.session_id,
+                request_id=principal.request_id,
+                object_kind=REFRESH_JOB_KIND,
+                object_id=job.id,
+                outcome=AuditOutcome.SUCCESS if ok else AuditOutcome.FAILURE,
+                severity=Severity.INFO if ok else Severity.ERROR,
+                reason=None if ok else job.error,
+                after_state={"env": environment, "status": job.status},
+            )
+        except Exception as exc:
+            _log().error(
+                "instruments_refresh_completed_audit_failed",
+                job_id=job.id,
+                error=type(exc).__name__,
+            )
+
+    return done
+
+
 __all__ = [
+    "REFRESH_STEP_UP_CLASS",
     "CatalogueReader",
+    "CatalogueRefresher",
     "InstrumentsPrincipal",
     "PrincipalResolver",
+    "make_instruments_refresh_router",
     "make_instruments_router",
     "serialize_instrument",
     "serialize_risk_limit_tier",
