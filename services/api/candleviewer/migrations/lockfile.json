@@ -291,6 +291,11 @@
       "path": "services/api/candleviewer/migrations/versions/0059_alerts_disarm_reason.py",
       "sha256": "f987a93563ad8a817d2d32575e7c05d71c42d3ea85808455b48ce4420fdb867f",
       "down_revision": "0058_oms_handovers"
+    },
+    "0060_recording_write_owner_only": {
+      "path": "services/api/candleviewer/migrations/versions/0060_recording_write_owner_only.py",
+      "sha256": "ab24ea95690c2624e9724ad6ee16e680eefd9b4bf348a71fa950edabf29ec359",
+      "down_revision": "0059_alerts_disarm_reason"
     }
   }
 }

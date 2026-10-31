@@ -24,8 +24,9 @@ Owner signed in with password and TOTP holds no `recorder_purge` step-up, so eac
 
 The expected statuses come from `matrix.yaml` alone (Security-owned, reviewed); nothing here
 restates them. A Manager is `manager_without_grant` (the synthetic one holds no grant), so the
-rows the matrix allows a Manager (`GET /admin/audit`, recorder compact and import) are not in
-its denial plan. Both plans load the template's `script` job, `security/zap/role_session.js`,
+row the matrix allows a Manager (`GET /admin/audit`) is not in its denial plan, while the
+recorder's compact and import are: `recording:write` is the Owner's alone (G-04, #484). Both
+plans load the template's `script` job, `security/zap/role_session.js`,
 which reads the role's bearer and SR-041 CSRF pair from `ZAP_AUTH_TOKEN` and `ZAP_CSRF_TOKEN`
 once, when ZAP loads it, and adds them to each request to the surface (ZAP expands no variable
 inside a replacer rule): no token is written.
