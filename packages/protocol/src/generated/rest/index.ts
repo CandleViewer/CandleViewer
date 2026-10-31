@@ -2258,8 +2258,9 @@ export interface paths {
      *     `blocked_type` (and, for a network resource, the blocked host), never a path, query,
      *     source file or sample, into `cv_csp_violations_total` and the `security.csp_violation` log.
      *     Bounded: body at most 8 KiB, at most 30 reports per client IP per 60 s, at most 10
-     *     violations read per body. Accepts the legacy `application/csp-report` body and the
-     *     Reporting API `application/reports+json` list; the answer carries no body on success.
+     *     violations read per body. Accepts the legacy `application/csp-report` body, the
+     *     Reporting API `application/reports+json` list and a plain `application/json` body of
+     *     either shape; the answer carries no body on success.
      */
     post: operations["postCspReport"];
     delete?: never;
@@ -16277,6 +16278,13 @@ export interface operations {
         "application/csp-report": {
           [key: string]: unknown;
         };
+        "application/json":
+          | {
+              [key: string]: unknown;
+            }
+          | {
+              [key: string]: unknown;
+            }[];
         "application/reports+json": {
           [key: string]: unknown;
         }[];

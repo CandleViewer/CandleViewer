@@ -12167,8 +12167,9 @@ paths:
         `blocked_type` (and, for a network resource, the blocked host), never a path, query,
         source file or sample, into `cv_csp_violations_total` and the `security.csp_violation` log.
         Bounded: body at most 8 KiB, at most 30 reports per client IP per 60 s, at most 10
-        violations read per body. Accepts the legacy `application/csp-report` body and the
-        Reporting API `application/reports+json` list; the answer carries no body on success.
+        violations read per body. Accepts the legacy `application/csp-report` body, the
+        Reporting API `application/reports+json` list and a plain `application/json` body of
+        either shape; the answer carries no body on success.
       security: []
       x-rbac: { permissions: [], scope: none }
       requestBody:
@@ -12178,6 +12179,11 @@ paths:
             schema: { type: object, additionalProperties: true }
           application/reports+json:
             schema: { type: array, items: { type: object, additionalProperties: true } }
+          application/json:
+            schema:
+              oneOf:
+                - { type: object, additionalProperties: true }
+                - { type: array, items: { type: object, additionalProperties: true } }
       responses:
         "204": { description: Report accepted (counted and logged). }
         "400":

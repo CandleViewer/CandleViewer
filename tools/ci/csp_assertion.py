@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""E43-T01: `csp-assertion`, a step of the `electron-hardening` CI job (SR-112, SR-114, SR-119).
+"""E43-T01: the `csp-assertion (E43-T01)` step (`tools/ci/csp_assertion.py`) of the `build` CI job,
+beside the Electron-hardening gate step (SR-112, SR-114, SR-119).
 
 The web `<meta>` (built by `vite build` from `packages/config/src/csp-policy.mjs`), the Electron
 response header (`dist/main/csp.js`, from the collected facts) and the FastAPI header

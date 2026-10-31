@@ -43,6 +43,7 @@ import pytest
 import candleviewer.app as appmod
 from candleviewer.admin.flags import catalogue
 from candleviewer.admin.flags.registry import Category, FlagSpec, UnsafeFlagDefinitionError
+from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.view_as_policy import OWN_OPERATIONS, PROTECTIVE_WRITES
 from candleviewer.auth.generated_permissions import Permission
@@ -398,6 +399,54 @@ def test_view_as_lock_locks_only_the_viewers_own_session(admin: AdminWorld) -> N
     )
 
 
+_CSP_LEGACY = {"csp-report": {"effective-directive": "script-src-elem", "blocked-uri": "inline"}}
+_CSP_MODERN = [
+    {
+        "type": "csp-violation",
+        "body": {"effectiveDirective": "script-src-elem", "blockedURL": "inline"},
+    }
+]
+
+
+def _csp_violations(admin: AdminWorld, labels: dict[str, str]) -> float:
+    """`cv_csp_violations_total` for *labels* on the app's own registry (the receiver's counter)."""
+    metrics = admin.app.state.app_context.metrics
+    return float(
+        sum(
+            sample.value
+            for family in metrics.collect()
+            for sample in family.samples
+            if sample.name == "cv_csp_violations_total" and labels.items() <= sample.labels.items()
+        )
+    )
+
+
+def _assert_csp_reports_pass_while_viewing(admin: AdminWorld, context: dict[str, Any]) -> None:
+    """With a view-as session active, the Owner's CSP report (legacy body, then the Reporting API
+    list) is `204`: no handler reached, no audit record (so no `admin.view_as_refused`), nothing
+    held changed, the same view-as context, and the violations counter up by exactly one each."""
+    labels = {"directive": "script-src-elem", "blocked_type": "inline"}
+    for content_type, body in (
+        ("application/csp-report", _CSP_LEGACY),
+        ("application/reports+json", _CSP_MODERN),
+    ):
+        before, mark, routed = _held(admin), len(admin.audit.records), len(admin.reached)
+        counted = _csp_violations(admin, labels)
+        sent = admin.send(
+            "owner",
+            "POST",
+            "/csp-report",
+            {"json": body, "headers": {"content-type": content_type}},
+        )
+        assert sent.status_code == 204, sent.text
+        assert admin.reached[routed:] == []  # the receiver answered first: no handler ran
+        assert admin.audit.records[mark:] == []  # no admin.view_as_refused, nothing else written
+        assert _held(admin) == before
+        read = admin.send("owner", "GET", "/auth/session/view-as", {})
+        assert (read.status_code, read.json()) == (200, context)  # still the same context
+        assert _csp_violations(admin, labels) - counted == 1
+
+
 def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     """The deployed composition's whole path (the S13b security look's Low-2): an Owner starts
     viewing as a Manager, `201`, which `GET /auth/session/view-as` reads back `active`, with the
@@ -449,6 +498,20 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     assert "AC-ADM-22" not in notice.message  # the viewer by name, never the reason
 
     unsafe = {op for op in served_operations(admin.app) if op[0] in _UNSAFE_METHODS}
+    # The one public mutating operation, read from the contract (`security: []`): a browser's CSP
+    # report carries no credential, the receiver answers it outside the session layers, and it
+    # only counts, so a view-as session has nothing to refuse (E43-T01, SR-112).
+    paths = cast(dict[str, dict[str, Any]], load_openapi_spec()["paths"])
+    # (The public `/auth/*` credential calls stay in the sweep: a session cookie is present, so the
+    # guard refuses them like any write.)
+    public = {
+        (m, p)
+        for m, p in unsafe
+        if paths[p][m.lower()].get("security") == [] and not p.startswith("/auth/")
+    }
+    assert public == {("POST", "/csp-report")}
+    _assert_csp_reports_pass_while_viewing(admin, started.json())
+    unsafe -= public
     protective = [operation for operation, _ in PROTECTIVE_WRITES.values()]
     registered = {op for op in protective if admin.app.state.protective_writes.is_registered(op)}
     assert registered == {_CANCEL_ALL, _CANCEL, _AMEND, _CLOSE, _CLOSE_ALL}  # their handlers decide
