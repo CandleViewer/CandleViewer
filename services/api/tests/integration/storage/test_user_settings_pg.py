@@ -175,7 +175,7 @@ async def test_user_settings_two_users_rows_never_cross(
         (DENSITY, "spacious"),
         (THEME, "dark"),
     ]
-    assert [(r[2], r[3]) for r in await store.read(user)] == [(THEME, "light")]
+    assert [(r.key, r.value) for r in await store.read(user)] == [(THEME, "light")]
 
 
 async def test_user_settings_system_scope_rows_are_never_read_or_written(
