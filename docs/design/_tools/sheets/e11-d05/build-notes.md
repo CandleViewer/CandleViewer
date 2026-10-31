@@ -94,3 +94,22 @@ The kit now draws these; boards 09 / 10 are re-rendered from it (spec lines are 
 - m4: each frame carries a caption `state: <Table 1 state>` (type.ui.caption, color.text.secondary) in the row gap 18
   px above it; root and group sizes are unchanged. CMP-188 (last-price pill down) closes its last bar at the bar's low,
   so its down pill sits below (auto)'s (the seeded bar is already down) and (up)'s.
+
+## Review fold r3 (2026-10-31, axis agreement)
+
+A sweep of all 55 frames checks each value against its own axis. Every price value (tooltip rows, legend values,
+price pills; not the watermark) must lie within the visible price ticks plus one tick step. Every time value in the
+strip must lie between its neighbouring ticks, and every other time value within the visible time ticks plus one step.
+Four frames failed and now pass (m3):
+
+- CMP-197 (overflow) and (docked): the widened range showed ticks 64,100-64,300 (64,000 is suppressed by the
+  last-price pill) while the box read about 64,003. Their bars and series now sit 40.0 higher (`SHIFT_197`), and the
+  range is set to 0.65 px per price unit with the last close 248 px down. The ticks read 64,000-64,400 and every value
+  falls on them. BB and Keltner still read upper >= middle (the EMA 20 row) >= lower.
+- CMP-189 (paused): "Paused at hh:mm" shows the newest bar on screen read off the axis (L267), not 13:47.
+- CMP-189 (maintenance band): the band runs 13:31-13:38, and its label `13:31–13:38 maintenance` sits between the
+  13:30 and 13:40 ticks. The label now covers only 13:35, which is the one dropped label.
+- CMP-199 (popover open): EMA 200 now reads 63,946.0 (was 63,912.0) and BB 20 upper 64,052.0 (was 64,080.0), inside
+  the 63,960-64,040 ticks plus one step.
+
+The CMP-180 disconnected strip's "last data 00:12" is an age (L413), not a clock value, so the sweep skips it.

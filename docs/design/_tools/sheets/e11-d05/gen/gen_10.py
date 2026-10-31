@@ -19,13 +19,19 @@ W197, H197 = 360, 320
 TIP_W = 200
 
 
-# m3: the overflow rows' values keep each band ordered upper >= middle >= lower (BB and Keltner both centre on 64,003.2,
-# the EMA 20 row; the moving averages sit around the bars)
-OVERFLOW = [("EMA 50", "63,998.5"), ("EMA 200", "63,962.0"), ("SMA 100", "64,004.0"), ("VWAP", "64,001.5"),
-            ("BB upper", "64,031.0"), ("BB lower", "63,975.4"), ("Keltner up", "64,022.7"), ("Keltner dn", "63,983.7")]
+# m3: the overflow rows' values keep each band ordered upper >= middle >= lower (BB and Keltner both centre on the EMA 20
+# row; the moving averages sit around the bars). Values before the frame's shift (SHIFT_197).
+EMA20 = 64003.2
+OVERFLOW = [("EMA 50", 63998.5), ("EMA 200", 63962.0), ("SMA 100", 64004.0), ("VWAP", 64001.5),
+            ("BB upper", 64031.0), ("BB lower", 63975.4), ("Keltner up", 64022.7), ("Keltner dn", 63983.7)]
+# r3 axis sweep: the docked / overflow frames widen the price range (the box clears the last-price band) and the
+# last-price pill suppresses the 64,000 tick (D5), so the unshifted bars would sit below every visible tick. Their bars
+# and series move up by SHIFT_197 and the range is set so the visible ticks (64,000-64,400, step 100) cover every value
+# the frame shows: PX_197 px per price unit, the last close LP_Y_197 px down the plot.
+SHIFT_197, PX_197, LP_Y_197 = 40.0, 0.65, 248
 
 
-def tip_rows(c: k.Crop, i: int, overflow: bool = False, when: str = "13:38") -> list[k.Node]:
+def tip_rows(c: k.Crop, i: int, overflow: bool = False, when: str = "13:38", shift: float = 0.0) -> list[k.Node]:
     b = c.bars[i]
     arrow = "▲" if b.c >= b.o else "▼"
 
@@ -40,16 +46,16 @@ def tip_rows(c: k.Crop, i: int, overflow: bool = False, when: str = "13:38") -> 
             row("row OH", cell("O", "O", k.f_price(b.o)), cell("H", "H", k.f_price(b.h))),
             row("row LC", cell("L", "L", k.f_price(b.l)), cell("C", "C", f"{k.f_price(b.c)} {arrow}")),
             row("row vol", cell("Vol", "Vol", "1,204"), cell("delta", "Δ", "+200")),
-            row("row EMA 20", cell("EMA 20", "─ EMA 20", "64,003.2", True))]
+            row("row EMA 20", cell("EMA 20", "─ EMA 20", k.f_price(EMA20 + shift), True))]
     if overflow:
-        rows += [row(f"row {e}", cell(e, f"─ {e}", v, True)) for e, v in OVERFLOW]
+        rows += [row(f"row {e}", cell(e, f"─ {e}", k.f_price(v + shift), True)) for e, v in OVERFLOW]
         rows.append(k.text("overflow", "+3 more · Alt+T", k.CAPTION, k.TEXT_2))
     return rows
 
 
 def tooltip(c: k.Crop, i: int, x: float, y: float, *, overflow: bool = False, note: str = "",
-            when: str = "13:38") -> k.Node:
-    return k.vbox("CMP-197 tooltip", tip_rows(c, i, overflow, when),
+            when: str = "13:38", shift: float = 0.0) -> k.Node:
+    return k.vbox("CMP-197 tooltip", tip_rows(c, i, overflow, when, shift),
                   {"fill": k.OVERLAY, "stroke": k.BORDER, "strokeWidth": k.HAIR, "strokeAlign": "inner",
                    "radius": k.R_CARD, "pad": k.INSET_SM, "shadow": "elevation.popover"}, w=TIP_W, x=x, y=y,
                   note=("DOM, aria-hidden; values never coloured by direction (▲ / ▼ and the sign carry it). " + note
@@ -63,10 +69,16 @@ def tip_h(overflow: bool = False) -> int:
 def f197(state: str) -> k.Node:
     c = k.Crop(W197, H197, gutter=72, n=14, times=("13:30", "13:35"))
     th = tip_h(state == "overflow")
+    shift = 0.0
     if state in ("overflow", "docked"):  # widen the price range so the last-price band sits low and the 12 rows clear it
-        c.hi += 3.5 * (c.hi - c.lo)
+        shift = SHIFT_197
+        for b in c.bars:
+            b.o, b.h, b.l, b.c = b.o + shift, b.h + shift, b.l + shift, b.c + shift
+        c.hi = c.last().c + LP_Y_197 / PX_197
+        c.lo = c.hi - (c.ph - 1) / PX_197
         k.deviate(f"CMP-197 {state}: the frame's price range is widened so the last-price band sits low and the "
-                  "box clears it (rule 4 priority); a layout choice of the crop, not a spec value")
+                  "box clears it (rule 4 priority), and its bars and series sit 40.0 higher so every value the frame "
+                  "shows lies on its visible ticks (64,000-64,400); a layout choice of the crop, not a spec value")
     k.last_pill(c)
     ly = c.y(c.last().c)
     band = (ly - (17 / 2 + 4), ly + (17 / 2 + 4))
@@ -101,7 +113,7 @@ def f197(state: str) -> k.Node:
         note = "overflow after 12 rows, as text"
     if not (ty + th <= band[0] or ty >= band[1]) or ty < 0 or ty + th > c.ph - 8 or tx < 0 or tx + TIP_W > c.pw:
         raise ValueError(f"CMP-197 {state}: box ({tx}, {ty}, {TIP_W} x {th}) breaks the band {band} or the plot")
-    c.pane.append(tooltip(c, i, tx, ty, overflow=state == "overflow", note=note, when=when))
+    c.pane.append(tooltip(c, i, tx, ty, overflow=state == "overflow", note=note, when=when, shift=shift))
     return c.build("f")
 
 
@@ -141,8 +153,9 @@ C198 = {"default": f"E11-D02 D13 L{D13}", "replay suffix": f"E11-D02 D13 L{D13};
 # ---------------------------------------------------------------- CMP-199 ChartLegend (340 x 300, the pane's top-left)
 W199, H199 = 340, 300
 D12 = k.L("### 7.5 CMP-199 ChartLegend (D12)", "d02")
-SERIES = [("BTCUSDT 1m", "64,011.0"), ("EMA 20", "64,003.2"), ("EMA 50", "63,980.5"), ("EMA 200", "63,912.0"),
-          ("VWAP", "63,995.0"), ("BB 20 upper", "64,080.0")]
+# r3 axis sweep: every value lies on the frame's visible ticks (63,960-64,040, one step of 20 either side)
+SERIES = [("BTCUSDT 1m", "64,011.0"), ("EMA 20", "64,003.2"), ("EMA 50", "63,980.5"), ("EMA 200", "63,946.0"),
+          ("VWAP", "63,995.0"), ("BB 20 upper", "64,052.0")]
 MORE = ["SMA 100", "Keltner up", "Keltner dn", "BB 20 lower", "Donchian hi", "Donchian lo", "Pivot P"]
 
 
