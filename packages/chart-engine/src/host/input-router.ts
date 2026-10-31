@@ -92,6 +92,10 @@ export function routeInput(target: HTMLElement, host: InputSink): () => void {
   const onCancel = (e: PointerEvent): void => {
     if (active.delete(e.pointerId)) row(kindOf(e), INPUT.cancel, e, slot(e, e));
   };
+  // G-29: a mouse or pen leaving the canvas clears the hover pick (a finger has no hover).
+  const onLeave = (e: PointerEvent): void => {
+    if (e.pointerType !== "touch") row("pointer", INPUT.leave, e, e.buttons);
+  };
   const onDblClick = (e: MouseEvent): void => {
     e.preventDefault(); // BQ-101: no text selection; on the price axis it restores auto (BQ-122)
     row("pointer", INPUT.dblclick, e, 0);
@@ -153,6 +157,7 @@ export function routeInput(target: HTMLElement, host: InputSink): () => void {
   for (const n of names) target.addEventListener(n, onPointer);
   target.addEventListener("pointercancel", onCancel);
   target.addEventListener("lostpointercapture", onCancel);
+  target.addEventListener("pointerleave", onLeave);
   target.addEventListener("dblclick", onDblClick);
   target.addEventListener("contextmenu", onContextMenu);
   target.addEventListener("wheel", onWheel, { passive: false });
@@ -172,6 +177,7 @@ export function routeInput(target: HTMLElement, host: InputSink): () => void {
     for (const n of names) target.removeEventListener(n, onPointer);
     target.removeEventListener("pointercancel", onCancel);
     target.removeEventListener("lostpointercapture", onCancel);
+    target.removeEventListener("pointerleave", onLeave);
     target.removeEventListener("dblclick", onDblClick);
     target.removeEventListener("contextmenu", onContextMenu);
     target.removeEventListener("wheel", onWheel);

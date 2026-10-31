@@ -86,6 +86,10 @@ export interface BufferLayout {
 export type ScaleModeName = "linear" | "log" | "percent" | "indexed";
 const SCALE_MODES: ReadonlySet<unknown> = new Set(["linear", "log", "percent", "indexed"]);
 
+/** The pointer a pick's tolerance comes from (E11-S08, BQ-130): 10 px, 16 px for touch. */
+export type PickPointer = "mouse" | "pen" | "touch";
+const PICK_POINTERS: ReadonlySet<unknown> = new Set(["mouse", "pen", "touch"]);
+
 export type Command =
   | { readonly k: "setViewport"; readonly timeStart: number; readonly timeEnd: number }
   | { readonly k: "setSeriesOptions"; readonly series: number; readonly options: object }
@@ -94,7 +98,14 @@ export type Command =
   | { readonly k: "setLod"; readonly candles: 0 | 1 | 2; readonly footprint: 0 | 1 | 2 | 3 }
   /** The app's resolved motion mode changed (E11-S04 BQ-104): `reduce` stops a glide. */
   | { readonly k: "setMotion"; readonly reduce: boolean }
-  | { readonly k: "pickAt"; readonly x: number; readonly y: number }
+  /** E11-S08 (BQ-135, additive): `pointer` sets the tolerance (mouse by default); `reqId` echoes. */
+  | {
+      readonly k: "pickAt";
+      readonly x: number;
+      readonly y: number;
+      readonly pointer?: PickPointer;
+      readonly reqId?: number;
+    }
   /** E11-S05 (BQ-124, additive): one pane's scale; `auto: false` is the lock. */
   | {
       readonly k: "setPriceScale";
@@ -184,9 +195,16 @@ export type FromWorker =
       readonly t: "pick";
       readonly id: ChartId;
       readonly objectId: string | null;
+      /** The object's kind; `none` on a miss, `axis` in a gutter (BQ-136). */
       readonly kind: string;
+      /** `screenToIndex` and the integer tick level under the point, on every reply. */
       readonly bar: number;
       readonly price: number;
+      /** E11-S08 (BQ-136, additive): on a hit, the body or one of the object's handles. */
+      readonly part?: "body" | "handle";
+      readonly handle?: number;
+      /** A `pickAt`'s own `reqId`; hover picks carry none. */
+      readonly reqId?: number;
     }
   | {
       readonly t: "viewport";
@@ -240,9 +258,19 @@ export const INPUT_MAX_ROWS = 256;
  * Row `type` codes. A wheel row carries its folded px delta in the `buttons` slot, and its class
  * as `MOD.pan` in `modifiers` (E11-S04, BQ-99); a `touch` row carries the `pointerId` there
  * instead of buttons (BQ-102). `cancel` (pointercancel or a lost capture) ends a drag with no
- * coast; `dblclick` resets the axis it lands on. Additive §6 rows: the stride stays 6.
+ * coast; `dblclick` resets the axis it lands on; `leave` (E11-S08 G-29, a mouse or pen only)
+ * clears the hover pick. Additive §6 rows: the stride stays 6.
  */
-export const INPUT = { move: 0, down: 1, up: 2, wheel: 3, key: 4, cancel: 5, dblclick: 6 } as const;
+export const INPUT = {
+  move: 0,
+  down: 1,
+  up: 2,
+  wheel: 3,
+  key: 4,
+  cancel: 5,
+  dblclick: 6,
+  leave: 7,
+} as const;
 /**
  * Key codes a `key` row carries in its `x` slot, Shift and Ctrl in its modifiers (E11-S04 PR 2,
  * BQ-106 to BQ-109: additive; `zoomIn` and `zoomOut` are E11-T02's).
@@ -345,7 +373,12 @@ function validCommand(cmd: unknown): boolean {
     case "setMotion":
       return typeof cmd["reduce"] === "boolean";
     case "pickAt":
-      return finite(cmd["x"]) && finite(cmd["y"]);
+      return (
+        finite(cmd["x"]) &&
+        finite(cmd["y"]) &&
+        optional(cmd["pointer"], (v) => PICK_POINTERS.has(v)) &&
+        optional(cmd["reqId"], Number.isSafeInteger)
+      );
     case "export":
       return Number.isSafeInteger(cmd["reqId"]);
     case "setPriceScale":
@@ -396,6 +429,10 @@ export function rejectReason(msg: unknown): string | null {
         return "input length is not a whole number of rows";
       }
       for (let i = 0; i < ev.length; i += 1) if (!Number.isFinite(ev[i])) return "non-finite input";
+      if (msg["kind"] === "pointer") return null;
+      for (let i = 0; i < ev.length; i += INPUT_STRIDE) {
+        if (ev[i] === INPUT.leave) return "a leave row outside pointer input";
+      }
       return null;
     }
     case "data": {

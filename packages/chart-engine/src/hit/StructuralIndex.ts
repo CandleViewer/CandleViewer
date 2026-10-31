@@ -45,9 +45,16 @@ export class StructuralIndex {
   private readonly resolvers = new Map<string, StructuralResolver>();
 
   constructor(
-    private readonly vp: ViewportState,
-    private readonly layout: StructuralLayout,
+    private vp: ViewportState,
+    private layout: StructuralLayout,
   ) {}
+
+  /** The degraded-2d re-init's new viewport and layout (G-28); the resolvers are kept. */
+  rebind(vp: ViewportState, layout: StructuralLayout): this {
+    this.vp = vp;
+    this.layout = layout;
+    return this;
+  }
 
   /** One resolver per pane; a second replaces the first. Returns its removal. */
   registerStructural(paneId: string, resolve: StructuralResolver): () => void {
