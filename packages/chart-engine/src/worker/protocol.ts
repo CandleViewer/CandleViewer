@@ -18,8 +18,11 @@ export interface DegradeDetails {
   readonly reason: DegradeReason;
 }
 
-/** Why an export was refused (README BQ-92, F-13): no pixels can be trusted, so none are sent. */
-export type ExportRejectReason = "context-lost" | "backend-failed";
+/**
+ * Why an export was refused (README BQ-92, F-13): no pixels can be trusted, so none are sent;
+ * `suspended` while the container is 0×0 or hidden (E11-S10, BQ-148).
+ */
+export type ExportRejectReason = "context-lost" | "backend-failed" | "suspended";
 export const ENGINE_EXPORT_UNAVAILABLE = "ENGINE_EXPORT_UNAVAILABLE";
 
 /** `takeScreenshot`'s distinct rejection while the chart is parked (mid-loss) or failed (BQ-92). */
@@ -136,6 +139,7 @@ export type ToWorker =
       readonly reducedMotion?: boolean;
     }
   | {
+      /** CSS px (backing / dpr, BQ-145); 0 on either axis suspends the chart (BQ-147). */
       readonly t: "resize";
       readonly id: ChartId;
       readonly width: number;
@@ -190,6 +194,9 @@ export type FromWorker =
       /** GL buffers and textures held (BQ-59); 0 under `degraded-2d`. */
       readonly gpuMemoryMbEstimate: number;
       readonly lod: LodLevels;
+      /** The ratio drawn at and the backing store `[width, height]` in device px (BQ-153). */
+      readonly dpr: number;
+      readonly backingStorePx: readonly [number, number];
     }
   | {
       readonly t: "pick";
@@ -418,7 +425,10 @@ export function rejectReason(msg: unknown): string | null {
         ? null
         : "malformed init";
     case "resize":
-      return [msg["width"], msg["height"], msg["dpr"]].every((v) => finite(v) && v > 0)
+      // A 0 size is a hidden container (BQ-147, C-45); NaN, a negative size or dpr <= 0 is not.
+      return [msg["width"], msg["height"]].every((v) => finite(v) && v >= 0) &&
+        finite(msg["dpr"]) &&
+        (msg["dpr"] as number) > 0
         ? null
         : "malformed resize";
     case "input": {

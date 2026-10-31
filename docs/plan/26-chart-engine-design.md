@@ -207,6 +207,8 @@ The profile rule (E11-S02, package README BQ-50); each `reduced` limit adds one 
 | DPI           | Backing store at `devicePixelRatio` (capped at 2 for the heatmap layer to bound texture cost); all geometry snaps to device pixels for hairlines            |
 | Future WebGPU | `GLBackend` sits behind `RenderBackend` (an `UploadSink` + `submit(drawList)`, package README BQ-59); a WebGPU backend can be added without touching layers |
 
+_Shipped (E11-S10 PR 1, package README BQ-142 to BQ-157): DPR is folded into the pane uniforms once (no `u_dpr`); `u_viewport` is the backing store on both axes; the backing store is the device-pixel-content-box (else `round(css * dpr)`) and the canvas CSS box `backing / dpr`; hairlines are `max(1, floor(dpr))` device px, snapped by `src/viewport/pixels.ts`; the heatmap cap is `layerDpr(dpr, 2)` for E21; a 0×0 container suspends its chart._
+
 ### 3.5 Viewport and transform math
 
 State: `{ timeStart, timeEnd }` (µs, float64) and per-pane `{ priceLow, priceHigh }` plus a scale mode. _Shipped (E11-S03, `src/viewport/`): bar space is authoritative, so the state is `{ leftIndex, barSpacing }` and `timeStart/timeEnd` are derived through the index→time map; prices are float64 ticks from `priceOrigin`; the GPU gets int `u_indexBase`/`u_tickBase` and relative float coefficients only (package README BQ-65–BQ-83)._
@@ -390,6 +392,8 @@ Shipped by E11-S04 PR 2 (package README BQ-104 and BQ-106 to BQ-109), additive: 
 Shipped by E11-S05 PR 1 (package README BQ-115 and BQ-124), additive: `command { k: "setPriceScale", pane, mode?, inverted?, auto?, includeDrawings?, priceOnly?, marginTop?, marginBottom? }` (a known mode, booleans, margins in [0, 0.45]); the `viewport` message gains `pane`, `mode`, `requestedMode`, `inverted`, `autoScale`, `logAvailable`, `logReason` (a code) and `anchorTick`; a `bars` batch's params `[priceOrigin, tickSize]` set the pane's price origin.
 
 Shipped by E11-S08 PR 2 (package README BQ-134 to BQ-136), additive: `command { k: "pickAt", x, y, pointer?, reqId? }` (`pointer` one of `mouse`, `pen`, `touch`; a safe-integer `reqId`) always answers with one `pick`, echoing `reqId`; `pick` gains `part?` (`body` or `handle`), `handle?` and `reqId?`, and carries `bar` and `price` (the bar index and integer tick level under the point) on every reply, with kind `none` on a miss and `axis` in a gutter. Hover picks come from `input` moves, edge-triggered; a new `input` row type `leave = 7` (a mouse or pen `pointerleave`, `pointer` input only) clears hover with one `objectId: null` when an object was hovered. `cell` stays absent (E18).
+
+Shipped by E11-S10 PR 1 (package README BQ-147, BQ-148 and BQ-153), additive: `resize` sizes are CSS px equal to `backing / dpr` and may be 0 (finite, ≥ 0; dpr > 0), which suspends the chart until a non-zero size; `ExportRejectReason` gains `suspended`; `frame` gains `dpr` and `backingStorePx` (`[width, height]` in device px).
 
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 

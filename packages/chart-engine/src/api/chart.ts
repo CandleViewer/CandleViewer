@@ -5,6 +5,7 @@
 import { mountSurface, probeRenderProfile } from "../host/mount.js";
 import { createScaleBadge } from "../host/scale-badge.js";
 import { readReducedMotion, watchMotion } from "../host/motion.js";
+import { watchSize } from "../host/resize.js";
 import {
   captureInput,
   createChartHost,
@@ -221,6 +222,7 @@ export function createChart(opts: ChartOptions): Chart {
     },
   });
   const detachInput = captureInput(opts.container, host);
+  const detachSize = watchSize(opts.container, host); // BQ-146
   const detachMotion = watchMotion(doc, surface.mirrorRoot, reducedMotion, (reduce) =>
     host.command({ k: "setMotion", reduce }),
   );
@@ -315,6 +317,7 @@ export function createChart(opts: ChartOptions): Chart {
       for (const pane of [...panes]) pane.remove();
       listeners.clear();
       detachInput();
+      detachSize();
       detachMotion();
       badge.dispose();
       host.dispose();

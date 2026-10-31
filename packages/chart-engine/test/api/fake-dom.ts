@@ -149,6 +149,72 @@ export interface FakeView {
   CustomEvent?: unknown;
   OffscreenCanvas?: unknown;
   ResizeObserver?: unknown;
+  matchMedia?: (query: string) => FakeMediaQuery;
+}
+
+type Box = { inlineSize: number; blockSize: number };
+
+/**
+ * A ResizeObserver double (E11-S10): `fire(device?, css?)` runs the callback with one entry,
+ * carrying a device-pixel-content-box and a content-box size when given; `dpcb: false` makes the
+ * device box option throw, as a browser without it does. `observed` holds the observe options while observing.
+ */
+export function fakeResizeObserver(dpcb = true) {
+  const state: {
+    observed: unknown[];
+    fire: (device?: Box, css?: Box) => void;
+    ctor: unknown;
+  } = {
+    observed: [],
+    fire: () => undefined,
+    ctor: class {
+      constructor(cb: (entries: object[]) => void) {
+        state.fire = (device, css) =>
+          cb([
+            {
+              ...(device === undefined ? {} : { devicePixelContentBoxSize: [device] }),
+              ...(css === undefined ? {} : { contentBoxSize: [css] }),
+            },
+          ]);
+      }
+      observe(_t: unknown, opts?: { box?: string }): void {
+        if (opts?.box === "device-pixel-content-box" && !dpcb) throw new TypeError("box");
+        state.observed.push(opts ?? null);
+      }
+      disconnect(): void {
+        state.observed.length = 0;
+      }
+    },
+  };
+  return state;
+}
+
+/** One `matchMedia` result; `change()` fires and drops its `once` listeners. */
+export class FakeMediaQuery {
+  readonly listeners = new Set<() => void>();
+  constructor(readonly media: string) {}
+  addEventListener(_t: string, cb: () => void): void {
+    this.listeners.add(cb);
+  }
+  removeEventListener(_t: string, cb: () => void): void {
+    this.listeners.delete(cb);
+  }
+  change(): void {
+    const all = [...this.listeners];
+    this.listeners.clear();
+    for (const cb of all) cb();
+  }
+}
+
+/** Installs `matchMedia` on `view`; `queries` lists every query armed, in order. */
+export function fakeMatchMedia(view: FakeView): FakeMediaQuery[] {
+  const queries: FakeMediaQuery[] = [];
+  view.matchMedia = (media) => {
+    const q = new FakeMediaQuery(media);
+    queries.push(q);
+    return q;
+  };
+  return queries;
 }
 
 export class FakeDocument extends FakeTarget {

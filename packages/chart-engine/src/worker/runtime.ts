@@ -28,6 +28,7 @@ import {
   type PriceExtentSource,
   type IndexTimeMap,
   type PaneUniforms,
+  backingPx,
   screenToTime,
   writePaneUniforms,
 } from "../viewport/index.js";
@@ -89,6 +90,22 @@ export interface RenderRuntime {
   readonly size: number;
   /** Internal (E11-S08, BQ-132): a chart's pick indices, which E14, E22 and E31 register in. */
   pickIndex(id: ChartId): { objects: ObjectIndex; structural: StructuralIndex } | undefined;
+  /**
+   * Internal (E11-S10, BQ-152): `cb(from, to)` runs once per DPR change, after the backing store
+   * is resized and before the next frame (E11-S11's atlas re-selects its size class on it).
+   * Returns the unsubscribe function; undefined for an unknown chart. A listener that throws
+   * posts a recoverable error for its chart and the others still run.
+   */
+  onDprChange(id: ChartId, cb: (from: number, to: number) => void): (() => void) | undefined;
+  /** Internal (BQ-153): a chart's resize counters. */
+  resizeCounters(id: ChartId): Readonly<ResizeCounters> | undefined;
+}
+
+/** `engine.resize.*` (BQ-153): backing-store reallocations and DPR changes, per chart. */
+export interface ResizeCounters {
+  reallocations: number;
+  dprChanges: number;
+  lastDpr: number;
 }
 
 /** Frame stats are posted at most once per this interval outside bench mode (§6: 1 Hz). */
@@ -116,6 +133,12 @@ interface Instance {
   readonly gpu: { backend: RenderBackend | undefined; readonly forced: boolean };
   /** True while the context is lost: frames stay requested but do not run (BQ-49). */
   parked: boolean;
+  /** True while the container is 0×0 or hidden (BQ-147): like `parked`, nothing is allocated. */
+  suspended: boolean;
+  /** The DPR the backing store is sized at, its listeners (BQ-152) and counters (BQ-153). */
+  dpr: number;
+  readonly dprListeners: Set<(from: number, to: number) => void>;
+  readonly resizes: ResizeCounters;
   loss: ContextLoss | null;
   /** Removes the context-loss listeners. */
   detach: (() => void) | null;
@@ -284,7 +307,48 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     if (inst.gpu.backend?.failure || phase === "failed") return "backend-failed";
     // The driver's truth too: a context lost before its event is dispatched would encode blank.
     if (inst.gpu.backend?.loss?.isContextLost() === true) return "context-lost";
-    return phase !== "live" || inst.parked ? "context-lost" : null; // parked: mid-loss
+    if (phase !== "live" || inst.parked) return "context-lost"; // parked: mid-loss
+    return inst.suspended ? "suspended" : null; // BQ-148: a hidden chart has no current pixels
+  }
+
+  /**
+   * A `resize` (E11-S10): 0 on either axis suspends the chart with nothing allocated (BQ-147);
+   * otherwise the backing store is set (counted only when it changes), and a DPR change marks
+   * every pane LAYOUT and STYLE and tells the listeners before the next frame (BQ-152).
+   */
+  function resize(inst: Instance, w: number, h: number, dpr: number): void {
+    const bw = backingPx(w, dpr);
+    const bh = backingPx(h, dpr);
+    inst.gestures.stop();
+    inst.suspended = bw === 0 || bh === 0;
+    if (inst.suspended) return; // the requested frame is kept, as a parked chart's is
+    const c = inst.canvas;
+    if (c.width !== bw || c.height !== bh) {
+      c.width = bw;
+      c.height = bh;
+      inst.resizes.reallocations += 1;
+    }
+    inst.viewport.setPanePlot(0, 0, h);
+    moved(inst, inst.viewport.setSize(plotWidthOf(w), h, dpr));
+    inst.layout.setSize(w, h); // LAYOUT: recomputed on the next frame only
+    const from = inst.dpr;
+    if (dpr !== from) {
+      inst.dpr = dpr;
+      inst.resizes.dprChanges += 1;
+      inst.resizes.lastDpr = dpr;
+      inst.graph.markResize();
+      inst.graph.markTheme();
+      // A throwing listener fails its own chart, recoverably, as a frame does; it never stops
+      // the other listeners or the resize (E11-T02).
+      for (const cb of inst.dprListeners) {
+        try {
+          cb(from, dpr);
+        } catch (e) {
+          fail(inst.id, e instanceof Error ? e.message : "dpr listener failed");
+        }
+      }
+    }
+    kick(inst); // resumes a suspended chart within one frame
   }
 
   function exportPng(inst: Instance, reqId: number): void {
@@ -460,6 +524,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         where: createStructuralHit(),
         hover: { id: null, part: "body", handle: -1 },
         parked: false,
+        suspended: false,
+        dpr: msg.dpr,
+        dprListeners: old?.dprListeners ?? new Set(),
+        resizes: old?.resizes ?? { reallocations: 0, dprChanges: 0, lastDpr: msg.dpr },
         loss: null,
         detach: null,
         elements: old ? { ...old.elements } : { bars: 0, footprint: 0, heatmap: 0, profile: 0 },
@@ -476,13 +544,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     switch (msg.t) {
       case "resize":
-        inst.canvas.width = Math.max(1, Math.round(msg.width * msg.dpr));
-        inst.canvas.height = Math.max(1, Math.round(msg.height * msg.dpr));
-        inst.gestures.stop();
-        inst.viewport.setPanePlot(0, 0, msg.height);
-        moved(inst, inst.viewport.setSize(plotWidthOf(msg.width), msg.height, msg.dpr));
-        inst.layout.setSize(msg.width, msg.height); // LAYOUT: recomputed on the next frame only
-        touch(inst);
+        resize(inst, msg.width, msg.height, msg.dpr);
         return;
       case "input":
         inst.gestures.apply(msg.kind === "touch", msg.events);
@@ -525,8 +587,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     if (inst.autoscale.update()) inst.viewportDirty = true;
     if (backend !== null && backend.failure === null) {
       writePaneUniforms(inst.viewport, 0, inst.uniforms); // once per pane per frame (§3.5)
-      // The clip space spans the canvas; the plot is its left part, so x maps unchanged (BQ-101).
+      // The clip space spans the backing store on both axes (BQ-101, BQ-142); the plot is its
+      // left part, so x maps unchanged, and y never mixes vp.height * dpr with the rounded size.
       inst.uniforms.floats[4] = width;
+      inst.uniforms.floats[5] = height;
       backend.setBackground(inst.theme[BACKGROUND_TOKEN]);
       const f = backend.submit(inst.builder.drawList, inst.builder.drawCount, width, height);
       // The R1 budget closes on the first complete frame after a restore (BQ-49).
@@ -582,6 +646,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         uploadedBytes: backend?.takeUploadedBytes() ?? 0,
         gpuMemoryMbEstimate: backend?.gpuMemoryMbEstimate ?? 0,
         lod: inst.lod,
+        dpr: inst.dpr,
+        backingStorePx: [width, height],
       });
     }
   }
@@ -590,7 +656,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     scheduled = false;
     for (const inst of charts.values()) {
       const frame = inst.slot.frame;
-      if (frame === null || inst.parked) continue; // a parked chart keeps its request
+      if (frame === null || inst.parked || inst.suspended) continue; // its request is kept
       inst.slot.frame = null;
       // A throwing canvas or context fails its own chart's frame, recoverably; it never escapes
       // the frame callback, where a worker would turn it into an uncaught error (E11-T02).
@@ -638,5 +704,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       const inst = charts.get(id);
       return inst && { objects: inst.objects, structural: inst.structural };
     },
+    onDprChange(id, cb) {
+      const set = charts.get(id)?.dprListeners;
+      set?.add(cb);
+      return set && (() => void set.delete(cb));
+    },
+    resizeCounters: (id) => charts.get(id)?.resizes,
   };
 }
