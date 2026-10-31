@@ -33,8 +33,9 @@ export function WsErrorHost(): JSX.Element | null {
           open
           role="alertdialog"
           title="Connection error"
-          description={`Session error (${s.modal}). Sign in again or contact an owner.`}
+          description={`Session error (${s.modal}). Live data may have stopped. If it persists, contact an owner.`}
           initialFocusRef={dismiss}
+          // Esc is deliberately the same as Dismiss: this modal informs and is no control point (C-2.12)
           onOpenChange={() => setS((p) => ({ ...p, modal: null }))}
           footer={
             <span ref={dismiss}>
