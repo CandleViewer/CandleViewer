@@ -721,17 +721,17 @@ class ReconciliationRequests(Protocol):
 
 
 class NoReconciliation(Interim):
-    """`ReconciliationRequests` until E29-T06 (24 Sec.8.12): each request is
-    `ReconciliationUnavailable`, which the consumer logs (`stream_resync_refused`), counts
-    (`reconciliation_unavailable`) and pages once per episode, keeping `oms.account_resyncing` in
-    force without holding order entry."""
+    """`ReconciliationRequests` of a composition with no reconciliation stores (24 Sec.8.12; with
+    them, E29-T06's jobs take each request): each request is `ReconciliationUnavailable`, which
+    the consumer logs (`stream_resync_refused`), counts (`reconciliation_unavailable`) and pages
+    once per episode, keeping `oms.account_resyncing` in force without holding order entry."""
 
     port: ClassVar[RuntimePortName] = "reconciliation"
     replaced_by: ClassVar[str] = "E29-T06 (#914)"
     serves: ClassVar[str] = "no reconciliation pass: each request is refused and paged"
 
     async def request_reconciliation(self, account_id: AccountId, *, reason: ResyncReason) -> None:
-        raise ReconciliationUnavailable("no reconciliation pass exists until E29-T06")
+        raise ReconciliationUnavailable("no reconciliation pass is composed: no store for it")
 
 
 #: E45-T01's four named carries of reconciliation (#914's ruling of record, BQ-2; 24 Sec.8.5
