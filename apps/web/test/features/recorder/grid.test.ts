@@ -20,6 +20,7 @@ import {
 } from "../../../src/features/recorder/grid";
 import type { RecorderRow } from "../../../src/features/recorder/model";
 import { PAGE_DECK } from "../../../src/features/recorder/pageCopy";
+import { REFUSAL_DECK_KEYS, type RefusalDeckKey } from "../../../src/features/recorder/recorderApi";
 import { refusalText } from "../../../src/features/recorder/refusal";
 import { POLICY } from "./modelFixtures";
 import { CONTEXT, D02_ROWS, NOW, row } from "./gridFixtures";
@@ -191,6 +192,16 @@ describe("refusal words (E16-D06 §16.4)", () => {
     } as const;
     expect(refusalText({ ...route, serverTime: null }, "compact")).toBe(
       "A compaction is already running. (job_running)",
+    );
+  });
+
+  it("test_every_refusal_key_reads_the_row_of_the_copy_that_holds_it", () => {
+    const words = (key: RefusalDeckKey): string =>
+      refusalText({ kind: "deck", key, code: "c", serverTime: null }, "compact");
+    for (const key of REFUSAL_DECK_KEYS) expect(words(key)).toMatch(/^[A-Z].* \(c\)$/);
+    expect(words("retention.refused.job_running")).toBe("A retention run is already running. (c)");
+    expect(words("storage.import.unknown")).toBe(
+      "The import's status is no longer available on the server. Run it again: finished days are skipped. (c)",
     );
   });
 
