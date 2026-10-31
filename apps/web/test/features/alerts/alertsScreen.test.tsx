@@ -322,7 +322,7 @@ describe("firing history", () => {
     const dialog = await screen.findByRole("dialog", { name: /Firing history: Alert 1/ });
     const list = await within(dialog).findByRole("list");
     expect(within(list).getAllByRole("listitem")).toHaveLength(12);
-    expect(within(dialog).getAllByText(/Held in one summary/)).toHaveLength(3);
+    expect(within(dialog).getAllByText(/Folded into a storm summary/)).toHaveLength(3);
     expect(within(dialog).getAllByRole("link", { name: "Open Notifications" })).toHaveLength(3);
     fireEvent.click(within(dialog).getByRole("button", { name: "Export CSV" }));
     const csv = download.mock.calls[0]?.[1] as string;
@@ -362,15 +362,29 @@ describe("auto-disarm", () => {
 });
 
 describe("read-only and 403", () => {
-  it("scenario: without alerts:write the write controls are absent", async () => {
-    setup([alert(1)], { permissions: ["alerts:read"] });
+  it("scenario: without alerts:write the write controls are disabled with the reason (D-8)", async () => {
+    const { api } = setup([alert(1)], { permissions: ["alerts:read"] });
     await screen.findByRole("row", { name: /Alert 1/ });
-    expect(screen.queryByRole("checkbox")).toBeNull();
-    expect(screen.queryByRole("switch")).toBeNull();
-    expect(screen.queryByRole("button", { name: /New alert/ })).toBeNull();
+    const reason = /Your role can't change alerts\./;
+    expect(screen.getByRole("checkbox", { name: "Select Alert 1" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    const toggle = screen.getByRole("switch", { name: "Active: Alert 1" });
+    expect(toggle).toHaveAttribute("aria-disabled", "true");
+    expect(toggle).toHaveAccessibleDescription(reason);
+    const create = screen.getByRole("button", { name: /New alert/ });
+    expect(create).toHaveAttribute("aria-disabled", "true");
+    expect(create).toHaveAccessibleDescription(reason);
+    fireEvent.click(toggle);
+    expect(api.setEnabled).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Actions for Alert 1" }));
-    expect(await screen.findByRole("menuitem", { name: "View history" })).toBeVisible();
-    expect(screen.queryByRole("menuitem", { name: /Snooze|Delete|Disable/ })).toBeNull();
+    expect(await screen.findByRole("menuitem", { name: "View history" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    for (const name of [/Snooze/, /Disable/, /Delete/])
+      expect(screen.getByRole("menuitem", { name })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("scenario: a 403 on a write is explained, not silent", async () => {
@@ -397,5 +411,107 @@ describe("accessibility", () => {
     expect(await run()).toEqual([]);
     fireEvent.click(screen.getByRole("checkbox", { name: "Select Alert 1" }));
     expect(await run()).toEqual([]);
+  });
+});
+
+describe("visible-set rules", () => {
+  it("shows the 200-row cap, with an announcement that matches the rendered count", async () => {
+    const many = Array.from({ length: 205 }, (_, i) => ({
+      ...alert(1),
+      id: `10000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      name: `Many ${i}`,
+    }));
+    setup(many);
+    expect(await screen.findByText(/Showing first 200 of 205/)).toBeVisible();
+    expect(screen.getByText(/refine the filters/)).toBeVisible();
+    await waitFor(() => expect(screen.getByText("Showing 200 of 205 alerts")).toBeVisible());
+    expect(screen.getAllByRole("row").length).toBeLessThanOrEqual(202);
+  }, 30_000);
+
+  it("drops selected rows that a tab hides, so the bulk count is the visible selection", async () => {
+    const fired = alert(1, { fire_count: 1, last_fired_at: "2026-10-31T13:00:00Z" });
+    const { api } = setup([fired, alert(2)]);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select Alert 1" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Alert 2" }));
+    expect(screen.getAllByText("2 selected").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("tab", { name: /Fired/ }));
+    expect(screen.queryAllByText("2 selected")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete 1 alerts?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete 1" }));
+    await waitFor(() => expect(api.remove).toHaveBeenCalledTimes(1));
+    expect(api.remove).toHaveBeenCalledWith(fired.id);
+  });
+
+  it("refreshes after a single write finds the alert deleted", async () => {
+    const api = fakeApi([alert(1)], {
+      setEnabled: vi.fn(() => Promise.resolve({ kind: "not_found" as const })),
+    });
+    setup([alert(1)], { api });
+    fireEvent.click(await screen.findByRole("switch", { name: "Active: Alert 1" }));
+    expect(await screen.findByText("it was deleted")).toBeVisible();
+    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("bulk 403 and the live feed", () => {
+  it("lists a per-item 403 with the role sentence", async () => {
+    const rows = [alert(1), alert(2)];
+    const api = fakeApi(rows, {
+      setEnabled: vi.fn((id: string) =>
+        id === rows[1]?.id
+          ? Promise.resolve({ kind: "forbidden" as const })
+          : Promise.resolve(ok(rows[0] as Alert)),
+      ),
+    });
+    setup(rows, { api });
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select Alert 1" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Alert 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Disable" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Disable 2 alerts?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Disable 2" }));
+    expect(
+      await screen.findByText(
+        "1 of 2 disabled. 1 failed: 'Alert 2' — Your role can't change alerts..",
+      ),
+    ).toBeVisible();
+  });
+
+  it("releases the alerts topic on unmount", async () => {
+    const teardown = vi.fn();
+    const source = { subscribe: vi.fn(() => teardown) };
+    const { unmount } = setup([alert(1)], { source });
+    await screen.findByRole("row", { name: /Alert 1/ });
+    expect(source.subscribe).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(teardown).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows plain text, not a link, for a suppressed firing while no notification centre exists", async () => {
+    const a = alert(1);
+    const api = fakeApi([a], {
+      deliveries: vi.fn((q) =>
+        Promise.resolve(
+          q.alertId === undefined
+            ? ok([])
+            : {
+                kind: "ok" as const,
+                truncated: true as const,
+                value: [
+                  delivery(1, a.id as string, "2026-10-31T13:00:00Z", {
+                    status: "suppressed",
+                    error: "storm",
+                  }),
+                ],
+              },
+        ),
+      ),
+    });
+    setup([a], { api });
+    await menuFor("Alert 1", "View history");
+    const dialog = await screen.findByRole("dialog", { name: /Firing history/ });
+    expect(await within(dialog).findByText(/Folded into a storm summary/)).toBeVisible();
+    expect(within(dialog).queryByRole("link")).toBeNull();
+    expect(within(dialog).getByText(/Only the newest firings are shown/)).toBeVisible();
   });
 });

@@ -3,7 +3,15 @@
  * row and bulk actions with per-item results, firing history and the states of E40-D02 §2.5.
  * Server truth only: no alert is created here, and every write is a REST call the server authorises.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type JSX,
+} from "react";
 import {
   Button,
   Callout,
@@ -20,7 +28,7 @@ import {
   type TableColumn,
 } from "@candleviewer/ui";
 import { getMeClaims } from "../../lib/auth/meCache";
-import { getActiveClient } from "../../lib/ws/client/activeClient";
+import { getActiveClient, subscribeActiveClient } from "../../lib/ws/client/activeClient";
 import { useWsState } from "../../lib/ws/client/useWsState";
 import { AlertHistoryDialog } from "./AlertHistoryDialog";
 import { alertsApi, type AlertsApi, type AlertsFailure } from "./alertsApi";
@@ -117,7 +125,7 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
   const [symbol, setSymbol] = useState("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [picked, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [history, setHistory] = useState<Alert | null>(null);
   const [report, setReport] = useState<string | null>(null);
@@ -159,16 +167,25 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
   }, [api, canRead, refresh]);
 
   const source = props.source;
+  const client = useSyncExternalStore(subscribeActiveClient, getActiveClient, getActiveClient);
   useEffect(() => {
     if (!canRead) return;
+    const controller = new AbortController();
     const feed =
       source ??
-      createWsAlertsSource(getActiveClient, () => {
-        setResyncing(true);
-        void refresh();
-      });
-    return startAlertsBridge(feed, store);
-  }, [canRead, source, store, refresh]);
+      createWsAlertsSource(
+        () => client,
+        () => {
+          setResyncing(true);
+          void refresh(controller.signal);
+        },
+      );
+    const stop = startAlertsBridge(feed, store);
+    return () => {
+      controller.abort();
+      stop();
+    };
+  }, [canRead, source, client, store, refresh]);
 
   const groupFor = useCallback(
     (a: Alert) => groupOf(statusOf(a, nowMs), failed.has(a.id as string)),
@@ -198,9 +215,19 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
     [alerts],
   );
 
-  // "Showing N of M" is announced when the filters change, never on a live update (LR-8).
-  const latest = useRef({ shown: rows.length, total: alerts.length });
-  latest.current = { shown: rows.length, total: alerts.length };
+  // Only the rendered rows are ever selectable, so the selection is the picked ids that are still shown.
+  const rendered = useMemo(() => rows.slice(0, MAX_ROWS), [rows]);
+  const selected = useMemo(() => {
+    const ids = new Set(rendered.map((a) => a.id as string));
+    return new Set([...picked].filter((id) => ids.has(id)));
+  }, [picked, rendered]);
+  useEffect(() => {
+    setSelected((prev) => (prev.size === selected.size ? prev : selected));
+  }, [selected]);
+
+  // "Showing N of M" is announced when the filters change, never on a live update (LR-8); N is the rendered count.
+  const latest = useRef({ shown: rendered.length, total: alerts.length });
+  latest.current = { shown: rendered.length, total: alerts.length };
   const [announce, setAnnounce] = useState("");
   useEffect(() => {
     if (load === "ready") setAnnounce(COPY.showing(latest.current.shown, latest.current.total));
@@ -217,6 +244,7 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
     const out = await run();
     if (out.kind === "ok") return done(out.value as never);
     setProblem(failure(out.kind as AlertsFailure));
+    if (out.kind === "not_found") void refresh();
   };
   const setEnabled = (a: Alert, enabled: boolean): Promise<void> =>
     act(
@@ -282,48 +310,46 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
 
   const rowActions = (a: Alert): MenuItem[] => {
     const key = statusOf(a, nowMs);
-    const write: MenuItem[] = !canWrite
-      ? []
-      : [
-          isSnoozed(a, nowMs)
-            ? { id: "wake", label: COPY.actions.wake, onSelect: () => void snooze(a, null) }
-            : { id: "snooze", label: `${COPY.actions.snooze} ▸`, items: snoozeItems(a) },
-          a.enabled === false
-            ? {
-                id: "enable",
-                label: COPY.actions.enable,
-                onSelect: () =>
-                  key === "disarmed"
-                    ? setConfirm({ kind: "enable", alert: a })
-                    : void setEnabled(a, true),
-              }
-            : {
-                id: "disable",
-                label: COPY.actions.disable,
-                onSelect: () => void setEnabled(a, false),
-              },
-          {
-            id: "duplicate",
-            label: COPY.actions.duplicate,
-            disabledReason: COPY.actions.duplicateDisabled,
-            onSelect: () => undefined,
+    const denied = canWrite ? {} : { disabledReason: COPY.readOnly };
+    const write: MenuItem[] = [
+      isSnoozed(a, nowMs)
+        ? { id: "wake", label: COPY.actions.wake, onSelect: () => void snooze(a, null), ...denied }
+        : { id: "snooze", label: `${COPY.actions.snooze} ▸`, items: snoozeItems(a), ...denied },
+      a.enabled === false
+        ? {
+            id: "enable",
+            label: COPY.actions.enable,
+            onSelect: () =>
+              key === "disarmed"
+                ? setConfirm({ kind: "enable", alert: a })
+                : void setEnabled(a, true),
+            ...denied,
+          }
+        : {
+            id: "disable",
+            label: COPY.actions.disable,
+            onSelect: () => void setEnabled(a, false),
+            ...denied,
           },
-        ];
+      {
+        id: "duplicate",
+        label: COPY.actions.duplicate,
+        onSelect: () => undefined,
+        disabledReason: canWrite ? COPY.actions.duplicateDisabled : COPY.readOnly,
+      },
+    ];
     return [
       ...write,
       { id: "chart", label: COPY.actions.chart, onSelect: () => props.onShowOnChart?.(a) },
       { id: "history", label: COPY.actions.history, onSelect: () => setHistory(a) },
-      ...(canWrite
-        ? [
-            {
-              id: "delete",
-              label: COPY.actions.delete,
-              danger: true,
-              opensConfirm: true,
-              onSelect: () => setConfirm({ kind: "delete", alert: a }),
-            } as MenuItem,
-          ]
-        : []),
+      {
+        id: "delete",
+        label: COPY.actions.delete,
+        danger: true,
+        opensConfirm: true,
+        onSelect: () => setConfirm({ kind: "delete", alert: a }),
+        ...denied,
+      } as MenuItem,
     ];
   };
 
@@ -342,15 +368,14 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
           <span>
             {" "}
             {COPY.disarmTitle(signals?.get(metric)?.display_name ?? metric)}. {COPY.disarmWhy}
-            {canWrite ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setConfirm({ kind: "enable", alert: a })}
-              >
-                {`${COPY.actions.enable}…`}
-              </Button>
-            ) : null}
+            <Button
+              variant="secondary"
+              size="sm"
+              {...(canWrite ? {} : { disabled: true, disabledReason: COPY.readOnly })}
+              onClick={() => setConfirm({ kind: "enable", alert: a })}
+            >
+              {`${COPY.actions.enable}…`}
+            </Button>
           </span>
         ) : null}
       </span>
@@ -393,23 +418,20 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
         );
       },
     },
-    ...(canWrite
-      ? [
-          {
-            id: "active",
-            header: "Active",
-            interactive: true,
-            cell: (a: Alert) => (
-              <Toggle
-                label={`Active: ${a.name}`}
-                labelPosition="hidden"
-                checked={a.enabled !== false}
-                onChange={(on) => void setEnabled(a, on)}
-              />
-            ),
-          } satisfies TableColumn<Alert>,
-        ]
-      : []),
+    {
+      id: "active",
+      header: "Active",
+      interactive: true,
+      cell: (a: Alert) => (
+        <Toggle
+          label={`Active: ${a.name}`}
+          labelPosition="hidden"
+          checked={a.enabled !== false}
+          {...(canWrite ? {} : { disabled: true, disabledReason: COPY.readOnly })}
+          onChange={(on) => void setEnabled(a, on)}
+        />
+      ),
+    },
   ];
 
   if (!canRead)
@@ -493,11 +515,12 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
           />
         </div>
       )}
+      {rows.length > MAX_ROWS ? <p>{COPY.capped(MAX_ROWS, rows.length)}</p> : null}
       <Table
         caption={COPY.heading}
         captionHidden
         columns={columns}
-        rows={rows.slice(0, MAX_ROWS)}
+        rows={rendered}
         rowKey={(a) => a.id as string}
         rowLabel={(a) => a.name}
         density="compact"
@@ -506,7 +529,9 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
         {...(tableError === undefined ? {} : { error: tableError })}
         emptyState={emptyState}
         rowActions={rowActions}
-        {...(canWrite ? { selected, onRowSelect: setSelected } : {})}
+        selected={selected}
+        onRowSelect={setSelected}
+        {...(canWrite ? {} : { selectDisabledReason: COPY.readOnly })}
       />
     </>
   );
@@ -515,11 +540,13 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
     <div>
       <header>
         <h1>{COPY.heading}</h1>
-        {canWrite ? (
-          <Button variant="primary" disabled disabledReason={COPY.newAlertDisabled}>
-            {COPY.newAlert}
-          </Button>
-        ) : null}
+        <Button
+          variant="primary"
+          disabled
+          disabledReason={canWrite ? COPY.newAlertDisabled : COPY.readOnly}
+        >
+          {COPY.newAlert}
+        </Button>
       </header>
       {link === "offline" || link === "reconnecting" ? (
         <Callout tone="warning" title={COPY.disconnected} />

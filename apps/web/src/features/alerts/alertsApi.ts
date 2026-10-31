@@ -8,7 +8,8 @@ import type { Alert, DeliveryRow, VocabularySignal } from "./types.js";
 
 export type AlertsFailure = "forbidden" | "not_found" | "invalid" | "unavailable";
 export type Outcome<T> =
-  { readonly kind: "ok"; readonly value: T } | { readonly kind: AlertsFailure };
+  | { readonly kind: "ok"; readonly value: T; readonly truncated?: true }
+  | { readonly kind: AlertsFailure };
 
 export interface AlertsApi {
   list(signal?: AbortSignal): Promise<Outcome<readonly Alert[]>>;
@@ -65,7 +66,7 @@ async function pages<T>(
         return { kind: "ok", value: items };
       cursor = next;
     }
-    return { kind: "ok", value: items };
+    return { kind: "ok", value: items, truncated: true };
   } catch {
     return { kind: "unavailable" };
   }

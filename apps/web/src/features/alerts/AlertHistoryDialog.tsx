@@ -34,10 +34,13 @@ export function AlertHistoryDialog({
   download = downloadCsv,
 }: AlertHistoryDialogProps): JSX.Element {
   const [rows, setRows] = useState<readonly DeliveryRow[] | "error" | null>(null);
+  const [truncated, setTruncated] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     void api.deliveries({ alertId: alert.id as string }, controller.signal).then((out) => {
-      if (!controller.signal.aborted) setRows(out.kind === "ok" ? out.value : "error");
+      if (controller.signal.aborted) return;
+      setTruncated(out.kind === "ok" && out.truncated === true);
+      setRows(out.kind === "ok" ? out.value : "error");
     });
     return () => controller.abort();
   }, [api, alert.id]);
@@ -72,6 +75,7 @@ export function AlertHistoryDialog({
       }
     >
       {rows === null ? <p role="status">{H.loading}</p> : null}
+      {truncated ? <p role="note">{COPY.truncated}</p> : null}
       {rows === "error" ? <p role="alert">{H.error}</p> : null}
       {loaded !== null && firings.length === 0 ? <p>{H.empty}</p> : null}
       {firings.length > 0 ? (

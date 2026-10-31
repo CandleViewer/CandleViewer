@@ -1,3 +1,7 @@
+/**
+ * Values at fire time are absent from the history and the CSV until CC-2 lands: the delivery row's
+ * rendered message stands in for them.
+ */
 /** SCR-090 copy (E40-D02 handoff, "Copy deck" and C1), as constants: the screen holds no inline strings. */
 export const COPY = {
   heading: "Alerts",
@@ -31,6 +35,9 @@ export const COPY = {
   deliveryProblem: "Desktop notification blocked by the OS — enable it in Settings",
   deliveryChip: "Desktop blocked",
   showing: (n: number, total: number): string => `Showing ${n} of ${total} alerts`,
+  capped: (shown: number, total: number): string =>
+    `Showing first ${shown} of ${total} — refine the filters to see the rest.`,
+  truncated: "Only the newest firings are shown; the export holds the same rows.",
   selected: (n: number): string => `${n} selected`,
   bulk: {
     enable: {
@@ -63,7 +70,7 @@ export const COPY = {
     error: "The firing history couldn't load.",
     export: "Export CSV",
     suppressed: "Suppressed (storm)",
-    summary: "Held in one summary",
+    summary: "Folded into a storm summary",
     summaryLink: "Open Notifications",
     close: "Close",
   },
