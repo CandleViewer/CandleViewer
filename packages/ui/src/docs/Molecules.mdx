@@ -5,8 +5,9 @@ import { Meta } from "@storybook/addon-docs/blocks";
 # Molecules
 
 `CMP-040..069` in `docs/plan/15-component-catalogue.md`: form fields, menus, tabs, dialogs, toasts,
-tables and cards; and four components catalogued in other bands: CMP-079 RbacGate, CMP-160
-SymbolSearchInput, CMP-213 FuzzyList and CMP-219 SymbolPicker. A component's stories live under
+tables and cards; and six components catalogued in other bands: CMP-079 RbacGate, CMP-160
+SymbolSearchInput, CMP-161 WatchlistRow, CMP-162 WatchlistGroupTabs, CMP-213 FuzzyList and CMP-219
+SymbolPicker. A component's stories live under
 `Molecules/<Component>` and ship with the component (E05-S01..S04).
 
 ## RbacGate (CMP-079)
@@ -389,6 +390,7 @@ it as CMP-015 rows, or fail as a CMP-027 inline error with Retry (`error`, `onRe
 | Tab / Shift+Tab                                  | The scroll region when it scrolls (named by the caption), then the sortable header buttons in order; the body has no stop. |
 | Arrows, Page Up / Down, Home / End on the region | Scroll it (native).                                                                                                        |
 | Enter / Space on a header button                 | Sorts ascending, then descending; while that column is `sortPending` the press changes nothing.                            |
+| Esc while the echo shows                         | Hides it, focus kept; the next Esc is the host's.                                                                          |
 
 | Element     | Role                            | Name             | ARIA                                                                                            |
 | ----------- | ------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------- |
@@ -406,6 +408,12 @@ header row under CMP-015 skeleton rows and shows the caption's loading words; em
 filtered-empty render the host's CMP-026 (`emptyState`) across every column; an error renders CMP-027
 with Retry, spoken once by the table's region (the panel itself is not live). v0 renders every row
 and is not virtualised: above 200 rows it warns in development (#266).
+
+A header label its column cuts with an ellipsis shows whole in the table's one CMP-016 echo
+(`aria-hidden`; the header keeps its whole name) after CMP-016's 300 ms hover, and at once while its
+sort button has keyboard focus; so does a custom row's `cut` or `echo` cell, on hover (E08-D07 §4.1,
+as in grid mode). A hover echo goes CMP-016's 100 ms grace after the pointer leaves its cell and the
+echo; `Esc` hides it.
 
 Below the sum of its columns' `minWidthEm` (default 8 each, in the table's own `em`, so 200 % zoom
 counts) the table stacks, one block per row, read in order: the header buttons (wrapped, still
@@ -462,6 +470,134 @@ Stacked (the reflow above), a grid degrades to a table: arrow navigation needs r
 laid out, so the explicit table roles return and every control (the select boxes, the actions
 buttons, an `interactive` cell's controls) is its own Tab stop, in reading order; the row menu
 still opens with `Shift+F10`, and `aria-selected` stays on the rows.
+
+#### E08-D07's additions to grid mode (SCR-100, D16)
+
+| Keys                                         | Action                                                                                                                                      |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| → / ← onto or off a merged cell              | A merged cell is one cell: → reaches it and then leaves past its span; ↑ / ↓ off it keep its first column.                                  |
+| ↓, Page Down, Ctrl+End past the drawn window | The table asks the host for that row (`onRowsInView`); focus lands once it is drawn, unless moved first.                                    |
+| Enter / Space on a T2 sort header            | Sorts nothing; the reason shows in the echo on the header and is said once (the gated announcement); a held Enter's repeats say nothing.    |
+| A row's T2 key (`grid.refuse`)               | Changes nothing; the reason shows in the echo on the focused cell and is said once (the gated announcement).                                |
+| Esc while the echo shows                     | Hides it, focus kept; the next Esc is the host's.                                                                                           |
+| A host removing the focused row (`Del`)      | Focus goes to the same cell of the next row, else the previous (E08-D07 §6.3); a reorder keeps it on the moved row, the Tab stop following. |
+
+| Element     | Role                         | Name                          | ARIA                                                                                                                                                                       |
+| ----------- | ---------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| table       | grid                         | the caption                   | `aria-rowcount` counts the whole list with a window (`rowWindow`), the header included                                                                                     |
+| row         | row                          | —                             | `aria-rowindex` absolute in the whole list; `aria-current` on the active row (a custom row's)                                                                              |
+| row header  | rowheader (`th scope="row"`) | its content                   | a custom row's `cellProps(i, { header: true })`                                                                                                                            |
+| merged cell | gridcell                     | its content                   | a native `colspan` (`cellProps(i, { span })`)                                                                                                                              |
+| T2 header   | button in its columnheader   | "Not available" and the label | `aria-disabled="true"`, the lock leading, described by the host's note (`sortReasonId`) or its own hidden reason                                                           |
+| spacer rows | none                         | —                             | `aria-hidden`: the rows a window does not draw, counted in their height                                                                                                    |
+| echo        | tooltip (CMP-016 `echo`)     | —                             | `aria-hidden`: one per table, a cell's `echo` words or a cut text's whole words on keyboard focus and hover, or a T2 reason; a hover echo stays while the pointer is on it |
+
+A host draws a window of a long list (SCR-100 windows past 60 rows) by passing `rowWindow` and the rows it
+draws; the table reports the rows its region shows below the sticky header (`onRowsInView`, once per change)
+and asks for the row a key moves focus to, so the one Tab stop never sits on an undrawn row. `renderRow` hands
+a custom row CMP-049's row contract (`rowProps`, `cellProps`, `label`, `refuse`): CMP-161 WatchlistRow draws
+its cells through it, and the table then draws no select or actions column (`rowActions` opens as the context
+menu alone). `reflow="grid"` keeps a stacked grid a grid of cards, its roles, Tab stop and keys (E08-D07 D30).
+`announce` hands the table's lines to a host that owns the live region, and the table renders none (SCR-100
+owns none, D17); a T2 reason is the gated announcement's (`GatedAnnounceProvider`), said once. `widthEm` sets
+a column's `<col>` width in the table's `em`; `headerStatus` adds a glyph and a word to a header's name; an
+`align: "end"` text column end-aligns like a number. A header's label ellipsises when its column is narrower
+than its words, and a cell's `cut` text (CMP-161's symbol) may be cut: while cut, the echo shows the whole words
+(E08-D07 §4.1), cut being measured to the fraction of a pixel so that any ellipsis drawn has its echo. An
+end-aligned header uses its start padding as room for its label, its words sitting against the end where its
+values end; start-aligned headers and the stacked reflow keep both paddings. That is the interim for §4.1's
+784 px reference, where "Funding %", "OI Δ 24h %" and "Spread bps" are still cut, with the echo; the lasting
+answer, shorter headers or a wider reference, is E08-D07's. A hover echo goes CMP-016's 100 ms grace after the
+pointer leaves its cell and the echo.
+
+### WatchlistRow (CMP-161, a row of the APG Grid through CMP-049's row contract)
+
+| Keys                     | Action                                                                                                   |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- |
+| Arrows, Home / End, Page | CMP-049's grid keys; the merged delisted cell is one cell.                                               |
+| Enter, a click           | Activates the row (`onActivate`); a delisted row refuses with "Delisted by the exchange" (T2, the echo). |
+| Del                      | Removes the row (`onRemove`); a held key removes one; with `removeReason`, refused (T2).                 |
+| Alt+↑ / Alt+↓            | Moves the row (`onMove`); with that direction's `moveReason` (sorted, filtered, an end), refused (T2).   |
+| Ctrl+C                   | The host copies the symbol (`onCopy(symbol)`); a selection in the grid is left to the browser's copy.    |
+| A held key               | A refusal is said once per press: its repeats re-show nothing (a held Alt+↑/↓ keeps moving).             |
+| Shift+F10, the Menu key  | CMP-049's `rowActions` context menu for the row.                                                         |
+
+| Element     | Role      | Name                                                                                                | ARIA                                                                                                                   |
+| ----------- | --------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| row         | row       | —                                                                                                   | `aria-current` when active; `data-freshness="stale"` and `data-row-state` for its look                                 |
+| symbol      | rowheader | the symbol ("Not available" first while delisted)                                                   | delisted: `aria-disabled`, the lock leading, described by the merged cell; `description`; cut, the echo shows it whole |
+| value cells | gridcell  | the value as read ("+0.42%", "1,200,000,000 USDT", "no value yet")                                  | described by the age chip while stale, a stale OI cell by the host's note, and `describedBy`                           |
+| Status      | gridcell  | the chip's words, then its echo's ("Stale, 7 seconds Last update 10:31:02 UTC", "Not live" and why) | its `echo` shows the last update's time, or why a row is not live, for sight                                           |
+| Rec         | gridcell  | the chip's full text, or "Recording status restricted"                                              | E16-S02 fills it                                                                                                       |
+
+D9's formats are tabular mono: Last at the price scale, never coloured; 24h % and OI Δ with the sign and a
+hidden ▲/▼ that alone takes the buy or sell colour (DS-CR-2's fallback); Funding % at 4 dp and Spread in bps,
+never coloured; Turnover to three significant figures, its name the whole number; Funding in on the host's
+shared clock (`nowMs`), its name and echo adding the UTC target, "Settling…" at zero. One state per row, never
+stacked: a stale row is a tint, demoted text and one CMP-239 chip; a stale OI baseline marks its cells alone;
+initialising and not-live rows show "—" with a word; a delisted row merges its live cells. Disconnected is one
+`data-cv-feed="disconnected"` on an ancestor (no chip, text at `opacity.muted`). Values never announce.
+
+### WatchlistGroupTabs (CMP-162, APG Tabs, manual activation)
+
+| Keys                                 | Action                                                                                  |
+| ------------------------------------ | --------------------------------------------------------------------------------------- |
+| Tab                                  | Onto the active tab (one stop), then "More lists", "+", the host's controls, the panel. |
+| → / ←, Home / End                    | Moves focus between tabs, wrapping; never switches.                                     |
+| Enter / Space, a click               | Switches to the focused list (`onSwitch`): a switch changes subscriptions; never twice. |
+| Shift+F10, the Menu key, right-click | The tab's menu: Rename, Duplicate, Delete…, Manage watchlists…; Esc returns to the tab. |
+
+| Element    | Role                      | Name                                         | ARIA                                                                                    |
+| ---------- | ------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------- |
+| tablist    | tablist                   | the host's `aria-label`                      | —                                                                                       |
+| tab        | tab                       | "Majors, 12 symbols" ("187 of 200" from 180) | `aria-selected`, `aria-controls` its panel; it draws "Majors · 12"                      |
+| panel      | tabpanel                  | its tab                                      | holds the host's grid; only the active one is filled                                    |
+| More lists | button (CMP-001) and menu | "More lists"                                 | the lists that do not fit, by name and count                                            |
+| +          | button (CMP-002)          | "New watchlist"                              | T2 with `writeReason`: the lock badge; the host's notice describes it (`writeReasonId`) |
+
+Tabs that do not fit the header row move into "More lists", measured from hidden copies (watched, so a
+text-scale change re-measures) with the strip's gaps counted, so "More lists" never squeezes and a wider row
+brings them back; the active list always shows, alone when
+there is no room. The host's controls after "+" wrap at 200 % (D30). Without `workspaces:write` or while
+viewing as, "+", Rename, Duplicate and Delete… are T2 with `writeReason`; Manage watchlists… stays live.
+
+### ColumnPicker (CMP-056; the list is a named group of checkboxes, the menu APG Menu Button)
+
+| Keys                         | Action                                                                                                |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Tab                          | Through each column's box, then its `Move {column} up` and `Move {column} down` buttons.              |
+| Space on a box               | Shows or hides the column (`onChange`); a locked or read-only box changes nothing.                    |
+| Alt+↑ / Alt+↓ on a box       | Moves the column; at an end says "Already first." or "Already last." once (a locked box, its reason). |
+| Enter / Space on a move      | Moves the column; focus stays on the button; the new position is said once.                           |
+| Menu: Enter / ↓ on Columns   | Opens the columns as `menuitemcheckbox` items; Space toggles one and keeps the menu open.             |
+| Menu, T2: any key on Columns | Opens nothing; Enter, Space, ↓ or ↑ re-show the reason once per press (the same button, focus kept).  |
+
+The list's group is named by `label`. A move says `{column} moved to position {n} of {total}.` politely (the
+host's `announce`, or the picker's own status); a refusal is the gated announcement's, said once. A locked
+column (`lockedReason`) is checked and T2 with its reason shown under the row (2a, the box's description; its
+lock leads the label), outside the movable range; the range's end buttons are T2 (2b). With `writeReason`
+every box and move button is T2 with it, and the menu's button is; `writeReasonId` points them at the host's
+one notice; without it the list shows the reason once itself, before its boxes (rendering 2a: each box's
+lock leads its label, and every gated box and move button points at that line).
+
+### FileDrop / Import control (CMP-067; the button is APG Button, the zone has no role)
+
+| Keys                        | Action                                                                                  |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| Enter / Space on the button | Opens the native file picker (the hidden input, labelled by the button).                |
+| Tab                         | The button, then the preview's actions; the zone, the hint and the help line are text.  |
+| A drag over the zone        | One file shows the active words, more than one the reject words; nothing is announced.  |
+| A drop on the zone          | One file is read as a pick is; more than one reads none and says the reject words once. |
+| A drop on a T2 zone         | Reads nothing; the reason stays shown and is said once (the gated announcement).        |
+
+A file over `maxBytes` is refused before it is read, its size in words; a type `accept` does not take, or
+bytes that are not UTF-8, are "not text". The one file is decoded as UTF-8 and handed to the host as text
+(`onText`), never interpreted; rejections show as CMP-027 inline, politely. The preview step (`preview`) has a
+heading that takes focus, the host's account of the file as text, and its apply targets, one of which may be
+T2 with its reason shown under it (a full list; 2a, its lock leading the label). With `disabledReason` the
+button stays T2, its lock leading the label, and the zone shows the reason in place of its drop words (or
+`disabledReasonId` points the button at the host's one notice); a drop reads nothing. A size reads rounded up
+(`formatFileSize`: 65,537 bytes are "64.1 KB").
 
 ### Menu (CMP-041, APG Menu Button and Menu)
 

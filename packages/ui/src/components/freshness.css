@@ -1,0 +1,75 @@
+/*
+ * CMP-239 FreshnessMarker, the compact presentation (E08-D07 §5, §7.1 "Stale"; E08-D04 §3). A degraded cell only
+ * swaps a class (`freshnessClassName`): no node of its own, so a 4 Hz grid pays nothing for it. The words live once
+ * per row (the chip below) or per panel. A state change is one flip: no transition, no animation (E08-D07 §8).
+ * Each state rule names both classes `freshnessClassName` sets, so it out-specifies a host cell's own colour
+ * (`.cv-table__cell`) whatever the order: components.css concatenates by file name, freshness before table.
+ */
+
+/* A stale cell: the stale tint, demoted text, the value kept; a 2 px leading bar drawn inside, so no text moves. */
+.cv-freshness.cv-freshness--stale {
+  background: var(--color-data-confidence-stale-surface);
+  color: var(--color-data-confidence-stale-text);
+  box-shadow: inset calc(var(--border-thick) * 1px) 0 0 0
+    var(--color-data-confidence-stale-indicator);
+}
+
+/* The other states a cell can carry take their own text token (E08-D04 §3); their words are the host's. */
+.cv-freshness.cv-freshness--reconnecting {
+  color: var(--color-data-confidence-reconnecting-text);
+}
+
+.cv-freshness.cv-freshness--disconnected {
+  color: var(--color-data-confidence-disconnected-text);
+}
+
+.cv-freshness.cv-freshness--resyncing {
+  color: var(--color-data-confidence-resyncing-text);
+}
+
+.cv-freshness.cv-freshness--gapped {
+  color: var(--color-data-confidence-gapped-text);
+}
+
+.cv-freshness.cv-freshness--backfilling {
+  color: var(--color-data-confidence-backfilling-text);
+}
+
+.cv-freshness.cv-freshness--delisted {
+  color: var(--color-data-confidence-delisted-text);
+}
+
+/*
+ * The age chip, T1 (E08-D07 §7.1): `status.warning.subtle` with a 1 px `stale.indicator` edge (light's fill equals
+ * `surface.raised`, so the edge carries it, §7.3 item 6) and `text.primary`. Past T2 the strong chip below.
+ */
+.cv-freshness-chip {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  max-inline-size: 100%;
+  padding-inline: var(--space-inset-xs);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-data-confidence-stale-indicator);
+  border-radius: var(--radius-badge);
+  background: var(--color-status-warning-subtle);
+  color: var(--color-text-primary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+  white-space: nowrap;
+}
+
+.cv-freshness-chip[data-level="strong"] {
+  background: var(--color-data-confidence-stale-indicator);
+  color: var(--color-text-inverse);
+}
+
+@media (forced-colors: active) {
+  /* The bar becomes a real edge (forced colours drop box-shadow); the tint drops out and the words carry it. */
+  .cv-freshness.cv-freshness--stale {
+    border-inline-start: 2px solid CanvasText;
+  }
+
+  .cv-freshness-chip {
+    border: 1px solid CanvasText;
+  }
+}

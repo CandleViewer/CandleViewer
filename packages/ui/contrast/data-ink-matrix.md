@@ -86,6 +86,10 @@ CVD transform: Brettel/Vienot dichromacy projection for protanopia and deuterano
 | dark | compact | color.text.secondary on color.surface.hover | 7.5 | 4.5 | PASS |
 | dark | comfortable | color.text.secondary on color.surface.selected | 6.24 | 4.5 | PASS |
 | dark | compact | color.text.secondary on color.surface.selected | 6.24 | 4.5 | PASS |
+| dark | comfortable | color.text.inverse on color.data-confidence.stale.indicator | 12.31 | 4.5 | PASS |
+| dark | compact | color.text.inverse on color.data-confidence.stale.indicator | 12.31 | 4.5 | PASS |
+| dark | comfortable | color.text.tertiary on color.surface.hover | 4.79 | 4.5 | PASS |
+| dark | compact | color.text.tertiary on color.surface.hover | 4.79 | 4.5 | PASS |
 | light | comfortable | color.text.primary on color.surface.app | 17.99 | 4.5 | PASS |
 | light | compact | color.text.primary on color.surface.app | 17.99 | 4.5 | PASS |
 | light | comfortable | color.text.primary on color.surface.canvas | 16.78 | 4.5 | PASS |
@@ -134,6 +138,10 @@ CVD transform: Brettel/Vienot dichromacy projection for protanopia and deuterano
 | light | compact | color.text.secondary on color.surface.hover | 8.26 | 4.5 | PASS |
 | light | comfortable | color.text.secondary on color.surface.selected | 7.37 | 4.5 | PASS |
 | light | compact | color.text.secondary on color.surface.selected | 7.37 | 4.5 | PASS |
+| light | comfortable | color.text.inverse on color.data-confidence.stale.indicator | 5.65 | 4.5 | PASS |
+| light | compact | color.text.inverse on color.data-confidence.stale.indicator | 5.65 | 4.5 | PASS |
+| light | comfortable | color.text.tertiary on color.surface.hover | 5.44 | 4.5 | PASS |
+| light | compact | color.text.tertiary on color.surface.hover | 5.44 | 4.5 | PASS |
 | high-contrast | comfortable | color.text.primary on color.surface.app | 18.18 | 7 | PASS |
 | high-contrast | compact | color.text.primary on color.surface.app | 18.18 | 7 | PASS |
 | high-contrast | comfortable | color.text.primary on color.surface.canvas | 17.21 | 7 | PASS |
@@ -182,6 +190,10 @@ CVD transform: Brettel/Vienot dichromacy projection for protanopia and deuterano
 | high-contrast | compact | color.text.secondary on color.surface.hover | 12.22 | 7 | PASS |
 | high-contrast | comfortable | color.text.secondary on color.surface.selected | 10.17 | 7 | PASS |
 | high-contrast | compact | color.text.secondary on color.surface.selected | 10.17 | 7 | PASS |
+| high-contrast | comfortable | color.text.inverse on color.data-confidence.stale.indicator | 12.31 | 7 | PASS |
+| high-contrast | compact | color.text.inverse on color.data-confidence.stale.indicator | 12.31 | 7 | PASS |
+| high-contrast | comfortable | color.text.tertiary on color.surface.hover | 9.54 | 7 | PASS |
+| high-contrast | compact | color.text.tertiary on color.surface.hover | 9.54 | 7 | PASS |
 
 ## CVD discriminability
 

@@ -366,10 +366,12 @@ describe("FileDrop (CMP-067): the preview step before anything applies", () => {
   });
 });
 
-// Each story's play in jsdom (the storybook project runs them in Chromium, with axe).
+// Each story's play in jsdom (the storybook project runs them in Chromium, with axe): DragOver drags a real
+// DataTransfer, which jsdom has not.
 describe("FileDrop stories", () => {
   it("runs each story's play function", { timeout: 30_000 }, async () => {
     for (const [name, Story] of Object.entries(composeStories(stories))) {
+      if (name === "DragOver") continue;
       const canvasElement = document.body.appendChild(document.createElement("div"));
       await expect(Story.run({ canvasElement }), name).resolves.toBeUndefined();
       canvasElement.remove();

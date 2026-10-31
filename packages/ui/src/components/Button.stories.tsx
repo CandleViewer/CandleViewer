@@ -17,6 +17,11 @@ type Story = StoryObj<typeof Button>;
 
 const row = { display: "flex", gap: "var(--space-inset-sm)", alignItems: "center" } as const;
 const col = { display: "grid", gap: "var(--space-inset-sm)", justifyItems: "start" } as const;
+/** A host's 2a caption: the reason under its control, text.secondary in the caption type (E09-D09 §2.2). */
+const caption = {
+  color: "var(--color-text-secondary)",
+  font: "var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) / var(--type-ui-caption-line-height) var(--type-ui-caption-font-family)",
+} as const;
 
 export const Default: Story = {};
 
@@ -116,6 +121,30 @@ export const DisabledWithReason: Story = {
     await userEvent.keyboard("{Escape}");
     await expect(echo?.hidden).toBe(true);
     await expect(button).toHaveFocus();
+  },
+};
+
+/**
+ * Disabled with the reason shown by the host (E09-D09 §2.2 rendering 2a, `disabledReasonId`): a caption under the
+ * button, its one description; the lock leads the label, named "Not available"; no echo of its own.
+ */
+export const DisabledWithReasonInline: Story = {
+  args: { disabledReason: REASON, disabledReasonId: "button-reason" },
+  render: (args) => (
+    <div style={{ ...col, gap: "var(--space-stack-xs)" }}>
+      <Button {...args} />
+      <span id="button-reason" style={caption}>
+        {REASON}
+      </span>
+    </div>
+  ),
+  play: async ({ canvasElement, args }) => {
+    const button = within(canvasElement).getByRole("button", { name: "Not available Save" });
+    await userEvent.tab();
+    await expect(button).toHaveFocus();
+    await expect(button).toHaveAccessibleDescription(REASON);
+    await userEvent.keyboard("{Enter}");
+    await expect(args.onClick).not.toHaveBeenCalled();
   },
 };
 

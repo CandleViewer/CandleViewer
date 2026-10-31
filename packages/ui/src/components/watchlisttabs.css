@@ -1,0 +1,82 @@
+/*
+ * CMP-162 WatchlistGroupTabs (E08-D07 §4.1, §5, D4, D30): SCR-100's header row. The tabs are CMP-042's (`tabs.css`:
+ * the selected rule, hover, focus ring, T2); this file lays the row out: the tabs, "More lists" and "+" in a strip
+ * that never wraps, then the host's controls (the panel status, ⋮), which wrap: under the strip when the row has no
+ * room for them, and within themselves at 200 % (D30: the header keeps the active tab and "More lists" and wraps
+ * the panel status). Tokens only; static.
+ */
+.cv-wltabs__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-sm);
+  min-inline-size: 0;
+  min-block-size: var(--size-control-height);
+  border-block-end: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+}
+
+/* The room the tabs share: its width never follows its content, so a wider panel brings tabs back. */
+.cv-wltabs__strip {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-inline-size: 0;
+}
+
+.cv-wltabs__list {
+  display: flex;
+  flex: none;
+  flex-wrap: nowrap;
+  min-inline-size: 0;
+}
+
+.cv-wltabs__create {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.cv-wltabs__end {
+  display: inline-flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-inset-sm);
+  min-inline-size: 0;
+}
+
+/* The count after the name: "Majors · 12". */
+.cv-wltabs__count {
+  white-space: pre;
+}
+
+/*
+ * Copies of every tab, measured and never seen: out of the flow, out of every pointer and Tab path, a box of no
+ * size (so it never widens the page) whose copies keep their own widths (`flex: none`).
+ */
+.cv-wltabs__measure {
+  position: absolute;
+  display: flex;
+  inline-size: 0;
+  block-size: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.cv-wltabs__measure > * {
+  flex: none;
+}
+
+.cv-wltabs__panel {
+  min-inline-size: 0;
+}
+
+@media (forced-colors: active) {
+  .cv-wltabs__bar {
+    border-block-end: 1px solid CanvasText;
+  }
+}
