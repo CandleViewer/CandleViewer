@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import gc
 import importlib
 import inspect
@@ -52,6 +53,8 @@ from tests.unit.storage.cold._replay_rows import (
 )
 
 FIRST_HOUR = TimeRange(start_us=H0, end_us=H0 + HOUR)
+#: The scan's row mapper for trades, as `ParquetRecordedReader.read` hands it to `_Scan.run`.
+_TRADES = functools.partial(recorded_reader._events, StreamKind.TRADES)
 MINUTE = 60_000_000
 NEW_YEAR_2027 = 1_798_761_600_000_000  # 2027-01-01T00:00:00Z
 
@@ -781,9 +784,7 @@ def test_a_duckdb_failure_is_a_typed_cold_read_error(tmp_path: Path) -> None:
     files: dict[str, object] = {"files": [(tmp_path / "gone" / "part-0000.parquet").as_posix()]}
 
     with pytest.raises(ColdReplayReadError) as caught:
-        recorded_reader._Scan(tmp_path).run(
-            "SELECT * FROM read_parquet($files)", files, StreamKind.TRADES
-        )
+        recorded_reader._Scan(tmp_path).run("SELECT * FROM read_parquet($files)", files, _TRADES)
 
     assert caught.value.__cause__ is None and caught.value.__suppress_context__
     assert str(tmp_path) not in str(caught.value)
@@ -798,7 +799,7 @@ def test_the_scan_connection_may_open_nothing_outside_the_cold_root(tmp_path: Pa
     sql = "SELECT * FROM read_parquet($files)"
 
     with pytest.raises(ColdReplayReadError):
-        recorded_reader._Scan(root).run(sql, {"files": [outside.as_posix()]}, StreamKind.TRADES)
+        recorded_reader._Scan(root).run(sql, {"files": [outside.as_posix()]}, _TRADES)
 
 
 def test_a_scan_connection_is_memory_and_thread_bounded() -> None:
@@ -817,7 +818,7 @@ def test_no_statement_of_a_scan_can_loosen_its_bounds(tmp_path: Path) -> None:
     refused (unlocked, the SET would pass and only the row mapping would fail)."""
     with pytest.raises(ColdReplayReadError):
         recorded_reader._Scan(tmp_path).run(
-            "SET memory_limit = '8GiB'; SELECT 1 AS ts", {}, StreamKind.TRADES
+            "SET memory_limit = '8GiB'; SELECT 1 AS ts", {}, _TRADES
         )
 
 
@@ -1204,12 +1205,13 @@ async def test_duckdb_opens_the_resolved_part_path_never_the_link(
     real = recorded_reader._Scan.run
 
     def spy(
-        self: recorded_reader._Scan, sql: str, params: dict[str, object], stream: StreamKind
+        self: recorded_reader._Scan, sql: str, params: dict[str, object], mapper: Any
     ) -> list[RecordedEvent]:
         files = params["files"]
         assert isinstance(files, list)
         opened.extend(str(f) for f in files)
-        return real(self, sql, params, stream)
+        result: list[RecordedEvent] = real(self, sql, params, mapper)
+        return result
 
     monkeypatch.setattr(recorded_reader._Scan, "run", spy)
 
@@ -1997,3 +1999,36 @@ def test_an_interrupt_never_waits_for_a_worker_that_is_connecting_or_closing(
     holder.join(timeout=5)
     scan.interrupt()
     assert con.interrupts == 1
+
+
+async def test_heatmap_cells_read_back_a_bounded_page_and_the_earliest_entry(
+    tmp_path: Path,
+) -> None:
+    """E21-T03 (#606): exported `heatmap_cells` read back in storage order, at most `limit`
+    rows (the caller pages, C-2.18); `earliest` is the oldest manifest entry's start."""
+    rows: list[dict[str, object]] = [  # a part recorded before E21-T02: no samples/estimated
+        {"ts": H0 + i * 100_000, "symbol": SYMBOL, "price": 65_000.0 + p, "bid_size": 1.0 + i,
+         "ask_size": 0.0}
+        for i in range(4)
+        for p in range(2)
+    ]  # fmt: skip
+    registry = DatasetRegistry(tmp_path / "cold")
+    registry.ensure_tree()
+    exporter = ColdExporter(registry, MemHotSource({StreamKind.HEATMAP_CELLS: rows}))
+    await exporter.export_partition(
+        SYMBOL, StreamKind.HEATMAP_CELLS, FIRST_HOUR, partition_extra={"hour": "00"}
+    )
+    reader = ParquetRecordedReader(registry)
+    try:
+        got = await reader.heatmap_cells(SYMBOL, FIRST_HOUR, limit=3)
+        assert got == [
+            (H0, 65_000.0, 1.0, 0.0, None, None),
+            (H0, 65_001.0, 1.0, 0.0, None, None),
+            (H0 + 100_000, 65_000.0, 2.0, 0.0, None, None),
+        ]
+        assert await reader.earliest(SYMBOL, StreamKind.HEATMAP_CELLS) == H0
+        assert await reader.earliest(SYMBOL, StreamKind.ORDERBOOK_SNAPSHOT) is None
+        with pytest.raises(RecordedQueryRejected):
+            await reader.heatmap_cells(SYMBOL, FIRST_HOUR, limit=0)
+    finally:
+        reader.shutdown()

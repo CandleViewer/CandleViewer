@@ -17,7 +17,11 @@ import pytest
 from candleviewer.domain.sql_names import ts_param
 from candleviewer.replay import ReplayRequest, ReplaySource, ReplaySourceUnavailable, ReplayTiers
 from candleviewer.replay.merge import DEFAULT_IO_TIMEOUT_S
-from candleviewer.storage.errors import HotReplayReadError, HotReplayReadTimeout
+from candleviewer.storage.errors import (
+    HotReplayReadError,
+    HotReplayReadTimeout,
+    StorageRecordInvalid,
+)
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.natural_keys import TABLE_BY_STREAM
 from candleviewer.storage.questdb import recorded_reader
@@ -484,3 +488,33 @@ def test_a_symbol_that_is_no_plain_instrument_code_is_refused(symbol: str) -> No
 def test_the_range_templates_cannot_be_rebound_at_runtime() -> None:
     with pytest.raises(TypeError):
         RANGE_SQL[StreamKind.TRADES] = "SELECT * FROM trades"  # type: ignore[index]  # read-only map
+
+
+async def test_heatmap_cells_are_one_bounded_page_mapped_to_cells() -> None:
+    """E21-T03 (#606): the stored cells of a window, `LIMIT` the caller's page (C-2.18); a NULL
+    `samples`/`estimated` (before E21-T02) stays None."""
+    row = {"ts": NAIVE, "price": 100.5, "bid_size": 2.0, "ask_size": 0.0}
+    wire = FakePgWire([row | {"samples": 3, "estimated": True}, row | {"samples": None}])
+    cells = await QuestDbRecordedReader(wire).heatmap_cells("BTCUSDT", RNG, limit=2)
+    assert cells == [(1_500, 100.5, 2.0, 0.0, 3, True), (1_500, 100.5, 2.0, 0.0, None, None)]
+    assert wire.calls[0][0].endswith("ORDER BY ts LIMIT 2")
+    with pytest.raises(RecordedQueryRejected):
+        await QuestDbRecordedReader(wire).heatmap_cells("../x", RNG, limit=2)
+
+
+async def test_a_heatmap_size_that_is_not_a_number_fails_closed() -> None:
+    wire = FakePgWire([{"ts": NAIVE, "price": 1.0, "bid_size": math.nan, "ask_size": 0.0}])
+    with pytest.raises(StorageRecordInvalid, match="bid_size"):
+        await QuestDbRecordedReader(wire).heatmap_cells("BTCUSDT", RNG, limit=1)
+
+
+async def test_earliest_reads_the_first_cell_or_snapshot() -> None:
+    wire = FakePgWire([{"ts": NAIVE}])
+    reader = QuestDbRecordedReader(wire)
+    assert await reader.earliest("BTCUSDT", StreamKind.ORDERBOOK_SNAPSHOT) == 1_500
+    assert "FROM orderbook_snapshots" in wire.calls[0][0]
+    assert await QuestDbRecordedReader(FakePgWire()).earliest(
+        "BTCUSDT", StreamKind.HEATMAP_CELLS
+    ) is None  # fmt: skip
+    with pytest.raises(RecordedQueryRejected):
+        await reader.earliest("BTCUSDT", StreamKind.TRADES)

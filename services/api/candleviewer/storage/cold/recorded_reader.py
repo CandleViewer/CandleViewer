@@ -31,9 +31,10 @@ They come back ordered by `ts`, then part file, then row: the storage order the 
 from __future__ import annotations
 
 import asyncio
+import functools
 import re
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
@@ -62,8 +63,10 @@ from candleviewer.storage.errors import (
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
     BOOK_STREAMS,
+    HeatmapCell,
     RecordedEvent,
     RecordedQueryRejected,
+    cell_from_row,
     covered_parts,
     event_from_row,
     order_key,
@@ -97,6 +100,19 @@ DEFAULT_TIMEOUT_S: Final = 20.0
 #: How often a stopping read interrupts its scan again until the scan's thread has returned.
 _STOP_POLL_S: Final = 0.1
 _US_PER_DAY: Final = 24 * _US_PER_HOUR
+
+
+type _Rows = list[dict[str, object]]
+
+
+def _events(stream: StreamKind, rows: _Rows) -> list[RecordedEvent]:
+    return [event_from_row(stream, row) for row in rows]
+
+
+def _cells(rows: _Rows) -> list[HeatmapCell]:
+    """Worker thread: stored rows to cells, in storage order (a row a re-export left in two
+    parts is read twice; the caller keeps the copy read last, 21 Sec.5.3)."""
+    return [cell_from_row(row) for row in rows]
 
 
 def _too_many() -> ColdReplayReadError:
@@ -230,7 +246,9 @@ class _Scan:
         if self.stop.is_set():
             raise ColdReplayReadError("cold replay read stopped")
 
-    def run(self, sql: str, params: dict[str, object], stream: StreamKind) -> list[RecordedEvent]:
+    def run[T](
+        self, sql: str, params: dict[str, object], mapper: Callable[[_Rows], list[T]]
+    ) -> list[T]:
         """Worker thread: the scan, start to end. A DuckDB failure, at connect too, is typed
         and carries no chain: its text may name a path."""
         self._checkpoint()
@@ -251,10 +269,10 @@ class _Scan:
                 con.close()
         except duckdb.Error as exc:
             raise ColdReplayReadError(f"cold replay read failed: {type(exc).__name__}") from None
-        return [event_from_row(stream, row) for row in rows]
+        return mapper(rows)
 
 
-async def _stop(scan: _Scan, job: asyncio.Future[list[RecordedEvent]]) -> None:
+async def _stop[T](scan: _Scan, job: asyncio.Future[T]) -> None:
     """Stop `scan` and wait until its thread has returned, interrupting it again every
     `_STOP_POLL_S` (DuckDB drops an interrupt that arrives before a statement starts), through
     further cancellations: the last is re-raised once the thread has returned. A scan still
@@ -271,7 +289,7 @@ async def _stop(scan: _Scan, job: asyncio.Future[list[RecordedEvent]]) -> None:
         raise cancelled
 
 
-def _retrieve(job: asyncio.Future[list[RecordedEvent]]) -> None:
+def _retrieve[T](job: asyncio.Future[T]) -> None:
     """Mark a scan's outcome as seen: the read raises its own error for it."""
     if not job.cancelled():
         job.exception()
@@ -319,7 +337,38 @@ class ParquetRecordedReader:
         sql = _RANGE_SQL
         if stream in BOOK_STREAMS:
             sql, params["depth"] = _BOOK_RANGE_SQL, depth
-        return await self._query(sql, params, stream)
+        return await self._query(sql, params, functools.partial(_events, stream))
+
+    async def heatmap_cells(self, symbol: str, rng: TimeRange, *, limit: int) -> list[HeatmapCell]:
+        """E21-T03: the earliest `limit` stored `heatmap_cells` rows of `symbol` in `rng`, in
+        storage order, one per `(ts, price)` (`_cells`). The caller pages by `limit` (C-2.18)."""
+        if isinstance(limit, bool) or limit < 1:
+            raise RecordedQueryRejected("limit must be an int >= 1")
+        files = await self._files(symbol, StreamKind.HEATMAP_CELLS, rng.start_us, rng.end_us)
+        if not files:
+            return []
+        params: dict[str, object] = {
+            "files": files,
+            "lo": rng.start_us,
+            "hi": rng.end_us,
+            "n": limit,
+        }
+        return await self._query(_RANGE_SQL, params, _cells)
+
+    async def earliest(self, symbol: str, stream: StreamKind) -> int | None:
+        """E21-T03 `first_available`: the oldest manifest entry's start of `(symbol, stream)`,
+        from the earliest manifested partition holding one; None when nothing is archived."""
+        with _typed_listing():
+            return await asyncio.to_thread(self._earliest, symbol, stream)
+
+    def _earliest(self, symbol: str, stream: StreamKind) -> int | None:
+        for paths in self._registry.manifested_partitions(stream, symbol):  # oldest first
+            store = ManifestStore(paths.manifests_dir)
+            entries, _ = store.read_with_quarantine(paths.partition_dir, paths.root)
+            starts = [e.range_start_us for e in entries if type(e.range_start_us) is int]
+            if starts:
+                return min(starts)
+        return None
 
     async def snapshot_at(
         self, symbol: str, depth: int, at_us: int, *, not_before_us: int
@@ -335,7 +384,7 @@ class ParquetRecordedReader:
             "depth": depth,
             "n": _ANCHOR_ROWS,
         }
-        found = await self._query(_ANCHOR_SQL, params, stream)
+        found = await self._query(_ANCHOR_SQL, params, functools.partial(_events, stream))
         if len(found) == _ANCHOR_ROWS and found[0].ts_us == found[-1].ts_us:
             raise ColdReplayReadError(
                 "more snapshots share one instant than an anchor lookup reads"
@@ -406,13 +455,13 @@ class ParquetRecordedReader:
             self._verified.update(stamps)
         return [f.as_posix() for f in files]
 
-    async def _query(
-        self, sql: str, params: dict[str, object], stream: StreamKind
-    ) -> list[RecordedEvent]:
+    async def _query[T](
+        self, sql: str, params: dict[str, object], mapper: Callable[[_Rows], list[T]]
+    ) -> list[T]:
         async with self._sem:
             scan = _Scan(self._registry.root)
             try:
-                job = executor_future(self._pool, scan.run, sql, params, stream)
+                job = executor_future(self._pool, scan.run, sql, params, mapper)
             except RuntimeError:  # the pool is shut down
                 raise ColdReplayReadError("the cold reader is shut down") from None
             job.add_done_callback(_retrieve)

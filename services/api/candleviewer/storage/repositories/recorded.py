@@ -622,6 +622,33 @@ _MAPPERS: Final[dict[StreamKind, Callable[[_Row], _Mapped]]] = {
 }
 
 
+#: One stored `heatmap_cells` row (E21-T03, #606): `(ts_us, price, bid_size, ask_size, samples,
+#: estimated)`, the last two `None` on rows recorded before E21-T02 (21 Sec.4.12).
+type HeatmapCell = tuple[int, float, float, float, int | None, bool | None]
+
+
+def _finite(row: _Row, column: str) -> float:
+    value = row.get(column)
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        raise _invalid(column)
+    return float(value)
+
+
+def cell_from_row(row: Mapping[str, object]) -> HeatmapCell:
+    """One stored `heatmap_cells` row, either tier; a size or price that is not a finite number
+    fails closed with `StorageRecordInvalid`, naming the column."""
+    ts = row.get("ts")
+    samples, estimated = row.get("samples"), row.get("estimated")
+    return (
+        ts if type(ts) is int else _req_ts(row, "ts"),  # the cold tier selects epoch µs
+        _finite(row, "price"),
+        _finite(row, "bid_size"),
+        _finite(row, "ask_size"),
+        None if samples is None else int(_finite(row, "samples")),
+        None if estimated is None else bool(estimated),
+    )
+
+
 def event_from_row(stream: StreamKind, row: Mapping[str, object]) -> RecordedEvent:
     """Map one stored row of `stream` to its `RecordedEvent` (the tier-independent form).
 

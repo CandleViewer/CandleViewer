@@ -54,6 +54,7 @@ E09-S03-F1's implementation PR (#4743) serves `authLock`: 79.
 #909 S3c serves the frozen `previewTradeGroup`: 73, frozen 72.
 E29-T06 PR 1 (#914) adds the contract-first reconciliation pass and its `resolve`: 75.
 E02-T13 (#5181) serves the frozen `getSettings` and `updateSettings`: 73, frozen 70.
+E21-T03 (#606) serves the frozen `getHeatmap`: 72, frozen 69.
 Keep both caps tight: a contract PR that
 adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against current
 ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a PR that
@@ -85,8 +86,8 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 73
-FROZEN_BASELINE = 70
+PENDING_BASELINE = 72
+FROZEN_BASELINE = 69
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")
 ALLOW: dict[str, dict[str, dict[str, str]]] = json.loads(

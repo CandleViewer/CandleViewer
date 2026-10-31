@@ -155,6 +155,7 @@ from candleviewer.api.indicators import make_indicators_router
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
 from candleviewer.api.market_coverage import make_data_coverage_router
+from candleviewer.api.market_heatmap import make_market_heatmap_router
 from candleviewer.api.me import make_me_router
 from candleviewer.api.notifications import make_notifications_router
 from candleviewer.api.oms_reads import make_oms_reads_router
@@ -292,6 +293,7 @@ from candleviewer.health_wiring import (
     register_secrets_probe,
     register_write_behind_probe,
 )
+from candleviewer.heatmap_wiring import build_heatmap_wiring
 from candleviewer.import_wiring import build_import_runner
 from candleviewer.ingestion.book_supervisor import B14BookSupervisor
 from candleviewer.ingestion.clock import ClockGuard, ServerTimeFetcher, rest_client_fetcher
@@ -3218,6 +3220,20 @@ def create_app(
             lambda: coverage_service,
             principal_resolver=audit_resolver,
             symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
+        )
+    )
+    # E21-T03 (#606): `/market/heatmap` from recorded history (503 off the `real` backend); its
+    # QuestDB wire and cold reader close with ingestion.
+    heatmap = build_heatmap_wiring(resolved)
+    if heatmap is not None:
+        ctx.ingestion.attach_closer(heatmap.aclose)
+    app.include_router(
+        make_market_heatmap_router(
+            lambda: heatmap.reader if heatmap is not None else None,
+            principal_resolver=audit_resolver,
+            symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
+            tick_size=lambda sym: _catalogue_tick_size(ctx, sym),
+            now_us=lambda: time.time_ns() // 1000,
         )
     )
     # E08-S01-2: served from the scheduler's in-memory snapshot; `503` until
