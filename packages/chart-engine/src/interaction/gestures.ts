@@ -1,16 +1,17 @@
 // The worker half of the InputRouter (E11-S04 PR 1, 26 §3.11, README BQ-99 to BQ-103): packed
 // rows become viewport changes, routed by the layout's rects. The plot pans time on a drag and
 // zooms time at the cursor on a wheel (Ctrl+wheel, a trackpad pinch, too: BQ-100); the time axis
-// changes `barSpacing` about the plot's right edge; the price axis and a vertical plot drag are
-// no-ops until E11-S05 (G-5). Two touches pinch about their midpoint. Only a one-pointer plot drag
-// coasts. Keys go through the navigator (PR 2, BQ-106 to BQ-109); a reduced-motion release
-// never coasts (BQ-104). DOM-free and allocation-free per row.
+// changes `barSpacing` about the plot's right edge. E11-S05 (BQ-122, closes G-5): the price axis's
+// drag and wheel zoom price about the pointer and engage the lock, its double-click restores auto,
+// and a vertical plot drag pans price only while locked. Two touches pinch about their midpoint.
+// Only a one-pointer plot drag coasts. Keys go through the navigator (PR 2, BQ-106 to BQ-109); a
+// reduced-motion release never coasts (BQ-104). DOM-free and allocation-free per row.
 import { DEFAULT_BAR_SPACING, type ChartViewport } from "../viewport/Viewport.js";
 import { INPUT, INPUT_STRIDE, KEY } from "../worker/protocol.js";
 import { Momentum } from "./momentum.js";
 import { navigate, resetView } from "./navigator.js";
 import { VelocityEstimator } from "./velocity.js";
-import { axisDragFactor, MOD, REGION, regionAt, wheelFactor } from "./wheel.js";
+import { axisDragFactor, MOD, priceDragFactor, REGION, regionAt, wheelFactor } from "./wheel.js";
 
 export interface GestureSink {
   /** A viewport setter ran; `changed` is its result. */
@@ -21,7 +22,9 @@ export interface GestureSink {
   animate(m: Momentum): void;
 }
 
-const Drag = { none: 0, pan: 1, spacing: 2 } as const;
+const Drag = { none: 0, pan: 1, spacing: 2, price: 3 } as const;
+/** The pane the price gestures act on: the runtime lays out one pane (BQ-45, E11-S09). */
+const PANE = 0;
 
 export class Gestures {
   readonly velocity = new VelocityEstimator();
@@ -34,6 +37,9 @@ export class Gestures {
   pointerX = Number.NaN;
   private drag: number = Drag.none;
   private dragX = 0;
+  private dragY = 0;
+  /** A price-axis drag zooms about the y it started at. */
+  private anchorY = 0;
   private pinched = false;
   /** Two touch slots: pointer ids (NaN when free) and their last x. */
   private readonly ids = new Float64Array([Number.NaN, Number.NaN]);
@@ -98,8 +104,17 @@ export class Gestures {
       }
     }
     const r = this.region(x, y);
-    this.drag = r === REGION.plot ? Drag.pan : r === REGION.time ? Drag.spacing : Drag.none;
+    this.drag =
+      r === REGION.plot
+        ? Drag.pan
+        : r === REGION.time
+          ? Drag.spacing
+          : r === REGION.price
+            ? Drag.price
+            : Drag.none;
     this.dragX = x;
+    this.dragY = y;
+    this.anchorY = y;
   }
 
   private move(touch: boolean, x: number, y: number, b: number, dt: number): void {
@@ -107,20 +122,25 @@ export class Gestures {
     if (touch) {
       const slot = this.ids[0] === b ? 0 : this.ids[1] === b ? 1 : -1;
       if (slot >= 0 && !Number.isNaN(this.ids[1 - slot] as number)) this.pinch(slot, x);
-      else if (slot >= 0) this.dragTo(x, dt);
-    } else if ((b & 1) === 1) this.dragTo(x, dt);
+      else if (slot >= 0) this.dragTo(x, y, dt);
+    } else if ((b & 1) === 1) this.dragTo(x, y, dt);
     this.sink.hover(x);
   }
 
-  private dragTo(x: number, dt: number): void {
+  private dragTo(x: number, y: number, dt: number): void {
     const dx = x - this.dragX;
+    const dy = y - this.dragY;
     this.dragX = x;
+    this.dragY = y;
     const vp = this.vp;
     if (this.drag === Drag.pan) {
-      this.sink.moved(vp.pan(dx)); // time only: a vertical drag is inert (G-5)
+      this.sink.moved(vp.pan(dx));
+      this.sink.moved(vp.panPrice(PANE, dy)); // inert while autoscale is on (E11-D01 D2)
       this.velocity.sample(dx, dt);
     } else if (this.drag === Drag.spacing) {
       this.sink.moved(vp.zoomAt(vp.plotWidth, axisDragFactor(dx)));
+    } else if (this.drag === Drag.price && dy !== 0) {
+      this.sink.moved(vp.zoomPrice(PANE, this.anchorY, priceDragFactor(dy))); // locks
     }
   }
 
@@ -164,21 +184,22 @@ export class Gestures {
   private wheel(x: number, y: number, px: number, mods: number): void {
     this.stop();
     const r = this.region(x, y);
-    if (r === REGION.price) return; // price zoom is E11-S05's (G-5); the host prevented default
     const vp = this.vp;
     if ((mods & MOD.pan) !== 0) this.sink.moved(vp.pan(-px));
+    else if (r === REGION.price)
+      this.sink.moved(vp.zoomPrice(PANE, y, wheelFactor(px))); // locks
     else this.sink.moved(vp.zoomAt(r === REGION.time ? vp.plotWidth : x, wheelFactor(px)));
   }
 
   private dblclick(x: number, y: number): void {
     this.stop();
     const vp = this.vp;
-    const r = this.region(x, y); // the price axis's reset is E11-S05's (G-5)
+    const r = this.region(x, y);
     if (r === REGION.plot)
-      this.sink.moved(resetView(vp)); // as `Ctrl+Home` (BQ-107)
+      this.sink.moved(resetView(vp)); // as `Ctrl+Home` (BQ-107), autoscale included (BQ-119)
     else if (r === REGION.time) {
       this.sink.moved(vp.zoomAt(vp.plotWidth, DEFAULT_BAR_SPACING / vp.barSpacing));
-    }
+    } else this.sink.moved(vp.setScale(PANE, { auto: true })); // the price axis restores auto
   }
 
   /**

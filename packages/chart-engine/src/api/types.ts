@@ -238,6 +238,18 @@ export type PaneId = string & { readonly __brand: "PaneId" };
 export interface PaneOptions {
   /** Share of the chart height, in (0, 1]; default 1. */
   heightRatio?: number;
+  /**
+   * E11-S05 (README BQ-121, C-35): the persisted scale, applied at `addPane`; the lock is session
+   * state and never part of it.
+   */
+  priceScale?: {
+    mode?: "linear" | "log" | "percent" | "indexed";
+    inverted?: boolean;
+    includeDrawings?: boolean;
+    priceOnly?: boolean;
+    marginTop?: number;
+    marginBottom?: number;
+  };
 }
 
 export type Unsubscribe = () => void;
@@ -261,7 +273,34 @@ export interface TimeScale {
 
 export interface PriceScale {
   getVisibleRange(): PriceRange | null;
+  /** `false` is the lock (E11-D03: auto is the Lock's off state, C-30). */
   setAutoScale(on: boolean): void;
+  // E11-S05 (README BQ-121): widened with inline literal types; §8's verbatim block is untouched.
+  /** Log while unavailable is refused and the mode stays (`getState().logReason` says why). */
+  setMode(mode: "linear" | "log" | "percent" | "indexed"): void;
+  setInverted(on: boolean): void;
+  /** Margins are fractions of the window, each in [0, 0.45]; a RangeError otherwise. */
+  setOptions(opts: {
+    includeDrawings?: boolean;
+    priceOnly?: boolean;
+    marginTop?: number;
+    marginBottom?: number;
+  }): void;
+  /** The state the renderer last reported (`requestedMode` is what the app persists). */
+  getState(): {
+    mode: "linear" | "log" | "percent" | "indexed";
+    requestedMode: "linear" | "log" | "percent" | "indexed";
+    inverted: boolean;
+    autoScale: boolean;
+    includeDrawings: boolean;
+    priceOnly: boolean;
+    marginTop: number;
+    marginBottom: number;
+    logAvailable: boolean;
+    logReason: "non-positive" | "no-price-origin" | null;
+    /** Percent / indexed: the anchor bar's close in ticks; null when none. */
+    anchorTick: number | null;
+  };
 }
 
 export interface OverlayHandle {

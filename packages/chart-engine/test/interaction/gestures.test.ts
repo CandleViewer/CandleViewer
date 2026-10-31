@@ -12,6 +12,7 @@ import {
   DEFAULT_BAR_SPACING,
   indexToScreen,
   screenToIndex,
+  screenToPrice,
 } from "../../src/viewport/index.js";
 import { INPUT, KEY } from "../../src/worker/protocol.js";
 import { TestClock } from "../scene/test-clock.js";
@@ -24,6 +25,8 @@ const { down, move, up, cancel, wheel, dblclick, key } = INPUT;
 function chart() {
   const vp = new ChartViewport(minuteMap(5000));
   vp.setSize(plotWidthOf(SIZE.width), 600, 1);
+  vp.setPanePlot(0, 0, 600);
+  vp.setPriceRange(0, 1_000, 1_100);
   vp.pan(-2000 * vp.barSpacing); // bar 2000 at the left edge: room both ways
   const clock = new TestClock();
   const scheduler = new FrameScheduler(new SceneGraph(), clock);
@@ -61,11 +64,18 @@ describe("drag and coast on the plot", () => {
     expect((released - vp.leftIndex) * vp.barSpacing).toBeCloseTo(v0 * MOMENTUM.tauMs, 6);
   });
 
-  it("a vertical plot drag is inert while autoscale is always on (G-5)", () => {
+  it("a vertical plot drag is inert while autoscale is on and pans price once locked", () => {
     const { vp, mouse, changes } = chart();
     const at = vp.leftIndex;
-    mouse([down, 300, 100, 1, 0, 0], [move, 300, 400, 1, 0, 8], [up, 300, 400, 0, 0, 8]);
-    expect([vp.leftIndex, changes()]).toEqual([at, 0]);
+    const drag = (): void =>
+      mouse([down, 300, 100, 1, 0, 0], [move, 300, 400, 1, 0, 8], [up, 300, 400, 0, 0, 8]);
+    drag();
+    expect([vp.leftIndex, changes(), vp.panes[0]?.priceLow]).toEqual([at, 0, 1_000]);
+    vp.setScale(0, { auto: false }); // E11-D01 D2: only a locked scale pans price
+    drag();
+    expect(vp.leftIndex).toBe(at);
+    expect(vp.panes[0]?.priceLow).toBeCloseTo(1_050, 9); // 300 px of 600 is half the window
+    expect(changes()).toBe(1);
   });
 });
 
@@ -202,12 +212,26 @@ describe("axes (BQ-101): the time axis changes barSpacing at the plot's right ed
     expect(rightBar(vp)).toBeCloseTo(right, 9);
   });
 
-  it("the price axis's wheel, drag and double-click are no-ops", () => {
-    const { vp, mouse, changes } = chart();
+  it("Scenario: Manual drag disengages autoscale and is reversible", () => {
+    const { vp, mouse } = chart();
+    const p = vp.panes[0];
     const before = [vp.leftIndex, vp.barSpacing];
-    mouse([wheel, 1030, 300, -100, 0, 0], [dblclick, 1030, 300, 0, 0, 0]);
-    mouse([down, 1030, 300, 1, 0, 0], [move, 900, 300, 1, 0, 8], [up, 900, 300, 0, 0, 8]);
-    expect([vp.leftIndex, vp.barSpacing, changes()]).toEqual([...before, 0]);
+    // A drag up the price axis zooms price in about where it started, and locks the scale.
+    mouse([down, 1030, 150, 1, 0, 0], [move, 900, 50, 1, 0, 8], [up, 900, 50, 0, 0, 8]);
+    expect(p?.autoScale).toBe(false);
+    expect([vp.leftIndex, vp.barSpacing]).toEqual(before); // time is untouched
+    expect(screenToPrice(vp, 0, 150)).toBeCloseTo(1_075, 9);
+    expect((p?.priceHigh ?? 0) - (p?.priceLow ?? 0)).toBeCloseTo(100 * Math.exp(-0.5), 9);
+    mouse([dblclick, 1030, 300, 0, 0, 0]); // the gutter's double-click restores auto-fit
+    expect(p?.autoScale).toBe(true);
+    mouse([wheel, 1030, 300, -100, 0, 0]); // a wheel over the gutter zooms price and locks
+    expect(p?.autoScale).toBe(false);
+    expect((p?.priceHigh ?? 0) - (p?.priceLow ?? 0)).toBeCloseTo(
+      100 * Math.exp(-0.5) * Math.exp(-0.2),
+      9,
+    );
+    mouse([dblclick, 500, 300, 0, 0, 0]); // the plot's reset view re-enables auto too
+    expect(p?.autoScale).toBe(true);
   });
 
   it("a plot double-click is Ctrl+Home: the default spacing and the latest bar (BQ-107)", () => {

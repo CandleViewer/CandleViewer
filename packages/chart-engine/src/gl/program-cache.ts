@@ -86,16 +86,18 @@ export class ProgramCache {
   setUniforms(id: number, block: PaneUniforms): void {
     const u = this.use(id).uniforms;
     const { ints: i, floats: f } = block;
-    // No per-frame closure (31-chart-engine): the four locations are read and tested inline.
+    // No per-frame closure (31-chart-engine): the five locations are read and tested inline.
     const ib = u["u_indexBase"];
     const tb = u["u_tickBase"];
     const k = u["u_k"];
     const vp = u["u_viewport"];
+    const lg = u["u_log"];
     if (ib !== undefined && ib !== null) this.gl.uniform1i(ib, i[0] ?? 0);
     if (tb !== undefined && tb !== null) this.gl.uniform1i(tb, i[1] ?? 0);
     if (k !== undefined && k !== null)
       this.gl.uniform4f(k, f[0] ?? 0, f[1] ?? 0, f[2] ?? 0, f[3] ?? 0);
     if (vp !== undefined && vp !== null) this.gl.uniform2f(vp, f[4] ?? 0, f[5] ?? 0);
+    if (lg !== undefined && lg !== null) this.gl.uniform2f(lg, f[6] ?? 0, f[7] ?? 0); // E11-S05
   }
 
   private compile(id: number): LinkedProgram {

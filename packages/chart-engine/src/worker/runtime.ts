@@ -14,8 +14,10 @@ import { Gestures } from "../interaction/gestures.js";
 import { plotWidthOf } from "../interaction/wheel.js";
 import * as scene from "../scene/index.js";
 import {
+  AutoScaler,
   ChartViewport,
   createPaneUniforms,
+  type PriceExtentSource,
   type IndexTimeMap,
   type PaneUniforms,
   screenToTime,
@@ -65,6 +67,8 @@ export interface RuntimeDeps {
   probe(): CapabilityReport;
   /** Test-only (E11-S04, BQ-111): bars for every chart's viewport until E12 wires the store. */
   readonly timeMap?: IndexTimeMap;
+  /** Internal (E11-S05, BQ-116): pane 0's price sources for autoscale until E12 attaches them. */
+  readonly priceSources?: readonly PriceExtentSource[];
 }
 
 export interface RenderRuntime {
@@ -84,6 +88,8 @@ interface Instance {
   readonly config: ChartConfig;
   /** The shared transform (E11-S03): pan, zoom and `setViewport` all go through it. */
   readonly viewport: ChartViewport;
+  /** Autoscale, the log guard and the anchor, once per frame before the uniforms (E11-S05). */
+  readonly autoscale: AutoScaler;
   /** Pane 0's GPU block, rewritten once per frame before submission. */
   readonly uniforms: PaneUniforms;
   ready: boolean;
@@ -298,6 +304,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "setMotion":
         inst.gestures.setMotion(cmd.reduce); // the engine never reads the media query (BQ-104)
         return;
+      case "setPriceScale":
+        moved(inst, inst.viewport.setScale(cmd.pane, cmd)); // TRANSFORM only: no data refetch
+        return;
       case "pickAt": {
         // No HitIndex yet (E11-S08): every pick is a miss, reported once (edge-triggered).
         const key = "none";
@@ -368,6 +377,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         config: msg.config,
         viewport,
         uniforms: createPaneUniforms(),
+        autoscale: new AutoScaler(viewport, (pane) =>
+          pane === 0 ? (deps.priceSources ?? []) : [],
+        ),
         ready: false,
         viewportDirty: false,
         summary: "",
@@ -413,6 +425,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         const n = msg.layout.count;
         if (msg.op === "replace") inst.elements[msg.store] = n;
         else if (msg.op !== "patch") inst.elements[msg.store] += n;
+        // BQ-115: a bars batch's params are [priceOrigin, tickSize], the main series' (pane 0).
+        const [origin, tick] = msg.layout.params;
+        if (msg.store === "bars" && origin !== undefined && tick !== undefined) {
+          moved(inst, inst.viewport.setPriceInfo(0, origin, tick));
+        }
         deps.post({ t: "ack", id: inst.id, store: msg.store });
         touch(inst);
         return;
@@ -434,6 +451,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       deps.post({ t: "ready", id: inst.id, runMode: deps.runMode, renderProfile, capabilities });
     }
     const { width, height } = inst.canvas;
+    // At most one refit per pane per frame, and only when a key changed (BQ-116).
+    if (inst.autoscale.update()) inst.viewportDirty = true;
     if (backend !== null && backend.failure === null) {
       writePaneUniforms(inst.viewport, 0, inst.uniforms); // once per pane per frame (§3.5)
       // The clip space spans the canvas; the plot is its left part, so x maps unchanged (BQ-101).
@@ -465,6 +484,14 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         priceLow: pane?.priceLow ?? 0,
         priceHigh: pane?.priceHigh ?? 0,
         barSpacing: vp.barSpacing,
+        pane: 0,
+        mode: pane?.scaleMode ?? "linear",
+        requestedMode: pane?.requestedMode ?? "linear",
+        inverted: pane?.inverted ?? false,
+        autoScale: pane?.autoScale ?? true,
+        logAvailable: pane?.logReason === null,
+        logReason: pane?.logReason ?? null,
+        anchorTick: Number.isFinite(pane?.anchorTick) ? (pane?.anchorTick ?? null) : null,
       });
     }
     if (inst.a11yDirty) {

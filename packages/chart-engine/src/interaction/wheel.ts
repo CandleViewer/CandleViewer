@@ -9,6 +9,9 @@ export const WHEEL_ZOOM_PER_PX = 0.002;
 /** A time-axis drag's spacing change: `exp(dx · k)`, a drag right widens the bars. */
 export const AXIS_DRAG_PER_PX = 0.005;
 
+/** A price-axis drag's zoom (E11-S05, BQ-122): `exp(-dy · k)`, so a drag up zooms price in. */
+export const PRICE_DRAG_PER_PX = 0.005;
+
 /** The modifiers column: Shift, Ctrl, Alt, Meta and, on a wheel row, its pan class (BQ-99). */
 export const MOD = { shift: 1, ctrl: 2, alt: 4, meta: 8, pan: 16 } as const;
 
@@ -35,3 +38,4 @@ export function wheelPx(delta: number, mode: number, pageHeight: number): number
 
 export const wheelFactor = (px: number): number => Math.exp(-px * WHEEL_ZOOM_PER_PX);
 export const axisDragFactor = (dxPx: number): number => Math.exp(dxPx * AXIS_DRAG_PER_PX);
+export const priceDragFactor = (dyPx: number): number => Math.exp(-dyPx * PRICE_DRAG_PER_PX);

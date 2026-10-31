@@ -82,6 +82,10 @@ export interface BufferLayout {
   readonly params: readonly number[];
 }
 
+/** E11-S05's price-scale modes (BQ-118); percent and indexed draw as linear and relabel. */
+export type ScaleModeName = "linear" | "log" | "percent" | "indexed";
+const SCALE_MODES: ReadonlySet<unknown> = new Set(["linear", "log", "percent", "indexed"]);
+
 export type Command =
   | { readonly k: "setViewport"; readonly timeStart: number; readonly timeEnd: number }
   | { readonly k: "setSeriesOptions"; readonly series: number; readonly options: object }
@@ -91,6 +95,19 @@ export type Command =
   /** The app's resolved motion mode changed (E11-S04 BQ-104): `reduce` stops a glide. */
   | { readonly k: "setMotion"; readonly reduce: boolean }
   | { readonly k: "pickAt"; readonly x: number; readonly y: number }
+  /** E11-S05 (BQ-124, additive): one pane's scale; `auto: false` is the lock. */
+  | {
+      readonly k: "setPriceScale";
+      readonly pane: number;
+      readonly mode?: ScaleModeName;
+      readonly inverted?: boolean;
+      readonly auto?: boolean;
+      readonly includeDrawings?: boolean;
+      readonly priceOnly?: boolean;
+      /** Fractions of the window, each in [0, 0.45] (BQ-117). */
+      readonly marginTop?: number;
+      readonly marginBottom?: number;
+    }
   | { readonly k: "export"; readonly reqId: number }
   | { readonly k: "release" };
 
@@ -179,6 +196,17 @@ export type FromWorker =
       readonly priceLow: number;
       readonly priceHigh: number;
       readonly barSpacing: number;
+      /** E11-S05 (BQ-124, additive): the reported pane's scale state (pane 0 until E11-S09). */
+      readonly pane: number;
+      readonly mode: ScaleModeName;
+      readonly requestedMode: ScaleModeName;
+      readonly inverted: boolean;
+      readonly autoScale: boolean;
+      readonly logAvailable: boolean;
+      /** BQ-120: why log is unavailable, a code (the UI owns the copy, C-32). */
+      readonly logReason: "non-positive" | "no-price-origin" | null;
+      /** Percent / indexed: the anchor bar's close in ticks; null when none. */
+      readonly anchorTick: number | null;
     }
   | { readonly t: "a11y"; readonly id: ChartId; readonly cursorSummary: string }
   | {
@@ -280,6 +308,22 @@ export function layoutBytes(layout: unknown, byteLength: number): number {
   return total;
 }
 
+const optional = (v: unknown, ok: (v: unknown) => boolean): boolean => v === undefined || ok(v);
+const isBool = (v: unknown): boolean => typeof v === "boolean";
+const isMargin = (v: unknown): boolean => finite(v) && v >= 0 && v <= 0.45;
+
+/** BQ-124: a pane index, a known mode, booleans and margins in [0, 0.45], nothing else. */
+function validScale(cmd: Record<string, unknown>): boolean {
+  return (
+    Number.isSafeInteger(cmd["pane"]) &&
+    (cmd["pane"] as number) >= 0 &&
+    optional(cmd["mode"], (v) => SCALE_MODES.has(v)) &&
+    ["inverted", "auto", "includeDrawings", "priceOnly"].every((f) => optional(cmd[f], isBool)) &&
+    optional(cmd["marginTop"], isMargin) &&
+    optional(cmd["marginBottom"], isMargin)
+  );
+}
+
 function validCommand(cmd: unknown): boolean {
   if (!isObj(cmd)) return false;
   switch (cmd["k"]) {
@@ -304,6 +348,8 @@ function validCommand(cmd: unknown): boolean {
       return finite(cmd["x"]) && finite(cmd["y"]);
     case "export":
       return Number.isSafeInteger(cmd["reqId"]);
+    case "setPriceScale":
+      return validScale(cmd);
     case "release":
       return true;
     default:

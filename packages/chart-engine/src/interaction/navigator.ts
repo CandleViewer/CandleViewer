@@ -43,8 +43,14 @@ export function toEnd(vp: ChartViewport, spacing = vp.barSpacing): boolean {
   return vp.scrollTo(vp.map.length + offset - visible, spacing);
 }
 
-/** `Ctrl+Home` and the plot's double-click: the default spacing, then `End` (autoscale: G-5). */
-export const resetView = (vp: ChartViewport): boolean => toEnd(vp, DEFAULT_BAR_SPACING);
+/**
+ * `Ctrl+Home` and the plot's double-click: the default spacing, then `End`, and every locked pane
+ * back to auto (E11-S05 BQ-119; `Ctrl+Home` stays a time reset, BQ-123).
+ */
+export function resetView(vp: ChartViewport): boolean {
+  const moved = toEnd(vp, DEFAULT_BAR_SPACING);
+  return vp.restoreAuto() || moved;
+}
 
 /** The `+/-` anchor: the pointer's last plot x, else the latest bar, else the right edge. */
 export function zoomAnchor(vp: ChartViewport, pointerX: number): number {
