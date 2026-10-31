@@ -8,6 +8,7 @@
  * routes this ticket owns (login/logout/403/404/settings-hub redirect)
  * render minimal placeholders.
  */
+import type { ComponentType } from "react";
 import { createBrowserRouter, redirect, type RouteObject } from "react-router";
 import { ROUTE_MANIFEST, type ManifestEntry } from "./manifest";
 import { ROUTE_TITLES, type TitleHandle } from "./titles";
@@ -30,7 +31,6 @@ import { SessionsSection } from "../features/session/SessionsSection";
 import { getMeClaims } from "../lib/auth/meCache";
 import { ShellLayout } from "../features/app-shell/ShellLayout";
 import { ScreenRoot } from "../features/app-shell/ScreenRoot";
-import { WatchlistRoute } from "../features/watchlist/WatchlistRoute";
 
 function elementFor(routeId: string, owner: string | null): RouteObject["element"] {
   if (routeId === "R-900") return <ForbiddenState />;
@@ -57,8 +57,6 @@ function elementFor(routeId: string, owner: string | null): RouteObject["element
       </ScreenRoot>
     );
   if (routeId === "R-303") return <AdminInviteScreen />;
-  // R-111 hosts SCR-100 as a routed page until E15's pane host (#4702 pre-ruling 1); the manifest's owner stays.
-  if (routeId === "R-111") return <WatchlistRoute />;
   if (routeId === "R-101") {
     // First sign-in lands on /terminal/last -> here; the card is server-gated (401 => renders nothing).
     return (
@@ -74,11 +72,35 @@ function elementFor(routeId: string, owner: string | null): RouteObject["element
   return <StubRoute routeId={routeId} owner={owner} />;
 }
 
+/** SCR-100's page (and SCR-101 over it), its feature's own chunk. */
+async function watchlistScreen(): Promise<{ Component: ComponentType }> {
+  const { WatchlistRoute } = await import("../features/watchlist/WatchlistRoute");
+  return { Component: WatchlistRoute };
+}
+
+/**
+ * Screens loaded on first visit (C-14.3; `.claude/rules/30-frontend-react.md`: feature routes load lazily), by route
+ * id. React Router's route `lazy` resolves the screen before the navigation commits, so the shell's route focus finds
+ * its `h1` as it finds an eager screen's; the guard (the static `loader`) and the manifest's access are unchanged.
+ */
+const LAZY_SCREENS: Readonly<Record<string, RouteObject["lazy"]>> = {
+  // R-111 hosts SCR-100 as a routed page until E15's pane host (#4702 pre-ruling 1), and R-110 opens SCR-101 (its
+  // `?modal=watchlists`, E08-D07 D24); the manifest's owner stays.
+  "R-110": watchlistScreen,
+  "R-111": watchlistScreen,
+};
+
+/** A route's screen: loaded on first visit (`LAZY_SCREENS`), else its element. */
+function screenOf(entry: ManifestEntry): Pick<RouteObject, "element" | "lazy"> {
+  const lazy = LAZY_SCREENS[entry.id];
+  return lazy === undefined ? { element: elementFor(entry.id, entry.owner) } : { lazy };
+}
+
 function buildRoutes(): RouteObject[] {
   const toRoute = (entry: ManifestEntry): RouteObject => ({
     id: entry.id,
     path: entry.path,
-    element: elementFor(entry.id, entry.owner),
+    ...screenOf(entry),
     errorElement: <RouteErrorElement />,
     // D-01 (WCAG 2.4.2): the page title `syncDocumentTitle` applies on every navigation
     handle: { title: ROUTE_TITLES[entry.id] } satisfies TitleHandle,

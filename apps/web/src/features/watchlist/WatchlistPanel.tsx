@@ -10,10 +10,15 @@
  *   until the ticker snapshot after the reconnect, and while the shell holds no WS client, one attribute on the panel
  *   demoting every row. It is never a scrim and gates no control (C-13); the connection region announces it, so the
  *   panel says nothing of it.
- * - Each list a view saves comes back here, so the next view of it shows it and saves against its version (C-2.12).
+ * - Each list a view saves comes back here, so the next view of it shows it and saves against its version (C-2.12); so
+ *   does each list SCR-101 stores (`sync`), and its closing reads the lists again (a deleted list goes then).
  * - The panel owns no live region (D17): it says through the app's one announcer, and its gated controls' refusals go
  *   there too (#5146's hand-off: the shell's own provider is a no-op).
+ * - Its root is the Watchlist focus context (`keymap.json`; E08-D07 §6.2): `Del`, `Alt+↑/↓` and `Ctrl+F` are its
+ *   rows, remappable, and the window keymap never runs or reports another view's command on them (`keys`).
  * - Ports: the sync group (E15-S04), the pane host and the pane settings (E15), each with a default (pre-ruling 2).
+ * - SCR-101 (#4702 PR (c)): the tab menu's "+", Rename, Duplicate, Delete… and "Manage watchlists…", "Create
+ *   watchlist", the empty list's "Import a list" and the add popover's "Paste several…" open it, each with its intent.
  */
 import {
   useCallback,
@@ -41,8 +46,10 @@ import { reportWatchlist } from "./analytics";
 import { COPY } from "./copy";
 import type { PricePrefs } from "./focusedLast";
 import { useInstrumentFacts, useListLookups, type InstrumentSource } from "./instruments";
+import { WATCHLIST_CONTEXT, useWatchlistKeys } from "./keys";
 import type { Watchlist } from "./listEdits";
 import { ListView } from "./ListView";
+import { managerHref, type ManagerIntent } from "./manager/intent";
 import {
   NO_PANEL_HOST,
   NO_SYNC_GROUP,
@@ -51,12 +58,10 @@ import {
   type PanelHostPort,
   type SyncGroupPort,
 } from "./ports";
+import { upsertList, type WatchlistSync } from "./sync";
 import { useSecondClock } from "./ticker/secondClock";
 import type { HubState, TickerHub } from "./ticker/tickerHub";
 import type { WatchlistApi } from "./watchlistApi";
-
-/** R-110: SCR-101, the manager (#4702 PR c), and the paths to it. */
-export const MANAGER_HREF = "/watchlist";
 
 const PANEL: CSSProperties = {
   display: "flex",
@@ -97,8 +102,10 @@ export interface WatchlistPanelProps {
   readonly readOnly?: boolean;
   /** A tab, or a list from "More lists": the page shows that list. */
   readonly onSwitchList?: (id: string) => void;
-  /** "+", Rename, Duplicate, Delete…, "Manage watchlists…" and "Create watchlist": SCR-101 (#4702 PR c). */
-  readonly onManage?: () => void;
+  /** SCR-101 (#4702 PR (c)), with what the path asks of it. */
+  readonly onManage?: (intent: ManagerIntent) => void;
+  /** What SCR-101 stores and its closing (the lists read again then). */
+  readonly sync?: WatchlistSync;
   /** The lists loaded and `listId` is none of them. */
   readonly onMissing?: () => void;
 }
@@ -199,6 +206,7 @@ export function WatchlistPanel(props: WatchlistPanelProps): JSX.Element | null {
   );
 
   const facts = useInstrumentFacts(instruments);
+  useWatchlistKeys();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -240,6 +248,21 @@ export function WatchlistPanel(props: WatchlistPanelProps): JSX.Element | null {
         : current,
     );
   }, []);
+  // SCR-101's lists: each it stores replaces or joins the ones read (never an older version); its closing reads again.
+  const { sync } = props;
+  useEffect(
+    () =>
+      sync?.subscribe((change) => {
+        if (change.kind === "reread") void refresh();
+        else
+          setLoad((current) =>
+            current.kind === "ready"
+              ? { kind: "ready", lists: upsertList(current.lists, change.list) }
+              : current,
+          );
+      }),
+    [sync, refresh],
+  );
   const retryIndex = useCallback(() => instruments.reread(), [instruments]);
   // E08-S09's index failed: no symbol is known to trade, so none is live; said once as it fails (§4.2 Errors).
   const indexFailed = facts.snapshot.phase === "failed";
@@ -281,6 +304,7 @@ export function WatchlistPanel(props: WatchlistPanelProps): JSX.Element | null {
   const [count, setCount] = useState<{ readonly id: string; readonly n: number } | null>(null);
   const onCount = useCallback((n: number) => setCount({ id: listId, n }), [listId]);
   const onManage = props.onManage ?? (() => undefined);
+  const manage = (intent: ManagerIntent) => () => onManage(intent);
 
   if (missing) return null;
   const columns = watchlistColumns(WATCHLIST_DEFAULT_COLUMNS, {
@@ -288,7 +312,7 @@ export function WatchlistPanel(props: WatchlistPanelProps): JSX.Element | null {
   });
   if (load.kind !== "ready" || facts.snapshot.phase === "loading") {
     return (
-      <section aria-label={COPY.title} style={PANEL}>
+      <section aria-label={COPY.title} style={PANEL} data-keymap-context={WATCHLIST_CONTEXT}>
         <Table<string>
           grid
           caption={COPY.title}
@@ -307,14 +331,14 @@ export function WatchlistPanel(props: WatchlistPanelProps): JSX.Element | null {
   }
   if (list === undefined) {
     return (
-      <section aria-label={COPY.title} style={PANEL}>
+      <section aria-label={COPY.title} style={PANEL} data-keymap-context={WATCHLIST_CONTEXT}>
         {readOnly ? (
           // The sentence form (E09-D09 §2.2): the reason alone, no button.
           <EmptyState title={COPY.noListsReadOnly} description={COPY.writeReason} />
         ) : (
           <EmptyState
             title={COPY.noListsTitle}
-            actions={[{ label: COPY.createList, onClick: onManage }]}
+            actions={[{ label: COPY.createList, onClick: manage({ kind: "create" }) }]}
           />
         )}
       </section>
@@ -329,6 +353,7 @@ export function WatchlistPanel(props: WatchlistPanelProps): JSX.Element | null {
     <section
       aria-label={COPY.region(list.name)}
       style={PANEL}
+      data-keymap-context={WATCHLIST_CONTEXT}
       data-cv-feed={down ? "disconnected" : undefined}
     >
       <GatedAnnounceProvider announce={say}>
@@ -338,11 +363,11 @@ export function WatchlistPanel(props: WatchlistPanelProps): JSX.Element | null {
           counts={counts}
           activeId={list.id}
           onSwitch={(id) => props.onSwitchList?.(id)}
-          onCreate={onManage}
-          onRename={onManage}
-          onDuplicate={onManage}
-          onDelete={onManage}
-          onManage={onManage}
+          onCreate={manage({ kind: "create" })}
+          onRename={(id) => onManage({ kind: "rename", listId: id })}
+          onDuplicate={(id) => onManage({ kind: "duplicate", listId: id })}
+          onDelete={(id) => onManage({ kind: "delete", listId: id })}
+          onManage={manage({ kind: "open", listId: list.id })}
           headerEnd={<PanelStatus id={statusId} hub={hub} down={down} paused={paused} />}
           {...(writeReason === undefined ? {} : { writeReason, writeReasonId: noticeId })}
         >
@@ -368,7 +393,8 @@ export function WatchlistPanel(props: WatchlistPanelProps): JSX.Element | null {
             onSaved={onSaved}
             onRefresh={refresh}
             onRetryIndex={retryIndex}
-            managerHref={MANAGER_HREF}
+            managerHref={managerHref(list.id)}
+            onManage={onManage}
           />
         </WatchlistGroupTabs>
       </GatedAnnounceProvider>

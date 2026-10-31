@@ -11,7 +11,8 @@
     "Ticket",
     "Positions",
     "Replay",
-    "Rules"
+    "Rules",
+    "Watchlist"
   ],
   "commands": [
     {
@@ -309,6 +310,10 @@
       "shadows": [
         {
           "command": "rules.delete",
+          "rationale": "Delete scoped to the focused panel; contexts are never co-active"
+        },
+        {
+          "command": "watchlist.remove",
           "rationale": "Delete scoped to the focused panel; contexts are never co-active"
         }
       ]
@@ -694,7 +699,13 @@
       "destructive": false,
       "ignoreRepeat": false,
       "validWhen": "always",
-      "visibleControl": true
+      "visibleControl": true,
+      "shadows": [
+        {
+          "command": "watchlist.move_up",
+          "rationale": "Alt+↑ scoped to the focused panel; contexts are never co-active"
+        }
+      ]
     },
     {
       "id": "rules.move_down",
@@ -704,7 +715,13 @@
       "destructive": false,
       "ignoreRepeat": false,
       "validWhen": "always",
-      "visibleControl": true
+      "visibleControl": true,
+      "shadows": [
+        {
+          "command": "watchlist.move_down",
+          "rationale": "Alt+↓ scoped to the focused panel; contexts are never co-active"
+        }
+      ]
     },
     {
       "id": "rules.duplicate",
@@ -732,6 +749,10 @@
       "shadows": [
         {
           "command": "chart.delete_drawing",
+          "rationale": "Delete scoped to the focused panel; contexts are never co-active"
+        },
+        {
+          "command": "watchlist.remove",
           "rationale": "Delete scoped to the focused panel; contexts are never co-active"
         }
       ]
@@ -938,6 +959,70 @@
       "ignoreRepeat": false,
       "validWhen": "always",
       "visibleControl": true
+    },
+    {
+      "id": "watchlist.remove",
+      "label": "Remove symbol",
+      "context": "Watchlist",
+      "defaultBinding": "Del",
+      "destructive": false,
+      "validWhen": "a watchlist row focused",
+      "visibleControl": true,
+      "screens": ["SCR-100"],
+      "shadows": [
+        {
+          "command": "chart.delete_drawing",
+          "rationale": "Delete scoped to the focused panel; contexts are never co-active"
+        },
+        {
+          "command": "rules.delete",
+          "rationale": "Delete scoped to the focused panel; contexts are never co-active"
+        }
+      ]
+    },
+    {
+      "id": "watchlist.move_up",
+      "label": "Move row up",
+      "context": "Watchlist",
+      "defaultBinding": "Alt+↑",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "validWhen": "a watchlist row focused, in manual order",
+      "visibleControl": true,
+      "screens": ["SCR-100"],
+      "shadows": [
+        {
+          "command": "rules.move_up",
+          "rationale": "Alt+↑ scoped to the focused panel; contexts are never co-active"
+        }
+      ]
+    },
+    {
+      "id": "watchlist.move_down",
+      "label": "Move row down",
+      "context": "Watchlist",
+      "defaultBinding": "Alt+↓",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "validWhen": "a watchlist row focused, in manual order",
+      "visibleControl": true,
+      "screens": ["SCR-100"],
+      "shadows": [
+        {
+          "command": "rules.move_down",
+          "rationale": "Alt+↓ scoped to the focused panel; contexts are never co-active"
+        }
+      ]
+    },
+    {
+      "id": "watchlist.filter",
+      "label": "Filter symbols",
+      "context": "Watchlist",
+      "defaultBinding": "Ctrl+F",
+      "destructive": false,
+      "validWhen": "a watchlist panel focused",
+      "visibleControl": true,
+      "screens": ["SCR-100"]
     }
   ]
 }

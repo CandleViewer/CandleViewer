@@ -4,7 +4,8 @@
  * active result at the end of the list and clears the input, so the popover stays for the next; a symbol already on
  * the list shows its outcome ("On Majors"), never T2, and choosing it adds nothing. A status line under the input shows
  * the last add or outcome, and each is said once, politely. At 200 symbols the input is T2 with the cap's words (D10).
- * `Esc`, a click outside or `Tab` out closes it; the adds of one opening change the live window once (the panel's).
+ * "Paste several…" follows the input (`Tab` from the input reaches it, then out, §6.3) and opens SCR-101's paste on this
+ * list. `Esc`, a click outside or `Tab` out closes it; the adds of one opening change the live window once (the panel's).
  */
 import { useId, useState, type JSX } from "react";
 import { Button, Popover, SymbolSearchInput, type FuzzyListItem } from "@candleviewer/ui";
@@ -35,6 +36,8 @@ export interface AddSymbolPopoverProps {
   readonly say: (text: string) => void;
   /** T2 on the button (read-only, or the cap): the reason, and the host's node that shows it. */
   readonly reason?: { readonly text: string; readonly nodeId: string } | undefined;
+  /** "Paste several…": SCR-101's paste on this list; the popover closes first. */
+  readonly onPasteSeveral?: (() => void) | undefined;
 }
 
 export function AddSymbolPopover(props: AddSymbolPopoverProps): JSX.Element {
@@ -118,6 +121,18 @@ export function AddSymbolPopover(props: AddSymbolPopoverProps): JSX.Element {
       <p id={statusId} style={STATUS}>
         {status}
       </p>
+      {props.onPasteSeveral === undefined ? null : (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            close(false);
+            props.onPasteSeveral?.();
+          }}
+        >
+          {COPY.pasteSeveral}
+        </Button>
+      )}
     </Popover>
   );
 }

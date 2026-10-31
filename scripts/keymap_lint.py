@@ -37,6 +37,7 @@ CONTEXTS = (
     "Admin",
     "Settings",
     "Auth",
+    "Watchlist",
 )
 MOD_ORDER = ("Ctrl", "Alt", "Shift")
 MOD_ALIASES = {

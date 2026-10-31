@@ -19,6 +19,7 @@ const PACE_SAMPLE = 5;
 const SCREEN_STUBS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
   "R-201": stubSessionsList, // SCR-112 sessions: the table with the current session marked
   "R-111": stubWatchlists, // SCR-100: a list and its instruments
+  "R-110": stubWatchlists, // SCR-101 over the page: its lists and the list's symbols
 };
 
 /**
@@ -66,6 +67,14 @@ export async function openScreen(page: Page, s: A11yScreen): Promise<void> {
     await expect(grid, `${s.id}: its grid did not render`).toBeVisible({
       timeout: STEP_TIMEOUT_MS,
     });
+  }
+  if (s.id === "R-110") {
+    // SCR-101 open on the first list (the stub's session has no workspaces:write: the read-only manager)
+    const dialog = page.getByRole("dialog", { name: "Watchlists" });
+    await expect(
+      dialog.getByRole("option", { name: "Majors, 3 symbols" }),
+      `${s.id}: the manager's lists did not render`,
+    ).toBeVisible({ timeout: STEP_TIMEOUT_MS });
   }
 }
 

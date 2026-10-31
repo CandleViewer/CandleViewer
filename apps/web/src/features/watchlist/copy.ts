@@ -110,6 +110,8 @@ export const COPY = {
   noMatch: (name: string, query: string): string => `No symbol on ${name} matches '${query}'.`,
   /** D36's add popover. */
   addTo: (name: string): string => `Add to ${name}`,
+  /** §4.2 Adding: SCR-101's paste on this list (proposed). */
+  pasteSeveral: "Paste several…",
   onList: (name: string): string => `On ${name}`,
   added: (symbol: string, name: string): string => `Added ${symbol} to ${name}.`,
   alreadyOn: (symbol: string, name: string): string => `${symbol} is already on ${name}.`,
