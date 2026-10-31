@@ -91,6 +91,10 @@
     "$type": "color",
     "$value": "#2EBD59"
   },
+  "palette.green.550": {
+    "$type": "color",
+    "$value": "#2AAF53"
+  },
   "palette.green.600": {
     "$type": "color",
     "$value": "#23994A"
@@ -499,7 +503,7 @@
   "palette.light.amber.300": { "$type": "color", "$value": "#9A6A05" },
   "palette.light.amber.500": { "$type": "color", "$value": "#B87F0A" },
   "palette.light.amber.700": { "$type": "color", "$value": "#8A5F04" },
-  "palette.light.amber.900": { "$type": "color", "$value": "#FCEECB" },
+  "palette.light.amber.900": { "$type": "color", "$value": "#F4F0D1" },
   "palette.light.cyan.300": { "$type": "color", "$value": "#12798F" },
   "palette.light.cyan.500": { "$type": "color", "$value": "#178AA8" },
   "palette.light.cyan.900": { "$type": "color", "$value": "#DAF2F7" },
