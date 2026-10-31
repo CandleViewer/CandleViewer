@@ -15,9 +15,12 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+from hypothesis import example, given, settings
+from hypothesis import strategies as st
 
 from candleviewer.accounts.errors import AccountNotFoundError, ProfileUnavailableError
-from candleviewer.domain.primitives import AccountId, Environment
+from candleviewer.domain.events import Instrument
+from candleviewer.domain.primitives import AccountId, Environment, Symbol
 from candleviewer.exchange.base.errors import TransportError
 from candleviewer.exchange.base.models import (
     AccountRef,
@@ -30,6 +33,7 @@ from candleviewer.oms.errors import (
     EnvironmentMismatch,
     IdempotencyKeyReuse,
     LotSizeViolation,
+    OmsNotReady,
     OrderInvalid,
     StoreUnavailable,
 )
@@ -42,12 +46,14 @@ from candleviewer.oms.position_writes import (
     close_request,
     entry_request,
     is_full_close,
+    resolve_close,
     reversal_refs,
 )
 from candleviewer.storage.repositories.positions import PositionRow, PositionState
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from candleviewer.storage.repositories.trade_groups import GroupAnchor
 from tests.unit.api.oms_reads_world import position
+from tests.unit.audit.audit_waits import virtual
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.submit_rig import (
     SYMBOL,
@@ -640,3 +646,214 @@ def test_first_persist_a_reversal_entrys_anchor_holds_the_open_ref_of_its_groups
         replace(first, anchor=replace(first.anchor, client_ref=str(reversal_refs(key)[1]))).check(
             order
         )  # a placeOrder entry keeps the key itself
+
+
+# --- the close's size (E29-S03 #978, BQ-2 to BQ-4 as ruled) ---------------------------------------
+
+
+def pct(value: str) -> CloseTerms:
+    return CloseTerms("market", pct=Decimal(value))
+
+
+def qty(value: str) -> CloseTerms:
+    return CloseTerms("market", qty=Decimal(value))
+
+
+def lot(step: str, minimum: str | None = None) -> Instrument:
+    return instrument(qty_step=Decimal(step), min_order_qty=Decimal(minimum or step))
+
+
+@pytest.mark.parametrize(
+    ("size", "terms", "step", "minimum", "sent", "left", "rounded"),
+    [
+        ("0.250", pct("50"), "0.001", None, "0.125", "0.125", False),  # the Gherkin scenario
+        ("0.250", pct("33"), "0.001", None, "0.082", "0.168", True),  # 33 %: 0.0825 floored
+        ("0.300", pct("33"), "0.001", None, "0.099", "0.201", False),  # 33 % on the grid
+        ("10", pct("33"), "1", None, "3", "7", True),  # a qty_step of 1: 3.3 floored
+        ("1.50", pct("25"), "0.01", None, "0.37", "1.13", True),  # D02's OQ-K: 0.375 floored
+        ("0.250", qty("0.1005"), "0.001", None, "0.100", "0.150", True),  # a qty floored too
+        ("0.250", qty("0.100"), "0.001", None, "0.100", "0.150", False),
+        ("0.250", pct("100"), "0.001", None, "0.250", "0", False),  # the whole size
+        ("0.250", qty("0.250"), "0.001", None, "0.250", "0", False),
+        ("0.002", pct("50"), "0.001", None, "0.001", "0.001", False),  # one lot of two
+        ("0.001", pct("100"), "0.001", None, "0.001", "0", False),  # a one-lot position, whole
+        ("0.4", pct("50"), "0.01", "0.2", "0.2", "0.2", False),  # a minimum above the step, met
+        ("0.05", pct("100"), "0.01", "0.1", "0.05", "0", False),  # whole, under the minimum
+    ],
+)  # fmt: skip
+def test_resolve_close_rounding_table(
+    size: str, terms: CloseTerms, step: str, minimum: str | None, sent: str, left: str,
+    rounded: bool,
+) -> None:  # fmt: skip
+    """BQ-2: from the stored size, floored to the lot step and never up, the whole size at
+    100 % or for a qty equal to it; a close of the whole size is never refused (BQ-4)."""
+    resolved = resolve_close(row(size=Decimal(size)), terms, lot(step, minimum))
+    assert (resolved.qty, resolved.remaining) == (Decimal(sent), Decimal(left))
+    assert resolved.rounded is rounded and resolved.full is (resolved.remaining == 0)
+
+
+@pytest.mark.parametrize(
+    ("size", "terms", "step", "minimum", "rules", "resolved", "remaining"),
+    [
+        ("0.15", pct("50"), "0.01", "0.1", ["dust_remainder", "qty_below_minimum"], "0.07", "0.08"),
+        ("0.25", pct("65"), "0.01", "0.1", ["dust_remainder"], "0.16", "0.09"),
+        ("0.25", qty("0.2"), "0.01", "0.1", ["dust_remainder"], "0.2", "0.05"),
+        ("0.200", pct("0.4"), "0.001", None, ["qty_below_minimum"], "0.000", None),
+        ("0.001", pct("50"), "0.001", None, ["qty_below_minimum"], "0.000", None),  # one lot
+        ("0.25", qty("0.05"), "0.01", "0.1", ["qty_below_minimum"], "0.05", None),
+    ],
+)  # fmt: skip
+def test_resolve_close_refuses_a_partial_close_leaving_dust_or_under_the_minimum(
+    size: str, terms: CloseTerms, step: str, minimum: str | None, rules: list[str],
+    resolved: str, remaining: str | None,
+) -> None:  # fmt: skip
+    """BQ-3 and BQ-4: each rule named, dust first (only the whole close answers it), with the
+    symbol, the minimum as the limit, the resolved size and, for dust, the remainder."""
+    with pytest.raises(OrderInvalid) as refused:
+        resolve_close(row(size=Decimal(size)), terms, lot(step, minimum))
+    errors = refused.value.errors
+    assert [e.rule for e in errors] == rules
+    field_name = "pct" if terms.pct is not None else "qty"
+    limit, sent = Decimal(minimum or step), Decimal(resolved)
+    assert all((e.field, e.symbol, e.limit, e.resolved) == (field_name, "BTCUSDT", limit, sent)
+               for e in errors)  # fmt: skip
+    assert errors[0].remaining == (None if remaining is None else Decimal(remaining))
+    detail = errors[0].message if len(errors) == 1 else f"{len(errors)} rules failed."
+    assert refused.value.detail == detail
+
+
+def test_resolve_close_needs_a_percent_or_a_quantity() -> None:
+    with pytest.raises(ValueError, match="percent or a quantity"):
+        resolve_close(row(), CloseTerms("market"), lot("0.001"))
+
+
+@given(
+    lots=st.integers(min_value=1, max_value=10**6),
+    exponent=st.integers(min_value=-6, max_value=0),
+    minimum_lots=st.integers(min_value=1, max_value=100),
+    percent=st.decimals(min_value=Decimal("0.01"), max_value=Decimal(100), places=2),
+)
+@example(lots=250, exponent=-3, minimum_lots=1, percent=Decimal(50))
+@example(lots=15, exponent=-2, minimum_lots=10, percent=Decimal(50))
+@settings(max_examples=200, deadline=None, derandomize=True)
+def test_property_resolve_close_on_the_grid_within_the_size_never_leaving_dust(
+    lots: int, exponent: int, minimum_lots: int, percent: Decimal
+) -> None:
+    """For any size, lot step, minimum and percent: a close `resolve_close` admits is on the lot
+    grid, above zero, never above the size or what was asked, and leaves no remainder in
+    (0, min_order_qty); one it refuses is a partial close, for those two rules alone."""
+    step = Decimal(1).scaleb(exponent)
+    size, minimum = lots * step, minimum_lots * step
+    listed = instrument(qty_step=step, min_order_qty=minimum)
+    try:
+        resolved = resolve_close(row(size=size), CloseTerms("market", pct=percent), listed)
+    except OrderInvalid as refused:
+        assert percent != 100
+        assert {e.rule for e in refused.errors} <= {"dust_remainder", "qty_below_minimum"}
+        return
+    assert resolved.qty % step == 0 and 0 < resolved.qty <= size
+    assert resolved.qty <= size * percent / 100
+    assert not 0 < resolved.remaining < minimum
+    assert resolved.qty + resolved.remaining == size
+    assert resolved.full is (percent == 100)
+
+
+def test_close_request_sends_the_resolved_size_as_its_fixed_qty() -> None:
+    request = close_request(row(), pct("33"), Decimal("0.066"))
+    assert (request.sizing.mode, request.sizing.qty, request.reduce_only) == (
+        "fixed_qty",
+        Decimal("0.066"),
+        True,
+    )
+
+
+# --- the instrument step 13 reads (E29-S03) -------------------------------------------------------
+
+
+async def test_instrument_reads_the_symbols_instrument_through_the_pipelines_port() -> None:
+    assert (await Rig().service().instrument(SYMBOL)).symbol == SYMBOL
+
+
+@pytest.mark.parametrize("error", [TimeoutError(), RuntimeError("down")])
+async def test_instrument_an_unread_catalogue_is_store_unavailable(error: Exception) -> None:
+    rig = Rig()
+    rig.instruments.refuse = error
+    with pytest.raises(StoreUnavailable):
+        await rig.service().instrument(SYMBOL)
+
+
+async def test_instrument_no_catalogue_yet_answers_oms_not_ready_as_itself() -> None:
+    rig = Rig()
+    rig.instruments.refuse = OmsNotReady()
+    with pytest.raises(OmsNotReady):
+        await rig.service().instrument(SYMBOL)
+
+
+@pytest.mark.parametrize("listed", [False, True], ids=["unlisted", "another_symbols"])
+async def test_instrument_a_symbol_none_lists_is_validation_failed(listed: bool) -> None:
+    rig = Rig()
+    if listed:
+        rig.instruments.listed["ETHUSDT"] = instrument()  # BTCUSDT's, under another name
+    with pytest.raises(OrderInvalid) as refused:
+        await rig.service().instrument(Symbol("ETHUSDT"))
+    assert [e.rule for e in refused.value.errors] == ["listed"]
+
+
+# --- a rejected close's re-read (E29-S03 BQ-7) ----------------------------------------------------
+
+
+async def test_refresh_upserts_the_row_the_venue_read_shows_for_the_key() -> None:
+    rig = Rig()
+    rig.port.held = [cr.position(ACCOUNT, qty="0.040"), cr.position(ACCOUNT, qty="0.1",
+                                                                    position_idx=1)]  # fmt: skip
+    assert await rig.service().refresh(row()) is True
+    [state] = rig.store.states
+    assert (state.exchange_account_id, state.symbol, state.position_idx, state.size) == (
+        ACCOUNT,
+        "BTCUSDT",
+        0,
+        Decimal("0.040"),
+    )
+
+
+@pytest.mark.parametrize(
+    "change", ["absent", "twice", "unread", "store_down", "stale", "another_environment"]
+)
+async def test_refresh_changes_nothing_on_a_key_unshown_or_a_failure(change: str) -> None:
+    """Best effort: nothing applied, and a key the read does not show is never written flat on a
+    guess (C-2.6): the private stream's push and reconciliation write it."""
+    rig = Rig()
+    rig.port.held = [cr.position(ACCOUNT, qty="0.040")]
+    if change == "absent":
+        rig.port.held = [cr.position(ACCOUNT, qty="0.1", position_idx=1)]
+    elif change == "twice":
+        rig.port.held = [cr.position(ACCOUNT, qty="0.040")] * 2
+    elif change == "unread":
+        rig.port.unread = True
+    elif change == "store_down":
+        rig.store.fail = True
+    elif change == "stale":
+        rig.store.stale = True
+    else:
+        rig.accounts.environment = "live"
+    assert await rig.service().refresh(row()) is False
+    assert len(rig.store.states) == (1 if change == "stale" else 0)
+
+
+@virtual
+async def test_refresh_is_bounded_and_a_hung_read_writes_nothing() -> None:
+    rig = Rig()
+    hold = asyncio.Event()
+
+    async def hung(account: AccountRef) -> Sequence[Position]:
+        await hold.wait()
+        return []
+
+    rig.port.positions = hung  # type: ignore[method-assign]  # a read that never answers
+    assert await rig.service().refresh(row()) is False
+    assert rig.store.states == []
+
+
+def test_the_service_refuses_an_unbounded_refresh() -> None:
+    with pytest.raises(ValueError, match="above zero"):
+        Rig().service(refresh_wait_s=0)

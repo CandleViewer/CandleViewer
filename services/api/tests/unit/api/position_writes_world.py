@@ -398,6 +398,8 @@ class World:
     )
     clock: list[float] = field(default_factory=lambda: [0.0])
     cache: IdempotencyCache = field(default_factory=IdempotencyCache)
+    #: The routes' registry, which a test reads its counters off.
+    metrics: Metrics = field(default_factory=lambda: Metrics("demo"))
     records: Records = field(init=False)
 
     def __post_init__(self) -> None:
@@ -417,7 +419,7 @@ class World:
         limiter = self.limiter
         app = FastAPI()
         common: dict[str, Any] = {
-            "audit": self.audit, "records": self.records, "metrics": Metrics("demo"),
+            "audit": self.audit, "records": self.records, "metrics": self.metrics,
             "replays": self.cache, "limiter": limiter,
         }  # fmt: skip
         source = None if self.principals == "none" else Principals(fail=self.principals == "fail")
