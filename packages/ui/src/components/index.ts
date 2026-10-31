@@ -103,6 +103,15 @@ export type {
   InlineErrorProps,
 } from "./ErrorState.js";
 
+export { createFlashCoalescer } from "./flashCoalescer.js";
+export type {
+  FlashCoalescer,
+  FlashCoalescerOptions,
+  FlashDirection,
+  FlashStart,
+  FlashTick,
+} from "./flashCoalescer.js";
+
 export { useFocusRing } from "./FocusRing.js";
 export type { FocusRingOptions, FocusRingProps } from "./FocusRing.js";
 
