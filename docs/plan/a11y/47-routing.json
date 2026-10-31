@@ -1,0 +1,146 @@
+{
+  "schema": 1,
+  "source": "E47-D02 (#1301) brief BQ-4, BQ-6, BQ-7; owners are the E47-D03..D10 design tickets in docs/plan/backlog/E47.json; first matching rule wins, then engineering-only with a reason",
+  "auditor": "agent-run (E47-D02 lane)",
+  "auditDate": "2026-10-31",
+  "owners": {
+    "E47-D03": "High-contrast and colour-vision-safe theme design (SCR-116)",
+    "E47-D04": "Focus order, focus visibility and landmark model spec",
+    "E47-D05": "Accessibility settings hi-fi (SCR-117) incl. preference previews",
+    "E47-D06": "Canvas accessibility design: DOM mirror, surrogates and table alternatives",
+    "E47-D07": "Live-region announcement design: content, politeness and throttling",
+    "E47-D08": "Motion design: reduced-motion variants and flash-rate safety",
+    "E47-D09": "Keyboard operability design: cheatsheet, command palette and drag alternatives",
+    "E47-D10": "Design-system contribution: a11y primitives, patterns and Storybook a11y stories"
+  },
+  "severityMap": {
+    "t01": {
+      "blocker": "blocker",
+      "serious": "major",
+      "moderate": "minor",
+      "minor": "minor"
+    },
+    "review": {
+      "blocker": "blocker",
+      "blocking": "blocker",
+      "major": "major",
+      "minor": "minor",
+      "info": "info"
+    },
+    "taskBlockingPattern": "task[- ]blocking"
+  },
+  "reviews": [
+    { "key": "E09-D10", "path": "docs/design/E09/E09-D10.md" },
+    { "key": "E08-D12", "path": "docs/design/E08/E08-D12.md" }
+  ],
+  "pendingReviews": ["E12-D11", "E14-D10", "E32-D07"],
+  "rules": [
+    {
+      "match": { "screen": ["SCR-117"] },
+      "owner": "E47-D05",
+      "reason": "the accessibility settings screen is E47-D05's hi-fi"
+    },
+    {
+      "match": { "screen": ["SCR-116"] },
+      "owner": "E47-D03",
+      "reason": "the theme settings screen is E47-D03's design"
+    },
+    {
+      "match": { "sc": ["1.4.1", "1.4.3", "1.4.11"] },
+      "owner": "E47-D03",
+      "reason": "colour and contrast criteria"
+    },
+    {
+      "match": { "class": ["colour", "contrast"] },
+      "owner": "E47-D03",
+      "reason": "colour and contrast class"
+    },
+    {
+      "match": { "sc": ["2.4.3", "2.4.7", "2.4.11"] },
+      "owner": "E47-D04",
+      "reason": "focus order and visibility criteria"
+    },
+    {
+      "match": { "class": ["focus", "reflow"] },
+      "owner": "E47-D04",
+      "reason": "focus and reflow class (focus model and landmarks)"
+    },
+    {
+      "match": { "sc": ["1.4.10"] },
+      "owner": "E47-D04",
+      "reason": "reflow at 320 CSS px belongs with the layout and landmark model"
+    },
+    {
+      "match": { "sc": ["4.1.3"] },
+      "owner": "E47-D07",
+      "reason": "status messages are the live-region design"
+    },
+    {
+      "match": { "class": ["screen reader"] },
+      "owner": "E47-D07",
+      "reason": "screen-reader announcement class"
+    },
+    {
+      "match": { "sc": ["2.2.1", "2.3.1", "2.3.3"] },
+      "owner": "E47-D08",
+      "reason": "time limits and motion criteria"
+    },
+    {
+      "match": { "class": ["timing"] },
+      "owner": "E47-D08",
+      "reason": "timing class"
+    },
+    {
+      "match": { "class": ["keyboard"] },
+      "owner": "E47-D09",
+      "reason": "keyboard operability class"
+    },
+    {
+      "match": { "sc": ["4.1.2", "3.3.1", "3.3.3"] },
+      "owner": "E47-D10",
+      "reason": "name/role/value and error identification are a primitive and pattern contract"
+    },
+    {
+      "match": { "class": ["consistency"] },
+      "owner": "E47-D10",
+      "reason": "consistency class (primitives and patterns)"
+    },
+    {
+      "match": { "sc": ["2.4.2", "2.4.5"] },
+      "owner": "engineering-only",
+      "reason": "page titles and multiple ways to find a page are routing behaviour, not a design deliverable"
+    },
+    {
+      "match": { "class": ["copy"] },
+      "owner": "engineering-only",
+      "reason": "copy fix lands in the owning feature's design follow-up, not an E47 design ticket"
+    },
+    {
+      "match": { "class": ["scope"] },
+      "owner": "engineering-only",
+      "reason": "scope note for the reviewed epic, not an accessibility design change"
+    }
+  ],
+  "overrides": {
+    "A11Y-R-E08-D12-F-01": {
+      "owner": "E47-D03",
+      "reason": "token pair identical to the live text colour: a contrast and colour-independence design change"
+    },
+    "A11Y-R-E08-D12-F-02": {
+      "owner": "E47-D07",
+      "reason": "the announcement rate is a live-region rule"
+    },
+    "A11Y-R-E08-D12-F-04": {
+      "owner": "E47-D03",
+      "reason": "high-contrast rendering of highlighted rows"
+    },
+    "A11Y-R-E08-D12-F-05": {
+      "owner": "E47-D03",
+      "reason": "contrast measured in the token section"
+    },
+    "A11Y-R-E08-D12-F-08": {
+      "owner": "E47-D07",
+      "reason": "status announcement for the reconnecting state"
+    }
+  }
+}
