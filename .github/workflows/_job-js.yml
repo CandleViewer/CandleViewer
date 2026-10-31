@@ -265,6 +265,10 @@ jobs:
           pnpm --filter @candleviewer/web --filter @candleviewer/desktop build
           xvfb-run -a node apps/desktop/scripts/collect-hardening-facts.mjs hardening-facts.json
           python tools/ci/electron_hardening_gate.py --desktop-dist apps/desktop/dist             --web-dist apps/web/dist --builder-config apps/desktop/electron-builder.yml             --facts hardening-facts.json --require-runtime
+      # E43-T01 (SR-112, SR-114, SR-119): the web <meta>, the Electron header and the FastAPI header are
+      # the one golden policy (no unsafe-inline/eval, exact connect-src), and no web *.js names an exchange host.
+      - name: csp-assertion (E43-T01) - web meta, Electron header and API header equal the golden policy
+        run: python tools/ci/csp_assertion.py --web-dist apps/web/dist --facts hardening-facts.json
       # E14-X03 (#549; DR5, SR-E14-10): the build above is the production bundle, so no test-only
       # engine handle may be in it. Reads apps/web/dist (no second build); never the source maps.
       - name: Production-bundle guard (E14-X03, DR5, SR-E14-10) - no test-only engine handle in the build

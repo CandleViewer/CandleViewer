@@ -59,18 +59,36 @@ APP_PROBES: dict[tuple[str, str], int] = {
 # SR-114: the top-level entries of apps/desktop/dist the build emits; the scans below cover both.
 DIST_DIRS = frozenset({"main", "preload"})
 
-# SR-112: directives whose value must match verbatim (connect-src handled separately).
+# SR-112 / C-12.10: directives whose value must match verbatim, in the header AND the <meta>
+# (connect-src is judged separately). style-src carries no 'unsafe-inline' (E43-T01).
 SR112_EXACT: dict[str, str] = {
     "default-src": "'self'",
     "script-src": "'self'",
-    "style-src": "'self' 'unsafe-inline'",
+    "style-src": "'self'",
     "img-src": "'self' data: blob:",
     "worker-src": "'self' blob:",
     "object-src": "'none'",
-    "frame-ancestors": "'none'",
     "base-uri": "'none'",
     "form-action": "'none'",
 }
+# Directives a <meta> cannot carry (browsers ignore them there): required in the header, and a
+# <meta> that carries one is a violation. report-uri is a loopback URL, judged by a pattern.
+HEADER_ONLY_EXACT: dict[str, str] = {
+    "frame-ancestors": "'none'",
+    "report-to": "csp-endpoint",
+}
+REPORT_URI_RE = re.compile(
+    r"^https?://(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]{1,5})?/api/v1/csp-report$"
+)
+HEADER_ONLY = frozenset({*HEADER_ONLY_EXACT, "report-uri"})
+_ALLOWED_DIRECTIVES = frozenset({*SR112_EXACT, *HEADER_ONLY, "connect-src"})
+_LOOPBACK_ORIGIN_RE = re.compile(
+    r"^(https?)://(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]{1,5})?$"
+)
+_TAILNET_DNS_RE = re.compile(
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?::[0-9]{1,5})?$"
+)
 
 # SR-119: any exchange host (both vendor domains), incl. regional and stream* subdomains.
 BYBIT_HOST_RE = re.compile(
@@ -283,8 +301,57 @@ def check_app_scheme(main_js: str) -> list[Violation]:
     return vs
 
 
-def check_csp(source: str, csp: str) -> list[Violation]:
-    """SR-112 (verbatim directives, no unsafe-eval) + SR-119 (no exchange host)."""
+def _check_connect_src(source: str, connect: str) -> list[Violation]:
+    """connect-src is exactly: 'self', one loopback backend origin and its ws(s) twin, and
+    optionally one https/wss pair for a tailnet DNS name. Nothing else (no wildcard, no scheme).
+    """
+
+    def bad(msg: str) -> list[Violation]:
+        return [Violation("SR-112", source, msg)]
+
+    toks = connect.split()
+    if not toks or toks[0] != "'self'":
+        return bad("connect-src must start with 'self'")
+    for tok in toks[1:]:
+        if (
+            tok == "*"
+            or tok.startswith("*.")
+            or tok in {"http:", "https:", "ws:", "wss:"}
+        ):
+            return bad(f"connect-src wildcard/scheme-only '{tok}'")
+    rest = toks[1:]
+    if len(rest) not in (2, 4):
+        return bad(
+            "connect-src must be 'self', the backend origin pair and at most one tailnet pair"
+        )
+    m = _LOOPBACK_ORIGIN_RE.match(rest[0])
+    want_ws = ""
+    if m is not None:
+        scheme = m.group(1)
+        want_ws = ("ws" if scheme == "http" else "wss") + rest[0][len(scheme) :]
+    if m is None or rest[1] != want_ws:
+        return bad(
+            f"connect-src backend origins '{rest[0]} {rest[1]}' are not a loopback "
+            "http(s)/ws(s) pair"
+        )
+    if len(rest) == 4:
+        https_tok, wss_tok = rest[2], rest[3]
+        host = https_tok[len("https://") :] if https_tok.startswith("https://") else ""
+        numeric = re.fullmatch(r"[0-9.]+(?::[0-9]+)?", host) is not None
+        if not _TAILNET_DNS_RE.match(host) or numeric or wss_tok != f"wss://{host}":
+            return bad(
+                f"connect-src tailnet entries '{https_tok} {wss_tok}' are not an https/wss pair "
+                "for one DNS name"
+            )
+    return []
+
+
+def check_csp(source: str, csp: str, surface: str = "header") -> list[Violation]:
+    """SR-112 (verbatim directives, no unsafe-inline/eval, exact connect-src, no extra directive,
+    header-only directives in the header only) + SR-119 (no exchange host).
+
+    `surface` is "header" (the Electron or API response header) or "meta" (the <meta> fallback).
+    """
     vs: list[Violation] = []
     d = parse_csp(csp)
     for name, want in SR112_EXACT.items():
@@ -302,26 +369,57 @@ def check_csp(source: str, csp: str) -> list[Violation]:
                     f"directive '{name}' is '{d[name]}', need '{want}'",
                 )
             )
+    for name in sorted(set(d) - _ALLOWED_DIRECTIVES):
+        vs.append(Violation("SR-112", source, f"unexpected directive '{name}'"))
+    for name in sorted(HEADER_ONLY & set(d)) if surface == "meta" else ():
+        vs.append(
+            Violation(
+                "SR-112",
+                source,
+                f"'{name}' is ignored in a <meta>; it belongs in the header only",
+            )
+        )
+    if surface == "header":
+        for name, want in HEADER_ONLY_EXACT.items():
+            if name not in d:
+                vs.append(
+                    Violation(
+                        "SR-112",
+                        source,
+                        f"directive '{name}' is missing; need '{want}'",
+                    )
+                )
+            elif d[name] != want:
+                vs.append(
+                    Violation(
+                        "SR-112",
+                        source,
+                        f"directive '{name}' is '{d[name]}', need '{want}'",
+                    )
+                )
+        if "report-uri" not in d:
+            vs.append(Violation("SR-112", source, "directive 'report-uri' is missing"))
+        elif REPORT_URI_RE.match(d["report-uri"]) is None:
+            vs.append(
+                Violation(
+                    "SR-112",
+                    source,
+                    f"report-uri '{d['report-uri']}' is not the loopback /api/v1/csp-report URL",
+                )
+            )
     if "unsafe-eval" in csp:
         vs.append(Violation("SR-112", source, "CSP contains 'unsafe-eval' (forbidden)"))
+    if "unsafe-inline" in csp:
+        vs.append(
+            Violation(
+                "SR-112", source, "CSP contains 'unsafe-inline' (forbidden, C-12.10)"
+            )
+        )
     connect = d.get("connect-src")
     if connect is None:
         vs.append(Violation("SR-112", source, "directive 'connect-src' is missing"))
     else:
-        toks = connect.split()
-        if not toks or toks[0] != "'self'":
-            vs.append(Violation("SR-112", source, "connect-src must start with 'self'"))
-        for tok in toks[1:]:
-            if (
-                tok == "*"
-                or tok.startswith("*.")
-                or tok in {"http:", "https:", "ws:", "wss:"}
-            ):
-                vs.append(
-                    Violation(
-                        "SR-112", source, f"connect-src wildcard/scheme-only '{tok}'"
-                    )
-                )
+        vs += _check_connect_src(source, connect)
     for m in BYBIT_HOST_RE.finditer(csp):
         vs.append(
             Violation(
@@ -456,7 +554,8 @@ def _enclosing_function(js: str, at: int) -> tuple[str, int, int] | None:
 
 def check_subscriptions(preload_js: str, subject: str) -> list[Violation]:
     """SR-111: one `ipcRenderer.on(channel, ...)` call site, in a function that checks
-    ALLOWED_IPC_EVENTS before it; `removeListener(channel, ...)` only inside that function."""
+    ALLOWED_IPC_EVENTS before it; `removeListener(channel, ...)` only inside that function.
+    """
     vs: list[Violation] = []
     calls = list(re.finditer(r"ipcRenderer\s*\.\s*on\s*\(\s*([^,)]+)", preload_js))
     helper: tuple[int, int] | None = None
@@ -1049,7 +1148,10 @@ def check_runtime_facts(
     header_csp = facts.get("cspHeader")
     if isinstance(header_csp, str):
         vs += check_csp("main-process CSP header", header_csp)
-        if meta_csp is not None and parse_csp(meta_csp) != parse_csp(header_csp):
+        header_less = {
+            k: v for k, v in parse_csp(header_csp).items() if k not in HEADER_ONLY
+        }
+        if meta_csp is not None and parse_csp(meta_csp) != header_less:
             vs.append(
                 Violation("SR-112", "CSP header vs <meta>", "header and <meta> differ")
             )
@@ -1109,9 +1211,8 @@ def run_all_checks(
     main_js = "\n".join(_read(p) for p in main_files)
     for p in main_files + preload_files:
         vs += check_dev_affordances(p.relative_to(desktop_dist).as_posix(), _read(p))
-    bundle_files = (
-        sorted((web_dist / "assets").glob("*.js")) if web_dist.is_dir() else []
-    )
+    # Every .js under the web dist (assets/, workers, nested chunks), for the SR-119 host scan.
+    bundle_files = sorted(web_dist.rglob("*.js")) if web_dist.is_dir() else []
     html = _read(web_dist / "index.html")
     if not bundle_files or not html:
         vs.append(
@@ -1119,13 +1220,15 @@ def run_all_checks(
         )
     web_js = "\n".join(_read(p) for p in bundle_files)
     for p in bundle_files:
-        vs += check_bundle_hosts(f"renderer bundle {p.name}", _read(p))
+        vs += check_bundle_hosts(
+            f"renderer bundle {p.relative_to(web_dist).as_posix()}", _read(p)
+        )
         vs += check_dev_affordances(f"renderer bundle {p.name}", _read(p))
     meta = extract_meta_csp(html)
     if meta is None:
         vs.append(Violation("SR-112", "index.html", "CSP <meta> fallback is missing"))
     else:
-        vs += check_csp("index.html <meta> CSP", meta)
+        vs += check_csp("index.html <meta> CSP", meta, "meta")
     vs += check_declared_prefs(_read(desktop_dist / "main" / "shellPort.js"))
     vs += check_app_scheme(main_js)
     vs += check_runtime_facts(facts, meta, require_runtime)

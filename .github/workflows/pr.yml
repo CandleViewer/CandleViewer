@@ -164,6 +164,9 @@ jobs:
               - 'tools/ci/check_built_exports.mjs'
               - 'tools/ci/electron_hardening_gate.py'
               - 'tools/ci/electron_hardening_checks.py'
+              # E43-T01: csp-assertion and the API policy builder it loads by path (stdlib only).
+              - 'tools/ci/csp_assertion.py'
+              - 'services/api/candleviewer/api/csp.py'
               # E14-X03 (#549): the drawing-path suppression check, its path list and the shared grammar.
               - 'tools/ci/check_no_inline_suppressions.py'
               - 'tools/ci/no-inline-suppression-paths.json'
