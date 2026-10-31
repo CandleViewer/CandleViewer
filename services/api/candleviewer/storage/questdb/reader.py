@@ -123,6 +123,27 @@ def build_read_funding(sym: str, rng: TimeRange, limit: int) -> QueryBuilder:
     return _checked(sql, (sym, ts_param(rng.start_us), ts_param(rng.end_us)))
 
 
+def build_read_oi(sym: str, interval: str, source: str, rng: TimeRange, limit: int) -> QueryBuilder:
+    """E24-T01 one open-interest series: symbol, interval and source equality, two-sided ts
+    bound, ts-ordered, hard row cap (`limit` validated int, inlined as for funding)."""
+    sql = (
+        "SELECT ts, symbol, oi, oi_value, interval, source "  # noqa: S608  # nosec B608 reason=int-limit-clamped-by-_inline_limit owner=@CandleViewer/backend
+        "FROM open_interest WHERE symbol = $1 AND interval = $2 AND source = $3 "
+        f"AND ts >= $4 AND ts < $5 ORDER BY ts LIMIT {_inline_limit(limit)}"
+    )
+    params = (sym, interval, source, ts_param(rng.start_us), ts_param(rng.end_us))
+    return _checked(sql, params)
+
+
+def build_oi_coverage(sym: str, interval: str, source: str) -> QueryBuilder:
+    """E24-T01 coverage of one series: its first and last stored `ts` (NULLs when empty)."""
+    sql = (
+        "SELECT min(ts) lo, max(ts) hi FROM open_interest "
+        "WHERE symbol = $1 AND interval = $2 AND source = $3"
+    )
+    return _checked(sql, (sym, interval, source))
+
+
 def build_read_big_trades(sym: str, rng: TimeRange, min_notional: float) -> QueryBuilder:
     """Shape #4 (big-trade bubbles): precomputed `notional` column."""
     sql = (
