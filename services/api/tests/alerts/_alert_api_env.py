@@ -23,6 +23,7 @@ from candleviewer.storage.repositories.alerts import (
 USER_A = "00000000-0000-4000-8000-00000000000a"
 USER_B = "00000000-0000-4000-8000-00000000000b"
 T0 = datetime(2026, 10, 5, tzinfo=UTC)
+NOW = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)  # the router's injected clock
 
 PRICE_CROSS: dict[str, Any] = {
     "name": "BTC reclaims 64k",
@@ -40,7 +41,7 @@ PRICE_CROSS: dict[str, Any] = {
         },
     },
     "message_template": "BTCUSDT crossed 64000 (last {{market.last_price}})",
-    "expires_at": "2026-09-21T00:00:00Z",
+    "expires_at": "2099-01-01T00:00:00Z",
 }
 
 
@@ -75,14 +76,13 @@ class FakeAlertRepo:
         row = AlertRow(
             id=alert_id or str(uuid.uuid4()),
             owner_user_id=owner_user_id,
-            cooldown_seconds=60,
             snoozed_until=None,
             has_webhook=False,
             last_fired_at=None,
             fire_count=0,
             created_at=now,
             updated_at=now,
-            **f,
+            **({"cooldown_seconds": 60} | f),
         )
         self.rows[row.id] = row
         return row
@@ -136,6 +136,13 @@ class FakeAlertRepo:
         self.rows[alert_id] = replace(row, enabled=enabled, updated_at=self._now())
         return self.rows[alert_id]
 
+    async def set_snooze(self, alert_id: str, until: datetime | None) -> AlertRow | None:
+        row = await self.get(alert_id)
+        if row is None:
+            return None
+        self.rows[alert_id] = replace(row, snoozed_until=until, updated_at=self._now())
+        return self.rows[alert_id]
+
 
 class Audit:
     def __init__(self) -> None:
@@ -174,6 +181,7 @@ class Env:
                 resolve if wired else None,
                 self.audit,
                 on_compile=lambda s, reason: self.compiles.append(reason),
+                clock=lambda: NOW,
             )
         )
         self.c = TestClient(app)

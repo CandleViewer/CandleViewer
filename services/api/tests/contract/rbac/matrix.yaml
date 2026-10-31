@@ -327,6 +327,12 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+  PUT /alerts/{alertId}/snooze:
+    permissions: ['alerts:write']
+    scope: self
+    public: false
+    state: executed
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   GET /auth/_perf/argon2-params:
     permissions: ['admin:read']
     scope: none

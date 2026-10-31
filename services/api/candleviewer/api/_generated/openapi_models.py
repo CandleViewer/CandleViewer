@@ -8133,10 +8133,23 @@ class AlertInput(BaseModel):
         ),
     ] = None
     severity: Literal["debug", "info", "warning", "error", "critical"] | None = None
-    expires_at: AwareDatetime | None = None
+    expires_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="A past instant is refused with `422 validation_failed` (E40-D02 CC-10)."
+        ),
+    ] = None
     webhook_url: AnyUrl | None = None
     enabled: StrictBool = True
-    __null_refused = field_validator("message_template", "severity", mode="before")(_refuse_null)
+    cooldown_seconds: Annotated[
+        JsonInt | None,
+        Field(
+            description="Minimum seconds between two firings; omitted on create = 60, omitted on replace = unchanged (E40-D02 CC-5).",
+            ge=0,
+            le=86400,
+        ),
+    ] = None
+    __null_refused = field_validator("message_template", "severity", "cooldown_seconds", mode="before")(_refuse_null)
 
 
 class WorkspaceDetail(Workspace):
@@ -8287,9 +8300,29 @@ class Alert(AlertInput):
     owner_user_id: UUID | None = None
     fire_count: JsonInt | None = None
     last_fired_at: AwareDatetime | None = None
+    cooldown_seconds: Annotated[
+        JsonInt | None,
+        Field(
+            description="Minimum seconds between two firings; omitted on create = 60, omitted on replace = unchanged (E40-D02 CC-5).",
+            ge=0,
+            le=86400,
+        ),
+    ] = None
+    snoozed_until: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="UTC instant until which firings are suppressed; null = not snoozed (CC-3)."
+        ),
+    ] = None
+    disarm_reason: Annotated[
+        Literal["source_unavailable"] | None,
+        Field(
+            description="Why the server disarmed the alert (`enabled=false`); null otherwise. Cleared when the alert is re-enabled (CC-3)."
+        ),
+    ] = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
-    _AlertInput__null_refused = field_validator("message_template", "severity", mode="before")(_take_null)
+    _AlertInput__null_refused = field_validator("message_template", "severity", "cooldown_seconds", mode="before")(_take_null)
 
 
 RuleArithmeticNode.model_rebuild()

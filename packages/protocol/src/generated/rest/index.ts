@@ -1493,6 +1493,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/alerts/{alertId}/snooze": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        alertId: components["parameters"]["AlertId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Snooze an alert, or clear its snooze
+     * @description `until` is a future tz-aware instant (snoozed until then) or `null` (snooze cleared); a
+     *     past or offset-less instant is `422 validation_failed`. Audited as `alert.snoozed` /
+     *     `alert.unsnoozed` (C-2.9). Another user's alert is `404`.
+     */
+    put: operations["setAlertSnooze"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/alerts/deliveries": {
     parameters: {
       query?: never;
@@ -7245,8 +7269,14 @@ export interface components {
       weighted_avg_price?: components["schemas"]["Decimal"];
     };
     Alert: components["schemas"]["AlertInput"] & {
+      cooldown_seconds?: number;
       /** Format: date-time */
       created_at?: string;
+      /**
+       * @description Why the server disarmed the alert (`enabled=false`); null otherwise. Cleared when the alert is re-enabled (CC-3).
+       * @enum {string|null}
+       */
+      disarm_reason?: "source_unavailable" | null;
       fire_count?: number;
       /** Format: uuid */
       id?: string;
@@ -7254,6 +7284,11 @@ export interface components {
       last_fired_at?: string | null;
       /** Format: uuid */
       owner_user_id?: string;
+      /**
+       * Format: date-time
+       * @description UTC instant until which firings are suppressed; null = not snoozed (CC-3).
+       */
+      snoozed_until?: string | null;
       /** Format: date-time */
       updated_at?: string;
     };
@@ -7295,11 +7330,16 @@ export interface components {
     AlertInput: {
       channels: components["schemas"]["AlertChannel"][];
       condition_ir: components["schemas"]["AlertConditionIr"];
+      /** @description Minimum seconds between two firings; omitted on create = 60, omitted on replace = unchanged (E40-D02 CC-5). */
+      cooldown_seconds?: number;
       /** @default true */
       enabled: boolean;
       /** Format: uuid */
       exchange_account_id?: string | null;
-      /** Format: date-time */
+      /**
+       * Format: date-time
+       * @description A past instant is refused with `422 validation_failed` (E40-D02 CC-10).
+       */
       expires_at?: string | null;
       /** @description Mustache-style placeholders resolved from the rule context. */
       message_template?: string;
@@ -14795,6 +14835,49 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  setAlertSnooze: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path: {
+        alertId: components["parameters"]["AlertId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          /** Format: date-time */
+          until: string | null;
+        };
+      };
+    };
+    responses: {
+      /** @description Updated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Alert"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

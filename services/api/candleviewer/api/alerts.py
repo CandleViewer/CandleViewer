@@ -19,7 +19,7 @@ condition); a refusal is a 403, audited first as `alert.scope_refused`.
 
 import time
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
@@ -60,6 +60,12 @@ Channel = Literal["in_app", "email", "webhook", "push", "desktop"]
 OnCompile = Callable[[float, str | None], None]
 #: E40-T03: the in-process change event (alert id) the evaluator re-keys on.
 OnChange = Callable[[str], Awaitable[None]]
+#: Injected wall clock (tz-aware UTC) for the past-instant refusals.
+Clock = Callable[[], datetime]
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 async def _no_change(_alert_id: str) -> None:
@@ -81,11 +87,21 @@ class AlertInput(BaseModel):
     expires_at: datetime | None = None
     webhook_url: str | None = None
     enabled: bool = True
+    #: CC-5: bounds mirror the `al_cooldown` CHECK (migration 0014). Omitted: 60 on create,
+    #: the stored value on replace.
+    cooldown_seconds: Annotated[int, Field(ge=0, le=86400)] | None = None
 
     @field_validator("name")
     @classmethod
     def _storable_name(cls, value: str) -> str:
         return refuse_unstorable_text(value)
+
+
+class _SnoozeBody(BaseModel):
+    """`setAlertSnooze`: `until` is required; `null` clears the snooze."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    until: datetime | None
 
 
 class _EnabledBody(BaseModel):
@@ -118,9 +134,11 @@ class _Deps:
         audit: Any,
         on_compile: OnCompile,
         on_change: OnChange = _no_change,
+        clock: Clock = _utc_now,
     ) -> None:
         self.repo, self.registry, self.resolver = repo, registry, actor_resolver
         self.audit, self.on_compile, self.on_change = audit, on_compile, on_change
+        self.clock = clock
 
     def store(self) -> AlertRepository:
         r = self.repo()
@@ -150,6 +168,8 @@ class _Deps:
             "condition_ir": row.condition_ir, "condition_hash": row.condition_hash,
             "message_template": row.message_template, "severity": row.severity,
             "expires_at": _iso(row.expires_at), "webhook_url": None, "enabled": row.enabled,
+            "cooldown_seconds": row.cooldown_seconds, "snoozed_until": _iso(row.snoozed_until),
+            "disarm_reason": row.disarm_reason,
             "fire_count": row.fire_count, "last_fired_at": _iso(row.last_fired_at),
             "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at),
         }  # fmt: skip
@@ -169,8 +189,9 @@ def make_alerts_router(
     audit: Any,
     on_compile: OnCompile = lambda seconds, reason: None,
     on_change: OnChange = _no_change,
+    clock: Clock = _utc_now,
 ) -> APIRouter:
-    d = _Deps(repo_provider, registry_provider, actor_resolver, audit, on_compile, on_change)
+    d = _Deps(repo_provider, registry_provider, actor_resolver, audit, on_compile, on_change, clock)
     router = APIRouter(tags=["alerts"], route_class=_ProblemRoute)
 
     def need(
@@ -219,6 +240,13 @@ def make_alerts_router(
                                     "message": e["msg"]} for e in errs]) from None  # fmt: skip
         except ValueError:
             raise _Problem(422, "validation_failed", "Invalid alert", "Body is not JSON.") from None
+        if body.expires_at is not None and (
+            body.expires_at.tzinfo is None or body.expires_at <= d.clock()
+        ):  # CC-10: an alert that is born expired is a mistake, not a state
+            raise _Problem(422, "validation_failed", "Invalid alert",
+                           "expires_at must be a future instant with a UTC offset.",
+                           errors=[{"field": "expires_at", "rule": "expires_in_past",
+                                    "message": "expires_at must be in the future"}])  # fmt: skip
         if "push" in body.channels:  # E40-T04: never accept an alert that can never deliver
             raise _Problem(422, "validation_failed", "Invalid alert",
                            "Push delivery is not available in this deployment.",
@@ -250,7 +278,10 @@ def make_alerts_router(
         return body, compiled
 
     def fields(body: AlertInput, compiled: Any) -> dict[str, Any]:
-        return {
+        cooldown = (
+            {} if body.cooldown_seconds is None else {"cooldown_seconds": body.cooldown_seconds}
+        )
+        return cooldown | {
             "name": body.name, "symbol": body.symbol,
             "scope_account_id": None if body.exchange_account_id is None
             else str(body.exchange_account_id),
@@ -261,7 +292,7 @@ def make_alerts_router(
         }  # fmt: skip
 
     def update_fields(body: AlertInput, compiled: Any, row: AlertRow) -> dict[str, Any]:
-        return fields(body, compiled) | {"cooldown_seconds": row.cooldown_seconds}
+        return {"cooldown_seconds": row.cooldown_seconds} | fields(body, compiled)
 
     def name_taken() -> _Problem:
         return _Problem(409, "conflict", "Conflict", "You already have an alert with this name.")
@@ -372,6 +403,31 @@ def make_alerts_router(
                             before_state={"enabled": row.enabled},
                             after_state={"enabled": body.enabled})  # fmt: skip
         new = await d.store().set_enabled(row.id, body.enabled)
+        if new is None:
+            raise _not_found()
+        await d.on_change(new.id)
+        return d.respond(new)
+
+    @router.put("/alerts/{alertId}/snooze")
+    async def set_snooze(
+        request: Request, got: Annotated[tuple[Actor, AlertRow], Depends(owned_w)]
+    ) -> Response:
+        actor, row = got
+        try:
+            body = _SnoozeBody.model_validate(await request.json())
+        except (ValueError, ValidationError):
+            raise _Problem(422, "validation_failed", "Invalid body",
+                           "Body must be {\"until\": <UTC instant>|null}.") from None  # fmt: skip
+        until = body.until
+        if until is not None and (until.tzinfo is None or until <= d.clock()):
+            raise _Problem(422, "validation_failed", "Invalid body",
+                           "until must be a future instant with a UTC offset.",
+                           errors=[{"field": "until", "rule": "until_in_past",
+                                    "message": "until must be in the future"}])  # fmt: skip
+        await d.audit_event("alert.unsnoozed" if until is None else "alert.snoozed", actor, row.id,
+                            before_state={"snoozed_until": _iso(row.snoozed_until)},
+                            after_state={"snoozed_until": _iso(until)})  # fmt: skip
+        new = await d.store().set_snooze(row.id, until)
         if new is None:
             raise _not_found()
         await d.on_change(new.id)
