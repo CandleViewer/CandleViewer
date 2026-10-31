@@ -11,13 +11,17 @@
  *   arrival reaches the DOM within one tick and a frame (BQ-21's 200 ms, proven with fake timers).
  * - **Marks** (BQ-21): the scheduler's `state.apply` and `paint` marks, and between them a
  *   `performance.measure` named `ws_frame_apply_seconds` with `detail.topic` `"positions"` for every
- *   tick that applied a frame. Local only: its transport is G-W2's (E29-Q03, E29-T09).
+ *   tick that applied a frame. Its duration is in milliseconds, as every `performance.measure` is,
+ *   whatever the metric's name says: G-W2's transport (E29-Q03, E29-T09) converts it to seconds.
  * - **REST** (BQ-18): one `listPositions` for first paint while the topic is pending, and one per
- *   link-down episode as the fallback. Never polled.
+ *   link-down episode as the fallback. Never polled. Past 25 accounts a read names the 25 the
+ *   subscription does, once the directory is known (first paint is asked before it is).
  * - **S-02:** no first `snap` within 5 s (BQ-18's budget), or a refused subscription, is "Could not
  *   load"; `retry()` re-subscribes.
- * - **A narrowing** (`23` §9.5) re-subscribes with the same accounts: its `sub_ok` names the ones
- *   kept, and the store drops the rest with their F-02 lines (SR-E29-11).
+ * - **A narrowing** (`23` §9.5) carries no account to a feature, and the handle's `effective`
+ *   keeps the old list, so the feed re-reads the directory: `setAccounts` names and drops the
+ *   accounts it no longer lists (SR-E29-11). The subscription continues with the kept accounts;
+ *   it is made again with the reduced set (§9.5's invitation) only when the directory changed.
  */
 import type { ConsumerSpec, TopicHandle, WsClient } from "../../lib/ws/api";
 import { createFrameScheduler, type FrameMark } from "../../lib/ws/client/frameScheduler";
@@ -151,23 +155,40 @@ export function startPositionsFeed(options: PositionsFeedOptions): PositionsFeed
     }, SNAPSHOT_BUDGET_MS);
   }
 
+  /**
+   * One REST read. Past the cap it names the accounts the subscription does: an over-cap account's
+   * row would never be live.
+   */
   function readRest(): void {
-    void api.listPositions({}, abort.signal).then((outcome) => {
+    const named =
+      accountIds !== null && accountIds.length > MAX_ACCOUNT_IDS
+        ? { accountIds: accountIds.slice(0, MAX_ACCOUNT_IDS) }
+        : {};
+    void api.listPositions(named, abort.signal).then((outcome) => {
       if (!stopped && outcome.kind === "ok") store.applyRest(outcome.items, wall());
     });
   }
 
-  function loadAccounts(): void {
+  /**
+   * The directory, then the subscriptions. After a narrowing (`narrowed`) it settles who left, and
+   * the subscription is made again only when the list changed; a failed re-read leaves the
+   * narrowing's accounts held back, unnamed, until a later read settles them.
+   */
+  function loadAccounts(narrowed = false): void {
     void api.listExchangeAccounts(abort.signal).then((outcome) => {
       if (stopped) return;
       if (outcome.kind !== "ok") {
-        store.setAccounts(null);
+        if (!narrowed) store.setAccounts(null);
         return;
       }
       const directory = outcome.items.map(accountInfo).filter((a): a is AccountInfo => a !== null);
       store.setAccounts(directory);
-      accountIds = directory.map((a) => a.id);
-      subscribe(accountIds);
+      const ids = directory.map((a) => a.id);
+      const before = accountIds;
+      const same =
+        before !== null && ids.length === before.length && ids.every((id, i) => before[i] === id);
+      accountIds = ids;
+      if (!narrowed || (!same && store.getSnapshot().status !== "revoked")) subscribe(ids);
     });
   }
 
@@ -197,7 +218,7 @@ export function startPositionsFeed(options: PositionsFeedOptions): PositionsFeed
       const frames = handle.read();
       if (frames.length > 0) signals?.applyLockout(id, frames);
     }
-    if (store.takeResubscribe() && accountIds !== null) subscribe(accountIds); // 23 §9.5
+    if (store.takeNarrowed()) loadAccounts(true); // 23 §9.5: the directory says who left
     if (positions !== null) store.setEffective(positions.effective);
     link();
     store.commit();
@@ -220,6 +241,7 @@ export function startPositionsFeed(options: PositionsFeedOptions): PositionsFeed
     try {
       perf.mark(`${MARK_PREFIX}state.apply`, { startTime: applyStart });
       perf.mark(`${MARK_PREFIX}paint`, { startTime: atMs });
+      // in milliseconds, as every measure is: G-W2's transport makes it `_seconds`
       perf.measure(APPLY_MEASURE, { start: applyStart, end: atMs, detail: { topic: "positions" } });
       perf.clearMarks?.(`${MARK_PREFIX}state.apply`);
       perf.clearMarks?.(`${MARK_PREFIX}paint`);

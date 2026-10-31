@@ -2,8 +2,9 @@
  * E29-S01 (#911) the feed, on fake timers: the subscriptions it makes, the 10 Hz commit tick, the
  * "Live update latency" scenario proven deterministically (BQ-21: an arrival is on the screen within
  * one 100 ms tick and one frame), the `state.apply` / `paint` marks with the `ws_frame_apply_seconds`
- * measure, S-02's 5 s budget and Retry, the link-down REST fallback (one read, never a poll), and
- * a narrowing's re-subscribe.
+ * measure, S-02's 5 s budget and Retry, the link-down REST fallback (one read, never a poll), the
+ * 25-account cap, and a narrowing named through the directory (the fake shares a stream's
+ * `effective` as the engine does, so no `sub_ok` names who left).
  */
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +15,7 @@ import type {
   ExchangeAccount,
   PositionsApi,
   PositionsOutcome,
+  PositionsQuery,
   Position,
 } from "../../../src/features/positions/api";
 import {
@@ -151,6 +153,48 @@ describe("subscriptions", () => {
       (positionsHandle()?.spec.opts as { exchange_account_ids: string[] }).exchange_account_ids,
     ).toHaveLength(25);
     expect(store.getSnapshot().overCap).toHaveLength(2);
+  });
+
+  it("past 25: an over-cap row never shows nor reads as withdrawn, and REST names the 25", async () => {
+    const many = Array.from({ length: 27 }, (_, i) => ({
+      ...(accounts[0] as ExchangeAccount),
+      id: `a1000000-0000-4000-8000-${String(i + 100).padStart(12, "0")}`,
+      label: `Acct ${i}`,
+    }));
+    const ids = many.map((a) => a.id);
+    const rowOf = (account: string | undefined, n: number): Position => ({
+      ...(restItems[0] as Position),
+      id: `0d000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+      exchange_account_id: account ?? "",
+    });
+    const items = [rowOf(ids[0], 900), rowOf(ids[26], 926)];
+    const listPositions = vi.fn(async (query?: PositionsQuery): Promise<PositionsOutcome> => ({
+      kind: "ok",
+      items: items.filter((p) => query?.accountIds?.includes(p.exchange_account_id) ?? true),
+      aggregates: [],
+    }));
+    start(
+      fakeApi({ listExchangeAccounts: async () => ({ kind: "ok", items: many }), listPositions }),
+    );
+    await settle(COMMIT_INTERVAL_MS + 16);
+    // first paint is asked before the directory is known; the over-cap row leaves when it is
+    expect(listPositions).toHaveBeenNthCalledWith(1, {}, expect.anything());
+    expect(store.getSnapshot().overCap).toEqual(ids.slice(25));
+    expect(store.getSnapshot().rows.map((r) => r.accountId)).toEqual([ids[0]]);
+    positionsHandle()?.setEffective({ exchange_account_ids: ids.slice(0, 25) }); // its sub_ok
+    await settle(COMMIT_INTERVAL_MS + 16);
+    expect(store.getSnapshot().withdrawn).toEqual([]);
+    ws.setState({
+      link: { kind: "reconnecting", attempt: 1, nextAttemptAtMs: 0 },
+      outage: { sinceMs: 1, lastDataMs: null },
+    });
+    await settle(COMMIT_INTERVAL_MS + 16);
+    expect(listPositions).toHaveBeenLastCalledWith(
+      { accountIds: ids.slice(0, 25) },
+      expect.anything(),
+    );
+    expect(store.getSnapshot().rows.map((r) => r.accountId)).toEqual([ids[0]]);
+    expect(store.getSnapshot().withdrawn).toEqual([]);
   });
 
   it("no accounts: nothing to subscribe to", async () => {
@@ -323,28 +367,80 @@ describe("the link-down fallback (BQ-18)", () => {
   });
 });
 
-describe("a narrowing (23 §9.5) re-subscribes and names who left (SR-E29-11)", () => {
-  it("the new sub_ok's effective list drops the withdrawn account with its F-02 line", async () => {
-    const signals = createAccountSignals();
-    start(fakeApi(), { signals });
+describe("a narrowing (23 §9.5): the directory names who left (SR-E29-11)", () => {
+  const TICKS = (COMMIT_INTERVAL_MS + 16) * 2; // the tick that reads the reset, and the next commit
+  const kept = snapshot.positions.filter((p) => p.exchange_account_id !== SUB2);
+
+  /** A feed live on the three accounts; the next directory read answers `next`. */
+  async function narrowing(next: ExchangeAccount[]) {
+    const reads = [accounts, next];
+    const api = fakeApi({
+      listExchangeAccounts: vi.fn(async (): Promise<AccountsOutcome> => ({
+        kind: "ok",
+        items: reads.shift() ?? next,
+      })),
+    });
+    start(api, { signals: createAccountSignals() });
     await settle();
     const first = positionsHandle();
-    first?.setEffective({ exchange_account_ids: [MAIN, SUB1, SUB2] });
+    first?.setEffective({ exchange_account_ids: [MAIN, SUB1, SUB2] }); // its sub_ok
     first?.push(snap(snapshot));
     await settle(COMMIT_INTERVAL_MS + 16);
     first?.push(reset("narrowed"));
-    await settle(COMMIT_INTERVAL_MS + 16);
-    expect(first?.released).toBe(true);
-    expect(store.getSnapshot().rows).toEqual([]);
+    return { api, first };
+  }
+
+  it("the handle keeps the old effective list, so the directory re-read names the account that left", async () => {
+    const { api, first } = await narrowing(accounts.filter((a) => a.id !== SUB2));
+    await settle(TICKS);
+    expect(api.listExchangeAccounts).toHaveBeenCalledTimes(2);
+    expect(store.getSnapshot().withdrawn).toEqual([{ accountId: SUB2, label: "Sub-2" }]);
+    expect(store.getSnapshot().rows).toEqual([]); // until the narrowed snap: who stayed is unknown
+    // made again with the reduced set; it takes the held subscription over, so no sub goes out and
+    // the effective list is still the old one (no sub_ok narrowed it)
     const second = positionsHandle();
-    expect(second).not.toBe(first);
-    second?.setEffective({ exchange_account_ids: [MAIN, SUB1] });
-    second?.push(
-      snap({ positions: snapshot.positions.filter((p) => p.exchange_account_id !== SUB2) }),
-    );
+    expect(first?.released).toBe(true);
+    expect(second?.spec.opts).toEqual({ exchange_account_ids: [MAIN, SUB1] });
+    expect(second?.effective).toEqual({ exchange_account_ids: [MAIN, SUB1, SUB2] });
+    expect(ws.subs.filter((ch) => ch === "positions")).toHaveLength(1);
+    second?.push(snap({ positions: kept }));
+    await settle(COMMIT_INTERVAL_MS + 16);
+    expect(store.getSnapshot().rows).toHaveLength(3);
+    expect(store.getSnapshot().withdrawn).toEqual([{ accountId: SUB2, label: "Sub-2" }]);
+  });
+
+  it("the narrowed snap brings the kept accounts back before the directory answers", async () => {
+    const { first } = await narrowing(accounts.filter((a) => a.id !== SUB2));
+    first?.push(snap({ positions: kept })); // on the same tick: the subscription continues (§9.5)
+    await settle(COMMIT_INTERVAL_MS + 16);
+    expect(store.getSnapshot()).toMatchObject({ status: "live", withdrawn: [] });
+    expect(store.getSnapshot().rows).toHaveLength(3);
     await settle(COMMIT_INTERVAL_MS + 16);
     expect(store.getSnapshot().withdrawn).toEqual([{ accountId: SUB2, label: "Sub-2" }]);
     expect(store.getSnapshot().rows).toHaveLength(3);
+  });
+
+  it("a directory that still lists every account names no one and makes nothing again", async () => {
+    // the gap: an account that leaves the subscription but stays listed (account_disabled)
+    const { first } = await narrowing(accounts);
+    first?.push(snap({ positions: kept }));
+    await settle(TICKS);
+    expect(store.getSnapshot().withdrawn).toEqual([]);
+    expect(positionsHandle()).toBe(first);
+    expect(ws.handles.filter((h) => h.ch === "positions")).toHaveLength(1);
+  });
+
+  it("a re-read that fails names no one and makes nothing again", async () => {
+    const reads: AccountsOutcome[] = [{ kind: "ok", items: accounts }, { kind: "unavailable" }];
+    start(fakeApi({ listExchangeAccounts: async () => reads.shift() ?? { kind: "unavailable" } }));
+    await settle();
+    positionsHandle()?.push(snap(snapshot));
+    await settle(COMMIT_INTERVAL_MS + 16);
+    const first = positionsHandle();
+    first?.push(reset("narrowed"));
+    await settle(TICKS);
+    expect(store.getSnapshot()).toMatchObject({ rows: [], withdrawn: [] });
+    expect(positionsHandle()).toBe(first);
   });
 });
 

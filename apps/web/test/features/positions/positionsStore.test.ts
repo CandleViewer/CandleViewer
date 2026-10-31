@@ -4,6 +4,7 @@
  * it wholesale), resets (the last good view until the next `snap`), and the reset and revocation
  * cache drop with E29-D05 F-02's line (OM-I04, SR-E29-11). Frames are the shipped mappers' goldens.
  */
+import { renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { DeltaFrame } from "../../../src/lib/ws/api";
 import type { generated } from "@candleviewer/protocol";
@@ -15,6 +16,8 @@ import {
 } from "../../../src/features/positions/model/rowMapping";
 import {
   createPositionsStore,
+  MAX_TOMBSTONES,
+  usePositions,
   type PositionsStore,
 } from "../../../src/features/positions/positionsStore";
 import { delta, golden, MAIN, reset, snap, SUB1, SUB2 } from "./support/fakes";
@@ -31,6 +34,8 @@ const directory = golden<{ items: ExchangeAccount[] }>("rest_list_exchange_accou
   .filter((a): a is AccountInfo => a !== null);
 const item = (symbol: string, account: string): Item =>
   snapshot.positions.find((p) => p.symbol === symbol && p.exchange_account_id === account) as Item;
+/** The snapshot under a narrowing that took SUB2 (`23` §9.5's `reconfigure` snap). */
+const kept = snapshot.positions.filter((p) => p.exchange_account_id !== SUB2);
 
 function started(): PositionsStore {
   const store = createPositionsStore();
@@ -120,6 +125,95 @@ describe("removed, after the upserts (23 §15.2)", () => {
   });
 });
 
+describe("a REST read never brings back what was taken (SR-E29-11)", () => {
+  it("one that lands after a revocation is ignored; a withdrawn account stays out while its line stands", () => {
+    const store = live();
+    store.applyFrames([reset("revoked")]);
+    store.applyRest(restItems, 9_000);
+    store.commit();
+    expect(store.getSnapshot()).toMatchObject({ status: "revoked", source: "none", rows: [] });
+    store.markRetrying();
+    store.dismissWithdrawn(MAIN);
+    store.applyRest(restItems, 9_100);
+    store.commit();
+    expect(store.getSnapshot().rows.map((r) => r.accountId)).toEqual([MAIN]);
+  });
+
+  it("one that lands during a narrowing brings none of its accounts, nor a withdrawn one's", () => {
+    const store = live();
+    store.applyFrames([reset("narrowed")]);
+    store.applyRest(restItems, 9_000);
+    store.commit();
+    expect(store.getSnapshot().rows).toEqual([]);
+    store.setAccounts(directory.filter((a) => a.id !== SUB2));
+    store.applyRest(restItems, 9_100);
+    store.commit();
+    expect(store.getSnapshot().rows.map((r) => r.accountId)).toEqual([MAIN, SUB1, SUB1]);
+    expect(store.getSnapshot().source).toBe("rest");
+  });
+
+  it("an over-cap account's rows leave when the cap is known, and no read brings them back", () => {
+    const store = started();
+    store.applyRest(restItems, 1_000);
+    store.setOverCap([SUB2]);
+    store.commit();
+    expect(store.getSnapshot().rows.map((r) => r.accountId)).toEqual([MAIN, SUB1, SUB1]);
+    store.applyRest(restItems, 2_000);
+    store.commit();
+    expect(store.getSnapshot()).toMatchObject({ withdrawn: [], overCap: [SUB2] });
+    expect(store.getSnapshot().rows).toHaveLength(3);
+  });
+});
+
+describe("a removed row stays removed for the baseline's life (23 §6.2.3, §15)", () => {
+  const btc = (): Item => item("BTCUSDT", SUB2);
+
+  it("a late item stamped at or before the removal is dropped; a later one reopens it", () => {
+    const store = live();
+    store.applyFrames([delta(bodyOf("flat"))]); // SUB2 BTCUSDT, by id
+    store.applyFrames([
+      delta({ positions: [{ ...btc(), updated_at_ms: btc().updated_at_ms - 1 }] }),
+    ]);
+    store.applyFrames([delta({ positions: [btc()] })]); // the very row that was removed
+    store.commit();
+    expect(store.getSnapshot().rows).toHaveLength(4);
+    store.applyFrames([
+      delta({ positions: [{ ...btc(), updated_at_ms: btc().updated_at_ms + 1 }] }),
+    ]);
+    store.commit();
+    expect(store.getSnapshot().rows).toHaveLength(5);
+  });
+
+  it("a flat item's own stamp bounds it; the next snapshot starts afresh", () => {
+    const store = live();
+    const at = btc().updated_at_ms + 50;
+    store.applyFrames([delta({ positions: [{ ...btc(), side: "flat", updated_at_ms: at }] })]);
+    store.applyFrames([delta({ positions: [{ ...btc(), updated_at_ms: at - 10 }] })]);
+    store.commit();
+    expect(store.getSnapshot().rows).toHaveLength(4);
+    store.applyFrames([snap(snapshot)]);
+    store.commit();
+    expect(store.getSnapshot().rows).toHaveLength(5); // a snapshot says what is open
+  });
+
+  it("remembers at most MAX_TOMBSTONES removals, the oldest forgotten first", () => {
+    const store = live();
+    const symbols = Array.from({ length: MAX_TOMBSTONES + 1 }, (_, i) => `S${i}USDT`);
+    const flat = (symbol: string): Item => ({ ...btc(), symbol, side: "flat" });
+    store.applyFrames([delta({ positions: symbols.map(flat) })]);
+    const late = (n: number): Item => ({
+      ...btc(),
+      symbol: `S${n}USDT`,
+      id: `0d000000-0000-4000-8000-${String(900 + n).padStart(12, "0")}`,
+    });
+    store.applyFrames([delta({ positions: [late(0), late(1)] })]);
+    store.commit();
+    const shown = store.getSnapshot().rows.map((r) => r.symbol);
+    expect(shown).toContain("S0USDT"); // forgotten: its late item is taken
+    expect(shown).not.toContain("S1USDT");
+  });
+});
+
 describe("sources (BQ-18)", () => {
   it("REST is first paint while the snapshot is pending; a snap replaces it wholesale", () => {
     const store = started();
@@ -181,21 +275,51 @@ describe("resets", () => {
     },
   );
 
-  it("narrowed: every row leaves at once; the re-subscribe's sub_ok names who left (F-02)", () => {
+  it("narrowed: every row leaves at once; the directory names who left (F-02)", () => {
     const store = live();
     store.applyFrames([reset("narrowed")]);
     store.commit();
     expect(store.getSnapshot().rows).toEqual([]);
-    expect(store.takeResubscribe()).toBe(true);
-    expect(store.takeResubscribe()).toBe(false);
-    store.setEffective({}); // the new handle, before its sub_ok: nothing yet
-    store.setEffective({ exchange_account_ids: [MAIN, SUB1] });
-    store.applyFrames([
-      snap({ positions: snapshot.positions.filter((p) => p.exchange_account_id !== SUB2) }),
-    ]);
+    expect(store.takeNarrowed()).toBe(true);
+    expect(store.takeNarrowed()).toBe(false);
+    store.setEffective({ exchange_account_ids: [MAIN, SUB1, SUB2] }); // the old list: no news
+    store.applyFrames([snap({ positions: kept })]);
+    store.commit();
+    expect(store.getSnapshot().withdrawn).toEqual([]);
+    store.setAccounts(directory.filter((a) => a.id !== SUB2));
     store.commit();
     expect(store.getSnapshot().withdrawn).toEqual([{ accountId: SUB2, label: "Sub-2" }]);
-    expect(store.getSnapshot().rows.map((r) => r.accountId)).not.toContain(SUB2);
+    expect(store.getSnapshot().rows.map((r) => r.accountId)).toEqual([MAIN, SUB1, SUB1]);
+  });
+
+  it("narrowed: a narrowed sub_ok (a fresh subscription) names who left before the directory", () => {
+    const store = live();
+    store.applyFrames([reset("narrowed")]);
+    store.setEffective({ exchange_account_ids: [MAIN, SUB1] });
+    store.commit();
+    expect(store.getSnapshot().withdrawn).toEqual([{ accountId: SUB2, label: "Sub-2" }]);
+    store.setAccounts(directory.filter((a) => a.id !== SUB2)); // named once
+    store.commit();
+    expect(store.getSnapshot().withdrawn).toHaveLength(1);
+  });
+
+  it("narrowed: a directory that lists every account names no one (an account_disabled gap)", () => {
+    const store = live();
+    store.applyFrames([reset("narrowed"), snap({ positions: kept })]);
+    store.setAccounts(directory);
+    store.commit();
+    expect(store.getSnapshot().withdrawn).toEqual([]);
+    store.setAccounts(directory.filter((a) => a.id !== SUB2)); // later: SUB2 had no rows by then
+    store.commit();
+    expect(store.getSnapshot().withdrawn).toEqual([]);
+  });
+
+  it("narrowed, then revoked: every account the narrowing took is named", () => {
+    const store = live();
+    store.applyFrames([reset("narrowed"), snap({ positions: kept }), reset("revoked")]);
+    store.commit();
+    expect(store.getSnapshot().withdrawn.map((w) => w.label)).toEqual(["Main", "Sub-1", "Sub-2"]);
+    expect(store.takeNarrowed()).toBe(false); // ended: nothing to re-read
   });
 
   it("revoked after data: the subscription ends, every account's rows leave with its line", () => {
@@ -220,6 +344,15 @@ describe("resets", () => {
       rows: [],
       withdrawn: [],
     });
+  });
+
+  it("an over-cap account is never named withdrawn, though no sub_ok names it", () => {
+    const store = live();
+    store.applyFrames([reset("narrowed")]);
+    store.setOverCap([SUB2]);
+    store.setEffective({ exchange_account_ids: [MAIN, SUB1] });
+    store.commit();
+    expect(store.getSnapshot().withdrawn).toEqual([]);
   });
 
   it("a narrowed sub_ok drops the account it no longer names", () => {
@@ -309,6 +442,47 @@ describe("wallet: the MM rate, today's realised PnL", () => {
     });
   });
 
+  it("the MM rate's balance staleness reaches the reading (23 §15.4)", () => {
+    const store = live();
+    const sub2 = wallet.balances[2] as generated.ws.Wallet["balances"][number];
+    const keyOf = (): string =>
+      store.getSnapshot().rows.find((r) => r.accountId === SUB2 && r.symbol === "BTCUSDT")?.key ??
+      "";
+    store.applyWallet([snap({ balances: [{ ...sub2, stale: true, stale_since_ms: 1_000 }] })]);
+    store.commit();
+    expect(store.getSnapshot().liq.get(keyOf())).toMatchObject({
+      basis: "mm_rate",
+      mmRateStale: true,
+      mmRateStaleSinceMs: 1_000,
+    });
+    store.applyWallet([
+      delta({
+        balances: [{ ...sub2, stale_since_ms: null, updated_at_ms: sub2.updated_at_ms + 1 }],
+      }),
+    ]);
+    store.commit();
+    expect(store.getSnapshot().liq.get(keyOf())).toMatchObject({
+      mmRateStale: false,
+      mmRateStaleSinceMs: null,
+    });
+    const isolated = store.getSnapshot().rows.find((r) => r.accountId === SUB1)?.key ?? "";
+    expect(store.getSnapshot().liq.get(isolated)).toMatchObject({ mmRateStale: null });
+  });
+
+  it("before any wallet frame, the REST balance's rate has no known staleness", () => {
+    const store = createPositionsStore();
+    store.setStarted(true);
+    store.setAccounts(directory.map((a) => (a.id === SUB2 ? { ...a, mmRate: "0.72" } : a)));
+    store.applyFrames([snap(snapshot)]);
+    store.commit();
+    const key = store.getSnapshot().rows.find((r) => r.accountId === SUB2)?.key ?? "";
+    expect(store.getSnapshot().liq.get(key)).toMatchObject({
+      basis: "mm_rate",
+      mmRatePct: "72",
+      mmRateStale: null,
+    });
+  });
+
   it("realised_pnl_today, when served, per account; an older item is dropped", () => {
     const store = live();
     const balance = wallet.balances[0] as generated.ws.Wallet["balances"][number];
@@ -380,5 +554,40 @@ describe("commits (the 10 Hz tick)", () => {
     store.setOverCap([SUB2]);
     expect(store.commit()).toBe(false);
     expect(store.getSnapshot().overCap).toEqual([SUB2]);
+  });
+});
+
+describe("teardown (every subscription lets go)", () => {
+  it("a listener that unsubscribed hears no later commit", () => {
+    const store = started();
+    const listener = vi.fn();
+    const unsubscribe = store.subscribe(listener);
+    store.applyFrames([snap(snapshot)]);
+    store.commit();
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    unsubscribe(); // twice is harmless
+    store.applyFrames([delta(bodyOf("update"))]);
+    expect(store.commit()).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("usePositions unsubscribes on unmount", () => {
+    const store = live();
+    const released = vi.fn();
+    const watched: PositionsStore = {
+      ...store,
+      subscribe: (listener) => {
+        const off = store.subscribe(listener);
+        return () => {
+          released();
+          off();
+        };
+      },
+    };
+    const { result, unmount } = renderHook(() => usePositions(watched, (s) => s.rows.length));
+    expect(result.current).toBe(5);
+    unmount();
+    expect(released).toHaveBeenCalledTimes(1);
   });
 });

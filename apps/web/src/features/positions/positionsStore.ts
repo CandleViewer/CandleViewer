@@ -12,11 +12,21 @@
  *   good view until the next `snap` replaces them. `narrowed` and `revoked` drop the accounts' rows
  *   at once from every cache, rows, liquidation state and balances alike (OM-I04, SR-E29-11), and
  *   each withdrawn account gets E29-D05 F-02's "No longer shown" line.
+ * - **A narrowing** (`23` §9.5) arrives as a bare `reset`: the consumer API carries no
+ *   `removed_accounts`, and the handle's `effective` keeps the old list (E17's registry does not
+ *   edit it). Its accounts wait as candidates: one the narrowed `snap` serves was kept; the feed
+ *   re-reads the directory, and `setAccounts` names the ones it no longer lists (a narrowed
+ *   `sub_ok` names them too, when one comes). A REST read never brings a candidate's rows back,
+ *   nor a withdrawn or over-cap account's, nor any after a revocation (SR-E29-11).
+ * - **A removed row stays removed** for the baseline's life: an item stamped at or before its
+ *   removal is late (`23` §6.2.3, §15), whichever frame brings it.
  * - **Commits** are coalesced: inputs only mark the store dirty, and `commit()`, which the feed
  *   calls at most every 100 ms (`wsPositions.ts`), publishes one snapshot (the ticket's 10 Hz tick).
  */
 import { useSyncExternalStore } from "react";
 import type { TopicFrame } from "../../lib/ws/api";
+import type { DataBody } from "../../lib/ws/protocol/codec";
+import { parseDecimal } from "./model/decimal";
 import { LiqTierTracker, type LiqCrossing, type LiqReading } from "./model/liqTier";
 import {
   isUuid,
@@ -82,14 +92,24 @@ interface WalletEntry {
   readonly coin: string;
   readonly mmRate: string | null;
   readonly realisedToday: string | null;
+  /** `23` §15.4: the balance is older than the producer's 10 s, since `staleSinceMs`. */
+  readonly stale: boolean;
+  readonly staleSinceMs: number | null;
   readonly updatedAtMs: number;
 }
-type Body =
-  { readonly e: "j"; readonly p: unknown } | { readonly e: "b64"; readonly bytes: ArrayBuffer };
+/** What a reading takes of the account's MM rate (BQ-11): the rate, and its balance's staleness. */
+interface MmRate {
+  readonly rate: string | null;
+  /** The `wallet` balance's `stale`; `null` when the rate is not the wallet's. */
+  readonly stale: boolean | null;
+  readonly staleSinceMs: number | null;
+}
 
 /** Bounded, as every cache is (C-2.18): a crossings list per commit, the withdrawn lines. */
 const MAX_CROSSINGS = 512;
 const MAX_WITHDRAWN = 64;
+/** The removed rows a baseline remembers (C-2.18): past it the oldest is forgotten first. */
+export const MAX_TOMBSTONES = 1_024;
 
 const EMPTY: PositionsSnapshot = Object.freeze({
   status: "idle",
@@ -111,7 +131,7 @@ const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> =>
 
 /** The `positions` payload of a structured body, or `null` (a binary body carries no positions). */
 function payloadOf(
-  body: Body,
+  body: DataBody,
 ): { positions: readonly unknown[]; removed: readonly unknown[] } | null {
   if (body.e !== "j" || !isRecord(body.p) || !Array.isArray(body.p["positions"])) return null;
   const removed = body.p["removed"];
@@ -128,10 +148,11 @@ function itemKey(item: unknown): string | null {
   return keyOf(account.toLowerCase(), symbol, idx === 1 || idx === 2 ? idx : 0);
 }
 
-const stampOf = (item: unknown): number | null => {
-  const v = isRecord(item) ? item["updated_at_ms"] : undefined;
-  return typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : null;
-};
+/** `23` §13 `epochMs`: a safe, non-negative integer, else `null`. */
+const epochMs = (v: unknown): number | null =>
+  typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : null;
+const stampOf = (item: unknown): number | null =>
+  epochMs(isRecord(item) ? item["updated_at_ms"] : undefined);
 
 const isOpen = (item: unknown): boolean =>
   isRecord(item) && (item["side"] === "long" || item["side"] === "short");
@@ -143,7 +164,11 @@ export interface PositionsStore {
   setStarted(started: boolean): void;
   /** The account directory, `null` when its read failed. */
   setAccounts(accounts: readonly AccountInfo[] | null): void;
-  /** A REST read: first paint, or the link-down fallback; ignored once a WS baseline is held. */
+  /**
+   * A REST read: first paint, or the link-down fallback. Ignored once a WS baseline is held and
+   * while revoked; a narrowing's candidates, a withdrawn account while its line stands, and an
+   * over-cap account bring no rows.
+   */
   applyRest(items: readonly RestPosition[], atMs: number): void;
   /** What the `positions` handle's `read()` returned, in order. */
   applyFrames(frames: readonly TopicFrame[]): void;
@@ -151,8 +176,9 @@ export interface PositionsStore {
   applyWallet(frames: readonly TopicFrame[]): void;
   /**
    * The current subscription's effective options (`TopicHandle.effective`, C4): an account it no
-   * longer names leaves every cache with its F-02 line (a narrowed `sub_ok`, SR-E29-11). Call it
-   * after any re-subscribe, with the handle now held.
+   * longer names leaves every cache with its F-02 line (a narrowed `sub_ok`, SR-E29-11). An
+   * over-cap account is never named. A list that still names a narrowing's candidates settles
+   * nothing: after a narrowing it is the old one (E17), so only the directory settles them.
    */
   setEffective(effective: Readonly<Record<string, unknown>>): void;
   setLink(up: boolean): void;
@@ -160,12 +186,13 @@ export interface PositionsStore {
   markSnapshotFailed(): void;
   /** Retry re-subscribes (S-02): back to loading, the failure cleared. */
   markRetrying(): void;
+  /** Accounts past the 25 a subscription names: never shown live, so their rows leave, unnamed. */
   setOverCap(accountIds: readonly string[]): void;
   /**
-   * Whether a narrowing owes a re-subscribe (taken once): the reset names no account, and the new
-   * `sub_ok`'s effective list says which ones left (`23` §9.5).
+   * Whether a narrowing came since the last call (taken once): its reset names no account, so the
+   * feed re-reads the directory, whose `setAccounts` names the ones that left (`23` §9.5).
    */
-  takeResubscribe(): boolean;
+  takeNarrowed(): boolean;
   dismissWithdrawn(accountId: string): void;
   /** Publishes one snapshot when anything changed; `true` when it did. */
   commit(): boolean;
@@ -180,6 +207,8 @@ export function createPositionsStore(): PositionsStore {
   let directory: Map<string, AccountInfo> | null = null;
   let ws = new Map<string, WsPosition>();
   let wsIds = new Map<string, string>(); // position id -> key
+  /** Removed rows' keys -> the stamp they were removed at, for the baseline's life (`23` §15). */
+  let tombs = new Map<string, number>();
   let wsBaseline = false;
   let everSnapped = false;
   let wsAsOf: number | null = null;
@@ -188,8 +217,9 @@ export function createPositionsStore(): PositionsStore {
   let linkUp = true;
   let snapshotFailed = false;
   let revoked = false;
+  /** A narrowing's candidates: the accounts whose rows it took, until the directory settles. */
   let pendingNarrowing: Set<string> | null = null;
-  let resubscribe = false;
+  let narrowed = false;
   let withdrawn: Withdrawn[] = [];
   let overCap: readonly string[] = [];
   let wallet = new Map<string, Map<string, WalletEntry>>();
@@ -256,6 +286,7 @@ export function createPositionsStore(): PositionsStore {
       lastGood = { ...lastGood, rows: new Map([...lastGood.rows].filter(([key]) => !gone(key))) };
     }
     for (const key of [...mapped.keys()]) if (gone(key)) mapped.delete(key);
+    for (const key of [...tombs.keys()]) if (gone(key)) tombs.delete(key);
     for (const id of accountIds) wallet.delete(id);
     touch();
   }
@@ -263,6 +294,7 @@ export function createPositionsStore(): PositionsStore {
   function clearWs(): void {
     ws = new Map();
     wsIds = new Map();
+    tombs = new Map(); // a removal is the baseline's: the next one says what is open
     wsBaseline = false;
   }
 
@@ -272,27 +304,48 @@ export function createPositionsStore(): PositionsStore {
     if (key === null || stamp === null) return; // `23` §15.2 requires both: a malformed item is dropped
     const held = ws.get(key);
     if (held !== undefined && stamp < held.updated_at_ms) return; // older: discarded (23 §15)
+    // a row removed since the baseline began: an item stamped no later than its removal is late
+    const removedAt = tombs.get(key);
+    if (held === undefined && removedAt !== undefined && stamp <= removedAt) return;
     if (!isOpen(item)) {
-      remove(key); // a flat row leaves the view
+      remove(key, stamp); // a flat row leaves the view
       return;
     }
     const wire = item as WsPosition;
     ws.set(key, wire);
     wsIds.set(wire.id.toLowerCase(), key);
+    tombs.delete(key);
   }
 
-  function remove(key: string): void {
+  /**
+   * The row leaves, and its key remembers when: the flat item's stamp, else the removed row's own
+   * (a `removed` id carries none), so an item stamped no later cannot bring it back.
+   */
+  function remove(key: string, stamp?: number): void {
     const wire = ws.get(key);
     if (wire !== undefined) wsIds.delete(wire.id.toLowerCase());
     ws.delete(key);
+    const at = Math.max(stamp ?? -1, wire?.updated_at_ms ?? -1, tombs.get(key) ?? -1);
+    if (at < 0) return;
+    tombs.delete(key); // the newest removal goes last, so the oldest is forgotten first
+    tombs.set(key, at);
+    if (tombs.size > MAX_TOMBSTONES) {
+      const oldest = tombs.keys().next();
+      if (oldest.done !== true) tombs.delete(oldest.value);
+    }
   }
 
-  function applySnap(bodies: readonly Body[], ts: number): void {
+  function applySnap(bodies: readonly DataBody[], ts: number): void {
     clearWs();
     for (const body of bodies) {
       const payload = payloadOf(body);
       if (payload === null) continue;
       for (const item of payload.positions) upsert(item);
+    }
+    if (pendingNarrowing !== null) {
+      // a narrowing's `snap` is built under the new scope (`23` §9.5): an account it serves stayed
+      for (const key of ws.keys()) pendingNarrowing.delete(accountOfKey(key));
+      if (pendingNarrowing.size === 0) pendingNarrowing = null;
     }
     wsBaseline = true;
     everSnapped = true;
@@ -303,7 +356,7 @@ export function createPositionsStore(): PositionsStore {
     wsAsOf = ts;
   }
 
-  function applyDelta(body: Body, ts: number): void {
+  function applyDelta(body: DataBody, ts: number): void {
     if (!wsBaseline) return; // the client never extends a void baseline (23 §7.1)
     const payload = payloadOf(body);
     if (payload === null) return;
@@ -327,12 +380,13 @@ export function createPositionsStore(): PositionsStore {
           revoked = true;
           noteWithdrawn([...held, ...(pendingNarrowing ?? [])]);
           pendingNarrowing = null;
+          narrowed = false; // ended: nothing is re-read or re-made until Retry
         } else {
           snapshotFailed = true; // refused before any snapshot (S-02)
         }
       } else {
         pendingNarrowing = new Set([...(pendingNarrowing ?? []), ...held]);
-        resubscribe = true;
+        narrowed = true;
       }
       return;
     }
@@ -346,7 +400,7 @@ export function createPositionsStore(): PositionsStore {
     clearWs();
   }
 
-  function walletPayload(body: Body): readonly unknown[] {
+  function walletPayload(body: DataBody): readonly unknown[] {
     if (body.e !== "j" || !isRecord(body.p) || !Array.isArray(body.p["balances"])) return [];
     return body.p["balances"];
   }
@@ -361,21 +415,30 @@ export function createPositionsStore(): PositionsStore {
     const held = coins.get(coin);
     if (held !== undefined && stamp < held.updatedAtMs) return; // 23 §15, per (account, coin)
     const text = (v: unknown): string | null =>
-      typeof v === "string" && /^-?[0-9]+(\.[0-9]+)?$/.test(v) ? v : null;
+      typeof v === "string" && parseDecimal(v) !== null ? v : null;
+    const stale = item["stale"] === true;
     coins.set(coin, {
       coin,
       mmRate: text(item["account_mm_rate"]),
       realisedToday: text(item["realised_pnl_today"]),
+      stale,
+      staleSinceMs: stale ? epochMs(item["stale_since_ms"]) : null,
       updatedAtMs: stamp,
     });
     wallet.set(account, coins);
   }
 
-  /** The account's MM rate: `wallet`'s USDT row, else any, else the REST balance's (first paint). */
-  function mmRateOf(accountId: string): string | null {
+  /**
+   * The account's MM rate: `wallet`'s USDT row, else any, else the REST balance's (first paint),
+   * with the wallet row's `stale` (`23` §15.4); the REST balance's is not read, so it is `null`.
+   */
+  function mmRateOf(accountId: string): MmRate {
     const coins = wallet.get(accountId);
     const entry = coins?.get("USDT") ?? [...(coins?.values() ?? [])][0];
-    return entry?.mmRate ?? directory?.get(accountId)?.mmRate ?? null;
+    if (entry !== undefined && entry.mmRate !== null) {
+      return { rate: entry.mmRate, stale: entry.stale, staleSinceMs: entry.staleSinceMs };
+    }
+    return { rate: directory?.get(accountId)?.mmRate ?? null, stale: null, staleSinceMs: null };
   }
 
   function statusOf(): FeedStatus {
@@ -404,13 +467,16 @@ export function createPositionsStore(): PositionsStore {
       const row = entry.row;
       if (row === null) continue;
       rows.push(row);
+      const mm = mmRateOf(row.accountId);
       const { reading, crossing } = tracker.update(row.key, {
         side: row.side,
         entry: row.entry,
         mark: row.mark,
         liqPrice: row.liqPrice,
         marginMode: row.marginMode.value,
-        mmRate: mmRateOf(row.accountId),
+        mmRate: mm.rate,
+        mmRateStale: mm.stale,
+        mmRateStaleSinceMs: mm.staleSinceMs,
       });
       liq.set(row.key, reading);
       if (crossing !== null && crossings.length < MAX_CROSSINGS) {
@@ -462,7 +528,7 @@ export function createPositionsStore(): PositionsStore {
         snapshotFailed = false;
         revoked = false;
         pendingNarrowing = null;
-        resubscribe = false;
+        narrowed = false;
         withdrawn = [];
         overCap = [];
         wallet = new Map();
@@ -480,19 +546,30 @@ export function createPositionsStore(): PositionsStore {
       const next = new Map(accounts.map((a) => [a.id, a]));
       const gone = new Set<string>();
       for (const id of directory?.keys() ?? []) if (!next.has(id)) gone.add(id);
-      noteWithdrawn([...gone].filter((id) => heldAccounts().has(id))); // labels from the old directory
+      // a shown account, or a narrowing's candidate, gets its line; labels from the old directory
+      const named = new Set([...heldAccounts(), ...(pendingNarrowing ?? [])]);
+      noteWithdrawn([...gone].filter((id) => named.has(id)));
       directory = next;
       dropAccounts(gone);
+      pendingNarrowing = null; // the directory settles a narrowing: the candidates it lists stayed
       if (accounts.length > 0 && snapshotFailed && !everSnapped && rest === null)
         snapshotFailed = false;
       touch();
     },
     applyRest(items, atMs) {
-      if (wsBaseline) return; // the WS snapshot is authoritative (BQ-18)
+      // the WS snapshot is authoritative (BQ-18); while revoked, no read applies until Retry
+      if (wsBaseline || revoked) return;
+      const barred = new Set([
+        ...withdrawn.map((w) => w.accountId),
+        ...(pendingNarrowing ?? []),
+        ...overCap,
+      ]);
       const rows = new Map<string, RestPosition>();
       for (const item of items) {
         const key = itemKey(item);
-        if (key !== null && isOpen(item)) rows.set(key, item);
+        // a read that set out before a withdrawal or a narrowing brings none of their rows back,
+        // and an over-cap account's rows would never be live
+        if (key !== null && isOpen(item) && !barred.has(accountOfKey(key))) rows.set(key, item);
       }
       rest = { rows, asOfMs: atMs };
       lastGood = null; // read after the loss, so newer than what the link left
@@ -522,14 +599,16 @@ export function createPositionsStore(): PositionsStore {
     setEffective(effective) {
       const ids = effective["exchange_account_ids"];
       if (!Array.isArray(ids) || !ids.every(isUuid)) return; // no `sub_ok` yet: nothing narrowed
-      const scope = new Set(ids.map((id) => id.toLowerCase()));
+      const scope = new Set([...ids.map((id) => id.toLowerCase()), ...overCap]); // never withdrawn
       const out = new Set(
         [...heldAccounts(), ...(pendingNarrowing ?? [])].filter((id) => !scope.has(id)),
       );
-      pendingNarrowing = null;
       if (out.size === 0) return;
       noteWithdrawn(out); // a narrowed `sub_ok`, or the accounts a narrowing took (SR-E29-11)
       dropAccounts(out);
+      if (pendingNarrowing === null) return;
+      for (const id of out) pendingNarrowing.delete(id);
+      if (pendingNarrowing.size === 0) pendingNarrowing = null;
     },
     setLink(up) {
       if (up === linkUp) return;
@@ -550,11 +629,14 @@ export function createPositionsStore(): PositionsStore {
       if (accountIds.length === overCap.length && accountIds.every((id, i) => overCap[i] === id))
         return;
       overCap = [...accountIds];
+      // a first-paint read set out before the cap was known: its rows of these accounts would never
+      // be live, so they leave now, with no line (they were not withdrawn; `overCap` says why)
+      dropAccounts(new Set(overCap));
       touch();
     },
-    takeResubscribe() {
-      const owed = resubscribe;
-      resubscribe = false;
+    takeNarrowed() {
+      const owed = narrowed;
+      narrowed = false;
       return owed;
     },
     dismissWithdrawn(accountId) {

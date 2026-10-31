@@ -2,6 +2,13 @@
  * Test support for the positions feature (E29-S01 #911): the goldens the shipped Python mappers
  * write (`packages/fixtures/golden/positions/`, BQ-22), and a fake WS client whose topic handles
  * hold the frames a test pushes until `read()` drains them, as the real client's queue does.
+ *
+ * The fake shares a stream as the engine does (`lib/ws/core/engine.ts`, `core/subscriptions.ts`).
+ * Every handle of one `(ch, rs)` reads the stream's `effective`, which only a `sub_ok` or `ctl_ok`
+ * (`setEffective`) changes; a narrowing never does (`23` §9.5). A handle consumed while another
+ * still holds the stream, or before a microtask has passed since the last one let go (the engine's
+ * `sync`), takes the subscription over: it inherits the `effective`, as `host.subscribe` does, and
+ * no `sub` goes out, so no `sub_ok` comes to say who left. `subs` lists the `sub`s that went out.
  */
 import { INITIAL_WS_STATE } from "../../../../src/lib/ws/state/reducer";
 import type {
@@ -54,24 +61,42 @@ export interface FakeClient {
   readonly handles: FakeHandle[];
   /** The live (not released) handles of `ch`. */
   live(ch: string): FakeHandle[];
+  /** The `ch` of every `sub` sent, in order: a handle that took a stream over sent none. */
+  readonly subs: readonly string[];
   setLink(link: Link): void;
   setState(patch: Partial<WsState>): void;
 }
 
+/** One server subscription, as the engine keeps it: its handles share what its `sub_ok` said. */
+interface FakeStream {
+  effective: Readonly<Record<string, unknown>>;
+  refs: number;
+}
+
 export function fakeClient(): FakeClient {
   const handles: FakeHandle[] = [];
+  const streams = new Map<string, FakeStream>();
+  const subs: string[] = [];
   const listeners = new Set<() => void>();
   let state: WsState = { ...INITIAL_WS_STATE, link: { kind: "up" }, transport: "connected" };
   const client: FakeClient["client"] = {
-    consume(spec) {
+    consume(spec, rs) {
+      const key = `${spec.ch}#${rs ?? "live"}`;
+      let stream = streams.get(key);
+      if (stream === undefined) {
+        stream = { effective: {}, refs: 0 };
+        streams.set(key, stream);
+        subs.push(spec.ch);
+      }
+      stream.refs += 1;
+      const held = stream;
       let queue: TopicFrame[] = [];
-      let effective: Readonly<Record<string, unknown>> = {};
       let status: TopicStatus = "pending";
       let released = false;
       const handle: FakeHandle = {
         spec,
         ch: spec.ch,
-        rs: undefined,
+        rs,
         source: "live",
         read: () => {
           const out = queue;
@@ -79,7 +104,7 @@ export function fakeClient(): FakeClient {
           return out;
         },
         get effective() {
-          return effective;
+          return held.effective;
         },
         get status() {
           return status;
@@ -88,13 +113,21 @@ export function fakeClient(): FakeClient {
           return released;
         },
         release: () => {
+          if (released) return;
           released = true;
+          held.refs -= 1;
+          if (held.refs > 0) return;
+          // the engine's `sync` runs in a microtask: until then the server holds the subscription,
+          // and a handle consumed meanwhile takes it over (`host.subscribe`, `inherit()`)
+          queueMicrotask(() => {
+            if (held.refs === 0 && streams.get(key) === held) streams.delete(key);
+          });
         },
         push: (...frames) => {
           queue.push(...frames);
         },
         setEffective: (next) => {
-          effective = next;
+          held.effective = next;
         },
         setStatus: (next) => {
           status = next;
@@ -113,6 +146,7 @@ export function fakeClient(): FakeClient {
     client,
     handles,
     live: (ch) => handles.filter((h) => h.ch === ch && !h.released),
+    subs,
     setLink(link) {
       state = { ...state, link };
       listeners.forEach((l) => l());
