@@ -3,6 +3,12 @@
 Writes go through the hot tier's ILP writer; the dedup key `(ts, symbol, interval, source)`
 makes a re-run backfill and an at-least-once ticker tap idempotent. Reads are one
 `(symbol, interval, source)` series per call, parameterised (SR-047), plus its coverage.
+
+Precision: `oi` and `oi_value` are QuestDB `DOUBLE` columns (`0001_core_tables.sql`), so a
+value is written as a `float` and read back as the `Decimal` of its shortest repr. A value
+with more than ~15 significant digits loses its tail. These are open-interest quantities,
+never order prices or sizes, so no C-2.x money rule applies; the in-memory store keeps the
+exact `Decimal`.
 """
 
 from __future__ import annotations

@@ -5,11 +5,14 @@ so the store and the fetcher are local structural Protocols the composition root
 
 Invariants (STRIDE `docs/security/threat-models/E24-derivatives.md` D5/D8/D12):
 - the two series never mix: `1s` is `ws_ticker`, `5min`..`1d` are `rest` (`source_of`);
-- a ticker without OI or OI value writes nothing, never 0 (BQ-12);
+- a ticker without OI writes nothing, never 0 (BQ-12); one with OI but no OI value writes the
+  OI with a NULL value, as the schema allows (`21-database-schema.md` §4.7);
 - a missing span is reported in `gaps`, never filled;
 - bounds are checked (`deriv_limits`) before the store is read;
 - a request can only queue a backfill for a listed symbol, once per `(symbol, interval)` and
-  older window, into a bounded queue drained by one worker (concurrency 1 per symbol).
+  older window, into a bounded queue drained by one worker (concurrency 1 per symbol);
+- the "older window" floor is raised only when a job completes, so a failed job (retries
+  exhausted, page rejected, store error) lets the next request queue it again.
 """
 
 from __future__ import annotations
@@ -107,7 +110,10 @@ class TimeWindow:
 
 
 class TickerDownsampler:
-    """First ticker per symbol per UTC second, in monotonic seconds; nothing without OI."""
+    """First ticker per symbol per UTC second, in monotonic seconds.
+
+    Nothing without OI (never a 0); OI without an OI value is kept with a NULL value.
+    """
 
     def __init__(self) -> None:
         self._last_s: dict[str, int] = {}
@@ -115,7 +121,7 @@ class TickerDownsampler:
     def offer(
         self, symbol: str, ts_us: int, oi: Decimal | None, oi_value: Decimal | None
     ) -> OiPoint | None:
-        if oi is None or oi_value is None:
+        if oi is None:
             return None
         second = ts_us // 1_000_000
         last = self._last_s.get(symbol)
@@ -144,11 +150,13 @@ class OiBackfill:
         self._sleep, self._random, self._clock = sleep, random_fn, clock_s
         self._queue: asyncio.Queue[tuple[str, str, TimeWindow]] = asyncio.Queue(QUEUE_MAX)
         self._pending: set[tuple[str, str]] = set()
-        #: Oldest start already requested per key: a later or equal window queues nothing.
+        #: Oldest start a COMPLETED job covered per key: a later or equal window queues nothing.
+        #: Raised only on success (`run_once`), so a failed job never blocks a re-queue.
         self._floor: dict[tuple[str, str], int] = {}
 
     def keys(self) -> list[tuple[str, str]]:
-        return sorted(self._floor)
+        """Every key a request registered: completed or still pending."""
+        return sorted(self._floor.keys() | self._pending)
 
     def request(
         self, symbol: str, interval: str, window: TimeWindow, *, refresh: bool = False
@@ -158,7 +166,7 @@ class OiBackfill:
         if interval not in REST_INTERVALS or key in self._pending:
             return False
         floor = self._floor.get(key)
-        if floor is None and len(self._floor) >= MAX_KEYS:
+        if floor is None and len(self._floor.keys() | self._pending) >= MAX_KEYS:
             return False
         if not refresh and floor is not None and window.start_us >= floor:
             return False
@@ -167,7 +175,6 @@ class OiBackfill:
         except asyncio.QueueFull:
             return False
         self._pending.add(key)
-        self._floor[key] = window.start_us if floor is None else min(floor, window.start_us)
         return True
 
     async def run(self) -> None:
@@ -175,21 +182,38 @@ class OiBackfill:
         while True:
             symbol, interval, window = await self._queue.get()
             try:
-                await self.run_job(symbol, interval, window)
+                await self.run_once(symbol, interval, window)
             except asyncio.CancelledError:
                 raise
-            except Exception:  # one job never stops the worker
+            except Exception:  # one job never stops the worker; the floor stays where it was
                 logger().exception("oi_backfill_job_failed", symbol=symbol_label(symbol))
             finally:
                 self._pending.discard((symbol, interval))
+                self._queue.task_done()
+
+    async def run_once(self, symbol: str, interval: str, window: TimeWindow) -> bool:
+        """Run one job; raise the key's floor only when it completed. Returns completed."""
+        _, completed = await self._job(symbol, interval, window)
+        if completed:
+            key = (symbol, interval)
+            floor = self._floor.get(key)
+            self._floor[key] = window.start_us if floor is None else min(floor, window.start_us)
+        return completed
 
     async def run_job(self, symbol: str, interval: str, window: TimeWindow) -> int:
         """Page newest-first with the venue cursor until done; returns rows written."""
+        written, _ = await self._job(symbol, interval, window)
+        return written
+
+    async def _job(self, symbol: str, interval: str, window: TimeWindow) -> tuple[int, bool]:
+        """`(rows written, completed)`; not completed when a page failed or was rejected."""
         label, started, written, cursor = symbol_label(symbol), self._clock(), 0, None
+        completed = True
         try:
             for _ in range(MAX_PAGES_PER_JOB):
                 page = await self._fetch(symbol, interval, window, cursor)
                 if page is None:
+                    completed = False
                     break
                 deriv_oi_backfill_pages_total.labels(label, interval, "ok").inc()
                 for reason in page.rejected_reasons:
@@ -203,7 +227,7 @@ class OiBackfill:
                     break
         finally:
             deriv_oi_backfill_latency_seconds.observe(max(0.0, self._clock() - started))
-        return written
+        return written, completed
 
     async def _fetch(
         self, symbol: str, interval: str, window: TimeWindow, cursor: str | None

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+from collections.abc import Sequence
 from decimal import Decimal
 
 import pytest
@@ -82,10 +85,16 @@ def test_oi_downsampler_caps_one_row_per_second() -> None:
 def test_oi_downsampler_skips_a_ticker_without_oi_and_never_writes_zero() -> None:
     d = TickerDownsampler()
     assert d.offer("BTCUSDT", S, None, Decimal(1)) is None
-    assert d.offer("BTCUSDT", S, Decimal(1), None) is None
     assert d.offer("BTCUSDT", S + 1, Decimal(1), Decimal(2)) is not None
     d.forget("BTCUSDT")
     assert d.offer("BTCUSDT", S, Decimal(1), Decimal(2)) is not None
+
+
+def test_oi_downsampler_keeps_oi_without_a_value_as_null() -> None:
+    point = TickerDownsampler().offer("BTCUSDT", S, Decimal("61180"), None)
+    assert point is not None
+    assert (point.open_interest, point.open_interest_value) == (Decimal("61180"), None)
+    assert (point.interval, point.source) == ("1s", "ws_ticker")
 
 
 @given(st.lists(st.integers(min_value=0, max_value=10**8), max_size=200))
@@ -150,15 +159,62 @@ async def test_oi_backfill_gives_up_after_max_attempts_and_on_non_retryable() ->
     assert await _backfill(store, bad).run_job("BTCUSDT", "5min", WINDOW) == 0
 
 
-def test_oi_backfill_request_is_bounded_and_queues_an_older_window_only_once() -> None:
+async def _drain(backfill: OiBackfill) -> None:
+    """Run the worker until every queued job settled (no sleeps: `Queue.join`)."""
+    worker = asyncio.create_task(backfill.run())
+    try:
+        await backfill._queue.join()
+    finally:
+        worker.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await worker
+
+
+async def test_oi_backfill_request_is_bounded_and_queues_an_older_window_only_once() -> None:
     backfill = _backfill(InMemoryOiStore(), _Fetcher())
     assert backfill.request("BTCUSDT", "5min", WINDOW)
     assert not backfill.request("BTCUSDT", "5min", WINDOW)  # pending
-    backfill._pending.clear()
-    assert not backfill.request("BTCUSDT", "5min", WINDOW)  # nothing older than asked before
+    assert backfill.keys() == [("BTCUSDT", "5min")]  # a pending key counts
+    await _drain(backfill)
+    assert not backfill.request("BTCUSDT", "5min", WINDOW)  # nothing older than completed
     assert backfill.request("BTCUSDT", "5min", TimeWindow(FIRST - STEP, LAST))
     assert not backfill.request("BTCUSDT", "1s", WINDOW)  # the ticker series is never fetched
     assert backfill.keys() == [("BTCUSDT", "5min")]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        [OiFetchFailed("X", retryable=True, http_status=503, ret_code=None)] * MAX_ATTEMPTS,
+        [OiRowRejected("bad", "symbol")],
+    ],
+    ids=["retries-exhausted", "page-rejected"],
+)
+async def test_oi_backfill_failed_job_lets_the_next_request_requeue(
+    failure: list[Exception],
+) -> None:
+    store, fetcher = InMemoryOiStore(), _Fetcher(failure)
+    backfill = _backfill(store, fetcher)
+    assert backfill.request("BTCUSDT", "5min", WINDOW)
+    await _drain(backfill)
+    assert len(store) == 0 and backfill._floor == {}
+    assert backfill.request("BTCUSDT", "5min", WINDOW)  # not blocked by the failed attempt
+    await _drain(backfill)
+    assert len(store) == 260
+    assert not backfill.request("BTCUSDT", "5min", WINDOW)  # completed now: the floor holds
+
+
+async def test_oi_backfill_job_raising_keeps_the_worker_and_the_floor() -> None:
+    class _Broken(InMemoryOiStore):
+        async def write_points(self, rows: Sequence[OiPoint]) -> None:
+            raise RuntimeError("store down")
+
+    backfill = _backfill(_Broken(), _Fetcher())
+    assert backfill.request("BTCUSDT", "5min", WINDOW)
+    with capture_logs() as logs:
+        await _drain(backfill)
+    assert [e["event"] for e in logs if e["log_level"] == "error"] == ["oi_backfill_job_failed"]
+    assert backfill.request("BTCUSDT", "5min", WINDOW)  # the store error raised no floor
 
 
 def test_find_gaps_reports_inner_leading_and_open_tail_spans() -> None:
