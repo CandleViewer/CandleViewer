@@ -1157,6 +1157,21 @@ describe("Table (CMP-049) grid mode, selection and row actions", () => {
     expect(target(0, 0)).toHaveFocus();
   });
 
+  it("selectDisabledReason: every select box and select-all are T2, state the reason, and change nothing", async () => {
+    const onRowSelect = vi.fn();
+    await mount(
+      <GridHost selectDisabledReason="Your role can't change alerts." onRowSelect={onRowSelect} />,
+    );
+    for (const name of ["Select all rows", "Select alex", "Select sam", "Select kim"]) {
+      const box = page.getByRole("checkbox", { name });
+      expect(box).toHaveAttribute("aria-disabled", "true");
+      expect(box).toHaveAccessibleDescription("Your role can't change alerts.");
+    }
+    await userEvent.click(page.getByRole("checkbox", { name: "Select alex" }));
+    await userEvent.click(page.getByRole("checkbox", { name: "Select all rows" }));
+    expect(onRowSelect).not.toHaveBeenCalled();
+  });
+
   it("the actions button opens the row menu; Esc returns focus to it", async () => {
     await mount(<GridHost />);
     const button = page.getByRole("button", { name: "Actions for sam" });

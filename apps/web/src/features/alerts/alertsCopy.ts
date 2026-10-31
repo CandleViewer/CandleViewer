@@ -5,8 +5,8 @@
 /** SCR-090 copy (E40-D02 handoff, "Copy deck" and C1), as constants: the screen holds no inline strings. */
 export const COPY = {
   heading: "Alerts",
-  newAlert: "+ New alert",
-  newAlertDisabled: "The alert editor isn't available yet.",
+  /** E09-D09 §3.2: the `{verb}` of `alerts:write`, filling `rbac.permission`. */
+  writeVerb: "change alerts",
   loading: "Loading alerts…",
   empty: "No alerts yet",
   emptyBody:
@@ -36,8 +36,10 @@ export const COPY = {
   deliveryChip: "Desktop blocked",
   showing: (n: number, total: number): string => `Showing ${n} of ${total} alerts`,
   capped: (shown: number, total: number): string =>
-    `Showing first ${shown} of ${total} — refine the filters to see the rest.`,
+    `Showing the first ${shown} of ${total} — refine the filters to see the rest.`,
   truncated: "Only the newest firings are shown; the export holds the same rows.",
+  /** Parser-safe: documented here and shown in the dialog, never as a comment line in the CSV. */
+  csvNote: "Values at fire time are not stored; the message text stands in for them.",
   selected: (n: number): string => `${n} selected`,
   bulk: {
     enable: {
@@ -79,8 +81,6 @@ export const COPY = {
     wake: "Wake now",
     enable: "Enable",
     disable: "Disable",
-    duplicate: "Duplicate…",
-    duplicateDisabled: "The alert editor isn't available yet.",
     chart: "Show on chart",
     history: "View history",
     delete: "Delete…",

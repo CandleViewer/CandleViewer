@@ -23,7 +23,10 @@ import {
   Select,
   Tabs,
   Table,
+  RbacGate,
+  type RbacGateChild,
   Toggle,
+  formatRbacReason,
   type MenuItem,
   type TableColumn,
 } from "@candleviewer/ui";
@@ -71,6 +74,8 @@ const CHANNEL_WORD: Readonly<Record<string, string>> = {
   webhook: "Webhook",
   push: "Push",
 };
+/** `rbac.permission` with the E09-D09 §3.2 verb for `alerts:write`. */
+const READ_ONLY = formatRbacReason("rbac.permission", { verb: "change alerts" });
 const MAX_ROWS = 200;
 const MINUTE_MS = 60_000;
 const STATUS_OPTIONS = [
@@ -310,7 +315,7 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
 
   const rowActions = (a: Alert): MenuItem[] => {
     const key = statusOf(a, nowMs);
-    const denied = canWrite ? {} : { disabledReason: COPY.readOnly };
+    const denied = canWrite ? {} : { disabledReason: READ_ONLY };
     const write: MenuItem[] = [
       isSnoozed(a, nowMs)
         ? { id: "wake", label: COPY.actions.wake, onSelect: () => void snooze(a, null), ...denied }
@@ -331,12 +336,6 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
             onSelect: () => void setEnabled(a, false),
             ...denied,
           },
-      {
-        id: "duplicate",
-        label: COPY.actions.duplicate,
-        onSelect: () => undefined,
-        disabledReason: canWrite ? COPY.actions.duplicateDisabled : COPY.readOnly,
-      },
     ];
     return [
       ...write,
@@ -368,14 +367,15 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
           <span>
             {" "}
             {COPY.disarmTitle(signals?.get(metric)?.display_name ?? metric)}. {COPY.disarmWhy}
-            <Button
-              variant="secondary"
-              size="sm"
-              {...(canWrite ? {} : { disabled: true, disabledReason: COPY.readOnly })}
-              onClick={() => setConfirm({ kind: "enable", alert: a })}
-            >
-              {`${COPY.actions.enable}…`}
-            </Button>
+            <WriteGate allowed={canWrite}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setConfirm({ kind: "enable", alert: a })}
+              >
+                {`${COPY.actions.enable}…`}
+              </Button>
+            </WriteGate>
           </span>
         ) : null}
       </span>
@@ -423,13 +423,14 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
       header: "Active",
       interactive: true,
       cell: (a: Alert) => (
-        <Toggle
-          label={`Active: ${a.name}`}
-          labelPosition="hidden"
-          checked={a.enabled !== false}
-          {...(canWrite ? {} : { disabled: true, disabledReason: COPY.readOnly })}
-          onChange={(on) => void setEnabled(a, on)}
-        />
+        <WriteGate allowed={canWrite}>
+          <Toggle
+            label={`Active: ${a.name}`}
+            labelPosition="hidden"
+            checked={a.enabled !== false}
+            onChange={(on) => void setEnabled(a, on)}
+          />
+        </WriteGate>
       ),
     },
   ];
@@ -531,23 +532,14 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
         rowActions={rowActions}
         selected={selected}
         onRowSelect={setSelected}
-        {...(canWrite ? {} : { selectDisabledReason: COPY.readOnly })}
+        {...(canWrite ? {} : { selectDisabledReason: READ_ONLY })}
       />
     </>
   );
 
   return (
     <div>
-      <header>
-        <h1>{COPY.heading}</h1>
-        <Button
-          variant="primary"
-          disabled
-          disabledReason={canWrite ? COPY.newAlertDisabled : COPY.readOnly}
-        >
-          {COPY.newAlert}
-        </Button>
-      </header>
+      <h1>{COPY.heading}</h1>
       {link === "offline" || link === "reconnecting" ? (
         <Callout tone="warning" title={COPY.disconnected} />
       ) : null}
@@ -597,6 +589,23 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
         />
       )}
     </div>
+  );
+}
+
+/** CMP-079 for `alerts:write`: the T2 form (lock, `rbac.permission` with the §3.2 verb) when denied. */
+function WriteGate({
+  allowed,
+  children,
+}: {
+  readonly allowed: boolean;
+  readonly children: RbacGateChild;
+}): JSX.Element {
+  return allowed ? (
+    <RbacGate allowed>{children}</RbacGate>
+  ) : (
+    <RbacGate allowed={false} reason="rbac.permission" fills={{ verb: COPY.writeVerb }}>
+      {children}
+    </RbacGate>
   );
 }
 
