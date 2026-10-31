@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { buildRoutes } from "../../src/routes/tree";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
-import { pageTitle, syncDocumentTitle } from "../../src/routes/titles";
+import { ROUTE_TITLES, pageTitle, syncDocumentTitle } from "../../src/routes/titles";
 import { setMeClaims, resetMeClaims } from "../../src/lib/auth/meCache";
+import { resetShellState, setShellState, type Me } from "../../src/shell/bootstrap/store";
 import type { Role } from "../../src/routes/rbac";
 
 /**
@@ -19,6 +20,9 @@ function renderAt(path: string) {
   const router = createMemoryRouter(buildRoutes(), { initialEntries: [path] });
   return render(<RouterProvider router={router} />);
 }
+
+/** A route's render with the admin area's lazy chunk: a busy host can take seconds over it. */
+const ROUTE_WAIT = { timeout: 5_000 } as const;
 
 function claimsFor(role: Role | null) {
   setMeClaims({
@@ -92,8 +96,9 @@ describe("route tree x RBAC matrix", () => {
     claimsFor("owner");
     const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/admin?tab=x"] });
     render(<RouterProvider router={router} />);
+    // the admin area's code arrives lazily, after the guard (E42-S01 BQ-7)
     expect(
-      await screen.findByRole("heading", { name: /R-300 — owned by E18/ }),
+      await screen.findByRole("heading", { name: /R-300 — owned by E18/ }, ROUTE_WAIT),
     ).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
@@ -196,4 +201,156 @@ describe("page titles (D-01, WCAG 2.4.2)", () => {
     const state = { errors: { root: error }, matches: [] } as unknown as State;
     expect(pageTitle(state)).toBe(title);
   });
+});
+
+// ---- E42-S01 (#1022): every admin route inside CMP-087 AdminLayout, its code loaded behind the guard
+// (BQ-7). That a non-owner loads no admin module at all is pinned in
+// test/features/admin/shell/lazyBoundary.test.tsx, whose module registry is fresh; here an earlier
+// test may already have loaded it.
+
+const ADMIN_ROUTES = ROUTE_MANIFEST.filter(
+  (e) => e.path === "/admin" || e.path.startsWith("/admin/"),
+);
+const concrete = (path: string): string => path.replace(/:[a-zA-Z]+/g, "x");
+/** The band's route words: the page title (`titles.ts`, `12` §2); `/admin` is SCR-120's "Overview". */
+const bandLabel = (id: string): string => (id === "R-300" ? "Overview" : (ROUTE_TITLES[id] ?? id));
+/** The page each admin route shows today when it is not a stub. */
+const PAGE_H1: Readonly<Record<string, string>> = {
+  "R-303": "Invite user",
+  "R-354": "Security centre",
+  "R-360": "R-360 — owned by E09",
+};
+
+/** A session as the bootstrap leaves it: the guards' claims and the shell's `me` and environment. */
+function sessionFor(role: Role): void {
+  claimsFor(role);
+  const me = { role, permissions: [], accounts: [], user: { username: `${role}.one` } };
+  setShellState({ me: me as unknown as Me, environment: "demo" });
+}
+
+const requested = (): string[] => vi.mocked(fetch).mock.calls.map(([input]) => String(input));
+
+describe("E42-S01: the admin routes inside CMP-087 AdminLayout", () => {
+  beforeEach(() => {
+    resetMeClaims();
+    resetShellState();
+    const body = JSON.stringify({ items: [] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(body, { headers: { "Content-Type": "application/json" } })),
+    );
+  });
+  afterEach(() => {
+    resetShellState();
+    vi.unstubAllGlobals();
+  });
+
+  it(
+    "frames every admin route for an owner: the band first in main, then the page's one h1",
+    { timeout: 60_000 },
+    async () => {
+      sessionFor("owner");
+      expect(ADMIN_ROUTES).toHaveLength(21);
+      for (const entry of ADMIN_ROUTES) {
+        const router = createMemoryRouter(buildRoutes(), {
+          initialEntries: [concrete(entry.path)],
+        });
+        const view = render(<RouterProvider router={router} />);
+        const band = await screen.findByRole("region", { name: "Admin area" }, ROUTE_WAIT);
+        expect(band.textContent, entry.id).toBe(`◆ Admin area · ${bandLabel(entry.id)}`);
+        const main = screen.getByRole("main");
+        // the outlet's first element is the area's D1 inset, the layout is its first element and
+        // the band is the layout's first
+        const area = main.querySelector("[data-shell-canvas]")?.firstElementChild;
+        expect(area?.firstElementChild, entry.id).toHaveAttribute("data-cmp", "CMP-087");
+        expect(area?.firstElementChild?.firstElementChild, entry.id).toBe(band);
+        const [h1, ...more] = within(main).getAllByRole("heading", { level: 1 });
+        expect(more, entry.id).toEqual([]);
+        expect(h1, entry.id).toHaveAccessibleName(
+          PAGE_H1[entry.id] ?? `${entry.id} — owned by E18`,
+        );
+        const after = band.compareDocumentPosition(h1 as HTMLElement);
+        expect(after & Node.DOCUMENT_POSITION_FOLLOWING, entry.id).toBeTruthy();
+        view.unmount();
+        router.dispose();
+      }
+    },
+  );
+
+  it("frames R-360 /admin/audit for an owner only: a manager keeps the plain shell", async () => {
+    sessionFor("manager");
+    const plain = renderAt("/admin/audit");
+    const stub = { name: "R-360 — owned by E09", level: 1 } as const;
+    expect(await screen.findByRole("heading", stub, ROUTE_WAIT)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Admin area" })).toBeNull();
+    plain.unmount();
+    sessionFor("owner");
+    renderAt("/admin/audit");
+    const band = await screen.findByRole("region", { name: "Admin area" }, ROUTE_WAIT);
+    expect(band.textContent).toBe("◆ Admin area · Audit log");
+    expect(screen.getByRole("heading", stub)).toBeInTheDocument();
+  });
+
+  it(
+    "gives a manager and a viewer the 404 on every hidden admin route: no band, no admin request",
+    { timeout: 60_000 },
+    async () => {
+      for (const role of ["manager", "viewer"] as const) {
+        sessionFor(role);
+        for (const entry of ADMIN_ROUTES.filter((e) => e.access.denyAs === "404")) {
+          const router = createMemoryRouter(buildRoutes(), {
+            initialEntries: [concrete(entry.path)],
+          });
+          const view = render(<RouterProvider router={router} />);
+          await screen.findByRole("heading", { name: "Page not found", level: 1 }, ROUTE_WAIT);
+          expect(screen.queryByRole("region", { name: "Admin area" }), entry.id).toBeNull();
+          view.unmount();
+          router.dispose();
+        }
+      }
+      expect(requested().filter((url) => url.includes("/api/v1/admin"))).toEqual([]);
+      // the watcher sees an admin page's own reads: the owner's invite screen lists the invites
+      sessionFor("owner");
+      renderAt("/admin/users/new");
+      await waitFor(
+        () => expect(requested().some((u) => u.endsWith("/users/invites"))).toBe(true),
+        ROUTE_WAIT,
+      );
+    },
+  );
+
+  it(
+    "moves focus to the page h1 on the way in, with the one route announcement",
+    { timeout: 30_000 },
+    async () => {
+      sessionFor("owner");
+      const lands = async (path: string, h1: string): Promise<string[]> => {
+        const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/journal"] });
+        render(<RouterProvider router={router} />);
+        await screen.findByRole("heading", { name: /R-180/ }, ROUTE_WAIT);
+        const announced: string[] = [];
+        const record = (records: MutationRecord[]): void => {
+          for (const node of records.flatMap((r) => [...r.addedNodes])) {
+            if (node instanceof HTMLElement && node.hasAttribute("data-seq")) {
+              announced.push(node.textContent ?? "");
+            }
+          }
+        };
+        const regions = new MutationObserver(record);
+        regions.observe(document.body, { childList: true, subtree: true });
+        await act(() => router.navigate(path));
+        const heading = await screen.findByRole("heading", { name: h1, level: 1 }, ROUTE_WAIT);
+        await waitFor(() => expect(document.activeElement).toBe(heading), ROUTE_WAIT);
+        record(regions.takeRecords());
+        regions.disconnect();
+        cleanup();
+        router.dispose();
+        return announced;
+      };
+      const plain = await lands("/risk", "R-150 — owned by E12");
+      const admin = await lands("/admin/users", "R-301 — owned by E18");
+      expect(plain).not.toEqual([]);
+      expect(admin).toEqual(plain);
+    },
+  );
 });
