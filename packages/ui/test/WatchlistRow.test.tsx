@@ -604,6 +604,29 @@ describe("WatchlistRow (CMP-161): keys and activation", () => {
     expect(echo()).toHaveTextContent(reason);
   });
 
+  it("a host's keyOf names the row keys (a remapped binding): those keys act, and the defaults then do nothing", async () => {
+    const onMove = vi.fn();
+    const onRemove = vi.fn();
+    // SCR-100's keymap moved remove to Backspace and move up to Shift+↑
+    const keyOf = (event: { key: string; shiftKey: boolean }) =>
+      event.key === "Backspace"
+        ? ("remove" as const)
+        : event.shiftKey && event.key === "ArrowUp"
+          ? ("up" as const)
+          : null;
+    await mount(<Host items={[{ data: BTC, options: { onMove, onRemove, keyOf } }]} />);
+    focusIn("BTCUSDT", "last");
+    const cell = cellIn("BTCUSDT", "last");
+    fireEvent.keyDown(cell, { key: "Delete" });
+    fireEvent.keyDown(cell, { key: "ArrowUp", altKey: true });
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(onMove).not.toHaveBeenCalled();
+    fireEvent.keyDown(cell, { key: "Backspace" });
+    fireEvent.keyDown(cell, { key: "ArrowUp", shiftKey: true });
+    expect(onRemove).toHaveBeenCalledOnce();
+    expect(onMove.mock.calls).toEqual([["up"]]);
+  });
+
   it("Ctrl+C copies the row's symbol through the host, which is handed the symbol", async () => {
     const onCopy = vi.fn<(symbol: string) => void>();
     window.getSelection()?.removeAllRanges();
