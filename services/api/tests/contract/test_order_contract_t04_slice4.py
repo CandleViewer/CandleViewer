@@ -541,11 +541,12 @@ def test_an_account_it_cannot_send_for_and_cancel_alls_counting_are_as_ruled() -
         _between(_ARCH, "OMS order alerts (E29-T03, E29-T04;", "\n"),
         "one case raises exactly one ticket, the alert carrying the request for a user's cancel "
         "and the request alone for a KILL's bound `110001`",
-        "Until E29-T06 / T08 the `oms_unknown_orders` page also counts an order parked by",
+        "An order parked by `110001` counts in `oms_unknown_orders` under the reason "
+        "`already_terminal`, which the page leaves out (§12.1; E29-T08, #916 BQ-7).",
     )
-    assert (
-        "until E29-T06 / T08 the unknown-orders alert (`oms_unknown_orders`, §12.5) also counts "
-        "orders parked by `110001`, and the ticket names the reason" in _METRIC
+    assert (  # E29-T08 (#916 BQ-7): the gauge's reason routes it, so no "until" remains
+        "an order parked by `110001` counts in the unknown-orders gauge under the reason "
+        "`already_terminal`, which the page leaves out, the ticket naming the reason" in _METRIC
     )
     failures = _CANCEL_ALL.split("else `error` gives its first failure", 1)[1]
     for code in ("store_unavailable", "account_unavailable", "conflict"):
@@ -630,7 +631,10 @@ def test_the_contract_lens_fold_defines_once_and_closes_the_gaps() -> None:
     assert (ids["maxItems"], ids["uniqueItems"]) == (100, True)
     errors = _between(_INTERNAL_DOC, "### 8.6 Error mapping", "### 8.7 ")
     assert "On a cancel, B1's own or a KILL's (an algo's `cancel_children`, §9.5" in errors
-    assert "the parked order also counts in `oms_unknown_orders`, whose rule pages" in errors
+    assert (  # E29-T08 (#916 BQ-7)
+        "The parked order counts in `oms_unknown_orders` under the reason `already_terminal`"
+        in " ".join(errors.split())
+    )
     assert "An amend's own `entry_attach` rows (24 §8.8 rule 6, audit reason `amend`) are " in (
         _words(_SCHEMA_DOC)
     )
