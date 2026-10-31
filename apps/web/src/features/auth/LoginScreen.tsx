@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import { formatRemaining, login } from "./authApi";
+import { TwoFactorStep } from "./TwoFactorStep";
 
 type State = "idle" | "submitting" | "invalid" | "rate_limited" | "unreachable";
 
@@ -25,7 +26,15 @@ export function LoginScreen(): JSX.Element {
   const [reveal, setReveal] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [remaining, setRemaining] = useState(0);
-  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  /**
+   * The SCR-002 challenge (#2711 BQ-02): its handle lives in this ref only, taken from the in-memory
+   * `login()` outcome, never from the URL, history state, storage or the DOM, and never logged. A new
+   * `mfa_required` replaces it; `id` remounts the step, so a stale handle is never sent.
+   */
+  const handle = useRef<string | null>(null);
+  const [challenge, setChallenge] = useState<{ id: number; deadline: number } | null>(null);
+  const [returned, setReturned] = useState(0);
+  const identifierField = useRef<HTMLInputElement>(null);
   const summary = useRef<HTMLDivElement>(null);
   const [reason] = useState(() => {
     const key = new URLSearchParams(window.location.search).get("reason");
@@ -56,6 +65,21 @@ export function LoginScreen(): JSX.Element {
   useEffect(() => {
     if (reason !== undefined) summary.current?.focus();
   }, [reason]);
+  // "Back to login" from SCR-002: focus returns to the form's first field
+  useEffect(() => {
+    if (returned > 0) identifierField.current?.focus();
+  }, [returned]);
+
+  const takeHandle = useCallback((): string | null => handle.current, []);
+  const dropHandle = useCallback((): void => {
+    handle.current = null;
+  }, []);
+  const backToLogin = useCallback((): void => {
+    handle.current = null;
+    setChallenge(null);
+    setState("idle");
+    setReturned((n) => n + 1);
+  }, []);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -67,7 +91,10 @@ export function LoginScreen(): JSX.Element {
     const out = await login(identifier.trim(), password);
     setPassword("");
     if (out.kind === "mfa_required") {
-      setMfaToken(out.mfaToken);
+      handle.current = out.mfaToken;
+      // the challenge's life is fixed once, here, from `expires_in` (BQ-06)
+      const deadline = Date.now() + out.expiresInS * 1000;
+      setChallenge((c) => ({ id: (c?.id ?? 0) + 1, deadline }));
       setState("idle");
     } else if (out.kind === "authenticated") {
       window.location.assign("/terminal");
@@ -82,12 +109,15 @@ export function LoginScreen(): JSX.Element {
   const message =
     fieldError ?? (state === "invalid" || state === "unreachable" ? MESSAGES[state] : null);
 
-  if (mfaToken !== null) {
+  if (challenge !== null) {
     return (
-      <main>
-        <h1>Two-factor code</h1>
-        <p>Continue in the authenticator step.</p>
-      </main>
+      <TwoFactorStep
+        key={challenge.id}
+        deadline={challenge.deadline}
+        takeHandle={takeHandle}
+        dropHandle={dropHandle}
+        onBack={backToLogin}
+      />
     );
   }
 
@@ -105,6 +135,7 @@ export function LoginScreen(): JSX.Element {
         ) : null}
         <label htmlFor="login-id">Username or email</label>
         <input
+          ref={identifierField}
           id="login-id"
           autoComplete="username"
           value={identifier}

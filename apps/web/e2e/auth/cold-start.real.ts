@@ -15,14 +15,20 @@ import {
   valueOf,
 } from "../support/real/cookies";
 import { expect, test } from "../support/real/failureArtefacts";
-import { completeMfa, signIn, submitPassword } from "../support/real/signIn";
+import {
+  completeMfa,
+  completeMfaByForm,
+  refreshThenRead,
+  signIn,
+  submitPassword,
+} from "../support/real/signIn";
 
 // E09-Q02 (#293) PR 2 (#2490): AC1, the cold start on the seeded stack, against the real API and the
 // browser's own cookie jar. The cookie checks are #293's BQ-3 wording of record: no `Set-Cookie` after
 // the password step; after MFA exactly `cv_refresh` (HttpOnly, Secure, Strict, `Path=/api/v1/auth`)
 // and `__Host-cv_csrf` (Secure, Strict, not HttpOnly); a planted `cv_refresh` replaced, never adopted;
-// a refresh rotating both; a one-byte tamper getting `401`. MFA is completed by in-page `fetch` until
-// SCR-002's OTP form lands (#2711, BQ-2). Each test signs in a fixture user of its own. Values are
+// a refresh rotating both; a one-byte tamper getting `401`. C01 completes MFA through SCR-002's form
+// (#2711 BQ-15); the others by in-page `fetch` (#293 BQ-2). Each test signs in a fixture user of its own. Values are
 // compared as booleans (`same`), never printed: a failure shows flags, statuses and codes only.
 // The per-address refresh budget is 10 a minute (`api/sessions.py`): each test declares how often
 // it presents `cv_refresh` to `POST /auth/refresh`, the page loads that carry one included
@@ -89,21 +95,24 @@ test("E09-TC-C01 GET /auth/session gives the user and permissions, the cold star
   context,
   lane,
 }) => {
-  await lane.refreshes(2); // the page load into the shell, then the refresh read after it
+  await lane.refreshes(2); // the form's page load into the shell, then the refresh read after it
   const user = lane.user();
   const secrets = [lane.stack.password(), user.seed()];
   const signingIn = watchForLeaks(page, secrets);
-  const { mfa } = await signIn(page, lane.stack, user);
-  expect(mfa.session.status).toBe(200);
-  expect(mfa.session.username).toBe(user.username);
-  expect(mfa.session.permissions).toBeGreaterThan(0);
-  expect(mfa.session.echoesToken, "GET /auth/session does not echo the bearer").toBe(false);
-  expect(mfa.me).toEqual({ status: 200, echoesToken: false });
-  await signingIn.flush(); // before the navigation below drops this page's bodies
+  await page.goto("/login");
+  const step = await submitPassword(page, user, lane.stack.password());
+  expect(step.mfaRequired, "the password step asks for the second factor").toBe(true);
+  await expect(page.getByRole("heading", { name: "Two-factor code" })).toBeVisible();
+  await signingIn.flush(); // before the form's page load drops this page's bodies
+
+  // #2711: the same sign-in through SCR-002's form, which then loads the shell by itself
+  const mfa = await completeMfaByForm(page, lane.stack.clock.totpAt(user.seed()));
+  expect(mfa.status).toBe(200);
+  expect([...mfa.cookiesSet].sort()).toEqual([CSRF_COOKIE, REFRESH_COOKIE]);
   const cookie = await requiredValue(context, REFRESH_COOKIE);
   const booting = watchForLeaks(page, [...secrets, cookie]);
 
-  await page.goto("/terminal/last"); // the page load refreshes by cookie, then reads /me
+  // the page load refreshes by cookie, then reads /me
   await expect(page).toHaveURL(/\/terminal\/last$/u);
   await expect(page.getByRole("heading", { name: SHELL })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
@@ -115,13 +124,15 @@ test("E09-TC-C01 GET /auth/session gives the user and permissions, the cold star
   expect(same(rotated, cookie), "the page load's refresh rotated cv_refresh").toBe(false);
   // `booting` forbids the cookie from before the boot, which no body echoes. The value a leaking
   // body would carry is the one a refresh issues next, unknown until it runs: so read a refresh's
-  // answer after the boot (a 200 with a bundle, so the `false` is not a 401's empty body).
-  expect(await refreshByCookie(page)).toEqual({
-    status: 200,
-    code: null,
-    bundle: true,
-    refreshInBody: false,
-  });
+  // answer after the boot (a 200 with a bundle, so the `false` is not a 401's empty body), and with
+  // the bearer it issued, `/auth/session` and `/me`: neither echoes it.
+  const reads = await refreshThenRead(page);
+  expect(reads.refresh).toEqual({ status: 200, code: null, bundle: true, refreshInBody: false });
+  expect(reads.session.status).toBe(200);
+  expect(reads.session.username).toBe(user.username);
+  expect(reads.session.permissions).toBeGreaterThan(0);
+  expect(reads.session.echoesToken, "GET /auth/session does not echo the bearer").toBe(false);
+  expect(reads.me).toEqual({ status: 200, echoesToken: false });
   await booting.flush();
 });
 

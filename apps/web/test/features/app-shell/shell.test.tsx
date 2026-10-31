@@ -82,10 +82,19 @@ describe("E10-S01 S1: ShellLayout landmarks and one main per route", () => {
 
   it("leaves public routes outside the shell, each with its own single main", async () => {
     signIn(null);
-    renderAt("/login/2fa");
-    await screen.findByRole("heading", { name: /R-002/ });
+    renderAt("/login/2fa/enroll");
+    await screen.findByRole("heading", { name: /R-006/ });
     expect(screen.getAllByRole("main")).toHaveLength(1);
     expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+  });
+
+  it("a direct load of /login/2fa holds no challenge, so it lands on SCR-001 with no query (#2711 BQ-02)", async () => {
+    signIn(null);
+    const router = renderAt("/login/2fa?mfa_token=planted#planted");
+    await screen.findByRole("heading", { name: "Sign in to CandleViewer", level: 1 });
+    expect(router.state.location.pathname).toBe("/login");
+    expect(router.state.location.search).toBe("");
+    expect(screen.queryByRole("heading", { name: "Two-factor code" })).toBeNull();
   });
 
   it("renders the catch-all 404 inside the shell, with one main, like a hidden admin route", async () => {
