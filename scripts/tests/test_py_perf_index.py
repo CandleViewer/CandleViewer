@@ -26,9 +26,7 @@ from tools.ci import py_perf_index as ppi  # noqa: E402 - the repo root is on sy
 
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "_job-py.yml"
 API_PYTHON = ppi.API_ROOT / ".venv" / "bin" / "python"
-SELECTION = (
-    '-m "perf and not flaky" --no-cov -p no:cacheprovider -p no:randomly --durations=0'
-)
+SELECTION = '-m "perf and not flaky" --no-cov -p no:cacheprovider -p no:randomly --durations=0'
 
 
 def _jobs() -> dict[str, Any]:
@@ -57,13 +55,9 @@ def test_the_index_equals_the_live_perf_collection() -> None:
 
 
 def test_drift_names_each_missing_and_stale_test_and_how_to_regenerate() -> None:
-    index = ppi.Index(
-        ppi.MARKER, ("tests/a/test_x.py::t1", "tests/a/test_y.py::t2"), {}, 1.0
-    )
+    index = ppi.Index(ppi.MARKER, ("tests/a/test_x.py::t1", "tests/a/test_y.py::t2"), {}, 1.0)
     assert ppi.drift(index, list(index.tests)) == ""
-    problem = ppi.drift(
-        index, ["tests/a/test_x.py::t1", "tests/b/test_new.py::t3[p 1]"]
-    )
+    problem = ppi.drift(index, ["tests/a/test_x.py::t1", "tests/b/test_new.py::t3[p 1]"])
     assert "not in the index: tests/b/test_new.py::t3[p 1]" in problem
     assert "no longer collected: tests/a/test_y.py::t2" in problem
     assert ppi.REGENERATE in problem and "py_perf_index.py write" in ppi.REGENERATE
@@ -84,9 +78,7 @@ def test_the_index_is_the_perf_selection_sorted_and_weighted() -> None:
     ):
         assert name in heaviest, (name, heaviest)
     doc = " ".join((ppi.__doc__ or "").split())
-    assert (
-        "124449801043" in doc and "41171217151" in doc
-    )  # the weights cite their source
+    assert "124449801043" in doc and "41171217151" in doc  # the weights cite their source
 
 
 def test_the_shards_partition_the_index_by_whole_files() -> None:
@@ -103,15 +95,11 @@ def test_the_shards_partition_the_index_by_whole_files() -> None:
 def test_a_new_perf_file_lands_in_exactly_one_shard_at_the_default_weight() -> None:
     index = ppi.load()
     new = "tests/unit/zz_new/test_new_perf.py::test_budget[a b]"
-    grown = ppi.Index(
-        index.marker, (*index.tests, new), index.weights, index.default_weight
-    )
+    grown = ppi.Index(index.marker, (*index.tests, new), index.weights, index.default_weight)
     parts = ppi.split(grown, _total())
     assert sum(part.count(new) for part in parts) == 1
     assert sorted(t for part in parts for t in part) == sorted(grown.tests)
-    assert (
-        grown.weight("tests/unit/zz_new/test_new_perf.py") == index.default_weight > 0
-    )
+    assert grown.weight("tests/unit/zz_new/test_new_perf.py") == index.default_weight > 0
 
 
 def test_the_split_balances_the_measured_weights() -> None:
@@ -152,12 +140,8 @@ def test_each_shard_sets_the_hang_guard_the_script_computes() -> None:
     minutes = ppi.timeout_minutes(index, _total())
     assert jobs["py-perf"]["timeout-minutes"] == minutes
     heaviest = max(ppi.expected_seconds(index, _total()))
-    assert (
-        minutes * 60 >= heaviest * ppi.TIMEOUT_FACTOR
-    )  # at least 1.5x the expected p95
-    assert (
-        minutes * 60 >= heaviest + ppi.PREPULL_WORST_S
-    )  # a worst-case pre-pull still fits
+    assert minutes * 60 >= heaviest * ppi.TIMEOUT_FACTOR  # at least 1.5x the expected p95
+    assert minutes * 60 >= heaviest + ppi.PREPULL_WORST_S  # a worst-case pre-pull still fits
     assert isinstance(jobs["py-perf-index"]["timeout-minutes"], int)
 
 
@@ -169,9 +153,7 @@ def test_parse_collection_keeps_node_ids_only() -> None:
     ]
 
 
-def test_log_weights_sums_each_files_phases_and_refuses_a_log_without_durations() -> (
-    None
-):
+def test_log_weights_sums_each_files_phases_and_refuses_a_log_without_durations() -> None:
     log = (
         "2026-10-31T05:30:01.3632288Z ===== slowest durations =====\n"
         "2026-10-31T05:30:01.3633351Z 110.11s call     tests/a/test_x.py::t[a b]\n"
@@ -187,7 +169,8 @@ def test_log_weights_sums_each_files_phases_and_refuses_a_log_without_durations(
 
 
 def test_reweigh_from_one_shards_log_keeps_the_other_files_weights() -> None:
-    """A log that covers one shard re-weighs its files only; the files it never names keep theirs."""
+    """A log that covers one shard re-weighs its files only; the files it never names keep
+    theirs."""
     old = {
         "tests/a/test_x.py": 40.0,
         "tests/a/test_fast.py": 1.0,
@@ -233,7 +216,8 @@ def test_load_refuses_a_malformed_index(tmp_path: Path) -> None:
             ' "default_weight": 1}'
         ),
         (
-            '{"marker": "perf and not flaky", "tests": [], "weights": {"tests/a/test_a.py": Infinity},'
+            '{"marker": "perf and not flaky", "tests": [], '
+            '"weights": {"tests/a/test_a.py": Infinity},'
             ' "default_weight": 1}'
         ),
     ):
