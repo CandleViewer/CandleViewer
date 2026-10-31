@@ -449,7 +449,11 @@ def build_reconciliation(
     stale_after_s: float, remediates: Callable[[Environment], bool],
 ) -> ReconcileWiring:  # fmt: skip
     """The pass, its phases and the driver over the runtime's stores and adapters (module
-    docstring), built and not started; `ReconcileJobs.start` opens the jobs."""
+    docstring), built and not started; `ReconcileJobs.start` opens the jobs. A live or demo
+    environment whose capability record does not remediate is a `ValueError` here, so the OMS's
+    composition fails closed (24 Sec.14.3, C-2.6, C-4.14)."""
+    if environment in ("live", "demo") and not remediates(environment):
+        raise ValueError("a live or demo reconciliation job always remediates (24 Sec.14.3)")
     counted = ReconcileMetrics(metrics)
     writer = RecordedStopWriter(router=router, gate=gate, audit=audit)
     ports = ReconcilePorts(
