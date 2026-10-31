@@ -6666,9 +6666,9 @@ This number follows §19.62, as the orchestrator renumbered it on 2026-10-31 (21
 
 - §15.5: `trade_group_definition.save_refused` joins the closed set and is registered: a definition create or replace refused for a membership across environments is recorded before its `400 environment_mismatch` (C-2.9, C-2.11), unbudgeted as the scope refusals are today; one unwritten is `503 audit_unavailable`, which 22 already declares. No operation changes. `21-database-schema.md` §3.10.1 lists it.
 
-### 19.63 2026-10-31 — §8.5: B1 version 8 closes a multi-fill `untracked` order, and an unreadable hand-over pages (E29-T06, #914)
+### 19.65 2026-10-31 — §8.5: B1 version 8 closes a multi-fill `untracked` order, and an unreadable hand-over pages (E29-T06, #914)
 
-This number follows §19.62, which #5152 holds; an entry that lands first takes it, and this one moves to the next free number.
+This number follows §19.64, which #5255 (#5111) holds, after §19.63, which #5163 holds, as the orchestrator ruled on 2026-10-31; it keeps 19.65 whichever lands first.
 
 - The third of the ticket's four changes (the job driver, the triggers and the wiring; the Owner's two routes are the fourth), with the contract lines its runtime needs.
 - §8.5, the standing items: B1 chart version 8 (#5157) applies an `untracked` row's `EXEC`, so the orchestrator's interim of 2026-10-31 ends for an order filled in more than one execution: the pass sends its fills and the order closes once the fills read complete it. `untracked_fills_unread` stays one of the closed list's three, for a row whose fills read cannot complete it (a fill outside every window the pass reads) or whose status no finding maps, as a held window would recover none of those either.
