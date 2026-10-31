@@ -64,7 +64,8 @@ export const SETTINGS: Schemas["Settings"] = {
 
 /**
  * `GET /auth/session` as 22 `authGetSession` answers it (its `manager` example), for `role` with the empty
- * permissions `/me` gives here: unlocked, 15 min from the idle lock, so `SessionLockHost` reads it again only 14 min on.
+ * permissions `/me` gives here, an empty `account_scope`, and without the optional `kill_switch`, `clock_offset_ms`
+ * and `api_version`: unlocked, 15 min from the idle lock, so `SessionLockHost` reads it again only 14 min on.
  */
 export function sessionInfo(role: MeOptions["role"]): Schemas["SessionInfo"] {
   return {
@@ -167,7 +168,7 @@ export interface LeakGuard {
   /**
    * Waits for the page's `/api/v1/` requests to settle, awaits every pending body check, then fails if any
    * forbidden value was seen (SR-012), if any body could not be read, or if a request had not settled by the
-   * bound (fail closed): only a redirect's body and a failed request's, which have none, are passed over.
+   * bound (fail closed): only a redirect's body, a static file's `304` and a failed request's are passed over.
    */
   readonly flush: () => Promise<void>;
 }
@@ -185,10 +186,13 @@ const apiCall = (request: Request): string =>
  *
  * `flush` judges only once every `/api/v1/` request the page has started has finished or failed, waiting up to
  * `settleMs` (a web-first poll):
- * - a request that failed (aborted, or cancelled by a navigation) delivered no body, so it is not checked;
+ * - a request that failed (aborted, or cancelled by a navigation) delivered no body the page could read, so it
+ *   is not checked;
  * - a request still unsettled at the bound fails the flush, which names it;
  * - a finished request whose body cannot be read fails the flush, so "read nothing" never passes as "found
- *   nothing" (fail closed). Of the finished ones, only a redirect, which has no body, is passed over.
+ *   nothing" (fail closed). Of the finished ones, only a redirect, which has no body, is passed over. A `304`
+ *   hands the page its cached copy, which Playwright cannot read: from the API it fails the flush, and from a
+ *   static file (the SPA's own build, revalidated on the next page load) it is passed over.
  *
  * Other requests (scripts, styles) are checked once finished but not waited for: a shared worker's script never
  * finishes for the page. A flush sees only the requests started before its wait ends. Playwright reads a body
@@ -212,7 +216,7 @@ export function watchForLeaks(
     if (new URL(request.url()).pathname.startsWith("/api/v1/")) inflight.add(request);
   });
   page.on("requestfailed", (request) => {
-    inflight.delete(request); // no body reached the page
+    inflight.delete(request); // no body the page could read
   });
   page.on("requestfinished", (request) => {
     inflight.delete(request);
@@ -224,7 +228,8 @@ export function watchForLeaks(
       try {
         const res = await request.response();
         status = res?.status() ?? 0;
-        if (status >= 300 && status <= 399) return; // a redirect has no body to leak
+        const cached = status === 304 && new URL(request.url()).pathname.startsWith("/api/v1/");
+        if (status >= 300 && status <= 399 && !cached) return; // a redirect, or the SPA's own file
         if (res === null) throw new Error("no response");
         text = await res.text();
       } catch {
