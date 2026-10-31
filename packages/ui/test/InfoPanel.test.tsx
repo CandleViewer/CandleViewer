@@ -10,9 +10,13 @@ import {
   type InfoPanelProps,
   type InfoPanelTriggerProps,
 } from "../src/components/index.js";
+import { narrowViewport } from "./narrowViewport.js";
 import { mount } from "./theme/mount.js";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 const key = async (key: string, shiftKey = false): Promise<boolean> => {
   let kept = true;
@@ -306,5 +310,42 @@ describe("InfoPanel (CMP-069) inline", () => {
     await focus(screen().getByRole("textbox", { name: "Filter" }));
     await key("Escape");
     expect(screen().getByRole("region", { name: "Iceberg detector" })).toBeVisible();
+  });
+});
+
+// #5144 ruling A (ledger row A54): the drawer form covers the page at 720 CSS px or less, so it is modal.
+describe("InfoPanel (CMP-069) drawer at the narrow breakpoint", () => {
+  it("narrow: aria-modal, Tab stays inside, Esc closes and focus returns to the trigger", async () => {
+    narrowViewport(true);
+    const trigger = await openWith();
+    const dialog = screen().getByRole("dialog", { name: "Iceberg detector" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(screen().getByText("Next on the page").closest("[inert], [aria-hidden]")).not.toBeNull();
+    await focus(button("Close Iceberg detector"));
+    await key("Tab");
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    // The close button's tooltip takes the first Esc; focus back on the heading for the drawer's own.
+    await focus(screen().getByRole("heading", { name: "Iceberg detector" }));
+    await key("Escape");
+    expect(screen().queryByRole("dialog")).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("wide: unchanged: no aria-modal, Tab flows on to the page", async () => {
+    narrowViewport(false);
+    await openWith();
+    expect(screen().getByRole("dialog", { name: "Iceberg detector" })).not.toHaveAttribute(
+      "aria-modal",
+    );
+    await focus(button("Close Iceberg detector"));
+    await key("Tab");
+    expect(button("Next on the page")).toHaveFocus();
+  });
+
+  it("the inline form is not a drawer over the page: untouched at narrow", async () => {
+    narrowViewport(true);
+    await openWith({ variant: "inline" });
+    expect(screen().queryByRole("dialog")).toBeNull();
+    expect(button("Next on the page").closest("[inert], [aria-hidden]")).toBeNull();
   });
 });

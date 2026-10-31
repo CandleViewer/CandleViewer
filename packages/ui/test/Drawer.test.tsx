@@ -3,6 +3,7 @@ import { act, StrictMode, useRef, useState, type JSX, type ReactNode } from "rea
 import { expect, fireEvent, within } from "storybook/test";
 import { afterEach, describe, it, vi } from "vitest";
 import { Button, Dialog, Drawer, Popover, type DrawerProps } from "../src/components/index.js";
+import { narrowViewport } from "./narrowViewport.js";
 import { mount } from "./theme/mount.js";
 
 afterEach(() => {
@@ -566,5 +567,70 @@ describe("Drawer readable body", () => {
     const group = screen().getByRole("group", { name: "Instrument rules" });
     expect(group).toHaveClass("cv-drawer__body");
     expect(group).toHaveAttribute("tabindex", "0");
+  });
+});
+
+// #5144 ruling A (ledger row A54), conventions 39: at 720 CSS px or less a drawer over the page covers
+// every page stop, so a non-modal one is modal while open.
+describe("Drawer (CMP-046) non-modal at the narrow breakpoint", () => {
+  it("narrow: aria-modal, the scrim, the page inert and not scrolling", async () => {
+    narrowViewport(true);
+    const host = await openHost(<Host modal={false} />);
+    expect(drawerNode()).toHaveAttribute("aria-modal", "true");
+    expect(drawerNode()).toHaveAttribute("data-modal");
+    expect(document.querySelector(".cv-drawer__scrim")).not.toBeNull();
+    expect(within(host).getByTestId("page").closest("[inert], [aria-hidden]")).not.toBeNull();
+    expect(document.documentElement.style.overflow).toBe("hidden");
+  });
+
+  it("narrow: Tab cycles inside, Esc closes and focus returns to the opener", async () => {
+    narrowViewport(true);
+    const onOpenChange = vi.fn();
+    await openHost(<Host modal={false} onOpenChange={onOpenChange} />);
+    await focus(button("Done"));
+    await key("Tab");
+    expect(button("Close Instrument rules")).toHaveFocus();
+    await key("Tab", true);
+    expect(button("Done")).toHaveFocus();
+    await key("Escape");
+    expect(onOpenChange).toHaveBeenLastCalledWith(false, "escape");
+    expect(screen().queryByRole("dialog")).toBeNull();
+    expect(button("Open")).toHaveFocus();
+  });
+
+  it("wide: unchanged: no aria-modal, no scrim, Tab flows on to the page", async () => {
+    narrowViewport(false);
+    const host = await openHost(<Host modal={false} />);
+    expect(drawerNode()).not.toHaveAttribute("aria-modal");
+    expect(document.querySelector(".cv-drawer__scrim")).toBeNull();
+    expect(within(host).getByTestId("page").closest("[inert], [aria-hidden]")).toBeNull();
+    await focus(button("Done"));
+    await key("Tab");
+    expect(button("After")).toHaveFocus();
+  });
+
+  it("a resize from wide to narrow while open switches to modal, and back", async () => {
+    const viewport = narrowViewport(false);
+    const host = await openHost(<Host modal={false} />);
+    await focus(button("After"));
+    await viewport.set(true);
+    expect(drawerNode()).toHaveAttribute("aria-modal", "true");
+    expect(within(host).getByTestId("page").closest("[inert], [aria-hidden]")).not.toBeNull();
+    // Focus left on the now inert page is brought inside.
+    expect(drawerNode().contains(document.activeElement)).toBe(true);
+    await focus(button("Done"));
+    await key("Tab");
+    expect(button("Close Instrument rules")).toHaveFocus();
+    await viewport.set(false);
+    expect(drawerNode()).not.toHaveAttribute("aria-modal");
+    expect(document.querySelector(".cv-drawer__scrim")).toBeNull();
+    expect(within(host).getByTestId("page").closest("[inert], [aria-hidden]")).toBeNull();
+    expect(document.documentElement.style.overflow).toBe("");
+  });
+
+  it("without matchMedia it is the wide behaviour", async () => {
+    vi.stubGlobal("matchMedia", undefined);
+    await openHost(<Host modal={false} />);
+    expect(drawerNode()).not.toHaveAttribute("aria-modal");
   });
 });
