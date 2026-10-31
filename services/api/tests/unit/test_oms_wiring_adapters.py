@@ -18,6 +18,7 @@ from candleviewer.admin import wiring as admin_wiring
 from candleviewer.audit.writer import AuditUnavailable, AuditWriter, keyed_record_id
 from candleviewer.exchange.base.errors import NotFoundError, OmsErrorCode
 from candleviewer.oms.commands import NEVER_SENT_ALERT
+from candleviewer.oms.errors import ReconciliationUnavailable
 from candleviewer.oms.order_machine import (
     CompositePublisher,
     MachinePublisher,
@@ -364,6 +365,63 @@ async def test_a_malformed_sl_attach_failed_notice_is_logged_then_paged_and_neve
     critical = [entry["event"] for entry in logs if entry["log_level"] == "critical"]
     assert critical == ["oms_notice_unrouted"] + ([] if error is None else ["oms_pager_failed"])
     assert pager.alerts == [("page", "order notice alert not routed: AttributeError", "order")]
+
+
+# --- E29-T06 (#914): the request bound to the account's reconciliation job -----------------------
+
+
+async def test_a_bound_reconciliation_request_goes_to_its_job_and_pages_nothing() -> None:
+    """24 Sec.8.5's trigger table: once bound, B1's `request_reconciliation` is the account's
+    job's to take (the composition binds its `unknown` trigger, `test_oms_runtime.py`): nothing is
+    paged or logged unowned. Every other notice routes as it did."""
+    pager, asked = _Pager(), list[object]()
+
+    async def trigger(account: Any) -> object:
+        asked.append(account)
+        return None
+
+    router = OrderNoticesRouter(pager)
+    router.bind_reconciliation(trigger)
+    with capture_logs() as logs:
+        await router.notify(_notice("request_reconciliation", reason="already_terminal"))
+        await router.notify(_notice("request_fallback_sl"))
+    assert asked == [ACCOUNT]
+    assert [(e["event"], e.get("kind")) for e in logs] == [
+        ("oms_order_notice_unowned", "request_fallback_sl")
+    ]
+    assert pager.alerts == [("page", "order notice request_fallback_sl has no owner until E32",
+                             "order")]  # fmt: skip
+
+
+_REFUSED = "order notice request_reconciliation was refused: no reconciliation job took it"
+
+
+@pytest.mark.parametrize(
+    ("detail", "alert"),
+    [({}, ("page", _REFUSED)), ({"reason": "already_terminal"}, ("alert", _REFUSED)),
+     ({"reason": "already_terminal", "alerted": True}, None)],
+    ids=["quarantined", "terminal", "alerted"],
+)  # fmt: skip
+async def test_a_request_its_job_refuses_is_logged_and_paged_as_refused(
+    detail: dict[str, Any], alert: tuple[str, str] | None
+) -> None:
+    """A request no job takes (the driver stopping or unwired, or a job that did not open) falls
+    back to the unowned notice's page, a ticket where the 110001 rules say so, and its summary
+    says it was refused, never that it has no owner."""
+    pager = _Pager()
+
+    async def refuses(_account: Any) -> object:
+        raise ReconciliationUnavailable("no reconciliation job can open: stopping or unwired")
+
+    router = OrderNoticesRouter(pager)
+    router.bind_reconciliation(refuses)
+    with capture_logs() as logs:
+        await router.notify(_notice("request_reconciliation", **detail))
+    refused = [e for e in logs if e["event"] == "oms_reconcile_request_refused"]
+    assert [(e["account_id"], e["error"]) for e in refused] == [
+        (str(ACCOUNT), "ReconciliationUnavailable")
+    ]
+    assert pager.alerts == ([] if alert is None else [(*alert, "order")])
 
 
 class _Feed:
