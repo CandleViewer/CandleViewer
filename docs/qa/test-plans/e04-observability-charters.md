@@ -93,7 +93,7 @@ The report moved to `docs/qa/e04-blind-spots.md` (BQ-10, ruled): one row per con
 
 Proposed dated note under `RSK-047` (R14 Operability, `docs/plan/32-risk-register.md`:573), not R11 (BQ-04: R11 is Supply chain and tooling, :45):
 
-> **E04-Q02 blind spots (2026-10-31)** — the E04 exploratory pass found 21 conditions the system cannot detect. Two P1 Bugs are filed: #5174 (alert rules on series nothing emits or scrapes, so `PostgresDown` and `ClockDriftBlockingTrading` cannot fire, and no rule reads `up`) and #5173 (the health ticker). Fourteen are routed to their owning epics. Four are put for acceptance (BQ-12): queue depth below full, a broken notification channel while the dead-man channel works, the quiet-hours window (already accepted for the guards), and 29 rules on lazy or flag-gated series without their own guard. Two CI checks now stop new unguarded series and new unproduced series. **Acceptance pending** (the orchestrator rules at READY where a compensating control is named; the owner may revoke). No score change.
+> **E04-Q02 blind spots (2026-10-31)** — the E04 exploratory pass found 21 conditions the system cannot detect. Two P1 Bugs are filed: #5174 (alert rules on series nothing emits or scrapes, so `PostgresDown` and `ClockDriftBlockingTrading` cannot fire, and no rule reads `up`) and #5173 (the health ticker). Fourteen are routed to their owning epics. Four are put for acceptance (BQ-12): queue depth below full, a broken notification channel while the dead-man channel works, the quiet-hours window (already accepted for the guards), and 29 rules on lazy or flag-gated series without their own guard. Two CI checks now stop new unguarded series and new unproduced series. BS-07, BS-10 and BS-11 are accepted by the orchestrator under the 2026-10-29 delegation (the owner may revoke) (#5165, the BQ-12 ruling); BS-09 is not accepted, pending on #5174. No score change.
 
 ## 7. E04 sign-off draft (not posted; posted at merge)
 
@@ -107,7 +107,7 @@ Proposed comment on E04 (#33), posted at merge with a **proposed** verdict (BQ-1
 >
 > **Defects outstanding.** #5173 and #5174 until fixed. Open E04 follow-ups: #1523, #1524, #1525, #1683 (likely stale: the lint gates at `_job-py.yml`:132–134), #1684, #1720, #3231. Blocked legs: every live technique (PRR staging re-run), the screen-reader traversal (a human), the single scratch CI run (pack index).
 >
-> **Residual risk.** `RSK-047` (R14), with the §6 note, acceptance pending (Owner).
+> **Residual risk.** `RSK-047` (R14), with the §6 note: BS-07, BS-10 and BS-11 accepted by the orchestrator under the 2026-10-29 delegation (the owner may revoke); BS-09 pending on #5174.
 
 Proposed handover comment on E04-X02 (#258), cross-linked on #1720 (BQ-03, ruled: a comment on #258 cross-linked on #1720; a found secret is reported privately under `SECURITY.md`, C-12.13): the per-surface table of charter 3, "six of six cleared statically, live reads blocked". **Not posted.**
 
