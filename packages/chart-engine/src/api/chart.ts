@@ -301,8 +301,8 @@ export function createChart(opts: ChartOptions): Chart {
     },
     async takeScreenshot(): Promise<Blob> {
       if (disposed) throw new Error("chart-engine: the chart was disposed");
-      // Parked, mid-loss or failed: `ExportUnavailableError` (code ENGINE_EXPORT_UNAVAILABLE and a
-      // reason), never a blank or stale image (F-13, BQ-92).
+      // Parked, suspended (0×0, BQ-147), mid-loss or failed: `ExportUnavailableError` (code
+      // ENGINE_EXPORT_UNAVAILABLE and a reason), never a blank or stale image (F-13, BQ-92).
       const blob = await host.exportPng();
       if (blob === null) throw new Error("chart-engine: the canvas could not be encoded");
       return blob as Blob;

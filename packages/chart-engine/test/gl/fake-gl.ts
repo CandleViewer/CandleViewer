@@ -163,7 +163,22 @@ export class FakeGl implements GL2Like {
       `rows ${String(a[5])} ${fnv1a(px.subarray(0, Number(a[4]) * Number(a[5])))}`,
     );
   };
-  viewport = (): void => void this.call("viewport");
+  /** Every `viewport` and `scissor` rect (E11-S10, BQ-149), and SCISSOR_TEST's state. */
+  readonly viewports: number[][] = [];
+  readonly scissors: number[][] = [];
+  scissorTest = false;
+  viewport(...rect: number[]): void {
+    if (this.call("viewport")) this.viewports.push(rect);
+  }
+  scissor(...rect: number[]): void {
+    if (this.call("scissor")) this.scissors.push(rect);
+  }
+  enable(cap: number): void {
+    if (this.call("enable") && cap === GL.SCISSOR_TEST) this.scissorTest = true;
+  }
+  disable(cap: number): void {
+    if (this.call("disable") && cap === GL.SCISSOR_TEST) this.scissorTest = false;
+  }
   clearColor(...rgba: number[]): void {
     const hex = (v: number): string =>
       Math.round(v * 255)

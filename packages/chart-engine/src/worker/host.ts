@@ -4,6 +4,8 @@
 // message per frame, keeps at most two unacknowledged `data` batches per store, transfers every
 // buffer, and restarts a lost worker. DOM side: this file is in tsconfig.dom.json's program.
 import { probeRenderProfile } from "../host/mount.js";
+import { backingPx } from "../viewport/pixels.js";
+import { BackingSizer } from "./backing.js";
 import { createRenderRuntime, type RenderRuntime } from "./runtime.js";
 import { createTextPlatform, type TextScope } from "./text-platform.js";
 import {
@@ -368,10 +370,14 @@ function retainKey(cmd: Command): string | null {
 
 type ResizeMsg = Extract<ToWorker, { t: "resize" }>;
 
-/** The canvas's CSS box follows the container on the main thread, in both run modes. */
+/**
+ * The canvas's CSS box follows the container on the main thread, in both run modes: the backing
+ * store over dpr (BQ-145), so a padded store overflows into the clip wrapper (BQ-150).
+ */
 function styleCanvas(canvas: HTMLCanvasElement, size: ResizeMsg): void {
-  canvas.style.width = `${size.width}px`;
-  canvas.style.height = `${size.height}px`;
+  const { backingWidth: bw, backingHeight: bh, dpr } = size;
+  canvas.style.width = `${bw === undefined ? size.width : bw / dpr}px`;
+  canvas.style.height = `${bh === undefined ? size.height : bh / dpr}px`;
 }
 
 export function createChartHost(o: ChartHostOptions): ChartHost {
@@ -398,6 +404,10 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   let forced = o.env.forceProfile !== undefined;
   /** The motion mode every `init` carries, a restart's included (not a retained command). */
   let reduce = o.reducedMotion === true;
+  /** The backing store's 128 px growth steps and their settle-time trim (BQ-149). */
+  const mounted = o.canvas();
+  const sizer = new BackingSizer(mounted.width, mounted.height, o.dpr);
+  let settleQueued = false;
 
   const init = (): void => {
     const canvas = o.canvas();
@@ -503,14 +513,42 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
     link.post({ t: "input", id, kind, events }, [events.buffer]);
   }
 
+  /** Posts `msg` as the size, carrying the sizer's store only while it is padded (BQ-149). */
+  function postSize(msg: ResizeMsg): void {
+    const { width, height, dpr } = msg;
+    const exact: ResizeMsg = { t: "resize", id, width, height, dpr };
+    const [backingWidth, backingHeight] = [sizer.width, sizer.height];
+    size = sizer.padded ? { ...exact, backingWidth, backingHeight } : exact;
+    styleCanvas(o.canvas(), size);
+    link.post(size, []);
+  }
+
+  /** A resize through the sizer; a padded store starts counting resize-free frames. */
+  function applyResize(msg: ResizeMsg): void {
+    sizer.resize(backingPx(msg.width, msg.dpr), backingPx(msg.height, msg.dpr), msg.dpr);
+    postSize(msg);
+    if (sizer.settling && !settleQueued) {
+      settleQueued = true;
+      o.env.requestFrame(settleFrame);
+    }
+  }
+
+  /** One frame of the settle count (the injected requestFrame, never wall time): trims at 10. */
+  function settleFrame(): void {
+    settleQueued = false;
+    if (disposed || !sizer.settling) return;
+    if (pendingResize === null && sizer.frame()) {
+      if (size !== null) postSize(size);
+      return;
+    }
+    settleQueued = true;
+    o.env.requestFrame(settleFrame);
+  }
+
   function flush(): void {
     flushQueued = false;
     if (disposed) return;
-    if (pendingResize !== null) {
-      size = pendingResize;
-      styleCanvas(o.canvas(), size);
-      link.post(size, []);
-    }
+    if (pendingResize !== null) applyResize(pendingResize);
     if (pendingSync !== null) link.post(pendingSync, []);
     pendingResize = null;
     pendingSync = null;
@@ -615,6 +653,10 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
     },
     exportPng(): Promise<unknown> {
       if (disposed) return Promise.resolve(null);
+      // BQ-149: the PNG is the exact size, so a pending resize lands and the padding is trimmed.
+      if (pendingResize !== null) applyResize(pendingResize);
+      pendingResize = null;
+      if (size !== null && sizer.trim()) postSize(size);
       exportSeq += 1;
       const reqId = exportSeq;
       return new Promise((resolve, reject) => {

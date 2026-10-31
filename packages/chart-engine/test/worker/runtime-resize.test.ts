@@ -3,6 +3,7 @@
 // and a 0×0 container suspends the chart and resumes it within one frame (BQ-147, BQ-148).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GLBackend } from "../../src/gl/backend.js";
+import { Dirty, SceneGraph } from "../../src/scene/index.js";
 import { snapHairline, type PaneUniforms } from "../../src/viewport/index.js";
 import { createRenderRuntime, type RenderRuntime } from "../../src/worker/runtime.js";
 import { INPUT, rejectReason, type FromWorker } from "../../src/worker/protocol.js";
@@ -80,6 +81,21 @@ describe("Scenario: Moving to a different-DPI monitor re-renders correctly", () 
     frame();
     expect(of("frame").at(-1)).toMatchObject({ dpr: 2, backingStorePx: [800, 400] });
     expect(rt.resizeCounters(1)).toEqual({ reallocations: 1, dprChanges: 1, lastDpr: 2 });
+  });
+
+  it("a DPR change at the same CSS size still marks every pane LAYOUT and STYLE", () => {
+    const marked = vi.spyOn(SceneGraph.prototype, "markResize");
+    resize(400, 200, 1); // the same size and ratio: nothing to mark
+    expect(marked).not.toHaveBeenCalled();
+    resize(400, 200, 2); // the layout engine's setSize short-circuits; the DPR branch marks
+    expect(marked.mock.calls).toEqual([[]]); // every pane, not one
+    const graph = marked.mock.contexts[0] as SceneGraph;
+    for (const id of ["main", "main/price-axis", "chart/time-axis"]) {
+      expect(graph.get(id)?.dirty ?? 0, id).toSatisfy((d: number) => (d & Dirty.LAYOUT) !== 0);
+    }
+    for (const id of ["main/price-axis", "chart/time-axis"]) {
+      expect(graph.get(id)?.dirty ?? 0, id).toSatisfy((d: number) => (d & Dirty.STYLE) !== 0);
+    }
   });
 
   it("a throwing listener posts a recoverable error; the others run and the resize lands", () => {

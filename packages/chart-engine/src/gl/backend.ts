@@ -45,12 +45,17 @@ export interface LossCapable {
 
 /** 26 §3.4's seam: what the runtime needs, so a WebGPU backend can stand in later (BQ-59). */
 export interface RenderBackend extends UploadSink {
-  /** Draws `list[0, count)` into a `width` × `height` backing store; the failure, else null. */
+  /**
+   * Draws `list[0, count)` into a `w` × `h` store; the failure, else null. A padded `bw` × `bh`
+   * backing store (E11-S10 BQ-149) is drawn in its exact top-left `w` × `h` sub-rect only.
+   */
   submit(
     list: readonly RetainedBatch[],
     count: number,
     w: number,
     h: number,
+    bw?: number,
+    bh?: number,
   ): BackendFailure | null;
   readonly trace: DrawTrace;
   readonly failure: BackendFailure | null;
@@ -85,6 +90,8 @@ export class GLBackend implements RenderBackend, LossCapable {
   paneUniforms: PaneUniformSource | null = null;
   private readonly rgb = [0, 0, 0];
   private background: string | undefined = "#000";
+  /** Whether SCISSOR_TEST is on: only while the store is padded, so an exact one adds no call. */
+  private scissored = false;
 
   /** `renderer` is the probe's unmasked string, null when `WEBGL_debug_renderer_info` is absent. */
   constructor(
@@ -111,9 +118,19 @@ export class GLBackend implements RenderBackend, LossCapable {
     count: number,
     w: number,
     h: number,
+    bw = w,
+    bh = h,
   ): BackendFailure | null {
     if (this.failure !== null) return this.failure;
-    this.gl.viewport(0, 0, w, h);
+    // BQ-149: GL's origin is bottom-left, so the top-left sub-rect starts at y = bh - h; the
+    // scissor keeps the clear inside it too.
+    const padded = bw !== w || bh !== h;
+    this.gl.viewport(0, bh - h, w, h);
+    if (padded) {
+      if (!this.scissored) this.gl.enable(GL.SCISSOR_TEST);
+      this.gl.scissor(0, bh - h, w, h);
+    } else if (this.scissored) this.gl.disable(GL.SCISSOR_TEST);
+    this.scissored = padded;
     this.gl.clearColor(this.rgb[0] ?? 0, this.rgb[1] ?? 0, this.rgb[2] ?? 0, 1);
     this.gl.clear(GL.COLOR_BUFFER_BIT);
     try {
@@ -154,6 +171,7 @@ export class GLBackend implements RenderBackend, LossCapable {
 
   /** On `webglcontextlost`: every GL object is gone; the CPU mirrors stay. */
   invalidate(): void {
+    this.scissored = false; // a restored context starts with SCISSOR_TEST off
     this.registry.invalidateAll();
     this.buffers.invalidate();
   }

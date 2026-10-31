@@ -146,6 +146,11 @@ interface Instance {
   suspended: boolean;
   /** The DPR the backing store is sized at, its listeners (BQ-152) and counters (BQ-153). */
   dpr: number;
+  /**
+   * The exact size drawn (device px, BQ-149): the top-left sub-rect of a padded backing store.
+   * The clip space, picking and the transform use it, never the padding.
+   */
+  readonly exact: { width: number; height: number };
   readonly dprListeners: Set<(from: number, to: number) => void>;
   readonly resizes: ResizeCounters;
   loss: ContextLoss | null;
@@ -366,16 +371,23 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
    * otherwise the backing store is set (counted only when it changes), and a DPR change marks
    * every pane LAYOUT and STYLE and tells the listeners before the next frame (BQ-152).
    */
-  function resize(inst: Instance, w: number, h: number, dpr: number): void {
-    const bw = backingPx(w, dpr);
-    const bh = backingPx(h, dpr);
+  function resize(inst: Instance, msg: Extract<ToWorker, { t: "resize" }>): void {
+    const { width: w, height: h, dpr } = msg;
+    const ew = backingPx(w, dpr);
+    const eh = backingPx(h, dpr);
     inst.gestures.stop();
-    inst.suspended = bw === 0 || bh === 0;
+    inst.suspended = ew === 0 || eh === 0;
     if (inst.suspended) return; // the requested frame is kept, as a parked chart's is
+    inst.exact.width = ew;
+    inst.exact.height = eh;
+    // BQ-149: the host's padded store (validated >= exact), reallocated only when it changes.
+    const bw = msg.backingWidth ?? ew;
+    const bh = msg.backingHeight ?? eh;
     const c = inst.canvas;
     if (c.width !== bw || c.height !== bh) {
-      c.width = bw;
-      c.height = bh;
+      // Only the axis that changed is written: a same-value write may still reset a real bitmap.
+      if (c.width !== bw) c.width = bw;
+      if (c.height !== bh) c.height = bh;
       inst.resizes.reallocations += 1;
     }
     inst.viewport.setPanePlot(0, 0, h);
@@ -580,6 +592,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         parked: false,
         suspended: false,
         dpr: msg.dpr,
+        exact: { width: c.width, height: c.height },
         dprListeners: old?.dprListeners ?? new Set(),
         resizes: old?.resizes ?? { reallocations: 0, dprChanges: 0, lastDpr: msg.dpr },
         loss: null,
@@ -599,7 +612,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     switch (msg.t) {
       case "resize":
-        resize(inst, msg.width, msg.height, msg.dpr);
+        resize(inst, msg);
         return;
       case "input":
         inst.gestures.apply(msg.kind === "touch", msg.events);
@@ -637,17 +650,20 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       inst.ready = true;
       deps.post({ t: "ready", id: inst.id, runMode: deps.runMode, renderProfile, capabilities });
     }
-    const { width, height } = inst.canvas;
+    const { width, height } = inst.exact;
+    const backing = inst.canvas;
     // At most one refit per pane per frame, and only when a key changed (BQ-116).
     if (inst.autoscale.update()) inst.viewportDirty = true;
     if (backend !== null && backend.failure === null) {
       writePaneUniforms(inst.viewport, 0, inst.uniforms); // once per pane per frame (§3.5)
-      // The clip space spans the backing store on both axes (BQ-101, BQ-142); the plot is its
-      // left part, so x maps unchanged, and y never mixes vp.height * dpr with the rounded size.
+      // The clip space spans the exact store on both axes (BQ-101, BQ-142, BQ-149); the plot is
+      // its left part, so x maps unchanged, and y never mixes vp.height * dpr with the rounded
+      // size. A padded store is drawn in its exact top-left sub-rect.
       inst.uniforms.floats[4] = width;
       inst.uniforms.floats[5] = height;
       backend.setBackground(inst.theme[BACKGROUND_TOKEN]);
-      const f = backend.submit(inst.builder.drawList, inst.builder.drawCount, width, height);
+      const { drawList, drawCount } = inst.builder;
+      const f = backend.submit(drawList, drawCount, width, height, backing.width, backing.height);
       // The R1 budget closes on the first complete frame after a restore (BQ-49).
       if (
         f === null &&
@@ -702,7 +718,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         gpuMemoryMbEstimate: backend?.gpuMemoryMbEstimate ?? 0,
         lod: inst.lod,
         dpr: inst.dpr,
-        backingStorePx: [width, height],
+        backingStorePx: [backing.width, backing.height],
       });
     }
   }
