@@ -784,6 +784,7 @@ Drag preview                Drop zones
 - **With E08 data-confidence states:** disconnected and reconnecting win (SCR-152 banner, the pane frozen with its last-good time); a build in flight is cancelled by the disconnect and the previous series stays; loads and backfill resume after reconnect. A stale feed marks the forming bar stale in text (E12-S10). A `generation_swap` snapshot keeps the held frame (E12-D02 D-1) until the snapshot and the REST re-read cover the visible window or reach a known boundary inside it (recording start, the built range's start, a coverage hole, or 422 `no_data_recorded`), which is then drawn, and the series swaps in one frame (`23-ws-protocol.md` §7.4); past 600 ms the strip reads "Updating Volume 50 BTC...", and a failed re-read gives the retryable inline notice (E12-D02 §8). The snapshot cannot say which kind of swap it is, so the re-read decides: old and new generations side by side (a builder cold start) get a seam at the new generation's first bar; one generation that replaced the held bars (an ADR-0033 rebuild) gets the built-from boundary at its first bar, and a chart that did not start that build also shows a one-time strip notice "Volume 50 BTC was rebuilt from <ts>; bars redrawn" with `Dismiss`; a tick-size epoch change shows "Tick size changed; series restarted" (ADR-0033). A recording gap is not E08's `gapped` (a live-stream gap that was backfilled), and each keeps its own marker.
 - **Handoff pack (E11-D09):** [E11-D09.md](../design/E11/E11-D09.md) — redlines, behaviour rules, key map, motion table, token mapping, state matrix, assets; hand-off tables in [E11-D09-handoff.md](../design/E11/E11-D09-handoff.md); Penpot page `E11-D09 Chart-engine handoff pack` (boards pending in a second PR); owner approval pending.
 - **A11y review (E12-D11):** [E12-D11.md](../design/E12/E12-D11.md) (E12-D11; the bar and series band's screen-reader script, keyboard map and announcement budget; Heikin-Ashi reads the real values first; owner approval pending).
+- **Hand-off pack (E12 bar series):** [E12-D12.md](../design/E12/E12-D12.md) v1 (E12-D12; owner approval pending).
 
 ### SCR-031 — Chart settings dialog (general)
 
@@ -812,6 +813,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `chart.settings_changed` with `{section, key}` (analytics; no audit record).
 - **Design sign-off acceptance checklist:** [ ] all sections drawn (appearance, grid, scales, session/timezone, crosshair, tooltip, precision) [ ] live preview against a real chart [ ] reset-to-default per section and global [ ] 'applies to this panel / all panels / as new default' scope control drawn
 - **A11y review (E12-D11):** [E12-D11.md](../design/E12/E12-D11.md) (E12-D11; the dialog's keys and the order of the polite writes after Save; owner approval pending).
+- **Hand-off pack (E12 bar series):** [E12-D12.md](../design/E12/E12-D12.md) v1 (E12-D12; owner approval pending).
 
 ### SCR-032 — Footprint settings dialog
 
@@ -1047,6 +1049,7 @@ Drag preview                Drop zones
 - **As built (E08-S09, #4703)**: CMP-017 on the chart toolbar's CMP-219, CMP-160 over CMP-213 inside, on SCR-102's ranking, deck, session Recent and words; rendered only once a chart is bound and the shell's index runs (no pane yet: no trigger and no placeholder). E12-S11 mounts it in CMP-221, binds the workspace opener that starts the index, and consumes its commit, disarming an armed chart before it returns (D-10). The trigger is the open path until `/` lands with E10-S02's dispatcher rule (A-D05-2); a host can open it (`open`). The interval strip (CMP-220, E12-D02 NC-10) is a slot; no recording chip, not-recorded line or Record (E16-S02); View symbol info once SCR-103's port is registered (E08-S10); 24 h turnover reads "—" (D-8). Loading is one line, without skeleton rows. It draws no stale, refreshing or disconnected footer (E08-D05 §7 lists none); a re-read shows only as the held list of §6.2's Refreshing. Load failed is CMP-026 `error` (its glyph and message, Retry now below them), where B22 draws one line with Retry now inline. CMP-160's target chip sits on its own row above the input, where B15, B21 and B22 draw it in the heading row. Check again is T2 through CMP-026's `disabledReason`, not CMP-079, which takes E09-D09's RBAC keys only. Analytics go to the app's `cv:analytics` seam; `chart.symbol_changed` is E12-S11's, when the new symbol paints.
 - **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; the quick-switcher's keyboard, focus and announcement rows; no key bound; the pair is built, so its rows reach E08-Q05; owner approval pending).
 - **Hand-off pack:** [E08-D13.md](../design/E08/E08-D13.md) v1 (E08-D13; the built quick-switcher's acceptance record, its rows to E08-Q05; owner approval pending; a11y contract: E08-D12).
+- **Hand-off pack (E12 bar series):** [E12-D12.md](../design/E12/E12-D12.md) v1 (E12-D12; owner approval pending).
 
 ### SCR-042 — Interval / bar-mode menu
 
@@ -1060,6 +1063,7 @@ Drag preview                Drop zones
 - **Design sign-off acceptance checklist:** [x] all bar modes drawn with their parameter inputs [x] favourites/pinned intervals [x] custom-interval validation message [x] non-time bar modes state clearly which ones require recorded tick history [x] rebuilding and partial-history precedence drawn per the SCR-030 state matrix (E12-D01 §9)
 - **Hi-fi (E12-D03):** [E12-D03.md](../design/E12/E12-D03.md) §2 (per-mode table), §3 (redlines), §4 (states), §7 (placement); Penpot page `E12-D03`, boards 01–18 (drawn).
 - **A11y review (E12-D11):** [E12-D11.md](../design/E12/E12-D11.md) (E12-D11; the menu's script rows; disabled modes stay focusable and speak their reason once; owner approval pending).
+- **Hand-off pack (E12 bar series):** [E12-D12.md](../design/E12/E12-D12.md) v1 (E12-D12; owner approval pending).
 
 ### SCR-043 — Price-scale / time-scale context menus
 
@@ -1101,9 +1105,10 @@ Drag preview                Drop zones
 - **Performance:** Virtualised table renders 100k rows without layout jank (<=8 ms scripting per scroll frame); it reads the same in-memory series as the canvas, so no extra fetch is issued.
 - **Analytics/audit:** `chart.data_table_opened`, `chart.data_table_exported` (analytics).
 - **UX research:** [e18-footprint-cell-reading.md](../research/digests/e18-footprint-cell-reading.md) (E18-D01; heuristic, pending owner approval; a footprint cell is this table's level sub-row, whose E11-D04 D10 menu is two items — Horizontal line at this price · Copy level as TSV; the memo PROPOSES to D10's owner a level-row extension (C17): "Focus imbalance" first, Create alert at this level (pre-filled with the level price), Add note, Replay from here, with D10's two items kept — one cell menu shared with SCR-030 and SCR-056, never an order; the columns of "Copy level as TSV" as D5's six plus PROPOSED additions; two PROPOSED renames for D10's owner; R5, C15, C17).
-- **Design sign-off acceptance checklist:** [ ] table carries the same information as the canvas incl. footprint cells per bar (expandable row) [ ] column set and sorting drawn [ ] keyboard navigation within the grid [ ] CSV export control [ ] it is reachable from the chart panel header, not hidden in settings - equal status verified
+- **Design sign-off acceptance checklist:** [ ] table carries the same information as the canvas incl. footprint cells per bar (expandable row) [x] column set and sorting drawn (E12-D07 §3; boards 01, 02, 03) [ ] keyboard navigation within the grid [ ] CSV export control [ ] it is reachable from the chart panel header, not hidden in settings - equal status verified
 - **Handoff pack (E11-D09):** [E11-D09.md](../design/E11/E11-D09.md) — redlines, behaviour rules, key map, motion table, token mapping, state matrix, assets; hand-off tables in [E11-D09-handoff.md](../design/E11/E11-D09-handoff.md); Penpot page `E11-D09 Chart-engine handoff pack` (boards pending in a second PR); owner approval pending.
 - **A11y review (E12-D11):** [E12-D11.md](../design/E12/E12-D11.md) (E12-D11; the table's script rows, one speaker per fact and the derived Heikin-Ashi columns; owner approval pending).
+- **Hand-off pack (E12 bar series):** [E12-D12.md](../design/E12/E12-D12.md) v1 (E12-D12; owner approval pending).
 
 ### SCR-046 — Chart engine diagnostics overlay
 
@@ -1135,10 +1140,11 @@ Drag preview                Drop zones
 - **Performance:** The empty state renders without initialising the GL context for the data layer, so an empty chart costs no GPU budget.
 - **Analytics/audit:** `chart.empty_state_shown` with `{reason: 'not_recorded'|'no_data_in_range'|'symbol_delisted'}` (analytics).
 - **UX research:** [e16-recorder-mental-model.md](../design/research/e16-recorder-mental-model.md) §4 (E16-D01; proposes scoping the live-data sentence and naming the cause; copy owned by E16-D05).
-- **Design sign-off acceptance checklist:** [ ] three distinct reasons drawn (never recorded / no data in this range / instrument not trading) [ ] owner CTA to SCR-140 and non-owner explanatory copy both drawn [ ] live-data-still-works note present where true [ ] no infinite spinner path
+- **Design sign-off acceptance checklist:** [x] three distinct reasons drawn (never recorded / no data in this range / instrument not trading) (E12-D02 §8; boards 31, 35, 36; E12-D08 §2.2) [x] owner CTA to SCR-140 and non-owner explanatory copy both drawn (E12-D02 §8; boards 33, 34; E12-D08 §2.3) [x] live-data-still-works note present where true (E12-D08 §2.4; W-12) [x] no infinite spinner path (E12-D08 §1.4, §2.4)
 - **Hi-fi (E16-D05, #373):** [E16-D05.md](../design/E16/E16-D05.md) — the final recorder-dependent copy deck, the `retention_purge` treatment, the partial-history chip and the gap band's legend/tooltip; anatomy per E11-D04 §11.
 - **A11y review and hand-off (E16-D06):** [E16-D06.md](../design/E16/E16-D06.md) (E16-D06; the keyboard, focus and announcement rows of the recorder-dependent empty state, the sentence form's T2 reading and the first-bar focus restoration; owner approval pending).
 - **A11y review (E12-D11):** [E12-D11.md](../design/E12/E12-D11.md) (E12-D11; the empty state's heading, spoken once and only after a user action; owner approval pending).
+- **Hand-off pack (E12 bar series):** [E12-D12.md](../design/E12/E12-D12.md) v1 (E12-D12; owner approval pending).
 
 ### SCR-048 — Chart error state
 
@@ -1148,8 +1154,9 @@ Drag preview                Drop zones
 - **A11y:** `role="alert"` region with a plain-language error, a correlation id as selectable text, and a retry button that is focusable and not colour-only.
 - **Performance:** Retry uses exponential backoff (1s, 2s, 4s, 8s, capped 30s) with the next attempt time shown; failures never spin the render loop.
 - **Analytics/audit:** `chart.error_shown` with `{code, correlationId}` (analytics); backend-side failures are recorded in the incident log (SCR-144).
-- **Design sign-off acceptance checklist:** [ ] distinct copy for engine/WebGL failure, data-feed failure and backend failure [ ] WebGL-unavailable fallback message names the fallback path [ ] correlation id copyable [ ] retry + 'open diagnostics' actions [ ] the rest of the workspace remains usable
+- **Design sign-off acceptance checklist:** [x] distinct copy for engine/WebGL failure, data-feed failure and backend failure (E12-D08 §4.1; E12-D02 §8; boards 38, 39) [ ] WebGL-unavailable fallback message names the fallback path [x] correlation id copyable (E12-D08 §4.2) [x] retry + 'open diagnostics' actions (E12-D08 §4.1, §5, §10.4) [x] the rest of the workspace remains usable (E12-D08 §4.3)
 - **A11y review (E12-D11):** [E12-D11.md](../design/E12/E12-D11.md) (E12-D11; the polite card, once per episode, with the opaque reference as selectable text; owner approval pending).
+- **Hand-off pack (E12 bar series):** [E12-D12.md](../design/E12/E12-D12.md) v1 (E12-D12; owner approval pending).
 
 ### SCR-049 — Multi-chart grid panel
 
