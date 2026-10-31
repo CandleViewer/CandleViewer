@@ -326,11 +326,14 @@ async def test_the_routes_reach_the_jobs_on_the_lane_and_their_record_on_the_ser
         async def write_ahead(taken: PassTaken) -> None:
             written.append(taken)
 
+        async def decided_ahead(state: str) -> None:
+            raise AssertionError(f"no decision is recorded where none is taken ({state})")
+
         taken = await service.reconcile_now(ACCOUNT, write_ahead=write_ahead)
         assert written == [taken] and taken.joined is False
         assert ("ReconcileJobs.reconcile_now", HOP_TIMEOUT_S) in lanes[-1].hops
         with pytest.raises(NothingToResolve):  # the driver's refusal reaches the route as is
-            await service.resolve(ACCOUNT, decided_by="owner", write_ahead=write_ahead)
+            await service.resolve(ACCOUNT, decided_by="owner", write_ahead=decided_ahead)
         assert ("ReconcileJobs.resolve", HOP_TIMEOUT_S) in lanes[-1].hops
 
 

@@ -111,7 +111,8 @@ async def served(pg_dsn: str, owner: uuid.UUID, tmp_path: Path) -> AsyncIterator
     app.include_router(
         make_admin_reconciliation_router(
             AccountsRepository(SqlAlchemyAccountsStore(stored)), lambda: Runtime(service),
-            environment="demo", auth=cast(Any, granted), resolver=_Owner(owner), audit=writer,
+            environment="demo", auth=cast(Any, granted), resolver=_Owner(owner),
+            audit=cast(Any, writer),  # its `emit` names its keywords; the route's takes any
         )
     )  # fmt: skip
     transport = httpx.ASGITransport(app=app)
