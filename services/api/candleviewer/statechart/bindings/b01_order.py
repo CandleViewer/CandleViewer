@@ -612,7 +612,8 @@ def passes_all_gates(context: dict[str, Any], event: Any) -> bool:
 
 
 def adoption_allowed(context: dict[str, Any], event: Any) -> bool:
-    """Denies every adoption until E45-S01 records the Owner's decision D6 (B1.5, SR-E29-12)."""
+    """Denies every adoption: D6 is resolved for v1 as automatic adoption only, by the pass, so
+    no route sends `ADOPT` (BQ-17, B1.5, SR-E29-12)."""
     return False
 
 
@@ -1165,9 +1166,10 @@ async def adopt_terms(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> 
 
 
 async def adopt_untracked(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
-    """`ADOPT` passed `adoption_allowed` (deny-all until E45-S01 records D6), whose verdicts
-    include a native stop attached (C-2.6): the order is managed from here as it was discovered,
-    its stop the OMS's now; the adoption's own audit record is its route's (SR-E29-12)."""
+    """`ADOPT` passed `adoption_allowed` (deny-all: no route sends `ADOPT` in v1, BQ-17), whose
+    verdicts include a native stop attached (C-2.6): the order is managed from here as it was
+    discovered, its stop the OMS's now; the adoption's own audit record is its route's
+    (SR-E29-12)."""
     context.update(needs_lookup=False, discovered=False)
     logger().warning("b01_untracked_adopted", order_link_id=context.get("order_link_id"))
 

@@ -479,7 +479,7 @@ async def test_an_exchange_end_waits_for_the_fills_it_reports(rig: Rig) -> None:
 
 async def test_s9_no_rule_algo_or_group_acts_on_an_untracked_order(rig: Rig) -> None:
     """S9, SR-E29-12: a rule, an algo or a group is refused on an `untracked` order, only a user
-    may ask to adopt it (D6 denies every adoption until E45-S01), and reconciliation's finding is
+    may ask to adopt it (D6: no route adopts in v1, BQ-17), and reconciliation's finding is
     recorded."""
     found = order_of(7, order_link_id="ext-" + "ab" * 16, exchange_order_id="x7")
     assert await rig.facade.discover(found, environment="demo") == "untracked"

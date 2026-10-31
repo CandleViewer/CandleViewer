@@ -414,7 +414,7 @@ async def _at(
 
 async def test_b01_bindings_schemas_guards_and_audits() -> None:
     """Every event has a closed schema of this machine's own (#847), every guard denies an empty
-    event (A6), only `adoption_allowed` denies everything (until E45-S01 records D6), and every
+    event (A6), only `adoption_allowed` denies everything (no route adopts in v1, BQ-17), and every
     audit reaches the hook (C-2.9)."""
     schemas = CV_EVENT_SCHEMAS["order"]
     assert all_events(CHART) == set(schemas) == set(b01.SCHEMAS)
