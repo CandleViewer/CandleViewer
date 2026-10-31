@@ -15,6 +15,8 @@
     "./tsconfig/dom.json": "./tsconfig.dom.json",
     "./vitest": "./vitest.preset.mjs",
     "./vitest-flaky": "./src/vitest-flaky.mjs",
+    "./perf-calibration": "./src/perf-calibration.mjs",
+    "./perf-budget-guard": "./src/perf-budget-guard.mjs",
     "./no-restricted-imports": "./no-restricted-imports.mjs"
   },
   "scripts": {

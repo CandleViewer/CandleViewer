@@ -429,6 +429,40 @@ and `command { k: "setMotion", reduce }`, both validated at the worker boundary.
   (`frameTimeMs.{p50,p95,p99}`, `drawCalls`, `memoryMb`); `bench:baseline` writes
   `bench/baseline.json` for the `main`-branch comparison (CONSTITUTION §9 #16).
 
+### Perf budgets and runner calibration
+
+Wall-clock bounds in `test/**/*.perf.test.ts` (and the protocol and rule-graph perf tests of the same
+`engine-bench` job) keep their spec numbers (06 / the ticket) and are asserted as
+`toBeLessThanOrEqual(budget(120))`. A vitest `setupFiles` entry runs `@candleviewer/config/perf-calibration`
+once per test file before any timed region and logs one `calibration cpu=... cpu spread=...
+reference=... factor=...` line: one fixed CPU probe (an integer-hash loop, least of 5 samples after a
+warm-up). `budget(ms)` widens the spec number by `max(1, cpu / REFERENCE_CPU_MS)`: a slower runner
+widens the bound in proportion, a faster one never tightens it below the spec number, above 3x the
+test fails with "runner too slow". A first set of five samples spreading (max/min) by more than 2.0
+takes one more set of five; the calibration fails closed (measured value appended) only if both sets
+exceed 2.0, and a resampled calibration uses the median of all ten samples (otherwise the least of
+five). A spread above 1.5 on an accepted calibration emits one `::warning title=perf calibration::`
+annotation per process. The limit is 2.0 because a trust check that can fail on its own is the flake
+the calibration removes (observed per-run maxima 1.21, 1.33, 1.43, 1.30 and 1.47). A memory probe was tried and dropped: on the first
+`ubuntu-latest` run its 64 MiB random-access walk varied 7.4 to 19.6 ms (sample spread up to 2.66)
+against a stable CPU probe (20.59 to 21.15 ms, spread 1.00 to 1.21), failing 10 of 18 perf tests
+with no real budget miss. This normalises for runner class (capacity), not for momentary
+contention (C-9.3), except on the resampled branch, whose median of ten can widen the bound on a
+contended run (still capped at 3×). Each assertion logs only its margin; a failure shows measured, scaled
+bound and calibration. A guard test in each perf-owning package (`test/perf-budget-guard.test.ts`, logic in
+`packages/config/src/perf-budget-guard.mjs`) fails any `toBeLessThan*`/`toBeGreaterThan*` perf bound
+that skips `budget(`; a comparison that is not a wall-clock bound carries a
+`// budget-exempt: ratio` comment. The rule is owned by 06 section 7.4.
+
+A wall-clock budget may retry twice on the shared runner (`retry: 2`, `perf` project only); the budget
+itself never moves by retry, and a pass on a retry emits a `::warning title=perf retry::` annotation.
+
+`REFERENCE_CPU_MS` is 17.984 ms: the least CPU calibration over five `ubuntu-latest` engine-bench
+runs on PR #5142 (2026-10-31; the table is in that PR). It is re-taken when engine-bench moves to the
+self-hosted runner (E03-T14). It moves
+only through a `bench:baseline`-class PR (the `/packages/config/` and `/packages/chart-engine/` owners approve, written justification, CI evidence), and
+raising it loosens the gate.
+
 ## Benchmark harness (E06-K01)
 
 `bench/` is a deterministic, seeded benchmark harness for the M0 report (see

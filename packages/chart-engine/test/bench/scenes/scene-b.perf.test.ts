@@ -7,6 +7,7 @@ import { runRepetition, runScenario } from "../../../bench/runner.mjs";
 import { captureMachineDescriptor } from "../../../bench/machine.mjs";
 import { generateM0Fixture } from "../../../bench/fixtures/index.mjs";
 import { percentile } from "../../../bench/stats.mjs";
+import { budget, why } from "@candleviewer/config/perf-calibration";
 
 interface Ext {
   textBatchMs: number;
@@ -32,7 +33,7 @@ describe("perf budgets: SceneB", () => {
       scene.setFormat("full"),
       scene.setFormat("compact"),
     );
-    expect(ms).toBeLessThan(20);
+    expect(ms, why(ms, 20)).toBeLessThan(budget(20));
   });
   it("SDF arm holds B3: p95 <= 16 ms, text <= 2 ms (median of frames)", () => {
     const scene = new SceneB({ arm: "sdf" });
@@ -53,7 +54,7 @@ describe("perf budgets: SceneB", () => {
       peakProcessMemMB: 1,
       peakProcessMemSource: "test",
     });
-    expect(r.p95).toBeLessThanOrEqual(16);
+    expect(r.p95, why(r.p95, 16)).toBeLessThanOrEqual(budget(16));
     // One frame's text cost mixes a measured CPU batch walk with modelled GPU cost, so a stalled
     // frame inflates a single read (2.60 ms against the 2 ms budget on an untouched main, #3578).
     // Sample TEXT_FRAMES further frames after one discarded warm-up frame and compare the median.
@@ -68,7 +69,8 @@ describe("perf budgets: SceneB", () => {
     textMs();
     const text: number[] = [];
     for (let i = 0; i < TEXT_FRAMES; i += 1) text.push(textMs());
-    expect(median(text)).toBeLessThanOrEqual(2.0);
+    const textMedian = median(text);
+    expect(textMedian, why(textMedian, 2.0)).toBeLessThanOrEqual(budget(2.0));
   });
   it("shedding text (L2) renders a faster frame than full text (L0): median of interleaved pairs", () => {
     const scene = new SceneB();
@@ -89,6 +91,7 @@ describe("perf budgets: SceneB", () => {
       l0.push(frameMs(14));
       l2.push(frameMs(7));
     }
+    // budget-exempt: ratio (interleaved L2 vs L0 comparison, not a wall-clock bound)
     expect(median(l2)).toBeLessThan(median(l0));
   });
   it("warm atlas load (cache hit) stays within 5 ms: median of repeated loads", async () => {
@@ -96,6 +99,7 @@ describe("perf budgets: SceneB", () => {
     await loadAtlas(store, "Inter", 500);
     const warm: number[] = [];
     for (let i = 0; i < WARM_LOADS; i += 1) warm.push((await loadAtlas(store, "Inter", 500)).ms);
-    expect(median(warm)).toBeLessThanOrEqual(5);
+    const warmMedian = median(warm);
+    expect(warmMedian, why(warmMedian, 5)).toBeLessThanOrEqual(budget(5));
   });
 });

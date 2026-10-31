@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { SceneGraphBench } from "../../../bench/scenes/scene-graph.js";
 import { percentile } from "../../../bench/stats.mjs";
+import { budget, why } from "@candleviewer/config/perf-calibration";
 
 describe("perf budgets: scene-graph traversal", () => {
   it("a pan + data frame over 3 panes x 12 nodes takes < 0.3 ms (median of 5 runs)", () => {
@@ -15,6 +16,7 @@ describe("perf budgets: scene-graph traversal", () => {
       if (r >= 0) perFrame.push((performance.now() - start) / 600); // run -1 is the warm-up
       expect(bench.allocationsInFramePath).toBe(0);
     }
-    expect(percentile(perFrame, 50) ?? Number.NaN).toBeLessThan(0.3);
+    const median = percentile(perFrame, 50) ?? Number.NaN;
+    expect(median, why(median, 0.3)).toBeLessThan(budget(0.3));
   });
 });

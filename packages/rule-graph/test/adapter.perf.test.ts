@@ -7,6 +7,7 @@
 // x25, and the bound keeps protocol's 2.5x slack on linear (its cvwb-decode.perf.test.ts bestMs).
 // The perf project: no coverage.
 import type { RuleIr } from "@candleviewer/protocol/rule-ir";
+import { budget, why } from "@candleviewer/config/perf-calibration";
 import { describe, expect, it } from "vitest";
 import { toGraph } from "../src/adapter/toGraph.js";
 import { toIr } from "../src/adapter/toIr.js";
@@ -62,13 +63,14 @@ describe("the adapter's budget: 20 ms per step on a 200-node graph (E37-T01)", (
     const ms = cpuMs(steps(SMALL)[step])[4] as number; // the median
     console.info(`${step}, 200 nodes: ${ms.toFixed(3)} ms CPU (median of 9)`);
     expect(ms).toBeGreaterThan(0);
-    expect(ms).toBeLessThanOrEqual(20);
+    expect(ms, why(ms, 20)).toBeLessThanOrEqual(budget(20));
   });
 
   it.each(STEPS)("%s scales linearly: 1 000 nodes cost under 12.5 times what 200 do", (step) => {
     const least = (doc: RuleIr) => cpuMs(steps(doc)[step])[0] as number; // protocol's bestMs
     const ratio = least(LARGE) / least(SMALL);
     console.info(`${step}, 1 000:200 nodes: x${ratio.toFixed(2)} CPU (least of 9)`);
+    // budget-exempt: ratio (1 000 vs 200 nodes in one process, not a wall-clock bound)
     expect(ratio).toBeLessThan(12.5); // linear x5, quadratic x25
   });
 });

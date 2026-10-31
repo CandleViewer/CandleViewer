@@ -6,6 +6,7 @@ import { runRepetition, runScenario } from "../../../bench/runner.mjs";
 import { captureMachineDescriptor } from "../../../bench/machine.mjs";
 import { generateM0Fixture } from "../../../bench/fixtures/index.mjs";
 import { percentile } from "../../../bench/stats.mjs";
+import { budget, why } from "@candleviewer/config/perf-calibration";
 
 // Comparisons use the median of an odd number of samples after a discarded warm-up, so one stalled
 // sample (GC, a preempted runner) cannot flip them: the rule scene-b.perf.test.ts uses (#3554).
@@ -46,7 +47,7 @@ describe("perf budgets: SceneA", () => {
     scene.init(fixture);
     scene.step(0, { tMs: 0, kind: "none" });
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThanOrEqual(900);
+    expect(elapsed, why(elapsed, 900)).toBeLessThanOrEqual(budget(900));
     scene.dispose();
   });
   it("static-frame time does not scale measurably with total bar count (10k vs 100k, <=10% diff): median of interleaved frames", () => {
@@ -74,12 +75,15 @@ describe("perf budgets: SceneA", () => {
     // Both scenes show the same *visible* window (viewport math is independent of total store
     // length), so frame cost should be near-identical regardless of the 10x difference in bars.
     const diffRatio = Math.abs(median(t100k) - median(t10k)) / Math.max(median(t10k), 1e-6);
+    // budget-exempt: ratio (two scenes in one process, not a wall-clock bound)
     expect(diffRatio).toBeLessThanOrEqual(0.1);
   });
   it("B1: continuous pan holds p95 <= 12ms: median of per-repetition p95s", () => {
-    expect(scenarioP95("B1")).toBeLessThanOrEqual(12);
+    const p95 = scenarioP95("B1");
+    expect(p95, why(p95, 12)).toBeLessThanOrEqual(budget(12));
   });
   it("B2: zoom sweep holds p95 <= 14ms: median of per-repetition p95s", () => {
-    expect(scenarioP95("B2")).toBeLessThanOrEqual(14);
+    const p95 = scenarioP95("B2");
+    expect(p95, why(p95, 14)).toBeLessThanOrEqual(budget(14));
   });
 });
