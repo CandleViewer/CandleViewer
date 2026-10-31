@@ -97,6 +97,12 @@ groups:
       # after a restart: the 7-day maximum bridges a restart, and `> 0` keeps a reaper that never
       # succeeded silent (its nightly loop is not scheduled yet). 48 h = two nightly intervals
       # (RetentionConfig.interval_s, test-pinned).
+      # KNOWN LIMIT (test-pinned): the gauge is process-local, so after a restart it reads 0 and
+      # the alert resolves 7 days after the last success, with no new pass (silent from then on).
+      # OBLIGATION: once the nightly retention is scheduled, drop the `> 0` guard (0 then fires)
+      # and the 7d window. Owner: #481 (E16-Q04, the recorder nightly).
+      # Durable fix: seed the gauge at boot from the
+      # reaper's persisted last success (its `retention.run` end audit record).
       - alert: RetentionStale
         expr: >-
           time() - (max by (env) (max_over_time(retention_last_success_timestamp[7d])) > 0)

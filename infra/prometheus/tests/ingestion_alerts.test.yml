@@ -377,6 +377,25 @@ tests:
             exp_annotations:
               runbook_url: "docs/ops/runbooks/recorder.md#alert-retentionstale"
               summary: "The last successful recorder retention pass is more than 48 hours old."
+  # RetentionStale known limit (#567), pinned on purpose: the gauge is process-local. Success at
+  # 1 h, a restart at 12 h (gauge 0 from then): it fires at 170 h (169 h old, inside the 7-day
+  # window) and is silent again at 180 h, when the success leaves the window. Dropping the `> 0`
+  # guard and the window (once the nightly retention is scheduled) must change this case.
+  - interval: 1h
+    input_series:
+      - series: 'retention_last_success_timestamp{env="demo"}'
+        values: "0 3600+0x10 0+0x180"
+    alert_rule_test:
+      - eval_time: 170h
+        alertname: RetentionStale
+        exp_alerts:
+          - exp_labels: { severity: ticket, component: recorder, env: demo }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-retentionstale"
+              summary: "The last successful recorder retention pass is more than 48 hours old."
+      - eval_time: 180h
+        alertname: RetentionStale
+        exp_alerts: []
   # Seek anchors (#2223): no_book keeps rising from 1 m, so the 10 m hold fires it at 11 m, not 10 m;
   # late rises the whole time and never fires; error rises for 5 m only and stays silent.
   - interval: 1m

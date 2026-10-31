@@ -239,6 +239,31 @@ async def test_recorder_up_is_one_from_start_to_stop_even_while_the_startup_fail
     assert _up() == 0.0
 
 
+async def _boom() -> None:
+    await asyncio.sleep(0)
+    raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize("how", ["cancelled", "raising"])
+async def test_recorder_up_is_zero_when_the_run_task_ends_without_a_stop(
+    rig: Rig, how: str
+) -> None:
+    """E16-T09 (#567): a task that dies on its own must not leave RecorderDown silent."""
+    recorder_up.set(0)
+    if how == "raising":
+        rig.rt._run = _boom  # type: ignore[method-assign]  # an error that escapes the loop
+    await rig.rt.start()
+    assert _up() == 1.0
+    task = next(t for t in asyncio.all_tasks() if t.get_name() == "recorder-runtime")
+    if how == "cancelled":
+        task.cancel()
+    await asyncio.wait([task])  # the done callback is queued before this wait's own
+    await asyncio.sleep(0)
+    assert _up() == 0.0
+    if how == "raising":
+        rig.rt._task = None  # the fixture's stop need not re-raise the test's error
+
+
 async def test_health_shows_a_positions_source_that_is_not_deployed_with_its_env(rig: Rig) -> None:
     rig.m.seed.open_positions.return_value = None
     await rig.rt.start()

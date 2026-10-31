@@ -200,6 +200,15 @@ were missed. Recorded data past its window is not being deleted, so the disk kee
 Severity: Ticket. A reaper that has never succeeded keeps the gauge at 0 and stays silent; the
 nightly loop is not scheduled yet ([recorder-retention.md](recorder-retention.md#how-it-works)).
 
+**Known limit.** The gauge is process-local. If the API restarted after the last success, it
+reads 0, and once that success is older than 7 days the alert **resolves by itself** while no
+pass has succeeded. A resolved RetentionStale is therefore not proof that retention runs: check
+the last `retention.run` end audit record and _Retention last success age (h)_. The promtool case
+in `infra/prometheus/tests/ingestion_alerts.test.yml` pins this. **Obligation:** once the nightly
+retention is scheduled, the `> 0` guard is dropped (0 then fires) and the 7-day window goes away.
+Owner: #481 (E16-Q04, the recorder nightly). The durable fix is to seed the gauge at boot from the reaper's persisted last success
+(its `retention.run` end audit record).
+
 1. On _Retention last success age (h)_, confirm the age keeps rising and when it last fell.
 2. Read the API logs for `retention_skipped_locked`, `retention_delete_failed`,
    `retention_checkpoint_corrupt` and `retention_yield_ingest_lag`.
