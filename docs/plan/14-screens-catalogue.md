@@ -1039,6 +1039,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `chart.symbol_changed` with `{from, to, source: 'quick-switcher'}` (analytics).
 - **Design sign-off acceptance checklist:** [x] typeahead with fuzzy match (B16) [x] recent symbols (B15) [x] interval shortcuts in the same overlay (B15) [x] not-recorded warning on symbols with no history (B02, B16, B18) [x] no-results state (B17)
 - **As built (E08-S09, #4703)**: CMP-017 on the chart toolbar's CMP-219, CMP-160 over CMP-213 inside, on SCR-102's ranking, deck, session Recent and words; rendered only once a chart is bound and the shell's index runs (no pane yet: no trigger and no placeholder). E12-S11 mounts it in CMP-221, binds the workspace opener that starts the index, and consumes its commit, disarming an armed chart before it returns (D-10). The trigger is the open path until `/` lands with E10-S02's dispatcher rule (A-D05-2); a host can open it (`open`). The interval strip (CMP-220, E12-D02 NC-10) is a slot; no recording chip, not-recorded line or Record (E16-S02); View symbol info once SCR-103's port is registered (E08-S10); 24 h turnover reads "—" (D-8). Loading is one line, without skeleton rows. It draws no stale, refreshing or disconnected footer (E08-D05 §7 lists none); a re-read shows only as the held list of §6.2's Refreshing. Load failed is CMP-026 `error` (its glyph and message, Retry now below them), where B22 draws one line with Retry now inline. CMP-160's target chip sits on its own row above the input, where B15, B21 and B22 draw it in the heading row. Check again is T2 through CMP-026's `disabledReason`, not CMP-079, which takes E09-D09's RBAC keys only. Analytics go to the app's `cv:analytics` seam; `chart.symbol_changed` is E12-S11's, when the new symbol paints.
+- **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; the quick-switcher's keyboard, focus and announcement rows; no key bound; the pair is built, so its rows reach E08-Q05; owner approval pending).
 
 ### SCR-042 — Interval / bar-mode menu
 
@@ -2279,6 +2280,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `watchlist.symbol_added`, `watchlist.symbol_removed`, `watchlist.reordered`, `watchlist.column_changed`, `watchlist.symbol_activated` (analytics); `data_confidence.state_entered` `{surface, state}` (analytics). Adding a symbol never starts recording; record/unrecord (with `recording:write`, E08-D07 D12) is audited server-side as `recording.started` / `recording.stopped` (24 §15.5).
 - **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the one-shot row settle, "a stale cell never animates", the container-class mass transition at 200 rows / 60 rendered).
 - **Design sign-off acceptance checklist:** [ ] columns (symbol, last, change %, turnover, funding, funding countdown, OI Δ, spread, rec) drawn with units [ ] up/down encoding uses arrows and text as well as colour [ ] flash-on-update respects reduced motion [ ] recording indicator per symbol [ ] drag-reorder with a keyboard alternative [ ] empty state with an add CTA [ ] stale-data shading per row and per column, thresholds stated [ ] initialising and not-live rows [ ] the disconnected panel status
+- **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; one keyboard model with the drag-reorder twins, the grid's focus table, one polite summary per stale episode, the focused Last under the announce-prices gate; owner approval pending).
 
 ### SCR-101 — Watchlist manager
 
@@ -2293,6 +2295,7 @@ Drag preview                Drop zones
 - **Performance:** Watchlist CRUD is a small REST surface; changes apply locally first and reconcile, with conflicts surfaced rather than silently overwritten. Surfacing a conflict needs a version on `PUT /watchlists/{watchlistId}` (E08-D07 C-1); until then a save is last-write-wins.
 - **Analytics/audit:** `watchlist.created`, `watchlist.renamed`, `watchlist.deleted`, `watchlist.duplicated`, `watchlist.imported`, `watchlist.exported`, `watchlist.bulk_added` `{count}` (analytics).
 - **Design sign-off acceptance checklist:** [ ] multiple watchlists with create/rename/duplicate/delete [ ] bulk add by paste [ ] import/export [ ] delete confirmation [ ] empty state [ ] per-list column configuration
+- **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; the manager's dialog focus order, the Move up / Move down path beside the hidden drag handle, the native file input for imports; owner approval pending).
 
 ### SCR-102 — Symbol search (global)
 
@@ -2307,6 +2310,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `symbol.searched`, `symbol.search_result_opened`, `empty_state_shown {surface, reason}` (analytics; payloads in E08-D05 §12.1).
 - **As built (E08-S09)**: opened from the TopBar trigger and from `/` (`global.symbol_search`, E10-S02 #305; inert in a text field, A-D05-2), once a workspace binds a pane; CMP-043 `md` (560 px; no 720 size). The menu holds Open in the target, Open in new chart, View symbol info (once SCR-103's port is registered) and Remove from recent; Open DOM ladder, Add to watchlist and Record wait on their owners (no ladder opener, E08-S08, E16-S02), as do the Recording column and chips. 24 h cells read "—" (no ticker held, D-8). A footer notice (disconnected, stale, refreshing, a refresh's answer) takes the key hints' row, which stays the input's description. Refresh from Bybit posts `POST /instruments/refresh`, one request at a time: its answer holds the footer until the list next arrives or 60 s pass (§6.2's poll span), and the surface's polite region says it once; any answer but 202 and the two 429s reads the PROPOSED "Couldn't request a refresh just now." (the route is a stub until E08-S01), and the job poll and Refresh failed wait on E08-S01's route. Without `instruments:write` the stale footer's Refresh is T2 in rendering 2a, as Load failed's: its reason beside it, said once per press. Analytics go to the app's `cv:analytics` seam. A snapshot whose reason is `instrument_revision` (`23` §7.4) re-reads the list while the index runs: the shell's WS client tells the session, which reads once, 20 s after the last frame of a burst (the server publishes the revisions before it swaps in the catalogue `GET /instruments` serves, so an earlier read can return the old list), and once more 20 s later if the list that landed was fetched before the burst; frames for a symbol the index holds nothing of start no read.
 - **Design sign-off acceptance checklist:** [x] fuzzy matching with the matched substring highlighted (and not relying on colour alone) (B01, B05) [x] recent and favourite sections (B04) [x] per-result actions (open chart, add to watchlist, open ladder) (B06) [x] not-recorded indicator (B01, B05) [x] no-results state with a suggestion (B07) [x] keyboard-only operation (B14)
+- **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; the combobox's one polite region and its count after a 300 ms rest, the action menu by keyboard, the commit in the shell region; the forced-colours rendering owed; owner approval pending).
 
 ### SCR-103 — Symbol info / instrument detail
 
@@ -2320,6 +2324,7 @@ Drag preview                Drop zones
 - **Performance:** Static instrument metadata is cached; live fields subscribe to `ticker.{symbol}` only while the drawer is open.
 - **Analytics/audit:** `symbol.info_viewed`, `symbol.info_load_failed {dependency}`, `symbol.info_rules_changed`, `symbol.info_value_malformed` (analytics; payloads in E08-D06 §12).
 - **Design sign-off acceptance checklist:** [ ] tick size, lot size, min/max qty, max leverage, risk-limit tiers, funding interval, settlement and status drawn [ ] live ticker block [ ] recording status with a link to SCR-140 (owner) [ ] delisted/suspended state [ ] 'these rules are enforced by the exchange' note
+- **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; the drawer's trapped ring and its one status region at most one line per 2 s, the countdown never spoken per tick, the T2 sentence form; owner approval pending).
 
 ### SCR-104 — Scanner / screener panel
 
@@ -2332,6 +2337,7 @@ Drag preview                Drop zones
 - **Performance:** Scanning runs server-side over the hot tier; the panel polls at <=0.2 Hz or subscribes to a scan topic, and never evaluates criteria client-side across the universe; a full-universe scan returns in <=3 s.
 - **Analytics/audit:** `scanner.filter_changed`, `scanner.preset_saved`, `scanner.result_opened`, `scanner.alert_created_from_result` (analytics).
 - **Design sign-off acceptance checklist:** [ ] filter set drawn (change %, volume, OI change, funding, spread, tape-speed z-score, regime _(estimated)_) [ ] saved presets [ ] result actions (open chart, add to watchlist, create alert) [ ] estimated-criteria flagged [ ] no-results and scan-failed states [ ] 'scanning is limited to live metrics for symbols we are not recording' note
+- **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; the grid's caption and focus restoration, the poll-bounded announcements at most once per 5 s, the pane name and the forced-colours rendering owed; owner approval pending).
 
 ---
 
@@ -2981,6 +2987,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Performance:** Usage figures come from the backend's own rate-limit accounting (server-side counters and exchange response headers), sampled at 1 Hz; the browser never queries the exchange directly.
 - **Analytics/audit:** `connectivity.panel_viewed` (analytics); `connectivity.budget_changed` (per-account request budget) and `connectivity.reconnect_forced` are **audited**.
 - **Design sign-off acceptance checklist:** [ ] per-account, per-endpoint-class usage against limit with headroom [ ] the fan-out budget view showing how many accounts can be served at the configured rate [ ] throttled and banned states with the exchange's stated recovery time [ ] force-reconnect action with confirmation [ ] server-time-skew indicator [ ] historical usage sparkline with a table alternative
+- **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; structure only; hi-fi review owed by E08-D09; owner approval pending).
 
 ### SCR-148 — Admin: maintenance mode
 
@@ -3033,6 +3040,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Design sign-off acceptance checklist:** [ ] the three empty-state classes drawn (nothing created yet / nothing matches the filter / data not recorded yet) [ ] role-aware action vs explanation variants [ ] the recorder-dependent variant carries the recording-start timestamp [ ] copy for each class written and reviewed [ ] the pattern is applied consistently in every panel that can be empty
 - **Hi-fi (E16-D05, #373):** [E16-D05.md](../design/E16/E16-D05.md) (the recorder-dependent variant, the three classes, the role legs).
 - **A11y review and hand-off (E16-D06):** [E16-D06.md](../design/E16/E16-D06.md) (E16-D06; the pattern's keyboard and announcement rows, the partial chip as a described static stop, the gap band reached by the data cursor only; owner approval pending).
+- **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; structure only for the two E08 variants; hi-fi review owed by E08-D10; the pattern's rows are E16-D06's; owner approval pending).
 
 ### SCR-152 — Disconnected / reconnecting state
 
@@ -3057,6 +3065,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Design (hi-fi + handoff, motion spec):** [E17-D02.md](../design/E17/E17-D02.md) · [E17-D02-handoff.md](../design/E17/E17-D02-handoff.md) (E17-D02; three SCR-152 variants, CMP-076/077/078/092, copy deck, announcement policy, motion PROPOSED) · [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; banner content at 0 ms, dismissal fade, the PROPOSED hysteresis table and the flap collapse; `ws.banner_suppressed` proposed).
 - **Hi-fi (E29-D03, OMS account states):** [E29-D03.md](../design/E29/E29-D03.md) §4 (the per-account reconciling, desync and stale — locked variants on SCR-063, corrections that show both values, the post-reconnect summary in `recovered`), §5 (the copy deck); boards 08–11 on Penpot page `E29-D03` (the exports in `docs/design/E29/img/`).
 - **Hand-off pack:** [E29-D06.md](../design/E29/E29-D06.md) v1 (E29-D06; owner approval pending) (a11y contract: E29-D05).
+- **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; the connection region's policy of record read from E17-D01 §7 and E17-D02 §11, one alert per Disconnected episode, the Details split by role; owner approval pending).
 
 ### SCR-153 — Degraded-mode state
 
