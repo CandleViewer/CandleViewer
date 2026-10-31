@@ -219,6 +219,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "trade_group_definition.created",
         "trade_group_definition.updated",
         "trade_group_definition.deleted",
+        # #5120 (C-2.11): a create or replace refused for a membership across environments,
+        # written before its `400 environment_mismatch`, the path's definition its object.
+        "trade_group_definition.save_refused",
         "trade_group.submit",
         # #2635 (F-01; ADR-0040 Decision 1, proposed): a trade-group request refused whole because a
         # leg would exceed its bound profile's caps or risk budget, written ahead of the `403

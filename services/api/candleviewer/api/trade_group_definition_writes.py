@@ -4,10 +4,11 @@ next: no resolver 501, no session 401; `accounts:write`, the Owner's alone (403 
 `403 trading_disabled` with no `reason` (21 Sec.10.7). `validated`: the shape (422, a repeat
 `duplicate_account`); each member's account in the Owner's scope, a missing or deleted one `403
 account_scope_denied` (SR-E29-13) before any environment is judged; the environments (400
-`environment_mismatch`, the accounts named by label); a definition outside this process's
-environment, whose listing alone judges (C-2.11), out of scope as the order path answers one; the
-common symbols (400 `no_common_symbol`). Then the `risk_caps` step-up (SR-E28-02), naming the
-environment and the member count, never the name; then the store, `trade_group_definition.created`
+`environment_mismatch`, the accounts named by label; `trade_group_definition.save_refused` first,
+#5120, unwritten 503); a definition outside this process's environment, whose listing alone
+judges (C-2.11), out of scope as the order path answers one; the common symbols (400
+`no_common_symbol`). Then the `risk_caps` step-up (SR-E28-02), naming the environment and the
+member count, never the name; then the store, `trade_group_definition.created`
 ahead of its commit (C-2.9; unwritten, 503 with nothing stored; `audit_definition_write` serves
 every definition write), a live name in any letter case `409 conflict`. Logs carry no value.
 
@@ -65,7 +66,7 @@ from candleviewer.api.trade_groups_gate import TradeGroupsGate
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
-from candleviewer.auth.metrics import count_authz_denial
+from candleviewer.auth.metrics import count_authz_denial, normalise_role
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.observability.context import current_request_uuid
@@ -119,6 +120,17 @@ class _Rejected(edge.Refused):
     """A body the rules refuse: `400 validation_failed` (a shape refusal is 422)."""
 
 
+class _Mixed(_Rejected):
+    """A membership across environments (C-2.11): `400`, recorded first (#5120)."""
+
+    def __init__(
+        self, entries: list[ProfileFieldError], detail: str, environment: Environment,
+        definition_id: uuid.UUID | None,
+    ) -> None:  # fmt: skip
+        super().__init__(entries, detail)
+        self.environment, self.definition_id = environment, definition_id
+
+
 class _Missing(Exception):
     """No live definition of this process's environment: missing, deleted or another's (404)."""
 
@@ -150,8 +162,9 @@ def _unaudited() -> JSONResponse:
 
 
 def _mixed(
-    definition: domain.DefinitionInput, accounts: Sequence[ExchangeAccount], outside: Sequence[Any]
-) -> _Rejected:
+    definition: domain.DefinitionInput, accounts: Sequence[ExchangeAccount], outside: Sequence[Any],
+    definition_id: uuid.UUID | None,
+) -> _Mixed:  # fmt: skip
     """An entry per member outside; `detail` the rule, then every member by label (AC 2)."""
     named = ", ".join(f"{quote_label(a.label)} ({a.env.value})" for a in accounts)
     message = "This account is not in the definition's environment."
@@ -159,7 +172,22 @@ def _mixed(
         ProfileFieldError(f"members[{i}].exchange_account_id", "environment_mismatch", message)
         for i, account in enumerate(accounts) if account.id in outside
     ]  # fmt: skip
-    return _Rejected(entries, f"{domain.MIXED_ENVIRONMENTS} {named}.")
+    detail = f"{domain.MIXED_ENVIRONMENTS} {named}."
+    return _Mixed(entries, detail, definition.environment, definition_id)
+
+
+async def _mixed_refused(got: _Caller, exc: _Mixed) -> None:
+    """#5120 (C-2.9, C-2.11): the refusal's record, before its answer; its errors name members
+    by field, never by label. Unbudgeted, as the scope refusals are today."""
+    actor, entries = got.principal.user_id, [entry.to_dict() for entry in exc.errors]
+    state = {"role": normalise_role(got.principal.roles), "environment": exc.environment}
+    await got.named.emit(
+        "trade_group_definition.save_refused", actor_label=str(actor), actor_user_id=actor,
+        actor_ip=got.ip, env=exc.environment, object_kind="trade_group_definition",
+        object_id=None if exc.definition_id is None else str(exc.definition_id),
+        request_id=got.request_id, outcome="denied", severity="warning",
+        reason="environment_mismatch", after_state=state | {"errors": entries},
+    )  # fmt: skip
 
 
 class DefinitionAuditRefused(Exception):
@@ -296,7 +324,8 @@ def make_trade_group_definition_writes_router(
         accounts = [await held.accounts.get_account(scope, m.account_id) for m in members]
         envs = cast(Mapping[AccountId, Environment], {a.id: a.env.value for a in accounts})
         if outside := domain.environment_mismatches(definition, envs):
-            raise _mixed(definition, accounts, outside)
+            of = None if stored is None else stored.definition.id
+            raise _mixed(definition, accounts, outside, of)
         if held.instruments.environment != definition.environment:  # another process's (C-2.11)
             raise errors.AccountNotFoundError("account")
         listed = await held.instruments.listed(
@@ -311,6 +340,11 @@ def make_trade_group_definition_writes_router(
 
     async def answer(exc: Exception, got: _Caller) -> Response:
         """A write that stored nothing, answered as 22 says; a defect is raised."""
+        if isinstance(exc, _Mixed):
+            try:
+                await _mixed_refused(got, exc)
+            except (AuditError, RuntimeError, TimeoutError):
+                return _unaudited()
         if isinstance(exc, port.DefinitionStoreError):
             exc = domain.definition_error(exc)  # a fresh error holding a name alone (C-12.6)
         if isinstance(exc, _Missing):

@@ -158,6 +158,18 @@ def test_an_environment_change_is_400_write_once(world: World) -> None:
     assert (world.texts, world.audited, world.commits) == ([], [], 0)
 
 
+def test_a_replace_mixing_environments_is_400_and_recorded_on_the_definition(
+    world: World,
+) -> None:
+    """#5120 (C-2.11): one `.save_refused` naming the path's definition; Core3 is unchanged."""
+    before, got = world.records[CORE3], world.put(create.payload(A, L))
+    entry = {"field": "members[1].exchange_account_id", "rule": "environment_mismatch"}
+    entry["message"] = "This account is not in the definition's environment."
+    assert (got.status_code, got.json()["errors"]) == (400, [entry])
+    assert world.records[CORE3] == before and world.commits == 0 and world.texts == []
+    assert world.audited == [create.refused_record(CORE3, entry) | {"committed": 0}]
+
+
 def test_a_replace_of_a_deleted_definition_is_404_and_adds_no_member(world: World) -> None:
     """SEC-2-03, C-2.11: missing, deleted, of another environment, or deleted between the read and
     the store's row lock: the read's one 404, a delete's alike; nothing is written."""

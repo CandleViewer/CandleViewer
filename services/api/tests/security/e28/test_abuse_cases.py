@@ -175,13 +175,13 @@ def test_ac05_a_definition_made_or_edited_to_span_environments_is_refused(
     unchanged: E28World, method: str, path: str
 ) -> None:
     """The definitions are the one edit-after-creation path: a mixed membership on create and on
-    a replace is 400 `environment_mismatch` before any challenge or write. The stored trigger is
-    `test_tg_frozen_after_draft_pg`'s. † Known gap, #5120: the refusal writes no audit record
-    yet (C-2.11's class should). This pins today's absence; #5120 flips it to the record."""
+    a replace is 400 `environment_mismatch` before any challenge or write, and recorded under
+    the request's own id (#5120, C-2.9). The stored trigger is `test_tg_frozen_after_draft_pg`'s."""
     sent = payload(A, L, name="Core3")
     resp, records = call(unchanged, f"ac05|{method}", method, path, json=sent)
     rules = [e["rule"] for e in resp.json()["errors"]]
-    assert (resp.status_code, rules, records) == (400, ["environment_mismatch"], [])
+    assert (resp.status_code, rules) == (400, ["environment_mismatch"])
+    assert records == [("trade_group_definition.save_refused", "environment_mismatch")]
 
 
 def test_ac06_an_ungranted_and_an_absent_account_answer_the_preview_alike(
