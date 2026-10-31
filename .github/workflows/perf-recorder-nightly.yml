@@ -1,0 +1,147 @@
+name: perf-recorder-nightly
+# E16-Q04 (#481): the recorder perf pack, nightly and on dispatch, never on a PR and not a required
+# check (C-9.2). Three legs on one hosted runner, each judged by its own thresholds:
+# - ingest: `bench.recorder.ingest_load --profile full` (the mix at 50 000 msg/s for 10 minutes)
+#   through the real StreamWriter into a local QuestDB (compose, loopback ILP): p95 flush < 50 ms,
+#   RSS <= 512 MiB, the rate reached, zero drops, produced == written + gap-accounted rows;
+# - soak: `bench.recorder.soak --profile full` on a virtual clock, 2 symbols at depth 200 at the
+#   E16-K01 reference rates, `soak_hours` of scenario time (0.25 nightly): zero drops, backlog p95
+#   0, spill 0, reconciliation, GB/day within 20 % of the provisional E16-K01 figure. The 24 h soak
+#   is a dispatch with soak_hours=24 on a runner that may hold it (a hosted job stops at 6 h);
+# - api: `tests/load/k6/recorder_api.js` against the loopback fixture app (bench.recorder.api_app):
+#   5 `recorder` WS subscribers, 1 Hz /recording/status and coverage queries, 20 symbols, for
+#   120 s: API p95 < 150 ms, frame < 8 KiB, at least one frame.
+# No exchange is reached: the feed is the recorded corpus and the API is the fixture app (C-13.5).
+# The three legs run after the soak-hours check passed, each also after a red one before it.
+# The fixture app's bench sessions are minted in process and stay in RUNNER_TEMP, never uploaded.
+# k6 v2.3.0 is fetched and checked as perf-ingestion-nightly.yml does. A red leg comments on the
+# signal's open issue, or opens one (_nightly-issue.yml, #1849); no workflow-level concurrency
+# group (#3449).
+on:
+  schedule:
+    - cron: "47 2 * * *"
+  workflow_dispatch:
+    inputs:
+      soak_hours:
+        description: "Soak scenario hours (virtual clock); 24 is the ticket's soak"
+        type: string
+        default: "0.25"
+permissions:
+  contents: read
+env:
+  PYTHONUNBUFFERED: "1"
+jobs:
+  recorder-perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CV_ENV: test
+      CV_BENCH_MACHINE_PROFILE: ci-ubuntu-latest
+      K6_VERSION: v2.3.0
+      # sha256 of k6-v2.3.0-linux-amd64.tar.gz, as perf-ws-load.yml pins it
+      K6_SHA256: 39c3117b6af817592dcd0ce4242105c0a7af10948c2a425306f0be8f7a8a8ab1
+      K6_NO_USAGE_REPORT: "true"
+      K6_AUTO_EXTENSION_RESOLUTION: "false"
+      # Compose checks every service's variables on each command; only QuestDB starts here.
+      GF_SECURITY_ADMIN_PASSWORD: unused-ci
+      MINIO_ROOT_PASSWORD: unused-ci
+      CV_ALERT_PAGE_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_TICKET_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_DEADMAN_URL: http://127.0.0.1:1/unused
+      SOAK_HOURS: ${{ inputs.soak_hours || '0.25' }}
+    outputs:
+      regressed: ${{ steps.sync.outcome == 'success' && (steps.smoke.outcome == 'failure' || steps.ingest.outcome == 'failure' || steps.soak.outcome == 'failure' || steps.api.outcome == 'failure') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - id: sync
+        run: uv sync --project services/api
+      - name: Check the soak hours (a positive number)
+        id: hours
+        run: |
+          set -euo pipefail
+          [[ "$SOAK_HOURS" =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v h="$SOAK_HOURS" 'BEGIN { exit !(h > 0) }' \
+            || { echo "::error title=perf-recorder::soak_hours must be a positive number"; exit 1; }
+      - name: Harness smoke (the wall-time ingest smoke, harness marker)
+        id: smoke
+        working-directory: services/api
+        run: uv run pytest tests/unit/bench/test_e16_recorder_harness.py -m "harness and not flaky" -q -p no:randomly --no-cov
+      - name: Install the pinned k6 (sha256 verified twice)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/k6"
+          mkdir -p "$dir"
+          cd "$dir"
+          tarball="k6-${K6_VERSION}-linux-amd64.tar.gz"
+          gh release download "$K6_VERSION" -R grafana/k6 -p "$tarball" -p "k6-${K6_VERSION}-checksums.txt" --clobber
+          echo "${K6_SHA256}  ${tarball}" | sha256sum -c -
+          grep " ${tarball}\$" "k6-${K6_VERSION}-checksums.txt" | sha256sum -c -
+          tar -xzf "$tarball" --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
+          ./k6 version | grep -F "k6 ${K6_VERSION} "
+          echo "$dir" >> "$GITHUB_PATH"
+      - name: Start QuestDB (the compose data store, loopback only)
+        run: |
+          set -euo pipefail
+          v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "POSTGRES_PASSWORD=$v" >> "$GITHUB_ENV"
+          POSTGRES_PASSWORD="$v" docker compose -f infra/compose/docker-compose.yml --profile core up -d --wait questdb
+      - name: Ingest load (50k msg/s for 10 min into QuestDB; its budgets decide the step)
+        id: ingest
+        if: always() && steps.hours.outcome == 'success'
+        working-directory: services/api
+        run: uv run python -m bench.recorder.ingest_load --profile full --ilp 127.0.0.1:9009 --out bench/reports/recorder_ingest.json
+      - name: Soak (virtual clock, 2 symbols at depth 200; its budgets decide the step)
+        id: soak
+        if: always() && steps.hours.outcome == 'success'
+        working-directory: services/api
+        run: uv run python -m bench.recorder.soak --profile full --hours "$SOAK_HOURS" --out bench/reports/recorder_soak.json
+      - name: API/WS load (k6 against the loopback fixture app; its thresholds decide the step)
+        id: api
+        if: always() && steps.hours.outcome == 'success'
+        working-directory: services/api
+        run: |
+          set -euo pipefail
+          umask 077
+          state="$RUNNER_TEMP/cvr"
+          mkdir -p "$state" bench/reports
+          uv run python -m bench.recorder.api_app --out "$state" > "$state/ready" 2> bench/reports/recorder_api_app.err &
+          app=$!
+          trap 'kill "$app" 2>/dev/null || true' EXIT
+          for _ in $(seq 60); do
+            grep -q '^CV_BENCH_RECORDER_READY ' "$state/ready" && break
+            kill -0 "$app" 2>/dev/null || { echo "::error title=perf-recorder::the fixture app exited"; exit 1; }
+            sleep 1
+          done
+          port=$(sed -n 's/^CV_BENCH_RECORDER_READY port=\([0-9]*\) .*/\1/p' "$state/ready")
+          [[ "$port" =~ ^[0-9]+$ ]] || { echo "::error title=perf-recorder::no ready line"; exit 1; }
+          k6 run --summary-export bench/reports/recorder_api-k6-summary.json \
+            -e BASE_URL="http://127.0.0.1:$port" -e TOKENS="$state/tokens.json" -e DURATION=120s \
+            ../../tests/load/k6/recorder_api.js
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: recorder-perf-results
+          path: |
+            services/api/bench/reports/recorder_ingest.json
+            services/api/bench/reports/recorder_soak.json
+            services/api/bench/reports/recorder_api-k6-summary.json
+            services/api/bench/reports/recorder_api_app.err
+          if-no-files-found: ignore
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
+
+  recorder-perf-issue:
+    needs: recorder-perf
+    if: ${{ always() && needs.recorder-perf.outputs.regressed == 'true' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: perf-recorder
+      title-prefix: "perf: recorder nightly budget failed"
+      labels: perf,area/recorder-replay
+      body: "perf-recorder-nightly failed a recorder budget (E16-Q04, #481). Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Artifact: recorder-perf-results."

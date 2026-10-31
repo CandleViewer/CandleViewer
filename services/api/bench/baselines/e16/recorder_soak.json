@@ -1,0 +1,19 @@
+{
+  "scenario": "recorder_soak",
+  "harness_version": "e16-q04/1",
+  "machine_profile": "unrecorded",
+  "gate": "warn-only",
+  "run_profile": "full",
+  "higher_is_better": [],
+  "profile_scaling": "none",
+  "metrics": {},
+  "provisional": true,
+  "gb_per_day_per_symbol": {
+    "value": 14.04,
+    "unit": "GB/day/symbol, hot tier, depth 200",
+    "source": "docs/plan/notes/e16-storage-measurement.md section 3 (E16-K01): trades 0.362 + orderbook_deltas 13.68, the two streams the soak drives",
+    "tolerance": 0.2,
+    "status": "provisional until the live 7-day re-measure (#1778 A) replaces the note's figures"
+  },
+  "note": "No run is recorded: E16-Q04 delivered the scripts with a tiny-scale smoke only, and perf measurements never run on agent hosts. Record the first full run with --record-baseline on the runner, in a reviewed PR (06-performance 7.4)."
+}

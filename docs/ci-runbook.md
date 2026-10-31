@@ -211,14 +211,32 @@ has a 15-minute limit, so a hung suite fails the step and files the report; a jo
 limit (the locked install 5 minutes; checkout, setup and the upload 3 each), so a hang fails a step
 and files. No concurrency group (#3449). Cost: one job a night, capped by its 35-minute timeout.
 
+**Nightly recorder chaos (#481).** `chaos-recorder-nightly.yml` runs the recorder chaos suite
+(`services/api/tests/chaos/recorder`, E16-Q04; catalogue in its `SCENARIOS.md`: the disk-pressure
+ladder, the QuestDB outage and the roll-off interruption) on `main` daily at 03:33 UTC and on
+demand, the same shape as the WS chaos nightly above: one `chaos-recorder` job, one pytest call
+with `-m "chaos and not flaky"`, `--no-cov`, no retries, a 10-minute step limit and a 35-minute
+job limit. Smoke scale with fakes, so the PR lane's `db-chaos` shards run it too; the nightly adds
+the real-filesystem leg (`test_loopback.py`): it mounts a 64 MiB ext4 loopback image at
+`/mnt/cv-chaos-recorder` with sudo, sets `CV_CHAOS_LOOPBACK=1` and unmounts it on every exit path
+(the leg skips without the flag and fails, never skips, on a directory that is not a loop-device
+mount). Not required
+(C-9.1), but a red night blocks the next release (C-9.2) and files under the `chaos-recorder`
+signal (labels `qa`, `area/recorder-replay`, `priority/p1`). Triage from the job log (`-rA`) and
+the `chaos-recorder-junit` artifact; a failing negative control (`test_pinned_assertion_fails_*`)
+means the pinned-bytes assertion stopped proving anything, not that pins were lost.
+
 **Nightly issues, one per signal (#1849).** `fixture-drift.yml` (signal `fixture-drift`),
 `perf-storage-nightly.yml` (`perf-storage`), `perf-ingestion-nightly.yml` (`perf-ingestion-soak`,
 `perf-e08-q04-pack`, and `perf-e08-q04-full` on a dispatch with `profile=full` and on the Sunday
 05:17 UTC `rest_k6` run),
 `dast-admin-nightly.yml` (`dast-admin`, labels `security`, `area/accounts-admin`; nightly at
 03:27 UTC and on dispatch), `e2e-auth-real.yml` (`e2e-auth-real`, labels `type/test`,
-`area/auth-rbac`; nightly at 03:51 UTC and on dispatch) and `chaos-ws-nightly.yml` (`chaos-ws`,
-labels `qa`, `area/backend-platform`, `priority/p1`) report a red signal through
+`area/auth-rbac`; nightly at 03:51 UTC and on dispatch), `chaos-ws-nightly.yml` (`chaos-ws`,
+labels `qa`, `area/backend-platform`, `priority/p1`), `perf-recorder-nightly.yml`
+(`perf-recorder`, labels `perf`, `area/recorder-replay`; nightly at 02:47 UTC and on dispatch,
+E16-Q04) and `chaos-recorder-nightly.yml` (`chaos-recorder`, labels `qa`, `area/recorder-replay`,
+`priority/p1`; nightly at 03:33 UTC and on dispatch, E16-Q04) report a red signal through
 `_nightly-issue.yml`, from scheduled and manual runs alike; `dast-admin` and `e2e-auth-real` report
 from `main` only, so a dispatch on a branch files nothing. Its `report` job comments on the
 newest open issue that `github-actions[bot]` opened with the signal's title prefix and all its
