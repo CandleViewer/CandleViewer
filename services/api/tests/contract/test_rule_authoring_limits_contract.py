@@ -108,7 +108,8 @@ def test_validate_and_compile_document_the_429_with_retry_after(operation_id: st
 
 def test_validate_and_compile_share_one_bucket_of_10_a_second_and_a_burst_of_20() -> None:
     prose = _prose("validateRule")
-    assert "`validateRule` and `compileRule` share one token bucket per user, across" in prose
+    shared = "`validateRule` and `compileRule` share one token bucket per user, for every role, the"
+    assert shared + " Owner included, across" in prose
     assert "`rules_check_rate_per_user_per_second`" in prose
     rate = _number(r"\(default (\d+) a second\)", prose)
     burst = _number(r"a burst of twice the rate \((\d+) by default\)", prose)

@@ -5528,8 +5528,9 @@ export interface paths {
      *     A `reason` over 280 characters, counted in Unicode code points, is refused whole as
      *     `createRule` refuses a `note`: `422 rule_ir_invalid`, `errors[].field` `reason`,
      *     `errors[].rule` `max_length` (example `noteTooLong` of `RuleIrInvalid`), decided before the
-     *     scope check, so it writes no audit record, and the mode does not change. A `reason` that
-     *     is not storable text stays `400 validation_failed`.
+     *     scope check and before the live-enablement step-up is consumed, so a refused `reason` spends
+     *     no grant, raises no challenge and writes no audit record, and the mode does not change. A
+     *     `reason` that is not storable text stays `400 validation_failed`.
      */
     put: operations["setRuleMode"];
     post?: never;
@@ -5685,7 +5686,7 @@ export interface paths {
      *     warnings do not block saving but do block arming.
      *
      *     **Limit (E35, #4834).** `validateRule` and `compileRule` share one token bucket per user,
-     *     across all of the user's sessions: `rules_check_rate_per_user_per_second` (default 10 a
+     *     for every role, the Owner included, across all of the user's sessions: `rules_check_rate_per_user_per_second` (default 10 a
      *     second) with a burst of twice the rate (20 by default). A call over it is
      *     `429 rate_limited` with `Retry-After` (whole seconds, at least 1, which the body's
      *     `retry_after_seconds` repeats) and writes no audit record. The bucket is taken after

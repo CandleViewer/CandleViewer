@@ -367,7 +367,8 @@ info:
     `/admin/audit*` budget and from the view-as one: at most `rules_refusal_budget_per_hour`
     (default 120) records in a rolling hour, the same for every role, the Owner included. The
     tracking, in-flight and summary limits of that mechanism apply. Over the cap a refusal is
-    answered with its own status (`403` or `404`) and writes no record: it is counted, and its
+    answered with its own status, unchanged (the scope refusal's `403` or `404`, a mode refusal's
+    own `4xx`), and writes no record: it is counted, and its
     count is carried by the user's next record or, when none follows, by one summary record per
     user and window (`suppressed_summary`, outside the cap), so a refusal is never dropped. A due
     record that cannot be written turns the refusal into `503 audit_unavailable`, and nothing
@@ -8585,7 +8586,7 @@ paths:
         warnings do not block saving but do block arming.
 
         **Limit (E35, #4834).** `validateRule` and `compileRule` share one token bucket per user,
-        across all of the user's sessions: `rules_check_rate_per_user_per_second` (default 10 a
+        for every role, the Owner included, across all of the user's sessions: `rules_check_rate_per_user_per_second` (default 10 a
         second) with a burst of twice the rate (20 by default). A call over it is
         `429 rate_limited` with `Retry-After` (whole seconds, at least 1, which the body's
         `retry_after_seconds` repeats) and writes no audit record. The bucket is taken after
@@ -8756,8 +8757,9 @@ paths:
         A `reason` over 280 characters, counted in Unicode code points, is refused whole as
         `createRule` refuses a `note`: `422 rule_ir_invalid`, `errors[].field` `reason`,
         `errors[].rule` `max_length` (example `noteTooLong` of `RuleIrInvalid`), decided before the
-        scope check, so it writes no audit record, and the mode does not change. A `reason` that
-        is not storable text stays `400 validation_failed`.
+        scope check and before the live-enablement step-up is consumed, so a refused `reason` spends
+        no grant, raises no challenge and writes no audit record, and the mode does not change. A
+        `reason` that is not storable text stays `400 validation_failed`.
       x-rbac: { permissions: [rules:write, rules:arm_live], scope: granted_accounts }
       x-idempotency: required
       parameters:
