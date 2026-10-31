@@ -3,7 +3,7 @@
 // its shader's affine (src/gl/shaders), so both backends place an instance on the same pixels.
 // The pane block (`PaneUniforms`, E11-S03) is the only projection used: no price or time maths here.
 import { attributeOffset, PROGRAM } from "../scene/instance-layout.js";
-import type { PaneUniforms } from "../viewport/transform.js";
+import { projectRel, type PaneUniforms } from "../viewport/transform.js";
 import type { Ctx2DLike } from "./ctx2d.js";
 
 /** One instance to paint: its ring floats (and their int32 view) at `at`, in a w × h store. */
@@ -54,8 +54,9 @@ export function paintQuad(ctx: Ctx2DLike, a: PaintArgs): void {
 
 /**
  * `bar-cell`, colour only (S4: no text): the shader's `x = (rel.x + 0.5 - k.w + (c.x - 0.5) *
- * size.x) * k.x` and `y = (rel.y + c.y * size.y) * k.y + k.z`, `rel` the exact int difference from
- * the block's bases (BQ-75), at the corners c = (0, 0) and (1, 1); y grows down (its NDC flip).
+ * size.x) * k.x` and its y through `projectRel` (E11-S05 BQ-114, every scale mode), `rel` the
+ * exact int difference from the block's bases (BQ-75), at the corners c = (0, 0) and (1, 1); y
+ * grows down (its NDC flip).
  */
 export function paintBarCell(ctx: Ctx2DLike, a: PaintArgs): void {
   const b = a.block;
@@ -68,8 +69,8 @@ export function paintBarCell(ctx: Ctx2DLike, a: PaintArgs): void {
   const sy = scaleY(a);
   const x0 = (rx - half) * sx;
   const x1 = (rx + half) * sx;
-  const y0 = (ry * (k[1] ?? 0) + (k[2] ?? 0)) * sy;
-  const y1 = ((ry + (a.data[a.at + SIZE + 1] ?? 0)) * (k[1] ?? 0) + (k[2] ?? 0)) * sy;
+  const y0 = projectRel(k, ry) * sy;
+  const y1 = projectRel(k, ry + (a.data[a.at + SIZE + 1] ?? 0)) * sy;
   ctx.rect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
 }
 

@@ -3,6 +3,7 @@
 // shared render runtime, in a worker or inline (`ChartOptions.runMode`, src/worker/host.ts); the
 // scene graph and GL backend land in E11-S01 / E11-S02 behind this same surface.
 import { mountSurface, probeRenderProfile } from "../host/mount.js";
+import { createScaleBadge } from "../host/scale-badge.js";
 import { readReducedMotion, watchMotion } from "../host/motion.js";
 import {
   captureInput,
@@ -18,7 +19,7 @@ import {
   type RunMode,
 } from "../worker/protocol.js";
 import { createPane, type PaneInternal } from "./pane.js";
-import { createTimeScale } from "./scales.js";
+import { checkScaleOptions, createTimeScale } from "./scales.js";
 import type {
   Chart,
   ChartEvents,
@@ -150,6 +151,17 @@ export function createChart(opts: ChartOptions): Chart {
         panes[0]?.priceScale.observe(
           msg.priceHigh > msg.priceLow ? { low: msg.priceLow, high: msg.priceHigh } : null,
         );
+        // E11-S05 (BQ-124): the scale state; `viewportChanged` also tells of a lock (C-35).
+        panes[msg.pane]?.priceScale.observeState({
+          mode: msg.mode,
+          requestedMode: msg.requestedMode,
+          inverted: msg.inverted,
+          autoScale: msg.autoScale,
+          logAvailable: msg.logAvailable,
+          logReason: msg.logReason,
+          anchorTick: msg.anchorTick,
+        });
+        if (msg.pane === 0) badge.set(!msg.autoScale);
         emit("viewportChanged", {
           timeStart: msg.timeStart,
           timeEnd: msg.timeEnd,
@@ -169,6 +181,9 @@ export function createChart(opts: ChartOptions): Chart {
     }
   }
 
+  const badge = createScaleBadge(opts.container, opts.theme.colors, () =>
+    host.command({ k: "setPriceScale", pane: 0, auto: true }),
+  );
   const env = (envOverride ?? defaultHostEnv)(doc);
   const reducedMotion = readReducedMotion(doc); // the app's resolved mode (E11-S04 BQ-104)
   const host = createChartHost({
@@ -230,16 +245,29 @@ export function createChart(opts: ChartOptions): Chart {
     runMode: host.runMode,
     addPane(paneOpts: PaneOptions): Pane {
       assertLive();
+      const scale = paneOpts.priceScale;
+      if (scale !== undefined) checkScaleOptions(scale);
       paneSeq += 1;
       const pane = createPane(`pane-${paneSeq}` as PaneId, paneOpts, {
         assertLive,
         data: (store, op, layout, buffer) => host.data(store, op, layout, buffer),
+        scale(id, fields): void {
+          const i = panes.findIndex((p) => p.id === id);
+          if (i >= 0) host.command({ k: "setPriceScale", pane: i, ...fields });
+        },
         onRemoved(id: PaneId): void {
           const i = panes.findIndex((p) => p.id === id);
           if (i >= 0) panes.splice(i, 1);
         },
       });
       panes.push(pane);
+      if (scale !== undefined) {
+        // BQ-121: the persisted scale (mode and invert survive; the lock never does).
+        const { mode, inverted, ...rest } = scale;
+        if (mode !== undefined) pane.priceScale.setMode(mode);
+        if (inverted !== undefined) pane.priceScale.setInverted(inverted);
+        pane.priceScale.setOptions(rest);
+      }
       return pane;
     },
     removePane(id: PaneId): void {
@@ -249,6 +277,7 @@ export function createChart(opts: ChartOptions): Chart {
       if (disposed) return;
       theme = next;
       host.command({ k: "setTheme", theme: next.colors });
+      badge.setTheme(next.colors);
     },
     setDensity(d: Density): void {
       if (disposed) return;
@@ -287,6 +316,7 @@ export function createChart(opts: ChartOptions): Chart {
       listeners.clear();
       detachInput();
       detachMotion();
+      badge.dispose();
       host.dispose();
       surface.unmount();
     },

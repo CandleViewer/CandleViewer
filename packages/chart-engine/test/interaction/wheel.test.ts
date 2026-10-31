@@ -45,12 +45,12 @@ describe("Scenario: Zoom is anchored to the cursor", () => {
     }
   });
 
-  it("anchors at the true plot x: an x in the price gutter zooms nothing (RULED (5))", () => {
+  it("anchors at the true plot x: an x in the price gutter zooms no time (RULED (5))", () => {
     const { vp, g, moves } = chart();
     const before = [vp.leftIndex, vp.barSpacing];
     g.apply(false, rows([INPUT.wheel, 1250, 300, -100, 0, 0]));
     expect([vp.leftIndex, vp.barSpacing]).toEqual(before);
-    expect(moves).toEqual([]);
+    expect(moves).toEqual([false]); // the price zoom is E11-S05's; no plot height here: no change
   });
 });
 

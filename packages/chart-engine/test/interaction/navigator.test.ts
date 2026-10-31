@@ -78,8 +78,13 @@ describe("Scenario: Every pointer gesture has a keyboard equivalent", () => {
     expect(zoomAnchor(view(0), Number.NaN)).toBe(1000);
   });
 
-  it("Ctrl+Home resets the spacing and shows the latest bar (autoscale is E11-S05's, G-5)", () => {
+  it("Ctrl+Home resets the spacing, shows the latest bar and restores autoscale", () => {
     const vp = view();
+    navigate(vp, KEY.zoomIn, MOD.shift, 300);
+    vp.setScale(0, { auto: false });
+    expect(navigate(vp, KEY.home, MOD.ctrl, Number.NaN) && vp.panes[0]?.autoScale).toBe(true);
+    vp.setScale(0, { auto: false }); // already reset in time: the restore alone is a change
+    expect(resetView(vp)).toBe(true);
     navigate(vp, KEY.zoomIn, MOD.shift, 300);
     expect(navigate(vp, KEY.home, MOD.ctrl, Number.NaN)).toBe(true);
     expect(vp.barSpacing).toBe(DEFAULT_BAR_SPACING);

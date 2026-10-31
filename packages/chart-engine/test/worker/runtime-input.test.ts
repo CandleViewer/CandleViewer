@@ -86,9 +86,15 @@ describe("the viewport is the layout's plot rect (BQ-101, RULED (5))", () => {
     if (z === undefined) throw new Error("no viewport");
     expect(z.barSpacing).toBeGreaterThan(v.barSpacing);
     expect(Math.abs(at(1210, z) - at(1210, v)) / MIN).toBeLessThan(0.5 / z.barSpacing);
-    input("wheel", [INPUT.wheel, 1250, 300, -100, 0, 0]); // over the price axis: inert (G-5)
+    input("wheel", [INPUT.wheel, 1250, 300, -100, 0, 0]); // over the price axis: price only
     frame();
-    expect(viewports().at(-1)).toEqual(z);
+    const p = viewports().at(-1);
+    expect([p?.timeStart, p?.timeEnd, p?.barSpacing]).toEqual([
+      z.timeStart,
+      z.timeEnd,
+      z.barSpacing,
+    ]);
+    expect(p?.autoScale).toBe(false); // E11-S05: the price zoom engages the lock (BQ-122)
   });
 });
 

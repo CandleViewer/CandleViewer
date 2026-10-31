@@ -35,6 +35,7 @@ describe("Scenario: Panning does not touch GPU buffers", () => {
       "uniform1i",
       "uniform4f",
       "uniform2f",
+      "uniform2f", // E11-S05's u_log (BQ-113)
     ]);
     expect(frame).toContain("drawArraysInstanced");
     expect(start - bench.viewport.timeStart).toBeCloseTo((200 / 6) * 60e6, 0); // 200 px of 6 px bars

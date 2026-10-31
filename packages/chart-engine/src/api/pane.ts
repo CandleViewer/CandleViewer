@@ -1,7 +1,7 @@
 // Pane facade (stub). Series, overlay and indicator handles record their lifecycle only; the
 // stores, batches and plugin hosting behind them are E11-T03 / E11-S01 / E12+.
 import { encodeCandles, type BufferLayout, type DataOp, type StoreId } from "../worker/protocol.js";
-import { createPriceScale, type PriceScaleState } from "./scales.js";
+import { createPriceScale, type PriceScaleState, type ScaleFields } from "./scales.js";
 import type {
   CandleData,
   IndicatorHandle,
@@ -21,6 +21,8 @@ export interface PaneHost {
   assertLive(): void;
   /** Hands a batch to the render runtime (buffer transferred). */
   data(store: StoreId, op: DataOp, layout: BufferLayout, buffer: ArrayBuffer): void;
+  /** Forwards this pane's price-scale fields (E11-S05, a `setPriceScale` command). */
+  scale?(id: PaneId, fields: ScaleFields): void;
 }
 
 /** A series handle plus the state the stub records (read by tests; no renderer yet). */
@@ -48,6 +50,10 @@ export function createPane(id: PaneId, opts: PaneOptions, host: PaneHost): PaneI
   let heightRatio = checkRatio(opts.heightRatio ?? 1);
   let removed = false;
   const series = new Set<object>();
+  const priceScale = createPriceScale((fields) => {
+    live();
+    host.scale?.(id, fields);
+  });
 
   function live(): void {
     host.assertLive();
@@ -56,7 +62,7 @@ export function createPane(id: PaneId, opts: PaneOptions, host: PaneHost): PaneI
 
   return {
     id,
-    priceScale: createPriceScale(),
+    priceScale,
     get heightRatio(): number {
       return heightRatio;
     },

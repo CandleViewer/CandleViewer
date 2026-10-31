@@ -6,10 +6,11 @@
 // folded per frame by class (zoom, pan) and region. Every gesture's meaning is the worker's
 // (src/interaction/gestures.ts). Keys (PR 2, BQ-106 to BQ-109) are heard on the container only,
 // never the window: the navigator's keys are prevented, Space only mid-drag, and a held Space is
-// released on focus loss. DOM program (tsconfig.dom.json); O(1) per event, and no allocation
-// but `getCoalescedEvents()`'s array.
+// released on focus loss. E11-S05 (BQ-124): a right-click over the price gutter dispatches
+// `candleviewer:pricescalemenu` for the app's menu (E11-S06's axis stop adds the keys). DOM
+// program (tsconfig.dom.json); O(1) per event, and no allocation but `getCoalescedEvents()`'s array.
 import { isSpace, keyCode } from "../interaction/navigator.js";
-import { MOD, plotHeightOf, regionAt, wheelPx } from "../interaction/wheel.js";
+import { MOD, plotHeightOf, REGION, regionAt, wheelPx } from "../interaction/wheel.js";
 import { INPUT, KEY, type InputKind } from "../worker/protocol.js";
 
 /** The `ChartHost` members the router uses (structural: no import cycle with worker/host.ts). */
@@ -34,6 +35,9 @@ const modifiers = (e: Modded): number =>
   (e.ctrlKey ? MOD.ctrl : 0) |
   (e.altKey ? MOD.alt : 0) |
   (e.metaKey ? MOD.meta : 0);
+
+/** The app's SCR-043 menu listens for it (detail `{ pane, x, y, byKey }`, client px). */
+export const PRICE_SCALE_MENU_EVENT = "candleviewer:pricescalemenu";
 
 const DOWN = { pointerdown: INPUT.down, pointerup: INPUT.up, pointermove: INPUT.move } as const;
 
@@ -89,7 +93,7 @@ export function routeInput(target: HTMLElement, host: InputSink): () => void {
     if (active.delete(e.pointerId)) row(kindOf(e), INPUT.cancel, e, slot(e, e));
   };
   const onDblClick = (e: MouseEvent): void => {
-    e.preventDefault(); // BQ-101: no text selection; the price axis's double-click is a no-op
+    e.preventDefault(); // BQ-101: no text selection; on the price axis it restores auto (BQ-122)
     row("pointer", INPUT.dblclick, e, 0);
   };
   const onWheel = (e: WheelEvent): void => {
@@ -107,6 +111,17 @@ export function routeInput(target: HTMLElement, host: InputSink): () => void {
     const fold = (pan ? 3 : 0) + regionAt(e.offsetX, e.offsetY, w, h);
     const t = dt("wheel", e.timeStamp);
     host.input("wheel", put(INPUT.wheel, e.offsetX, e.offsetY, delta, mods, t), fold);
+  };
+
+  const onContextMenu = (e: MouseEvent): void => {
+    if (regionAt(e.offsetX, e.offsetY, target.clientWidth, target.clientHeight) !== REGION.price) {
+      return; // the plot's menu is the app's
+    }
+    e.preventDefault();
+    const Custom = target.ownerDocument.defaultView?.CustomEvent;
+    if (typeof Custom !== "function") return;
+    const detail = { pane: 0, x: e.clientX, y: e.clientY, byKey: false };
+    target.dispatchEvent(new Custom(PRICE_SCALE_MENU_EVENT, { bubbles: true, detail }));
   };
 
   let space = false; // BQ-109: the pan-drag modifier, held
@@ -139,6 +154,7 @@ export function routeInput(target: HTMLElement, host: InputSink): () => void {
   target.addEventListener("pointercancel", onCancel);
   target.addEventListener("lostpointercapture", onCancel);
   target.addEventListener("dblclick", onDblClick);
+  target.addEventListener("contextmenu", onContextMenu);
   target.addEventListener("wheel", onWheel, { passive: false });
   target.addEventListener("keydown", onKeyDown);
   target.addEventListener("keyup", onKeyUp);
@@ -157,6 +173,7 @@ export function routeInput(target: HTMLElement, host: InputSink): () => void {
     target.removeEventListener("pointercancel", onCancel);
     target.removeEventListener("lostpointercapture", onCancel);
     target.removeEventListener("dblclick", onDblClick);
+    target.removeEventListener("contextmenu", onContextMenu);
     target.removeEventListener("wheel", onWheel);
     target.removeEventListener("keydown", onKeyDown);
     target.removeEventListener("keyup", onKeyUp);

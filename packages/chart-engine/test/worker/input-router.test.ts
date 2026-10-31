@@ -1,7 +1,7 @@
 // E11-S04 PR 1: the DOM half of the InputRouter (src/host/input-router.ts) on the fake DOM, over
 // the real host and worker entry; frames are run by hand so each flush is one frame (BQ-99).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { routeInput } from "../../src/host/input-router.js";
+import { PRICE_SCALE_MENU_EVENT, routeInput } from "../../src/host/input-router.js";
 import { MOD } from "../../src/interaction/wheel.js";
 import { captureInput, createChartHost, type ChartHost } from "../../src/worker/host.js";
 import { INPUT, KEY, type ToWorker } from "../../src/worker/protocol.js";
@@ -225,5 +225,32 @@ describe("keys on the chart container only (BQ-106 to BQ-109)", () => {
       KEY.spaceUp,
     ]);
     detach();
+  });
+
+  it("a right-click over the price gutter dispatches the price-scale menu event (BQ-124)", () => {
+    const view = container.ownerDocument.defaultView as { CustomEvent?: unknown };
+    view.CustomEvent = class {
+      readonly detail: unknown;
+      constructor(
+        readonly type: string,
+        init: { detail: unknown },
+      ) {
+        this.detail = init.detail;
+      }
+    };
+    const detach = routeInput(asHtml(container), host);
+    const seen: unknown[] = [];
+    container.addEventListener(PRICE_SCALE_MENU_EVENT, (e) => seen.push(e));
+    const click = { offsetX: 1030, offsetY: 200, clientX: 1040, clientY: 210 };
+    expect(container.dispatch("contextmenu", { ...click, offsetX: 500 })).toBe(false); // the plot
+    expect(container.dispatch("contextmenu", click)).toBe(true);
+    expect(seen).toEqual([
+      expect.objectContaining({ detail: { pane: 0, x: 1040, y: 210, byKey: false } }),
+    ]);
+    view.CustomEvent = undefined; // no CustomEvent in the realm: prevented, nothing dispatched
+    expect(container.dispatch("contextmenu", click)).toBe(true);
+    expect(seen).toHaveLength(1);
+    detach();
+    expect(container.listeners.get("contextmenu")?.size ?? 0).toBe(0);
   });
 });

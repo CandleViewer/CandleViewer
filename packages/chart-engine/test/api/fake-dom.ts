@@ -30,6 +30,11 @@ export class FakeTarget {
     this.listeners.get(type)?.delete(cb);
   }
 
+  /** `EventTarget.dispatchEvent` over `dispatch` (E11-S05's `candleviewer:pricescalemenu`). */
+  dispatchEvent(event: { type: string }): boolean {
+    return !this.dispatch(event.type, event);
+  }
+
   /** Delivers `event` to every listener; returns whether one called `preventDefault`. */
   dispatch(type: string, event: object): boolean {
     let prevented = false;
@@ -75,6 +80,11 @@ export class FakeElement extends FakeTarget {
 
   setPointerCapture(id: number): void {
     this.captured.push(id);
+  }
+
+  /** Moves the document's `activeElement` here (E11-S05's badge hand-off). */
+  focus(): void {
+    this.ownerDocument.activeElement = this;
   }
 
   insertBefore(child: FakeElement, ref: FakeElement): FakeElement {
@@ -136,6 +146,7 @@ export class FakeOffscreen {
 
 export interface FakeView {
   devicePixelRatio: number;
+  CustomEvent?: unknown;
   OffscreenCanvas?: unknown;
   ResizeObserver?: unknown;
 }
@@ -149,6 +160,7 @@ export class FakeDocument extends FakeTarget {
   /** `transferControlToOffscreen` exists but throws (a canvas that already has a context). */
   offscreenThrows = false;
   readonly created: FakeElement[] = [];
+  activeElement: FakeElement | null = null;
   webgl2Available = true;
   context2dAvailable = true;
 

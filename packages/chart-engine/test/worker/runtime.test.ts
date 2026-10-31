@@ -253,9 +253,17 @@ describe("interaction", () => {
         id: 1,
         timeStart: expect.closeTo(-5e8, 0),
         timeEnd: 1.5e9,
-        priceLow: 0, // no autoscale until E11-S05: the default one-tick window
+        priceLow: 0, // no price sources injected: autoscale keeps the default window
         priceHigh: 1,
         barSpacing: 6, // 2e9 µs of the default 60 s grid over 200 px
+        pane: 0, // E11-S05 (BQ-124): the scale state, additive
+        mode: "linear",
+        requestedMode: "linear",
+        inverted: false,
+        autoScale: true,
+        logAvailable: false,
+        logReason: "no-price-origin",
+        anchorTick: null,
       },
     ]);
     expect(of("a11y")).toHaveLength(1);

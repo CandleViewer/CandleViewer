@@ -11,12 +11,39 @@ export interface IndexTimeMap {
   readonly barDurationUs?: number;
 }
 
+/** E11-S05: the four projections; percent and indexed draw as linear and relabel (BQ-118). */
+export type ScaleMode = "linear" | "log" | "percent" | "indexed";
+/** Why log cannot be drawn (BQ-120): codes only, the UI owns the copy (C-32). */
+export type LogReason = "non-positive" | "no-price-origin";
+
 /** One pane's vertical mapping: float64 ticks from the series' `priceOrigin` (BQ-71). */
 export interface PaneTransform {
   priceLow: number;
   priceHigh: number;
-  /** BQ-72: log, percent and inverted are E11-S05's alternative `priceToScreen`. */
-  readonly scaleMode: "linear";
+  /** The mode drawn (BQ-120): log falls back to linear on the guard and never restores itself. */
+  scaleMode: ScaleMode;
+  /**
+   * The mode asked for, persisted by the app; differs from `scaleMode` after a fallback or while
+   * a log request waits for (or is refused on) the data.
+   */
+  requestedMode: ScaleMode;
+  /** Flips the y mapping after the mode's own projection (CPU-only). */
+  inverted: boolean;
+  /** Auto is the Lock's off state (BQ-119, C-30): never persisted, never synced. */
+  autoScale: boolean;
+  includeDrawings: boolean;
+  /** "Scale price only" (E11-D03): overlay extents are left out of the fit. */
+  priceOnly: boolean;
+  /** Margins as fractions of the fitted window, each in [0, 0.45] (BQ-117). */
+  marginTop: number;
+  marginBottom: number;
+  /** The main series' price of tick 0 and its tick size (BQ-115); tickSize 0 until known. */
+  priceOrigin: number;
+  tickSize: number;
+  /** Percent and indexed: the close of the left-most fully visible bar, in ticks; NaN if none. */
+  anchorTick: number;
+  /** Null when log can be drawn. */
+  logReason: LogReason | null;
   plotTop: number;
   plotHeight: number;
 }

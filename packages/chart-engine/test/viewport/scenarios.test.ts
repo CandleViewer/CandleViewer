@@ -83,6 +83,7 @@ describe("Scenario: Prices keep sub-tick precision at BTC magnitudes", () => {
       "u_tickBase",
       "u_k",
       "u_viewport",
+      "u_log", // E11-S05: [0, 0] under linear (BQ-113)
     ]);
     const floats = gl.uniforms.slice(2).flatMap((u) => u.slice(1));
     expect(floats.every((v) => Math.abs(v as number) < 4096)).toBe(true);

@@ -43,6 +43,12 @@ const valid: ToWorker[] = [
   { t: "command", id: 1, cmd: { k: "setTheme", theme: {} } },
   { t: "command", id: 1, cmd: { k: "setLod", candles: 2, footprint: 3 } },
   { t: "command", id: 1, cmd: { k: "pickAt", x: 1, y: 2 } },
+  // E11-S05 (BQ-124): every field optional but the pane.
+  {
+    t: "command",
+    id: 1,
+    cmd: { k: "setPriceScale", pane: 0, mode: "log", auto: false, marginTop: 0.45 },
+  },
   { t: "command", id: 1, cmd: { k: "export", reqId: 1 } },
   { t: "command", id: 1, cmd: { k: "release" } },
 ];
@@ -120,6 +126,20 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
       { t: "command", id: 1, cmd: { k: "setLod", candles: 3, footprint: 0 } },
       "malformed command",
     ],
+    ...(
+      [
+        ["an unknown scale mode", { mode: "symlog" }],
+        ["a negative pane", { pane: -1 }],
+        ["a margin over 0.45", { marginBottom: 0.5 }],
+        ["a NaN margin", { marginTop: Number.NaN }],
+        ["a non-boolean lock", { auto: 1 }],
+        ["no pane", { pane: undefined }],
+      ] as const
+    ).map(([name, f]): [string, object, string] => [
+      `a setPriceScale with ${name}`,
+      { t: "command", id: 1, cmd: { k: "setPriceScale", pane: 0, ...f } },
+      "malformed command",
+    ]),
   ])("rejects %s", (_name, msg, reason) => {
     expect(rejectReason(msg)).toBe(reason);
   });

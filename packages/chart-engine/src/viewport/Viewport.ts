@@ -3,8 +3,37 @@
 // authoritative (BQ-66): pan and zoom move `leftIndex` and `barSpacing`, and times are derived
 // through the injected `IndexTimeMap`. Every setter clamps, so no renderer observes an
 // out-of-range value. DOM-free and internal (BQ-65): not §8's `Viewport` type.
-import { INT32_TICKS, indexAt, screenToTime, setPriceRange } from "./transform.js";
-import type { IndexTimeMap, PaneTransform, ViewportState } from "./types.js";
+import {
+  createPaneTransform,
+  INT32_TICKS,
+  indexAt,
+  MAX_MARGIN,
+  panPrice,
+  SCALE_MODES,
+  screenToTime,
+  setPriceRange,
+  zoomPrice,
+} from "./transform.js";
+import type { IndexTimeMap, PaneTransform, ScaleMode, ViewportState } from "./types.js";
+
+/** One `setPriceScale` command's fields (E11-S05, BQ-124); each is optional. */
+export interface ScaleOptions {
+  readonly mode?: ScaleMode;
+  readonly inverted?: boolean;
+  readonly auto?: boolean;
+  readonly includeDrawings?: boolean;
+  readonly priceOnly?: boolean;
+  readonly marginTop?: number;
+  readonly marginBottom?: number;
+}
+
+/** The command-visible scale state as one comparable value (commands only, never per frame). */
+const scaleKey = (p: PaneTransform): string =>
+  [p.scaleMode, p.requestedMode, p.inverted, p.autoScale, p.includeDrawings, p.priceOnly].join() +
+  `,${p.marginTop},${p.marginBottom}`;
+
+const margin = (v: number | undefined, was: number): number =>
+  v !== undefined && v >= 0 && v <= MAX_MARGIN ? v : was;
 
 /** No bars loaded: a uniform 60 s grid from t = 0 µs, until E12 attaches the series store. */
 export const EMPTY_TIME_MAP: IndexTimeMap = {
@@ -45,15 +74,7 @@ export class ChartViewport implements ViewportState {
     public map: IndexTimeMap = EMPTY_TIME_MAP,
     panes = 1,
   ) {
-    for (let i = 0; i < panes; i += 1) {
-      this.panes.push({
-        priceLow: 0,
-        priceHigh: 1,
-        scaleMode: "linear",
-        plotTop: 0,
-        plotHeight: 0,
-      });
-    }
+    for (let i = 0; i < panes; i += 1) this.panes.push(createPaneTransform());
   }
 
   get visibleBars(): number {
@@ -101,6 +122,68 @@ export class ChartViewport implements ViewportState {
   setPriceRange(pane: number, low: number, high: number): boolean {
     const p = this.panes[pane];
     return p !== undefined && setPriceRange(p, low, high);
+  }
+
+  /** BQ-115: the main series' `priceOrigin` and `tickSize` (its `data` params). */
+  setPriceInfo(pane: number, origin: number, tickSize: number): boolean {
+    const p = this.panes[pane];
+    if (p === undefined || !Number.isFinite(origin) || !(tickSize > 0 && tickSize < Infinity)) {
+      return false;
+    }
+    const changed = p.priceOrigin !== origin || p.tickSize !== tickSize;
+    p.priceOrigin = origin;
+    p.tickSize = tickSize;
+    return changed;
+  }
+
+  /**
+   * A `setPriceScale` command (BQ-119, BQ-120): every mode is recorded as `requestedMode` (what
+   * the app persists). Log while `logReason` is set is not drawn and the drawn mode stays; a log
+   * held only for want of a price origin (a pane restored before its first bars) is applied by
+   * the guard's first evaluation (`AutoScaler`). `auto: false` freezes the current window.
+   */
+  setScale(pane: number, o: ScaleOptions): boolean {
+    const p = this.panes[pane];
+    if (p === undefined) return false;
+    const before = scaleKey(p);
+    if (o.mode !== undefined && SCALE_MODES.includes(o.mode)) {
+      p.requestedMode = o.mode;
+      if (o.mode !== "log" || p.logReason === null) p.scaleMode = o.mode;
+    }
+    p.inverted = o.inverted ?? p.inverted;
+    p.autoScale = o.auto ?? p.autoScale;
+    p.includeDrawings = o.includeDrawings ?? p.includeDrawings;
+    p.priceOnly = o.priceOnly ?? p.priceOnly;
+    p.marginTop = margin(o.marginTop, p.marginTop);
+    p.marginBottom = margin(o.marginBottom, p.marginBottom);
+    return before !== scaleKey(p);
+  }
+
+  /** The reset view's half (BQ-119): every locked pane goes back to auto. */
+  restoreAuto(): boolean {
+    let changed = false;
+    for (const p of this.panes) {
+      changed ||= !p.autoScale;
+      p.autoScale = true;
+    }
+    return changed;
+  }
+
+  /** The price axis's wheel and drag (BQ-122): zoom about y and engage the lock. */
+  zoomPrice(pane: number, y: number, factor: number): boolean {
+    const p = this.panes[pane];
+    if (p === undefined || !(p.plotHeight > 0) || !(factor > 0) || !Number.isFinite(factor)) {
+      return false; // no plot, no gesture: the lock stays as it was
+    }
+    const locked = p.autoScale;
+    p.autoScale = false;
+    return zoomPrice(p, y, factor) || locked;
+  }
+
+  /** A vertical plot drag pans price only while the scale is locked (E11-D01 D2). */
+  panPrice(pane: number, dyPx: number): boolean {
+    const p = this.panes[pane];
+    return p !== undefined && !p.autoScale && panPrice(p, dyPx);
   }
 
   /** Moves the chart `dxPx` CSS px right (content follows the pointer). */
