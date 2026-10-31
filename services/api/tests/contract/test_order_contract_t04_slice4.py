@@ -320,7 +320,8 @@ def test_cancel_all_cancels_order_by_order_and_folds_only_what_a_read_proves() -
 
 def test_the_exit_refusals_are_counted_and_the_change_is_logged() -> None:
     """Q14: the counter, its labels, its catalogue entry with the code that counts it (as H0's
-    was); 24 section 19's entry, numbered after main's last one."""
+    was); 24 section 19's entry, numbered above main's last one. Numbers are unique and
+    increasing; gaps are allowed, so PRs editing section 19 at once never renumber each other."""
     assert not _missing(
         _METRIC,
         "by `operation` (`amend`, `cancel`, `cancel_all`) and problem code",
@@ -328,7 +329,7 @@ def test_the_exit_refusals_are_counted_and_the_change_is_logged() -> None:
     )
     assert "`oms_exit_refused_total{operation,code}`" in _EXITS
     numbers = [int(n) for n in re.findall(r"^### 19\.(\d+) ", _INTERNAL_DOC, re.MULTILINE)]
-    assert numbers == list(range(1, len(numbers) + 1))  # one entry per number, in order
+    assert numbers == sorted(set(numbers)), numbers  # unique and increasing; gaps allowed
     title = r"^### 19\.(\d+) 2026-10-24 — .*: the exit routes' contract \(E29-T04, #913\)$"
     found = re.search(title, _INTERNAL_DOC, re.MULTILINE)
     assert found is not None

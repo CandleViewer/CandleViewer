@@ -6063,6 +6063,8 @@ Records the cross-document reconciliation pass of **2026-09-14**. Its purpose wa
 
 Every change below is a **contract change**: it alters a name, a shape or an enum that code will be generated from. Nothing here is cosmetic.
 
+Entries are numbered `19.N` with unique, increasing integers; **gaps are allowed**. A PR takes the provisional number the orchestrator assigns when it rules the ticket (above `main`'s last entry and above every number already assigned to an in-flight PR) and keeps it through its rebases; nobody renumbers at merge. Entries sit in numeric order in the file — a lower number that lands later is inserted before the higher ones, never appended — and the contract suite checks uniqueness and order, not contiguity.
+
 ### 19.1 Canonicity rules established
 
 The pass had to resolve the same concept being defined in several places. The following ownership rules are now binding; when two documents disagree, the owner wins and the other is regenerated.
