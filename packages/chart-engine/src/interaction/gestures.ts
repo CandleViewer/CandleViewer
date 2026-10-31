@@ -58,6 +58,12 @@ export class Gestures {
     });
   }
 
+  /** A drag, a pinch, a finger down or a glide (E11-S08, BQ-134): hover does not pick then. */
+  get active(): boolean {
+    const down = !Number.isNaN(this.ids[0] as number) || !Number.isNaN(this.ids[1] as number);
+    return this.drag !== Drag.none || this.pinched || down || this.momentum.active;
+  }
+
   /** Stops a glide where it is: the one entry point every cancel reason calls (BQ-103). */
   stop(): void {
     this.momentum.cancel();

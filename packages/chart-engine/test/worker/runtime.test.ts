@@ -291,12 +291,15 @@ describe("interaction", () => {
     expect(of("a11y").at(-1)?.cursorSummary).toBe("");
   });
 
-  it("reports a pick edge-triggered", () => {
+  // E11-S08 (BQ-135) changed this pin: an explicit pick always replies; hover is edge-triggered.
+  it("replies to every pickAt, a miss included", () => {
     make();
     rt.handle({ t: "command", id: 1, cmd: { k: "pickAt", x: 1, y: 1 } });
-    rt.handle({ t: "command", id: 1, cmd: { k: "pickAt", x: 2, y: 2 } });
-    expect(of("pick")).toHaveLength(1);
-    expect(of("pick")[0]?.objectId).toBeNull();
+    rt.handle({ t: "command", id: 1, cmd: { k: "pickAt", x: 2, y: 2, reqId: 4 } });
+    expect(of("pick").map((p) => [p.objectId, p.reqId])).toEqual([
+      [null, undefined],
+      [null, 4],
+    ]);
   });
 
   it("ignores degenerate ranges and an empty canvas width", () => {

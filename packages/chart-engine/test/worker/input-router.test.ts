@@ -156,6 +156,21 @@ describe("pointer routing (BQ-102)", () => {
     expect(container.listeners.get("pointercancel")?.size).toBe(0);
   });
 
+  it("a mouse or pen leaving the canvas posts a leave row; a finger does not (G-29)", () => {
+    const detach = routeInput(asHtml(container), host);
+    container.dispatch("pointerleave", ptr(1, 1064, 10));
+    container.dispatch("pointerleave", ptr(2, 0, 12, "pen"));
+    container.dispatch("pointerleave", ptr(3, 0, 14, "touch"));
+    frame();
+    expect(inputs("touch")).toEqual([]);
+    expect(rowsOf(inputs("pointer")[0] as Input).map((r) => [r[0], r[1]])).toEqual([
+      [INPUT.leave, 1064],
+      [INPUT.leave, 0],
+    ]);
+    detach();
+    expect(container.listeners.get("pointerleave")?.size).toBe(0);
+  });
+
   it("a touch row carries its pointer id, and touch-action is none on the container", () => {
     const detach = captureInput(asHtml(container), host); // the kept re-export
     container.dispatch("pointerdown", ptr(11, 100, 10, "touch"));
