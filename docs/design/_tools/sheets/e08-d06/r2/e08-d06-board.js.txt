@@ -1,0 +1,1557 @@
+/* E08-D06 — Hi-fi: SCR-103 symbol info drawer (#174, PR #4072): BUILD script r2.
+ *
+ * This file is the body of ONE Penpot MCP `execute_code` call, with the bridge connected and the CandleViewer file open.
+ * Same shared-plugin convention and write patterns as the E08-D05 board script (#126) and e18-d01-board.js
+ * (penpot-gotchas.md): single writer (storage.hpe1inst stamp in WRITER; "SET-ME" skips), file-id guard (FILE_ID is
+ * written by the loader at load time, never kept here or posted: the page is referenced by name and page id only), page
+ * by name (created if missing; pin PAGE_ID after the first run), openPage + re-check, then ONLY synchronous creates;
+ * idempotent: removes ITS OWN top-level frames (ticket prefix, normalised name, this page only) and stamps every board
+ * `hpe1ver` = VERSION; every shape is named "E08-D06 / …" and carries plugin data under TAG. No script ever calls
+ * page.remove(). Never retry after a "tab suspended" answer: probe read-only first. Afterwards run e08-d06-relayout.js
+ * (PASS "measure", then "restack" until moved = 0), e08-d06-dedupe.js, probe until every instance agrees, then export.
+ * Never switch the file's active token theme or density ([THEME-WINDOW]): exports keep the build-time theme.
+ *
+ * SOURCE of every word: docs/design/E08/E08-D06.md, docs/design/E08/E08-D06-handoff.md and the SCR-103, SCR-010 and
+ * SCR-152 entries of docs/plan/14-screens-catalogue.md on design/e08-hifi-symbol-info at
+ * 59771c01cccd3d2375955ea704ac84fd41d89606 (the T2 text fold). Contract values (BTCUSDT, SOLUSDT, LUNAUSDT): packages/fixtures/bybit/
+ * 2026-10-05/rest/instruments_after.json; live values: the snapshot line of packages/fixtures/bybit/2026-10-05/ws/
+ * recorded_tickers_BTCUSDT.jsonl, both formatted by spec §5 (F3–F7, F10). All drawn text sits in the DATA block;
+ * e08-d06-check-terms.py proves each string verbatim in those sources, fixture-derived, a declared substitution, or in
+ * the declared structural allow-list, and replays this script against a mock.
+ *
+ * BOARDS: spec §15's index — 25 dark boards in §15's order, then the light twins of boards 1–17 (SEPARATE boards, 42
+ * in all); board n is "E08-D06 / NN <§15 id>", its twin "E08-D06 / NN <§15 id> · light"; exports
+ * docs/design/E08/img/<id lowercased, "/" → "-">-<theme>.png (§15: scr-103-<state>-<role>-<theme>.png,
+ * cmp-<nnn>-<name>-<theme>.png). Every board sits on its own grid slot computed for all 42 up front (rows by kind: the
+ * SCR-103 states 1–14 and 25, their light twins, the components 15–17, their twins, the spec boards 18–24; ≥ 160 px apart), so
+ * a subset build lands in place and no two boards overlap. Each board holds its frame(s) — clipped nested boards of
+ * §15's size (board 13 adds column A beside it, board 20 the 200 % reflow, board 25 the view-as frame), labelled
+ * "<theme> · <density>" or by the §6 state they draw (boards 13 and 25) — and a
+ * 328 px annotation column on the right (board width = frames + 400): numbered markers on the parts and, per marker, the
+ * five facets (Role, Keyboard, Focus, Budget, Event; "—" where the sources give none), grouped as
+ * "E08-D06 / NN annotations"; footer "page E08-D06 · board NN · r2".
+ *
+ * R2 (the coordinator's T2 text round on #4072, folded in 59771c01c; e08-d06-check-terms.py checks r2 at that commit and
+ * REQUIRES the sentence form, r1 is its negative control): "Record this symbol…" for a Manager or Viewer is E09-D09's T2
+ * in the SENTENCE FORM (CMP-079 RbacGate rendering CMP-026 with `cta` omitted): the reason alone, "Only the owner can
+ * start recording." (rbac.owner_only), as body text in color.text.secondary, with no button, no lock glyph and no
+ * aria-disabled control; for the Owner viewing as another user the view-as leg comes first, "Read-only while viewing as
+ * alex." (rbac.view_as, the user 14 SCR-124 names). The hidden SCR-140 link keeps its own T3 sentence "Recording is set
+ * up by the owner." under it, never in its place. New board 25 (dark only, like 18–24; spec §15) draws both states as
+ * two labelled frames of board 2's SOLUSDT drawer; board 17's Manager column splits its states so the not-recorded one
+ * carries the T2 sentence (and a view-as group beside it); board 23 adds §6's two T2 rows and grows to 1280 × 980, with
+ * the m3 cells; board 8's recorder band shows the coverage 422's own words, "Recorded coverage waits for the instrument
+ * list." (spec §11.3), in place of the coverage rows; boards 3 and 13 re-quote the reworded D-4 and §8 lines. No board
+ * is drawn yet (BLOCKED-PENPOT), so r2 is the first draw: all 42 boards, no redraw by id (resync-r2.md).
+ *
+ * TOKENS (hi-fi, every fill, stroke and text colour from a DS token by NAME; no colour literal in this file): resolved in
+ * the frame's theme stack (themes.json: dark = primitives + semantic-dark; light = + semantic-light; later sets win)
+ * from the file's own token sets (penpot.library.local.tokens) and bound with bindToken(shape, setName, tokenName,
+ * props). The plugin API applies a token by NAME and resolves it over the ACTIVE sets ("the value set to the attributes
+ * will depend on which sets are active"), so BIND_MODE:
+ *   "active" (default) — bind by name wherever the active sets resolve the token to this frame's own value (every token
+ *            of the active theme's boards, and theme-invariant tokens everywhere); elsewhere paint the frame's own
+ *            resolved value and RECORD the binding (set, token, props) in plugin data TAG + ":tok", bound:false — so
+ *            the dark boards are bound by name and the light twins are painted with their own resolved colours.
+ *   "all"    — bind every shape by name (light twins then show the ACTIVE theme's colours).
+ *   "none"   — paint resolved values and record every binding; no applyToken.
+ * Exports keep the theme that was active at build time. A token the spec names that does not exist is drawn with its
+ * documented interim (spec §16.4, the handoff's Tokens lines) and listed in `missingTokens` and `warnings`: size.drawer
+ * (the drawer is drawn 480 px wide, Q7), motion.shimmer (static skeleton rows), font.mono (type.num.base, A-5),
+ * color.text.buy / color.text.sell (the sign in text, color.text.primary), font.size.body / font.size.label
+ * (type.ui.body / type.ui.caption, A-2), motion.slide (a static board; A-3's motion tokens are not drawn). Typography
+ * tokens the spec names (type.ui.heading-md, type.ui.heading-sm, type.ui.body, type.ui.caption, type.num.base) are bound
+ * with props ["typography"] (BIND_TYPE); radius.card, elevation.dialog, elevation.popover, opacity.scrim and border.focus
+ * where the spec names them.
+ * FONTS: the exact gfont-inter / gfont-jetbrains-mono entries of penpot.fonts.all (never findByName / findById: both
+ * prefix-match); variants regular / 500 / 600 / 700 only; fontId, fontFamily, fontVariantId and fontWeight set and read back.
+ * SIZE: send it with penpot-load.py (stores the body once; then one call per board, ONLY = [n]) or penpot_exec.py.
+ */
+"use strict";
+
+// ---------------------------------------------------------------- constants (edit only these) -------------
+const WRITER = "SET-ME"; // storage.hpe1inst stamp of the ONE instance allowed to write (probe.js); "SET-ME" skips
+const VERSION = "r2"; // hpe1ver stamp on every board; bump when the content changes
+const FILE_ID = "SET-ME"; // written by the loader at load time (--file-id), never kept here or posted (design rule 2026-10-21: page name + page id only); "SET-ME" fails the guard closed
+const PAGE_NAME = "E08-D06 SCR-103 Symbol info"; // created by name on the first run; then pin PAGE_ID
+const PAGE_ID = null; // paste the returned pageId here after the first run
+const TICKET = "E08-D06";
+const TAG = "cv:e08-d06"; // plugin-data key marking every shape this script creates (value "v1")
+const ONLY = null; // e.g. [1, 2] builds (and clears) boards 1 and 2 and their light twins; ["1L"] board 1's twin only, ["1D"] its dark board only; null = all 42 (positions do not depend on ONLY)
+const EXPORT_DIR = "docs/design/E08/img";
+const BIND_MODE = "active"; // "active" | "all" | "none" — see the header; the lead decides before drawing
+const BIND_TYPE = true; // also bind the typography / radius / elevation / opacity / border tokens the spec names
+const SET_NAMES = ["primitives", "semantic-dark", "semantic-light", "semantic-hc"]; // the file's token sets (themes.json)
+const THEME_SET = { dark: "semantic-dark", light: "semantic-light", hc: "semantic-hc" };
+const STACK = { // themes.json at HEAD: the sets each theme activates, lowest precedence first (later sets win)
+  "semantic-dark": ["primitives", "semantic-dark"],
+  "semantic-light": ["primitives", "semantic-dark", "semantic-light"],
+  "semantic-hc": ["primitives", "semantic-dark", "semantic-hc"],
+};
+const NOTE_SET = "semantic-dark"; // the parent board, labels and annotation layer are drawn in the dark theme
+// Every drawn word (JSON; e08-d06-check-terms.py parses this block; keys starting with "_" are layout data, never drawn).
+const D = /*DATA-BEGIN*/{
+"struct":{"words":["Annotations","placeholder","illustrative"],"glyphs":["—","×","⊘","⚠","!","→","●","○","◐","▲","▼","✕","i","▾"],"facetPrefix":["Role: ","Keyboard: ","Focus: ","Budget: ","Event: "],"patterns":["^[1-9][0-9]?$","^page E08-D06 · board [0-9]{2}( light)? · r2$","^(dark|light) · (compact|comfortable|200 %)$"],"illustrative":["1","2","3","4","5","6","7","8","2,000,000","2,600,000","3,200,000","3,800,000","4,400,000","5,000,000","5,600,000","6,200,000","100×","83.33×","71.42×","62.5×","55.55×","50×","45.45×","41.66×","−0.00771 %"]},
+"_fixture":{"instruments":{"BTCUSDT":{"base":"BTC","quote":"USDT","settle":"USDT","contract":"LinearPerpetual","status":"Trading","launch":"1585699200000","tick":"0.10","step":"0.001","minQty":"0.001","maxQty":"100.000","minNotional":"5","maxLev":"100.00","levStep":"0.01","funding":480},"SOLUSDT":{"base":"SOL","quote":"USDT","settle":"USDT","contract":"LinearPerpetual","status":"Trading","launch":"1585699200000","tick":"0.005","step":"0.001","minQty":"0.001","maxQty":"100.000","minNotional":"5","maxLev":"100.00","levStep":"0.01","funding":480},"LUNAUSDT":{"base":"LUNA","quote":"USDT","settle":"USDT","contract":"LinearPerpetual","status":"Closed","launch":"1585699200000","tick":"0.0001","step":"0.001","minQty":"0.001","maxQty":"100.000","minNotional":"5","maxLev":"100.00","levStep":"0.01","funding":480}},"shown":{"BTCUSDT":{"tick":"0.1","step":"0.001","minQty":"0.001","maxQty":"100","minNotional":"5","maxLev":"100×","levStep":"0.01","funding":"8 h","status":"Trading","identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"SOLUSDT":{"tick":"0.005","step":"0.001","minQty":"0.001","maxQty":"100","minNotional":"5","maxLev":"100×","levStep":"0.01","funding":"8 h","status":"Trading","identity":"SOL / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"LUNAUSDT":{"tick":"0.0001","step":"0.001","minQty":"0.001","maxQty":"100","minNotional":"5","maxLev":"100×","levStep":"0.01","funding":"8 h","status":"Closed","identity":"LUNA / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"}},"ticker":{"symbol":"BTCUSDT","lastPrice":"82751.20","markPrice":"82751.20","indexPrice":"82782.37","price24hPcnt":"0.012297","highPrice24h":"82850.00","lowPrice24h":"80611.70","volume24h":"41760.3720","turnover24h":"3412632305.4093","openInterest":"57911.602","openInterestValue":"4792254559.42","fundingRate":"0.0000771","nextFundingTime":"1792396800000","ts":1792391746229},"live":{"last":"82,751.2","mark":"82,751.2","index":"82,782.37","chg":"▲ +1.23 %","high":"82,850.0","low":"80,611.7","vol":"41,760.372","turn":"3.41 B","oi":"57,911.602","oiv":"4.79 B","rate":"+0.00771 %","updated":"Updated 06:35:46 UTC","lastUpdate":"Last update 06:35:46 UTC","cd":"next in 01:24:13 · 08:00 UTC"}},
+"_subst":{"idSOL":{"src":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01","pairs":[["BTC","SOL"]]},"idLUNA":{"src":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01","pairs":[["BTC","LUNA"]]},"exSOL":{"src":"Price must be a multiple of 0.1 · 50,000.04 → 50,000.0 (nearest)","pairs":[["0.1 ·","0.005 ·","SOLUSDT (fixture, after the tick change) | 0.005 | 148.1234 → 148.125"],["50,000.04 → 50,000.0","148.1234 → 148.125","SOLUSDT (fixture, after the tick change) | 0.005 | 148.1234 → 148.125"]]},"exLUNA":{"src":"Price must be a multiple of 0.1 · 50,000.04 → 50,000.0 (nearest)","pairs":[["0.1 ·","0.0001 ·","LUNAUSDT (fixture, Closed) | 0.0001 | 0.123456 → 0.1235"],["50,000.04 → 50,000.0","0.123456 → 0.1235","LUNAUSDT (fixture, Closed) | 0.0001 | 0.123456 → 0.1235"]]},"provSOL":{"src":"Rules revision 7 · checked 2 h ago","pairs":[["revision 7","revision 8","revision 7 → 8"]]},"lunaNot":{"src":"BTCUSDT is not trading on Bybit.","pairs":[["BTCUSDT","LUNAUSDT"]]},"lunaLive":{"src":"No live trading data — BTCUSDT is not trading.","pairs":[["BTCUSDT","LUNAUSDT"]]},"lunaFund":{"src":"No funding — BTCUSDT is not trading.","pairs":[["BTCUSDT","LUNAUSDT"]]},"t2chip":{"src":"Stale 7s","pairs":[["7s","15s","Stale 15 s — new orders blocked on BTCUSDT"]]}},
+"copy":{"close":"×","hContract":"Contract rules","tagContract":"Set by Bybit","hLive":"Live market","tagLive":"Live from Bybit","hRec":"Recording in CandleViewer","tagRec":"Recorded by CandleViewer","note":"These rules are enforced by the exchange. CandleViewer shows them and cannot change them.","prov":"Rules revision 7 · checked 2 h ago","exTick":"Price must be a multiple of 0.1 · 50,000.04 → 50,000.0 (nearest)","exStep":"Quantity must be a multiple of 0.001 · 0.0019 → 0.001 (always down)","exNotional":"Order notional must be at least 5 · 1.0 × 0.001 = 0.001 → refused","exLev":"Leverage is set in steps of 0.01","canChange":"can change","asOf":"Coverage as of 10:31:02 UTC · trades can include imported days","recOn":"● Recording · added manually","streams":"trades from 1 Sep · order book from 7 Sep","gaps":"1 · 4 Sep 02:11–02:15 UTC, connection lost","disk":"812 GB","retention":"pinned, exempt by default","settings":"Recorder settings","openChart":"Open in new chart","openDom":"Open DOM ladder","notRec":"○ Not recorded","noWindow":"No recorded data in the last 90 days","record":"Record this symbol…","setUp":"Recording is set up by the owner.","ownerOnly":"Only the owner can start recording.","viewAs":"Read-only while viewing as alex.","covWait":"Recorded coverage waits for the instrument list.","frT2":"Not recorded, Manager or Viewer","frViewAs":"Not recorded, Owner viewing as","stale7":"Stale 7s","t2strip":"Stale 15 s — new orders blocked on BTCUSDT","disc":"Disconnected — last data 00:12","liveNo":"Live values unavailable — CandleViewer has reached its live-data limit.","liveNoHow":"Close a chart or a watchlist symbol, then try again.","tryAgain":"Try again","delisted":"Delisted by the exchange","notTrading":"BTCUSDT is not trading on Bybit.","preLaunch":"BTCUSDT is not open for trading in CandleViewer — pre-launch on Bybit.","stClosed":"Status: Closed.","stDelivering":"Status: Delivering.","stPre":"Not trading yet — status: Pre-launch.","liveNot":"No live trading data — BTCUSDT is not trading.","fundNot":"No funding — BTCUSDT is not trading.","covNot":"Recorded coverage isn't available for symbols that aren't trading.","s503":"CandleViewer's server is loading the instrument list from Bybit — next try in 4 s.","changedTag":"Changed · was 0.01","changedNote":"Rules changed at 06:40 UTC (revision 7 → 8).","failH":"Couldn't load BTCUSDT's contract rules.","failNet":"CandleViewer can't reach its server.","orderLine":"CandleViewer can't check BTCUSDT orders against these rules until they load.","retry":"Retry","ref":"Ref urn:cv:req:…","notInList":"BTCUSDT isn't in Bybit's instrument list as CandleViewer last read it.","searchSymbols":"Search symbols","forbidden":"Your role can't see instruments.","covFail":"Couldn't load recorded coverage.","roleA":"Viewer: A (ticket literal)","noRecordings":"Your role can't see recordings.","tiersNA":"Risk-limit tiers: not available yet","focusAfter":"Focus after","banner":{"glyph":"!","title":"Disconnected - reconnecting (attempt 3, next in 4 s)","body":["Last data 00:12 ago. Trading is disabled while offline.","Your exchange-side stop-losses are unaffected."],"actions":["Retry now","Details"]}},
+"labels":{"status":"Status","tick":"Tick size","step":"Quantity step","minQty":"Minimum quantity","maxQty":"Maximum quantity, limit orders","mktQty":"Maximum quantity, market orders","minNotional":"Minimum order value","maxLev":"Maximum leverage","funding":"Funding interval","tiers":"Risk-limit tiers","last":"Last price","mark":"Mark price","index":"Index price","chg":"24 h change","high":"24 h high","low":"24 h low","vol":"24 h volume","turn":"24 h turnover","oi":"Open interest","oiv":"Open interest value","rate":"Funding rate (predicted)","next":"Next funding","rec":"Recording","from":"Recorded data from","streams":"Streams, last 90 days","gaps":"Gaps, last 90 days","disk":"Size on disk (owner)","retention":"Retention (owner)"},
+"bands":{"contract0":{"_key":"contract","h":"Contract rules","tag":"Set by Bybit","items":[{"_k":"line","t":"These rules are enforced by the exchange. CandleViewer shows them and cannot change them.","_key":"note","_ty":"body","_role":"text2","_align":"left"},{"_k":"line","t":"Rules revision 7 · checked 2 h ago","_key":"prov","_ty":"caption","_role":"text2","_align":"right"},{"_k":"row","l":"Status","_vk":"word","v":"Trading"},{"_k":"row","l":"Tick size","_vk":"num","v":"0.1","u":"USDT"},{"_k":"ex","t":"Price must be a multiple of 0.1 · 50,000.04 → 50,000.0 (nearest)"},{"_k":"row","l":"Quantity step","_vk":"num","v":"0.001","u":"BTC"},{"_k":"ex","t":"Quantity must be a multiple of 0.001 · 0.0019 → 0.001 (always down)"},{"_k":"row","l":"Minimum quantity","_vk":"num","v":"0.001","u":"BTC"},{"_k":"row","l":"Maximum quantity, limit orders","_vk":"num","v":"100","u":"BTC"},{"_k":"row","l":"Maximum quantity, market orders","_vk":"na","v":"not available yet"},{"_k":"row","l":"Minimum order value","_vk":"num","v":"5","u":"USDT"},{"_k":"ex","t":"Order notional must be at least 5 · 1.0 × 0.001 = 0.001 → refused"},{"_k":"row","l":"Maximum leverage","_vk":"num","v":"100×"},{"_k":"ex","t":"Leverage is set in steps of 0.01"},{"_k":"row","l":"Funding interval","_vk":"num","v":"8 h","tag":"can change"},{"_k":"row","l":"Risk-limit tiers","_vk":"na","v":"not available yet"}]},"live1":{"_key":"live","h":"Live market","tag":"Live from Bybit","items":[{"_k":"line","t":"Updated 06:35:46 UTC","_key":"updated","_ty":"caption","_role":"text2","_align":"left"},{"_k":"row","l":"Last price","_vk":"num","v":"82,751.2","u":"USDT"},{"_k":"row","l":"Mark price","_vk":"num","v":"82,751.2","u":"USDT"},{"_k":"row","l":"Index price","_vk":"num","v":"82,782.37","u":"USDT"},{"_k":"row","l":"24 h change","_vk":"num","v":"▲ +1.23 %"},{"_k":"row","l":"24 h high","_vk":"na","v":"not available yet"},{"_k":"row","l":"24 h low","_vk":"na","v":"not available yet"},{"_k":"row","l":"24 h volume","_vk":"num","v":"41,760.372","u":"BTC"},{"_k":"row","l":"24 h turnover","_vk":"num","v":"3.41 B","u":"USDT"},{"_k":"row","l":"Open interest","_vk":"num","v":"57,911.602","u":"BTC"},{"_k":"row","l":"Open interest value","_vk":"num","v":"4.79 B","u":"USDT"},{"_k":"row","l":"Funding rate (predicted)","_vk":"num","v":"+0.00771 %"},{"_k":"row","l":"Next funding","_vk":"cd","v":"next in 01:24:13 · 08:00 UTC"}]},"rec2":{"_key":"rec","h":"Recording in CandleViewer","tag":"Recorded by CandleViewer","items":[{"_k":"line","t":"Coverage as of 10:31:02 UTC · trades can include imported days","_key":"asof","_ty":"caption","_role":"text2","_align":"left"},{"_k":"row","l":"Recording","_vk":"rec","v":"● Recording · added manually"},{"_k":"row","l":"Recorded data from","_vk":"na","v":"not available yet","_col":"rec"},{"_k":"row","l":"Streams, last 90 days","_vk":"rec","v":"trades from 1 Sep · order book from 7 Sep"},{"_k":"row","l":"Gaps, last 90 days","_vk":"rec","v":"1 · 4 Sep 02:11–02:15 UTC, connection lost"},{"_k":"row","l":"Size on disk (owner)","_vk":"recnum","v":"812 GB"},{"_k":"row","l":"Retention (owner)","_vk":"rec","v":"pinned, exempt by default"},{"_k":"link","t":"Recorder settings","_key":"link"}]},"contract3":{"_key":"contract","h":"Contract rules","tag":"Set by Bybit","items":[{"_k":"line","t":"These rules are enforced by the exchange. CandleViewer shows them and cannot change them.","_key":"note","_ty":"body","_role":"text2","_align":"left"},{"_k":"line","t":"Rules revision 8 · checked 2 h ago","_key":"prov","_ty":"caption","_role":"text2","_align":"right"},{"_k":"row","l":"Status","_vk":"word","v":"Trading"},{"_k":"row","l":"Tick size","_vk":"num","v":"0.005","u":"USDT"},{"_k":"ex","t":"Price must be a multiple of 0.005 · 148.1234 → 148.125 (nearest)"},{"_k":"row","l":"Quantity step","_vk":"num","v":"0.001","u":"SOL"},{"_k":"ex","t":"Quantity must be a multiple of 0.001 · 0.0019 → 0.001 (always down)"},{"_k":"row","l":"Minimum quantity","_vk":"num","v":"0.001","u":"SOL"},{"_k":"row","l":"Maximum quantity, limit orders","_vk":"num","v":"100","u":"SOL"},{"_k":"row","l":"Maximum quantity, market orders","_vk":"na","v":"not available yet"},{"_k":"row","l":"Minimum order value","_vk":"num","v":"5","u":"USDT"},{"_k":"ex","t":"Order notional must be at least 5 · 1.0 × 0.001 = 0.001 → refused"},{"_k":"row","l":"Maximum leverage","_vk":"num","v":"100×"},{"_k":"ex","t":"Leverage is set in steps of 0.01"},{"_k":"row","l":"Funding interval","_vk":"num","v":"8 h","tag":"can change"},{"_k":"row","l":"Risk-limit tiers","_vk":"na","v":"not available yet"}]},"live4":{"_key":"live","h":"Live market","tag":"Live from Bybit","items":[{"_k":"ph","labels":["Last price","Mark price","Index price","24 h change","24 h high","24 h low","24 h volume","24 h turnover","Open interest","Open interest value","Funding rate (predicted)","Next funding"],"_key":"ph"}]},"rec5":{"_key":"rec","h":"Recording in CandleViewer","tag":"Recorded by CandleViewer","items":[{"_k":"line","t":"Coverage as of 10:31:02 UTC · trades can include imported days","_key":"asof","_ty":"caption","_role":"text2","_align":"left"},{"_k":"row","l":"Recording","_vk":"rec","v":"○ Not recorded"},{"_k":"row","l":"Recorded data from","_vk":"na","v":"not available yet","_col":"rec"},{"_k":"row","l":"Streams, last 90 days","_vk":"rec","v":"No recorded data in the last 90 days"},{"_k":"btns","b":[["Record this symbol…","secondary"]],"_key":"record"},{"_k":"link","t":"Recorder settings","_key":"link"}]},"live6":{"_key":"live","h":"Live market","tag":"Live from Bybit","items":[{"_k":"line","t":"Last update 06:35:46 UTC","_key":"updated","_ty":"caption","_role":"text2","_align":"left"},{"_k":"row","l":"Last price","_vk":"num","v":"82,751.2","u":"USDT"},{"_k":"row","l":"Mark price","_vk":"num","v":"82,751.2","u":"USDT"},{"_k":"row","l":"Index price","_vk":"num","v":"82,782.37","u":"USDT"},{"_k":"row","l":"24 h change","_vk":"num","v":"▲ +1.23 %"},{"_k":"row","l":"24 h high","_vk":"na","v":"not available yet"},{"_k":"row","l":"24 h low","_vk":"na","v":"not available yet"},{"_k":"row","l":"24 h volume","_vk":"num","v":"41,760.372","u":"BTC"},{"_k":"row","l":"24 h turnover","_vk":"num","v":"3.41 B","u":"USDT"},{"_k":"row","l":"Open interest","_vk":"num","v":"57,911.602","u":"BTC"},{"_k":"row","l":"Open interest value","_vk":"num","v":"4.79 B","u":"USDT"},{"_k":"row","l":"Funding rate (predicted)","_vk":"num","v":"+0.00771 %"},{"_k":"row","l":"Next funding","_vk":"cd","v":"next in 01:24:13 · 08:00 UTC"}],"marker":{"_kind":"stale","t":"Stale 7s"},"_state":"stale"},"live7":{"_key":"live","h":"Live market","tag":"Live from Bybit","items":[{"_k":"line","t":"Last update 06:35:46 UTC","_key":"updated","_ty":"caption","_role":"text2","_align":"left"},{"_k":"strip","t":"Stale 15 s — new orders blocked on BTCUSDT","_key":"strip"},{"_k":"row","l":"Last price","_vk":"num","v":"82,751.2","u":"USDT"},{"_k":"row","l":"Mark price","_vk":"num","v":"82,751.2","u":"USDT"},{"_k":"row","l":"Index price","_vk":"num","v":"82,782.37","u":"USDT"},{"_k":"row","l":"24 h change","_vk":"num","v":"▲ +1.23 %"},{"_k":"row","l":"24 h high","_vk":"na","v":"not available yet"},{"_k":"row","l":"24 h low","_vk":"na","v":"not available yet"},{"_k":"row","l":"24 h volume","_vk":"num","v":"41,760.372","u":"BTC"},{"_k":"row","l":"24 h turnover","_vk":"num","v":"3.41 B","u":"USDT"},{"_k":"row","l":"Open interest","_vk":"num","v":"57,911.602","u":"BTC"},{"_k":"row","l":"Open interest value","_vk":"num","v":"4.79 B","u":"USDT"},{"_k":"row","l":"Funding rate (predicted)","_vk":"num","v":"+0.00771 %"},{"_k":"row","l":"Next funding","_vk":"cd","v":"next in 01:24:13 · 08:00 UTC"}],"marker":{"_kind":"stale","t":"Stale 15s"},"_state":"stale"},"live8":{"_key":"live","h":"Live market","tag":"Live from Bybit","items":[{"_k":"line","t":"Last update 06:35:46 UTC","_key":"updated","_ty":"caption","_role":"text2","_align":"left"},{"_k":"row","l":"Last price","_vk":"num","v":"82,751.2","u":"USDT"},{"_k":"row","l":"Mark price","_vk":"num","v":"82,751.2","u":"USDT"},{"_k":"row","l":"Index price","_vk":"num","v":"82,782.37","u":"USDT"},{"_k":"row","l":"24 h change","_vk":"num","v":"▲ +1.23 %"},{"_k":"row","l":"24 h high","_vk":"na","v":"not available yet"},{"_k":"row","l":"24 h low","_vk":"na","v":"not available yet"},{"_k":"row","l":"24 h volume","_vk":"num","v":"41,760.372","u":"BTC"},{"_k":"row","l":"24 h turnover","_vk":"num","v":"3.41 B","u":"USDT"},{"_k":"row","l":"Open interest","_vk":"num","v":"57,911.602","u":"BTC"},{"_k":"row","l":"Open interest value","_vk":"num","v":"4.79 B","u":"USDT"},{"_k":"row","l":"Funding rate (predicted)","_vk":"num","v":"+0.00771 %"},{"_k":"row","l":"Next funding","_vk":"cd","v":"next in 01:24:13 · 08:00 UTC"}],"marker":{"_kind":"text","t":"Disconnected — last data 00:12"},"_state":"stale"},"live9":{"_key":"live","h":"Live market","tag":"Live from Bybit","items":[{"_k":"skel","n":12,"labels":["Last price","Mark price","Index price","24 h change","24 h high","24 h low","24 h volume","24 h turnover","Open interest","Open interest value","Funding rate (predicted)","Next funding"],"_key":"skel"}]},"live10":{"_key":"live","h":"Live market","tag":"Live from Bybit","items":[{"_k":"block","_tone":"warning","lines":["Live values unavailable — CandleViewer has reached its live-data limit.","Close a chart or a watchlist symbol, then try again."],"_key":"unavail","btns":[["Try again","primary"]]}]},"contract11":{"_key":"contract","h":"Contract rules","tag":"Set by Bybit","items":[{"_k":"line","t":"These rules are enforced by the exchange. CandleViewer shows them and cannot change them.","_key":"note","_ty":"body","_role":"text2","_align":"left"},{"_k":"line","t":"Rules revision 7 · checked 2 h ago","_key":"prov","_ty":"caption","_role":"text2","_align":"right"},{"_k":"row","l":"Status","_vk":"word","v":"Closed"},{"_k":"row","l":"Tick size","_vk":"num","v":"0.0001","u":"USDT"},{"_k":"ex","t":"Price must be a multiple of 0.0001 · 0.123456 → 0.1235 (nearest)"},{"_k":"row","l":"Quantity step","_vk":"num","v":"0.001","u":"LUNA"},{"_k":"ex","t":"Quantity must be a multiple of 0.001 · 0.0019 → 0.001 (always down)"},{"_k":"row","l":"Minimum quantity","_vk":"num","v":"0.001","u":"LUNA"},{"_k":"row","l":"Maximum quantity, limit orders","_vk":"num","v":"100","u":"LUNA"},{"_k":"row","l":"Maximum quantity, market orders","_vk":"na","v":"not available yet"},{"_k":"row","l":"Minimum order value","_vk":"num","v":"5","u":"USDT"},{"_k":"ex","t":"Order notional must be at least 5 · 1.0 × 0.001 = 0.001 → refused"},{"_k":"row","l":"Maximum leverage","_vk":"num","v":"100×"},{"_k":"ex","t":"Leverage is set in steps of 0.01"},{"_k":"row","l":"Funding interval","_vk":"num","v":"8 h","tag":"can change"},{"_k":"row","l":"Risk-limit tiers","_vk":"na","v":"not available yet"}]},"live12":{"_key":"live","h":"Live market","tag":"Live from Bybit","items":[{"_k":"say","t":"No live trading data — LUNAUSDT is not trading.","_key":"live","_role":"text"},{"_k":"row","l":"Next funding","_vk":"cdword","v":"No funding — LUNAUSDT is not trading."}]},"rec13":{"_key":"rec","h":"Recording in CandleViewer","tag":"Recorded by CandleViewer","items":[{"_k":"row","l":"Recording","_vk":"rec","v":"○ Not recorded"},{"_k":"say","t":"Recorded coverage isn't available for symbols that aren't trading.","_key":"cov","_role":"text2"},{"_k":"link","t":"Recorder settings","_key":"link"}]},"contract14":{"_key":"contract","h":"Contract rules","tag":"Set by Bybit","items":[{"_k":"row","l":"Status","_vk":"word","v":"Pre-launch"}]},"live15":{"_key":"live","h":"Live market","tag":"Live from Bybit","items":[{"_k":"say","t":"No live trading data — BTCUSDT is not trading.","_key":"live","_role":"text"},{"_k":"row","l":"Next funding","_vk":"cdword","v":"No funding — BTCUSDT is not trading."}]},"contract16":{"_key":"contract","h":"Contract rules","tag":"Set by Bybit","items":[{"_k":"row","l":"Status","_vk":"word","v":"Delivering"}]},"contract17":{"_key":"contract","h":"Contract rules","tag":"Set by Bybit","items":[{"_k":"row","l":"Status","_vk":"word","v":"Closed"}]},"contract18":{"_key":"contract","h":"Contract rules","tag":"Set by Bybit","items":[{"_k":"line","t":"CandleViewer's server is loading the instrument list from Bybit — next try in 4 s.","_key":"503","_ty":"body","_role":"text2","_align":"left"},{"_k":"skel","n":6,"_key":"skel"}]},"rec19":{"_key":"rec","h":"Recording in CandleViewer","tag":"Recorded by CandleViewer","items":[{"_k":"row","l":"Recording","_vk":"rec","v":"● Recording · added manually"},{"_k":"say","t":"Recorded coverage waits for the instrument list.","_key":"covwait","_role":"text2"},{"_k":"row","l":"Recorded data from","_vk":"na","v":"not available yet","_col":"rec"},{"_k":"row","l":"Size on disk (owner)","_vk":"recnum","v":"812 GB"},{"_k":"row","l":"Retention (owner)","_vk":"rec","v":"pinned, exempt by default"},{"_k":"link","t":"Recorder settings","_key":"link"}]},"contract20":{"_key":"contract","h":"Contract rules","tag":"Set by Bybit","items":[{"_k":"line","t":"These rules are enforced by the exchange. CandleViewer shows them and cannot change them.","_key":"note","_ty":"body","_role":"text2","_align":"left"},{"_k":"line","t":"Rules changed at 06:40 UTC (revision 7 → 8).","_key":"changed","_ty":"caption","_role":"text","_align":"left"},{"_k":"line","t":"illustrative","_key":"illus","_ty":"caption","_role":"text3","_align":"right"},{"_k":"row","l":"Status","_vk":"word","v":"Trading"},{"_k":"row","l":"Tick size","_vk":"num","v":"0.005","u":"USDT","tag":"Changed · was 0.01"},{"_k":"ex","t":"Price must be a multiple of 0.005 · 148.1234 → 148.125 (nearest)"},{"_k":"row","l":"Quantity step","_vk":"num","v":"0.001","u":"SOL"},{"_k":"ex","t":"Quantity must be a multiple of 0.001 · 0.0019 → 0.001 (always down)"},{"_k":"row","l":"Minimum quantity","_vk":"num","v":"0.001","u":"SOL"},{"_k":"row","l":"Maximum quantity, limit orders","_vk":"num","v":"100","u":"SOL"},{"_k":"row","l":"Maximum quantity, market orders","_vk":"na","v":"not available yet"},{"_k":"row","l":"Minimum order value","_vk":"num","v":"5","u":"USDT"},{"_k":"ex","t":"Order notional must be at least 5 · 1.0 × 0.001 = 0.001 → refused"},{"_k":"row","l":"Maximum leverage","_vk":"num","v":"100×"},{"_k":"ex","t":"Leverage is set in steps of 0.01"},{"_k":"row","l":"Funding interval","_vk":"num","v":"8 h","tag":"can change"},{"_k":"row","l":"Risk-limit tiers","_vk":"na","v":"not available yet"}]},"contract21":{"_key":"contract","h":"Contract rules","tag":"Set by Bybit","items":[{"_k":"block","_tone":"danger","lines":["Couldn't load BTCUSDT's contract rules.","CandleViewer can't reach its server.","CandleViewer can't check BTCUSDT orders against these rules until they load."],"_key":"fail","btns":[["Retry","primary"]],"ref":"Ref urn:cv:req:…"}]},"contract22":{"_key":"contract","h":"Contract rules","tag":"Set by Bybit","items":[{"_k":"block","_tone":"plain","lines":["BTCUSDT isn't in Bybit's instrument list as CandleViewer last read it."],"_key":"404","btns":[["Search symbols","secondary"],["Retry","primary"]]}]},"contract23":{"_key":"contract","h":"Contract rules","tag":"Set by Bybit","items":[{"_k":"block","_tone":"plain","lines":["Your role can't see instruments."],"_key":"403"}]},"rec24":{"_key":"rec","h":"Recording in CandleViewer","tag":"Recorded by CandleViewer","items":[{"_k":"row","l":"Recording","_vk":"rec","v":"● Recording · added manually"},{"_k":"block","_tone":"warning","lines":["Couldn't load recorded coverage."],"_key":"cov","btns":[["Retry","primary"]]},{"_k":"row","l":"Recorded data from","_vk":"na","v":"not available yet","_col":"rec"},{"_k":"row","l":"Size on disk (owner)","_vk":"recnum","v":"812 GB"},{"_k":"row","l":"Retention (owner)","_vk":"rec","v":"pinned, exempt by default"},{"_k":"link","t":"Recorder settings","_key":"link"}]},"rec25":{"_key":"rec","h":"Recording in CandleViewer","tag":"Recorded by CandleViewer","items":[{"_k":"line","t":"Coverage as of 10:31:02 UTC · trades can include imported days","_key":"asof","_ty":"caption","_role":"text2","_align":"left"},{"_k":"row","l":"Recording","_vk":"rec","v":"● Recording · added manually"},{"_k":"row","l":"Recorded data from","_vk":"na","v":"not available yet","_col":"rec"},{"_k":"row","l":"Streams, last 90 days","_vk":"rec","v":"trades from 1 Sep · order book from 7 Sep"},{"_k":"row","l":"Gaps, last 90 days","_vk":"rec","v":"1 · 4 Sep 02:11–02:15 UTC, connection lost"},{"_k":"say","t":"Recording is set up by the owner.","_key":"setup","_role":"text2"}]},"rec26":{"_key":"rec","h":"Recording in CandleViewer","tag":"Recorded by CandleViewer","items":[{"_k":"say","t":"Your role can't see recordings.","_key":"colA","_role":"text2"}]},"rec27":{"_key":"rec","h":"Recording in CandleViewer","tag":"Recorded by CandleViewer","items":[{"_k":"line","t":"Coverage as of 10:31:02 UTC · trades can include imported days","_key":"asof","_ty":"caption","_role":"text2","_align":"left"},{"_k":"row","l":"Recording","_vk":"rec","v":"○ Not recorded"},{"_k":"row","l":"Recorded data from","_vk":"na","v":"not available yet","_col":"rec"},{"_k":"row","l":"Streams, last 90 days","_vk":"rec","v":"No recorded data in the last 90 days"},{"_k":"say","t":"Only the owner can start recording.","_key":"t2","_role":"text2"},{"_k":"say","t":"Recording is set up by the owner.","_key":"setup","_role":"text2"}]},"rec28":{"_key":"rec","h":"Recording in CandleViewer","tag":"Recorded by CandleViewer","items":[{"_k":"line","t":"Coverage as of 10:31:02 UTC · trades can include imported days","_key":"asof","_ty":"caption","_role":"text2","_align":"left"},{"_k":"row","l":"Recording","_vk":"rec","v":"○ Not recorded"},{"_k":"row","l":"Recorded data from","_vk":"na","v":"not available yet","_col":"rec"},{"_k":"row","l":"Streams, last 90 days","_vk":"rec","v":"No recorded data in the last 90 days"},{"_k":"say","t":"Read-only while viewing as alex.","_key":"t2","_role":"text2"},{"_k":"say","t":"Recording is set up by the owner.","_key":"setup","_role":"text2"}]}},
+"drawers":{"d01":{"title":"BTCUSDT","_bands":["contract0","live1","rec2"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"d02":{"title":"SOLUSDT","_bands":["contract3","live4","rec5"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"SOL / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"d03a":{"title":"BTCUSDT","_bands":["contract0","live6","rec2"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"d03b":{"title":"BTCUSDT","_bands":["contract0","live7","rec2"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"d04":{"title":"BTCUSDT","_bands":["contract0","live8","rec2"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01","banner":true},"d05a":{"title":"BTCUSDT","_bands":["contract0","live9","rec2"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"d05b":{"title":"BTCUSDT","_bands":["contract0","live10","rec2"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"d06":{"title":"LUNAUSDT","_bands":["contract11","live12","rec13"],"actions":[["Open in new chart","secondary"]],"identity":"LUNA / USDT · USDT perpetual · settled in USDT · listed 2020-04-01","chip":{"_kind":"delisted","t":"Delisted by the exchange"},"notice":{"_tone":"danger","lines":["LUNAUSDT is not trading on Bybit.","Status: Closed."]}},"d07a":{"title":"BTCUSDT","_bands":["contract14","live15"],"actions":[["Open in new chart","secondary"]],"identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01","notice":{"_tone":"info","lines":["BTCUSDT is not open for trading in CandleViewer — pre-launch on Bybit.","Not trading yet — status: Pre-launch."]}},"d07b":{"title":"BTCUSDT","_bands":["contract16","live15"],"actions":[["Open in new chart","secondary"]],"identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01","chip":{"_kind":"delisted","t":"Delisted by the exchange"},"notice":{"_tone":"danger","lines":["BTCUSDT is not trading on Bybit.","Status: Delivering."]}},"d07c":{"title":"BTCUSDT","_bands":["contract17","live15"],"actions":[["Open in new chart","secondary"]],"identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01","chip":{"_kind":"delisted","t":"Delisted by the exchange"},"notice":{"_tone":"danger","lines":["BTCUSDT is not trading on Bybit.","Status: Closed."]}},"d08":{"title":"BTCUSDT","_bands":["contract18","live1","rec19"],"actions":[["Open in new chart","secondary"]]},"d09":{"title":"SOLUSDT","_bands":["contract20","live4","rec5"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"SOL / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"d10a":{"title":"BTCUSDT","_bands":["contract21"],"actions":[],"strip":true},"d10b":{"title":"BTCUSDT","_bands":["contract22"],"actions":[],"strip":true},"d10c":{"title":"BTCUSDT","_bands":["contract23"],"actions":[],"strip":true},"d11":{"title":"BTCUSDT","_bands":["contract0","live1","rec24"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"d12":{"title":"BTCUSDT","_bands":["contract0","live1","rec25"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"BTC / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"d13A":{"title":"BTCUSDT","_bands":["rec26"],"actions":[],"strip":true},"d25":{"title":"SOLUSDT","_bands":["contract3","live4","rec27"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"SOL / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"},"d25B":{"title":"SOLUSDT","_bands":["contract3","live4","rec28"],"actions":[["Open in new chart","secondary"],["Open DOM ladder","secondary"]],"identity":"SOL / USDT · USDT perpetual · settled in USDT · listed 2020-04-01"}},
+"boards":[
+{"n":1,"id":"SCR-103/populated-recorded-owner","_kind":"drawer","_twin":true,"_frames":[{"_w":480,"_h":1360,"_lab":"compact","_density":"compact"}],"desc":"§3","_drawer":"d01","markers":[{"_at":"title","part":"\"Symbol info: BTCUSDT\" (\"Symbol info:\" visually hidden)","note":"CMP-046 modal, right side, 480 CSS px","Role":"dialog, aria-modal=\"true\", aria-labelledby the title, aria-describedby the identity line","Keyboard":"Esc closes and restores focus","Focus":"the title (tabindex=\"-1\")","Budget":"warm: within 100 ms, no request, the SCR-079 precedent","Event":"symbol.info_viewed"},{"_at":"band:contract","part":"Three bands in a fixed order: Contract rules → Live market → Recording in CandleViewer, never reordered by state.","Role":"section, aria-labelledby its h3","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"row:Tick size","part":"dd \"0.1 USDT. Price must be a multiple of 0.1. Example: 50,000.04 becomes 50,000.0.\"","Role":"dl with one dt / dd pair per value (F8), units inside the text","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"line:prov","part":"Provenance in honest words:","note":"updated_at is when the server fetched the catalogue","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"band:live","part":"One freshness marker for the live band, in its header.","note":"values, no marker (absence is live)","Role":"—","Keyboard":"—","Focus":"—","Budget":"values repaint text in fixed columns at the topic's 250 ms cadence (23 §6.1), with no layout shift","Event":"—"},{"_at":"row:Next funding","part":"Next funding in 1 hour 24 minutes, at 08:00 UTC","note":"The digits update at most once a second","Role":"text in aria-live=\"off\"","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"band:rec","part":"The CandleViewer band reads and never subscribes:","Role":"—","Keyboard":"—","Focus":"—","Budget":"GET /market/data-coverage?symbol= once per open (06 row 13: reads under 150 ms p95)","Event":"—"},{"_at":"link","part":"Recorder settings","note":"the SCR-140 link hidden (T3) for Manager and Viewer","Role":"CMP-021 a for Recorder settings","Keyboard":"—","Focus":"each control, ring color.focus.ring at border.focus","Budget":"—","Event":"—"},{"_at":"actions","part":"Both open a new panel, never the focused one, so no armed pane is retargeted (E08-D05 D-10).","Role":"\"Open BTCUSDT in a new chart\", \"Open BTCUSDT DOM ladder\", \"Recorder settings\"","Keyboard":"Close → band actions (Retry, Try again) → \"Show all N tiers\" → the tiers region when it scrolls → Recorder settings or Record (Owner) → Open in new chart → Open DOM ladder → Close (trapped)","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":2,"id":"SCR-103/populated-not-recorded-owner","_kind":"drawer","_twin":true,"_frames":[{"_w":480,"_h":1220,"_lab":"compact","_density":"compact"}],"desc":"SOLUSDT (tick 0.005), Record this symbol…, the empty 90-day window","_drawer":"d02","markers":[{"_at":"row:Tick size","part":"SOLUSDT (tick 0.005)","Role":"dl with one dt / dd pair per value (F8), units inside the text","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"ph","part":"Live market","note":"never a value kept from an earlier item, never a zero, never another symbol's value","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"row:Recording","part":"\"○ Not recorded\" (or its refusal); \"Record this symbol…\" (Q6) and the link","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"row:Streams, last 90 days","part":"a window with no interval reads \"No recorded data in the last 90 days\" and the Gaps row is omitted, never \"0\"","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"record","part":"the Owner's \"Record this symbol…\" opens M-023 (Q6)","Role":"—","Keyboard":"—","Focus":"each control, ring color.focus.ring at border.focus","Budget":"—","Event":"—"}]},
+{"n":3,"id":"SCR-103/live-stale-t1-t2-owner","_kind":"drawers","_twin":true,"_frames":[{"_w":1000,"_h":1360,"_lab":"compact","_density":"compact"}],"desc":"\"Stale 7s\"; the T2 strip; contract band unchanged (AC 2)","_drawers":["d03a","d03b"],"markers":[{"_at":"L:marker:live","part":"CMP-239 \"Stale 7s\" in the header, \"Last update 06:35:46 UTC\"","note":"polite once: \"Live values stale.\" and on exit \"Live values current.\"","Role":"CMP-239 text in the band header, part of the band's description","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"L:band:live","part":"band on color.data-confidence.stale.surface, values in .stale.text","note":"values kept, never live-updating","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"L:band:contract","part":"The contract band never takes a stale treatment.","note":"unchanged and authoritative","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"R:strip","part":"as T1 plus the CMP-078 escalated strip \"Stale 15 s — new orders blocked on BTCUSDT\" (E17-D01 D16)","note":"meta.stale reads \"Stale (server) — since 14:02:11\"","Role":"the shell's assertive T2 sentence (E17-D01 §7), never repeated here","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"R:marker:live","part":"Thresholds are E17-D01's T1 / T2 (architect ruling A2): stale at 5 s, escalated at 15 s, or the server's meta.stale (T2, E17-D01) / per-item stale (T1: this spec's own reading, proposed to E17-D01, H-9)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":4,"id":"SCR-103/live-reconnecting-owner","_kind":"drawer","_twin":true,"_frames":[{"_w":480,"_h":1360,"_lab":"compact","_density":"compact"}],"desc":"banner above the scrim; countdown counting","_drawer":"d04","markers":[{"_at":"banner","part":"the SCR-152 banner, live above the scrim, outranks it","Role":"the shell's alert (E17-D01 §7)","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"marker:live","part":"dims like stale, \"Disconnected — last data 00:12\" (E17-D01 §5), no CMP-239","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"row:Next funding","part":"the countdown keeps counting to its fixed time","note":"keeps counting (the target is a fixed time) inside the band's treatment","Role":"text in aria-live=\"off\"","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"band:rec","part":"store frozen; as-of stays","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"band:contract","part":"The contract band never takes a stale treatment.","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":5,"id":"SCR-103/live-awaiting-unavailable-owner","_kind":"drawers","_twin":true,"_frames":[{"_w":1000,"_h":1360,"_lab":"compact","_density":"compact"}],"desc":"first tick; subscription_limit","_drawers":["d05a","d05b"],"markers":[{"_at":"L:skel","part":"static CMP-015 rows, aria-busy","note":"after 5 s \"No live values yet\" with the T1 treatment","Role":"aria-busy while a band loads","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"R:block:unavail","part":"\"Live values unavailable — CandleViewer has reached its live-data limit.\" + \"Close a chart or a watchlist symbol, then try again.\" · Try again","note":"sub_ok refusal subscription_limit: 40 symbols or 200 subscriptions per connection, 23 §4.2; the code does not say which","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"symbol.info_load_failed"},{"_at":"R:btn:Try again","part":"Retry keeps focus on the button, sets aria-busy on its band and never loops on its own","Role":"—","Keyboard":"—","Focus":"each control, ring color.focus.ring at border.focus","Budget":"—","Event":"—"},{"_at":"L:band:contract","part":"unchanged and authoritative","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":6,"id":"SCR-103/not-trading-closed-owner","_kind":"drawer","_twin":true,"_frames":[{"_w":480,"_h":1100,"_lab":"compact","_density":"compact"}],"desc":"LUNAUSDT Closed, status_reason (AC 3)","_drawer":"d06","markers":[{"_at":"notice","part":"notice under the title: \"BTCUSDT is not trading on Bybit.\"","note":"then status_reason verbatim (server text written for screen readers, #182), else E11-D04's fallbacks","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"chip","part":"CMP-239 delisted only when delisted","note":"delisted is derived and true only for Delivering and Closed","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"band:contract","part":"The contract band stays fully legible","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"say:live","part":"the live band is replaced by one sentence, the countdown is suppressed with its reason","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"say:cov","part":"\"Recorded coverage isn't available for symbols that aren't trading.\" with no Retry: the coverage route answers 422 for them (CR-13)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"actions","part":"Open in new chart is the only action","note":"a flip while open is announced once","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":7,"id":"SCR-103/not-trading-variants","_kind":"drawers","_twin":true,"_frames":[{"_w":1480,"_h":560,"_lab":"compact","_density":"compact"}],"desc":"PreLaunch, Delivering, Closed strips","_drawers":["d07a","d07b","d07c"],"markers":[{"_at":"A:notice","part":"PreLaunch, a pre-market contract that can trade on Bybit: \"BTCUSDT is not open for trading in CandleViewer — pre-launch on Bybit.\", Q2","note":"PreLaunch is an info notice (E08-D05 D-6)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"B:chip","part":"CMP-239 delisted for Delivering and Closed, info tone for PreLaunch","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"C:notice","part":"\"Status: Closed.\" / \"Status: Delivering.\" / \"Not trading yet — status: Pre-launch.\" (E11-D04)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":8,"id":"SCR-103/catalogue-refreshing-owner","_kind":"drawer","_twin":true,"_frames":[{"_w":480,"_h":1060,"_lab":"compact","_density":"compact"}],"desc":"cold open, the 503 line","_drawer":"d08","markers":[{"_at":"title","part":"title only","note":"A symbol not in the Trading-only index (not trading, or newly listed) waits on that request (cold, §6).","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"line:503","part":"on a 503, \"CandleViewer's server is loading the instrument list from Bybit — next try in 4 s.\" (2, 4, 8, 16, 30 s, or Retry-After; E08-D05)","Role":"—","Keyboard":"—","Focus":"—","Budget":"the 503 ladder is the only automatic retry, bounded at 60 s","Event":"—"},{"_at":"skel","part":"static rows + \"Checking Bybit for BTCUSDT…\"","Role":"aria-busy while a band loads","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"band:live","part":"loads on its own","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"say:covwait","part":"no status yet (Catalogue loading, or Contract load failed) gives \"Recorded coverage waits for the instrument list.\"","note":"It also answers 422 for every symbol until the server holds its first catalogue snapshot (_catalogue_listed fails closed, app.py:2745-2751)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":9,"id":"SCR-103/rules-changed-while-open-owner","_kind":"drawer","_twin":true,"_frames":[{"_w":480,"_h":1360,"_lab":"compact","_density":"compact"}],"desc":"SOLUSDT 0.01 → 0.005, revision 7 → 8 (illustrative)","_drawer":"d09","markers":[{"_at":"row:Tick size","part":"changed rows tagged \"Changed · was 0.01\"","note":"polite once: \"Contract rules changed: tick size is now 0.005 USDT, was 0.01.\"","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"symbol.info_rules_changed"},{"_at":"line:changed","part":"band note \"Rules changed at 06:40 UTC (revision 7 → 8).\"","note":"updates the provenance line only: no tag, no announcement, no symbol.info_rules_changed","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"ph","part":"Live market","note":"never a value kept from an earlier item, never a zero, never another symbol's value","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":10,"id":"SCR-103/load-error-catalogue-owner","_kind":"stack","_twin":true,"_frames":[{"_w":480,"_h":760,"_lab":"compact","_density":"compact"}],"desc":"AC 4; 404 and 403 strips","_drawers":["d10a","d10b","d10c"],"markers":[{"_at":"A:block:fail","part":"CMP-027 error, role=\"alert\" once: \"Couldn't load BTCUSDT's contract rules.\"","note":"the order line, gated on CR-10","Role":"CMP-027: role=\"alert\" (contract), role=\"status\" (coverage, live)","Keyboard":"—","Focus":"—","Budget":"—","Event":"symbol.info_load_failed"},{"_at":"A:btn:Retry","part":"Retry keeps focus on the button, sets aria-busy on its band and never loops on its own","note":"\"Ref urn:cv:req:…\" only when the problem carries instance","Role":"—","Keyboard":"—","Focus":"each control, ring color.focus.ring at border.focus","Budget":"—","Event":"—"},{"_at":"B:block:404","part":"\"BTCUSDT isn't in Bybit's instrument list as CandleViewer last read it.\" · Search symbols (SCR-102); Retry 60 s after the answer, the server's refresh cooldown (C-8)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"C:block:403","part":"T4: \"Your role can't see instruments.\" (E09-D09 rbac.permission)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":11,"id":"SCR-103/load-error-coverage-owner","_kind":"drawer","_twin":true,"_frames":[{"_w":480,"_h":1360,"_lab":"compact","_density":"compact"}],"desc":"band-local failure","_drawer":"d11","markers":[{"_at":"block:cov","part":"CMP-027 warning (polite): \"Couldn't load recorded coverage.\" · Retry; the state row still shows","note":"dependency tells a catalogue failure from a coverage failure (ticket Observability)","Role":"CMP-027: role=\"alert\" (contract), role=\"status\" (coverage, live)","Keyboard":"—","Focus":"—","Budget":"—","Event":"symbol.info_load_failed"},{"_at":"btn:Retry","part":"Retry keeps focus on the button, sets aria-busy on its band and never loops on its own","Role":"—","Keyboard":"—","Focus":"each control, ring color.focus.ring at border.focus","Budget":"—","Event":"—"},{"_at":"band:contract","part":"a coverage, recorder or live failure stays in its own band","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":12,"id":"SCR-103/populated-recorded-manager","_kind":"drawer","_twin":true,"_frames":[{"_w":480,"_h":1260,"_lab":"compact","_density":"compact"}],"desc":"column B, sentence, no link","_drawer":"d12","markers":[{"_at":"band:rec","part":"recording state, coverage and gaps for every role (column B)","note":"size on disk, retention and pin for the Owner only","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"say:setup","part":"the SCR-140 link hidden (T3) for Manager and Viewer, replaced by E09-D09's sentence \"Recording is set up by the owner.\"","Role":"—","Keyboard":"As a Manager, the band ends \"Recording is set up by the owner.\"; no link in the Tab order.","Focus":"—","Budget":"—","Event":"—"},{"_at":"actions","part":"Both open a new panel, never the focused one, so no armed pane is retargeted (E08-D05 D-10).","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":13,"id":"SCR-103/populated-recorded-viewer","_kind":"drawer","_twin":true,"_frames":[{"_w":480,"_h":1220,"_lab":"compact","_density":"compact"},{"_w":480,"_h":260,"_lab":"compact","_density":"compact","label":"Viewer: A (ticket literal)","_show":"colA"}],"desc":"column B; column A beside it","_drawer":"d12","_colA":"d13A","markers":[{"_at":"band:rec","part":"Why B.","note":"Every role holds recording:read (22 x-permissions)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"say:setup","part":"Two controls, two conversions (E09-D09 §2.4 rows (i) and (ii)).","note":"a T2 reason never borrows the T3 sentence","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"A:say:colA","part":"Fallback (Q1): the ticket's literal \"Viewer none\" (column A).","note":"E09-D09's rbac.permission \"Your role can't see recordings.\" is the band's sentence","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"actions","part":"Open DOM ladder (Trading only; read-only for a Viewer, E08-D05 §6.3)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":14,"id":"SCR-103/risk-limit-tiers","_kind":"tiers","_twin":true,"_frames":[{"_w":1040,"_h":900,"_lab":"compact","_density":"compact"}],"desc":"collapsed, expanded, unavailable (illustrative rows)","tiers":{"caption":"Risk-limit tiers for BTCUSDT","cols":["Tier","Position value up to, USDT","Max leverage"],"rows":[["1","2,000,000","100×"],["2","2,600,000","83.33×"],["3","3,200,000","71.42×"],["4","3,800,000","62.5×"],["5","4,400,000","55.55×"],["6","5,000,000","50×"],["7","5,600,000","45.45×"],["8","6,200,000","41.66×"]],"show":"Show all 12 tiers","states":["collapsed","expanded","unavailable"],"na":"Risk-limit tiers: not available yet","illus":"illustrative"},"markers":[{"_at":"collapsed","part":"A table with the caption \"Risk-limit tiers for BTCUSDT\"; collapsed to the first 3 rows with \"Show all 12 tiers\" (button, aria-expanded, aria-controls)","Role":"table + caption; disclosure button with aria-expanded; region role=\"region\", tabindex=\"0\"","Keyboard":"—","Focus":"each control, ring color.focus.ring at border.focus","Budget":"—","Event":"—"},{"_at":"expanded","part":"expanded, at most 8 rows, then a focusable scroll region (role=\"region\", \"Risk-limit tiers, scrollable\")","Role":"—","Keyboard":"↑ ↓ PageUp PageDown Home End","Focus":"stays","Budget":"—","Event":"—"},{"_at":"unavailable","part":"Today: \"Risk-limit tiers: not available yet\".","note":"never an empty table and never \"none\"","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"cols","part":"The margin columns stay hidden until CR-4 states their unit","note":"Board 14 draws illustrative rows, marked so.","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":15,"id":"CMP-126/funding-countdown-states","_kind":"cmp126","_twin":true,"_frames":[{"_w":960,"_h":900,"_lab":"compact","_density":"compact"}],"desc":"§7 states; the sign variants and no rate","cmp126":{"head":["Story name","Shown (the drawer's band row)","Condition"],"rows":[{"label":"NoRate","cond":"≥ 1 h","v":"next in 01:24:13 · 08:00 UTC","_at":"norate"},{"label":"NoRate","cond":"< 1 h","v":"next in 00:59:59 · 08:00 UTC"},{"label":"UnderFiveMinutes","cond":"< 5 min","v":"settles in 00:04:12 · 08:00 UTC","_glyph":"warn","_at":"under5"},{"label":"Settlement","cond":"settlement","desc":"restarts at once from the ticker's next next_funding_time_ms, never from interval × 60 000 (E24-D01 F11)","_at":"settle"},{"label":"Elapsed","cond":"elapsed, no fresh ticker","v":"Settlement time passed — waiting for an update","_word":true,"_at":"elapsed"},{"label":"InBandState","cond":"stale or disconnected, time ahead","v":"next in 01:24:13 · 08:00 UTC","_band":"stale"},{"label":"ClockSkew","cond":"clock alarm on, or offset unknown","v":"at 08:00:00 UTC (in about 1 h 24 min)","v2":"Clock skew 612 ms — the countdown may be off","_at":"clock"},{"label":"Unknown","cond":"next funding time unknown","v":"Next funding time not available","_word":true},{"label":"Suppressed","cond":"not trading","v":"No funding — BTCUSDT is not trading.","_word":true},{"label":"Positive","cond":"rate sign: positive, negative, zero","rate":"+0.00771 %","v":"next in 01:24:13 · 08:00 UTC","_at":"sign"},{"label":"Negative","rate":"−0.00771 %","v":"next in 01:24:13 · 08:00 UTC","illus":"illustrative"},{"label":"Zero","rate":"0.0000 %","v":"next in 01:24:13 · 08:00 UTC"}]},"markers":[{"_at":"norate","part":"no rate (SCR-103)","note":"The Next funding row holds CMP-126, whose text spans the value and unit columns (§7).","Role":"text in aria-live=\"off\"","Keyboard":"—","Focus":"—","Budget":"The digits update at most once a second","Event":"—"},{"_at":"under5","part":"polite once at 5 min and at 1 min: \"BTCUSDT funding settles in 5 minutes.\"","note":"the warning glyph on surface.overlay is 10.17 / 3.78 / 10.17 and carries words","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"elapsed","part":"never negative, never a frozen 00:00:00","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"clock","part":"The two clocks are kept apart:","note":"the client-to-server skew (welcome.clock_skew_ms, warning above ±2 000 ms, 23 §4.2)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"sign","part":"the sign in text (CMP-020), never colour alone","note":"one timer per symbol serves SCR-054, E11-D02's status row and this drawer (E24-D01 F13)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":16,"id":"CMP-125/symbol-info-popover-states","_kind":"cmp125","_twin":true,"_frames":[{"_w":1100,"_h":700,"_lab":"compact","_density":"compact"}],"desc":"§9","cmp125":{"host":"BTCUSDT","link":"Open full details","bands":["Contract rules","Live market","Recording in CandleViewer"],"contract":[["Tick size","0.1","USDT"],["Quantity step","0.001","BTC"],["Minimum order value","5","USDT"],["Maximum leverage","100×",null]],"live":[["Last price","82,751.2","USDT"],["Funding rate (predicted)","+0.00771 %",null]],"rec":"● Recording","states":[{"label":"default"},{"label":"stale (band marker)","marker":"Stale 7s"},{"label":"not trading (the status heading, no live rows)","notice":"BTCUSDT is not trading on Bybit."},{"label":"unavailable","na":"Contract rules not loaded"}]},"markers":[{"_at":"pop0","part":"A compact, non-modal quick reference with the same three band labels","Role":"dialog without aria-modal","Keyboard":"Esc closes it and returns focus","Focus":"—","Budget":"—","Event":"—"},{"_at":"trig0","part":"It opens from an explicit trigger (a CMP-002 info button, aria-haspopup=\"dialog\"), never on hover alone","Role":["button (CMP-002), aria-haspopup=\"dialog\"","\"Symbol summary, BTCUSDT\""],"Keyboard":"never on hover alone","Focus":"—","Budget":"—","Event":"—"},{"_at":"pop1","part":"stale (band marker)","Role":"CMP-239 text in the band header, part of the band's description","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"pop2","part":"not trading (the status heading, no live rows)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"link3","part":"unavailable (\"Contract rules not loaded\" + Open full details)","Role":["a (CMP-021)","\"Open full details for BTCUSDT\""],"Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":17,"id":"CMP-177/recorder-status-row-summary-states","_kind":"cmp177","_twin":true,"_frames":[{"_w":960,"_h":900,"_lab":"compact","_density":"compact"}],"desc":"§4.3 words; the Owner; T2 sentences rbac.owner_only, rbac.view_as","cmp177":{"label":"Recording","cols":[{"h":"Owner","groups":[{"v":"summary, Owner","s":"recording (5 reasons), lingering, starting, stopping, degraded, error","_at":"own1","rows":["● Recording · added manually","● Recording · a chart is open","● Recording · a position is open","● Recording · a rule uses it","● Recording · an alert uses it","● Recording · stops in 12 min","◐ Starting to record","◐ Stopping","▲ Recording, degraded","✕ Recording error"]},{"v":"summary, Owner","s":"not recorded, symbol cap, disk pressure, gated (its cause in words, spec §4.3)","_at":"own2","rows":["○ Not recorded","○ Not recorded — 20-symbol limit reached","○ Not recorded — disk nearly full","▲ Recording gated — disk full; data is being dropped"],"record":"Record this symbol…","link":"Recorder settings"},{"v":"summary, any role","s":"restricted (absent from a role_restricted set)","_at":"anyrole","rows":["Recording status restricted"]}]},{"h":"Manager","groups":[{"v":"summary, others","s":"the same states, gated as \"may be gated\" in a role_restricted set (spec §4.3); no internals; T3 sentence","_at":"others","rows":["● Recording · added manually","▲ Recording may be gated — disk full","Recording status restricted"],"say":"Recording is set up by the owner."},{"v":"summary, others","s":"not recorded: Record is T2, in the sentence form, CMP-079 → CMP-026 with cta omitted; no button (spec §8)","_at":"t2own","rows":["○ Not recorded"],"says":["Only the owner can start recording.","Recording is set up by the owner."]},{"v":"summary, view-as","s":"not recorded, the Owner viewing as another user: rbac.view_as first (spec §8)","_at":"t2view","rows":["○ Not recorded"],"says":["Read-only while viewing as alex.","Recording is set up by the owner."]}]}]},"markers":[{"_at":"own1","part":"words per spec §4.3; final copy E16-D05","Role":["dd text; glyph aria-hidden","\"Recording, added manually\""],"Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"own2","part":"\"Record this symbol…\" (Q6) and the link","note":"Gate causes","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"anyrole","part":"never \"Not recorded\"","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"others","part":"the same states, gated as \"may be gated\" in a role_restricted set (spec §4.3); no internals; T3 sentence","note":"words carry every state; glyphs are decorative (spec §13)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"t2own","part":"for a Manager or Viewer, and for the Owner viewing as another user, the not-recorded state's Record is T2 in CMP-079 RbacGate's sentence form (CMP-026, cta omitted; CMP-019 lock listed, no glyph drawn), rbac.view_as first, then rbac.owner_only","Role":"text: CMP-026 description in CMP-079's sentence form; no control, glyph or aria-disabled (§8)","Keyboard":"a T2 reason in the sentence form is text and takes no key (spec §8)","Focus":"—","Budget":"—","Event":"—"},{"_at":"t2view","part":"not recorded, the Owner viewing as another user: rbac.view_as first (spec §8)","note":"While the Owner views as another user, every other row follows the target's column, because every read answers as the target (22 View-as, \"Scope\").","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":18,"id":"SCR-103/precision-rules-examples","_kind":"precision","_twin":false,"_frames":[{"_w":1200,"_h":1100,"_lab":"compact","_density":"compact"}],"desc":"§5; minimal vs as delivered; one stacked 14-char qty; after CR-8 / CR-11","precision":{"minimal":{"head":["Rule","minimal","as delivered"],"rows":[["Tick size","0.1","0.10","USDT"],["Quantity step","0.001","0.001","BTC"],["Minimum quantity","0.001","0.001","BTC"],["Maximum quantity, limit orders","100","100.000","BTC"],["Minimum order value","5","5","USDT"],["Maximum leverage","100×","100.00",null]]},"after":{"head":["as delivered","after CR-8 / CR-11"],"illus":"illustrative","rows":[["24 h high","not available yet","82,850.0","USDT"],["24 h low","not available yet","80,611.7","USDT"],["Recorded data from","not available yet","2026-09-01 00:00 UTC",null]]},"stacked":{"title":"Stacked","label":"24 h volume","v":"50,000,000,000"},"ticks":{"title":"Tick width cases","head":["Symbol (source)","Tick","Price in → shown","Characters"],"rows":[["BTCUSDT (fixture)","0.1","50,000.04 → 50,000.0","8"],["ETHUSDT (fixture)","0.01","3,210.4749 → 3,210.47","8"],["SOLUSDT (fixture, after the tick change)","0.005","148.1234 → 148.125","7"],["LUNAUSDT (fixture, Closed)","0.0001","0.123456 → 0.1235","6"],["the AC's tick (computed, not a recorded instrument)","0.00001","0.123456 → 0.12346","7"],["7-decimal width (computed)","0.0000001","0.012345678 → 0.0123457","9"]]},"rules":{"title":"Each rule beside an example","head":["Rule","Sentence","Example (source)"],"rows":[["Tick size","\"Price must be a multiple of 0.1.\" (:168)","50,000.04 → 50,000.0, the nearest tick (case 0)"],["Quantity step","\"Quantity must be a multiple of 0.001.\" (:177)","0.0019 → 0.001, always rounded down (case 1)"],["Minimum quantity","\"Quantity must be at least 0.001.\" (:193)","the floored size is checked: 0.001 on a 0.003 step floors to 0.000 and is refused (case 4, AWKWARDUSDT)"],["Maximum quantity, limit","\"Quantity must not exceed 100.\" (:200)","150 → refused (case 2)"],["Minimum order value","\"Order notional must be at least 5.\" (:209)","1.0 × 0.001 = 0.001 USDT → refused (case 3)"]]},"f":[["F1 Strings, not floats.","^-?[0-9]+(\\.[0-9]+)?$"],["F2 Positional notation only.","1E-7","→","0.0000001"],["F3 Rule values in minimal exact form:","\"0.10\" → \"0.1\", \"100.000\" → \"100\", \"100.00\" → \"100×\""],["F4 Prices","82,751.2","82,782.37"],["F5 Quantities","57,911.602 BTC; 0.250 BTC"],["F6 Rates and changes:","0.0001 → \"+0.0100 %\", 0.0000771 → \"+0.00771 %\"","+1.23 %","\"0.00 %\", \"0.0000 %\""],["F7 Magnitudes","999.6 M → 1.00 B","812 GB"],["F8 Grouping, units, one value per row:","50,000,000,000"],["F9 One formatter.","Price must be a multiple of 0.1."],["F10 Times","02:11:00–02:14:20 reads 02:11–02:15"]]},"markers":[{"_at":"minimal","part":"Fallback (Q5): values as delivered (\"0.10\", \"100.000\"), drawn on board 18.","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"after","part":"24 h high 82,850.0 and low 80,611.7 USDT, the recorded snapshot's highPrice24h / lowPrice24h, F4","note":"Recorded data from 2026-09-01 00:00 UTC, 22's recording_started_at example","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"stacked","part":"A value wider than the column (a 1000× contract's 24 h volume in base units can run to 14 characters, \"50,000,000,000\") stacks under its label, as CMP-036 Stacked","note":"digits are never cut or ellipsised (board 18)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"ticks","part":"none is a half-tick tie, so contradiction C-1 does not touch them","note":"the last two rows say so on the board","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"f9","part":"F9 One formatter.","note":"(CR-2)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":19,"id":"SCR-103/anatomy","_kind":"anatomy","_twin":false,"_frames":[{"_w":1000,"_h":1400,"_lab":"compact","_density":"compact"}],"desc":"bands, columns, tokens","_drawer":"d01","callouts":[{"_at":"drawer","t":"drawer color.surface.overlay, elevation.dialog, header and footer padding space.dialog.padding"},{"_at":"title","t":"Title type.ui.heading-md"},{"_at":"band:contract","t":"band headings type.ui.heading-sm in color.text.primary"},{"_at":"line:prov","t":"source tags, as-of and provenance lines type.ui.caption in color.text.secondary"},{"_at":"row:Status","t":"labels type.ui.body in color.text.secondary"},{"_at":"val:Tick size","t":"values type.num.base in color.text.primary, right-aligned with tabular figures in a value column sized for 11 characters (E30-D02 §5.4), one value per row (F8)"},{"_at":"unit:Quantity step","t":"units type.ui.caption in color.text.tertiary in a fixed unit column"},{"_at":"ex:Minimum order value","t":"example lines type.ui.caption in color.text.tertiary"},{"_at":"rule:live","t":"the band rule border.hairline in color.border.default is decorative (1.30:1, §13): the heading and the tag carry the boundary."},{"_at":"row:Mark price","t":"Rows size.row.height (24 / 32)"},{"_at":"row:Next funding","t":"The Next funding row holds CMP-126, whose text spans the value and unit columns (§7)."},{"_at":"gap:rec","t":"band gap space.stack.lg"}],"markers":[{"_at":"band:contract","part":"Three bands in a fixed order: Contract rules → Live market → Recording in CandleViewer, never reordered by state.","Role":"section, aria-labelledby its h3","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"cols","part":"values type.num.base in color.text.primary, right-aligned with tabular figures in a value column sized for 11 characters (E30-D02 §5.4), one value per row (F8)","Role":"dl with one dt / dd pair per value (F8), units inside the text","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"title","part":"Title type.ui.heading-md","Role":"dialog, aria-modal=\"true\", aria-labelledby the title, aria-describedby the identity line","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":20,"id":"SCR-103/context-min-viewport","_kind":"context","_twin":false,"_frames":[{"_w":1280,"_h":800,"_lab":"compact","_density":"compact"},{"_w":640,"_h":400,"_lab":"200 %","_density":"compact","_show":"zoom"}],"desc":"over the workspace, TopBar live; 200 % reflow","_drawer":"d01","topBar":{"logo":"CV","env":"DEMO","symbol":"BTCUSDT","caret":"▾","palette":"Ctrl+K","panic":["FLATTEN ALL","FREEZE"],"interval":"1m"},"markers":[{"_at":"topbar","part":"full height below the TopBar and the SCR-152 slot, which stay live above the scrim with the env band and the panic cluster (E08-D05 D-11)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"Z:title","part":"At 200 % of the 1280 × 800 minimum (640 × 400 CSS px) the drawer is full width","note":"under 400 px of drawer width a row stacks its label over its value; at 320 CSS px nothing scrolls sideways and no value is cut","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"title","part":"CMP-046 modal, right side, 480 CSS px","note":"Non-modal was rejected: the ticket asks for a focus trap, and releasing the live subscription needs a clear close.","Role":"dialog, aria-modal=\"true\", aria-labelledby the title, aria-describedby the identity line","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"scrim","part":"scrim color.surface.sunken at opacity.scrim below the TopBar and the SCR-152 slot","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":21,"id":"SCR-103/keyboard-focus-order","_kind":"keys","_twin":false,"_frames":[{"_w":1000,"_h":1400,"_lab":"compact","_density":"compact"}],"desc":"§10.1","_drawer":"d01","_order":["close","link","act:Open in new chart","act:Open DOM ladder"],"keys":[["Enter on an opener","SCR-102 / SCR-041 menus, SCR-047, SCR-100 menu, palette","open","the title (tabindex=\"-1\"); for section: \"coverage\", the CandleViewer band's heading, scrolled into view"],["Tab, Shift+Tab","drawer","Close → band actions (Retry, Try again) → \"Show all N tiers\" → the tiers region when it scrolls → Recorder settings or Record (Owner) → Open in new chart → Open DOM ladder → Close (trapped)","each control, ring color.focus.ring at border.focus"],["Enter, Space","buttons, the disclosure","activate","stays; a navigation closes the drawer"],["↑ ↓ PageUp PageDown Home End","tiers region","scroll","stays"],["Esc","anywhere in the drawer","close","the opener; if it is gone (SCR-102 closed on \"View symbol info\"), the element that opened that surface (E08-D05 §9.2)"],["Ctrl+= Ctrl+- Ctrl+Shift+H Ctrl+Shift+M","anywhere (05 §3.2 Accessibility bindings)","run with the drawer open: the text scale, high contrast or reduced motion applies and the drawer re-lays out in place (05 §5 items 6–7, 16 §3 rule 4)","stays on the same control; the scroll position is kept"],["? (Shift+/)","anywhere","opens the hotkey cheat sheet over the drawer (05 §3.2 \"Always available\"; 05 §3.4 item 9)","the sheet; when it closes, back where it was in the drawer"],["any other Global Ctrl, Alt or F-key binding","anywhere","closes the drawer, then runs","its target"]],"markers":[{"_at":"title","part":"the title (tabindex=\"-1\"); for section: \"coverage\", the CandleViewer band's heading, scrolled into view","Role":"—","Keyboard":"—","Focus":"the title (tabindex=\"-1\")","Budget":"—","Event":"—"},{"_at":"close","part":"Close → band actions (Retry, Try again) → \"Show all N tiers\" → the tiers region when it scrolls → Recorder settings or Record (Owner) → Open in new chart → Open DOM ladder → Close (trapped)","Role":"—","Keyboard":"Tab, Shift+Tab","Focus":"each control, ring color.focus.ring at border.focus","Budget":"—","Event":"—"},{"_at":"keys","part":"The Accessibility bindings and ? pass through instead of closing the drawer","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"act:Open DOM ladder","part":"If a focused action disappears (a status flip removes Open DOM ladder), focus moves to the status notice (tabindex=\"-1\"), which is announced","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":22,"id":"SCR-103/lifecycle-wireflow","_kind":"flow","_twin":false,"_frames":[{"_w":1600,"_h":900,"_lab":"compact","_density":"compact"}],"desc":"open, live, grace, revision, retry, close","flow":{"nodes":[{"_k":"open","_x":40,"_y":60,"title":"open","lines":["The contract band paints from the client's instrument index when the symbol is in it","GET /instruments/{symbol} runs once per open for tiers and stale_since, never blocking the first paint."]},{"_k":"live","_x":590,"_y":60,"title":"live","lines":["The drawer is one consumer of ticker.{symbol} in the app's ticker store, which subscribes only if no other panel has (US-MKT-005, fan-out)","A band fed only by it turns stale at 5 s (T1) and stays there"]},{"_k":"revision","_x":1140,"_y":60,"title":"revision","lines":["one re-read of the detail; a status change re-renders the bands (§6).","changed rows carry \"Changed\" and the old value, the band says when, and one polite announcement follows."]},{"_k":"retry","_x":40,"_y":520,"title":"retry","lines":["Retry is manual after a failure; each failure is announced once.","the 503 ladder is the only automatic retry, bounded at 60 s."]},{"_k":"close","_x":590,"_y":520,"title":"close","lines":["(Esc, ×, the scrim, a navigation): release the consumer, cancel requests in flight, restore focus."]},{"_k":"grace","_x":1140,"_y":520,"title":"grace","lines":["On close the consumer is released and the store keeps the topic for 30 s, so a reopen within 30 s paints at once with no transition (E08-D02 §4)."]}],"edges":[{"_f":"open","_t":"live","label":"ticker.{symbol}"},{"_f":"live","_t":"revision","label":"an instrument_revision re-snapshot of the live subscription (23 §7.4; nothing sends one yet, H-7), a reconnect or a reopen triggers one re-read"},{"_f":"open","_t":"retry","label":"a 503 is the server still loading (E08-D05's bounded retry ladder), then a failure after 60 s, as is a network error or any other status"},{"_f":"retry","_t":"open","label":"Retry"},{"_f":"live","_t":"close","label":"(Esc, ×, the scrim, a navigation)"},{"_f":"close","_t":"grace","label":"the store keeps the topic for 30 s"},{"_f":"grace","_t":"live","label":"a reopen within 30 s paints at once with no transition"}]},"markers":[{"_at":"open","part":"Open.","Role":"—","Keyboard":"—","Focus":"—","Budget":"warm: within 100 ms, no request, the SCR-079 precedent","Event":"symbol.info_viewed"},{"_at":"live","part":"Live.","note":"Until H-7 ships a producer for the ticker family, a subscription stays snapshot_pending (23 §7.7) and never gets a snap or a d","Role":"—","Keyboard":"—","Focus":"—","Budget":"values repaint text in fixed columns at the topic's 250 ms cadence (23 §6.1), with no layout shift","Event":"—"},{"_at":"revision","part":"Revision and reconnect","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"symbol.info_rules_changed"},{"_at":"retry","part":"Retry keeps focus on the button, sets aria-busy on its band and never loops on its own","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"symbol.info_load_failed"},{"_at":"close","part":"releases the live subscription","Role":"—","Keyboard":"Esc closes and restores focus","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":23,"id":"SCR-103/states-matrix","_kind":"matrix","_twin":false,"_frames":[{"_w":1280,"_h":980,"_lab":"compact","_density":"compact"}],"desc":"§6","matrix":{"head":["State","Contract rules","Live market","Recording in CandleViewer","Header, actions, announcement"],"rows":[["Populated, recorded","rules, sentences, examples","values, no marker (absence is live)","state, coverage, gaps; Owner internals and link","both actions"],["Not recorded","same","same","\"○ Not recorded\" (or its refusal); \"Record this symbol…\" (Q6) and the link","same"],["Not recorded, Manager or Viewer","same","same","\"Only the owner can start recording.\", then \"Recording is set up by the owner.\"","same"],["Not recorded, Owner viewing as","same","same","with rbac.view_as \"Read-only while viewing as alex.\" (§8)","same"],["Stale, T1","unchanged and authoritative","CMP-239 \"Stale 7s\" in the header, \"Last update 06:35:46 UTC\"","unchanged","polite once: \"Live values stale.\" and on exit \"Live values current.\""],["Stale, T2","unchanged","the CMP-078 escalated strip \"Stale 15 s — new orders blocked on BTCUSDT\"","unchanged","the shell's assertive T2 sentence (E17-D01 §7), never repeated here"],["Exchange feed down","unchanged","as stale, labelled \"Stale — exchange feed down\" (E17-D01 §5)","unchanged","as T1"],["Reconnecting, disconnected","unchanged","dims like stale, \"Disconnected — last data 00:12\" (E17-D01 §5), no CMP-239","store frozen; as-of stays","the shell's alert (E17-D01 §7)"],["Awaiting the first tick","unchanged","static CMP-015 rows, aria-busy; after 5 s \"No live values yet\"","unchanged","—"],["Live unavailable","unchanged","\"Live values unavailable — CandleViewer has reached its live-data limit.\"","unchanged","polite once"],["Not trading","fully legible; Status row in words","replaced by \"No live trading data — BTCUSDT is not trading.\"","\"Recorded coverage isn't available for symbols that aren't trading.\"","notice under the title: \"BTCUSDT is not trading on Bybit.\""],["Catalogue loading","static rows + \"Checking Bybit for BTCUSDT…\"","loads on its own","a 422 reading \"Recorded coverage waits for the instrument list.\"","title only"],["Catalogue overdue","D-3 notice; values unchanged","unchanged","unchanged","—"],["Rules changed while open","changed rows tagged \"Changed · was 0.01\"","unchanged","unchanged","polite once: \"Contract rules changed: tick size is now 0.005 USDT, was 0.01.\""],["Contract load failed","CMP-027 error, role=\"alert\" once: \"Couldn't load BTCUSDT's contract rules.\"","loads on its own","as in Catalogue loading (§11.3)","—"],["Not in the instrument list","\"BTCUSDT isn't in Bybit's instrument list as CandleViewer last read it.\"","not subscribed","as Not trading (CR-13)","Open in new chart only"],["Forbidden","T4: \"Your role can't see instruments.\" (E09-D09 rbac.permission)","per its own result","per its own result","—"],["Coverage failed","unchanged","unchanged","CMP-027 warning (polite): \"Couldn't load recorded coverage.\" · Retry","—"],["Tiers unavailable","\"Risk-limit tiers: not available yet\"","—","—","—"],["Recording restricted","—","—","\"Recording status restricted\"","—"],["Clock alarm","—","the countdown shows \"at 08:00:00 UTC (in about 1 h 24 min)\"","—","polite once"],["Opened from a replay surface","unchanged","header adds \"Current market — not the replay time.\"","unchanged","—"],["Demo / live","in demo the provenance line adds \"Bybit live catalogue\"","identical in both: demo has no public feed of its own","what the server reports","the TopBar env band stays live above the scrim (D-14)"]]},"markers":[{"_at":"head","part":"Precedence inside the live band follows E08-D04 §3 and E17-D01 D2: one state at a time (not trading over disconnected over stale over live).","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"r12","part":"Retry keeps focus on the button, sets aria-busy on its band and never loops on its own","note":"the 503 ladder is the only automatic retry, bounded at 60 s.","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"r13","part":"The order line of a contract load failure is gated on CR-10","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":24,"id":"SCR-103/populated-recorded-owner-comfortable","_kind":"drawer","_twin":false,"_frames":[{"_w":480,"_h":1720,"_lab":"comfortable","_density":"comfortable"}],"desc":"board 1 at 32 px rows","_drawer":"d01","markers":[{"_at":"row:Status","part":"32 px (size.row.comfortable, size.control.comfortable; the density mode re-points size.row.height / size.control.height per themes.json)","note":"Rows size.row.height (24 / 32)","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"actions","part":"Targets 24 / 32 px (size.target.min); no essential exception.","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]},
+{"n":25,"id":"SCR-103/not-recorded-non-owner-view-as","_kind":"drawer","_twin":false,"_frames":[{"_w":480,"_h":1220,"_lab":"compact","_density":"compact","label":"Not recorded, Manager or Viewer"},{"_w":480,"_h":1220,"_lab":"compact","_density":"compact","label":"Not recorded, Owner viewing as","_show":"viewAs"}],"desc":"SOLUSDT; Manager or Viewer rbac.owner_only; viewing as rbac.view_as","_drawer":"d25","_viewAs":"d25B","markers":[{"_at":"say:t2","part":"\"○ Not recorded\" (or its refusal); T2 in the sentence form (§8): \"Only the owner can start recording.\", then \"Recording is set up by the owner.\"","note":"The not-recorded state is an empty state whose sole CTA is gated, so both reasons take the sentence form","Role":"text: CMP-026 description in CMP-079's sentence form; no control, glyph or aria-disabled (§8)","Keyboard":"A Manager or Viewer, and the Owner viewing as another user, meet neither Recorder settings nor Record in the Tab order","Focus":"—","Budget":"—","Event":"—"},{"_at":"say:setup","part":"the SCR-140 link hidden (T3) for Manager and Viewer, replaced by E09-D09's sentence \"Recording is set up by the owner.\"","note":"a T2 reason never borrows the T3 sentence","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"B:say:t2","part":"as for a Manager or Viewer, with rbac.view_as \"Read-only while viewing as alex.\" (§8) in place of the owner-only sentence","note":"While the Owner views as another user, every other row follows the target's column, because every read answers as the target (22 View-as, \"Scope\").","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"},{"_at":"B:actions","part":"Both open a new panel, never the focused one, so no armed pane is retargeted (E08-D05 D-10).","Role":"—","Keyboard":"—","Focus":"—","Budget":"—","Event":"—"}]}
+]}/*DATA-END*/;
+
+// ---------------------------------------------------------------- single writer -----------------------------
+if (typeof storage === "undefined" || storage.hpe1inst !== WRITER) {
+  return { skip: typeof storage === "undefined" ? null : storage.hpe1inst, note: "not the writer instance — run probe.js, pick one stamp, set WRITER" };
+}
+
+// ---------------------------------------------------------------- guard ------------------------------------
+const warnings = [];
+const warn = (where, e) => warnings.push(where + ": " + (e && e.message ? e.message : String(e)));
+if (!penpot.currentFile || penpot.currentFile.id !== FILE_ID) {
+  return { abort: "file", current: penpot.currentFile ? { id: penpot.currentFile.id, name: penpot.currentFile.name } : null };
+}
+
+// ---------------------------------------------------------------- token catalogue (read once, synchronous) ---
+// TokenCatalog.sets (ordered; "when the same token name exists in several active sets, the latter has precedence"),
+// TokenSet.name / .active / .tokens; a set is found by exact name, else by its last path segment.
+const TOK = { ok: false, sets: {}, idx: {}, found: {}, activeSets: [] };
+try {
+  const cat = penpot.library && penpot.library.local ? penpot.library.local.tokens : null;
+  const sets = (cat && cat.sets) || [];
+  for (const want of SET_NAMES) {
+    let s = null;
+    for (const x of sets) if (!s && x && x.name === want) s = x;
+    for (const x of sets) if (!s && x && String(x.name).split("/").pop() === want) s = x;
+    const m = new Map();
+    if (s) { try { for (const t of s.tokens || []) if (t && t.name) m.set(t.name, t); } catch (e) { warn("tokens " + want, e); } }
+    TOK.sets[want] = s; TOK.idx[want] = m;
+    TOK.found[want] = s ? { name: s.name, active: !!s.active, tokens: m.size } : null;
+  }
+  for (const x of sets) if (x && x.active) TOK.activeSets.push(x.name);
+  TOK.ok = !!(TOK.sets["primitives"] && TOK.sets["semantic-dark"] && TOK.idx["semantic-dark"].size);
+} catch (e) { warn("tokens", e); }
+if (!TOK.ok) {
+  return { abort: "tokens", found: TOK.found, warnings, note: "the file has no usable primitives + semantic-dark token sets (penpot.library.local.tokens): sync packages/ui/tokens first; nothing was drawn" };
+}
+const safe = (f, d) => { try { return f(); } catch (e) { return d; } };
+function rawOf(setName, name) { // the theme stack's winning token object for a name (later sets win), or null
+  const st = STACK[setName] || [setName];
+  for (let i = st.length - 1; i >= 0; i--) { const m = TOK.idx[st[i]]; const t = m && m.get(name); if (t) return { tok: t, set: st[i] }; }
+  return null;
+}
+const RES = {};
+function resolveIn(setName, name, depth) { // a token's value in a theme stack, following {references} (raw `value`s only)
+  const key = setName + "|" + name;
+  if (key in RES) return RES[key];
+  let val = null;
+  const r = rawOf(setName, name);
+  if (r) {
+    const v = safe(() => r.tok.value, null);
+    if (typeof v === "string") {
+      const m = /^\{([^}]+)\}$/.exec(v.trim());
+      val = m ? ((depth || 0) < 12 ? resolveIn(setName, m[1], (depth || 0) + 1) : null) : v.trim();
+    } else if (typeof v === "number") val = String(v);
+  }
+  RES[key] = val;
+  return val;
+}
+function hexOf(v) { // "#rgb", "#rrggbb", "#rrggbbaa", "rgb(...)", "rgba(...)" -> { hex: "#RRGGBB", a } or null
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  let m = /^#([0-9a-f]{3})$/i.exec(s);
+  if (m) { const c = m[1]; return { hex: ("#" + c[0] + c[0] + c[1] + c[1] + c[2] + c[2]).toUpperCase(), a: 1 }; }
+  m = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(s);
+  if (m) return { hex: ("#" + m[1]).toUpperCase(), a: m[2] ? parseInt(m[2], 16) / 255 : 1 };
+  m = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)(?:[\s,/]+([\d.]+)(%?))?\s*\)$/i.exec(s);
+  if (m) {
+    const h = (n) => ("0" + Math.max(0, Math.min(255, Math.round(+n))).toString(16)).slice(-2);
+    const a = m[4] == null ? 1 : (m[5] ? +m[4] / 100 : +m[4]);
+    return { hex: ("#" + h(m[1]) + h(m[2]) + h(m[3])).toUpperCase(), a };
+  }
+  return null;
+}
+function sameColour(a, b) { const x = hexOf(a), y = hexOf(b); return !!(x && y && x.hex === y.hex && Math.abs(x.a - y.a) < 0.01); }
+const OVERRIDES = ["semantic-light", "semantic-hc"];
+function themeInvariant(name) { // a token no theme overrides (only primitives / semantic-dark carry it)
+  for (const s of OVERRIDES) if (TOK.idx[s] && TOK.idx[s].has(name)) return false;
+  return true;
+}
+function activeTheme() { // the theme whose stack the ACTIVE sets reproduce, judged on four colour tokens
+  const probe = ["color.surface.overlay", "color.text.primary", "color.text.tertiary", "color.focus.ring"];
+  for (const th of ["light", "hc", "dark"]) {
+    const set = THEME_SET[th];
+    if (!TOK.sets[set]) continue;
+    let ok = true;
+    for (const n of probe) { const r = rawOf(set, n); if (!r || !sameColour(safe(() => r.tok.resolvedValue), resolveIn(set, n))) { ok = false; break; } }
+    if (ok) return th;
+  }
+  return null;
+}
+const ACTIVE_THEME = activeTheme();
+
+// ---------------------------------------------------------------- bindToken (guarded; never throws) ----------
+const BIND = { live: 0, recorded: 0, missing: 0, failed: 0 };
+const ACT = new Map(); // token name -> the value the ACTIVE sets resolve (TokenBase.resolvedValue), read once per name
+function activeValue(tok) { if (!ACT.has(tok.name)) ACT.set(tok.name, safe(() => tok.resolvedValue, undefined)); return ACT.get(tok.name); }
+const QUEUE = new Map(); // setName|token|props -> { tok, props, shapes } — applied in batches (applyToShapes) per board
+const RECS = new Map(); // shape -> { prop: record } — written to plugin data TAG + ":tok" per board
+const MISSING = new Map(); // a token the spec names that does not exist -> the documented interim drawn instead
+const ABSENT = new Map(); // a token this script binds that the file's sets lack -> count
+function record(shape, props, rec) { let r = RECS.get(shape); if (!r) { r = {}; RECS.set(shape, r); } for (const p of props) r[p] = rec; }
+function bindToken(shape, setName, tokenName, props) {
+  try {
+    const rec = { t: tokenName, s: setName, b: 0 }; // token, set, bound (1) or recorded only (0); w = why not bound
+    const raw = rawOf(setName, tokenName);
+    if (!raw) {
+      BIND.missing++; ABSENT.set(tokenName, (ABSENT.get(tokenName) || 0) + 1);
+      rec.w = "absent"; // not in the file's sets of this theme stack
+      record(shape, props, rec);
+      return false;
+    }
+    let live = BIND_MODE === "all";
+    if (BIND_MODE === "active") {
+      const want = resolveIn(setName, tokenName);
+      const isColour = !!hexOf(want);
+      live = isColour ? sameColour(activeValue(raw.tok), want) : themeInvariant(tokenName);
+      if (!live) rec.w = "inactive"; // by name, the active sets would resolve another value
+    }
+    if (live) {
+      const key = setName + "|" + tokenName + "|" + props.join(",");
+      let q = QUEUE.get(key);
+      if (!q) { q = { tok: raw.tok, props: props.slice(), shapes: [] }; QUEUE.set(key, q); }
+      q.shapes.push(shape);
+      rec.b = 1; BIND.live++;
+    } else BIND.recorded++;
+    record(shape, props, rec);
+    return rec.b === 1;
+  } catch (e) { BIND.failed++; warn("bindToken " + tokenName, e); return false; }
+}
+function flushBindings() { // batched application (asynchronous in Penpot); then the binding records into plugin data
+  for (const q of QUEUE.values()) {
+    let done = false;
+    try { if (typeof q.tok.applyToShapes === "function") { q.tok.applyToShapes(q.shapes, q.props); done = true; } } catch (e) { warn("applyToShapes " + q.tok.name, e); }
+    if (!done) for (const s of q.shapes) { try { s.applyToken(q.tok, q.props); } catch (e) { BIND.failed++; warn("applyToken " + q.tok.name, e); break; } }
+  }
+  QUEUE.clear();
+  for (const [s, r] of RECS) { try { s.setPluginData(TAG + ":tok", JSON.stringify(r)); } catch (e) { warn("tok record", e); } }
+  RECS.clear();
+}
+function noteMissing(name, interim) { if (!MISSING.has(name)) MISSING.set(name, interim); }
+// the token names spec §16.4 and the handoff's Tokens lines name but packages/ui/tokens does not publish: how each is drawn
+const MISSING_HOW = {
+  "size.drawer": "the drawer is drawn 480 px wide (spec D-14, Q7); no width token is bound",
+  "motion.shimmer": "none: skeleton rows are static (spec §10.3)",
+  "font.mono": "type.num.base (spec §16.4 A-5)",
+  "color.text.buy / color.text.sell": "the sign in text, color.text.primary (handoff CMP-126 table 1)",
+  "font.size.body / font.size.label": "type.ui.body / type.ui.caption (spec §16.4 A-2)",
+  "motion.slide": "not drawn: a static board; motion.duration.normal with motion.easing.decelerate / .accelerate (spec §16.4 A-3)",
+};
+
+// ---------------------------------------------------------------- roles -> token names ------------------------
+// A role names the token the spec (§3, §6, §7, §9, §13) or the handoff binds. The skeleton bar (CMP-015) is not given a
+// colour token by the spec: color.surface.selected, as E08-D05 draws it (listed in the report as a source gap).
+const ROLES = {
+  app: "color.surface.app", canvas: "color.surface.canvas", raised: "color.surface.raised", overlay: "color.surface.overlay",
+  sunken: "color.surface.sunken", selected: "color.surface.selected",
+  staleSurface: "color.data-confidence.stale.surface", staleText: "color.data-confidence.stale.text",
+  staleInd: "color.data-confidence.stale.indicator",
+  delText: "color.data-confidence.delisted.text", delInd: "color.data-confidence.delisted.indicator",
+  borderSubtle: "color.border.subtle", borderDefault: "color.border.default", borderStrong: "color.border.strong",
+  text: "color.text.primary", text2: "color.text.secondary", text3: "color.text.tertiary", inverse: "color.text.inverse",
+  link: "color.text.link", onAction: "color.text.on-action",
+  primary: "color.action.primary.default", secondary: "color.action.secondary.default",
+  focus: "color.focus.ring",
+  warnStrong: "color.status.warning.strong", warnSubtle: "color.status.warning.subtle",
+  dangerStrong: "color.status.danger.strong", dangerSubtle: "color.status.danger.subtle",
+  infoStrong: "color.status.info.strong", infoSubtle: "color.status.info.subtle",
+  envDemo: "color.env.demo",
+  candleUp: "color.candle.up", candleDown: "color.candle.down", wick: "color.candle.wick", grid: "color.grid.line",
+};
+const FALLBACK_ROLE = { text: "text", fill: "overlay", stroke: "borderDefault" };
+let CUR = { theme: "dark", set: NOTE_SET, density: "compact" }; // the frame being drawn
+function roleTok(role) {
+  const r = ROLES[role];
+  if (!r) { warn("role", "unknown role " + role); return null; }
+  if (typeof r === "string") return { tok: r, miss: null };
+  const th = r[CUR.theme];
+  if (th) return { tok: th[0], miss: th[1] };
+  return { tok: r.tok, miss: r.miss || null };
+}
+function valueFor(role, kind) { // -> { tok, miss, v: {hex, a} } in the current theme stack; falls back (warned) if unresolvable
+  let t = roleTok(role);
+  let v = t ? hexOf(resolveIn(CUR.set, t.tok)) : null;
+  if (!v) {
+    const fb = roleTok(FALLBACK_ROLE[kind] || "text");
+    warn("token", (t ? t.tok : role) + " does not resolve in " + CUR.set + "; painted with " + (fb ? fb.tok : "?"));
+    t = fb; v = fb ? hexOf(resolveIn(CUR.set, fb.tok)) : null;
+  }
+  if (t && t.miss) noteMissing(t.miss, t.tok);
+  return t && v ? { tok: t.tok, miss: t.miss, v } : null;
+}
+function paintFill(s, role, opacity) {
+  const c = valueFor(role, "fill");
+  if (!c) { s.fills = []; return; }
+  s.fills = [{ fillColor: c.v.hex, fillOpacity: opacity == null ? c.v.a : opacity }];
+  bindToken(s, CUR.set, c.tok, ["fill"]);
+  if (c.miss) record(s, ["interim"], { i: c.miss, d: c.tok });
+}
+function paintText(s, role) {
+  const c = valueFor(role, "text");
+  if (!c) return;
+  s.fills = [{ fillColor: c.v.hex, fillOpacity: c.v.a }];
+  bindToken(s, CUR.set, c.tok, ["fill"]);
+  if (c.miss) record(s, ["interim"], { i: c.miss, d: c.tok });
+}
+function paintStroke(s, role, width, style, align) {
+  const c = valueFor(role, "stroke");
+  if (!c) { s.strokes = []; return; }
+  s.strokes = [{ strokeColor: c.v.hex, strokeOpacity: c.v.a, strokeWidth: width || 1, strokeStyle: style || "solid", strokeAlignment: align || "inner" }];
+  bindToken(s, CUR.set, c.tok, ["strokeColor"]);
+  if (c.miss) record(s, ["interimStroke"], { i: c.miss, d: c.tok });
+}
+function bindNamed(s, tokenName, props) { if (BIND_TYPE) bindToken(s, CUR.set, tokenName, props); } // non-colour tokens
+const RADIUS_PROPS = ["borderRadiusTopLeft", "borderRadiusTopRight", "borderRadiusBottomRight", "borderRadiusBottomLeft"];
+
+// ---------------------------------------------------------------- page (by name; pin PAGE_ID later) ---------
+const norm = (s) => String(s || "").replace(/\s*\/\s*/g, "/");
+const pages = penpot.currentFile.pages || [];
+function classifyPage(p) {
+  const out = { id: p.id, name: p.name, ours: 0, foreign: 0, unknown: false };
+  try {
+    for (const s of (p.root && p.root.children) || []) { if (norm(s.name).startsWith(TICKET + "/")) out.ours++; else out.foreign++; }
+  } catch (e) { out.unknown = true; warn("classify " + p.id, e); }
+  return out;
+}
+const named = pages.filter((p) => p.name === PAGE_NAME).map(classifyPage);
+let page = PAGE_ID ? pages.find((p) => p.id === PAGE_ID) || null : null;
+if (!page && named.length) {
+  const clean = named.filter((c) => !c.unknown && c.foreign === 0);
+  if (!clean.length) return { abort: "all-candidate-pages-hold-foreign-content", pages: named, note: "decide by hand which page is ours; nothing was touched" };
+  clean.sort((a, b) => (b.ours - a.ours));
+  page = pages.find((p) => p.id === clean[0].id) || null;
+}
+const duplicatePages = named.filter((c) => !page || c.id !== page.id).map((c) => Object.assign({}, c, {
+  action: c.unknown ? "keep — shapes unreadable; probe read-only, decide by hand"
+    : c.foreign > 0 ? "keep — foreign content; never ours to delete"
+    : c.ours > 0 ? "delete MANUALLY in the Penpot UI after this build, once a read-only probe shows it holds only " + TICKET + " / frames"
+    : "delete MANUALLY in the Penpot UI (empty page)",
+}));
+let createdPage = false;
+if (!page) { page = penpot.createPage(); page.name = PAGE_NAME; createdPage = true; }
+if (!penpot.currentPage || penpot.currentPage.id !== page.id) {
+  try { const r = penpot.openPage(page); if (r && typeof r.then === "function") await r; } catch (e) { warn("openPage", e); }
+}
+if (!penpot.currentPage || penpot.currentPage.id !== page.id) {
+  return { retry: true, pageId: page.id, pageName: page.name, createdPage, note: "page not current yet — run again, or open it in the UI first" };
+}
+// ---- from here on: synchronous only (no await) ----
+
+// ---------------------------------------------------------------- fonts (exact ids, explicit, read back) ---
+const FONTS = (() => { try { return (penpot.fonts && penpot.fonts.all) || []; } catch (e) { warn("fonts.all", e); return []; } })();
+const FONT_INTER = FONTS.find((f) => f && f.fontId === "gfont-inter") || null;
+const FONT_MONO = FONTS.find((f) => f && f.fontId === "gfont-jetbrains-mono") || null;
+if (!FONT_INTER) warn("fonts", "gfont-inter is not in penpot.fonts.all — texts carry the explicit fontId / fontFamily only");
+if (!FONT_MONO) warn("fonts", "gfont-jetbrains-mono is not in penpot.fonts.all — texts carry the explicit fontId / fontFamily only");
+const VARIANT = { 400: "regular", 500: "500", 600: "600", 700: "700" }; // never "normal-400"
+const fontIssues = new Map();
+function fontIssue(sig) { const n = (fontIssues.get(sig) || 0) + 1; fontIssues.set(sig, n); if (n === 1) warn("font", sig); }
+function fontSpec(mono, weight) {
+  const w = VARIANT[weight] ? weight : 400;
+  const f = mono ? FONT_MONO : FONT_INTER;
+  const id = mono ? "gfont-jetbrains-mono" : "gfont-inter";
+  let v = null;
+  if (f) { try { v = (f.variants || []).find((x) => x && x.fontVariantId === VARIANT[w]) || null; } catch (e) { v = null; } if (!v) fontIssue(id + " lists no variant " + VARIANT[w]); }
+  return { f, v, fontId: id, fontFamily: (f && f.fontFamily) || (mono ? "JetBrains Mono" : "Inter"), fontVariantId: VARIANT[w], fontWeight: String(w) };
+}
+function readBack(t, fs) {
+  try {
+    for (const k of ["fontId", "fontFamily", "fontVariantId", "fontWeight"]) {
+      const got = String(t[k]);
+      if (got !== fs[k]) fontIssue("read-back " + k + " wanted " + fs[k] + " got " + got);
+    }
+  } catch (e) { fontIssue("read-back failed: " + (e && e.message ? e.message : e)); }
+}
+// The type styles the spec names (§3), with their values in primitives at HEAD (the typography token, when bound,
+// sets the same family, size, weight and line height); unnamed text uses the same scale without a token.
+const TYPE = {
+  "type.ui.heading-md": { mono: false, size: 16, weight: 600, lh: 1.2 },
+  "type.ui.heading-sm": { mono: false, size: 14, weight: 600, lh: 1.2 },
+  "type.ui.body": { mono: false, size: 13, weight: 400, lh: 1.4 },
+  "type.ui.caption": { mono: false, size: 11, weight: 400, lh: 1.2 },
+  "type.num.base": { mono: true, size: 13, weight: 400, lh: 1.2 },
+};
+(function checkScale() { // warn when the file's type scale differs from the sizes this layout assumes
+  const want = { "font.size.xs": "11", "font.size.base": "13", "font.size.md": "14", "font.size.lg": "16", "font.weight.semibold": "600", "font.lineheight.tight": "1.2", "font.lineheight.normal": "1.4" };
+  for (const k of Object.keys(want)) { const v = resolveIn(NOTE_SET, k); if (v != null && String(v) !== want[k]) warn("type scale", k + " is " + v + " in the file, the layout assumes " + want[k]); }
+})();
+
+// ---------------------------------------------------------------- helpers (pattern idiom) ---------------------
+function set(obj, props) { for (const k of Object.keys(props)) { try { obj[k] = props[k]; } catch (e) { warn("set " + k, e); } } }
+function tag(shape, meta) {
+  try { shape.setPluginData(TAG, "v1"); shape.setPluginData(TAG + ":meta", JSON.stringify(meta || {})); } catch (e) { warn("tag", e); }
+}
+function pad2(n) { return (n < 10 ? "0" : "") + n; }
+function estLines(str, w, size, mono) {
+  const cpl = Math.max(6, Math.floor(w / (size * (mono ? 0.62 : 0.56))));
+  let lines = 0;
+  for (const para of String(str).split("\n")) lines += Math.max(1, Math.ceil(para.length / cpl));
+  return lines;
+}
+function estH(str, w, size, mono) { return Math.ceil((estLines(str, w, size, mono) + 0.4) * size * 1.38) + 6; } // multi-line blocks
+function lineH(size, lh) { return Math.ceil(size * (lh || 1.3)) + 2; } // one line
+// Per-character advances in em (Chromium, the Google Fonts files): Inter 400 and 700 (other weights interpolated) and
+// JetBrains Mono's glyphs that are not 0.6 em; build_board.py copies them from the text-fit gate's table.
+const ADV_TAB = /*ADV-BEGIN*/{"i4":{"0":0.6309,"1":0.4067,"2":0.6099,"3":0.6177,"4":0.646,"5":0.5933,"6":0.6201,"7":0.5659,"8":0.6187,"9":0.6201," ":0.2813,"!":0.2876,"\"":0.4658,"#":0.6333,"$":0.6416,"%":0.9819,"&":0.644,"'":0.2998,"(":0.3647,")":0.3647,"*":0.501,"+":0.6616,",":0.2881,"-":0.46,".":0.2881,"/":0.3604,":":0.2881,";":0.3018,"<":0.6616,"=":0.6616,">":0.6616,"?":0.5112,"@":0.9658,"A":0.6899,"B":0.6543,"C":0.7305,"D":0.7217,"E":0.6011,"F":0.5903,"G":0.7461,"H":0.7432,"I":0.2686,"J":0.5708,"K":0.6719,"L":0.5654,"M":0.9033,"N":0.7534,"O":0.7646,"P":0.6387,"Q":0.7646,"R":0.6436,"S":0.6416,"T":0.6455,"U":0.7441,"V":0.6899,"W":0.9854,"X":0.6821,"Y":0.6787,"Z":0.6289,"[":0.3647,"\\":0.3604,"]":0.3647,"^":0.4712,"_":0.4561,"`":0.3228,"a":0.5615,"b":0.6123,"c":0.5713,"d":0.6123,"e":0.583,"f":0.3701,"g":0.6133,"h":0.5913,"i":0.2422,"j":0.2422,"k":0.5488,"l":0.2422,"m":0.876,"n":0.5908,"o":0.5996,"p":0.6123,"q":0.6123,"r":0.3765,"s":0.5278,"t":0.3271,"u":0.5913,"v":0.562,"w":0.8184,"x":0.5459,"y":0.562,"z":0.5522,"{":0.4263,"|":0.3325,"}":0.4263,"~":0.6616," ":0.2813,"£":0.6108,"¥":0.5498,"§":0.5684,"«":0.5825,"°":0.4556,"±":0.6616,"²":0.4419,"³":0.4458,"µ":0.5859,"¶":0.6025,"·":0.2881,"¹":0.3042,"»":0.5825,"¼":0.8022,"½":0.8472,"¾":0.8818,"×":0.6616,"÷":0.6616,"Δ":0.6812,"Σ":0.689,"π":0.605,"σ":0.624,"τ":0.4658,"–":0.5,"—":1.0,"‖":0.2808,"‘":0.2607,"’":0.2607,"“":0.4404,"”":0.4404,"†":0.4912,"‡":0.5,"•":0.5625,"…":0.8643,"′":0.2227,"″":0.4424,"‹":0.3843,"›":0.3843,"₀":0.3486,"€":0.6665,"ℹ":0.3799,"←":1.0,"↑":0.834,"→":1.0,"↓":0.834,"↔":1.0,"↳":0.8379,"↺":0.8379,"↻":0.8379,"⇄":0.8379,"⇒":0.8379,"⇧":0.8379,"∆":0.6118,"∈":0.8711,"∑":0.7129,"−":0.6616,"√":0.5488,"∝":0.7144,"∞":0.7129,"≈":0.5488,"≠":0.5488,"≤":0.5488,"≥":0.5488,"⊗":0.8379,"⊘":0.8379,"⋯":1.0,"⌃":0.8379,"⌄":0.8379,"⌖":0.563,"⌘":1.0,"⌥":1.1523,"⌫":1.4141,"⎋":0.791,"⏎":0.8379,"①":0.8965,"②":0.8965,"③":0.8965,"ⓘ":1.0,"⓵":1.0,"─":0.7085,"│":0.7085,"░":0.7085,"▒":0.7085,"■":0.604,"□":0.604,"▣":0.9448,"▤":0.9448,"▪":0.3545,"▲":0.9897,"△":0.769,"▶":0.769,"▸":0.502,"▼":0.9897,"▽":0.769,"▾":0.502,"◂":0.502,"◆":0.769,"◇":0.769,"◉":0.8726,"○":0.604,"◌":0.5942,"●":0.604,"◐":0.604,"◷":0.8726,"☐":0.8965,"☑":0.8965,"⚠":0.8965,"⛔":1.2477,"⛨":0.75,"✓":0.8379,"✔":0.8379,"✕":0.8379,"✗":0.8379,"⟳":0.8379,"⧉":0.714,"📅":1.2477,"🔒":1.2477,"🔓":1.2477},"i7":{"0":0.6743,"1":0.4312,"2":0.6299,"3":0.6455,"4":0.6763,"5":0.6221,"6":0.6494,"7":0.5815,"8":0.6509,"9":0.6494," ":0.2368,"!":0.3379,"\"":0.5518,"#":0.6489,"$":0.6548,"%":1.0156,"&":0.6719,"'":0.3389,"(":0.377,")":0.377,"*":0.5591,"+":0.6787,",":0.334,"-":0.4678,".":0.334,"/":0.3882,":":0.334,";":0.3428,"<":0.6787,"=":0.6787,">":0.6787,"?":0.5596,"@":1.0161,"A":0.7466,"B":0.6616,"C":0.7397,"D":0.7222,"E":0.6074,"F":0.5869,"G":0.7505,"H":0.7471,"I":0.2808,"J":0.5845,"K":0.7192,"L":0.5654,"M":0.9316,"N":0.7622,"O":0.7705,"P":0.6479,"Q":0.7769,"R":0.6567,"S":0.6548,"T":0.6675,"U":0.7319,"V":0.7466,"W":1.0376,"X":0.7383,"Y":0.731,"Z":0.6641,"[":0.377,"\\":0.3882,"]":0.377,"^":0.4868,"_":0.4761,"`":0.3652,"a":0.5806,"b":0.6304,"c":0.5884,"d":0.6304,"e":0.5957,"f":0.3979,"g":0.6318,"h":0.6226,"i":0.271,"j":0.271,"k":0.5801,"l":0.271,"m":0.9126,"n":0.6226,"o":0.6133,"p":0.6304,"q":0.6304,"r":0.4072,"s":0.5601,"t":0.3662,"u":0.6226,"v":0.5996,"w":0.8501,"x":0.5801,"y":0.6021,"z":0.5728,"{":0.4688,"|":0.3716,"}":0.4688,"~":0.6787," ":0.2368,"£":0.6387,"¥":0.5703,"§":0.5684,"«":0.6602,"°":0.4595,"±":0.6787,"²":0.46,"³":0.4717,"µ":0.6279,"¶":0.5986,"·":0.334,"¹":0.333,"»":0.6602,"¼":0.8457,"½":0.8813,"¾":0.9199,"×":0.6787,"÷":0.6787,"Δ":0.7427,"Σ":0.6934,"π":0.6392,"σ":0.6509,"τ":0.5103,"–":0.5,"—":1.0,"‖":0.3242,"‘":0.3105,"’":0.3105,"“":0.54,"”":0.5317,"†":0.583,"‡":0.5,"•":0.4741,"…":1.002,"′":0.2744,"″":0.5474,"‹":0.4312,"›":0.4312,"₀":0.2998,"€":0.6846,"ℹ":0.3799,"←":1.0,"↑":0.9053,"→":1.0,"↓":0.9053,"↔":1.0,"↳":0.8379,"↺":0.8379,"↻":0.8379,"⇄":0.8379,"⇒":0.8379,"⇧":0.8379,"∆":0.6118,"∈":0.8711,"∑":0.7129,"−":0.6787,"√":0.5488,"∝":0.7144,"∞":0.7129,"≈":0.5488,"≠":0.5488,"≤":0.5488,"≥":0.5488,"⊗":0.8379,"⊘":0.8379,"⋯":1.0,"⌃":0.8379,"⌄":0.8379,"⌖":0.563,"⌘":1.0,"⌥":1.1523,"⌫":1.4141,"⎋":0.791,"⏎":0.8379,"①":0.8965,"②":0.8965,"③":0.8965,"ⓘ":1.0,"⓵":1.0,"─":0.7085,"│":0.7085,"░":0.7085,"▒":0.7085,"■":0.604,"□":0.604,"▣":0.9448,"▤":0.9448,"▪":0.3545,"▲":0.9897,"△":0.769,"▶":0.769,"▸":0.502,"▼":0.9897,"▽":0.769,"▾":0.502,"◂":0.502,"◆":0.769,"◇":0.769,"◉":0.8726,"○":0.604,"◌":0.5942,"●":0.604,"◐":0.604,"◷":0.8726,"☐":0.8965,"☑":0.8965,"⚠":0.8965,"⛔":1.2477,"⛨":0.75,"✓":0.8379,"✔":0.8379,"✕":0.8379,"✗":0.8379,"⟳":0.8379,"⧉":0.714,"📅":1.2477,"🔒":1.2477,"🔓":1.2477},"m":{"‖":0.2808,"‡":0.5,"₀":0.3486,"ℹ":0.3799,"←":1.0,"→":1.0,"↔":1.0,"↳":0.8379,"↺":0.8379,"↻":0.8379,"⇄":0.8379,"⇒":0.8379,"⇧":0.8379,"∆":0.6118,"∈":0.8711,"∑":0.7129,"√":0.5488,"∝":0.7144,"∞":0.7129,"≈":0.5488,"≠":0.5488,"≤":0.5488,"≥":0.5488,"⊗":0.8379,"⊘":0.8379,"⋯":1.0,"⌃":0.8379,"⌄":0.8379,"⌖":0.563,"⌘":1.0,"⌥":1.1523,"⌫":1.4141,"⎋":0.791,"⏎":0.8379,"①":0.8965,"②":0.8965,"③":0.8965,"ⓘ":1.0,"⓵":1.0,"─":0.7085,"│":0.7085,"░":0.7085,"▒":0.7085,"■":0.604,"□":0.604,"▣":0.9448,"▤":0.9448,"▪":0.3545,"▲":0.9897,"△":0.769,"▶":0.769,"▸":0.502,"▼":0.9897,"▽":0.769,"▾":0.502,"◂":0.502,"◆":0.769,"◇":0.769,"◉":0.8726,"○":0.604,"◌":0.5942,"●":0.604,"◐":0.604,"◷":0.8726,"☐":0.8965,"☑":0.8965,"⚠":0.8965,"⛔":1.2477,"⛨":0.75,"✓":0.8379,"✔":0.8379,"✕":0.8379,"✗":0.8379,"⟳":0.8379,"⧉":0.714,"📅":1.2477,"🔒":1.2477,"🔓":1.2477}}/*ADV-END*/;
+function advOf(ch, weight, mono) {
+  if (mono) { const v = ADV_TAB.m[ch]; return v == null ? 0.6 : v; }
+  const a = ADV_TAB.i4[ch], b = ADV_TAB.i7[ch];
+  if (a == null || b == null) return 1.0;
+  const t = Math.max(0, Math.min(1, ((weight || 400) - 400) / 300));
+  return a + t * (b - a);
+}
+function tw(str, size, mono, weight) { // one-line box width: real advances + 2 %, never under the 0.56 / 0.62 em estimate (estH), + 4 px
+  let em = 0, n = 0;
+  for (const ch of String(str)) { em += advOf(ch, weight, mono); n++; }
+  return Math.ceil(Math.max(em * 1.02, n * (mono ? 0.62 : 0.56)) * size) + 4;
+}
+let created = 0;
+let ANCH = null; // anchors of the board being drawn: key -> [x, y] (the first frame that draws a part wins)
+function anchor(key, x, y) { if (ANCH && !ANCH[key]) ANCH[key] = [x, y]; }
+// o: size, weight, mono, lh, role (colour role), align, grow ("w" auto-width | "h" auto-height | "fixed"), ty (typography
+// token), fw (font-weight token), deco, name, blk / stk / idx / after (relayout stacking tags)
+function mkText(parent, str, x, y, w, o) {
+  o = o || {};
+  if (str == null || String(str) === "") { warn("mkText", "empty string for " + (o.name || "text")); return null; }
+  let t = null;
+  try { t = penpot.createText(String(str)); } catch (e) { warn("createText", e); }
+  if (!t) { warn("createText", "returned null for: " + String(str).slice(0, 40)); return null; }
+  created++;
+  t.name = TICKET + " / " + (o.name || "text");
+  const ty = o.ty && TYPE[o.ty] ? TYPE[o.ty] : null;
+  const size = ty ? ty.size : (o.size || 12);
+  const weight = o.weight || (ty ? ty.weight : 400);
+  const mono = ty ? ty.mono : !!o.mono;
+  const lh = o.lh || (ty ? ty.lh : 1.3);
+  o.size = size; o.weight = weight; o.mono = mono; // the effective type, readable by the text-fit gate
+  const fs = fontSpec(mono, weight);
+  try { if (fs.f) fs.f.applyToText(t, fs.v || undefined); } catch (e) { warn("applyToText", e); }
+  set(t, { fontId: fs.fontId, fontFamily: fs.fontFamily, fontVariantId: fs.fontVariantId, fontWeight: fs.fontWeight, fontSize: String(size), lineHeight: String(lh), align: o.align || "left" });
+  if (o.deco) set(t, { textDecoration: o.deco });
+  readBack(t, fs);
+  const multi = o.grow === "h";
+  const h = multi ? (o.tight ? blockH(str, w, size, lh, weight >= 600, mono) : estH(str, w, size, mono)) : lineH(size, lh); // tight: UI copy laid out by blockH
+  try { t.resize(Math.max(1, w), h); } catch (e) { warn("resize text", e); }
+  set(t, { growType: multi ? "auto-height" : (o.grow === "fixed" ? "fixed" : "auto-width") }); // after resize(), which sets "fixed"
+  t.x = x; t.y = y;
+  paintText(t, o.role || "text");
+  if (o.ty) { bindNamed(t, o.ty, ["typography"]); if (/^type\.num\./.test(o.ty)) noteMissing("font.mono", "type.num.base"); }
+  if (o.fw) bindNamed(t, o.fw, ["fontWeight"]);
+  tag(t, { role: "text", blk: o.blk, stk: o.stk, idx: o.idx, after: o.after });
+  parent.appendChild(t);
+  return { shape: t, h };
+}
+// o: stroke (role), sw, dash, radius (+ radiusTok), shadowTok, layerOpacity (+ opacityTok), fillOpacity, name, role, blk...
+function mkRect(parent, x, y, w, h, fillRole, o) {
+  o = o || {};
+  const r = penpot.createRectangle();
+  created++;
+  r.name = TICKET + " / " + (o.name || "rect");
+  r.x = x; r.y = y; r.resize(Math.max(1, w), Math.max(1, h));
+  if (fillRole) paintFill(r, fillRole, o.fillOpacity); else r.fills = [];
+  if (o.stroke) paintStroke(r, o.stroke, o.sw || 1, o.dash ? "dashed" : "solid", o.align || "inner");
+  if (o.radius) set(r, { borderRadius: o.radius });
+  if (o.radiusTok) bindNamed(r, o.radiusTok, RADIUS_PROPS);
+  if (o.shadowTok) bindNamed(r, o.shadowTok, ["shadow"]);
+  if (o.layerOpacity != null) set(r, { opacity: o.layerOpacity });
+  if (o.opacityTok) bindNamed(r, o.opacityTok, ["opacity"]);
+  if (o.swTok) bindNamed(r, o.swTok, ["strokeWidth"]);
+  tag(r, { role: o.role || "rect", blk: o.blk, stk: o.stk, idx: o.idx, bg: !!o.bg, pad: o.pad, gap: o.gap });
+  parent.appendChild(r);
+  return r;
+}
+function mkEllipse(parent, x, y, w, h, fillRole, o) {
+  o = o || {};
+  let e = null;
+  try { e = penpot.createEllipse(); } catch (err) { e = null; }
+  if (!e) return mkRect(parent, x, y, w, h, fillRole, Object.assign({ radius: Math.min(w, h) / 2 }, o));
+  created++;
+  e.name = TICKET + " / " + (o.name || "ellipse");
+  e.x = x; e.y = y; e.resize(w, h);
+  if (fillRole) paintFill(e, fillRole); else e.fills = [];
+  if (o.stroke) paintStroke(e, o.stroke, o.sw || 1, "solid", o.outer ? "outer" : "inner");
+  tag(e, { role: o.role || "ellipse", blk: o.blk, stk: o.stk, idx: o.idx });
+  parent.appendChild(e);
+  return e;
+}
+let pathFallback = false; // set once createPath/content fails, so every later line draws a thin rect without retrying
+function mkPath(parent, content, o) { // one path from an absolute-coordinate content string; null => the caller falls back
+  o = o || {};
+  if (pathFallback || typeof penpot.createPath !== "function") { pathFallback = true; return null; }
+  let p = null;
+  try {
+    p = penpot.createPath();
+    p.name = TICKET + " / " + (o.name || "line");
+    if ("d" in p) p.d = content; else p.content = content; // Path.d (Path.content is deprecated)
+    if (!(p.width > 0 || p.height > 0)) throw new Error("path content not applied");
+    if (o.fill) paintFill(p, o.fill); else p.fills = [];
+    if (o.stroke) paintStroke(p, o.stroke, o.width || 1, o.dashed ? "dashed" : "solid", "center"); else p.strokes = [];
+    created++;
+    tag(p, { role: "wire" });
+    parent.appendChild(p);
+    return p;
+  } catch (e) {
+    warn("path-fallback (drawing rects instead)", e); pathFallback = true;
+    try { if (p) p.remove(); } catch (e2) { /* nothing to undo */ }
+    return null;
+  }
+}
+const P1 = (v) => v.toFixed(1);
+function polyline(parent, pts, strokeRole, o) { return mkPath(parent, pts.map((q, i) => (i ? "L" : "M") + P1(q[0]) + " " + P1(q[1])).join(" "), Object.assign({ stroke: strokeRole }, o || {})); }
+function hline(parent, x1, x2, y, role, o) { // a 1 px rule as a rect (exact, token-bound fill)
+  o = o || {};
+  mkRect(parent, x1, y, x2 - x1, o.width || 1, role, { name: o.name || "rule" });
+}
+function vline(parent, x, y1, y2, role, o) { o = o || {}; mkRect(parent, x, y1, o.width || 1, y2 - y1, role, { name: o.name || "rule" }); }
+function arrowHead(parent, x, y, dir, role) { // a filled triangle with its tip at (x, y), pointing d / u / l / r
+  const s = 4.5, L = 8;
+  const pts = dir === "d" ? [[x, y], [x - s, y - L], [x + s, y - L]] : dir === "u" ? [[x, y], [x - s, y + L], [x + s, y + L]]
+    : dir === "r" ? [[x, y], [x - L, y - s], [x - L, y + s]] : [[x, y], [x + L, y - s], [x + L, y + s]];
+  if (mkPath(parent, "M" + P1(pts[0][0]) + " " + P1(pts[0][1]) + " L" + P1(pts[1][0]) + " " + P1(pts[1][1]) + " L" + P1(pts[2][0]) + " " + P1(pts[2][1]) + " Z", { fill: role, name: "arrow-head" })) return;
+  mkRect(parent, x - 3, y - 3, 6, 6, role, { name: "arrow-tip" });
+}
+function exportAs(id, theme) { return EXPORT_DIR + "/" + String(id).toLowerCase().replace(/\//g, "-") + "-" + theme + ".png"; } // §15: scr-103-<state>-<role>-<theme>.png, cmp-<nnn>-<name>-<theme>.png
+// ---------------------------------------------------------------- UI kit (hi-fi, token-bound) ----------------
+const G = D.copy, LB = D.labels, DASH = D.struct.glyphs[0];
+const RH = () => (CUR.density === "comfortable" ? 32 : 24); // size.row.height / size.control.height: compact 24, comfortable 32
+const EXH = () => (CUR.density === "comfortable" ? 20 : 16); // an example line under its row
+const PAD = 24; // space.dialog.padding (the drawer's header and footer padding, §3)
+const BAND_GAP = 16; // space.stack.lg (the band gap, §3)
+function vmid(y, h, size, lh) { return y + (h - Math.ceil(size * (lh || 1.3))) / 2; }
+function wrapCount(str, w, size, bold, mono) { // greedy word wrap with the real advances (bold + 2 %)
+  const k = bold ? 1.02 : 1, wt = bold ? 600 : 400, sp = (tw(" ", size, mono, wt) - 4) * k;
+  let lines = 0;
+  for (const para of String(str).split("\n")) {
+    let cur = 0;
+    lines++;
+    for (const word of para.split(" ")) { const ww = (tw(word, size, mono, wt) - 4) * k; if (cur > 0 && cur + sp + ww > w) { lines++; cur = ww; } else cur += (cur > 0 ? sp : 0) + ww; }
+  }
+  return lines;
+}
+function mockLines(str, w, size, mono) { // the line count estH and the geometry mock assume (0.56 / 0.62 em per character)
+  const cpl = Math.max(1, Math.floor(w / (size * (mono ? 0.62 : 0.56))));
+  let n = 0;
+  for (const para of String(str).split("\n")) n += Math.max(1, Math.ceil(para.length / cpl));
+  return n;
+}
+function blockH(str, w, size, lh, bold, mono) { // a wrapped block's height: never under either line count
+  const n = Math.max(wrapCount(str, w, size, bold, mono), mockLines(str, w, size, mono));
+  return n === 1 ? lineH(size, lh) : Math.ceil(n * size * Math.max(lh || 1.3, 1.38)) + 4;
+}
+function scrimOpacity() { const v = parseFloat(resolveIn(NOTE_SET, "opacity.scrim")); return isFinite(v) ? v : 0.6; }
+function focusRing(p, x, y, w, h, r) { // color.focus.ring at border.focus (2 px), outside the control
+  mkRect(p, x - 3, y - 3, w + 6, h + 6, null, { stroke: "focus", sw: 2, swTok: "border.focus", radius: (r || 4) + 3, name: "focus-ring" });
+}
+let BOXES = null; // boxes of the board being drawn: key -> {x, y, w, h} (first wins), for callouts and focus-order tags
+function box(key, x, y, w, h) { if (BOXES && !BOXES[key]) BOXES[key] = { x, y, w, h }; }
+// ---- glyphs (shapes, so they never depend on a font's coverage)
+function delGlyph(p, x, y, s) { // ⊘ in color.data-confidence.delisted.indicator (CMP-239 delisted)
+  mkEllipse(p, x, y, s, s, null, { stroke: "delInd", sw: 1.5, name: "delisted-glyph" });
+  if (!polyline(p, [[x + s * 0.22, y + s * 0.78], [x + s * 0.78, y + s * 0.22]], "delInd", { width: 1.5, name: "delisted-glyph-slash" })) mkRect(p, x + s / 2 - 0.75, y + 1, 1.5, s - 2, "delInd", { name: "delisted-glyph-slash" });
+}
+function warnGlyph(p, x, y, role) { // ⚠ as a filled triangle (stale: .stale.indicator; under 5 min: color.status.warning.strong)
+  if (!mkPath(p, "M" + P1(x + 6) + " " + P1(y) + " L" + P1(x + 12) + " " + P1(y + 11) + " L" + P1(x) + " " + P1(y + 11) + " Z", { fill: role, name: "warning-glyph" })) mkRect(p, x, y, 12, 11, role, { name: "warning-glyph" });
+}
+function infoGlyph(p, x, y) { // the pre-launch glyph: a color.status.info.strong disc with an inverse "i"
+  mkEllipse(p, x, y, 16, 16, "infoStrong", { name: "info-glyph" });
+  mkText(p, D.struct.glyphs[12], x, vmid(y, 16, 11, 1.2), 16, { size: 11, weight: 700, lh: 1.2, role: "inverse", align: "center", grow: "fixed", name: "info-glyph-mark" });
+}
+// ---- controls
+function buttonW(label, kind) { return kind === "link" ? tw(label, 12, false, 500) : tw(label, 12, false, 500) + 20; }
+function button(p, x, y, label, kind, o) { // CMP-001: primary (Retry, Try again: color.text.on-action on color.action.primary.default, §13) or secondary
+  o = o || {};
+  const h = o.h || RH(), w = o.w || buttonW(label, kind);
+  if (kind === "primary") mkRect(p, x, y, w, h, "primary", { radius: 4, name: "button-primary" });
+  else if (kind === "secondary") mkRect(p, x, y, w, h, "secondary", { radius: 4, name: "button-secondary" });
+  const role = kind === "primary" ? "onAction" : kind === "link" ? "link" : "text";
+  mkText(p, label, x, vmid(y, h, 12, 1.2), w, { size: 12, weight: 500, lh: 1.2, role, align: kind === "link" ? "left" : "center", grow: "fixed", name: "button-label" });
+  if (o.focus) focusRing(p, x, y, w, h, 4);
+  if (o.key) box(o.key, x, y, w, h);
+  return w;
+}
+function closeButton(p, x, y, o) { // CMP-002 "Close symbol info": a 24 / 32 px target, glyph in color.text.secondary
+  const s = RH();
+  mkText(p, G.close, x, vmid(y, s, 16, 1.2), s, { size: 16, lh: 1.2, role: "text2", align: "center", grow: "fixed", name: "close-button-glyph" });
+  box((o && o.ap || "") + "close", x, y, s, s);
+}
+function tagPill(p, x, y, text, o) { // a static tag ("can change", "Changed · was 0.01"): caption text in a 1 px outline
+  o = o || {};
+  const w = tw(text, 11) + 8, h = 18;
+  mkRect(p, x, y, w, h, null, { stroke: "borderDefault", radius: 9, name: "tag" });
+  mkText(p, text, x + 4, vmid(y, h, 11, 1.2), w - 6, { ty: "type.ui.caption", role: o.role || "text2", name: "tag-label" });
+  return w;
+}
+// ---- the drawer (CMP-046) and its bands (CMP-036 rows, CMP-126, CMP-177, CMP-027, CMP-239, CMP-078, CMP-015)
+function cols(x0, cw) { // §3: a value column sized for 11 characters, right-aligned; a fixed unit column; recorder words
+  const unitW = 64, valW = Math.ceil(11 * 13 * 0.6) + 8;
+  const valR = x0 + cw - unitW - 8;
+  return { valR, valL: valR - valW, unitX: valR + 8, unitW, recX: x0 + 152, right: x0 + cw };
+}
+function noticeH(n, cw) { const iw = cw - (n._tone === "info" ? 24 : 0) - 24; let h = 10; n.lines.forEach((L, i) => { h += blockH(L, iw, 13, 1.4, i === 0) + 2; }); return h + 8; }
+function headerH(dk, cw) {
+  let h = PAD + RH();
+  if (dk.identity) h += 2 + lineH(11, 1.2);
+  if (dk.chip) h += 6 + 20;
+  if (dk.notice) h += 8 + noticeH(dk.notice, cw);
+  return h + 16 + 1;
+}
+function footerH(dk) { return dk.actions && dk.actions.length ? 1 + 16 + RH() + PAD : 0; }
+function bandOf(k) { const b = D.bands[k]; if (!b) warn("band", "no band " + k); return b; }
+function itemH(it, cw) {
+  const rh = RH();
+  switch (it._k) {
+    case "row": return rh;
+    case "ex": return EXH();
+    case "line": return it._ty === "body" ? blockH(it.t, cw, 13, 1.4) + 4 : lineH(11, 1.2) + 2;
+    case "say": return blockH(it.t, cw, 13, 1.4) + 6;
+    case "block": {
+      const iw = cw - 24;
+      let h = 10;
+      it.lines.forEach((L, i) => { h += blockH(L, iw, 13, 1.4, i === 0) + 2; });
+      if (it.btns) h += 6 + rh;
+      if (it.ref) h += 4 + lineH(11, 1.2);
+      return h + 10 + 8;
+    }
+    case "strip": return blockH(it.t, cw - 24, 12, 1.3, true) + 14 + 6;
+    case "skel": return it.n * rh;
+    case "ph": return it.labels.length * rh;
+    case "link": return rh;
+    case "btns": return rh + 8;
+    default: warn("item", "unknown kind " + it._k); return 0;
+  }
+}
+function bandH(bd, cw) { let h = 1 + 12 + RH() + 4; for (const it of bd.items) h += itemH(it, cw); return h + 6; } // 6 px under the last row (inside a stale surface too)
+function bodyH(dk, cw) { let h = 0; dk._bands.forEach((k, i) => { h += (i ? BAND_GAP : 0) + bandH(bandOf(k), cw); }); return h; }
+function drawerH(dk, w) { const cw = w - 2 * PAD; return headerH(dk, cw) + BAND_GAP + bodyH(dk, cw) + (footerH(dk) ? BAND_GAP + footerH(dk) : 12); } // a strip (no footer) ends 12 px under its band
+function bannerH() { return 112; }
+function banner152(p, x, y, w) { // SCR-152's banner (14), live above the scrim; danger severity as E08-D03 binds it
+  const b = G.banner, h = bannerH();
+  mkRect(p, x, y, w, h, "dangerSubtle", { name: "banner" });
+  mkRect(p, x, y, 4, h, "dangerStrong", { name: "banner-left-border" });
+  mkEllipse(p, x + 20, y + 14, 18, 18, "dangerStrong", { name: "banner-icon" });
+  mkText(p, b.glyph, x + 20, vmid(y + 14, 18, 12, 1.2), 18, { size: 12, weight: 700, lh: 1.2, role: "inverse", align: "center", grow: "fixed", name: "banner-icon-mark" });
+  mkText(p, b.title, x + 48, y + 14, tw(b.title, 13, false, 600), { size: 13, weight: 600, lh: 1.2, role: "text", name: "banner-title" });
+  mkText(p, b.body[0], x + 48, y + 36, tw(b.body[0], 12), { size: 12, lh: 1.2, role: "text", name: "banner-body" });
+  mkText(p, b.body[1], x + 48, y + 54, tw(b.body[1], 12), { size: 12, lh: 1.2, role: "text", name: "banner-body" });
+  const bw = button(p, x + 48, y + 78, b.actions[0], "primary", { h: 22 });
+  button(p, x + 48 + bw + 12, y + 78, b.actions[1], "secondary", { h: 22 });
+  return h;
+}
+function drawRow(p, x0, y, cw, it, st, ap, gut) {
+  const rh = RH(), c = cols(x0, cw), stale = !!st.stale, valRole = stale ? "staleText" : "text";
+  const labEnd = it._vk === "rec" || it._vk === "recnum" || it._vk === "cdword" || it._col === "rec" ? c.recX - 8 : c.valL - 8;
+  const lw = Math.min(tw(it.l, 13), labEnd - x0);
+  mkText(p, it.l, x0, vmid(y, rh, 13, 1.4), lw, { ty: "type.ui.body", role: "text2", name: "row-label" });
+  noteMissing("font.size.body / font.size.label", MISSING_HOW["font.size.body / font.size.label"]);
+  anchor(ap + "row:" + it.l, gut[0], y + rh / 2);
+  anchor(ap + "val:" + it.l, gut[1], y + rh / 2);
+  anchor(ap + "unit:" + it.l, gut[1], y + rh / 2);
+  box(ap + "row:" + it.l, x0, y, cw, rh);
+  const vy = vmid(y, rh, 13, 1.2);
+  if (it._vk === "num") {
+    const vw = tw(it.v, 13, true);
+    mkText(p, it.v, c.valR - vw, vy, vw, { ty: "type.num.base", role: valRole, align: "right", grow: "fixed", name: "row-value" });
+    box(ap + "val:" + it.l, c.valR - vw, y, vw, rh);
+    if (it.u) {
+      mkText(p, it.u, c.unitX, vmid(y, rh, 11, 1.2), tw(it.u, 11), { ty: "type.ui.caption", role: "text3", name: "row-unit" });
+      box(ap + "unit:" + it.l, c.unitX, y, c.unitW, rh);
+    }
+    if (it.tag && it.u) tagPill(p, x0 + lw + 8, y + (rh - 18) / 2, it.tag, { role: "text" }); // "Changed · was 0.01" (D-13), after the label
+    else if (it.tag) mkText(p, it.tag, c.unitX, vmid(y, rh, 11, 1.2), tw(it.tag, 11), { ty: "type.ui.caption", role: "text2", name: "row-tag" }); // "can change" in the unit column (§3)
+  } else if (it._vk === "word" || it._vk === "na") {
+    const x = it._col === "rec" ? c.recX : c.valL;
+    mkText(p, it.v, x, vmid(y, rh, 13, 1.4), tw(it.v, 13), { ty: "type.ui.body", role: it._vk === "na" ? "text3" : valRole, name: it._vk === "na" ? "row-value-unavailable" : "row-value-word" });
+  } else if (it._vk === "cd" || it._vk === "cdword") { // CMP-126: spans the value and unit columns (§7)
+    if (it._vk === "cd") {
+      const vw = tw(it.v, 13, true);
+      mkText(p, it.v, c.right - vw, vy, vw, { ty: "type.num.base", role: valRole, align: "right", grow: "fixed", name: "countdown" });
+      box(ap + "cd", c.right - vw, y, vw, rh);
+    } else mkText(p, it.v, c.recX, vmid(y, rh, 13, 1.4), Math.min(tw(it.v, 13), c.right - c.recX), { ty: "type.ui.body", role: "text2", name: "countdown-suppressed" });
+  } else if (it._vk === "rec" || it._vk === "recnum") { // CMP-177 summary: the state word in color.text.secondary (A-6), the other facts as values
+    const mono = it._vk === "recnum", role = it.l === LB.rec ? "text2" : valRole;
+    const vw = Math.min(tw(it.v, 13, mono), c.right - c.recX);
+    if (mono) mkText(p, it.v, c.recX, vy, vw, { ty: "type.num.base", role, name: "row-value" });
+    else mkText(p, it.v, c.recX, vmid(y, rh, 13, 1.4), vw, { ty: "type.ui.body", role, name: "row-value-word" });
+  }
+}
+function drawBlock(p, x0, y, cw, it, ap, gut) { // CMP-027 error / warning, or a plain state (404, 403): words carry it, never colour alone
+  const rh = RH(), fill = { danger: "dangerSubtle", warning: "warnSubtle", info: "infoSubtle" }[it._tone] || null;
+  const h = itemH(it, cw) - 8, iw = cw - 24;
+  if (fill) mkRect(p, x0, y, cw, h, fill, { radius: 4, name: "state-" + it._tone });
+  else mkRect(p, x0, y, cw, h, null, { stroke: "borderDefault", radius: 4, name: "state-plain" });
+  anchor(ap + "block:" + it._key, gut[0], y + 14);
+  box(ap + "block:" + it._key, x0, y, cw, h);
+  let cy = y + 10;
+  it.lines.forEach((L, i) => {
+    mkText(p, L, x0 + 12, cy, iw, { size: 13, lh: 1.4, weight: i === 0 ? 600 : 400, role: fill || i === 0 ? "text" : "text2", grow: "h", tight: true, name: i === 0 ? "state-heading" : "state-line" });
+    cy += blockH(L, iw, 13, 1.4, i === 0) + 2;
+  });
+  if (it.btns) {
+    cy += 6;
+    let bx = x0 + 12;
+    for (const b of it.btns) { const bw = button(p, bx, cy, b[0], b[1], { key: ap + "btn:" + b[0] }); anchor(ap + "btn:" + b[0], gut[1], cy + rh / 2); bx += bw + 8; }
+    cy += rh;
+  }
+  if (it.ref) { cy += 4; mkText(p, it.ref, x0 + 12, cy, tw(it.ref, 11), { ty: "type.ui.caption", role: "text", name: "state-ref" }); }
+}
+function drawBand(p, x0, y, cw, bd, ap, gut) {
+  const rh = RH(), st = { stale: bd._state === "stale" }, k = bd._key, h = bandH(bd, cw);
+  hline(p, x0, x0 + cw, y, "borderDefault", { name: "band-rule" }); // border.hairline, decorative (1.30:1, §13)
+  anchor(ap + "rule:" + k, gut[1], y);
+  if (st.stale) mkRect(p, x0 - 8, y + 6, cw + 16, h - 6, "staleSurface", { radius: 4, name: "band-stale-surface" });
+  let cy = y + 1 + 12;
+  const hw = tw(bd.h, 14, false, 600);
+  mkText(p, bd.h, x0, vmid(cy, rh, 14, 1.2), hw, { ty: "type.ui.heading-sm", role: "text", name: "band-heading" });
+  anchor(ap + "band:" + k, gut[0], cy + rh / 2);
+  box(ap + "band:" + k, x0, cy, hw, rh);
+  const tgw = tw(bd.tag, 11);
+  mkText(p, bd.tag, x0 + cw - tgw, vmid(cy, rh, 11, 1.2), tgw, { ty: "type.ui.caption", role: "text2", align: "right", grow: "fixed", name: "band-source-tag" });
+  anchor(ap + "tag:" + k, gut[1], cy + rh / 2);
+  if (bd.marker) { // CMP-239 in the band header (stale), or the disconnected label (no CMP-239; SCR-152 outranks it)
+    let mx = x0 + hw + 10;
+    if (bd.marker._kind === "stale") { warnGlyph(p, mx, cy + (rh - 11) / 2, "staleInd"); mx += 16; }
+    mkText(p, bd.marker.t, mx, vmid(cy, rh, 11, 1.2), tw(bd.marker.t, 11, false, 600), { size: 11, weight: 600, lh: 1.2, role: "staleText", name: "band-marker-label" });
+    anchor(ap + "marker:" + k, gut[1], cy + rh / 2);
+  }
+  cy += rh + 4;
+  let last = null;
+  for (const it of bd.items) {
+    const ih = itemH(it, cw);
+    if (it._k === "row") { drawRow(p, x0, cy, cw, it, st, ap, gut); last = it.l; }
+    else if (it._k === "ex") {
+      mkText(p, it.t, x0 + 12, vmid(cy, EXH(), 11, 1.2), Math.min(tw(it.t, 11), cw - 12), { ty: "type.ui.caption", role: "text3", name: "row-example" });
+      if (last) { anchor(ap + "ex:" + last, gut[0], cy + EXH() / 2); box(ap + "ex:" + last, x0 + 12, cy, cw - 12, EXH()); }
+    } else if (it._k === "line") {
+      const body = it._ty === "body", size = body ? 13 : 11;
+      const o = { size, lh: body ? 1.4 : 1.2, role: st.stale && it._role !== "text3" ? "staleText" : it._role, name: "band-line-" + it._key };
+      if (body) { o.ty = "type.ui.body"; o.grow = "h"; o.tight = true; mkText(p, it.t, x0, cy + 1, cw, o); }
+      else { o.ty = "type.ui.caption"; const lw = tw(it.t, 11); if (it._align === "right") { o.align = "right"; o.grow = "fixed"; mkText(p, it.t, x0 + cw - lw, cy + 1, lw, o); } else mkText(p, it.t, x0, cy + 1, lw, o); }
+      anchor(ap + "line:" + it._key, it._align === "right" ? gut[1] : gut[0], cy + Math.min(ih, 20) / 2);
+      box(ap + "line:" + it._key, x0, cy, cw, ih);
+    } else if (it._k === "say") {
+      mkText(p, it.t, x0, cy + 3, cw, { ty: "type.ui.body", role: it._role || "text", grow: "h", tight: true, name: "band-sentence" });
+      anchor(ap + "say:" + it._key, gut[0], cy + 12);
+    } else if (it._k === "block") drawBlock(p, x0, cy, cw, it, ap, gut);
+    else if (it._k === "strip") { // CMP-078 escalated (E17-D01 D16)
+      const sh = ih - 6;
+      mkRect(p, x0, cy, cw, sh, "warnSubtle", { radius: 4, name: "escalated-strip" });
+      mkRect(p, x0, cy, 4, sh, "warnStrong", { name: "escalated-strip-bar" });
+      mkText(p, it.t, x0 + 12, cy + 7, cw - 24, { size: 12, weight: 600, lh: 1.3, role: "text", grow: "h", tight: true, name: "escalated-strip-text" });
+      anchor(ap + "strip", gut[0], cy + sh / 2);
+    } else if (it._k === "skel") { // CMP-015, static (no motion.shimmer token exists)
+      noteMissing("motion.shimmer", MISSING_HOW["motion.shimmer"]);
+      const c = cols(x0, cw);
+      for (let i = 0; i < it.n; i++) {
+        const ry = cy + i * rh, by = ry + (rh - 8) / 2;
+        if (it.labels) mkText(p, it.labels[i], x0, vmid(ry, rh, 13, 1.4), Math.min(tw(it.labels[i], 13), c.valL - 8 - x0), { ty: "type.ui.body", role: "text2", name: "row-label" });
+        else mkRect(p, x0, by, 120 - (i % 3) * 16, 8, "selected", { radius: 2, name: "skeleton" });
+        mkRect(p, c.valL + 24, by, c.valR - c.valL - 24, 8, "selected", { radius: 2, name: "skeleton" });
+      }
+      anchor(ap + "skel", gut[0], cy + rh / 2);
+    } else if (it._k === "ph") { // a labelled placeholder: no recorded ticker for this symbol (never another symbol's value, §4.2)
+      const c = cols(x0, cw);
+      it.labels.forEach((L, i) => mkText(p, L, x0, vmid(cy + i * rh, rh, 13, 1.4), Math.min(tw(L, 13), c.valL - 16 - x0), { ty: "type.ui.body", role: "text2", name: "row-label" }));
+      mkRect(p, c.valL - 8, cy + 2, c.right - c.valL + 8, ih - 4, null, { stroke: "text3", dash: true, radius: 4, name: "placeholder" });
+      const pw = tw(D.struct.words[1], 11);
+      mkText(p, D.struct.words[1], c.valL + (c.right - c.valL - pw) / 2, cy + ih / 2 - 8, pw, { ty: "type.ui.caption", role: "text3", name: "placeholder-word" });
+      anchor(ap + "ph", gut[0], cy + rh / 2);
+    } else if (it._k === "link") { // CMP-021 (Owner): color.text.link, underlined
+      const lw = tw(it.t, 13);
+      mkText(p, it.t, x0, vmid(cy, rh, 13, 1.4), lw, { ty: "type.ui.body", role: "link", deco: "underline", name: "link-label" });
+      anchor(ap + "link", gut[0], cy + rh / 2);
+      box(ap + "link", x0, cy, lw, rh);
+    } else if (it._k === "btns") {
+      let bx = x0;
+      for (const b of it.b) { bx += button(p, bx, cy + 4, b[0], b[1], { key: ap + "btn:" + b[0] }) + 8; anchor(ap + "btn:" + b[0], gut[1], cy + 4 + rh / 2); }
+      anchor(ap + it._key, gut[0], cy + 4 + rh / 2);
+    }
+    cy += ih;
+  }
+  return h;
+}
+// draw one drawer at (x, y), w wide, h tall (h = null: as tall as its content, no footer: a strip); o.ap prefixes anchors
+function drawDrawer(p, x, y, w, h, dk, o) {
+  o = o || {};
+  const ap = o.ap || "", rh = RH(), cw = w - 2 * PAD, x0 = x + PAD, gut = [x + 12, x + w - 12];
+  noteMissing("size.drawer", MISSING_HOW["size.drawer"]);
+  noteMissing("motion.slide", MISSING_HOW["motion.slide"]);
+  if (h == null) h = drawerH(dk, w);
+  let top = y;
+  if (dk.banner) { banner152(p, x, y, w); anchor(ap + "banner", gut[1], y + 24); top += bannerH(); }
+  const dh = y + h - top;
+  mkRect(p, x, top, w, dh, "overlay", { shadowTok: "elevation.dialog", name: "drawer" });
+  anchor(ap + "drawer", gut[1], top + 12);
+  box(ap + "drawer", x, top, w, dh);
+  let cy = top + PAD;
+  const tw0 = Math.min(tw(dk.title, 16, false, 600), cw - rh - 8);
+  mkText(p, dk.title, x0, vmid(cy, rh, 16, 1.2), tw0, { ty: "type.ui.heading-md", role: "text", name: "drawer-title" });
+  anchor(ap + "title", gut[0], cy + rh / 2);
+  box(ap + "title", x0, cy, tw0, rh);
+  closeButton(p, x0 + cw - rh, cy, { ap });
+  anchor(ap + "close", gut[1], cy + rh / 2);
+  if (o.focus && o.focus.indexOf("title") >= 0) focusRing(p, x0, cy, tw0, rh, 2);
+  if (o.focus && o.focus.indexOf("close") >= 0) focusRing(p, x0 + cw - rh, cy, rh, rh, 4);
+  cy += rh;
+  if (dk.identity) {
+    cy += 2;
+    mkText(p, dk.identity, x0, cy, Math.min(tw(dk.identity, 11), cw), { ty: "type.ui.caption", role: "text2", name: "drawer-identity" });
+    anchor(ap + "identity", gut[0], cy + 8);
+    cy += lineH(11, 1.2);
+  }
+  if (dk.chip) { // CMP-239 delisted: glyph and words (never colour alone)
+    cy += 6;
+    delGlyph(p, x0, cy + 3, 14);
+    mkText(p, dk.chip.t, x0 + 20, vmid(cy, 20, 11, 1.2), tw(dk.chip.t, 11, false, 600), { size: 11, weight: 600, lh: 1.2, role: "delText", name: "chip-delisted-label" });
+    anchor(ap + "chip", gut[0], cy + 10);
+    cy += 20;
+  }
+  if (dk.notice) { // the not-trading notice under the title (CMP-028): text.primary on the status subtle surface
+    cy += 8;
+    const n = dk.notice, nh = noticeH(n, cw), nx = x0 + (n._tone === "info" ? 24 : 0), nw = cw - (nx - x0);
+    if (n._tone === "info") infoGlyph(p, x0, cy + 10);
+    mkRect(p, nx, cy, nw, nh, n._tone === "info" ? "infoSubtle" : "dangerSubtle", { radius: 4, name: "notice" });
+    let ny = cy + 10;
+    n.lines.forEach((L, i) => { mkText(p, L, nx + 12, ny, nw - 24, { size: 13, lh: 1.4, weight: i === 0 ? 600 : 400, role: "text", grow: "h", tight: true, name: i === 0 ? "notice-heading" : "notice-line" }); ny += blockH(L, nw - 24, 13, 1.4, i === 0) + 2; });
+    anchor(ap + "notice", gut[0], cy + 14);
+    cy += nh;
+  }
+  cy += 16;
+  hline(p, x, x + w, cy, "borderDefault", { name: "header-divider" });
+  cy += 1 + BAND_GAP;
+  const fh = footerH(dk), bodyBottom = fh ? y + h - fh - 8 : y + h - 8;
+  let clipped = false;
+  dk._bands.forEach((k, i) => {
+    const bd = bandOf(k);
+    if (!bd || clipped) return;
+    if (i) { anchor(ap + "gap:" + bd._key, gut[1], cy + BAND_GAP / 2); cy += BAND_GAP; }
+    const bh = bandH(bd, cw);
+    if (cy + bh > bodyBottom + 0.5) {
+      if (o.clip) { drawClipped(p, x0, cy, cw, bd, ap, gut, bodyBottom); clipped = true; return; } // the body scrolls under the sticky footer
+      warn("drawer", (o.label || "") + " " + dk.title + ": band " + bd._key + " runs " + Math.ceil(cy + bh - bodyBottom) + " px past the footer");
+    }
+    cy += drawBand(p, x0, cy, cw, bd, ap, gut);
+  });
+  if (fh) { // sticky footer: Open in new chart (always), Open DOM ladder (Trading only)
+    const fy = y + h - fh;
+    hline(p, x, x + w, fy, "borderDefault", { name: "footer-divider" });
+    let bx = x0;
+    const by = fy + 1 + 16;
+    anchor(ap + "actions", gut[0], by + rh / 2);
+    for (const a of dk.actions) { const bw = button(p, bx, by, a[0], a[1], { key: ap + "act:" + a[0], focus: o.focus && o.focus.indexOf("act:" + a[0]) >= 0 }); anchor(ap + "act:" + a[0], gut[1], by + rh / 2); bx += bw + 8; }
+  }
+  return { x, y, w, h, bodyEnd: cy };
+}
+function drawClipped(p, x0, y, cw, bd, ap, gut, bottom) { // a band cut by the sticky footer: the rows that fit (the body scrolls)
+  const items = [];
+  let h = 1 + 12 + RH() + 4;
+  if (y + h > bottom) return;
+  for (const it of bd.items) { const ih = itemH(it, cw); if (y + h + ih > bottom) break; items.push(it); h += ih; }
+  drawBand(p, x0, y, cw, Object.assign({}, bd, { items }), ap, gut);
+}
+// ---------------------------------------------------------------- context (SCR-010 shell, workspace, scrim) ----
+function topBar(p, x, y, w, tb, o) { // SCR-010 TopBar: env badge (CMP-075), symbol trigger (CMP-219), palette (CMP-084), panic (CMP-211)
+  o = o || {};
+  const h = 40;
+  mkRect(p, x, y, w, h, "raised", { name: "topbar" });
+  hline(p, x, x + w, y + h - 1, "borderSubtle", { name: "topbar-rule" });
+  mkText(p, tb.logo, x + 16, vmid(y, h, 13, 1.2), tw(tb.logo, 13, false, 700), { size: 13, weight: 700, lh: 1.2, role: "text", name: "topbar-logo" });
+  const ew = tw(tb.env, 10.5, false, 700) + 6;
+  mkRect(p, x + 48, y + 10, ew, 20, "envDemo", { radius: 4, name: "env-badge" });
+  mkText(p, tb.env, x + 51, vmid(y + 10, 20, 10.5, 1.2), ew - 4, { size: 10.5, weight: 700, lh: 1.2, role: "onAction", name: "env-badge-label" });
+  let cx = x + 48 + ew + 16;
+  if (!o.narrow) {
+    const sw = tw(tb.symbol, 12, false, 500) + 24;
+    mkRect(p, cx, y + 7, sw, 26, null, { stroke: "borderDefault", radius: 4, name: "topbar-symbol" });
+    mkText(p, tb.symbol, cx + 6, vmid(y + 7, 26, 12, 1.2), tw(tb.symbol, 12, false, 500), { size: 12, weight: 500, lh: 1.2, role: "text", name: "topbar-symbol-label" });
+    mkText(p, tb.caret, cx + sw - 16, vmid(y + 7, 26, 12, 1.2), 12, { size: 12, lh: 1.2, role: "text", name: "topbar-symbol-caret" });
+    cx += sw + 8;
+    const pw = 180, kw = tw(tb.palette, 10.5, true) + 8;
+    mkRect(p, cx, y + 7, pw, 26, "app", { stroke: "borderDefault", radius: 4, name: "topbar-palette" });
+    mkRect(p, cx + pw - kw - 4, y + 11, kw, 18, "raised", { radius: 3, name: "kbd" });
+    mkText(p, tb.palette, cx + pw - kw, vmid(y + 11, 18, 10.5, 1.2), kw - 6, { size: 10.5, mono: true, lh: 1.2, role: "text", name: "kbd-label" });
+  }
+  let rx = x + w - 16;
+  for (const lab of tb.panic.slice().reverse()) {
+    const bw = tw(lab, 11, false, 700) + 16;
+    rx -= bw;
+    mkRect(p, rx, y + 7, bw, 26, "secondary", { radius: 4, name: "panic-button" });
+    mkText(p, lab, rx, vmid(y + 7, 26, 11, 1.2), bw, { size: 11, weight: 700, lh: 1.2, role: "text", align: "center", grow: "fixed", name: "panic-label" });
+    rx -= 8;
+  }
+  return h;
+}
+function scrim(p, x, y, w, h) { // the scrim: color.surface.sunken at opacity.scrim (§3, E08-D05 D-11)
+  mkRect(p, x, y, w, h, "sunken", { layerOpacity: scrimOpacity(), opacityTok: "opacity.scrim", name: "scrim" });
+}
+function lcg(seed) { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; }
+function candles(p, x, y, w, h, seed) { // context only: a fixed seeded series (no Math.random), no labels
+  const rnd = lcg(seed), n = Math.floor(w / 12), bars = [];
+  let v = 0.5;
+  for (let i = 0; i < n; i++) { const o = v; v = Math.min(0.9, Math.max(0.1, v + (rnd() - 0.5) * 0.09)); bars.push({ o, c: v, hi: Math.max(o, v) + rnd() * 0.04, lo: Math.min(o, v) - rnd() * 0.04 }); }
+  const Y = (t) => y + h - t * h;
+  const wicks = bars.map((b, i) => [x + i * 12 + 6, Y(b.hi), x + i * 12 + 6, Y(b.lo)]);
+  if (!mkPath(p, wicks.map((s) => "M" + P1(s[0]) + " " + P1(s[1]) + " L" + P1(s[2]) + " " + P1(s[3])).join(" "), { stroke: "wick", width: 1, name: "candle-wicks" })) for (const s of wicks) mkRect(p, s[0] - 0.5, s[1], 1, s[3] - s[1], "wick", { name: "candle-wick" });
+  bars.forEach((b, i) => { const up = b.c >= b.o; mkRect(p, x + i * 12 + 2, Y(Math.max(b.o, b.c)), 8, Math.max(1, Math.abs(Y(b.o) - Y(b.c))), up ? "candleUp" : "candleDown", { name: up ? "candle-up" : "candle-down" }); });
+}
+function chartPanel(p, x, y, w, h, tb, seed) { // the workspace under the scrim (context): toolbar with the symbol and interval buttons, candles
+  mkRect(p, x, y, w, h, "app", { stroke: "borderSubtle", name: "chart-panel" });
+  mkRect(p, x + 1, y + 1, w - 2, 32, "raised", { name: "chart-toolbar" });
+  const sw = tw(tb.symbol, 12, false, 500) + 24;
+  mkRect(p, x + 8, y + 6, sw, 22, null, { stroke: "borderDefault", radius: 4, name: "chart-symbol-button" });
+  mkText(p, tb.symbol, x + 14, vmid(y + 6, 22, 12, 1.2), tw(tb.symbol, 12, false, 500), { size: 12, weight: 500, lh: 1.2, role: "text", name: "chart-symbol-label" });
+  mkText(p, tb.caret, x + 8 + sw - 16, vmid(y + 6, 22, 12, 1.2), 12, { size: 12, lh: 1.2, role: "text", name: "chart-symbol-caret" });
+  const iw = tw(tb.interval, 12, false, 500) + 12;
+  mkRect(p, x + 8 + sw + 6, y + 6, iw, 22, null, { stroke: "borderDefault", radius: 4, name: "chart-interval-button" });
+  mkText(p, tb.interval, x + 8 + sw + 12, vmid(y + 6, 22, 12, 1.2), iw - 12, { size: 12, weight: 500, lh: 1.2, role: "text", name: "chart-interval-label" });
+  const top = y + 56, bot = y + h - 28, left = x + 16, right = x + w - 24;
+  for (let i = 0; i < 5; i++) hline(p, left, right, top + (i * (bot - top)) / 4, "grid", { name: "grid-line" });
+  candles(p, left, top, right - left, bot - top, seed || 7);
+}
+function gridPanel(p, x, y, w, h) { // context: a grid panel beside the chart (rows only, no words)
+  mkRect(p, x, y, w, h, "raised", { stroke: "borderSubtle", name: "grid-panel" });
+  for (let i = 0; i < Math.floor((h - 40) / 28); i++) hline(p, x + 1, x + w - 1, y + 32 + i * 28, "borderSubtle", { name: "grid-panel-row-rule" });
+}
+// ---------------------------------------------------------------- frames, per board kind ---------------------------
+const P_SIDE = ["L:", "R:"], P_ABC = ["A:", "B:", "C:"];
+function frameDrawers(f, fx, fy, fw, fh, keys) { // drawers side by side, 480 px each (§15's 1000 / 1480 px boards)
+  const n = keys.length, gap = n > 1 ? (fw - n * 480) / (n - 1) : 0, ap = n === 2 ? P_SIDE : P_ABC;
+  keys.forEach((k, i) => drawDrawer(f, fx + i * (480 + gap), fy, 480, fh, D.drawers[k], { ap: ap[i] }));
+}
+function frameStack(f, fx, fy, fw, fh, keys) { // board 10: the failure and its 404 / 403 strips, stacked
+  let y = fy;
+  keys.forEach((k, i) => { const dk = D.drawers[k], h = drawerH(dk, fw); drawDrawer(f, fx, y, fw, h, dk, { ap: P_ABC[i] }); y += h + 8; });
+  if (y - 8 > fy + fh) warn("frame", "board 10: the strips run " + Math.ceil(y - 8 - fy - fh) + " px past the frame");
+}
+// ---- board 14: CMP-049 risk-limit tiers (illustrative rows, marked so)
+function tiersPanel(f, x, y, w, t, state) {
+  const rh = RH(), x0 = x + 16, cw = w - 32, c1 = x0 + 250, c2 = x0 + cw;
+  const rows = state === "expanded" ? t.rows : state === "collapsed" ? t.rows.slice(0, 3) : [];
+  const tableH = state === "unavailable" ? 0 : 22 + rh + rows.length * rh + (state === "collapsed" ? 8 + rh : 12);
+  const h = 12 + rh + 6 + rh + tableH + 16;
+  mkRect(f, x, y, w, h, "overlay", { shadowTok: "elevation.dialog", name: "drawer" });
+  let cy = y + 12;
+  const hw = tw(G.hContract, 14, false, 600);
+  mkText(f, G.hContract, x0, vmid(cy, rh, 14, 1.2), hw, { ty: "type.ui.heading-sm", role: "text", name: "band-heading" });
+  const tg = tw(G.tagContract, 11);
+  mkText(f, G.tagContract, x0 + cw - tg, vmid(cy, rh, 11, 1.2), tg, { ty: "type.ui.caption", role: "text2", align: "right", grow: "fixed", name: "band-source-tag" });
+  cy += rh + 6;
+  if (state === "unavailable") { mkText(f, t.na, x0, vmid(cy, rh, 13, 1.4), tw(t.na, 13), { ty: "type.ui.body", role: "text3", name: "tiers-unavailable" }); anchor("unavailable", x - 12, cy + rh / 2); return h; } // D-8's sentence, never an empty table
+  mkText(f, LB.tiers, x0, vmid(cy, rh, 13, 1.4), tw(LB.tiers, 13), { ty: "type.ui.body", role: "text2", name: "row-label" });
+  cy += rh;
+  mkText(f, t.caption, x0, cy + 2, tw(t.caption, 11), { ty: "type.ui.caption", role: "text2", name: "tiers-caption" });
+  const iw = tw(t.illus, 11);
+  mkText(f, t.illus, x0 + cw - iw, cy + 2, iw, { ty: "type.ui.caption", role: "text3", align: "right", grow: "fixed", name: "illustrative-tag" });
+  cy += 22;
+  const head = (s, xr, left) => { const hw2 = tw(s, 11, false, 600); mkText(f, s, left ? xr : xr - hw2, vmid(cy, rh, 11, 1.2), hw2, { size: 11, weight: 600, lh: 1.2, role: "text3", align: left ? "left" : "right", grow: "fixed", name: "tiers-column-head" }); };
+  head(t.cols[0], x0, true); head(t.cols[1], c1); head(t.cols[2], c2);
+  if (state === "collapsed") anchor("cols", x + w + 12, cy + rh / 2);
+  cy += rh;
+  const regionY = cy;
+  if (state === "expanded") mkRect(f, x0 - 4, regionY - 2, cw + 8, rows.length * rh + 4, null, { stroke: "borderDefault", radius: 4, name: "tiers-scroll-region" });
+  rows.forEach((r, i) => {
+    const ry = cy + i * rh;
+    if (i) hline(f, x0, x0 + cw, ry, "borderSubtle", { name: "tiers-row-rule" });
+    const num = (s, xr) => { const vw = tw(s, 13, true); mkText(f, s, xr - vw, vmid(ry, rh, 13, 1.2), vw, { ty: "type.num.base", role: "text", align: "right", grow: "fixed", name: "tiers-value" }); };
+    mkText(f, r[0], x0 + 4, vmid(ry, rh, 13, 1.2), tw(r[0], 13, true), { ty: "type.num.base", role: "text", name: "tiers-tier" });
+    num(r[1], c1); num(r[2], c2 - 6);
+  });
+  cy += rows.length * rh;
+  if (state === "expanded") { // the focusable scroll region (tabindex="0"): its ring, and a thumb (more tiers below)
+    mkRect(f, x0 + cw - 2, regionY + 4, 3, rows.length * rh - 40, "borderStrong", { radius: 2, name: "tiers-scroll-thumb" });
+    focusRing(f, x0 - 4, regionY - 2, cw + 8, rows.length * rh + 4, 4);
+    anchor("expanded", x - 12, regionY + rh / 2);
+  } else {
+    cy += 8;
+    button(f, x0, cy, t.show, "secondary");
+    anchor("collapsed", x - 12, cy + rh / 2);
+  }
+  return h;
+}
+function frameTiers(f, fx, fy, fw, fh, t) {
+  const w = 480, xs = [fx + 20, fx + fw - 20 - w];
+  const lab = (s, x, y) => mkText(f, s, x, y, tw(s, 12, false, 600), { size: 12, weight: 600, lh: 1.2, role: "text3", name: "specimen-label" });
+  lab(t.states[0], xs[0], fy + 20);
+  const h1 = tiersPanel(f, xs[0], fy + 44, w, t, "collapsed");
+  lab(t.states[2], xs[0], fy + 44 + h1 + 32);
+  tiersPanel(f, xs[0], fy + 44 + h1 + 56, w, t, "unavailable");
+  lab(t.states[1], xs[1], fy + 20);
+  tiersPanel(f, xs[1], fy + 44, w, t, "expanded");
+}
+// ---- board 15: CMP-126 FundingCountdown states (§7; the handoff's story names)
+function frame126(f, fx, fy, fw, fh, s) {
+  const x = fx + 20, w = fw - 40, cS = x + 16, cV = x + 200, cC = x + 640, wV = 420, wC = w - 640 - 16;
+  const rowsH = s.rows.map((r) => {
+    let h = 24;
+    if (r.desc) h = Math.max(h, blockH(r.desc, wV, 12, 1.3) + 4);
+    if (r.v2) h = 24 + 18;
+    if (r.cond) h = Math.max(h, blockH(r.cond, wC, 12, 1.3) + 4);
+    return h + 16;
+  });
+  const h = 16 + 24 + 8 + rowsH.reduce((a, v) => a + v, 0) + 8;
+  mkRect(f, x, fy + 20, w, h, "overlay", { radius: 6, radiusTok: "radius.card", name: "specimen-sheet" });
+  let cy = fy + 20 + 16;
+  [[s.head[0], cS], [s.head[1], cV], [s.head[2], cC]].forEach(([t, xx]) => mkText(f, t, xx, vmid(cy, 24, 11, 1.2), tw(t, 11, false, 600), { size: 11, weight: 600, lh: 1.2, role: "text3", name: "specimen-head" }));
+  cy += 24 + 8;
+  s.rows.forEach((r, i) => {
+    const rh = rowsH[i], ry = cy + 8;
+    hline(f, x + 8, x + w - 8, cy, "borderSubtle", { name: "specimen-rule" });
+    mkText(f, r.label, cS, vmid(ry, 24, 13, 1.2), tw(r.label, 13, false, 600), { size: 13, weight: 600, lh: 1.2, role: "text", name: "story-label" });
+    if (r._at) anchor(r._at, x - 12, ry + 12);
+    let vx = cV;
+    if (r._band === "stale") mkRect(f, cV - 8, ry - 2, wV + 16, 28, "staleSurface", { radius: 4, name: "band-stale-surface" });
+    if (r.rate) {
+      noteMissing("color.text.buy / color.text.sell", MISSING_HOW["color.text.buy / color.text.sell"]);
+      const rw = tw(r.rate, 13, true);
+      mkText(f, r.rate, vx, vmid(ry, 24, 13, 1.2), rw, { ty: "type.num.base", role: "text", name: "rate-value" });
+      vx += rw + 16;
+    }
+    if (r._glyph === "warn") { warnGlyph(f, vx, ry + 6, "warnStrong"); vx += 18; }
+    if (r.v) {
+      const role = r._band === "stale" ? "staleText" : r._word ? "text2" : "text";
+      if (r._word) mkText(f, r.v, vx, vmid(ry, 24, 13, 1.4), tw(r.v, 13), { ty: "type.ui.body", role, name: "countdown-word" });
+      else mkText(f, r.v, vx, vmid(ry, 24, 13, 1.2), tw(r.v, 13, true), { ty: "type.num.base", role, name: "countdown" });
+      if (r.illus) mkText(f, r.illus, vx + tw(r.v, 13, true) + 12, vmid(ry, 24, 11, 1.2), tw(r.illus, 11), { ty: "type.ui.caption", role: "text3", name: "illustrative-tag" });
+    }
+    if (r.v2) mkText(f, r.v2, cV, ry + 26, tw(r.v2, 11), { ty: "type.ui.caption", role: "text2", name: "countdown-note" });
+    if (r.desc) mkText(f, r.desc, cV, ry + 2, wV, { size: 12, lh: 1.3, role: "text2", grow: "h", tight: true, name: "specimen-description" });
+    if (r.cond) mkText(f, r.cond, cC, ry + 4, wC, { size: 12, lh: 1.3, role: "text2", grow: "h", tight: true, name: "specimen-condition" });
+    cy += rh;
+  });
+}
+// ---- board 16: CMP-125 SymbolInfoPopover, four states (§9)
+function popoverH(s, st, w) {
+  const rh = RH(), bands = 18;
+  let h = 12 + rh + 4;
+  if (st.na) return h + blockH(st.na, w - 24, 12, 1.3) + 8 + rh + 12;
+  if (st.notice) h += blockH(st.notice, w - 40, 12, 1.3, true) + 16 + 6;
+  h += bands + s.contract.length * 22 + 6;
+  if (!st.notice) h += bands + s.live.length * 22 + 6;
+  h += bands + 22 + 6;
+  return h + rh + 12;
+}
+function popover(f, x, y, w, s, st, i) {
+  const rh = RH(), x0 = x + 12, cw = w - 24, h = popoverH(s, st, w);
+  mkRect(f, x, y, w, h, "overlay", { stroke: "borderSubtle", radius: 6, radiusTok: "radius.card", shadowTok: "elevation.popover", name: "popover" });
+  anchor("pop" + i, x - 12, y + 16);
+  let cy = y + 12;
+  mkText(f, s.host, x0, vmid(cy, rh, 14, 1.2), tw(s.host, 14, false, 600), { ty: "type.ui.heading-sm", role: "text", name: "popover-title" });
+  cy += rh + 4;
+  const linkRow = () => { const lw = tw(s.link, 12); mkText(f, s.link, x0, vmid(cy, rh, 12, 1.2), lw, { size: 12, lh: 1.2, role: "link", deco: "underline", name: "link-label" }); anchor("link" + i, x0 + lw + 16, cy + rh / 2); };
+  if (st.na) { mkText(f, st.na, x0, cy, cw, { size: 12, lh: 1.3, role: "text2", grow: "h", tight: true, name: "popover-unavailable" }); cy += blockH(st.na, cw, 12, 1.3) + 8; linkRow(); return h; }
+  const bandLab = (t, marker) => {
+    mkText(f, t, x0, cy, tw(t, 11, false, 600), { size: 11, weight: 600, lh: 1.2, role: "text", name: "popover-band-label" });
+    if (marker) { const mx = x0 + tw(t, 11, false, 600) + 8; warnGlyph(f, mx, cy + 2, "staleInd"); mkText(f, marker, mx + 16, cy, tw(marker, 11, false, 600), { size: 11, weight: 600, lh: 1.2, role: "staleText", name: "band-marker-label" }); }
+    cy += 18;
+  };
+  const kv = (r, role) => {
+    mkText(f, r[0], x0, vmid(cy, 22, 11, 1.2), tw(r[0], 11), { ty: "type.ui.caption", role: "text2", name: "row-label" });
+    let xr = x0 + cw;
+    if (r[2]) { const uw = tw(r[2], 11); mkText(f, r[2], xr - uw, vmid(cy, 22, 11, 1.2), uw, { ty: "type.ui.caption", role: "text3", align: "right", grow: "fixed", name: "row-unit" }); xr -= uw + 4; }
+    const vw = tw(r[1], 12, true);
+    mkText(f, r[1], xr - vw, vmid(cy, 22, 12, 1.2), vw, { size: 12, mono: true, lh: 1.2, role: role || "text", align: "right", grow: "fixed", name: "row-value" });
+    cy += 22;
+  };
+  if (st.notice) {
+    const nh = blockH(st.notice, cw - 16, 12, 1.3, true) + 16;
+    delGlyph(f, x0, cy + 4, 12);
+    mkRect(f, x0 + 18, cy, cw - 18, nh, "dangerSubtle", { radius: 4, name: "notice" });
+    mkText(f, st.notice, x0 + 26, cy + 8, cw - 34, { size: 12, weight: 600, lh: 1.3, role: "text", grow: "h", tight: true, name: "notice-heading" });
+    cy += nh + 6;
+  }
+  bandLab(s.bands[0]); for (const r of s.contract) kv(r); cy += 6;
+  if (!st.notice) { bandLab(s.bands[1], st.marker); for (const r of s.live) kv(r, st.marker ? "staleText" : "text"); cy += 6; }
+  bandLab(s.bands[2]);
+  mkText(f, s.rec, x0, vmid(cy, 22, 12, 1.2), tw(s.rec, 12), { size: 12, lh: 1.2, role: "text2", name: "recording-word" });
+  cy += 22 + 6;
+  linkRow();
+  return h;
+}
+function frame125(f, fx, fy, fw, fh, s) {
+  const n = s.states.length, gap = 24, w = Math.floor((fw - 40 - gap * (n - 1)) / n);
+  s.states.forEach((st, i) => {
+    const x = fx + 20 + i * (w + gap);
+    let y = fy + 20;
+    mkText(f, st.label, x, y, w, { size: 12, weight: 600, lh: 1.3, role: "text3", grow: "h", tight: true, name: "specimen-label" });
+    y += 36;
+    const rh = RH();
+    mkText(f, s.host, x, vmid(y, rh, 13, 1.2), tw(s.host, 13, true), { ty: "type.num.base", role: "text", name: "host-symbol" });
+    const bx = x + tw(s.host, 13, true) + 8; // CMP-002 info button (aria-haspopup="dialog"), expanded
+    mkRect(f, bx, y, rh, rh, "selected", { radius: 4, name: "trigger-pressed" });
+    mkEllipse(f, bx + 5, y + 5, rh - 10, rh - 10, null, { stroke: "text2", sw: 1.5, name: "trigger-glyph" });
+    mkText(f, D.struct.glyphs[12], bx, vmid(y, rh, 11, 1.2), rh, { size: 11, weight: 700, lh: 1.2, role: "text2", align: "center", grow: "fixed", name: "trigger-glyph-mark" });
+    if (i === 0) { focusRing(f, bx, y, rh, rh, 4); anchor("trig0", bx + rh + 18, y + rh / 2); }
+    popover(f, x, y + rh + 8, w, s, st, i);
+  });
+}
+// ---- board 17: CMP-177 RecorderStatusRow, summary variant (§4.3 words; Owner vs Manager)
+function frame177(f, fx, fy, fw, fh, s) {
+  const gap = 40, w = Math.floor((fw - 40 - gap) / 2), rh = RH();
+  s.cols.forEach((col, ci) => {
+    const x = fx + 20 + ci * (w + gap), x0 = x + 16, cw = w - 32;
+    let y = fy + 20;
+    mkText(f, col.h, x, vmid(y, 24, 14, 1.2), tw(col.h, 14, false, 600), { ty: "type.ui.heading-sm", role: "text", name: "column-head" });
+    y += 32;
+    for (const g of col.groups) {
+      mkText(f, g.v, x, y, tw(g.v, 12, false, 600), { size: 12, weight: 600, lh: 1.2, role: "text3", name: "variant-label" });
+      y += 18;
+      mkText(f, g.s, x, y, w, { size: 12, lh: 1.3, role: "text2", grow: "h", tight: true, name: "variant-states" });
+      y += blockH(g.s, w, 12, 1.3) + 6;
+      const vx = x0 + 88, avail = cw - 88; // the state word wraps to a second line when it does not fit (no word is cut)
+      const vh = (v) => (tw(v, 13) > avail ? Math.max(rh, blockH(v, avail, 13, 1.4) + 4) : rh);
+      const says = g.says || (g.say ? [g.say] : []); // r2: a T2 group carries its reason, then the hidden link's T3 sentence
+      const rowsH = g.rows.reduce((a, v) => a + vh(v), 0) + (g.record ? rh + 8 : 0) + (g.link ? rh : 0) + says.reduce((a, t) => a + blockH(t, cw, 13, 1.4) + 6, 0);
+      mkRect(f, x, y, w, rowsH + 16, "overlay", { radius: 6, radiusTok: "radius.card", name: "summary-surface" });
+      if (g._at) anchor(g._at, x - 12, y + 8 + rh / 2);
+      let cy = y + 8;
+      for (const v of g.rows) {
+        mkText(f, s.label, x0, vmid(cy, rh, 13, 1.4), tw(s.label, 13), { ty: "type.ui.body", role: "text2", name: "row-label" });
+        if (tw(v, 13) > avail) mkText(f, v, vx, cy + 2, avail, { ty: "type.ui.body", role: "text2", grow: "h", tight: true, name: "row-value-word" });
+        else mkText(f, v, vx, vmid(cy, rh, 13, 1.4), tw(v, 13), { ty: "type.ui.body", role: "text2", name: "row-value-word" });
+        cy += vh(v);
+      }
+      if (g.record) { button(f, x0, cy + 4, g.record, "secondary"); cy += rh + 8; }
+      if (g.link) { mkText(f, g.link, x0, vmid(cy, rh, 13, 1.4), tw(g.link, 13), { ty: "type.ui.body", role: "link", deco: "underline", name: "link-label" }); cy += rh; }
+      for (const t of says) { mkText(f, t, x0, cy + 3, cw, { ty: "type.ui.body", role: "text2", grow: "h", tight: true, name: "band-sentence" }); cy += blockH(t, cw, 13, 1.4) + 6; }
+      y += rowsH + 16 + 20;
+    }
+  });
+}
+// ---- board 18: the precision rules F1–F10, minimal vs as delivered, the stacked quantity, after CR-8 / CR-11
+function tableBlock(f, x, y, w, head, rows, colsDef, o) { // a small table on the overlay surface; colsDef: [{x, w, align, mono, role}]
+  o = o || {};
+  const size = 12, lh = 1.3;
+  const rowH = rows.map((r) => Math.max(24, ...r.map((cell, i) => (cell == null || colsDef[i].mono ? 24 : blockH(cell, colsDef[i].w, size, lh) + 8))));
+  const h = 8 + 22 + rowH.reduce((a, v) => a + v, 0) + 8;
+  mkRect(f, x, y, w, h, "overlay", { radius: 6, radiusTok: "radius.card", name: o.name || "table" });
+  let cy = y + 8;
+  head.forEach((t, i) => { if (t == null) return; const c = colsDef[i], hw = tw(t, 11, false, 600); mkText(f, t, c.align === "right" ? x + c.x + c.w - hw : x + c.x, cy + 3, hw, { size: 11, weight: 600, lh: 1.2, role: "text3", align: c.align === "right" ? "right" : "left", grow: "fixed", name: "table-head" }); });
+  cy += 22;
+  rows.forEach((r, ri) => {
+    hline(f, x + 8, x + w - 8, cy, "borderSubtle", { name: "table-rule" });
+    r.forEach((cell, i) => {
+      if (cell == null) return;
+      const c = colsDef[i];
+      if (c.mono) { const vw = Math.min(tw(cell, 12, true), c.w); mkText(f, cell, c.align === "right" ? x + c.x + c.w - vw : x + c.x, vmid(cy, 24, 12, 1.2), vw, { size: 12, mono: true, lh: 1.2, role: c.role || "text", align: c.align === "right" ? "right" : "left", grow: "fixed", name: "table-value" }); }
+      else mkText(f, cell, x + c.x, cy + 4, c.w, { size, lh, role: c.role || "text2", grow: "h", tight: true, name: "table-cell" });
+    });
+    cy += rowH[ri];
+  });
+  return h;
+}
+function framePrecision(f, fx, fy, fw, fh, s) {
+  const L = fx + 20, R = fx + fw / 2 + 10, W = fw / 2 - 30;
+  const title = (t, x, y, extra) => { const w0 = tw(t, 12, false, 600); mkText(f, t, x, y, w0, { size: 12, weight: 600, lh: 1.2, role: "text", name: "section-title" }); if (extra) mkText(f, extra, x + w0 + 10, y, tw(extra, 11), { ty: "type.ui.caption", role: "text3", name: "illustrative-tag" }); return 22; };
+  let y = fy + 20;
+  // minimal vs as delivered (Q5)
+  anchor("minimal", L - 12, y + 40);
+  y += tableBlock(f, L, y, W, s.minimal.head.concat([null]), s.minimal.rows,
+    [{ x: 12, w: 250 }, { x: 270, w: 110, align: "right", mono: true }, { x: 390, w: 100, align: "right", mono: true }, { x: 500, w: 50, role: "text3" }], { name: "table-minimal" }) + 20;
+  // today vs after CR-8 / CR-11 (illustrative)
+  y += title(s.after.head[1], L, y, s.after.illus);
+  anchor("after", L - 12, y + 20);
+  y += tableBlock(f, L, y, W, [null].concat(s.after.head).concat([null]), s.after.rows,
+    [{ x: 12, w: 160 }, { x: 180, w: 120, role: "text3" }, { x: 310, w: 180, align: "right", mono: true }, { x: 500, w: 50, role: "text3" }], { name: "table-after" }) + 20;
+  // one stacked 14-character quantity (CMP-036 Stacked, F8)
+  y += title(s.stacked.title, L, y);
+  anchor("stacked", L - 12, y + 16);
+  const sw = 432, sx = L, c = cols(sx + 16, sw - 32);
+  mkRect(f, sx, y, sw, 64, "overlay", { radius: 6, radiusTok: "radius.card", name: "stacked-row" });
+  mkText(f, s.stacked.label, sx + 16, y + 8, tw(s.stacked.label, 13), { ty: "type.ui.body", role: "text2", name: "row-label" });
+  const vw = tw(s.stacked.v, 13, true);
+  mkText(f, s.stacked.v, c.valR - vw, y + 34, vw, { ty: "type.num.base", role: "text", align: "right", grow: "fixed", name: "row-value" });
+  y += 64 + 20;
+  // tick width cases
+  y += title(s.ticks.title, L, y);
+  anchor("ticks", L - 12, y + 20);
+  tableBlock(f, L, y, W, s.ticks.head, s.ticks.rows,
+    [{ x: 12, w: 220 }, { x: 236, w: 76, align: "right", mono: true }, { x: 324, w: 176, mono: true }, { x: 500, w: 48, align: "right", mono: true }], { name: "table-ticks" });
+  // F1–F10, each with the spec's example
+  let ry = fy + 20;
+  for (const card of s.f) {
+    const ex = card.slice(1);
+    mkText(f, card[0], R, ry, tw(card[0], 12, false, 600), { size: 12, weight: 600, lh: 1.2, role: "text", name: "rule-title" });
+    if (/^F9/.test(card[0])) anchor("f9", R - 12, ry + 8);
+    let ex0 = R + 12, ey = ry + 18;
+    for (const e of ex) {
+      const ew = tw(e, 12, true);
+      if (ex0 + ew > R + W) { ex0 = R + 12; ey += 18; }
+      mkText(f, e, ex0, ey, Math.min(ew, W - 12), { size: 12, mono: true, lh: 1.2, role: "text2", name: "rule-example" });
+      ex0 += ew + 12;
+    }
+    ry = ey + 26;
+  }
+  ry += 12;
+  ry += title(s.rules.title, R, ry);
+  tableBlock(f, R, ry, W, s.rules.head, s.rules.rows, [{ x: 12, w: 118 }, { x: 136, w: 190, role: "text" }, { x: 334, w: 216 }], { name: "table-rules" });
+}
+// ---- board 19: the anatomy (bands, columns, tokens)
+function frameAnatomy(f, fx, fy, fw, fh, bd) {
+  const dk = D.drawers[bd._drawer], dx = fx, dy = fy + 20, dw = 480, dh = fh - 40;
+  drawDrawer(f, dx, dy, dw, dh, dk, {});
+  const x0 = dx + PAD, cw = dw - 2 * PAD, c = cols(x0, cw), a = BOXES["row:" + LB.status], z = BOXES["row:" + LB.tiers];
+  if (a && z) { // column guides over the contract rows: label, value (11 characters), unit
+    const gy = a.y, gh = z.y + z.h - a.y;
+    mkRect(f, x0 - 2, gy, c.valL - 8 - x0 + 4, gh, null, { stroke: "text3", dash: true, name: "guide-label-column" });
+    mkRect(f, c.valL - 2, gy, c.valR - c.valL + 4, gh, null, { stroke: "text3", dash: true, name: "guide-value-column" });
+    mkRect(f, c.unitX - 2, gy, c.unitW + 4, gh, null, { stroke: "text3", dash: true, name: "guide-unit-column" });
+    anchor("cols", dx + dw - 12, gy + 6);
+  }
+  const cx = fx + 540, cwid = fw - 540 - 20;
+  let prev = fy + 12;
+  for (const co of bd.callouts) {
+    const at = ANCH && ANCH[co._at];
+    if (!at) { warn("callout", "board 19: no anchor " + co._at); continue; }
+    const ay = at[1], ch = blockH(co.t, cwid - 20, 12, 1.3) + 12;
+    const y = Math.max(prev, ay - ch / 2);
+    mkRect(f, cx, y, cwid, ch, "raised", { radius: 4, name: "callout" });
+    mkText(f, co.t, cx + 10, y + 6, cwid - 20, { size: 12, lh: 1.3, role: "text2", grow: "h", tight: true, name: "callout-text" });
+    const sx = dx + dw + 4, ex = cx - 2, my = y + ch / 2;
+    if (!polyline(f, [[sx, ay], [sx + 20, ay], [ex - 12, my], [ex, my]], "text3", { width: 1, name: "callout-leader" })) mkRect(f, sx, ay, ex - sx, 1, "text3", { name: "callout-leader" });
+    mkEllipse(f, dx + dw - 6, ay - 3, 6, 6, "text3", { name: "callout-dot" });
+    prev = y + ch + 8;
+  }
+  if (prev > fy + fh) warn("frame", "board 19: callouts run " + Math.ceil(prev - fy - fh) + " px past the frame");
+}
+// ---- board 20: over the workspace, the TopBar live; and the 200 % reflow
+function frameContext(f, fx, fy, fw, fh, bd, fr) {
+  const tb = bd.topBar, dk = D.drawers[bd._drawer];
+  if (fr._show === "zoom") { // 640 × 400 CSS px: the drawer is full width below the TopBar (05 §5 item 7)
+    topBar(f, fx, fy, fw, tb, { narrow: true });
+    drawDrawer(f, fx, fy + 40, fw, fh - 40, dk, { ap: "Z:", clip: true });
+    return;
+  }
+  topBar(f, fx, fy, fw, tb);
+  anchor("topbar", fx + 640, fy + 20);
+  chartPanel(f, fx + 8, fy + 48, 780, fh - 56, tb, 11);
+  gridPanel(f, fx + 796, fy + 48, fw - 804, fh - 56);
+  scrim(f, fx, fy + 40, fw, fh - 40);
+  anchor("scrim", fx + 400, fy + 420);
+  drawDrawer(f, fx + fw - 480, fy + 40, 480, fh - 40, dk, { clip: true });
+}
+// ---- board 21: the keyboard path and focus order (§10.1)
+function orderTag(f, b, n, side) { // a focus-order tag beside a control (top edge, left or right): numeral in a color.focus.ring outline
+  const x = side === "left" ? b.x - 28 : side === "right" ? b.x + b.w + 8 : b.x + b.w / 2 - 10;
+  const y = side === "top" ? b.y - 20 : b.y + (b.h - 18) / 2;
+  mkRect(f, x, y, 20, 18, "overlay", { stroke: "focus", sw: 1.5, radius: 9, name: "focus-order-tag" });
+  mkText(f, String(n), x, vmid(y, 18, 11, 1.2), 20, { size: 11, weight: 700, lh: 1.2, role: "text", align: "center", grow: "fixed", name: "focus-order-label" });
+}
+function frameKeys(f, fx, fy, fw, fh, bd) {
+  const dk = D.drawers[bd._drawer];
+  drawDrawer(f, fx, fy + 20, 480, fh - 40, dk, { focus: ["title"] });
+  bd._order.forEach((k, i) => { const b = BOXES[k]; if (b) orderTag(f, b, i + 1, k === "close" ? "left" : k === "link" ? "right" : "top"); else warn("focus order", "board 21: no box " + k); });
+  const x = fx + 520, w = fw - 520 - 20;
+  let y = fy + 20;
+  anchor("keys", x - 12, y + 12);
+  for (const k of bd.keys) {
+    const iw = w - 24;
+    const h = 10 + 18 + blockH(k[1], iw, 11, 1.2) + 4 + blockH(k[2], iw, 12, 1.3) + 6 + 16 + blockH(k[3], iw, 12, 1.3) + 10;
+    mkRect(f, x, y, w, h, "raised", { radius: 4, name: "key-card" });
+    let cy = y + 10;
+    mkText(f, k[0], x + 12, cy, Math.min(tw(k[0], 12, true, 600), iw), { size: 12, mono: true, weight: 600, lh: 1.2, role: "text", name: "key" });
+    cy += 18;
+    mkText(f, k[1], x + 12, cy, iw, { size: 11, lh: 1.2, role: "text3", grow: "h", tight: true, name: "key-where" });
+    cy += blockH(k[1], iw, 11, 1.2) + 4;
+    mkText(f, k[2], x + 12, cy, iw, { size: 12, lh: 1.3, role: "text", grow: "h", tight: true, name: "key-action" });
+    cy += blockH(k[2], iw, 12, 1.3) + 6;
+    mkText(f, D.copy.focusAfter, x + 12, cy, tw(D.copy.focusAfter, 11, false, 600), { size: 11, weight: 600, lh: 1.2, role: "text3", name: "key-focus-label" });
+    cy += 16;
+    mkText(f, k[3], x + 12, cy, iw, { size: 12, lh: 1.3, role: "text2", grow: "h", tight: true, name: "key-focus-after" });
+    y += h + 10;
+  }
+  if (y > fy + fh) warn("frame", "board 21: key cards run " + Math.ceil(y - fy - fh) + " px past the frame");
+}
+// ---- board 22: the lifecycle wireflow (open, live, grace, revision, retry, close)
+function frameFlow(f, fx, fy, fw, fh, fl) {
+  const W = 400, H = 230, box2 = {};
+  for (const nd of fl.nodes) {
+    const b = { x: fx + nd._x, y: fy + nd._y, w: W, h: H };
+    box2[nd._k] = b;
+    mkRect(f, b.x, b.y, b.w, b.h, "overlay", { stroke: "borderDefault", radius: 6, radiusTok: "radius.card", name: "flow-step" });
+    let cy = b.y + 14;
+    mkText(f, nd.title, b.x + 16, cy, tw(nd.title, 14, false, 600), { ty: "type.ui.heading-sm", role: "text", name: "flow-step-title" });
+    cy += 26;
+    for (const L of nd.lines) { mkText(f, L, b.x + 16, cy, W - 32, { size: 12, lh: 1.3, role: "text2", grow: "h", tight: true, name: "flow-step-line" }); cy += blockH(L, W - 32, 12, 1.3) + 6; }
+    if (cy > b.y + H) warn("flow", nd._k + " runs " + Math.ceil(cy - b.y - H) + " px past its box");
+    anchor(nd._k, b.x + b.w - 22, b.y + 22); // inside the step, right of its title
+  }
+  const lab = (s, x, y, w) => mkText(f, s, x, y, w, { size: 11, lh: 1.3, role: "text2", grow: "h", tight: true, name: "flow-edge-label" });
+  const edge = (pts, dir) => { if (!polyline(f, pts, "text3", { width: 1.5, name: "flow-edge" })) for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i]; mkRect(f, Math.min(a[0], b[0]) - 0.75, Math.min(a[1], b[1]) - 0.75, Math.abs(b[0] - a[0]) + 1.5, Math.abs(b[1] - a[1]) + 1.5, "text3", { name: "flow-edge" }); } const e = pts[pts.length - 1]; arrowHead(f, e[0], e[1], dir, "text3"); };
+  for (const e of fl.edges) {
+    const s = box2[e._f], t = box2[e._t], key = e._f + ">" + e._t;
+    if (key === "open>live" || key === "live>revision" || key === "close>grace") { // horizontal, label above the line in the gutter
+      const y = s.y + s.h / 2, x1 = s.x + s.w, x2 = t.x, lw = x2 - x1 - 16;
+      edge([[x1, y], [x2, y]], "r");
+      lab(e.label, x1 + 8, y - 8 - blockH(e.label, lw, 11, 1.3), lw);
+    } else if (key === "open>retry" || key === "live>close") { // down, label right of the line
+      const x = s.x + 100, y1 = s.y + s.h, y2 = t.y;
+      edge([[x, y1], [x, y2]], "d");
+      lab(e.label, x + 10, y1 + 12, 160);
+    } else if (key === "retry>open") { // back up
+      const x = s.x + 300, y1 = s.y, y2 = t.y + t.h;
+      edge([[x, y1], [x, y2]], "u");
+      lab(e.label, x + 10, y2 + 40, tw(e.label, 11) + 4);
+    } else if (key === "grace>live") { // up and left, into live's bottom (a reopen within 30 s)
+      const x1 = s.x + s.w / 2, ym = s.y - 110, x2 = t.x + 300, y2 = t.y + t.h;
+      edge([[x1, s.y], [x1, ym], [x2, ym], [x2, y2]], "u");
+      lab(e.label, x2 + 10, ym - 8 - blockH(e.label, x1 - x2 - 20, 11, 1.3), x1 - x2 - 20);
+    } else warn("flow", "no route for " + key);
+  }
+}
+// ---- board 23: the states × bands matrix (§6; each cell a verbatim excerpt)
+function frameMatrix(f, fx, fy, fw, fh, m) {
+  const x = fx + 16, w = fw - 32, c0 = 216, cw = (w - c0) / 4, rh = 39, size = 10.5;
+  const h = 8 + 26 + m.rows.length * rh + 4;
+  mkRect(f, x, fy + 12, w, h, "overlay", { radius: 6, radiusTok: "radius.card", name: "matrix" });
+  let cy = fy + 12 + 8;
+  m.head.forEach((t, i) => { const hx = x + (i ? c0 + (i - 1) * cw : 0) + 10; mkText(f, t, hx, cy + 4, tw(t, 11, false, 600), { size: 11, weight: 600, lh: 1.2, role: "text3", name: "matrix-head" }); });
+  anchor("head", x - 10, cy + 12);
+  cy += 26;
+  m.rows.forEach((r, ri) => {
+    hline(f, x + 6, x + w - 6, cy, "borderSubtle", { name: "matrix-rule" });
+    if (r[0] === "Contract load failed") { anchor("r12", x - 10, cy + rh / 2); anchor("r13", x + w + 10, cy + rh / 2); }
+    r.forEach((cell, i) => {
+      const cx = x + (i ? c0 + (i - 1) * cw : 0) + 10, cwid = (i ? cw : c0) - 16;
+      if (i === 0) mkText(f, cell, cx, cy + 5, cwid, { size: 12, weight: 600, lh: 1.25, role: "text", grow: "h", tight: true, name: "matrix-state" });
+      else mkText(f, cell, cx, cy + 4, cwid, { size, lh: 1.25, role: "text2", grow: "h", tight: true, name: "matrix-cell" });
+    });
+    cy += rh;
+  });
+}
+function drawFrame(bd, fr, f, fx, fy) {
+  const fw = fr._w, fh = fr._h;
+  switch (bd._kind) {
+    case "drawer":
+      if (fr._show === "colA") return drawDrawer(f, fx, fy, fw, fh, D.drawers[bd._colA], { ap: "A:" });
+      if (fr._show === "viewAs") return drawDrawer(f, fx, fy, fw, fh, D.drawers[bd._viewAs], { ap: "B:" }); // board 25 (r2)
+      return drawDrawer(f, fx, fy, fw, fh, D.drawers[bd._drawer], { label: "board " + bd.n });
+    case "drawers": return frameDrawers(f, fx, fy, fw, fh, bd._drawers);
+    case "stack": return frameStack(f, fx, fy, fw, fh, bd._drawers);
+    case "tiers": return frameTiers(f, fx, fy, fw, fh, bd.tiers);
+    case "cmp126": return frame126(f, fx, fy, fw, fh, bd.cmp126);
+    case "cmp125": return frame125(f, fx, fy, fw, fh, bd.cmp125);
+    case "cmp177": return frame177(f, fx, fy, fw, fh, bd.cmp177);
+    case "precision": return framePrecision(f, fx, fy, fw, fh, bd.precision);
+    case "anatomy": return frameAnatomy(f, fx, fy, fw, fh, bd);
+    case "context": return frameContext(f, fx, fy, fw, fh, bd, fr);
+    case "keys": return frameKeys(f, fx, fy, fw, fh, bd);
+    case "flow": return frameFlow(f, fx, fy, fw, fh, bd.flow);
+    case "matrix": return frameMatrix(f, fx, fy, fw, fh, bd.matrix);
+    default: warn("frame", "board " + bd.n + ": unknown kind " + bd._kind);
+  }
+}
+// ---------------------------------------------------------------- annotation layer (dark theme) ------------------
+const COL_W = 328, FACETS = D.struct.facetPrefix.map((s) => s.replace(": ", ""));
+function facetLines(m) { // one line per facet the sources give; the facets they do not give share one line, each with "—"
+  const out = [], none = [];
+  for (const fct of FACETS) { const v = m[fct] == null ? DASH : m[fct]; if (v === DASH) { none.push(fct + ": " + DASH); continue; } for (const s of Array.isArray(v) ? v : [v]) out.push(fct + ": " + s); }
+  if (none.length) out.push(none.join(" · "));
+  return out;
+}
+function ctext(ctx, str, x, y, w, o) { const h = estH(str, w, o.size, !!o.mono); if (ctx.draw) { const r = mkText(ctx.b, str, x, y, w, Object.assign({ grow: "h" }, o)); if (r) ctx.shapes.push(r.shape); } return h; }
+function badge(ctx, x, y, n, keys) { // a filled circle in color.text.primary with a color.text.inverse numeral
+  const e = mkEllipse(ctx.b, x, y, 20, 20, "text", Object.assign({ stroke: "canvas", sw: 1.5, outer: true, name: "marker " + n }, keys || {}));
+  ctx.shapes.push(e);
+  const r = mkText(ctx.b, String(n), x, y + 3, 20, Object.assign({ size: 11, weight: 700, lh: 1.2, role: "inverse", align: "center", grow: "fixed", name: "marker-numeral" }, keys || {}));
+  if (r) ctx.shapes.push(r.shape);
+}
+function markerBlock(ctx, m, no, x, y, W, keys) {
+  const pad = 10, innerX = x + 36, innerW = W - 46;
+  let h = pad;
+  const lines = [{ s: m.part, o: { size: 11.5, weight: 700, name: "marker-part", after: 3, role: "text" } }];
+  if (m.note) lines.push({ s: m.note, o: { size: 11, role: "text3", name: "marker-note", after: 3 } });
+  for (const fl of facetLines(m)) lines.push({ s: fl, o: { size: 11, role: "text2", name: "marker-facet", after: 2 } });
+  let bg = null;
+  if (ctx.draw) {
+    bg = mkRect(ctx.b, x, y, W, 10, "raised", Object.assign({ stroke: "borderSubtle", radius: 6, role: "card-bg", bg: true, pad, gap: 12, name: "marker-block" }, keys));
+    ctx.shapes.push(bg);
+    badge(ctx, x + 9, y + 9, no, keys);
+  }
+  for (const L of lines) h += ctext(ctx, L.s, innerX, y + h, innerW, Object.assign({}, keys, L.o)) + L.o.after;
+  h += pad - 4;
+  if (bg) bg.resize(W, h);
+  return h;
+}
+function columnBlocks(ctx, bd, x, y, W, sfx) { // the annotation column: board id, what it shows, then one block per marker
+  let cy = y, idx = 0;
+  const stk = TICKET + ":c" + bd.n + sfx, base = { blk: stk + "-h", stk, idx };
+  cy += ctext(ctx, bd.id, x, cy, W, Object.assign({ size: 15, weight: 700, role: "text", name: "column-title", after: 4 }, base)) + 4;
+  cy += ctext(ctx, bd.desc, x, cy, W, Object.assign({ size: 11.5, role: "text2", name: "column-description", after: 8 }, base)) + 8;
+  cy += ctext(ctx, D.struct.words[0], x, cy, W, Object.assign({ size: 11, weight: 700, role: "text3", name: "column-annotations", after: 0 }, base));
+  cy += 12; idx++;
+  bd.markers.forEach((m, i) => { cy += markerBlock(ctx, m, i + 1, x, cy, W, { blk: stk + "-m" + (i + 1), stk, idx }) + 12; idx++; });
+  return { bottom: cy - 12, idx };
+}
+function annotate(b, bd, colX, colY, sfx) { // markers on the parts + the column, grouped
+  const ctx = { draw: true, b, shapes: [] };
+  bd.markers.forEach((m, i) => {
+    const at = ANCH && ANCH[m._at];
+    if (!at) { warn("marker", "board " + bd.n + sfx + " has no anchor '" + m._at + "' for marker " + (i + 1)); return; }
+    const cx = Math.min(b.x + b.width - 34, Math.max(b.x + 34, at[0])), cy = Math.min(b.y + b.height - 34, Math.max(b.y + 34, at[1])); // ≥ 24 px content margins
+    badge(ctx, cx - 10, cy - 10, i + 1);
+  });
+  const r = columnBlocks(ctx, bd, colX, colY, COL_W, sfx);
+  try {
+    const g = penpot.group(ctx.shapes.filter(Boolean));
+    if (g) { g.name = TICKET + " / " + pad2(bd.n) + " annotations" + (sfx ? " · light" : ""); tag(g, { role: "annotations", board: bd.n }); }
+    else warn("group", "board " + bd.n + sfx + ": penpot.group returned null; markers and column stay ungrouped");
+  } catch (e) { warn("group board " + bd.n + sfx, e); }
+  return r;
+}
+function footerText(n, theme) { return "page " + TICKET + " · board " + pad2(n) + (theme === "light" ? " light" : "") + " · " + VERSION; }
+function columnHeight(bd) { return columnBlocks({ draw: false }, bd, 0, 0, COL_W, "").bottom + 12 + estH(footerText(bd.n, "light"), 300, 11); }
+
+// ---------------------------------------------------------------- plan: 42 slots, sizes and grid (independent of ONLY)
+const boards = D.boards || [];
+const M = 24, FGAP = 40, LAB_H = 26, GAPX = 160, GAPY = 240;
+const slots = []; // §15's order: the 25 dark boards, then the light twins of boards 1–17
+for (const bd of boards) slots.push({ bd, theme: "dark", key: bd.n + "D" });
+for (const bd of boards) if (bd._twin) slots.push({ bd, theme: "light", key: bd.n + "L" });
+const rowOf = (s) => { const n = s.bd.n, l = s.theme === "light"; return n <= 14 || n === 25 ? (l ? 1 : 0) : n <= 17 ? (l ? 3 : 2) : 4; }; // SCR-103 states (1–14, 25) · twins · components · twins · spec boards
+const boardName = (s) => TICKET + " / " + pad2(s.bd.n) + " " + s.bd.id + (s.theme === "light" ? " · light" : "");
+const plan = slots.map((s) => {
+  const fws = s.bd._frames.map((fr) => fr._w), framesW = fws.reduce((a, v) => a + v, 0) + FGAP * (fws.length - 1);
+  const framesH = Math.max.apply(null, s.bd._frames.map((fr) => fr._h));
+  return { s, framesW, w: M + framesW + M + COL_W + M, h: Math.max(M + LAB_H + framesH, M + columnHeight(s.bd)) + M + 8, x: 0, y: 0 };
+});
+(function grid() {
+  const rows = [[], [], [], [], []];
+  for (const p of plan) rows[rowOf(p.s)].push(p);
+  let y = 0;
+  rows.forEach((row) => {
+    let x = 0, maxH = 0;
+    for (const p of row) {
+      if (p.s.theme === "light") { const dark = plan.find((q) => q.s.bd === p.s.bd && q.s.theme === "dark"); p.x = dark.x; }
+      else { p.x = x; x += p.w + GAPX; }
+      p.y = y; maxH = Math.max(maxH, p.h);
+    }
+    if (row.length) y += maxH + GAPY;
+  });
+})();
+const want = (s) => !ONLY || ONLY.some((o) => (typeof o === "number" ? o === s.bd.n : String(o).replace(/^0+/, "").toUpperCase() === s.key));
+
+// ---- idempotent: remove this ticket's OWN frames for the boards about to be built (normalised name, this page only)
+const planned = plan.filter((p) => want(p.s)).map((p) => norm(boardName(p.s)));
+const removed = [];
+for (const s of (page.root.children || []).slice()) {
+  try {
+    if (s.type !== "board") continue;
+    const nm = norm(s.name);
+    if (!nm.startsWith(TICKET + "/")) continue;
+    if (planned.indexOf(nm) >= 0) { removed.push({ name: s.name, id: s.id, hpe1ver: s.getPluginData ? s.getPluginData("hpe1ver") : null }); s.remove(); }
+  } catch (e) { warn("clear", e); }
+}
+
+// ---------------------------------------------------------------- build -------------------------------------
+const DARK = () => ({ theme: "dark", set: NOTE_SET, density: "compact" });
+function mkBoard(sl, x, y, w, h) {
+  const b = penpot.createBoard();
+  created++;
+  b.name = boardName(sl);
+  b.x = x; b.y = y; b.resize(w, h);
+  paintFill(b, "canvas");
+  set(b, { clipContent: false });
+  tag(b, { role: "board", board: sl.bd.n, theme: sl.theme, id: sl.bd.id, exportAs: exportAs(sl.bd.id, sl.theme) });
+  try { b.setPluginData("hpe1ver", VERSION); } catch (e) { warn("hpe1ver", e); }
+  return b;
+}
+function mkFrame(b, sl, fr, x, y) { // one frame: a clipped nested board of §15's size
+  const f = penpot.createBoard();
+  created++;
+  f.name = TICKET + " / " + pad2(sl.bd.n) + " " + (fr.label || sl.theme + " " + fr._lab) + (fr._show ? " " + fr._show : ""); // a layer name, not drawn text
+  f.x = x; f.y = y; f.resize(fr._w, fr._h);
+  paintFill(f, "canvas");
+  set(f, { clipContent: true });
+  tag(f, { role: "frame", board: sl.bd.n, theme: sl.theme, density: fr._density, size: fr._w + "x" + fr._h, set: THEME_SET[sl.theme] });
+  b.appendChild(f);
+  return f;
+}
+const built = [];
+for (const p of plan) {
+  const sl = p.s, bd = sl.bd, sfx = sl.theme === "light" ? "L" : "";
+  if (!want(sl)) continue;
+  try {
+    CUR = DARK();
+    const b = mkBoard(sl, p.x, p.y, p.w, p.h);
+    ANCH = {}; BOXES = {};
+    let fx = b.x + M;
+    for (const fr of bd._frames) {
+      CUR = DARK();
+      const label = fr.label || sl.theme + " · " + fr._lab;
+      mkText(b, label, fx, b.y + M, tw(label, 12, false, 600), { size: 12, weight: 600, lh: 1.2, role: "text2", name: "frame-label" });
+      const setName = THEME_SET[sl.theme];
+      if (!TOK.sets[setName]) { warn("frame", "board " + bd.n + sfx + ": the file has no " + setName + " set; frame not drawn"); fx += fr._w + FGAP; continue; }
+      CUR = { theme: sl.theme, set: setName, density: fr._density };
+      const f = mkFrame(b, sl, fr, fx, b.y + M + LAB_H);
+      try { drawFrame(bd, fr, f, fx, b.y + M + LAB_H); } catch (e) { warn("board " + bd.n + sfx + " " + label, e); }
+      fx += fr._w + FGAP;
+    }
+    CUR = DARK();
+    const colX = b.x + M + p.framesW + M;
+    const r = annotate(b, bd, colX, b.y + M, sfx);
+    mkText(b, footerText(bd.n, sl.theme), colX, r.bottom + 12, 300, { size: 11, lh: 1.3, role: "text3", grow: "h", name: "footer", blk: TICKET + ":c" + bd.n + sfx + "-f", stk: TICKET + ":c" + bd.n + sfx, idx: r.idx });
+    ANCH = null; BOXES = null;
+    flushBindings();
+    built.push({ n: bd.n, theme: sl.theme, name: b.name, id: b.id, size: p.w + "x" + p.h, frames: bd._frames.map((fr) => (fr.label || sl.theme + " · " + fr._lab) + " " + fr._w + "x" + fr._h), exportAs: exportAs(bd.id, sl.theme) });
+  } catch (e) { warn("board " + bd.n + sfx, e); try { flushBindings(); } catch (e2) { warn("flush", e2); } ANCH = null; BOXES = null; }
+}
+
+// ---------------------------------------------------------------- result ------------------------------------
+for (const [sig, n] of fontIssues) if (n > 1) warnings.push("font: " + sig + " (x" + n + ")");
+const missingTokens = [];
+for (const name of MISSING.keys()) { const how = MISSING_HOW[name] || MISSING.get(name); missingTokens.push({ token: name, drawn: how }); warnings.push("missing token " + name + " (spec §16.4; the handoff's Tokens lines): " + how); }
+for (const [name, n] of ABSENT) warnings.push("token " + name + " is not in the file's sets: " + n + " binding(s) recorded unbound");
+try { page.setPluginData(TAG, "v1"); page.setPluginData(TAG + ":built", new Date().toISOString()); } catch (e) { warn("page tag", e); }
+const exportCommands = built.map((x) => "python3 docs/design/_tools/penpot_export.py " + x.id + " " + x.exportAs).join("\n");
+return {
+  writer: WRITER,
+  version: VERSION,
+  pageId: page.id,
+  pageName: page.name,
+  createdPage,
+  removed,
+  duplicatePages,
+  tokens: { sets: TOK.found, activeSets: TOK.activeSets, activeTheme: ACTIVE_THEME, bindMode: BIND_MODE, live: BIND.live, recorded: BIND.recorded, absent: BIND.missing, failed: BIND.failed },
+  missingTokens,
+  pathFallback,
+  shapes: created,
+  boards: built,
+  next: "e08-d06-relayout.js PASS=\"measure\" → PASS=\"restack\" (until moved=0) → e08-d06-dedupe.js → probe.js until every instance agrees → export (keep the build-time theme active)",
+  exportCommands,
+  warnings,
+};

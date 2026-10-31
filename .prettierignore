@@ -108,6 +108,9 @@ docs/design/_tools/sheets/e12-d07/v4/
 # docs/design/_tools/sheets/e11-d05/v4: the packed (compact) E11-D05 ref-frame sheets (boards 09 / 10), as the kit
 # writes them (compactOf.file the bare raw-sheet name)
 docs/design/_tools/sheets/e11-d05/v4/
+# docs/design/_tools/sheets/e08-d06/v4: the packed (compact) E08-D06 sheets the boards were rendered from, as the kit
+# writes them (compactOf.file the bare raw-sheet name; e08-d06/BUILD.md rebuilds them)
+docs/design/_tools/sheets/e08-d06/v4/
 
 # ADR-0038 S0 (#3947): CONSTITUTION.md predates Prettier and was never formatted by it; amendments
 # (C-16.1) edit it word by word, so a reflow must never ride along. Formatting it is its own PR.
