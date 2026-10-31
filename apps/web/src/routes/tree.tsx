@@ -32,6 +32,7 @@ import { SessionsSection } from "../features/session/SessionsSection";
 import { getMeClaims, refreshMeClaims } from "../lib/auth/meCache";
 import { ShellLayout } from "../features/app-shell/ShellLayout";
 import { ScreenRoot } from "../features/app-shell/ScreenRoot";
+import { WatchlistRoute } from "../features/watchlist/WatchlistRoute";
 
 const SETTINGS_ROUTES = new Set(["R-201", "R-202", "R-203", "R-204", "R-205"]);
 
@@ -68,6 +69,8 @@ function innerElementFor(routeId: string, owner: string | null): RouteObject["el
     );
   // E42-S01: each admin route inside CMP-087, its code loaded once the guard let the session in.
   if (isAdminRoute(routeId)) return <AdminRouteElement routeId={routeId} owner={owner} />;
+  // R-111 hosts SCR-100 as a routed page until E15's pane host (#4702 pre-ruling 1); the manifest's owner stays.
+  if (routeId === "R-111") return <WatchlistRoute />;
   if (routeId === "R-101") {
     // First sign-in lands on /terminal/last -> here; the card is server-gated (401 => renders nothing).
     return (
