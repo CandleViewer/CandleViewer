@@ -60,24 +60,6 @@ groups:
         annotations:
           summary: "A rule was auto-disarmed"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-ruleautodisarm"
-      - alert: EnvMismatchAttempt
-        expr: increase(env_mismatch_attempts_total[15m]) > 0
-        for: 0m
-        labels:
-          severity: ticket
-          component: oms
-        annotations:
-          summary: "Demo/live mismatch attempt blocked"
-          runbook_url: "docs/plan/07-release-and-prr.md#alert-envmismatchattempt"
-      - alert: CredentialExpiryApproaching
-        expr: min(credential_expiry_days) < 14
-        for: 10m
-        labels:
-          severity: ticket
-          component: secrets
-        annotations:
-          summary: "Credential or certificate expiry within 14 days"
-          runbook_url: "docs/plan/07-release-and-prr.md#alert-credentialexpiryapproaching"
       - alert: KeySelfCheckFailed
         # #836 (C-2.8, C-12.2, SR-032): a stored key fails a rule (a refused right, a whitelist that
         # is not the egress IP, SR-033, or any other), one alert per rule: order entry is read-only,

@@ -2,8 +2,8 @@
 
 BQ-08: an alert whose series nothing produces can never fire, and reads as "healthy" (RSK-047,
 observability gaps); this is how `PostgresDown` (`pg_up`) slipped through, since the dashboard
-lint checks panels, not rules. `PostgresDown`, `ClockDriftBlockingTrading` and the unemitted class
-behind them are #5174 (P1). Each series in each alert expression, guards included, must be
+lint checks panels, not rules. That and the unemitted class behind it were #5174 (P1).
+Each series in each alert expression, guards included, must be
 (1) a catalogue series that is emitted: `status="live"` or `exported=True` (a `planned` entry
 records an owner epic, not an emitter; `register_r0` registers live ones only), histogram
 families by name, (2) a recorded
@@ -17,11 +17,10 @@ docker, and no claim about a running stack.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Final
-
-import pytest
 
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from tests._alert_rules import (
@@ -83,6 +82,16 @@ def emitted_names() -> frozenset[str]:
     return frozenset(lint_module().catalogue_names()) - planned_names()
 
 
+_UP_JOB: Final = re.compile(r'\bup\s*\{[^}]*?\bjob\s*=\s*"([^"]+)"')
+
+
+def up_is_scraped(expr: str) -> bool:
+    """`up` is synthesised by Prometheus for every scrape target, so it exists exactly when the
+    rule names a `job` that prometheus.yml scrapes: `up{job="gone"}` and a bare `up` are not."""
+    named = _UP_JOB.findall(expr)
+    return bool(named) and set(named) <= scrape_jobs()
+
+
 def violations(rules: list[Rule]) -> set[Pair]:
     lint = lint_module()
     known, recorded, jobs = emitted_names(), recorded_names(), scrape_jobs()
@@ -90,6 +99,8 @@ def violations(rules: list[Rule]) -> set[Pair]:
     for r in rules:
         for s in series_in(r.expr, with_process=True):
             if s in recorded or base_name(s) in known:
+                continue
+            if s == "up" and up_is_scraped(r.expr):
                 continue
             external = s in lint.EXTERNAL or s in _PUSHED_EXTRA or s.startswith("process_")
             if external and producer_job(s) in jobs:
@@ -162,6 +173,15 @@ def test_self_test_external_name_without_a_scrape_job_is_reported() -> None:
     assert violations(mutated) == {("AmDown", "alertmanager_alerts_invalid_total")}
 
 
+def test_self_test_up_counts_only_for_a_job_prometheus_scrapes() -> None:
+    """#5174: `up` is synthesised per scrape job, so the rule's `job` matcher must name one."""
+    assert violations([Rule("x.yml", "Ok", 'up{job="candleviewer-api"} == 0')]) == set()
+    assert violations([Rule("x.yml", "Gone", 'up{job="no-such-job"} == 0')]) == {("Gone", "up")}
+    assert violations([Rule("x.yml", "Bare", "up == 0")]) == {("Bare", "up")}
+    mixed = Rule("x.yml", "Mixed", 'up{job="candleviewer-api"} == 0 or up{job="no-such-job"} == 0')
+    assert violations([mixed]) == {("Mixed", "up")}, "every named job must be scraped"
+
+
 def test_self_test_catalogue_recorded_and_pushed_names_resolve() -> None:
     lint = lint_module()
     some_catalogue = sorted(lint.catalogue_names())[0]
@@ -194,9 +214,3 @@ def test_self_test_fixed_expression_makes_its_baseline_entry_stale() -> None:
     entries = [*baseline_entries(), {"alert": "Gone", "series": "gone_total", "reason": "x"}]
     _, stale = diff(load_rules(), entries)
     assert stale == {("Gone", "gone_total")}
-
-
-@pytest.mark.parametrize("name", ["pg_up", "credential_expiry_days", "env_mismatch_attempts_total"])
-def test_alert_series_named_by_the_draft_stay_listed_until_they_resolve(name: str) -> None:
-    # Dropping one of these from the baseline without fixing the rule must fail the first test.
-    assert any(e["series"] == name for e in baseline_entries())

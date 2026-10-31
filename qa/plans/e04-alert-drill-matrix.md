@@ -21,7 +21,8 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | OmsUnknownOrders | page | 1m | `docs/plan/07-release-and-prr.md#alert-omsunknownorders` | synthetic | | | | | | pending |
 | OmsPositionReadingOwed | page | 0m | `docs/plan/07-release-and-prr.md#alert-omspositionreadingowed` | synthetic | | | | | | pending (promtool: a reading owed 60 s fires at once, one owed 59 s stays silent, and a reading handed on clears it: `infra/prometheus/tests/system_alerts.test.yml`. A real drill needs a position reading the projection cannot hand on, such as a row dated more than 5 s ahead of the store's clock) |
 | PostgresDown | page | 1m | `docs/plan/07-release-and-prr.md#alert-postgresdown` | real+synthetic | | | | | | pending |
-| ClockDriftBlockingTrading | page | 1m | `docs/plan/07-release-and-prr.md#alert-clockdriftblockingtrading` | synthetic | | | | | | pending |
+| PostgresDegraded | page | 5m | `docs/plan/07-release-and-prr.md#alert-postgresdegraded` | synthetic | | | | | | pending (promtool: a probe reading `degraded` fires once held 5 m, is silent at 4 m and on a brief degraded) |
+| ApiDown | page | 3m | `docs/plan/07-release-and-prr.md#alert-apidown` | real+synthetic | | | | | | pending (drill: stop the api container; promtool covers the `absent` arm, a job gone from prometheus.yml) |
 | DiskCritical | page | 2m | `docs/plan/07-release-and-prr.md#alert-diskcritical` | synthetic | | | | | | pending |
 | AuditChainVerificationFailed | page | 0m | `docs/plan/07-release-and-prr.md#alert-auditchainverificationfailed` | synthetic | | | | | | pending |
 | AuditVerifyNotPassing | page | 0m | `docs/plan/07-release-and-prr.md#alert-auditverifynotpassing` | synthetic | | | | | | pending |
@@ -35,8 +36,6 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | EventLoopLagHigh | ticket | 5m | `docs/plan/07-release-and-prr.md#alert-eventlooplaghigh` | synthetic | | | | | | pending |
 | DiskHigh | ticket | 5m | `docs/plan/07-release-and-prr.md#alert-diskhigh` | synthetic | | | | | | pending |
 | RuleAutodisarm | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-ruleautodisarm` | synthetic | | | | | | pending |
-| EnvMismatchAttempt | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-envmismatchattempt` | synthetic | | | | | | pending |
-| CredentialExpiryApproaching | ticket | 10m | `docs/plan/07-release-and-prr.md#alert-credentialexpiryapproaching` | synthetic | | | | | | pending |
 | AuthLoginFailureSpike | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-authloginfailurespike` | synthetic | | | | | | pending |
 | AuthLockouts | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-authlockouts` | synthetic | | | | | | pending |
 | AuthLoginFailureFloorMissed | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-authloginfailurefloormissed` | synthetic | | | | | | pending |

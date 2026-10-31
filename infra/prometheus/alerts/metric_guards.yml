@@ -186,23 +186,23 @@ groups:
         annotations:
           summary: "Expected metric auth_owner_bootstraps is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
-      - alert: ExpectedMetricMissingPgUp
-        expr: absent(pg_up)
+      - alert: ExpectedMetricMissingHealthComponentState
+        expr: absent(health_component_state)
         for: 15m
         labels:
           severity: ticket
           component: alerting
         annotations:
-          summary: "Expected metric pg_up is not emitted"
+          summary: "Expected metric health_component_state is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
-      - alert: ExpectedMetricMissingBybitClockDriftMs
-        expr: absent(bybit_clock_drift_ms)
+      - alert: ExpectedMetricMissingBuildInfo
+        expr: absent(build_info)
         for: 15m
         labels:
           severity: ticket
           component: alerting
         annotations:
-          summary: "Expected metric bybit_clock_drift_ms is not emitted"
+          summary: "Expected metric build_info is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingDiskUsedRatio
         expr: absent(disk_used_ratio)
@@ -267,24 +267,6 @@ groups:
           component: alerting
         annotations:
           summary: "Expected metric rule_autodisarm_total is not emitted"
-          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
-      - alert: ExpectedMetricMissingEnvMismatchAttemptsTotal
-        expr: absent(env_mismatch_attempts_total)
-        for: 15m
-        labels:
-          severity: ticket
-          component: alerting
-        annotations:
-          summary: "Expected metric env_mismatch_attempts_total is not emitted"
-          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
-      - alert: ExpectedMetricMissingCredentialExpiryDays
-        expr: absent(credential_expiry_days)
-        for: 15m
-        labels:
-          severity: ticket
-          component: alerting
-        annotations:
-          summary: "Expected metric credential_expiry_days is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingAuthLoginFailuresTotal
         expr: absent(auth_login_failures_total)

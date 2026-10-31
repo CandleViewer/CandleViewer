@@ -3,7 +3,7 @@
 An exchange event carries five stage timestamps (`StageStamps`); each stage's
 cost is a subtraction, not a guess. The exchange-origin stage
 (`t_exchange → t_received`) is on the exchange's clock, so it is only
-reported when a clock-offset measurement exists (`bybit_clock_drift_ms`,
+reported when a clock-offset measurement exists (`exchange_clock_drift_ms`,
 E08/US-MKT-009); without one it is `None` ("unavailable") — never a raw,
 skew-dominated or negative number.
 
