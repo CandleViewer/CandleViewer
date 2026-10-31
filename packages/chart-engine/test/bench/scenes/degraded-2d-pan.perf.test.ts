@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { Degraded2dPanBench } from "../../../bench/scenes/degraded-2d-pan.js";
 import { percentile } from "../../../bench/stats.mjs";
 import type { Ctx2DLike } from "../../../src/canvas2d/ctx2d.js";
+import { budget, why } from "@candleviewer/config/perf-calibration";
 
 /** A context that does nothing: the timing is the engine's CPU side alone. */
 const silent = (): Ctx2DLike => ({
@@ -32,6 +33,7 @@ describe("perf budgets: degraded-2d pan over 20 000 bars", () => {
       bench.step(-2);
       runs.push(performance.now() - start);
     }
-    expect(percentile(runs, 50) ?? Number.NaN).toBeLessThanOrEqual(8);
+    const median = percentile(runs, 50) ?? Number.NaN;
+    expect(median, why(median, 8)).toBeLessThanOrEqual(budget(8));
   });
 });

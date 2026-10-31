@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { PANES, ViewportTransformBench } from "../../../bench/scenes/viewport-transform.js";
 import { percentile } from "../../../bench/stats.mjs";
+import { budget, why } from "@candleviewer/config/perf-calibration";
 
 describe("perf budgets: the shared transform", () => {
   it("a frame's transform work takes <= 0.05 ms per pane (median of 5 runs)", () => {
@@ -13,6 +14,7 @@ describe("perf budgets: the shared transform", () => {
       for (let f = 0; f < 600; f += 1) bench.step();
       if (r >= 0) perPane.push((performance.now() - start) / 600 / PANES); // run -1 warms up
     }
-    expect(percentile(perPane, 50) ?? Number.NaN).toBeLessThanOrEqual(0.05);
+    const median = percentile(perPane, 50) ?? Number.NaN;
+    expect(median, why(median, 0.05)).toBeLessThanOrEqual(budget(0.05));
   });
 });

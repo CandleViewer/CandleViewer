@@ -30,6 +30,7 @@ Source: `docs/plan/26-chart-engine-design.md`, ADR-0002, CONSTITUTION C-2.16, §
 - **Fail on >5% regression** in frame time, draw calls or memory vs the `main` baseline (median of 5,
   headless Chromium, fixed dataset). Paste the bench diff in the PR.
 - `bench:baseline` updates need CODEOWNER approval and a written justification.
+- Wall-clock bounds in `*.perf.test.ts` go through `budget(<spec>)` (one CPU-probe runner calibration, capped at 3x; owner: `docs/plan/06-performance-and-load-standard.md` §7.4). That is normalisation, not loosening: never change a spec number, and `REFERENCE_CPU_MS` in `packages/config/src/perf-calibration.mjs` is a baseline-class change.
 - Every new layer adds a benchmark scenario under `bench/` in the same PR.
 
 ## Tests

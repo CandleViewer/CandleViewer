@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { budget, why } from "@candleviewer/config/perf-calibration";
 import { describe, expect, it } from "vitest";
 import { COMMON_HEADER_BYTES, decodeBookDelta, decodeFootprint } from "../src/runtime/index.js";
 
@@ -69,7 +70,7 @@ describe("CVWB decode performance (§16.3)", () => {
     const t = bestMs(() => decodeBookDelta(d));
     console.info(`book delta 50 levels: ${t.toFixed(4)} ms (best of 15)`);
     expect(t).toBeGreaterThan(0);
-    expect(t).toBeLessThan(0.5);
+    expect(t, why(t, 0.5)).toBeLessThan(budget(0.5));
   });
 
   it("footprint, 400 cells, is far inside the 3 ms hard fail", () => {
@@ -78,7 +79,7 @@ describe("CVWB decode performance (§16.3)", () => {
     const t = bestMs(() => decodeFootprint(d));
     console.info(`footprint 400 cells: ${t.toFixed(4)} ms (best of 15)`);
     expect(t).toBeGreaterThan(0);
-    expect(t).toBeLessThan(3);
+    expect(t, why(t, 3)).toBeLessThan(budget(3));
   });
 
   it("decode time scales linearly with record_count (x8 records < x20 time)", () => {
@@ -90,6 +91,7 @@ describe("CVWB decode performance (§16.3)", () => {
     }
     const ratio = bestMs(() => decodeBookDelta(b)) / bestMs(() => decodeBookDelta(a));
     console.info(`x8 records -> x${ratio.toFixed(2)} time`);
+    // budget-exempt: ratio (two decodes in one process, not a wall-clock bound)
     expect(ratio).toBeLessThan(20);
   });
 });

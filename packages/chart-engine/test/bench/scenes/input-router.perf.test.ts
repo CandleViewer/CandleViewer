@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { InputRouterBench } from "../../../bench/scenes/input-router.js";
 import { percentile } from "../../../bench/stats.mjs";
+import { budget, why } from "@candleviewer/config/perf-calibration";
 
 describe("perf budgets: the input router", () => {
   it("the input stage of a drag, glide and wheel frame takes <= 1 ms (median of 5 runs)", () => {
@@ -13,6 +14,7 @@ describe("perf budgets: the input router", () => {
       if (r >= 0) perFrame.push(bench.inputMs / 600); // run -1 warms up
       expect(bench.registrations).toBe(10);
     }
-    expect(percentile(perFrame, 50) ?? Number.NaN).toBeLessThanOrEqual(1);
+    const median = percentile(perFrame, 50) ?? Number.NaN;
+    expect(median, why(median, 1)).toBeLessThanOrEqual(budget(1));
   });
 });

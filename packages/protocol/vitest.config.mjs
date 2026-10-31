@@ -28,7 +28,14 @@ export default defineConfig({
       },
       {
         extends: true,
-        test: { name: "perf", include: ["test/**/*.perf.test.ts"], testTimeout: 60_000 },
+        test: {
+          name: "perf",
+          include: ["test/**/*.perf.test.ts"],
+          testTimeout: 60_000,
+          // C-9.3: a wall-clock budget may retry twice on the shared runner; the budget never moves.
+          retry: 2,
+          setupFiles: ["../config/src/perf-calibration-setup.mjs"],
+        },
       },
       {
         extends: true,

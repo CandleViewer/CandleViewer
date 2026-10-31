@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { percentile } from "../../../bench/stats.mjs";
 import { BarStore } from "../../../src/model/index.js";
+import { budget, why } from "@candleviewer/config/perf-calibration";
 
 describe("perf budgets: bar-store mutations", () => {
   it("1 M one-bar appends, past the 200 000 ceiling, take ≤ 120 ms (median of 5 runs)", () => {
@@ -20,6 +21,7 @@ describe("perf budgets: bar-store mutations", () => {
       if (r >= 0) runs.push(performance.now() - start); // run -1 is the warm-up
       expect(store.length).toBe(200_000);
     }
-    expect(percentile(runs, 50) ?? Number.NaN).toBeLessThanOrEqual(120);
+    const median = percentile(runs, 50) ?? Number.NaN;
+    expect(median, why(median, 120)).toBeLessThanOrEqual(budget(120));
   });
 });

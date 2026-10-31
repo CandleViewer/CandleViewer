@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { GlRegistryBench } from "../../../bench/scenes/gl-registry.js";
 import { percentile } from "../../../bench/stats.mjs";
 import { FakeGl } from "../../gl/fake-gl.js";
+import { budget, why } from "@candleviewer/config/perf-calibration";
 
 describe("perf budgets: GL registry invalidate + recreate", () => {
   it("1 000 resources invalidate and recreate in <= 5 ms (median of 5 runs)", () => {
@@ -14,6 +15,7 @@ describe("perf budgets: GL registry invalidate + recreate", () => {
       expect(bench.step()).toBe(0);
       if (r >= 0) runs.push(performance.now() - start); // run -1 is the warm-up
     }
-    expect(percentile(runs, 50) ?? Number.NaN).toBeLessThanOrEqual(5);
+    const median = percentile(runs, 50) ?? Number.NaN;
+    expect(median, why(median, 5)).toBeLessThanOrEqual(budget(5));
   });
 });
