@@ -162,6 +162,13 @@ describe("ThemeSwitcher (CMP-062)", () => {
     const host = await mount(<ThemeSwitcher value="light" matchSystem density="comfortable" />);
     expect(await seriousViolations(host)).toEqual([]);
   });
+
+  it("has no serious or critical axe violations in the default and disabled states", async () => {
+    const plain = await mount(<ThemeSwitcher value="dark" />);
+    expect(await seriousViolations(plain)).toEqual([]);
+    const off = await mount(<ThemeSwitcher value="high-contrast" disabled />);
+    expect(await seriousViolations(off)).toEqual([]);
+  });
 });
 
 describe("ThemeSwitcherConnected (CMP-062, store-bound)", () => {

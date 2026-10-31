@@ -73,6 +73,7 @@ export function ThemeSwitcher({
   useEffect(() => {
     // Runs after the commit's render, so it names what the host applied (a refused change names the unchanged theme).
     // A trailing zero-width space on every other commit makes a repeated sentence a DOM change, so it is re-announced.
+    // Best-effort: some screen readers ignore a change of that space alone; the manual screen-reader pass confirms it.
     if (commits > 0)
       setSpoken(
         latest.current.announce[latest.current.value] + (commits % 2 === 0 ? "\u200B" : ""),
