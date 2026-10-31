@@ -65,11 +65,19 @@ async def test_an_account_resolved_to_another_fails_the_fetch() -> None:
     assert failed.value.kind == "other_account"
 
 
-@pytest.mark.parametrize("read", ["unfinished_for", "get_by_exchange_order_id", "get_by_link_id"])
+@pytest.mark.parametrize(
+    ("read", "asked"),
+    [
+        ("unfinished_for", None),
+        ("get_by_exchange_order_id", "x5"),
+        ("get_by_link_id", LINK.format(5)),
+    ],
+)
 async def test_a_store_answering_another_accounts_row_plans_nothing_from_it(
-    read: str, monkeypatch: pytest.MonkeyPatch
+    read: str, asked: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """C-12.4: a row of another account from any order read is refused, never paired."""
+    """C-12.4: a row of another account from any order read is refused, never paired, and logged
+    by the read and the id it asked for, never the row (C-12.6)."""
     w = World()
     foreign = row(5, exchange_account_id=OTHER)
 
@@ -84,8 +92,32 @@ async def test_a_store_answering_another_accounts_row_plans_nothing_from_it(
     assert w.oms.effects("push", "command", "discover") == []
     assert any(e.kind == "_AnotherAccount" for e in report.errors)
     met = [e for e in logs if e["event"] == "reconcile_row_of_another_account"]
-    assert {(e["log_level"], e["read"]) for e in met} == {("critical", read)}
+    assert {(e["log_level"], e["read"], e["subject"]) for e in met} == {("critical", read, asked)}
     assert w.oms.pages == [_ANOTHER_PAGE]  # paged once (C-2.11), however many reads met it
+
+
+async def test_a_row_of_another_account_the_diff_meets_pages_once_per_episode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BQ-12, C-2.11: a store that answers another account's row to the diff's reads, pass after
+    pass, pages once while the mix-up lasts; an order diff that meets none ends the episode, so
+    the next one pages again."""
+    w = World()
+    real = w.oms.get_by_exchange_order_id
+
+    async def foreign(*_a: Any) -> Any:
+        return row(5, exchange_account_id=OTHER)
+
+    w.venue.seed_execution(fill("e5", n=5))
+    monkeypatch.setattr(w.oms, "get_by_exchange_order_id", foreign)
+    first, second = await w.run(), await w.run()
+    assert first.errors == second.errors == (PassError("2", "_AnotherAccount", "e5"),)
+    assert w.oms.pages == [_ANOTHER_PAGE]
+    monkeypatch.setattr(w.oms, "get_by_exchange_order_id", real)
+    await w.run()  # met none: the episode is over
+    monkeypatch.setattr(w.oms, "get_by_exchange_order_id", foreign)
+    await w.run()
+    assert w.oms.pages == [_ANOTHER_PAGE, _ANOTHER_PAGE]
 
 
 async def test_a_history_read_answering_another_accounts_order_is_refused(
