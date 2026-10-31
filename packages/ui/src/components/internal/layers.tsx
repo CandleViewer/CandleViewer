@@ -9,7 +9,8 @@ import { createContext, useContext, useLayoutEffect, useRef, type RefObject } fr
  */
 
 interface Layer {
-  readonly modal: boolean;
+  /** Mutable: a layer whose modality changes while open keeps its stack position. */
+  modal: boolean;
   readonly element: () => HTMLElement | null;
   readonly escape: () => void;
   readonly claimsEscape?: () => boolean;
@@ -104,6 +105,8 @@ export function useLayer(
   escape.current = onEscape;
   const claims = useRef(claimsEscape);
   claims.current = claimsEscape;
+  const latestModal = useRef(modal);
+  latestModal.current = modal;
   const current = useRef<Layer | null>(null);
   const handle = useRef<LayerHandle | null>(null);
   handle.current ??= {
@@ -119,7 +122,7 @@ export function useLayer(
   useLayoutEffect(() => {
     if (!open) return undefined;
     const layer: Layer = {
-      modal,
+      modal: latestModal.current,
       element: () => element.current,
       escape: () => escape.current(),
       claimsEscape: () => claims.current?.() ?? true,
@@ -130,7 +133,16 @@ export function useLayer(
       remove(layer);
       if (current.current === layer) current.current = null;
     };
-  }, [open, modal, element]);
+  }, [open, element]);
+
+  // A modality change while open (a drawer crossing the narrow breakpoint) updates the layer in place: it
+  // stays where it is in the stack, under any layer opened from inside it.
+  useLayoutEffect(() => {
+    const layer = current.current;
+    if (!open || layer === null || layer.modal === modal) return;
+    layer.modal = modal;
+    notify();
+  }, [open, modal]);
 
   return handle.current;
 }

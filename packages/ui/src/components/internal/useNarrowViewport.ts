@@ -6,10 +6,16 @@ import { useSyncExternalStore } from "react";
  */
 export const NARROW_QUERY = "(max-width: 45rem)";
 
-const query = (): MediaQueryList | null =>
-  typeof window === "undefined" || typeof window.matchMedia !== "function"
-    ? null
-    : window.matchMedia(NARROW_QUERY);
+/** One list for every subscribe and snapshot; rebuilt only if `window.matchMedia` itself is replaced. */
+let cached: { readonly source: unknown; readonly list: MediaQueryList } | null = null;
+
+const query = (): MediaQueryList | null => {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return null;
+  if (cached === null || cached.source !== window.matchMedia) {
+    cached = { source: window.matchMedia, list: window.matchMedia(NARROW_QUERY) };
+  }
+  return cached.list;
+};
 
 const subscribe = (notify: () => void): (() => void) => {
   const list = query();

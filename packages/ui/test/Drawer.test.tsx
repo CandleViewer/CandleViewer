@@ -628,6 +628,41 @@ describe("Drawer (CMP-046) non-modal at the narrow breakpoint", () => {
     expect(document.documentElement.style.overflow).toBe("");
   });
 
+  it("a resize to narrow keeps a layer opened above the drawer on top: Esc closes it first", async () => {
+    const viewport = narrowViewport(false);
+    const onOpenChange = vi.fn();
+    function Both(): JSX.Element {
+      const [dialog, setDialog] = useState(false);
+      return (
+        <>
+          <Host modal={false} onOpenChange={onOpenChange} />
+          <button type="button" onClick={() => setDialog(true)}>
+            Settings
+          </button>
+          <Dialog open={dialog} title="Settings" onOpenChange={setDialog} />
+        </>
+      );
+    }
+    await openHost(<Both />);
+    await focus(button("Settings"));
+    await click(button("Settings"));
+    expect(screen().getByRole("dialog", { name: "Settings" })).toBeInTheDocument();
+    await viewport.set(true);
+    await key("Escape");
+    expect(screen().queryByRole("dialog", { name: "Settings" })).toBeNull();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(drawerNode()).toBeInTheDocument();
+  });
+
+  it("a resize to narrow returns focus to the last control used inside", async () => {
+    const viewport = narrowViewport(false);
+    await openHost(<Host modal={false} />);
+    await focus(button("Done"));
+    await focus(button("After"));
+    await viewport.set(true);
+    expect(button("Done")).toHaveFocus();
+  });
+
   it("without matchMedia it is the wide behaviour", async () => {
     vi.stubGlobal("matchMedia", undefined);
     await openHost(<Host modal={false} />);
