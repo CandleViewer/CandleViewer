@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent, type JSX } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import { StepUpChallengeGate } from "../stepUp/StepUpChallengeGate";
 import {
   inviteApi,
@@ -27,6 +27,17 @@ export function AdminInviteScreen(): JSX.Element {
   const [created, setCreated] = useState<CreatedInvite | null>(null);
   const [copied, setCopied] = useState(false);
   const [pending, setPending] = useState<readonly PendingInvite[]>([]);
+  /**
+   * The user's last action, sent again as a NEW request (new `Idempotency-Key`) when they ask for a
+   * fresh challenge after a warning or an expiry (A11Y-F-0010): the server answers with a new
+   * `challenge_id`, same factors; the old challenge and its held request are abandoned unsent.
+   */
+  const lastAction = useRef<(() => Promise<void>) | null>(null);
+  /** Invalid codes counted against abandoned challenges, carried into the fresh one. */
+  const [priorFailures, setPriorFailures] = useState(0);
+  /** The form as it reads now: a renewal sends what is on screen, not what the first submit read. */
+  const form = useRef({ username, email, role });
+  form.current = { username, email, role };
 
   const refresh = useCallback(async () => {
     const res = await inviteApi.list();
@@ -46,11 +57,29 @@ export function AdminInviteScreen(): JSX.Element {
     event.preventDefault();
     setError(null);
     setStepUp(null);
+    await start(create);
+  }
+
+  async function create(): Promise<void> {
+    const { username, email, role } = form.current;
     if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
       setError("Username must be 3-32 characters of a-z, 0-9, dot, underscore or dash.");
       return;
     }
     onCreateAnswer(await inviteApi.create({ username, email, roles: [role] }));
+  }
+
+  async function start(action: () => Promise<void>): Promise<void> {
+    lastAction.current = action;
+    setPriorFailures(0);
+    await action();
+  }
+
+  function renew(failures: number): void {
+    setStepUp(null);
+    setError(null);
+    setPriorFailures(failures);
+    void lastAction.current?.();
   }
 
   function onCreateAnswer(res: ApiResult<CreatedInvite>, retried = false): void {
@@ -85,7 +114,7 @@ export function AdminInviteScreen(): JSX.Element {
   async function reissue(userId: string): Promise<void> {
     setError(null);
     setStepUp(null);
-    reissued(await inviteApi.reissue(userId));
+    await start(async () => reissued(await inviteApi.reissue(userId)));
   }
 
   async function revoke(userId: string): Promise<void> {
@@ -110,6 +139,8 @@ export function AdminInviteScreen(): JSX.Element {
           onResent={(response) => void onResent(stepUp, response)}
           readBack={refresh}
           outcomeWhere="Pending invitations"
+          onRenew={renew}
+          priorFailures={priorFailures}
         />
       ) : null}
       <form onSubmit={(event) => void onSubmit(event)}>

@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SetupChecklistCard } from "../../src/features/onboarding/SetupChecklistCard";
@@ -14,6 +15,17 @@ function all(state: string): object[] {
   return KEYS.map((k) => item(k, state));
 }
 afterEach(() => vi.unstubAllGlobals());
+
+// axe-core is a transitive dependency of @axe-core/playwright (already a devDependency).
+const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
+  "axe-core",
+) as { run: (el: Element, o?: object) => Promise<{ violations: { impact?: string | null }[] }> };
+
+async function seriousViolations(): Promise<unknown[]> {
+  // jsdom has no layout; contrast is checked by the Playwright axe run.
+  const res = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
+  return res.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+}
 
 describe("SetupChecklistCard", () => {
   it("renders six steps with state as text", async () => {
@@ -92,6 +104,47 @@ describe("SCR-018 coach marks", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(screen.getByText("Take the tour"));
     expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  async function autoOpened(): Promise<HTMLElement> {
+    window.localStorage.clear();
+    const body = { complete: false, dismissed: false, items: all("pending") };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(body)));
+    render(<SetupChecklistCard />);
+    const dlg = await screen.findByRole("dialog");
+    expect(dlg).toHaveFocus();
+    return dlg;
+  }
+
+  it("an auto-opened tour closed by Esc returns focus to Take the tour, not body (D-04)", async () => {
+    const dlg = await autoOpened();
+    expect(await seriousViolations()).toEqual([]);
+    fireEvent.keyDown(dlg, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Take the tour" })).toHaveFocus();
+  });
+
+  it("an auto-opened tour closed by Finish returns focus to Take the tour (D-04)", async () => {
+    await autoOpened();
+    for (let stop = 1; stop < 8; stop += 1)
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Take the tour" })).toHaveFocus();
+  });
+
+  it("a tour opened from Take the tour returns focus to it on Exit tour (D-04)", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("cv.onboarding.tour.seen", "1");
+    const body = { complete: false, dismissed: false, items: all("pending") };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(body)));
+    render(<SetupChecklistCard />);
+    const take = await screen.findByRole("button", { name: "Take the tour" });
+    take.focus();
+    fireEvent.click(take);
+    fireEvent.click(screen.getByRole("button", { name: "Exit tour" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(take).toHaveFocus();
   });
 
   it("does not auto-offer the tour once the checklist is complete", async () => {

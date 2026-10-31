@@ -250,6 +250,37 @@ describe("the dispatcher rule (A-D05-2 (a)–(c); AC6: typing is never hijacked)
     });
   });
 
+  it("D-19 (#5196): a field's own editing chord in a field is typing: never run, never reported", () => {
+    const typed = { status: "ignored", reason: "editable" };
+    for (const active of [ctx(), ctx("Rules"), ctx("Chart"), ctx("Replay")]) {
+      const { d, execute, notify } = dispatcher();
+      expect(d(ev("a", { code: "KeyA", ctrlKey: true, target: field() }), active)).toEqual(typed);
+      expect(d(ev("z", { code: "KeyZ", ctrlKey: true, target: field() }), active)).toEqual(typed);
+      expect(d(ev("y", { code: "KeyY", metaKey: true, target: field() }), active)).toEqual(typed);
+      expect(d(ev("ArrowLeft", { ctrlKey: true, target: field() }), active)).toEqual(typed);
+      expect(
+        d(ev("ArrowRight", { ctrlKey: true, shiftKey: true, target: field() }), active),
+      ).toEqual(typed);
+      expect([execute.mock.calls.length, notify.mock.calls.length]).toEqual([0, 0]);
+    }
+  });
+
+  it("pin: outside a field the same chords keep their commands (Ctrl+A selects all rules)", () => {
+    const { d } = dispatcher();
+    expect(d(ev("a", { code: "KeyA", ctrlKey: true, target: button() }), ctx("Rules"))).toEqual({
+      status: "executed",
+      commandId: "rules.select_all",
+    });
+  });
+
+  it("pin: a chord that is not a field's own still runs from a field: Ctrl+/ opens the cheatsheet", () => {
+    const { d } = dispatcher();
+    expect(d(ev("/", { code: "Slash", ctrlKey: true, target: field() }), ctx())).toEqual({
+      status: "executed",
+      commandId: "global.cheatsheet",
+    });
+  });
+
   it("D7: Esc is never reported where nothing takes it", () => {
     const { d, notify } = dispatcher(() => false);
     expect(d(ev("Escape"), ctx())).toEqual({ status: "unbound" });

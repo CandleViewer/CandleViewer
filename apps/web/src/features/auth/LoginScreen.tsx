@@ -122,8 +122,9 @@ export function LoginScreen(): JSX.Element {
           aria-describedby={message ? "login-error" : undefined}
           onChange={(e) => setPassword(e.target.value)}
         />
+        {/* one stable name; aria-pressed alone carries the state (CMP-201, A11Y-F-0003) */}
         <button type="button" aria-pressed={reveal} onClick={() => setReveal((r) => !r)}>
-          {reveal ? "Hide password" : "Show password"}
+          Show password
         </button>
         <button type="submit" disabled={busy || rateLimited}>
           {busy ? "Signing in..." : "Sign in"}
