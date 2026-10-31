@@ -65,4 +65,9 @@ describe("previewtile.css contract", () => {
     ])
       expect(find(forced, sel, "color")).toContain("CanvasText");
   });
+
+  it("forced colours: only the host image slot opts out of colour adjustment", () => {
+    expect(find(forced, ".cv-preview-tile__image", "forced-color-adjust")).toContain("none");
+    expect(css.all.match(/forced-color-adjust/g)).toHaveLength(1);
+  });
 });

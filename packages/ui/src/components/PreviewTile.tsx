@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, JSX, ReactNode } from "react";
 import { Icon } from "../icons/Icon.js";
 import { ColorSwatch } from "./ColorSwatch.js";
+import { Skeleton } from "./Skeleton.js";
 import { contrastRatio } from "./internal/contrast.js";
 
 /** The catalogue's kinds plus J21's `scales`, `chart` (E12-D05) and `ladder` (E32-D04). */
@@ -105,6 +106,10 @@ function overrideRatio(
  * CMP-228 PreviewTile: the miniature preview beside a settings form. One `role="img"` named in words,
  * never focusable, never a live region, never the only disclosure. No spinner: a recomputing host keeps
  * its last frame. Empty and error tiles are named "Preview unavailable" and say why in visible text.
+ *
+ * Named deviation from the catalogue props (`settings: object`, `sampleData?: unknown`, 15-component-catalogue
+ * CMP-228): the tile owns no settings behaviour. `settings` is carried as `label`, the configuration in words
+ * (the accessible name), and `sampleData` as `children`, the host renderer's image. Nothing else is added.
  */
 export function PreviewTile({
   kind = "candles",
@@ -136,18 +141,25 @@ export function PreviewTile({
     setRatio(frame === null ? null : overrideRatio(frame, overrides));
   }, [overrideKey]);
   const warning =
-    ratio !== null && ratio < PREVIEW_TILE_CONTRAST_PAIRS.min
+    ready && ratio !== null && ratio < PREVIEW_TILE_CONTRAST_PAIRS.min
       ? contrastWarning(ratio.toFixed(2))
       : null;
 
-  let image: ReactNode = children;
+  // The host image keeps its own colours under forced colours; the edge and the text do not (CSS).
+  let image: ReactNode =
+    children === undefined ? undefined : <span className="cv-preview-tile__image">{children}</span>;
   // Content inside a role="img" is not exposed, so the reason and the theme sample are referenced as
   // the image's description: the name stays "Preview unavailable" (J21) and the words still reach AT.
   let description: string | undefined = descriptionId;
   if (status === "empty")
     image = (
-      <span id={descriptionId} className="cv-preview-tile__status">
-        {emptyText}
+      <span className="cv-preview-tile__empty">
+        <span className="cv-preview-tile__silhouette">
+          <Skeleton shape="chart" />
+        </span>
+        <span id={descriptionId} className="cv-preview-tile__status">
+          {emptyText}
+        </span>
       </span>
     );
   else if (status === "error")

@@ -26,6 +26,30 @@
   color: var(--color-text-primary);
 }
 
+/* The empty state: the static CMP-015 silhouette behind the reason (decorative, aria-hidden by the atom). */
+.cv-preview-tile__empty {
+  position: relative;
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  width: 100%;
+}
+
+.cv-preview-tile__silhouette {
+  position: absolute;
+  inset: 0;
+  display: grid;
+}
+
+.cv-preview-tile__empty > .cv-preview-tile__status {
+  position: relative;
+}
+
+/* The host's image slot paints its own colours. */
+.cv-preview-tile__image {
+  display: contents;
+}
+
 /* The theme kind's built-in sample: a ladder bid, ask and a positions row in the previewed tokens. */
 .cv-preview-tile__sample {
   display: flex;
@@ -87,6 +111,10 @@
 }
 
 @media (forced-colors: active) {
+  .cv-preview-tile__image {
+    forced-color-adjust: none;
+  }
+
   .cv-preview-tile__frame {
     border-color: CanvasText;
   }

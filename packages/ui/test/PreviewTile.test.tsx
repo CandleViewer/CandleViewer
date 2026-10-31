@@ -107,10 +107,10 @@ describe("PreviewTile (CMP-228)", () => {
     expect(warning.querySelector("svg")).not.toBeNull();
   });
 
-  it("warns on the secondary (reason) text pair too, at its lower ratio", async () => {
+  it("warns on the secondary text pair too, at its lower ratio", async () => {
     const host = await mount(
       tile({
-        status: "empty",
+        source: "sample",
         tokenOverrides: {
           [BODY.text]: "#000000",
           [SECONDARY.text]: "#888888",
@@ -119,6 +119,26 @@ describe("PreviewTile (CMP-228)", () => {
       }),
     );
     expect(within(host).getByText(/^Low contrast:/)).toHaveTextContent("3.54:1");
+  });
+
+  it("empty and error: the host image is not shown, so no contrast warning renders", async () => {
+    const tokenOverrides = {
+      [BODY.text]: "#888888",
+      [BODY.surface]: "#ffffff",
+      [SECONDARY.text]: "#888888",
+    };
+    for (const status of ["empty", "error"] as const) {
+      const host = await mount(tile({ status, tokenOverrides }));
+      expect(within(host).queryByText(/^Low contrast:/)).toBeNull();
+    }
+  });
+
+  it("empty: the static silhouette sits behind the reason, hidden from AT; the name and description stay", async () => {
+    const host = await mount(tile({ status: "empty" }));
+    const img = within(host).getByRole("img", { name: PREVIEW_TILE_COPY.unavailable });
+    const skeleton = img.querySelector('[data-cmp="CMP-015"]');
+    expect(skeleton).toHaveAttribute("aria-hidden", "true");
+    expect(img).toHaveAccessibleDescription(PREVIEW_TILE_COPY.empty);
   });
 
   it("a one-sided override is measured against the theme's computed value", async () => {
