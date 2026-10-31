@@ -3315,7 +3315,10 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Force a refresh of the instrument cache from Bybit */
+    /**
+     * Force a refresh of the instrument cache from Bybit
+     * @description Schedules one refresh of the instrument catalogue and answers at once with the job that runs it, never waiting for the venue (E08-T10, #5111). The job is polled through `getJob`, `kind: instrument_refresh`, in the job store's envelope as for every kind: it ends `succeeded` with an empty `result` object, `failed` with `error` a stable code (the exception's class name, never a message) once the refresh's retries are spent, which leaves the previous catalogue served with `meta.stale_since` set, or `cancelled` when the process stops. A request while a refresh job is queued or running joins it: `202` with that job's `job_id` and `scheduled_at`, never `409`, no second job and no second venue call. One refresh is accepted per environment per 60 s: a request beyond it answers `429 rate_limited` with `Retry-After` and creates no job; a request that joins a running job starts no refresh, so this limit neither refuses nor counts it. **Step-up.** `instruments:write` is a dangerous permission (04-security-program.md SR-025 and section 7.2.2 row 5a): after authorisation, and once the scheduler is known to be running and the `Idempotency-Key` is well formed, the handler demands a live step-up of the grace class `instruments`, and without one answers `403 step_up_required` with `action_class` set to `instruments`; nothing is looked up, joined, counted or recorded before it. The checks then run in this order: the idempotency lookup, the join, the 60 s limit, the per-user bucket (`429 rate_limited`), then the venue budget of the market-data class the refresh's fetches draw (`429 exchange_rate_limited` with `Retry-After` and `retry_after_seconds`; the stop, cancel and SL reserve is never drawn). The request is audited ahead as `instruments.refresh.requested` (24-internal-schemas.md section 15.5) before every `202`, a join included, and for a new job before the job exists; a record that cannot be written answers `503 audit_unavailable` and starts nothing. The job's end, `succeeded` or `failed`, is audited as `instruments.refresh.completed`. A repeat with the same `Idempotency-Key` within 24 h replays the original `202` with `Idempotency-Replayed: true` and starts nothing. Answers `501 not_implemented` while no principal resolver is wired, and `503` while the catalogue scheduler is not wired or has stopped.
+     */
     post: operations["refreshInstruments"];
     delete?: never;
     options?: never;
@@ -15944,7 +15947,7 @@ export interface operations {
       content: {
         "application/json": {
           /**
-           * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required. `audit` gates the audit-log export (`exportAuditLog`) and the download of its file (`downloadAuditExport`); `backups` gates a backup restore or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`, `deleteBackup`), one fresh code per action. `sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`, 24-internal-schemas.md section 8.8 rule 5), one fresh code per loosening; declared ahead of the service (C-6.1), which E29-T07 extends. `accounts` gates disabling, re-enabling or deleting an exchange account (`updateExchangeAccount` with `enabled` `false` or `true`, and a mode change once E27-S05 serves it; `deleteExchangeAccount`) and a revoke's `flatten_first` branch (`revokeApiKey`), one fresh code per action; the class and its routes are E27-S04's (#898), which lands them in slices (C-6.1). `recorder_purge` gates purging recorded data (`purgeRecordedData`), one fresh code per purge: a no-grace, request-bound class (the grant binds the exact method, path and body).
+           * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required. `audit` gates the audit-log export (`exportAuditLog`) and the download of its file (`downloadAuditExport`); `backups` gates a backup restore or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`, `deleteBackup`), one fresh code per action. `sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`, 24-internal-schemas.md section 8.8 rule 5), one fresh code per loosening; declared ahead of the service (C-6.1), which E29-T07 extends. `accounts` gates disabling, re-enabling or deleting an exchange account (`updateExchangeAccount` with `enabled` `false` or `true`, and a mode change once E27-S05 serves it; `deleteExchangeAccount`) and a revoke's `flatten_first` branch (`revokeApiKey`), one fresh code per action; the class and its routes are E27-S04's (#898), which lands them in slices (C-6.1). `recorder_purge` gates purging recorded data (`purgeRecordedData`), one fresh code per purge: a no-grace, request-bound class (the grant binds the exact method, path and body). `instruments` gates the refresh of the instrument catalogue from the venue (`refreshInstruments`, E08-T10), a grace class.
            * @enum {string}
            */
           action_class?:
@@ -15959,7 +15962,8 @@ export interface operations {
             | "backups"
             | "sl_loosen"
             | "accounts"
-            | "recorder_purge";
+            | "recorder_purge"
+            | "instruments";
           /**
            * Format: uuid
            * @description The `challenge_id` of the `403 step_up_required` being answered (#2304). Required whenever the session has a live challenge, whatever its class, grace classes included, and always for a no-grace class (`live_enablement`, `killswitch`, `backups`, `recorder_purge` or `accounts`; and `sl_loosen` once its routes are mounted), named by the live challenge or by `action_class`: omitting it is `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_required}]`. Only a grace class named by `action_class` while no challenge is live elevates without it. This ends the transitional grace-class optionality that #2725 was to end (the web client sends `challenge_id` on every step-up): a tightening this contract announced before any client relied on the optionality. A value that does not name the live challenge (expired, superseded, already used or unknown), or that is sent when there is none, gets `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is decided before the password and code are checked: no factor is verified, no failure is counted and nothing is elevated. The client then drops the held request without sending it.
@@ -17970,6 +17974,8 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
+        "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
@@ -17984,9 +17990,10 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Refresh scheduled. */
+      /** @description Refresh scheduled, or a running refresh joined. */
       202: {
         headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
