@@ -4,6 +4,7 @@
 // src/layers never import this module (.dependency-cruiser.js `chart-engine-core-no-dom-host`).
 
 import { probeCanvas, type CapabilityReport } from "../gl/capability.js";
+import { backingPx } from "../viewport/pixels.js";
 
 export interface HostSurface {
   /**
@@ -32,13 +33,14 @@ export function mountSurface(container: HTMLElement): HostSurface {
 
   const makeCanvas = (): HTMLCanvasElement => {
     const dpr = doc.defaultView?.devicePixelRatio ?? 1;
-    const widthCss = container.clientWidth;
-    const heightCss = container.clientHeight;
+    // BQ-145: CSS box = backing / dpr, so CSS px map to device px by exactly dpr.
+    const w = backingPx(container.clientWidth, dpr);
+    const h = backingPx(container.clientHeight, dpr);
     const c = doc.createElement("canvas");
-    c.width = Math.max(1, Math.round(widthCss * dpr));
-    c.height = Math.max(1, Math.round(heightCss * dpr));
-    c.style.width = `${widthCss}px`;
-    c.style.height = `${heightCss}px`;
+    c.width = Math.max(1, w);
+    c.height = Math.max(1, h);
+    c.style.width = `${w / dpr}px`;
+    c.style.height = `${h / dpr}px`;
     c.style.display = "block";
     // The canvas is presentation only: the mirror below carries the semantics (05 §6.1).
     c.setAttribute("aria-hidden", "true");

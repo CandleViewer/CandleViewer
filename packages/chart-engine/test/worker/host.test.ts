@@ -22,6 +22,7 @@ import {
 import type { CandleData, ChartEvents, ThemeTokens } from "../../src/index.js";
 import { asHtml, FakeDocument, FakeElement, FakeOffscreen } from "../api/fake-dom.js";
 import { MOD } from "../../src/interaction/wheel.js";
+import { watchSize } from "../../src/host/resize.js";
 import { fakeEnv, FakeWorker } from "./fake-worker.js";
 
 const theme: ThemeTokens = {
@@ -311,10 +312,10 @@ describe("one message per frame", () => {
 
   it("captures pointer (coalesced), wheel and size changes from the container", () => {
     const container = workerDoc();
-    let onResize: (() => void) | null = null;
+    let onResize: ((entries: object[]) => void) | null = null;
     const observed: unknown[] = [];
     (container.ownerDocument.defaultView as { ResizeObserver?: unknown }).ResizeObserver = class {
-      constructor(cb: () => void) {
+      constructor(cb: (entries: object[]) => void) {
         onResize = cb;
       }
       observe(t: unknown): void {
@@ -327,6 +328,7 @@ describe("one message per frame", () => {
     const host = hostOn(container);
     settle();
     const detach = captureInput(asHtml(container), host);
+    const unwatch = watchSize(asHtml(container), host); // BQ-146: the observer moved here
     const ev = (x: number, t: number): object => ({
       offsetX: x,
       offsetY: 1,
@@ -350,7 +352,7 @@ describe("one message per frame", () => {
     expect(container.dispatch("wheel", wheel)).toBe(true); // non-passive, always prevented
     expect(container.captured).toEqual([7]);
     container.clientWidth = 300;
-    (onResize as (() => void) | null)?.();
+    (onResize as ((entries: object[]) => void) | null)?.([{}]);
     settle();
     const w = lastWorker();
     const rows = (k: string): number[][] => {
@@ -375,6 +377,7 @@ describe("one message per frame", () => {
     expect(observed).toHaveLength(1);
     detach();
     expect(container.listeners.get("wheel")?.size).toBe(0);
+    unwatch();
     expect(observed).toHaveLength(0);
     host.dispose();
   });
@@ -475,13 +478,13 @@ describe("Scenario: Worker death is recovered", () => {
 
   it("restores the last size, backing store and CSS box, after a resize and a worker loss", () => {
     const container = workerDoc();
-    let onResize: () => void = () => undefined;
+    let onResize: (entries: object[]) => void = () => undefined;
     const view = container.ownerDocument.defaultView as { devicePixelRatio: number } & Record<
       string,
       unknown
     >;
     view["ResizeObserver"] = class {
-      constructor(cb: () => void) {
+      constructor(cb: (entries: object[]) => void) {
         onResize = cb;
       }
       observe(): void {}
@@ -502,7 +505,7 @@ describe("Scenario: Worker death is recovered", () => {
     container.clientWidth = 300;
     container.clientHeight = 150;
     view.devicePixelRatio = 2;
-    onResize();
+    onResize([{}]);
     settle();
     expect(box(canvasOf())).toEqual([600, 300, "300px", "150px"]);
     lastWorker().kill();
@@ -516,7 +519,7 @@ describe("Scenario: Worker death is recovered", () => {
     ]);
     // The last size sent wins until the observer reports the new one.
     expect(box(canvasOf())).toEqual([600, 300, "300px", "150px"]);
-    onResize();
+    onResize([{}]);
     settle();
     expect(box(canvasOf())).toEqual([640, 300, "320px", "150px"]);
     chart.dispose();

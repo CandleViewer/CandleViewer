@@ -116,7 +116,10 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
       { ...valid[0], canvas: { ...offscreen, width: Number.NaN } },
       "malformed init",
     ],
-    ["a zero-width resize", { ...valid[1], width: 0 }, "malformed resize"],
+    // BQ-147 / C-45: a 0 size is a hidden container and legal; these stay malformed.
+    ["a negative-width resize", { ...valid[1], width: -1 }, "malformed resize"],
+    ["a NaN-height resize", { ...valid[1], height: Number.NaN }, "malformed resize"],
+    ["a zero-dpr resize", { ...valid[1], dpr: 0 }, "malformed resize"],
     ["a bad sync", { t: "sync", groupId: "g", timeRange: [1], crosshair: null }, "malformed sync"],
     ["an unknown command", { t: "command", id: 1, cmd: { k: "eval" } }, "malformed command"],
     [

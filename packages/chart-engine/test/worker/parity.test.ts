@@ -17,13 +17,13 @@ const theme: ThemeTokens = {
   colors: { "color.chart.background": "#0b0e11" },
 };
 
-let resized: () => void = () => undefined;
+let resized: (entries: object[]) => void = () => undefined;
 
 function realm(): FakeElement {
   const doc = new FakeDocument();
   doc.offscreenAvailable = true;
   const ResizeObserver = class {
-    constructor(cb: () => void) {
+    constructor(cb: (entries: object[]) => void) {
       resized = cb;
     }
     observe(): void {}
@@ -68,7 +68,7 @@ function scenario(runMode: RunMode): unknown[] {
   container.dispatch("pointermove", pointer(300, 0, 5)); // crosshair
   vi.advanceTimersByTime(16);
   container.clientWidth = 800; // resize: the crosshair math follows the new width
-  resized();
+  resized([{}]);
   container.dispatch("pointermove", pointer(300, 1, 6));
   vi.advanceTimersByTime(1000);
   const canvas = container.children.find((c) => c.tagName === "CANVAS");

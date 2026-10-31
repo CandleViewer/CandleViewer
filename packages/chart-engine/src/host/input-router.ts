@@ -20,7 +20,6 @@ export interface InputSink {
     row: readonly [number, number, number, number, number, number],
     fold?: number,
   ): void;
-  resize(width: number, height: number, dpr: number): void;
 }
 
 interface Modded {
@@ -41,7 +40,7 @@ export const PRICE_SCALE_MENU_EVENT = "candleviewer:pricescalemenu";
 
 const DOWN = { pointerdown: INPUT.down, pointerup: INPUT.up, pointermove: INPUT.move } as const;
 
-/** Routes `target`'s input and size changes into `host`; returns the detach function. */
+/** Routes `target`'s input into `host`; returns the detach function (size: host/resize.ts). */
 export function routeInput(target: HTMLElement, host: InputSink): () => void {
   // `dt` per kind (BQ-99): a wheel between two moves must not shorten the velocity's window.
   const last: Record<InputKind, number> = { pointer: 0, wheel: 0, key: 0, touch: 0 };
@@ -165,14 +164,6 @@ export function routeInput(target: HTMLElement, host: InputSink): () => void {
   target.addEventListener("keyup", onKeyUp);
   target.addEventListener("focusout", release);
   target.style.touchAction = "none"; // the browser neither scrolls nor zooms the page on touch
-  const view = target.ownerDocument.defaultView;
-  const observer =
-    typeof view?.ResizeObserver === "function"
-      ? new view.ResizeObserver(() =>
-          host.resize(target.clientWidth, target.clientHeight, view.devicePixelRatio),
-        )
-      : null;
-  observer?.observe(target);
   return () => {
     for (const n of names) target.removeEventListener(n, onPointer);
     target.removeEventListener("pointercancel", onCancel);
@@ -184,6 +175,5 @@ export function routeInput(target: HTMLElement, host: InputSink): () => void {
     target.removeEventListener("keydown", onKeyDown);
     target.removeEventListener("keyup", onKeyUp);
     target.removeEventListener("focusout", release);
-    observer?.disconnect();
   };
 }
