@@ -85,7 +85,10 @@ export function ingestTheme(input: unknown): EngineTheme {
   }
   const map = colors as Record<string, unknown>;
   const slots = {} as Record<ThemeSlot, Rgba>;
-  for (const slot of THEME_SLOTS) {
+  // An index loop, not `for...of`: Semgrep folds `of` into `in`, so a keyed write in a
+  // `for...of` reads as a keyed copy to cv-engine-proto-pollution (E11-X02, F-15).
+  for (let i = 0; i < SLOT_COUNT; i += 1) {
+    const slot = THEME_SLOTS[i] as ThemeSlot;
     if (!Object.hasOwn(map, slot)) throw new ThemeIngestError(slot, "missing");
     const rgba = parseHexColor(map[slot]);
     if (rgba === null) throw new ThemeIngestError(slot, "invalid");

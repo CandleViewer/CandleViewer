@@ -8,6 +8,7 @@ import { backingPx } from "../viewport/pixels.js";
 import { BackingSizer } from "./backing.js";
 import { createRenderRuntime, type RenderRuntime } from "./runtime.js";
 import { createTextPlatform, type TextScope } from "./text-platform.js";
+import type { TextPlatform } from "../text/platform.js";
 import {
   conflate,
   INPUT,
@@ -51,6 +52,11 @@ export interface HostEnv {
   now(): number;
   probe(): CapabilityReport;
   correlationId(): string;
+  /**
+   * The inline runtime's text platform (E11-S11), built on the document's own view, so no module
+   * aliases the global object (E11-X02, CE-E04). Absent: no atlas (a fake env, a bare realm).
+   */
+  textPlatform?(): TextPlatform | null;
   /**
    * Test-only (E11-T05, README BQ-94): start every chart forced to 2D over the existing
    * `init.profile`, the switch E11-Q07's GPU matrix uses. Not a §8 option, not a user setting.
@@ -119,7 +125,7 @@ function inlineLink(env: HostEnv, unlink: () => void): Link {
     now: () => env.now(),
     setTimer: (cb, ms) => env.setTimer(cb, ms),
     probe: () => env.probe(),
-    text: createTextPlatform(globalThis as unknown as TextScope),
+    text: env.textPlatform?.() ?? null,
     timeline: performance, // read by bench-mode charts only (E11-T06)
   });
   return {
@@ -283,6 +289,7 @@ export function defaultHostEnv(doc: Document): HostEnv {
     },
     now: () => performance.now(),
     probe: () => probeRenderProfile(doc),
+    textPlatform: () => (view === null ? null : createTextPlatform(view as unknown as TextScope)),
     correlationId: () => {
       correlationSeq += 1;
       const bytes = crypto.getRandomValues(new Uint8Array(6));

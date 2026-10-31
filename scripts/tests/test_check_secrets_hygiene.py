@@ -43,6 +43,60 @@ def test_repo_fixtures_are_clean() -> None:
     assert h.check_fixtures(Path(__file__).resolve().parents[2]) == []
 
 
+# E11-X02 (#392; CE-I09): the chart engine's fixtures, goldens and bench results are synthetic.
+ENGINE = "packages/chart-engine"
+
+
+@pytest.mark.parametrize(
+    ("rel", "text", "pattern"),
+    [
+        (f"{ENGINE}/test/fixtures/session.json", '{"accountId": "7731045"}', "accountId field"),
+        (f"{ENGINE}/bench/scenes/orders.ts", "const orderLinkId = 'a1b2c3';", "orderLinkId field"),
+        (f"{ENGINE}/test/model/x.test.ts", "{ uid: 52817744 }", "uid field"),
+        (f"{ENGINE}/bench/matrix/results/r.json", '{"note": "ops.desk@gmail.com"}', "e-mail"),
+    ],
+)
+def test_engine_fixtures_account_id_fails_naming_file_and_pattern(
+    tmp_path: Path, rel: str, text: str, pattern: str
+) -> None:
+    _write(tmp_path, rel, text)
+    errors = h.check_engine_fixtures(tmp_path)
+    assert len(errors) == 1
+    assert errors[0].startswith(f"{rel}: line 1: ") and pattern in errors[0]
+    assert "7731045" not in errors[0] and "gmail" not in errors[0]  # the value is never printed
+
+
+def test_engine_fixtures_api_key_fails(tmp_path: Path) -> None:
+    _write(tmp_path, f"{ENGINE}/test/golden/k.json", f'{{"api_key": "{REAL}"}}')
+    errors = h.check_engine_fixtures(tmp_path)
+    assert errors and all(f"{ENGINE}/test/golden/k.json" in e for e in errors)
+    assert any("exchange-key-shape" in e for e in errors)
+
+
+def test_engine_fixtures_clean_tree_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clean = {
+        "test/fixtures/a.json": '{"accountId": "fixture-acct-0001", "userId": ""}',
+        "test/api/b.test.ts": "interface X { accountId: string }\nconst m = 'qa@example.com';",
+        "bench/matrix/results/m.json": '{"machine": {"cpu": "x86_64", "gpu": "llvmpipe"}}',
+        "src/notscanned.ts": '{"accountId": "7731045"}',  # src is the lint's, not this check's
+    }
+    for rel, text in clean.items():
+        _write(tmp_path, f"{ENGINE}/{rel}", text)
+    assert h.check_engine_fixtures(tmp_path) == []
+    assert h.main(["engine-fixtures", "--root", str(tmp_path)]) == 0
+    _write(tmp_path, f"{ENGINE}/test/x.json", '{"orderId": "5521"}')
+    assert h.main(["engine-fixtures", "--root", str(tmp_path)]) == 1
+    capsys.readouterr()
+    h.main(["all", "--root", str(tmp_path)])  # CI's invocation runs it too
+    assert f"{ENGINE}/test/x.json: line 1: orderId field" in capsys.readouterr().err
+
+
+def test_engine_fixtures_repo_engine_tree_clean() -> None:
+    assert h.check_engine_fixtures(Path(__file__).resolve().parents[2]) == []
+
+
 def test_dev_env_ok_and_violations(tmp_path: Path) -> None:
     _write(tmp_path, ".gitignore", ".env\n.env.*\n")
     _write(tmp_path, ".env.example", "# c\nCV_ENV=demo\nBYBIT_API_SECRET=\n")

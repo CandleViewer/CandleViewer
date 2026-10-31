@@ -30,7 +30,8 @@ const LAYERS = ["src/layers/drawings/__probe.ts", "src/layers/drawings/deep/er/_
 const DANGER =
   "export const A = ({ t }: { t: string }) => <div dangerouslySetInnerHTML={{ __html: t }} />;\n";
 const WRITE = "export function f(el: HTMLElement, t: string): void { el.innerHTML = t; }\n";
-const WINDOW = "export const w = window;\n";
+// A bare `window` read (not an alias of it: E11-X02 bans `const w = window` as its own error).
+const WINDOW = "export const w = (): unknown => window;\n";
 const INSERT =
   'export function g(el: HTMLElement, t: string): void { el.insertAdjacentHTML("beforeend", t); }\n';
 const ANY = "export const a: any = 1;\n";

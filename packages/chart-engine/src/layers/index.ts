@@ -4,7 +4,8 @@
 export * from "./candle/ring.js";
 export * from "./candle/heikin-ashi.js";
 export * from "./host.js";
-export type * from "./plugin-api.js";
+// Named, not `export type *`: the pinned Semgrep cannot parse that form (see src/text/index.ts).
+export type { DataRange, InstanceRing, SeriesProjection } from "./plugin-api.js";
 export * from "./candle/geometry.js";
 export * from "./candle/palette.js";
 export * from "./candle/series.js";
