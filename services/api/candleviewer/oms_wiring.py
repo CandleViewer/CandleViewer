@@ -942,13 +942,14 @@ def _named(value: object, known: frozenset[str]) -> str:
 
 class OrderNoticesRouter:
     """`order_machine.OrderNotices`: an `alert` goes to the pager (a page, but a never-sent
-    order's, which is a ticket); `request_reconciliation` and `request_fallback_sl` are an ERROR
-    and a page until E29-T06 and E32 own them (but a reconciliation asked for an order the venue
-    does not hold, which is a ticket); `amend_rejected` is a log line. It logs the order's
-    ids, the notice's names and the venue's code when an integer, never a price, a size or a key
-    (C-12.6): an alert is named only from `ORDER_ALERTS` and an amend's code from `OmsErrorCode`,
-    else `unnamed`. It never raises: a notice it cannot route is a CRITICAL log and a page,
-    whatever it was, and a failing pager is logged at CRITICAL."""
+    order's, which is a ticket); `request_reconciliation` goes to the account's reconciliation
+    job once bound (`bind_reconciliation`), and else, or when its job refuses it, is an ERROR and
+    a page, as `request_fallback_sl` is until E32 owns it (but a reconciliation asked for an
+    order the venue does not hold, which is a ticket); `amend_rejected` is a log line. It logs the
+    order's ids, the notice's names and the venue's code when an integer, never a price, a size or
+    a key (C-12.6): an alert is named only from `ORDER_ALERTS` and an amend's code from
+    `OmsErrorCode`, else `unnamed`. It never raises: a notice it cannot route is a CRITICAL log and
+    a page, whatever it was, and a failing pager is logged at CRITICAL."""
 
     def __init__(self, pager: Pager) -> None:
         self._pager = pager
@@ -960,21 +961,25 @@ class OrderNoticesRouter:
         self._reconcile = trigger
 
     async def notify(self, notice: OrderNotice) -> None:
+        refused = False
         if notice.kind == "request_reconciliation" and self._reconcile is not None:
             try:
                 await self._reconcile(AccountId(notice.account_id))
                 return
             except Exception as exc:  # no job took it: the page an unowned notice raises
+                refused = True
                 _log().error("oms_reconcile_request_refused", account_id=str(notice.account_id),
                              error=type(exc).__name__)  # fmt: skip
         try:
-            self._route(notice)
+            self._route(notice, refused=refused)
         except Exception as exc:  # not routed, maybe page-worthy: logged and paged, never raised
             kind, error = _name(getattr(notice, "kind", None)), type(exc).__name__
             _log().critical("oms_notice_unrouted", kind=kind, error=error)
             self._raise("page", f"order notice {kind} not routed: {error}")
 
-    def _route(self, notice: OrderNotice) -> None:
+    def _route(self, notice: OrderNotice, *, refused: bool = False) -> None:
+        """`refused`: a `request_reconciliation` its bound job refused, which pages as an unowned
+        one does, its summary saying so."""
         log = _log()
         ids = {
             "order_id": str(notice.order_id),
@@ -995,6 +1000,8 @@ class OrderNoticesRouter:
             if reason == ALREADY_TERMINAL and notice.detail.get("alerted") is True:
                 return  # its case's `order_already_terminal` alert is the one ticket (14:30Z)
             summary = f"order notice {kind} has no owner until {owner}"
+            if refused:
+                summary = f"order notice {kind} was refused: no reconciliation job took it"
             self._raise("alert" if reason == ALREADY_TERMINAL else "page", summary)
         elif kind == "amend_rejected":
             code = _named(notice.detail.get("error_code"), _ERROR_CODES)
