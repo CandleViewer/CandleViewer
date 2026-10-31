@@ -10,7 +10,7 @@ of its verdicts true after it merges:
   own hash (none exists today; E10-S01 embeds the pre-paint script).
 - §11: Storybook is not published. No workflow uploads a Storybook build or runs a pages / hosted
   Storybook step (by `uses:`, by an `upload-artifact` path, or by a `run:` that copies the build
-  out), and the dev server binds loopback.
+  out), and the dev and VR servers bind loopback.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ INDEX = ROOT / "apps" / "web" / "index.html"
 DESKTOP_CSP = ROOT / "apps" / "desktop" / "src" / "main" / "csp.ts"
 WORKFLOWS = ROOT / ".github" / "workflows"
 UI_PACKAGE = ROOT / "packages" / "ui" / "package.json"
+VR_CONFIG = ROOT / "packages" / "ui" / "vr" / "playwright.config.ts"
 
 #: Sources a `script-src` may hold: the app's own origin or a hash (CSP3 hash-source).
 SCRIPT_SOURCE = re.compile(r"'self'|'sha(?:256|384|512)-[A-Za-z0-9+/]+={0,2}'")
@@ -141,3 +142,8 @@ def test_the_storybook_dev_server_binds_loopback() -> None:
     assert re.search(r"--host 127\.0\.0\.1(?:\s|$)", scripts["storybook"]), scripts["storybook"]
     assert "--disable-telemetry" in scripts["storybook"]
     assert "--disable-telemetry" in scripts["storybook:build"]
+
+
+def test_the_vr_static_server_binds_loopback() -> None:
+    (command,) = re.findall(r"command:\s*`([^`]*)`", VR_CONFIG.read_text(encoding="utf-8"))
+    assert re.search(r"--bind 127\.0\.0\.1(?:\s|$)", command), command

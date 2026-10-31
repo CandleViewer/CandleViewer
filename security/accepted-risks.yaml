@@ -196,6 +196,55 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/3672"
+  # #272 (E05-X02, the design-system review, record §3 and §13): the Medium advisories on the
+  # packages/ui dev and build paths, none on its runtime path (@floating-ui/* only). Accepted
+  # under the owner's 2026-10-29 delegation, #2701 6490317249; the owner ratifies. Approval is
+  # the orchestrator's comment on the PR. 2026-11-20 ends inside C-12.3's 30 days, so no
+  # exception is needed, and it is the date of the #3639 batch, so one re-decision covers all.
+  # qs and fast-uri have a patch-level fix (a workspace override and a lockfile change, outside
+  # #272's write set): the fix is preferred, and its PR removes these two entries.
+  - id: "GHSA-8g5g-mxqh-grgj"
+    tool: npm-audit
+    severity: MEDIUM
+    reason: "vite 6.4.4 under vitest (packages/ui and the other test runners), dev-only; no patched release in the 6.x line is reported. The flaw is in vite's dev server: the unit runs never start it as a network server, and nothing ships it"
+    approver: "basiltt" # accepted under the owner's 2026-10-29 delegation, #2701 6490317249; the owner ratifies
+    expires: "2026-11-20"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/272"
+  - id: "GHSA-6pq8-jhm2-2vcw"
+    tool: npm-audit
+    severity: MEDIUM
+    reason: "qs 6.16.0 under style-dictionary (the token build), build-time only; fixed in 6.16.1 by a patch-level override (preferred; remove this entry when it lands). The build parses no untrusted query string"
+    approver: "basiltt" # accepted under the owner's 2026-10-29 delegation, #2701 6490317249; the owner ratifies
+    expires: "2026-11-20"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/272"
+  - id: "GHSA-g3hv-75wg-m249"
+    tool: npm-audit
+    severity: MEDIUM
+    reason: "minimatch 3.1.5, 5.1.9 and 10.2.6 under lint (eslint, typescript-eslint), Storybook docgen, the OpenAPI codegen and style-dictionary, and 9.0.9 under electron-builder (desktop packaging), dev and build only; fixed only in 11.x, a major its parents do not take. Patterns come from repo config, never from untrusted input"
+    approver: "basiltt" # accepted under the owner's 2026-10-29 delegation, #2701 6490317249; the owner ratifies
+    expires: "2026-11-20"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/272"
+  - id: "GHSA-3g3m-2fjr-6pw4"
+    tool: npm-audit
+    severity: MEDIUM
+    reason: "glob 13.0.6 under style-dictionary and Storybook docgen, dev and build only; fixed only in 14.x, a major its parents do not take. Patterns come from repo config, never from untrusted input"
+    approver: "basiltt" # accepted under the owner's 2026-10-29 delegation, #2701 6490317249; the owner ratifies
+    expires: "2026-11-20"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/272"
+  - id: "GHSA-w74x-v6f9-j3xg"
+    tool: npm-audit
+    severity: MEDIUM
+    reason: "fast-uri 3.1.8 under ajv in the shared config package's commit-message tooling, dev-only; fixed in 3.1.9 by a patch-level override (preferred; remove this entry when it lands). The tooling parses no untrusted URI"
+    approver: "basiltt" # accepted under the owner's 2026-10-29 delegation, #2701 6490317249; the owner ratifies
+    expires: "2026-11-20"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/272"
+  - id: "GHSA-wjr9-j795-jxcr"
+    tool: npm-audit
+    severity: MEDIUM
+    reason: "fast-uri 3.1.8, the second Medium on the same dev-only path (ajv in the shared config package's commit-message tooling); fixed in 3.1.9 by the same patch-level override (preferred; remove this entry when it lands)"
+    approver: "basiltt" # accepted under the owner's 2026-10-29 delegation, #2701 6490317249; the owner ratifies
+    expires: "2026-11-20"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/272"
   # E03 #1755 review round 4 (#1778 B5-b forbids file-level excludes): applied migration
   # 0004_instruments.py is immutable (C-5.4), so its three legacy `nosemgrep` markers
   # cannot gain reason/owner/review fields. The `exchange_code` enum value names the one
