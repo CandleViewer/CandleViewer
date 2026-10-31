@@ -180,6 +180,22 @@ class Error(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
+    resolved: Annotated[
+        str | None,
+        Field(
+            description="`closePosition`'s size rules only (`qty_below_minimum`, `dust_remainder`): the size the close resolved to, floored to the instrument's `qty_step`.\n",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    remaining: Annotated[
+        str | None,
+        Field(
+            description="`dust_remainder` only: the size the close would leave open, the stored size less `resolved`.\n",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
 
 
 class Exchange(BaseModel):
