@@ -45,7 +45,7 @@ WS_ROWS: dict[str, list[set[str]]] = {
         {"cv_ws_frame_bytes", "cv_ws_connections_in_use"},
         {"cv_ws_sequence_gaps_detected_total"},
     ],
-    "WS queue, RTT and coalescing (backpressure flag on)": [
+    "WS queue, RTT and coalescing": [
         {"cv_ws_queue_bytes", "cv_ws_queue_frames"},
         {"cv_ws_rtt_seconds"},
         {"cv_ws_conflated_total"},
@@ -286,11 +286,12 @@ def test_event_counts_over_the_range_are_whole_events() -> None:
                 assert re.fullmatch(r"round\(sum(?: by \(\w+\) )?\(increase\(.*\)\)\)", expr), expr
 
 
-def test_the_flag_on_series_are_marked_as_such() -> None:
-    """Class, depth, RTT and the merge series move only with the backpressure flag on."""
+def test_the_pipeline_series_are_no_longer_marked_as_flag_on() -> None:
+    """#2409 removed `CV_WS_BACKPRESSURE_ENABLED`: class, depth, RTT and the merge series always
+    move, so no title or description says they wait on a flag."""
     rows = _rows()
-    assert "flag on" in _panel("WS connections by class")["title"]
-    queue_row = "WS queue, RTT and coalescing (backpressure flag on)"
+    assert "flag" not in _panel("WS connections by class")["title"]
+    queue_row = "WS queue, RTT and coalescing"
     assert {s for p in rows[queue_row] for s in _series(p)} == {
         "cv_ws_queue_bytes",
         "cv_ws_queue_frames",
@@ -298,3 +299,5 @@ def test_the_flag_on_series_are_marked_as_such() -> None:
         "cv_ws_conflated_total",
         "cv_ws_coalesced_updates",
     }
+    texts = [str(p.get("title", "")) + str(p.get("description", "")) for p in _ws_panels()]
+    assert not [t for t in texts if "BACKPRESSURE_ENABLED" in t or "flag on" in t]

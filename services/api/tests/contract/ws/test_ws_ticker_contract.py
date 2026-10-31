@@ -3,8 +3,8 @@ validates every frame against `23-ws-protocol.md` §13-§15, the §14.8 `TickerU
 
 Recorded BTCUSDT ticker frames replay through the production `TickerStream` and `TickerTopic`; the
 ETHUSDT and SOLUSDT frames are those frames re-keyed in-test (`tests/_tickers.py`). Time is the
-harness's fake clock, and `CV_WS_BACKPRESSURE_ENABLED` is on (the World's default), so the
-outbound pipeline's window paces each subscription behind the topic's own 250 ms window (§8.1).
+harness's fake clock, and the outbound pipeline's window paces each subscription behind the
+topic's own 250 ms window (§8.1).
 """
 
 from __future__ import annotations

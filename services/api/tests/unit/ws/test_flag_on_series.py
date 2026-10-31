@@ -1,5 +1,5 @@
 """E17-T06 (#571, slice D3): the series that wait on #412's flag-on pipeline, aggregated per
-process (ruling D6; `20-architecture.md` section 12.1). With `CV_WS_BACKPRESSURE_ENABLED` on:
+process (ruling D6; `20-architecture.md` section 12.1). On that pipeline (the one path since #2409):
 
 - a throttle window of n >= 2 source updates that leaves as one frame adds n - 1 to
   `cv_ws_conflated_total{topic}` under its family, and observes n in `cv_ws_coalesced_updates`;

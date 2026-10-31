@@ -101,12 +101,14 @@ def _restricted_only(body: dict[str, Any]) -> None:
 
 
 def _apply(conn: Conn, roles: str) -> list[dict[str, Any]]:
-    """A §9.5 change to `roles`, then what the registry's settle sends (flag off)."""
+    """A §9.5 change to `roles`, then what the registry's settle sends: the gateway's settle hands
+    the re-pended subscriptions to the pipeline, which flushes each through this emitter alone."""
     authz = conn.authz
     new = replace(authz.principal, roles=frozenset({roles}))
     frames = authz.apply_snapshot(VersionedSnapshot(new, authz.version + 1), 9)
     subs, authz.settling = authz.settling, []
-    conn.emitter.flush_pending(subs)
+    for sub in subs:
+        conn.emitter.flush_pending((sub,))
     return frames or []
 
 

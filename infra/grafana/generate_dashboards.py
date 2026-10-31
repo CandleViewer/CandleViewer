@@ -362,8 +362,7 @@ def _ws_gateway(b: Board) -> None:
         "are the incident reasons (7.4) and the only ones the lines judge; the other reasons "
         "cross them in normal use. Moving today: client_resync, reconfigure, the bars and "
         "indicator series' generation_swap and history_repair, upstream_desync from the alerts "
-        "topic (6.2.1) and from a delta the hub failed to emit, and backpressure with "
-        "CV_WS_BACKPRESSURE_ENABLED on. The book feed does not call the hub's upstream_desync "
+        "topic (6.2.1), and backpressure. The book feed does not call the hub's upstream_desync "
         "trigger yet, and upstream_reconnect, instrument_revision and replay_seek have no caller, "
         "so a flat zero for those is not coverage. WsUpstreamDesyncHigh fires above 5 "
         "upstream_desync in an hour.",
@@ -385,7 +384,7 @@ def _ws_gateway(b: Board) -> None:
         "read zero whatever happens.",
     )
     b.ts(
-        "WS connections by class (backpressure flag on)",
+        "WS connections by class",
         f"sum by (state) (cv_ws_connection_class{{{E}}})",
         "short",
         legend="{{state}}",
@@ -393,11 +392,9 @@ def _ws_gateway(b: Board) -> None:
     _describe(
         b,
         "Open client connections per 23-ws-protocol.md 8.3 class (`state`), from the first "
-        "auth_ok to the teardown, summed over processes. Set only with "
-        "CV_WS_BACKPRESSURE_ENABLED on (on by default; off stays selectable): with it off every class reads zero, so a "
-        "flat zero is not health. A connection's class is read when its writer runs; a writer "
-        "held in a send keeps its last class, and a stuck socket shows in the overflow and "
-        "closes panels.",
+        "auth_ok to the teardown, summed over processes. A connection's class is read when its "
+        "writer runs; a writer held in a send keeps its last class, and a stuck socket shows in "
+        "the overflow and closes panels.",
     )
     b.ts(
         "WS overflow actions in the range, by reason",
@@ -411,8 +408,7 @@ def _ws_gateway(b: Board) -> None:
         "topic; close_budget and close_redrop per close (a slow_consumer close, which the closes "
         "panel and WsSlowConsumerClosed see too); close_flush_deadline per close whose flush "
         "expired, beside its step 3; withdrawn per queued frame that a withdrawn grant or "
-        "permission dropped (9.5). The ladder runs only with CV_WS_BACKPRESSURE_ENABLED on; with "
-        "it off only close_flush_deadline and withdrawn move. A reason's series starts at its "
+        "permission dropped (9.5). A reason's series starts at its "
         "first event, so the first one after a restart may not show.",
     )
     b.ts(
@@ -429,8 +425,8 @@ def _ws_gateway(b: Board) -> None:
         "Estimated from cv_ws_frame_bytes, kind json or msgpack, sampled 1 in 32 with weight 32, "
         "so each subscription's first 31 frames, control frames and system frames are left out "
         "and it reads low. Bytes are as encoded for the send, before permessage-deflate and less "
-        "the span id sp; with the backpressure flag on a frame counts at its encode, so one the "
-        "ladder drops later is in it. A connection feeds only its own codec, so json and msgpack "
+        "the span id sp; a frame counts at its encode, so one the ladder drops later is in it. "
+        "A connection feeds only its own codec, so json and msgpack "
         "never count the same frame; the CVWB kinds do, so they are left out. The lines are "
         "23-ws-protocol.md 16.3's server-to-client budget for the reference workspace.",
     )
@@ -453,8 +449,8 @@ def _ws_gateway(b: Board) -> None:
 
 
 def _ws_queue(b: Board) -> None:
-    b.row("WS queue, RTT and coalescing (backpressure flag on)")
-    # Per process, flag on only (ruling D6 of #412): read once per connection per
+    b.row("WS queue, RTT and coalescing")
+    # Per process (ruling D6 of #412): read once per connection per
     # CV_WS_CLASSIFY_INTERVAL_MS (the probe and the depth) or as a merged window leaves.
     b.ts(
         "WS outbound queue depth p95, share of the default budget (lines: 25 % and 60 %)",

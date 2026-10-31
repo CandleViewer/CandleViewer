@@ -1,5 +1,5 @@
 """E17-T06 (#571) slice D2: `sp` through the real `/ws` router, on both codecs and the budgeted
-writer (`CV_WS_BACKPRESSURE_ENABLED` on; #2409 runs it on that path only): a string on MessagePack
+writer (the one outbound path since #2409): a string on MessagePack
 too, left out of `cv_ws_frame_bytes{json|msgpack}` (20 section 12.1) by exactly what the real
 encoders write for it, the writer's debug span record, a client's `sp` ignored, and
 `CV_TELEMETRY_ENABLED` choosing the id source. A fake clock times the span: the hub takes each
@@ -66,13 +66,12 @@ async def _session(
     deltas: int,
     *,
     span_ids: bool = True,
-    backpressure: BackpressureConfig | None = _ON,
 ) -> tuple[_Wire, str]:
     """`hello`, `auth`, a binary `book` subscription (its `snap` is `s` 1) and `deltas` deltas,
     with span ids on unless `span_ids` is off; returns the wire and the connection id once the
     socket has closed. Delta k is taken at 1.0 + 0.25k s and sent 250 ms later: that is past the
     book window, so none of them waits in the pacer (#3329)."""
-    rig = _Rig(backpressure)
+    rig = _Rig(_ON)
     rig.registry.services.span_ids = new_span_id if span_ids else None
     sock = _Wire(encoding)
     async with asyncio.timeout(_DEADLINE_S):
@@ -184,18 +183,15 @@ def test_only_a_sampled_frame_that_carries_sp_is_queued_as_spanned() -> None:
     assert item.key == (_BOOK, None) and not item.priority
 
 
-#: #2409: the flag-off case is kept until the removal PR, the only cover of the flag-off writer's
-#: span record.
-@pytest.mark.parametrize("backpressure", [None, _ON], ids=["flag_off", "flag_on"])
 async def test_the_writer_logs_one_debug_span_record_per_frame_that_carries_sp(
-    backpressure: BackpressureConfig | None, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The exact entry, with the writer task's context merged in: it holds the connection id and
     no user or session id (bound after the writer was spawned)."""
     caplog.set_level(logging.DEBUG)
     with capture_logs(processors=[structlog.contextvars.merge_contextvars]) as logs:
         # `s` 2 to 2N
-        sock, connection_id = await _session(_JSON, 2 * N - 1, backpressure=backpressure)
+        sock, connection_id = await _session(_JSON, 2 * N - 1)
     sent = [frame for frame, _ in _carrying_sp(sock)]
     assert [f["s"] for f in sent] == [N, 2 * N]
     assert [e for e in logs if e["event"] == SPAN_EVENT] == [

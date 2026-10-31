@@ -7,7 +7,7 @@ writes, for three seeds of the order the sockets write in. Of its 21 server-side
 definition: the publish to the end of the frame's `send_payload`), the second-worst, their 95th
 percentile, stays under the budget's 20 ms and the worst under a 100 ms bound; both are reported.
 
-On the E17-Q02 chaos rig (real uvicorn, the backpressure flag on), unchanged; its listening socket
+On the E17-Q02 chaos rig (real uvicorn, the outbound pipeline), unchanged; its listening socket
 gets `TCP_NODELAY`, as uvicorn's own binding gives the sockets it accepts. Timed on the loop clock
 (the gateway's is virtual), with the collector off while timing. `perf`: runs in `py-perf`.
 """
@@ -31,7 +31,7 @@ from websockets.typing import Origin, Subprotocol
 from candleviewer.observability.context import spawn
 from candleviewer.ws import gateway
 from tests.chaos.ws._proxy import HOST
-from tests.chaos.ws._server import BOOK, SEED, Stack, flag_on
+from tests.chaos.ws._server import BOOK, SEED, Stack, granted
 from tests.contract.ws._support import ORIGIN
 
 pytestmark = pytest.mark.perf
@@ -123,7 +123,7 @@ async def test_anothers_book_frames_stay_in_budget_beside_eight_sockets_of_refus
             out.set()
 
     monkeypatch.setattr(gateway._Connection, "send_payload", traced)
-    async with flag_on() as stack:
+    async with granted() as stack:
         stack._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         viewer = stack.client(await stack.sessions.mint(str(VIEWER)), SEED)
         await viewer.start({"ch": BOOK}).until(lambda: viewer.synced, "the book's snapshot")

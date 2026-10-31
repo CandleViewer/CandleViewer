@@ -72,9 +72,9 @@ def _spy_closes(
     def spy(reason: str, **kw: Any) -> None:
         close_with(reason, **kw)
         pipe = conn.pipeline
-        queued = conn.outbound.qsize() if pipe is None else len(pipe.queue)
+        queued = len(pipe.queue)
         seen.append({"reason": reason, "now": conn.clock(), "sent": len(sock.raw)})
-        seen[-1].update(queued=queued, deadline=None if pipe is None else pipe.deadline)
+        seen[-1].update(queued=queued, deadline=pipe.deadline)
         called.set()
 
     mp.setattr(conn, "close_with", spy)
@@ -282,15 +282,12 @@ async def test_a_reauth_moves_the_expiry_the_timer_closes_at(
     assert close["reason"] == "token_expired"
 
 
-#: #2409: the flag-off case is kept until the removal PR, the only cover of the flag-off writer's
-#: own idle `ping`.
-@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag_off", "flag_on"])
 async def test_inbound_traffic_moves_the_heartbeat_deadline_the_timer_closes_at(
-    backpressure: BackpressureConfig | None, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The writer still queues the idle `ping` after 20 s of outbound silence (§9.1; its own check,
     kept). A frame read at 21 s moves the heartbeat deadline from 45 s to 66 s."""
-    rig, sock, pings = _Rig(backpressure), _Wire(), _Pings()
+    rig, sock, pings = _Rig(), _Wire(), _Pings()
     sock.pings, rig.expires_at = pings, _at(_FAR)
     async with asyncio.timeout(_DEADLINE_S):
         handler, conn = await rig.open(sock)

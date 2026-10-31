@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 import pytest
 
 from tests.chaos.ingestion._clock import VirtualClock
-from tests.chaos.ws._server import Stack, flag_on
+from tests.chaos.ws._server import Stack, granted
 from tests.unit.ws._seq_support import ACC_A, ACC_B
 
 
@@ -19,6 +19,7 @@ async def stack() -> AsyncIterator[Stack]:
 
 @pytest.fixture
 async def stack_on() -> AsyncIterator[Stack]:
-    """`CV_WS_BACKPRESSURE_ENABLED` on: the default budget (`_server.flag_on`)."""
-    async with flag_on() as s:
+    """The same stack as `stack` (`_server.granted`): the name is the one the scenarios that
+    needed the budget took while E17-T03's flag existed (#2409 removed it)."""
+    async with granted() as s:
         yield s

@@ -1,4 +1,4 @@
-"""E17-T03 (#412, S2a-ii): the control-frame lane rule and the invalidation drops, flag on
+"""E17-T03 (#412, S2a-ii): the control-frame lane rule and the invalidation drops
 (`23-ws-protocol.md` §8.4 Lanes, §9.5, §10.1). Control frames and `orders`, `executions` and
 `system` frames ride the priority lane; one that ends or resets a subscription's stream drops what
 the normal lane holds of it (`ConnectionAuthz.on_drop`). Router tests run the real `/ws` router
@@ -60,12 +60,10 @@ def _row(account: uuid.UUID, at: int = 1) -> dict[str, Any]:
     return {"id": f"p-{account}", "exchange_account_id": str(account), "updated_at_ms": at}
 
 
-def _positions_rig(
-    monkeypatch: pytest.MonkeyPatch, *accounts: uuid.UUID, flag: bool = True
-) -> _Rig:
+def _positions_rig(monkeypatch: pytest.MonkeyPatch, *accounts: uuid.UUID) -> _Rig:
     """A rig whose user reads `positions` on `accounts`; a `positions` snapshot holds one row per
     account of the subscription as it is when it is built."""
-    rig = _Rig(BackpressureConfig() if flag else None)
+    rig = _Rig(BackpressureConfig())
     rig.perms, rig.grants = _PERMS | {Permission.POSITIONS_READ}, _grants(*accounts)
     build = rig.source.build
 
@@ -380,62 +378,12 @@ async def test_a_snapshot_that_raises_after_a_narrowing_is_contained_to_its_topi
         assert [(f["meta"]["reason"], f["p"]["positions"]) for f in snaps] == [
             ("backpressure", [_row(ACC_A)])
         ] * 2
-    # contained as the hub contains it: one `ws snapshot failed` a connection, never the error's
-    # text (the deleted flag-off case pinned these; the code read on #5081)
+    # contained to its topic: one `ws snapshot failed` a connection, never the error's text
     failed = [e for e in logs if e["event"] == "ws snapshot failed"]
     level = "error" if family == "orders" else "warning"
     assert [(e["family"], e["error"], e["log_level"]) for e in failed] == [
         (family, "RuntimeError", level)
     ] * 2
-    assert _MARK not in str(logs)
-
-
-@pytest.mark.parametrize(("failing", "level"), [("orders", "error"), ("positions", "warning")])
-async def test_a_flag_off_settle_failure_leaves_the_other_narrowed_topic_its_snap(
-    failing: str, level: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """§10.1 flag off (#415): `orders` and `positions` narrowed together, both re-pended. The one
-    whose `reconfigure` build raises stays pending with its reason and logs `ws snapshot failed`
-    (`error` for `orders`, else `warning`); the other still gets its `snap`, and nothing closes.
-    #2409: kept until the removal PR, the only cover of the flag-off settle's per-topic guard
-    (the router's `settle`, its `TopicEmitter` branch); the pipeline twin is
-    `test_a_snapshot_that_raises_after_a_narrowing_is_contained_to_its_topic`."""
-    rig, sock = _positions_rig(monkeypatch, ACC_A, ACC_B, flag=False), _Wire()
-    other = "positions" if failing == "orders" else "orders"
-    async with _connected(rig, sock) as conn:
-        for family in ("orders", "positions"):
-            await rig.sub(sock, family, exchange_account_ids=[str(ACC_A), str(ACC_B)])
-        await _held(rig, sock)
-        for family in ("orders", "positions"):  # a frame of B each, dropped by the narrowing
-            rig.sequencing.publish(family, {family: [_row(ACC_B)]}, account=ACC_B)
-        build = rig.source.build
-
-        def raises(sub: Subscription) -> SnapshotBody | None:
-            if sub.topic.family.family == failing:
-                raise RuntimeError(_MARK)
-            return build(sub)
-
-        monkeypatch.setattr(rig.source, "build", raises)
-        rig.grants = _grants(ACC_A)
-        with capture_logs() as logs:
-            await rig.registry.grants_changed(USER)
-        sock.release()
-        frames = await sock.next(4)  # the held frame, the change and its two `revoked`
-        frames += [sock.sent.get_nowait() for _ in range(sock.sent.qsize())]  # then the settle's
-        assert conn.authz is not None and sock.closed_with is None and conn.outbound.empty()
-        pending = {sub.ch: sub.snapshot_pending for sub in conn.authz.by_id.values()}
-    assert [(f["t"], f.get("ch")) for f in frames] == [
-        ("d", "system"),
-        ("permission_change", None),
-        ("revoked", "orders"),
-        ("revoked", "positions"),
-        ("snap", other),
-    ]
-    meta = frames[4]["meta"]
-    assert (meta["reason"], frames[4]["s"], meta["previous_seq"]) == ("reconfigure", 3, 2)
-    assert pending == {failing: True, other: False}
-    (line,) = [e for e in logs if e["event"] == "ws snapshot failed"]
-    assert (line["family"], line["error"], line["log_level"]) == (failing, "RuntimeError", level)
     assert _MARK not in str(logs)
 
 

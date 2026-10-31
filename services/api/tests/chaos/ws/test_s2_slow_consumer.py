@@ -1,7 +1,7 @@
 """#410 scenario 2: a client that stops reading for 60 s is harmless (G4, P6; §8.4, ruling D8;
 C-13.6 #11, backpressure: a slow WS client).
 
-E17-T03's flag is on (`_server.flag_on`: the default 8 MiB / 2 000-frame budget). A client holding
+On E17-T03's pipeline (`_server.granted`: the default 8 MiB / 2 000-frame budget). A client holding
 the reference workspace's feedable topics (§16.3: `book.BTCUSDT.50` and the tape; no bar builder is
 wired into the harness for its 1 m `bars` and 5 m `footprint` panes) stops reading behind a
 `PAUSE`d lane for 60 s of virtual time while the hub publishes the recorded book and tape every
@@ -46,7 +46,7 @@ from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.pipeline import ConnectionPipeline
 from tests.chaos.ws._client import BACKOFF, TIMEOUT_S, Client, each
 from tests.chaos.ws._proxy import Fault, Proxy
-from tests.chaos.ws._server import BOOK, BUFFERS, ORDERS, SEED, TRADES, Stack, flag_on
+from tests.chaos.ws._server import BOOK, BUFFERS, ORDERS, SEED, TRADES, Stack, granted
 from tests.unit.ws._seq_support import ACC_A
 
 pytestmark = pytest.mark.chaos
@@ -62,7 +62,7 @@ CHANNELS = (BOOK, TRADES["ch"])
 TAPE = TRADES["ch"]
 HEALTHY = (uuid.UUID(int=0x201), uuid.UUID(int=0x202))
 SLEEPER = uuid.UUID(int=0x203)
-BUDGET = BackpressureConfig()  # `flag_on`'s, checked against the sleeper's queue
+BUDGET = BackpressureConfig()  # the stack's, checked against the sleeper's queue
 Acct = tuple[int, int, int]  # queued bytes, pending window bytes, frames
 
 
@@ -415,7 +415,7 @@ async def test_s2_sleeping_client_stays_in_its_budget_and_costs_the_others_nothi
     # Healthy clients: every update in its tick (no class the sleeper degraded, no frame held),
     # no gap, no print lost or doubled, and the same stream, frame for frame, as a run without
     # the sleeper (same seed, same stream).
-    async with flag_on() as other:
+    async with granted() as other:
         control = await Run(other).connect(HEALTHY)
         await control.feed(QUIET_TICKS, tape=False)
         await control.feed(PAUSE_TICKS - QUIET_TICKS + AFTER_TICKS)

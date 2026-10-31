@@ -699,15 +699,14 @@ def apply(state: dict[str, dict[int, int]], frame: Frame, *, reset: bool) -> Non
             book[price] = size
 
 
-@pytest.mark.parametrize(("flag", "feeder"), [(True, "inproc"), (False, "inproc"), (True, "proc")])
+@pytest.mark.parametrize("feeder", ["inproc", "proc"])
 async def test_the_backend_serves_the_real_gateway_and_a_client_ends_consistent(
-    flag: bool, feeder: str, tmp_path: Path
+    feeder: str, tmp_path: Path
 ) -> None:
     """`feeder="proc"` (#571): the same, fed by the child through the receiver; the child is
     reaped when the backend exits."""
     cfg = fixture_app.BackendConfig(
-        symbols=("BTCUSDT", "ETHUSDT"), hot=1, warm=1, users=1, connections=1, flag=flag,
-        feeder=feeder,
+        symbols=("BTCUSDT", "ETHUSDT"), hot=1, warm=1, users=1, connections=1, feeder=feeder,
     )  # fmt: skip
     async with fixture_app.Backend(cfg, TABLE, tmp_path) as be:
         assert (tmp_path / "tokens.json").stat().st_mode & 0o777 == 0o600
@@ -735,7 +734,7 @@ async def test_the_backend_serves_the_real_gateway_and_a_client_ends_consistent(
             )
             welcome = await recv(ws)
             assert (
-                welcome["p"]["features"]["coalescing"] is flag
+                welcome["p"]["features"]["coalescing"] is True
                 and welcome["p"]["encoding"] == "json"
             )
             await ws.send(
@@ -803,9 +802,7 @@ async def test_the_backend_serves_the_real_gateway_and_a_client_ends_consistent(
 async def test_the_refresh_double_rotates_a_session_and_the_socket_re_auths_in_place(
     tmp_path: Path,
 ) -> None:
-    cfg = fixture_app.BackendConfig(
-        symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1, flag=False
-    )
+    cfg = fixture_app.BackendConfig(symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1)
     async with fixture_app.Backend(cfg, TABLE, tmp_path) as be:
         first = be.tokens["u0"][0]
         url = f"ws://127.0.0.1:{be.port}/ws"
@@ -1311,7 +1308,6 @@ def test_a_k6_bin_that_cannot_be_run_is_refused_never_a_traceback(
 
 def test_a_run_plan_applies_the_overrides_to_the_resolved_profile() -> None:
     ns = argparse.Namespace(
-        flag="off",
         staging=True,
         seed=9,
         duration_s=90.0,
@@ -1326,7 +1322,7 @@ def test_a_run_plan_applies_the_overrides_to_the_resolved_profile() -> None:
         trace_sp=False,
     )
     p = runner.plan(TABLE, ns, "smoke", Path("out"), families=["book"])
-    assert (p.profile, p.flag, p.staging, p.seed, p.duration_s) == ("smoke", False, True, 9, 90.0)
+    assert (p.profile, p.staging, p.seed, p.duration_s) == ("smoke", True, 9, 90.0)
     assert (p.backend_cpus, p.k6_cpus) == ("0-7", "2-3")  # --staging's default, one overridden
     assert (
         p.prof["rtt_delay_ms"] == 700.0
@@ -1367,7 +1363,7 @@ def test_a_proc_feeder_runs_off_the_backends_cpus_on_k6s_unless_given_its_own(
             runner.start_backend(p)
     assert seen[0][-2:] == ["--feeder", "inproc"]
     assert seen[1][-4:] == ["--feeder", "proc", "--feeder-cpus", "4-7"]
-    cfg = fixture_app.BackendConfig.for_profile(TABLE, "B", flag=True, seed=1, feeder="proc")
+    cfg = fixture_app.BackendConfig.for_profile(TABLE, "B", seed=1, feeder="proc")
     assert (cfg.feeder, cfg.feeder_cpus) == ("proc", None)
 
 
@@ -2256,10 +2252,7 @@ def test_the_ws_path_defaults_to_the_gateways_and_one_option_moves_it_everywhere
     ]
     assert [runner.k6_env(p, 7, 1.0, 2.0)["WS_PATH"] for p in plans] == ["/ws", "/api/v1/ws"]
     paths = [p.prof["ws_path"] for p in plans]
-    cfgs = [
-        fixture_app.BackendConfig.for_profile(TABLE, "A", flag=True, seed=1, ws_path=x)
-        for x in paths
-    ]
+    cfgs = [fixture_app.BackendConfig.for_profile(TABLE, "A", seed=1, ws_path=x) for x in paths]
     assert [c.ws_path for c in cfgs] == ["/ws", "/api/v1/ws"]
     with pytest.raises(ValueError, match="expected /ws"):
         runner.plan(TABLE, args(ws_path="/x"), "smoke", tmp_path)
@@ -2287,7 +2280,7 @@ async def test_the_fixture_serves_both_gateway_paths_as_the_app_does(
     """#3916: `create_app` serves the gateway at `/ws` and `/api/v1/ws` (`include_ws_router`), and
     so does the fixture, whichever path k6 is given; another prefix is served as well."""
     cfg = fixture_app.BackendConfig(
-        symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1, flag=False, ws_path=ws_path
+        symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1, ws_path=ws_path
     )
     async with fixture_app.Backend(cfg, TABLE, tmp_path) as be:
         for path in dict.fromkeys(("/ws", "/api/v1/ws", ws_path)):
@@ -2302,9 +2295,7 @@ async def test_a_window_holds_an_update_that_the_envelope_stamp_cannot_see(tmp_p
     """The premise of W5's instrument, through the real gateway: an update published into a window
     is stamped by `ts` when the window RELEASES it, a window after its source, while the CVWB header
     keeps the source. Decode minus `ts` cannot price the wait; decode minus the source does."""
-    cfg = fixture_app.BackendConfig(
-        symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1, flag=True
-    )
+    cfg = fixture_app.BackendConfig(symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1)
     async with fixture_app.Backend(cfg, TABLE, tmp_path) as be:
         be._tasks[1].cancel()  # no feeder: the two updates below are all there is
         await asyncio.gather(be._tasks[1], return_exceptions=True)
@@ -2486,18 +2477,17 @@ async def frames_until(ws: Any, book_deltas: int) -> list[dict[str, Any]]:
     return got
 
 
-@pytest.mark.parametrize(("flag", "mode"), [(True, "off"), (False, "off"), (True, "on")])
+@pytest.mark.parametrize("mode", ["off", "on"])
 async def test_with_instrumentation_off_nothing_is_recorded_and_a_client_still_ends_consistent(
-    flag: bool, mode: str, tmp_path: Path
+    mode: str, tmp_path: Path
 ) -> None:
-    """Off: every inventoried name holds its stand-in while the backend serves (both writers), no
+    """Off: every inventoried name holds its stand-in while the backend serves, no
     frame carries an `sp` past the 32nd delta, the book a client rebuilds is the server's, the
     fan-out histogram stays empty while E17-T02's counters still count, and every name is the
     production object again once the backend exits. On: nothing is patched and `sp` appears."""
     before = held()
     cfg = fixture_app.BackendConfig(
-        symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1, flag=flag,
-        instrumentation=mode,
+        symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1, instrumentation=mode,
     )  # fmt: skip
     async with fixture_app.Backend(cfg, TABLE, tmp_path) as be:
         now = held()
@@ -2556,11 +2546,9 @@ def test_the_instrumentation_mode_reaches_the_backend_run_json_and_never_a_selfc
             runner.start_backend(p)
     assert [a[a.index("--instrumentation") + 1] for a in seen] == ["on", "off"]
     assert seen[0][-2:] == ["--feeder", "inproc"]  # the feeder's options stay last, as before
-    cfg = fixture_app.BackendConfig.for_profile(TABLE, "A", flag=True, seed=1)
+    cfg = fixture_app.BackendConfig.for_profile(TABLE, "A", seed=1)
     assert cfg.instrumentation == "on"
-    off_cfg = fixture_app.BackendConfig.for_profile(
-        TABLE, "A", flag=True, seed=1, instrumentation="off"
-    )
+    off_cfg = fixture_app.BackendConfig.for_profile(TABLE, "A", seed=1, instrumentation="off")
     assert off_cfg.instrumentation == "off"
     with pytest.raises(ValueError, match="instrumentation 'x'"):
         fixture_app.Backend(replace(cfg, instrumentation="x"), TABLE, tmp_path)

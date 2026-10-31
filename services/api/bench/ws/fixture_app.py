@@ -36,7 +36,7 @@ cannot be pointed at a stub exchange (no setting overrides the hosts).
   outbound `websocket.send` inside the `cv_ws_fanout_seconds` span (the self-check), and
   `CV_BENCH_FEED_SEED`. Ready line on stdout: `CV_BENCH_WS_READY port=<p> pid=<n> tokens=<path>`.
 
-    uv run python -m bench.ws.fixture_app --profile A --flag on --out DIR [--feeder proc]
+    uv run python -m bench.ws.fixture_app --profile A --out DIR [--feeder proc]
         [--instrumentation off]
 """
 
@@ -237,7 +237,6 @@ class BackendConfig:
     warm: int
     users: int  # bench users, the probe's included
     connections: int  # sessions minted per user
-    flag: bool
     seed: int = 7
     send_delay_ms: int = 0
     depths: tuple[int, ...] = (50,)
@@ -252,7 +251,6 @@ class BackendConfig:
         table: dict[str, Any],
         name: str,
         *,
-        flag: bool,
         seed: int,
         send_delay_ms: int = 0,
         ws_path: str = "",
@@ -268,7 +266,6 @@ class BackendConfig:
             warm=feed["warm"],
             users=int(p["users"]) + int(bool(p.get("probe"))),
             connections=int(p["connections"]),
-            flag=flag,
             seed=seed,
             send_delay_ms=send_delay_ms or int(p.get("send_delay_ms", 0)),
             depths=tuple(feed["book_depths"]),
@@ -286,7 +283,7 @@ class Backend:
     def __init__(self, cfg: BackendConfig, table: dict[str, Any], state_dir: Path) -> None:
         assert_loopback("127.0.0.1")
         self.cfg, self.state_dir = cfg, state_dir
-        self.settings = Settings(ws_shutdown_grace_ms=100, ws_backpressure_enabled=cfg.flag)
+        self.settings = Settings(ws_shutdown_grace_ms=100)
         self.hub, self.bus = SequencingHub(), Bus()
         tiers = tier_plan(len(cfg.symbols), cfg.hot, cfg.warm, table["tiers"])
         if cfg.feeder not in FEEDERS:
@@ -358,7 +355,7 @@ class Backend:
             revocation_hub=RevocationHub(),
             allowed_origins=frozenset({table["origin"]}),
             hub=self.gateway,
-            backpressure=BackpressureConfig.from_settings(self.settings) if cfg.flag else None,
+            backpressure=BackpressureConfig.from_settings(self.settings),  # as `create_app` does
             server_version=HARNESS_VERSION,
             loop_stall=LoopStall(),  # #4833: as `create_app` wires it, one per process
         )
@@ -463,7 +460,7 @@ def feeder_ended(task: asyncio.Task[Any]) -> None:
 async def serve(args: argparse.Namespace) -> None:
     table = profiles.load()
     cfg = BackendConfig.for_profile(
-        table, args.profile, flag=args.flag == "on", seed=args.seed,
+        table, args.profile, seed=args.seed,
         send_delay_ms=args.send_delay_ms, ws_path=args.ws_path,
         feeder=args.feeder, feeder_cpus=args.feeder_cpus, instrumentation=args.instrumentation,
     )  # fmt: skip
@@ -477,7 +474,6 @@ async def serve(args: argparse.Namespace) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--profile", required=True)
-    ap.add_argument("--flag", choices=("on", "off"), default="on")
     ap.add_argument("--seed", type=int, default=int(os.environ.get(ENV_SEED, "7")))
     ap.add_argument("--send-delay-ms", type=int, default=int(os.environ.get(ENV_SEND_DELAY, "0")))
     ap.add_argument("--out", default="")

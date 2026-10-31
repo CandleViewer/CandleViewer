@@ -92,7 +92,7 @@ from candleviewer.ws.limits import (
     json_values_over_count,
 )
 from tests.chaos.ws._proxy import HOST
-from tests.chaos.ws._server import BOOK, SEED, Stack, flag_on
+from tests.chaos.ws._server import BOOK, SEED, Stack, granted
 from tests.contract.ws._support import ORIGIN
 from tests.security.ws._raw import delta
 
@@ -338,7 +338,7 @@ async def nodelay_stack() -> AsyncIterator[Stack]:
     """The rig's flag-on stack, its accepted sockets with `TCP_NODELAY` (module doc). The rig has
     no accessor for its listening socket and is not edited here, so this reaches `_sock`: one
     line in `Stack._boot` would make it unnecessary."""
-    async with flag_on() as stack:
+    async with granted() as stack:
         stack._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         yield stack
 

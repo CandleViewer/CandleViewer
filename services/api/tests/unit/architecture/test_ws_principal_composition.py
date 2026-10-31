@@ -199,36 +199,7 @@ def test_deployed_app_ws_sub_answers_as_the_matrix_says(
     if family.startswith("machines."):
         rbac.seed_machine(deployed.app, row, actor)
     observed = _subscribe_once(deployed.app, actor, row["sample"], account)
-    assert observed == _expected(deployed.app, family, actor), (family, actor)
-
-
-def _expected(app: Any, family: str, actor: str) -> str:
-    """The matrix's outcome, except that `heatmap.*` is `unknown_topic` to an actor the matrix
-    lets in while the app's own settings keep the WS byte budget off (G-04, 23 §6.1: the family
-    is not served without it). The matrix is the flag-on answer, checked with the budget on
-    below."""
-    expected = str(_TOPICS[family]["outcomes"][actor])
-    on = app.state.app_context.settings.ws_backpressure_enabled
-    if family == "heatmap" and expected == "sub_ok" and not on:
-        return "unknown_topic"
-    return expected
-
-
-def test_deployed_app_serves_heatmap_as_the_matrix_says_with_the_byte_budget_on(
-    deployed: SimpleNamespace,
-) -> None:
-    """G-04 (23 §6.1): with the WS byte budget on, `heatmap.*` answers an owner and a viewer as
-    the matrix says. That composition lives in this test only: its class patches would otherwise
-    reach the module composition's cells (`deployed` is built first and outlives it)."""
-    deploying = _deploy(ws_backpressure_enabled=True)
-    on = next(deploying)
-    try:
-        assert on.app.state.app_context.settings.ws_backpressure_enabled
-        for actor in ("owner", "viewer"):
-            observed = _subscribe_once(on.app, actor, _TOPICS["heatmap"]["sample"], None)
-            assert observed == _TOPICS["heatmap"]["outcomes"][actor], actor
-    finally:
-        deploying.close()
+    assert observed == _TOPICS[family]["outcomes"][actor], (family, actor)
 
 
 @pytest.mark.parametrize("family", ACCOUNT_SCOPED)

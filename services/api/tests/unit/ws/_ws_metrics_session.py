@@ -2,9 +2,8 @@
 
 Five connections on the real `/ws` router, on the caller's loop behind `_Wire` (the rig of
 `tests/unit/ws/test_pipeline_outbound.py`): no thread, no sleep, a fake clock, every wait bounded.
-Every connection runs with the backpressure flag on (one connection per step that needs its own
-queue, below); the last is a pass on MessagePack with a binary book, for the series only that codec
-moves (#2409: it was the flag-off wiring's pass).
+Every connection runs on the outbound pipeline (one connection per step that needs its own queue,
+below); the last is a pass on MessagePack with a binary book, for the series only that codec moves.
 
 What a scrape sees is what the tests read: `export_ws_metrics` and `export_cvwb_metrics` on a
 fresh registry (the ones `create_app` serves), rendered by `generate_latest` and parsed back from

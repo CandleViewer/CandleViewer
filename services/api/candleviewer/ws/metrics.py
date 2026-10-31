@@ -1,6 +1,6 @@
 """CVWB encode metrics (E17-T02 follow-up, docs/plan/20-architecture.md section 12.1) and the
-send-path series of the gateway (E17-T06: fan-out span, frame encode time and size); with the
-backpressure flag on, also its conflation, class, RTT and queue depth series (below).
+send-path series of the gateway (E17-T06: fan-out span, frame encode time and size), and its
+conflation, class, RTT and queue depth series (below).
 
 Module-level series (the encoder is a pure function with no facade); `export_cvwb_metrics()` and
 `export_ws_metrics()` serve them on the scraped registry. ``kind`` is the six-name body-kind enum
@@ -87,7 +87,7 @@ cv_ws_closes_total = Counter(
 # Nothing closes with `normal`. `other` has no producer: `lifecycle.bye_frame` raises on an
 # unknown reason on a connection's first close (a sealed close on one already closing skips it, and
 # its only caller without `bye=` passes `token_expired`), and a `bye=` frame is built only by
-# `user_disabled_bye` (a fixed reason), by the gateway's `refuse_connect` and the flag-on
+# `user_disabled_bye` (a fixed reason), by the gateway's `refuse_connect` and
 # `pipeline.slow_consumer_bye` (both through `lifecycle.bye_frame`, so validated) and by
 # `revocation.bye_frame`, which does not validate its
 # reason and is reached through `RevocationHub.close_for` (from `_close_each` and from `run_auth`'s
@@ -302,7 +302,7 @@ cv_ws_frame_bytes = FastHistogram(
     label_values=[(k,) for k in FRAME_KINDS],
 )
 
-# -- E17-T06 with CV_WS_BACKPRESSURE_ENABLED on (#412's wiring, ruling D6) ----------------------
+# -- E17-T06 on the outbound pipeline (#412's wiring, ruling D6) --------------------------------
 # Per process: no connection, user, symbol or channel in any label. The two labelled series bind
 # their closed sets where those sets live, at import (`pacing.CONFLATED`, `pacing.CLASS_COUNTS`).
 # `cv_ws_coalesced_updates` is observed as a merged window leaves (a `FastHistogram`, as the send
@@ -393,11 +393,10 @@ ENCODE_COST: Final = {
     k: (cv_ws_frame_encode_seconds.labels(v.name), cv_ws_frame_bytes.labels(v.name))
     for k, v in KINDS.items()
 }
-#: The writer's encode of a data frame: its seconds, and the bytes encoded for the send (a JSON text
-#: is ASCII: chars == bytes). The writer observes the pair of the connection's codec for the frame
-#: the hub stamped, one in `SAMPLE_EVERY`: `json.dumps` on `cv.v1.json`, `encode_server_frame` on
-#: `cv.v1.msgpack`. With `CV_WS_BACKPRESSURE_ENABLED` on, `pipeline.ConnectionPipeline.push`
-#: observes the pair instead, at the frame's one encode.
+#: The encode of a data frame: its seconds, and the bytes encoded for the send (a JSON text is
+#: ASCII: chars == bytes). `pipeline.ConnectionPipeline.push` observes the pair of the
+#: connection's codec for the frame the hub stamped, one in `SAMPLE_EVERY`, at the frame's one
+#: encode: `outbound.json_payload` on `cv.v1.json`, `encode_server_frame` on `cv.v1.msgpack`.
 JSON_ENCODE_SECONDS: Final = cv_ws_frame_encode_seconds.labels(JSON_KIND)
 JSON_FRAME_BYTES: Final = cv_ws_frame_bytes.labels(JSON_KIND)
 MSGPACK_ENCODE_SECONDS: Final = cv_ws_frame_encode_seconds.labels(MSGPACK_KIND)

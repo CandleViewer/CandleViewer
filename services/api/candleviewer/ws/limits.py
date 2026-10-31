@@ -42,7 +42,7 @@ Single home for every bound the gateway enforces. Overflow policy:
 - A `resync`, a `ctl` that would re-snapshot or a `sub` entry that would start a
   subscription, past the connection's or its user's rebuild budget -> `resync_rate_limited`; it
   changes nothing, and only a topic's own resync loop is revoked (SR-193).
-- With the backpressure flag on, a connection's queued `bars.*` frames past
+- A connection's queued `bars.*` frames past
   `BARS_SHARE_PCT` of either limit of its outbound budget -> those topics alone are
   dropped and re-snapshotted (`drop_share`); no other family loses a frame (SR-E12-07).
 """
@@ -107,7 +107,7 @@ MAX_BARS_SUBSCRIPTIONS = 16
 MAX_DEEP_BOOK_SUBSCRIPTIONS = 4
 #: The depth from which a `book` subscription counts against that cap.
 DEEP_BOOK_MIN_DEPTH = 200
-#: SR-E12-07 (§8.4, flag on): the share, in percent of each limit of a connection's outbound
+#: SR-E12-07 (§8.4): the share, in percent of each limit of a connection's outbound
 #: budget, that its queued `bars.*` frames may hold, so `book` and `trades` are not starved.
 BARS_SHARE_PCT = 50
 #: SR-193 (§7.5, §16.2): the rebuild budget of a connection, which every snapshot a client causes

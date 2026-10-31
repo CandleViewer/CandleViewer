@@ -1,5 +1,5 @@
-"""One connection's outbound pipeline while `CV_WS_BACKPRESSURE_ENABLED` is on (E17-T03, #412;
-`23-ws-protocol.md` §4.4, §8.4, §10.1).
+"""One connection's outbound pipeline, the gateway's one outbound path (E17-T03, #412; #2409
+removed `CV_WS_BACKPRESSURE_ENABLED`; `23-ws-protocol.md` §4.4, §8.4, §10.1).
 
 From `accept` on, `_Connection.push` hands every frame to `ConnectionPipeline.push`, the `welcome`
 included. It is encoded once in the negotiated subprotocol (`outbound.encode`), queued on the
@@ -47,8 +47,8 @@ observes the depth it read; `Pacer` counts merged windows and each RTT sample (`
 The frame cost series (E17-T06, `cv_ws_frame_encode_seconds` and `cv_ws_frame_bytes`) see that one
 encode. For a data frame the hub stamped (`received`: one frame of a subscription in
 `SAMPLE_EVERY`) the serialiser alone is timed with `perf_counter` and its output sized at its wire
-length, once, under the connection's own kind (`json` or `msgpack`) with weight `SAMPLE_EVERY`, as
-the flag-off writer does before its send. Any other frame reads no timer, and an encode that fails
+length, once, under the connection's own kind (`json` or `msgpack`) with weight `SAMPLE_EVERY`.
+Any other frame reads no timer, and an encode that fails
 is not observed. The encode happens at push, so a stamped frame that a close or a ladder drop
 removes before the send is in these series but not in `cv_ws_fanout_seconds`, which the writer
 observes once the socket has the frame. The observed size leaves out a frame's `sp` (23 §3.1).
@@ -173,7 +173,7 @@ def slow_consumer_bye(now_ms: int, topics: Iterable[str] | None = None) -> dict[
 
 
 def msgpack_payload(frame: Mapping[str, Any]) -> bytes:
-    """`cv.v1.msgpack` with the flag on: `codec.encode_server_frame`, refusing a NaN or an
+    """`cv.v1.msgpack`: `codec.encode_server_frame`, refusing a NaN or an
     infinity with `ValueError`, as `outbound.json_payload` does (§10.1). Only a frame whose packed
     bytes match `_NON_FINITE_FLOAT64` is walked, so any other costs one search of its bytes."""
     payload = encode_server_frame(frame)

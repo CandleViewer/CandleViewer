@@ -75,7 +75,7 @@ RATE_PER_SECOND: Final = 30
 RATE_PER_MINUTE: Final = 300
 #: §8.5: `pong`s a second that the inbound rate does not count, from the first `auth_ok`: about
 #: twice the server's `ping`s, the RTT probe's one per classification (every 500 ms at the
-#: `CV_WS_CLASSIFY_INTERVAL_MS` floor, flag on) and the heartbeat's one per `SERVER_PING_AFTER_S`.
+#: `CV_WS_CLASSIFY_INTERVAL_MS` floor) and the heartbeat's one per `SERVER_PING_AFTER_S`.
 PONG_BUDGET_PER_S: Final = 4
 #: §8.5: the most of them at once, so `pong`s that arrive together still fit (two seconds' worth).
 PONG_BUDGET_BURST: Final = 8
@@ -114,10 +114,9 @@ LIMITS_BLOCK: Final[dict[str, int]] = {
     "min_throttle_ms": MIN_THROTTLE_MS,
     "max_symbols_per_connection": MAX_SYMBOLS_PER_CONNECTION,
 }
-#: §4.2 `welcome.features` every build serves. `coalescing` is not one of them: it mirrors
-#: `CV_WS_BACKPRESSURE_ENABLED` (`23-ws-protocol.md` §4.2), so `welcome_features` adds it per
-#: router.
-FEATURES: Final[dict[str, bool]] = {"replay": True, "binary_payloads": True}
+#: §4.2 `welcome.features`. `coalescing` is always on: the §8 pipeline is the one outbound path
+#: (#2409 removed `CV_WS_BACKPRESSURE_ENABLED`, which it once mirrored).
+FEATURES: Final[dict[str, bool]] = {"replay": True, "binary_payloads": True, "coalescing": True}
 
 
 class CloseCode(enum.IntEnum):
@@ -560,14 +559,9 @@ class ConnectRateLimiter:
             del self._stamps[stalest]
 
 
-def welcome_features(*, coalescing: bool) -> dict[str, bool]:
-    """The §4.2 `features` block: `FEATURES` plus `coalescing`, which mirrors
-    `CV_WS_BACKPRESSURE_ENABLED` (`23-ws-protocol.md` §4.2): advertised when the flag is on.
-    The flag must stay off until the backpressure wiring is complete (#412; removal ticket
-    #2900), so a welcome from a build that has it on earlier advertises ahead of what that build
-    does. That rollout precondition is the operator's; nothing here checks it. Hands out a fresh
-    dict."""
-    return {**FEATURES, "coalescing": coalescing}
+def welcome_features() -> dict[str, bool]:
+    """The §4.2 `features` block, `FEATURES`, as a fresh dict."""
+    return dict(FEATURES)
 
 
 def client_epoch_ms(value: object) -> int | None:

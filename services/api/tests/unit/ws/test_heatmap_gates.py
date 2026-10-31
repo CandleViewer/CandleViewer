@@ -1,10 +1,10 @@
-"""E21-T02 (#605; 23 §6.1, §10.2, §16.2): the `heatmap.*` gates at `sub` and `ctl`, in order: G-04
-(`unknown_topic` while the byte budget is off, live and replay), depth 500 while
+"""E21-T02 (#605; 23 §6.1, §10.2, §16.2): the `heatmap.*` gates at `sub` and `ctl`, in order: a
+replay one while no replay producer serves it (`unknown_topic`), depth 500 while
 `heatmap_depth_500` is off (`invalid_topic_format`), and the G-02 spec caps
 (`subscription_limit`); a `ctl` of the bucket re-snapshots on a new spec lease; saturation holds
 a heatmap to one frame a second with `degraded_topics` (§8.3). The composition root serves the
-family from the order-flow publisher. `CV_WS_BACKPRESSURE_ENABLED`'s default may flip, so every
-test sets `heatmap_off` (or the setting) explicitly."""
+family from the order-flow publisher. G-04 holds by construction: every connection runs on the
+byte budget (#2409 removed `CV_WS_BACKPRESSURE_ENABLED`, whose off state refused the family)."""
 
 from __future__ import annotations
 
@@ -70,7 +70,6 @@ def _conn(
     principal = PrincipalSnapshot(
         uuid.UUID(int=user), frozenset({"viewer"}), frozenset({Permission.MARKETDATA_READ})
     )
-    services.setdefault("heatmap_off", False)
     svc = SubscriptionServices(upstream=UpstreamRefs(sink), heatmap=topic, **services)
     return ConnectionAuthz(principal, svc), sink
 
@@ -98,21 +97,9 @@ def _code(result: dict[str, Any]) -> str | None:
 # -- G-04 ----------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("rs", [None, RS], ids=["live", "replay"])
-def test_heatmap_is_unknown_topic_while_the_byte_budget_is_off(rs: str | None) -> None:
-    """G-04 (23 §6.1, §10.2): with `CV_WS_BACKPRESSURE_ENABLED` off every `heatmap.*` `sub`, live
-    and replay, is refused `unknown_topic` and is never pending; nothing is held."""
+def test_heatmap_is_served_on_the_byte_budget() -> None:
     topic = _topic()
-    conn, sink = _conn(topic, heatmap_off=True)
-    body = {} if rs is None else {"replay_session_id": rs}
-    (refused,) = _sub(conn, _hm(), **body)
-    assert _code(refused) == "unknown_topic"
-    assert conn.by_id == {} and sink.opened == [] and topic._symbols == {}
-
-
-def test_heatmap_is_served_with_the_byte_budget_on() -> None:
-    topic = _topic()
-    conn, sink = _conn(topic, heatmap_off=False)
+    conn, sink = _conn(topic)
     (ok,) = _sub(conn, _hm(time_bucket_ms=100))
     assert _code(ok) is None
     [sub] = conn.by_id.values()
@@ -128,20 +115,19 @@ def test_heatmap_is_served_with_the_byte_budget_on() -> None:
 
 def test_heatmap_depth_500_is_refused_while_heatmap_depth_500_is_off() -> None:
     """D-row (#604 BQ-9): depth 500 is `invalid_topic_format` while the flag is off; depth 200
-    is served. G-04 is checked first: with the budget off the same `sub` is `unknown_topic`."""
+    is served."""
     conn, _ = _conn(_topic())
     deep, normal = _sub(conn, _hm(depth=500), _hm("ETHUSDT", depth=200))
     assert (_code(deep), _code(normal)) == ("invalid_topic_format", None)
-    off, _ = _conn(_topic(), heatmap_off=True)
-    assert _code(_sub(off, _hm(depth=500))[0]) == "unknown_topic"
 
 
-def test_a_replay_heatmap_is_unknown_topic_with_the_byte_budget_on() -> None:
+@pytest.mark.parametrize("depth", [200, 500])
+def test_a_replay_heatmap_is_unknown_topic(depth: int) -> None:
     """No replay producer serves `heatmap` yet, so a replay `sub` is refused
     `unknown_topic` (§10.2 "topic not served"), never left `snapshot_pending` for good."""
     topic = _topic()
-    conn, sink = _conn(topic, heatmap_off=False, depth_500=True)
-    (refused,) = _sub(conn, _hm(depth=500), replay_session_id=RS)
+    conn, sink = _conn(topic, depth_500=True)
+    (refused,) = _sub(conn, _hm(depth=depth), replay_session_id=RS)
     assert _code(refused) == "unknown_topic"
     assert conn.by_id == {} and sink.opened == [] and topic._symbols == {}
 
@@ -225,17 +211,13 @@ def test_saturation_degrades_heatmap_to_1000ms_with_degraded_topics() -> None:
 # -- the composition root ------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("on", [False, True])
-def test_create_app_serves_heatmap_from_its_publisher_behind_the_byte_budget(
-    on: bool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("CV_WS_BACKPRESSURE_ENABLED", "true" if on else "false")
+def test_create_app_serves_heatmap_from_its_publisher() -> None:
     app = create_app(_settings())
     services = app.state.ws_registry.services
     topic = services.snapshots._sources["heatmap"]
     assert isinstance(topic, HeatmapTopic) and topic is services.heatmap
     assert topic in app.state.ws_runtime.feeds and "heatmap" not in PENDING_ADAPTERS
-    assert services.heatmap_off is (not on)
+    assert not hasattr(services, "heatmap_off")  # G-04: no gate left to close (#2409)
 
 
 class _Stream(BookStream):

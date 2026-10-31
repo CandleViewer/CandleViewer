@@ -1,9 +1,8 @@
-"""E17-T03 (#412): `create_app` and the backpressure flag (`CV_WS_BACKPRESSURE_ENABLED`).
+"""E17-T03 (#412): `create_app` and the outbound budget.
 
-The composition root hands `make_ws_router` a `BackpressureConfig`, built from the budget settings,
-only while the flag is on; off (the default) it passes none and the gateway keeps today's path.
-`welcome.features.coalescing` mirrors the flag through the real handshake (`23-ws-protocol.md`
-§4.2). A sibling of `test_app_wiring.py`, which other open PRs edit at its tail (C-4.15).
+The composition root always hands `make_ws_router` a `BackpressureConfig` built from the budget
+settings (#2409 removed `CV_WS_BACKPRESSURE_ENABLED`), and `welcome.features.coalescing` is `true`
+through the real handshake (`23-ws-protocol.md` §4.2). A sibling of `test_app_wiring.py`.
 """
 
 from __future__ import annotations
@@ -41,24 +40,6 @@ def _spy_on_the_router(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
 
 @pytest.mark.parametrize(
-    "budget",
-    [{}, {"ws_queue_bytes": 5_000_000, "ws_queue_frames": 300}],
-    ids=["defaults", "budget_set"],
-)
-def test_create_app_passes_no_backpressure_config_while_the_flag_is_off(
-    monkeypatch: pytest.MonkeyPatch, budget: dict[str, int]
-) -> None:
-    """Off stays selectable until #2900, and the budget settings alone change nothing: only the
-    flag selects the pipeline."""
-    seen = _spy_on_the_router(monkeypatch)
-
-    create_app(_settings(ws_backpressure_enabled=False, **budget))
-
-    (kwargs,) = seen
-    assert kwargs.get("backpressure") is None
-
-
-@pytest.mark.parametrize(
     ("budget", "expected"),
     [
         ({}, BackpressureConfig()),
@@ -69,22 +50,21 @@ def test_create_app_passes_no_backpressure_config_while_the_flag_is_off(
     ],
     ids=["contract_budget", "settings_budget"],
 )
-def test_create_app_passes_the_budget_settings_while_the_flag_is_on(
+def test_create_app_passes_the_budget_settings(
     monkeypatch: pytest.MonkeyPatch, budget: dict[str, int], expected: BackpressureConfig
 ) -> None:
     seen = _spy_on_the_router(monkeypatch)
 
-    create_app(_settings(ws_backpressure_enabled=True, **budget))
+    create_app(_settings(**budget))
 
     (kwargs,) = seen
     assert kwargs["backpressure"] == expected
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["off", "on"])
-def test_welcome_coalescing_feature_mirrors_the_flag(flag: bool) -> None:
-    """Off it honestly reads `false` (nothing coalesces); `replay` and `binary_payloads` are not
-    the flag's to change."""
-    app = create_app(_settings(ws_backpressure_enabled=flag))
+def test_welcome_advertises_coalescing() -> None:
+    """The pipeline always coalesces (§8.2), so `coalescing` is `true` beside `replay` and
+    `binary_payloads`."""
+    app = create_app(_settings())
 
     with TestClient(app, client=("127.0.0.1", 50000), headers={"origin": ORIGIN}) as client:
         with client.websocket_connect("/ws", subprotocols=JSON) as ws:
@@ -95,5 +75,5 @@ def test_welcome_coalescing_feature_mirrors_the_flag(flag: bool) -> None:
     assert welcome["p"]["features"] == {
         "replay": True,
         "binary_payloads": True,
-        "coalescing": flag,
+        "coalescing": True,
     }

@@ -1,4 +1,4 @@
-"""#3353: with `CV_WS_BACKPRESSURE_ENABLED` on, a merged window keeps its family's CVWB body kind on
+"""#3353: on the outbound pipeline, a merged window keeps its family's CVWB body kind on
 a binary subscription (`23-ws-protocol.md` §3.2, §3.4, §8.2). `book` (kind 2), `trades` (3) and
 `bars` (4) re-encode it from their updates' parts and decode back to the merged body. A `bars`
 window leaves structured only by §3.4's own trigger, and as one frame per kind-4 frame past the

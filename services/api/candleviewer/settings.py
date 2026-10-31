@@ -80,6 +80,11 @@ CLOSE_FLUSH_TIMEOUT_S: Final = 2.0
 #: Upper bound on writing a closing WS connection's `ws.connection.closed` row; the teardown never
 #: waits longer on the audit sink.
 CLOSE_AUDIT_TIMEOUT_S: Final = 2.0
+#: #2409: the refusal of a `.env` or environment that still sets the removed backpressure flag.
+WS_BACKPRESSURE_FLAG_REMOVED: Final = (
+    "CV_WS_BACKPRESSURE_ENABLED was removed in #2409 (the WS outbound pipeline always runs): "
+    "delete the line"
+)
 #: The two fixed 0.1 s ticks of the exit path: uvicorn's main loop sees the exit request within
 #: 0.1 s, and `Server.shutdown` sleeps 0.1 s before its drain. `PlannedShutdownServer`'s poll and
 #: uvicorn's drain poll add nothing to the worst case: `asyncio.wait` returns on completion and
@@ -723,28 +728,22 @@ class Settings(BaseSettings):
     # Lowered, never raised: the gateway's cap is the contract value (`ws.limits`), the transport
     # closes a frame 4 KiB above it, and `welcome` advertises the effective value (#572).
     ws_max_inbound_frame_bytes: int = Field(default=262_144, ge=1024, le=262_144)
-    # E17-T03 (#412): the WS backpressure pipeline (coalescing, adaptive throttling and the §8.4
-    # outbound budget) behind `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: default on since #4883, an
-    # owner ruling of 2026-10-29 on E17-Q03 profile B (#568); removal ticket #2900). It swaps the
-    # mechanism that bounds a connection's outbound frames and
-    # never removes the bound (C-2.18): off keeps today's 1 024-frame push bound, so it gates no
-    # safety invariant (C-4.14). With it on, `create_app` passes a `BackpressureConfig` and every
-    # frame goes through `ws/pipeline.py`; `welcome.features.coalescing` mirrors it
-    # (`23-ws-protocol.md` §4.2).
-    # The default flipped on with #4883 (E17-Q03 recorded, #568; profile B's full-rate pass is a
-    # GA-host item, the R1 note on #571): chaos scenarios 2 and 3
-    # pass (`tests/chaos/ws/SCENARIOS.md`, #410) and #571's gauges and overhead measurement have
-    # landed (`23-ws-protocol.md` §8.4 Rollout, §8.6). Off stays available until #2900.
-    ws_backpressure_enabled: bool = True
-    # The per-connection outbound budget (§8.4) and the classification cadence (§8.3). The contract
+    # E17-T03 (#412): the per-connection outbound budget (§8.4) and the classification cadence
+    # (§8.3) of the WS pipeline (coalescing, adaptive throttling and the §8.4 ladder), the one
+    # outbound path since #2409 removed `CV_WS_BACKPRESSURE_ENABLED` (C-4.13). The contract
     # values (`ws.outbound.QUEUE_BYTES` / `QUEUE_FRAMES`) are the ceilings, so either may be lowered
     # and never raised (a raise needs a security review: E17 threat model §6). M1 may not import
-    # `ws`, so the numbers are spelled out here and a test pins them. With the flag on, `create_app`
-    # reads them into a `BackpressureConfig`. The floors are typo guards, not sizing:
+    # `ws`, so the numbers are spelled out here and a test pins them. `create_app` reads them into
+    # a `BackpressureConfig`. The floors are typo guards, not sizing:
     # a byte budget under one maximum outbound frame (4 MiB, as in `welcome.limits`) or a frame
     # budget under the 200 allowed subscriptions (256 leaves room for control replies) would close
     # a connection at its first large frame or round of snapshots. At a floor one maximum frame
     # fits (a test pins it) and nothing more is promised.
+    # #2409: `CV_WS_BACKPRESSURE_ENABLED`, removed. A tombstone, never a value: an operator `.env`
+    # or environment that still sets it is refused at load with `WS_BACKPRESSURE_FLAG_REMOVED`
+    # (below), where `extra="forbid"` would say only "extra" and a bare environment variable would
+    # be ignored. Nothing reads it; a later release may drop the tombstone.
+    ws_backpressure_enabled: None = Field(default=None, exclude=True, repr=False)
     ws_queue_bytes: int = Field(default=8_388_608, ge=4_194_304, le=8_388_608)
     ws_queue_frames: int = Field(default=2_000, ge=256, le=2_000)
     ws_classify_interval_ms: int = Field(default=1_000, ge=500, le=10_000)
@@ -1212,6 +1211,15 @@ class Settings(BaseSettings):
             if path.is_relative_to(directory) or directory.is_relative_to(path):
                 raise ValueError(f"CV_BACKUP_ROOT must not be, contain or lie inside {name}")
         return str(path)
+
+    @field_validator("ws_backpressure_enabled", mode="before")
+    @classmethod
+    def _refuse_the_removed_backpressure_flag(cls, value: object) -> None:
+        """#2409: any value given at all is refused, with what to do; only the unset default,
+        `None`, passes. The message names no value (C-12.6)."""
+        if value is None:
+            return None
+        raise ValueError(WS_BACKPRESSURE_FLAG_REMOVED)
 
     @field_validator("uvicorn_drain_timeout_s", mode="before")
     @classmethod
