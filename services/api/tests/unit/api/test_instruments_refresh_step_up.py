@@ -76,7 +76,7 @@ async def test_refresh_without_elevation_is_403_step_up_required_and_audited() -
     assert r.status_code == 403
     body = r.json()
     assert (body["code"], body["action_class"]) == ("step_up_required", "instruments")
-    assert body["action_summary"] == "Refresh the demo instrument catalogue from Bybit"
+    assert body["action_summary"] == "Refresh the demo instrument catalogue from the exchange"
     (record,) = [call for call in em.calls if call["action"] == "auth.step_up_required"]
     assert record["outcome"] == AuditOutcome.DENIED and record["reason"] == "instruments"
     assert jobs.held() == 0 and audit.actions == []

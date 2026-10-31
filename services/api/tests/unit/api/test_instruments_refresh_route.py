@@ -299,7 +299,9 @@ async def test_refresh_without_step_up_answers_403_step_up_required_and_starts_n
 async def test_refresh_challenge_restates_the_servers_environment() -> None:
     w = World()
     assert (await w.post()).status_code == 202
-    assert w.elevation.texts == [ChallengeText("Refresh the demo instrument catalogue from Bybit")]
+    assert w.elevation.texts == [
+        ChallengeText("Refresh the demo instrument catalogue from the exchange")
+    ]
 
 
 async def test_refresh_forbidden_role_is_refused_before_any_challenge() -> None:

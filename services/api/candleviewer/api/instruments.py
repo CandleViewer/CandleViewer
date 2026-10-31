@@ -384,7 +384,7 @@ def _whole_s(seconds: float) -> int:
 def refresh_instruments_text(environment: str) -> ChallengeText:
     """What the `instruments` challenge restates: a fixed template over the server's own
     environment, nothing from the client."""
-    return ChallengeText(f"Refresh the {environment} instrument catalogue from Bybit")
+    return ChallengeText(f"Refresh the {environment} instrument catalogue from the exchange")
 
 
 def make_instruments_refresh_router(
