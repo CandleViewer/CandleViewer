@@ -64,6 +64,10 @@ function blocks(css: string): Block[] {
 const noMotion = (value: string | undefined): boolean =>
   value === undefined || value === "none" || /^var\(--cv-recipe-[\w-]+\)$/.test(value);
 
+/** Exactly the counterpart forms; any other `:root ...` selector is scanned like a component rule. */
+const isCounterpart = (selector: string): boolean =>
+  /^:root(\[data-motion|:not\(\[data-motion\]\)|\[data-theme-swap\])/.test(selector);
+
 /** Findings for one stylesheet. A recipe variable resolves to `none` under reduce (theme.css), so it counts as paired. */
 export function scanCss(css: string): Finding[] {
   const all = blocks(css);
@@ -86,7 +90,7 @@ export function scanCss(css: string): Finding[] {
       if (b.decls.size > 0) out.push({ rule: "os-only-reduce", selector: b.selector });
       continue;
     }
-    if (animates.length === 0 || b.selector.startsWith(":root") || fallback) continue;
+    if (animates.length === 0 || isCounterpart(b.selector) || fallback) continue;
     const selectors = b.selector.split(/,(?![^(]*\))/).map(squash);
     if (!selectors.every((s) => reduceSelectors.has(`${REDUCE} ${s}`))) {
       out.push({ rule: "no-counterpart", selector: b.selector });
@@ -185,6 +189,13 @@ describe("motion scan (E05-D03 C-7)", () => {
       expect(scanCss(".a { animation: spin 1s linear; }")).toEqual([
         { rule: "no-counterpart", selector: ".a" },
       ]);
+    });
+
+    it("flags a :root descendant rule; only the counterpart forms are skipped", () => {
+      expect(scanCss(":root .x { animation: spin 1s; }")).toEqual([
+        { rule: "no-counterpart", selector: ":root .x" },
+      ]);
+      expect(scanCss(':root[data-motion="reduce"] .x { animation: none; }')).toEqual([]);
     });
 
     it("flags an entrance gated on the OS no-preference query", () => {

@@ -216,7 +216,8 @@ html[data-text-scale="150"] {
 
 /*
  * A theme swap is one frame: no colour transition runs across it (the store sets `data-theme-swap` for the
- * swap's frames), so no surface fades between two themes.
+ * swap's frames), so no surface fades between two themes. It also cuts any in-flight non-colour transition
+ * for those frames (a closing dialog or drawer jumps to its end state; harmless, neither waits on transitionend).
  */
 :root[data-theme-swap],
 :root[data-theme-swap] *,

@@ -190,23 +190,54 @@ const sameDetail = (a: ThemeChangeDetail, b: ThemeChangeDetail): boolean =>
 const defaultRoot = (): HTMLElement | undefined =>
   typeof document === "undefined" ? undefined : document.documentElement;
 
+/** The cap on a swap's mark: a hidden tab runs no animation frames, so a timer clears it there. */
+const SWAP_CAP_MS = 100;
+
 /**
  * Marks the root for the frames of a theme swap, so `theme.css` runs no colour transition across it
- * (E05-D03, the #3140 lens finding). Cleared after two animation frames: the first holds the swap's
- * style recalculation, the second the frame after it; a timer clears it where frames do not run.
+ * (E05-D03, the #3140 lens finding). Cleared after two animation frames (the first holds the swap's
+ * style recalculation, the second the frame after it) or after `SWAP_CAP_MS`, whichever fires first,
+ * which cancels the other. A later swap cancels the earlier chain, so only the latest one clears the mark.
  */
-function markThemeSwap(root: HTMLElement): void {
-  root.setAttribute("data-theme-swap", "");
-  const clear = (): void => root.removeAttribute("data-theme-swap");
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => requestAnimationFrame(clear));
-  } else {
-    setTimeout(clear, 100);
-  }
+function createSwapMarker(root: HTMLElement | undefined): { mark: () => void; cancel: () => void } {
+  let cancelPending = (): void => {};
+  const cancel = (): void => {
+    cancelPending();
+    cancelPending = () => {};
+  };
+  const mark = (): void => {
+    if (root === undefined) return;
+    cancel();
+    root.setAttribute("data-theme-swap", "");
+    let frame1: number | undefined;
+    let frame2: number | undefined;
+    const hasFrames = typeof requestAnimationFrame === "function";
+    const stop = (): void => {
+      if (hasFrames) {
+        if (frame1 !== undefined) cancelAnimationFrame(frame1);
+        if (frame2 !== undefined) cancelAnimationFrame(frame2);
+      }
+      clearTimeout(timer);
+      cancelPending = () => {};
+    };
+    const finish = (): void => {
+      stop();
+      root.removeAttribute("data-theme-swap");
+    };
+    const timer = setTimeout(finish, SWAP_CAP_MS);
+    if (hasFrames) {
+      frame1 = requestAnimationFrame(() => {
+        frame2 = requestAnimationFrame(finish);
+      });
+    }
+    cancelPending = stop;
+  };
+  return { mark, cancel };
 }
 
 export function createThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
   const root = options.root ?? defaultRoot();
+  const swap = createSwapMarker(root);
   const storage = options.storage ?? attempt(() => window.localStorage, undefined);
   const mm =
     options.matchMedia ??
@@ -235,7 +266,7 @@ export function createThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
       "text-scale": s.textScale,
     };
     if (root.hasAttribute("data-theme") && root.getAttribute("data-theme") !== s.theme) {
-      markThemeSwap(root);
+      swap.mark();
     }
     for (const [name, value] of Object.entries(values)) {
       if (root.getAttribute(`data-${name}`) !== String(value))
@@ -351,7 +382,11 @@ export function createThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
       queries.forEach((q) => q.addEventListener("change", syncOs));
       syncOs();
       writeRoot(snapshot);
-      return () => queries.forEach((q) => q.removeEventListener("change", syncOs));
+      return () => {
+        queries.forEach((q) => q.removeEventListener("change", syncOs));
+        swap.cancel();
+        root?.removeAttribute("data-theme-swap");
+      };
     },
     apply,
     setTheme: (theme) => {
