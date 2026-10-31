@@ -58,6 +58,7 @@ import "../src/components/symbolsearch.css";
 import "../src/components/table.css";
 import "../src/components/tabs.css";
 import "../src/components/tag.css";
+import "../src/components/themeswitcher.css";
 import "../src/components/toast.css";
 import "../src/components/fields.css";
 import "../src/components/formfield.css";

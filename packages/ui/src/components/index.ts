@@ -293,6 +293,13 @@ export type { SymbolSearchInputProps, SymbolSearchTarget } from "./SymbolSearchI
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";
 
+export { THEME_SWITCHER_COPY, ThemeSwitcher, ThemeSwitcherConnected } from "./ThemeSwitcher.js";
+export type {
+  ThemeSwitcherConnectedProps,
+  ThemeSwitcherCopy,
+  ThemeSwitcherProps,
+} from "./ThemeSwitcher.js";
+
 export { Toast, ToastRegion } from "./Toast.js";
 export type {
   ToastAction,

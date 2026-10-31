@@ -1,0 +1,9 @@
+/* CMP-062 ThemeSwitcher: the CMP-003 segments and the CMP-004 "match system" switch, space.inset.sm apart.
+   No token of its own (15 "n/a"); both controls keep their own CSS. No motion: the swap is instant (16 §4). */
+.cv-theme-switcher {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-sm);
+  max-width: 100%;
+}
