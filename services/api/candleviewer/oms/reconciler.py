@@ -1733,10 +1733,10 @@ class _Remediation:
         await _bounded(call, PORT_TIMEOUT_S)
 
     async def _reread(self, xid: str, e: Execution) -> OrderRow | None:
-        """The row bound to the order of a fill (3d), read again once 3a to 3c recorded the order.
-        A row of another account (BQ-12, C-2.11) is answered as none, as the diff's reads refuse
-        one: logged by the read and the id asked for, never the row, paged once per episode, and
-        listed against the fill, which holds the watermark; the caller keeps the fill."""
+        """The row bound to a fill's order (3d), read again once this pass bound or recorded the
+        order. A row of another account (BQ-12, C-2.11) is answered as none, as the diff's reads
+        refuse one: logged by the read and the id asked for, never the row, paged once per episode,
+        and listed against the fill, which holds the watermark; the caller keeps the fill."""
         call = self._p.orders.get_by_exchange_order_id(self._account, xid)
         row = await _bounded(call, PORT_TIMEOUT_S)
         if row is None or row.exchange_account_id == self._account:
