@@ -1,5 +1,5 @@
 """`indicators.{symbol}.{bar_type}.{param}` deltas from the indicator engine (E13-T02, #426;
-`23-ws-protocol.md` §6.1, §7.4, §8.2, §14.10). With `bars_enabled`, `create_app` makes
+`23-ws-protocol.md` §6.1, §7.4, §8.2, §14.10). `create_app` makes
 `IndicatorsPublisher` the engine's listener (`IndicatorEngine.listen`).
 
 - **Deltas.** A close's new or amended points go out in one `d` per group of subscriptions that

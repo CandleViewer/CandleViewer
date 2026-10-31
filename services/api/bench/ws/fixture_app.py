@@ -2,8 +2,8 @@
 
 Wired as the E17-Q02 chaos `Stack` wires it (`make_ws_router`, `ConnectionRegistry`,
 `SubscriptionServices`, `GatewayHub`, `WsRuntime`, served by `PlannedShutdownServer` with the
-production `uvicorn_kwargs`), on wall time, plus the real `bars.*` path as `create_app` composes it
-with `bars_enabled`: a `BarBuilderSet` on a private `Bus`, emitting to the `SeriesStore` and the
+production `uvicorn_kwargs`), on wall time, plus the real `bars.*` path as `create_app` composes it:
+a `BarBuilderSet` on a private `Bus`, emitting to the `SeriesStore` and the
 `BarsPublisher`, with `BarsSnapshotSource` behind the snapshots. `create_app` is not used: it takes
 no snapshot sources, so its book subscriptions would stay pending without live ingestion, which
 cannot be pointed at a stub exchange (no setting overrides the hosts).

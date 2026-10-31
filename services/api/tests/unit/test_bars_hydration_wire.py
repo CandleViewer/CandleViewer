@@ -1,6 +1,6 @@
 """#2787 D2-G2 (ruling D-G2 = A): the WS series store's first reads on their own PG-wire connection.
 
-With `bars_enabled` and a bars sink, the app builds a second `LazyPgWire`, `bars_hydrate`, from the
+With a bars sink, the app builds a second `LazyPgWire`, `bars_hydrate`, from the
 sink's (`bars`): the store reads through it; REST `/market/bars` and the bars writer keep the
 sink's; the runtime closes it after the sink. The G2 line: a first read that outlives the store's
 2 s, whose discard then waits out the 5 s close, fails no REST bars read issued with it or during
@@ -43,11 +43,11 @@ REST: dict[str, str | int] = {
 }  # fmt: skip
 
 
-def _app(tmp_path: Path, *, enabled: bool = True) -> FastAPI:
+def _app(tmp_path: Path) -> FastAPI:
     """On the real storage backend (it composes the bars sink), with test vectors for auth."""
     return create_app(
         Settings(
-            environment=Environment.DEMO, storage_backend="real", bars_enabled=enabled,
+            environment=Environment.DEMO, storage_backend="real",
             bars_state_root=str(tmp_path / "bars"), parquet_root=str(tmp_path / "parquet"),
             metrics_enabled=False, auth_pepper=SecretStr("test-pepper"),
             auth_totp_key_hex=SecretStr("11" * 32), auth_recovery_hmac_key_hex=SecretStr("22" * 32),
@@ -175,9 +175,8 @@ def test_the_same_scenario_on_one_connection_fails_both_rest_reads(tmp_path: Pat
     assert run["moved"] == {"bars": shared, "bars_hydrate": {}}
 
 
-@pytest.mark.parametrize("enabled", [False, True])
 def test_the_store_reads_on_its_own_wire_and_rest_and_the_writer_keep_the_sinks(
-    enabled: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     names: list[str] = []
     init = LazyPgWire.__init__
@@ -187,11 +186,7 @@ def test_the_store_reads_on_its_own_wire_and_rest_and_the_writer_keep_the_sinks(
         init(self, *args, **kwargs)
 
     monkeypatch.setattr(LazyPgWire, "__init__", spy)
-    app = _app(tmp_path, enabled=enabled)
-    if not enabled:  # no sink, so no second wire either
-        assert app.state.ws_registry.services.series is None
-        assert {"bars", "bars_hydrate"}.isdisjoint(names)
-        return
+    app = _app(tmp_path)
     assert sorted(n for n in names if n.startswith("bars")) == ["bars", "bars_hydrate"]
     sink, (_, first, rest) = app.state.bars_runtime.writer._sink._inner, _wiring(app)
     assert isinstance(sink, QuestDbRowSink) and _wire(rest) is sink.pgwire

@@ -54,7 +54,7 @@ a WS snapshot source reads `latest` and `version`.
   `history`, or the read hit its row limit (`BarTail.fetched` reached `MAX_HISTORY`: a skipped
   row left the series short of full, but the limit, not `since_us`, ended the window). Whoever
   started that read, the store then calls the repair hook (`on_repair`, set once: `create_app`
-  sets it, with `bars_enabled`, to the WS publisher's `history_repair`) with
+  sets it to the WS publisher's `history_repair`) with
   `min_history`, the depth of the newest bar it added or replaced, newest first and the forming
   bar 1, as `latest` counts `history`. A depth it cannot count (the walk raised, or gave less
   than 1) goes out as 1, counted (`bars_series_repair_failed_total{reason="depth"}`) and logged
@@ -537,7 +537,7 @@ class SeriesStore:
 
     def on_repair(self, hook: RepairHook) -> None:
         """Set the repair hook (module docstring), once: the WS publisher's `history_repair`,
-        which `create_app` sets with `bars_enabled` (#2787 D2-H1). A second call raises
+        which `create_app` sets (#2787 D2-H1). A second call raises
         `RuntimeError`."""
         if self._on_repair is not None:
             raise RuntimeError("the series store's repair hook is set already")

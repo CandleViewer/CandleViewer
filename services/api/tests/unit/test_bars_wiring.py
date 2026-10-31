@@ -51,60 +51,43 @@ def _trace_stop(mp: pytest.MonkeyPatch, owner: Any, name: str, order: list[str])
     mp.setattr(owner, "stop", stop)
 
 
-def _settings(tmp_path: Path, *, enabled: bool) -> Settings:
+def _settings(tmp_path: Path) -> Settings:
     return Settings(
         environment=Environment.DEMO,
         git_sha="deadbeef",
         version="9.9.9",
-        bars_enabled=enabled,
         bars_state_root=str(tmp_path / "bars"),
         metrics_enabled=False,
     )
 
 
-def test_flag_off_by_default_builds_no_runtime(tmp_path: Path) -> None:
-    app = create_app(_settings(tmp_path, enabled=False))
-    assert getattr(app.state, "bars_runtime", None) is None
-
-
-def test_flag_on_builds_runtime_with_state_root(tmp_path: Path) -> None:
-    app = create_app(_settings(tmp_path, enabled=True))
+def test_builds_runtime_with_state_root(tmp_path: Path) -> None:
+    app = create_app(_settings(tmp_path))
     assert isinstance(app.state.bars_runtime, BarsRuntime)
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_the_heal_driver_comes_with_the_flag_over_the_wired_store(
-    tmp_path: Path, enabled: bool
-) -> None:
-    """#2787 P4b: with `bars_enabled` off nothing holds a heal driver, so no task can start; on,
-    the bars runtime owns one over the WS series store the gateway serves."""
-    app = create_app(_settings(tmp_path, enabled=enabled))
+def test_the_heal_driver_is_over_the_wired_store(tmp_path: Path) -> None:
+    """#2787 P4b: the bars runtime owns a heal driver over the WS series store the gateway
+    serves."""
+    app = create_app(_settings(tmp_path))
     runtime = getattr(app.state, "bars_runtime", None)
     heal = getattr(runtime, "heal", None)
-    if not enabled:
-        assert (runtime, heal) == (None, None)
-        return
     assert isinstance(heal, HealDriver) and heal._store is app.state.ws_registry.services.series
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_the_repair_hook_is_the_publishers_history_repair_set_once_and_only_with_the_flag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
+def test_the_repair_hook_is_the_publishers_history_repair_set_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#2787 P4b: 23 §7.4's `history_repair` has one caller, the store's repair hook (a task that
     diffs `latest()` across an await can miss a repair or send extra snaps). `create_app` sets it
     once, on the store the gateway serves, to the publisher on the emit path and then the
-    indicator engine there (E13-T02, #426), the sinks found by name; flag off, no store exists
-    to hook."""
+    indicator engine there (E13-T02, #426), the sinks found by name."""
     hooks: list[tuple[SeriesStore, Any]] = []
     monkeypatch.setattr(SeriesStore, "on_repair", lambda store, hook: hooks.append((store, hook)))
     calls: list[Any] = []  # E13-T02: the hook's two repairs, in order
     for name, owner in (("ws", BarsPublisher), ("indicators", IndicatorEngine)):
         monkeypatch.setattr(owner, "history_repair", functools.partialmethod(_record, calls, name))
-    services = create_app(_settings(tmp_path, enabled=enabled)).state.ws_registry.services
-    if not enabled:
-        assert (hooks, services.series) == ([], None)
-        return
+    services = create_app(_settings(tmp_path)).state.ws_registry.services
     ((store, hook),) = hooks
     assert store is services.series
     sinks = {sink.name: sink for sink in services.bars._router._sinks}  # by name, not position
@@ -126,7 +109,7 @@ async def test_the_lifespan_runs_the_heal_driver_task_and_stops_it_before_the_se
     """#2787 P4b: the driver's one task runs while the app serves and is gone after it; the
     runtime stops it first, so no read is in flight when the set, writer and sink stop. Then the
     indicator engine's recomputes (E13-T02), still before the set (20 §4.2)."""
-    ctx = build_app_context(_settings(tmp_path, enabled=False))
+    ctx = build_app_context(_settings(tmp_path))
     app = FastAPI()
     app.state.app_context = ctx
     store = SeriesStore()
@@ -192,7 +175,7 @@ async def test_lifespan_register_publish_shutdown_flushes_blobs_and_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Only the context + runtime: create_app()'s other lifespan tasks need Postgres.
-    ctx = build_app_context(_settings(tmp_path, enabled=False))
+    ctx = build_app_context(_settings(tmp_path))
     app = FastAPI()
     app.state.app_context = ctx
     order: list[str] = []
@@ -248,7 +231,7 @@ async def test_writer_probe_not_deployed_off_and_degraded_when_writer_degraded(
         HealthRegistry,
     )
 
-    ctx = build_app_context(_settings(tmp_path, enabled=False))
+    ctx = build_app_context(_settings(tmp_path))
     runtime = wire_bars(ctx, now_us=lambda: T0, inner_sink=None)
     holder: list[Any] = [None]
     registry = HealthRegistry()
@@ -266,7 +249,7 @@ async def test_writer_probe_not_deployed_off_and_degraded_when_writer_degraded(
 def test_wire_without_sink_warns_rows_not_persisted(tmp_path: Path) -> None:
     from structlog.testing import capture_logs
 
-    ctx = build_app_context(_settings(tmp_path, enabled=False))
+    ctx = build_app_context(_settings(tmp_path))
     with capture_logs() as logs:
         wire_bars(ctx, now_us=lambda: T0)
     assert any(e["event"] == "bars_rows_not_persisted" for e in logs)
@@ -329,8 +312,8 @@ def test_sink_built_only_on_real_backend(tmp_path: Path) -> None:
     from candleviewer.app import _build_bars_sink
     from candleviewer.storage.questdb.wiring import QuestDbRowSink
 
-    assert _build_bars_sink(_settings(tmp_path, enabled=True)) is None  # fake backend: stub
-    real = _settings(tmp_path, enabled=True).model_copy(update={"storage_backend": "real"})
+    assert _build_bars_sink(_settings(tmp_path)) is None  # fake backend: stub
+    real = _settings(tmp_path).model_copy(update={"storage_backend": "real"})
     assert isinstance(_build_bars_sink(real), QuestDbRowSink)  # lazy: no I/O at build
 
 
@@ -338,7 +321,7 @@ def test_fake_backend_keeps_guarded_stub_and_warning(tmp_path: Path) -> None:
     from structlog.testing import capture_logs
 
     with capture_logs() as logs:
-        app = create_app(_settings(tmp_path, enabled=True))
+        app = create_app(_settings(tmp_path))
     assert isinstance(app.state.bars_runtime, BarsRuntime)
     assert any(e["event"] == "bars_rows_not_persisted" for e in logs)
 
@@ -358,7 +341,7 @@ async def test_rows_flow_set_writer_ilp_and_shutdown_order(
         transport=transport,
         pgwire=_FakePgWire(order),  # type: ignore[arg-type]  # structural fake
     )
-    ctx = build_app_context(_settings(tmp_path, enabled=False))
+    ctx = build_app_context(_settings(tmp_path))
     app = FastAPI()
     app.state.app_context = ctx
     now = [T0]

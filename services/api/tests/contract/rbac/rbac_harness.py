@@ -9,7 +9,10 @@ state from another.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import re
+import shutil
+import tempfile
 import time
 import uuid
 from collections import defaultdict
@@ -712,28 +715,24 @@ def audit_adapter(sink: _AuditSink) -> Any:
     return _audit
 
 
-def world_env(bars_state_root: Path | None) -> dict[str, str]:
+def world_env(bars_state_root: Path) -> dict[str, str]:
     """The environment `build_world` sets through its `MonkeyPatch` (`create_app()` reads
-    `get_settings()`). `WORLD_ENV` holds its names: the leak guard checks each one is restored.
-    Without a `bars_state_root` the world keeps bars off, as it was before #399 slice E."""
-    env = {"CV_ALLOWED_ORIGINS": WS_ORIGIN}
-    if bars_state_root is not None:
-        # `bars.*` answers `unknown_topic` while the feature is off (23 §6.1, #399 slice E), but
-        # the matrix asserts its authorization outcome, so the pack runs with the feature on.
-        # Remove this entry with the flag (#399).
-        env["CV_BARS_ENABLED"] = "true"
+    `get_settings()`). `WORLD_ENV` holds its names: the leak guard checks each one is restored."""
+    return {
+        "CV_ALLOWED_ORIGINS": WS_ORIGIN,
         # `register()` loads (and, on a bad blob, deletes) builder state under this root, whose
-        # default is the production `/data/bars/state`, so bars on always comes with a tmp root.
-        env["CV_BARS_STATE_ROOT"] = str(bars_state_root)
-    return env
+        # default is the production `/data/bars/state`. Bars are always on (#399), so every world
+        # comes with a tmp root.
+        "CV_BARS_STATE_ROOT": str(bars_state_root),
+    }
 
 
 WORLD_ENV = tuple(world_env(Path()))  # the names only
 
 
 def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) -> World:
-    """Build the app. With a `bars_state_root` the world runs with bars on and keeps their builder
-    state there; without one bars stay off. The attribute patches and `world_env` are applied
+    """Build the app. The world keeps the bars builder state under `bars_state_root`, a fresh tmp
+    dir when not given (bars are always on, #399). The attribute patches and `world_env` are applied
     through `mp` and live as long as the caller's context (the alert repository is resolved per
     request, so the patch must outlive `create_app`). The caller undoes `mp` in a `finally`: a
     failure in here, after the first patch, must not leave the process patched."""
@@ -766,7 +765,11 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     # E42-T05 BK-10: a catalogue and artefact store stand-in, so the link issue reaches its gate.
     mp.setattr(appmod, "build_admin_backups", lambda *_a, **_k: BackupCatalogue(_Backups()))
     mp.setattr(appmod, "build_backup_downloads", _backup_downloads)
-    for name, value in world_env(bars_state_root).items():
+    if bars_state_root is None:
+        bars_state_root = Path(tempfile.mkdtemp(prefix="cv-bars-state-"))
+        atexit.register(shutil.rmtree, bars_state_root, ignore_errors=True)
+    state_root = bars_state_root
+    for name, value in world_env(state_root).items():
         mp.setenv(name, value)
     app = appmod.create_app(
         principal_resolver=resolver,

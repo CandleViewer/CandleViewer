@@ -1,8 +1,8 @@
 """The bars heal driver (#2787 D2-H1, decision D-H1 = A; `23-ws-protocol.md` §7.4).
 
 One supervised task re-reads the held WS bars series that the series store lists as not complete
-(`SeriesStore.due`: not `hydrated`, or `gapped`). `BarsRuntime` builds and owns it only when
-`bars_enabled` is on (C-4.13), so with the flag off no driver or task exists.
+(`SeriesStore.due`: not `hydrated`, or `gapped`). `BarsRuntime` builds and owns it (the
+`bars_enabled` flag was removed in #399).
 
 - **Each tick** (every `interval_s`, through the injected `sleep`) takes at most `CONCURRENCY`
   keys, the earliest due first, and refreshes them at once (`SeriesStore.refresh`). That is half the

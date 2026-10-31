@@ -70,7 +70,6 @@ def test_world_patches_are_undone_by_the_monkeypatch_teardown(tmp_path: Path) ->
         assert appmod.build_identity_provider is not _ORIGINAL_IDENTITY, "world must patch"
         assert _retention_builder() is not _original_retention_builder
         settings = get_settings()
-        assert settings.bars_enabled is True, "world must enable bars while live"
         assert settings.bars_state_root == str(tmp_path.resolve()), "world must root bars in tmp"
     finally:
         mp.undo()

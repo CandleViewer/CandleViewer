@@ -3,7 +3,7 @@
 `EmitRouter` after the series store (a re-snapshot reads the new generation) and calls
 `note_generation` for each bars snapshot it builds; the series store calls `history_repair`
 through its repair hook after each re-read that repaired a series (#2787 D2-H1: `create_app` sets
-the hook with `bars_enabled`).
+the hook).
 
 - **Groups.** Each `include_delta` group (§6.1) with a subscriber a frame reaches (live,
   snapshotted, unpaused) is encoded and sent alone (`publish(select=...)`, `meta.include_delta`):

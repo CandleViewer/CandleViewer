@@ -10,7 +10,7 @@ machine profile `laptop-i7-13850HX`, not `cv-bench-01`; 24 h of scenario time in
 baseline recorded, and the committed baseline is a smoke run, so its gate compared nothing. The rule that
 judges it was recorded on #399 before the reading existed and is quoted below. Every cell of the reading
 table's 24 h column comes from the laptop run's report or is computed from its curve, and its 1.5 h column is
-quoted from #3861; none is invented. `bars_enabled` stays off at least until the line passes.
+quoted from #3861; none is invented. The line was a precondition for the flag flip; the flag was removed in #399 (bars are always on), and the line stays recorded here as history.
 
 The line is D2-G4 of #399's flag checklist: "memory at the 32-spec cap measured in the soak lane before
 `bars_enabled` flips". Does the bars path hold budget #8 (06 §2 row 8, 300 MB a symbol) at 32 specs a
@@ -23,7 +23,7 @@ a `BarBuilderSet` and a `SeriesStore` holding 32 series of 1 000 bars (6 tick, 9
 delta), hydrated through the production tail read from the recorded golden bars and fed by the soak's trade
 stream (50 prints and 10 book deltas a second a symbol, seed 7), on a virtual clock (about 3 h of wall time
 on the laptop that recorded the baseline). Process RSS is sampled every 60 s (1 441 samples); the judged
-figure is the RSS the lanes add, per symbol, in MiB. The lane never reads `bars_enabled`.
+figure is the RSS the lanes add, per symbol, in MiB. The lane never read the (since removed) `bars_enabled` flag.
 
 ## The pass rule, fixed before the reading (#399, issuecomment-6297719530)
 

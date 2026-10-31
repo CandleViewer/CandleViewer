@@ -785,13 +785,12 @@ class Settings(BaseSettings):
     # (`MIN_STOP_BUDGET_S`, `MIN_DRAIN_TIMEOUT_S`).
     api_stop_budget_s: int = Field(default=30, ge=MIN_STOP_BUDGET_S, le=120)
     uvicorn_drain_timeout_s: int = Field(default=5, ge=MIN_DRAIN_TIMEOUT_S, le=30)
-    # E12 #2031: run the BarBuilderSet + BarWriter in the app (C-4.13: off by default; removal
-    # with E12-T05 #398 / E12-T06 #399, the first consumers). Never gates a safety invariant.
-    # `bars_state_root` holds the 60 s state blobs, created owner-only (0700) where the platform
-    # allows. Empty (default) = `<data dir>/bars/state`, where the data dir is the parent of
-    # `parquet_root` (the app's only data-dir setting). Otherwise it must be absolute and not a
-    # symlink; it is normalised with expanduser().resolve() at settings load.
-    bars_enabled: bool = False
+    # E12 #2031: the BarBuilderSet + BarWriter always run in the app (the `bars_enabled` flag,
+    # C-4.13, was removed in #399). `bars_state_root` holds the 60 s state blobs, created
+    # owner-only (0700) where the platform allows. Empty (default) = `<data dir>/bars/state`,
+    # where the data dir is the parent of `parquet_root` (the app's only data-dir setting).
+    # Otherwise it must be absolute and not a symlink; it is
+    # normalised with expanduser().resolve() at settings load.
     bars_state_root: str = ""
     # E42-T05 (#966 Q7): the backup volume, the only place backup artefacts are read from
     # (`storage/backup_artefacts.py`); only the backup engine writes it. Empty (default) = unwired.

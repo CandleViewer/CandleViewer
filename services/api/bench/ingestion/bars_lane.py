@@ -1,7 +1,7 @@
 """The bars path in a soak lane (#399 D2-G4): bar builders and the WS series store at the cap.
 
-With `LaneConfig.bars_specs`, each lane composes for its symbol what `create_app` composes with
-`bars_enabled` on (`bars_wiring.wire_bars`): a `BarBuilderSet` on the lane's bus, fed by the lane's
+With `LaneConfig.bars_specs`, each lane composes for its symbol what `create_app` composes
+(`bars_wiring.wire_bars`): a `BarBuilderSet` on the lane's bus, fed by the lane's
 `TradeStream`, emitting through an `EmitRouter` to a `SeriesStore` that holds `bars_specs` series
 (`SPECS`: the per-symbol cap of 32 at most), each hydrated with `bars_per_series` stored bars (the
 1 000-bar cap at most) through the production `BarReader.read_tail`. A system consumer hydrates

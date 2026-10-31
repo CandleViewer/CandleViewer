@@ -7,7 +7,7 @@ retention.
 **Tape wins over klines on overlap (E12-T05, #398).** When the composition root injects a
 `tape` reader (tape-built `bars_time` rows), its bars replace kline rows with the same open time
 and `sources` gains `tape` only when such a row is actually returned. Without one (no `BarWriter`
-composed, `bars_enabled` off) the read is klines-only and never claims tape.
+composed: the fake storage backend) the read is klines-only and never claims tape.
 The cold tier is wired by the composition root (`ParquetKlineReader`, #2048); the route's
 catalogue check precedes any cold path join.
 

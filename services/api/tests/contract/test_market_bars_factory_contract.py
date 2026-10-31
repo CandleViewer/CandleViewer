@@ -32,7 +32,6 @@ async def test_market_bars_range_and_delta_compose_a_live_builder_set(
         environment=Environment.DEMO,
         git_sha="deadbeef",
         version="9.9.9",
-        bars_enabled=False,  # renko flag off: range/delta must not depend on it
         bars_state_root=str(tmp_path / "bars"),
         metrics_enabled=False,
     )
