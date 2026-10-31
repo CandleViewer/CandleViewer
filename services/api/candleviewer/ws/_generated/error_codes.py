@@ -28,6 +28,7 @@ class ErrorCode(StrEnum):
     STEP_UP_REQUIRED = "step_up_required"
     SESSION_READ_ONLY = "session_read_only"
     MFA_ENROLLMENT_REQUIRED = "mfa_enrollment_required"
+    CURRENT_PASSWORD_INVALID = "current_password_invalid"
     POSITIONS_UNKNOWN = "positions_unknown"
     FORBIDDEN = "forbidden"
     CSRF_TOKEN_INVALID = "csrf_token_invalid"
@@ -69,6 +70,9 @@ class ErrorCode(StrEnum):
     RETENTION_PINNED_REFUSED = "retention_pinned_refused"
     IMPORT_RANGE_INVALID = "import_range_invalid"
     IDEMPOTENCY_KEY_REUSED = "idempotency_key_reused"
+    PASSWORD_BREACHED = "password_breached"
+    PASSWORD_REUSED = "password_reused"
+    PASSWORD_POLICY = "password_policy"
     RATE_LIMITED = "rate_limited"
     EXCHANGE_RATE_LIMITED = "exchange_rate_limited"
     INTERNAL_ERROR = "internal_error"
@@ -138,6 +142,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.STEP_UP_REQUIRED: ErrorMeta(("rest",), None, False, None, None, "A dangerous action needs a live step-up elevation for its action class"),
     ErrorCode.SESSION_READ_ONLY: ErrorMeta(("rest",), None, False, None, None, "Session is read-only for 5 minutes after three invalid step-up codes"),
     ErrorCode.MFA_ENROLLMENT_REQUIRED: ErrorMeta(("rest",), None, False, None, None, "Session is enrolment-only; enrol and confirm a TOTP method first"),
+    ErrorCode.CURRENT_PASSWORD_INVALID: ErrorMeta(("rest",), None, False, None, None, "The current password given to change the password is wrong (counts toward the account lockout)"),
     ErrorCode.POSITIONS_UNKNOWN: ErrorMeta(("rest",), None, False, None, None, "Open-position state is unavailable; resend with acknowledge_unknown_positions=true"),
     ErrorCode.FORBIDDEN: ErrorMeta(("rest", "ws",), "any", False, None, None, "Authenticated but lacking the required permission"),
     ErrorCode.CSRF_TOKEN_INVALID: ErrorMeta(("rest",), None, False, None, None, "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session (SR-041)"),
@@ -179,6 +184,9 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.RETENTION_PINNED_REFUSED: ErrorMeta(("rest",), None, False, None, None, "The symbol is pinned and the purge did not set include_pinned"),
     ErrorCode.IMPORT_RANGE_INVALID: ErrorMeta(("rest",), None, False, None, None, "Import date range is inverted or spans more than 366 days"),
     ErrorCode.IDEMPOTENCY_KEY_REUSED: ErrorMeta(("rest",), None, False, None, None, "Idempotency-Key reused with a different body (the code the recorder job routes ship)"),
+    ErrorCode.PASSWORD_BREACHED: ErrorMeta(("rest",), None, False, None, None, "The new password is on the local breached-password list or follows a simple pattern"),
+    ErrorCode.PASSWORD_REUSED: ErrorMeta(("rest",), None, False, None, None, "The new password equals the current one or one of the user's last 4 retired passwords"),
+    ErrorCode.PASSWORD_POLICY: ErrorMeta(("rest",), None, False, None, None, "The new password breaks a password-policy rule other than the breached list (errors name the rule)"),
     ErrorCode.RATE_LIMITED: ErrorMeta(("rest",), None, True, None, None, "Per-user API rate limit exceeded"),
     ErrorCode.EXCHANGE_RATE_LIMITED: ErrorMeta(("rest",), None, True, None, None, "The exchange's per-UID rate budget is exhausted (10006/10018) \u2014 request shed locally"),
     ErrorCode.INTERNAL_ERROR: ErrorMeta(("rest", "ws",), "any", True, None, None, "Unhandled server error"),

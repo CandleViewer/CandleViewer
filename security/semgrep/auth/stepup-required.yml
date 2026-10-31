@@ -26,10 +26,13 @@ rules:
           metavariable: $M
           regex: "^(get|post|put|patch|delete|api_route)$"
       # $P may be a literal, a constant name, an f-string or an expression:
-      # the regex runs on its source text.
+      # the regex runs on its source text. #2110 (BQ-220): a user's own password change,
+      # `PUT /auth/password`, is not in SR-025's list and is not step-up gated (the re-verified
+      # current password is SR-028's proof); only the whole literal "/auth/password" is exempt (anchored both ends), never a
+      # longer, prefixed or dotted path.
       - metavariable-regex:
           metavariable: $P
-          regex: "(?i)^(?!.*reset-preview).*(mfa/reset|api-keys|api_keys|kill-switch|kill_switch|/roles|roles_path|recovery-codes/regenerate|revoke-all|revoke_all|/password|password_path|backups/[{][^}]*[}]/(download|restore)(?![/A-Za-z0-9_{])).*$"
+          regex: "(?i)^(?!.*reset-preview)(?![\"']/auth/password[\"']$).*(mfa/reset|api-keys|api_keys|kill-switch|kill_switch|/roles|roles_path|recovery-codes/regenerate|revoke-all|revoke_all|/password|password_path|backups/[{][^}]*[}]/(download|restore)(?![/A-Za-z0-9_{])).*$"
       # Real dependency in the decorator.
       - pattern-not: |
           @$R.$M(..., dependencies=[..., Depends(require_step_up(...)), ...], ...)

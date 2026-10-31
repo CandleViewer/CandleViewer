@@ -33,6 +33,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 
+from candleviewer.auth import password_policy
 from candleviewer.auth.errors import (
     InviteConflict,
     InviteNotFound,
@@ -75,21 +76,19 @@ from candleviewer.auth.throttle import PerIpLoginThrottle
 INVITE_TTL = timedelta(hours=72)
 #: After the token is consumed the invitee has this long to finish TOTP.
 ENROLL_WINDOW = timedelta(minutes=30)
-MIN_PASSWORD_LENGTH = 12
-MAX_PASSWORD_LENGTH = 512
-#: Local deny list (SR-028); a full breached-password corpus is later hardening.
-_COMMON_PASSWORDS = frozenset(
-    {
-        "password1234",
-        "passwordpassword",
-        "123456789012",
-        "qwertyuiop12",
-        "letmein123456",
-        "administrator",
-        "candleviewer1",
-        "iloveyou12345",
-    }
-)
+#: SR-028 (#2330 BQ-234): the policy module's bounds, shared with the password change.
+MIN_PASSWORD_LENGTH = password_policy.MIN_LENGTH
+MAX_PASSWORD_LENGTH = password_policy.MAX_LENGTH
+#: Invite redemption's own messages for the policy's rules (unchanged by BQ-234; `422
+#: password_policy` either way). The rules themselves are `auth.password_policy`'s.
+_Rule = password_policy.PolicyRule
+_INVITE_MESSAGES = {
+    _Rule.MIN_LENGTH: f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+    _Rule.MAX_LENGTH: "Password is too long",
+    _Rule.BREACHED: "Password is too easy to guess",
+    _Rule.SIMPLE_PATTERN: "Password is too easy to guess",
+    _Rule.CONTAINS_IDENTITY: "Password must not contain your username or email",
+}
 
 Clock = Callable[[], datetime]
 #: Write-ahead audit hook for a legacy-role downgrade: `(invite, stored_role)`.
@@ -117,19 +116,11 @@ def hash_token(token: str) -> str:
 
 
 def check_password_policy(password: str, *, username: str, email: str) -> None:
-    """SR-028: >= 12 chars, not trivially patterned, not derived from identity."""
-    if len(password) < MIN_PASSWORD_LENGTH:
-        raise PasswordPolicyViolation(f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
-    if len(password) > MAX_PASSWORD_LENGTH:
-        raise PasswordPolicyViolation("Password is too long")
-    lowered = password.lower()
-    if len(set(lowered)) < 4 or lowered in _COMMON_PASSWORDS:
-        raise PasswordPolicyViolation("Password is too easy to guess")
-    local = email.split("@", 1)[0].lower()
-    if (len(username) >= 3 and username.lower() in lowered) or (
-        len(local) >= 3 and local in lowered
-    ):
-        raise PasswordPolicyViolation("Password must not contain your username or email")
+    """SR-028 through the one policy module (`auth.password_policy`, #2330 BQ-234): >= 14 code
+    points, not breached or trivially patterned, not derived from identity."""
+    verdict = password_policy.check(password, username=username, email=email)
+    if verdict is not None:
+        raise PasswordPolicyViolation(_INVITE_MESSAGES[verdict.rule])
 
 
 class _MfaLike(Protocol):

@@ -210,9 +210,9 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Type:** Page. **Route:** `/login/change-password`. Triggered when `mustChangePassword` is set (new user, owner reset, password age beyond policy).
 - **Components:** CMP-200 AuthCard, CMP-201 PasswordField, CMP-202 PasswordStrengthMeter, CMP-203 RequirementChecklist.
 - **Data:** `PUT /api/v1/auth/password`.
-- **Validation:** ≥12 chars, not in breach list, not equal to previous 5, must match confirmation. Messages: "Use at least 12 characters."; "This password appears in a known breach list."; "Passwords don't match."
+- **Validation:** ≥14 chars, not in breach list, not equal to previous 5, must match confirmation. Messages: "Use at least 14 characters."; "This password appears in a known breach list."; "Passwords don't match."
 - **A11y:** requirement checklist uses `aria-live="polite"`; each requirement shows met/unmet as text, not colour only.
-- **Audit:** `auth.password.changed`. **Stories:** US-AUTH-006.
+- **Audit:** `auth.password_change` (with `auth.session_revoked`, reason `password_change`). **Stories:** US-AUTH-006.
 - **Performance:** Policy evaluation is client-side and synchronous; strength meter updates within one frame (<=16 ms).
 - **Stories:** US-ONB-006, US-ADMIN-001.
 - **Design sign-off acceptance checklist:** [ ] policy rules listed before typing, not only as errors [ ] strength meter is not colour-only (text label) [ ] 'cannot reuse last 5 passwords' server error state drawn [ ] show/hide password control [ ] no dismiss path (forced) verified

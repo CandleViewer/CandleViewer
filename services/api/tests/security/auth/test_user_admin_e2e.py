@@ -201,6 +201,7 @@ _SELF_SERVICE_WRITES: dict[tuple[str, str], int] = {
     ("POST", "/auth/refresh"): 422,
     ("POST", "/auth/step-up"): 400,
     ("POST", "/auth/unlock"): 409,
+    ("PUT", "/auth/password"): 422,
 }
 #: The writes whose 422 is FastAPI's, naming each refused field.
 _DECLARED: tuple[str, ...] = ("/auth/login", "/auth/mfa/enroll", "/auth/mfa/enroll/confirm")
@@ -249,6 +250,9 @@ def test_self_service_never_sets_admin_fields() -> None:
     step_up = answers["POST", "/auth/step-up"].json()
     assert step_up["code"] == "validation_failed"  # the members are refused, never named
     assert [(e["field"], e["rule"]) for e in step_up["errors"]] == [("body", "extra_forbidden")] * 3
+    pw = answers["PUT", "/auth/password"].json()  # the three members are refused, never named
+    extra = [(e["field"], e["rule"]) for e in pw["errors"] if e["rule"] == "additional_properties"]
+    assert extra == [("body", "additional_properties")] * 3
     assert w.repo.statements == []  # no user, role or grant statement ran
     assert (w.repo.status(_M), w.repo.roles[_M]) == (UserStatus.ACTIVE, frozenset({"manager"}))
     assert not [a for a in actions if a.partition(".")[0] in ("users", "roles", "grants")]

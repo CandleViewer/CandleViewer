@@ -31,6 +31,7 @@ from candleviewer.auth.login_service import (
 )
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import SessionRecord, UserRecord
+from candleviewer.auth.password_service import PasswordChangeService, PasswordStore
 from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_repository import SessionRepository
 from candleviewer.auth.session_service import (
@@ -42,6 +43,7 @@ from candleviewer.auth.session_service import (
     classify_session,
 )
 from candleviewer.auth.step_up import OwnerTotpReset, StepUpService
+from candleviewer.auth.throttle import VerifyAdmission
 from candleviewer.auth.totp_skew import TotpSkewReporter
 from candleviewer.auth.view_as import ViewAsSessionStore
 from candleviewer.observability.health import HealthReport, HealthStatus
@@ -91,10 +93,16 @@ class AuthService:
         login_failure_floor: timedelta = LOGIN_FAILURE_FLOOR,
         login_verify_concurrency: int = LOGIN_VERIFY_CONCURRENCY,
         owner_reset: OwnerTotpReset | None = None,
+        password_store: PasswordStore | None = None,
     ) -> None:
         self._started = False
         #: #2593: the owner TOTP reset's one unit of work (the step-up service refuses without it).
         self._owner_reset = owner_reset
+        #: #2110: the user rows a password change reads and writes (the SQL user repository).
+        self._password_store = password_store
+        self._passwords: PasswordChangeService | None = None
+        #: #2110 (BQ-226): one bound for sign-in's and the password change's verifications.
+        self._verify_admission = VerifyAdmission(login_verify_concurrency)
         #: #4648: the minimum time a failed sign-in takes (`CV_AUTH_LOGIN_FAILURE_FLOOR_MS`);
         #: #4664: also a refused second factor, recovery code and step-up.
         self._login_failure_floor = login_failure_floor
@@ -152,6 +160,17 @@ class AuthService:
         if self._mfa is None:
             raise RuntimeError("AuthService.start() has not wired an MfaRepository")
         return self._mfa
+
+    @property
+    def passwords_is_active(self) -> bool:
+        return self._passwords is not None
+
+    @property
+    def passwords(self) -> PasswordChangeService:
+        """`PUT /auth/password`'s checks (#2110); wired with step-up and a password store."""
+        if self._passwords is None:
+            raise AuthServiceUnavailable("password change")
+        return self._passwords
 
     @property
     def step_up_is_active(self) -> bool:
@@ -271,6 +290,7 @@ class AuthService:
                 clock=self._clock,
                 failure_floor=self._login_failure_floor,
                 verify_concurrency=self._login_verify_concurrency,
+                admission=self._verify_admission,
             )
         if self._session_repository is not None:
             self._sessions = SessionService(
@@ -351,6 +371,15 @@ class AuthService:
                     failure_floor=self._login_failure_floor,
                     owner_reset=self._owner_reset,
                 )
+                if self._password_store is not None and self._login_hash_pool is not None:
+                    # #2110: the hash work on the sign-in pool, behind the sign-in bound.
+                    self._passwords = PasswordChangeService(
+                        self._password_store,
+                        self._step_up,
+                        Hasher(pepper=self._pepper, executor=self._login_hash_pool),
+                        admission=self._verify_admission,
+                        clock=self._clock,
+                    )
         await self._break_glass_notice.start()  # read before cv-api serves, then every minute
         self._started = True
 
@@ -366,6 +395,7 @@ class AuthService:
             self._login_hash_pool = None
         self._mfa = None
         self._invites = None
+        self._passwords = None
         if self._skew_reporter is not None:
             await self._skew_reporter.stop()
             self._skew_reporter = None

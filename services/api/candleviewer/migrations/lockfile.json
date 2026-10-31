@@ -296,6 +296,11 @@
       "path": "services/api/candleviewer/migrations/versions/0060_recording_write_owner_only.py",
       "sha256": "ab24ea95690c2624e9724ad6ee16e680eefd9b4bf348a71fa950edabf29ec359",
       "down_revision": "0059_alerts_disarm_reason"
+    },
+    "0061_password_history": {
+      "path": "services/api/candleviewer/migrations/versions/0061_password_history.py",
+      "sha256": "a7a814fe8f679ba410badd60114d2870f05ee16333fdbd93ab75f5a51d51ee66",
+      "down_revision": "0060_recording_write_owner_only"
     }
   }
 }

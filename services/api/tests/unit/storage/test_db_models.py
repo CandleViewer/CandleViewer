@@ -112,6 +112,8 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "watchlists",
         # E29-T06 (0058_oms_handovers)
         "oms_handovers",
+        # #2110 / #2330 (0061_password_history)
+        "password_history",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected

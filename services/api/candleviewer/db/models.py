@@ -2073,6 +2073,29 @@ scanner_presets = Table(
     Index("ux_sp_default", "user_id", unique=True, postgresql_where=text("is_default")),
 )
 
+#: `password_history` (#2110 / #2330, revision 0061_password_history): 21 Sec.3.1.1a.
+password_history = Table(
+    "password_history",
+    metadata,
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+    Column(
+        "password_hash",
+        Text,
+        nullable=False,
+        comment=(
+            "SECRET: Argon2id digest of a retired password; never logged, never returned by API"
+        ),
+    ),
+    Column(
+        "retired_at",
+        TIMESTAMP(timezone=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    CheckConstraint("password_hash LIKE '$argon2id$%'", name="ph_pwd_argon"),
+)
+
 #: `watchlists` (E08-T07 #4706, revision 0055_watchlists): 21 Sec.3.8.6.
 watchlists = Table(
     "watchlists",

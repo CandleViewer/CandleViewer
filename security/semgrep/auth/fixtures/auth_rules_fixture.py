@@ -153,6 +153,37 @@ async def link_fetch_ok():
     return None
 
 
+# #2110 (BQ-220): the caller's own password change is not step-up gated.
+@router.put("/auth/password")  # ok: stepup-required
+async def own_password_change_ok():
+    return None
+
+
+@router.put("/auth/password/reset")  # ruleid: stepup-required
+async def password_longer_path_bad():
+    return None
+
+
+@router.put("/admin/auth/password")  # ruleid: stepup-required
+async def password_prefixed_path_bad():
+    return None
+
+
+@router.put("/x.auth/password")  # ruleid: stepup-required
+async def password_dotted_prefix_bad():
+    return None
+
+
+@router.put("/auth/password.json")  # ruleid: stepup-required
+async def password_dotted_suffix_bad():
+    return None
+
+
+@router.put("/users/{userId}/password")  # ruleid: stepup-required
+async def other_users_password_bad():
+    return None
+
+
 # --- no-secret-logging (SR-122) -------------------------------------------
 def log_bad(logger, session_token):
     logger.info("login", session_token)  # ruleid: no-secret-logging

@@ -217,6 +217,7 @@ def open_stack(
         invite_repository=FakeInviteRepository(),
         clock=clock,
         owner_reset=InMemoryOwnerReset(users, mfa, sessions),  # #2593: the reset's unit of work
+        password_store=users,  # #2110: `PUT /auth/password` reads and writes the same rows
     )
     monkeypatch.setattr(appmod, "build_auth_service", lambda *_a, **_k: auth)
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _s: Identity())

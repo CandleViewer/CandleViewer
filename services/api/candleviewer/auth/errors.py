@@ -307,3 +307,24 @@ class BootstrapOwnerRefused(AuthError):
     def __init__(self, reason: str) -> None:
         super().__init__(f"bootstrap owner mint refused: {reason}")
         self.reason = reason
+
+
+class CurrentPasswordInvalid(AuthError):
+    """`PUT /auth/password` (#2110): the current password is wrong, or the account is locked
+    (SR-016: refused alike). `locked_until` is set when this failure locked the account."""
+
+    def __init__(self, locked_until: datetime | None = None) -> None:
+        super().__init__("current password invalid")
+        self.locked_until = locked_until
+
+
+class PasswordRefused(AuthError):
+    """`PUT /auth/password` (#2110): the new password breaks the SR-028 policy or the reuse rule.
+    `code` is the contract code (`password_breached`, `password_policy`, `password_reused`),
+    `rule` the `errors[].rule` (`None` for none) and `detail` the user-safe `04` Sec.6.3.1 text."""
+
+    def __init__(self, code: str, detail: str, rule: str | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.detail = detail
+        self.rule = rule
