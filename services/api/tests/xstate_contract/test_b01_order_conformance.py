@@ -6,7 +6,9 @@ and is refused forged, and a golden version-4 snapshot is refused on restore, it
 from its `order_events` (28 B1.8, the snapshot migration). Chart version 6 (#4808) is version 5
 with its exit refusals alone, and a version-5 snapshot is refused on restore. Chart version 7 (#914)
 is version 6 with its `missing_remote` arms alone, and a golden version-6 snapshot is refused on
-restore, its order rebuilt from its `order_events`."""
+restore, its order rebuilt from its `order_events`. Chart version 8 (#914) is version 7 with its
+`untracked` fill arms alone, an `untracked` row that holds a fill round trips, and a golden
+version-7 snapshot is refused on restore, its order rebuilt from its `order_events`."""
 
 from __future__ import annotations
 
@@ -57,6 +59,8 @@ V4_HASH = "18d4f519f032b9394245f00f18b0c6fce9145d22969ef2eb3854f2695190c3dc"
 V5_HASH = "627c93f770bcff5d39dce0bed60d2a666c730860998327c6449b4e9e961ee019"
 #: Chart version 6's `machine_hash` (28 B1.8): version 7's restore refuses a snapshot sealed at it.
 V6_HASH = "e75583007285bcb73dfa511d71ec92bdee74054827864668a41f5f8e638fc15e"
+#: Chart version 7's `machine_hash` (28 B1.8): version 8's restore refuses a snapshot sealed at it.
+V7_HASH = "f6289b9e6d7738bc6574c8cc5a6985e4e1be98a647deeb1514b4b5421ed13c54"
 #: Version 6's arm in each `lifecycle` state for an exit it does not take (INV-B1-r).
 _EXIT_REFUSAL = {"actions": ["audit_operator_command_refused"]}
 #: Version 7's arm in each live state a reconciliation pass finds nowhere (INV-B1-s).
@@ -64,6 +68,22 @@ _MISSING_REMOTE = {"target": "#order.lifecycle.unknown", "actions": ["record_mis
 #: The settled live states that take it, in chart order (24 Sec.8.5 step 3b); a state with a
 #: request in flight takes none.
 _MISSED_LIVE = ("submitted", "triggered", "partially_filled", "quarantined")
+#: `untracked`'s `EXEC` arm before version 8, and version 8's three in its place (INV-B1-l).
+_V7_UNTRACKED_EXEC = {"actions": ["record_remote_state"]}
+_UNTRACKED_FILLS = [
+    {
+        "target": "#order.lifecycle.filled",
+        "guard": "exec_new_and_closes",
+        "actions": ["apply_untracked_exec"],
+    },
+    {
+        "target": "#order.lifecycle.untracked",
+        "guard": "exec_new_and_partial",
+        "reenter": True,
+        "actions": ["apply_untracked_exec"],
+    },
+    {"actions": ["record_remote_state"]},
+]
 _GOLDEN = Path(__file__).resolve().parent / "golden"
 
 
@@ -236,15 +256,20 @@ def _version_6_hash(envelope: SealedSnapshot) -> SealedSnapshot:
     return dataclasses.replace(envelope, machine_hash=V6_HASH)
 
 
+def _version_7_hash(envelope: SealedSnapshot) -> SealedSnapshot:
+    return dataclasses.replace(envelope, machine_hash=V7_HASH)
+
+
 @pytest.mark.parametrize(
-    "defect", [_wrong_hash, _version_5_hash, _version_6_hash, _bad_hmac, _another_order]
+    "defect",
+    [_wrong_hash, _version_5_hash, _version_6_hash, _version_7_hash, _bad_hmac, _another_order],
 )
 async def test_b01_a_forged_or_foreign_snapshot_is_refused(
     defect: Callable[[SealedSnapshot], SealedSnapshot],
 ) -> None:
     """CV-C52, CV-C53, MUST-12: a snapshot of a filled order under another machine hash, version
-    5's and version 6's included, with a total edited after the seal, or sealed for another order,
-    is quarantined and pages P1; it is never loaded."""
+    5's, version 6's and version 7's included, with a total edited after the seal, or sealed for
+    another order, is quarantined and pages P1; it is never loaded."""
     async with _resting(("partially_filled", "sl_present")) as (_rig, order, interp):
         key, keys, audit, pager = (
             MachineKey("order", str(order.id), "demo"),
@@ -344,10 +369,20 @@ async def test_b01_terms_step_snapshot_forged_or_version_4_refused(
         await rig.facade.stop()
 
 
+def _version_7(chart: Mapping[str, Any]) -> dict[str, Any]:
+    """Chart version 7: version 8 with `untracked`'s one `EXEC` arm, `record_remote_state`, in
+    place of version 8's three (28 B1.8, INV-B1-l)."""
+    out = copy.deepcopy(dict(chart)) | {"version": 7}
+    on = out["states"]["lifecycle"]["states"]["untracked"]["on"]
+    if on["EXEC"] == _UNTRACKED_FILLS:
+        on["EXEC"] = dict(_V7_UNTRACKED_EXEC)
+    return out
+
+
 def _version_6(chart: Mapping[str, Any]) -> dict[str, Any]:
     """Chart version 6: version 7 without its `missing_remote` arms (28 B1.8), each the one arm
     that takes a live row a pass finds nowhere into `unknown` (INV-B1-s)."""
-    out = copy.deepcopy(dict(chart)) | {"version": 6}
+    out = _version_7(chart) | {"version": 6}
     for node in out["states"]["lifecycle"]["states"].values():
         on = node.get("on") or {}
         if on.get("RECON_MISS") == _MISSING_REMOTE:
@@ -389,8 +424,8 @@ def test_b01_version_7_is_version_6_with_the_missing_remote_arms_alone() -> None
     """28 B1.8 version 7: the chart is version 6 with one `RECON_MISS` arm into `unknown` in each
     settled live state a pass finds nowhere (INV-B1-s), and nothing else. Its hash moved from
     version 6's, so the restore refuses a snapshot sealed at version 6 (MUST-12), and no upcaster
-    carries one: B1 recovers from its `order_events`."""
-    assert CHART["version"] == 7 and REGISTRY.hash("order") != V6_HASH
+    carries one: B1 recovers from its `order_events`. Version 8 derives it first (`_version_7`)."""
+    assert machine_hash(_version_7(CHART)) == V7_HASH != V6_HASH
     assert machine_hash(_version_6(CHART)) == V6_HASH
     states = CHART["states"]["lifecycle"]["states"]
     arms = [
@@ -400,6 +435,20 @@ def test_b01_version_7_is_version_6_with_the_missing_remote_arms_alone() -> None
     ]
     assert arms == list(_MISSED_LIVE)
     assert not has_upcaster("order", V6_HASH, REGISTRY.hash("order"))
+
+
+def test_b01_version_8_is_version_7_with_the_untracked_fill_arms_alone() -> None:
+    """28 B1.8 version 8: the chart is version 7 with `untracked`'s three `EXEC` arms in place of
+    its one, `record_remote_state` (INV-B1-l), and nothing else: no other state's `EXEC` group
+    moved. Its hash moved from version 7's, so the restore refuses a snapshot sealed at version 7
+    (MUST-12), and no upcaster carries one: B1 recovers from its `order_events`."""
+    assert CHART["version"] == 8 and REGISTRY.hash("order") != V7_HASH
+    assert machine_hash(_version_7(CHART)) == V7_HASH
+    states = CHART["states"]["lifecycle"]["states"]
+    assert states["untracked"]["on"]["EXEC"] == _UNTRACKED_FILLS
+    users = {s for s, node in states.items() if "apply_untracked_exec" in json.dumps(node)}
+    assert users == {"untracked"}
+    assert not has_upcaster("order", V7_HASH, REGISTRY.hash("order"))
 
 
 async def test_b01_version_4_golden_snapshot_refused_then_rebuilt_from_order_events() -> None:
@@ -486,6 +535,83 @@ async def test_b01_version_6_golden_snapshot_refused_then_rebuilt_from_order_eve
         assert {name: again.context(stop)[name] for name in held} == held
     finally:
         await again.facade.stop()
+
+
+async def test_b01_version_7_golden_snapshot_refused_then_rebuilt_from_order_events() -> None:
+    """28 B1.8 version 8, the snapshot migration, on a golden snapshot: an order reconciliation
+    discovered, at rest in `untracked`, the state version 8 gives its `EXEC` arms, sealed at
+    version 7 (`golden/order.v7_to_v8.before.json`, its seal genuine under version 7's chart) is
+    refused by version 8's restore for its machine hash, quarantined and paged P1, and never
+    loaded; no upcaster carries it, as B1 recovers from `order_events`: the row's history
+    hydrates to the configuration `.after.json` names and to every context value the snapshot
+    held."""
+    before = json.loads((_GOLDEN / "order.v7_to_v8.before.json").read_text(encoding="utf-8"))
+    after = json.loads((_GOLDEN / "order.v7_to_v8.after.json").read_text(encoding="utf-8"))
+    key, seal = MachineKey(**before["key"]), Seal(**before["seal"])
+    envelope = SealedSnapshot(
+        key, before["version"], before["machine_hash"], before["snapshot"], seal
+    )
+    v7, keys, audit, pager = _version_7(CHART), Keys(), Audit(), Pager()
+    assert machine_hash(v7) == before["machine_hash"] == V7_HASH != REGISTRY.hash("order")
+    open_sealed(keys, v7, envelope, key=key, expected_machine_hash=V7_HASH)  # a genuine seal
+    with pytest.raises(RestoreRefusedError) as refused:
+        await _restorer(keys, audit, pager).restore(key, envelope)
+    assert (refused.value.reason, len(audit.quarantined), pager.pages) == (
+        after["refused"],
+        1,
+        ["P1"],
+    )
+    assert not has_upcaster("order", V7_HASH, REGISTRY.hash("order"))
+    rig = build_rig(registry=REGISTRY)
+    try:
+        found = await _untracked(rig)
+    except BaseException:
+        await rig.facade.stop()  # B1's ports are process-wide: never left wired (C-2.11)
+        raise
+    again = await rig.restart()
+    try:
+        assert str(found.id) == key.entity_id
+        lifecycle = await again.facade.hydrate(ACCOUNT, found.id, environment="demo")
+        await again.quiet()
+        assert again.facade.state(found.id) == (lifecycle, after["protection"])
+        assert lifecycle == after["lifecycle"]
+        held = before["snapshot"]["context"]
+        assert {name: again.context(found)[name] for name in held} == held
+    finally:
+        await again.facade.stop()
+
+
+async def test_b01_untracked_row_with_a_fill_snapshot_round_trip_identical() -> None:
+    """29 Sec.1.3 on version 8: a sealed snapshot of an `untracked` row that holds a partial fill
+    (applied through the facade, written as an `untracked` to `untracked` step) restores the same
+    configuration and context, its totals included, and the restore runs no step: it writes
+    nothing and sends nothing."""
+    rig = build_rig(registry=REGISTRY)
+    try:
+        found = await _untracked(rig)
+        await rig.facade.push(ACCOUNT, found.id, "EXEC", fill_of(found, "e1", "0.4"))
+        await rig.quiet()
+        assert rig.facade.state(found.id) == ("untracked", "not_required")
+        interp = rig.facade._orders[found.id].interp
+        before = (set(interp.current_state_ids), copy.deepcopy(dict(interp.context)))
+        assert (before[1]["filled_qty"], before[1]["seen_exec_ids"]) == ("0.4", ["e1"])
+        events = await rig.events.list_for_order(ACCOUNT, found.id)
+        key, keys = MachineKey("order", str(found.id), "demo"), Keys()
+        envelope = await _sealed(interp, key, keys)
+        restored = await _restorer(keys, Audit(), Pager()).restore(key, envelope)
+        try:
+            await settle()
+            after = (
+                set(restored.interpreter.current_state_ids),
+                dict(restored.interpreter.context),
+            )
+            assert after == before and not restored.degraded
+            assert await rig.events.list_for_order(ACCOUNT, found.id) == events
+            assert rig.commands.sent == []
+        finally:
+            await restored.interpreter.stop()
+    finally:
+        await rig.facade.stop()
 
 
 # --- INV-1, INV-2 and INV-5 on the library --------------------------------------------------------

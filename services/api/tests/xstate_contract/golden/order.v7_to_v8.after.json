@@ -1,0 +1,6 @@
+{
+  "_comment": "#914 (E29-T06, B1 v8): what B1's version-8 restore path does with order.v7_to_v8.before.json: refused for its machine_hash (MUST-12), one quarantine row and a P1 page, never upcast; the row's order_events hydrate it to this configuration and to every context value the snapshot held (28 B1.8, version 8).",
+  "refused": "envelope machine_hash does not match registry (MUST-12)",
+  "lifecycle": "untracked",
+  "protection": "not_required"
+}

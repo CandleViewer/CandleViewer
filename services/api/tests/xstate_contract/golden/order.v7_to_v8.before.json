@@ -1,0 +1,83 @@
+{
+  "_comment": "#914 (E29-T06, B1 v8): a B1 `order` snapshot sealed at chart version 7 (machine_hash f6289b9e6d77...), for 28 B1.8's version-8 snapshot migration: an order reconciliation discovered (DISCOVERED, at rest in `untracked`, the state version 8 gives its EXEC arms) through the OMS facade on the in-memory stores, sealed by the real Persister with the contract suite's HMAC key (_harness.Keys) and a fixed epoch on the version-7 tree (f2ae72d6); `taken_at` is the seal's wall time. Version 8 refuses it, and no upcaster carries it: B1 recovers from order_events (test_b01_order_conformance.py).",
+  "key": {
+    "machine_kind": "order",
+    "entity_id": "00000000-0000-0000-0000-000000000007",
+    "env": "demo"
+  },
+  "version": 3,
+  "machine_hash": "f6289b9e6d7738bc6574c8cc5a6985e4e1be98a647deeb1514b4b5421ed13c54",
+  "snapshot": {
+    "version": 3,
+    "machine_id": "order",
+    "machine_hash": "602475cac8bfec15",
+    "taken_at": 1793413040.9685051,
+    "status": "running",
+    "context": {
+      "order_id": "00000000-0000-0000-0000-000000000007",
+      "order_link_id": "ext-abababababababababababababababab",
+      "account_id": "00000000-0000-0000-0000-0000000000a1",
+      "symbol": "BTCUSDT",
+      "side": "buy",
+      "qty": "1",
+      "filled_qty": "0",
+      "leaves_qty": "1",
+      "avg_price": null,
+      "cum_exec_value": "0",
+      "fee_paid": "0",
+      "seen_exec_ids": [],
+      "last_exchange_update": 0,
+      "recon_misses": 0,
+      "_fault": null,
+      "sl_deadline_us": null,
+      "halted_by_kill": false,
+      "kill_skip_cancel": false,
+      "exchange_order_id": "x7",
+      "price": "63000",
+      "trigger_price": null,
+      "take_profit": null,
+      "stop_loss": "62000",
+      "reduce_only": false,
+      "reject_code": null,
+      "needs_lookup": false,
+      "amend_terms": null,
+      "rate_reservation": null,
+      "persisted_state": "untracked",
+      "event_seq": 0,
+      "recon_deadline_us": null,
+      "sl_reading": null,
+      "outbox": [],
+      "discovered": true,
+      "recorded_stop": false
+    },
+    "state_ids": ["order.lifecycle.untracked", "order.protection.not_required"],
+    "value": {
+      "lifecycle": "untracked",
+      "protection": "not_required"
+    },
+    "configuration": [
+      "order",
+      "order.lifecycle",
+      "order.lifecycle.untracked",
+      "order.protection",
+      "order.protection.not_required"
+    ],
+    "output": null,
+    "error": null,
+    "chain_trips": 0,
+    "last_chain_error": null,
+    "deferred": [],
+    "pending_events": [],
+    "scheduled_sends": [],
+    "history": {},
+    "actors": {},
+    "system": {},
+    "cv_epoch": "77777777777777777777777777777777",
+    "cv_generation": 1,
+    "cv_drained": []
+  },
+  "seal": {
+    "key_id": "k1",
+    "tag": "50ddc208ac925c68ec2373714f237a71e085b937efeb7ba4156559f7471a0414"
+  }
+}

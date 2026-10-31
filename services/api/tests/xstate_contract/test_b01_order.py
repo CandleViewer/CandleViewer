@@ -91,7 +91,15 @@ INVARIANTS: dict[str, str | tuple[str, ...]] = {
     ),
     "INV-B1-j": "test_inv_b1_j_result_adopted_only_if_ret_code_ok_property",
     "INV-B1-k": "test_inv_b1_k_exchange_end_is_never_stranded_property",
-    "INV-B1-l": "test_inv_b1_l_untracked_is_never_managed_property",
+    "INV-B1-l": (
+        "test_inv_b1_l_untracked_is_never_managed_property",
+        "test_b01_order_untracked.py::test_inv_b1_l_untracked_takes_exec_on_three_ordered_arms",
+        "test_b01_order_untracked.py::test_inv_b1_l_a_partial_exec_reenters_untracked_and_writes_the_fill",
+        "test_b01_order_untracked.py::test_inv_b1_l_the_exec_that_fills_the_order_takes_it_to_filled",
+        "test_b01_order_untracked.py::test_inv_b1_l_an_applied_fill_restarts_the_miss_count",
+        "test_b01_order_untracked.py::test_inv_b1_l_an_untracked_row_is_never_managed_property",
+        "test_b01_order_conformance.py::test_b01_version_8_is_version_7_with_the_untracked_fill_arms_alone",
+    ),
     "INV-B1-m": (
         "test_inv_b1_m_held_is_left_only_by_the_operator_property",
         "test_inv_b1_m_a_stray_operator_command_is_refused_never_kept",
@@ -100,6 +108,7 @@ INVARIANTS: dict[str, str | tuple[str, ...]] = {
     "INV-B1-o": (
         "test_inv_b1_o_every_arm_into_a_filled_state_raises_the_notice",
         "test_inv_b1_o_a_fill_reaching_a_final_or_held_order_is_an_audited_anomaly",
+        "test_b01_order_untracked.py::test_inv_b1_o_starts_protection_answers_no_while_untracked",
     ),
     "INV-B1-p": (
         "test_b01_order_recorded_stop.py::test_inv_b1_p_a_recorded_stop_is_never_killed_and_keeps_every_fill_property",
@@ -374,6 +383,7 @@ _UNTRACKED_EXITS = {
     ("cancelled", "RECON_FOUND_CANCELLED"),
     ("cancelled", "RECON_MISS"),
     ("filled", "RECON_FOUND_FILLED"),
+    ("filled", "EXEC"),  # version 8: the fill that completes it (INV-B1-l)
 }
 
 
@@ -513,13 +523,22 @@ async def test_inv_b1_k_exchange_end_is_never_stranded_property(
 
 
 @_HYP
-@given(events=st.lists(st.sampled_from(_EVENTS), max_size=8), miss=st.booleans(), ok=st.booleans())
+@given(
+    events=st.lists(st.sampled_from(_EVENTS), max_size=8),
+    miss=st.booleans(),
+    ok=st.booleans(),
+    closes=st.booleans(),
+    partial=st.booleans(),
+)
 async def test_inv_b1_l_untracked_is_never_managed_property(
-    events: list[str], miss: bool, ok: bool, charts: Charts
+    events: list[str], miss: bool, ok: bool, closes: bool, partial: bool, charts: Charts
 ) -> None:
-    """No event before an ADOPT, allowed or not, runs a managing action: commands are refused."""
+    """No event before an ADOPT, allowed or not, runs a managing action: commands are refused.
+    Version 8: an `EXEC` either guard admits applies the fill (`apply_untracked_exec`, which
+    manages nothing) and leaves only for `filled`; one neither admits is recorded."""
     assert _into("order.lifecycle.untracked") == {("lifecycle.draft", "DISCOVERED")}
     plan = {"second_consecutive_miss": miss, "adoption_allowed": ok}
+    plan |= {"exec_new_and_closes": closes, "exec_new_and_partial": partial}
     done = {"cancel_order": _done, "amend_order": _done}
     async with _at("untracked", charts, guards=plan, service_mode=done) as (i, rec, _c):
         for ev in [*"CANCEL AMEND SEND VALIDATE".split(), *filter("ADOPT".__ne__, events), "ADOPT"]:

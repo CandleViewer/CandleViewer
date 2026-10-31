@@ -1,6 +1,6 @@
 {
   "id": "order",
-  "version": 7,
+  "version": 8,
   "strictConfig": true,
   "maxIterations": 500,
   "actionErrorPolicy": "rollback",
@@ -829,11 +829,28 @@
                 ]
               }
             ],
-            "EXEC": {
-              "actions": [
-                "record_remote_state"
-              ]
-            },
+            "EXEC": [
+              {
+                "target": "#order.lifecycle.filled",
+                "guard": "exec_new_and_closes",
+                "actions": [
+                  "apply_untracked_exec"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.untracked",
+                "guard": "exec_new_and_partial",
+                "reenter": true,
+                "actions": [
+                  "apply_untracked_exec"
+                ]
+              },
+              {
+                "actions": [
+                  "record_remote_state"
+                ]
+              }
+            ],
             "KILL": {
               "actions": [
                 "audit_kill_ignored_unowned"

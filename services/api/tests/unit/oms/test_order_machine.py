@@ -1711,6 +1711,75 @@ async def test_a_discovered_order_found_filled_never_has_its_stop_managed(rig: R
     assert rig.facade.state(found.id) is None  # final, its region settled: evicted, B8's now
 
 
+async def test_an_untracked_order_filled_in_two_executions_reaches_filled_with_its_qty(
+    rig: Rig,
+) -> None:
+    """B1 version 8 (INV-B1-l, #914): an order reconciliation discovered, filled on the exchange in
+    two executions, applies each as it arrives, through the store path every fill takes: the
+    first keeps the row `untracked` with its cumulative quantity, and the second, which fills
+    `qty`, takes it to `filled` with `cum_exec_qty == qty`. Nothing is sent, and the end hands the
+    position to B8 as a fill reconciliation found does (C-2.6)."""
+    found = order_of(7, order_link_id="ext-" + "ab" * 16, exchange_order_id="x7")
+    assert await rig.facade.discover(found, environment="demo") == "untracked"
+    await rig.facade.push(ACCOUNT, found.id, "EXEC", fill_of(found, "e1", "0.4"))
+    await rig.quiet()
+    assert rig.facade.state(found.id) == ("untracked", "not_required")
+    assert (rig.commands.sent, rig.notices.got) == ([], [])
+    await rig.facade.push(ACCOUNT, found.id, "EXEC", fill_of(found, "e2", "0.6"))
+    await rig.quiet()
+    row = await rig.orders.get(ACCOUNT, found.id)
+    assert row is not None and (row.state, row.cum_exec_qty, row.leaves_qty) == (
+        "filled",
+        row.qty,
+        Decimal(0),
+    )
+    events = await rig.store.list_for_order(ACCOUNT, found.id)
+    assert [(e.kind, e.from_state, e.to_state) for e in events] == [
+        ("adopt", None, "untracked"),
+        ("partial_fill", "untracked", "untracked"),
+        ("fill", "untracked", "filled"),
+    ]
+    stored = [await rig.fills.get(ACCOUNT, exec_id) for exec_id in ("e1", "e2")]
+    assert [(s.order_id, s.exec_qty) for s in stored if s is not None] == [
+        (found.id, Decimal("0.4")),
+        (found.id, Decimal("0.6")),
+    ]
+    assert rig.commands.sent == []
+    assert [(n.kind, dict(n.detail)) for n in rig.notices.got] == [
+        ("alert", {"alert": "SL_ATTACH_FAILED"}),
+        ("request_fallback_sl", {}),
+    ]
+    assert rig.facade.state(found.id) is None  # final, its region settled: evicted, B8's now
+
+
+async def test_an_untracked_order_with_one_partial_fill_stays_untracked_and_unmanaged(
+    rig: Rig,
+) -> None:
+    """B1 version 8 (INV-B1-l, INV-B1-o): one partial fill keeps the discovered row `untracked`,
+    its cumulative quantity written with the execution, and nothing is sent, notified or paged.
+    After a restart its history replays the fill as an `EXEC` and the row is still `untracked`,
+    its fill held: a hydration starts no protection region for it either."""
+    found = order_of(7, order_link_id="ext-" + "ab" * 16, exchange_order_id="x7")
+    assert await rig.facade.discover(found, environment="demo") == "untracked"
+    await rig.facade.push(ACCOUNT, found.id, "EXEC", fill_of(found, "e1", "0.4"))
+    await rig.quiet()
+    assert rig.facade.state(found.id) == ("untracked", "not_required")
+    row = await rig.orders.get(ACCOUNT, found.id)
+    assert row is not None and (row.state, row.lifecycle_state) == ("untracked", "untracked")
+    assert (row.cum_exec_qty, row.leaves_qty) == (Decimal("0.4"), Decimal("0.6"))
+    assert (rig.commands.sent, rig.notices.got, rig.pager.calls) == ([], [], [])
+    again = await rig.restart()
+    try:
+        assert await again.facade.hydrate(ACCOUNT, found.id, environment="demo") == "untracked"
+        await again.quiet()
+        assert again.facade.state(found.id) == ("untracked", "not_required")
+        held = again.context(found)
+        assert (held["filled_qty"], held["seen_exec_ids"]) == ("0.4", ["e1"])
+        assert (again.commands.sent, again.notices.got, again.pager.calls) == ([], [], [])
+    finally:
+        await again.facade.stop()
+
+
 async def test_a_partial_fill_found_without_its_execution_starts_the_stop(rig: Rig) -> None:
     """INV-B1-o: reconciliation finds the unknown order partly filled, with no execution to apply
     yet: `partially_filled` starts the protection region all the same, so the stop is attached."""
