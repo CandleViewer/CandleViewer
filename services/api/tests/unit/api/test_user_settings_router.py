@@ -8,8 +8,10 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
+import httpx
 import jsonschema
 import pytest
 from fastapi import FastAPI, Request
@@ -20,7 +22,7 @@ from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.user_settings import make_user_settings_router
 from candleviewer.api.user_settings_models import MAX_BODY_BYTES
 from candleviewer.audit.access import AuditPrincipal
-from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
+from candleviewer.audit.writer import AuditUnavailable, AuditWriter, AuditWriterStopped
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.user_settings import (
@@ -28,6 +30,7 @@ from candleviewer.storage.repositories.user_settings import (
     UserSettingsWriteAhead,
 )
 from tests.openapi_helpers import deref
+from tests.unit.audit.audit_fakes import FakeAuditRepository
 from tests.unit.storage.fakes_replay_sessions import FakeClock
 from tests.unit.storage.fakes_user_settings import FakeUserSettings
 from tests.unit.storage.user_settings_contract import noop
@@ -402,3 +405,90 @@ def test_record_role_holds_while_only_the_owner_and_managers_hold_settings_write
         if "settings:write" in codes or "*" in codes or role == "owner"
     }
     assert roles == {"owner", "manager"}
+
+
+# -- Q3, as ruled: the webhook URL leaves its owner masked -----------------------------------------
+
+_HOOK = "notifications.webhook_url"
+#: A canary in each part `masked` drops: the userinfo, the path, the query and the fragment.
+_CANARY_1 = "https://canary-u1@hooks.example.test:8443/T000/canary-p1?k=canary-q1#canary-f1"
+_CANARY_2 = "https://canary-u2@hooks.example.test/T001/canary-p2?k=canary-q2#canary-f2"
+_SHOWN = "https://hooks.example.test/…"
+
+
+def _states(records: list[tuple[str, dict[str, Any]]]) -> list[tuple[Any, Any]]:
+    return [(record["before_state"], record["after_state"]) for _, record in records]
+
+
+async def test_patch_settings_records_the_webhook_url_masked_on_a_set_a_change_and_a_reset(
+    env: _Env,
+) -> None:
+    for url in (_CANARY_1, _CANARY_2, None):  # set, change, reset
+        _settings(env.patch(_MANAGER, {"notifications": {"webhook_url": url}}))
+    assert _states(env.audit.records) == [
+        ({_HOOK: None}, {_HOOK: _SHOWN}),
+        ({_HOOK: _SHOWN}, {_HOOK: _SHOWN}),
+        ({_HOOK: _SHOWN}, {_HOOK: None}),
+    ]
+    assert "canary" not in json.dumps(_states(env.audit.records))
+
+
+async def test_patch_settings_a_webhook_url_changed_in_its_path_only_is_one_record(
+    env: _Env,
+) -> None:
+    await env.seed(_OWNER, {_HOOK: "https://hooks.example.test/T000/canary-old"})
+    sent = "https://hooks.example.test/T000/canary-new"
+    body = _settings(env.patch(_OWNER, {"notifications": {"webhook_url": sent}}))
+    assert _states(env.audit.records) == [({_HOOK: _SHOWN}, {_HOOK: _SHOWN})]
+    assert body["notifications"] == {"webhook_url": sent}  # its owner reads it in full
+    assert env.values(_OWNER) == {_HOOK: sent}
+
+
+async def test_settings_a_view_reads_the_webhook_url_masked_and_its_owner_in_full(
+    env: _Env,
+) -> None:
+    await env.seed(_MANAGER, {_HOOK: _CANARY_1, "notifications.email_enabled": True})
+    own, viewed = _settings(env.get(_MANAGER)), _settings(env.get(_MANAGER, viewer=_OWNER))
+    assert own["notifications"] == {"webhook_url": _CANARY_1, "email_enabled": True}
+    assert viewed["notifications"] == {"webhook_url": _SHOWN, "email_enabled": True}
+    assert viewed["_meta"] == own["_meta"]
+
+
+class _Emits:
+    """The app's emitter shape over the real writer, as `_LazyAuditEmitter` passes it on."""
+
+    def __init__(self, writer: AuditWriter) -> None:
+        self.writer = writer
+
+    async def emit(self, action: str, **fields: Any) -> None:
+        await self.writer.emit(action, **fields)
+
+
+async def test_patch_settings_the_real_writer_stores_the_webhook_url_masked(tmp_path: Path) -> None:
+    """Through the real `AuditWriter.build()` and `audit.redact`, not the fake sink: the masked
+    form passes the redactor (no secret-shaped key), and the stored rows hold no canary."""
+    repo = FakeAuditRepository()
+    writer = AuditWriter(repo, str(tmp_path / "audit.wal"), sleep=repo.retry_sleep)
+    await writer.start()
+    store = FakeUserSettings(FakeClock())
+    app = FastAPI()
+    app.include_router(
+        make_user_settings_router(lambda: store, _Resolver(), _Emits(writer)), prefix="/api/v1"
+    )
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://cv") as client:
+            for url in (_CANARY_1, _CANARY_2, None):
+                sent = {"notifications": {"webhook_url": url}}
+                resp = await client.patch(_URL, json=sent, headers=_bearer(_MANAGER))
+                assert resp.status_code == 200, resp.text
+        await writer.flush(5)
+    finally:
+        await writer.stop(1)
+    stored = [(r["action"], r["before_state"], r["after_state"]) for r in repo.rows]
+    assert [(a, json.loads(b), json.loads(f)) for a, b, f in stored] == [
+        ("settings.change", {_HOOK: None}, {_HOOK: _SHOWN}),
+        ("settings.change", {_HOOK: _SHOWN}, {_HOOK: _SHOWN}),
+        ("settings.change", {_HOOK: _SHOWN}, {_HOOK: None}),
+    ]
+    assert "canary" not in json.dumps(repo.rows, default=str)

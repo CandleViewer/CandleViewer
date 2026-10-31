@@ -212,6 +212,22 @@ async def test_settings_under_a_view_read_the_target_and_write_nothing(
     assert [r["action"] for r in world.audit.records] == ["admin.view_as_refused"]
 
 
+async def test_settings_and_preferences_answer_a_viewer_the_webhook_url_masked(
+    world: World, store: FakeUserSettings
+) -> None:
+    """Q3, as ruled: the target reads its own webhook URL in full; the Owner viewing as the target
+    reads it masked, on both aliases, through the real view-as guard and session resolvers."""
+    url = "https://canary-u@hooks.example.test:8443/T000/canary-p?k=canary-q#canary-f"
+    await _seed(store, "manager_with_grant", {"notifications.webhook_url": url})
+    own = _conforms("get", _get(world, bearer("manager_with_grant")))
+    assert own["notifications"] == {"webhook_url": url}
+    viewing = bearer_viewing("manager_with_grant")
+    viewed = _conforms("get", _get(world, viewing))
+    preferences = world.client.get("/me/preferences", headers=viewing)
+    assert (preferences.status_code, preferences.json()) == (200, viewed)
+    assert viewed == {**own, "notifications": {"webhook_url": "https://hooks.example.test/…"}}
+
+
 @pytest.mark.parametrize("actor", _ROLES)
 async def test_me_preferences_answers_exactly_what_get_settings_answers(
     world: World, store: FakeUserSettings, actor: str

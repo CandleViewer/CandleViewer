@@ -33,7 +33,8 @@ the shell cannot start without into a 500), and no model here overrides the cont
 
 Preferences are the caller's overrides, read from the per-user store `GET /settings` reads
 (`UserSettings`, E02-T13, #5181) and shaped by the same `user_settings_models.effective`, so the
-two answers are equal: the subject's rows (the target's on a live view, as `/settings` reads it).
+two answers are equal: the subject's rows (the target's on a live view, as `/settings` reads it),
+with a credential-class leaf masked on a view, as `/settings` masks it (Q3, as ruled).
 No deployment default set exists yet (E02-T13's Q1), so a leaf the caller has not overridden is
 absent and the client applies its built-in default. After the checks above, a store that is not
 wired or cannot be read is a 503 `store_unavailable` (logged by its class), never an empty answer.
@@ -288,7 +289,7 @@ def make_me_router(
                 raise
             _log().error("auth.me.settings_store_unavailable", error=type(exc).__name__)
             return _store_unavailable()
-        return JSONResponse(effective(rows), headers=_NO_STORE)
+        return JSONResponse(effective(rows, viewing=caller.viewing), headers=_NO_STORE)
 
     @router.get("/me/keymap", tags=["settings"])
     async def get_my_keymap(request: Request) -> Response:

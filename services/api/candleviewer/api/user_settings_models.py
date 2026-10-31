@@ -20,6 +20,11 @@ Reading Q1 of #5181: no deployment default set exists, so the effective settings
 overrides alone and the client applies its built-in default to every other leaf. `effective()` is
 the one place a default set would be overlaid. A stored row that 22's `Settings` no longer accepts
 (a later contract delta) is left out of the answer and logged by its key, never served.
+
+Q3 of #5181, as ruled: `notifications.webhook_url` is a credential-bearing URL that may embed a
+token (21 Sec.12), stored as a plain row and answered in full to its owner only. `masked()` is
+the one place its value is reduced, to its scheme and host: for the `settings.change` record's
+before and after, and for a view-as read, whose reader is not the owner.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Final, get_args
+from urllib.parse import urlsplit
 
 import structlog
 from pydantic import BaseModel, ValidationError
@@ -50,6 +56,10 @@ _MAX_ERRORS: Final = 20
 META: Final = "_meta"
 #: 22 `updateSettings`: set only through `armOneClickTrading` (SR-043), never through a patch.
 READ_ONLY: Final = frozenset({"trading.one_click_armed"})
+#: The credential-class leaves (21 Sec.12): their values leave their owner only as `masked()`.
+MASKED_LEAVES: Final = frozenset({"notifications.webhook_url"})
+#: A masked value's elided part, and the whole of a value with no scheme and host to keep.
+ELIDED: Final = "…"
 _NAME: Final = re.compile(r"[a-z0-9_]{1,64}")
 
 
@@ -185,9 +195,30 @@ def judge_patch(raw: bytes) -> dict[str, object]:
     return out
 
 
-def effective(rows: Iterable[UserSetting]) -> dict[str, Any]:
+def masked(key: str, value: object) -> object:
+    """`value` of leaf `key` as it may leave its owner. A leaf outside `MASKED_LEAVES`, `None` (no
+    override) and `""` are as they are. Any other value of a credential-class leaf keeps only its
+    scheme and host, as `scheme://host/…` (the host as `urlsplit` reads it, lower case, an IPv6
+    host in its brackets), so its userinfo, port, path, query and fragment, where a token sits,
+    never leave; a value with no scheme or no host, or not a string, is `…`."""
+    if key not in MASKED_LEAVES or value is None or value == "":
+        return value
+    if not isinstance(value, str):
+        return ELIDED
+    try:
+        parts = urlsplit(value)
+        host = parts.hostname
+    except ValueError:  # an unclosed `[` or a bracketed host that is no IP address
+        return ELIDED
+    if not parts.scheme or not host:
+        return ELIDED
+    return f"{parts.scheme}://{f'[{host}]' if ':' in host else host}/{ELIDED}"
+
+
+def effective(rows: Iterable[UserSetting], *, viewing: bool) -> dict[str, Any]:
     """22's `Settings` from the caller's rows (reading Q1: no default set to overlay them on), with
-    `_meta`: the leaves that came from the caller, and the latest write among them."""
+    `_meta`: the leaves that came from the caller, and the latest write among them. `viewing`: the
+    reader views as the rows' owner and is not them, so each credential-class leaf is `masked()`."""
     groups: dict[str, dict[str, object]] = {}
     overridden: list[str] = []
     latest: datetime | None = None
@@ -201,7 +232,7 @@ def effective(rows: Iterable[UserSetting]) -> dict[str, Any]:
             _log().warning("user_settings_row_not_served", key=row.key)  # the key, never a value
             continue
         group, _, name = row.key.partition(".")
-        groups.setdefault(group, {})[name] = value
+        groups.setdefault(group, {})[name] = masked(row.key, value) if viewing else value
         overridden.append(row.key)
         latest = row.updated_at if latest is None else max(latest, row.updated_at)
     meta: dict[str, object] = {"overridden": sorted(overridden)}

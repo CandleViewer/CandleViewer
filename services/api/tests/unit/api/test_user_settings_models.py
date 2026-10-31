@@ -155,7 +155,7 @@ def _row(key: str, value: object, at: datetime = _T1) -> UserSetting:
 
 
 def test_effective_of_no_rows_is_the_empty_settings() -> None:
-    assert m.effective(()) == {"_meta": {"overridden": []}}
+    assert m.effective((), viewing=False) == {"_meta": {"overridden": []}}
 
 
 def test_effective_overlays_the_rows_and_meta_names_them_with_the_latest_write() -> None:
@@ -164,7 +164,8 @@ def test_effective_overlays_the_rows_and_meta_names_them_with_the_latest_write()
             _row("appearance.density", "compact"),
             _row("appearance.font_scale", 1, _T2),
             _row("trading.default_qty_presets", ["0.01"]),
-        ]
+        ],
+        viewing=False,
     )
     assert doc == {
         "appearance": {"density": "compact", "font_scale": 1.0},
@@ -194,7 +195,7 @@ def test_effective_never_serves_a_row_22s_settings_refuses_and_logs_only_its_key
     row: UserSetting,
 ) -> None:
     with capture_logs() as logs:
-        doc = m.effective([row, _row("chart.crosshair_sync", True)])
+        doc = m.effective([row, _row("chart.crosshair_sync", True)], viewing=False)
     assert doc == {
         "chart": {"crosshair_sync": True},
         "_meta": {"overridden": ["chart.crosshair_sync"], "updated_at": "2026-10-01T00:00:00Z"},
@@ -202,3 +203,54 @@ def test_effective_never_serves_a_row_22s_settings_refuses_and_logs_only_its_key
     assert logs == [
         {"event": "user_settings_row_not_served", "key": row.key, "log_level": "warning"}
     ]
+
+
+# -- Q3, as ruled: the credential-class leaf leaves its owner masked -------------------------------
+
+_HOOK = "notifications.webhook_url"
+
+
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [
+        ("https://hooks.example.test/services/T000/B000/x", "https://hooks.example.test/…"),
+        ("https://u:pw@hooks.example.test:8443/p?q=1#f", "https://hooks.example.test/…"),
+        ("https://hooks.example.test", "https://hooks.example.test/…"),
+        ("HTTPS://Hooks.Example.TEST/x", "https://hooks.example.test/…"),
+        ("http://[2001:db8::1]:8080/hook", "http://[2001:db8::1]/…"),
+        ("https://user:p@ss@hooks.example.test/x", "https://hooks.example.test/…"),
+        ("hooks.example.test/x", "…"),  # no scheme
+        ("//hooks.example.test/x", "…"),
+        ("mailto:ops@example.test", "…"),  # no host
+        ("https:///x", "…"),
+        ("https://u@:8443/x", "…"),
+        ("https://[::1/x", "…"),  # unclosed bracket: `urlsplit` refuses it
+        ("https://[hooks]/x", "…"),  # a bracketed host that is no IP address
+        (42, "…"),  # not a string
+        (["https://hooks.example.test/x"], "…"),
+        (None, None),  # no override
+        ("", ""),
+    ],
+)
+def test_masked_keeps_a_webhook_urls_scheme_and_host_only(value: object, shown: object) -> None:
+    assert m.masked(_HOOK, value) == shown
+
+
+def test_masked_leaves_every_other_leaf_as_it_is() -> None:
+    url = "https://u:pw@hooks.example.test/x"
+    assert {key: m.masked(key, url) for key in m.LEAVES if key != _HOOK} == dict.fromkeys(
+        set(m.LEAVES) - {_HOOK}, url
+    )
+    assert m.MASKED_LEAVES == {_HOOK} and m.MASKED_LEAVES <= set(m.LEAVES)
+
+
+@pytest.mark.parametrize("viewing", [False, True], ids=["owner", "viewing"])
+def test_effective_masks_the_webhook_url_for_a_viewer_only(viewing: bool) -> None:
+    url = "https://u:pw@hooks.example.test:8443/T000/canary?k=canary#canary"
+    doc = m.effective(
+        [_row(_HOOK, url), _row("notifications.email_enabled", True)], viewing=viewing
+    )
+    shown = "https://hooks.example.test/…" if viewing else url
+    assert doc["notifications"] == {"webhook_url": shown, "email_enabled": True}
+    assert doc["_meta"]["overridden"] == ["notifications.email_enabled", _HOOK]
+    jsonschema.validate(doc, deref(_SPEC, {"$ref": "#/components/schemas/Settings"}))

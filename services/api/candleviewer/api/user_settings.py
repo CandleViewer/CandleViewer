@@ -19,12 +19,15 @@ CSRF guards the write at the edge (`CsrfMiddleware`, SR-041); no step-up is aske
 user's lock and, before the commit, writes `settings.change` (C-2.9). Reading Q2 of #5181: one
 record per request that changes a leaf, `object_kind` `setting` with the user as the object,
 naming the actor, the role (`user:<role>`), the session and the address, its state only the leaves
-the request changed, each with its value before and after (`null`: no override). A record that
-cannot be written is `503 audit_unavailable`, nothing changed; a patch that changes nothing writes
-no record. The answer is the effective settings after the merge, as `GET` would answer them.
+the request changed, each with its value before and after (`null`: no override; a credential-class
+leaf masked, below). A record that cannot be written is `503 audit_unavailable`, nothing changed;
+a patch that changes nothing writes no record. The answer is the effective settings after the
+merge, as `GET` would answer them.
 
-Reading Q3 of #5181: `notifications.webhook_url` is stored, served and recorded like any other
-leaf, never as a secret. Logs carry the changed keys, never a value, that one included.
+Q3 of #5181, as ruled: `notifications.webhook_url` is a credential-bearing URL (21 Sec.12), stored
+as a plain row and answered in full to its owner only. The record's before and after carry its
+masked form (`user_settings_models.masked`: scheme and host), and a read under a view-as context
+answers that form too, its reader not being the owner. Logs carry the changed keys, never a value.
 """
 
 from __future__ import annotations
@@ -45,6 +48,7 @@ from candleviewer.api.user_settings_models import (
     PatchRefused,
     effective,
     judge_patch,
+    masked,
 )
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.errors import AuditError
@@ -138,6 +142,11 @@ def _snapshot(p: AuditPrincipal) -> PrincipalSnapshot:
     return PrincipalSnapshot(p.user_id, frozenset({"owner"} if p.is_owner else ()), perms)
 
 
+def _viewing(p: AuditPrincipal) -> bool:
+    """The session views as another user (#3085): the principal is the target's, the actor not."""
+    return p.actor_id != p.user_id
+
+
 def _role(p: AuditPrincipal) -> str:
     """The writer's role for its record. Only the Owner and Managers hold `settings:write`
     (21 Sec.10.1, 22 `x-permissions`; a test pins it), and a writer has passed `enforce`."""
@@ -176,7 +185,7 @@ def make_user_settings_router(
         if not isinstance(got, AuditPrincipal):
             raise _Problem("unauthenticated", "No verified session for this request.")
         writes = permission is Permission.SETTINGS_WRITE
-        if writes and got.actor_id != got.user_id:  # the view-as guard refuses this first
+        if writes and _viewing(got):  # the view-as guard refuses this first
             raise _Problem("view_as_read_only", "This session is viewing as another user.")
         try:
             await enforce(
@@ -206,8 +215,8 @@ def make_user_settings_router(
                     actor_ip=p.ip, session_id=p.session_id, request_id=p.request_id,
                     object_kind="setting", object_id=str(p.user_id),
                     outcome=AuditOutcome.SUCCESS, severity=Severity.INFO,
-                    before_state={c.key: c.before for c in changes},
-                    after_state={c.key: c.after for c in changes},
+                    before_state={c.key: masked(c.key, c.before) for c in changes},
+                    after_state={c.key: masked(c.key, c.after) for c in changes},
                 )  # fmt: skip
             except (AuditError, RuntimeError) as exc:  # RuntimeError: no writer started
                 raise SettingsAuditRefused from exc
@@ -218,7 +227,8 @@ def make_user_settings_router(
     @router.get("/settings")
     async def get_settings(request: Request) -> Response:
         principal = await caller(request, Permission.SETTINGS_READ)
-        return JSONResponse(effective(await store().read(principal.user_id)))
+        rows = await store().read(principal.user_id)
+        return JSONResponse(effective(rows, viewing=_viewing(principal)))
 
     @router.patch("/settings")
     async def update_settings(request: Request) -> Response:
@@ -233,7 +243,7 @@ def make_user_settings_router(
         rows = await repo.apply(principal.user_id, patch, write_ahead=record(principal, changed))
         if changed:
             _log().info("user_settings_changed", user_id=str(principal.user_id), keys=changed)
-        return JSONResponse(effective(rows))
+        return JSONResponse(effective(rows, viewing=_viewing(principal)))
 
     return router
 
