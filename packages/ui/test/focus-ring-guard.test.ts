@@ -1,8 +1,10 @@
 /**
  * E47-S05 (#1319) slice 3: the focus-ring guard (WCAG 2.4.7, 2.4.11, 1.4.11; CMP-039, A11Y-P-01).
  *
- * 1. Every CSS rule in apps/web and packages/ui that removes the outline (`outline: none | 0`, `outline-style:
- *    none`, `outline-width: 0`) must be one of: a rule that also draws a replacement in the same rule, one whose
+ * 1. Every CSS rule in apps/web, apps/desktop and packages/ui that removes the outline (`outline: none | 0 | initial
+ *    | unset`, `outline-style: none | hidden`, `outline-width: 0`, `outline-color: transparent`, `all: unset`) must be
+ *    one of: a rule that also draws an `outline` in the ring token (a box-shadow is no replacement unless the site is
+ *    registered with a reason and a forced-colors outline rule backs it), one whose
  *    selector excludes `:focus-visible` (it can never remove a keyboard ring), one whose element has its own
  *    `:focus-visible` ring rule in the same file, or a site registered in `SITES` below with its reason. A
  *    container-focus site names the selector that draws the ring instead, and that rule must still exist.
@@ -10,7 +12,7 @@
  * 3. The ring token holds the contrast of every `color.focus.ring` pair of the tools/contrast registry
  *    (3:1 on each surface tier), in every theme. The pairs are read from there, never copied.
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -22,6 +24,8 @@ const REPO = resolve(import.meta.dirname, "../../..");
 interface CssRule {
   readonly selector: string;
   readonly decls: ReadonlyMap<string, string>;
+  /** The at-rule preludes around it, outermost first (`@media (forced-colors: active)`). */
+  readonly at: readonly string[];
 }
 
 function splitTop(text: string, sep: string): string[] {
@@ -72,7 +76,8 @@ function parseCss(source: string): CssRule[] {
       const done = stack.pop();
       if (done !== undefined && !done.prelude.startsWith("@")) {
         for (const selector of splitTop(done.prelude, ",")) {
-          rules.push({ selector: squash(selector), decls: done.decls });
+          const at = stack.map((f) => f.prelude).filter((x) => x.startsWith("@"));
+          rules.push({ selector: squash(selector), decls: done.decls, at });
         }
       }
     }
@@ -80,28 +85,28 @@ function parseCss(source: string): CssRule[] {
   return rules;
 }
 
-const NONE = /^(?:none|0|0px|0 none|none 0)(?:\s*!important)?$/iu;
+const NONE = /^(?:none|0|0px|0 none|none 0|initial|unset|revert)(?:\s*!important)?$/iu;
 
 /** Whether a rule removes the outline. */
 function removesOutline(rule: CssRule): boolean {
-  const outline = rule.decls.get("outline");
-  const style = rule.decls.get("outline-style");
-  const width = rule.decls.get("outline-width");
+  const get = (k: string): string => rule.decls.get(k) ?? "";
   return (
-    (outline !== undefined && NONE.test(outline)) ||
-    (style !== undefined && /^none(?:\s*!important)?$/iu.test(style)) ||
-    (width !== undefined && /^0(?:px)?(?:\s*!important)?$/iu.test(width))
+    NONE.test(get("outline")) ||
+    /^(?:none|hidden|initial|unset)(?:\s*!important)?$/iu.test(get("outline-style")) ||
+    /^0(?:px)?(?:\s*!important)?$/iu.test(get("outline-width")) ||
+    /^transparent(?:\s*!important)?$/iu.test(get("outline-color")) ||
+    /^(?:unset|initial)(?:\s*!important)?$/iu.test(get("all"))
   );
 }
 
+/** The rule draws the ring as an `outline` in the ring token: the only replacement that counts. */
 const drawsRing = (rule: CssRule): boolean => {
-  const outline = rule.decls.get("outline");
-  const shadow = rule.decls.get("box-shadow") ?? "";
-  return (
-    (outline !== undefined && !NONE.test(outline) && /focus-ring/u.test(outline)) ||
-    /focus-ring/u.test(shadow)
-  );
+  const outline = rule.decls.get("outline") ?? "";
+  return !NONE.test(outline) && /focus-ring/u.test(outline);
 };
+
+const shadowRing = (rule: CssRule): boolean =>
+  /focus-ring/u.test(rule.decls.get("box-shadow") ?? "");
 
 /** `:not(…, :focus-visible)` somewhere in the selector: the rule never applies while a keyboard ring should show. */
 const excludesFocusVisible = (selector: string): boolean =>
@@ -111,7 +116,7 @@ const excludesFocusVisible = (selector: string): boolean =>
 // The registered sites.
 
 interface Site {
-  readonly kind: "programmatic-target" | "container-focus";
+  readonly kind: "programmatic-target" | "container-focus" | "box-shadow";
   /** `container-focus`: the file and selector of the rule that draws the ring instead. */
   readonly ring?: { readonly file: string; readonly selector: string };
   readonly reason: string;
@@ -202,7 +207,9 @@ function walk(dir: string, accept: (name: string) => boolean): string[] {
 }
 
 const rel = (p: string): string => relative(REPO, p).split("\\").join("/");
-const ROOTS = [join(REPO, "apps/web"), join(REPO, "packages/ui")];
+const ROOTS = ["apps/web", "apps/desktop", "packages/ui"]
+  .map((r) => join(REPO, r))
+  .filter((r) => existsSync(r));
 
 const CSS_FILES = ROOTS.flatMap((r) => walk(r, (n) => n.endsWith(".css")));
 const CORPUS = new Map(CSS_FILES.map((p) => [rel(p), parseCss(readFileSync(p, "utf8"))]));
@@ -236,6 +243,16 @@ function acceptedBy(
   corpus: Corpus = CORPUS,
 ): string | undefined {
   if (drawsRing(s.rule)) return "replacement in the same rule";
+  const shadow = sites[`${s.file}|${s.selector}`];
+  if (shadowRing(s.rule) && shadow?.kind === "box-shadow") {
+    const forced = (corpus.get(s.file) ?? []).some(
+      (r) =>
+        r.selector === s.selector &&
+        r.at.some((a) => /forced-colors:\s*active/u.test(a)) &&
+        /^(?:\d+px|calc\(.*\))\s+solid\s+Highlight/u.test(r.decls.get("outline") ?? ""),
+    );
+    return forced ? "registered box-shadow with a forced-colors outline" : undefined;
+  }
   if (excludesFocusVisible(s.selector)) return "excludes :focus-visible";
   if (hasOwnRing(s.file, s.selector, corpus)) return "own :focus-visible ring";
   return sites[`${s.file}|${s.selector}`] === undefined ? undefined : "registered site";
@@ -310,7 +327,12 @@ describe("focus-ring guard: the checker itself", () => {
       "outline:0px",
       "outline: none !important",
       "outline-style: none",
+      "outline-style: hidden",
       "outline-width: 0",
+      "outline: initial",
+      "outline: unset",
+      "outline-color: transparent",
+      "all: unset",
     ]) {
       expect(check(`.a:focus { ${decl}; }`), decl).toEqual(["bare:.a:focus"]);
     }
@@ -330,7 +352,7 @@ describe("focus-ring guard: the checker itself", () => {
   });
 
   it("accepts a replacement in the same rule, a :not(:focus-visible) selector and an own ring", () => {
-    expect(check(".a { outline: none; box-shadow: 0 0 0 2px var(--color-focus-ring); }")).toEqual([
+    expect(check(".a { all: unset; outline: 2px solid var(--color-focus-ring); }")).toEqual([
       undefined,
     ]);
     expect(check(".a:hover:not(:disabled, :focus-visible) { outline: none }")).toEqual([undefined]);
@@ -348,6 +370,16 @@ describe("focus-ring guard: the checker itself", () => {
     );
   });
 
+  it("takes a box-shadow ring only as a registered site backed by a forced-colors outline", () => {
+    const shadow = ".a { outline: none; box-shadow: 0 0 0 2px var(--color-focus-ring); }";
+    const site = { "x.css|.a": { kind: "box-shadow", reason: "x".repeat(21) } } as const;
+    const forced = "@media (forced-colors: active) { .a { outline: 2px solid Highlight; } }";
+    expect(check(shadow)).toEqual(["bare:.a"]); // a shadow alone is no replacement
+    expect(check(shadow, site)).toEqual(["bare:.a"]); // registered, but forced colours drop the shadow
+    expect(check(`${shadow} ${forced}`, site)).toEqual([undefined]);
+    expect(check(`${shadow} ${forced}`)).toEqual(["bare:.a"]); // the outline rule alone does not register it
+  });
+
   it("accepts only the exact registered selector", () => {
     const sites = { "x.css|.a": { kind: "programmatic-target", reason: "x".repeat(21) } } as const;
     expect(check(".a { outline: none }", sites)).toEqual([undefined]);
@@ -355,13 +387,30 @@ describe("focus-ring guard: the checker itself", () => {
   });
 });
 
+const SPELLINGS =
+  /outline(?:Style|Width|Color)?["']?\s*[:=]\s*["'`]?(?:none|0|hidden|transparent|initial|unset)\b|\ball["']?\s*[:=]\s*["'`]?unset\b|\boutline-(?:none|0|hidden)\b|focus:outline-none/u;
+
 describe("focus-ring guard: no outline removal outside CSS files", () => {
+  it("recognises every spelling", () => {
+    for (const line of [
+      'style={{ outline: "none" }}',
+      "style={{ outlineStyle: 'hidden' }}",
+      'style={{ outlineColor: "transparent" }}',
+      'style={{ all: "unset" }}',
+      '<a class="outline-none">',
+      '<a class="outline-hidden">',
+      '<a class="focus:outline-none">',
+      'el.style.outline = "0"',
+    ]) {
+      expect(SPELLINGS.test(line), line).toBe(true);
+    }
+    expect(SPELLINGS.test('style={{ outline: "2px solid var(--color-focus-ring)" }}')).toBe(false);
+  });
+
   it("finds none in inline styles, Tailwind classes or markup", () => {
     const files = ROOTS.flatMap((r) =>
       walk(r, (n) => /\.(?:tsx?|html)$/u.test(n) && !/\.(?:test|stories)\.tsx?$/u.test(n)),
     ).filter((p) => !/\/(?:test|e2e|\.storybook|eslint-rules|scripts)\//u.test(rel(p)));
-    const SPELLINGS =
-      /outline(?:Style|Width)?["']?\s*[:=]\s*["'`]?(?:none|0)\b|\boutline-(?:none|0)\b|focus:outline-none/u;
     const hits = files
       .filter((p) =>
         readFileSync(p, "utf8")
@@ -370,6 +419,25 @@ describe("focus-ring guard: no outline removal outside CSS files", () => {
       )
       .map(rel);
     expect(hits).toEqual([]);
+  });
+});
+
+describe("focus-ring guard: a programmatic target is tabindex -1", () => {
+  const sources = walk(
+    join(REPO, "packages/ui/src"),
+    (n) => /\.tsx$/u.test(n) && !/\.(?:test|stories)\.tsx$/u.test(n),
+  ).map((p) => ({ file: rel(p), text: readFileSync(p, "utf8") }));
+  const targets = Object.entries(SITES).filter(([, site]) => site.kind === "programmatic-target");
+
+  it.each(targets)("%s", (key) => {
+    const cls = /\.(cv-[\w-]+):focus$/u.exec(key.slice(key.indexOf("|") + 1))?.[1];
+    expect(cls, key).toBeDefined();
+    const owner = sources.filter((f) => new RegExp(`${cls}(?![\\w-])`, "u").test(f.text));
+    expect(owner.length, `no component renders .${cls}`).toBeGreaterThan(0);
+    expect(
+      owner.some((f) => /tabIndex[=:]\s*\{?\s*-1/u.test(f.text)),
+      `.${cls}: the component never sets tabIndex -1, so it is reachable by Tab`,
+    ).toBe(true);
   });
 });
 
@@ -407,6 +475,20 @@ describe("focus-ring guard: the ring's contrast per theme (WCAG 1.4.11)", () => 
   it("the registry declares ring pairs, none below 3:1", () => {
     expect(RING_PAIRS.length).toBeGreaterThanOrEqual(3);
     for (const p of RING_PAIRS) expect(p.threshold).toBeGreaterThanOrEqual(3);
+  });
+
+  it("the ring width token resolves to at least 2px in every theme", () => {
+    for (const [name, theme] of Object.entries(themes)) {
+      const width = Number(theme["border.focus"]?.$value);
+      expect(width, `${name}: border.focus`).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("every theme is checked against at least 5 ring pairs", () => {
+    for (const name of Object.keys(themes)) {
+      const pairs = RING_PAIRS.filter((x) => x.themes === undefined || x.themes.includes(name));
+      expect(pairs.length, name).toBeGreaterThanOrEqual(5);
+    }
   });
 
   it("builds light, dark and high-contrast", () => {

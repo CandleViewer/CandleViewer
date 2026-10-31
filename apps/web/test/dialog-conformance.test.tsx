@@ -37,7 +37,7 @@ const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/play
 ) as { run: (el: Element, o?: object) => Promise<{ violations: { impact?: string | null }[] }> };
 
 type Role = "dialog" | "alertdialog";
-type Dim = "focusIn" | "trap" | "escape" | "return" | "scrim";
+type Dim = "focusIn" | "trap" | "escape" | "return" | "scrim" | "pageInert";
 
 interface Spies {
   readonly confirm: Mock;
@@ -59,6 +59,8 @@ interface Row {
   readonly scrim: "none" | "guard";
   /** Runs before Esc: puts the dialog in its most committed state (a typed confirm that matches). */
   readonly beforeEsc?: () => void;
+  /** Rendered by the ui Dialog, so its scrim is a `.cv-dialog__scrim`. */
+  readonly layer?: boolean;
   readonly gaps?: Partial<Record<Dim, string>>;
   readonly mount: (spies: Spies) => Handle;
 }
@@ -125,9 +127,17 @@ const sessionsApi = (): SessionsApi => ({
 
 const field = (label: RegExp | string): HTMLElement => screen.getByLabelText(label);
 
+/**
+ * Temporary hand-built chrome (#2725; to be re-based on CMP-043/044, #266) is aria-modal and traps Tab, but nothing
+ * hides the page behind it from a screen reader's virtual cursor, as CMP-043's `inert` does. Found by this matrix.
+ */
+const PAGE_LIVE =
+  "hand-built modal: aria-modal and a Tab trap, but the page behind it is not inert or aria-hidden (re-base on CMP-043, #266)";
+
 const ROWS: readonly Row[] = [
   {
     id: "StepUpDialog (code only)",
+    gaps: { pageInert: PAGE_LIVE },
     role: "alertdialog",
     esc: "cancels",
     scrim: "guard",
@@ -144,6 +154,7 @@ const ROWS: readonly Row[] = [
   },
   {
     id: "StepUpDialog (typed confirm)",
+    gaps: { pageInert: PAGE_LIVE },
     role: "alertdialog",
     esc: "cancels",
     scrim: "guard",
@@ -165,6 +176,7 @@ const ROWS: readonly Row[] = [
   },
   {
     id: "SessionLockDialog",
+    gaps: { pageInert: PAGE_LIVE },
     role: "alertdialog",
     esc: "inert",
     scrim: "guard",
@@ -185,8 +197,9 @@ const ROWS: readonly Row[] = [
     esc: "cancels",
     scrim: "guard",
     gaps: {
+      pageInert: PAGE_LIVE,
       return:
-        "a view swap, not an overlay: Back remounts SessionLockDialog, which focuses its password (SessionLockHost)",
+        "a view swap, not an overlay: Back remounts SessionLockDialog, which focuses its password (asserted on the real SessionLockHost in session.test.tsx, `Esc goes back`)",
     },
     mount: simple(({ open, spies, cancel }) =>
       open ? (
@@ -196,6 +209,7 @@ const ROWS: readonly Row[] = [
   },
   {
     id: "SessionExpiredCard",
+    gaps: { pageInert: PAGE_LIVE },
     role: "alertdialog",
     esc: "inert",
     scrim: "guard",
@@ -205,6 +219,7 @@ const ROWS: readonly Row[] = [
   },
   {
     id: "SessionTimeoutWarning",
+    gaps: { pageInert: PAGE_LIVE },
     role: "alertdialog",
     esc: "cancels",
     scrim: "none",
@@ -216,6 +231,7 @@ const ROWS: readonly Row[] = [
   },
   {
     id: "SessionsSection revoke confirm",
+    gaps: { pageInert: PAGE_LIVE },
     role: "alertdialog",
     esc: "cancels",
     scrim: "guard",
@@ -231,6 +247,7 @@ const ROWS: readonly Row[] = [
   },
   {
     id: "Cheatsheet",
+    gaps: { pageInert: PAGE_LIVE },
     role: "dialog",
     esc: "cancels",
     scrim: "none",
@@ -248,6 +265,7 @@ const ROWS: readonly Row[] = [
   },
   {
     id: "VersionDialog (via VersionDialogSlot)",
+    layer: true,
     role: "alertdialog",
     esc: "cancels",
     scrim: "none",
@@ -259,6 +277,7 @@ const ROWS: readonly Row[] = [
   },
   {
     id: "ui Dialog (dialog)",
+    layer: true,
     role: "dialog",
     esc: "cancels",
     scrim: "none",
@@ -280,6 +299,7 @@ const ROWS: readonly Row[] = [
   },
   {
     id: "ui ConfirmDialog (typed)",
+    layer: true,
     role: "alertdialog",
     esc: "cancels",
     scrim: "none",
@@ -298,6 +318,7 @@ const ROWS: readonly Row[] = [
   },
   {
     id: "WsErrorHost fatal modal",
+    layer: true,
     role: "alertdialog",
     esc: "cancels",
     scrim: "none",
@@ -310,10 +331,18 @@ const ROWS: readonly Row[] = [
 const TABBABLE =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])';
 
-const tabbables = (): HTMLElement[] =>
-  Array.from(document.querySelectorAll<HTMLElement>(TABBABLE)).filter(
-    (el) => el.closest('[inert], [aria-hidden="true"]') === null,
-  );
+/**
+ * The tab order as a browser computes it from the markup: nothing is filtered out as inert or hidden here, so a
+ * dialog that does not trap Tab lets focus escape to the page behind it. That the page is out of reach is its own
+ * observation (`pageInert`).
+ */
+const rowById = (id: string): Row => {
+  const row = ROWS.find((r) => r.id === id);
+  if (row === undefined) throw new Error(`no matrix row: ${id}`);
+  return row;
+};
+
+const tabbables = (): HTMLElement[] => Array.from(document.querySelectorAll<HTMLElement>(TABBABLE));
 
 /** One Tab press as a browser does it: the keydown first, then the move, unless a handler took it. */
 function tab(shift: boolean): void {
@@ -330,7 +359,7 @@ function tab(shift: boolean): void {
 
 /** Gives an opening dialog its tick to take focus; a dialog that never does is a finding, not a throw. */
 const settle = (el: HTMLElement): Promise<void> =>
-  waitFor(() => expect(el.contains(document.activeElement)).toBe(true), { timeout: 150 }).catch(
+  waitFor(() => expect(el.contains(document.activeElement)).toBe(true), { timeout: 1000 }).catch(
     () => undefined,
   );
 
@@ -396,16 +425,30 @@ const OBSERVE: Record<Dim, (row: Row) => Promise<boolean>> = {
       return false;
     }
   },
+  pageInert: async (row) => {
+    await openRow(row);
+    const el = dialogOf(row.role);
+    await settle(el);
+    if (el.getAttribute("aria-modal") !== "true") return true; // a non-modal dialog leaves the page live
+    const page = screen.getAllByRole("button", { hidden: true }).filter((b) => !el.contains(b));
+    const out = (n: Element): boolean => n.closest('[inert], [aria-hidden="true"]') !== null;
+    return page.length > 0 && page.every(out);
+  },
   scrim: async (row) => {
     const { spies } = await openRow(row);
     const el = dialogOf(row.role);
     await settle(el);
-    const scrim = el.closest(".cv-dialog__scrim") ?? el.parentElement;
-    if (scrim === null || scrim === document.body) return row.scrim === "none";
+    const scrim =
+      row.layer === true ? document.querySelector(".cv-dialog__scrim") : el.parentElement;
+    if (scrim === null || scrim === document.body) return false;
+    if (row.layer === true && scrim.className.includes("cv-dialog__scrim") === false) return false;
     const taken = !fireEvent.mouseDown(scrim);
     fireEvent.mouseUp(scrim);
     fireEvent.click(scrim);
+    // a press never moves focus out of the dialog (jsdom does not blur on a press: a guarded scrim prevents it)
+    const inside = el.contains(document.activeElement);
     const stays = screen.queryByRole(row.role) !== null && spies.confirm.mock.calls.length === 0;
+    if (!inside) return false;
     return row.role === "alertdialog" ? stays && (row.scrim !== "guard" || taken) : true;
   },
 };
@@ -420,7 +463,7 @@ afterEach(() => {
 });
 
 describe.each(ROWS)("dialog conformance: $id", (row) => {
-  for (const dim of ["focusIn", "trap", "escape", "return", "scrim"] as const) {
+  for (const dim of ["focusIn", "trap", "escape", "return", "scrim", "pageInert"] as const) {
     const gap = row.gaps?.[dim];
     const title = {
       focusIn: "focus moves into the dialog on open",
@@ -428,6 +471,7 @@ describe.each(ROWS)("dialog conformance: $id", (row) => {
       escape: row.esc === "cancels" ? "Esc cancels and never confirms" : "Esc does not dismiss",
       return: "focus returns to the opener, never body",
       scrim: "a scrim press does not dismiss an alertdialog or take focus",
+      pageInert: "the page behind a modal is inert or aria-hidden",
     }[dim];
     it(gap === undefined ? title : `known gap (${gap}): ${title} does not hold`, async () => {
       const held = await OBSERVE[dim](row);
@@ -462,8 +506,10 @@ const COVERED: Readonly<Record<string, string>> = {
   "lib/ws/WsErrorHost.tsx": "matrix: WsErrorHost fatal modal",
   "features/symbol-search/SymbolSearch.tsx":
     "ui Dialog row (the mechanism); focus in and back in symbol-search/SymbolSearch.test.tsx",
+  // QuickSwitcher.tsx is not listed on purpose: it only mounts SymbolSearch, which holds the one Dialog.
 };
-const DIALOG_SOURCE = /role="(?:alert)?dialog"|<Dialog\b|<ConfirmDialog\b|aria-modal/u;
+const DIALOG_SOURCE =
+  /role="(?:alert)?dialog"|<Dialog\b|<ConfirmDialog\b|<Drawer\b|<InfoPanel\b|aria-modal/u;
 
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -484,10 +530,35 @@ describe("dialog conformance: nothing built is missing", () => {
   });
 });
 
+describe("the matrix can fail", () => {
+  /** A modal dialog with no trap, no Esc, no return and nothing hiding the page. */
+  const bare: Row = {
+    id: "stub",
+    role: "dialog",
+    esc: "cancels",
+    scrim: "none",
+    mount: simple(({ open }) =>
+      open ? (
+        <div role="dialog" aria-modal="true" aria-label="Stub" tabIndex={-1}>
+          <button type="button">One</button>
+          <button type="button">Two</button>
+        </div>
+      ) : null,
+    ),
+  };
+
+  it("an untrapped Tab escapes to the page behind it, so `trap` fails", async () => {
+    expect(await OBSERVE.trap(bare)).toBe(false);
+  });
+  it("a page left live behind aria-modal fails `pageInert`", async () => {
+    expect(await OBSERVE.pageInert(bare)).toBe(false);
+  });
+});
+
 describe("pinned regressions", () => {
   it("A11Y-F-0013: a press on the step-up scrim neither dismisses nor takes focus off the dialog", async () => {
     const spies = { confirm: vi.fn(), cancel: vi.fn() };
-    const handle = ROWS[0]!.mount(spies);
+    const handle = rowById("StepUpDialog (code only)").mount(spies);
     (await handle.opener()).focus();
     await handle.open();
     const el = dialogOf("alertdialog");
@@ -500,7 +571,7 @@ describe("pinned regressions", () => {
   });
 
   it("A11Y-F-0026: the cheatsheet is a modal dialog: focus in on Close, trapped, Esc closes, focus back", async () => {
-    const row = ROWS.find((r) => r.id === "Cheatsheet")!;
+    const row = rowById("Cheatsheet");
     const { opener } = await openRow(row);
     expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
     expect(dialogOf("dialog")).toHaveAttribute("aria-modal", "true");
