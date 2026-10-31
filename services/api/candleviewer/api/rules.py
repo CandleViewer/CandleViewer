@@ -11,17 +11,23 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
+from candleviewer.api.preview_limiter import PreviewLimiter
 from candleviewer.api.rule_body import read_object
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import escape_unpaired
 from candleviewer.rules.compiler import compile_form, compile_graph
-from candleviewer.rules.compiler.common import build_rule, check_bounds, value_issues
+from candleviewer.rules.compiler.common import (
+    ConditionNodeBoundError,
+    build_rule,
+    check_bounds,
+    value_issues,
+)
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.ir import canonicalize, ir_hash
 from candleviewer.rules.ir.canonical import IrValueError
@@ -36,6 +42,7 @@ from candleviewer.rules.vocabulary import (
     etag_for,
 )
 from candleviewer.rules.vocabulary.catalogue import ARM_LIVE_PERMISSION
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _REQUIRED = "rules:read"
 #: Probed on the caller to annotate the vocabulary. Named constants, never literals: they must
@@ -43,6 +50,13 @@ _REQUIRED = "rules:read"
 _ADVISORY_PERMISSIONS = ("orders:write", ARM_LIVE_PERMISSION)
 _CACHE = "private, max-age=60"
 _Counter = Callable[[str], None]
+#: `validateRule` and `compileRule` share one token bucket per user, its burst this many times its
+#: rate (22 `validateRule`).
+CHECK_BURST_FACTOR: Final = 2
+#: The checks that bucket covers, the closed set of `rule_authoring_rate_limited_total{route}`.
+CHECK_ROUTES: Final = ("validate", "compile")
+#: The one bucket of every principal that carries no user id.
+_NO_USER: Final = UUID(int=0)
 
 
 def _diff(a: Any, b: Any, path: str = "") -> list[dict[str, Any]]:
@@ -88,6 +102,22 @@ def _problem(status: int, title: str, detail: str, *, code: str | None = None) -
     return JSONResponse(status_code=status, media_type="application/problem+json", content=content)
 
 
+def _rate_limited(wait: int) -> JSONResponse:
+    """`429 rate_limited` (22 `RateLimited`): the wait, whole seconds and at least one, in
+    `Retry-After` and again in the body. It writes no audit record."""
+    code = ErrorCode.RATE_LIMITED
+    body = {
+        "type": f"https://candleviewer.local/errors/{code.value}",
+        "title": ERROR_META[code].title,
+        "status": 429,
+        "code": code.value,
+        "detail": "Too many rule checks; retry after the delay given.",
+        "retry_after_seconds": wait,
+    }
+    headers = {"Retry-After": str(wait)}
+    return JSONResponse(body, 429, headers, media_type="application/problem+json")
+
+
 def make_rules_router(
     registry_provider: Callable[[], MetricRegistry | None],
     *,
@@ -98,6 +128,9 @@ def make_rules_router(
     on_divergence: Callable[[str, int], Any] = lambda editor, n_diffs: None,
     scope_resolver: ScopeResolver | None = None,
     scope_refresh: Callable[[UUID], Awaitable[None]] | None = None,
+    check_limiter: PreviewLimiter | None = None,
+    on_rate_limited: _Counter = lambda route: None,
+    on_cap_refused: _Counter = lambda cap: None,
 ) -> APIRouter:
     router = APIRouter(tags=["rules"])
 
@@ -115,6 +148,19 @@ def make_rules_router(
     def _caller(principal: _Principal) -> UUID | None:
         uid = getattr(principal, "user_id", None)
         return uid if isinstance(uid, UUID) else None
+
+    def _throttled(principal: _Principal, route: str) -> JSONResponse | None:
+        """The check's token from the caller's bucket, else the `429`: one bucket per user, shared
+        by validate and compile and across the user's sessions, and one for every principal with
+        no user id. Taken after `_authorize` and before the body is read."""
+        if check_limiter is None:
+            return None
+        caller = _caller(principal)
+        wait = check_limiter.try_take(_NO_USER if caller is None else caller)
+        if wait is None:
+            return None
+        on_rate_limited(route)
+        return _rate_limited(wait)
 
     async def _authorize_scope(principal: _Principal, rule: Any) -> JSONResponse | None:
         """C-12.4: 403 on any account/environment the caller may not use (no existence leak)."""
@@ -197,6 +243,12 @@ def make_rules_router(
         for a body nested too deep, None for anything but a JSON object."""
         return await read_object(request, lambda detail: _problem(400, "Bad request", detail))
 
+    def _counted(exc: RuleCompileError | IrValueError) -> RuleCompileError:
+        """`_compile_error`, a refusal of the condition-node bound counted on the way."""
+        if isinstance(exc, ConditionNodeBoundError):
+            on_cap_refused(exc.cap)
+        return _compile_error(exc)
+
     def _invalid(exc: RuleCompileError) -> JSONResponse:
         n = len(exc.issues)
         return JSONResponse(
@@ -222,6 +274,8 @@ def make_rules_router(
         principal, denied = await _authorize(request)
         if denied is not None or principal is None:
             return denied or _problem(401, "Unauthorized", "no session")
+        if (limited := _throttled(principal, "validate")) is not None:
+            return limited
         registry = registry_provider()
         if registry is None:
             return _problem(503, "Service unavailable", "rule engine vocabulary unavailable")
@@ -235,7 +289,7 @@ def make_rules_router(
             rule = build_rule(body["ir"])
             canonicalize(rule)  # what compile hashes: a value the hash cannot hold is not valid
         except (RuleCompileError, IrValueError) as exc:  # still a 200 with valid=false
-            errs = [i.to_dict() for i in _compile_error(exc).issues]
+            errs = [i.to_dict() for i in _counted(exc).issues]
             return JSONResponse(
                 {"valid": False, "errors": errs, "warnings": [], "referenced_variables": [],
                  "referenced_actions": [], "estimated_evaluations_per_minute": 0}
@@ -251,6 +305,8 @@ def make_rules_router(
         principal, denied = await _authorize(request)
         if denied is not None or principal is None:
             return denied or _problem(401, "Unauthorized", "no session")
+        if (limited := _throttled(principal, "compile")) is not None:
+            return limited
         registry = registry_provider()
         if registry is None:
             return _problem(503, "Service unavailable", "rule engine vocabulary unavailable")
@@ -267,7 +323,7 @@ def make_rules_router(
             rule_hash = ir_hash(rule)
         except (RuleCompileError, IrValueError) as exc:
             on_compile(editor, "invalid")
-            return _invalid(_compile_error(exc))
+            return _invalid(_counted(exc))
         forbidden = await _authorize_scope(principal, rule)
         if forbidden is not None:
             return forbidden
@@ -288,7 +344,7 @@ def make_rules_router(
             try:
                 other_view = json.loads(canonicalize(other_fn(other, ruleId)))
             except (RuleCompileError, IrValueError) as exc:
-                err = _compile_error(exc)
+                err = _counted(exc)
                 await _notify_divergence(editor, len(err.issues))
                 return _invalid(err)
             diff = _diff(json.loads(canonicalize(rule)), other_view)

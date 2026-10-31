@@ -59,12 +59,14 @@ JSON = {"content-type": "application/json"}
 NESTING = MAX_RULE_BODY_BYTES // 2 - 16
 #: The reader's own 400: a rule within the bounds nests `MAX_DEPTH + 2` levels in its body.
 DEEPER = f"JSON nesting is deeper than {MAX_DEPTH + 2} levels."
-#: Shared-node depths from the bounds: within them once every copy is charged, past them, and as
-#: deep as the depth bound allows. The first one's hash is the one it compiled to before.
-SHARED_WITHIN = (MAX_ITEMS // 16).bit_length() - 1
+#: Shared-node depths: the deepest whose expansion is within the node cap (`test_rule_condition_
+#: node_cap` pins that), with its hash; a depth whose copies each carry `SHARED_LONG` values,
+#: refused with the bounds issue; and as deep as the depth bound allows.
+SHARED_WITHIN = 8
+SHARED_WITHIN_HASH = "68ffe5aa9756dc9c28e4f4b0b2a85927cfc8d76814bdfe649dd47c18c7f46754"
 SHARED_OVER = MAX_ITEMS.bit_length()
+SHARED_LONG = 64
 SHARED_DEEP = MAX_DEPTH - 2
-SHARED_WITHIN_HASH = "d8f0e59db169fde7356c9e6da7aef40e226c5ffc5fc0c58f627d494d42779f58"
 WRITES = pytest.mark.parametrize("route", ["", "/{rid}", "/{rid}/active-version", "/{rid}/mode"])
 CHECKS = pytest.mark.parametrize("path", ["/rules/validate", f"/rules/{RULE_ID}/compile"])
 
@@ -147,9 +149,30 @@ def _deep(levels: int) -> bytes:
     return ('{"ir":' + "[" * (levels - 1) + "]" * (levels - 1) + "}").encode()
 
 
-def _shared(levels: int) -> dict[str, Any]:
-    """A graph model whose condition nodes are shared, `levels` deep."""
+def _expansion(model: dict[str, Any]) -> int:
+    """The condition-node copies a graph model's expansion builds: a shared one per consumer."""
+    kinds = {n["id"]: n["type"] for n in model["nodes"]}
+    feeds: dict[str, list[str]] = {}
+    for e in model["edges"]:
+        feeds.setdefault(e["to"], []).append(e["from"])
+    memo: dict[str, int] = {}
+
+    def copies(nid: str) -> int:
+        if nid not in memo:
+            memo[nid] = (kinds[nid] in ("comparison", "boolean", "temporal")) + sum(
+                copies(src) for src in feeds.get(nid, [])
+            )
+        return memo[nid]
+
+    return copies(next(e["from"] for e in model["edges"] if e["port"] == "when"))
+
+
+def _shared(levels: int, values: int = 0) -> dict[str, Any]:
+    """A graph model whose condition nodes are shared, `levels` deep; with `values`, its comparison
+    carries that many `set_values`, so every copy does."""
     g, prev = _jsonable(to_graph_model(_rule())), "c1"
+    if values:
+        next(n for n in g["nodes"] if n["id"] == "c1")["data"]["set_values"] = ["v"] * values
     for k in range(1, levels + 1):
         g["nodes"].append({"id": f"b{k}", "type": "boolean", "data": {"op": "all_of"}})
         g["edges"] += [{"from": prev, "to": f"b{k}", "port": "in"}] * 2
@@ -216,7 +239,7 @@ def test_compile_graph_shared_nodes_within_the_bounds_keep_their_ir_hash() -> No
 def test_compile_graph_shared_node_copies_past_the_bounds_are_the_bounds_issue() -> None:
     """The graph compiler charges shared-node copies against the document bounds."""
     with pytest.raises(RuleCompileError) as refused:
-        compile_graph(_shared(SHARED_OVER))
+        compile_graph(_shared(SHARED_OVER, SHARED_LONG))
     assert _issues([i.to_dict() for i in refused.value.issues]) == BOUNDS
     assert LIMITS in refused.value.issues[0].message
 

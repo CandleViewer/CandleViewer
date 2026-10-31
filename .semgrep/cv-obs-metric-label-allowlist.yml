@@ -40,6 +40,9 @@ rules:
       # resource (E15-T01): {workspace, layout}; max_series=2.
       # route (#2421): the matched route TEMPLATE (`scope["route"].path`), never the raw path,
       #   plus `unmatched`; bounded by the app's route table; max_series=1000 as a backstop.
+      # route, also (E35, #4834, rule_authoring_rate_limited_total): the check a 429 answered,
+      #   {validate, compile} (`api/rules.CHECK_ROUTES`), each child bound at build; never a path
+      #   or an identifier; max_series=2.
       # permission, route, role, also (#902, authz_denied_by_route_total): the clamped permission
       #   (or `other`), the route template (`unmatched`, `ws`) and normalise_role; max_series=1040,
       #   206 (permission, route template) pairs + unmatched/ws, x 4 roles, x 1.25 (#4530).
@@ -131,6 +134,9 @@ rules:
       # outcome, reason, also (E28-T03 #907, cv_sizer_outcomes_total): {ok, skip, fail} x
       #   accounts.sizer SkipReason/FailReason + none; 11 pairs; max_series=11.
       # cap, also (E28-T03 #907, cv_sizer_clamped_total): accounts.sizer.CapName (7); max_series=7.
+      # cap, also (E35, #4834, rule_authoring_cap_refused_total): the bound a rule authoring request
+      #   was refused at, {condition_nodes, note, reason, stored_rules} (`rules/manager.REFUSED_CAPS`),
+      #   each child bound at build; never an identifier; max_series=4.
       # depth (E21-T01, #604, book_resync_total, book_publish_latency_ms,
       #   book_subscriptions_active): a book depth, the closed 23 Sec.6.1 set {1, 50, 200, 500}
       #   (a tier or a topic depth, `ws/topics.DEPTHS`), never an identifier; max_series <= 132

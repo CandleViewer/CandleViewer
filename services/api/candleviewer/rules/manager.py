@@ -16,7 +16,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final, Protocol
+from typing import Any, Final, Literal, Protocol, get_args
 from uuid import UUID
 
 import structlog
@@ -24,7 +24,7 @@ from pydantic import ValidationError
 
 from candleviewer.observability import spawn
 from candleviewer.rules.arming import ArmingFacts, check_arming
-from candleviewer.rules.compiler.common import check_bounds
+from candleviewer.rules.compiler.common import ConditionNodeBoundError, check_bounds
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.ir.accounts import (
@@ -109,6 +109,21 @@ class RuleRefusalUnrecorded(Exception):
     hook failed, or did not answer within `REFUSAL_AUDIT_TIMEOUT_S`; `__cause__` says which, for
     the route to answer (`rules` may not import `audit`). A success record's failure is never
     wrapped."""
+
+
+#: The bounds the authoring routes count when they refuse one (`rule_authoring_cap_refused_total`):
+#: a closed set, so the counter's series stay bounded.
+RefusedCap = Literal["condition_nodes", "note", "reason", "stored_rules"]
+REFUSED_CAPS: Final = get_args(RefusedCap)
+
+
+class RuleCapRefused(RuleError):
+    """A refusal of one of the `REFUSED_CAPS`, answered as any `RuleError` is. `cap` is an attribute
+    and never a member of the answer: the routes count it, nothing sends it."""
+
+    def __init__(self, cap: RefusedCap, status: int, code: str, message: str, **extra: Any) -> None:
+        super().__init__(status, code, message, **extra)
+        self.cap = cap
 
 
 def _ir_invalid(issues: list[Issue]) -> RuleError:
@@ -705,9 +720,15 @@ class RulesManager:
     @staticmethod
     def check_document(doc: Any) -> None:
         """The bounds compile and validate apply (`check_bounds`), first on every save and for any
-        caller about to walk the document itself: the same 422 `rule_ir_invalid` as `_validated`."""
+        caller about to walk the document itself: the same 422 `rule_ir_invalid` as `_validated`.
+        A document over the condition-node bound is a `RuleCapRefused`, which the routes count."""
         try:
             check_bounds(doc, "rule")
+        except ConditionNodeBoundError as exc:
+            refused = _ir_invalid(exc.issues)
+            raise RuleCapRefused(
+                exc.cap, refused.status, refused.code, refused.message, **refused.extra
+            ) from exc
         except RuleCompileError as exc:
             raise _ir_invalid(exc.issues) from exc
 
