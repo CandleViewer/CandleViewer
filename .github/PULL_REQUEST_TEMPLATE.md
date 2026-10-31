@@ -21,7 +21,8 @@
 Ticket key: <!-- e.g. EP-OMS-014, from the ticket JSON `key` field / issue title prefix -->
 
 Closes #
-<!-- Exactly one primary issue (C-4.6/C-4.7). Reference related issues below if needed. -->
+<!-- One primary issue by default (C-4.6/C-4.7); a bundle under an owner delivery-speed directive lists
+     `Closes #N` for each ticket, with one acceptance table per ticket. Reference related issues below if needed. -->
 <!-- A stacked slice writes `Refs #N` plus a `Partial: <reason>` line and must close nothing: no
      close/fix/resolve + issue ref anywhere in the body (checklists included) or in its commit
      messages (squash merges keep them, and they are not checked), no issue linked in the
@@ -78,7 +79,7 @@ Related:
 
 ### Process (§4, §10)
 
-- [ ] One issue → one branch → one PR; description contains `Closes #N` (C-4.6, C-4.7)
+- [ ] One issue → one branch → one PR by default (a bundle under an owner delivery-speed directive: `Closes #N` per ticket, one acceptance table each); description contains `Closes #N` (C-4.6, C-4.7)
 - [ ] Branch matches `<type>/<epic-key>-<slug>`; commits are Conventional with an allowed scope (C-4.4, C-4.10)
 - [ ] Branch rebased on `main` (no merge commits); will be **squash**-merged (C-4.12)
 - [ ] Diff ≤ 400 changed LOC, or `large-pr-approved` label with written justification (C-4.8)

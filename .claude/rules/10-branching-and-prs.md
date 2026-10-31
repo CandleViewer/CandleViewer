@@ -15,7 +15,7 @@ Source: `CONSTITUTION.md` §4, `docs/plan/01-sdlc-and-branching.md`, `.github/PU
 - Spikes end in a written finding (ADR or `docs/plan/` note) and are deleted (C-4.5).
 
 ## Scope
-- Exactly one issue ⇄ one branch ⇄ one PR (C-4.6). No drive-by changes (C-4.9) — open a new issue instead.
+- One issue ⇄ one branch ⇄ one PR by default; a bundle under an owner delivery-speed directive closes several tickets of one module / epic / chain, each with its own acceptance table and QA record (C-4.6). No drive-by changes (C-4.9) — open a new issue instead.
 - Preferred diff ≤400 changed LOC excluding lockfiles/generated/snapshots (C-4.8). Split larger work
   into stacked PRs behind a flag (C-4.13).
 - Before starting, check open PRs for overlapping paths (C-4.15): `gh pr list --search "<path>"`.

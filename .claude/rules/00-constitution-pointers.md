@@ -39,7 +39,7 @@ link to it instead).
 - Tickets labelled `retired` are not work items. Never pick them up; follow the replacement named in the body.
 
 ## Non-negotiables (summary; details in the Constitution)
-- One issue ⇄ one branch ⇄ one PR; `Closes #N` in the PR (C-4.6, C-4.7).
+- One issue ⇄ one branch ⇄ one PR by default; bundles only under an owner delivery-speed directive, each ticket with its own acceptance table and QA record; `Closes #N` in the PR (C-4.6, C-4.7).
 - No flag may gate a safety invariant; native SL is always placed (C-2.6, C-4.14).
 - Never edit an applied migration (C-5.4). One migration per PR (C-5.3).
 - Secrets are only touched in `services/api/secrets/` (C-3.2).

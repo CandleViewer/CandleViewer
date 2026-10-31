@@ -27,7 +27,7 @@ a bug to report.
 1. **Start from a Ready issue.** Check it against the Definition of Ready (Constitution §11.1). If
    acceptance criteria, design sign-off, dependencies or estimate are missing, comment on the issue and
    stop — do not guess.
-2. **One ticket = one branch = one PR.** Branch as `<type>/<epic-key>-<short-slug>` using `feat/`, `fix/`,
+2. **One ticket = one branch = one PR by default** (bundling only as C-4.6 allows). Branch as `<type>/<epic-key>-<short-slug>` using `feat/`, `fix/`,
    `chore/`, `design/`, `spike/` or `docs/` (Constitution §4.2).
 3. **Contract first.** If the REST/WS surface changes, edit `docs/plan/22-api-openapi.yaml` or
    `docs/plan/23-ws-protocol.md` and regenerate `packages/protocol` before writing implementation code
