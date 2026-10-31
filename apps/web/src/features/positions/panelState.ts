@@ -7,6 +7,8 @@
  *
  * Deep links (`12-sitemap.md` §7, R-130): `?groupBy=account|symbol` and `?account=<uuid>` set the
  * view; a deep-linked value is not persisted (it is "persisted per-user if changed interactively").
+ * It is held apart from the stored view, field by field, until the user changes that field: an
+ * unrelated change stores the user's own group-by and chips, never the link's.
  * `manager` is read as no value: Group by Manager is not offered (BQ-10). `trade_group` has no
  * deep-link form (D04-G2). The server re-validates an account's scope whatever the link says.
  */
@@ -98,14 +100,24 @@ function write(user: string | null, state: PanelState): void {
   }
 }
 
+/** The fields a deep link sets, over the stored view, until each is changed interactively. */
+type Linked = Partial<Pick<PanelState, "groupBy" | "chips">>;
+const NO_LINK: Linked = Object.freeze({});
+
 let user: string | null = null;
+/** The user's own view: what is stored. */
+let stored: PanelState = DEFAULT_PANEL_STATE;
+let linked: Linked = NO_LINK;
+/** What is shown: the stored view, with the link's fields over it. */
 let state: PanelState = DEFAULT_PANEL_STATE;
 const listeners = new Set<() => void>();
 
-function set(next: PanelState, persist: boolean): void {
-  if (persist) write(user, next);
-  if (next === state) return;
-  state = next;
+function set(nextStored: PanelState, nextLinked: Linked, persist: boolean): void {
+  if (persist) write(user, nextStored);
+  if (nextStored === stored && nextLinked === linked) return;
+  stored = nextStored;
+  linked = nextLinked;
+  state = linked === NO_LINK ? stored : { ...stored, ...linked };
   for (const listener of [...listeners]) listener();
 }
 
@@ -116,17 +128,27 @@ export function subscribePanelState(listener: () => void): () => void {
   return () => void listeners.delete(listener);
 }
 
-/** Whose view this is: loads that user's stored state (or the defaults for none). */
+/** Whose view this is: loads that user's stored state (or the defaults); a link applies after. */
 export function setPanelUser(next: string | null): void {
   user = next;
-  set(read(next), false);
+  set(read(next), NO_LINK, false);
 }
 
-/** An interactive change: applied and stored for the user. */
+/**
+ * An interactive change: applied and stored for the user. A field it names leaves the link (the
+ * user chose it now); the fields it does not name keep the stored values, not the link's.
+ */
 export function updatePanelState(patch: Partial<PanelState>): void {
-  set({ ...state, ...patch }, true);
+  const groupBy = patch.groupBy === undefined ? linked.groupBy : undefined;
+  const chips = patch.chips === undefined ? linked.chips : undefined;
+  const keep: Linked =
+    groupBy === undefined && chips === undefined
+      ? NO_LINK
+      : { ...(groupBy !== undefined && { groupBy }), ...(chips !== undefined && { chips }) };
+  set({ ...stored, ...patch }, keep, true);
 }
 
+/** A chip change acts on the chips shown, the link's included, and stores the result. */
 export function updateChips(action: FilterAction): void {
   const chips = reduceFilters(state.chips, action);
   if (chips !== state.chips) updatePanelState({ chips });
@@ -152,9 +174,13 @@ export function readDeepLink(search: string): DeepLink {
 export function applyDeepLink(link: DeepLink): void {
   const chip =
     link.account === undefined ? null : normaliseChip({ kind: "account", value: link.account });
-  const chips =
-    chip === null ? state.chips : [...state.chips.filter((c) => c.kind !== "account"), chip];
-  set({ ...state, ...(link.groupBy !== undefined && { groupBy: link.groupBy }), chips }, false);
+  if (link.groupBy === undefined && chip === null) return; // a link with no value opens nothing
+  const next: Linked = {
+    ...linked,
+    ...(link.groupBy !== undefined && { groupBy: link.groupBy }),
+    ...(chip !== null && { chips: [...state.chips.filter((c) => c.kind !== "account"), chip] }),
+  };
+  set(stored, next, false);
 }
 
 /** The deep link of the view (account and symbol group-bys; the first Account chip). */
@@ -170,7 +196,7 @@ export function deepLinkSearch(view: PanelState): string {
 /** Back to a fresh page's state (tests, sign-out). */
 export function resetPanelState(): void {
   user = null;
-  set(DEFAULT_PANEL_STATE, false);
+  set(DEFAULT_PANEL_STATE, NO_LINK, false);
 }
 
 /** One field of the panel state; a component re-renders only when that field changes. */

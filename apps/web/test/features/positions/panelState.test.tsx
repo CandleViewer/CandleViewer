@@ -147,6 +147,46 @@ describe("deep links (12 §7, R-130)", () => {
     expect(getPanelState().groupBy).toBe("symbol");
   });
 
+  it("a later unrelated change stores the user's own view, never the link's", () => {
+    setPanelUser("user-1");
+    updateChips({ type: "add", chip: { kind: "account", value: MAIN } });
+    applyDeepLink(readDeepLink(`?groupBy=symbol&account=${SUB1}`));
+    updatePanelState({ density: "comfortable" });
+    expect(getPanelState()).toMatchObject({
+      groupBy: "symbol",
+      chips: [{ kind: "account", value: SUB1 }],
+      density: "comfortable",
+    });
+    expect(JSON.parse(localStorage.getItem(KEY) ?? "null")).toMatchObject({
+      groupBy: "account",
+      chips: [{ kind: "account", value: MAIN }],
+      density: "comfortable",
+    });
+  });
+
+  it("a field changed after a link is stored as chosen; the link keeps the others", () => {
+    setPanelUser("user-1");
+    applyDeepLink(readDeepLink(`?groupBy=symbol&account=${SUB1}`));
+    updatePanelState({ groupBy: "trade_group" });
+    expect(getPanelState()).toMatchObject({
+      groupBy: "trade_group",
+      chips: [{ kind: "account", value: SUB1 }],
+    });
+    expect(JSON.parse(localStorage.getItem(KEY) ?? "null")).toMatchObject({
+      groupBy: "trade_group",
+      chips: [],
+    });
+    updateChips({ type: "add", chip: { kind: "symbol", value: "BTCUSDT" } }); // on the chips shown
+    expect(JSON.parse(localStorage.getItem(KEY) ?? "null")).toMatchObject({
+      chips: [
+        { kind: "account", value: SUB1 },
+        { kind: "symbol", value: "BTCUSDT" },
+      ],
+    });
+    setPanelUser("user-1"); // the stored view again, with no link over it
+    expect(getPanelState().chips).toHaveLength(2);
+  });
+
   it("writes the link of a view", () => {
     expect(
       deepLinkSearch({
