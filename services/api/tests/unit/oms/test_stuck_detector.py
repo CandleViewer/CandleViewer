@@ -337,6 +337,59 @@ async def test_a_record_that_does_not_answer_is_cut_at_its_bound_and_paged() -> 
     assert rig.bus.offered == []
 
 
+async def test_a_bus_that_refuses_the_hop_ends_nothing() -> None:
+    rig = build()
+    rig.bus.refuse = True
+    rig.reads.orders["demo"] = [order()]
+    assert await rig.detector.scan() == "ok"
+    assert rig.kinds() == ["in_flight"] and len(rig.events.rows) == 1
+
+
+def test_the_maps_refuse_a_cap_under_one() -> None:
+    with pytest.raises(ValueError, match="max_tracked"):
+        Dedupe(DEFAULTS, max_tracked=0)
+
+
+@pytest.mark.parametrize(
+    ("scan", "why"),
+    [({"timeout_s": 5.0}, "under its interval"), ({"limit": 0}, "limit is an int")],
+)
+def test_the_scan_refuses_a_bound_past_its_interval_or_no_limit(
+    scan: dict[str, Any], why: str
+) -> None:
+    with pytest.raises(ValueError, match=why):
+        build(**scan)
+
+
+class _HangingReads(InMemoryStuckReads):
+    """A read that never answers."""
+
+    async def stuck_orders(
+        self, environment: Any, *, limit: int
+    ) -> tuple[tuple[StuckOrderRow, ...], bool]:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+async def test_a_scan_its_bound_cuts_is_failed_and_its_chores_still_run() -> None:
+    """The loop counts a cut scan `failed`, logs it, then runs each chore, one that raises
+    logged and the loop going on."""
+    ran: list[str] = []
+
+    async def chore() -> None:
+        ran.append("chore")
+        raise RuntimeError("the account read failed")
+
+    async def stop(_seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    rig = build(reads=_HangingReads(), sleep=stop, timeout_s=0.01, chores=(chore,))
+    with pytest.raises(asyncio.CancelledError):
+        await rig.detector.run()
+    assert rig.count("oms_detector_scans_total", result="failed") == 1
+    assert ran == ["chore"]
+
+
 # --- One scan -----------------------------------------------------------------------------------
 
 
