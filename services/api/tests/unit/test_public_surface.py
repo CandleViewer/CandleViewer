@@ -66,8 +66,9 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "make_support_bundle_router",
         # E24-T02: funding-rate router.
         "make_funding_router",
-        # E24-T01: open-interest router.
+        # E24-T01 / E24-T03: open-interest and liquidations routers.
         "make_open_interest_router",
+        "make_liquidations_router",
     },
     # E09-T02: the audit writer/query surface M21/M23 consume (C-3.3).
     "M19": {

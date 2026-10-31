@@ -1,4 +1,6 @@
-"""E24-T03 (#667): the `allLiquidation` push parser, over the docs-shaped fixtures."""
+"""E24-T03 (#667): the Bybit `allLiquidation` push parser, over the corpus only: the docs
+transcription (`ws/docs-all-liquidation.jsonl`) and the generated cascade
+(`ws/allLiquidation_BTCUSDT_burst.jsonl`)."""
 
 from __future__ import annotations
 
@@ -44,7 +46,9 @@ def test_parse_push_keeps_every_print_apart_by_batch_index() -> None:
     twin_a, twin_b = events[0], events[1]
     assert (twin_a.ts_event, twin_a.price) == (twin_b.ts_event, twin_b.price)
     assert twin_a.qty == twin_b.qty
-    assert {e.liquidated_side for e in events} == {"short"}  # `Buy` closes a short
+    wire = [row["S"] for row in json.loads(BURST[1])["data"]]
+    closed = {"Buy": "short", "Sell": "long"}  # `Buy` closes a short, `Sell` a long (24 §2.5)
+    assert [e.liquidated_side for e in events] == [closed[w] for w in wire]
 
 
 def test_parse_print_without_own_time_takes_the_envelope_and_says_so() -> None:
