@@ -34,12 +34,13 @@ const FAMILIES: Record<string, string[]> = {
   "scroll-behavior": ["scroll-behavior"],
 };
 const REDUCE_FORMS = ['[data-motion="reduce"] *', ":not([data-motion]) *"];
+/** Selectors that only suppress motion: the reduce scopes and the one-frame theme-swap block. */
+const SUPPRESSORS = ['[data-motion="reduce"]', ":not([data-motion])", "[data-theme-swap]"];
 
 /** The contract: every animated property outside the reduce scope has an `!important` universal counterpart. */
 function violations(css: string): string[] {
   const rules = parseRules(css);
-  const scoped = (r: Rule): boolean =>
-    REDUCE_FORMS.some((f) => r.selector.includes(f.slice(0, -2)));
+  const scoped = (r: Rule): boolean => SUPPRESSORS.some((f) => r.selector.includes(f));
   const universal = (form: string): Rule | undefined =>
     rules.find((r) => scoped(r) && r.selector.split(",").some((s) => s.trim().endsWith(form)));
   const out: string[] = [];

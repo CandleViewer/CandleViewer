@@ -190,6 +190,21 @@ const sameDetail = (a: ThemeChangeDetail, b: ThemeChangeDetail): boolean =>
 const defaultRoot = (): HTMLElement | undefined =>
   typeof document === "undefined" ? undefined : document.documentElement;
 
+/**
+ * Marks the root for the frames of a theme swap, so `theme.css` runs no colour transition across it
+ * (E05-D03, the #3140 lens finding). Cleared after two animation frames: the first holds the swap's
+ * style recalculation, the second the frame after it; a timer clears it where frames do not run.
+ */
+function markThemeSwap(root: HTMLElement): void {
+  root.setAttribute("data-theme-swap", "");
+  const clear = (): void => root.removeAttribute("data-theme-swap");
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => requestAnimationFrame(clear));
+  } else {
+    setTimeout(clear, 100);
+  }
+}
+
 export function createThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
   const root = options.root ?? defaultRoot();
   const storage = options.storage ?? attempt(() => window.localStorage, undefined);
@@ -219,6 +234,9 @@ export function createThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
       motion: s.motion,
       "text-scale": s.textScale,
     };
+    if (root.hasAttribute("data-theme") && root.getAttribute("data-theme") !== s.theme) {
+      markThemeSwap(root);
+    }
     for (const [name, value] of Object.entries(values)) {
       if (root.getAttribute(`data-${name}`) !== String(value))
         root.setAttribute(`data-${name}`, String(value));

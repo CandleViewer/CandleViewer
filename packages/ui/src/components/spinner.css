@@ -26,7 +26,7 @@
   display: block;
   width: 100%;
   height: 100%;
-  animation: cv-spin calc(var(--motion-duration-slow) * 2) linear infinite;
+  animation: var(--cv-recipe-spinner);
 }
 
 .cv-spinner__arc circle {
@@ -43,8 +43,8 @@
   }
 }
 
-/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): no rotation, a static arc.
-   The pulse of D15 waits for the E05-D03 motion recipe, which is what lets it survive theme.css's reduce rule. */
+/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): no rotation, a static arc
+   with the in-flight label; the recipe resolves to `none` and there is no pulse (E05-D03 row 7, G-5). */
 :root[data-motion="reduce"] .cv-spinner__arc {
   animation: none;
 }

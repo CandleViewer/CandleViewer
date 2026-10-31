@@ -38,6 +38,25 @@ const attrs = (root: HTMLElement): (string | null)[] =>
   ["theme", "density", "motion", "text-scale"].map((name) => root.getAttribute(`data-${name}`));
 
 describe("theme store attributes", () => {
+  it("marks a theme swap for its frames only (theme.css suppresses transitions under it)", () => {
+    vi.stubGlobal("requestAnimationFrame", (run: FrameRequestCallback) => {
+      frames.push(run);
+      return frames.length;
+    });
+    const frames: FrameRequestCallback[] = [];
+    const { root, store } = setup();
+    store.connect();
+    expect(root.hasAttribute("data-theme-swap")).toBe(false); // the first write is no swap
+    store.setDensity("comfortable");
+    expect(root.hasAttribute("data-theme-swap")).toBe(false); // nor is a density change
+    store.setTheme("light");
+    expect(root.hasAttribute("data-theme-swap")).toBe(true);
+    frames.shift()?.(0); // the swap's own frame: still marked
+    expect(root.hasAttribute("data-theme-swap")).toBe(true);
+    frames.shift()?.(0);
+    expect(root.hasAttribute("data-theme-swap")).toBe(false);
+  });
+
   it.each(THEMES)("sets data-theme=%s on the root", (theme) => {
     const { root, store } = setup();
     store.connect();

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { find, loadCss } from "./css-contract.js";
+import { find, loadCss, recipeSafe } from "./css-contract.js";
 
 const { all, normal, forced } = loadCss("dialog.css");
 
@@ -88,8 +88,11 @@ describe("dialog.css contract (CMP-043)", () => {
   });
 
   it("H21: the scrim fades in over normal / standard while the card is a cut", () => {
-    expect(all).toMatch(
-      /prefers-reduced-motion: no-preference\)\s*\{\s*\.cv-dialog__scrim\s*\{\s*animation: cv-dialog-scrim-in var\(--motion-duration-normal\)\s*cubic-bezier\(var\(--motion-easing-standard\)\)/,
+    expect(find(normal, ".cv-dialog__scrim", "animation")).toContain(
+      "animation: var(--cv-recipe-dialog-scrim-in)",
+    );
+    expect(recipeSafe("dialog-scrim-in")).toBe(
+      "cv-dialog-scrim-in var(--motion-duration-normal) cubic-bezier(var(--motion-easing-standard))",
     );
     expect(find(normal, ".cv-dialog", "animation")).toBe("");
     expect(find(normal, ".cv-dialog", "transition")).toBe("");
@@ -98,32 +101,19 @@ describe("dialog.css contract (CMP-043)", () => {
   it("the exit fades both parts over fast / accelerate with no pointer events", () => {
     const exit = find(normal, '.cv-dialog-layer[data-state="closing"] > .cv-dialog', "transition");
     expect(exit).toContain("opacity: 0");
-    expect(exit).toContain(
-      "transition: opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate))",
+    expect(exit).toContain("transition: var(--cv-recipe-fade-out)");
+    expect(recipeSafe("fade-out")).toBe(
+      "opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate))",
     );
     expect(find(normal, '.cv-dialog-layer[data-state="closing"]', "pointer-events")).toContain(
       "pointer-events: none",
     );
   });
 
-  it("reduced motion: the in-app override and the OS preference both cut the fade", () => {
-    expect(find(all, ':root[data-motion="reduce"] .cv-dialog__scrim', "animation")).toContain(
-      "animation: none",
-    );
-    expect(
-      find(
-        all,
-        ':root[data-motion="reduce"] .cv-dialog-layer[data-state="closing"] > .cv-dialog',
-        "transition",
-      ),
-    ).toContain("transition: none");
-    expect(
-      find(
-        all,
-        ':root:not([data-motion]) .cv-dialog-layer[data-state="closing"] > .cv-dialog__scrim',
-        "transition",
-      ),
-    ).toContain("transition: none");
+  it("reduced motion: no OS-query gate, the recipes resolve to none under data-motion (G-1)", () => {
+    expect(all).not.toMatch(/prefers-reduced-motion: no-preference/);
+    expect(all).not.toMatch(/:root:not\(\[data-motion\]\) \.cv-dialog/);
+    expect(find(all, ".cv-dialog__scrim", "animation")).toContain("var(--cv-recipe-");
   });
 
   it("forced colours: a CanvasText edge on Canvas; the scrim keeps its black (conventions 38)", () => {

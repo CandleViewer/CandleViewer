@@ -26,11 +26,9 @@
   opacity: var(--opacity-scrim);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .cv-dialog__scrim {
-    animation: cv-dialog-scrim-in var(--motion-duration-normal)
-      cubic-bezier(var(--motion-easing-standard));
-  }
+/* The scrim fades in over the `dialog-scrim-in` recipe (E05-D03 row 2a): `none` under reduce, from `theme.css`. */
+.cv-dialog__scrim {
+  animation: var(--cv-recipe-dialog-scrim-in);
 }
 
 @keyframes cv-dialog-scrim-in {
@@ -153,25 +151,10 @@
 .cv-dialog-layer[data-state="closing"] > .cv-dialog__scrim,
 .cv-dialog-layer[data-state="closing"] > .cv-dialog {
   opacity: 0;
-  transition: opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate));
+  transition: var(--cv-recipe-fade-out);
 }
 
-/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): a cut both ways. */
-:root[data-motion="reduce"] .cv-dialog__scrim {
-  animation: none;
-}
-
-:root[data-motion="reduce"] .cv-dialog-layer[data-state="closing"] > .cv-dialog__scrim,
-:root[data-motion="reduce"] .cv-dialog-layer[data-state="closing"] > .cv-dialog {
-  transition: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion]) .cv-dialog-layer[data-state="closing"] > .cv-dialog__scrim,
-  :root:not([data-motion]) .cv-dialog-layer[data-state="closing"] > .cv-dialog {
-    transition: none;
-  }
-}
+/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): the recipes resolve to `none`, a cut both ways. */
 
 /* The universal reduce pair (as theme.css applies it), kept here so the file is self-contained. */
 :root[data-motion="reduce"] *,

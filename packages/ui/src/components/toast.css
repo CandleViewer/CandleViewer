@@ -3,7 +3,7 @@
  * surface for every tone (H6): the overlay at elevation.popover with a 1 px default edge, a 2 px border.thick start
  * edge in the tone's `.default`, and the glyph in its `.strong`; the glyph and the kicker carry the tone. 360 px, or
  * the viewport less space.inset.lg each side. Motion: it slides in (translate and opacity over `fast` /
- * `decelerate`); reduced motion is a cut until E05-D03's fade-only recipe lands; the host's removal is a cut.
+ * `decelerate`); reduced motion is a cut (the `toast-in` recipe resolves to `none`, E05-D03 row 4a); the host's removal is a cut.
  * The region's place and stacking order are CMP-212's: no z-index (no layer token yet), as CMP-016 and CMP-017.
  */
 .cv-toast-region {
@@ -53,10 +53,8 @@
   --cv-toast-strong: var(--color-status-danger-strong);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .cv-toast {
-    animation: cv-toast-in var(--motion-duration-fast) cubic-bezier(var(--motion-easing-decelerate));
-  }
+.cv-toast {
+  animation: var(--cv-recipe-toast-in);
 }
 
 @keyframes cv-toast-in {
@@ -142,10 +140,7 @@
   flex: none;
 }
 
-/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): the entrance is a cut. */
-:root[data-motion="reduce"] .cv-toast {
-  animation: none;
-}
+/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): the recipe resolves to `none`, a cut. */
 
 /* The universal reduce pair for animations (as theme.css applies it), kept here so the file is self-contained. */
 :root[data-motion="reduce"] *,

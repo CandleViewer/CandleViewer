@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { find, loadCss } from "./css-contract.js";
+import { find, loadCss, recipeSafe } from "./css-contract.js";
 
 const { all, normal, forced } = loadCss("toast.css");
 
@@ -74,17 +74,18 @@ describe("toast.css contract (CMP-045)", () => {
 
   it("no countdown bar: nothing animates but the entrance", () => {
     expect(all).not.toMatch(/transition/);
-    expect([...all.matchAll(/animation:/g)]).toHaveLength(2);
+    expect([...all.matchAll(/animation:/g)]).toHaveLength(1);
   });
 
-  it("motion: slides in over fast / decelerate only without a reduce preference; reduce is a cut", () => {
-    expect(all).toMatch(
-      /@media \(prefers-reduced-motion: no-preference\) \{\s*\.cv-toast \{\s*animation: cv-toast-in var\(--motion-duration-fast\) cubic-bezier\(var\(--motion-easing-decelerate\)\);/,
+  it("motion: slides in over the toast-in recipe (fast / decelerate); reduce resolves it to none (G-1)", () => {
+    expect(find(normal, ".cv-toast", "animation")).toContain(
+      "animation: var(--cv-recipe-toast-in)",
+    );
+    expect(recipeSafe("toast-in")).toBe(
+      "cv-toast-in var(--motion-duration-fast) cubic-bezier(var(--motion-easing-decelerate))",
     );
     expect(all).toContain("transform: translateY(var(--space-inset-sm))");
-    expect(find(normal, ':root[data-motion="reduce"] .cv-toast', "animation")).toContain(
-      "animation: none",
-    );
+    expect(all).not.toMatch(/prefers-reduced-motion: no-preference/);
   });
 
   it("forced colours: a CanvasText border and edge on Canvas; glyph and words CanvasText", () => {
