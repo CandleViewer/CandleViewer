@@ -12,9 +12,10 @@ questions. E22-Q02 to E22-Q05 automate, measure, audit and execute it; this plan
 - **Base and READY sha.** The plan was written at `origin/main` `f2ae72d68b072924b338d2302c1c142834dd718e` (`f2ae72d68`) and rebased onto
   `7e13e073a066d296b205e075c6b3335d7fc096ff` (`7e13e073a`), where every cite was re-checked: between the two only `26` changed among the cited files, and
   this plan cites `26` by section through D05. The BQ list was read at `93025160e`; between it and `f2ae72d68` only docs landed that this plan cites (the
-  merged E22-D05 pack and its deck, two `14` / `15` catalogue rows), and no cited code line moved. Every † and every blocked row was re-grepped at `origin/main`
-  `9afa0b29d500dc18cc7568a5ec21c659470f13bf` (`9afa0b29d`), the READY base: the nine † rows still have no emitter, no blocked row changed status, and the
-  only cited file that moved since `7e13e073a` is `14`, whose SCR-053 lines did not (the #422 rider carried by BQ-24).
+  merged E22-D05 pack and its deck, two `14` / `15` catalogue rows), and no cited code line moved. Every † and every blocked row, and every file:line cite, was re-grepped at
+  `origin/main` `6298e962e4258a51b692d9af400bb71fdb6b5229` (`6298e962e`), the READY base after the rebase: the nine † rows still have no emitter, no
+  blocked row changed status, and the cites that moved (eleven: nine in `22` after #5126, two in `app.py`, each re-pinned) now point at their text; #5141
+  closed C-PCT (the #422 rider carried by BQ-24).
 - **Expectations come from the specification, not the implementation.** Each case cites its source:
   - `US-BIG-nnn/k` is scenario k of that story in `docs/plan/11-user-stories.md` §12 (`11`:2172–2290); the global acceptance criteria are `11`:42–49;
   - `S01` to `S05` and `T01`, `T02`, `T04` are the Gherkin of E22-S01 to S05 and E22-T01, T02, T04 in `docs/plan/backlog/E22.json` (`E22J`; the one-line
@@ -42,7 +43,7 @@ questions. E22-Q02 to E22-Q05 automate, measure, audit and execute it; this plan
   an owner means that owner must answer or ship first; the case is still executable the day the blocker clears, never untestable (BQ-12).
 - **Sources, in order** (BQ-07): (1) the wire: `sub_ok.effective` (`big_trade_threshold`, `big_trade_mode`, defaults included, `23`:790)
   and each `TradesBatch` item (`is_big_trade`, `cluster_size`) and frame field (`dropped`, `coalesced`, `coalesced_count`, `big_trade_threshold`;
-  `23`:2838–2880), and REST `TradesPageMeta` (`22`:19648–19662) > (2) an API answer: a `22` status and rule, a `23` `sub_ok` or `err` code > (3) the
+  `23`:2838–2880), and REST `TradesPageMeta` (`22`:19670–19684) > (2) an API answer: a `22` status and rule, a `23` `sub_ok` or `err` code > (3) the
   presentation: a tape row's accessible name, a bubble's DOM-mirror name and tooltip, quoted from the deck (presentation only, and the case says so). Canvas
   pixels are never an expected value: a bubble is read through its sparse DOM-mirror node and its tooltip (D02:255, D02:269). Every case also names a
   secondary record: a counter or frame field (section 10's lists); a read-only case with none says "none (a read)". A † after a metric or event marks one
@@ -86,7 +87,7 @@ note (C02, section 4); "threshold percentile 0-100" (the engine refuses 0 and 10
 The before-writing question list (BQ-01 to BQ-25, posted on #713 as comment 6536429292, read from `main` `93025160e`) proposed a default for every
 question, and the orchestrator's ruling of record (#713 comment 6537475047, 2026-10-31, under the 2026-10-29 delegation) rules **all 25 as proposed**, with
 these riders: cites by operation id, schema and field, with lines only where a rule is quoted (BQ-02); the deck's PROPOSED percentile range against the
-engine's bounds is a C-row, the plan citing the engine meanwhile (BQ-08: C-PCT, C21); the ETHUSDT and SOLUSDT windows scanned before the plan says no
+engine's bounds was a C-row, now resolved by #5141 (E22-D05 v1.1; BQ-08: C-PCT, C21); the ETHUSDT and SOLUSDT windows scanned before the plan says no
 recorded print reaches the default (BQ-11, U5: C16); the counters' read path on staging an open question to the observability owner (BQ-16: OQ-1); the
 metrics leg one row blocked on #645 / #658 with an aggregate stand-in (BQ-05: C55, G-M1); the PR closes #713 on the document (BQ-14). The seven departures
 from #422 are confirmed by name (BQ-25; listed in its row). A later ruling that changes a row changes the sections it names in one pass.
@@ -133,7 +134,7 @@ request (`d02.13.cp24`), and the server legs are blocked on E22-S02 (#715).
 
 | Action                        | Operation (permission · scope)                                                  | OWNER    | MANAGER  | VIEWER                                                                       | view-as                                 | Cases         |
 | ----------------------------- | ------------------------------------------------------------------------------- | -------- | -------- | ---------------------------------------------------------------------------- | --------------------------------------- | ------------- |
-| read a page                   | `getTrades` (`marketdata:read` · none; `22`:4724; matrix.yaml:947–951 executed) | `200`    | `200`    | `200`                                                                        | `200`                                   | C15, C32, C61 |
+| read a page                   | `getTrades` (`marketdata:read` · none; `22`:4728; matrix.yaml:947–951 executed) | `200`    | `200`    | `200`                                                                        | `200`                                   | C15, C32, C61 |
 | subscribe the tape            | WS `trades.{symbol}` (a read; `23`:748)                                         | `sub_ok` | `sub_ok` | `sub_ok`                                                                     | `sub_ok`                                | C01, C61      |
 | read metrics                  | `getMetrics` (`marketdata:read` · none; matrix.yaml:903–909 `not_mounted`)      | blocked  | blocked  | blocked                                                                      | blocked                                 | C55           |
 | pause, inspect, filter, scale | none (client state)                                                             | yes      | yes      | yes (D02 S23: "pause, the display filters and Big only still work", D02:142) | yes                                     | C04, C42, C61 |
@@ -172,7 +173,7 @@ streaming; mirrors US-BIG-001/1, S01.1; UI half blocked on E22-S01 #714)
   accessible names; compare each row's side with the fixture frame's `S` for the same trade id.
 - Expected: `sub_ok.effective` carries `cluster_window_ms` 0, `cluster_tolerance_ticks` 0, `big_trade_threshold` and `big_trade_mode`, defaults included
   (`23`:787, `23`:790); the `snap` holds at most 200 items, oldest first (`23`:748; `TP`:34–35, `TP`:87); each item has `ts_ms`, `price`, `size` and `side`
-  (`23`:2845) and `side` equals the fixture's `S` lower-cased, the taker side (`22` `PublicTrade.side`, `22`:19626–19631; `BYB/2026-10-05/README.trades.md`:4–5).
+  (`23`:2845) and `side` equals the fixture's `S` lower-cased, the taker side (`22` `PublicTrade.side`, `22`:19648–19653; `BYB/2026-10-05/README.trades.md`:4–5).
   Each row shows the Time cell as `HH:MM:SS.mmm`, then Price, Size, Notional and Side in D02's column order (column headers "Time" · "Price" · "Size" ·
   "Notional" · "Side", `d02.13.cp16`), newest at the top; the Side word and its glyph come from the item's `side`, never from price movement
   (S01.1 "never inferred client-side"). A row's accessible name follows the deck template, side first ("Sell, 18.75 BTC at 64,012.0, 1.2M, whale,
@@ -256,7 +257,7 @@ E-REPLAY · backfill; mirrors D02 S15, S16; edge "WS disconnect mid-burst"; bloc
 - Expected: a `presentation` divider "— gap {t1} → {t2} —" (`d02.13.cp09`), the chip "Reconstructed after gap" (`d02.13.cp05`) and the
   button "Load missed prints" (`d02.13.cp10`); after the REST load the missed prints sit under the divider "— {n} prints while disconnected —" and
   "{n} missed prints loaded" is said once (`d02.13.cp23`); each id appears once (ids 0004–0006 inserted, 0001, 0003, 0007 not repeated). The
-  REST page is the hot tape only, the last 1 000 prints (`TR`:3–4; `22`:4662–4664): a gap longer than that is not fully loadable, and the case asserts what
+  REST page is the hot tape only, the last 1 000 prints (`TR`:3–4; `22`:4666–4668): a gap longer than that is not fully loadable, and the case asserts what
   the page returns, never more. Mid-burst: the resubscribe `snap` holds the last 200 items and no id repeats across `snap` and the later `d` frames.
 - Source: the REST page and the `snap` ids > the divider count (presentation). 2nd: `cv_ws_frames_emitted_total{topic="trades"}` (`WM`:157–161).
 
@@ -336,7 +337,7 @@ D02 S6, D04 FP-01; `14`:1272; blocked on E22-S01 #714, FX-G4 and FX-G3)
 ### 3.2 US-BIG-002 Big-trade threshold highlighting (Must)
 
 At the base no threshold can be set: the publisher and the route take their config from `lambda _symbol: BigTradeConfig()` (`TP`:204; `TR`:158), the app
-wiring passes none (`services/api/candleviewer/app.py`:1809–1816), and no text connects a saved threshold to the engine (D05-G-2, D05:215, D05:535). Every
+wiring passes none (`services/api/candleviewer/app.py`:1810–1817), and no text connects a saved threshold to the engine (D05-G-2, D05:215, D05:535). Every
 symbol therefore runs mode `notional` at 250 000 USDT (`bigtrade_models.py`:30–31; `23`:790). Every case that sets a mode or a value is **blocked on E22-S02
 (#715) and the `22` owner** (BQ-08); the default-threshold legs run today.
 
@@ -424,8 +425,8 @@ edge "threshold percentile 0 and 100"; blocked on E22-S02 #715 and D05-G-4)
 - Steps: enter -1, then "abc", then (percentile mode) 0 and 100; read the field's message; watch the WS for any `sub` or `ctl`.
 - Expected: an inline validation message, the previous value retained, and no subscription change sent (no `sub`, `ctl` or `unsub` frame; S02.5). The
   engine's bounds: a value must be finite and at least 0, and a percentile strictly between 0 and 100 (`bigtrade_models.py`:40–41,
-  `0 < self.value < 100`). The deck's PROPOSED message says "Enter a value of 0 or more; a percentile is 0 to 100." (`d05.05.range`; D05:302), which admits
-  0 and 100: a C-row (C-PCT, section 10). The case asserts the behaviour (0 and 100 refused in percentile mode), not the text.
+  `0 < self.value < 100`). The deck's PROPOSED message, v1.1, says "Enter 0 or more; a percentile is above 0 and below 100." (`d05.05.range`), matching the
+  engine (C-PCT, resolved by #5141). The case asserts the behaviour (0 and 100 refused in percentile mode), not the text, while the entry stays PROPOSED.
 - Source: the WS frame log (no change) > the field state (presentation). 2nd: none.
 
 **E22-Q01-C22 The same trade id delivered twice after a resubscribe counts once** (`integration`; E-REPLAY · backfill; mirrors T01.6)
@@ -723,7 +724,7 @@ the 5 000 ms maximum (REST only)"; C-row C-5000)
 - Pre: FX-GOLD.
 - Steps: `getTrades` with `cluster_window_ms=5000` and no `from` / `to`; then with `from` / `to` 15 min apart, then 15 min + 1 ms apart.
 - Expected: 5 000 is accepted on REST (`LIM`:15; `22` `getTrades` `cluster_window_ms` maximum 5000); above 2 000 ms the read window narrows to 15 min, so
-  15 min is `200` and 15 min + 1 ms is `400` `invalid_time_range` (`LIM`:13; `TR`:247–256; `22`:4685–4687). The ticket's "clustering window at 0 and at the
+  15 min is `200` and 15 min + 1 ms is `400` `invalid_time_range` (`LIM`:13; `TR`:247–256; `22`:4689–4691). The ticket's "clustering window at 0 and at the
   5 000 ms maximum" holds on REST only: the WS bound is 2 000 ms (`LIM`:16; `23`:787) and the panel's control stops there (D05-C-3, D05:142), so the UI
   reaches neither 5 000 nor any refusal (C57).
 - Source: the REST answers. 2nd: `BM` `bigtrade_range_rejected_total{endpoint}` rises once for the refusal (`BM`:53–57).
@@ -789,9 +790,9 @@ the ticket's third surface; **blocked on #645 / #658** for the per-series leg; G
 - Steps: read the composition allow-list and the RBAC matrix rows for `getMetrics`; over a fixed span, count the flagged items the tape received and read the
   engine's flagged counter before and after.
 - Expected: `getMetrics` is a contract-first operation not mounted at the base (`services/api/tests/unit/architecture/composition_allowlist.json`:105–108;
-  `services/api/tests/contract/rbac/matrix.yaml`:903–909, `state: not_mounted`); the app wires the `trades` topic (`services/api/candleviewer/app.py`:1809–1816), and
+  `services/api/tests/contract/rbac/matrix.yaml`:903–909, `state: not_mounted`); the app wires the `trades` topic (`services/api/candleviewer/app.py`:1810–1817), and
   `getMetrics` is `not_mounted` (matrix.yaml:903–909). When served, `big_trade_notional` is the largest print notional in a 1 000 ms window and
-  `big_trade_zscore` a z-score over 500 prints (`22` `getMetrics`, `22`:4892–4894; `24`:1125–1126; `services/api/candleviewer/rules/vocabulary/metrics.py`:38–39):
+  `big_trade_zscore` a z-score over 500 prints (`22` `getMetrics`, `22`:4896–4898; `24`:1125–1126; `services/api/candleviewer/rules/vocabulary/metrics.py`:38–39):
   aggregates, never a per-print flag, and `trade_cluster` (`24`:1129) has no `MetricCode` in `22`. The stand-in, aggregate only and never per print: the
   `bigtrade_flagged_total{mode}` delta (`BM`:26–28) equals the count of distinct flagged items the tape received over the span. When the route is served,
   the case adds: for each 1 000 ms window, the served `big_trade_notional` equals the largest notional among the tape's items in that window.
@@ -802,7 +803,7 @@ AC2, AC3, AC8 (REST half) and `TM`:179's boundary-table duty)
 
 - Pre: FX-CLEAN BTCUSDT; a session with `marketdata:read`.
 - Steps: one `getTrades` request per row below; read the status, the problem code or rule, and the `field`.
-- Expected (`TR`:167–212; `22`:4685–4698, the "Errors as built" paragraph): a parameter outside its schema is **422** `validation_failed` with
+- Expected (`TR`:167–212; `22`:4689–4702, the "Errors as built" paragraph): a parameter outside its schema is **422** `validation_failed` with
   `errors[].field` (as `query.cluster_window_ms`) and the failed `rule`; a malformed `from`, `to`, `min_size` or `cursor` is **400**; `invalid_time_range` and
   `invalid_min_size` are **400**. `TM` writes "400" for AC2 and AC8 (`TM`:208, `TM`:214): C-row C-400 to the `TM` owner (E22-X01); the table follows `22`.
 
@@ -838,7 +839,7 @@ streaming; mirrors T02.3, `TM` AC8 (WS half); edge "clustering window at 0 and a
 
 - Expected: refusals are per topic in `sub_ok`, never clamped; "cluster_window_ms must be 0 to 2000." is the shape of the message (`23`:788); the topic is not
   subscribed (`23`:788; T02.3); `min_size` refusals are `invalid_options` with `field: "min_size"` (`23`:787). REST answers the same values with 422 by
-  intent (`22`:4696–4697): each surface keeps its own refusal shape.
+  intent (`22`:4700–4701): each surface keeps its own refusal shape.
 - Source: `sub_ok` per topic. 2nd: `cv_ws_trades_subscribe_rejected_total{reason="cluster_range"}` rises once per cluster refusal and
   `{reason="min_size_floor"}` per `min_size` refusal (`WM`:174–182; `TP`:179–188, `TP`:294).
 
@@ -1051,7 +1052,7 @@ exists; none is marked untestable (ticket AC 3).
 
 **Entry** (`03`:407; BQ-14). E22-S01 to S05 are merged to `main`, CI is green, and a deployable build runs on the staging stack; the
 fixtures of section 6 and FX-G3, FX-G4 exist; the `22` `getTrades` and `23` §6.1 `trades` contract tests are green; every open question a case depends on is
-answered, or the case is marked blocked on it. **At the base** (`7e13e073a`) the backend is merged (E22-T01, T02, T04, X01) and every frontend surface is
+answered, or the case is marked blocked on it. **At the base** (`6298e962e`) the backend is merged (E22-T01, T02, T04, X01) and every frontend surface is
 unbuilt (no tape feature, no bubble layer, D05:56–57); E22-S01 to S05 are Sprint 12 (`E22J`:377–485). The entry criteria are therefore met for the wire
 cases once FX-G3 runs and not met for the UI cases, which is why this PR closes #713 on the document (as #404 and #422 did) and the execution record is
 E22-Q05's (#755). The ticket's "six states" are the six Gherkin states D02 lists first (D02:116); D02 draws 23 (D02:120–142).
@@ -1145,25 +1146,25 @@ bind: D02-G4 (no tape keymap context, C62), D02-G7 (the full-ring policy, C05), 
 
 **10.2 This plan's differences between the ticket and the merged sources** (C-rows; each case asserts the merged source):
 
-| Row      | Difference                                                                                                                                                                                   | Cases     | Owner                                      |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ------------------------------------------ |
-| C-5000   | the ticket's "clustering window … at the 5 000 ms maximum" holds on REST only; WS stops at 2 000 (`LIM`:15–16; `23`:787–788) and so does the panel (D05-C-3)                                 | C49, C57  | E22-S04 #717                               |
-| C-PCT    | the deck's PROPOSED `d05.05.range` says "a percentile is 0 to 100", while the engine refuses 0 and 100 (`bigtrade_models.py`:41, `0 < self.value < 100`); the plan cites the engine's bounds | C21       | E22-D05 (a versioned delta), E22-S02 #715  |
-| C-400    | `TM` AC2 and AC8 expect "400"; `22` answers a parameter outside its schema with 422 `validation_failed` (`22`:4691–4697)                                                                     | C56       | the `TM` owner, E22-X01                    |
-| C-CURSOR | `22` `Cursor` and `TM` AC2 set cursor expiry and refusal rules that this plan cannot assert at the base                                                                                      | C56       | the `22` owner with E22-X02 #756           |
-| C-BIT2   | T02.2 says binary kind-3 records set flags bit2; a window holding a multi-print cluster leaves structured, so bit2 is not set on `trades` (`23`:257; `TP`:30–33, :467)                       | C34       | the `23` owner, E22-T02                    |
-| C-CFLAG  | a cluster is big when any member is flagged, with no test of the total (`23`:791, `23`:2861)                                                                                                 | C52       | the `22`, `23`, `24` owners                |
-| C-CSIZE  | US-BIG-004/1 sums the qualifying prints; the engine sums every evaluated member (`bigtrade.py`:174; `24`:600)                                                                                | C33, C53  | the `24` owner with the `11` owner         |
-| C-CPOS   | the mark sits at the cluster's `vwap` (D03:206); the item and the row carry the first print's price (`23`:791)                                                                               | C53       | D03's owner with the `23` owner            |
-| C-TIER2  | tier 2 and the bubble cap are a client-side 4× (D02:101, D02:249); S02.1 forbids a client comparison against the threshold                                                                   | C54       | E22-S02 #715, D04's owner (D05-C-11)       |
-| C-ACC    | the popover says "same price … within 250 ms / 1 tick"; the rule is a price bucket with no anchor check (`BC`:5–6; `24`:597)                                                                 | C37, C41  | D02's owner, E22-S04 #717                  |
-| C-FAIL   | the popover names no failure mode (S04.4; `30`:386)                                                                                                                                          | C37       | D02's owner, E22-S04 #717                  |
-| C-WHY    | "Why estimated?" opens a section with no wording (D02 G10; D05:609)                                                                                                                          | C37       | E22-S04 #717, E25-D05                      |
-| C-BAR    | US-BIG-004/3 wants the bar rule in the tooltip; the drawn tooltip names the bar only (`d02.13.cp19`)                                                                                         | C36       | D02's owner, E22-S04 #717                  |
-| C-NAMES  | the ticket's `tape_prints_dropped_total` and `tape_frames_coalesced_total` ship as `cv_ws_tape_prints_dropped_total{reason}` and `cv_ws_tape_frames_coalesced_total` (`WM`:162–173)          | C59       | the ticket text (E22-Q01's own; no action) |
-| C-14DATA | `14`:1271 says "thresholds applied client-side; percentile thresholds computed server-side via GET /api/v1/market/metrics"; the threshold is the engine's, echoed on the tape (`23`:790)     | C15, C17  | the `14` owner                             |
-| C-STATES | the ticket says "six states"; D02 draws 23 with the six Gherkin ones first (D02:116, D02:120–142)                                                                                            | section 7 | none (the plan covers the 23)              |
-| C-THEMES | the ticket says both themes; the design resolves three (D05:288–290)                                                                                                                         | C64, CH4  | none (the plan covers three)               |
+| Row      | Difference                                                                                                                                                                               | Cases     | Owner                                               |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | --------------------------------------------------- |
+| C-5000   | the ticket's "clustering window … at the 5 000 ms maximum" holds on REST only; WS stops at 2 000 (`LIM`:15–16; `23`:787–788) and so does the panel (D05-C-3)                             | C49, C57  | E22-S04 #717                                        |
+| C-PCT    | resolved by #5141 (v1.1): the deck's `d05.05.range` now reads "a percentile is above 0 and below 100", matching the engine (`bigtrade_models.py`:41, `0 < self.value < 100`)             | C21       | closed; the wording stays PROPOSED for E22-S02 #715 |
+| C-400    | `TM` AC2 and AC8 expect "400"; `22` answers a parameter outside its schema with 422 `validation_failed` (`22`:4695–4701)                                                                 | C56       | the `TM` owner, E22-X01                             |
+| C-CURSOR | `22` `Cursor` and `TM` AC2 set cursor expiry and refusal rules that this plan cannot assert at the base                                                                                  | C56       | the `22` owner with E22-X02 #756                    |
+| C-BIT2   | T02.2 says binary kind-3 records set flags bit2; a window holding a multi-print cluster leaves structured, so bit2 is not set on `trades` (`23`:257; `TP`:30–33, :467)                   | C34       | the `23` owner, E22-T02                             |
+| C-CFLAG  | a cluster is big when any member is flagged, with no test of the total (`23`:791, `23`:2861)                                                                                             | C52       | the `22`, `23`, `24` owners                         |
+| C-CSIZE  | US-BIG-004/1 sums the qualifying prints; the engine sums every evaluated member (`bigtrade.py`:174; `24`:600)                                                                            | C33, C53  | the `24` owner with the `11` owner                  |
+| C-CPOS   | the mark sits at the cluster's `vwap` (D03:206); the item and the row carry the first print's price (`23`:791)                                                                           | C53       | D03's owner with the `23` owner                     |
+| C-TIER2  | tier 2 and the bubble cap are a client-side 4× (D02:101, D02:249); S02.1 forbids a client comparison against the threshold                                                               | C54       | E22-S02 #715, D04's owner (D05-C-11)                |
+| C-ACC    | the popover says "same price … within 250 ms / 1 tick"; the rule is a price bucket with no anchor check (`BC`:5–6; `24`:597)                                                             | C37, C41  | D02's owner, E22-S04 #717                           |
+| C-FAIL   | the popover names no failure mode (S04.4; `30`:386)                                                                                                                                      | C37       | D02's owner, E22-S04 #717                           |
+| C-WHY    | "Why estimated?" opens a section with no wording (D02 G10; D05:609)                                                                                                                      | C37       | E22-S04 #717, E25-D05                               |
+| C-BAR    | US-BIG-004/3 wants the bar rule in the tooltip; the drawn tooltip names the bar only (`d02.13.cp19`)                                                                                     | C36       | D02's owner, E22-S04 #717                           |
+| C-NAMES  | the ticket's `tape_prints_dropped_total` and `tape_frames_coalesced_total` ship as `cv_ws_tape_prints_dropped_total{reason}` and `cv_ws_tape_frames_coalesced_total` (`WM`:162–173)      | C59       | the ticket text (E22-Q01's own; no action)          |
+| C-14DATA | `14`:1271 says "thresholds applied client-side; percentile thresholds computed server-side via GET /api/v1/market/metrics"; the threshold is the engine's, echoed on the tape (`23`:790) | C15, C17  | the `14` owner                                      |
+| C-STATES | the ticket says "six states"; D02 draws 23 with the six Gherkin ones first (D02:116, D02:120–142)                                                                                        | section 7 | none (the plan covers the 23)                       |
+| C-THEMES | the ticket says both themes; the design resolves three (D05:288–290)                                                                                                                     | C64, CH4  | none (the plan covers three)                        |
 
 **10.3 Open questions** (no merged source answers them; both readings stated where there are two):
 
