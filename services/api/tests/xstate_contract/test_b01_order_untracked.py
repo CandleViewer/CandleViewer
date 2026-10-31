@@ -264,6 +264,50 @@ async def test_the_facade_hands_a_cancelled_untracked_rows_position_to_b8() -> N
             await rig.facade.stop()
 
 
+async def test_a_hydrated_untracked_row_keeps_the_fill_that_restarted_its_miss_count() -> None:
+    """#5157's code look (its optional item): a row whose history is `RECON_MISS` then `EXEC`,
+    each an `untracked` to `untracked` step, hydrates from `order_events` (24 Sec.8.2 Recovery) to
+    the context the live machine held: the fill applied and `recon_misses` back to 0, so the next
+    miss after the restart is a first one and the row is not ended (INV-B1-l)."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(b01, "_ATTEMPTS", OrderedDict())
+        rig = build_rig()
+        found = order_of(7, order_link_id="ext-" + "ab" * 16, exchange_order_id="x7")
+        try:
+            assert await rig.facade.discover(found, environment="demo") == "untracked"
+            await rig.facade.command(
+                ACCOUNT, found.id, "RECON_MISS", {"pass_id": "p1"}, actor="system"
+            )
+            await rig.facade.push(ACCOUNT, found.id, "EXEC", fill_of(found, "e1", "0.4"))
+            await rig.quiet()
+            held = ("recon_misses", "filled_qty", "seen_exec_ids", "discovered")
+            live = {name: rig.context(found)[name] for name in held}
+            assert live == {
+                "recon_misses": 0, "filled_qty": "0.4", "seen_exec_ids": ["e1"], "discovered": True,
+            }  # fmt: skip
+        except BaseException:
+            await rig.facade.stop()
+            raise
+        again = await rig.restart()
+        try:
+            events = await again.events.list_for_order(ACCOUNT, found.id)
+            assert [(e.from_state, e.to_state) for e in events] == [
+                (None, "untracked"), ("untracked", "untracked"), ("untracked", "untracked"),
+            ]  # fmt: skip
+            assert await again.facade.hydrate(ACCOUNT, found.id, environment="demo") == "untracked"
+            await again.quiet()
+            assert {name: again.context(found)[name] for name in held} == live
+            await again.facade.command(
+                ACCOUNT, found.id, "RECON_MISS", {"pass_id": "p2"}, actor="system"
+            )
+            await again.quiet()
+            assert again.facade.state(found.id)[0] == "untracked"
+            assert again.context(found)["recon_misses"] == 1
+            assert again.commands.sent == []
+        finally:
+            await again.facade.stop()
+
+
 async def test_a_findings_execution_is_still_only_recorded_in_untracked() -> None:
     """28 B1.8 version 8 (d): `RECON_FOUND_PARTIAL` keeps version 7's arm, so an execution it
     carries is recorded, never applied: an `untracked` row's fills reach it as `EXEC`."""
