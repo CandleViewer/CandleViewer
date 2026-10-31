@@ -23,7 +23,7 @@ from candleviewer.ingestion.metrics import ingest_rejected_total
 
 _LOGGER_NAME: Final[str] = __name__
 
-Stream = Literal["trade", "ticker", "book", "pump"]
+Stream = Literal["trade", "ticker", "book", "pump", "liquidation"]
 LOG_INTERVAL_S: Final[float] = 10.0
 
 
