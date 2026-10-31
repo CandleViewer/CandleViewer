@@ -27,8 +27,9 @@ interface NeutralStatic extends TagBase {
 
 /**
  * A removable neutral chip (E10: only neutral chips are removable). The remove control is a ghost CMP-002
- * named "Remove {label}" (or `removeLabel`). `onRemove` hands focus to the owning group (CMP-169, CMP-055): next chip's remove
- * button, else the previous one, else its input, never `<body>`. The chip never moves focus itself.
+ * named "Remove {label}" (or `removeLabel`). `onRemove` hands focus to the owning group (CMP-169, CMP-055):
+ * next chip's remove button, else the previous one, else its input, never `<body>`. The chip never moves focus
+ * itself.
  */
 interface NeutralRemovable extends TagBase {
   variant?: "neutral";
