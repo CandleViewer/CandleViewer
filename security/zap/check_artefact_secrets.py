@@ -23,7 +23,10 @@ would match every file), is an error, not a pass; so is a variable or a secret f
 search by. No env file means no session was minted, so nothing can have leaked. Stdlib only.
 
 Usage: check_artefact_secrets.py --env-dir DIR [--env NAME ...] [--secret-file GLOB ...]
-PATH [PATH ...]
+[--title NAME] PATH [PATH ...]
+
+`--title` names the lane on its `::error` lines (default `zap-admin`): one lowercase token, so
+nothing in it can end a workflow command early.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -39,6 +43,14 @@ from urllib.parse import quote
 
 #: The shortest value searched for: each secret is a token, key or seed of far more characters.
 MIN_LEN = 16
+#: `--title`: a workflow command's title, one token.
+_TITLE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+
+
+def _title(value: str) -> str:
+    if _TITLE.fullmatch(value) is None:
+        raise argparse.ArgumentTypeError("a title is lowercase letters, digits and dashes")
+    return value
 
 
 class Unreadable(ValueError):
@@ -132,6 +144,9 @@ def main(argv: list[str] | None = None) -> int:
         metavar="GLOB",
         help="files whose stripped content is searched for (repeatable)",
     )
+    parser.add_argument(
+        "--title", type=_title, default="zap-admin", help="the lane's name on its error lines"
+    )
     parser.add_argument("paths", type=Path, nargs="+", help="the directories to be uploaded")
     args = parser.parse_args(argv)
     try:
@@ -139,10 +154,10 @@ def main(argv: list[str] | None = None) -> int:
         extra = run_secrets(args.env, args.secret_file, os.environ)
         found = leaks({**values, **extra}, args.paths)
     except (OSError, UnicodeDecodeError, Unreadable) as exc:
-        print(f"::error title=zap-admin::the artefact check cannot run: {exc}")
+        print(f"::error title={args.title}::the artefact check cannot run: {exc}")
         return 2
     for item in found:
-        print(f"::error title=zap-admin::a secret of the run reached the artefact: {item}")
+        print(f"::error title={args.title}::a secret of the run reached the artefact: {item}")
     if not found:
         print(
             f"check_artefact_secrets: none of {len(values)} session values and "

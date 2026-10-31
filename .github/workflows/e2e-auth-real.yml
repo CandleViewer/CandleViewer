@@ -81,6 +81,7 @@ jobs:
             CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX CV_E2E_REAL_PASSWORD; do secret "$name"; done
           # The audit lane key (ADR-0037 decision 6), mode 0400 in a directory of its own.
           (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
+          echo "::add-mask::$(cat "$RUNNER_TEMP/cv-lane/lane.key")"
 
       - name: Start Postgres and QuestDB (the compose data stores, loopback only)
         # Bounded: the slowest healthcheck (QuestDB's) gives up after about two minutes.
@@ -208,7 +209,7 @@ jobs:
             --env CV_E2E_REAL_PASSWORD --env POSTGRES_PASSWORD --env CV_AUTH_PEPPER \
             --env CV_AUTH_TOTP_KEY_HEX --env CV_AUTH_RECOVERY_HMAC_KEY_HEX --env CV_AUTH_CSRF_KEY_HEX \
             --secret-file "$RUNNER_TEMP/cv/*.totp" --secret-file "$RUNNER_TEMP/cv-lane/lane.key" \
-            apps/web/test-results
+            --title e2e-auth-real apps/web/test-results
 
       - name: Upload the failure artefacts (kept 14 days)
         if: ${{ failure() && steps.scrub.outcome == 'success' }}
