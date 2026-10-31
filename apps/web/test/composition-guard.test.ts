@@ -26,6 +26,8 @@ const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   "chart-price-scale":
     "E11-S05 (#386): SCR-043 is a <Chart> child; no screen mounts one until SCR-030",
   tape: "E22-S01 (#714) PR-A: the SCR-053 model only; PR-B mounts the panel behind its flag",
+  "confirm-policy":
+    "E47-S08 (#1322): resolver and hook for the confirm surfaces (SCR-029/072/076/129), unbuilt (BQ-8)",
 };
 
 interface ParsedImports {

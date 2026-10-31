@@ -45,6 +45,10 @@ export interface HoldGateOptions {
   readonly onArm: () => void;
   /** The armed press's window ran out unanswered (the host speaks once); not called on Esc, blur or a fire. */
   readonly onLapse: () => void;
+  /** A pointer hold began (a key hold is announced by `onArm`). */
+  readonly onHoldStart?: () => void;
+  /** A pointer hold was released before completing; fired once per early release. */
+  readonly onHoldCancel?: () => void;
   /** A new value drops any hold and the armed press: the intent changed under them (the guard's rearm). */
   readonly resetKey: string;
 }
@@ -91,6 +95,8 @@ export function useHoldGate({
   onFire,
   onArm,
   onLapse,
+  onHoldStart,
+  onHoldCancel,
   resetKey,
 }: HoldGateOptions): HoldGateState {
   const [progress, setProgress] = useState(0);
@@ -108,8 +114,28 @@ export function useHoldGate({
   const windowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const ticks = useRef(0);
   // The latest options, read by the timers without restarting them.
-  const latest = useRef({ durationMs, enabled, clock, canStart, onFire, onArm, onLapse });
-  latest.current = { durationMs, enabled, clock, canStart, onFire, onArm, onLapse };
+  const latest = useRef({
+    durationMs,
+    enabled,
+    clock,
+    canStart,
+    onFire,
+    onArm,
+    onLapse,
+    onHoldStart,
+    onHoldCancel,
+  });
+  latest.current = {
+    durationMs,
+    enabled,
+    clock,
+    canStart,
+    onFire,
+    onArm,
+    onLapse,
+    onHoldStart,
+    onHoldCancel,
+  };
 
   const stopHold = (): void => {
     clearTimeout(tickTimer.current);
@@ -219,7 +245,10 @@ export function useHoldGate({
   );
 
   const release = (kind: Hold["kind"]): void => {
-    if (hold.current?.kind === kind) stopHold();
+    if (hold.current?.kind !== kind) return;
+    stopHold();
+    // A key release is a discrete press (it armed; `onArm` spoke): only a pointer release is an early cancel.
+    if (kind === "pointer") latest.current.onHoldCancel?.();
   };
 
   return {
@@ -241,6 +270,7 @@ export function useHoldGate({
           }
         }
         startHold("pointer", at);
+        latest.current.onHoldStart?.();
       },
       onPointerUp: () => release("pointer"),
       onPointerCancel: () => release("pointer"),

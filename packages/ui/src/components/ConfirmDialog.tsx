@@ -455,6 +455,13 @@ export function ConfirmDialog({
     // H25: the armed name is spoken politely, once per arming; a lapsed window once, so the disarm is heard.
     onArm: () => setPolite((s) => ({ n: s.n + 1, text: armedName })),
     onLapse: () => setPolite((s) => ({ n: s.n + 1, text: `Disarmed — ${confirmLabel}` })),
+    onHoldStart: () =>
+      setPolite((s) => ({
+        n: s.n + 1,
+        text: `Holding — keep pressing to ${lowerFirst(confirmLabel)}`,
+      })),
+    onHoldCancel: () =>
+      setPolite((s) => ({ n: s.n + 1, text: `Released early — ${confirmLabel} cancelled` })),
     // The guard's rearm (a new title or effect) drops a hold or an armed press made for the old intent.
     resetKey: `${title}\n${confirmLabel}`,
   });

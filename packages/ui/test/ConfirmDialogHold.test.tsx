@@ -130,6 +130,19 @@ describe("ConfirmDialog hold (CMP-044, H25)", () => {
     expect(target).not.toHaveAttribute("data-holding");
   });
 
+  it("Gherkin 'Hold-to-confirm has a keyboard path': a pointer hold is announced, an early release is said once", async () => {
+    await openHost();
+    const target = confirmButton();
+    const status = (): HTMLElement => screen().getByRole("status");
+    await pointerDown(target);
+    expect(status()).toHaveTextContent(/^Holding — keep pressing to flatten/);
+    await advance(400);
+    await pointerUp(target);
+    expect(status()).toHaveTextContent(/^Released early — Flatten .* cancelled$/);
+    await pointerUp(target);
+    expect(status().textContent?.match(/Released early/g)).toHaveLength(1);
+  });
+
   it("a pointer hold fires at the duration, never before, once", async () => {
     const onConfirm = vi.fn();
     await openHost({ onConfirm });
