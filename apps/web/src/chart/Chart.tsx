@@ -45,10 +45,19 @@ export const RECREATE_KEYS = [
 type Applied = { theme: ChartOptions["theme"]; density: ChartOptions["density"] | undefined };
 
 const ChartContext = createContext<ChartApi | null>(null);
+const ContainerContext = createContext<HTMLElement | null>(null);
 
 /** The mounted chart's API, or null before mount and after unmount. */
 export function useChartApi(): ChartApi | null {
   return useContext(ChartContext);
+}
+
+/**
+ * The element the mounted chart renders into (the engine's input target, where it dispatches its
+ * DOM events such as SCR-043's `candleviewer:pricescalemenu`), or null while no chart is mounted.
+ */
+export function useChartContainer(): HTMLElement | null {
+  return useContext(ContainerContext);
 }
 
 export function Chart({ options, label, onFrameStats, onError, children }: ChartProps): ReactNode {
@@ -60,6 +69,7 @@ export function Chart({ options, label, onFrameStats, onError, children }: Chart
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
   const [chart, setChart] = useState<ChartApi | null>(null);
+  const [container, setContainer] = useState<HTMLElement | null>(null);
   // What the live chart was last given, so an unchanged theme or density is never re-applied.
   const applied = useRef<Applied>({ theme: options.theme, density: options.density });
 
@@ -78,11 +88,13 @@ export function Chart({ options, label, onFrameStats, onError, children }: Chart
     // that costs one extra render per mount or recreate, and `<Pane>` children mount one commit
     // after the chart exists. Accepted: neither carries chart data.
     setChart(created);
+    setContainer(container);
     return () => {
       offStats();
       offError();
       created.dispose();
       setChart(null);
+      setContainer(null);
     };
   }, [recreateKey]);
 
@@ -100,11 +112,21 @@ export function Chart({ options, label, onFrameStats, onError, children }: Chart
   }, [chart, options.density]);
 
   // `figure` + name is the stub's semantics: no live region yet. The real chart semantics
-  // (E11-S13, CMP-180) revisit the role once the DOM mirror root carries content.
+  // (E11-S13, CMP-180) revisit the role once the DOM mirror root carries content. `tabIndex={-1}`
+  // (not a Tab stop, which E11-S13's plot stop adds): a press focuses it, so the engine's keys and
+  // SCR-043's `Shift+F10` are heard there and a closed menu can return focus to it (E11-S05).
   return (
-    <div ref={containerRef} role="figure" aria-label={label} style={{ position: "relative" }}>
+    <div
+      ref={containerRef}
+      role="figure"
+      aria-label={label}
+      tabIndex={-1}
+      style={{ position: "relative" }}
+    >
       <ChartContext.Provider value={chart}>
-        {chart === null ? null : children}
+        <ContainerContext.Provider value={container}>
+          {chart === null ? null : children}
+        </ContainerContext.Provider>
       </ChartContext.Provider>
     </div>
   );
