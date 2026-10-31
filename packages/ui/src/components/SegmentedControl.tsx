@@ -1,7 +1,7 @@
 import { type JSX, type MouseEvent } from "react";
 import { Icon } from "../icons/Icon.js";
 import type { IconName } from "../icons/registry.js";
-import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonText, announceGatedReason, useDisabledReason } from "./internal/disabledReason.js";
 import { useRoving, type RovingItemProps } from "./internal/useRoving.js";
 
 export interface SegmentedOption {
@@ -52,6 +52,7 @@ interface SegmentProps {
   readonly disabled: boolean;
   readonly gated: boolean;
   readonly groupReasonId: string | undefined;
+  readonly groupReason: string | undefined;
   readonly roving: RovingItemProps;
   readonly onPick: (value: string) => void;
 }
@@ -63,6 +64,7 @@ function Segment({
   disabled,
   gated,
   groupReasonId,
+  groupReason,
   roving,
   onPick,
 }: SegmentProps): JSX.Element {
@@ -81,6 +83,7 @@ function Segment({
     }
   };
   const handleClick = (event: MouseEvent<HTMLElement>): void => {
+    if (gated) announceGatedReason(groupReason);
     if (disabled || gated) return;
     event.currentTarget.focus();
     onPick(option.value);
@@ -145,6 +148,7 @@ export function SegmentedControl({
     checked: value,
     onSelect: onPick,
     gated: refused,
+    onRefused: () => announceGatedReason(group.reason),
   });
   return (
     <>
@@ -170,6 +174,7 @@ export function SegmentedControl({
             disabled={group.disabled}
             gated={group.gated}
             groupReasonId={group.gated ? group.reasonId : undefined}
+            groupReason={group.reason}
             roving={roving.itemProps(option.value)}
             onPick={onPick}
           />

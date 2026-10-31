@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { Button } from "./Button.js";
 import { RbacGate, type RbacGateProps } from "./RbacGate.js";
 import { Toggle } from "./Toggle.js";
@@ -36,6 +36,9 @@ const denied = (gate: DeniedGate): Story => {
       await userEvent.click(control);
       await expect(control).toHaveFocus();
       await expect(onClick).not.toHaveBeenCalled();
+      // One polite announcement of the reason (D09 2.2), set a microtask after the click.
+      const region = within(canvasElement.ownerDocument.body).getByRole("status");
+      await waitFor(() => expect(region).toHaveTextContent(/\.$/));
     },
   };
 };

@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, type ComponentPropsWithoutRef, type JSX } fro
 import { Icon } from "../icons/Icon.js";
 import { ChoiceRow } from "./internal/ChoiceRow.js";
 import { cx } from "./internal/cx.js";
-import { useDisabledReason } from "./internal/disabledReason.js";
+import { announceGatedReason, useDisabledReason } from "./internal/disabledReason.js";
 import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { useControllable } from "./internal/useControllable.js";
 
@@ -77,7 +77,10 @@ export function Checkbox({
           onChange={(e) => {
             e.currentTarget.indeterminate = indeterminate;
             // Controlled by `checked`: React restores the box after a no-op change, so a gated box keeps its value.
-            if (reason.gated) return;
+            if (reason.gated) {
+              announceGatedReason(reason.reason);
+              return;
+            }
             const next = indeterminate ? true : !checked;
             setChecked(next);
             onChange?.(next);

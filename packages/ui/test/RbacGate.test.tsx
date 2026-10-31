@@ -12,6 +12,7 @@ import {
   type RbacReasonKey,
 } from "../src/components/index.js";
 import { mount } from "./theme/mount.js";
+import { clearPolite, politeText } from "./theme/polite.js";
 
 const button = (host: HTMLElement): HTMLButtonElement =>
   within(host).getByRole("button", { name: "Place order" }) as HTMLButtonElement;
@@ -85,6 +86,40 @@ describe("RbacGate (CMP-079)", () => {
     await userEvent.keyboard(" ");
     fireEvent.click(control);
     expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("denied: Enter, click and a dispatched click each announce the reason once, never call the handler", async () => {
+    const onClick = fn();
+    const host = await mount(
+      <RbacGate allowed={false} reason="rbac.permission" fills={{ verb: "place orders" }}>
+        <Button onClick={onClick}>Place order</Button>
+      </RbacGate>,
+    );
+    const control = button(host);
+    const reason = "Your role can't place orders.";
+    expect(await politeText()).toBe("");
+    await userEvent.tab();
+    expect(await politeText()).toBe("");
+    await userEvent.keyboard("{Enter}");
+    expect(await politeText()).toBe(reason);
+    clearPolite();
+    await userEvent.click(control);
+    expect(await politeText()).toBe(reason);
+    clearPolite();
+    fireEvent.click(control);
+    expect(await politeText()).toBe(reason);
+    expect(document.querySelectorAll("[role=status]")).toHaveLength(1);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("allowed: an activation announces nothing", async () => {
+    const host = await mount(
+      <RbacGate allowed reason="rbac.account">
+        <Button>Place order</Button>
+      </RbacGate>,
+    );
+    await userEvent.click(button(host));
+    expect(await politeText()).toBe("");
   });
 
   it("keeps the wrapped control's role and full name on other atoms", async () => {

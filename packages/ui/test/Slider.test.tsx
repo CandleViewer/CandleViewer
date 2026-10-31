@@ -8,6 +8,7 @@ import { Slider } from "../src/components/index.js";
 import { visibleMarks, type SliderProps } from "../src/components/Slider.js";
 import * as stories from "../src/components/Slider.stories.js";
 import { mount } from "./theme/mount.js";
+import { clearPolite, politeText } from "./theme/polite.js";
 
 const REASON = "Owner only";
 type Base = Partial<Omit<SliderProps, "aria-label" | "aria-labelledby">>;
@@ -520,5 +521,30 @@ describe("Slider stories", () => {
   it.each(Object.entries(composed))("%s renders", async (_name, Story) => {
     const host = await mount(<Story />);
     expect(host.querySelector("[role=slider]")).not.toBeNull();
+  });
+});
+
+describe("Slider gated announcement (D09 2.2)", () => {
+  it("announces the reason on a value key or a rail press, not on focus or a non-value key", async () => {
+    const onChange = fn();
+    const host = await mount(<Host onChange={onChange} disabledReason={REASON} />);
+    await userEvent.tab();
+    await userEvent.keyboard("a");
+    expect(await politeText()).toBe("");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(await politeText()).toBe(REASON);
+    clearPolite();
+    const again = await mount(<Host onChange={onChange} disabledReason={REASON} />);
+    await userEvent.pointer({ keys: "[MouseLeft>]", target: rail(again) });
+    expect(await politeText()).toBe(REASON);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(host).toBeDefined();
+  });
+
+  it("an allowed slider announces nothing", async () => {
+    await mount(<Host onChange={fn()} />);
+    await userEvent.tab();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(await politeText()).toBe("");
   });
 });

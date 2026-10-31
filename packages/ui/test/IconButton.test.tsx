@@ -5,6 +5,7 @@ import { describe, it } from "vitest";
 import { IconButton } from "../src/components/index.js";
 import * as stories from "../src/components/IconButton.stories.js";
 import { mount } from "./theme/mount.js";
+import { clearPolite, politeText } from "./theme/polite.js";
 
 const REASON = "Owner only";
 const get = (host: HTMLElement, name = "Settings"): HTMLButtonElement =>
@@ -147,5 +148,21 @@ describe("IconButton stories", () => {
   it.each(Object.entries(composeStories(stories)))("%s renders", async (_name, Story) => {
     const host = await mount(<Story />);
     expect(within(host).getAllByRole("button").length).toBeGreaterThan(0);
+  });
+});
+
+describe("IconButton gated announcement (D09 2.2)", () => {
+  it("announces the reason on a gated click, announces nothing when allowed", async () => {
+    const onClick = fn();
+    const host = await mount(
+      <IconButton icon="lock" label="Arm" disabledReason={REASON} onClick={onClick} />,
+    );
+    await userEvent.click(within(host).getByRole("button", { name: "Arm" }));
+    expect(await politeText()).toBe(REASON);
+    expect(onClick).not.toHaveBeenCalled();
+    clearPolite();
+    const open = await mount(<IconButton icon="lock" label="Arm" onClick={onClick} />);
+    await userEvent.click(within(open).getByRole("button", { name: "Arm" }));
+    expect(await politeText()).toBe("");
   });
 });
