@@ -5971,8 +5971,8 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Audit a destructive hotkey binding change (hotkey.trading_binding_changed)
-     * @description The UI posts this when a trading (destructive) command is rebound. The server appends an audit record (C-2.9) attributed to the session principal; actor, role and time are never taken from the body.
+     * Audit a hotkey binding change in the dangerous set (hotkey.trading_binding_changed)
+     * @description The UI posts this whenever a command of the client keymap's dangerous set (its destructive commands, `ticket.submit` and the arm toggles) is rebound or unbound by a user holding `settings:write`; a user without it remaps on the device only and posts nothing. `acknowledged_unsafe` marks a bare key bound on the user's acknowledgement. The server appends an audit record (C-2.9) attributed to the session principal; actor, role and time are never taken from the body.
      */
     post: operations["recordHotkeyBindingAudit"];
     delete?: never;

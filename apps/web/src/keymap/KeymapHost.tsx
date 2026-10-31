@@ -1,10 +1,13 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { toggleHighContrastAnnounced } from "@candleviewer/ui";
+import { appThemeStore } from "../shell/bootstrap/themeStore";
 import { createDispatcher } from "./dispatcher";
 import { getBindings, subscribeBindings } from "./profile";
 import type { KeymapCommand } from "./keymap";
 import { Cheatsheet } from "./Cheatsheet";
 import { flushAuditOutbox, recordAudit } from "./audit";
 import { isCommandValid, registerCommand, runCommand } from "./registry";
+import { cycleRegion, toggleReducedMotionAnnounced } from "./shellCommands";
 
 /**
  * Views register their commands' handlers through the registry's guard (#305); a command with no handler, or whose
@@ -42,6 +45,20 @@ export function KeymapHost(): JSX.Element {
   const bindings = useSyncExternalStore(subscribeBindings, getBindings);
   // Real command: the `Ctrl+/` cheatsheet (SCR-013). Other commands register from their owning views.
   useEffect(() => registerCommand("global.cheatsheet", () => setSheetOpen((o) => !o)), []);
+  // The shell's own (#305, BQ-6): the landmark ring and E05-T02's two theme toggles. None is a stepper, so a held
+  // chord runs each once (E10-D04 G-07).
+  useEffect(() => {
+    const offs = [
+      registerCommand("global.region_cycle", () => void cycleRegion()),
+      registerCommand("global.toggle_high_contrast", () => {
+        toggleHighContrastAnnounced(appThemeStore());
+      }),
+      registerCommand("global.toggle_reduced_motion", () => {
+        toggleReducedMotionAnnounced(appThemeStore());
+      }),
+    ];
+    return () => offs.forEach((off) => off());
+  }, []);
   useEffect(() => {
     const on = (e: Event) => recordAudit((e as CustomEvent).detail);
     const retry = () => void flushAuditOutbox();
@@ -86,7 +103,9 @@ export function KeymapHost(): JSX.Element {
         },
         activeContexts(),
       );
-      if (r.status === "executed" || r.status === "repeat") e.preventDefault();
+      if (r.status === "executed" || r.status === "repeat" || r.status === "reserved") {
+        e.preventDefault();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

@@ -21,6 +21,7 @@ export const PR_IDS: ReadonlySet<string> = new Set(["R-001", "R-901", "R-902", "
 
 const SIGNED_IN = new Map<string, NonNullable<A11yScreen["signedIn"]>>([
   ["R-201", { role: "owner", heading: "Security settings" }],
+  ["R-202", { role: "owner", heading: "Hotkeys" }],
   ["R-203", { role: "owner", heading: "Appearance" }],
 ]);
 

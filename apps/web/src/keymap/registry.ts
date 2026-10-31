@@ -10,13 +10,13 @@
  */
 import {
   KEYMAP,
+  bindingAtoms,
   isDangerous,
   isSingleLetter,
   rangeDigit,
   type KeymapCommand,
   type KeymapContext,
 } from "./keymap";
-import { bindingAtoms } from "./validate";
 
 export interface DeclaredShadow {
   readonly command: string;
@@ -48,7 +48,9 @@ export interface CommandMeta {
 export const ignoresRepeat = (c: KeymapCommand): boolean =>
   isDangerous(c) || c.ignoreRepeat !== false;
 export const runsInEditable = (c: KeymapCommand): boolean => c.allowInEditable === true;
-const contextsOf = (c: KeymapCommand): readonly KeymapContext[] => c.focusContexts ?? [c.context];
+/** Where a command's binding is live: its focus contexts, by default its own context. */
+export const contextsOf = (c: KeymapCommand): readonly KeymapContext[] =>
+  c.focusContexts ?? [c.context];
 const isLocal = (c: KeymapCommand): boolean => contextsOf(c).some((x) => x !== "Global");
 const declared = (c: KeymapCommand): readonly DeclaredShadow[] =>
   (c.shadows ?? []).filter((s) => s.rationale.trim() !== "");
@@ -86,8 +88,9 @@ export function globalShadowNote(
   c: KeymapCommand,
   bindings: ReadonlyMap<string, string>,
 ): string | undefined {
-  if (!isLocal(c)) return undefined;
-  const atoms = bindingAtoms(bindings.get(c.id) ?? c.defaultBinding);
+  const own = bindings.get(c.id) ?? c.defaultBinding;
+  if (!isLocal(c) || own === "") return undefined; // an unbound command shares no key
+  const atoms = bindingAtoms(own);
   for (const g of KEYMAP) {
     if (g.context !== "Global") continue;
     const shared = bindingAtoms(bindings.get(g.id) ?? g.defaultBinding).some((a) =>
@@ -128,9 +131,10 @@ export function buildComboMap(
     slots.set(context, own);
     if (!own.has(atom)) own.set(atom, hit);
   };
+  // AC5: a stored single letter on a dangerous command never runs; an unbound command (`""`, WCAG 2.1.4) takes no key.
   const bound = commands
     .map((c) => [c, bindings?.get(c.id) ?? c.defaultBinding] as const)
-    .filter(([c, binding]) => !(isDangerous(c) && isSingleLetter(binding))); // AC5: a stored one never runs
+    .filter(([c, binding]) => binding !== "" && !(isDangerous(c) && isSingleLetter(binding)));
   for (const [c, binding] of bound) {
     if (bindingAtoms(binding)[0] !== binding) continue; // a range: indexed after every exact binding
     for (const context of contextsOf(c)) put(context, binding, { command: c });

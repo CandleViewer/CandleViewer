@@ -1,16 +1,21 @@
 import { useSyncExternalStore } from "react";
 import { KEYMAP } from "./keymap";
 import { getBindings, subscribeBindings } from "./profile";
-import { globalShadowNote } from "./registry";
+import { commandMeta, globalShadowNote } from "./registry";
+import { holdsReservedOverride } from "./validate";
 
 /**
  * SCR-013 overlay: current bindings by context as a real table; conflicts get a warning chip, and a view's declared
- * shadow of a Global key shows its rationale beside the key (BQ-4: no override is silent, `05` §3.1 rule 2).
+ * shadow of a Global key shows its rationale beside the key (BQ-4: no override is silent, `05` §3.1 rule 2). The
+ * reserved `Ctrl+K` and `Esc` read "not remappable" (BQ-7; E10-D04 §15), and a binding still on its reviewed override
+ * of a browser or OS key reads "reserved by the browser or OS" (E10-D04 §15, DS-305B-02); an unbound command reads
+ * "unbound".
  */
 export function Cheatsheet({ onClose }: { readonly onClose?: () => void }): JSX.Element {
   const b = useSyncExternalStore(subscribeBindings, getBindings);
   const seen = new Map<string, number>();
   for (const c of KEYMAP) {
+    if (b.get(c.id) === "") continue; // unbound
     const k = `${c.context}|${b.get(c.id)}`;
     seen.set(k, (seen.get(k) ?? 0) + 1);
   }
@@ -38,11 +43,16 @@ export function Cheatsheet({ onClose }: { readonly onClose?: () => void }): JSX.
               const bound = b.get(c.id) ?? c.defaultBinding;
               const conflict = (seen.get(`${ctx}|${bound}`) ?? 0) > 1;
               const shadow = globalShadowNote(c, b);
+              const locked = commandMeta(c.id)?.remappable === false;
               return (
                 <tr key={c.id}>
                   <th scope="row">{c.label}</th>
                   <td>
-                    <kbd>{bound}</kbd>
+                    {bound === "" ? "unbound" : <kbd>{bound}</kbd>}
+                    {locked ? <span> not remappable</span> : null}
+                    {holdsReservedOverride(c, bound) ? (
+                      <span> reserved by the browser or OS</span>
+                    ) : null}
                     {shadow === undefined ? null : <span>{` ${shadow}`}</span>}
                     {conflict ? (
                       <span role="img" aria-label="Warning: conflicting binding">

@@ -35,6 +35,8 @@ export interface KeymapCommand {
   readonly allowInEditable?: boolean;
   /** `false` keeps it out of SCR-113 (`keymap_lint.py` then wants an `editableException`). */
   readonly editable?: boolean;
+  /** The dangerous set's commands: a rebind is audited (#305, D10; SEC-305A-01). */
+  readonly audited?: boolean;
 }
 
 interface KeymapFile {
@@ -173,6 +175,15 @@ const FUNCTION_KEY = /(?:^|\+)F(?:[1-9]|1\d|2[0-4])$/;
 /** A binding with no Ctrl, Alt or function key (A-D05-2): typing makes one, so a text field keeps it. */
 export function isBareBinding(binding: string): boolean {
   return !/^(?:Ctrl|Alt)\+/.test(binding) && !FUNCTION_KEY.test(binding);
+}
+
+/** A range binding's atoms (`Alt+1..9` → `Alt+1` … `Alt+9`); any other binding is its own atom. */
+export function bindingAtoms(binding: string): string[] {
+  const m = /^(.*?)(\d)\.\.(\d)$/.exec(binding);
+  if (!m) return [binding];
+  const out: string[] = [];
+  for (let d = Number(m[2]); d <= Number(m[3]); d++) out.push(`${m[1] ?? ""}${d}`);
+  return out;
 }
 
 /** The digit a binding string supplies to a range binding (`Alt+1..9`); null when it is not one. */
