@@ -7,7 +7,8 @@ own, and a `FakeTradingPort` as the venue (C-13.5). As in E4's `test_startup_swe
 account read is in memory (no key row is seeded); here the instrument catalogue is composed too,
 so the pipeline admits. Each scenario asserts the answer against 22 and the rows, the audit
 records and the exchange calls behind it, counting the venue's calls from just before its request,
-and depends on no other test's rows (`world`); an unreachable Postgres is a loopback relay that is
+once the process's startup reconciliation pass (E29-T06) has made its own reads, and depends on no
+other test's rows (`world`); an unreachable Postgres is a loopback relay that is
 cut, both pools behind it. "Retry reuses the id" and "A persist-time id collision is re-allocated"
 never reach the route: slices 1 and 2 prove them (C6's `test_retry_reuses_the_id`,
 `test_a_persist_time_id_collision_is_re_allocated`). Amend is slice 4's. Run once locally before
@@ -272,9 +273,10 @@ async def _serving(
     `settle` is False: a venue call left held would never let it) and it goes down, draining for
     `drain_s` when given: `POST /orders`, `POST /orders/cancel-all` and the exit routes, mounted in
     `create_app()`'s order over its OMS runtime (`world.runtime`), which is ready unless `ready`
-    is False, and then composed nothing to settle (CR-S3L2X-01). Its own pools, both on `dsn` (the
-    OMS stores', and the profile cache's unless `profiles` stands in), metrics and 24 h record; the
-    venue, the audit log and the pager are the world's."""
+    is False, and then composed nothing to settle (CR-S3L2X-01); once ready, its startup
+    reconciliation pass has recorded itself before the block starts (`_reconciled`). Its own
+    pools, both on `dsn` (the OMS stores', and the profile cache's unless `profiles` stands in),
+    metrics and 24 h record; the venue, the audit log and the pager are the world's."""
     metrics = Metrics("demo")
     process_dsn = dsn or c6._login(world.dsn, "cv_app")
     pool = SqlAlchemyRelationalRepository(process_dsn, "place-order-route-it")
@@ -301,9 +303,11 @@ async def _serving(
     )
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://cv")
     try:
+        passes = _passes(world)
         async with started(runtime), client:
             if ready:
                 await asyncio.wait_for(runtime.wait_ready(), _READY_BOUND_S)
+                await _reconciled(world, passes)
             yield client
             if ready and settle:  # composed: one never ready composed nothing (CR-S3L2X-01)
                 parts = runtime._composed()  # the facade's tasks are the order lane's (CV-C13)
@@ -318,6 +322,21 @@ async def _serving(
 
 async def _post(client: httpx.AsyncClient, body: dict[str, Any]) -> httpx.Response:
     return await client.post("/orders", json=body, headers={"Idempotency-Key": str(KEY)})
+
+
+def _passes(world: World) -> int:
+    """The reconciliation passes recorded so far (`oms.reconcile`, 24 Sec.15.5), every process's
+    on the world's audit log."""
+    return sum(action == "oms.reconcile" for action, _ in world.writer.actions)
+
+
+async def _reconciled(world: World, before: int) -> None:
+    """E29-T06 (#914): the process's startup reconciliation pass, which `ready` never waits for
+    (BQ-14), has made its venue reads and recorded itself, so the calls a test counts from here are
+    its request's own. The bound only turns a hang into a failure."""
+    async with asyncio.timeout(_READY_BOUND_S):
+        while _passes(world) == before:  # noqa: ASYNC110 - the lane's record, bounded above
+            await asyncio.sleep(0)
 
 
 def _entry(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
