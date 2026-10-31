@@ -57,6 +57,7 @@ groups:
         labels:
           severity: ticket
           component: rules
+          quiet_hours: bypass
         annotations:
           summary: "A rule was auto-disarmed"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-ruleautodisarm"
@@ -141,6 +142,7 @@ groups:
         labels:
           severity: ticket
           component: auth
+          quiet_hours: bypass
         annotations:
           summary: "Failed-login spike"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authloginfailurespike"
@@ -150,6 +152,7 @@ groups:
         labels:
           severity: ticket
           component: auth
+          quiet_hours: bypass
         annotations:
           summary: "Account lockout occurred"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authlockouts"
@@ -252,6 +255,7 @@ groups:
         labels:
           severity: ticket
           component: auth
+          quiet_hours: bypass
         annotations:
           summary: "Permission-check failure spike"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authzdeniedspike"
@@ -272,6 +276,7 @@ groups:
         labels:
           severity: ticket
           component: secrets
+          quiet_hours: bypass
         annotations:
           summary: "Exchange credential verification failed"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-credentialverificationfailures"
@@ -301,6 +306,7 @@ groups:
         labels:
           severity: ticket
           component: oms
+          quiet_hours: bypass
         annotations:
           summary: "Rate-limit rejections in OMS"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-omsraterejects"
@@ -310,6 +316,7 @@ groups:
         labels:
           severity: ticket
           component: network
+          quiet_hours: bypass
         annotations:
           summary: "Egress IP changed"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-egressipchanged"

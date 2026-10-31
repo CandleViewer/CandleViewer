@@ -2,7 +2,8 @@
 """E04-T05 CI gate: every alert rule has severity page|ticket (Watchdog excepted),
 a component label and a runbook_url whose anchor resolves in docs/plan/07-release-and-prr.md
 (or, for the E08-T06 ingestion set, in docs/ops/ingestion.md). The optional `resolves: window`
-label (#2931) is allowed on pages only.
+label (#2931) is allowed on pages only. The optional `quiet_hours: bypass` label (#2621, SR-125) is
+allowed on tickets only: its route has no mute, so those tickets are sent inside quiet hours.
 """
 
 from __future__ import annotations
@@ -28,6 +29,9 @@ SEVERITIES = {"page", "ticket"}
 #: anyone acts, so Alertmanager sends no [RESOLVED] for it (receiver `page_event`, #2931). The
 #: value set is closed: a typo would fall through to the generic page route and send one.
 RESOLVES = ("window",)
+#: `quiet_hours: bypass` routes an SR-125 security ticket past the quiet-hours mute (#2621). One
+#: value, tickets only: a page is never muted, and any other value would match no route.
+QUIET_HOURS = ("bypass",)
 EXEMPT = {"Watchdog"}
 
 
@@ -68,6 +72,11 @@ def check(alert_dir: Path = ALERT_DIR, runbook_text: str | None = None) -> list[
                         errors.append(f"{name}: resolves label must be {allowed}")
                     if labels.get("severity") != "page":
                         errors.append(f"{name}: resolves label is only valid on a page")
+                if "quiet_hours" in labels:
+                    if labels["quiet_hours"] not in QUIET_HOURS:
+                        errors.append(f"{name}: quiet_hours label must be 'bypass'")
+                    if labels.get("severity") != "ticket":
+                        errors.append(f"{name}: quiet_hours label is only valid on a ticket")
                 url = (r.get("annotations") or {}).get("runbook_url")
                 if not url:
                     errors.append(f"{name}: missing annotations.runbook_url")
