@@ -41,6 +41,7 @@ from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.observability.secret_type import Secret
 from candleviewer.oms import order_machine
+from candleviewer.oms import ports as ports_module
 from candleviewer.oms.errors import (
     RULE_STOP_UNIT_UNSUPPORTED,
     FieldError,
@@ -973,8 +974,27 @@ def test_demo_and_testnet_start_with_no_reconciliation(environment: ProcessEnvir
     refuse_live_without_reconciliation(environment, NoReconciliation())
 
 
-def test_a_live_process_starts_with_any_other_reconciliation_binding() -> None:
+def test_scenario_live_start_stays_refused_while_a_carry_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#914's Gherkin, "Live start stays refused while a carry is missing": given a live process
+    whose reconciliation is bound and in which any one of E45-T01's four carries is not
+    registered, when it starts, then it refuses to start, whatever port type reconciliation is
+    bound to (BQ-2); with all four registered it starts."""
+    carries = ports_module.RECONCILIATION_CARRIES
+    assert len(carries) == 4 and ports_module.reconciliation_carries_missing() == carries
+    for missing in carries:
+        monkeypatch.setattr(ports_module, "_CARRIES_REGISTERED", set(carries) - {missing})
+        assert ports_module.reconciliation_carries_missing() == (missing,)
+        for port in (InMemoryReconciliationRequests(), NoReconciliation()):
+            with pytest.raises(ReconciliationUnavailable):
+                refuse_live_without_reconciliation(ProcessEnvironment.LIVE, port)
+    monkeypatch.setattr(ports_module, "_CARRIES_REGISTERED", set())
+    for name in carries:  # each carry registers itself as it lands
+        ports_module.register_reconciliation_carry(name)
     refuse_live_without_reconciliation(ProcessEnvironment.LIVE, InMemoryReconciliationRequests())
+    with pytest.raises(ValueError, match="named carries"):
+        ports_module.register_reconciliation_carry("a_fifth")
 
 
 def test_live_as_plain_text_refuses_no_reconciliation_too() -> None:

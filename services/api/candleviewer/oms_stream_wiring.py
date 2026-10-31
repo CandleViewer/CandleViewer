@@ -142,16 +142,30 @@ LAG: Final = "oms_stream_event_lag_seconds"
 OWED_AGE: Final = "oms_position_reading_owed_age_seconds"
 
 type Severity = Literal["info", "warning", "error", "critical"]
-#: 23 Sec.15.9's closed table, E29-T05's rows: one severity and one role-neutral message per
-#: `reason`, never built from data, naming no account and counting none (SEC-2, SEC-3). A `reason`
-#: without a row here is never sent (E29-T06 adds its rows with its code).
+#: 23 Sec.15.9's closed table: one severity and one role-neutral message per `reason`, never built
+#: from data, naming no account and counting none (SEC-2, SEC-3). A `reason` without a row here is
+#: never sent. E29-T05's row is `oms.account_resyncing`; E29-T06's three are reconciliation's.
 NOTICES: Final[Mapping[AccountNoticeReason, tuple[Severity, str]]] = MappingProxyType(
     {
         "oms.account_resyncing": (
             "warning",
             "An account is resynchronising; its orders and positions are being verified.",
         ),
+        "oms.account_desync": (
+            "warning",
+            "Reconciliation found a difference on an account and is correcting it.",
+        ),
+        "oms.account_stale": (
+            "critical",
+            "Order entry on an account is refused: reconciliation has failed for 2 minutes.",
+        ),
+        "oms.account_synced": ("info", "An account is reconciled and live again."),
     }
+)
+#: The one row whose severity the producer chooses (23 Sec.15.9): `oms.account_desync` is
+#: `critical` for a pass that found an open position with no stop and no record in force.
+ALSO_SEVERE: Final[Mapping[AccountNoticeReason, frozenset[Severity]]] = MappingProxyType(
+    {"oms.account_desync": frozenset({"critical"})}
 )
 _NOTICE_KEYS: Final = frozenset({"kind", "severity", "reason", "message", "exchange_account_ids"})
 _TOPICS: Final[frozenset[str]] = frozenset(get_args(PrivateKind.__value__))
@@ -219,13 +233,20 @@ class Ports(Protocol):
 # --- account notices (23 Sec.15.9) --------------------------------------------------------------
 
 
-def account_notice(account_id: UUID, reason: AccountNoticeReason) -> dict[str, Any]:
-    """The frame `body` of one notice: the table's row for `reason`, the account only in
-    `exchange_account_ids`; a `ValueError` for a `reason` the table has no row for."""
+def account_notice(
+    account_id: UUID, reason: AccountNoticeReason, severity: Severity | None = None
+) -> dict[str, Any]:
+    """The frame `body` of one notice: the table's row for `reason` (its severity, or one the
+    table allows the producer to choose), the account only in `exchange_account_ids`; a
+    `ValueError` for a `reason` the table has no row for, or a severity it does not allow."""
     row = NOTICES.get(reason)
     if row is None:
         raise ValueError("an account notice reason without a row in the closed table")
-    severity, message = row
+    fixed, message = row
+    if severity is None:
+        severity = fixed
+    elif severity != fixed and severity not in ALSO_SEVERE.get(reason, frozenset()):
+        raise ValueError("a severity the closed table does not allow for the reason")
     return {
         "kind": "account_notice",
         "severity": severity,
@@ -241,7 +262,9 @@ def checked_notice(body: Mapping[str, Any]) -> dict[str, Any]:
     `UUID`) of canonical lowercase UUID strings; else a `ValueError` naming no value."""
     if body.get("kind") != "account_notice" or set(body) != _NOTICE_KEYS:
         raise ValueError("not an account_notice of the five keys")
-    if NOTICES.get(body["reason"]) != (body["severity"], body["message"]):
+    row = NOTICES.get(body["reason"])
+    allowed = (row[0], *ALSO_SEVERE.get(body["reason"], ())) if row is not None else ()
+    if row is None or body["message"] != row[1] or body["severity"] not in allowed:
         raise ValueError("a severity or message off the closed table")
     ids = body["exchange_account_ids"]
     if type(ids) is not list or not ids:
@@ -756,7 +779,8 @@ def build_stream_consumer(
     monotonic: Callable[[], float] = time.monotonic,
     reconciliation: ReconciliationRequests | None = None,
     handovers: ExecutionHandovers | None = None, readings: ProtectionReadings | None = None,
-    lockout: ForeignOrderLockout | None = None,
+    lockout: ForeignOrderLockout | None = None, no_intent: PagedNoIntentRecords | None = None,
+    evidence: StreamEvidence | None = None,
 ) -> StreamWiring:  # fmt: skip
     """The consumer and its parts, built and not started (module docstring). `environment` is the
     process's: its records' `env`, and the live refusals, run here on the bindings as bound, so a
@@ -768,7 +792,10 @@ def build_stream_consumer(
     `ExchangeWallClock`, which the projection and the consumer then read too (S8b), else one is
     built over those two; `clock_health` the clock guard's verdict, the re-sync epoch's source
     (`ClockEpoch`). A stand-in a caller does not name is bound; each is announced, a real port at
-    0."""
+    0. `no_intent` and `lockout`, when given, are the instances reconciliation takes too (E29-T06),
+    so a finding pages once whichever caller meets it; `evidence`, when given, is the consumer's
+    evidence as it stands (reconciliation's mark over the hop to the serving loop), else the hop
+    over `health` is built here."""
     writer = NoIntentWriter(emitter, environment=environment.value)
     reconciliation = NoReconciliation() if reconciliation is None else reconciliation
     handovers = NoHandoverStore() if handovers is None else handovers
@@ -796,15 +823,17 @@ def build_stream_consumer(
     successor = Successor(
         stops=stops, audit=audit, positions=projection, counts=counts.push, clock=now
     )
+    no_intent = PagedNoIntentRecords(writer, pager) if no_intent is None else no_intent
+    evidence = ServedEvidence(health, serving) if evidence is None else evidence
     pushes = StreamPushes(
         target=facade, reads=StreamReadsBinding(orders, stops),
         fill_orders=VenueFillOrders(trading, ports), lockout=lockout, handovers=handovers,
-        stops=recorded, successors=successor, no_intent=PagedNoIntentRecords(writer, pager),
+        stops=recorded, successors=successor, no_intent=no_intent,
         counts=counts.push, pager=pager, monotonic=monotonic,
     )  # fmt: skip
     consumer = StreamConsumer(
         accounts=accounts, trading=trading, streams=PortStreams(ports),
-        health=ServedEvidence(health, serving), reconciliation=reconciliation,
+        health=evidence, reconciliation=reconciliation,
         notices=StreamNotices(hub, serving), credentials=GuardedRejections(credentials, pager),
         positions=projection, pushes=pushes, counts=counts.consumer, pager=pager,
         now_us=clock.now_us, lags=counts, host_us=clock.host_us, epochs=ClockEpoch(clock_health),

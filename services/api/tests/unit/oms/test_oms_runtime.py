@@ -557,6 +557,9 @@ class World:
     watched: list[float] = field(default_factory=list)
     watches: Beats = field(default_factory=Beats)
     binder: Binder = field(default_factory=Binder)
+    #: E29-T06 #914: `oms_handovers` and the pass's own store, None composing neither.
+    handover_store: Any = None
+    reconcile_reads: Any = None
     #: The dev-only account fixture's lane transport factory, None in production (#913 L1d).
     lane_transport: Callable[[], Transport] | None = None
     #: Account health and the gateway's hub, as the consumer takes them (E29-T05 S8b).
@@ -604,7 +607,8 @@ class World:
             anchors=store.anchors, stops=store.stops, groups=cast(GroupStores, None),
             unclaimed=unclaimed, positions=positions,
             accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store, audit=audit,
-            sink=sink, lock=self.lock, release=release,
+            sink=sink, lock=self.lock, release=release, handovers=self.handover_store,
+            reconcile=self.reconcile_reads,
         )  # fmt: skip
 
     def runtime(
@@ -714,6 +718,34 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
     assert [world.gauge(name) for name in runtime_ports] == [1.0] * 11
     assert world.log == [*STARTED, *STOPPED] and port.closed  # the lock released last
     assert not b01.ports_wired()
+
+
+async def test_with_its_stores_reconciliation_composes_in_place_of_its_stand_ins() -> None:
+    """E29-T06 #914: the hand-over store and the pass's store compose reconciliation. The stream
+    takes its driver (no `NoReconciliation`) and the store (no `NoHandoverStore`), both announced
+    as real ports; B19's port is wired while the runtime runs and its jobs stop first; the port is
+    unwired at the stop, once every job is stopped."""
+    from candleviewer.oms.handovers import StoreHandovers
+    from candleviewer.statechart.bindings import b19_reconciliation as b19
+    from tests.unit.oms.test_handovers import _Store
+    from tests.unit.test_oms_reconcile_wiring import Reads
+
+    world = World(handover_store=_Store(), reconcile_reads=Reads())
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime()) as runtime:
+        await asyncio.wait_for(runtime.wait_ready(), 10)  # a bound on the test
+        parts = runtime._composed()
+        assert parts.reconcile is not None and b19.ports_wired()
+        assert parts.stream.reconciliation is parts.reconcile.jobs
+        assert isinstance(parts.stream.stand_ins["execution_handovers"], StoreHandovers)
+        assert world.gauge("reconciliation") == world.gauge("execution_handovers") == 0.0
+        names = [name for name, _ in parts.closers]  # its jobs stop before anything they use
+        assert all(
+            names.index("reconciliation") < names.index(used)
+            for used in ("stop_gate", "machines", "commands", "trading_port", "audit")
+        )
+    assert not b19.ports_wired()
 
 
 async def test_the_router_and_cancel_all_share_the_one_fold_port_over_the_lanes_own_port() -> None:
