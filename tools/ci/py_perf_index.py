@@ -10,16 +10,16 @@ collected the whole services/api suite (68,000 tests, about 5 min on a hosted ru
 The index holds the marker expression, the node ids (sorted) and `weights`: the seconds per test
 file, setup, call and teardown summed from pytest's `--durations=0` lines in the log of CI job
 124449801043 (run 41171217151, 2026-10-31, the slowest of the four runs #5186 measured: 1,059 s
-of pytest, 759 s of it in the tests). A file pytest timed under 0.005 s a phase weighs 0. A file
-missing from `weights` (a new perf file) costs `default_weight`, so it still lands in exactly one
-shard; stale weights cost balance, never coverage. Shards are whole files (a module's fixtures
+of pytest, 759 s of it in the tests). A file the log ran but timed under 0.005 s a phase weighs
+0. A file missing from `weights` (a new perf file) costs `default_weight`, so it still lands in
+exactly one shard; stale weights cost balance, never coverage. Shards are whole files (a module's fixtures
 are set up once), split by `governance_shards.shards`: heaviest first, to the lightest shard.
 
 Commands, run from services/api in its environment (`uv run python ../../tools/ci/...`), since
 `write` and `check` collect with the interpreter that runs them:
-  write [LOG...]    collect live and rewrite the index; with LOGs (a py-perf job log with
-                    `--durations=0`), re-weigh every indexed file from them (a file's largest
-                    total), else keep the weights
+  write [LOG...]    collect live and rewrite the index; with LOGs (the py-perf job logs, with
+                    `--durations=0`, of all three shards of one run), re-weigh every file the
+                    logs ran (a file's largest total); a file no log names keeps its weight
   check             collect live; exit 1 when the index differs, naming the tests and the fix
   shard INDEX COUNT the node ids of one shard, one per line (`_job-py.yml` reads them)
   plan COUNT        each shard's files, tests and weighted seconds, and the job's timeout
@@ -50,7 +50,7 @@ MARKER = "perf and not flaky"
 #: How to rewrite the index, quoted by `check`'s failure.
 REGENERATE = (
     "cd services/api && uv run python ../../tools/ci/py_perf_index.py write  "
-    "(add a py-perf job log with --durations=0 to re-weigh the files)"
+    "(add the job logs of all three py-perf shards of one run to re-weigh the files)"
 )
 #: The collection the index mirrors: `_job-py.yml`'s selection, with no coverage and no cache.
 COLLECT_ARGS = (
@@ -72,6 +72,8 @@ PREPULL_WORST_S = 8 * 45 + 220
 NODE_ID_RE = re.compile(r"^tests/\S+?\.py::\S.*$")
 DURATION_RE = re.compile(r"(\d+\.\d+)s (?:setup|call|teardown) +(tests/\S+?\.py)::")
 HIDDEN_RE = re.compile(r"\(\d+ durations < [\d.]+s hidden")
+#: A test file a log names: a progress line (`tests/x.py ..  [ 4%]`) or a duration line.
+LOG_FILE_RE = re.compile(r"(tests/[^\s:]+?\.py)(?=\s|::|$)", re.MULTILINE)
 
 
 class PerfIndexError(Exception):
@@ -105,7 +107,9 @@ def load(path: Path = INDEX_PATH) -> Index:
     tests, weights = raw.get("tests"), raw.get("weights")
     default = raw.get("default_weight")
     if raw.get("marker") != MARKER:
-        raise PerfIndexError(f"{path}: 'marker' must be {MARKER!r}, the py-perf selection")
+        raise PerfIndexError(
+            f"{path}: 'marker' must be {MARKER!r}, the py-perf selection"
+        )
     if not isinstance(tests, list) or not all(
         isinstance(t, str) and NODE_ID_RE.match(t) for t in tests
     ):
@@ -113,12 +117,25 @@ def load(path: Path = INDEX_PATH) -> Index:
     if tests != sorted(set(tests)):
         raise PerfIndexError(f"{path}: 'tests' must be sorted, without duplicates")
     if not isinstance(weights, dict) or not all(
-        isinstance(v, (int, float)) and v >= 0 for v in weights.values()
+        _seconds(v) and v >= 0 for v in weights.values()
     ):
         raise PerfIndexError(f"{path}: 'weights' must map test files to seconds")
-    if not isinstance(default, (int, float)) or default <= 0:
-        raise PerfIndexError(f"{path}: 'default_weight' must be a positive number of seconds")
-    return Index(MARKER, tuple(tests), {k: float(v) for k, v in weights.items()}, float(default))
+    if not _seconds(default) or default <= 0:
+        raise PerfIndexError(
+            f"{path}: 'default_weight' must be a positive number of seconds"
+        )
+    return Index(
+        MARKER, tuple(tests), {k: float(v) for k, v in weights.items()}, float(default)
+    )
+
+
+def _seconds(value: object) -> bool:
+    """A finite JSON number (`true` is not one, nor `NaN` or `Infinity`)."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 def dump(index: Index, path: Path = INDEX_PATH) -> None:
@@ -126,10 +143,14 @@ def dump(index: Index, path: Path = INDEX_PATH) -> None:
     payload = {
         "marker": index.marker,
         "default_weight": index.default_weight,
-        "weights": {f: round(w, 2) for f, w in sorted(index.weights.items()) if f in files},
+        "weights": {
+            f: round(w, 2) for f, w in sorted(index.weights.items()) if f in files
+        },
         "tests": list(index.tests),
     }
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
 
 
 def parse_collection(stdout: str) -> list[str]:
@@ -137,7 +158,9 @@ def parse_collection(stdout: str) -> list[str]:
     return sorted({line for line in stdout.splitlines() if NODE_ID_RE.match(line)})
 
 
-def collect(python: Sequence[str] = (sys.executable,), api_root: Path = API_ROOT) -> list[str]:
+def collect(
+    python: Sequence[str] = (sys.executable,), api_root: Path = API_ROOT
+) -> list[str]:
     """The live `perf and not flaky` collection of services/api, as sorted node ids."""
     proc = subprocess.run(
         [*python, "-m", "pytest", *COLLECT_ARGS],
@@ -183,9 +206,43 @@ def log_weights(text: str) -> dict[str, float]:
     return totals
 
 
+def log_files(text: str) -> set[str]:
+    """The test files a log names: those its pytest ran, timed or not."""
+    return set(LOG_FILE_RE.findall(text))
+
+
+def reweigh(
+    old: Mapping[str, float], files: Sequence[str], logs: Sequence[str]
+) -> tuple[dict[str, float], float]:
+    """The weights of `files` from py-perf job logs, and the default weight of a new file.
+
+    A file the logs ran weighs its largest total across them (0 when timed under 0.005 s a
+    phase); a file no log names (a shard whose log was left out) keeps its `old` weight, or none
+    (the default) when it had none. The default is the median weight above 0 the logs timed.
+    """
+    measured: dict[str, float] = {}
+    ran: set[str] = set()
+    for text in logs:
+        for name, seconds in log_weights(text).items():
+            measured[name] = max(measured.get(name, 0.0), seconds)
+        ran |= log_files(text)
+    weights: dict[str, float] = {}
+    for file in files:
+        if file in ran or file in measured:
+            weights[file] = measured.get(file, 0.0)
+        elif file in old:
+            weights[file] = old[file]
+    timed = [measured[f] for f in files if measured.get(f, 0.0) > 0]
+    if not timed:
+        raise PerfIndexError("the logs timed no indexed file")
+    return weights, round(statistics.median(timed), 2)
+
+
 def split(index: Index, count: int) -> list[list[str]]:
     """The index's node ids in `count` shards of whole files, about equal in weight."""
-    parts = shards(index.files, count, weights=index.weights, default=index.default_weight)
+    parts = shards(
+        index.files, count, weights=index.weights, default=index.default_weight
+    )
     by_file: dict[str, list[str]] = {}
     for test in index.tests:
         by_file.setdefault(file_of(test), []).append(test)
@@ -233,18 +290,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             default = old.default_weight if old else 1.0
             live = collect()
             if rest:
-                measured: dict[str, float] = {}
-                for log in rest:
-                    for name, seconds in log_weights(
-                        Path(log).read_text("utf-8", "replace")
-                    ).items():
-                        measured[name] = max(measured.get(name, 0.0), seconds)
-                # A file the logs ran but timed under 0.005 s a phase weighs 0.
-                weights = {file_of(t): measured.get(file_of(t), 0.0) for t in live}
-                # A new file costs the median timed file, about what a perf test file takes.
-                default = round(statistics.median(w for w in weights.values() if w > 0), 2)
+                try:
+                    texts = [Path(log).read_text("utf-8", "replace") for log in rest]
+                except OSError as exc:
+                    raise PerfIndexError(f"cannot read a log: {exc}") from exc
+                files = sorted({file_of(t) for t in live})
+                weights, default = reweigh(weights, files, texts)
+                kept = [
+                    f for f in files if f in weights and not any(f in t for t in texts)
+                ]
+                if kept:
+                    print(
+                        f"py_perf_index: no log names {len(kept)} files; kept their weights"
+                    )
             dump(Index(MARKER, tuple(live), weights, default))
-            print(f"py_perf_index: wrote {len(live)} tests to {INDEX_PATH.relative_to(REPO_ROOT)}")
+            print(
+                f"py_perf_index: wrote {len(live)} tests to {INDEX_PATH.relative_to(REPO_ROOT)}"
+            )
             return 0
         if command == "check" and not rest:
             index = load()
@@ -269,7 +331,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if command == "plan" and (one := _count_args(rest, 1)):
             index = load()
             parts, seconds = split(index, one[0]), expected_seconds(index, one[0])
-            for number, (part, total) in enumerate(zip(parts, seconds, strict=True), start=1):
+            for number, (part, total) in enumerate(
+                zip(parts, seconds, strict=True), start=1
+            ):
                 files = len({file_of(t) for t in part})
                 print(
                     f"shard {number}/{one[0]}: {files} files, {len(part)} tests, "

@@ -375,8 +375,8 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   guard), 16.5-18.9 minutes in one job before (#5171). `py-perf-index`, beside them, collects the
   suite and fails when the index differs, naming each test: regenerate with
   `cd services/api && uv run python ../../tools/ci/py_perf_index.py write` and commit the index;
-  add a shard's job log (`--durations=0`) to that command to re-weigh the files when a shard's time
-  creeps up. `ci-required` judges the `py` workflow, whose conclusion includes every shard.
+  add the job logs (`--durations=0`) of all three shards of one run to that command to re-weigh the
+  files when a shard's time creeps up (a file no log names keeps its old weight). `ci-required` judges the `py` workflow, whose conclusion includes every shard.
 - A gate inside `gates` reports under its own lane name: read the `gates` step named after it
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
   means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`
