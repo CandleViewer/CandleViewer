@@ -141,6 +141,8 @@ def _notice(kind: str, **detail: Any) -> OrderNotice:
     return OrderNotice(kind, ORDER, ACCOUNT, "cvd-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en", detail)
 
 
+#: An unbound `request_reconciliation`'s page: the composition has no reconciliation stores.
+_UNBOUND = "order notice request_reconciliation has no owner: no reconciliation is composed"
 #: What a notice's detail could carry and no log line may (C-12.6).
 _VALUES = {"price": "63099.8", "qty": "0.5", "api_key": "DUMMYKEY_" + "Q3w9" * 5}
 
@@ -161,18 +163,18 @@ _VALUES = {"price": "63099.8", "qty": "0.5", "api_key": "DUMMYKEY_" + "Q3w9" * 5
         (
             _notice("request_reconciliation"),
             "error",
-            ("page", "order notice request_reconciliation has no owner until E29-T06"),
+            ("page", _UNBOUND),
         ),
         (
             _notice("request_reconciliation", reason="already_terminal"),
             "error",
-            ("alert", "order notice request_reconciliation has no owner until E29-T06"),
+            ("alert", _UNBOUND),
         ),
         (_notice("request_reconciliation", reason="already_terminal", alerted=True), "error", None),
         (
             _notice("request_reconciliation", reason="not_held_unbound"),
             "error",
-            ("page", "order notice request_reconciliation has no owner until E29-T06"),
+            ("page", _UNBOUND),
         ),
         (
             _notice("request_fallback_sl"),
@@ -315,7 +317,7 @@ async def test_the_venues_110001_is_a_ticket_and_a_later_transport_fault_pages()
         ("b01_already_terminal", 110001), ("b01_order_unknown", 110001),
         ("b01_transport_fault", None), ("b01_order_unknown", None),
     ]  # fmt: skip
-    unowned = "order notice request_reconciliation has no owner until E29-T06"
+    unowned = _UNBOUND
     assert [(severity, summary) for severity, summary, _ in pager.alerts] == [
         ("alert", "order alert order_already_terminal"),
         ("page", "order alert order_unknown"), ("page", unowned),

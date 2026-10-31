@@ -259,10 +259,14 @@ class ReconcileJobs:
 
     async def start(self, accounts: Iterable[AccountId]) -> None:
         """Wires B19's port, then opens each account's job (restored, or built afresh) and sends
-        it `startup` (BQ-14: the caller reports ready after it, never after the pass). One
-        account whose start fails, whatever the failure (its job not opened, or a send that did
-        not answer), is logged, paged and refused order entry (its standing set, fail closed)
-        until a later trigger opens its job or reaches it (`_reached`); the others start."""
+        it `startup` (BQ-14: the caller reports ready after it, never after the pass). Each
+        account with no job yet is marked stale before the loop begins, and only its job's open
+        clears the mark (`_open`, its standing rebuilt from its state), so a start its caller's
+        bound cuts short, its task cancelled, leaves every account it did not open refused (the
+        Opus delta's m-a on #5185, INV-B19-a). One account whose start fails, whatever the
+        failure (its job not opened, or a send that did not answer), is logged, paged and refused
+        order entry (its standing set, fail closed) until a later trigger opens its job or
+        reaches it (`_reached`); the others start."""
         remediate = self._remediates(self._env)
         if not remediate and self._env in _ALWAYS_REMEDIATE:  # C-2.6, C-4.14: never on live or demo
             raise ValueError("a live or demo reconciliation job always remediates (24 Sec.14.3)")
@@ -273,6 +277,9 @@ class ReconcileJobs:
         ordered = sorted(set(accounts), key=str)
         self._spacing = max(SPACING_S, self._jitter_s / max(len(ordered), 1))
         self._gauge(lambda: float(self._standing.stale_count))
+        for account in ordered:  # fail closed first: only an open clears it, never a cut start
+            if account not in self._jobs:
+                self._standing.mark_stale(account)
         for account in ordered:
             try:
                 await self.trigger(account, "startup")

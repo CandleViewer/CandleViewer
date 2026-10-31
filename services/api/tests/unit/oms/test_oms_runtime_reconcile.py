@@ -27,6 +27,7 @@ from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.models import AccountRef
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms import reconcile_job as rj
 from candleviewer.oms.errors import OmsNotReady, ReconciliationUnavailable
 from candleviewer.oms.fakes import InMemorySubmissionStore
 from candleviewer.oms.reconcile_job import NothingToResolve, PassTaken, ReconcileJobs
@@ -71,6 +72,28 @@ def _accounts(world: World, monkeypatch: pytest.MonkeyPatch, fail: Any) -> list[
 
     monkeypatch.setattr(world.store, "environment_accounts", reads)
     return calls
+
+
+def _seeded(world: World, *ns: int) -> list[AccountId]:
+    """Trading accounts of the world's environment, each with an active key, opened in order."""
+    accounts = [AccountId(UUID(int=n)) for n in ns]
+    for account in accounts:
+        ref = AccountRef(account_id=account, uid="1", environment="demo", key_ref="k")
+        InMemorySubmissionStore(world.store).seed_account(ref)
+        world.accounts.append(TradingAccountRow(account, "demo", "1", False, KEY))
+    return accounts
+
+
+class _Released(ReconcileStanding):
+    """The standing, the lift of its hold awaitable (`released`)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.released = asyncio.Event()
+
+    def release(self) -> None:
+        super().release()
+        self.released.set()
 
 
 async def test_a_failed_start_holds_every_account_until_a_retry_starts_the_jobs(
@@ -194,17 +217,14 @@ async def test_a_start_its_bound_cuts_holds_the_accounts_it_missed_until_a_retry
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """#914's security look, Low 2, under the start's bound (`_bounded`): a start cut short once
-    its first account's job opened is a failed start, so the whole environment is held and the
-    account it never reached, with neither a job nor a standing mark, is refused all the same. It
-    is logged CRITICAL as a `TimeoutError` and paged once; the retry opens the jobs and lifts it."""
+    its first account's job opened is a failed start. The accounts it did not open keep the stale
+    mark the start set before its loop (the delta look's m-a), the whole environment is held
+    besides, and it is logged CRITICAL as a `TimeoutError` and paged once; the retry opens the
+    jobs, each open clearing its account's mark, and lifts the hold."""
     monkeypatch.setattr(oms_wiring, "SWEEP_STATEMENT_TIMEOUT_MS", 0)
     monkeypatch.setattr(oms_wiring, "SWEEP_CALL_SLACK_S", 0.3)  # real time, kept short
     world, standing = _world(), ReconcileStanding()
-    first, cut, missed = (AccountId(UUID(int=n)) for n in (0xB1, 0xB2, 0xB3))
-    for account in (first, cut, missed):
-        ref = AccountRef(account_id=account, uid="1", environment="demo", key_ref="k")
-        InMemorySubmissionStore(world.store).seed_account(ref)
-        world.accounts.append(TradingAccountRow(account, "demo", "1", False, KEY))
+    first, cut, missed = accounts = _seeded(world, 0xB1, 0xB2, 0xB3)
     real, hangs = ReconcileJobs.trigger, [cut]
 
     async def trigger(self: ReconcileJobs, account: AccountId, trigger: Any) -> str | None:
@@ -220,8 +240,8 @@ async def test_a_start_its_bound_cuts_holds_the_accounts_it_missed_until_a_retry
         if n == 3:  # the retry's read: what the cut start left
             wiring = runtime._composed().reconcile
             assert wiring is not None
-            held, refusal = standing.held, standing.refusal(missed)
-            seen.append((held, refusal, standing.is_stale(missed), set(wiring.jobs._jobs)))
+            marked = [standing.is_stale(account) for account in accounts]
+            seen.append((standing.held, marked, set(wiring.jobs._jobs)))
         return False
 
     _accounts(world, monkeypatch, look)
@@ -231,11 +251,49 @@ async def test_a_start_its_bound_cuts_holds_the_accounts_it_missed_until_a_retry
             await until(lambda: not standing.held)
             wiring = runtime._composed().reconcile
             assert wiring is not None and set(wiring.jobs._jobs) == {first, cut, missed}
-            assert standing.refusal(missed) is None  # opened, so rebuilt from its state
-    assert seen == [(True, HELD, False, {first})]  # held by the environment's hold alone
+            assert [standing.refusal(account) for account in accounts] == [None] * 3
+    assert seen == [(True, [False, True, True], {first})]  # opened, or marked, and held besides
     unstarted = [e for e in logs if e["event"] == "oms_reconcile_unstarted"]
     assert [(e["log_level"], e["error"]) for e in unstarted] == [("critical", "TimeoutError")]
     assert world.pager.calls.count("oms_reconcile_unstarted") == 1
+
+
+async def test_a_start_cut_while_the_snapshot_load_hangs_leaves_no_account_open_and_unmarked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The delta look's m-a, its run scaled by 0.02 as that run was (the start's bound 0.34 s,
+    each open step's 0.2 s): the snapshot store's load hangs, so the first account's open fails
+    at its step's bound and the start's bound cuts the second's before the third is reached.
+    Every account ends opened or stale, never neither (that run read `[True, False, False]`);
+    once the load answers, a retry starts the jobs and lifts the hold, and an account it did not
+    open stays marked until a trigger opens its job."""
+    monkeypatch.setattr(oms_wiring, "SWEEP_STATEMENT_TIMEOUT_MS", 0)
+    monkeypatch.setattr(oms_wiring, "SWEEP_CALL_SLACK_S", 0.34)  # real time, as that run's
+    monkeypatch.setattr(rj, "OPEN_TIMEOUT_S", 0.2)
+    world, standing = _world(), _Released()
+    accounts = _seeded(world, 0xC1, 0xC2, 0xC3)
+    answered, real = asyncio.Event(), ReconcileJobs._restored
+
+    async def restored(self: ReconcileJobs, account: AccountId, key: Any) -> Any:
+        await rj._opening_step(answered.wait())  # the snapshot store's load, hung until answered
+        return await real(self, account, key)  # no store composed here: built afresh
+
+    monkeypatch.setattr(ReconcileJobs, "_restored", restored)
+    runtime = world.runtime(standing=standing)
+    async with started(runtime):
+        await _ready(runtime)  # the start cut and paged, `ready` all the same (BQ-14)
+        wiring = runtime._composed().reconcile
+        assert wiring is not None
+        jobs = wiring.jobs
+        assert [(jobs.state(a), standing.is_stale(a)) for a in accounts] == [(None, True)] * 3
+        assert standing.held and world.pager.calls.count("oms_reconcile_unstarted") == 1
+        answered.set()
+        await asyncio.wait_for(standing.released.wait(), 10)  # a bound on the test
+        assert all(jobs.state(a) is not None or standing.is_stale(a) for a in accounts)
+        for account in accounts:
+            if jobs.state(account) is None:  # its open failed before the load answered
+                await jobs.trigger(account, "reconnect")  # its stream's first trigger opens it
+        assert all(jobs.state(a) is not None and not standing.is_stale(a) for a in accounts)
 
 
 async def test_a_composition_with_no_reconciliation_lifts_a_hold_an_earlier_start_left() -> None:
