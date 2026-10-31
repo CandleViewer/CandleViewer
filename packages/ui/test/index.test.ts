@@ -5,6 +5,8 @@ import type {
   AdminGrace,
   AdminLayoutProps,
   AdminStripItem,
+  AuditRowListProps,
+  AuditRowProps,
   ButtonProps,
   CardProps,
   ColumnPickerProps,
@@ -27,6 +29,7 @@ import type {
   InfoPanelProps,
   MenuProps,
   NumericStepperInputProps,
+  PageHeaderProps,
   RadioGroupProps,
   SearchBoxProps,
   SegmentedControlProps,
@@ -170,6 +173,23 @@ describe("@candleviewer/ui organisms (E42-S01)", () => {
     ]);
     expect(Atoms.ADMIN_COPY.bandName).toBe("Admin area");
     const props: [AdminLayoutProps, AdminStripItem, AdminGrace] | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui admin chrome molecules (E42-S01)", () => {
+  it.each([
+    ["AuditRow", Atoms.AuditRow],
+    ["AuditRowList", Atoms.AuditRowList],
+    ["PageHeader", Atoms.PageHeader],
+  ])("exports %s from the package entry as a component function", (_name, component) => {
+    expect(typeof component).toBe("function");
+  });
+
+  it("exports the compact row's copy defaults and each props type (checked by the typechecker)", () => {
+    expect(Atoms.AUDIT_ROW_COPY.outcome.denied).toBe("Denied");
+    expect(Atoms.AUDIT_ACTION_LABELS["admin.area_entered"]).toBe("Area entered");
+    const props: [AuditRowProps, AuditRowListProps, PageHeaderProps] | null = null;
     expect(props).toBeNull();
   });
 });
