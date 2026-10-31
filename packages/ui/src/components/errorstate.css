@@ -94,6 +94,13 @@
   list-style: none;
 }
 
+/* WCAG 2.5.8: each summary link is a list item, so the inline exception does not apply; 24 px tall. */
+.cv-error-state__items a {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--size-target-min);
+}
+
 .cv-error-state[data-form="banner"] .cv-error-state__message {
   display: flex;
   flex-direction: column;
