@@ -134,7 +134,7 @@ describe("E10-S01 S5: keyboard", () => {
     const probe = screen.getByRole("textbox", { name: "probe" });
     act(() => probe.focus());
     await act(async () => void fireEvent.keyDown(probe, { key: "3" }));
-    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
   });
 
   it("moves focus with the arrows, Home and End, wrapping, but not with a modifier", async () => {

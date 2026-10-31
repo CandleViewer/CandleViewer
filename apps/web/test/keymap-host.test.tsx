@@ -72,10 +72,48 @@ describe("inert press explains itself (wired host)", () => {
     for (let i = 0; i < 3; i++)
       fireEvent.keyDown(window, { key: "X", ctrlKey: true, shiftKey: true });
     expect(run).not.toHaveBeenCalled();
-    const host = screen.getByTestId("toast-host");
-    expect(host).toHaveAttribute("role", "status");
-    expect(host.querySelectorAll("p")).toHaveLength(1);
+    const host = screen.getByRole("region", { name: "Notifications" });
+    expect(within(host).getAllByRole("group")).toHaveLength(1);
     expect(host.textContent).toMatch(/Cancel all working orders/);
+    off();
+  });
+  it("keeps a toast past 60 s until dismissed, gives each press its own id and caps the queue (#5197)", async () => {
+    vi.useFakeTimers();
+    const { KeymapHost, registerCommand, KEYMAP_TOAST_MAX } = mods;
+    const { ShellAnnouncer, clearAnnouncements } =
+      await import("../src/features/app-shell/announcer");
+    const off = registerCommand("dom.cancel_all", vi.fn(), () => false);
+    render(
+      <div data-keymap-context="DOM">
+        <input aria-label="f" />
+        <ShellAnnouncer />
+        <KeymapHost />
+      </div>,
+    );
+    screen.getByLabelText("f").focus();
+    const press = () => {
+      fireEvent.keyDown(window, { key: "X", ctrlKey: true, shiftKey: true });
+    };
+    const groups = () =>
+      within(screen.getByRole("region", { name: "Notifications" })).queryAllByRole("group");
+    press();
+    act(() => void vi.advanceTimersByTime(60_000));
+    expect(groups()).toHaveLength(1);
+    // a second press (past the dispatcher's 5 s window) is a second toast, spoken again
+    press();
+    expect(groups()).toHaveLength(2);
+    const polite = document.querySelector('[aria-live="polite"]');
+    expect(polite?.textContent).toMatch(/Cancel all working orders/);
+    fireEvent.click(within(groups()[0] as HTMLElement).getByRole("button", { name: /Dismiss/ }));
+    expect(groups()).toHaveLength(1);
+    fireEvent.click(within(groups()[0] as HTMLElement).getByRole("button", { name: /Dismiss/ }));
+    expect(screen.queryByRole("group")).toBeNull();
+    for (let i = 0; i < KEYMAP_TOAST_MAX + 2; i++) {
+      act(() => void vi.advanceTimersByTime(6000));
+      press();
+    }
+    expect(groups()).toHaveLength(KEYMAP_TOAST_MAX);
+    clearAnnouncements();
     off();
   });
   it("executes when valid", () => {
@@ -334,7 +372,7 @@ describe("profile persistence + Rules-context inert explanation", () => {
     );
     screen.getByLabelText("rule editor").focus();
     fireEvent.keyDown(window, { key: "s", ctrlKey: true });
-    expect(screen.getByTestId("toast-host")).toHaveTextContent(
+    expect(screen.getByRole("region", { name: "Notifications" })).toHaveTextContent(
       /Save draft is not available here \(Rules view\)/,
     );
     off();
@@ -362,7 +400,7 @@ describe("#305 PR A: the typing guard in the wired host (AC6, D6, D7, D8, G-07)"
     // A key dispatched at the window reads the focused element as its target.
     expect(fireEvent.keyDown(window, { key: "/", code: "Slash" })).toBe(true);
     expect(open).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
     off();
   });
 
@@ -381,7 +419,7 @@ describe("#305 PR A: the typing guard in the wired host (AC6, D6, D7, D8, G-07)"
     const row = screen.getByRole("button", { name: "Journal row" });
     row.focus();
     for (let i = 0; i < 2; i++) fireEvent.keyDown(row, { key: "Escape", code: "Escape" });
-    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
   });
 
   it("D6: in a ticket a typed `b` stays text, and so does a key a control took first or an IME composes", () => {
@@ -455,7 +493,7 @@ describe("#305 PR A: the typing guard in the wired host (AC6, D6, D7, D8, G-07)"
         fireEvent.keyDown(focused, { key });
       }
     }
-    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
   });
 
   it("G-07: a held Ctrl+/ opens the cheatsheet once; its auto-repeat is taken, not toggled", () => {
@@ -488,7 +526,7 @@ describe("#305 PR A: the typing guard in the wired host (AC6, D6, D7, D8, G-07)"
     chart.focus();
     expect(fireEvent.keyDown(chart, { key: "F11", code: "F11" })).toBe(false);
     expect(panel).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
     off();
   });
 

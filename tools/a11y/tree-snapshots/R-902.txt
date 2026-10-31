@@ -15,4 +15,3 @@
   - button "Retry now"
   - paragraph: CandleViewer v0.1.0 · environment not known yet
 - status
-- status

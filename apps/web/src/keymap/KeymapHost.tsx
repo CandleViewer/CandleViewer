@@ -1,5 +1,11 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { toggleHighContrastAnnounced } from "@candleviewer/ui";
+import {
+  ToastRegion,
+  toggleHighContrastAnnounced,
+  type ToastAnnounce,
+  type ToastItem,
+} from "@candleviewer/ui";
+import { announce } from "../features/app-shell/announcer";
 import { appThemeStore } from "../shell/bootstrap/themeStore";
 import { createDispatcher } from "./dispatcher";
 import { getBindings, subscribeBindings } from "./profile";
@@ -31,19 +37,53 @@ export function activeContexts(el: Element | null = document.activeElement): Set
   return s;
 }
 
-/** SCR-015 toast host: polite, non-modal, never steals focus. */
-export function ToastHost({ messages }: { readonly messages: readonly string[] }): JSX.Element {
+/**
+ * SCR-015 toast duration (WCAG 2.2.1): `null` is "until dismissed", so the user, not a timer, ends a toast. A later
+ * SCR-117 duration setting (5 / 10 / 20 s) drives this one value.
+ */
+export const KEYMAP_TOAST_DURATION_MS: number | null = null;
+
+/**
+ * With no timer the queue is bounded here: the newest toasts stay, the oldest drop. SCR-015's counted stack
+ * (CMP-212) is the follow-up that replaces this cap.
+ */
+export const KEYMAP_TOAST_MAX = 5;
+
+/** Module-level so an id never repeats in a page's life: the shell announcer remembers every key it has said (4.1.3). */
+let toastSeq = 0;
+
+/**
+ * SCR-015 toast host: CMP-045's region (pauses on hover and focus, dismissible, never steals focus). The sentence is
+ * spoken once through the shell's pre-rendered polite region (`announce`), never rendered inside the stack. The
+ * region portals to `body`; the wrapper keeps `toast-host` and the inert exemption.
+ */
+export function ToastHost({
+  toasts,
+  onDismiss,
+  durationMs = KEYMAP_TOAST_DURATION_MS,
+}: {
+  readonly toasts: readonly ToastItem[];
+  readonly onDismiss: (id: string) => void;
+  readonly durationMs?: number | null;
+}): JSX.Element {
   return (
-    <div role="status" aria-live="polite" data-testid="toast-host" data-cv-inert-exempt="">
-      {messages.map((m, i) => (
-        <p key={`${i}-${m}`}>{m}</p>
-      ))}
+    <div data-testid="toast-host" data-cv-inert-exempt="">
+      <ToastRegion
+        toasts={toasts}
+        durationMs={durationMs}
+        announce={announceToShell}
+        onDismiss={(id) => onDismiss(id)}
+      />
     </div>
   );
 }
 
+const announceToShell: ToastAnnounce = (politeness, text, key) => {
+  announce(politeness, text, key);
+};
+
 export function KeymapHost(): JSX.Element {
-  const [toasts, setToasts] = useState<readonly string[]>([]);
+  const [toasts, setToasts] = useState<readonly ToastItem[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const bindings = useSyncExternalStore(subscribeBindings, getBindings);
   // Real command: the `Ctrl+/` cheatsheet (SCR-013). Other commands register from their owning views.
@@ -81,8 +121,9 @@ export function KeymapHost(): JSX.Element {
       isValid: (c: KeymapCommand) => isCommandValid(c.id),
       execute: (c: KeymapCommand, digit?: number) => runCommand(c.id, digit),
       notify: (m) => {
-        setToasts((t) => [...t, m]);
-        window.setTimeout(() => setToasts((t) => t.slice(1)), 5000);
+        toastSeq += 1;
+        const id = `keymap-toast-${toastSeq}`;
+        setToasts((t) => [...t, { id, title: m, tone: "info" as const }].slice(-KEYMAP_TOAST_MAX));
       },
       countInert: (action, view) => reportHotkey({ name: "hotkey.inert_pressed", action, view }),
     });
@@ -117,7 +158,10 @@ export function KeymapHost(): JSX.Element {
   }, [bindings]);
   return (
     <>
-      <ToastHost messages={toasts} />
+      <ToastHost
+        toasts={toasts}
+        onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))}
+      />
       {sheetOpen ? <Cheatsheet onClose={() => setSheetOpen(false)} /> : null}
     </>
   );

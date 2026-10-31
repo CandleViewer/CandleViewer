@@ -43,7 +43,7 @@ describe("BQ-7, D9: Ctrl+K is reserved for the palette", () => {
     const { KeymapHost } = m;
     render(<KeymapHost />);
     expect(press({ key: "k", code: "KeyK", ctrlKey: true })).toBe(false);
-    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
   });
 
   it("once a palette registers on Ctrl+K, the palette runs (E15)", () => {
