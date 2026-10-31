@@ -43,13 +43,20 @@ for (const d of dirs) {
 }
 // Under --shard each shard runs a subset, so the union over all given dirs must cover the manifest.
 const missing = manifest.stories.filter((id) => !byId.has(id));
+const listed = new Set(manifest.stories);
+for (const id of byId.keys())
+  if (!listed.has(id)) problems.push(`story file ${id} is not in the manifest`);
 const perStory = (manifest.themes?.length ?? 0) * (manifest.densities?.length ?? 0);
 for (const id of manifest.stories) {
   const s = byId.get(id);
   if (s === undefined) continue;
   const want = perStory * (s.pinned ? 1 : (manifest.motions?.length ?? 2));
-  if (want === 0 || s.cells.length !== want) {
-    problems.push(`${id} has ${s.cells.length} cells, expected ${want}`);
+  if (want === 0) {
+    problems.push(
+      `${id}: the expected cell count is 0 (themes / densities / motions empty: check A11Y_THEMES and A11Y_DENSITIES)`,
+    );
+  } else if (s.cells.length !== want) {
+    problems.push(`${id}: ${s.cells.length} cells, expected ${want}`);
   }
 }
 const cells = manifest.stories.flatMap((id) => byId.get(id)?.cells ?? []);
@@ -103,7 +110,9 @@ if (missing.length > 0) {
   process.exit(1);
 }
 if (problems.length > 0) {
-  console.error(`A11Y-INFRA: ${[...new Set(problems)].slice(0, 5).join("; ")}`);
+  const unique = [...new Set(problems)];
+  const more = unique.length > 5 ? ` (+${unique.length - 5} more)` : "";
+  console.error(`A11Y-INFRA: ${unique.slice(0, 5).join("; ")}${more}`);
   process.exit(1);
 }
 if (offsite.length > 0 || failed.length > 0) process.exit(1);

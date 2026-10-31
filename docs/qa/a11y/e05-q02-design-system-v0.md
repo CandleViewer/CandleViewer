@@ -4,7 +4,7 @@
 
 This is an **agent-run** audit. It is not a human pass: no screen reader was operated by a person, no pointer-free session was driven by a person, and nobody zoomed a browser. Every number below was measured by the committed driver; every item that needs a person is listed as human-owed in §5.
 
-- **Swept sha:** `b6253ac33`, the E05-S04 slice-H head, which carries the complete v0 component set.
+- **Swept sha:** `b6253ac33`, the E05-S04 slice-H head at the time of the sweep (a pre-rebase sha of #5237's branch; it may not resolve after that PR squash-merges), which carries the complete v0 component set.
 - **Fix commits:** `fb7e0f159` (skip link) and `f2b3d0331` (error summary links and the Typography story). The re-sweep of the three components was run before the branch was rebased onto `main`; the fixes were not re-swept at the rebased head.
 - **Environment:** the built Storybook, served on loopback, Playwright Chromium, headless. No live exchange, no network beyond loopback. The driver counts off-site requests; there were none.
 - **Out of scope** (ticket): application screens and routes (E47), design-contract sign-off (E05-D04), chart canvas a11y.
