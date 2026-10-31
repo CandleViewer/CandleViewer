@@ -150,18 +150,21 @@ describe("caution note and print", () => {
 });
 
 describe("review folds", () => {
-  it("Reset onto a default another command took is refused, offers Swap, and changes nothing", () => {
-    // Ctrl+Shift+W (close_all's default) is a reviewed override no other command may take, so the
-    // same three steps run on the DOM zoom pair, whose defaults are plain keys.
-    bindKey("Price zoom out", "F6");
-    bindKey("Price zoom in", "-");
-    expect(m.getBindings().get("dom.zoom_in")).toBe("-");
+  it("Reset onto a default another command took is refused, offers Swap, and audits nothing", () => {
+    const cancel = KEYMAP.find((c) => c.id === "dom.cancel_all")?.label ?? "";
+    bindKey(cancel, "X", ["Ctrl", "Alt"]);
+    bindKey("Price zoom in", "X", ["Ctrl", "Shift"]); // cancel-all's default, now free
+    expect(m.getBindings().get("dom.zoom_in")).toBe("Ctrl+Shift+X");
+    audits.length = 0;
+    events.length = 0;
     const before = new Map(m.getBindings());
-    const row = inRow("Price zoom out");
+    const row = inRow(cancel);
     fireEvent.click(row.getByRole("button", { name: /^Reset\b/ }));
     expect(row.getByText(/already bound to/)).toBeVisible();
     expect(row.getByRole("button", { name: "Swap" })).toBeVisible();
     expect(m.getBindings()).toEqual(before);
+    expect(m.getBindings().get("dom.cancel_all")).toBe("Ctrl+Alt+X");
+    expect(audits.filter((a) => a.action === "hotkey.trading_binding_changed")).toHaveLength(0);
     expect(events.map((e) => e.name)).toContain("hotkey.conflict_blocked");
     expect(events.map((e) => e.name)).not.toContain("hotkey.reset");
   });
@@ -191,13 +194,31 @@ describe("review folds", () => {
     expect(polite()).toBe("Recording cancelled.");
   });
 
-  it("the row being edited stays listed when the search would drop it", () => {
+  it("the row being edited stays listed under a search; another row's focus releases it", () => {
     const row = inRow("Price zoom in");
     fireEvent.focus(row.getByRole("textbox", { name: "Key for Price zoom in" }));
-    fireEvent.change(screen.getByLabelText("Search commands"), { target: { value: "flatten" } });
+    const search = screen.getByLabelText("Search commands");
+    fireEvent.focus(search);
+    fireEvent.change(search, { target: { value: "cancel all" } });
     expect(screen.getByText("Price zoom in", { selector: "th" })).toBeVisible();
-    fireEvent.focus(screen.getByLabelText("Search commands"));
+    const rows = [...document.querySelectorAll("tbody tr")].filter(
+      (tr) => tr.querySelector("th")?.textContent !== "Price zoom in",
+    );
+    const other = rows[0]?.querySelector("input:not([type=checkbox])");
+    fireEvent.focus(other as Element);
     expect(screen.queryByText("Price zoom in", { selector: "th" })).toBeNull();
+  });
+
+  it("a stale message does not pin its row under a later filter, and a click off says cancelled", () => {
+    bindKey("Price zoom in", "-"); // refused: Price zoom out holds it
+    expect(inRow("Price zoom in").getByText(/already bound to/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Context"), { target: { value: "Chart" } });
+    expect(screen.queryByText("Price zoom in", { selector: "th" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Context"), { target: { value: "*" } });
+    const rec = inRow("Price zoom in").getByRole("button", { name: /^Record\b/ });
+    fireEvent.click(rec);
+    fireEvent.click(rec);
+    expect(polite()).toBe("Recording cancelled.");
   });
 
   it("the context select's first option is a labelled sentinel, not a context", () => {

@@ -131,10 +131,11 @@ export function HotkeyEditor(): JSX.Element {
           .toLowerCase()
           .includes(needle)),
   );
-  const count = matches.length;
+  const matched = matches.length;
   /** The row being edited, or holding the last message, stays listed whatever the search says. */
   const keep = notice?.id ?? editing;
   const shown = KEYMAP.filter((c) => matches.includes(c) || c.id === keep);
+  const count = shown.length; // the announcement counts the rows on screen
   const filtering = needle !== "" || ctx !== ALL;
   useEffect(() => {
     if (!filtering) return undefined;
@@ -269,16 +270,20 @@ export function HotkeyEditor(): JSX.Element {
           <input
             type="search"
             value={query}
-            onFocus={() => setEditing(null)}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setNotice(null); // a stale message must not pin its row under every later filter
+              setQuery(e.target.value);
+            }}
           />
         </label>
         <label>
           Context
           <select
             value={ctx}
-            onFocus={() => setEditing(null)}
-            onChange={(e) => setCtx(e.target.value)}
+            onChange={(e) => {
+              setNotice(null);
+              setCtx(e.target.value);
+            }}
           >
             <option value={ALL}>All contexts</option>
             {CONTEXTS.map((c) => (
@@ -318,7 +323,7 @@ export function HotkeyEditor(): JSX.Element {
           ))}
         </tbody>
       </table>
-      {count === 0 ? <p>No command matches.</p> : null}
+      {matched === 0 ? <p>No command matches.</p> : null}
       <button
         type="button"
         onClick={() => {
@@ -444,7 +449,7 @@ function Row(props: {
               aria-pressed={recording}
               onClick={() => {
                 setRecording(!recording);
-                if (!recording) say("Press the keys now. Esc cancels.");
+                say(recording ? "Recording cancelled." : "Press the keys now. Esc cancels.");
               }}
               onBlur={() => {
                 if (!recording) return;
