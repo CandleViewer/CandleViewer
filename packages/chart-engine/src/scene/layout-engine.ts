@@ -27,6 +27,10 @@ function checkRatio(r: number): number {
   throw new RangeError("chart-engine: a pane height ratio must be in (0, 1]");
 }
 
+/** The price-axis gutter right of each pane and the time-axis gutter below them, CSS px. */
+export const PRICE_GUTTER_PX = 64;
+export const TIME_GUTTER_PX = 24;
+
 export class LayoutEngine {
   readonly panes: PaneLayout[] = [];
   readonly timeAxis: Rect = [0, 0, 0, 0];
@@ -36,8 +40,8 @@ export class LayoutEngine {
 
   constructor(
     private readonly graph: SceneGraph,
-    readonly priceGutter = 64,
-    readonly timeGutter = 24,
+    readonly priceGutter = PRICE_GUTTER_PX,
+    readonly timeGutter = TIME_GUTTER_PX,
   ) {}
 
   /** Lays out a pane already in the graph, below the others. */
