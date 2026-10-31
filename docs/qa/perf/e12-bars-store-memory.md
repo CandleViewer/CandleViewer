@@ -1,6 +1,8 @@
 # E12 bars store memory at the 32-spec cap (E12-T06 D2-G4, #399)
 
-Status: **harness delivered; the 24 h reading (the fallback, coordinator ruling 4) fails R4 only; D2-G4 stays open.**
+Status: **D2-G4 closed on the `default` memdiag leg (run 40020104619, R4 −0.020 MB/h; ruled 2026-10-31,
+#399 issuecomment-6545764042). The laptop fallback (+0.2475) and the `cv-bench-01` nightly (+0.2358) stay on
+record as FAIL readings of R4; see "D2-G4 closed" below.**
 
 This record holds the D2-G4 fallback reading (coordinator ruling 4): run 39396280082 was cancelled at its
 2100-minute timeout with no report, so `soak_bars --profile full` ran once on a laptop, as "The reading" says:
@@ -117,6 +119,47 @@ the nightly runs it after the 24 h `soak_steady` in one process (`runner all`), 
 include that scenario's heap and the lane-added figure could move either way. The setup row is the check
 against 145.6 MB. The R4 figure agrees three ways: the report's `rss_plateau_slope` and the block read
 0.2475 MB/h over 721 samples, an independent offline script +0.248; the block prints `1441 86400.0`.
+
+## D2-G4 closed (2026-10-31)
+
+After the fallback above, two more 24 h readings of the same rule exist, both on `cv-bench-01` (machine
+profile `bench-runner`), and the diagnosis that reconciles them is in
+[`e12-bars-r4-diagnosis.md`](e12-bars-r4-diagnosis.md) ("The result"):
+
+| Reading                                        | Run         | Head        | R4 (MB/h a symbol, 721 samples) | Other checks         |
+| ---------------------------------------------- | ----------- | ----------- | ------------------------------- | -------------------- |
+| laptop fallback (above)                        | none        | `bd82bdce2` | +0.2475: FAIL                   | pass                 |
+| nightly `soak_bars` (`perf-ingestion-nightly`) | 39741074901 | `362590b93` | +0.2358: FAIL                   | pass                 |
+| memdiag `default` leg (`perf-bars-memdiag`)    | 40020104619 | `f496b01e2` | −0.020: PASS                    | R1-R3 pass; complete |
+
+The combined `memdiag judge` verdict over the four legs is **NOT REPRODUCED** (#399, issuecomment-6545806239),
+and the diagnosis is allocator retention, not a leak: with pymalloc off (`malloc` leg, run 40169689142) the
+glibc in-use bytes are flat to falling over hours 12-24 while free bytes in the arena rise, and with
+allocations of 128 KiB or more on mmap (`mmap128k` leg, run 40249045721) no step of 1 MiB or more appears
+after the first half hour.
+
+**Ruled (BQ-1, 2026-10-31, under the owner's delegation of 2026-10-29):** D2-G4 closes on the `default` leg,
+as the diagnosis rule's own text says. That reading is a `--profile full` `soak_bars` run of 24 h meeting
+all four checks of the pass rule above, on `cv-bench-01` (in a process that also probed the allocator
+hourly, as the diagnosis rule records), so it satisfies the rule as written; no budget,
+limit, band or baseline changed. The two FAIL readings stay on record as FAIL readings, not withdrawn: the
+diagnosis explains them as the same growth pattern, a staircase of 1.8-4.0 MiB heap steps whose slope over
+the window is decided by the size of the step nearest its middle and by whether pymalloc releases memory
+after it. The tie-break is one host-quiet nightly `soak_bars`, judged by the same R4 and named here with its
+run id when it lands; it does not hold the closing PR.
+
+**Fragility, recorded.** R4 near 0.18 is decided by single step sizes: on the recorded curves, the nightly's
+h17.60 step at 1.84 MiB instead of 4.00 reads 0.1671, and the default leg without its two releases reads
+0.1323 (0.2144 with a 4.00 MiB step as well), so 3 of the 5 bench and laptop runs pass and 2 fail. A future
+reading on either side of 0.18 is not by itself a change in behaviour; a rise in glibc in-use bytes
+(`uordblks`) over hours 12-24 would be. On the 30-day projection R4 was derived from: at the worst reading,
++0.2475 MB/h from 178 MB, linear growth would reach budget #8's 300 MB after about 20 days of continuous
+running, and the measured growth decays (hours 2-12 at 0.20-0.37 MB/h, hours 12-24 at −0.02 to 0.25).
+
+The standing conditions below still hold at the closing reading's head and at this record's: neither
+`bars/series_store.py`, `bars/builder_set.py` nor `bars/models.py` has changed since `e784738b5`, nor the
+sink list in `bars_wiring.py` since `4a921a101`. The reading with E13's indicators sink in the lane, owed
+before the flip ("Noted" below), is unchanged by this closure.
 
 ## Noted, not part of the verdict
 
