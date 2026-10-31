@@ -124,7 +124,11 @@ ERRORS: list[str] = []
 # settings backend task (E02-T13, the routes E22-S02 and E30-S07 consume) planned in S11; S11
 # carries +2 eng pts and train R2 none (360 of its 360), funded as A24/A48 were. These
 # downgrade to WARN so the governance CI gate stays meaningful for *new* overages.
-ACCEPTED_OVERAGE = {"sprint": {7: 5, 11: 2, 14: 3, 15: 39}, "train": {"R1": 5, "R3": 6}}
+# Decision 2026-10-31 (#2701 ledger addendum A row A59, comment 6547509914): E10-S05, the
+# SCR-012 command palette build (a plan gap from #1323 D-07 and E10-Q02 BQ-04), planned in S07;
+# S07 carries +5 eng pts and train R1 +5 (415 of 405), funded from the R5 reserve as A24 / A48 /
+# A53 were.
+ACCEPTED_OVERAGE = {"sprint": {7: 10, 11: 2, 14: 3, 15: 39}, "train": {"R1": 10, "R3": 6}}
 WARNINGS: list[str] = []
 MOVES: list[dict] = []
 UNFIXABLE_SPRINTS: set[int] = set()
