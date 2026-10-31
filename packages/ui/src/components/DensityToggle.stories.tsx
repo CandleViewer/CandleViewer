@@ -19,13 +19,16 @@ const LONG_PANEL = "Order book and recent trades for BTCUSDT perpetual";
 function GlobalHost({
   initial = "compact",
   onChange,
+  form,
 }: {
+  form?: "segmented" | "menu";
   initial?: DensityName;
   onChange?: (v: DensityName) => void;
 }): JSX.Element {
   const [value, setValue] = useState<DensityName>(initial);
   return (
     <DensityToggle
+      {...(form === undefined ? {} : { form })}
       value={value}
       onChange={(next) => {
         setValue(next);
@@ -114,6 +117,22 @@ export const KeyboardCommits: Story = {
     await userEvent.keyboard("{ArrowRight}");
     await expect(canvas.getByRole("radio", { name: "Comfortable" })).toHaveFocus();
     await waitFor(() => expect(live()).toBe("Chart panel density: comfortable"));
+  },
+};
+
+/** Form=menu: the trigger names the group; picking Comfortable commits, speaks once and closes. */
+export const MenuForm: Story = {
+  render: () => <GlobalHost form="menu" />,
+  play: async ({ canvasElement }) => {
+    const trigger = within(canvasElement).getByRole("button", { name: "Density: Compact" });
+    await userEvent.click(trigger);
+    const body = within(document.body);
+    await expect(body.getByRole("menuitemradio", { name: "Compact" })).toBeChecked();
+    await userEvent.click(body.getByRole("menuitemradio", { name: "Comfortable" }));
+    await waitFor(() => expect(live()).toBe("Density: Comfortable"));
+    await expect(
+      within(canvasElement).getByRole("button", { name: "Density: Comfortable" }),
+    ).toHaveFocus();
   },
 };
 
