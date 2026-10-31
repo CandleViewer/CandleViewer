@@ -610,6 +610,7 @@ class Crop:
         self.zone = zone
         self.first = 0  # bars before this index are not drawn (not loaded)
         self.drop_times: set[int] = set()  # live fold: time labels removed, the rest keep their positions
+        self.lp_box: tuple[int, int] | None = None  # the last-price pill's (top, bottom) in the gutter (D5 suppression)
         self.ink_group: str | None = None  # wrap the candles in one named group (the stale x0.85 dim target)
         self.axes = True  # False: no gutter rule / labels (no GL context)
         self.axis_typo = NUM
@@ -638,6 +639,46 @@ class Crop:
         major = [first + i * step for i in range(int(span // step) + 1) if first + i * step < self.hi]
         minor = [p + step / 2 for p in major if p + step / 2 < self.hi]
         return major, minor
+
+    def strip_area(self) -> tuple[float, float]:
+        """The strip's label area: 8 px right of the zone tag (E11-D02 L172) to 8 px left of the cluster (L171)."""
+        a = 4 + text_w(self.zone, NUM) + 8 if self.zone else 4.0
+        ends = [float(k["x"]) for k in self.strip if k.get("name") == "cluster"]
+        return a, min([float(self.pw), *[e - 8 for e in ends]])
+
+    def time_x(self, i: int) -> float:
+        """The centre of time label i (labels evenly spaced in the strip's label area, dropped ones included)."""
+        a, b = self.strip_area()
+        return a + (b - a) * (i + 0.5) / len(self.times)
+
+    def minutes_at(self, x: float) -> float:
+        """The axis time at x (minutes after midnight), linear through the frame's own time labels (m3: every pill
+        value is read off the axis it sits on, so it falls between the ticks it sits between)."""
+        t = [int(s[:2]) * 60 + int(s[3:5]) for s in self.times]
+        step = t[1] - t[0] if len(t) > 1 else 5
+        a, b = self.strip_area()
+        return t[0] + (x - self.time_x(0)) / ((b - a) / len(t)) * step
+
+    def clock_at(self, x: float, *, secs: bool = False) -> str:
+        m = self.minutes_at(x)
+        if secs:
+            s = math.floor(m * 60)
+            return f"{s // 3600:02d}:{s // 60 % 60:02d}:{s % 60:02d}"
+        return f"{math.floor(m) // 60:02d}:{math.floor(m) % 60:02d}"
+
+    def strip_pill(self, n: Node, xc: float) -> Node:
+        """Place a strip pill on its anchor xc: centred; flipped left of the anchor when it would cross the cluster's
+        8 px zone (E11-D02 L206); at the zone tag's mirror zone (L172) flipped right of the anchor, and held at the
+        zone's edge when the flip does not clear it, so a pill never covers the tag's clock (L206: pills cover tick
+        labels only)."""
+        a, b = self.strip_area()
+        w = est_width(n)
+        x = xc - w / 2
+        if x + w > b:
+            x = xc - w
+        if x < a:
+            x = max(xc, a)
+        return dict(n, x=round(x))
 
     def candle_nodes(self, upto: int | None = None) -> list[Node]:
         kids: list[Node] = []
@@ -677,27 +718,27 @@ class Crop:
         gut: list[Node] = [rect("axis rule", 1, self.ph, slot("color.chart.rule"), x=0, y=0)] if self.axes else []
         if self.labels:
             ax = slot("color.chart.axis")
+            lh = text_h(self.axis_typo)
+            lp = self.lp_box
+            # E11-D02 L205 (D5): the last-price pill suppresses any tick label whose box comes within one label
+            # height of it
             gut += [text(f"tick {i}", f_price(p), self.axis_typo, ax, x=4, y=max(0, self.y(p) - 7))
                     for i, p in enumerate(major)
-                    if 4 < self.y(p) < self.ph - 10]
+                    if 4 < self.y(p) < self.ph - 10 and not (
+                        lp and max(0, self.y(p) - 7) < lp[1] + lh and max(0, self.y(p) - 7) + lh > lp[0] - lh)]
         gut += self.gutter
         kids.append(box("price gutter", gut, {"fill": pbg, "clip": True}, w=self.gw, h=self.ph, x=self.pw, y=self.st))
         if self.sh:
             st: list[Node] = [rect("strip rule", self.w, 1, slot("color.chart.rule"), x=0, y=0)]
             if self.labels:
                 ax = slot("color.chart.axis")
-                a = 4.0
                 if self.zone:
                     st.append(text("zone tag", self.zone, NUM, ax, x=4, y=6, note="1 Hz, the WS-corrected server "
                                    "time; aria-live off; 8 px exclusion zone to its right (E11-D02 D8)"))
-                    a = 4 + text_w(self.zone, NUM) + 8
-                ends = [float(k["x"]) for k in self.strip if k.get("name") == "cluster"]
-                b = min([float(self.pw), *[e - 8 for e in ends]])
-                n = len(self.times)
                 for i, t in enumerate(self.times):
                     if i in self.drop_times:
                         continue
-                    cx = a + (b - a) * (i + 0.5) / n
+                    cx = self.time_x(i)
                     st.append(text(f"time {i}", t, NUM, ax, x=round(cx - text_w(t, NUM) / 2), y=6))
             st += self.strip
             kids.append(box("time strip", st, {"fill": pbg, "clip": True}, w=self.w, h=self.sh, x=0,
@@ -736,6 +777,7 @@ class Group:
     title: str
     frames: list[Node]
     per_row: int
+    states: list[str]
 
     @property
     def name(self) -> str:
@@ -747,12 +789,15 @@ class Group:
         y, i = LABEL_H, 0
         while i < len(self.frames):
             row, x = self.frames[i:i + self.per_row], 0
-            for f in row:
+            for j, f in enumerate(row):
+                # m4: each frame carries a visible caption naming its Table 1 state, in the gap above it
+                kids.append(text(f"state caption · {self.states[i + j]}", f"state: {self.states[i + j]}", CAPTION,
+                                 TEXT_2, w=f["w"], x=x, y=y - 18))
                 kids.append(dict(f, x=x, y=y))
                 x += f["w"] + FRAME_GAP
             y += max(f["h"] for f in row) + FRAME_GAP
             i += self.per_row
-        w = max(k["x"] + k["w"] for k in kids[1:])
+        w = max(k["x"] + k["w"] for k in kids[1:] if k["t"] == "board")
         return box(self.name, kids, None, w=w, h=y - FRAME_GAP)
 
 
@@ -785,6 +830,8 @@ def board(nn: int, groups: list[Group], ann: Node) -> tuple[dict[str, Any], list
          f"(a mismatch makes a duplicate root); size {w} x {h}")
     live(f"after touchTexts + relayout: the annotation column (estimated {ah:.0f} px) ends at least {MARGIN} px above "
          f"the root's bottom (h {h}); if not, raise the root's h to the column's end + {MARGIN} and record it")
+    live("each frame has its state caption 'state: <Table 1 state>' (type.ui.caption, color.text.secondary) 18 px "
+         "above it, inside the row gap, clear of the frame (round 2, m4)")
     for g in placed:
         live(f"group {g['name']!r}: read back {g['w']} x {g['h']} at ({g['x']}, {g['y']}); its frames keep their "
              f"sheet sizes after relayout (clip on, no child outside its frame)")
@@ -967,6 +1014,7 @@ def last_pill(c: Crop, *, up: bool | None = None, line: bool = True) -> None:
     up = (b.c >= b.o) if up is None else up
     fill = UP if up else DOWN
     yy = c.y(b.c)
+    c.lp_box = (yy - 8, yy - 8 + 17)
     if line:
         c.pane.append(dashes("last-price line", 0, yy, c.pw, fill, vertical=False))
     c.gutter.append(rect("last-price nub", 4, 6, fill, x=1, y=yy - 3))
@@ -991,7 +1039,7 @@ def build_group(cmp: str, title: str, states: list[str], make: Any, cites: dict[
     for st in states:
         frames.append(ref_frame(cmp, title, st, lambda st=st: make(st), cites[st]))
         used += [x for x in FRAME_SLOTS if x not in used]
-    return Group(cmp, title, frames, per_row), used
+    return Group(cmp, title, frames, per_row, states), used
 
 
 def density_line(extra: str = "") -> str:

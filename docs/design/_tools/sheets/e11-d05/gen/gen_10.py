@@ -19,7 +19,13 @@ W197, H197 = 360, 320
 TIP_W = 200
 
 
-def tip_rows(c: k.Crop, i: int, overflow: bool = False) -> list[k.Node]:
+# m3: the overflow rows' values keep each band ordered upper >= middle >= lower (BB and Keltner both centre on 64,003.2,
+# the EMA 20 row; the moving averages sit around the bars)
+OVERFLOW = [("EMA 50", "63,998.5"), ("EMA 200", "63,962.0"), ("SMA 100", "64,004.0"), ("VWAP", "64,001.5"),
+            ("BB upper", "64,031.0"), ("BB lower", "63,975.4"), ("Keltner up", "64,022.7"), ("Keltner dn", "63,983.7")]
+
+
+def tip_rows(c: k.Crop, i: int, overflow: bool = False, when: str = "13:38") -> list[k.Node]:
     b = c.bars[i]
     arrow = "▲" if b.c >= b.o else "▼"
 
@@ -30,20 +36,20 @@ def tip_rows(c: k.Crop, i: int, overflow: bool = False) -> list[k.Node]:
     def row(name: str, a: k.Node, b2: k.Node | None = None) -> k.Node:
         return k.hbox(name, [a, b2], None, w=TIP_W - 16, h=14)
 
-    rows = [k.text("title", "14 Oct 13:38 · 1m", k.CAPTION, k.TEXT_2),
+    rows = [k.text("title", f"14 Oct {when} · 1m", k.CAPTION, k.TEXT_2),
             row("row OH", cell("O", "O", k.f_price(b.o)), cell("H", "H", k.f_price(b.h))),
             row("row LC", cell("L", "L", k.f_price(b.l)), cell("C", "C", f"{k.f_price(b.c)} {arrow}")),
             row("row vol", cell("Vol", "Vol", "1,204"), cell("delta", "Δ", "+200")),
             row("row EMA 20", cell("EMA 20", "─ EMA 20", "64,003.2", True))]
     if overflow:
-        extra = ["EMA 50", "EMA 200", "SMA 100", "VWAP", "BB upper", "BB lower", "Keltner up", "Keltner dn"]
-        rows += [row(f"row {e}", cell(e, f"─ {e}", k.f_price(63990.0 + 7.5 * j), True)) for j, e in enumerate(extra)]
+        rows += [row(f"row {e}", cell(e, f"─ {e}", v, True)) for e, v in OVERFLOW]
         rows.append(k.text("overflow", "+3 more · Alt+T", k.CAPTION, k.TEXT_2))
     return rows
 
 
-def tooltip(c: k.Crop, i: int, x: float, y: float, *, overflow: bool = False, note: str = "") -> k.Node:
-    return k.vbox("CMP-197 tooltip", tip_rows(c, i, overflow),
+def tooltip(c: k.Crop, i: int, x: float, y: float, *, overflow: bool = False, note: str = "",
+            when: str = "13:38") -> k.Node:
+    return k.vbox("CMP-197 tooltip", tip_rows(c, i, overflow, when),
                   {"fill": k.OVERLAY, "stroke": k.BORDER, "strokeWidth": k.HAIR, "strokeAlign": "inner",
                    "radius": k.R_CARD, "pad": k.INSET_SM, "shadow": "elevation.popover"}, w=TIP_W, x=x, y=y,
                   note=("DOM, aria-hidden; values never coloured by direction (▲ / ▼ and the sign carry it). " + note
@@ -70,7 +76,13 @@ def f197(state: str) -> k.Node:
     ch, inv = k.slot("color.chart.crosshair"), k.slot("color.chart.pill.text.inverse")
     c.pane.append(k.dashes("crosshair · vertical", xc, 0, c.ph, ch, vertical=True))
     c.pane.append(k.dashes("crosshair · horizontal", 0, py, c.pw, ch, vertical=False))
-    c.strip.append(k.pill("time pill", "13:38", ch, inv, x=xc - 18, y=4))
+    when = c.clock_at(xc)  # m3: the time pill and the box's title read the time off the axis
+    c.strip.append(c.strip_pill(k.pill("time pill", when, ch, inv, y=4), xc))
+    if c.strip[-1]["x"] != round(xc - k.est_width(c.strip[-1]) / 2):
+        k.spec_gap("CMP-197: where the crosshair time pill would cover the zone tag's clock, E11-D02 L206 lets pills "
+                   "cover tick labels only and L172 mirrors the cluster's exclusion zone at the tag; the pill flips "
+                   "right of its anchor and is held at the zone's edge (8 px right of the tag), its value still the "
+                   "crosshair's time")
     tx, ty = xc + 16, py + 16
     note = ""
     if state == "flipped left":
@@ -89,7 +101,7 @@ def f197(state: str) -> k.Node:
         note = "overflow after 12 rows, as text"
     if not (ty + th <= band[0] or ty >= band[1]) or ty < 0 or ty + th > c.ph - 8 or tx < 0 or tx + TIP_W > c.pw:
         raise ValueError(f"CMP-197 {state}: box ({tx}, {ty}, {TIP_W} x {th}) breaks the band {band} or the plot")
-    c.pane.append(tooltip(c, i, tx, ty, overflow=state == "overflow", note=note))
+    c.pane.append(tooltip(c, i, tx, ty, overflow=state == "overflow", note=note, when=when))
     return c.build("f")
 
 
@@ -138,6 +150,18 @@ def button(name: str, glyph: str, color: str = k.TEXT_2) -> k.Node:
     return k.hbox(name, [k.icon("glyph", glyph, color, k.ICON)], {"justify": "center"}, w=24, h=24)
 
 
+def eye_off(color: str) -> k.Node:
+    """m2: the eye-off glyph from primitives (the local icon set has no eye-off): the `show` eye plus a 2 px diagonal
+    stroke, top-left to bottom-right, in the glyph's colour."""
+    k.deviate("CMP-199 hidden rows: E11-D02 D12 (L119) and L343 draw an eye-off icon; the local icon set has none, so "
+              "it is drawn from primitives - the `show` eye plus a 2 px diagonal stroke (13 2 x 2 steps) in "
+              "color.text.tertiary; swap for the library icon when it lands")
+    return k.box("glyph · eye-off", [k.icon("eye", "show", color, k.ICON, x=0, y=0),
+                                     *[k.rect(f"slash {j:02d}", 2, 2, color, x=1 + j, y=1 + j) for j in range(13)]],
+                 None, w=16, h=16, note="eye-off drawn from primitives: the show eye + a diagonal stroke (no eye-off "
+                                        "icon in the local set)")
+
+
 def label_row(*, focused: bool = False, collapsed: bool = False) -> k.Node:
     kids = [k.rect("pane-focus bar", 2, 16, k.ACTION) if focused else None,
             k.text("pane label", "Price", k.LABEL, k.TEXT_1),
@@ -156,7 +180,8 @@ def series_row(i: int, name: str, value: str, *, hidden: bool = False) -> k.Node
     c3 = k.TEXT_3 if hidden else None
     kids = [sw, k.text("label", name, k.LABEL, c3 or k.TEXT_1, w=118),
             k.text("value", "—" if hidden else value, k.NUM, c3 or k.TEXT_2, w=64, align="right"),
-            button("eye", "show", k.TEXT_3 if hidden else k.TEXT_2)]
+            (k.hbox("eye", [eye_off(k.TEXT_3)], {"justify": "center"}, w=24, h=24) if hidden
+             else button("eye", "show", k.TEXT_2))]
     return k.hbox(f"row {i + 1} · {name}", kids, {"gap": k.INSET_SM}, h=24,
                   note=(f"eye toggle aria-pressed=false, stable name '{name} visible'; 'hidden' in the row's name"
                         if hidden else f"eye toggle aria-pressed=true, stable name '{name} visible'"))
@@ -176,6 +201,24 @@ def legend(rows: list[k.Node]) -> k.Node:
     return k.vbox("CMP-199 legend", rows, None, x=8, y=8, note="DOM; inset 8 (compact); one roving stop")
 
 
+def clear_value(c: k.Crop, rows: list[int]) -> None:
+    """Widen the crop's price range upwards until no candle crosses the value cell of the given legend rows (legend at
+    (8, 8), 24 px rows, the value cell x 150-214)."""
+    def hit() -> bool:
+        for i, b in enumerate(c.bars):
+            x = c.x(i)
+            if 146 <= x <= 218 and any(c.y(b.h) < 8 + 24 * r + 24 and c.y(b.l) > 8 + 24 * r for r in rows):
+                return True
+        return False
+    lifts = 0
+    while hit():
+        c.hi += 0.25 * (c.hi - c.lo)
+        lifts += 1
+    if lifts:
+        k.deviate("CMP-199 one hidden: the frame's price range is widened so no candle crosses the hidden row's \"—\" "
+                  "value (D12 gives the legend no row fill); a layout choice of the crop, not a spec value")
+
+
 def f199(state: str) -> k.Node:
     c = k.Crop(W199, H199, strip=False, gutter=72, n=14)
     s = SERIES
@@ -183,9 +226,14 @@ def f199(state: str) -> k.Node:
         rows = [label_row(), *[series_row(i, n, v) for i, (n, v) in enumerate(s[:3])]]
     elif state == "one hidden":
         rows = [label_row(), *[series_row(i, n, v, hidden=i == 1) for i, (n, v) in enumerate(s[:3])]]
+        # m2: lift the candles clear of the hidden row's "—" (the legend has no row fill in D12)
+        clear_value(c, [2])
     elif state == "all hidden":
         rows = [label_row(), *[series_row(i, n, v, hidden=True) for i, (n, v) in enumerate(s)],
                 summary("6 series · 6 hidden")]
+        c.data = False  # m2: the price series is hidden too, so no candles are drawn behind the "—" values
+        k.deviate("CMP-199 all hidden: every series row is hidden, the price series included, so the pane draws no "
+                  "candles (grid and axis stay) and no \"—\" value sits over a wick")
     elif state in ('overflow "+N more"', "popover open"):
         n_vis = max(3, int(0.3 * c.ph // 24))
         total = len(s) + len(MORE)

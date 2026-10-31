@@ -33,10 +33,10 @@ Root 3000 x 2566 px at (4000, 0); footer "page E11-D05 ref frames · board 10 ·
 
 ## Validator and size
 
-- `10-ref-frames-b.json: 0 errors, 14 warnings, 61 sections, 260077 bytes` (exit 0)
-- 61 sections, 2083 shapes, 260077 bytes
+- `10-ref-frames-b.json: 0 errors, 14 warnings, 80 sections, 273738 bytes` (exit 0)
+- 80 sections, 2167 shapes, 273738 bytes
 
-## Live checks (12)
+## Live checks (13)
 
 - each of the 22 frames reads back with the exact Table 1 name 'CMP-nnn · Name — ref frame (<state>)' and a non-empty plugin-data note naming its state
 - CMP-197 frames: the tooltip box never overlaps the last-price pill's band (read back its y / h against the last-price line y ± 12.5)
@@ -44,6 +44,7 @@ Root 3000 x 2566 px at (4000, 0); footer "page E11-D05 ref frames · board 10 ·
 - CMP-199 'popover open': the popover and its ring sit above the legend (z-order) and inside the frame
 - root 'E11-D05 / 10 ref-frames-b' at (4000, 0) on page 'E11-D05 ref frames': read back the name exactly after the first section call (a mismatch makes a duplicate root); size 3000 x 2566
 - after touchTexts + relayout: the annotation column (estimated 2794 px) ends at least 80 px above the root's bottom (h 2566); if not, raise the root's h to the column's end + 80 and record it
+- each frame has its state caption 'state: <Table 1 state>' (type.ui.caption, color.text.secondary) 18 px above it, inside the row gap, clear of the frame (round 2, m4)
 - group 'CMP-197 ChartTooltip · 6 ref frames': read back 2360 x 360 at (80, 80); its frames keep their sheet sizes after relayout (clip on, no child outside its frame)
 - group 'CMP-198 ChartWatermark · 4 ref frames': read back 1400 x 240 at (80, 520); its frames keep their sheet sizes after relayout (clip on, no child outside its frame)
 - group 'CMP-199 ChartLegend · 8 ref frames': read back 1480 x 680 at (80, 840); its frames keep their sheet sizes after relayout (clip on, no child outside its frame)
@@ -51,14 +52,18 @@ Root 3000 x 2566 px at (4000, 0); footer "page E11-D05 ref frames · board 10 ·
 - export docs/design/E11/img/E11-D05-10-ref-frames-b.png: export the root at scale 1 (dark set active) and record the board id, the PNG size (3000 x 2566) and the frame count read back
 - after the render, run 10-ref-frames-b.post-live.js (the kit writes it beside this sheet) twice: frame notes to shared plugin data cvd02/note, watermarks 48 / 40 px weight 600 centred under the candles, the stale x0.85 ink fills, the mark pill's 3 px padding (the live fold, 2026-10-30)
 
-## Spec gaps (1)
+## Spec gaps (2)
 
+- CMP-197: where the crosshair time pill would cover the zone tag's clock, E11-D02 L206 lets pills cover tick labels only and L172 mirrors the cluster's exclusion zone at the tag; the pill flips right of its anchor and is held at the zone's edge (8 px right of the tag), its value still the crosshair's time
 - CMP-197 docked: D10 rule 6 says the docked box yields to the legend by sitting right of it; the frame has no legend (CMP-199 is board 10's own row), so the box sits at the pane's top-right
 
-## Deviations (2)
+## Deviations (5)
 
 - CMP-197 docked: the frame's price range is widened so the last-price band sits low and the box clears it (rule 4 priority); a layout choice of the crop, not a spec value
 - CMP-197 overflow: the frame's price range is widened so the last-price band sits low and the box clears it (rule 4 priority); a layout choice of the crop, not a spec value
+- CMP-199 hidden rows: E11-D02 D12 (L119) and L343 draw an eye-off icon; the local icon set has none, so it is drawn from primitives - the `show` eye plus a 2 px diagonal stroke (13 2 x 2 steps) in color.text.tertiary; swap for the library icon when it lands
+- CMP-199 one hidden: the frame's price range is widened so no candle crosses the hidden row's "—" value (D12 gives the legend no row fill); a layout choice of the crop, not a spec value
+- CMP-199 all hidden: every series row is hidden, the price series included, so the pane draws no candles (grid and axis stay) and no "—" value sits over a wick
 
 ## Fallbacks (12)
 
