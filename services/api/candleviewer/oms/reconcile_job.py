@@ -67,7 +67,7 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.statechart import build
 from candleviewer.statechart.bindings import b19_reconciliation as b19
 from candleviewer.statechart.factory import default_clock
-from candleviewer.statechart.gateway import Gateway, receipt_is_conclusive
+from candleviewer.statechart.gateway import ALWAYS_ADMIT, Gateway, receipt_is_conclusive
 from candleviewer.statechart.persistence import (
     MachineKey,
     RestoreRefusedError,
@@ -217,7 +217,9 @@ class ReconcileJobs:
         self._sink, self._persistence = sink, persistence
         self._interval_s, self._jitter_s, self._retry_s = interval_s, jitter_s, retry_s
         self._sleep, self._monotonic = sleep, monotonic
-        self._gateway = Gateway(pager=pager)
+        # every send is the driver's own, under the job's lock: a latch that refused it would stop
+        # the pass and step 5's repair with it (C-2.6)
+        self._gateway = Gateway(pager=pager, admission=ALWAYS_ADMIT)
         self._jobs: dict[AccountId, _Job] = {}
         self._opening = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
