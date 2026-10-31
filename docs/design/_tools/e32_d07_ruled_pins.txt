@@ -1,4 +1,4 @@
-# E32-D07 pins: 1622 units (region, location, the normalised text; values cut out, copied blocks collapsed), the deck entries and the cites' line hashes at the base.
+# E32-D07 pins: 1626 units (region, location, the normalised text; values cut out, copied blocks collapsed), the deck entries and the cites' line hashes at the base.
 # Written by `--repin-ruled` only; `--check` reads it (G-RULED-PIN). Never hand-edit.
 spec:(top)#1	shape	
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half)#1	heading	# E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half)
@@ -263,19 +263,19 @@ spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-06
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-13	EV-13 | SCR-065 | Cancel all levels | audit `algo.scaled_cancelled` / `algo.scaled_partially_cancelled` | `algo.cancelled`; per child `order.cancelled` | server | D02 G-15
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-14	EV-14 | SCR-065 | Retry failed levels (drawn absent) | — | per child `order.submitted` | server | D02 G-12
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-15	EV-15 | SCR-065 | Arm pill | `order.arm_toggled` (`D02`:677) | — | client (E30-S04) | none
-spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-16	EV-16 | SCR-065 | Details | `order.rejection_viewed` | the read audited as `order.diagnostics_viewed` (registered at the base) | server | D02 G-15
+spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-16	EV-16 | SCR-065 | Details | `order.rejection_viewed` | the read audited as `order.diagnostics_viewed` (registered at the base) | server | D02 G-15; §14's D7 row (Details T2 for a non-owner)
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-17	EV-17 | SCR-065 | Reduce size · Place one order instead · Keep levels · the disclosure · the mode switch · Cancel / Close | — | none | — | none
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-18	EV-18 | SCR-069 | Place | — | `order.submitted`, `trade_group.created`, `sl.attached` | server | none
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-19	EV-19 | SCR-069 | a preview answer | analytics `algo.bracket_previewed` | — | client analytics | none
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-20	EV-20 | SCR-069 | any field change, the single-target action included | analytics `algo.bracket_field_changed` | — | client analytics | none
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-21	EV-21 | SCR-069 | Retry TP 2 | — | `order.submitted` | server | D02 G-12
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-22	EV-22 | SCR-069 | Arm pill | `order.arm_toggled` | — | client | none
-spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-23	EV-23 | SCR-069 | Details | `order.rejection_viewed` | the read audited as `order.diagnostics_viewed` (registered at the base) | server | HG-3
+spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-23	EV-23 | SCR-069 | Details | `order.rejection_viewed` | the read audited as `order.diagnostics_viewed` (registered at the base) | server | HG-3; §14's D7 row (Details T2 for a non-owner)
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-24	EV-24 | SCR-069 | Cancel and Close | — | none | — | none
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	row EV-25	EV-25 | all | any T2 control | — | none | — | none
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	s11	Sources: `D02`:497-509, :668-679, :771-781; `D04` §7.4; `D03` §7.
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	s12	The audit names are written by the server ahead of
-spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	s13	the result (C-2.9); the client analytics names have no transport today, so nothing client-side is emitted until the
+spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	s13	the result (C-2.9; `24` §15.5's write-ahead records, §8.1 S8, `24`:1580); the client analytics names have no transport today, so nothing client-side is emitted until the
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	s14	analytics-event contract owner rules (as `E22D05` §7).
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 7. The event map per control (RULED BQ-13)#1	shape	h.p2p2p2p1p2p1.trttttttttttttttttttttttttt.p2p1p1.
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 8. Redlines, tokens and the deck (consolidated, tool-lifted, never measured)#1	heading	## 8. Redlines, tokens and the deck (consolidated, tool-lifted, never measured)
@@ -530,7 +530,8 @@ spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-06
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 14. Versions and deltas (`T` AC 1) (RULED BQ-18)#1	row v1#4	v1 | {{SHA:base}} | the loosen flow is contract at the base, code pending E29-T07 (#915) and E34-S03 (#1111) (`D05`:344) | E32-S07 | E29-T07, E34-S03
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 14. Versions and deltas (`T` AC 1) (RULED BQ-18)#1	row v1#5	v1 | {{SHA:base}} | D06's boards PENDING; when they merge, §2's row is filled and the tool re-reads it | none | E32-D06 (RULED BQ-02)
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 14. Versions and deltas (`T` AC 1) (RULED BQ-18)#1	row v1#6	v1 | {{SHA:base}} | `sl.loosen_refused` and `order.diagnostics_viewed` are registered in `24` §15.5 at the base, after D02 wrote G-4 and G-15 | E32-S06, E32-S07 | —
-spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 14. Versions and deltas (`T` AC 1) (RULED BQ-18)#1	shape	h.p1p2p2p2p1.trtttttt.
+spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 14. Versions and deltas (`T` AC 1) (RULED BQ-18)#1	row v1#7	v1 | {{SHA:base}} | D7 is ruled on #915: `getOrderDiagnostics` is the Owner's alone, `403` for a Manager or Viewer (`22`:14135-14139; `24`:5338); so Details is T2 for a non-owner with its `rbac.*` reason (REVIEW R-5), which answers D02 O-4 and D03 HQ-3 | E32-S05, E32-S06 | E32-D03's and E32-D04's lane
+spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 14. Versions and deltas (`T` AC 1) (RULED BQ-18)#1	shape	h.p1p2p2p2p1.trttttttt.
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 15. Sign-off, deviations and the pack's paths (RULED BQ-01) (RULED BQ-17)#1	heading	## 15. Sign-off, deviations and the pack's paths (RULED BQ-01) (RULED BQ-17)
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 15. Sign-off, deviations and the pack's paths (RULED BQ-01) (RULED BQ-17)#1	s1	- **Sign-off.** Accessibility specialist = the orchestrator's delegated a11y lens on the PR (REVIEW §14; A28
 spec:E32-D07 — Engineering hand-off pack for the E32 builders (SCR-064, SCR-065, SCR-069 bracket half) > 15. Sign-off, deviations and the pack's paths (RULED BQ-01) (RULED BQ-17)#1	s2	applied).
@@ -1503,7 +1504,10 @@ cite	15:1455	4b8f9f561419
 cite	15:1902	fd6fccc9123c
 cite	15:2920	0cc0beb59d6d
 cite	15:513	97a2ca2992ca
+cite	22:14135-14139	130d160dc36e
 cite	22:18534	1c77c673da34
+cite	24:1580	e98ce0f68c42
+cite	24:5338	0bcd389639b1
 cite	D02:189-378	41a7e98b471c
 cite	D02:209	a681ab7d159b
 cite	D02:321	679071ce4dc6
