@@ -6,11 +6,16 @@ do, with no pipeline step changed: the anchor's operation and ref ride on `Submi
 module holds what the pipeline does not:
 
 * **The orders' terms.** `close_request` is the reduce-only order of the opposite side, intent
-  `flatten`, sized by the request's `fixed_qty` (a percent of the position's size, the whole size
-  at 100 %, floored to the lot step by the pipeline); `entry_request` is a reversal's entry on the
-  closed side's opposite, sized by the profile (C-12.5), its native stop the profile's (C-2.6).
+  `flatten`, sized by the request's `fixed_qty`: the size `resolve_close` resolved for
+  `closePosition`, else the whole size (`closeAllPositions` and a reversal); `entry_request` is a
+  reversal's entry on the closed side's opposite, sized by the profile (C-12.5), its native stop
+  the profile's (C-2.6).
   `reversal_refs(key)` names a reversal's two anchors, `uuid5(key, "close")` and
   `uuid5(key, "open")` (21 Sec.3.3.10).
+* **The close's size** (E29-S03 #978, 22 `closePosition`): `resolve_close` is the route's step 13,
+  pure, before any exchange call: a percent of the admitted row's size, or its `qty`, floored to
+  the lot step, the whole size at 100 %; `qty_below_minimum` and `dust_remainder` refuse it. The
+  instrument it reads is `PositionWrites.instrument`'s, the pipeline's own port.
 * **The group-key pre-check** (`PositionWrites.group_key_free`): a reversal whose raw key already
   anchors one of its creator's trade groups is refused 409 `idempotency_key_reuse` before its close.
 * **The native-stop pre-check** (`PositionWrites.entry_stop_ready`): a reversal is refused before
@@ -39,27 +44,33 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from decimal import Decimal
+from dataclasses import dataclass, field
+from decimal import Context, Decimal, localcontext
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID, uuid5
 
 import structlog
 
 from candleviewer.accounts.errors import AccountNotFoundError, ProfileUnavailableError
-from candleviewer.domain.primitives import AccountId, Environment, Side, Symbol
+from candleviewer.domain.events import Instrument
+from candleviewer.domain.primitives import AccountId, Environment, Qty, Side, Symbol
 from candleviewer.exchange.base.errors import ExchangeError, TransportError
 from candleviewer.exchange.base.models import AccountRef, CancelOrderRequest, OrderAck, Position
+from candleviewer.exchange.policy import InstrumentPolicy
 from candleviewer.observability import spawn
 from candleviewer.oms.errors import (
+    RULE_DUST_REMAINDER,
     RULE_NATIVE_STOP_REQUIRED,
+    RULE_QTY_BELOW_MINIMUM,
     EnvironmentMismatch,
     FieldError,
     IdempotencyKeyReuse,
+    OmsError,
     OrderInvalid,
     StoreUnavailable,
 )
 from candleviewer.oms.ports import (
+    Instruments,
     OrderType,
     Profiles,
     RequestRecord,
@@ -77,8 +88,9 @@ from candleviewer.storage.repositories.trade_groups import GroupAnchor
 
 __all__ = [
     "CLOSE_ACTION", "FLATTEN_ACTION", "MAX_SWEEPS", "REVERSE_ACTION", "REVERSE_WAIT_S",
-    "SWEEP_WAIT_S", "CloseFill", "CloseTerms", "GroupKeys", "PositionWrites", "PositionWritesDeps",
-    "VenuePosition", "close_request", "entry_request", "is_full_close", "reversal_refs",
+    "SWEEP_WAIT_S", "CloseFill", "CloseSize", "CloseTerms", "GroupKeys", "PositionWrites",
+    "PositionWritesDeps", "VenuePosition", "close_request", "entry_request", "is_full_close",
+    "resolve_close", "reversal_refs",
 ]  # fmt: skip
 
 #: 24 Sec.15.5 (ruling BQ-5): a close's record, a reversal's, and a close-all's per account.
@@ -99,6 +111,16 @@ _FINAL_UNFILLED: Final = frozenset({"cancelled", "rejected", "expired", "killed"
 #: A position's index on the other side in hedge mode; one-way stays 0.
 _OTHER_IDX: Final[Mapping[int, Literal[0, 1, 2]]] = {0: 0, 1: 2, 2: 1}
 _NO_STOP: Final = "The account's profile cannot give the entry a native stop, so nothing was sent."
+#: The close's size rules' sentences (22 `closePosition`), naming no value (C-12.6).
+_BELOW_MINIMUM: Final = "The close rounds down below the symbol's minimum order quantity."
+_DUST: Final = (
+    "The close would leave less than the smallest size that can be closed; "
+    "close the whole position instead."
+)
+_UNLISTED: Final = "No instrument is listed under this symbol."
+#: The precision a close's size is resolved in: a `numeric(38,18)` size times a percent, and its
+#: steps, are exact in it, so the floor is never taken on a figure the context rounded.
+_EXACT: Final = Context(prec=100)
 
 CloseFill = Literal["filled", "partially_filled", "unfilled"]
 #: The venue's read of a position's key (`PositionWrites.venue_position`).
@@ -142,14 +164,66 @@ def is_full_close(row: PositionRow, terms: CloseTerms) -> bool:
     return terms.qty is not None and terms.qty == row.size
 
 
-def close_request(row: PositionRow, terms: CloseTerms) -> OrderRequest:
-    """The close: reduce-only, the opposite side, intent `flatten`, on the position's own index;
-    a percent of the size, the whole size at 100 % (the pipeline floors it to the lot step)."""
-    if terms.pct is not None:
+@dataclass(frozen=True, slots=True)
+class CloseSize:
+    """A close's size as `resolve_close` resolved it: what the body asked (`requested`, a percent
+    of the stored size or its `qty`), the size sent (`qty`), the size left open (`remaining`) and
+    whether it is the whole position (`full`). Its repr shows no size (C-12.6)."""
+
+    requested: Qty = field(repr=False)
+    qty: Qty = field(repr=False)
+    remaining: Qty = field(repr=False)
+    full: bool
+
+    @property
+    def rounded(self) -> bool:
+        """Whether the floor changed what the body asked (22: a confirmation says so)."""
+        return self.qty != self.requested
+
+
+def resolve_close(row: PositionRow, terms: CloseTerms, instrument: Instrument) -> CloseSize:
+    """22 `closePosition`'s size (E29-S03 BQ-2 to BQ-4), resolved at the route's step 13 before
+    any exchange call, from the admitted row's `size`, never a fresh read or a client's figure:
+    `pct` of it or the `qty`, floored to `qty_step` (`InstrumentPolicy.round_qty`, the rule the
+    client ports), and the whole size at 100 % or for a `qty` equal to it. A partial close is
+    refused, `OrderInvalid` listing each rule it breaks in this order: `dust_remainder`, a
+    remainder above zero but under `min_order_qty`, first, as only the whole close answers it;
+    `qty_below_minimum`, the size under `min_order_qty`, zero included. A close of the whole size
+    is never refused here. The row is open and a `qty` within its size: the route's
+    `position_errors` judged both first."""
+    with localcontext(_EXACT):
+        if terms.pct is not None:
+            full, requested = terms.pct == _HUNDRED, row.size * terms.pct / _HUNDRED
+        elif terms.qty is not None:
+            full, requested = terms.qty == row.size, terms.qty
+        else:
+            raise ValueError("a close names a percent or a quantity")
+        qty = row.size if full else InstrumentPolicy(instrument).round_qty(requested)
+        remaining = row.size - qty
+    if full:
+        return CloseSize(requested, qty, remaining, full)
+    named, minimum = ("pct" if terms.pct is not None else "qty"), instrument.min_order_qty
+    errors: list[FieldError] = []
+    if 0 < remaining < minimum:
+        errors.append(FieldError(named, RULE_DUST_REMAINDER, _DUST, symbol=row.symbol,
+                                 limit=minimum, resolved=qty, remaining=remaining))  # fmt: skip
+    if qty < minimum:
+        errors.append(FieldError(named, RULE_QTY_BELOW_MINIMUM, _BELOW_MINIMUM, symbol=row.symbol,
+                                 limit=minimum, resolved=qty))  # fmt: skip
+    if errors:
+        detail = errors[0].message if len(errors) == 1 else f"{len(errors)} rules failed."
+        raise OrderInvalid(detail, errors=errors)
+    return CloseSize(requested, qty, remaining, full)
+
+
+def close_request(row: PositionRow, terms: CloseTerms, qty: Qty | None = None) -> OrderRequest:
+    """The close: reduce-only, the opposite side, intent `flatten`, on the position's own index,
+    sized by `qty`, the size `resolve_close` resolved; without one, a percent of the size, the
+    whole size at 100 % (`closeAllPositions`' and a reversal's path)."""
+    if qty is None and terms.pct is not None:
         qty = row.size if terms.pct == _HUNDRED else row.size * terms.pct / _HUNDRED
-    elif terms.qty is not None:
-        qty = terms.qty
-    else:
+    qty = terms.qty if qty is None else qty
+    if qty is None:
         raise ValueError("a close names a percent or a quantity")
     return OrderRequest(
         account_id=AccountId(row.exchange_account_id), symbol=Symbol(row.symbol),
@@ -214,6 +288,7 @@ class PositionWritesDeps:
     ports: Callable[[Environment], SweepPort]
     audit: SubmitAudit
     environment: Environment
+    instruments: Instruments
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +322,23 @@ class PositionWrites:
     def monotonic(self) -> float:
         """The injected clock every deadline here is measured on."""
         return self._monotonic()
+
+    async def instrument(self, symbol: Symbol) -> Instrument:
+        """`closePosition`'s step 13 read (E29-S03): the symbol's instrument from the pipeline's
+        own instruments port, within the store bound. An OMS refusal answers as itself (no
+        catalogue yet is `OmsNotReady`); a read that fails or does not answer in time is
+        `StoreUnavailable`; a symbol none lists is `OrderInvalid`, as the pipeline answers it."""
+        try:
+            async with asyncio.timeout(self._store_timeout_s):
+                found = await self._deps.instruments.instrument(symbol)
+        except OmsError:
+            raise
+        except Exception as exc:  # unread: no close is sized on a guess
+            _log().warning("oms_close_instrument_unread", failure=type(exc).__name__)
+            raise StoreUnavailable from None
+        if found is None or found.symbol != symbol:
+            raise OrderInvalid(_UNLISTED, errors=(FieldError("symbol", "listed", _UNLISTED),))
+        return found
 
     async def entry_stop_ready(self, account_id: AccountId) -> None:
         """The native-stop pre-check (module docstring): `OrderInvalid` (`native_stop_required`)

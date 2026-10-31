@@ -28,7 +28,8 @@ from candleviewer.api.position_reverse import make_position_reverse_router
 from candleviewer.api.recording_writes import WriteLimiter
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
-from candleviewer.domain.primitives import AccountId, Environment
+from candleviewer.domain.events import Instrument
+from candleviewer.domain.primitives import AccountId, Environment, Symbol
 from candleviewer.observability import spawn
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.cancel_all import CancelAllRequest, ScopedAccounts
@@ -64,6 +65,7 @@ from tests.unit.api.oms_reads_world import (
     position,
 )
 from tests.unit.oms.submission_contract import entry, reduce_only
+from tests.unit.oms.submit_rig import instrument
 
 ACCOUNT: Final = ACCOUNT_A
 LIVE: Final = ACCOUNT_LIVE
@@ -255,8 +257,12 @@ class Pipeline:
 
 @dataclass
 class Positions:
-    """The position service: the fill answer, the pre-check's refusal, the records, the sweeps."""
+    """The position service: the instruments step 13 reads (`listed`, each symbol's instrument
+    with `submit_rig`'s figures, or `instrument_error` raised), the fill answer, the pre-check's
+    refusal, the records, the sweeps."""
 
+    listed: dict[str, Instrument] = field(default_factory=dict)
+    instrument_error: OmsError | None = None
     fill: CloseFill = "filled"
     fill_error: OmsError | None = None
     venue: VenuePosition = "flat"
@@ -269,6 +275,11 @@ class Positions:
     waits: list[float] = field(default_factory=list)
     #: The runtime's clock, the world's (`World.clock`).
     clock: list[float] = field(default_factory=lambda: [0.0])
+
+    async def instrument(self, symbol: Symbol) -> Instrument:
+        if self.instrument_error is not None:
+            raise self.instrument_error
+        return self.listed.get(symbol) or instrument(symbol=symbol)
 
     async def entry_stop_ready(self, account_id: AccountId) -> None:
         if self.stop_refusal is not None:
