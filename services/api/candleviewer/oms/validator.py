@@ -39,7 +39,11 @@ type-alias pattern `admin.wiring` already uses to avoid a direct import edge.
    (24-internal-schemas.md Sec.1.3 rule 3); the answer is `tick_size_violation` if a price is off
    its tick, else `lot_size_violation` if the quantity or the notional is, else
    `validation_failed`. A market order has no price of its own: its reference price measures its
-   notional only.
+   notional only. An order that only reduces (its effect `REDUCE`, which `SizedOrder` holds
+   for a reduce-only order alone, SR-E29-01), every close among them, is exempt from
+   `min_notional` alone: the server never refuses an exit for its notional, and the venue
+   arbitrates (E29-S03 #978 BQ-5, C-2.6); an amend's terms (`check_terms`) and every other order
+   are held to it.
 
 `Validator.check_route` refuses an order whose environment is not its route's (C-2.11): a demo
 account's order never reaches a live client, nor the reverse. Decimal throughout.
@@ -86,6 +90,8 @@ _POLICY_RULES: Final[Mapping[FilterViolationCode, tuple[str, str]]] = MappingPro
 _NOT_FOR_MARKET: Final = frozenset(
     {FilterViolationCode.PRICE_NOT_TICK_MULTIPLE, FilterViolationCode.QTY_ABOVE_MAX}
 )
+#: The one filter an order that only reduces is exempt from (BQ-5): the venue judges its notional.
+_NOT_FOR_AN_EXIT: Final = frozenset({FilterViolationCode.NOTIONAL_BELOW_MIN})
 _TICK_RULES: Final = frozenset({"tick_size"})
 _LOT_RULES: Final = frozenset(
     {"qty_step", "min_order_qty", "max_order_qty", "max_mkt_order_qty", "min_notional"}
@@ -161,7 +167,7 @@ class Validator:
         if instrument.symbol != order.symbol:
             raise ValueError("the instrument is not the order's symbol")
         self.assert_order_placement_allowed()
-        errors = _terms_errors(order, instrument)
+        errors = _terms_errors(order, instrument, reduces=order.effect is OrderEffect.REDUCE)
         if order.effect is not OrderEffect.REDUCE:
             if profile is None:
                 raise RiskRefused("No profile allows this order.")
@@ -189,9 +195,12 @@ class Validator:
             )
 
 
-def _terms_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]:
+def _terms_errors(
+    order: SizedOrder, instrument: Instrument, *, reduces: bool = False
+) -> list[FieldError]:
     """Steps 2 and 4 of the module docstring: a figure step 2 refuses raises; step 4's
-    violations are listed for the caller, which may add the leverage's."""
+    violations are listed for the caller, which may add the leverage's. `reduces` is an order
+    that only reduces, exempt from `min_notional` (BQ-5)."""
     non_finite = _non_finite_errors(order)
     if non_finite:
         raise OrderInvalid(errors=non_finite)
@@ -209,6 +218,8 @@ def _terms_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]
             raise OrderInvalid(errors=malformed)
         if order.order_type == "market":
             violations = [v for v in violations if v.code not in _NOT_FOR_MARKET]
+        if reduces:
+            violations = [v for v in violations if v.code not in _NOT_FOR_AN_EXIT]
         return [*map(_policy_error, violations), *_order_path_errors(order, instrument)]
     except InvalidOperation as error:  # a figure no step can judge: DivisionImpossible
         raise OrderInvalid() from error
