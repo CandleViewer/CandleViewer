@@ -3,6 +3,7 @@ import { composeStories } from "@storybook/react-vite";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
 import { Button, GatedAnnounceProvider } from "../src/components/index.js";
+import { mountLiveRegion } from "../src/theme/a11y.js";
 import * as stories from "../src/components/Button.stories.js";
 import { mount } from "./theme/mount.js";
 import { clearPolite, politeText } from "./theme/polite.js";
@@ -337,7 +338,19 @@ describe("Button gated announcement routed by a host", () => {
     await userEvent.click(within(quiet).getByRole("button", { name: "Quiet" }));
     expect(await politeText()).toBe("");
     const spoken = await mount(<Button disabledReason={REASON}>Spoken</Button>);
+    // Count the region's non-empty writes: the text is replaced, so reading it alone can't tell once from twice.
+    const region = mountLiveRegion();
+    const records: MutationRecord[] = [];
+    const watch = new MutationObserver((batch) => records.push(...batch));
+    watch.observe(region, { childList: true });
     await userEvent.click(within(spoken).getByRole("button", { name: "Spoken" }));
     expect(await politeText()).toBe(REASON);
+    records.push(...watch.takeRecords());
+    watch.disconnect();
+    const writes = records
+      .flatMap((r) => [...r.addedNodes].map((n) => n.textContent ?? ""))
+      .filter((text) => text !== "");
+    expect(writes).toEqual([REASON]);
+    clearPolite();
   });
 });
