@@ -14,6 +14,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.api import user_settings_models as m
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.audit.redact import REDACTION_MARKER, redact
 from candleviewer.storage.repositories.user_settings import UserSetting
 from tests.openapi_helpers import deref
 
@@ -254,3 +255,15 @@ def test_effective_masks_the_webhook_url_for_a_viewer_only(viewing: bool) -> Non
     assert doc["notifications"] == {"webhook_url": shown, "email_enabled": True}
     assert doc["_meta"]["overridden"] == ["notifications.email_enabled", _HOOK]
     jsonschema.validate(doc, deref(_SPEC, {"$ref": "#/components/schemas/Settings"}))
+
+
+def test_the_audit_redactor_masks_only_orderflow_big_trade_k_among_the_leaves() -> None:
+    """Every leaf's key through the real `audit.redact`, as a `settings.change` state passes it.
+    Its name rules are by fragment, and `orderflowbigtradek` holds "dek" ("tra-dek"), so that one
+    leaf's change is recorded with no values. A new leaf the redactor masks, or a redactor change
+    that masks another or stops masking this one, fails here; a carve-out is `audit/redact.py`'s
+    own, security-reviewed change, not this module's."""
+    redacted = redact(dict.fromkeys(m.LEAVES, "kept"))
+    assert redacted is not None and set(redacted) == set(m.LEAVES)
+    masked = {key: value for key, value in redacted.items() if value != "kept"}
+    assert masked == {"orderflow.big_trade_k": REDACTION_MARKER}
