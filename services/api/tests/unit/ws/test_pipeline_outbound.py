@@ -394,8 +394,8 @@ def _d(ch: str, **p: Any) -> dict[str, Any]:
 @_ENCODINGS
 async def test_queued_payload_matches_send_frame(encoding: str) -> None:
     """#2897 parity: the payload queued at push is, byte for byte, what `send_frame` writes (a
-    CVWB part raw on msgpack); only a non-finite number differs: with the flag on both codecs
-    refuse it (below), and `send_frame`, the flag-off path, does not."""
+    CVWB part raw on msgpack; the writer sends each `bye` through it); only a non-finite number
+    differs: both codecs refuse it at push (below), and `send_frame` does not."""
     part = dict(vector_frames())["trades"]
     frames: list[dict[str, Any]] = [
         {"t": "welcome", "id": "h", "ts": 1, "p": {"limits": {"a": 1}, "note": "é"}},
@@ -405,7 +405,12 @@ async def test_queued_payload_matches_send_frame(encoding: str) -> None:
     ]
     wire = _Wire(encoding)
     conn = _Connection(
-        cast(Any, wire), encoding=encoding, clock=float, wall_ms=int, auth_timeout_s=1
+        cast(Any, wire),
+        encoding=encoding,
+        clock=float,
+        wall_ms=int,
+        auth_timeout_s=1,
+        backpressure=_ON,
     )
     kind = "bytes" if wire.msgpack else "text"
     pipe, _ = _pipe(encoding)
