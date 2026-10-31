@@ -7,11 +7,13 @@ import contextlib
 import itertools
 
 import pytest
+import structlog.testing
 
 from candleviewer.observability.health_probes import (
     CallableProbe,
     ComponentState,
     HealthRegistry,
+    HealthSnapshot,
     NotDeployedProbe,
     ProbeResult,
     SystemEvent,
@@ -229,6 +231,37 @@ async def test_ticker_survives_raising_refresh_and_marks_snapshot_degraded(
         assert snap is not None and snap.overall is S.HEALTHY  # recovered
     finally:
         await reg.stop()
+
+
+async def test_failed_refresh_publishes_the_degraded_frame_and_logs_the_streak_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))
+    published: list[S] = []
+
+    async def pub(snap: HealthSnapshot) -> None:
+        published.append(snap.overall)
+
+    reg = HealthRegistry(on_snapshot=pub)
+
+    async def ok() -> ProbeResult:
+        return ProbeResult(S.HEALTHY)
+
+    reg.register(CallableProbe("postgres", ok))
+    await reg.refresh()
+
+    async def failing() -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(reg, "refresh", failing)
+    with structlog.testing.capture_logs() as logs:
+        reg.start(1.0)
+        try:
+            await _spin(20)
+        finally:
+            await reg.stop()
+    assert published == [S.HEALTHY, S.DEGRADED]  # WS clients see the failure, once
+    assert [e["event"] for e in logs].count("health_refresh_failed") == 1  # a streak, one line
 
 
 async def test_raising_observers_do_not_freeze_the_snapshot() -> None:

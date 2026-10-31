@@ -210,6 +210,7 @@ class HealthRegistry:
         self._prev: dict[str, ComponentState] = {}
         self._snapshot: HealthSnapshot | None = None
         self._task: asyncio.Task[None] | None = None
+        self._refresh_failing = False  # logs a failure streak once, not every tick
         self.duration_observer: Callable[[str, float], None] | None = None
         self.state_observer: Callable[[str, ComponentState], None] | None = None
 
@@ -300,28 +301,38 @@ class HealthRegistry:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
-    def _mark_refresh_failed(self) -> None:
+    async def _mark_refresh_failed(self) -> None:
         """Stop serving a stale HEALTHY snapshot as current after a failed refresh.
 
         Reuses the module's existing vocabulary: a probe that cannot answer is reported
         DEGRADED (as for a timeout), so overall is raised to at least DEGRADED. Components and
         `taken_at` stay as last observed (honest about what was measured); the next successful
         refresh replaces the snapshot and clears the flag. No snapshot yet means the endpoint
-        already has nothing to serve.
+        already has nothing to serve. The marked snapshot is published too, so WS clients do not
+        keep the last healthy frame.
         """
         snap = self._snapshot
-        if snap is not None:
-            self._snapshot = replace(
-                snap, overall=worst_of([snap.overall, ComponentState.DEGRADED])
-            )
+        if snap is None:
+            return
+        marked = replace(snap, overall=worst_of([snap.overall, ComponentState.DEGRADED]))
+        if marked == snap:
+            return
+        self._snapshot = marked
+        if self._on_snapshot is not None:
+            with contextlib.suppress(Exception):  # publisher failure must not stop the ticker
+                await self._on_snapshot(marked)
 
     async def _loop(self, interval_s: float) -> None:
         while True:
             try:
                 await self.refresh()
             except Exception as exc:  # CancelledError is BaseException and still propagates
-                structlog.get_logger(__name__).error(
-                    "health_refresh_failed", error=type(exc).__name__
-                )
-                self._mark_refresh_failed()
+                if not self._refresh_failing:
+                    structlog.get_logger(__name__).error(
+                        "health_refresh_failed", error=type(exc).__name__
+                    )
+                self._refresh_failing = True
+                await self._mark_refresh_failed()
+            else:
+                self._refresh_failing = False
             await asyncio.sleep(interval_s)
