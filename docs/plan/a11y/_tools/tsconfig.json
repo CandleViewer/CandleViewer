@@ -1,0 +1,24 @@
+{
+  "//": "E47-T01 sweep driver: typecheck with apps/web's tsc. `paths` resolves both packages from apps/web (no new dependency): tsc takes the package directory (its types), Playwright's loader the last existing entry (the CommonJS entry file).",
+  "extends": "../../../../packages/config/tsconfig.dom.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "types": ["node"],
+    "typeRoots": ["../../../../apps/web/node_modules/@types"],
+    "baseUrl": ".",
+    "paths": {
+      "@playwright/test": [
+        "../../../../apps/web/node_modules/@playwright/test",
+        "../../../../apps/web/node_modules/@playwright/test/index.js"
+      ],
+      "@axe-core/playwright": [
+        "../../../../apps/web/node_modules/@axe-core/playwright",
+        "../../../../apps/web/node_modules/@axe-core/playwright/dist/index.js"
+      ]
+    }
+  },
+  "include": ["*.ts"]
+}
