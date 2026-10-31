@@ -211,7 +211,8 @@ export default tseslint.config(
     // E11-S03: and the shared transform (src/viewport). E11-T05: and the Canvas 2D backend
     // (src/canvas2d), whose context type is the hand-written Ctx2DLike (no Path2D, BQ-84).
     // E11-S04: and the gesture, velocity and momentum logic (src/interaction, BQ-98).
-    files: ["src/{core,layers,scene,model,gl,viewport,canvas2d,interaction}/**/*.ts"],
+    // E11-S08: and picking (src/hit, BQ-140).
+    files: ["src/{core,layers,scene,model,gl,viewport,canvas2d,interaction,hit}/**/*.ts"],
     rules: {
       "no-restricted-globals": ["error", ...NETWORK_GLOBALS, ...DOM_GLOBALS],
     },

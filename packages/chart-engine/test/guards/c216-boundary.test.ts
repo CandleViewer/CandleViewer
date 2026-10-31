@@ -17,12 +17,13 @@ const PKG = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REPO = join(PKG, "..", "..");
 const C216_RULES = ["no-restricted-imports", "no-restricted-globals", "no-restricted-syntax"];
 // E11-S02: the WebGL2 backend, E11-S03: the shared transform, E11-T05: the Canvas 2D backend and
-// E11-S04: the gesture logic join every DOM-free list below.
+// E11-S04: the gesture logic and E11-S08: picking (BQ-140) join every DOM-free list below.
 const GL = [
   "src/gl/probe.ts",
   "src/viewport/probe.ts",
   "src/canvas2d/probe.ts",
   "src/interaction/probe.ts",
+  "src/hit/probe.ts",
 ];
 // Generous per-test budget for the loops, the tsc programs and the project-service lint: they
 // pass in ~2 s alone but share the runner with the whole unit project under load (C-9.3).
@@ -314,6 +315,8 @@ describe("Scenario: The framework-free boundary is enforced (dependency-cruiser)
     write("packages/chart-engine/src/viewport/uses-host.ts", 'import "../host/mount";\n');
     write("packages/chart-engine/src/interaction/uses-host.ts", 'import "../host/mount";\n');
     write("packages/chart-engine/src/interaction/uses-gl.ts", 'import "../gl/registry";\n');
+    write("packages/chart-engine/src/hit/uses-host.ts", 'import "../host/mount";\n');
+    write("packages/chart-engine/src/hit/uses-gl.ts", 'import "../gl/registry";\n');
     write("packages/chart-engine/src/gl/uses-worker.ts", 'import "../worker/protocol";\n');
     write("packages/chart-engine/src/worker/protocol.ts", "export const p = 1;\n");
     write("packages/chart-engine/src/canvas2d/backend.ts", "export const b = 1;\n");
@@ -364,7 +367,7 @@ describe("Scenario: The framework-free boundary is enforced (dependency-cruiser)
     expect(violations("packages/chart-engine/src/api/clean.ts")).toEqual([]);
   });
 
-  it.each(["scene", "model", "viewport", "interaction"])(
+  it.each(["scene", "model", "viewport", "interaction", "hit"])(
     "src/%s importing the DOM host adapter fails chart-engine-core-no-dom-host",
     (dir) => {
       expect(violations(`packages/chart-engine/src/${dir}/uses-host.ts`)).toEqual([
@@ -373,7 +376,7 @@ describe("Scenario: The framework-free boundary is enforced (dependency-cruiser)
     },
   );
 
-  it.each(["scene", "viewport", "interaction"])(
+  it.each(["scene", "viewport", "interaction", "hit"])(
     "src/%s importing src/gl fails chart-engine-core-no-gl",
     (dir) => {
       expect(violations(`packages/chart-engine/src/${dir}/uses-gl.ts`)).toEqual([

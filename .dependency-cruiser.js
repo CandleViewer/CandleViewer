@@ -127,8 +127,10 @@ module.exports = {
       severity: "error",
       comment:
         "C-2.16: src/core|layers|scene|model|viewport stay DOM-free; DOM glue lives only in the " +
-        "host adapter (E11-S03 adds the shared transform, E11-S04 the gestures).",
-      from: { path: "^packages/chart-engine/src/(core|layers|scene|model|viewport|interaction)" },
+        "host adapter (E11-S03 adds the shared transform, E11-S04 the gestures, E11-S08 picking).",
+      from: {
+        path: "^packages/chart-engine/src/(core|layers|scene|model|viewport|interaction|hit)",
+      },
       to: { path: "^packages/chart-engine/src/host" },
     },
     {
@@ -137,7 +139,9 @@ module.exports = {
       comment:
         "C-2.16 / 26 §3.1: src/core|layers|scene|model|viewport never reach GL; nodes append to " +
         "batches and only the backends (src/gl, E11-S02; src/canvas2d, E11-T05) draw.",
-      from: { path: "^packages/chart-engine/src/(core|layers|scene|model|viewport|interaction)" },
+      from: {
+        path: "^packages/chart-engine/src/(core|layers|scene|model|viewport|interaction|hit)",
+      },
       to: { path: "^packages/chart-engine/src/(gl|canvas2d)" },
     },
     {
