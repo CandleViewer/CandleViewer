@@ -272,7 +272,8 @@ class UserDisable(Protocol):
 class UserPurge(Protocol):
     """`UsersPurgeTask` (E42-T10 S14): `running` while its reaper runs; `schedule` puts a disabled
     user's purge 90 days out on the injected clock, `users.delete` written ahead, a repeat keeping
-    the first date, and refuses with `PurgeUnavailableError` once the reaper has stopped."""
+    the first date, and refuses with `PurgeUnavailableError` once the reaper has stopped, or with
+    `ActorNotAuthorised` (#2593) when the actor is no longer an active owner under its locks."""
 
     @property
     def running(self) -> bool: ...
@@ -326,11 +327,15 @@ async def _refused_at_effect(
     user_id: uuid.UUID,
     session_id: uuid.UUID | None,
     who: Mapping[str, Any],
+    *,
+    answer: str = _ENTRY_REFUSAL,
+    unrecorded: str = _NOT_AUDITED,
 ) -> JSONResponse:
     """#2593: the store re-read the actor in the change's own transaction, after the owner lock,
     and found no active owner, so it rolled back with nothing written. One `rbac.denied` after the
-    rollback (reason `actor_role_revoked`, an audit field only), then the entry refusal; `503
-    audit_unavailable` when that record cannot be written (C-2.9)."""
+    rollback (reason `actor_role_revoked`, an audit field only), then the route's entry refusal
+    (`answer`, its 403 reason); `503 audit_unavailable` (detail `unrecorded`) when that record
+    cannot be written (C-2.9)."""
     try:
         await emitter.emit(
             "rbac.denied",
@@ -345,8 +350,8 @@ async def _refused_at_effect(
             **who,
         )
     except (AuditError, RuntimeError):  # RuntimeError: audit not started
-        return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
-    return _forbidden(_ENTRY_REFUSAL)
+        return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, unrecorded)
+    return _forbidden(answer)
 
 
 def _registered(code: ErrorCode, status: int, detail: str) -> JSONResponse:
@@ -574,11 +579,18 @@ async def _push_roles(notifier: PermissionChangeNotifier, user_id: uuid.UUID) ->
 
 
 async def _schedule_purge(
-    purge: UserPurge, user_id: uuid.UUID, actor: uuid.UUID, session: uuid.UUID
+    purge: UserPurge,
+    emitter: _Emitter,
+    user_id: uuid.UUID,
+    actor: uuid.UUID,
+    session: uuid.UUID,
 ) -> Response:
     """E42-T10 S14, once the disable has committed: the purge, `users.delete` ahead (R5), naming
     the session that stepped up. The disable is its own audited change and stays if this step is
-    refused, as the refusal says; a retry is the disable's no-op (AC5), then this step."""
+    refused, as the refusal says; a retry is the disable's no-op (AC5), then this step. #2593: an
+    actor demoted or disabled since the disable committed is refused in the schedule's own
+    transaction, after the user and owner locks: `DELETE`'s entry 403 (`forbidden_role`) and one
+    `rbac.denied` after the rollback, as the disable's own refusal is."""
     rid = current_request_id()  # bound by `CorrelationMiddleware`: a UUID if present
     unscheduled = "the user is disabled, but its purge was not scheduled: "
     try:
@@ -587,6 +599,12 @@ async def _schedule_purge(
             actor_user_id=actor,
             request_id=current_request_uuid(),
             session_id=session,
+        )
+    except ActorNotAuthorised:  # #2593: refused at the effect, nothing scheduled or recorded
+        who = {"request_id": current_request_uuid()}
+        unrecorded = unscheduled + "the audit record could not be written"
+        return await _refused_at_effect(
+            emitter, actor, user_id, session, who, answer="forbidden_role", unrecorded=unrecorded
         )
     except PurgeUserNotFoundError:
         return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
@@ -937,7 +955,7 @@ def make_users_router(
             )
             return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
         if purge and user_purge is not None:  # E42-T10 S14: then the purge, 90 days out
-            return await _schedule_purge(user_purge, user_id, principal.user_id, gate)
+            return await _schedule_purge(user_purge, emitter, user_id, principal.user_id, gate)
         return Response(status_code=204)
 
     return router

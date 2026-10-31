@@ -29,6 +29,7 @@ from candleviewer.auth.errors import SessionNotFound, StepUpRequired
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
+from candleviewer.storage.repositories import owner_floor_sqlalchemy as floor_module
 from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as store_module
 from candleviewer.storage.repositories import user_purge_sqlalchemy as purge_module
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import LOCK_USER
@@ -92,21 +93,27 @@ class _PurgeRel:
         log: list[str],
         row: tuple[Any, ...] | None = ("disabled", None, None),
         commit_error: BaseException | None = None,
+        actor_owner: bool = True,
     ) -> None:
         self.log, self.row, self.commit_error = log, row, commit_error
+        self.actor_owner = actor_owner  # #2593: the actor's re-read under the owner lock
         self.written: dict[str, Any] | None = None
         self.committed = False
 
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
         async def execute(stmt: Any, params: Any = None) -> Any:
+            row: Any = None
             if stmt is purge_module._LOCK_FOR_SCHEDULE:
                 self.log.append("purge:read")
+                row = self.row
             elif stmt is purge_module._SCHEDULE:
                 self.log.append("purge:write")
                 self.written = params
-            row = self.row if stmt is purge_module._LOCK_FOR_SCHEDULE else None
-            return SimpleNamespace(first=lambda: row)
+            elif stmt is floor_module.ACTOR_IS_ACTIVE_OWNER:
+                self.log.append("purge:actor")
+                row = (1,) if self.actor_owner else None
+            return SimpleNamespace(first=lambda: row, scalar_one=lambda: 2)
 
         async def commit() -> None:
             if self.commit_error is not None:
@@ -130,10 +137,13 @@ class _Door(UsersPurgeTask):
         return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
 
 
-def _purging(w: _World, *args: Any, running: tuple[bool, ...] = (True,)) -> tuple[_Door, _PurgeRel]:
+def _purging(
+    w: _World, *args: Any, running: tuple[bool, ...] = (True,), actor_owner: bool = True
+) -> tuple[_Door, _PurgeRel]:
     """The real purge store over `_PurgeRel(w.log, *args)`, writing its records to the world,
-    behind the reaper's door."""
+    behind the reaper's door; `actor_owner=False` is an actor demoted since the disable (#2593)."""
     rel = _PurgeRel(w.log, *args)
+    rel.actor_owner = actor_owner
     store = SqlAlchemyUserPurgeStore(cast(Any, rel), audit=w, clock=lambda: _PURGE_NOW)
     return _Door(store, running), rel
 
@@ -551,7 +561,13 @@ def test_delete_with_purge_disables_then_schedules_the_purge_90_days_out(
     assert r.status_code == 204 and r.content == b""
     _conforms(spec, r)
     assert w.log[:4] == ["step_up", "positions", "orders", "users.disable"] and w.rel.committed
-    assert w.log[-4:] == ["purge:read", "purge:write", "users.delete", "purge:commit"]
+    assert w.log[-5:] == [
+        "purge:read",
+        "purge:actor",
+        "purge:write",
+        "users.delete",
+        "purge:commit",
+    ]
     due = _PURGE_NOW + timedelta(days=90)
     assert rel.written == {"id": str(TARGET), "purge_after": due}
     (record,) = w.of("users.delete")
@@ -764,3 +780,46 @@ def test_an_owner_demoted_since_entry_unrecorded_is_503(spec: dict[str, Any]) ->
     r = _client(w, _principal("owner", spec)).delete(_PATH.format(TARGET))
     assert r.status_code == 503 and r.json()["code"] == "audit_unavailable"
     assert not w.rel.committed
+
+
+def test_a_purge_by_an_owner_demoted_after_the_disable_gets_the_entry_403(
+    spec: dict[str, Any],
+) -> None:
+    """#2593, the eleventh write: the disable commits, then the actor is demoted before the purge's
+    own transaction; that transaction re-reads the actor under the owner lock and refuses before
+    any write or record. The answer is `DELETE`'s entry 403 byte for byte (a fresh request from
+    the demoted caller), never a challenge, with one `rbac.denied` (`actor_role_revoked`) after
+    the rollback, naming the session that stepped up."""
+    w = _World()
+    store, rel = _purging(w, actor_owner=False)
+    r = _purge_delete(w, spec, store)
+    entry = _client(_World(), _principal("manager", spec)).delete(_PATH.format(TARGET) + _PURGE)
+    assert (r.status_code, entry.status_code) == (403, 403)
+    assert r.content == entry.content and r.headers["content-type"] == entry.headers["content-type"]
+    _conforms(spec, r)
+    assert w.rel.committed and w.of("users.disable")  # the disable's own commit stands
+    assert "purge:write" not in w.log and not rel.committed and w.of("users.delete") == []
+    (denied,) = w.of("rbac.denied")
+    assert (denied["reason"], denied["actor_user_id"], denied["session_id"]) == (
+        "actor_role_revoked",
+        CALLER,
+        SESSION,
+    )
+    assert (denied["object_kind"], denied["object_id"], denied["outcome"]) == (
+        "user",
+        str(TARGET),
+        "denied",
+    )
+    assert w.log.index("purge:actor") < w.log.index("rbac.denied")  # after the rollback
+
+
+def test_a_purge_refused_at_the_effect_unrecorded_is_503(spec: dict[str, Any]) -> None:
+    """C-2.9: the purge's refusal whose `rbac.denied` cannot be written answers 503
+    `audit_unavailable`, saying the user is disabled and the purge not scheduled."""
+    w = _World(fail={"rbac.denied": [AuditUnavailable("down")]})
+    store, rel = _purging(w, actor_owner=False)
+    r = _purge_delete(w, spec, store)
+    assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
+    _conforms(spec, r)
+    assert r.json()["detail"].startswith("the user is disabled, but its purge was not scheduled")
+    assert w.rel.committed and not rel.committed and w.of("users.delete") == []

@@ -12,7 +12,7 @@ rolled back by the write-ahead timeout on a slow runner.
 - Revoke first: A's write is refused (`ActorNotAuthorised`), nothing of it is written and its
   hook never runs, for every covered store (role set, user update, disable, account access, the
   owner TOTP reset, an owner's session revoke, the invite create, re-issue and revoke, the
-  view-as start).
+  view-as start), and the purge scheduled after a `DELETE ?purge=true` disable.
 - A disabled rather than demoted: A's grant row is untouched, so only the fresh statement after
   the lock (never the locked id set) sees it; refused alike.
 - A's write first: it commits whole, and B's revoke is ordered after it.
@@ -30,6 +30,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,7 @@ from candleviewer.storage.repositories.user_lifecycle import UserPatch
 from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import (
     SqlAlchemyUserLifecycleStore,
 )
+from candleviewer.storage.repositories.user_purge_sqlalchemy import SqlAlchemyUserPurgeStore
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserAdminStore
 
@@ -64,7 +66,9 @@ _ROOT = Path(__file__).resolve().parents[3]
 #: Bounds every wait on another task, and every store's write-ahead bound: a regression fails
 #: instead of hanging CI, and a parked hook is never rolled back by its own timeout.
 _WAIT_S = 30.0
-_DIGEST = "0" * 64  # a stand-in hash: the stores bind it, nothing reads it
+#: The invite's placeholder: `users_pwd_argon` (0001) admits only an Argon2id head, as
+#: `test_invites_pg.py` binds it.
+_DIGEST = "$argon2id$x"
 _WAITING = sa.text("SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted")
 _USER = sa.text(
     "INSERT INTO users (id, email, username, password_hash, status) VALUES (CAST(:id AS uuid), "
@@ -95,6 +99,8 @@ _STATE = sa.text(
 )
 _VIEWING = sa.text("SELECT view_as_context_id FROM sessions WHERE id = CAST(:id AS uuid)")
 _USERS = sa.text("SELECT count(*) FROM users")
+_DISABLE = sa.text("UPDATE users SET status = 'disabled' WHERE id = CAST(:id AS uuid)")
+_PURGE_AFTER = sa.text("SELECT purge_after FROM users WHERE id = CAST(:id AS uuid)")
 
 
 @pytest.fixture(scope="module")
@@ -189,7 +195,10 @@ async def world(pg_dsn: str) -> Any:
         a, b = await _user(engine, "owner"), await _user(engine, "owner")
         t = await _user(engine, "manager")
         account = uuid.uuid4()
-        await _exec(engine, _ACCOUNT, id=str(account), uid=str(account.int % 10**12), label="x")
+        # Per world: `ux_ea_label (env, lower(label))` and `ux_ea_uid` (0017) span the module's
+        # one container, so a constant label refuses the second world's account.
+        uid, label = str(account.int % 10**12), f"recheck-{account.hex[:12]}"
+        await _exec(engine, _ACCOUNT, id=str(account), uid=uid, label=label)
         invited = uuid.uuid4()
         created = await _invites(rel).create_user_with_invite(
             user_id=invited,
@@ -227,10 +236,12 @@ def _invites(rel: SqlAlchemyRelationalRepository) -> SqlAlchemyInviteRepository:
     )
 
 
-def _account_audit_hook(park: _Park) -> Any:
+def _audit_hook(park: _Park, ahead: str = "users.access_change") -> Any:
+    """An emitter whose write-ahead record (`ahead`; a closing one too) is `park`."""
+
     class _Emitter:
         async def emit(self, action: str, **_kw: Any) -> None:
-            if action == "users.access_change":  # the write-ahead record (a closing one too)
+            if action == ahead:
                 await park()
 
     return _Emitter()
@@ -257,7 +268,7 @@ async def _disable(w: _World, park: _Park) -> Any:
 
 
 async def _access(w: _World, park: _Park) -> Any:
-    emitter = _account_audit_hook(park)
+    emitter = _audit_hook(park)
     store = SqlAlchemyAccountAccessStore(w.rel, audit=emitter, audit_timeout_s=_WAIT_S)
     return await store.replace_grants(w.t, {w.account: "read"}, actor_user_id=w.a)
 
@@ -352,6 +363,17 @@ async def _first_then(
             return tuple(await asyncio.gather(one, two, return_exceptions=True))  # type: ignore[return-value]
 
 
+async def _schedule_purge(w: _World, park: _Park) -> Any:
+    """The eleventh write: the purge scheduled after the disable committed (T disabled first)."""
+    store = SqlAlchemyUserPurgeStore(
+        w.rel,
+        audit=_audit_hook(park, "users.delete"),
+        clock=lambda: datetime.now(UTC),
+        audit_timeout_s=_WAIT_S,
+    )
+    return await store.schedule(w.t, actor_user_id=w.a)
+
+
 def _demote_a(w: _World, park: _Park) -> Callable[[], Awaitable[Any]]:
     store = SqlAlchemyUserRoleStore(w.rel, owner_floor=_floor, audit_timeout_s=_WAIT_S)
     return lambda: store.apply_roles(w.a, frozenset({"viewer"}), actor=w.b, audit=park)
@@ -429,3 +451,36 @@ async def test_an_active_owner_demoting_itself_is_not_refused_by_the_recheck(
     store = SqlAlchemyUserRoleStore(w.rel, owner_floor=_floor, audit_timeout_s=_WAIT_S)
     park = _Park("self", [], hold=False)
     assert await store.apply_roles(w.a, frozenset({"viewer"}), actor=w.a, audit=park) is True
+
+
+@pytest.mark.parametrize("revoke_first", [True, False], ids=["revoke-first", "purge-first"])
+async def test_the_purge_schedule_after_a_disable_is_ordered_against_a_revoke(
+    world: _World, revoke_first: bool
+) -> None:
+    """The eleventh owner-only write (`DELETE ?purge=true`'s second transaction): T is disabled
+    (the first transaction, committed). Revoke first: A's schedule is refused under the owner
+    lock, `purge_after` stays NULL and its `users.delete` never runs. Schedule first: it commits
+    whole, and B's revoke is ordered after it."""
+    w, order = world, list[str]()
+    await _exec(w.engine, _DISABLE, id=str(w.t))
+    hold, free = ("revoke", "effect") if revoke_first else ("effect", "revoke")
+    parked, other = _Park(hold, order, hold=True), _Park(free, order, hold=False)
+    revoke = _demote_a(w, parked if revoke_first else other)
+    purge = partial(_schedule_purge, w, other if revoke_first else parked)
+    if revoke_first:
+        revoked, scheduled = await _first_then(w, revoke, parked, purge)
+    else:
+        scheduled, revoked = await _first_then(w, purge, parked, revoke)
+    assert revoked is True, revoked
+    async with w.engine.connect() as conn:
+        purge_after: datetime | None
+        purge_after = (await conn.execute(_PURGE_AFTER, {"id": str(w.t)})).scalar_one()
+        roles = [r[0] for r in await conn.execute(_ROLES_OF, {"id": str(w.a)})]
+    assert roles == ["viewer"]
+    if revoke_first:
+        assert isinstance(scheduled, ActorNotAuthorised), scheduled
+        assert scheduled.actor_id == str(w.a)
+        assert order == ["revoke"] and purge_after is None
+    else:
+        assert not isinstance(scheduled, BaseException) and scheduled.changed, scheduled
+        assert order == ["effect", "revoke"] and purge_after is not None
