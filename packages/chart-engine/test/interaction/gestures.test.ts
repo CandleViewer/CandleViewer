@@ -189,6 +189,23 @@ describe("pinch (touch): time zoom about the midpoint, no coast", () => {
   });
 });
 
+describe("active (E11-S08, BQ-134): hover does not pick while a gesture runs", () => {
+  it("is true while a finger is down, through a pinch and during a glide", () => {
+    const { g, touch, flick } = chart();
+    expect(g.active).toBe(false);
+    touch([down, 400, 300, 1, 0, 0]);
+    expect(g.active).toBe(true); // a finger down
+    touch([down, 600, 300, 2, 0, 0], [up, 600, 300, 2, 0, 8]);
+    expect(g.active).toBe(true); // pinched, one finger left
+    touch([up, 400, 300, 1, 0, 8]);
+    expect(g.active).toBe(false); // a pinch never coasts
+    flick();
+    expect([g.momentum.active, g.active]).toEqual([true, true]); // a glide
+    g.stop();
+    expect(g.active).toBe(false);
+  });
+});
+
 describe("axes (BQ-101): the time axis changes barSpacing at the plot's right edge", () => {
   const rightBar = (vp: ChartViewport): number => vp.leftIndex + vp.plotWidth / vp.barSpacing;
 

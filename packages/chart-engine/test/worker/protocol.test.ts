@@ -43,6 +43,8 @@ const valid: ToWorker[] = [
   { t: "command", id: 1, cmd: { k: "setTheme", theme: {} } },
   { t: "command", id: 1, cmd: { k: "setLod", candles: 2, footprint: 3 } },
   { t: "command", id: 1, cmd: { k: "pickAt", x: 1, y: 2 } },
+  // E11-S08 (BQ-135): the pointer and the reqId are optional.
+  { t: "command", id: 1, cmd: { k: "pickAt", x: 1, y: 2, pointer: "touch", reqId: 3 } },
   // E11-S05 (BQ-124): every field optional but the pane.
   {
     t: "command",
@@ -138,6 +140,17 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
     ).map(([name, f]): [string, object, string] => [
       `a setPriceScale with ${name}`,
       { t: "command", id: 1, cmd: { k: "setPriceScale", pane: 0, ...f } },
+      "malformed command",
+    ]),
+    ...(
+      [
+        ["an unknown pointer", { pointer: "stylus" }],
+        ["a fractional reqId", { reqId: 1.5 }],
+        ["a NaN x", { x: Number.NaN }],
+      ] as const
+    ).map(([name, f]): [string, object, string] => [
+      `a pickAt with ${name}`,
+      { t: "command", id: 1, cmd: { k: "pickAt", x: 1, y: 2, ...f } },
       "malformed command",
     ]),
   ])("rejects %s", (_name, msg, reason) => {

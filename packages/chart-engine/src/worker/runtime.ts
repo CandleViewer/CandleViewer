@@ -10,6 +10,14 @@
 import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
+import {
+  createPickHit,
+  createStructuralHit,
+  ObjectIndex,
+  StructuralIndex,
+  type PickHit,
+  type StructuralHit,
+} from "../hit/index.js";
 import { Gestures } from "../interaction/gestures.js";
 import { plotWidthOf } from "../interaction/wheel.js";
 import * as scene from "../scene/index.js";
@@ -27,6 +35,8 @@ import {
   BACKGROUND_TOKEN,
   ENGINE_DECODE_ERROR,
   ENGINE_NO_WEBGL2,
+  INPUT,
+  INPUT_STRIDE,
   rejectReason,
   RESTART_BACKOFF_MS,
   STORE_IDS,
@@ -38,6 +48,7 @@ import {
   type ExportRejectReason,
   type FromWorker,
   type LodLevels,
+  type PickPointer,
   type RunMode,
   type StoreId,
   type ThemeLut,
@@ -76,6 +87,8 @@ export interface RenderRuntime {
   handle(msg: unknown): void;
   /** Charts registered (read by tests and the host's restart bookkeeping). */
   readonly size: number;
+  /** Internal (E11-S08, BQ-132): a chart's pick indices, which E14, E22 and E31 register in. */
+  pickIndex(id: ChartId): { objects: ObjectIndex; structural: StructuralIndex } | undefined;
 }
 
 /** Frame stats are posted at most once per this interval outside bench mode (§6: 1 Hz). */
@@ -113,7 +126,13 @@ interface Instance {
   lastFrameAt: number;
   /** Pointer, wheel, touch and key routing plus the glide (E11-S04). */
   readonly gestures: Gestures;
-  lastPick: string | null;
+  /** One pane's object and structural indices (E11-S08) and their reused result slots. */
+  readonly objects: ObjectIndex;
+  readonly structural: StructuralIndex;
+  readonly hit: PickHit;
+  readonly where: StructuralHit;
+  /** The last hover pick posted, (objectId, part, handle): edge-triggered (BQ-134). */
+  readonly hover: { id: string | null; part: PickHit["part"]; handle: number };
   readonly elements: Record<StoreId, number>;
 }
 
@@ -285,6 +304,53 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     } else done(null);
   }
 
+  /** The structural answer, then the object index in the plot (one pane until E11-S09). */
+  function locate(inst: Instance, x: number, y: number, pointer: PickPointer): void {
+    const { hit, where } = inst;
+    inst.structural.pickStructural(x, y, where);
+    hit.id = null;
+    hit.kind = "none";
+    hit.part = "body";
+    hit.handle = -1;
+    if (where.region !== "plot") return;
+    inst.objects.gesture = inst.gestures.active; // a drifted grid waits for the gesture (BQ-127)
+    inst.objects.pick(x, y, pointer, hit);
+  }
+
+  /** BQ-136: `bar` and `price` on every reply; a miss is `none`, or `axis` in a gutter. */
+  function postPick(inst: Instance, reqId?: number): void {
+    const { hit, where } = inst;
+    const gutter = where.region === "price" || where.region === "time";
+    deps.post({
+      t: "pick",
+      id: inst.id,
+      objectId: hit.id,
+      kind: hit.id !== null ? hit.kind : gutter ? "axis" : "none",
+      bar: where.barIndex,
+      price: where.priceLevel,
+      ...(hit.id !== null && { part: hit.part }),
+      ...(hit.handle >= 0 && { handle: hit.handle }),
+      ...(reqId !== undefined && { reqId }),
+    });
+  }
+
+  /**
+   * BQ-134: one pick per `input` message, at its last move, none during a drag or glide; posted
+   * only when (objectId, part, handle) changes, so leaving an object posts one `objectId: null`.
+   */
+  function hover(inst: Instance, touch: boolean, ev: Float32Array): void {
+    let i = ev.length - INPUT_STRIDE;
+    while (i >= 0 && ev[i] !== INPUT.move) i -= INPUT_STRIDE;
+    if (i < 0 || inst.gestures.active) return;
+    locate(inst, ev[i + 1] as number, ev[i + 2] as number, touch ? "touch" : "mouse");
+    const { hit, hover: h } = inst;
+    if (h.id === hit.id && h.part === hit.part && h.handle === hit.handle) return;
+    h.id = hit.id;
+    h.part = hit.part;
+    h.handle = hit.handle;
+    postPick(inst);
+  }
+
   function command(inst: Instance, cmd: Command): void {
     switch (cmd.k) {
       case "setViewport":
@@ -307,21 +373,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "setPriceScale":
         moved(inst, inst.viewport.setScale(cmd.pane, cmd)); // TRANSFORM only: no data refetch
         return;
-      case "pickAt": {
-        // No HitIndex yet (E11-S08): every pick is a miss, reported once (edge-triggered).
-        const key = "none";
-        if (inst.lastPick === key) return;
-        inst.lastPick = key;
-        deps.post({
-          t: "pick",
-          id: inst.id,
-          objectId: null,
-          kind: key,
-          bar: -1,
-          price: Number.NaN,
-        });
+      case "pickAt":
+        // BQ-135: an explicit pick always replies and leaves the hover edge state alone.
+        locate(inst, cmd.x, cmd.y, cmd.pointer ?? "mouse");
+        postPick(inst, cmd.reqId);
         return;
-      }
       case "export":
         exportPng(inst, cmd.reqId);
         return;
@@ -391,7 +447,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
           hover: (x) => crosshairAt(inst, screenToTime(viewport, x)),
           animate: (m) => inst.scheduler.animate(m),
         }),
-        lastPick: null,
+        objects: new ObjectIndex(viewport, 0, "main"),
+        structural: new StructuralIndex(viewport, scene.layout),
+        hit: createPickHit(),
+        where: createStructuralHit(),
+        hover: { id: null, part: "body", handle: -1 },
         parked: false,
         loss: null,
         detach: null,
@@ -419,6 +479,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         return;
       case "input":
         inst.gestures.apply(msg.kind === "touch", msg.events);
+        if (msg.kind === "pointer" || msg.kind === "touch") {
+          hover(inst, msg.kind === "touch", msg.events);
+        }
         return;
       case "data": {
         // The stores are E11-T03's; until then a batch only moves the element count.
@@ -563,6 +626,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     },
     get size(): number {
       return charts.size;
+    },
+    pickIndex(id: ChartId) {
+      const inst = charts.get(id);
+      return inst && { objects: inst.objects, structural: inst.structural };
     },
   };
 }

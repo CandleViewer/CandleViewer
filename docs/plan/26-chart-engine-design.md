@@ -282,6 +282,8 @@ Two complementary indices, both maintained incrementally in the worker:
 
 Picking budget ≤ 1 ms for 200 drawings + 50 lines. Results are posted to the main thread only when the picked object changes (edge-triggered), keeping message traffic low. Grab handles use an enlarged 10 px tolerance; touch input uses 16 px.
 
+_Shipped (E11-S08, package README BQ-127 to BQ-141, `src/hit/`): the object grid is kept in world space (fractional bar index × ticks, ~64 px cells at build), so a pan or an autoscale moves nothing and only the candidates a query finds are projected; a rebuild runs only on a cell-size drift outside [¼, 4] (deferred past a gesture) or a y-mapping switch. Under log a segment, straight on screen, is placed along its bent tick path (G-27). Mouse and pen take 10 px, touch 16 px, shared by bodies and handles. The runtime picks once per `input` message at its last move, never during a drag or glide, and posts `pick` only when (object, part, handle) changes; `pickAt` always replies._
+
 ### 3.10 Drawings
 
 - **Tools in v1**: trendline, ray, extended line, horizontal line/ray, vertical line, rectangle, ellipse, Fibonacci retracement, Fibonacci extension, measurement tool (price/%/bars/time), text note, arrow, price range, position tool (entry/SL/TP with R:R readout), and a brush/freehand for annotations.
@@ -386,6 +388,8 @@ Shipped by E11-S04 PR 1 (package README BQ-99 and BQ-102), additive and with the
 Shipped by E11-S04 PR 2 (package README BQ-104 and BQ-106 to BQ-109), additive: `KEY` codes `left` 3, `right` 4, `home` 5, `end` 6, `spaceDown` 7 and `spaceUp` 8 in a `key` row's `x` slot, with Shift and Ctrl in its modifiers; `init.reducedMotion?` (the app's resolved mode, carried by every `init`) and `command { k: "setMotion", reduce }`.
 
 Shipped by E11-S05 PR 1 (package README BQ-115 and BQ-124), additive: `command { k: "setPriceScale", pane, mode?, inverted?, auto?, includeDrawings?, priceOnly?, marginTop?, marginBottom? }` (a known mode, booleans, margins in [0, 0.45]); the `viewport` message gains `pane`, `mode`, `requestedMode`, `inverted`, `autoScale`, `logAvailable`, `logReason` (a code) and `anchorTick`; a `bars` batch's params `[priceOrigin, tickSize]` set the pane's price origin.
+
+Shipped by E11-S08 PR 2 (package README BQ-134 to BQ-136), additive: `command { k: "pickAt", x, y, pointer?, reqId? }` (`pointer` one of `mouse`, `pen`, `touch`; a safe-integer `reqId`) always answers with one `pick`, echoing `reqId`; `pick` gains `part?` (`body` or `handle`), `handle?` and `reqId?`, and carries `bar` and `price` (the bar index and integer tick level under the point) on every reply, with kind `none` on a miss and `axis` in a gutter. Hover picks come from `input` moves, edge-triggered. `cell` stays absent (E18).
 
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 

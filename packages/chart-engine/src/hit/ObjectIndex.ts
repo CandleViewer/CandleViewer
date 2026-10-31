@@ -1,8 +1,10 @@
 // The object index (E11-S08, 26 §3.9 item 2): one pane's pickable objects in a uniform grid kept
 // in world space (BQ-127): x in fractional bar index, y in ticks, cells ~64 CSS px at build. A pan
-// or an autoscale moves no object between cells (y is linear today; a non-linear y is G-27), so
+// or an autoscale moves no object between cells (under log too, as below), so
 // nothing is re-projected per frame: a query converts its ring through the current transform and
-// projects only the candidates it finds (BQ-128). A rebuild runs only when the cell size drifts
+// projects only the candidates it finds (BQ-128). Under log a segment is drawn straight on screen,
+// which is straight in (bar index, ln price): it is placed along that curve, and a mode switch is
+// one rebuild (G-27). A rebuild runs only when the cell size drifts
 // outside [¼, 4] of 64 px, and not during a gesture unless the ring would read more than RING_MAX
 // buckets. Horizontal and vertical lines sit in 1-D bands; rays, and objects padded past CELL_PX,
 // in an always-tested list (BQ-129), so the ring never outgrows one cell of pad. A pick
@@ -10,6 +12,7 @@
 import type { MutationRange } from "../model/counters.js";
 import {
   indexAt,
+  priceAt,
   priceToScreen,
   screenToPrice,
   screenToTime,
@@ -143,6 +146,10 @@ export class ObjectIndex {
   private best = -1;
   private bestDist = Infinity;
   private bestHandle = -1;
+  /** The y mapping the grid was placed under: log, and its price origin and tick size. */
+  private log = false;
+  private origin = 0;
+  private tick = 0;
 
   constructor(
     private readonly vp: ViewportState,
@@ -263,7 +270,7 @@ export class ObjectIndex {
     const tol = toleranceFor(pointer);
     this.begin();
     if (this.live > 0 && this.ready()) {
-      if (this.pending && !this.gesture) this.rebuild();
+      if ((this.pending && !this.gesture) || this.remapped()) this.rebuild();
       if (!this.scan(x, y, tol, false)) {
         this.rebuild();
         this.scan(x, y, tol, true);
@@ -365,12 +372,14 @@ export class ObjectIndex {
     const lo = CELL_PX / 4;
     const hi = CELL_PX * 4;
     const drift = !(pxX >= lo && pxX <= hi && pxY >= lo && pxY <= hi);
+    // A ring past the price domain (log y far off the plot) is non-finite: never walked.
+    const wide = !((cx1 - cx0 + 1) * (cy1 - cy0 + 1) <= RING_MAX);
     if (forced) {
-      if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > RING_MAX) {
+      if (wide) {
         for (let s = 0; s < this.entries.length; s += 1) this.test(s, x, y, tol);
         return true;
       }
-    } else if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > RING_MAX || (drift && !this.gesture)) {
+    } else if (wide || (drift && !this.gesture)) {
       return false;
     }
     this.pending ||= drift;
@@ -458,6 +467,19 @@ export class ObjectIndex {
     this.bestHandle = handle;
   }
 
+  /** The pane draws log y (the transform's own test) with another origin or tick than placed. */
+  private remapped(): boolean {
+    const p = this.vp.panes[this.pane];
+    const log = this.logY();
+    if (log !== this.log) return true;
+    return log && p !== undefined && (p.priceOrigin !== this.origin || p.tickSize !== this.tick);
+  }
+
+  private logY(): boolean {
+    const p = this.vp.panes[this.pane];
+    return p?.scaleMode === "log" && priceAt(p, Math.floor(p.priceLow)) > 0;
+  }
+
   /** Cell size from the current transform: CELL_PX of bars and of ticks at the plot's middle. */
   private middle(): number {
     const p = this.vp.panes[this.pane];
@@ -471,6 +493,10 @@ export class ObjectIndex {
     );
     this.cw = CELL_PX / this.vp.barSpacing;
     this.ch = ch > 0 && ch < Infinity ? ch : 1;
+    const p = this.vp.panes[this.pane];
+    this.log = this.logY();
+    this.origin = p?.priceOrigin ?? 0;
+    this.tick = p?.tickSize ?? 0;
   }
 
   /** A full re-placement at the current scale (O(N), counted); off the pick path but drift. */
@@ -525,6 +551,7 @@ export class ObjectIndex {
     const nx = Math.abs(bx - ax) + 1;
     const ny = Math.abs(by - ay) + 1;
     const cells = e.type === RECT ? nx * ny : nx + ny - 1;
+    if (e.type === SEGMENT && this.log) return this.bend(e, s, x0, x1, nx + ny);
     if (e.type === RAY || !(cells <= MAX_CELLS)) return this.unbound(e, s);
     if (e.type === RECT) {
       for (let cx = Math.min(ax, bx); cx <= Math.max(ax, bx); cx += 1) {
@@ -540,6 +567,33 @@ export class ObjectIndex {
     e.table = UNBOUNDED;
     e.keys.push(-1);
     this.unbounded.push(s);
+  }
+
+  /**
+   * A segment under log: straight in (bar index, ln price), so its ticks bend. It is cut into `n`
+   * pieces, each at most one cell wide; a piece is monotone in both axes, so the box of its end
+   * cells holds it, and the boxes cost at most 4n cells. A non-positive price joins the list.
+   */
+  private bend(e: Entry, s: number, x0: number, x1: number, span: number): void {
+    const a = Math.log(this.origin + e.p0 * this.tick);
+    const b = Math.log(this.origin + e.p1 * this.tick);
+    const n = Math.max(1, span);
+    if (!(Number.isFinite(a) && Number.isFinite(b)) || 4 * n > MAX_CELLS) {
+      return this.unbound(e, s);
+    }
+    let cx = Math.floor(x0);
+    let cy = Math.floor(e.p0 / this.ch);
+    for (let i = 1; i <= n; i += 1) {
+      const u = i / n;
+      const p = i === n ? e.p1 : (Math.exp(a + (b - a) * u) - this.origin) / this.tick;
+      const nx = Math.floor(x0 + (x1 - x0) * u);
+      const ny = Math.floor(p / this.ch);
+      for (let x = Math.min(cx, nx); x <= Math.max(cx, nx); x += 1) {
+        for (let y = Math.min(cy, ny); y <= Math.max(cy, ny); y += 1) this.add(e, s, hash2(x, y));
+      }
+      cx = nx;
+      cy = ny;
+    }
   }
 
   /** Amanatides–Woo: the cells a segment crosses, at most `cells` of them. */
