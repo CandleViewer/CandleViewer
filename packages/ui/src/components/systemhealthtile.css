@@ -1,0 +1,131 @@
+/* CMP-178 SystemHealthTile (E42-D03 §6, §15; E42-D05 §4.3, §16). Tokens only and static: a state flips in
+   one frame. The word, the glyph shape and the times carry each state; the tone colour only reinforces. */
+.cv-health-tile {
+  display: grid;
+  min-width: 0;
+}
+
+/* Long names break anywhere; nothing truncates, at 200 % text too. */
+.cv-health-tile__body {
+  display: grid;
+  gap: var(--space-stack-xs);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-health-tile__body > p {
+  margin: 0;
+}
+
+/* The glyph sits in a size.icon box on the word's first line; the word wraps beside it. */
+.cv-health-tile__state {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-inset-xs);
+  color: var(--color-text-primary);
+}
+
+.cv-health-tile__glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-icon);
+  height: calc(var(--type-ui-body-font-size) * var(--type-ui-body-line-height));
+}
+.cv-health-tile__glyph[data-tone="ok"] {
+  color: var(--color-status-success-strong);
+}
+.cv-health-tile__glyph[data-tone="warning"] {
+  color: var(--color-status-warning-strong);
+}
+.cv-health-tile__glyph[data-tone="danger"] {
+  color: var(--color-status-danger-strong);
+}
+.cv-health-tile__glyph[data-tone="stale"] {
+  color: var(--color-data-confidence-stale-indicator);
+}
+.cv-health-tile__glyph[data-tone="neutral"] {
+  color: var(--color-neutral-default);
+}
+
+/* The neutral ring (no registry glyph yet, E42-D03 DS-5) is a border, so forced colours keep it. */
+.cv-health-tile__ring {
+  box-sizing: border-box;
+  width: calc(var(--size-icon) * 5 / 6);
+  height: calc(var(--size-icon) * 5 / 6);
+  border: calc(var(--border-hairline) * 1px) solid currentcolor;
+  border-radius: var(--radius-circle);
+}
+
+.cv-health-tile__value,
+.cv-health-tile__hint {
+  color: var(--color-text-secondary);
+}
+
+.cv-health-tile__number {
+  color: var(--color-text-primary);
+  font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
+    var(--type-num-base-line-height) var(--type-num-base-font-family);
+}
+
+.cv-health-tile__meta {
+  color: var(--color-text-tertiary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-health-tile__retry {
+  justify-self: start;
+}
+
+/*
+ * The env badge: a pill with the env token's hairline; its word carries the environment. The modifiers
+ * are classes, after the base rule (equal specificity: the later border-color wins). Never a selector on
+ * the top bar badge's data attribute: that badge has no hide path and its guard rejects such a selector.
+ */
+.cv-health-tile__env {
+  display: inline-block;
+  padding-inline: var(--space-inset-xs);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-strong);
+  border-radius: var(--radius-badge);
+  color: var(--color-text-primary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.cv-health-tile__env--live {
+  border-color: var(--color-env-live);
+}
+.cv-health-tile__env--demo {
+  border-color: var(--color-env-demo);
+}
+
+/* Forced colours: the tones drop; glyph shapes, words and the badge's border carry everything. */
+@media (forced-colors: active) {
+  .cv-health-tile__glyph[data-tone],
+  .cv-health-tile__meta {
+    color: CanvasText;
+  }
+
+  .cv-health-tile__env {
+    border-color: CanvasText;
+    color: CanvasText;
+  }
+
+  /* CMP-015's fills drop here, so a loading tile shows its busy words, not an empty body. Two
+     classes outrank the utility's clip pattern (controls.css), which this undoes part by part. */
+  .cv-health-tile__loading.cv-visually-hidden {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+}

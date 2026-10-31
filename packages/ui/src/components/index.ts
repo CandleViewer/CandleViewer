@@ -330,6 +330,10 @@ export type { SymbolPickerProps, SymbolRecordingState } from "./SymbolPicker.js"
 export { SymbolSearchInput } from "./SymbolSearchInput.js";
 export type { SymbolSearchInputProps, SymbolSearchTarget } from "./SymbolSearchInput.js";
 
+export { SYSTEM_HEALTH_TILE_COPY, SystemHealthTile } from "./SystemHealthTile.js";
+export type { SystemHealthTileEnv, SystemHealthTileProps } from "./SystemHealthTile.js";
+export type { SystemHealthTileState, SystemHealthTileTone } from "./SystemHealthTile.js";
+
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";
 

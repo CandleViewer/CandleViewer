@@ -135,6 +135,23 @@ roles and names.
 | link         | link                 | its words: time (UTC), actor, action label and code, subject, outcome, severity | The fields are " · " apart in plain text, read as written. No hash, IP or `detail` is shown.    |
 | glyph        | none (`aria-hidden`) | —                                                                               | The octagon (error, critical) or the triangle (warning); the severity word carries the meaning. |
 
+### SystemHealthTile (CMP-178, a CMP-050 region tile, no pattern of its own)
+
+| Keys            | Action                                                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab | DOM order: the heading link, the host's lines' own stops, the Runbook link, then Retry. The tile adds no stop of its own. |
+| Enter           | Follows the focused link: the heading to its area, Runbook to the runbook.                                                |
+| Enter / Space   | On Retry, the host reads again. While loading Retry is busy, not disabled: a press does nothing and focus stays on it.    |
+
+| Element       | Role                            | Name                                                     | Notes                                                                                                                                                                       |
+| ------------- | ------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tile          | region                          | its heading: the link's words, then the env badge's word | `aria-busy="true"` while loading. No live region: the shell announces a transition once.                                                                                    |
+| heading       | heading at `headingLevel` (2–4) | its text                                                 | Default level 3. Holds the link and the env badge.                                                                                                                          |
+| heading link  | link (CMP-021)                  | the label                                                | The tile's first stop. The env badge's word joins the region's name, not the link's.                                                                                        |
+| glyph         | none (`aria-hidden`)            | —                                                        | One shape per tone; the word carries the state, a warning's after a visually hidden "Attention:".                                                                           |
+| loading words | text, visually hidden           | —                                                        | "Loading…" beside CMP-015, which is `aria-hidden`; shown in forced colours, where CMP-015's fills drop.                                                                     |
+| Retry         | button (CMP-001)                | "Retry"                                                  | Last. Busy while loading, never disabled, so it keeps focus while loading and after a failed read; after a good read the host drops it and focus moves to the heading link. |
+
 ### Combobox (CMP-048, APG Combobox: editable, list autocomplete)
 
 | Keys              | Action                                                                                                                    |

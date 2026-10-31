@@ -66,6 +66,7 @@ import "../src/components/stepper.css";
 import "../src/components/swatchlegend.css";
 import "../src/components/symbolpicker.css";
 import "../src/components/symbolsearch.css";
+import "../src/components/systemhealthtile.css";
 import "../src/components/table.css";
 import "../src/components/tabs.css";
 import "../src/components/tag.css";
