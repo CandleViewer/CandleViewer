@@ -33,8 +33,8 @@ Root 3000 x 2566 px at (4000, 0); footer "page E11-D05 ref frames · board 10 ·
 
 ## Validator and size
 
-- `10-ref-frames-b.json: 0 errors, 14 warnings, 80 sections, 273738 bytes` (exit 0)
-- 80 sections, 2167 shapes, 273738 bytes
+- `10-ref-frames-b.json: 0 errors, 14 warnings, 80 sections, 273681 bytes` (exit 0)
+- 80 sections, 2167 shapes, 273681 bytes
 
 ## Live checks (13)
 
@@ -50,7 +50,7 @@ Root 3000 x 2566 px at (4000, 0); footer "page E11-D05 ref frames · board 10 ·
 - group 'CMP-199 ChartLegend · 8 ref frames': read back 1480 x 680 at (80, 840); its frames keep their sheet sizes after relayout (clip on, no child outside its frame)
 - group 'CMP-226 BarCountdown · 4 ref frames': read back 1080 x 88 at (80, 1600); its frames keep their sheet sizes after relayout (clip on, no child outside its frame)
 - export docs/design/E11/img/E11-D05-10-ref-frames-b.png: export the root at scale 1 (dark set active) and record the board id, the PNG size (3000 x 2566) and the frame count read back
-- after the render, run 10-ref-frames-b.post-live.js (the kit writes it beside this sheet) twice: frame notes to shared plugin data cvd02/note, watermarks 48 / 40 px weight 600 centred under the candles, the stale x0.85 ink fills, the mark pill's 3 px padding (the live fold, 2026-10-30)
+- after the render, run 10-ref-frames-b.post-live.js (the kit writes it beside this sheet) twice: frame notes to shared plugin data cvd02/note, watermarks 48 / 40 px weight 600 centred under the candles (the live fold, 2026-10-30)
 
 ## Spec gaps (2)
 
