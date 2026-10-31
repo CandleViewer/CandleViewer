@@ -29,6 +29,12 @@ before commit.
 
 ## Golden provenance (C-13.5)
 
+- `src/synthetic-ticks.mjs` — seeded synthetic price-tick generator (`generateTicks`,
+  `generatePresetTicks`; presets `burst` 40 Hz for 5 s, `idle` 0.2 Hz, `steady-40hz`). Source:
+  synthetic, seeded (mulberry32), no recording; rate: configurable, default 40 Hz; purpose:
+  flash-rate harness for E47-S04 / G005; env: none; redaction: n/a, nothing recorded. Not a venue
+  payload (C-13.5 not engaged). Timestamps come from a fake clock, prices are integer ticks plus a
+  decimal string.
 - `golden/bars/time_bars_BTCUSDT.jsonl` — E12-S01 time bars (1m/5m/1h, one bar per line).
   Source: corpus `bybit/2026-10-05/ws/clean_publicTrade_BTCUSDT.jsonl`; date 2026-10-05; symbol
   BTCUSDT; env: public live stream shape (no account data); redaction: derived output of an
