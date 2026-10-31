@@ -75,6 +75,19 @@ describe("theme store attributes", () => {
       return { pending, flush };
     }
 
+    it("the cap timer does not throw when the frame API is gone by the time it fires", () => {
+      vi.useFakeTimers();
+      fakeFrames();
+      const { root, store } = setup();
+      store.connect();
+      store.setTheme("light"); // the mark starts with frames available
+      vi.stubGlobal("requestAnimationFrame", undefined);
+      vi.stubGlobal("cancelAnimationFrame", undefined); // a host teardown before the cap fires
+      expect(() => vi.advanceTimersByTime(100)).not.toThrow();
+      expect(root.hasAttribute("data-theme-swap")).toBe(false);
+      vi.useRealTimers();
+    });
+
     it("an earlier swap's frames never clear a later swap's mark", () => {
       vi.useFakeTimers();
       const { flush } = fakeFrames();
