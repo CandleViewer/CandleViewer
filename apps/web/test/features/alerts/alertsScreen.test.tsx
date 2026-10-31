@@ -8,6 +8,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { AlertsScreen, type AlertsScreenProps } from "../../../src/features/alerts/AlertsScreen";
 import { createAlertsStore } from "../../../src/features/alerts/alertsStore";
 import type { Alert } from "../../../src/features/alerts/types";
+import { setActiveClient } from "../../../src/lib/ws/client/activeClient";
+import { INITIAL_WS_STATE } from "../../../src/lib/ws/state/reducer";
 import { alert, delivery, fakeApi, NOW, ok, signal } from "./_fixtures";
 
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
@@ -34,6 +36,15 @@ function setup(alerts: readonly Alert[], over: Partial<AlertsScreenProps> = {}) 
     />,
   );
   return { api, store, ...utils };
+}
+
+function setupNoSource(alerts: readonly Alert[]) {
+  const api = fakeApi(alerts);
+  const store = createAlertsStore();
+  render(
+    <AlertsScreen api={api} store={store} permissions={WRITE} now={() => NOW} timeZone="UTC" />,
+  );
+  return { api, store };
 }
 
 async function menuFor(name: string, item: string | RegExp): Promise<void> {
@@ -366,6 +377,9 @@ describe("read-only and 403", () => {
     const toggle = screen.getByRole("switch", { name: "Active: Alert 1" });
     expect(toggle).toHaveAttribute("aria-disabled", "true");
     expect(toggle).toHaveAccessibleDescription(reason);
+    expect(
+      screen.getByRole("row", { name: /Alert 1/ }).querySelector('[data-icon="lock"]'),
+    ).not.toBeNull();
     expect(screen.queryByRole("button", { name: /New alert/ })).toBeNull();
     fireEvent.click(toggle);
     expect(api.setEnabled).not.toHaveBeenCalled();
@@ -374,8 +388,19 @@ describe("read-only and 403", () => {
       "aria-disabled",
       "true",
     );
-    for (const name of [/Snooze/, /Disable/, /Delete/])
-      expect(screen.getByRole("menuitem", { name })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitem", { name: /Snooze/ })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    for (const name of [/Disable/, /Delete/]) {
+      const item = screen.getByRole("menuitem", { name });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      // The lead glyph is a sibling of the menuitem span, inside the same row.
+      expect(
+        item.parentElement?.parentElement?.querySelector('[data-icon="lock"]'),
+        String(name),
+      ).not.toBeNull();
+    }
   });
 
   it("scenario: a 403 on a write is explained, not silent", async () => {
@@ -463,7 +488,7 @@ describe("bulk 403 and the live feed", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Disable 2" }));
     expect(
       await screen.findByText(
-        "1 of 2 disabled. 1 failed: 'Alert 2' — Your role can't change alerts..",
+        "1 of 2 disabled. 1 failed: 'Alert 2' — Your role can't change alerts.",
       ),
     ).toBeVisible();
   });
@@ -504,5 +529,76 @@ describe("bulk 403 and the live feed", () => {
     expect(await within(dialog).findByText(/Folded into a storm summary/)).toBeVisible();
     expect(within(dialog).queryByRole("link")).toBeNull();
     expect(within(dialog).getByText(/Only the newest firings are shown/)).toBeVisible();
+  });
+});
+
+describe("lifecycle", () => {
+  afterEach(() => setActiveClient(null));
+
+  const client = () => {
+    const handle = { read: () => [], release: vi.fn() };
+    return {
+      handle,
+      client: {
+        consume: vi.fn(() => handle),
+        getState: () => INITIAL_WS_STATE,
+        subscribe: () => () => undefined,
+      },
+    };
+  };
+
+  it("re-subscribes to the alerts topic when the active client changes", async () => {
+    const a = client();
+    const b = client();
+    setActiveClient(a.client as never);
+    const { api, store } = setupNoSource([alert(1)]);
+    await screen.findByRole("row", { name: /Alert 1/ });
+    expect(a.client.consume).toHaveBeenCalledWith(expect.objectContaining({ ch: "alerts" }));
+    act(() => setActiveClient(b.client as never));
+    expect(a.handle.release).toHaveBeenCalledTimes(1);
+    expect(b.client.consume).toHaveBeenCalledTimes(1);
+    expect(api.list).toHaveBeenCalledTimes(1);
+    expect(store.list()).toHaveLength(1);
+  });
+
+  it("aborts an in-flight refresh on unmount and ignores its late answer", async () => {
+    let signal: AbortSignal | undefined;
+    let settle: (v: unknown) => void = () => undefined;
+    const api = fakeApi([], {
+      list: vi.fn((s?: AbortSignal) => {
+        signal = s;
+        return new Promise((resolve) => (settle = resolve));
+      }) as never,
+    });
+    const { store, unmount } = setup([], { api });
+    unmount();
+    expect(signal?.aborted).toBe(true);
+    await act(async () => settle(ok([alert(1)])));
+    expect(store.list()).toHaveLength(0);
+  });
+
+  it("keeps the rows and says so when a later refresh fails", async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(ok([alert(1)]))
+      .mockResolvedValue({ kind: "unavailable" });
+    const api = fakeApi([alert(1)], {
+      list,
+      setEnabled: vi.fn(() => Promise.resolve({ kind: "not_found" as const })),
+    });
+    setup([alert(1)], { api });
+    fireEvent.click(await screen.findByRole("switch", { name: "Active: Alert 1" }));
+    expect(await screen.findByText(/couldn't be refreshed/)).toBeVisible();
+    expect(screen.getByRole("row", { name: /Alert 1/ })).toBeVisible();
+    expect(screen.queryByText(/Alerts couldn't load/)).toBeNull();
+  });
+
+  it("moves focus to the select-all box after Clear", async () => {
+    setup([alert(1)]);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select Alert 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: "Select all rows" })).toHaveFocus(),
+    );
   });
 });

@@ -58,6 +58,7 @@ def test_snooze_set_then_clear_is_audited(env: Env) -> None:
         {"until": (NOW - timedelta(seconds=1)).isoformat()},
         {"until": NOW.isoformat()},
         {"until": "2099-01-01T00:00:00"},  # no offset
+        {"until": "2099-01-01T00:00"},  # no offset, no seconds
         {},
         {"until": FUTURE, "extra": 1},
         {"until": "tomorrow"},

@@ -127,6 +127,8 @@ class SqlAlchemyAlertFiringStore:
         fired_at: datetime,
         once: bool,
         bump: bool,
+        # Repeated, not imported: storage may not import the alerts module (CONSTITUTION §3).
+        # Keep in step with `alerts.ports.DisarmReason`.
         disarm_reason: Literal["source_unavailable"] | None = None,
     ) -> list[int] | None:
         ids: list[int] = []

@@ -21,10 +21,16 @@ export function downloadCsv(filename: string, text: string): void {
   link.href = url;
   link.download = filename;
   link.click();
-  URL.revokeObjectURL(url);
+  // After the click has been handed to the browser, never in the same tick.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-const utc = (iso: string): string => `${iso.slice(0, 19).replace("T", " ")} UTC`;
+const utc = (iso: string): string => {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms)
+    ? `${new Date(ms).toISOString().slice(0, 19).replace("T", " ")} UTC`
+    : iso;
+};
 
 export function AlertHistoryDialog({
   alert,
@@ -82,7 +88,7 @@ export function AlertHistoryDialog({
       {firings.length > 0 ? (
         <ol aria-label={H.title(alert.name)}>
           {firings.map((firing) => (
-            <li key={firing.firedAt}>
+            <li key={firing.key}>
               <time dateTime={firing.firedAt}>{utc(firing.firedAt)}</time>
               {" — "}
               {firing.channels.map((c) => `${c.channel} ${c.word}`).join(" · ")}

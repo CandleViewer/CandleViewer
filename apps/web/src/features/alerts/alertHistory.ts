@@ -11,11 +11,25 @@ export interface HistoryChannel {
 }
 
 export interface Firing {
+  /** `fired_at` plus the lowest delivery id of the firing: unique even for equal timestamps. */
+  readonly key: string;
   readonly firedAt: string;
   readonly message: string;
   readonly channels: readonly HistoryChannel[];
   readonly suppressedStorm: boolean;
 }
+
+/** A timestamp that does not parse sorts last, never as NaN. */
+export function timeOf(iso: string | undefined): number {
+  const ms = Date.parse(iso ?? "");
+  return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
+}
+
+const newestFirst = (a: string | undefined, b: string | undefined): number => {
+  const x = timeOf(a);
+  const y = timeOf(b);
+  return x === y ? 0 : x < y ? 1 : -1;
+};
 
 const CHANNEL_WORD: Readonly<Record<string, string>> = {
   in_app: "In app",
@@ -47,21 +61,30 @@ export function statusWord(row: DeliveryRow): string {
   }
 }
 
+/**
+ * A firing is the channel rows sharing one `fired_at`; a second row for a channel the firing already
+ * holds starts another firing, so two firings with equal timestamps stay two.
+ */
 export function groupFirings(rows: readonly DeliveryRow[]): readonly Firing[] {
-  const byTime = new Map<string, DeliveryRow[]>();
-  for (const row of rows) {
-    const key = row.fired_at ?? "";
-    byTime.set(key, [...(byTime.get(key) ?? []), row]);
+  const groups: { firedAt: string; rows: DeliveryRow[] }[] = [];
+  for (const row of [...rows].sort((a, b) => (a.id ?? 0) - (b.id ?? 0))) {
+    const firedAt = row.fired_at ?? "";
+    const open = groups.find(
+      (g) => g.firedAt === firedAt && !g.rows.some((r) => r.channel === row.channel),
+    );
+    if (open === undefined) groups.push({ firedAt, rows: [row] });
+    else open.rows.push(row);
   }
-  return [...byTime.entries()]
-    .sort(([a], [b]) => Date.parse(b) - Date.parse(a))
-    .map(([firedAt, group]) => {
+  return groups
+    .sort((a, b) => newestFirst(a.firedAt, b.firedAt))
+    .map(({ firedAt, rows: group }) => {
       const channels = group.map((row) => ({
         channel: CHANNEL_WORD[row.channel ?? ""] ?? String(row.channel),
         word: statusWord(row),
         suppressedStorm: row.status === "suppressed" && row.error === "storm",
       }));
       return {
+        key: `${firedAt}#${Math.min(...group.map((r) => r.id ?? 0))}`,
         firedAt,
         message: group.find((row) => (row.message ?? "") !== "")?.message ?? "",
         channels,
@@ -78,17 +101,18 @@ export function csvCell(value: string): string {
   return /[",\n\r]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
 }
 
+/** UTF-8 byte order mark: spreadsheets read the file as UTF-8, not the local code page. */
+const BOM = "\uFEFF";
+
 export const CSV_HEADER = ["fired_at", "channel", "status", "reason", "message"] as const;
 
 /** One CSV line per delivery row, newest first, every row of every firing. */
 export function historyCsv(rows: readonly DeliveryRow[]): string {
-  const sorted = [...rows].sort(
-    (a, b) => Date.parse(b.fired_at ?? "") - Date.parse(a.fired_at ?? ""),
-  );
+  const sorted = [...rows].sort((a, b) => newestFirst(a.fired_at, b.fired_at));
   const lines = sorted.map((row) =>
     [row.fired_at ?? "", row.channel ?? "", row.status ?? "", row.error ?? "", row.message ?? ""]
       .map(csvCell)
       .join(","),
   );
-  return [CSV_HEADER.join(","), ...lines].join("\r\n") + "\r\n";
+  return BOM + [CSV_HEADER.join(","), ...lines].join("\r\n") + "\r\n";
 }

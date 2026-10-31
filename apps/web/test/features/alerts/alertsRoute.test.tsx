@@ -32,9 +32,13 @@ describe("downloadCsv", () => {
     const click = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
+    vi.useFakeTimers();
     downloadCsv("a.csv", "x");
     expect(create).toHaveBeenCalledTimes(1);
     expect(click).toHaveBeenCalledTimes(1);
+    expect(revoke).not.toHaveBeenCalled();
+    vi.runAllTimers();
     expect(revoke).toHaveBeenCalledWith("blob:x");
+    vi.useRealTimers();
   });
 });

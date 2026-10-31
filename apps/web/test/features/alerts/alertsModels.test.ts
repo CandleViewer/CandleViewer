@@ -14,6 +14,7 @@ import {
   groupFirings,
   historyCsv,
   statusWord,
+  timeOf,
 } from "../../../src/features/alerts/alertHistory";
 import { nextLocalMidnightMs } from "../../../src/features/alerts/snoozeTomorrow";
 import { createWsAlertsSource, frameFor } from "../../../src/features/alerts/alertsWsSource";
@@ -137,10 +138,44 @@ describe("history", () => {
     expect(csvCell("@cmd")).toBe("'@cmd");
     expect(csvCell("  =1+1")).toBe("'  =1+1");
     expect(csvCell("\t=1")).toBe("'\t=1");
+    expect(csvCell("+x")).toBe("'+x");
+    expect(csvCell("-x")).toBe("'-x");
+    expect(csvCell("\r=1")).toBe('"\'\r=1"');
     const csv = historyCsv([delivery(1, "a", "2026-10-31T13:00:00Z", { message: "x,y" })]);
     expect(csv).toBe(
-      'fired_at,channel,status,reason,message\r\n2026-10-31T13:00:00Z,in_app,sent,,"x,y"\r\n',
+      '\uFEFFfired_at,channel,status,reason,message\r\n2026-10-31T13:00:00Z,in_app,sent,,"x,y"\r\n',
     );
+  });
+});
+
+describe("groupFirings keys and ordering", () => {
+  it("keys a firing by time and lowest id; equal timestamps with a repeated channel stay two firings", () => {
+    const at = "2026-10-31T13:00:00Z";
+    const two = groupFirings([
+      delivery(5, "a", at),
+      delivery(4, "a", at, { channel: "desktop" }),
+      delivery(9, "a", at),
+    ]);
+    expect(two.map((f) => f.key)).toEqual([`${at}#4`, `${at}#9`]);
+    expect(two[0]?.channels.map((c) => c.channel)).toEqual(["Desktop", "In app"]);
+    expect(new Set(two.map((f) => f.key)).size).toBe(2);
+  });
+
+  it("sorts an unparseable fired_at last, in the list and the CSV, without NaN", () => {
+    const rows = [
+      delivery(1, "a", "not-a-date"),
+      delivery(2, "a", "2026-10-31T13:00:00Z"),
+      delivery(3, "a", "2026-10-31T14:00:00Z"),
+    ];
+    expect(groupFirings(rows).map((f) => f.firedAt)).toEqual([
+      "2026-10-31T14:00:00Z",
+      "2026-10-31T13:00:00Z",
+      "not-a-date",
+    ]);
+    const lines = historyCsv(rows).trim().split("\r\n");
+    expect(lines[1]).toContain("14:00:00Z");
+    expect(lines[3]).toContain("not-a-date");
+    expect(timeOf(undefined)).toBe(Number.NEGATIVE_INFINITY);
   });
 });
 
