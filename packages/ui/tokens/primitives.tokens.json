@@ -498,6 +498,7 @@
   "palette.light.blue.700": { "$type": "color", "$value": "#DDE8FC" },
   "palette.light.amber.300": { "$type": "color", "$value": "#9A6A05" },
   "palette.light.amber.500": { "$type": "color", "$value": "#B87F0A" },
+  "palette.light.amber.700": { "$type": "color", "$value": "#8A5F04" },
   "palette.light.amber.900": { "$type": "color", "$value": "#FCEECB" },
   "palette.light.cyan.300": { "$type": "color", "$value": "#12798F" },
   "palette.light.cyan.500": { "$type": "color", "$value": "#178AA8" },
