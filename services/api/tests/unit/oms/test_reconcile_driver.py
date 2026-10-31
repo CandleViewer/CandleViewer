@@ -336,11 +336,35 @@ async def test_a_manual_request_writes_ahead_then_starts_a_pass_or_joins_the_run
         assert await _resting(driver) == "idle"
         assert job.records.rows[-1][1:] == (started.pass_id, job.records.rows[-1][2])
         assert job.records.rows[-1][2]["trigger"] == "manual"
-        with pytest.raises(NoSuchJob):
-            await driver.reconcile_now(AccountId(UUID(int=7)), write_ahead=write_ahead)
     finally:
         gate.set()
         await driver.stop()
+
+
+async def test_a_manual_request_opens_the_job_of_an_account_with_none_but_never_once_stopping(
+    job: Job, timers: Timers
+) -> None:
+    """24 Sec.8.5: an on-demand request is a trigger like any other, so it opens the account's
+    job (restored, or built afresh) and starts its pass; once the driver stops, none opens and
+    nothing is written."""
+    driver = _driver(job, timers)
+    await driver.start([])
+    written: list[PassTaken] = []
+
+    async def write_ahead(taken: PassTaken) -> None:
+        written.append(taken)
+
+    try:
+        assert ACCOUNT not in driver._jobs
+        taken = await driver.reconcile_now(ACCOUNT, write_ahead=write_ahead)
+        assert ACCOUNT in driver._jobs and written == [taken] and taken.joined is False
+        assert await _resting(driver) == "idle"
+        assert job.records.rows[-1][1] == taken.pass_id
+    finally:
+        await driver.stop()
+    with pytest.raises(ReconciliationUnavailable):
+        await driver.reconcile_now(AccountId(UUID(int=7)), write_ahead=write_ahead)
+    assert len(written) == 1
 
 
 async def test_a_manual_request_on_a_locked_job_is_refused_and_writes_nothing(

@@ -307,10 +307,10 @@ class ReconcileJobs:
     ) -> PassTaken:
         """`reconcileAccount` (22, BQ-7): a pass started now (`SWEEP_DUE`, `trigger: manual`), or
         the running one's id (`joined`); `write_ahead` records the request first (`oms.reconcile`,
-        `stage: requested`) and a raise sends nothing. `NoSuchJob`, or `JobLocked` while locked."""
-        job = self._jobs.get(account)
-        if job is None:
-            raise NoSuchJob(str(account))
+        `stage: requested`) and a raise sends nothing. A trigger like any other, it opens the
+        account's job when it has none (24 Sec.8.5), so `ReconciliationUnavailable` when none can
+        open; `JobLocked` while locked."""
+        job = await self._job(account)
         async with job.lock:
             state = leaf_of(job.interp)
             if state == "stale_lockout":

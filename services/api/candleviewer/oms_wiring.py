@@ -93,6 +93,7 @@ from candleviewer.oms.errors import (
     OmsNotReady,
     OrderEntryRefused,
     OrderHistoryRefused,
+    ReconciliationUnavailable,
     StoreUnavailable,
     TradingDisabled,
 )
@@ -159,6 +160,7 @@ from candleviewer.oms.position_writes import (
     PositionWritesDeps,
     VenuePosition,
 )
+from candleviewer.oms.reconcile_job import PassTaken, ReconcileJobs, WriteAhead
 from candleviewer.oms.reconcile_standing import STALE_AFTER_S, ReconcileStanding
 from candleviewer.oms.repository import (
     ExecutionRepository,
@@ -1931,8 +1933,11 @@ class _Parts:
     #: (BQ-14); None where the stores compose none.
     reconcile: ReconcileWiring | None = None
     #: The accounts a job opens for at start: the environment's that resolve to a trading
-    #: account (an active key, not deleted); the rest open on their stream's first trigger.
+    #: account (an active key, not deleted); the rest open on their first trigger.
     tradable: Callable[[Sequence[UUID]], Awaitable[list[AccountId]]] | None = None
+    #: The way back to the serving loop, where the reconciliation routes' records are written
+    #: ahead (`OnLaneReconciliation`, E29-T06 #914).
+    serving: Serving | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2083,6 +2088,54 @@ class OnLaneLeverage:
     ) -> LeverageOutcome:
         change = self.parts.leverage.apply(request, actor=actor, request_id=request_id)
         return await _on_lane(self.parts, change, None)
+
+
+#: A route's write-ahead record, a coroutine function run on the serving loop (`Serving.call`).
+type ServedAhead[T] = Callable[[T], Coroutine[Any, Any, None]]
+
+
+@dataclass(frozen=True, slots=True)
+class OnLaneReconciliation:
+    """`OmsRuntime.reconciliation` from the serving loop (E29-T06 #914; 22 `reconcileAccount`,
+    `resolveReconciliation`): each call hops to the order lane (`Lane.call`), where the jobs and
+    their locks live, within `CV_COMMAND_TIMEOUT`, and its write-ahead record hops back to the
+    serving loop (`Serving.call`), where the route's audit writer runs, so B19 is told nothing
+    until that record is durable (C-2.9). What the record or the driver raises reaches the route
+    unchanged. `wired` is false where the stores compose no reconciliation."""
+
+    parts: _Parts
+
+    @property
+    def wired(self) -> bool:
+        return self.parts.reconcile is not None and self.parts.serving is not None
+
+    async def reconcile_now(
+        self, account: AccountId, *, write_ahead: ServedAhead[PassTaken]
+    ) -> PassTaken:
+        jobs, ahead = self._jobs(), self._served(write_ahead)
+        return await _on_lane(self.parts, jobs.reconcile_now(account, write_ahead=ahead))
+
+    async def resolve(
+        self, account: AccountId, *, decided_by: str, write_ahead: ServedAhead[str]
+    ) -> str:
+        jobs, ahead = self._jobs(), self._served(write_ahead)
+        resolving = jobs.resolve(account, decided_by=decided_by, write_ahead=ahead)
+        return await _on_lane(self.parts, resolving)
+
+    def _jobs(self) -> ReconcileJobs:
+        if self.parts.reconcile is None:
+            raise ReconciliationUnavailable("no reconciliation is composed")
+        return self.parts.reconcile.jobs
+
+    def _served[T](self, write_ahead: ServedAhead[T]) -> WriteAhead[T]:
+        serving = self.parts.serving
+        if serving is None:
+            raise ReconciliationUnavailable("no serving loop to write the record on")
+
+        async def ahead(value: T) -> None:
+            await serving.call(write_ahead(value))
+
+        return ahead
 
 
 @dataclass(frozen=True, slots=True)
@@ -2509,6 +2562,13 @@ class OmsRuntime:
         """The position writes' service (E29-T07 #915), each call awaited on the order lane
         (`OnLanePositions`); `OmsNotReady` before it is composed."""
         return OnLanePositions(self._composed())
+
+    @property
+    def reconciliation(self) -> OnLaneReconciliation:
+        """The reconciliation routes' service (E29-T06 #914): the on-demand pass and the operator's
+        decision, each awaited on the order lane, its record written ahead on the serving loop
+        (`OnLaneReconciliation`); `OmsNotReady` before it is composed."""
+        return OnLaneReconciliation(self._composed())
 
     def _composed(self) -> _Parts:
         if self._parts is None:
@@ -3389,7 +3449,7 @@ class OmsRuntime:
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
                 stream, admit_after, preview, leverage, writes, reads, observed, reconcile,
-                tradable,
+                tradable, serving,
             )  # fmt: skip
             with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
                 stopping = self._stopping

@@ -5,12 +5,16 @@
 A start of the jobs that fails before any opens holds every account's order entry (the standing,
 `account_stale`) while the runtime goes on to `ready`, and the startup task retries it on the
 sweep's backoff until it works, which lifts the hold (#914's security look, Low 2; INV-B19-a); one
-that fails once the stop has begun holds and pages nothing (the code look's M2)."""
+that fails once the stop has begun holds and pages nothing (the code look's M2). The routes reach
+the jobs only through `OmsRuntime.reconciliation`: each call on the order lane, its write-ahead
+record back on the serving loop, which a real `OrderLane` shows across threads."""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import threading
+from types import SimpleNamespace
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -18,11 +22,15 @@ from structlog.testing import capture_logs
 
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId
+from candleviewer.observability.metrics import Metrics
+from candleviewer.oms.errors import OmsNotReady, ReconciliationUnavailable
+from candleviewer.oms.reconcile_job import NothingToResolve, PassTaken
 from candleviewer.oms.reconcile_standing import UNSTARTED_DETAIL, ReconcileStanding
-from candleviewer.oms_wiring import OmsRuntime
+from candleviewer.oms_lane import HOP_TIMEOUT_S, OrderLane, Serving
+from candleviewer.oms_wiring import OmsRuntime, OnLaneReconciliation
 from candleviewer.statechart.bindings import b19_reconciliation as b19
 from tests.unit.oms.test_handovers import _Store
-from tests.unit.oms.test_oms_runtime import World, started, until
+from tests.unit.oms.test_oms_runtime import Recording, World, started, until
 from tests.unit.test_oms_reconcile_wiring import Reads
 
 ACCOUNT = AccountId(UUID(int=0x914))
@@ -143,4 +151,106 @@ async def test_a_composition_with_no_reconciliation_lifts_a_hold_an_earlier_star
     standing.hold()
     async with started(world.runtime(standing=standing)) as runtime:
         await _ready(runtime)
-        assert not standing.held
+        assert not standing.held and not runtime.reconciliation.wired
+
+
+async def test_the_routes_reach_the_jobs_on_the_lane_and_their_record_on_the_serving_loop() -> None:
+    lanes: list[Recording] = []
+
+    def lane() -> Recording:
+        lanes.append(Recording())
+        return lanes[-1]
+
+    world = _world()
+    runtime = world.runtime(lane=lane)
+    with pytest.raises(OmsNotReady):
+        _ = runtime.reconciliation  # the property refuses before the composition
+    async with started(runtime):
+        await _ready(runtime)
+        service = runtime.reconciliation
+        assert service.wired
+        written: list[PassTaken] = []
+
+        async def write_ahead(taken: PassTaken) -> None:
+            written.append(taken)
+
+        taken = await service.reconcile_now(ACCOUNT, write_ahead=write_ahead)
+        assert written == [taken] and taken.joined is False
+        assert ("ReconcileJobs.reconcile_now", HOP_TIMEOUT_S) in lanes[-1].hops
+        with pytest.raises(NothingToResolve):  # the driver's refusal reaches the route as is
+            await service.resolve(ACCOUNT, decided_by="owner", write_ahead=write_ahead)
+        assert ("ReconcileJobs.resolve", HOP_TIMEOUT_S) in lanes[-1].hops
+
+
+class _Jobs:
+    """The driver's two calls, noting the thread each runs on and what it was told."""
+
+    def __init__(self) -> None:
+        self.threads: list[tuple[str, int]] = []
+        self.told: list[str] = []
+
+    async def reconcile_now(self, account: AccountId, *, write_ahead: Any) -> PassTaken:
+        self.threads.append(("driver", threading.get_ident()))
+        taken = PassTaken("00000000-0000-4000-8000-000000000914", joined=False)
+        await write_ahead(taken)
+        self.told.append("SWEEP_DUE")
+        return taken
+
+    async def resolve(self, account: AccountId, *, decided_by: str, write_ahead: Any) -> str:
+        self.threads.append(("driver", threading.get_ident()))
+        await write_ahead("stale_lockout")
+        self.told.append("OPERATOR_RESOLVED")
+        return "stale_lockout"
+
+
+async def test_on_a_real_lane_the_record_is_written_on_the_serving_loops_thread() -> None:
+    """CV-C13: the jobs run on the order lane's own thread, the route's record on the serving
+    loop's, where its audit writer is bound; a record that raises there reaches the route as
+    itself and the driver tells B19 nothing."""
+    jobs, lane = _Jobs(), OrderLane(name="test-reconcile-lane")
+    await lane.start()
+    try:
+        serving = Serving(asyncio.get_running_loop(), Metrics("demo"))
+        parts = SimpleNamespace(reconcile=SimpleNamespace(jobs=jobs), serving=serving, lane=lane)
+        service = OnLaneReconciliation(cast(Any, parts))
+        here, written = threading.get_ident(), list[tuple[object, int]]()
+
+        async def write_ahead(value: object) -> None:
+            written.append((value, threading.get_ident()))
+
+        taken = await service.reconcile_now(ACCOUNT, write_ahead=write_ahead)
+        assert await service.resolve(ACCOUNT, decided_by="owner", write_ahead=write_ahead) == (
+            "stale_lockout"
+        )
+        assert [thread for _, thread in written] == [here, here]
+        assert [value for value, _ in written] == [taken, "stale_lockout"]
+        assert {thread for _, thread in jobs.threads} != {here}  # the lane's own thread
+
+        class Unwritten(Exception):
+            pass
+
+        async def refused(_value: object) -> None:
+            raise Unwritten
+
+        with pytest.raises(Unwritten):
+            await service.resolve(ACCOUNT, decided_by="owner", write_ahead=refused)
+        assert jobs.told == ["SWEEP_DUE", "OPERATOR_RESOLVED"]  # nothing more was told
+    finally:
+        await lane.stop()
+
+
+async def test_with_no_serving_loop_or_no_jobs_nothing_reaches_the_lane() -> None:
+    lane = Recording()
+    for parts in (
+        SimpleNamespace(reconcile=None, serving=object(), lane=lane),
+        SimpleNamespace(reconcile=SimpleNamespace(jobs=_Jobs()), serving=None, lane=lane),
+    ):
+        service = OnLaneReconciliation(cast(Any, parts))
+        assert not service.wired
+
+        async def write_ahead(_value: object) -> None:
+            raise AssertionError("nothing is written")
+
+        with pytest.raises(ReconciliationUnavailable):
+            await service.reconcile_now(ACCOUNT, write_ahead=write_ahead)
+    assert lane.hops == []
