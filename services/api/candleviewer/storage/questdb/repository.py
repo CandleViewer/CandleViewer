@@ -83,6 +83,11 @@ class QuestDbMarketDataRepository:
         self._reader = reader
         self._symbol_allowlist = symbol_allowlist
 
+    @property
+    def derivatives_io(self) -> tuple[IlpWriter, QuestDbReader]:
+        """E24-T01: the writer and reader the derivatives stores share with this repository."""
+        return self._writer, self._reader
+
     def _check_symbol(self, sym: str) -> None:
         if not self._symbol_allowlist(sym):
             raise SymbolNotAllowed(f"symbol {sym!r} is not in the allowlist")

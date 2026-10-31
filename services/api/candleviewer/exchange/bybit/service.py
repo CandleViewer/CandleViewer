@@ -45,6 +45,7 @@ from candleviewer.exchange.bybit.key_ws_probe import (
     connect_private_stream,
 )
 from candleviewer.exchange.bybit.klines import BybitKlineFetcher, TickSizeFor
+from candleviewer.exchange.bybit.open_interest import BybitOpenInterestFetcher
 from candleviewer.exchange.bybit.orderbook import book_topic, parse_book_frame
 from candleviewer.exchange.bybit.private_stream import (
     KeyTombstones,
@@ -242,6 +243,11 @@ class ExchangeBybitService:
         client (`MARKET_DATA` bucket) plus the closer for that client."""
         client = self.public_rest_client(env)
         return BybitFundingFetcher(client), client.aclose
+
+    @staticmethod
+    def open_interest_fetcher(client: BybitRestClient) -> BybitOpenInterestFetcher:
+        """E24-T01: open-interest history pages over a public governed client (`MARKET_DATA`)."""
+        return BybitOpenInterestFetcher(client)
 
     #: E27-T03: `(reason, code)` when a key-verification refusal is a verdict about the key.
     key_refusal = staticmethod(refusal)
