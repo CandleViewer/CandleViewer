@@ -3,7 +3,8 @@
 Writes go through the hot tier's ILP writer with `stream='all'`; the dedup key `(ts, symbol, side,
 price, size, batch_index)` makes a replayed push idempotent and keeps two identical prints of one
 push apart. Reads are parameterised (SR-047): one symbol's prints in the key's order, optionally
-one side, plus the first stored `ts` (coverage).
+one side, from a resume key `(ts, price, size, batch_index)` on, plus the first stored `ts`
+(coverage).
 
 Precision: `price`, `size` and `notional` are `DOUBLE` columns (`0001_core_tables.sql`); a value
 is read back as the `Decimal` of its shortest repr. The in-memory store keeps the exact `Decimal`.
@@ -15,7 +16,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Protocol
 
-from candleviewer.domain.liquidations import STREAM_ALL, LiqPrint
+from candleviewer.domain.liquidations import STREAM_ALL, Cut, LiqPrint
 from candleviewer.domain.sql_names import ts_us_from_row
 from candleviewer.storage.models import TimeRange
 from candleviewer.storage.questdb.ilp_writer import IlpWriter
@@ -64,11 +65,15 @@ class QuestDbLiquidationStore:
             await self._writer.write_rows("liquidations", [_row(p) for p in rows], "ts")
 
     async def read_prints(
-        self, symbol: str, rng: _Range, side: str | None, limit: int
+        self, symbol: str, rng: _Range, side: str | None, limit: int, from_key: Cut | None = None
     ) -> list[LiqPrint]:
         checked_identifier(symbol)
         window = TimeRange(start_us=rng.start_us, end_us=rng.end_us)
-        rows = await self._reader.run(build_read_liquidations(symbol, window, side, limit))
+        key = None
+        if from_key is not None:  # a DOUBLE column: the exact float the row was read back from
+            ts, price, size, bi = from_key
+            key = (ts, float(price), float(size), bi)
+        rows = await self._reader.run(build_read_liquidations(symbol, window, side, limit, key))
         return [
             LiqPrint(
                 ts_us=ts_us_from_row(r["ts"]),
@@ -105,7 +110,7 @@ class InMemoryLiquidationStore:
             del self._rows[next(iter(self._rows))]
 
     async def read_prints(
-        self, symbol: str, rng: _Range, side: str | None, limit: int
+        self, symbol: str, rng: _Range, side: str | None, limit: int, from_key: Cut | None = None
     ) -> list[LiqPrint]:
         hits = sorted(
             (
@@ -114,6 +119,7 @@ class InMemoryLiquidationStore:
                 if p.symbol == symbol
                 and rng.start_us <= p.ts_us < rng.end_us
                 and (side is None or p.side == side)
+                and (from_key is None or (p.ts_us, p.price, p.size, p.batch_index) >= from_key)
             ),
             key=LiqPrint.key,
         )

@@ -151,6 +151,8 @@ def make_liquidations_router(
             return _bad("invalid_time_range", "invalid from/to timestamp")
         except DerivInvalidRequest as exc:
             return _bad(exc.code, exc.detail)
+        except ArithmeticError:  # backstop: decimal faults only a crafted cursor can reach
+            return _bad("invalid_cursor", "pagination cursor is malformed or expired")
         except DerivSymbolUnlisted:
             return _problem(422, "validation_failed", "Unprocessable", f"{symbol} is not listed")
         except StorageTierUnavailable:

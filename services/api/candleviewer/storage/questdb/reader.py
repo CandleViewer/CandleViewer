@@ -144,16 +144,40 @@ def build_oi_coverage(sym: str, interval: str, source: str) -> QueryBuilder:
     return _checked(sql, (sym, interval, source))
 
 
-def build_read_liquidations(sym: str, rng: TimeRange, side: str | None, limit: int) -> QueryBuilder:
+def build_read_liquidations(
+    sym: str,
+    rng: TimeRange,
+    side: str | None,
+    limit: int,
+    from_key: tuple[int, float, float, int] | None = None,
+) -> QueryBuilder:
     """E24-T03 one symbol's prints in the dedup key's order (a total order, so a page re-reads
-    alike), two-sided ts bound, optional side equality, hard row cap (validated int, inlined)."""
-    side_sql, params = ("AND side = $4 ", (side,)) if side is not None else ("", ())
+    alike), two-sided ts bound, optional side equality, hard row cap (validated int, inlined).
+    `from_key` `(ts, price, size, batch_index)` keeps the rows at or above it in that order (a
+    page's resume point; every value a bind parameter, each placeholder used once)."""
+    params: list[object] = [sym, ts_param(rng.start_us), ts_param(rng.end_us)]
+
+    def bind(value: object) -> str:
+        params.append(value)
+        return f"${len(params)}"
+
+    side_sql = f"AND side = {bind(side)} " if side is not None else ""
+    key_sql = ""
+    if from_key is not None:
+        ts, price, size, bi = from_key
+        t = ts_param(ts)
+        key_sql = (
+            f"AND (ts > {bind(t)} OR (ts = {bind(t)} AND price > {bind(price)}) "
+            f"OR (ts = {bind(t)} AND price = {bind(price)} AND size > {bind(size)}) "
+            f"OR (ts = {bind(t)} AND price = {bind(price)} AND size = {bind(size)} "
+            f"AND batch_index >= {bind(bi)})) "
+        )
     sql = (
         "SELECT ts, symbol, side, price, size, notional, batch_index "  # noqa: S608  # nosec B608 reason=int-limit-clamped-by-_inline_limit owner=@CandleViewer/backend
-        f"FROM liquidations WHERE symbol = $1 AND ts >= $2 AND ts < $3 {side_sql}"
+        f"FROM liquidations WHERE symbol = $1 AND ts >= $2 AND ts < $3 {side_sql}{key_sql}"
         f"ORDER BY ts, side, price, size, batch_index LIMIT {_inline_limit(limit)}"
     )
-    return _checked(sql, (sym, ts_param(rng.start_us), ts_param(rng.end_us), *params))
+    return _checked(sql, tuple(params))
 
 
 def build_liquidations_first(sym: str) -> QueryBuilder:
