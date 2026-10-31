@@ -120,9 +120,11 @@ ERRORS: list[str] = []
 # 2026-10-30 (#2701 ledger addendum A row A48, corrected to train R1 in its follow-up comment):
 # E08-T10 (the refresh route E08-S09 #4703 consumes) planned in S07; S07 carries +5 eng pts and
 # train R1 +5 (this ticket's 3 on top of the +2 above), funded from the R5 defect/polish reserve
-# as A24 was. These downgrade to WARN so the governance CI gate stays meaningful for *new*
-# overages.
-ACCEPTED_OVERAGE = {"sprint": {7: 5, 14: 3, 15: 39}, "train": {"R1": 5, "R3": 6}}
+# as A24 was. Decision 2026-10-31 (#2701 ledger addendum A row A53, comment 6537048577): the
+# settings backend task (E02-T13, the routes E22-S02 and E30-S07 consume) planned in S11; S11
+# carries +2 eng pts and train R2 none (360 of its 360), funded as A24/A48 were. These
+# downgrade to WARN so the governance CI gate stays meaningful for *new* overages.
+ACCEPTED_OVERAGE = {"sprint": {7: 5, 11: 2, 14: 3, 15: 39}, "train": {"R1": 5, "R3": 6}}
 WARNINGS: list[str] = []
 MOVES: list[dict] = []
 UNFIXABLE_SPRINTS: set[int] = set()
