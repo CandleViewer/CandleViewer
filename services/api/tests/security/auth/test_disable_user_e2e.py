@@ -57,7 +57,7 @@ from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import CLOSE_USER_DISABLED
 from tests.contract.rbac.rbac_harness import _AuditSink, load_contract, role_permissions
 from tests.csrf_helpers import csrf_headers
-from tests.rules.test_rules_manager import _active_hash, _ir
+from tests.rules.test_rules_manager import _ir
 from tests.security.auth.test_disable_user_drill import _ORIGIN, _auth_ws, _Clock, _recv
 from tests.unit.auth.auth_fakes import FakeUserRepository, FullUsers, no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
@@ -218,9 +218,12 @@ def _settings() -> Settings:
 async def _armed_rule(manager: Any, m: str) -> str:
     """An armed rule of M, armed as the S5 tests arm one (`test_user_cascade_wiring.py`)."""
     actor = _actor(uuid.UUID(m))
-    rid = str((await manager.create(_ir(name="m-rule"), actor))["id"])
+    made = await manager.create(_ir(name="m-rule"), actor)
+    rid = str(made["id"])
     await manager.set_mode(rid, "simulate", actor, "sim-m")
-    await manager.record_simulation(rid, await _active_hash(manager, rid), 5, 0)
+    # The hash of version 1, the active one, as the save answered it: on Postgres a read by id is
+    # scoped to a live owner role (#2291), which the acting stand-in does not hold.
+    await manager.record_simulation(rid, made["version"]["ir_hash"], 5, 0)
     await manager.set_mode(rid, "armed", actor, "arm-m")
     return rid
 

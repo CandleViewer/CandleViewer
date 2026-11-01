@@ -2995,6 +2995,7 @@ CREATE TABLE rule_versions (
   backtest_summary jsonb,               -- optional auto-backtest on save
   created_by     uuid REFERENCES users(id) ON DELETE SET NULL,
   created_at     timestamptz NOT NULL DEFAULT now(),
+  account_refs   text[],                -- accounts the IR names (0063); NULL until computed
   UNIQUE (rule_id, version),
   UNIQUE (rule_id, ir_hash),
   CONSTRAINT rv_version_pos CHECK (version >= 1),
@@ -3006,6 +3007,8 @@ ALTER TABLE rules ADD CONSTRAINT rules_active_version_fk
 ```
 
 `UNIQUE (rule_id, ir_hash)` means saving an unchanged rule does not create a new version — the editors round-trip through the same IR, so a form→graph→form round trip must be a no-op (contract-tested).
+
+`account_refs` holds the account references the version's IR names anywhere (scope, metric references, action parameters), as the generic walker reads them (`collect_account_ids`), written with the version; it is NULL until computed, and no non-Owner read scope admits a version holding NULL, so the scoped reads of `GET /rules` take the account dimension inside the query (SR-051, #2291).
 
 #### 3.4.3 `rule_runs` and `rule_events`
 

@@ -1132,6 +1132,8 @@ rule_versions = Table(
     Column("backtest_summary", JSONB),
     Column("created_by", ForeignKey("users.id", ondelete="SET NULL")),
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    # 0063 (#2291, SR-051): the accounts the version's IR names; NULL until computed.
+    Column("account_refs", ARRAY(Text)),
     UniqueConstraint("rule_id", "version", name="rule_versions_rule_id_version_key"),
     UniqueConstraint("rule_id", "ir_hash", name="rule_versions_rule_id_ir_hash_key"),
     CheckConstraint("version >= 1", name="rv_version_pos"),

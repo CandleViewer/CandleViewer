@@ -3339,7 +3339,7 @@ def create_app(
             recorded_symbols=lambda: ctx.recorder.recorded_symbols(),
             on_compile=rule_telemetry.on_compile,
             on_divergence=rule_telemetry.on_divergence,
-            scope_resolver=ctx.rules.scope_resolver,
+            scope_resolver=lambda: ctx.rules.scope_resolver,
             scope_refresh=ctx.rules.refresh_scope,
             check_limiter=PreviewLimiter(
                 resolved.rules_check_rate_per_user_per_second,

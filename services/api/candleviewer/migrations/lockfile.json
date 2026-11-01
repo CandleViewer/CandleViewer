@@ -301,6 +301,11 @@
       "path": "services/api/candleviewer/migrations/versions/0061_password_history.py",
       "sha256": "a7a814fe8f679ba410badd60114d2870f05ee16333fdbd93ab75f5a51d51ee66",
       "down_revision": "0060_recording_write_owner_only"
+    },
+    "0063_rule_version_account_refs": {
+      "path": "services/api/candleviewer/migrations/versions/0063_rule_version_account_refs.py",
+      "sha256": "b2ab7564a070c3022a1687c991e7f02c8a0cb00d76f8e926dd9161632d958d7a",
+      "down_revision": "0061_password_history"
     }
   }
 }

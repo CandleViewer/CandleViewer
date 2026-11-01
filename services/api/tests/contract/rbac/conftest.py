@@ -52,6 +52,7 @@ def world(_world_module: World) -> World:
     """The shared real-app world, reset to a clean state before every test."""
     w = _world_module
     w.rule_store._rows.clear()
+    w.rule_store.reads.clear()
     w.scope_events.clear()
     w.audit.records.clear()
     w.purge_backend.calls.clear()

@@ -65,7 +65,7 @@ from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsState
 from candleviewer.recorder.retention import PrunePlan, RunReport
-from candleviewer.rules.manager import InMemoryRuleStore
+from candleviewer.rules.manager import InMemoryRuleStore, RuleReadScope, RuleRow
 from candleviewer.storage.errors import ActorNotAuthorised
 from candleviewer.storage.repositories.account_access import (
     AccessGrant,
@@ -699,6 +699,55 @@ class _Views:
         return None
 
 
+#: One read of the rules store: the method, the scope it was asked with (`None` for a read by id or
+#: whole) and the ids it returned.
+RuleRead = tuple[str, RuleReadScope | None, tuple[str, ...]]
+
+
+class RecordingRuleStore(InMemoryRuleStore):
+    """The pack's rules store: `InMemoryRuleStore`, logging each read in `reads`, so a test sees
+    which read served a request and with which scope (SR-051: the scope is part of the query)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads: list[RuleRead] = []
+
+    async def get(self, rule_id: str) -> RuleRow | None:
+        row = await super().get(rule_id)
+        self.reads.append(("get", None, () if row is None else (row.id,)))
+        return row
+
+    async def all(self) -> list[RuleRow]:
+        rows = await super().all()
+        self.reads.append(("all", None, tuple(r.id for r in rows)))
+        return rows
+
+    async def scoped_page(
+        self,
+        scope: RuleReadScope,
+        *,
+        mode: str | None,
+        level: str | None,
+        after: str | None,
+        limit: int,
+        only: str | None = None,
+    ) -> list[RuleRow]:
+        rows = await super().scoped_page(
+            scope, mode=mode, level=level, after=after, limit=limit, only=only
+        )
+        self.reads.append(("scoped_page", scope, tuple(r.id for r in rows)))
+        return rows
+
+    async def scoped_ids(self, scope: RuleReadScope) -> frozenset[str]:
+        ids = await super().scoped_ids(scope)
+        self.reads.append(("scoped_ids", scope, tuple(sorted(ids))))
+        return ids
+
+    async def name_taken(self, scope: RuleReadScope, name: str, exclude: str) -> bool:
+        self.reads.append(("name_taken", scope, ()))  # answers whether, never which rule
+        return await super().name_taken(scope, name, exclude)
+
+
 @dataclass
 class World:
     app: FastAPI
@@ -710,7 +759,7 @@ class World:
     step_up: _StepUp = field(default_factory=_StepUp)
     users: UserStore = field(default_factory=UserStore)
     access: AccessStore = field(default_factory=AccessStore)
-    rule_store: InMemoryRuleStore = field(default_factory=InMemoryRuleStore)
+    rule_store: RecordingRuleStore = field(default_factory=RecordingRuleStore)
     purge_backend: _PurgeBackend = field(default_factory=_PurgeBackend)
     grants: dict[uuid.UUID, tuple[uuid.UUID, ...]] = field(default_factory=dict)
 
@@ -816,7 +865,7 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     async def _scope_sink(event: str, _data: dict[str, str]) -> None:
         scope_events.append(event)
 
-    store = InMemoryRuleStore()
+    store = RecordingRuleStore()
     ctx.rules.bind(store=store, audit=audit_adapter(audit))
     ctx.rules.wire_scope(_ScopeSource(spec), "demo", _scope_sink)
     asyncio.run(ctx.rules.start(ctx))
