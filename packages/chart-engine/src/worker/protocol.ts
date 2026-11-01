@@ -271,7 +271,13 @@ export type FromWorker =
     }
   // README BQ-10: §6 has no acknowledgement, which the host's backpressure needs, and no reply to
   // the `export` command; both are added in their narrowest form.
-  | { readonly t: "ack"; readonly id: ChartId; readonly store: StoreId }
+  | {
+      readonly t: "ack";
+      readonly id: ChartId;
+      readonly store: StoreId;
+      /** E12-S06 (additive): the series a series batch was for, so the host frees its lane. */
+      readonly series?: number;
+    }
   | {
       readonly t: "exported";
       readonly id: ChartId;

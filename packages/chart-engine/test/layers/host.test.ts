@@ -64,7 +64,7 @@ describe("SeriesHost", () => {
       program: 4,
       texture: 0,
       first: 0,
-      count: 50,
+      count: 1024, // the ring's capacity: the shader collapses slots past its 50 bars (BQ-14)
     });
   });
 

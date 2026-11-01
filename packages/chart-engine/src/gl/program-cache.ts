@@ -3,9 +3,11 @@
 // resolved once then. A compile or link failure is a typed error the backend reports (BQ-52).
 import { PROGRAM } from "../scene/instance-layout.js";
 import type { PaneUniforms } from "../viewport/transform.js";
+import type { BatchUniforms } from "./submit.js";
 import { GL, type GL2Like, type GLObject } from "./gl-types.js";
 import type { GlRegistry, Handle } from "./registry.js";
 import { BAR_CELL } from "./shaders/bar-cell-stub.js";
+import { CANDLE } from "./shaders/candle.js";
 import { LINE } from "./shaders/line.js";
 import { QUAD } from "./shaders/quad.js";
 import { SDF_TEXT } from "./shaders/sdf-text.js";
@@ -29,7 +31,7 @@ export class ContextLostError extends Error {
 }
 
 /** A batch's `program` number (shared with the 2D backend, BQ-87) indexes this table. */
-export const PROGRAMS: readonly ProgramSource[] = [LINE, QUAD, SDF_TEXT, BAR_CELL];
+export const PROGRAMS: readonly ProgramSource[] = [LINE, QUAD, SDF_TEXT, BAR_CELL, CANDLE];
 export { PROGRAM };
 
 /** A compile or link failure; `log` is the driver's info log (trimmed in the backend's message). */
@@ -98,6 +100,21 @@ export class ProgramCache {
       this.gl.uniform4f(k, f[0] ?? 0, f[1] ?? 0, f[2] ?? 0, f[3] ?? 0);
     if (vp !== undefined && vp !== null) this.gl.uniform2f(vp, f[4] ?? 0, f[5] ?? 0);
     if (lg !== undefined && lg !== null) this.gl.uniform2f(lg, f[6] ?? 0, f[7] ?? 0); // E11-S05
+  }
+
+  /** A batch's own block (E12-S06) into the current program `id`: only what it declares. */
+  setBatchUniforms(id: number, block: BatchUniforms): void {
+    const u = this.use(id).uniforms;
+    const b = u["u_batch"];
+    const g = u["u_geom"];
+    const p = u["u_palette"];
+    const i = block.ints;
+    const f = block.geom;
+    if (b !== undefined && b !== null)
+      this.gl.uniform4i(b, i[0] ?? 0, i[1] ?? 0, i[2] ?? 0, i[3] ?? 0);
+    if (g !== undefined && g !== null)
+      this.gl.uniform4f(g, f[0] ?? 0, f[1] ?? 0, f[2] ?? 0, f[3] ?? 0);
+    if (p !== undefined && p !== null) this.gl.uniform4fv(p, block.palette);
   }
 
   private compile(id: number): LinkedProgram {

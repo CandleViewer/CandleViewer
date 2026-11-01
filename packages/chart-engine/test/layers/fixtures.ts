@@ -16,3 +16,11 @@ export function storeBar(store: BarStore, i: number): number[] {
   const [o, h, l, c] = [open[p] ?? 0, high[p] ?? 0, low[p] ?? 0, close[p] ?? 0];
   return [o, h, l, c, ((flags[p] ?? 0) & 0x0f) | (candleDir(o, h, l, c) << 4)];
 }
+
+/** The candle tokens (BQ-4): without them a candle series is refused its palette. */
+export const THEME = {
+  "color.candle.up": "#26a69a",
+  "color.candle.down": "#ef5350",
+  "color.candle.wick": "#787b86",
+  "color.surface.canvas": "#131722",
+};

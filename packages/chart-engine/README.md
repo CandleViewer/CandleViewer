@@ -740,3 +740,20 @@ figure without any code change; such a move still follows rules 1–3.
 4. Until a runtime's file exists the job records "no baseline yet" and still publishes its report; the
    first file is committed from the first green `main` run (for Chromium, a `workflow_dispatch` on `main`;
    that job runs on PRs and on dispatch, never on a push).
+
+## Candle series (E12-S06 PR 1) and the BQ-16 bench ruling
+
+The runtime owns a `BarStore` and a `CandleRing` per `addSeries` id (closing G-8 and G-23); a
+`CandleSeries` draws the ring as two hosts, the wick and the body, of one `candle` program over one
+shared buffer: two draws per series, a pan and a theme switch upload nothing (BQ-1, BQ-4, BQ-14).
+Deviation: `BatchBuilder.patch` folded an empty range into the pending one, so `[4, 4)` then
+`[0, 0)` uploaded `[0, 4)`; an empty range now only rebases and resets (regression test in
+`test/scene/batch-builder.test.ts`), and `CandleRing` never sends one.
+
+**BQ-16 (coordinator, as CODEOWNER):** F-02's per-bar checks stay unconditional. With the flags
+column written only once a series carries flags and the merge looked at only when the first time is
+at or before the last bar's, the `bar-store` microbenches still cost more than on `main`
+(interleaved medians, 8 rounds): 1 M one-bar appends 34.4 → 40.6 ms (+6.3 ms per 1 M, about
+6 ns a bar), 100 k mutation steps 9.6 → 10.6 ms. The 1 M budget is ≤ 120 ms: about 79 ms of headroom
+remains. No baseline moved: neither scenario is in `bench/baseline.json` or the matrix baselines
+(they are `*.perf.test.ts` budgets), and `bench/results.json` is byte-identical.

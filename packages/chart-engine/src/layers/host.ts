@@ -123,7 +123,7 @@ export class SeriesHost extends ContentNode implements HostContext {
     e.program = this.program;
     e.texture = 0;
     e.first = 0;
-    e.count = ring.length;
+    e.count = ring.capacity; // the shader maps each slot to its bar (BQ-14)
   }
 
   // §8's immediate-mode calls: present, so the host is a whole `RenderContext`, and loud.

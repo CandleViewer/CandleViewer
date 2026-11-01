@@ -18,6 +18,8 @@ export interface InstanceRing {
   readonly head: number;
   readonly stride: number;
   readonly length: number;
+  /** Physical slots: a draw covers them all, slots past `length` collapse (BQ-14). */
+  readonly capacity: number;
 }
 
 /** The transform's own functions (G-2), never a second projection. */

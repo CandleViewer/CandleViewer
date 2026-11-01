@@ -3,7 +3,7 @@
 // and the Canvas2D backend (its painters) read one ring the same way. DOM- and GL-free.
 
 /** A batch's `program` number: the state-sort key of 26 §3.1, shared by both backends. */
-export const PROGRAM = { line: 0, quad: 1, sdfText: 2, barCell: 3 } as const;
+export const PROGRAM = { line: 0, quad: 1, sdfText: 2, barCell: 3, candle: 4 } as const;
 
 /** [shader attribute, float offset in the slot, components, read as int32 bits]. */
 export type InstanceAttribute = readonly [name: string, offset: number, size: number, int: boolean];
@@ -48,6 +48,15 @@ export const INSTANCE_LAYOUTS: readonly InstanceLayout[] = [
       ["a_cell", 0, 2, true],
       ["a_size", 2, 2, false],
       ["a_color", 4, 4, false],
+    ],
+  },
+  {
+    // E12-S06 `candle`: the CandleRing's int32 [open, high, low, close] ticks and its meta word
+    // (flags | dir << 4); colour comes from the palette uniforms, never the ring.
+    stride: 5,
+    attributes: [
+      ["a_ohlc", 0, 4, true],
+      ["a_meta", 4, 1, true],
     ],
   },
 ];

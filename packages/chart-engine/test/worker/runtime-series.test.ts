@@ -15,7 +15,7 @@ import {
 } from "../../src/worker/protocol.js";
 import { createRenderRuntime, type RenderRuntime } from "../../src/worker/runtime.js";
 import { FakeGl, FULL, ROOMY } from "../gl/fake-gl.js";
-import { ringBar } from "../layers/fixtures.js";
+import { ringBar, THEME } from "../layers/fixtures.js";
 import type { BarStore } from "../../src/model/index.js";
 import { snapshot } from "../model/fixtures.js";
 
@@ -68,7 +68,7 @@ beforeEach(() => {
     id: 1,
     canvas,
     dpr: 1,
-    theme: {},
+    theme: THEME,
     config: { bench: true, syncGroup: null },
   });
   vi.advanceTimersByTime(16);
@@ -238,7 +238,7 @@ describe("the degraded-2d re-init keeps the DataModel (BQ-53)", () => {
       id: 1,
       canvas,
       dpr: 1,
-      theme: {},
+      theme: THEME,
       config: { bench: true, syncGroup: null },
       profile: "degraded-2d",
     });
