@@ -2,7 +2,7 @@ import { useId, useMemo, useState, type JSX, type KeyboardEvent, type ReactNode 
 import { Icon } from "../icons/Icon.js";
 import { Checkbox } from "./Checkbox.js";
 import type { MenuItem } from "./Menu.js";
-import { PnLBadge } from "./PnLBadge.js";
+import { PnLBadge, pnlReading } from "./PnLBadge.js";
 import { PositionModeToggle, type PositionMode } from "./PositionModeToggle.js";
 import { SplitButton, type SplitButtonProps } from "./SplitButton.js";
 import {
@@ -93,6 +93,8 @@ export interface PositionsGridTotals {
   readonly count: number;
   /** Σ size × mark (D02 D-15's Exposure); `null` when a row has none. */
   readonly exposure: string | null;
+  /** D-15's Net, Σ signed notional (long positive; D01 D1), in the row's tooltip and description; absent, none. */
+  readonly net?: string | null | undefined;
   readonly unrealisedPnl: string | null;
   readonly realisedToday: string | null;
 }
@@ -755,7 +757,10 @@ function GroupHeaderRow<R extends PositionsGridRow>({
 /**
  * CMP-114's `TotalsRow` (E29-D04 §2.1 frame `totals-row`; D02 §5.2, D-15): CMP-049's trailing rowgroup, pinned, led by
  * its rowheader "LIVE total" with the count and the exposure in the label's span ("LIVE total · 5 open · Exposure
- * 34,322.66 USDT"), its uPnL and rPnL today under their columns; never a size summed across symbols.
+ * 34,322.66 USDT"), its uPnL and rPnL today under their columns; never a size summed across symbols. What has no place
+ * on the row is in its tooltip (the label's echo) and its description: Net (D-15, D01 D1), a total whose column is not
+ * shown, and in the 360 px dock the exposure, the label keeping its count alone there, so no numeral is ever cut (D02
+ * §11.5, D-8).
  */
 function TotalsRow<R extends PositionsGridRow>({
   totals,
@@ -766,8 +771,33 @@ function TotalsRow<R extends PositionsGridRow>({
   readonly grid: TableRowContext;
   readonly parts: RowParts<R>;
 }): JSX.Element {
+  const descriptionId = useId();
   const lead = parts.selectable ? 1 : 0;
-  const exposure = shown(totals.exposure);
+  const unit = parts.currency;
+  /** A plain figure as the label shows it ("34,322.66 USDT", "— USDT") and as it is said ("no value" for a dash). */
+  const plain = (value: string | null): { readonly shown: string; readonly said: string } => {
+    const text = shown(value);
+    return text === null
+      ? { shown: `— ${unit}`, said: NO_VALUE }
+      : { shown: `${text} ${unit}`, said: `${text} ${unit}` };
+  };
+  /** A P&L as CMP-116 shows it ("+34.40 USDT") and says it ("profit 34.40 USDT"). */
+  const pnl = (value: string | null): { readonly shown: string; readonly said: string } => {
+    const signed = value === null ? null : formatDecimal(value, { plus: true });
+    return {
+      shown: `${signed?.text ?? "—"} ${unit}`,
+      said: pnlReading({ value, format: "abs", currency: unit }),
+    };
+  };
+  const aside = [
+    ...(parts.narrow ? [{ label: "Exposure", ...plain(totals.exposure) }] : []),
+    ...(totals.net === undefined ? [] : [{ label: "Net", ...plain(totals.net) }]),
+    ...(parts.columns.includes("upnl") ? [] : [{ label: "uPnL", ...pnl(totals.unrealisedPnl) }]),
+    ...(parts.columns.includes("rpnl_today")
+      ? []
+      : [{ label: "rPnL today", ...pnl(totals.realisedToday) }]),
+  ];
+  const count = ` · ${String(totals.count)} open`;
   // The label spans the columns before the first money column it carries.
   const sums = parts.columns
     .map((id, i) => ({ id, c: i + lead }))
@@ -783,7 +813,7 @@ function TotalsRow<R extends PositionsGridRow>({
         <PnLBadge
           value={id === "upnl" ? totals.unrealisedPnl : totals.realisedToday}
           format="abs"
-          currency={parts.currency}
+          currency={unit}
         />
       </td>,
     );
@@ -796,13 +826,26 @@ function TotalsRow<R extends PositionsGridRow>({
       {...grid.rowProps}
       className={cx(grid.rowProps.className, "cv-positions-grid__totals")}
       data-part="TotalsRow"
+      aria-describedby={aside.length === 0 ? undefined : descriptionId}
       onKeyDown={(event) => rowKeys(event, { selectAll: parts.selectAll })}
     >
-      <th {...grid.cellProps(0, { header: true, span: labelSpan })}>
+      <th
+        {...grid.cellProps(0, {
+          header: true,
+          span: labelSpan,
+          echo: aside.map((part) => `${part.label} ${part.shown}`).join(" · "),
+        })}
+      >
         {totals.label}
         <span className="cv-positions-grid__totals-span">
-          {` · ${String(totals.count)} open · Exposure ${exposure ?? "—"} ${parts.currency}`}
+          {parts.narrow ? count : `${count} · Exposure ${plain(totals.exposure).shown}`}
         </span>
+        {aside.length === 0 ? null : (
+          // Hidden, so the label's name stays its own words; the row's description reads it whole.
+          <span id={descriptionId} hidden>
+            {aside.map((part) => `${part.label} ${part.said}`).join(" · ")}
+          </span>
+        )}
       </th>
       {cells}
     </tr>

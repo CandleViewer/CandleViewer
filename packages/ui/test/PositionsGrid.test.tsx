@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
 import { act, useState, type JSX } from "react";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
   GatedAnnounceProvider,
@@ -541,6 +541,31 @@ describe("PositionsGrid (CMP-114): TotalsRow (D02 §5.2, D-15)", { timeout: 60_0
     await mount(<Host totals={{ ...TOTALS, exposure: null }} />);
     expect(grid().querySelector(".cv-table__totals th")).toHaveTextContent("Exposure — USDT");
   });
+
+  it("D-15's Net is the row's tooltip and description, the label's name its own", async () => {
+    await mount(<Host totals={{ ...TOTALS, net: "-1234.5" }} />);
+    const header = within(grid()).getByRole("rowheader", {
+      name: "LIVE total · 4 open · Exposure 34,322.66 USDT",
+    });
+    expect(header.closest("tr")).toHaveAccessibleDescription("Net −1,234.5 USDT");
+    expect(header).toHaveAttribute("data-cv-echo", "Net −1,234.5 USDT");
+  });
+
+  it("without Net, and every total in its column, the row has no tooltip and no description", async () => {
+    await mount(<Host />);
+    const header = within(grid()).getByRole("rowheader", { name: /^LIVE total/ });
+    expect(header.closest("tr")).not.toHaveAttribute("aria-describedby");
+    expect(header).not.toHaveAttribute("data-cv-echo");
+  });
+
+  it("a total whose column is not shown moves to the tooltip and description, read as CMP-116 reads it", async () => {
+    await mount(<Host columns={["side", "size"]} totals={{ ...TOTALS, realisedToday: null }} />);
+    const header = within(grid()).getByRole("rowheader", { name: /^LIVE total/ });
+    expect(header.closest("tr")).toHaveAccessibleDescription(
+      "uPnL loss 205.84 USDT · rPnL today no value",
+    );
+    expect(header).toHaveAttribute("data-cv-echo", "uPnL −205.84 USDT · rPnL today — USDT");
+  });
 });
 
 describe("PositionsGrid (CMP-114): selection (D-3)", { timeout: 60_000 }, () => {
@@ -708,7 +733,9 @@ describe(
             items: closeItems(),
             menuLabel: `More close actions, ${r.symbol}`,
             busy: r.symbol !== "BTCUSDT",
-            ...(r.symbol === "ETHUSDT" ? { disabledReason: "Your role can't change positions." } : {}),
+            ...(r.symbol === "ETHUSDT"
+              ? { disabledReason: "Your role can't change positions." }
+              : {}),
           })}
         />,
       );
@@ -754,7 +781,9 @@ describe(
       // A position's row still opens its own.
       await userEvent.pointer({
         keys: "[MouseRight]",
-        target: within(rowNamed(/^BTCUSDT · Long · 0\.250/)).getAllByRole("gridcell")[1] as HTMLElement,
+        target: within(rowNamed(/^BTCUSDT · Long · 0\.250/)).getAllByRole(
+          "gridcell",
+        )[1] as HTMLElement,
       });
       expect(
         await page.findByRole("menu", { name: "Actions for BTCUSDT Long on Main" }),
@@ -781,6 +810,42 @@ describe("PositionsGrid (CMP-114): the narrow dock (D02 §11.5)", { timeout: 60_
     expect(host.querySelector(".cv-positions-grid__actions")).toBeNull();
   });
 
+  it("the totals keep their label, count and uPnL; the exposure and rPnL today are the row's tooltip and description", async () => {
+    await mount(<Host variant="narrow" />);
+    // The name is the label and the count alone: no figure is cut where the label cell ends (D-8).
+    const header = within(grid()).getByRole("rowheader", { name: "LIVE total · 4 open" });
+    expect(header.querySelector(".cv-positions-grid__totals-span")?.textContent).toBe(" · 4 open");
+    const row = header.closest("tr");
+    expect(row).toHaveAccessibleDescription(
+      "Exposure 34,322.66 USDT · rPnL today profit 34.40 USDT",
+    );
+    expect(header).toHaveAttribute(
+      "data-cv-echo",
+      "Exposure 34,322.66 USDT · rPnL today +34.40 USDT",
+    );
+    expect(row?.querySelector('[data-cmp="CMP-116"]')).toHaveTextContent("loss 205.84 USDT");
+  });
+
+  it("the uPnL header keeps (USDT) in its name and in its tooltip (D-7, §11.5)", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount(<Host variant="narrow" />);
+      const upnl = within(grid()).getByRole("columnheader", { name: "uPnL (USDT)" });
+      expect(upnl.querySelector(".cv-table__label")?.firstChild?.textContent).toBe("uPnL");
+      act(() => {
+        fireEvent.pointerOver(upnl);
+      });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      const echo = document.querySelector('.cv-table__echo[data-cmp="CMP-016"]');
+      expect(echo).not.toHaveAttribute("hidden");
+      expect(echo).toHaveTextContent("uPnL (USDT)");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the row menu: Shift+F10 on a row opens its actions, Close first (D-12, §11.5)", async () => {
     const onClose = vi.fn();
     const host = await mount(
@@ -795,16 +860,18 @@ describe("PositionsGrid (CMP-114): the narrow dock (D02 §11.5)", { timeout: 60_
     );
     expect(host.querySelector(".cv-positions-grid__actions")).toBeNull();
     expect(within(grid()).queryByRole("button", { name: "Close" })).toBeNull();
-    act(() => within(rowNamed(/^BTCUSDT · Long · 0\.250/)).getAllByRole("gridcell")[1]?.focus());
+    act(() =>
+      within(rowNamed(/^BTCUSDT · Long · 0\.250/))
+        .getAllByRole("gridcell")[1]
+        ?.focus(),
+    );
     await userEvent.keyboard("{Shift>}{F10}{/Shift}");
     const menu = await page.findByRole("menu", { name: "Actions for BTCUSDT Long on Main" });
-    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
-      "Close",
-      "Close 25 %",
-      "Reverse…",
-      "SL/TP…",
-      "Chart",
-    ]);
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual(["Close", "Close 25 %", "Reverse…", "SL/TP…", "Chart"]);
     await userEvent.keyboard("{Enter}");
     expect(onClose).toHaveBeenCalledTimes(1);
   });

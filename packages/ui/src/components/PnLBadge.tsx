@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { formatDecimal } from "./internal/decimalText.js";
+import { formatDecimal, type DecimalText } from "./internal/decimalText.js";
 
 /** `abs` the signed digits (the column header carries the unit), `currency` the digits and the unit, `pct` percentage
  * points, `r` an R multiple. */
@@ -35,6 +35,32 @@ export type PnLBadgeProps = PnLBadgeBase & PnLFormatProps;
 /** The sign in words, read before the magnitude: "profit 8.00 USDT", "loss 121.50 USDT"; zero has no word. */
 const WORDS = { positive: "profit ", negative: "loss ", zero: "" } as const;
 
+/** The one sentence assistive technology reads for a figure as shown: its sign in words, magnitude and unit. */
+function readingOf(
+  shown: DecimalText | null,
+  format: PnLFormat,
+  currency: string | undefined,
+  nullReading: string | undefined,
+): string {
+  if (shown === null) return nullReading ?? (format === "r" ? R_UNAVAILABLE : NO_VALUE);
+  const unit = format === "r" ? "R" : format === "pct" ? undefined : currency;
+  const spokenUnit = unit === undefined ? (format === "pct" ? "%" : "") : ` ${unit}`;
+  return `${WORDS[shown.sign]}${shown.magnitude}${spokenUnit}`;
+}
+
+/**
+ * CMP-116's sentence for a figure, the words its hidden node reads ("profit 8.00 USDT", "loss 121.50 USDT", "R
+ * unavailable: no stop price"), for a host's description that cannot hold the badge itself (CMP-114's dock totals).
+ */
+export function pnlReading(props: PnLBadgeProps): string {
+  const { value, places } = props;
+  const shown =
+    value === null
+      ? null
+      : formatDecimal(value, { ...(places === undefined ? {} : { places }), plus: true });
+  return readingOf(shown, props.format ?? "abs", props.currency, props.nullReading);
+}
+
 /**
  * CMP-116 PnLBadge (E29-D04 §2.3, D04H §C.3; E29-S01 builds `abs`, `currency`, `pct` and `r` in the `bar` variant):
  * the digits stay `color.text.primary` and the sign is text ("+" or U+2212, zero unsigned), so the hue rides only
@@ -52,7 +78,6 @@ export function PnLBadge(props: PnLBadgeProps): JSX.Element {
   const unit = format === "r" ? "R" : format === "pct" ? undefined : props.currency;
   const percent = format === "pct" ? "%" : "";
   const visibleUnit = format === "currency" && unit !== undefined ? ` ${unit}` : percent;
-  const spokenUnit = unit === undefined ? percent : ` ${unit}`;
   return (
     <span
       className="cv-pnl-badge"
@@ -66,9 +91,7 @@ export function PnLBadge(props: PnLBadgeProps): JSX.Element {
         {shown === null ? "—" : `${shown.text}${visibleUnit}`}
       </span>
       <span className="cv-visually-hidden">
-        {shown === null
-          ? (nullReading ?? (format === "r" ? R_UNAVAILABLE : NO_VALUE))
-          : `${WORDS[shown.sign]}${shown.magnitude}${spokenUnit}`}
+        {readingOf(shown, format, props.currency, nullReading)}
       </span>
     </span>
   );
