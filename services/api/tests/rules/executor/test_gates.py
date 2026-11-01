@@ -23,6 +23,7 @@ import pytest
 
 from candleviewer.flags_wiring import FeatureFlagsRuntime
 from candleviewer.oms_wiring import InterimKillSwitch
+from candleviewer.rules.executor.budget import CircuitBreaker, OrderBudget
 from candleviewer.rules.executor.dispatch import Fire
 from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
 from candleviewer.rules.executor.gates import PRINCIPAL_MAX_AGE_S, Gates, Halts
@@ -64,10 +65,14 @@ REFUSED = HandlerAnswer("refused", error_code="validation_failed")
 
 class Double:
     """A bound handler: records what it would send, by node and account, and accepts it, but on
-    an account of `refuse`, which it refuses."""
+    an account of `refuse`, which it refuses. `answer` may be a list, answered in order, its last
+    answer kept."""
 
     def __init__(
-        self, sent: list[tuple[str, str]], answer: HandlerAnswer, refuse: set[uuid.UUID]
+        self,
+        sent: list[tuple[str, str]],
+        answer: HandlerAnswer | list[HandlerAnswer],
+        refuse: set[uuid.UUID],
     ) -> None:
         self.sent, self.answer, self.refuse = sent, answer, refuse
         self.ceilings: list[tuple[str, Decimal | None]] = []  # the allowance each request got
@@ -81,12 +86,15 @@ class Double:
     async def send(self, prep: Prepared, *, client_ref: str) -> HandlerAnswer:
         account = str(prep.request["account"])
         self.sent.append((str(prep.request["node"]), account))
-        return REFUSED if account in {str(a) for a in self.refuse} else self.answer
+        answer = self.answer
+        if isinstance(answer, list):
+            answer = answer.pop(0) if len(answer) > 1 else answer[0]
+        return REFUSED if account in {str(a) for a in self.refuse} else answer
 
 
 def bound_table(
     sent: list[tuple[str, str]],
-    answers: Mapping[str, HandlerAnswer] | None = None,
+    answers: Mapping[str, HandlerAnswer | list[HandlerAnswer]] | None = None,
     refuse: set[uuid.UUID] | None = None,
 ) -> dict[str, HandlerSpec]:
     """Every type bound to a `Double`, accepting unless `answers` names another answer."""
@@ -110,12 +118,51 @@ def action(node: str, action_type: str = "place_order", **over: Any) -> ActionRe
     return action_request(scope, OWNER, instance, **(base | {"armed_by": str(ARMER)} | over))
 
 
+class Rebuilt:
+    """`BudgetRebuild`: each rule's counted order ages, in seconds (none by default); `failing`
+    makes the read raise, and `asked` logs every read."""
+
+    def __init__(self, ages: Sequence[float] = ()) -> None:
+        self.ages, self.failing, self.asked = list(ages), False, list[str]()
+
+    async def order_ages(self, rule_id: str, *, limit: int) -> list[float]:
+        self.asked.append(rule_id)
+        if self.failing:
+            raise ConnectionError("the rule store is unreachable")
+        return self.ages[:limit]
+
+
+@dataclass
+class BreakerAlerts:
+    """The breaker's alerts: each page line, and each `system_events` row with its `moved`."""
+
+    pages: list[tuple[str, str, uuid.UUID, str]] = field(default_factory=list)
+    rows: list[tuple[str, uuid.UUID, str, bool]] = field(default_factory=list)
+
+    async def partial_fire(self, rule_id: str, run_id: uuid.UUID, node_id: str) -> None:
+        return None
+
+    async def write_ahead_failed(self, rule_id: str, run_id: uuid.UUID, node_id: str) -> None:
+        return None
+
+    def settled(self, rule_id: str) -> None:
+        return None
+
+    def breaker_tripped(self, rule_id: str, run_id: uuid.UUID, node_id: str) -> None:
+        self.pages.append(("tripped", rule_id, run_id, node_id))
+
+    async def breaker_moved(
+        self, rule_id: str, run_id: uuid.UUID, node_id: str, *, moved: bool
+    ) -> None:
+        self.rows.append((rule_id, run_id, node_id, moved))
+
+
 @dataclass
 class Gated:
     switches: Any = field(default_factory=Switches)  # the double, or the composition root's
     verdicts: dict[str, list[RowVerdict]] = field(default_factory=dict)
     denied: dict[str, str] = field(default_factory=dict)  # node -> the scope re-check's reason
-    answers: dict[str, HandlerAnswer] = field(default_factory=dict)  # type -> its double's answer
+    answers: dict[str, Any] = field(default_factory=dict)  # type -> its double's answer(s)
     sent: list[tuple[str, str]] = field(default_factory=list)
     records: Records = field(default_factory=Records)
     counted: Counted = field(default_factory=Counted)
@@ -130,16 +177,36 @@ class Gated:
     stop: Any = None  # check 8's port (`StopCheck`), unbound by default
     wall: float = 1_798_761_600.0  # 2027-01-01T00:00:00Z: the allowance's UTC day
     halts: Halts = field(default_factory=Halts)  # the trip and kill times
+    rebuilt: Rebuilt = field(default_factory=Rebuilt)  # the budget's rebuild: no prior orders
+    budget: OrderBudget = field(init=False)
+    alerts: BreakerAlerts = field(default_factory=BreakerAlerts)
+    moves: list[str] = field(default_factory=list)  # the breaker's B9 moves asked for
+    moving: Any = True  # what the move answers: True, False, or an exception it raises
+    dropped: list[tuple[str, str]] = field(default_factory=list)  # (rule, blocked_by) drops
+    rows: Any = None  # a `RulesManager` check 1 reads the stored row from, else scripted verdicts
     executor: ActionExecutor = field(init=False)
 
     def __post_init__(self) -> None:
         self.principals.clock = self.clock
+        self.budget = OrderBudget(rebuild=self.rebuilt)
+        breaker = CircuitBreaker(
+            self.halts, move=self.move, drop=lambda r, why: self.dropped.append((r, why)),
+            alerts=self.alerts, metrics=self.counted.metrics, clock=self.clock,
+        )  # fmt: skip
         self.executor = ActionExecutor(
             check_one=self.check_one, scope_check=self.scope_check, gates=self.gates(),
             records=self.records, audit=self.records, metrics=self.counted.metrics,
             handlers=bound_table(self.sent, self.answers, self.refuse), clock=self.clock,
-            halts=self.halts,
+            halts=self.halts, budget=self.budget, breaker=breaker, wall=lambda: self.wall,
         )  # fmt: skip
+
+    async def move(self, rule_id: str) -> bool:
+        self.moves.append(rule_id)
+        if isinstance(self.moving, BaseException):
+            raise self.moving
+        if callable(self.moving):  # a real manager's `trip_breaker`
+            return bool(await self.moving(rule_id))
+        return bool(self.moving)
 
     def clock(self) -> float:
         return self.now
@@ -158,6 +225,9 @@ class Gated:
 
     async def check_one(self, req: ActionRequest) -> RowVerdict:
         self.checked.append((req.payload.node_id, str(req.instance.account_id)))
+        if self.rows is not None:
+            stored = await self.rows.current_mode(req.rule_id)
+            return "armed" if stored is not None and stored.mode == "armed" else "mode_changed"
         queue = self.verdicts.get(req.payload.node_id)
         return queue.pop(0) if queue else "armed"
 
@@ -174,9 +244,14 @@ class Gated:
         await self.executor.hand_over(req)
         return None
 
-    async def run(self, *reqs: ActionRequest, **fire: Any) -> None:
-        fire = {"limits": self.limits} | fire
-        await self.executor.execute(Fire(RULE, RUN, tuple(reqs), self.emit, version_id="v", **fire))
+    async def run(
+        self, *reqs: ActionRequest, rule_id: str = RULE, run_id: uuid.UUID = RUN, **fire: Any
+    ) -> None:
+        """One fire of `reqs`, offered now on the rig's monotonic clock unless `fire` says when."""
+        facts: dict[str, Any] = {"limits": self.limits, "offered_at": self.now} | fire
+        await self.executor.execute(
+            Fire(rule_id, run_id, tuple(reqs), self.emit, version_id="v", **facts)
+        )
 
     def results(self) -> list[tuple[str, str, str | None]]:
         return self.records.results()
@@ -297,16 +372,18 @@ def _fail(gated: Gated, check: int) -> None:
         gated.principals.missing.add(ARMER)
     elif check == 6:  # the action is second in IR order, past the per-fire count
         gated.limits = RuleLimits(max_actions_per_fire=1)
+    elif check == 7:  # an order budget of none a minute: spent
+        gated.budget.per_minute = 0
     # check 8: `widen_stop` by type, and a stop action while the stop check's port is unbound
 
 
 _FIRST: dict[int, tuple[str, str | None]] = {
     1: ("skipped", "mode_changed"), 2: ("blocked", "rules_disabled"), 3: ("blocked", "kill_switch"),
     4: ("blocked", "scope"), 5: ("blocked", "permission"), 6: ("blocked", "cap"),
-    8: ("blocked", "native_sl"),
+    7: ("blocked", "order_budget"), 8: ("blocked", "native_sl"),
 }  # fmt: skip
 #: Each check k that applies to a type: an entry meets checks 1 to 7, a stop action 1 to 6 and 8.
-_ORDERS = [(k, "place_order") for k in (1, 2, 3, 4, 5, 6)] + [
+_ORDERS = [(k, "place_order") for k in (1, 2, 3, 4, 5, 6, 7)] + [
     (k, t) for t in ("widen_stop", "modify_stop_loss") for k in (1, 2, 3, 4, 5, 6, 8)
 ]
 

@@ -1,8 +1,9 @@
 """The rule action executor's metrics (E35-T09; `20-architecture.md` §12.1, BQ-8 of #5000).
 
 `rule_actions_total{type,result}`, `rule_action_duration_seconds{type}`,
-`rule_actions_blocked_total{reason}`, `rule_dispatch_reread_failed_total{reason}` and
-`rule_records_shed_total{kind}`, registered from their catalogue entries over the app's metrics
+`rule_actions_blocked_total{reason}`, `rule_dispatch_reread_failed_total{reason}`,
+`rule_records_shed_total{kind}`, and, since E35-T10, `rule_circuit_breaker_trips_total` and
+`rule_autodisarm_total`, registered from their catalogue entries over the app's metrics
 facade (idempotent: `register_r0` declares the same). Every label is checked against its closed set
 before any series is touched, so no value outside it ever makes a series; no label names a rule,
 an account, a user or a value. Unbound (no facade), it counts nothing, as the sinks discard.
@@ -29,6 +30,7 @@ _WHOLE: Final = frozenset({"backpressure", "circuit_breaker", "kill_switch"})
 _SERIES: Final = (
     "rule_actions_total", "rule_action_duration_seconds", "rule_actions_blocked_total",
     "rule_dispatch_reread_failed_total", "rule_records_shed_total",
+    "rule_circuit_breaker_trips_total", "rule_autodisarm_total",
 )  # fmt: skip
 
 
@@ -96,3 +98,13 @@ class ExecutorMetrics:
         checked = _closed(kind, get_args(ShedKind), "kind")
         if self._series:
             self._series["rule_records_shed_total"].labels(checked).inc()
+
+    def tripped(self) -> None:
+        """One trip of a rule's circuit breaker (24 §11.7): every trip, never deduplicated."""
+        if self._series:
+            self._series["rule_circuit_breaker_trips_total"].child().inc()
+
+    def autodisarmed(self) -> None:
+        """One rule disarmed after repeated scope or permission refusals (24 §11.5, BQ-10)."""
+        if self._series:
+            self._series["rule_autodisarm_total"].child().inc()

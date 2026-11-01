@@ -411,3 +411,81 @@ class _Halt:
     """The audit-chain break halt's view (`oms_wiring.HaltView`), set by the test."""
 
     engaged = False
+
+
+def test_a_budget_setting_above_the_hard_cap_refuses_start() -> None:
+    """Scenario: The budget survives a restart (edge case): a budget setting above its hard cap
+    refuses start. The caps live in `rules.limits` alone (60 a minute, 2,000 a day, interim,
+    pending the owner's ratification, #2701); `create_app` refuses to start above either, whatever
+    `rules_evaluator_enabled` says, before anything serves."""
+    from candleviewer.app import create_app
+    from candleviewer.rules.limits import ORDER_BUDGET_CAPS, ORDER_BUDGET_DEFAULTS
+    from candleviewer.settings import Settings
+
+    assert dict(ORDER_BUDGET_CAPS) == {"per_minute": 60, "per_day": 2_000}
+    assert dict(ORDER_BUDGET_DEFAULTS) == {"per_minute": 10, "per_day": 200}
+    at_caps = rules_oms_wiring.rule_order_budget(60, 2_000, None)
+    assert (at_caps.per_minute, at_caps.per_day) == (60, 2_000)
+    for minute, day, named in ((61, 200, "PER_MINUTE"), (10, 2_001, "PER_DAY")):
+        with pytest.raises(rules_oms_wiring.OrderBudgetAboveCap, match=f"BUDGET_{named} is above"):
+            rules_oms_wiring.rule_order_budget(minute, day, None)
+        settings = Settings(rules_order_budget_per_minute=minute, rules_order_budget_per_day=day)
+        assert settings.rules_evaluator_enabled is False
+        with pytest.raises(rules_oms_wiring.OrderBudgetAboveCap):
+            create_app(settings)
+
+
+class _Ages:
+    """The rules repository's read for the budget's rebuild, as the adapter calls it."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[str], float, int]] = []
+
+    async def order_action_ages(
+        self, rule_id: str, action_types: list[str], *, since_s: float, limit: int
+    ) -> list[float]:
+        self.calls.append((rule_id, list(action_types), since_s, limit))
+        return [1.5, 61.0]
+
+
+async def test_the_budget_rebuild_adapter_reads_the_counted_action_starts() -> None:
+    """BQ-7: the rebuild asks the repository for one rule's counted types (the handler table's
+    `counts_orders`), over the last 24 h, at most the day's limit, and hands back plain ages in
+    seconds, which the budget places on its own clock."""
+    from candleviewer.rules.executor.handlers import COUNTS_ORDERS
+
+    repository = _Ages()
+    adapter = rules_oms_wiring.RuleBudgetRebuild(cast(SqlAlchemyRulesRepository, repository))
+    assert await adapter.order_ages(RULE, limit=200) == (1.5, 61.0)
+    assert repository.calls == [(RULE, sorted(COUNTS_ORDERS), 86_400.0, 200)]
+    budget = rules_oms_wiring.rule_order_budget(
+        10, 200, cast(SqlAlchemyRulesRepository, repository)
+    )
+    assert await budget.admit(RULE, 1000.0) == "ok"  # rebuilt from the two ages, then counted
+    assert len(repository.calls) == 2
+
+
+async def test_the_breaker_alert_writes_one_system_event_and_pages() -> None:
+    """BQ-8: every trip pages, the `cv_page` CRITICAL line naming the rule, the fire and the action,
+    never deduplicated; after the B9 move one `critical` `system_events` row (`rules`,
+    `circuit_breaker`) says whether the rule was moved, and a rule not moved is paged again."""
+    events = _Events()
+    alerts = RuleAlerts(events)
+    ids = {"rule_id": RULE, "run_id": str(RUN), "node_id": "a1"}
+    with capture_logs() as logs:
+        alerts.breaker_tripped(RULE, RUN, "a1")
+        alerts.breaker_tripped(RULE, RUN, "a1")
+        await alerts.breaker_moved(RULE, RUN, "a1", moved=True)
+        await alerts.breaker_moved(RULE, RUN, "a1", moved=False)
+    pages = [(e["event"], e["log_level"], e["cv_page"]) for e in logs if e.get("cv_page")]
+    assert pages == [
+        ("rules.circuit_breaker_tripped", "critical", True),
+        ("rules.circuit_breaker_tripped", "critical", True),
+        ("rules.circuit_breaker_not_moved", "critical", True),
+    ]
+    assert all({k: e[k] for k in ids} == ids for e in logs if e.get("cv_page"))
+    assert [(r.component, r.kind, r.severity, r.details) for r in events.rows] == [
+        ("rules", "circuit_breaker", "critical", ids | {"moved": "true"}),
+        ("rules", "circuit_breaker", "critical", ids | {"moved": "false"}),
+    ]
+    assert len({r.message for r in events.rows}) == 1  # one fixed text

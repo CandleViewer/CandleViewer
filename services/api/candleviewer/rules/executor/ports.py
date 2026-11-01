@@ -156,6 +156,14 @@ class AlertPort(Protocol):
     def settled(self, rule_id: str) -> None:
         """The rule's fire ended with no partial outcome: its alert episode is over."""
 
+    def breaker_tripped(self, rule_id: str, run_id: UUID, node_id: str) -> None:
+        """The circuit breaker tripped (24 §11.7, BQ-8): the P1 page, synchronous, on every trip,
+        naming the rule, the fire and the action whose order the budget refused."""
+
+    async def breaker_moved(self, rule_id: str, run_id: UUID, node_id: str, *, moved: bool) -> None:
+        """After the trip's B9 move: the one `critical` `system_events` row saying whether the rule
+        was moved, and, when it was not, the page again."""
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PrincipalView:
