@@ -102,8 +102,9 @@ _RC_INSERT = sa.text(
     "INSERT INTO recovery_codes (id, user_id, code_hash) "
     "VALUES (CAST(:id AS uuid), CAST(:u AS uuid), :h)"
 )
-#: #2152 BQ-3: every candidate digest of the presented code at once; `UNIQUE (user_id,
-#: code_hash)` serves it.
+#: #2152 BQ-3: every candidate digest of the presented code at once. `code_hash` is a `sha256_hex`
+#: (`char(64)`) and compares here as text, so the `user_id` prefix of `UNIQUE (user_id,
+#: code_hash)` serves the lookup: a user's few codes.
 _RC_FIND = sa.text(
     "SELECT id::text AS id FROM recovery_codes WHERE user_id = CAST(:u AS uuid) "
     "AND code_hash = ANY(CAST(:hs AS text[])) AND used_at IS NULL"
