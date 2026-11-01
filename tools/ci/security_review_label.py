@@ -62,6 +62,8 @@ WEB_AUTH_PATHS = (
     # `POST /auth/logout` and `endSession()`
     "apps/web/src/features/symbol-search/SymbolSearch.tsx",  # the instrument-list refresh's
     # Owner-only T2 reads the session claims (`instruments:write`); the server enforces it
+    "apps/web/src/features/alerts/AlertsScreen.tsx",  # the alerts centre's writes read the
+    # session claims (`alerts:write`); the server enforces it
     "apps/web/src/features/stepUp/",  # the step-up dialog and challenge gate: answers the
     # server's challenge, holds and re-sends the refused request
     "apps/web/src/lib/auth/",  # the session claims cache

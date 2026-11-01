@@ -4,6 +4,7 @@
  */
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GatedAnnounceProvider } from "@candleviewer/ui";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { AlertsScreen, type AlertsScreenProps } from "../../../src/features/alerts/AlertsScreen";
 import { createAlertsStore } from "../../../src/features/alerts/alertsStore";
@@ -355,6 +356,9 @@ describe("auto-disarm", () => {
     const row = await screen.findByRole("row", { name: /Alert 1/ });
     expect(row).toHaveTextContent("Disarmed");
     expect(row).toHaveTextContent("Alert disarmed: Last price data source unavailable");
+    expect(row).toHaveTextContent(
+      "The Last price values stopped arriving at 10:00:00 UTC, so the alert was disarmed instead of firing on missing data. It stays off until you enable it.",
+    );
     fireEvent.click(within(row).getByRole("button", { name: "Enable…" }));
     const dialog = await screen.findByRole("alertdialog", { name: "Enable Alert 1?" });
     expect(dialog).toHaveTextContent(
@@ -410,6 +414,111 @@ describe("read-only and 403", () => {
     setup([alert(1)], { api });
     fireEvent.click(await screen.findByRole("switch", { name: "Active: Alert 1" }));
     expect(await screen.findByText("Your role can't change alerts.")).toBeVisible();
+  });
+});
+
+describe("G-T2: a gated control fires nothing and says why once", () => {
+  const reason = "Your role can't change alerts.";
+  /** Enter on a button arrives as a click, Space as a click on release; jsdom sends neither itself. */
+  const press = (node: HTMLElement, key: "Enter" | " "): void =>
+    act(() => {
+      fireEvent.keyDown(node, { key });
+      if (key === " ") fireEvent.keyUp(node, { key });
+      fireEvent.click(node);
+    });
+  function readOnly(alerts: readonly Alert[]) {
+    const said: string[] = [];
+    const api = fakeApi(alerts);
+    const store = createAlertsStore();
+    render(
+      <GatedAnnounceProvider announce={(text) => said.push(text)}>
+        <AlertsScreen
+          api={api}
+          store={store}
+          source={silent}
+          permissions={["alerts:read"]}
+          now={() => NOW}
+          timeZone="UTC"
+        />
+      </GatedAnnounceProvider>,
+    );
+    return { api, said };
+  }
+
+  it("the row toggle and the select box: Enter and Space change nothing, one announcement each press", async () => {
+    const { api, said } = readOnly([alert(1)]);
+    const toggle = await screen.findByRole("switch", { name: "Active: Alert 1" });
+    const box = screen.getByRole("checkbox", { name: "Select Alert 1" });
+    for (const control of [toggle, box]) {
+      for (const key of ["Enter", " "] as const) {
+        const before = said.length;
+        press(control, key);
+        expect(said.length - before).toBe(1);
+      }
+    }
+    expect(said.every((t) => t === reason)).toBe(true);
+    expect(api.setEnabled).not.toHaveBeenCalled();
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(box).not.toBeChecked();
+    expect(screen.queryByRole("toolbar", { name: "Bulk actions" })).toBeNull();
+  });
+
+  it("a gated menu write fires nothing on Enter or Space and says why once", async () => {
+    const { api, said } = readOnly([alert(1)]);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for Alert 1" }));
+    const item = await screen.findByRole("menuitem", { name: /Disable/ });
+    for (const key of ["Enter", " "] as const) {
+      const before = said.length;
+      fireEvent.keyDown(item, { key });
+      expect(said.length - before).toBeLessThanOrEqual(1);
+    }
+    expect(api.setEnabled).not.toHaveBeenCalled();
+    expect(api.remove).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    for (const t of said) expect(t).toBe(reason);
+  });
+
+  it("the disarmed row's Enable… is gated the same way: no confirm, one announcement a press", async () => {
+    const { api, said } = readOnly([
+      alert(1, { enabled: false, disarm_reason: "source_unavailable" }),
+    ]);
+    const button = await within(await screen.findByRole("row", { name: /Alert 1/ })).findByRole(
+      "button",
+      { name: "Enable…" },
+    );
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveAccessibleDescription(reason);
+    for (const key of ["Enter", " "] as const) {
+      const before = said.length;
+      press(button, key);
+      expect(said.length - before).toBe(1);
+    }
+    expect(said.every((t) => t === reason)).toBe(true);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(api.setEnabled).not.toHaveBeenCalled();
+  });
+});
+
+describe("LR-8: the bulk result is said once", () => {
+  async function bulkDisable(): Promise<void> {
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select Alert 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Disable" }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Disable 1" }));
+    await screen.findByText(/1 of 1 disabled\./);
+  }
+  it("clears when the selection changes", async () => {
+    setup([alert(1), alert(2)]);
+    await bulkDisable();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Alert 2" }));
+    expect(screen.queryByText(/1 of 1 disabled\./)).toBeNull();
+  });
+  it("clears when the filter or the tab changes", async () => {
+    setup([alert(1), alert(2)]);
+    await bulkDisable();
+    fireEvent.click(screen.getByRole("tab", { name: /Fired/ }));
+    expect(screen.queryByText(/1 of 1 disabled\./)).toBeNull();
+    expect(screen.getByText(/^Showing \d+ of \d+ alerts/)).toBeVisible();
   });
 });
 
