@@ -20,6 +20,9 @@
  *   nor a withdrawn or over-cap account's, nor any after a revocation (SR-E29-11).
  * - **A removed row stays removed** for the baseline's life: an item stamped at or before its
  *   removal is late (`23` §6.2.3, §15), whichever frame brings it.
+ * - **A contract-breaking item is dropped,** never thrown inside the feed's drain (the
+ *   orchestrator's carry on #911): an item with no account, symbol, stamp or position id (`23`
+ *   §15.2) is skipped, and the store logs it once, structured and naming the field, never a value.
  * - **Commits** are coalesced: inputs only mark the store dirty, and `commit()`, which the feed
  *   calls at most every 100 ms (`wsPositions.ts`), publishes one snapshot (the ticket's 10 Hz tick).
  */
@@ -110,6 +113,8 @@ const MAX_CROSSINGS = 512;
 const MAX_WITHDRAWN = 64;
 /** The removed rows a baseline remembers (C-2.18): past it the oldest is forgotten first. */
 export const MAX_TOMBSTONES = 1_024;
+/** The one warning a store logs for a dropped item: its fields, never the item's values. */
+export const DROPPED_ITEM_WARNING = "[positions] dropped a positions item that breaks 23 §15.2";
 
 const EMPTY: PositionsSnapshot = Object.freeze({
   status: "idle",
@@ -198,7 +203,14 @@ export interface PositionsStore {
   commit(): boolean;
 }
 
-export function createPositionsStore(): PositionsStore {
+export interface PositionsStoreOptions {
+  /** Where the one dropped-item warning goes; defaults to `console.warn`. */
+  readonly warn?: ((message: string, detail: { readonly field: string }) => void) | undefined;
+}
+
+export function createPositionsStore(options: PositionsStoreOptions = {}): PositionsStore {
+  const warn = options.warn ?? ((message, detail): void => console.warn(message, detail));
+  let warned = false;
   let snapshot = EMPTY;
   const listeners = new Set<() => void>();
   let dirty = false;
@@ -298,10 +310,20 @@ export function createPositionsStore(): PositionsStore {
     wsBaseline = false;
   }
 
+  /** Logs the first dropped item of this store's life, by field (C-2.18: one line, not one per item). */
+  function dropped(field: string): void {
+    if (warned) return;
+    warned = true;
+    warn(DROPPED_ITEM_WARNING, { field });
+  }
+
   function upsert(item: unknown): void {
     const key = itemKey(item);
     const stamp = stampOf(item);
-    if (key === null || stamp === null) return; // `23` §15.2 requires both: a malformed item is dropped
+    // `23` §15.2 requires each: an item without one breaks the contract and is dropped, never thrown
+    if (key === null) return dropped("key");
+    if (stamp === null) return dropped("updated_at_ms");
+    if (!isUuid(isRecord(item) ? item["id"] : undefined)) return dropped("id");
     const held = ws.get(key);
     if (held !== undefined && stamp < held.updated_at_ms) return; // older: discarded (23 §15)
     // a row removed since the baseline began: an item stamped no later than its removal is late
