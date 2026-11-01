@@ -13,9 +13,11 @@ is 503 `audit_unavailable` and nothing changes. `apply_now` reserves its one `re
 job first and lets it run only once the new set is stored; a refused request cancels it. That
 job shares the `retention_sweep` slot with compaction, so an `apply_now` during a compaction is
 409 `job_running` (and the other way round); its result says `skipped_locked` when the nightly
-pass held the volume lock and nothing was swept. One lock per router holds each PUT from reading
-the set before it through the replace, so the records follow the order the sets are stored in; if
-the replace fails after its record, a second `retention.change` (failure) says it did not land.
+pass held the volume lock and nothing was swept. The 200 is `{items, job_id}`: `job_id` is that
+job's id (`getJob` polls it), null without `apply_now`, and a replay of the key answers the
+same cached body. One lock per router holds each PUT from reading the set before it through
+the replace, so the records follow the order the sets are stored in; if the replace fails after
+its record, a second `retention.change` (failure) says it did not land.
 
 Q5: `retain_days` is the hot window for `archive_parquet` (the stream's total horizon stays its
 default) and the total horizon for `drop`. The store holds no field for `downsample`, `pin` or
@@ -230,9 +232,10 @@ def make_recording_retention_router(
                 ) from None
             before = await store.list_policies()
             gate: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+            sweep: Job | None = None
             try:
                 if now and run is not None:
-                    _reserve(jobs, run, gate, (owner, key or "", digest))
+                    sweep = _reserve(jobs, run, gate, (owner, key or "", digest))
                 after = [_logical(i.model_dump()) for i in body.items]
                 trail: dict[str, Any] = {
                     "actor_label": p.username, "actor_user_id": p.user_id, "actor_ip": p.ip,
@@ -258,7 +261,8 @@ def make_recording_retention_router(
             finally:
                 if not gate.done():
                     gate.set_result(False)  # refused: the reserved sweep never runs
-        out = JSONResponse({"items": [_dump(r) for r in stored]})
+        job_id = None if sweep is None else sweep.id
+        out = JSONResponse({"items": [_dump(r) for r in stored], "job_id": job_id})
         # no await may sit between the lock release and this cache put (a twin would miss it)
         return remember(cache, owner, key, digest, out)
 

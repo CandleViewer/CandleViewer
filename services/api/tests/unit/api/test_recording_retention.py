@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, get_args
 
@@ -24,6 +25,7 @@ from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.recorder.retention import RunReport
+from tests.unit.api._job_poll import mount_job_poll
 
 _PATH = "/recording/retention-policies"
 _T = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
@@ -39,7 +41,8 @@ class _Store:
         self.rows: list[dict[str, Any]] = []
         self.log, self.replaced = log, 0
         self.actors: list[str | None] = []
-        self.entered, self.hold = asyncio.Event(), None  # `hold`: park a replace until set
+        self.entered = asyncio.Event()
+        self.hold: asyncio.Event | None = None  # park a replace until it is set
         self.fail: Exception | None = None  # raised by a replace, after it was asked for
 
     def seed(self, stream: str, days: int, action: str = "archive_parquet",
@@ -51,7 +54,7 @@ class _Store:
     async def list_policies(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.rows]
 
-    async def replace(self, rows: list[dict[str, Any]], *,
+    async def replace(self, rows: Sequence[Mapping[str, Any]], *,
                       actor: str | None) -> list[dict[str, Any]]:  # fmt: skip
         self.log.append("replace")
         self.entered.set()
@@ -91,6 +94,7 @@ class _Env:
         app.include_router(retention.make_recording_retention_router(
             lambda: self.store, self.jobs, lambda: self.sweeper if self.sweeper_up else None,
             enabled, self, self, elevation=self.elevate if gated else None))  # fmt: skip
+        self.app = app
         self.http = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
 
     async def resolve(self, request: Any) -> AuditPrincipal | None:
@@ -222,6 +226,77 @@ async def test_apply_now_starts_exactly_one_sweep() -> None:
     done = await _settle(env.jobs)
     assert [(j.kind, j.status) for j in done] == [(JOB_KIND, "succeeded")]
     assert env.sweeper.runs == 1
+
+
+async def test_apply_now_answers_the_id_of_the_one_sweep_it_started() -> None:
+    """E16-S03 BQ-2: the reserved sweep's id was dropped; the 200 carries it as `job_id`, the id
+    `GET /admin/jobs/{jobId}` reads from the same store."""
+    env = _Env(*_OWNER)
+    resp = await env.put([_item()], apply_now="true")
+    assert resp.status_code == 200 and set(resp.json()) == {"items", "job_id"}
+    (job,) = await _settle(env.jobs)
+    job_id = resp.json()["job_id"]
+    assert job_id == job.id and str(uuid.UUID(job_id)) == job_id
+    assert env.jobs.get(job_id) is job and job.kind == JOB_KIND
+
+
+async def test_the_job_id_the_put_answers_is_the_job_the_poll_serves() -> None:
+    env = _Env(*_OWNER, "admin:read")
+    mount_job_poll(env.app, env.jobs, env)  # `GET /admin/jobs/{jobId}` over the same job store
+    resp = await env.put([_item()], apply_now="true")
+    polled = await env.http.get(f"/admin/jobs/{resp.json()['job_id']}")
+    assert polled.status_code == 200
+    assert (polled.json()["id"], polled.json()["kind"]) == (resp.json()["job_id"], JOB_KIND)
+    await _settle(env.jobs)
+
+
+@pytest.mark.parametrize("params", [{}, {"apply_now": "false"}], ids=["omitted", "false"])
+async def test_a_put_without_apply_now_answers_a_null_job_id_and_creates_no_job(
+    params: dict[str, Any],
+) -> None:
+    env = _Env(*_OWNER)
+    resp = await env.put([_item()], **params)
+    assert resp.status_code == 200 and set(resp.json()) == {"items", "job_id"}
+    assert resp.json()["job_id"] is None
+    assert not env.jobs._jobs and env.sweeper.runs == 0
+
+
+async def test_a_replayed_apply_now_put_answers_the_same_job_id_and_no_second_sweep() -> None:
+    env, key = _Env(*_OWNER), str(uuid.uuid4())
+    first = await env.put([_item()], key, apply_now="true")
+    again = await env.put([_item()], key, apply_now="true")
+    assert again.headers["idempotency-replayed"] == "true"
+    assert again.content == first.content and again.json()["job_id"] == first.json()["job_id"]
+    (job,) = await _settle(env.jobs)
+    assert job.id == first.json()["job_id"] and env.sweeper.runs == 1
+    assert env.store is not None and env.store.replaced == 1
+    other = await env.put([_item()], key)  # the same key without `apply_now` is another request
+    assert (other.status_code, other.json()["code"]) == (409, "idempotency_key_reuse")
+    assert len(env.jobs._jobs) == 1
+
+
+async def test_a_replayed_put_without_apply_now_answers_a_null_job_id_again() -> None:
+    env, key = _Env(*_OWNER), str(uuid.uuid4())
+    first = await env.put([_item()], key)
+    again = await env.put([_item()], key)
+    assert again.headers["idempotency-replayed"] == "true" and again.content == first.content
+    assert again.json()["job_id"] is None and not env.jobs._jobs
+
+
+async def test_two_overlapping_apply_now_puts_with_one_key_answer_one_job_id() -> None:
+    env = _Env(*_OWNER)
+    assert env.store is not None
+    env.store.hold = asyncio.Event()
+    key = str(uuid.uuid4())
+    first = asyncio.create_task(env.put([_item(days=60)], key, apply_now="true"))
+    await env.store.entered.wait()  # the first is inside the replace
+    second = asyncio.create_task(env.put([_item(days=60)], key, apply_now="true"))
+    await _spin()
+    env.store.hold.set()
+    one, two = await asyncio.gather(first, second)
+    assert (one.status_code, two.status_code) == (200, 200) and one.content == two.content
+    (job,) = await _settle(env.jobs)
+    assert one.json()["job_id"] == two.json()["job_id"] == job.id and env.sweeper.runs == 1
 
 
 async def test_apply_now_while_a_sweep_runs_is_409_and_stores_nothing() -> None:
