@@ -13,8 +13,8 @@ Board 04 of ten (§0 L74: a re-seed: the level kept, the nearest level with its 
 
 ## Validator and size
 
-- `04-retention.json: 0 errors, 1 warnings, 76 sections, 209861 bytes` (exit 0)
-- 76 sections, 209861 bytes
+- `04-retention.json: 0 errors, 1 warnings, 76 sections, 209879 bytes` (exit 0)
+- 76 sections, 209879 bytes
 
 ## Live checks (7)
 
@@ -50,7 +50,7 @@ Board 04 of ten (§0 L74: a re-seed: the level kept, the nearest level with its 
 
 ## Sources (1)
 
-- spec E47-D04.md md5 8a3e30af (§0 L74); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
+- spec E47-D04.md md5 82406120 (§0 L74); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
 
 ## Tokens (37)
 

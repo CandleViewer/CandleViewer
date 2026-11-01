@@ -335,7 +335,9 @@ def plain(cell: str) -> str:
 
 # ---------------------------------------------------------------------------- anchors
 
-ANCHOR_RE = re.compile(r"(?<![0-9A-Za-z.,])([0-9A-Za-z.,]+)<!--=([A-Z]+):([a-z0-9.\-]+)-->")
+ANCHOR_RE = re.compile(
+    r"(?<![0-9A-Za-z.,])([0-9A-Za-z.,]+)<!--=([A-Z]+):([a-z0-9.\-]+)-->", re.DOTALL
+)
 PLACEHOLDER_RE = re.compile(r"\{\{([A-Z]+):([a-z0-9.\-]+)\}\}")
 
 
@@ -345,7 +347,7 @@ def cut_anchors(text: str) -> str:
 
 def unanchor(text: str) -> str:
     """The text as read: each anchor reduced to its value."""
-    return re.sub(r"<!--=[A-Z]+:[a-z0-9.\-]+-->", "", text)
+    return re.sub(r"<!--=[A-Z]+:[a-z0-9.\-]+-->", "", text, flags=re.DOTALL)
 
 
 # ---------------------------------------------------------------------------- the screens
@@ -539,7 +541,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-BOARDS",
         "spec",
         "## 0.",
-        "drawn: board id `77692e72-cc05-8095-8008-e0bdca9b90f9`, "
+        "drawn: board id `2662f2e2-6e08-801c-8008-e171d26cce0a`, "
         "`docs/design/E47/img/E47-D04-01-landmarks-ring.png`",
         "drawn",
     ),
@@ -847,7 +849,7 @@ def g_marker(t: Texts) -> list[Finding]:
         for i, line in enumerate(text.split("\n")):
             if "{{" in line:
                 out.append(("G-MARKER", f"unfilled placeholder on line {i + 1}", doc, regions[i]))
-            stray = re.sub(r"<!--=[A-Z]+:[a-z0-9.\-]+-->", "", line)
+            stray = re.sub(r"<!--=[A-Z]+:[a-z0-9.\-]+-->", "", line, flags=re.DOTALL)
             if "<!--" in stray:
                 out.append(("G-MARKER", f"a stray HTML comment on line {i + 1}", doc, regions[i]))
     return out

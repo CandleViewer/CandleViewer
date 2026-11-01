@@ -11,13 +11,13 @@ Board 10 of ten (§0 L80: high-contrast twin of 08 with the thick geometry (§7.
 
 ## Validator and size
 
-- `10-ring-hc-thick.json: 0 errors, 0 warnings, 14 sections, 51208 bytes` (exit 0)
-- 14 sections, 51208 bytes
+- `10-ring-hc-thick.json: 0 errors, 0 warnings, 14 sections, 51263 bytes` (exit 0)
+- 14 sections, 51263 bytes
 
 ## Live checks (6)
 
 - root 'E47-D04 / 10 ring-hc-thick' at (24000, 3200): read back the name exactly after the first section call; size 3280 x 998
-- after touchTexts + relayout: the annotation column (estimated 803 px) ends inside the root (h 998); set the root's h to max(column end, footer end) + 80
+- after touchTexts + relayout: the annotation column (estimated 816 px) ends inside the root (h 998); set the root's h to max(column end, footer end) + 80
 - frame 'ring∕thick-hc · hc': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'ring∕backgrounds · hc': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - theme: activate the hc token set before exporting board 10 (twin of 08); read back one bound fill (color.surface.canvas) as the hc value
@@ -46,7 +46,7 @@ Board 10 of ten (§0 L80: high-contrast twin of 08 with the thick geometry (§7.
 
 ## Sources (1)
 
-- spec E47-D04.md md5 8a3e30af (§0 L80); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
+- spec E47-D04.md md5 82406120 (§0 L80); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
 
 ## Tokens (43)
 

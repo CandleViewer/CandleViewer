@@ -16,7 +16,7 @@ DOM_NAME = dict(k.PANELS)["dom"]
 def frame_landmarks() -> tuple[k.Node, tuple[str, list[str]]]:
     G = k.GEO
     ov = [k.outline("banner", *G["topbar"]), k.tag("banner · TopBar", 440, 30),
-          k.outline("navigation", *G["navrail"]), k.tag("navigation · NavRail", 4, 760 - 20),
+          k.outline("navigation", *G["navrail"]),
           k.outline("main", *G["main"]), k.tag("main · workspace (SCR-020)", G["main"][0] + 8, G["tray"][1] - 20),
           k.outline("complementary", *G["rightrail"]),
           k.tag("complementary · RightRail (SCR-014)", G["rightrail"][0] + 8, 740),
@@ -24,8 +24,10 @@ def frame_landmarks() -> tuple[k.Node, tuple[str, list[str]]]:
           k.tag("RG-02 tablist · Workspaces", G["tabstrip"][0] + 420, G["tabstrip"][1] + 8),
           k.tag("RG-04 toolbar · Minimised panels", G["tray"][0] + 260, G["tray"][1] + 6)]
     for kind, name in k.PANELS:
-        x, y = at_header(kind, -40)
-        ov.append(k.tag(f"region · h2", x + 60, y + 30, name=f"tag · region {kind}"))
+        x, y = at_header(kind, -40)  # in the header bar, clear of the column headers (boards lens n-2)
+        ov.append(k.tag(f"region · h2", x + 60, y + 2, name=f"tag · region {kind}"))
+    # boards lens D-4: up, clear of the main tag, and last, so the main outline does not cross it
+    ov.append(k.tag("navigation · NavRail", 4, 700))
     fr = k.workspace_window(F_LAND, bodies(), overlays=ov,
                             note="landmarks: one banner, navigation, main, complementary, contentinfo (§2)")
     lines = [f"§2 L{k.L('**Landmarks.** The shell (SCR-010)')}: one of each top-level landmark: banner = TopBar, "

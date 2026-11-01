@@ -64,7 +64,7 @@ board 09 is exported under the light set and board 10 under the high-contrast se
 | 04 retention       | 4      | 3280 × 1878 | dark  | 76                |
 | 05 dialog-flatten  | 2      | 3280 × 998  | dark  | 35                |
 | 06 overlay-palette | 3      | 4640 × 1101 | dark  | 55                |
-| 07 full-page-form  | 2      | 3280 × 998  | dark  | 32                |
+| 07 full-page-form  | 2      | 3280 × 1042 | dark  | 32                |
 | 08 ring-spec       | 2      | 3280 × 998  | dark  | 15                |
 | 09 ring-spec-light | 2      | 3280 × 998  | light | 15                |
 | 10 ring-hc-thick   | 2      | 3280 × 998  | hc    | 14                |
