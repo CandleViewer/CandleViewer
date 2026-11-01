@@ -21,7 +21,10 @@ its code:
 - [G-UNTOUCHED] PR 1: only the pack's five files differ from `git merge-base HEAD origin/main`.
   PR 2 (no pack document and not the tool differs): only `14`, `15` and `16` differ, each equal to
   the merge-base with every §C row applied, re-pointed by content, and the pins file may differ
-  only as the tool's own byte-exact rewrite; no other byte. Fails closed when git cannot answer.
+  only as the tool's own byte-exact rewrite; no other byte (its probes read `14`, `15` and `16`
+  at PR2_BASE, PR 2's own merge-base). PR 3 (the pack holds §11.1 "As built"): only the pack's
+  five files and exactly the register's exports; nothing in `14`, `15`, `16` or the token JSON.
+  Fails closed when git cannot answer.
 - [G-AROW] §C: rows A-1 ... A-n in order, each with its target (`14`, `15`, `16`), a known op and
   its Old equal to (or, for a fragment or a span, once in) its line at the base and unique in its
   scope; a row that DEPENDS on E15-D13's PR 2 finds its Old in E15-D13's CMP-251 text at the base,
@@ -73,6 +76,11 @@ its code:
   the order-placing and arming chords and give the protective chords their scope; §5 item 5 and
   CP-14 scroll the positions, orders and ticket bodies under the collapse at every height, and no
   protective write needs a taller window.
+- [G-BOARDS] PR 3's boards: the pack's §11.1 register holds ten rows (8 dark, 2 light twins),
+  each name, export and slug agreeing, the exports equal to the `E15-D12-*.png` files present;
+  its as-drawn table names each board id (BOARD_IDS) and each PNG's IHDR size; the AC trace's
+  and §13's "boards at PR 3" / "[ ] Drawn: PR 3" are flipped; the hand-off's "Final Penpot link"
+  cells read `[x]` with the page name and page id, and no "PR 3" and no URL.
 
 `--a-rows` prints §C as JSON, one record per row with its target file; `--self-test` applies one
 mutation per gate (MUTATIONS) and the probes (PROBES) to an in-memory copy and passes only when each
@@ -145,6 +153,27 @@ TOKENS_DIR = "packages/ui/tokens"
 THEMES = ("dark", "light", "high-contrast")
 THEME_KEY = {"dark": "dark", "light": "light", "high-contrast": "hc"}
 CMP251_HEAD = "### CMP-251 DockTabGroup (E15-D04 P6)"
+PR2_BASE = "9b30a1f372"  # PR 2's own merge-base (#5088's parent): `14` / `15` / `16` before §C
+# PR 3's boards (BQ-19): the page by name and id only, the board ids inside it (never the file).
+IMG_DIR = "docs/design/E15/img"
+IMG_PREFIX = IMG_DIR + "/E15-D12-"
+AS_BUILT = "### 11.1 As built (PR 3)"
+PAGE_NAME = "E15-D12 responsive and degraded"
+PAGE_ID = "b96edf38-8e58-8006-8008-e18400657fc2"
+BOARD_IDS = (
+    "b96edf38-8e58-8006-8008-e1874e027897",
+    "b96edf38-8e58-8006-8008-e1878a75b133",
+    "b96edf38-8e58-8006-8008-e1880fe5b572",
+    "b96edf38-8e58-8006-8008-e1883009165f",
+    "b96edf38-8e58-8006-8008-e18852911b81",
+    "b96edf38-8e58-8006-8008-e1887ed2a9ae",
+    "b96edf38-8e58-8006-8008-e188986b48a9",
+    "b96edf38-8e58-8006-8008-e188b02262a4",
+    "b96edf38-8e58-8006-8008-e188c949c9ad",
+    "b96edf38-8e58-8006-8008-e188ec1b59c0",
+)
+BOARD_THEMES = {"dark": 8, "light": 2}  # BQ-19: eight dark, two light twins
+PUBLIC_IDS = frozenset((PAGE_ID, *BOARD_IDS))
 
 
 def _load(path: Path, name: str) -> ModuleType:
@@ -1077,6 +1106,7 @@ class Texts:
     now: tuple[tuple[str, str], ...]  # ("14" | "15" | "16", working-tree text)
     mbase: tuple[tuple[str, str], ...]  # ("14" | "15" | "16", merge-base text)
     sources: tuple[tuple[str, str], ...] = ()
+    pngs: tuple[tuple[str, tuple[int, int] | None], ...] = ()  # E15-D12-*.png: its IHDR size
 
 
 def docs(t: Texts) -> list[tuple[str, str]]:
@@ -1287,6 +1317,17 @@ def g_untouched(t: Texts) -> list[Finding]:
     if t.changed is None:
         return fails("G-UNTOUCHED", ["git cannot name the changed paths (fail closed)"])
     docs_changed = [p for p in t.changed if p in OWN_PATHS and p != PINS_REL]
+    exports = [p for p in t.changed if p.startswith(IMG_PREFIX)]
+    if (docs_changed or exports) and AS_BUILT in t.pack:  # PR 3: the five and the register
+        allowed = set(OWN_PATHS) | {r[2].strip("`") for r in register(t.pack)}
+        return fails(
+            "G-UNTOUCHED",
+            [
+                f"PR 3 changes {p}, not one of the pack's five or a register export"
+                for p in t.changed
+                if p not in allowed
+            ],
+        )
     other = [p for p in t.changed if p not in OWN_PATHS]
     if docs_changed:  # PR 1: only the pack's five files
         return fails(
@@ -1603,6 +1644,8 @@ def public_problems(name: str, text: str) -> list[str]:
         (AGENTS, "an agent or session name"),
     ):
         for m in rx.finditer(text):
+            if rx is UUID and m.group(0) in PUBLIC_IDS:
+                continue  # the page id and the board ids (BQ-19: page name and id only)
             bad.append(f"{name}: {what} ({m.group(0)[:3]}…, offset {m.start()})")
     return bad
 
@@ -1738,6 +1781,119 @@ def g_protect(t: Texts) -> list[Finding]:
     return fails("G-PROTECT", protect_problems(t))
 
 
+# ---------------------------------------------------------------------------- the boards (PR 3)
+
+REGISTER_HEAD = ("No", "Board", "Export", "Theme")
+DRAWN_HEAD = ("No", "Board id", "PNG (W × H)")
+BOARD_NAME = re.compile(r"^`E15-D12 / (\d\d) ([a-z0-9-]+)`$")
+SIZE_CELL = re.compile(r"^(\d+) × (\d+)$")
+BOARDS_NO = r"boards? \d\d(?:(?:, | and )\d\d)* \(§11\.1\)"
+AC_DRAWN = re.compile(rf"^text done; drawn on {BOARDS_NO}$")
+DOD_DRAWN = re.compile(rf"\[x\] Drawn: {BOARDS_NO}\.")
+AC_ROWS = tuple(f"AC{n} " for n in range(1, 7))
+STALE = ("boards at PR 3", "[ ] Drawn: PR 3", "drawn when the desk frees")
+LINK_ROW = "| Final Penpot link"
+LINK_WORDS = f"page `{PAGE_NAME}`, page id `{PAGE_ID}`"
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    """The IHDR width and height, or None when the bytes do not open a PNG."""
+    if len(data) < 24 or data[:8] != PNG_SIG or data[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def read_pngs() -> tuple[tuple[str, tuple[int, int] | None], ...]:
+    found = sorted((ROOT / IMG_DIR).glob("E15-D12-*.png"))
+    return tuple((f"{IMG_DIR}/{p.name}", png_size(p.read_bytes()[:24])) for p in found)
+
+
+def as_built_tables(pack: str) -> dict[tuple[str, ...], list[list[str]]]:
+    """§11.1's tables, keyed by their first header cells (REGISTER_HEAD, DRAWN_HEAD)."""
+    out: dict[tuple[str, ...], list[list[str]]] = {}
+    block: list[list[str]] = []
+    for ln in [*lines(section(pack, AS_BUILT[4:], level=3)), ""]:
+        if ln.startswith("|"):
+            if not RULE_ROW.match(ln):
+                block.append(split_row(ln))
+            continue
+        if block:
+            for head in (REGISTER_HEAD, DRAWN_HEAD):
+                if tuple(block[0][: len(head)]) == head:
+                    out[head] = block[1:]
+            block = []
+    return out
+
+
+def register(pack: str) -> list[list[str]]:
+    return as_built_tables(pack).get(REGISTER_HEAD, [])
+
+
+def board_problems(t: Texts) -> list[str]:
+    if AS_BUILT not in t.pack:
+        return [f"the pack has no {AS_BUILT[4:]!r} section"]
+    bad: list[str] = []
+    rows, pngs = register(t.pack), dict(t.pngs)
+    themes = [r[3] if len(r) > 3 else "" for r in rows]
+    if len(rows) != len(BOARD_IDS):
+        bad.append(f"the register holds {len(rows)} rows, not {len(BOARD_IDS)}")
+    for th, n in BOARD_THEMES.items():
+        if themes.count(th) != n:
+            bad.append(f"the register holds {themes.count(th)} {th} boards, not {n}")
+    exports: dict[str, str] = {}
+    for i, r in enumerate(rows, 1):
+        m = BOARD_NAME.match(r[1] if len(r) > 1 else "")
+        want = f"{IMG_PREFIX}{m.group(1)}-{m.group(2)}.png" if m else ""
+        export = r[2].strip("`") if len(r) > 2 else ""
+        light = m is not None and m.group(2).endswith("-light")
+        if r[0] != f"{i:02d}" or not m or m.group(1) != r[0] or export != want:
+            bad.append(f"register row {i}: its No, name and export do not agree")
+        elif (themes[i - 1] == "light") != light:
+            bad.append(f"register row {i}: the theme {themes[i - 1]!r} disagrees with its slug")
+        exports[r[0]] = export
+    if set(exports.values()) != set(pngs):
+        extra = sorted(set(exports.values()) ^ set(pngs))
+        bad.append(f"the register's exports and the PNGs present differ: {extra}")
+    drawn = as_built_tables(t.pack).get(DRAWN_HEAD, [])
+    if [r[0] for r in drawn] != sorted(exports):
+        bad.append("the as-drawn table does not list the register's boards in order")
+    for r in drawn:
+        i = int(r[0]) if r[0].isdigit() else 0
+        if not 1 <= i <= len(BOARD_IDS) or len(r) < 3 or r[1] != f"`{BOARD_IDS[i - 1]}`":
+            bad.append(f"as drawn {r[0]}: the board id is not the drawn board's")
+            continue
+        m = SIZE_CELL.match(r[2])
+        got = pngs.get(exports.get(r[0], ""))
+        if not m or got != (int(m.group(1)), int(m.group(2))):
+            bad.append(f"as drawn {r[0]}: {r[2]!r} is not the PNG's IHDR size {got}")
+    ac = [split_row(ln) for ln in lines(t.pack) if ln.startswith(tuple("| " + a for a in AC_ROWS))]
+    for row in ac:
+        if len(row) < 3 or not AC_DRAWN.match(row[-1]):
+            bad.append(f"the AC trace's {row[0][:3]} row is not flipped to its boards")
+    if len(ac) != len(AC_ROWS):
+        bad.append(f"the AC trace holds {len(ac)} AC rows, not {len(AC_ROWS)}")
+    n_dod = len(DOD_DRAWN.findall(section(t.pack, "13.")))
+    if n_dod != 6:
+        bad.append(f"§13 holds {n_dod} flipped '[x] Drawn' lines, not 6")
+    for name, text in (("pack", t.pack), ("hand", t.hand), ("spec", t.spec)):
+        bad += [f"{name}: {s!r} is stale after PR 3" for s in STALE if s in text]
+    link = [split_row(ln) for ln in lines(t.hand) if ln.startswith(LINK_ROW)]
+    cells = link[0][1:] if len(link) == 1 else []
+    if len(cells) != 2:
+        bad.append("the hand-off has no single 'Final Penpot link' row with two cells")
+    for k, cell in enumerate(cells, 1):
+        if not cell.startswith("[x] ") or LINK_WORDS not in cell or "PR 3" in cell:
+            bad.append(f"the hand-off's link cell {k} is not `[x]` with the page name and id")
+        elif URL.search(cell) or HOSTNAME.search(cell):
+            bad.append(f"the hand-off's link cell {k} carries a URL or a host")
+    return bad
+
+
+def g_boards(t: Texts) -> list[Finding]:
+    return fails("G-BOARDS", board_problems(t))
+
+
 # ---------------------------------------------------------------------------- the run
 
 GATES: tuple[tuple[str, Callable[[Texts], list[Finding]]], ...] = (
@@ -1759,6 +1915,7 @@ GATES: tuple[tuple[str, Callable[[Texts], list[Finding]]], ...] = (
     ("G-DRYRUN", g_dryrun),
     ("G-MUTLIST", g_mutlist),
     ("G-PROTECT", g_protect),
+    ("G-BOARDS", g_boards),
 )
 
 
@@ -1798,6 +1955,7 @@ def load(sources: tuple[tuple[str, str], ...] = ()) -> Texts:
         now=tuple((k, read(rel)) for k, rel in TARGETS.items()),
         mbase=mbase,
         sources=sources,
+        pngs=read_pngs(),
     )
 
 
@@ -1842,7 +2000,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ),
     (
         "G-UNTOUCHED",
-        "simulate an edit to `14` in PR 1",
+        "simulate an edit to `14` beside the pack (PR 1 or PR 3)",
         lambda t: replace(t, changed=(t.changed or ()) + (TARGETS["14"],)),
     ),
     (
@@ -1924,18 +2082,29 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "let a hidden tab hold the protective actions without a route",
         _sub("spec", PROTECT_REACH, "behind a hidden tab only where the panel is"),
     ),
+    (
+        "G-BOARDS",
+        "type board 03's PNG height one pixel short",
+        _resub("pack", r"(^\| 03 +\| `[0-9a-f-]+` +\| 2032 × )2132", r"\g<1>2131"),
+    ),
 )
 
 
 def _pr2(t: Texts, extra: str = "", pins: str | None = None) -> Texts:
-    """PR 2's working tree: `14` and `16` with §C applied (`16` plus `extra`), pins as given."""
-    rows, mb = a_rows(t.pack)[0], dict(t.mbase)
+    """PR 2's working tree: `14` and `16` with §C applied (`16` plus `extra`), pins as given,
+    over PR 2's own merge-base (PR2_BASE), since the merge-base now holds §C."""
+    rows = a_rows(t.pack)[0]
+    mb = {k: at_sha(PR2_BASE, rel) or "" for k, rel in TARGETS.items()}
     now = dict(t.now)
     now["14"] = apply_rows(mb.get("14", ""), rows, "14") or ""
     now["16"] = (apply_rows(mb.get("16", ""), rows, "16") or "") + extra
     changed = (TARGETS["14"], TARGETS["16"], PINS_REL)
     return replace(
-        t, changed=changed, now=tuple(now.items()), pins=t.pins if pins is None else pins
+        t,
+        changed=changed,
+        now=tuple(now.items()),
+        mbase=tuple(mb.items()),
+        pins=t.pins if pins is None else pins,
     )
 
 
@@ -2017,6 +2186,16 @@ PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "G-CONTRAST",
         "§11 without the chip's greyscale / CVD ratio",
         _resub("spec", r"[0-9.]+<!--=CR:cvd\.chip\.word-->", "unmeasured"),
+    ),
+    (
+        "G-UNTOUCHED",
+        "PR 3 with a token JSON file changed beside the boards",
+        lambda t: replace(t, changed=(t.changed or ()) + (TOKENS_DIR + "/x.json",)),
+    ),
+    (
+        "G-BOARDS",
+        "the hand-off's CMP-092 link cell back to PR 3",
+        _sub("hand", f"[x] {LINK_WORDS}", f"[ ] PR 3, {LINK_WORDS}"),
     ),
 )
 # A PR 2 that applies §C exactly, with the tool's own pins rewrite: no new FAIL (lesson 1).
