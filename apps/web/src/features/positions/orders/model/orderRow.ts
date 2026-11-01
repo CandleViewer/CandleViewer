@@ -189,7 +189,7 @@ const asSent: Figure = (decimal) => decimal;
 const SOURCE_WORDS: Readonly<Record<TriggerBy, () => string>> = {
   LastPrice: () => ORDER_TEXT.lastPrice.string,
   MarkPrice: () => ORDER_TEXT.markPrice.string,
-  IndexPrice: () => bindProposed("blotter.ui.trigger.index"),
+  IndexPrice: () => ORDER_TEXT.indexPrice.string,
 };
 
 /** "Mark falls to 63,950.0" (D02:269); the PROPOSED forms for an unknown source or direction. */
@@ -197,10 +197,9 @@ export function triggerWords(trigger: TriggerModel, figure: Figure = asSent): st
   const price = figure(trigger.price);
   const source = trigger.source === null ? null : SOURCE_WORDS[trigger.source]();
   if (trigger.direction === null) {
-    return bindProposed("blotter.ui.trigger.undirected", {
-      Mark: source ?? "Price",
-      "63,950.0": price,
-    });
+    return source === null
+      ? bindProposed("blotter.ui.trigger.bare", { "63,950.0": price })
+      : bindProposed("blotter.ui.trigger.undirected", { Mark: source, "63,950.0": price });
   }
   const verb = trigger.direction === "rise" ? ORDER_TEXT.rises.string : ORDER_TEXT.falls.string;
   if (source === null) {
@@ -269,9 +268,16 @@ export function tifWords(tif: TimeInForce | null): string {
   return tif === "PostOnly" ? ORDER_TEXT.postOnly.string : tif;
 }
 
+/** The side's word, "Buy" or "Sell" (D02:263), "—" when unknown: the name and every sentence take it. */
 export function sideWords(side: "buy" | "sell" | null): string {
   if (side === null) return ORDER_TEXT.none.string;
   return side === "buy" ? ORDER_TEXT.buy.string : ORDER_TEXT.sell.string;
+}
+
+/** The side's glyph, "▲" or "▼" (D02:263), drawn before the word and hidden from the name; none when unknown. */
+export function sideGlyph(side: "buy" | "sell" | null): string | null {
+  if (side === null) return null;
+  return side === "buy" ? ORDER_TEXT.buyGlyph.string : ORDER_TEXT.sellGlyph.string;
 }
 
 const MS_PER_S = 1_000;
@@ -350,7 +356,10 @@ export interface OrderRowModel {
   /** The base coin of a USDT symbol, for "0.150 BTC" (D02 §6.1). */
   readonly baseCoin: string;
   readonly side: "buy" | "sell" | null;
+  /** "Buy" or "Sell": the word alone, as #911's model and D05's names carry the side. */
   readonly sideLabel: string;
+  /** "▲" or "▼", the cell's glyph before the word (D02:263), never read and never in a sentence. */
+  readonly sideGlyph: string | null;
   readonly orderType: "market" | "limit" | null;
   readonly intent: OrderIntent | null;
   /** "Limit · Take profit" (D-19). */
@@ -506,6 +515,7 @@ export function mapOrder(
     baseCoin: USDT.exec(wire.symbol)?.[1] ?? "",
     side,
     sideLabel: sideWords(side),
+    sideGlyph: sideGlyph(side),
     orderType,
     typeLabel: typeWords(orderType, intent),
     purpose: purposeWord(intent),

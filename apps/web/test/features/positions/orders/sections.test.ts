@@ -118,4 +118,22 @@ describe("the default order (D01 D13 a)", () => {
     const unnamed = groupLabel({ accountId: "acct", label: null, environment: "demo", rows: many });
     expect(unnamed).toBe("acct · DEMO · 3 orders");
   });
+
+  it("a group whose environment is not known drops the segment, never leaving it empty", () => {
+    const base = rows()[0] as OrderRowModel;
+    const many = [base, { ...base, id: "x" }, { ...base, id: "y" }];
+    const group = { accountId: MAIN, label: "Main", environment: null, rows: many };
+    expect(groupLabel(group)).toBe("Main · 3 orders");
+    expect(groupLabel({ ...group, rows: [base] })).toBe("Main · 1 order");
+    for (const label of [groupLabel(group), groupLabel({ ...group, rows: [base] })])
+      expect(label).not.toMatch(/·\s+·/);
+  });
+
+  it("the environment words are D02's LIVE and DEMO, and the PROPOSED TESTNET", () => {
+    const base = rows()[0] as OrderRowModel;
+    const group = { accountId: MAIN, label: "Main", rows: [base] };
+    expect(groupLabel({ ...group, environment: "live" })).toBe("Main · LIVE · 1 order");
+    expect(groupLabel({ ...group, environment: "demo" })).toBe("Main · DEMO · 1 order");
+    expect(groupLabel({ ...group, environment: "testnet" })).toBe("Main · TESTNET · 1 order");
+  });
 });

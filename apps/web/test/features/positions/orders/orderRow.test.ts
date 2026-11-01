@@ -18,6 +18,8 @@ import {
   priceLabel,
   protectiveOf,
   resolveState,
+  sideGlyph,
+  sideWords,
   stateLabel,
   tifWords,
   triggerLabel,
@@ -201,7 +203,7 @@ describe("Rows carry the full order vocabulary", () => {
     }).toEqual({
       account: "Sub-1",
       symbol: "BTCUSDT",
-      side: "▲ Buy",
+      side: "Buy",
       type: "Limit · Entry",
       qty: "0.15",
       filled: "0.05",
@@ -214,6 +216,7 @@ describe("Rows carry the full order vocabulary", () => {
       state: "Partial 0.05/0.15",
     });
     expect(r.tradeGroupId).toBe("0c000000-0000-4000-8000-000000000001");
+    expect(r.sideGlyph).toBe("▲"); // drawn before the word, apart from it (D02:263)
   });
 
   it("a REST row alone names the leg: the REST mapper serves no parent_order_id today", () => {
@@ -225,8 +228,9 @@ describe("Rows carry the full order vocabulary", () => {
 
   it("D02 §6.2's rows, as the topic serves them", () => {
     const tp = wsRow(TP);
-    expect([tp.sideLabel, tp.typeLabel, tp.flagsLabel, priceLabel(tp)]).toEqual([
-      "▼ Sell",
+    expect([tp.sideGlyph, tp.sideLabel, tp.typeLabel, tp.flagsLabel, priceLabel(tp)]).toEqual([
+      "▼",
+      "Sell",
       "Limit · Take profit",
       "Reduce-only",
       "64800",
@@ -316,7 +320,7 @@ describe("Conditional orders are separated: the trigger in words (BQ-17)", () =>
     expect(triggerWords(trigger)).toBe("Last reaches 64500");
   });
 
-  it("a sent direction wins, and the source words are D02:269's or PROPOSED", () => {
+  it("a sent direction wins, and the source words are D02:269's, E30-D02:243's or PROPOSED", () => {
     const item: WsOrder = { ...wsItem(snapshot, STOP), trigger_direction: "rise" };
     expect(mapOrder(item, "ws", dir)?.trigger).toMatchObject({ direction: "rise", derived: false });
     expect(
@@ -373,6 +377,12 @@ describe("Type · Purpose, flags, TIF, side and price words (D02 §6.1)", () => 
       "Post-only",
     ]);
     expect(tifWords(null)).toBe("—");
+  });
+
+  it("the side is a word with its glyph apart; an unknown side reads — with no glyph", () => {
+    expect([sideWords("buy"), sideGlyph("buy")]).toEqual(["Buy", "▲"]);
+    expect([sideWords("sell"), sideGlyph("sell")]).toEqual(["Sell", "▼"]);
+    expect([sideWords(null), sideGlyph(null)]).toEqual(["—", null]);
   });
 
   it("a market order's price reads Market; a limit with none reads —", () => {
