@@ -508,7 +508,7 @@ spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-render
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 10. The binding audit (AC 4) (RULED BQ-10)#1	heading	## 10. The binding audit (AC 4) (RULED BQ-10)
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 10. The binding audit (AC 4) (RULED BQ-10)#1	s1	Every field the design shows, traced to `getBars` (`22`:4330), `GET /api/v1/instruments/{symbol}` (`22`:4040), or the
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 10. The binding audit (AC 4) (RULED BQ-10)#1	s2	bars topic (`23`:749).
-spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 10. The binding audit (AC 4) (RULED BQ-10)#1	s3	`/recording/symbols` (`22`:5257) and `/me/preferences` (`22`:12757) carry no further field the
+spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 10. The binding audit (AC 4) (RULED BQ-10)#1	s3	`/recording/symbols` (`22`:5257) and `/me/preferences` (`22`:12791) carry no further field the
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 10. The binding audit (AC 4) (RULED BQ-10)#1	s4	E12 band shows; As new default writes `/me/preferences` under `settings:write` (D05 §14).
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 10. The binding audit (AC 4) (RULED BQ-10)#1	s5	The **Served** column is the
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 10. The binding audit (AC 4) (RULED BQ-10)#1	s6	tool's: each named source is found at its own definition line (a REST schema property, a `getBars` parameter, a
@@ -558,7 +558,7 @@ spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-render
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 11. Budgets, each with its gate (RULED BQ-15)#1	row B-08	B-08 | rebuild per 1 M prints | 10 s | SCR-030 | `D02`:370 | no gate yet (D12-G3) | E12-S12
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 11. Budgets, each with its gate (RULED BQ-15)#1	row B-09	B-09 | silent wait before progress | 600 ms | SCR-030 | `D02`:371 | no gate yet (D12-G3) | E12-S12
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 11. Budgets, each with its gate (RULED BQ-15)#1	row B-10	B-10 | SCR-041 open | ≤80 ms | SCR-041 | `D02`:372 | E12-S11 | E12-S11
-spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 11. Budgets, each with its gate (RULED BQ-15)#1	row B-11	B-11 | data-table scripting per scroll frame | ≤8 ms | SCR-045 | `14`:1100 | no gate yet (D12-G3) | E11-S14
+spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 11. Budgets, each with its gate (RULED BQ-15)#1	row B-11	B-11 | data-table scripting per scroll frame | ≤8 ms | SCR-045 | `14`:1101 | no gate yet (D12-G3) | E11-S14
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 11. Budgets, each with its gate (RULED BQ-15)#1	row B-12	B-12 | frame rate per pane at 100 k bars | ≥55 fps | SCR-030 | `11`:895 | `26` B1 | E12-S06
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 11. Budgets, each with its gate (RULED BQ-15)#1	row B-13	B-13 | candle draws per pane | 2 draws | SCR-030 | `D06`:237 | `26` B1 (≤ 8 draws, `26`:744): the pack's 2 is the tighter figure (D12-C8) | E12-S06
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 11. Budgets, each with its gate (RULED BQ-15)#1	row B-14	B-14 | menu open and parameter entry | <50 ms | SCR-042 | `D02`:372 | E12-S12 | E12-S12
@@ -605,7 +605,7 @@ spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-render
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 13. The analytics manifest (the union; none emitted) (RULED BQ-17)#1	s2	from its parent row.
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 13. The analytics manifest (the union; none emitted) (RULED BQ-17)#1	s3	**No event is emitted by this pack and none is added or renamed.** There is no wire path for
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 13. The analytics manifest (the union; none emitted) (RULED BQ-17)#1	s4	these names yet: `POST /telemetry/frontend` takes one pre-bucketed payload per 10 s and accepts no symbol
-spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 13. The analytics manifest (the union; none emitted) (RULED BQ-17)#1	s5	(`22`:11742-11747), so every row reads "named, unsourced" until the owner of the event contract rules (R578 BQ-08's
+spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 13. The analytics manifest (the union; none emitted) (RULED BQ-17)#1	s5	(`22`:11776-11781), so every row reads "named, unsourced" until the owner of the event contract rules (R578 BQ-08's
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 13. The analytics manifest (the union; none emitted) (RULED BQ-17)#1	s6	form).
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 13. The analytics manifest (the union; none emitted) (RULED BQ-17)#1	s7	No property derives from an account (`D08`:414); `correlationId` keeps the catalogue's spelling (`D02`:389).
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 13. The analytics manifest (the union; none emitted) (RULED BQ-17)#1	row Event	Event | Properties (as the parent states them) | Trigger point | Named by | Parent row | Status
@@ -908,7 +908,7 @@ spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-render
 spec:E12-D12 — Engineering hand-off pack for the bar-builder and series-rendering band > 20. Sign-off, deviations, the `14` lines and the pack's paths (RULED BQ-01, BQ-21, BQ-22) > 20.2 The `14` lines: one pointer per surface and the ticks with evidence#1	shape	h.p1p2p1p1p2p1p1.trttttttttttttttttttttttttttt.
 deck	pack	"E12-D12"
 deck	version	"v1"
-deck	base	"9518fe3cbd"
+deck	base	"8bae585409"
 deck	note	"The copy deck of the E12-D12 hand-off pack: every row of the five parents' decks (E12-D03 §5, E12-D04 §15, E12-D05 §12, E12-D07 §13, E12-D08 §11) under the id `<parent>:<row id>` (`#2` on an id the parent repeats), the String cell verbatim, the source row, the parent's own Where, Source, Status or Tag cell where it has one, and the owner: the parent ticket, which owns every PROPOSED string it wrote. Checked by docs/design/_tools/e12_d12_handoff_audit.py (G-DECK)."
 deck:entries	d03:C-1	{"owner": "E12-D03 (#201)", "source": "D03:186", "source_cell": "this spec", "text": "One bar per clock interval.", "where": "Time header, after \"Time · \""}
 deck:entries	d03:C-2	{"owner": "E12-D03 (#201)", "source": "D03:187", "source_cell": "`bars/activity_builders.py`", "text": "Bars close on trade count, so busy periods make more bars.", "where": "Tick, line 2"}
@@ -1081,11 +1081,11 @@ cite	05:144	0a9121a1bdc2
 cite	05:251	54b5a8ae5351
 cite	05:35	280e1a7e3931
 cite	11:895	5dedb0561eb6
-cite	14:1100	cd766a4569c3
+cite	14:1101	cd766a4569c3
 cite	14:741	34c2a8382ef1
 cite	14:86	5285acd06e47
-cite	22:11742-11747	c4a0d22cb4a5
-cite	22:12757	1d87b11c6fe9
+cite	22:11776-11781	c4a0d22cb4a5
+cite	22:12791	1d87b11c6fe9
 cite	22:344	46143d6ac202
 cite	22:4040	b952a8b9387e
 cite	22:4330	5159a63056b5

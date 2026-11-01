@@ -84,7 +84,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "9518fe3cbd"  # the base of record: every cite was read here (the version line)
+BASE = "8bae585409"  # the base of record: every cite was read here (the version line)
 HEAD_REF = "origin/main"
 VERSION_DATE = datetime.date(2026, 10, 31)  # v1's date: the design-ahead readings count from it
 ISSUE = "313"
@@ -225,11 +225,11 @@ CITE_TEXT: dict[str, str] = {
     '05:251': '## 9. Automated gates (CI-enforced)',
     '05:35': '6. No functionality may depend on hover-only or drag-only in',
     '11:895': 'NFR: ≥55 fps at 100k bars on the reference GPU; GPU memory ≤',
-    '14:1100': '- **Performance:** Virtualised table renders 100k rows witho',
+    '14:1101': '- **Performance:** Virtualised table renders 100k rows witho',
     '14:741': '- **Performance:** ≥58 fps at 2560×1440 with 100 k bars load',
     '14:86': '6. **WCAG 2.2 AA.** Every canvas surface has an equal-status',
-    '22:11742-11747': 'ADR-0014 §2 field telemetry. One pre-bucketed payload per 10',
-    '22:12757': '/me/preferences:',
+    '22:11776-11781': 'ADR-0014 §2 field telemetry. One pre-bucketed payload per 10',
+    '22:12791': '/me/preferences:',
     '22:344': '`403 view_as_expired`, whatever its method, and changes noth',
     '22:4040': '/instruments/{symbol}:',
     '22:4330': '/market/bars:',

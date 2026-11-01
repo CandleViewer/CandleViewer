@@ -1,7 +1,7 @@
 {
   "pack": "E12-D12",
   "version": "v1",
-  "base": "9518fe3cbd",
+  "base": "8bae585409",
   "note": "The copy deck of the E12-D12 hand-off pack: every row of the five parents' decks (E12-D03 §5, E12-D04 §15, E12-D05 §12, E12-D07 §13, E12-D08 §11) under the id `<parent>:<row id>` (`#2` on an id the parent repeats), the String cell verbatim, the source row, the parent's own Where, Source, Status or Tag cell where it has one, and the owner: the parent ticket, which owns every PROPOSED string it wrote. Checked by docs/design/_tools/e12_d12_handoff_audit.py (G-DECK).",
   "entries": {
     "d03:C-1": {
