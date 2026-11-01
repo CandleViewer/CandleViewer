@@ -3651,6 +3651,31 @@ export interface paths {
      *     `time_bucket_ms` and `price_grouping` control the grid; the response is a dense matrix
      *     plus its axes so the WebGL engine can upload it as a texture in one step.
      *     Colour convention is a client concern (green = bid, red = ask by owner decision #10).
+     *
+     *     **Recorded history (E21-T03, #606).** Columns are built at read from the stored native
+     *     100 ms columns (`heatmap_cells`, 21 §4.12; QuestDB for the hot window, the Parquet cold
+     *     tier for older days), re-bucketed to `time_bucket_ms` and `price_grouping` as 24 §6.3
+     *     states. Where a window has no stored cell but recorded book data exists, its columns are
+     *     rebuilt from the nearest recorded snapshot at or before them plus the deltas after it
+     *     (`orderbook_snapshots`, `orderbook_deltas`); a snapshot whose stored checksum does not
+     *     match is skipped for the one before it, and one with no stored checksum makes its
+     *     columns `estimated`. A bucket with no recorded row inside the recorded range is a
+     *     column with `samples` 0 and empty cells, never interpolated. `first_available` and
+     *     `history` state the recorded range: the response never starts before the bucket holding
+     *     `first_available` (no empty leading columns), and a symbol with no recorded history
+     *     answers `200` with empty axes and matrices and `history: none`, never `404`.
+     *     `segments` names the source and effective resolution of each span; a span older than
+     *     the 180-day downsample boundary (21 §7) has an effective resolution of at least
+     *     1 000 ms, whatever `time_bucket_ms` asked.
+     *
+     *     **Clamp and paging.** One response holds at most 2 000 time columns and 512 price rows
+     *     (23 §16.2). A window with more columns is served at the next coarser `time_bucket_ms`
+     *     of the enum that fits, stated in `effective_time_bucket_ms` with `clamped: true`. If
+     *     60 000 ms still does not fit, or the price span of the window exceeds 512 rows, the
+     *     response holds the newest columns that fit and `next_cursor` continues with the older
+     *     remainder (newest first, for progressive scroll-back). At most 2 backfills per user run
+     *     at once; another answers `429 rate_limited` with `Retry-After`. A client that aborts the
+     *     request ends its storage reads.
      */
     get: operations["getHeatmap"];
     put?: never;
@@ -8662,20 +8687,61 @@ export interface components {
       ask_matrix?: number[][];
       /** @description Row-major [price][time] resting bid size. */
       bid_matrix?: number[][];
+      /**
+       * @description True when the server coarsened the bucket to fit its column cap.
+       * @default false
+       */
+      clamped: boolean;
+      /**
+       * @description The bucket the `times` axis is built at; coarser than `time_bucket_ms` only when `clamped`.
+       * @enum {integer}
+       */
+      effective_time_bucket_ms?: 100 | 250 | 500 | 1000 | 5000 | 60000;
       /** @default false */
       estimated: boolean;
+      /** @description One per `times` entry; true for a column built from a resyncing book or an unverified snapshot (24 §6.3). */
+      estimated_columns?: boolean[];
+      /**
+       * Format: date-time
+       * @description Start of the symbol's earliest recorded book history (heatmap cells, book snapshots or book deltas, whichever is older); null when nothing was ever recorded (E21-T03).
+       */
+      first_available?: string | null;
       /** Format: date-time */
       from?: string;
+      /**
+       * @description `full`: recorded history covers the requested `from`. `partial`: it starts later, and the response starts at the bucket holding `first_available`. `none`: no recorded history in the window, with empty axes and matrices (not an error).
+       * @enum {string}
+       */
+      history?: "full" | "partial" | "none";
       max_value?: number;
+      /** @description Continues with the older remainder of the window (newest first); null when none remains. */
+      next_cursor?: string | null;
       /** @enum {string} */
       normalize?: "none" | "column" | "window";
       price_grouping?: number;
       prices?: components["schemas"]["Decimal"][];
+      /** @description One per `times` entry: the native 100 ms book samples aggregated into the column (24 §6.1). 0 is a column with no recorded data (a gap, never interpolated); a complete column holds `effective_time_bucket_ms / 100`. */
+      samples?: number[];
+      /** @description Consecutive spans of the served range, oldest first, each with its source and effective resolution. */
+      segments?: components["schemas"]["HeatmapSegment"][];
       symbol?: components["schemas"]["Symbol"];
       time_bucket_ms?: number;
       times?: string[];
       /** Format: date-time */
       to?: string;
+    };
+    HeatmapSegment: {
+      /** @description The finest time resolution the span's data holds; never finer than its source recorded. */
+      effective_resolution_ms: number;
+      /** Format: date-time */
+      from: string;
+      /**
+       * @description `hot` QuestDB cells, `cold` Parquet cells, `reconstructed` rebuilt from recorded book snapshots and deltas, `downsampled` older than the 180-day boundary (21 §7).
+       * @enum {string}
+       */
+      source: "hot" | "cold" | "reconstructed" | "downsampled";
+      /** Format: date-time */
+      to: string;
     };
     HotkeyBinding: {
       /**
@@ -18528,6 +18594,8 @@ export interface operations {
   getHeatmap: {
     parameters: {
       query: {
+        /** @description Opaque, server-issued `next_cursor` of a previous `getHeatmap` response; it continues with the older remainder of that request's window. A cursor is bound to the request that issued it (symbol, `from`, `time_bucket_ms`, `price_grouping`, `depth`, `normalize`); malformed, expired, foreign or replayed on another request -> `invalid_cursor` (422). */
+        cursor?: string;
         depth?: 50 | 200 | 500;
         /** @description Inclusive start of the time window (RFC 3339 UTC). */
         from?: components["parameters"]["From"];
@@ -18554,8 +18622,10 @@ export interface operations {
           "application/json": components["schemas"]["HeatmapResponse"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

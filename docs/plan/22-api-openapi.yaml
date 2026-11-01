@@ -5111,10 +5111,44 @@ paths:
         `time_bucket_ms` and `price_grouping` control the grid; the response is a dense matrix
         plus its axes so the WebGL engine can upload it as a texture in one step.
         Colour convention is a client concern (green = bid, red = ask by owner decision #10).
+
+        **Recorded history (E21-T03, #606).** Columns are built at read from the stored native
+        100 ms columns (`heatmap_cells`, 21 §4.12; QuestDB for the hot window, the Parquet cold
+        tier for older days), re-bucketed to `time_bucket_ms` and `price_grouping` as 24 §6.3
+        states. Where a window has no stored cell but recorded book data exists, its columns are
+        rebuilt from the nearest recorded snapshot at or before them plus the deltas after it
+        (`orderbook_snapshots`, `orderbook_deltas`); a snapshot whose stored checksum does not
+        match is skipped for the one before it, and one with no stored checksum makes its
+        columns `estimated`. A bucket with no recorded row inside the recorded range is a
+        column with `samples` 0 and empty cells, never interpolated. `first_available` and
+        `history` state the recorded range: the response never starts before the bucket holding
+        `first_available` (no empty leading columns), and a symbol with no recorded history
+        answers `200` with empty axes and matrices and `history: none`, never `404`.
+        `segments` names the source and effective resolution of each span; a span older than
+        the 180-day downsample boundary (21 §7) has an effective resolution of at least
+        1 000 ms, whatever `time_bucket_ms` asked.
+
+        **Clamp and paging.** One response holds at most 2 000 time columns and 512 price rows
+        (23 §16.2). A window with more columns is served at the next coarser `time_bucket_ms`
+        of the enum that fits, stated in `effective_time_bucket_ms` with `clamped: true`. If
+        60 000 ms still does not fit, or the price span of the window exceeds 512 rows, the
+        response holds the newest columns that fit and `next_cursor` continues with the older
+        remainder (newest first, for progressive scroll-back). At most 2 backfills per user run
+        at once; another answers `429 rate_limited` with `Retry-After`. A client that aborts the
+        request ends its storage reads.
       parameters:
         - $ref: "#/components/parameters/SymbolQuery"
         - $ref: "#/components/parameters/From"
         - $ref: "#/components/parameters/To"
+        - name: cursor
+          in: query
+          description: >-
+            Opaque, server-issued `next_cursor` of a previous `getHeatmap` response; it continues
+            with the older remainder of that request's window. A cursor is bound to the request
+            that issued it (symbol, `from`, `time_bucket_ms`, `price_grouping`, `depth`,
+            `normalize`); malformed, expired, foreign or replayed on another request ->
+            `invalid_cursor` (422).
+          schema: { type: string, maxLength: 128 }
         - name: time_bucket_ms
           in: query
           schema: { type: integer, enum: [100, 250, 500, 1000, 5000, 60000], default: 1000 }
@@ -5150,8 +5184,24 @@ paths:
                     max_value: 12.5
                     normalize: window
                     estimated: false
+                    first_available: "2026-09-14T07:30:00Z"
+                    history: full
+                    samples: [10, 10, 10]
+                    estimated_columns: [false, false, false]
+                    effective_time_bucket_ms: 1000
+                    segments:
+                      - {
+                          from: "2026-09-14T10:30:00Z",
+                          to: "2026-09-14T10:30:03Z",
+                          source: hot,
+                          effective_resolution_ms: 1000,
+                        }
+                    clamped: false
+                    next_cursor: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/metrics:
@@ -20266,6 +20316,62 @@ components:
         max_value: { type: number }
         normalize: { type: string, enum: [none, column, window] }
         estimated: { type: boolean, default: false }
+        first_available:
+          type: ["string", "null"]
+          format: date-time
+          description: >-
+            Start of the symbol's earliest recorded book history (heatmap cells, book snapshots
+            or book deltas, whichever is older); null when nothing was ever recorded (E21-T03).
+        history:
+          type: string
+          enum: [full, partial, none]
+          description: >-
+            `full`: recorded history covers the requested `from`. `partial`: it starts later,
+            and the response starts at the bucket holding `first_available`. `none`: no
+            recorded history in the window, with empty axes and matrices (not an error).
+        samples:
+          type: array
+          description: >-
+            One per `times` entry: the native 100 ms book samples aggregated into the column
+            (24 §6.1). 0 is a column with no recorded data (a gap, never interpolated); a
+            complete column holds `effective_time_bucket_ms / 100`.
+          items: { type: integer, minimum: 0 }
+        estimated_columns:
+          type: array
+          description: One per `times` entry; true for a column built from a resyncing book or an unverified snapshot (24 §6.3).
+          items: { type: boolean }
+        effective_time_bucket_ms:
+          type: integer
+          enum: [100, 250, 500, 1000, 5000, 60000]
+          description: The bucket the `times` axis is built at; coarser than `time_bucket_ms` only when `clamped`.
+        segments:
+          type: array
+          description: Consecutive spans of the served range, oldest first, each with its source and effective resolution.
+          items: { $ref: "#/components/schemas/HeatmapSegment" }
+        clamped:
+          type: boolean
+          default: false
+          description: True when the server coarsened the bucket to fit its column cap.
+        next_cursor:
+          type: ["string", "null"]
+          maxLength: 128
+          description: Continues with the older remainder of the window (newest first); null when none remains.
+    HeatmapSegment:
+      type: object
+      required: [from, to, source, effective_resolution_ms]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        source:
+          type: string
+          enum: [hot, cold, reconstructed, downsampled]
+          description: >-
+            `hot` QuestDB cells, `cold` Parquet cells, `reconstructed` rebuilt from recorded
+            book snapshots and deltas, `downsampled` older than the 180-day boundary (21 §7).
+        effective_resolution_ms:
+          type: integer
+          minimum: 100
+          description: The finest time resolution the span's data holds; never finer than its source recorded.
     MetricPoint:
       type: object
       required: [t, v]

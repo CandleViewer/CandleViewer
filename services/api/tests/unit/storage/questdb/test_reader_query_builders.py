@@ -28,6 +28,7 @@ _BUILDERS_WITH_RANGE = [
     (reader.build_read_orderflow_metrics, ("BTCUSDT", "cvd", RNG)),
     (reader.build_read_footprint_cells, ("BTCUSDT", "time", "1m", RNG)),
     (reader.build_asof_trades_to_tickers, ("BTCUSDT", RNG)),
+    (reader.build_read_heatmap_cells, ("BTCUSDT", RNG, 10)),
 ]
 
 
@@ -91,6 +92,41 @@ def test_build_read_heatmap_trail_filters_symbol_and_since_ts() -> None:
     assert qb.params == ("BTCUSDT", ts_param(5_000))
     assert "symbol = $1" in qb.sql
     assert "ts > $2" in qb.sql
+
+
+def test_build_read_heatmap_cells_reads_the_column_fields_with_bound_params() -> None:
+    """E21-T03: the recorded read binds symbol and both bounds and names the E21-T02 fields."""
+    qb = reader.build_read_heatmap_cells("BTCUSDT", RNG, 10)
+    assert qb.params == ("BTCUSDT", ts_param(1_000), ts_param(2_000))
+    assert qb.sql.startswith("SELECT ts, price, bid_size, ask_size, samples, estimated FROM")
+    assert qb.sql.endswith("ORDER BY ts LIMIT 10")
+
+
+@pytest.mark.parametrize("bad", [0, reader.HEATMAP_PAGE_ROWS + 1, True])
+def test_build_read_heatmap_cells_bounds_its_page(bad: int) -> None:
+    """C-2.18: a page is at most `HEATMAP_PAGE_ROWS` rows, the engine's `CELL_SPAN_ROWS`."""
+    from candleviewer.orderflow.heatmap_history import CELL_SPAN_ROWS
+
+    assert reader.HEATMAP_PAGE_ROWS == CELL_SPAN_ROWS
+    with pytest.raises(ValueError, match="limit"):
+        reader.build_read_heatmap_cells("BTCUSDT", RNG, bad)
+
+
+def test_build_first_book_snapshot_is_one_ts_ordered_row() -> None:
+    qb = reader.build_first_book_snapshot("BTCUSDT")
+    assert qb.sql == "SELECT ts FROM orderbook_snapshots WHERE symbol = $1 ORDER BY ts LIMIT 1"
+
+
+def test_build_first_book_delta_is_one_ts_ordered_row() -> None:
+    qb = reader.build_first_book_delta("BTCUSDT")
+    assert qb.sql == "SELECT ts FROM orderbook_deltas WHERE symbol = $1 ORDER BY ts LIMIT 1"
+    assert qb.params == ("BTCUSDT",)
+
+
+def test_build_first_heatmap_cell_is_one_ts_ordered_row() -> None:
+    qb = reader.build_first_heatmap_cell("BTCUSDT")
+    assert qb.sql == "SELECT ts FROM heatmap_cells WHERE symbol = $1 ORDER BY ts LIMIT 1"
+    assert qb.params == ("BTCUSDT",)
 
 
 def test_build_read_profile_filters_symbol_kind_and_period_ref() -> None:

@@ -26,14 +26,22 @@ from typing import Final, Protocol
 
 import asyncpg
 
-from candleviewer.domain.sql_names import assert_bind_count, ts_param
+from candleviewer.domain.sql_names import assert_bind_count, ts_param, ts_us_from_row
 from candleviewer.storage.errors import HotReplayReadError, HotReplayReadTimeout
 from candleviewer.storage.models import StreamKind, TimeRange
-from candleviewer.storage.questdb.reader import QueryBuilder
+from candleviewer.storage.questdb.reader import (
+    QueryBuilder,
+    build_first_book_delta,
+    build_first_book_snapshot,
+    build_first_heatmap_cell,
+    build_read_heatmap_cells,
+)
 from candleviewer.storage.repositories.recorded import (
     BOOK_STREAMS,
+    HeatmapCell,
     RecordedEvent,
     RecordedQueryRejected,
+    cell_from_row,
     event_from_row,
     order_key,
 )
@@ -156,6 +164,30 @@ class QuestDbRecordedReader:
         if len(found) == ANCHOR_ROWS and found[0].ts_us == found[-1].ts_us:
             raise HotReplayReadError("more snapshots share one instant than an anchor lookup reads")
         return max(found, key=order_key, default=None)
+
+    async def heatmap_cells(self, symbol: str, rng: TimeRange, *, limit: int) -> list[HeatmapCell]:
+        """E21-T03: the earliest `limit` stored `heatmap_cells` rows of `symbol` in `rng`, `ts`
+        ordered (`limit` at most `HEATMAP_PAGE_ROWS`, C-2.18); mapped in a worker thread."""
+        if not _SYMBOL_RE.fullmatch(symbol):
+            raise RecordedQueryRejected("symbol is not a plain instrument code")
+        rows = await self._fetch(build_read_heatmap_cells(symbol, rng, limit))
+        return await asyncio.to_thread(lambda: [cell_from_row(r) for r in rows])
+
+    async def earliest(self, symbol: str, stream: StreamKind) -> int | None:
+        """E21-T03 `first_available`: the oldest stored `heatmap_cells`, `orderbook_snapshots` or
+        `orderbook_deltas` row of `symbol` (µs); None when there is none."""
+        if not _SYMBOL_RE.fullmatch(symbol):
+            raise RecordedQueryRejected("symbol is not a plain instrument code")
+        builders = {
+            StreamKind.HEATMAP_CELLS: build_first_heatmap_cell,
+            StreamKind.ORDERBOOK_SNAPSHOT: build_first_book_snapshot,
+            StreamKind.ORDERBOOK_DELTA: build_first_book_delta,
+        }
+        build = builders.get(stream)
+        if build is None:
+            raise RecordedQueryRejected(f"stream {stream.value!r} has no first-row read")
+        rows = await self._fetch(build(symbol))
+        return ts_us_from_row(rows[0]["ts"]) if rows else None
 
     async def _fetch(self, query: QueryBuilder) -> Sequence[Mapping[str, object]]:
         """The query's rows. A deadline raises `HotReplayReadTimeout` and a driver failure

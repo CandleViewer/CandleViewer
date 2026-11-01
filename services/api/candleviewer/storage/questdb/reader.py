@@ -165,6 +165,45 @@ def build_read_heatmap_trail(sym: str, since_ts_us: int) -> QueryBuilder:
     return QueryBuilder(sql, (sym, ts_param(since_ts_us)))
 
 
+#: E21-T03: one page of `heatmap_cells` rows, mirroring `orderflow.heatmap_history.CELL_SPAN_ROWS`
+#: (`storage` may not import `orderflow`; a unit test pins the two equal).
+HEATMAP_PAGE_ROWS = 32_768
+
+
+def build_read_heatmap_cells(sym: str, rng: TimeRange, limit: int) -> QueryBuilder:
+    """E21-T03 (#606) recorded heatmap read: the earliest `limit` stored rows of `sym` in `rng`,
+    ts-ordered: the level, its two sizes and the column's own `samples` and `estimated` (NULL
+    on rows recorded before E21-T02, 21 Sec.4.12). `limit` is a validated int, inlined (no
+    PGWire LIMIT slot, #2168), at most `HEATMAP_PAGE_ROWS` (C-2.18)."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= HEATMAP_PAGE_ROWS:
+        raise ValueError(f"limit must be an int in 1..{HEATMAP_PAGE_ROWS}")
+    sql = (
+        "SELECT ts, price, bid_size, ask_size, samples, estimated FROM heatmap_cells "  # noqa: S608  # nosec B608 reason=int-limit-validated-above owner=@CandleViewer/backend
+        f"WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts LIMIT {limit}"
+    )
+    return _checked(sql, (sym, ts_param(rng.start_us), ts_param(rng.end_us)))
+
+
+def build_first_heatmap_cell(sym: str) -> QueryBuilder:
+    """Oldest stored `heatmap_cells` row of `sym` (one row; designated-timestamp ordered): the
+    hot half of `first_available` (E21-T03)."""
+    return _checked("SELECT ts FROM heatmap_cells WHERE symbol = $1 ORDER BY ts LIMIT 1", (sym,))
+
+
+def build_first_book_snapshot(sym: str) -> QueryBuilder:
+    """Oldest stored `orderbook_snapshots` row of `sym`: the recorded book's start, the other
+    hot half of `first_available` (E21-T03, BQ-3; the recorder forces one a minute)."""
+    sql = "SELECT ts FROM orderbook_snapshots WHERE symbol = $1 ORDER BY ts LIMIT 1"
+    return _checked(sql, (sym,))
+
+
+def build_first_book_delta(sym: str) -> QueryBuilder:
+    """Oldest stored `orderbook_deltas` row of `sym`: the third hot half of `first_available`
+    (E21-T03, BQ-3), so a delta recorded before the first snapshot still opens the range."""
+    sql = "SELECT ts FROM orderbook_deltas WHERE symbol = $1 ORDER BY ts LIMIT 1"
+    return _checked(sql, (sym,))
+
+
 def build_read_book_snapshot_at(sym: str, ts_us: int) -> QueryBuilder:
     """Shape #7 (replay seek), snapshot half: nearest snapshot at/before
     `ts_us`."""
