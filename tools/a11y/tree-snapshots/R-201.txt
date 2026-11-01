@@ -1,0 +1,114 @@
+- link "Skip to main content":
+  - /url: "#cv-main"
+- banner:
+  - text: CandleViewer
+  - 'img "Trading environment: Demo"': ○ DEMO
+  - button "Account" [disabled]
+  - text: Not available in this build.
+  - button "Interval" [disabled]
+  - text: Not available in this build.
+  - button "Search commands Ctrl+K" [disabled]
+  - text: The command palette is not available in this build.
+  - 'button "Connection: Reconnecting"': Reconnecting
+  - button "Sign out"
+- navigation "Primary":
+  - list:
+    - listitem:
+      - link "Terminal":
+        - /url: /terminal
+    - listitem:
+      - link "Rules":
+        - /url: /rules
+    - listitem:
+      - link "Journal":
+        - /url: /journal
+    - listitem:
+      - link "Replay":
+        - /url: /replay
+    - listitem:
+      - link "Alerts":
+        - /url: /alerts
+    - listitem:
+      - link "Settings":
+        - /url: /settings
+    - listitem:
+      - link "Admin":
+        - /url: /admin
+  - button "Collapse navigation rail" [expanded]
+- main:
+  - text: Search settings
+  - searchbox "Search settings"
+  - navigation "Settings":
+    - list:
+      - listitem:
+        - link "Profile":
+          - /url: /settings/profile
+        - text: Name, contact details and defaults.
+      - listitem:
+        - link "Security":
+          - /url: /settings/profile#security
+        - text: Password, two-factor and active sessions.
+      - listitem:
+        - link "Appearance":
+          - /url: /settings/appearance
+        - text: Theme, density and chart colours.
+      - listitem:
+        - link "Hotkeys":
+          - /url: /settings/hotkeys
+        - text: Every command with its key binding.
+      - listitem:
+        - button "Trading defaults" [disabled]
+        - text: "Not available yet: this section ships in a later release."
+      - listitem:
+        - link "Notifications":
+          - /url: /settings/notifications
+        - text: Channels and quiet hours per event.
+      - listitem:
+        - button "Data & performance" [disabled]
+        - text: "Not available yet: this section ships in a later release."
+      - listitem:
+        - link "Accessibility":
+          - /url: /settings/appearance#accessibility
+        - text: Motion, contrast, focus and announcements.
+      - listitem:
+        - button "Help & about" [disabled]
+        - text: "Not available yet: this section ships in a later release."
+  - button "Reset Profile…" [disabled]
+  - text: "Not available yet: resetting needs the settings service."
+  - heading "Security settings" [level=1]
+  - region "Sessions":
+    - heading "Sessions" [level=2]
+    - status
+    - region "Signed-in sessions":
+      - table "Signed-in sessions":
+        - caption: Signed-in sessions
+        - rowgroup:
+          - row "Device IP address Signed in Last seen Action":
+            - columnheader "Device"
+            - columnheader "IP address"
+            - columnheader "Signed in"
+            - columnheader "Last seen"
+            - columnheader "Action"
+        - rowgroup:
+          - row "Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0This session 100.64.0.7 2026-10-27 08:00 UTC 2026-10-27 09:00 UTC Revoke Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0 (this session)":
+            - rowheader "Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0This session"
+            - cell "100.64.0.7"
+            - cell "2026-10-27 08:00 UTC"
+            - cell "2026-10-27 09:00 UTC"
+            - cell "Revoke Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0 (this session)":
+              - button "Revoke Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0 (this session)"
+          - row "Desktop app 100.64.0.7 2026-10-27 08:00 UTC 2026-10-27 09:00 UTC Revoke Desktop app, last seen 2026-10-27 09:00 UTC":
+            - rowheader "Desktop app"
+            - cell "100.64.0.7"
+            - cell "2026-10-27 08:00 UTC"
+            - cell "2026-10-27 09:00 UTC"
+            - cell "Revoke Desktop app, last seen 2026-10-27 09:00 UTC":
+              - button "Revoke Desktop app, last seen 2026-10-27 09:00 UTC"
+    - button "Sign out everywhere"
+- complementary "Side panels":
+  - button "Notifications"
+- contentinfo:
+  - text: "Connection: offline"
+  - status "System status": "WS latency: unavailable"
+  - text: "12:00:00 UTC Trading environment: Demo v0.1.0"
+- status

@@ -1,0 +1,1356 @@
+- link "Skip to main content":
+  - /url: "#cv-main"
+- banner:
+  - text: CandleViewer
+  - 'img "Trading environment: Demo"': ○ DEMO
+  - button "Account" [disabled]
+  - text: Not available in this build.
+  - button "Interval" [disabled]
+  - text: Not available in this build.
+  - button "Search commands Ctrl+K" [disabled]
+  - text: The command palette is not available in this build.
+  - 'button "Connection: Reconnecting"': Reconnecting
+  - button "Sign out"
+- navigation "Primary":
+  - list:
+    - listitem:
+      - link "Terminal":
+        - /url: /terminal
+    - listitem:
+      - link "Rules":
+        - /url: /rules
+    - listitem:
+      - link "Journal":
+        - /url: /journal
+    - listitem:
+      - link "Replay":
+        - /url: /replay
+    - listitem:
+      - link "Alerts":
+        - /url: /alerts
+    - listitem:
+      - link "Settings":
+        - /url: /settings
+    - listitem:
+      - link "Admin":
+        - /url: /admin
+  - button "Collapse navigation rail" [expanded]
+- main:
+  - text: Search settings
+  - searchbox "Search settings"
+  - navigation "Settings":
+    - list:
+      - listitem:
+        - link "Profile":
+          - /url: /settings/profile
+        - text: Name, contact details and defaults.
+      - listitem:
+        - link "Security":
+          - /url: /settings/profile#security
+        - text: Password, two-factor and active sessions.
+      - listitem:
+        - link "Appearance":
+          - /url: /settings/appearance
+        - text: Theme, density and chart colours.
+      - listitem:
+        - link "Hotkeys":
+          - /url: /settings/hotkeys
+        - text: Every command with its key binding.
+      - listitem:
+        - button "Trading defaults" [disabled]
+        - text: "Not available yet: this section ships in a later release."
+      - listitem:
+        - link "Notifications":
+          - /url: /settings/notifications
+        - text: Channels and quiet hours per event.
+      - listitem:
+        - button "Data & performance" [disabled]
+        - text: "Not available yet: this section ships in a later release."
+      - listitem:
+        - link "Accessibility":
+          - /url: /settings/appearance#accessibility
+        - text: Motion, contrast, focus and announcements.
+      - listitem:
+        - button "Help & about" [disabled]
+        - text: "Not available yet: this section ships in a later release."
+  - button "Reset Hotkeys…" [disabled]
+  - text: "Not available yet: resetting needs the settings service."
+  - region "Hotkeys":
+    - heading "Hotkeys" [level=1]
+    - paragraph: Saved on this device only.
+    - paragraph: "Trading commands (marked in the Context column) change the risk surface of your muscle memory: rebinding one is audited."
+    - text: Search commands
+    - searchbox "Search commands"
+    - text: Context
+    - combobox "Context":
+      - option "All contexts" [selected]
+      - option "Auth"
+      - option "Global"
+      - option "Workspace"
+      - option "Chart"
+      - option "DOM"
+      - option "Ticket"
+      - option "Positions"
+      - option "Rules"
+      - option "Replay"
+    - button "Print list"
+    - table "Current key bindings by context":
+      - caption: Current key bindings by context
+      - rowgroup:
+        - row "Context Command Binding Change":
+          - columnheader "Context"
+          - columnheader "Command"
+          - columnheader "Binding"
+          - columnheader "Change"
+      - rowgroup:
+        - row "Auth Submit sign-in Enter Unbind Submit sign-in Reset Submit sign-in Ctrl for Submit sign-in Alt for Submit sign-in Shift for Submit sign-in Key for Submit sign-in Record Submit sign-in Save Submit sign-in":
+          - cell "Auth"
+          - rowheader "Submit sign-in"
+          - cell "Enter Unbind Submit sign-in Reset Submit sign-in":
+            - text: Enter
+            - button "Unbind Submit sign-in"
+            - button "Reset Submit sign-in" [disabled]
+          - cell "Ctrl for Submit sign-in Alt for Submit sign-in Shift for Submit sign-in Key for Submit sign-in Record Submit sign-in Save Submit sign-in":
+            - checkbox "Ctrl for Submit sign-in"
+            - text: Ctrl for Submit sign-in
+            - checkbox "Alt for Submit sign-in"
+            - text: Alt for Submit sign-in
+            - checkbox "Shift for Submit sign-in"
+            - text: Shift for Submit sign-in Key for Submit sign-in
+            - textbox "Key for Submit sign-in"
+            - button "Record Submit sign-in"
+            - button "Save Submit sign-in" [disabled]
+        - row "Global Command palette Ctrl+K not remappable":
+          - cell "Global"
+          - rowheader "Command palette"
+          - cell "Ctrl+K"
+          - cell "not remappable"
+        - row "Global Account picker Ctrl+Shift+A Unbind Account picker Reset Account picker Ctrl for Account picker Alt for Account picker Shift for Account picker Key for Account picker Record Account picker Save Account picker":
+          - cell "Global"
+          - rowheader "Account picker"
+          - cell "Ctrl+Shift+A Unbind Account picker Reset Account picker":
+            - text: Ctrl+Shift+A
+            - button "Unbind Account picker"
+            - button "Reset Account picker" [disabled]
+          - cell "Ctrl for Account picker Alt for Account picker Shift for Account picker Key for Account picker Record Account picker Save Account picker":
+            - checkbox "Ctrl for Account picker"
+            - text: Ctrl for Account picker
+            - checkbox "Alt for Account picker"
+            - text: Alt for Account picker
+            - checkbox "Shift for Account picker"
+            - text: Shift for Account picker Key for Account picker
+            - textbox "Key for Account picker"
+            - button "Record Account picker"
+            - button "Save Account picker" [disabled]
+        - row "Global Hotkey cheatsheet Ctrl+/ Unbind Hotkey cheatsheet Reset Hotkey cheatsheet Ctrl for Hotkey cheatsheet Alt for Hotkey cheatsheet Shift for Hotkey cheatsheet Key for Hotkey cheatsheet Record Hotkey cheatsheet Save Hotkey cheatsheet":
+          - cell "Global"
+          - rowheader "Hotkey cheatsheet"
+          - cell "Ctrl+/ Unbind Hotkey cheatsheet Reset Hotkey cheatsheet":
+            - text: Ctrl+/
+            - button "Unbind Hotkey cheatsheet"
+            - button "Reset Hotkey cheatsheet" [disabled]
+          - cell "Ctrl for Hotkey cheatsheet Alt for Hotkey cheatsheet Shift for Hotkey cheatsheet Key for Hotkey cheatsheet Record Hotkey cheatsheet Save Hotkey cheatsheet":
+            - checkbox "Ctrl for Hotkey cheatsheet"
+            - text: Ctrl for Hotkey cheatsheet
+            - checkbox "Alt for Hotkey cheatsheet"
+            - text: Alt for Hotkey cheatsheet
+            - checkbox "Shift for Hotkey cheatsheet"
+            - text: Shift for Hotkey cheatsheet Key for Hotkey cheatsheet
+            - textbox "Key for Hotkey cheatsheet"
+            - button "Record Hotkey cheatsheet"
+            - button "Save Hotkey cheatsheet" [disabled]
+        - row "Global Full-screen workspace F11 Unbind Full-screen workspace Reset Full-screen workspace Ctrl for Full-screen workspace Alt for Full-screen workspace Shift for Full-screen workspace Key for Full-screen workspace Record Full-screen workspace Save Full-screen workspace":
+          - cell "Global"
+          - rowheader "Full-screen workspace"
+          - cell "F11 Unbind Full-screen workspace Reset Full-screen workspace":
+            - text: F11
+            - button "Unbind Full-screen workspace"
+            - button "Reset Full-screen workspace" [disabled]
+          - cell "Ctrl for Full-screen workspace Alt for Full-screen workspace Shift for Full-screen workspace Key for Full-screen workspace Record Full-screen workspace Save Full-screen workspace":
+            - checkbox "Ctrl for Full-screen workspace"
+            - text: Ctrl for Full-screen workspace
+            - checkbox "Alt for Full-screen workspace"
+            - text: Alt for Full-screen workspace
+            - checkbox "Shift for Full-screen workspace"
+            - text: Shift for Full-screen workspace Key for Full-screen workspace
+            - textbox "Key for Full-screen workspace"
+            - button "Record Full-screen workspace"
+            - button "Save Full-screen workspace" [disabled]
+        - row "Global Navigate rail item 1-9 Alt+1..9 Unbind Navigate rail item 1-9 Reset Navigate rail item 1-9 Ctrl for Navigate rail item 1-9 Alt for Navigate rail item 1-9 Shift for Navigate rail item 1-9 Key for Navigate rail item 1-9 Record Navigate rail item 1-9 Save Navigate rail item 1-9":
+          - cell "Global"
+          - rowheader "Navigate rail item 1-9"
+          - cell "Alt+1..9 Unbind Navigate rail item 1-9 Reset Navigate rail item 1-9":
+            - text: Alt+1..9
+            - button "Unbind Navigate rail item 1-9"
+            - button "Reset Navigate rail item 1-9" [disabled]
+          - cell "Ctrl for Navigate rail item 1-9 Alt for Navigate rail item 1-9 Shift for Navigate rail item 1-9 Key for Navigate rail item 1-9 Record Navigate rail item 1-9 Save Navigate rail item 1-9":
+            - checkbox "Ctrl for Navigate rail item 1-9"
+            - text: Ctrl for Navigate rail item 1-9
+            - checkbox "Alt for Navigate rail item 1-9"
+            - text: Alt for Navigate rail item 1-9
+            - checkbox "Shift for Navigate rail item 1-9"
+            - text: Shift for Navigate rail item 1-9 Key for Navigate rail item 1-9
+            - textbox "Key for Navigate rail item 1-9"
+            - button "Record Navigate rail item 1-9"
+            - button "Save Navigate rail item 1-9" [disabled]
+        - row "Global Symbol search / Unbind Symbol search Reset Symbol search Ctrl for Symbol search Alt for Symbol search Shift for Symbol search Key for Symbol search Record Symbol search Save Symbol search":
+          - cell "Global"
+          - rowheader "Symbol search"
+          - cell "/ Unbind Symbol search Reset Symbol search":
+            - text: /
+            - button "Unbind Symbol search"
+            - button "Reset Symbol search" [disabled]
+          - cell "Ctrl for Symbol search Alt for Symbol search Shift for Symbol search Key for Symbol search Record Symbol search Save Symbol search":
+            - checkbox "Ctrl for Symbol search"
+            - text: Ctrl for Symbol search
+            - checkbox "Alt for Symbol search"
+            - text: Alt for Symbol search
+            - checkbox "Shift for Symbol search"
+            - text: Shift for Symbol search Key for Symbol search
+            - textbox "Key for Symbol search"
+            - button "Record Symbol search"
+            - button "Save Symbol search" [disabled]
+        - row "Global Region cycling Ctrl+\\ Unbind Region cycling Reset Region cycling Ctrl for Region cycling Alt for Region cycling Shift for Region cycling Key for Region cycling Record Region cycling Save Region cycling":
+          - cell "Global"
+          - rowheader "Region cycling"
+          - cell "Ctrl+\\ Unbind Region cycling Reset Region cycling":
+            - text: Ctrl+\
+            - button "Unbind Region cycling"
+            - button "Reset Region cycling" [disabled]
+          - cell "Ctrl for Region cycling Alt for Region cycling Shift for Region cycling Key for Region cycling Record Region cycling Save Region cycling":
+            - checkbox "Ctrl for Region cycling"
+            - text: Ctrl for Region cycling
+            - checkbox "Alt for Region cycling"
+            - text: Alt for Region cycling
+            - checkbox "Shift for Region cycling"
+            - text: Shift for Region cycling Key for Region cycling
+            - textbox "Key for Region cycling"
+            - button "Record Region cycling"
+            - button "Save Region cycling" [disabled]
+        - row "Global Toggle high-contrast theme Ctrl+Shift+H Unbind Toggle high-contrast theme Reset Toggle high-contrast theme Ctrl for Toggle high-contrast theme Alt for Toggle high-contrast theme Shift for Toggle high-contrast theme Key for Toggle high-contrast theme Record Toggle high-contrast theme Save Toggle high-contrast theme":
+          - cell "Global"
+          - rowheader "Toggle high-contrast theme"
+          - cell "Ctrl+Shift+H Unbind Toggle high-contrast theme Reset Toggle high-contrast theme":
+            - text: Ctrl+Shift+H
+            - button "Unbind Toggle high-contrast theme"
+            - button "Reset Toggle high-contrast theme" [disabled]
+          - cell "Ctrl for Toggle high-contrast theme Alt for Toggle high-contrast theme Shift for Toggle high-contrast theme Key for Toggle high-contrast theme Record Toggle high-contrast theme Save Toggle high-contrast theme":
+            - checkbox "Ctrl for Toggle high-contrast theme"
+            - text: Ctrl for Toggle high-contrast theme
+            - checkbox "Alt for Toggle high-contrast theme"
+            - text: Alt for Toggle high-contrast theme
+            - checkbox "Shift for Toggle high-contrast theme"
+            - text: Shift for Toggle high-contrast theme Key for Toggle high-contrast theme
+            - textbox "Key for Toggle high-contrast theme"
+            - button "Record Toggle high-contrast theme"
+            - button "Save Toggle high-contrast theme" [disabled]
+        - row "Global Toggle reduced-motion override Ctrl+Shift+M Unbind Toggle reduced-motion override Reset Toggle reduced-motion override Ctrl for Toggle reduced-motion override Alt for Toggle reduced-motion override Shift for Toggle reduced-motion override Key for Toggle reduced-motion override Record Toggle reduced-motion override Save Toggle reduced-motion override":
+          - cell "Global"
+          - rowheader "Toggle reduced-motion override"
+          - cell "Ctrl+Shift+M Unbind Toggle reduced-motion override Reset Toggle reduced-motion override":
+            - text: Ctrl+Shift+M
+            - button "Unbind Toggle reduced-motion override"
+            - button "Reset Toggle reduced-motion override" [disabled]
+          - cell "Ctrl for Toggle reduced-motion override Alt for Toggle reduced-motion override Shift for Toggle reduced-motion override Key for Toggle reduced-motion override Record Toggle reduced-motion override Save Toggle reduced-motion override":
+            - checkbox "Ctrl for Toggle reduced-motion override"
+            - text: Ctrl for Toggle reduced-motion override
+            - checkbox "Alt for Toggle reduced-motion override"
+            - text: Alt for Toggle reduced-motion override
+            - checkbox "Shift for Toggle reduced-motion override"
+            - text: Shift for Toggle reduced-motion override Key for Toggle reduced-motion override
+            - textbox "Key for Toggle reduced-motion override"
+            - button "Record Toggle reduced-motion override"
+            - button "Save Toggle reduced-motion override" [disabled]
+        - row "Workspace Switch layout preset Ctrl+1..9 Unbind Switch layout preset Reset Switch layout preset Ctrl for Switch layout preset Alt for Switch layout preset Shift for Switch layout preset Key for Switch layout preset Record Switch layout preset Save Switch layout preset":
+          - cell "Workspace"
+          - rowheader "Switch layout preset"
+          - cell "Ctrl+1..9 Unbind Switch layout preset Reset Switch layout preset":
+            - text: Ctrl+1..9
+            - button "Unbind Switch layout preset"
+            - button "Reset Switch layout preset" [disabled]
+          - cell "Ctrl for Switch layout preset Alt for Switch layout preset Shift for Switch layout preset Key for Switch layout preset Record Switch layout preset Save Switch layout preset":
+            - checkbox "Ctrl for Switch layout preset"
+            - text: Ctrl for Switch layout preset
+            - checkbox "Alt for Switch layout preset"
+            - text: Alt for Switch layout preset
+            - checkbox "Shift for Switch layout preset"
+            - text: Shift for Switch layout preset Key for Switch layout preset
+            - textbox "Key for Switch layout preset"
+            - button "Record Switch layout preset"
+            - button "Save Switch layout preset" [disabled]
+        - row "Workspace Save layout Ctrl+S Unbind Save layout Reset Save layout Ctrl for Save layout Alt for Save layout Shift for Save layout Key for Save layout Record Save layout Save Save layout":
+          - cell "Workspace"
+          - rowheader "Save layout"
+          - cell "Ctrl+S Unbind Save layout Reset Save layout":
+            - text: Ctrl+S
+            - button "Unbind Save layout"
+            - button "Reset Save layout" [disabled]
+          - cell "Ctrl for Save layout Alt for Save layout Shift for Save layout Key for Save layout Record Save layout Save Save layout":
+            - checkbox "Ctrl for Save layout"
+            - text: Ctrl for Save layout
+            - checkbox "Alt for Save layout"
+            - text: Alt for Save layout
+            - checkbox "Shift for Save layout"
+            - text: Shift for Save layout Key for Save layout
+            - textbox "Key for Save layout"
+            - button "Record Save layout"
+            - button "Save Save layout" [disabled]
+        - row "Workspace Save layout as Ctrl+Shift+S Unbind Save layout as Reset Save layout as Ctrl for Save layout as Alt for Save layout as Shift for Save layout as Key for Save layout as Record Save layout as Save Save layout as":
+          - cell "Workspace"
+          - rowheader "Save layout as"
+          - cell "Ctrl+Shift+S Unbind Save layout as Reset Save layout as":
+            - text: Ctrl+Shift+S
+            - button "Unbind Save layout as"
+            - button "Reset Save layout as" [disabled]
+          - cell "Ctrl for Save layout as Alt for Save layout as Shift for Save layout as Key for Save layout as Record Save layout as Save Save layout as":
+            - checkbox "Ctrl for Save layout as"
+            - text: Ctrl for Save layout as
+            - checkbox "Alt for Save layout as"
+            - text: Alt for Save layout as
+            - checkbox "Shift for Save layout as"
+            - text: Shift for Save layout as Key for Save layout as
+            - textbox "Key for Save layout as"
+            - button "Record Save layout as"
+            - button "Save Save layout as" [disabled]
+        - row "Workspace Move panel Alt+drag Unbind Move panel Reset Move panel Ctrl for Move panel Alt for Move panel Shift for Move panel Key for Move panel Record Move panel Save Move panel":
+          - cell "Workspace"
+          - rowheader "Move panel"
+          - cell "Alt+drag Unbind Move panel Reset Move panel":
+            - text: Alt+drag
+            - button "Unbind Move panel"
+            - button "Reset Move panel" [disabled]
+          - cell "Ctrl for Move panel Alt for Move panel Shift for Move panel Key for Move panel Record Move panel Save Move panel":
+            - checkbox "Ctrl for Move panel"
+            - text: Ctrl for Move panel
+            - checkbox "Alt for Move panel"
+            - text: Alt for Move panel
+            - checkbox "Shift for Move panel"
+            - text: Shift for Move panel Key for Move panel
+            - textbox "Key for Move panel"
+            - button "Record Move panel"
+            - button "Save Move panel" [disabled]
+        - row "Workspace Full-screen active panel F11 Unbind Full-screen active panel Reset Full-screen active panel Ctrl for Full-screen active panel Alt for Full-screen active panel Shift for Full-screen active panel Key for Full-screen active panel Record Full-screen active panel Save Full-screen active panel":
+          - cell "Workspace"
+          - rowheader "Full-screen active panel"
+          - cell "F11 Unbind Full-screen active panel Reset Full-screen active panel":
+            - text: F11
+            - button "Unbind Full-screen active panel"
+            - button "Reset Full-screen active panel" [disabled]
+          - cell "Ctrl for Full-screen active panel Alt for Full-screen active panel Shift for Full-screen active panel Key for Full-screen active panel Record Full-screen active panel Save Full-screen active panel":
+            - checkbox "Ctrl for Full-screen active panel"
+            - text: Ctrl for Full-screen active panel
+            - checkbox "Alt for Full-screen active panel"
+            - text: Alt for Full-screen active panel
+            - checkbox "Shift for Full-screen active panel"
+            - text: Shift for Full-screen active panel Key for Full-screen active panel
+            - textbox "Key for Full-screen active panel"
+            - button "Record Full-screen active panel"
+            - button "Save Full-screen active panel" [disabled]
+        - row "Workspace Cycle panels backward Ctrl+Alt+← Unbind Cycle panels backward Reset Cycle panels backward Ctrl for Cycle panels backward Alt for Cycle panels backward Shift for Cycle panels backward Key for Cycle panels backward Record Cycle panels backward Save Cycle panels backward":
+          - cell "Workspace"
+          - rowheader "Cycle panels backward"
+          - cell "Ctrl+Alt+← Unbind Cycle panels backward Reset Cycle panels backward":
+            - text: Ctrl+Alt+←
+            - button "Unbind Cycle panels backward"
+            - button "Reset Cycle panels backward" [disabled]
+          - cell "Ctrl for Cycle panels backward Alt for Cycle panels backward Shift for Cycle panels backward Key for Cycle panels backward Record Cycle panels backward Save Cycle panels backward":
+            - checkbox "Ctrl for Cycle panels backward"
+            - text: Ctrl for Cycle panels backward
+            - checkbox "Alt for Cycle panels backward"
+            - text: Alt for Cycle panels backward
+            - checkbox "Shift for Cycle panels backward"
+            - text: Shift for Cycle panels backward Key for Cycle panels backward
+            - textbox "Key for Cycle panels backward"
+            - button "Record Cycle panels backward"
+            - button "Save Cycle panels backward" [disabled]
+        - row "Workspace Cycle panels forward Ctrl+Alt+→ Unbind Cycle panels forward Reset Cycle panels forward Ctrl for Cycle panels forward Alt for Cycle panels forward Shift for Cycle panels forward Key for Cycle panels forward Record Cycle panels forward Save Cycle panels forward":
+          - cell "Workspace"
+          - rowheader "Cycle panels forward"
+          - cell "Ctrl+Alt+→ Unbind Cycle panels forward Reset Cycle panels forward":
+            - text: Ctrl+Alt+→
+            - button "Unbind Cycle panels forward"
+            - button "Reset Cycle panels forward" [disabled]
+          - cell "Ctrl for Cycle panels forward Alt for Cycle panels forward Shift for Cycle panels forward Key for Cycle panels forward Record Cycle panels forward Save Cycle panels forward":
+            - checkbox "Ctrl for Cycle panels forward"
+            - text: Ctrl for Cycle panels forward
+            - checkbox "Alt for Cycle panels forward"
+            - text: Alt for Cycle panels forward
+            - checkbox "Shift for Cycle panels forward"
+            - text: Shift for Cycle panels forward Key for Cycle panels forward
+            - textbox "Key for Cycle panels forward"
+            - button "Record Cycle panels forward"
+            - button "Save Cycle panels forward" [disabled]
+        - row "Chart Toggle footprint F Unbind Toggle footprint Reset Toggle footprint Ctrl for Toggle footprint Alt for Toggle footprint Shift for Toggle footprint Key for Toggle footprint Record Toggle footprint Save Toggle footprint":
+          - cell "Chart"
+          - rowheader "Toggle footprint"
+          - cell "F Unbind Toggle footprint Reset Toggle footprint":
+            - text: F
+            - button "Unbind Toggle footprint"
+            - button "Reset Toggle footprint" [disabled]
+          - cell "Ctrl for Toggle footprint Alt for Toggle footprint Shift for Toggle footprint Key for Toggle footprint Record Toggle footprint Save Toggle footprint":
+            - checkbox "Ctrl for Toggle footprint"
+            - text: Ctrl for Toggle footprint
+            - checkbox "Alt for Toggle footprint"
+            - text: Alt for Toggle footprint
+            - checkbox "Shift for Toggle footprint"
+            - text: Shift for Toggle footprint Key for Toggle footprint
+            - textbox "Key for Toggle footprint"
+            - button "Record Toggle footprint"
+            - button "Save Toggle footprint" [disabled]
+        - row "Chart Footprint mode profile/box Alt+F Unbind Footprint mode profile/box Reset Footprint mode profile/box Ctrl for Footprint mode profile/box Alt for Footprint mode profile/box Shift for Footprint mode profile/box Key for Footprint mode profile/box Record Footprint mode profile/box Save Footprint mode profile/box":
+          - cell "Chart"
+          - rowheader "Footprint mode profile/box"
+          - cell "Alt+F Unbind Footprint mode profile/box Reset Footprint mode profile/box":
+            - text: Alt+F
+            - button "Unbind Footprint mode profile/box"
+            - button "Reset Footprint mode profile/box" [disabled]
+          - cell "Ctrl for Footprint mode profile/box Alt for Footprint mode profile/box Shift for Footprint mode profile/box Key for Footprint mode profile/box Record Footprint mode profile/box Save Footprint mode profile/box":
+            - checkbox "Ctrl for Footprint mode profile/box"
+            - text: Ctrl for Footprint mode profile/box
+            - checkbox "Alt for Footprint mode profile/box"
+            - text: Alt for Footprint mode profile/box
+            - checkbox "Shift for Footprint mode profile/box"
+            - text: Shift for Footprint mode profile/box Key for Footprint mode profile/box
+            - textbox "Key for Footprint mode profile/box"
+            - button "Record Footprint mode profile/box"
+            - button "Save Footprint mode profile/box" [disabled]
+        - row "Chart Interval preset 1-9 1..9 Unbind Interval preset 1-9 Reset Interval preset 1-9 Ctrl for Interval preset 1-9 Alt for Interval preset 1-9 Shift for Interval preset 1-9 Key for Interval preset 1-9 Record Interval preset 1-9 Save Interval preset 1-9":
+          - cell "Chart"
+          - rowheader "Interval preset 1-9"
+          - cell "1..9 Unbind Interval preset 1-9 Reset Interval preset 1-9":
+            - text: 1..9
+            - button "Unbind Interval preset 1-9"
+            - button "Reset Interval preset 1-9" [disabled]
+          - cell "Ctrl for Interval preset 1-9 Alt for Interval preset 1-9 Shift for Interval preset 1-9 Key for Interval preset 1-9 Record Interval preset 1-9 Save Interval preset 1-9":
+            - checkbox "Ctrl for Interval preset 1-9"
+            - text: Ctrl for Interval preset 1-9
+            - checkbox "Alt for Interval preset 1-9"
+            - text: Alt for Interval preset 1-9
+            - checkbox "Shift for Interval preset 1-9"
+            - text: Shift for Interval preset 1-9 Key for Interval preset 1-9
+            - textbox "Key for Interval preset 1-9"
+            - button "Record Interval preset 1-9"
+            - button "Save Interval preset 1-9" [disabled]
+        - row "Chart Zoom price scale Shift+wheel Unbind Zoom price scale Reset Zoom price scale Ctrl for Zoom price scale Alt for Zoom price scale Shift for Zoom price scale Key for Zoom price scale Record Zoom price scale Save Zoom price scale":
+          - cell "Chart"
+          - rowheader "Zoom price scale"
+          - cell "Shift+wheel Unbind Zoom price scale Reset Zoom price scale":
+            - text: Shift+wheel
+            - button "Unbind Zoom price scale"
+            - button "Reset Zoom price scale" [disabled]
+          - cell "Ctrl for Zoom price scale Alt for Zoom price scale Shift for Zoom price scale Key for Zoom price scale Record Zoom price scale Save Zoom price scale":
+            - checkbox "Ctrl for Zoom price scale"
+            - text: Ctrl for Zoom price scale
+            - checkbox "Alt for Zoom price scale"
+            - text: Alt for Zoom price scale
+            - checkbox "Shift for Zoom price scale"
+            - text: Shift for Zoom price scale Key for Zoom price scale
+            - textbox "Key for Zoom price scale"
+            - button "Record Zoom price scale"
+            - button "Save Zoom price scale" [disabled]
+        - row "Chart Place limit order at price (arm-gated) Ctrl+drag Unbind Place limit order at price (arm-gated) Reset Place limit order at price (arm-gated) Ctrl for Place limit order at price (arm-gated) Alt for Place limit order at price (arm-gated) Shift for Place limit order at price (arm-gated) Key for Place limit order at price (arm-gated) Record Place limit order at price (arm-gated) Save Place limit order at price (arm-gated)":
+          - cell "Chart"
+          - rowheader "Place limit order at price (arm-gated)"
+          - cell "Ctrl+drag Unbind Place limit order at price (arm-gated) Reset Place limit order at price (arm-gated)":
+            - text: Ctrl+drag
+            - button "Unbind Place limit order at price (arm-gated)"
+            - button "Reset Place limit order at price (arm-gated)" [disabled]
+          - cell "Ctrl for Place limit order at price (arm-gated) Alt for Place limit order at price (arm-gated) Shift for Place limit order at price (arm-gated) Key for Place limit order at price (arm-gated) Record Place limit order at price (arm-gated) Save Place limit order at price (arm-gated)":
+            - checkbox "Ctrl for Place limit order at price (arm-gated)"
+            - text: Ctrl for Place limit order at price (arm-gated)
+            - checkbox "Alt for Place limit order at price (arm-gated)"
+            - text: Alt for Place limit order at price (arm-gated)
+            - checkbox "Shift for Place limit order at price (arm-gated)"
+            - text: Shift for Place limit order at price (arm-gated) Key for Place limit order at price (arm-gated)
+            - textbox "Key for Place limit order at price (arm-gated)"
+            - button "Record Place limit order at price (arm-gated)"
+            - button "Save Place limit order at price (arm-gated)" [disabled]
+        - row "Chart Market order at market (arm-gated) Alt+click Unbind Market order at market (arm-gated) Reset Market order at market (arm-gated) Ctrl for Market order at market (arm-gated) Alt for Market order at market (arm-gated) Shift for Market order at market (arm-gated) Key for Market order at market (arm-gated) Record Market order at market (arm-gated) Save Market order at market (arm-gated)":
+          - cell "Chart"
+          - rowheader "Market order at market (arm-gated)"
+          - cell "Alt+click Unbind Market order at market (arm-gated) Reset Market order at market (arm-gated)":
+            - text: Alt+click
+            - button "Unbind Market order at market (arm-gated)"
+            - button "Reset Market order at market (arm-gated)" [disabled]
+          - cell "Ctrl for Market order at market (arm-gated) Alt for Market order at market (arm-gated) Shift for Market order at market (arm-gated) Key for Market order at market (arm-gated) Record Market order at market (arm-gated) Save Market order at market (arm-gated)":
+            - checkbox "Ctrl for Market order at market (arm-gated)"
+            - text: Ctrl for Market order at market (arm-gated)
+            - checkbox "Alt for Market order at market (arm-gated)"
+            - text: Alt for Market order at market (arm-gated)
+            - checkbox "Shift for Market order at market (arm-gated)"
+            - text: Shift for Market order at market (arm-gated) Key for Market order at market (arm-gated)
+            - textbox "Key for Market order at market (arm-gated)"
+            - button "Record Market order at market (arm-gated)"
+            - button "Save Market order at market (arm-gated)" [disabled]
+        - row "Chart Cancel in-progress drawing Esc not remappable":
+          - cell "Chart"
+          - rowheader "Cancel in-progress drawing"
+          - cell "Esc"
+          - cell "not remappable"
+        - row "Chart (trading) Delete selected drawing Del Unbind Delete selected drawing Reset Delete selected drawing Ctrl for Delete selected drawing Alt for Delete selected drawing Shift for Delete selected drawing Key for Delete selected drawing Record Delete selected drawing Save Delete selected drawing":
+          - cell "Chart (trading)"
+          - rowheader "Delete selected drawing"
+          - cell "Del Unbind Delete selected drawing Reset Delete selected drawing":
+            - text: Del
+            - button "Unbind Delete selected drawing"
+            - button "Reset Delete selected drawing" [disabled]
+          - cell "Ctrl for Delete selected drawing Alt for Delete selected drawing Shift for Delete selected drawing Key for Delete selected drawing Record Delete selected drawing Save Delete selected drawing":
+            - checkbox "Ctrl for Delete selected drawing"
+            - text: Ctrl for Delete selected drawing
+            - checkbox "Alt for Delete selected drawing"
+            - text: Alt for Delete selected drawing
+            - checkbox "Shift for Delete selected drawing"
+            - text: Shift for Delete selected drawing Key for Delete selected drawing
+            - textbox "Key for Delete selected drawing"
+            - button "Record Delete selected drawing"
+            - button "Save Delete selected drawing" [disabled]
+        - row "Chart Undo drawing Ctrl+Z Unbind Undo drawing Reset Undo drawing Ctrl for Undo drawing Alt for Undo drawing Shift for Undo drawing Key for Undo drawing Record Undo drawing Save Undo drawing":
+          - cell "Chart"
+          - rowheader "Undo drawing"
+          - cell "Ctrl+Z Unbind Undo drawing Reset Undo drawing":
+            - text: Ctrl+Z
+            - button "Unbind Undo drawing"
+            - button "Reset Undo drawing" [disabled]
+          - cell "Ctrl for Undo drawing Alt for Undo drawing Shift for Undo drawing Key for Undo drawing Record Undo drawing Save Undo drawing":
+            - checkbox "Ctrl for Undo drawing"
+            - text: Ctrl for Undo drawing
+            - checkbox "Alt for Undo drawing"
+            - text: Alt for Undo drawing
+            - checkbox "Shift for Undo drawing"
+            - text: Shift for Undo drawing Key for Undo drawing
+            - textbox "Key for Undo drawing"
+            - button "Record Undo drawing"
+            - button "Save Undo drawing" [disabled]
+        - row "Chart Redo drawing Ctrl+Y Unbind Redo drawing Reset Redo drawing Ctrl for Redo drawing Alt for Redo drawing Shift for Redo drawing Key for Redo drawing Record Redo drawing Save Redo drawing":
+          - cell "Chart"
+          - rowheader "Redo drawing"
+          - cell "Ctrl+Y Unbind Redo drawing Reset Redo drawing":
+            - text: Ctrl+Y
+            - button "Unbind Redo drawing"
+            - button "Reset Redo drawing" [disabled]
+          - cell "Ctrl for Redo drawing Alt for Redo drawing Shift for Redo drawing Key for Redo drawing Record Redo drawing Save Redo drawing":
+            - checkbox "Ctrl for Redo drawing"
+            - text: Ctrl for Redo drawing
+            - checkbox "Alt for Redo drawing"
+            - text: Alt for Redo drawing
+            - checkbox "Shift for Redo drawing"
+            - text: Shift for Redo drawing Key for Redo drawing
+            - textbox "Key for Redo drawing"
+            - button "Record Redo drawing"
+            - button "Save Redo drawing" [disabled]
+        - row "DOM Market order (click) Ctrl+click Unbind Market order (click) Reset Market order (click) Ctrl for Market order (click) Alt for Market order (click) Shift for Market order (click) Key for Market order (click) Record Market order (click) Save Market order (click)":
+          - cell "DOM"
+          - rowheader "Market order (click)"
+          - cell "Ctrl+click Unbind Market order (click) Reset Market order (click)":
+            - text: Ctrl+click
+            - button "Unbind Market order (click)"
+            - button "Reset Market order (click)" [disabled]
+          - cell "Ctrl for Market order (click) Alt for Market order (click) Shift for Market order (click) Key for Market order (click) Record Market order (click) Save Market order (click)":
+            - checkbox "Ctrl for Market order (click)"
+            - text: Ctrl for Market order (click)
+            - checkbox "Alt for Market order (click)"
+            - text: Alt for Market order (click)
+            - checkbox "Shift for Market order (click)"
+            - text: Shift for Market order (click) Key for Market order (click)
+            - textbox "Key for Market order (click)"
+            - button "Record Market order (click)"
+            - button "Save Market order (click)" [disabled]
+        - row "DOM Stop order (click) Shift+click Unbind Stop order (click) Reset Stop order (click) Ctrl for Stop order (click) Alt for Stop order (click) Shift for Stop order (click) Key for Stop order (click) Record Stop order (click) Save Stop order (click)":
+          - cell "DOM"
+          - rowheader "Stop order (click)"
+          - cell "Shift+click Unbind Stop order (click) Reset Stop order (click)":
+            - text: Shift+click
+            - button "Unbind Stop order (click)"
+            - button "Reset Stop order (click)" [disabled]
+          - cell "Ctrl for Stop order (click) Alt for Stop order (click) Shift for Stop order (click) Key for Stop order (click) Record Stop order (click) Save Stop order (click)":
+            - checkbox "Ctrl for Stop order (click)"
+            - text: Ctrl for Stop order (click)
+            - checkbox "Alt for Stop order (click)"
+            - text: Alt for Stop order (click)
+            - checkbox "Shift for Stop order (click)"
+            - text: Shift for Stop order (click) Key for Stop order (click)
+            - textbox "Key for Stop order (click)"
+            - button "Record Stop order (click)"
+            - button "Save Stop order (click)" [disabled]
+        - row "DOM (trading) Cancel all working orders for symbol Ctrl+Shift+X Unbind Cancel all working orders for symbol Reset Cancel all working orders for symbol Ctrl for Cancel all working orders for symbol Alt for Cancel all working orders for symbol Shift for Cancel all working orders for symbol Key for Cancel all working orders for symbol Record Cancel all working orders for symbol Save Cancel all working orders for symbol":
+          - cell "DOM (trading)"
+          - rowheader "Cancel all working orders for symbol"
+          - cell "Ctrl+Shift+X Unbind Cancel all working orders for symbol Reset Cancel all working orders for symbol":
+            - text: Ctrl+Shift+X
+            - button "Unbind Cancel all working orders for symbol"
+            - button "Reset Cancel all working orders for symbol" [disabled]
+          - cell "Ctrl for Cancel all working orders for symbol Alt for Cancel all working orders for symbol Shift for Cancel all working orders for symbol Key for Cancel all working orders for symbol Record Cancel all working orders for symbol Save Cancel all working orders for symbol":
+            - checkbox "Ctrl for Cancel all working orders for symbol"
+            - text: Ctrl for Cancel all working orders for symbol
+            - checkbox "Alt for Cancel all working orders for symbol"
+            - text: Alt for Cancel all working orders for symbol
+            - checkbox "Shift for Cancel all working orders for symbol"
+            - text: Shift for Cancel all working orders for symbol Key for Cancel all working orders for symbol
+            - textbox "Key for Cancel all working orders for symbol"
+            - button "Record Cancel all working orders for symbol"
+            - button "Save Cancel all working orders for symbol" [disabled]
+        - row "DOM Price zoom in + Unbind Price zoom in Reset Price zoom in Ctrl for Price zoom in Alt for Price zoom in Shift for Price zoom in Key for Price zoom in Record Price zoom in Save Price zoom in":
+          - cell "DOM"
+          - rowheader "Price zoom in"
+          - cell "+ Unbind Price zoom in Reset Price zoom in":
+            - text: +
+            - button "Unbind Price zoom in"
+            - button "Reset Price zoom in" [disabled]
+          - cell "Ctrl for Price zoom in Alt for Price zoom in Shift for Price zoom in Key for Price zoom in Record Price zoom in Save Price zoom in":
+            - checkbox "Ctrl for Price zoom in"
+            - text: Ctrl for Price zoom in
+            - checkbox "Alt for Price zoom in"
+            - text: Alt for Price zoom in
+            - checkbox "Shift for Price zoom in"
+            - text: Shift for Price zoom in Key for Price zoom in
+            - textbox "Key for Price zoom in"
+            - button "Record Price zoom in"
+            - button "Save Price zoom in" [disabled]
+        - row "DOM Price zoom out - Unbind Price zoom out Reset Price zoom out Ctrl for Price zoom out Alt for Price zoom out Shift for Price zoom out Key for Price zoom out Record Price zoom out Save Price zoom out":
+          - cell "DOM"
+          - rowheader "Price zoom out"
+          - cell "- Unbind Price zoom out Reset Price zoom out":
+            - text: "-"
+            - button "Unbind Price zoom out"
+            - button "Reset Price zoom out" [disabled]
+          - cell "Ctrl for Price zoom out Alt for Price zoom out Shift for Price zoom out Key for Price zoom out Record Price zoom out Save Price zoom out":
+            - checkbox "Ctrl for Price zoom out"
+            - text: Ctrl for Price zoom out
+            - checkbox "Alt for Price zoom out"
+            - text: Alt for Price zoom out
+            - checkbox "Shift for Price zoom out"
+            - text: Shift for Price zoom out Key for Price zoom out
+            - textbox "Key for Price zoom out"
+            - button "Record Price zoom out"
+            - button "Save Price zoom out" [disabled]
+        - row "DOM Centre on mark C Unbind Centre on mark Reset Centre on mark Ctrl for Centre on mark Alt for Centre on mark Shift for Centre on mark Key for Centre on mark Record Centre on mark Save Centre on mark":
+          - cell "DOM"
+          - rowheader "Centre on mark"
+          - cell "C Unbind Centre on mark Reset Centre on mark":
+            - text: C
+            - button "Unbind Centre on mark"
+            - button "Reset Centre on mark" [disabled]
+          - cell "Ctrl for Centre on mark Alt for Centre on mark Shift for Centre on mark Key for Centre on mark Record Centre on mark Save Centre on mark":
+            - checkbox "Ctrl for Centre on mark"
+            - text: Ctrl for Centre on mark
+            - checkbox "Alt for Centre on mark"
+            - text: Alt for Centre on mark
+            - checkbox "Shift for Centre on mark"
+            - text: Shift for Centre on mark Key for Centre on mark
+            - textbox "Key for Centre on mark"
+            - button "Record Centre on mark"
+            - button "Save Centre on mark" [disabled]
+        - row "DOM Re-centre and resume auto-follow Space Unbind Re-centre and resume auto-follow Reset Re-centre and resume auto-follow Ctrl for Re-centre and resume auto-follow Alt for Re-centre and resume auto-follow Shift for Re-centre and resume auto-follow Key for Re-centre and resume auto-follow Record Re-centre and resume auto-follow Save Re-centre and resume auto-follow":
+          - cell "DOM"
+          - rowheader "Re-centre and resume auto-follow"
+          - cell "Space Unbind Re-centre and resume auto-follow Reset Re-centre and resume auto-follow":
+            - text: Space
+            - button "Unbind Re-centre and resume auto-follow"
+            - button "Reset Re-centre and resume auto-follow" [disabled]
+          - cell "Ctrl for Re-centre and resume auto-follow Alt for Re-centre and resume auto-follow Shift for Re-centre and resume auto-follow Key for Re-centre and resume auto-follow Record Re-centre and resume auto-follow Save Re-centre and resume auto-follow":
+            - checkbox "Ctrl for Re-centre and resume auto-follow"
+            - text: Ctrl for Re-centre and resume auto-follow
+            - checkbox "Alt for Re-centre and resume auto-follow"
+            - text: Alt for Re-centre and resume auto-follow
+            - checkbox "Shift for Re-centre and resume auto-follow"
+            - text: Shift for Re-centre and resume auto-follow Key for Re-centre and resume auto-follow
+            - textbox "Key for Re-centre and resume auto-follow"
+            - button "Record Re-centre and resume auto-follow"
+            - button "Save Re-centre and resume auto-follow" [disabled]
+        - row "DOM (trading) Arm/disarm one-click Ctrl+Shift+T Unbind Arm/disarm one-click (DOM) Reset Arm/disarm one-click (DOM) Ctrl for Arm/disarm one-click (DOM) Alt for Arm/disarm one-click (DOM) Shift for Arm/disarm one-click (DOM) Key for Arm/disarm one-click (DOM) Record Arm/disarm one-click (DOM) Save Arm/disarm one-click (DOM)":
+          - cell "DOM (trading)"
+          - rowheader "Arm/disarm one-click"
+          - cell "Ctrl+Shift+T Unbind Arm/disarm one-click (DOM) Reset Arm/disarm one-click (DOM)":
+            - text: Ctrl+Shift+T
+            - button "Unbind Arm/disarm one-click (DOM)"
+            - button "Reset Arm/disarm one-click (DOM)" [disabled]
+          - cell "Ctrl for Arm/disarm one-click (DOM) Alt for Arm/disarm one-click (DOM) Shift for Arm/disarm one-click (DOM) Key for Arm/disarm one-click (DOM) Record Arm/disarm one-click (DOM) Save Arm/disarm one-click (DOM)":
+            - checkbox "Ctrl for Arm/disarm one-click (DOM)"
+            - text: Ctrl for Arm/disarm one-click (DOM)
+            - checkbox "Alt for Arm/disarm one-click (DOM)"
+            - text: Alt for Arm/disarm one-click (DOM)
+            - checkbox "Shift for Arm/disarm one-click (DOM)"
+            - text: Shift for Arm/disarm one-click (DOM) Key for Arm/disarm one-click (DOM)
+            - textbox "Key for Arm/disarm one-click (DOM)"
+            - button "Record Arm/disarm one-click (DOM)"
+            - button "Save Arm/disarm one-click (DOM)" [disabled]
+        - row "Ticket Set side Buy B Unbind Set side Buy Reset Set side Buy Ctrl for Set side Buy Alt for Set side Buy Shift for Set side Buy Key for Set side Buy Record Set side Buy Save Set side Buy":
+          - cell "Ticket"
+          - rowheader "Set side Buy"
+          - cell "B Unbind Set side Buy Reset Set side Buy":
+            - text: B
+            - button "Unbind Set side Buy"
+            - button "Reset Set side Buy" [disabled]
+          - cell "Ctrl for Set side Buy Alt for Set side Buy Shift for Set side Buy Key for Set side Buy Record Set side Buy Save Set side Buy":
+            - checkbox "Ctrl for Set side Buy"
+            - text: Ctrl for Set side Buy
+            - checkbox "Alt for Set side Buy"
+            - text: Alt for Set side Buy
+            - checkbox "Shift for Set side Buy"
+            - text: Shift for Set side Buy Key for Set side Buy
+            - textbox "Key for Set side Buy"
+            - button "Record Set side Buy"
+            - button "Save Set side Buy" [disabled]
+        - row "Ticket Set side Sell S Unbind Set side Sell Reset Set side Sell Ctrl for Set side Sell Alt for Set side Sell Shift for Set side Sell Key for Set side Sell Record Set side Sell Save Set side Sell":
+          - cell "Ticket"
+          - rowheader "Set side Sell"
+          - cell "S Unbind Set side Sell Reset Set side Sell":
+            - text: S
+            - button "Unbind Set side Sell"
+            - button "Reset Set side Sell" [disabled]
+          - cell "Ctrl for Set side Sell Alt for Set side Sell Shift for Set side Sell Key for Set side Sell Record Set side Sell Save Set side Sell":
+            - checkbox "Ctrl for Set side Sell"
+            - text: Ctrl for Set side Sell
+            - checkbox "Alt for Set side Sell"
+            - text: Alt for Set side Sell
+            - checkbox "Shift for Set side Sell"
+            - text: Shift for Set side Sell Key for Set side Sell
+            - textbox "Key for Set side Sell"
+            - button "Record Set side Sell"
+            - button "Save Set side Sell" [disabled]
+        - row "Ticket Quantity preset 1-4 1..4 Unbind Quantity preset 1-4 Reset Quantity preset 1-4 Ctrl for Quantity preset 1-4 Alt for Quantity preset 1-4 Shift for Quantity preset 1-4 Key for Quantity preset 1-4 Record Quantity preset 1-4 Save Quantity preset 1-4":
+          - cell "Ticket"
+          - rowheader "Quantity preset 1-4"
+          - cell "1..4 Unbind Quantity preset 1-4 Reset Quantity preset 1-4":
+            - text: 1..4
+            - button "Unbind Quantity preset 1-4"
+            - button "Reset Quantity preset 1-4" [disabled]
+          - cell "Ctrl for Quantity preset 1-4 Alt for Quantity preset 1-4 Shift for Quantity preset 1-4 Key for Quantity preset 1-4 Record Quantity preset 1-4 Save Quantity preset 1-4":
+            - checkbox "Ctrl for Quantity preset 1-4"
+            - text: Ctrl for Quantity preset 1-4
+            - checkbox "Alt for Quantity preset 1-4"
+            - text: Alt for Quantity preset 1-4
+            - checkbox "Shift for Quantity preset 1-4"
+            - text: Shift for Quantity preset 1-4 Key for Quantity preset 1-4
+            - textbox "Key for Quantity preset 1-4"
+            - button "Record Quantity preset 1-4"
+            - button "Save Quantity preset 1-4" [disabled]
+        - row "Ticket (trading) Submit order Ctrl+Enter Unbind Submit order Reset Submit order Ctrl for Submit order Alt for Submit order Shift for Submit order Key for Submit order Record Submit order Save Submit order":
+          - cell "Ticket (trading)"
+          - rowheader "Submit order"
+          - cell "Ctrl+Enter Unbind Submit order Reset Submit order":
+            - text: Ctrl+Enter
+            - button "Unbind Submit order"
+            - button "Reset Submit order" [disabled]
+          - cell "Ctrl for Submit order Alt for Submit order Shift for Submit order Key for Submit order Record Submit order Save Submit order":
+            - checkbox "Ctrl for Submit order"
+            - text: Ctrl for Submit order
+            - checkbox "Alt for Submit order"
+            - text: Alt for Submit order
+            - checkbox "Shift for Submit order"
+            - text: Shift for Submit order Key for Submit order
+            - textbox "Key for Submit order"
+            - button "Record Submit order"
+            - button "Save Submit order" [disabled]
+        - row "Ticket Clear ticket Esc not remappable":
+          - cell "Ticket"
+          - rowheader "Clear ticket"
+          - cell "Esc"
+          - cell "not remappable"
+        - row "Ticket Snap price to bid Alt+B Unbind Snap price to bid Reset Snap price to bid Ctrl for Snap price to bid Alt for Snap price to bid Shift for Snap price to bid Key for Snap price to bid Record Snap price to bid Save Snap price to bid":
+          - cell "Ticket"
+          - rowheader "Snap price to bid"
+          - cell "Alt+B Unbind Snap price to bid Reset Snap price to bid":
+            - text: Alt+B
+            - button "Unbind Snap price to bid"
+            - button "Reset Snap price to bid" [disabled]
+          - cell "Ctrl for Snap price to bid Alt for Snap price to bid Shift for Snap price to bid Key for Snap price to bid Record Snap price to bid Save Snap price to bid":
+            - checkbox "Ctrl for Snap price to bid"
+            - text: Ctrl for Snap price to bid
+            - checkbox "Alt for Snap price to bid"
+            - text: Alt for Snap price to bid
+            - checkbox "Shift for Snap price to bid"
+            - text: Shift for Snap price to bid Key for Snap price to bid
+            - textbox "Key for Snap price to bid"
+            - button "Record Snap price to bid"
+            - button "Save Snap price to bid" [disabled]
+        - row "Ticket Snap price to ask Alt+A Unbind Snap price to ask Reset Snap price to ask Ctrl for Snap price to ask Alt for Snap price to ask Shift for Snap price to ask Key for Snap price to ask Record Snap price to ask Save Snap price to ask":
+          - cell "Ticket"
+          - rowheader "Snap price to ask"
+          - cell "Alt+A Unbind Snap price to ask Reset Snap price to ask":
+            - text: Alt+A
+            - button "Unbind Snap price to ask"
+            - button "Reset Snap price to ask" [disabled]
+          - cell "Ctrl for Snap price to ask Alt for Snap price to ask Shift for Snap price to ask Key for Snap price to ask Record Snap price to ask Save Snap price to ask":
+            - checkbox "Ctrl for Snap price to ask"
+            - text: Ctrl for Snap price to ask
+            - checkbox "Alt for Snap price to ask"
+            - text: Alt for Snap price to ask
+            - checkbox "Shift for Snap price to ask"
+            - text: Shift for Snap price to ask Key for Snap price to ask
+            - textbox "Key for Snap price to ask"
+            - button "Record Snap price to ask"
+            - button "Save Snap price to ask" [disabled]
+        - row "Ticket Snap price to mid Alt+M Unbind Snap price to mid Reset Snap price to mid Ctrl for Snap price to mid Alt for Snap price to mid Shift for Snap price to mid Key for Snap price to mid Record Snap price to mid Save Snap price to mid":
+          - cell "Ticket"
+          - rowheader "Snap price to mid"
+          - cell "Alt+M Unbind Snap price to mid Reset Snap price to mid":
+            - text: Alt+M
+            - button "Unbind Snap price to mid"
+            - button "Reset Snap price to mid" [disabled]
+          - cell "Ctrl for Snap price to mid Alt for Snap price to mid Shift for Snap price to mid Key for Snap price to mid Record Snap price to mid Save Snap price to mid":
+            - checkbox "Ctrl for Snap price to mid"
+            - text: Ctrl for Snap price to mid
+            - checkbox "Alt for Snap price to mid"
+            - text: Alt for Snap price to mid
+            - checkbox "Shift for Snap price to mid"
+            - text: Shift for Snap price to mid Key for Snap price to mid
+            - textbox "Key for Snap price to mid"
+            - button "Record Snap price to mid"
+            - button "Save Snap price to mid" [disabled]
+        - row "Ticket Toggle reduce-only R Unbind Toggle reduce-only Reset Toggle reduce-only Ctrl for Toggle reduce-only Alt for Toggle reduce-only Shift for Toggle reduce-only Key for Toggle reduce-only Record Toggle reduce-only Save Toggle reduce-only":
+          - cell "Ticket"
+          - rowheader "Toggle reduce-only"
+          - cell "R Unbind Toggle reduce-only Reset Toggle reduce-only":
+            - text: R
+            - button "Unbind Toggle reduce-only"
+            - button "Reset Toggle reduce-only" [disabled]
+          - cell "Ctrl for Toggle reduce-only Alt for Toggle reduce-only Shift for Toggle reduce-only Key for Toggle reduce-only Record Toggle reduce-only Save Toggle reduce-only":
+            - checkbox "Ctrl for Toggle reduce-only"
+            - text: Ctrl for Toggle reduce-only
+            - checkbox "Alt for Toggle reduce-only"
+            - text: Alt for Toggle reduce-only
+            - checkbox "Shift for Toggle reduce-only"
+            - text: Shift for Toggle reduce-only Key for Toggle reduce-only
+            - textbox "Key for Toggle reduce-only"
+            - button "Record Toggle reduce-only"
+            - button "Save Toggle reduce-only" [disabled]
+        - row "Ticket (trading) Arm/disarm one-click Ctrl+Shift+T Unbind Arm/disarm one-click (Ticket) Reset Arm/disarm one-click (Ticket) Ctrl for Arm/disarm one-click (Ticket) Alt for Arm/disarm one-click (Ticket) Shift for Arm/disarm one-click (Ticket) Key for Arm/disarm one-click (Ticket) Record Arm/disarm one-click (Ticket) Save Arm/disarm one-click (Ticket)":
+          - cell "Ticket (trading)"
+          - rowheader "Arm/disarm one-click"
+          - cell "Ctrl+Shift+T Unbind Arm/disarm one-click (Ticket) Reset Arm/disarm one-click (Ticket)":
+            - text: Ctrl+Shift+T
+            - button "Unbind Arm/disarm one-click (Ticket)"
+            - button "Reset Arm/disarm one-click (Ticket)" [disabled]
+          - cell "Ctrl for Arm/disarm one-click (Ticket) Alt for Arm/disarm one-click (Ticket) Shift for Arm/disarm one-click (Ticket) Key for Arm/disarm one-click (Ticket) Record Arm/disarm one-click (Ticket) Save Arm/disarm one-click (Ticket)":
+            - checkbox "Ctrl for Arm/disarm one-click (Ticket)"
+            - text: Ctrl for Arm/disarm one-click (Ticket)
+            - checkbox "Alt for Arm/disarm one-click (Ticket)"
+            - text: Alt for Arm/disarm one-click (Ticket)
+            - checkbox "Shift for Arm/disarm one-click (Ticket)"
+            - text: Shift for Arm/disarm one-click (Ticket) Key for Arm/disarm one-click (Ticket)
+            - textbox "Key for Arm/disarm one-click (Ticket)"
+            - button "Record Arm/disarm one-click (Ticket)"
+            - button "Save Arm/disarm one-click (Ticket)" [disabled]
+        - row "Positions Open SL/TP editor Enter Unbind Open SL/TP editor Reset Open SL/TP editor Ctrl for Open SL/TP editor Alt for Open SL/TP editor Shift for Open SL/TP editor Key for Open SL/TP editor Record Open SL/TP editor Save Open SL/TP editor":
+          - cell "Positions"
+          - rowheader "Open SL/TP editor"
+          - cell "Enter Unbind Open SL/TP editor Reset Open SL/TP editor":
+            - text: Enter
+            - button "Unbind Open SL/TP editor"
+            - button "Reset Open SL/TP editor" [disabled]
+          - cell "Ctrl for Open SL/TP editor Alt for Open SL/TP editor Shift for Open SL/TP editor Key for Open SL/TP editor Record Open SL/TP editor Save Open SL/TP editor":
+            - checkbox "Ctrl for Open SL/TP editor"
+            - text: Ctrl for Open SL/TP editor
+            - checkbox "Alt for Open SL/TP editor"
+            - text: Alt for Open SL/TP editor
+            - checkbox "Shift for Open SL/TP editor"
+            - text: Shift for Open SL/TP editor Key for Open SL/TP editor
+            - textbox "Key for Open SL/TP editor"
+            - button "Record Open SL/TP editor"
+            - button "Save Open SL/TP editor" [disabled]
+        - row "Positions (trading) Close selected position (confirm) Ctrl+W Unbind Close selected position (confirm) Reset Close selected position (confirm) Ctrl for Close selected position (confirm) Alt for Close selected position (confirm) Shift for Close selected position (confirm) Key for Close selected position (confirm) Record Close selected position (confirm) Save Close selected position (confirm)":
+          - cell "Positions (trading)"
+          - rowheader "Close selected position (confirm)"
+          - cell "Ctrl+W Unbind Close selected position (confirm) Reset Close selected position (confirm)":
+            - text: Ctrl+W
+            - button "Unbind Close selected position (confirm)"
+            - button "Reset Close selected position (confirm)" [disabled]
+          - cell "Ctrl for Close selected position (confirm) Alt for Close selected position (confirm) Shift for Close selected position (confirm) Key for Close selected position (confirm) Record Close selected position (confirm) Save Close selected position (confirm)":
+            - checkbox "Ctrl for Close selected position (confirm)"
+            - text: Ctrl for Close selected position (confirm)
+            - checkbox "Alt for Close selected position (confirm)"
+            - text: Alt for Close selected position (confirm)
+            - checkbox "Shift for Close selected position (confirm)"
+            - text: Shift for Close selected position (confirm) Key for Close selected position (confirm)
+            - textbox "Key for Close selected position (confirm)"
+            - button "Record Close selected position (confirm)"
+            - button "Save Close selected position (confirm)" [disabled]
+        - row "Positions (trading) Close all in view (confirm) Ctrl+Shift+W Unbind Close all in view (confirm) Reset Close all in view (confirm) Ctrl for Close all in view (confirm) Alt for Close all in view (confirm) Shift for Close all in view (confirm) Key for Close all in view (confirm) Record Close all in view (confirm) Save Close all in view (confirm)":
+          - cell "Positions (trading)"
+          - rowheader "Close all in view (confirm)"
+          - cell "Ctrl+Shift+W Unbind Close all in view (confirm) Reset Close all in view (confirm)":
+            - text: Ctrl+Shift+W
+            - button "Unbind Close all in view (confirm)"
+            - button "Reset Close all in view (confirm)" [disabled]
+          - cell "Ctrl for Close all in view (confirm) Alt for Close all in view (confirm) Shift for Close all in view (confirm) Key for Close all in view (confirm) Record Close all in view (confirm) Save Close all in view (confirm)":
+            - checkbox "Ctrl for Close all in view (confirm)"
+            - text: Ctrl for Close all in view (confirm)
+            - checkbox "Alt for Close all in view (confirm)"
+            - text: Alt for Close all in view (confirm)
+            - checkbox "Shift for Close all in view (confirm)"
+            - text: Shift for Close all in view (confirm) Key for Close all in view (confirm)
+            - textbox "Key for Close all in view (confirm)"
+            - button "Record Close all in view (confirm)"
+            - button "Save Close all in view (confirm)" [disabled]
+        - row "Positions Multi-select toggle Ctrl Unbind Multi-select toggle Reset Multi-select toggle Ctrl for Multi-select toggle Alt for Multi-select toggle Shift for Multi-select toggle Key for Multi-select toggle Record Multi-select toggle Save Multi-select toggle":
+          - cell "Positions"
+          - rowheader "Multi-select toggle"
+          - cell "Ctrl Unbind Multi-select toggle Reset Multi-select toggle":
+            - text: Ctrl
+            - button "Unbind Multi-select toggle"
+            - button "Reset Multi-select toggle" [disabled]
+          - cell "Ctrl for Multi-select toggle Alt for Multi-select toggle Shift for Multi-select toggle Key for Multi-select toggle Record Multi-select toggle Save Multi-select toggle":
+            - checkbox "Ctrl for Multi-select toggle"
+            - text: Ctrl for Multi-select toggle
+            - checkbox "Alt for Multi-select toggle"
+            - text: Alt for Multi-select toggle
+            - checkbox "Shift for Multi-select toggle"
+            - text: Shift for Multi-select toggle Key for Multi-select toggle
+            - textbox "Key for Multi-select toggle"
+            - button "Record Multi-select toggle"
+            - button "Save Multi-select toggle" [disabled]
+        - row "Positions Multi-select range Shift Unbind Multi-select range Reset Multi-select range Ctrl for Multi-select range Alt for Multi-select range Shift for Multi-select range Key for Multi-select range Record Multi-select range Save Multi-select range":
+          - cell "Positions"
+          - rowheader "Multi-select range"
+          - cell "Shift Unbind Multi-select range Reset Multi-select range":
+            - text: Shift
+            - button "Unbind Multi-select range"
+            - button "Reset Multi-select range" [disabled]
+          - cell "Ctrl for Multi-select range Alt for Multi-select range Shift for Multi-select range Key for Multi-select range Record Multi-select range Save Multi-select range":
+            - checkbox "Ctrl for Multi-select range"
+            - text: Ctrl for Multi-select range
+            - checkbox "Alt for Multi-select range"
+            - text: Alt for Multi-select range
+            - checkbox "Shift for Multi-select range"
+            - text: Shift for Multi-select range Key for Multi-select range
+            - textbox "Key for Multi-select range"
+            - button "Record Multi-select range"
+            - button "Save Multi-select range" [disabled]
+        - row "Rules Save draft Ctrl+S Unbind Save draft Reset Save draft Ctrl for Save draft Alt for Save draft Shift for Save draft Key for Save draft Record Save draft Save Save draft":
+          - cell "Rules"
+          - rowheader "Save draft"
+          - cell "Ctrl+S Unbind Save draft Reset Save draft":
+            - text: Ctrl+S
+            - button "Unbind Save draft"
+            - button "Reset Save draft" [disabled]
+          - cell "Ctrl for Save draft Alt for Save draft Shift for Save draft Key for Save draft Record Save draft Save Save draft":
+            - checkbox "Ctrl for Save draft"
+            - text: Ctrl for Save draft
+            - checkbox "Alt for Save draft"
+            - text: Alt for Save draft
+            - checkbox "Shift for Save draft"
+            - text: Shift for Save draft Key for Save draft
+            - textbox "Key for Save draft"
+            - button "Record Save draft"
+            - button "Save Save draft" [disabled]
+        - row "Rules Validate Ctrl+Enter Unbind Validate Reset Validate Ctrl for Validate Alt for Validate Shift for Validate Key for Validate Record Validate Save Validate":
+          - cell "Rules"
+          - rowheader "Validate"
+          - cell "Ctrl+Enter Unbind Validate Reset Validate":
+            - text: Ctrl+Enter
+            - button "Unbind Validate"
+            - button "Reset Validate" [disabled]
+          - cell "Ctrl for Validate Alt for Validate Shift for Validate Key for Validate Record Validate Save Validate":
+            - checkbox "Ctrl for Validate"
+            - text: Ctrl for Validate
+            - checkbox "Alt for Validate"
+            - text: Alt for Validate
+            - checkbox "Shift for Validate"
+            - text: Shift for Validate Key for Validate
+            - textbox "Key for Validate"
+            - button "Record Validate"
+            - button "Save Validate" [disabled]
+        - row "Rules Switch to graph mode Alt+G Unbind Switch to graph mode Reset Switch to graph mode Ctrl for Switch to graph mode Alt for Switch to graph mode Shift for Switch to graph mode Key for Switch to graph mode Record Switch to graph mode Save Switch to graph mode":
+          - cell "Rules"
+          - rowheader "Switch to graph mode"
+          - cell "Alt+G Unbind Switch to graph mode Reset Switch to graph mode":
+            - text: Alt+G
+            - button "Unbind Switch to graph mode"
+            - button "Reset Switch to graph mode" [disabled]
+          - cell "Ctrl for Switch to graph mode Alt for Switch to graph mode Shift for Switch to graph mode Key for Switch to graph mode Record Switch to graph mode Save Switch to graph mode":
+            - checkbox "Ctrl for Switch to graph mode"
+            - text: Ctrl for Switch to graph mode
+            - checkbox "Alt for Switch to graph mode"
+            - text: Alt for Switch to graph mode
+            - checkbox "Shift for Switch to graph mode"
+            - text: Shift for Switch to graph mode Key for Switch to graph mode
+            - textbox "Key for Switch to graph mode"
+            - button "Record Switch to graph mode"
+            - button "Save Switch to graph mode" [disabled]
+        - row "Rules Reorder up Alt+↑ Unbind Reorder up Reset Reorder up Ctrl for Reorder up Alt for Reorder up Shift for Reorder up Key for Reorder up Record Reorder up Save Reorder up":
+          - cell "Rules"
+          - rowheader "Reorder up"
+          - cell "Alt+↑ Unbind Reorder up Reset Reorder up":
+            - text: Alt+↑
+            - button "Unbind Reorder up"
+            - button "Reset Reorder up" [disabled]
+          - cell "Ctrl for Reorder up Alt for Reorder up Shift for Reorder up Key for Reorder up Record Reorder up Save Reorder up":
+            - checkbox "Ctrl for Reorder up"
+            - text: Ctrl for Reorder up
+            - checkbox "Alt for Reorder up"
+            - text: Alt for Reorder up
+            - checkbox "Shift for Reorder up"
+            - text: Shift for Reorder up Key for Reorder up
+            - textbox "Key for Reorder up"
+            - button "Record Reorder up"
+            - button "Save Reorder up" [disabled]
+        - row "Rules Reorder down Alt+↓ Unbind Reorder down Reset Reorder down Ctrl for Reorder down Alt for Reorder down Shift for Reorder down Key for Reorder down Record Reorder down Save Reorder down":
+          - cell "Rules"
+          - rowheader "Reorder down"
+          - cell "Alt+↓ Unbind Reorder down Reset Reorder down":
+            - text: Alt+↓
+            - button "Unbind Reorder down"
+            - button "Reset Reorder down" [disabled]
+          - cell "Ctrl for Reorder down Alt for Reorder down Shift for Reorder down Key for Reorder down Record Reorder down Save Reorder down":
+            - checkbox "Ctrl for Reorder down"
+            - text: Ctrl for Reorder down
+            - checkbox "Alt for Reorder down"
+            - text: Alt for Reorder down
+            - checkbox "Shift for Reorder down"
+            - text: Shift for Reorder down Key for Reorder down
+            - textbox "Key for Reorder down"
+            - button "Record Reorder down"
+            - button "Save Reorder down" [disabled]
+        - row "Rules Duplicate row Ctrl+D Unbind Duplicate row Reset Duplicate row Ctrl for Duplicate row Alt for Duplicate row Shift for Duplicate row Key for Duplicate row Record Duplicate row Save Duplicate row":
+          - cell "Rules"
+          - rowheader "Duplicate row"
+          - cell "Ctrl+D Unbind Duplicate row Reset Duplicate row":
+            - text: Ctrl+D
+            - button "Unbind Duplicate row"
+            - button "Reset Duplicate row" [disabled]
+          - cell "Ctrl for Duplicate row Alt for Duplicate row Shift for Duplicate row Key for Duplicate row Record Duplicate row Save Duplicate row":
+            - checkbox "Ctrl for Duplicate row"
+            - text: Ctrl for Duplicate row
+            - checkbox "Alt for Duplicate row"
+            - text: Alt for Duplicate row
+            - checkbox "Shift for Duplicate row"
+            - text: Shift for Duplicate row Key for Duplicate row
+            - textbox "Key for Duplicate row"
+            - button "Record Duplicate row"
+            - button "Save Duplicate row" [disabled]
+        - row "Rules (trading) Delete selection Del Unbind Delete selection Reset Delete selection Ctrl for Delete selection Alt for Delete selection Shift for Delete selection Key for Delete selection Record Delete selection Save Delete selection":
+          - cell "Rules (trading)"
+          - rowheader "Delete selection"
+          - cell "Del Unbind Delete selection Reset Delete selection":
+            - text: Del
+            - button "Unbind Delete selection"
+            - button "Reset Delete selection" [disabled]
+          - cell "Ctrl for Delete selection Alt for Delete selection Shift for Delete selection Key for Delete selection Record Delete selection Save Delete selection":
+            - checkbox "Ctrl for Delete selection"
+            - text: Ctrl for Delete selection
+            - checkbox "Alt for Delete selection"
+            - text: Alt for Delete selection
+            - checkbox "Shift for Delete selection"
+            - text: Shift for Delete selection Key for Delete selection
+            - textbox "Key for Delete selection"
+            - button "Record Delete selection"
+            - button "Save Delete selection" [disabled]
+        - row "Rules Select all Ctrl+A Unbind Select all Reset Select all Ctrl for Select all Alt for Select all Shift for Select all Key for Select all Record Select all Save Select all":
+          - cell "Rules"
+          - rowheader "Select all"
+          - cell "Ctrl+A Unbind Select all Reset Select all":
+            - text: Ctrl+A
+            - button "Unbind Select all"
+            - button "Reset Select all" [disabled]
+          - cell "Ctrl for Select all Alt for Select all Shift for Select all Key for Select all Record Select all Save Select all":
+            - checkbox "Ctrl for Select all"
+            - text: Ctrl for Select all
+            - checkbox "Alt for Select all"
+            - text: Alt for Select all
+            - checkbox "Shift for Select all"
+            - text: Shift for Select all Key for Select all
+            - textbox "Key for Select all"
+            - button "Record Select all"
+            - button "Save Select all" [disabled]
+        - row "Rules Group into sub-graph Ctrl+G Unbind Group into sub-graph Reset Group into sub-graph Ctrl for Group into sub-graph Alt for Group into sub-graph Shift for Group into sub-graph Key for Group into sub-graph Record Group into sub-graph Save Group into sub-graph":
+          - cell "Rules"
+          - rowheader "Group into sub-graph"
+          - cell "Ctrl+G Unbind Group into sub-graph Reset Group into sub-graph":
+            - text: Ctrl+G
+            - button "Unbind Group into sub-graph"
+            - button "Reset Group into sub-graph" [disabled]
+          - cell "Ctrl for Group into sub-graph Alt for Group into sub-graph Shift for Group into sub-graph Key for Group into sub-graph Record Group into sub-graph Save Group into sub-graph":
+            - checkbox "Ctrl for Group into sub-graph"
+            - text: Ctrl for Group into sub-graph
+            - checkbox "Alt for Group into sub-graph"
+            - text: Alt for Group into sub-graph
+            - checkbox "Shift for Group into sub-graph"
+            - text: Shift for Group into sub-graph Key for Group into sub-graph
+            - textbox "Key for Group into sub-graph"
+            - button "Record Group into sub-graph"
+            - button "Save Group into sub-graph" [disabled]
+        - row "Rules Auto-layout Ctrl+L Unbind Auto-layout Reset Auto-layout Ctrl for Auto-layout Alt for Auto-layout Shift for Auto-layout Key for Auto-layout Record Auto-layout Save Auto-layout":
+          - cell "Rules"
+          - rowheader "Auto-layout"
+          - cell "Ctrl+L Unbind Auto-layout Reset Auto-layout":
+            - text: Ctrl+L
+            - button "Unbind Auto-layout"
+            - button "Reset Auto-layout" [disabled]
+          - cell "Ctrl for Auto-layout Alt for Auto-layout Shift for Auto-layout Key for Auto-layout Record Auto-layout Save Auto-layout":
+            - checkbox "Ctrl for Auto-layout"
+            - text: Ctrl for Auto-layout
+            - checkbox "Alt for Auto-layout"
+            - text: Alt for Auto-layout
+            - checkbox "Shift for Auto-layout"
+            - text: Shift for Auto-layout Key for Auto-layout
+            - textbox "Key for Auto-layout"
+            - button "Record Auto-layout"
+            - button "Save Auto-layout" [disabled]
+        - row "Rules Pan canvas Space+drag Unbind Pan canvas Reset Pan canvas Ctrl for Pan canvas Alt for Pan canvas Shift for Pan canvas Key for Pan canvas Record Pan canvas Save Pan canvas":
+          - cell "Rules"
+          - rowheader "Pan canvas"
+          - cell "Space+drag Unbind Pan canvas Reset Pan canvas":
+            - text: Space+drag
+            - button "Unbind Pan canvas"
+            - button "Reset Pan canvas" [disabled]
+          - cell "Ctrl for Pan canvas Alt for Pan canvas Shift for Pan canvas Key for Pan canvas Record Pan canvas Save Pan canvas":
+            - checkbox "Ctrl for Pan canvas"
+            - text: Ctrl for Pan canvas
+            - checkbox "Alt for Pan canvas"
+            - text: Alt for Pan canvas
+            - checkbox "Shift for Pan canvas"
+            - text: Shift for Pan canvas Key for Pan canvas
+            - textbox "Key for Pan canvas"
+            - button "Record Pan canvas"
+            - button "Save Pan canvas" [disabled]
+        - row "Rules Cycle nodes Tab Unbind Cycle nodes Reset Cycle nodes Ctrl for Cycle nodes Alt for Cycle nodes Shift for Cycle nodes Key for Cycle nodes Record Cycle nodes Save Cycle nodes":
+          - cell "Rules"
+          - rowheader "Cycle nodes"
+          - cell "Tab Unbind Cycle nodes Reset Cycle nodes":
+            - text: Tab
+            - button "Unbind Cycle nodes"
+            - button "Reset Cycle nodes" [disabled]
+          - cell "Ctrl for Cycle nodes Alt for Cycle nodes Shift for Cycle nodes Key for Cycle nodes Record Cycle nodes Save Cycle nodes":
+            - checkbox "Ctrl for Cycle nodes"
+            - text: Ctrl for Cycle nodes
+            - checkbox "Alt for Cycle nodes"
+            - text: Alt for Cycle nodes
+            - checkbox "Shift for Cycle nodes"
+            - text: Shift for Cycle nodes Key for Cycle nodes
+            - textbox "Key for Cycle nodes"
+            - button "Record Cycle nodes"
+            - button "Save Cycle nodes" [disabled]
+        - row "Rules Open node inspector Enter Unbind Open node inspector Reset Open node inspector Ctrl for Open node inspector Alt for Open node inspector Shift for Open node inspector Key for Open node inspector Record Open node inspector Save Open node inspector":
+          - cell "Rules"
+          - rowheader "Open node inspector"
+          - cell "Enter Unbind Open node inspector Reset Open node inspector":
+            - text: Enter
+            - button "Unbind Open node inspector"
+            - button "Reset Open node inspector" [disabled]
+          - cell "Ctrl for Open node inspector Alt for Open node inspector Shift for Open node inspector Key for Open node inspector Record Open node inspector Save Open node inspector":
+            - checkbox "Ctrl for Open node inspector"
+            - text: Ctrl for Open node inspector
+            - checkbox "Alt for Open node inspector"
+            - text: Alt for Open node inspector
+            - checkbox "Shift for Open node inspector"
+            - text: Shift for Open node inspector Key for Open node inspector
+            - textbox "Key for Open node inspector"
+            - button "Record Open node inspector"
+            - button "Save Open node inspector" [disabled]
+        - row "Rules Rename node F2 Unbind Rename node Reset Rename node Ctrl for Rename node Alt for Rename node Shift for Rename node Key for Rename node Record Rename node Save Rename node":
+          - cell "Rules"
+          - rowheader "Rename node"
+          - cell "F2 Unbind Rename node Reset Rename node":
+            - text: F2
+            - button "Unbind Rename node"
+            - button "Reset Rename node" [disabled]
+          - cell "Ctrl for Rename node Alt for Rename node Shift for Rename node Key for Rename node Record Rename node Save Rename node":
+            - checkbox "Ctrl for Rename node"
+            - text: Ctrl for Rename node
+            - checkbox "Alt for Rename node"
+            - text: Alt for Rename node
+            - checkbox "Shift for Rename node"
+            - text: Shift for Rename node Key for Rename node
+            - textbox "Key for Rename node"
+            - button "Record Rename node"
+            - button "Save Rename node" [disabled]
+        - row "Replay Play / pause Space Unbind Play / pause Reset Play / pause Ctrl for Play / pause Alt for Play / pause Shift for Play / pause Key for Play / pause Record Play / pause Save Play / pause":
+          - cell "Replay"
+          - rowheader "Play / pause"
+          - cell "Space Unbind Play / pause Reset Play / pause":
+            - text: Space
+            - button "Unbind Play / pause"
+            - button "Reset Play / pause" [disabled]
+          - cell "Ctrl for Play / pause Alt for Play / pause Shift for Play / pause Key for Play / pause Record Play / pause Save Play / pause":
+            - checkbox "Ctrl for Play / pause"
+            - text: Ctrl for Play / pause
+            - checkbox "Alt for Play / pause"
+            - text: Alt for Play / pause
+            - checkbox "Shift for Play / pause"
+            - text: Shift for Play / pause Key for Play / pause
+            - textbox "Key for Play / pause"
+            - button "Record Play / pause"
+            - button "Save Play / pause" [disabled]
+        - row "Replay Step one bar back ← Unbind Step one bar back Reset Step one bar back Ctrl for Step one bar back Alt for Step one bar back Shift for Step one bar back Key for Step one bar back Record Step one bar back Save Step one bar back":
+          - cell "Replay"
+          - rowheader "Step one bar back"
+          - cell "← Unbind Step one bar back Reset Step one bar back":
+            - text: ←
+            - button "Unbind Step one bar back"
+            - button "Reset Step one bar back" [disabled]
+          - cell "Ctrl for Step one bar back Alt for Step one bar back Shift for Step one bar back Key for Step one bar back Record Step one bar back Save Step one bar back":
+            - checkbox "Ctrl for Step one bar back"
+            - text: Ctrl for Step one bar back
+            - checkbox "Alt for Step one bar back"
+            - text: Alt for Step one bar back
+            - checkbox "Shift for Step one bar back"
+            - text: Shift for Step one bar back Key for Step one bar back
+            - textbox "Key for Step one bar back"
+            - button "Record Step one bar back"
+            - button "Save Step one bar back" [disabled]
+        - row "Replay Step one bar forward → Unbind Step one bar forward Reset Step one bar forward Ctrl for Step one bar forward Alt for Step one bar forward Shift for Step one bar forward Key for Step one bar forward Record Step one bar forward Save Step one bar forward":
+          - cell "Replay"
+          - rowheader "Step one bar forward"
+          - cell "→ Unbind Step one bar forward Reset Step one bar forward":
+            - text: →
+            - button "Unbind Step one bar forward"
+            - button "Reset Step one bar forward" [disabled]
+          - cell "Ctrl for Step one bar forward Alt for Step one bar forward Shift for Step one bar forward Key for Step one bar forward Record Step one bar forward Save Step one bar forward":
+            - checkbox "Ctrl for Step one bar forward"
+            - text: Ctrl for Step one bar forward
+            - checkbox "Alt for Step one bar forward"
+            - text: Alt for Step one bar forward
+            - checkbox "Shift for Step one bar forward"
+            - text: Shift for Step one bar forward Key for Step one bar forward
+            - textbox "Key for Step one bar forward"
+            - button "Record Step one bar forward"
+            - button "Save Step one bar forward" [disabled]
+        - row "Replay Step one tick back Shift+← Unbind Step one tick back Reset Step one tick back Ctrl for Step one tick back Alt for Step one tick back Shift for Step one tick back Key for Step one tick back Record Step one tick back Save Step one tick back":
+          - cell "Replay"
+          - rowheader "Step one tick back"
+          - cell "Shift+← Unbind Step one tick back Reset Step one tick back":
+            - text: Shift+←
+            - button "Unbind Step one tick back"
+            - button "Reset Step one tick back" [disabled]
+          - cell "Ctrl for Step one tick back Alt for Step one tick back Shift for Step one tick back Key for Step one tick back Record Step one tick back Save Step one tick back":
+            - checkbox "Ctrl for Step one tick back"
+            - text: Ctrl for Step one tick back
+            - checkbox "Alt for Step one tick back"
+            - text: Alt for Step one tick back
+            - checkbox "Shift for Step one tick back"
+            - text: Shift for Step one tick back Key for Step one tick back
+            - textbox "Key for Step one tick back"
+            - button "Record Step one tick back"
+            - button "Save Step one tick back" [disabled]
+        - row "Replay Step one tick forward Shift+→ Unbind Step one tick forward Reset Step one tick forward Ctrl for Step one tick forward Alt for Step one tick forward Shift for Step one tick forward Key for Step one tick forward Record Step one tick forward Save Step one tick forward":
+          - cell "Replay"
+          - rowheader "Step one tick forward"
+          - cell "Shift+→ Unbind Step one tick forward Reset Step one tick forward":
+            - text: Shift+→
+            - button "Unbind Step one tick forward"
+            - button "Reset Step one tick forward" [disabled]
+          - cell "Ctrl for Step one tick forward Alt for Step one tick forward Shift for Step one tick forward Key for Step one tick forward Record Step one tick forward Save Step one tick forward":
+            - checkbox "Ctrl for Step one tick forward"
+            - text: Ctrl for Step one tick forward
+            - checkbox "Alt for Step one tick forward"
+            - text: Alt for Step one tick forward
+            - checkbox "Shift for Step one tick forward"
+            - text: Shift for Step one tick forward Key for Step one tick forward
+            - textbox "Key for Step one tick forward"
+            - button "Record Step one tick forward"
+            - button "Save Step one tick forward" [disabled]
+        - row "Replay Jump back 1 minute Ctrl+← Unbind Jump back 1 minute Reset Jump back 1 minute Ctrl for Jump back 1 minute Alt for Jump back 1 minute Shift for Jump back 1 minute Key for Jump back 1 minute Record Jump back 1 minute Save Jump back 1 minute":
+          - cell "Replay"
+          - rowheader "Jump back 1 minute"
+          - cell "Ctrl+← Unbind Jump back 1 minute Reset Jump back 1 minute":
+            - text: Ctrl+←
+            - button "Unbind Jump back 1 minute"
+            - button "Reset Jump back 1 minute" [disabled]
+          - cell "Ctrl for Jump back 1 minute Alt for Jump back 1 minute Shift for Jump back 1 minute Key for Jump back 1 minute Record Jump back 1 minute Save Jump back 1 minute":
+            - checkbox "Ctrl for Jump back 1 minute"
+            - text: Ctrl for Jump back 1 minute
+            - checkbox "Alt for Jump back 1 minute"
+            - text: Alt for Jump back 1 minute
+            - checkbox "Shift for Jump back 1 minute"
+            - text: Shift for Jump back 1 minute Key for Jump back 1 minute
+            - textbox "Key for Jump back 1 minute"
+            - button "Record Jump back 1 minute"
+            - button "Save Jump back 1 minute" [disabled]
+        - row "Replay Jump forward 1 minute Ctrl+→ Unbind Jump forward 1 minute Reset Jump forward 1 minute Ctrl for Jump forward 1 minute Alt for Jump forward 1 minute Shift for Jump forward 1 minute Key for Jump forward 1 minute Record Jump forward 1 minute Save Jump forward 1 minute":
+          - cell "Replay"
+          - rowheader "Jump forward 1 minute"
+          - cell "Ctrl+→ Unbind Jump forward 1 minute Reset Jump forward 1 minute":
+            - text: Ctrl+→
+            - button "Unbind Jump forward 1 minute"
+            - button "Reset Jump forward 1 minute" [disabled]
+          - cell "Ctrl for Jump forward 1 minute Alt for Jump forward 1 minute Shift for Jump forward 1 minute Key for Jump forward 1 minute Record Jump forward 1 minute Save Jump forward 1 minute":
+            - checkbox "Ctrl for Jump forward 1 minute"
+            - text: Ctrl for Jump forward 1 minute
+            - checkbox "Alt for Jump forward 1 minute"
+            - text: Alt for Jump forward 1 minute
+            - checkbox "Shift for Jump forward 1 minute"
+            - text: Shift for Jump forward 1 minute Key for Jump forward 1 minute
+            - textbox "Key for Jump forward 1 minute"
+            - button "Record Jump forward 1 minute"
+            - button "Save Jump forward 1 minute" [disabled]
+        - row "Replay Jump to real time R Unbind Jump to real time Reset Jump to real time Ctrl for Jump to real time Alt for Jump to real time Shift for Jump to real time Key for Jump to real time Record Jump to real time Save Jump to real time":
+          - cell "Replay"
+          - rowheader "Jump to real time"
+          - cell "R Unbind Jump to real time Reset Jump to real time":
+            - text: R
+            - button "Unbind Jump to real time"
+            - button "Reset Jump to real time" [disabled]
+          - cell "Ctrl for Jump to real time Alt for Jump to real time Shift for Jump to real time Key for Jump to real time Record Jump to real time Save Jump to real time":
+            - checkbox "Ctrl for Jump to real time"
+            - text: Ctrl for Jump to real time
+            - checkbox "Alt for Jump to real time"
+            - text: Alt for Jump to real time
+            - checkbox "Shift for Jump to real time"
+            - text: Shift for Jump to real time Key for Jump to real time
+            - textbox "Key for Jump to real time"
+            - button "Record Jump to real time"
+            - button "Save Jump to real time" [disabled]
+        - row "Replay Set bookmark B Unbind Set bookmark Reset Set bookmark Ctrl for Set bookmark Alt for Set bookmark Shift for Set bookmark Key for Set bookmark Record Set bookmark Save Set bookmark":
+          - cell "Replay"
+          - rowheader "Set bookmark"
+          - cell "B Unbind Set bookmark Reset Set bookmark":
+            - text: B
+            - button "Unbind Set bookmark"
+            - button "Reset Set bookmark" [disabled]
+          - cell "Ctrl for Set bookmark Alt for Set bookmark Shift for Set bookmark Key for Set bookmark Record Set bookmark Save Set bookmark":
+            - checkbox "Ctrl for Set bookmark"
+            - text: Ctrl for Set bookmark
+            - checkbox "Alt for Set bookmark"
+            - text: Alt for Set bookmark
+            - checkbox "Shift for Set bookmark"
+            - text: Shift for Set bookmark Key for Set bookmark
+            - textbox "Key for Set bookmark"
+            - button "Record Set bookmark"
+            - button "Save Set bookmark" [disabled]
+        - row "Replay Previous bookmark [ Unbind Previous bookmark Reset Previous bookmark Ctrl for Previous bookmark Alt for Previous bookmark Shift for Previous bookmark Key for Previous bookmark Record Previous bookmark Save Previous bookmark":
+          - cell "Replay"
+          - rowheader "Previous bookmark"
+          - cell "[ Unbind Previous bookmark Reset Previous bookmark":
+            - text: "["
+            - button "Unbind Previous bookmark"
+            - button "Reset Previous bookmark" [disabled]
+          - cell "Ctrl for Previous bookmark Alt for Previous bookmark Shift for Previous bookmark Key for Previous bookmark Record Previous bookmark Save Previous bookmark":
+            - checkbox "Ctrl for Previous bookmark"
+            - text: Ctrl for Previous bookmark
+            - checkbox "Alt for Previous bookmark"
+            - text: Alt for Previous bookmark
+            - checkbox "Shift for Previous bookmark"
+            - text: Shift for Previous bookmark Key for Previous bookmark
+            - textbox "Key for Previous bookmark"
+            - button "Record Previous bookmark"
+            - button "Save Previous bookmark" [disabled]
+        - row "Replay Next bookmark ] Unbind Next bookmark Reset Next bookmark Ctrl for Next bookmark Alt for Next bookmark Shift for Next bookmark Key for Next bookmark Record Next bookmark Save Next bookmark":
+          - cell "Replay"
+          - rowheader "Next bookmark"
+          - cell "] Unbind Next bookmark Reset Next bookmark":
+            - text: "]"
+            - button "Unbind Next bookmark"
+            - button "Reset Next bookmark" [disabled]
+          - cell "Ctrl for Next bookmark Alt for Next bookmark Shift for Next bookmark Key for Next bookmark Record Next bookmark Save Next bookmark":
+            - checkbox "Ctrl for Next bookmark"
+            - text: Ctrl for Next bookmark
+            - checkbox "Alt for Next bookmark"
+            - text: Alt for Next bookmark
+            - checkbox "Shift for Next bookmark"
+            - text: Shift for Next bookmark Key for Next bookmark
+            - textbox "Key for Next bookmark"
+            - button "Record Next bookmark"
+            - button "Save Next bookmark" [disabled]
+    - button "Reset all"
+    - text: Import keymap (JSON)
+    - textbox "Import keymap (JSON)"
+    - button "Import" [disabled]
+    - button "Export"
+- complementary "Side panels":
+  - button "Notifications"
+- contentinfo:
+  - text: "Connection: offline"
+  - status "System status": "WS latency: unavailable"
+  - text: "12:00:00 UTC Trading environment: Demo v0.1.0"
+- status
