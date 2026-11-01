@@ -21,6 +21,7 @@ import inspect
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
+from uuid import UUID
 
 import pytest
 import structlog
@@ -78,6 +79,20 @@ def test_the_scopes_name_the_order_its_account_and_its_state() -> None:
     assert order_machine._step_scope(step) == {
         "order_link_id": "cvl-1", "account_id": str(ACCOUNT), "state": "submitting"
     }  # fmt: skip
+
+
+def test_the_order_scope_names_the_order_its_account_and_its_state() -> None:
+    """The critical section's fields (`_holding`): the order's `order_link_id` once its view names
+    one, its `account_id` and its B1 `state`, and no other field (C-12.6)."""
+    named = order_machine._Order(
+        order_id=UUID(int=1), account_id=ACCOUNT, environment="demo", lifecycle="submitting",
+        view={"order_link_id": "cvl-1"},
+    )  # fmt: skip
+    assert order_machine._order_scope(named) == {
+        "order_link_id": "cvl-1", "account_id": str(ACCOUNT), "state": "submitting"
+    }  # fmt: skip
+    unnamed = order_machine._Order(order_id=UUID(int=2), account_id=ACCOUNT, environment="demo")
+    assert order_machine._order_scope(unnamed) == {"account_id": str(ACCOUNT), "state": "draft"}
 
 
 @pytest.fixture

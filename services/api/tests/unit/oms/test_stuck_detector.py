@@ -15,6 +15,7 @@ import pytest
 from prometheus_client import generate_latest
 from pydantic import ValidationError
 
+from candleviewer.domain.primitives import AccountId
 from candleviewer.oms import reconcile_job
 from candleviewer.oms.incidents import (
     DETAILS,
@@ -26,8 +27,10 @@ from candleviewer.oms.incidents import (
     event_kind,
     incident,
 )
+from candleviewer.oms.reconcile_standing import ReconcileStanding
 from candleviewer.oms.stuck_detector import (
     COOLDOWN_S,
+    SCAN_JITTER_S,
     UNKNOWN_CYCLE_S,
     Dedupe,
     Thresholds,
@@ -197,13 +200,43 @@ def test_a_stale_account_raises_at_once_then_each_cool_down() -> None:
     assert _stale(dedupe, ACCOUNT, now=COOLDOWN_S + 10) == [0.0]
 
 
-def test_each_map_forgets_its_oldest_key_past_its_cap() -> None:
-    """C-2.18: a forgotten key raises once more, never less."""
+def test_the_order_map_forgets_its_oldest_order_past_its_cap() -> None:
+    """C-2.18: a forgotten order raises once more, never less."""
     dedupe = Dedupe(DEFAULTS, max_tracked=2)
     assert (
         _orders(dedupe, order(1), order(2), order(3), now=0.0, complete=False) == ["in_flight"] * 3
     )
     assert _orders(dedupe, order(1), now=5.0, complete=False) == ["in_flight"]  # evicted
+
+
+def test_the_episode_map_forgets_its_oldest_position_past_its_cap() -> None:
+    """C-2.18: a forgotten episode begins again at the next scan that finds its position naked."""
+    dedupe = Dedupe(DEFAULTS, max_tracked=2)
+    _naked(dedupe, position("BTCUSDT"), position("ETHUSDT"), now=0.0, complete=False)
+    _naked(dedupe, position("SOLUSDT"), now=1.0, complete=False)  # BTCUSDT's, the oldest, goes
+    assert _naked(dedupe, position("ETHUSDT"), now=3.5, complete=False) == [3.5]  # kept
+    assert _naked(dedupe, position("BTCUSDT"), now=3.5, complete=False) == []  # begun again
+
+
+def test_the_account_map_forgets_its_oldest_account_past_its_cap() -> None:
+    """C-2.18: a forgotten account raises once more, never less."""
+    dedupe = Dedupe(DEFAULTS, max_tracked=2)
+    first, second, third = UUID(int=1), UUID(int=2), UUID(int=3)
+    assert _stale(dedupe, first, second, third, now=0.0) == [0.0] * 3  # the first is forgotten
+    assert _stale(dedupe, first, second, now=5.0) == [0.0]  # so raised again; the second cools
+
+
+def test_the_standings_accessor_is_a_copy_of_its_stale_accounts() -> None:
+    """BQ-2: the real standing's `stale_accounts`, which the scan reads: a copy, so a mark or a
+    clear after the read never changes what the read returned."""
+    standing = ReconcileStanding()
+    standing.mark_stale(AccountId(ACCOUNT))
+    read = standing.stale_accounts()
+    assert read == frozenset({ACCOUNT})
+    standing.mark_stale(AccountId(OTHER))
+    standing.clear(AccountId(ACCOUNT))
+    assert read == frozenset({ACCOUNT})
+    assert standing.stale_accounts() == frozenset({OTHER})
 
 
 def test_a_row_the_incident_refuses_is_skipped_and_logged() -> None:
@@ -497,6 +530,53 @@ async def test_the_loop_scans_nothing_until_ready_then_every_interval() -> None:
     assert waits[3:] == [5.0, 5.0, 5.0]  # then one scan at once and one each 5 s
     assert rig.count("oms_detector_scans_total", result="ok") == 3
     assert rig.detector.stalled()  # its loop ended
+
+
+@pytest.mark.parametrize(
+    ("jitter", "waits"),
+    [(0.4, [0.4, 5.0]), (9.0, [SCAN_JITTER_S, 5.0]), (-1.0, [5.0])],
+)
+async def test_each_ticks_phase_waits_its_jitter_cut_to_half_a_second(
+    jitter: float, waits: list[float]
+) -> None:
+    """BQ-5: a tick's phase is jittered by up to `SCAN_JITTER_S`: a jitter above it waits it, and
+    one under 0 waits nothing, so the first scan runs at once."""
+    waited: list[float] = []
+    rig: Any = None
+
+    async def sleep(seconds: float) -> None:
+        waited.append(seconds)
+        rig.clock.advance(seconds)
+        if rig.reads.reads >= 2:  # the first scan read both: the loop ends at its next tick
+            raise asyncio.CancelledError
+
+    rig = build(sleep=sleep, jitter=lambda: jitter)
+    with pytest.raises(asyncio.CancelledError):
+        await rig.detector.run()
+    assert waited == pytest.approx(waits)
+
+
+async def test_a_scan_that_ends_restarts_the_stall_clock() -> None:
+    """20 Sec.6.2: the stall runs from the last scan's end, not from `ready`: 29 s after the scan
+    that ended 5 s after `ready`, the detector is not stalled, and at 30 s it is."""
+    rig: Any = None
+    parked = asyncio.Event()
+
+    async def sleep(seconds: float) -> None:
+        if rig.count("oms_detector_scans_total", result="ok") >= 2:
+            parked.set()
+            await asyncio.Event().wait()  # the next tick never comes in this test
+        rig.clock.advance(seconds)
+
+    rig = build(sleep=sleep)
+    loop = asyncio.ensure_future(rig.detector.run())
+    await asyncio.wait_for(parked.wait(), 2)  # a bound on the test: the scans at 0 s and 5 s
+    rig.clock.advance(29.0)
+    assert not rig.detector.stalled()
+    rig.clock.advance(1.0)
+    assert rig.detector.stalled()
+    loop.cancel()
+    await asyncio.gather(loop, return_exceptions=True)
 
 
 class _SlowReads(InMemoryStuckReads):
