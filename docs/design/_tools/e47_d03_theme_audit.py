@@ -26,7 +26,8 @@ values, the default-deny pins and the mutations).
    hand-off's A-rows occurs verbatim on its cited line (G-AROW).
 3. **Gates.** One FAIL line per gate: G-PENDING (the BQ section carries the RULED stamp and
    names the ruling and the question list), G-BOARDS (at most ten boards, light twins at most a
-   third, each PENDING or drawn with its committed PNG at the stated size), G-BAR (every measured
+   third, each PENDING or drawn with its committed PNG at the stated size, its frames, node counts
+   and its own theme's gate), G-BAR (every measured
    row's verdict names exactly the themes below its bar), G-AAA (the 7:1 stretch rows name the
    themes that meet it), G-CVD (a pair under the JND floor names a non-colour cue; "none needed"
    only when every value clears it), G-RAMP (a ramp verdict is pass only when every cell is
@@ -664,7 +665,13 @@ class Mutation:
 
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
-        "M-1", "mark board 01 drawn without an id", "G-BOARDS", "spec", "## 0.", "PENDING", "drawn"
+        "M-1",
+        "mark board 01 drawn without an id",
+        "G-BOARDS",
+        "spec",
+        "## 0.",
+        "drawn: board id `f7c6d8dc-fd3f-80b3-8008-e0b1b8fc2c46`, ",
+        "drawn, ",
     ),
     Mutation(
         "M-2", "re-word W-1", "G-QUOTE", "spec", "## 13.", "text may be hard", "text can be hard"
@@ -1047,6 +1054,20 @@ def png_size(rel: str) -> tuple[int, int] | None:
     return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
 
 
+_PX = r"[\d,]+ px"
+_OWN = rf"own {_PX}, other {_PX}"
+_HC = rf"hc primary {_PX}, light {_PX}"
+DRAWN_CELL = re.compile(
+    r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`(?P<png>docs/design/E47/img/E47-D03-(?P<nn>\d\d)-[a-z0-9-]+\.png)` \((?P<w>\d+) × (?P<h>\d+)\), "
+    r"\d+ frames?, [\d,]+ shapes / [\d,]+ text nodes; "
+    rf"(?:(?P<gate>dark|light) gate PASS \({_OWN}\)|(?P<hc>high-contrast) gate PASS \({_HC}\)"
+    rf"|(?P<mixed>mixed) gates PASS \(dark {_OWN} · light {_OWN} · {_HC} · cvd-safe dark {_OWN}\))"
+)
+# a drawn cell's gate is its row's theme (board 08's mixed row gates each frame under its own set)
+GATE_OF = {"dark": "dark", "light": "light", "hc": "high-contrast", "mixed": "mixed"}
+
+
 def g_boards(t: Texts) -> list[Finding]:
     _, _, region = section(t.spec, "## 0.")
     rows = board_rows(t.spec)
@@ -1060,13 +1081,11 @@ def g_boards(t: Texts) -> list[Finding]:
         status = r[-1]
         if status == "PENDING":
             continue
-        m = re.fullmatch(
-            r"drawn: board id `[0-9a-f-]{36}`, `(docs/design/E47/img/E47-D03-\d\d-[a-z0-9-]+\.png)`"
-            r" \((\d+) × (\d+)\)",
-            status,
-        )
-        if not m or png_size(m.group(1)) != (int(m.group(2)), int(m.group(3))):
+        m = DRAWN_CELL.fullmatch(status)
+        if not m or png_size(m["png"]) != (int(m["w"]), int(m["h"])):
             bad.append(f"board {r[0]} status {status!r}")
+        elif m["nn"] != r[0] or (m["gate"] or m["hc"] or m["mixed"]) != GATE_OF.get(r[3]):
+            bad.append(f"board {r[0]}'s drawn cell names another board's PNG or theme's gate")
     return [("G-BOARDS", "; ".join(bad), "spec", region)] if bad else []
 
 

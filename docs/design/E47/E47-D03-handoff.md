@@ -6,21 +6,21 @@ Components: **CMP-031 ColorSwatch / ThemeChip** (the accent presets), **CMP-037 
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                     | Tokens and gates                                 | SCR-116 (CMP-031, 062, 063, 228)                    | CMP-074 / CMP-075          |
-| ------------------------ | ------------------------------------------------ | --------------------------------------------------- | -------------------------- |
-| Final Penpot link        | [ ] boards 09–10, drawn later in this PR         | [ ] boards 01–05, drawn later in this PR            | [ ] board 08               |
-| Variants × states        | [x] §2 (twelve renderings)                       | [x] §8.3 V-1 … V-10                                 | [x] §9                     |
-| Keyboard table           | [x] n/a                                          | [x] §8.1                                            | [x] unchanged (E10-D03)    |
-| Accessible name and role | [x] n/a                                          | [x] §8.1, W-19, R-9                                 | [x] W-3                    |
-| Live data                | [x] n/a                                          | [x] R-8: one polite announcement per change, ≤ 1 Hz | [x] unchanged              |
-| Motion pair              | [x] none (E47-D08 owns motion)                   | [x] none: one-frame swap (§12)                      | [x] none                   |
-| Density notes            | [x] density-independent colour                   | [x] §8.1 (J14), §8.5                                | [x] unchanged              |
-| Essential exceptions     | [x] the standing exemptions of §4.2 with reasons | [x] none                                            | [x] none                   |
-| Tokens used              | [x] §3, §C.2                                     | [x] §3.1, §8.2                                      | [x] §9                     |
-| Data contract            | [ ] NO: D03-G4, D03-G5                           | [ ] NO: D03-G1                                      | [x] unchanged              |
-| Contrast                 | [x] §3, §4 (computed)                            | [x] §3.1, §8.2                                      | [x] §9                     |
-| Storybook                | [x] §D                                           | [x] §D                                              | [x] §D                     |
-| Sign-off                 | [ ] owner approval pending                       | [ ] owner approval pending                          | [ ] owner approval pending |
+| Item                     | Tokens and gates                                                                                                     | SCR-116 (CMP-031, 062, 063, 228)                    | CMP-074 / CMP-075                           |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------- |
+| Final Penpot link        | [x] page `E47-D03 themes and SCR-116` (page id `cb0c3916-2579-81a4-8008-e0b13eb8789a`); boards 09–10 drawn (spec §0) | [x] the same page: boards 01–05 drawn (spec §0)     | [x] the same page: board 08 drawn (spec §0) |
+| Variants × states        | [x] §2 (twelve renderings)                                                                                           | [x] §8.3 V-1 … V-10                                 | [x] §9                                      |
+| Keyboard table           | [x] n/a                                                                                                              | [x] §8.1                                            | [x] unchanged (E10-D03)                     |
+| Accessible name and role | [x] n/a                                                                                                              | [x] §8.1, W-19, R-9                                 | [x] W-3                                     |
+| Live data                | [x] n/a                                                                                                              | [x] R-8: one polite announcement per change, ≤ 1 Hz | [x] unchanged                               |
+| Motion pair              | [x] none (E47-D08 owns motion)                                                                                       | [x] none: one-frame swap (§12)                      | [x] none                                    |
+| Density notes            | [x] density-independent colour                                                                                       | [x] §8.1 (J14), §8.5                                | [x] unchanged                               |
+| Essential exceptions     | [x] the standing exemptions of §4.2 with reasons                                                                     | [x] none                                            | [x] none                                    |
+| Tokens used              | [x] §3, §C.2                                                                                                         | [x] §3.1, §8.2                                      | [x] §9                                      |
+| Data contract            | [ ] NO: D03-G4, D03-G5                                                                                               | [ ] NO: D03-G1                                      | [x] unchanged                               |
+| Contrast                 | [x] §3, §4 (computed)                                                                                                | [x] §3.1, §8.2                                      | [x] §9                                      |
+| Storybook                | [x] §D                                                                                                               | [x] §D                                              | [x] §D                                      |
+| Sign-off                 | [ ] owner approval pending                                                                                           | [ ] owner approval pending                          | [ ] owner approval pending                  |
 
 ## §B Who applies what
 
@@ -116,7 +116,7 @@ Old is a verbatim fragment of the cited line at `95a4f2765` (the tool checks it)
 | E47-S08 (#1322)                | spec §8                                         | D03-G1                 |
 | E08-D04                        | D03-D15 … D03-D18 (DS-CR-1)                     | E47-D10 (#1309)        |
 
-## §G Board plan (drawn later in this PR)
+## §G Board plan (drawn in this PR; spec §0 as built)
 
 Frames are named `SCR-116/<state> · <theme>` or `ink/<surface> · <theme or simulation>`. Data: a seeded synthetic stream, declared on every board; ink hexes come from spec §7.4. Each board's frames:
 
@@ -135,7 +135,7 @@ Frames are named `SCR-116/<state> · <theme>` or `ink/<surface> · <theme or sim
 
 ## §H Summary for #1302
 
-1. Text-first spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards planned (3<!--=COUNT:boards.light--> in light, 2 of them twins), drawn later in this PR.
+1. Text-first spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards (3<!--=COUNT:boards.light--> in light, 2 of them twins) drawn in this PR (spec §0 as built).
 2. Three themes × one CVD-safe chart palette × two conventions, one overlay schema; the six ticket ids map onto it.
 3. Every pair recomputed per theme; 18<!--=COUNT:exempt.stale--> stale exemptions to remove; H-8, the control borders and the high-contrast border order and DS-CR-1 closed by 18<!--=COUNT:diff--> token values.
 4. The light CVD heatmap ramp runs backwards; the diff reverses it on the same primitives.
