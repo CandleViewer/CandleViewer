@@ -5,8 +5,8 @@
  */
 import type { SelectOption } from "@candleviewer/ui";
 import { fill } from "./copy";
-import { DETAIL_TEXT } from "./detailCopy";
-import { STREAM_LABELS } from "./pageCopy";
+import { DETAIL_REFUSED, DETAIL_TEXT } from "./detailCopy";
+import { PAGE_TEXT, STREAM_LABELS } from "./pageCopy";
 import {
   formatDate,
   formatHourMinute,
@@ -17,6 +17,7 @@ import {
 } from "./model";
 import type { RecorderFrame, RecordingStatus } from "./model/types";
 import type { StreamKind } from "./grid";
+import type { RefusalRoute } from "./recorderApi";
 
 /** D02 §6.7's Health: the figures a row's detail reads. */
 export interface RowHealth {
@@ -119,3 +120,13 @@ export function retentionOptions(row: RecorderRow, custom: boolean): SelectOptio
 /** The select's value for the row: "forever" while pinned, else its days; undefined when none is known. */
 export const retentionValue = (row: RecorderRow): string | undefined =>
   row.pinned ? FOREVER : row.retentionDays === null ? undefined : String(row.retentionDays);
+
+/**
+ * A refused change (pin, retention, depth): the generic T4 with its code token (E16-D06 §16.4), or the app's words
+ * when nothing answered; never the problem's `message` or `detail`.
+ */
+export function changeRefusal(route: RefusalRoute): string {
+  if (route.kind === "t4" && route.status === 0) return PAGE_TEXT.unreachable;
+  const code = route.kind === "step_up" ? "step_up_required" : route.code;
+  return code === null ? DETAIL_REFUSED.change : `${DETAIL_REFUSED.change} (${code})`;
+}

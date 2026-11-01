@@ -219,6 +219,7 @@ export function RecorderScreen({
     estimated: new Set([...estimates.keys()].filter((symbol) => !measured.has(symbol))),
     stoppedAtMs: data.stoppedAtMs,
     gaps: gapCounts,
+    accelerated: facts.accelerateRetention,
   };
   const listed = new Map((data.list.data ?? []).map((row) => [row.symbol, row]));
 
@@ -279,6 +280,19 @@ export function RecorderScreen({
     const gone = done.pressed !== null && !done.pressed.isConnected;
     if (done.recovered || gone) focusLanding(document.getElementById(RECORDER_H1_ID));
   }, [retries]);
+  // A-5347-d03, as F-05 lands: the last row going (an unpin, a stop) swaps the grid for the empty state, and focus
+  // that went with the grid's controls lands on the H1, never `<body>`. A page that opens empty moves nothing.
+  const hadRows = useRef(false);
+  useLayoutEffect(() => {
+    if (rows.length > 0) {
+      hadRows.current = true;
+      return;
+    }
+    if (!empty || !hadRows.current) return;
+    const now = document.activeElement;
+    if (now === null || now === document.body)
+      focusLanding(document.getElementById(RECORDER_H1_ID));
+  }, [rows.length, empty]);
   /** Applies chips for their fields, in place of what those fields held: a value is never ORed with one it replaces. */
   const applyFilters = (more: readonly FilterBarFilter[]): void =>
     setFilters((prev) => [...prev.filter((p) => !more.some((m) => m.field === p.field)), ...more]);
@@ -464,6 +478,7 @@ export function RecorderScreen({
             frame={frame}
             status={data.status.data}
             gaps={data.gaps}
+            onCustomRetention={openRetention}
           />
         )}
         <GapTable gaps={data.gaps} nowMs={nowMs} hostRef={gapsLanding.hostRef} />

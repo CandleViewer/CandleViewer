@@ -22,7 +22,8 @@ export type RecorderAnalytics =
       readonly symbol: string;
       readonly reason: RecordReason;
     }
-  | { readonly name: "recorder.auto_review_opened"; readonly source: "summary" | "why" };
+  | { readonly name: "recorder.auto_review_opened"; readonly source: "summary" | "why" }
+  | { readonly name: "recorder.pin_toggled"; readonly symbol: string; readonly pinned: boolean };
 
 export function reportRecorder(event: RecorderAnalytics): void {
   window.dispatchEvent(
