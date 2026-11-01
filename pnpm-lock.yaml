@@ -324,6 +324,9 @@ importers:
       '@candleviewer/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@candleviewer/rule-graph':
+        specifier: workspace:*
+        version: link:../../packages/rule-graph
       '@candleviewer/ui':
         specifier: workspace:*
         version: link:../../packages/ui

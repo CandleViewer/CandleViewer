@@ -38,6 +38,15 @@ export default defineConfig({
         find: /^@candleviewer\/chart-engine\/compat$/,
         replacement: resolve(import.meta.dirname, "../../packages/chart-engine/src/compat.ts"),
       },
+      // rule-graph's IR schema subpath (BQ-12 (d)): before the prefix alias below, which would
+      // otherwise turn it into `src/index.ts/rule-ir`.
+      {
+        find: /^@candleviewer\/protocol\/rule-ir$/,
+        replacement: resolve(
+          import.meta.dirname,
+          "../../packages/protocol/src/generated/ruleIr/index.ts",
+        ),
+      },
       {
         find: "@candleviewer/protocol",
         replacement: resolve(import.meta.dirname, "../../packages/protocol/src/index.ts"),

@@ -30,6 +30,7 @@
     "@candleviewer/config": "workspace:*",
     "@candleviewer/fixtures": "workspace:*",
     "@candleviewer/protocol": "workspace:*",
+    "@candleviewer/rule-graph": "workspace:*",
     "@candleviewer/ui": "workspace:*",
     "@playwright/test": "^1.64.1",
     "@size-limit/file": "^11.1.6",

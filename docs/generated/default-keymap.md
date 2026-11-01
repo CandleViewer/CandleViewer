@@ -64,6 +64,7 @@
 | Replay | Step one bar forward | `→` | no | valid when: always |
 | Replay | Step one tick back | `Shift+←` | no | valid when: always |
 | Replay | Step one tick forward | `Shift+→` | no | valid when: always |
+| Rules | Add node | `Ctrl+Shift+N` | no | overrides reserved key: Deliberate override of browser incognito window; Electron has no incognito window; valid when: graph editor focused |
 | Rules | Auto-layout | `Ctrl+L` | no | overrides reserved key: Deliberate override of browser address-bar focus; Electron has no address bar; valid when: always |
 | Rules | Cycle nodes | `Tab` | no | valid when: always |
 | Rules | Delete selection | `Del` | yes | valid when: always |
@@ -73,6 +74,14 @@
 | Rules | Open node inspector | `Enter` | no | valid when: always |
 | Rules | Reorder down | `Alt+↓` | no | valid when: always |
 | Rules | Reorder up | `Alt+↑` | no | valid when: always |
+| Rules | Nudge node down | `Ctrl+↓` | no | valid when: graph node focused |
+| Rules | Nudge node down (large step) | `Ctrl+Shift+↓` | no | valid when: graph node focused |
+| Rules | Nudge node left | `Ctrl+←` | no | valid when: graph node focused |
+| Rules | Nudge node left (large step) | `Ctrl+Shift+←` | no | valid when: graph node focused |
+| Rules | Nudge node right | `Ctrl+→` | no | valid when: graph node focused |
+| Rules | Nudge node right (large step) | `Ctrl+Shift+→` | no | valid when: graph node focused |
+| Rules | Nudge node up | `Ctrl+↑` | no | valid when: graph node focused |
+| Rules | Nudge node up (large step) | `Ctrl+Shift+↑` | no | valid when: graph node focused |
 | Rules | Pan canvas | `Space+drag` | no | valid when: always |
 | Rules | Rename node | `F2` | no | valid when: always |
 | Rules | Save draft | `Ctrl+S` | no | overrides reserved key: Deliberate override of browser save-page; drafts are saved in-app; valid when: always |
