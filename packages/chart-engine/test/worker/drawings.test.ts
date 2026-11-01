@@ -3,7 +3,7 @@
 // and the set kept across the degraded-2d re-init and a worker restart. Scenario 1's isolation
 // (a drag touches the drawings node alone) is the `drawings-drag` scene's counted test.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DrawingInput } from "../../src/layers/drawings/model.js";
+import { copyInput, type DrawingInput } from "../../src/layers/drawings/model.js";
 import { createChartHost } from "../../src/worker/host.js";
 import type { Command, FromWorker, ToWorker } from "../../src/worker/protocol.js";
 import { createRenderRuntime, type RenderRuntime } from "../../src/worker/runtime.js";
@@ -113,7 +113,9 @@ describe("the host after a worker restart", () => {
     });
     vi.advanceTimersByTime(20);
     host.command({ k: "setDrawings", op: "replace", drawings: many(3) });
-    host.command({ k: "setDrawings", op: "patch", drawings: [seg("d1", 50)], remove: ["d0"] });
+    const moved = seg("d1", 50);
+    host.command({ k: "setDrawings", op: "patch", drawings: [moved], remove: ["d0"] });
+    (moved.points as number[])[1] = 7; // mutated after command(): the replay keeps what was sent
     host.command({
       k: "setDrawings",
       op: "patch",
@@ -123,7 +125,7 @@ describe("the host after a worker restart", () => {
     vi.advanceTimersByTime(1020);
     const inbox = (FakeWorker.created.at(-1) as FakeWorker).inbox as ToWorker[];
     expect(inbox.flatMap((m) => (m.t === "command" ? [m.cmd] : []))).toEqual([
-      { k: "setDrawings", op: "replace", drawings: [seg("d1", 50), seg("d2", 2)] },
+      { k: "setDrawings", op: "replace", drawings: [seg("d1", 50), seg("d2", 2)].map(copyInput) },
     ]);
     host.dispose();
   });

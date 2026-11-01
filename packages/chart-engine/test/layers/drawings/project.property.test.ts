@@ -5,7 +5,13 @@ import { describe, expect, it } from "vitest";
 import { mulberry32 } from "../../../bench/fixtures/rng.mjs";
 import { bars } from "../../../bench/scenes/pan-zero-upload.js";
 import { DRAWING_KINDS, DRAWING_POINTS } from "../../../src/layers/drawings/model.js";
-import { reindex, screenBounds, toRecord } from "../../../src/layers/drawings/project.js";
+import {
+  DrawingsNode,
+  reindex,
+  screenBounds,
+  toRecord,
+} from "../../../src/layers/drawings/project.js";
+import { FrameContext } from "../../../src/scene/frame-context.js";
 import { BarStore } from "../../../src/model/BarStore.js";
 import * as tf from "../../../src/viewport/index.js";
 
@@ -90,5 +96,62 @@ describe("Scenario: anchors project inside their bounds and round-trip (20 000 c
     const r = toRecord({ id: "h", kind: "hline", points: [T0, 1e4], style, visible: false });
     screenBounds(random(mulberry32(1), false, false), r, out, 0);
     expect([...out].every(Number.isNaN)).toBe(true);
+  });
+
+  it("extreme anchors (±2^53 µs, ±2^30 ticks, a near-zero direction): bounds clamped, finite", () => {
+    const style = { colour: 0, width: 8, dash: 0 } as const;
+    const [t, k] = [2 ** 53, 2 ** 30];
+    for (const log of [false, true]) {
+      const vp = random(mulberry32(7), log, false);
+      for (const kind of ["segment", "ray", "line", "rect", "hline", "vline"] as const) {
+        const n = kind === "hline" || kind === "vline" ? 2 : 4;
+        for (const points of [
+          [-t, -k, t, k],
+          [t, k, t, k + 1e-12],
+          [T0, 3_000, T0 + 1e-9, 3_000],
+        ]) {
+          const r = toRecord({ id: "x", kind, points: points.slice(0, n), style });
+          reindex(r, vp.map, 1);
+          screenBounds(vp, r, out, 0);
+          const ok = [...out].every((v) => Number.isFinite(v) && Math.abs(v) <= 1e7);
+          expect(ok, `${kind} ${points}: ${[...out]}`).toBe(true); // clamped to ±1e7 CSS px
+        }
+      }
+    }
+  });
+});
+
+describe("Scenario: a bar map that changes length re-indexes every record once (500 cases)", () => {
+  it("appended bars move extrapolated anchors to their new indices; a pan re-indexes none", () => {
+    for (let c = 0; c < 500; c += 1) {
+      const rng = mulberry32(359_000 + c);
+      const grow = new BarStore({ maxBars: 4_000 });
+      grow.append(bars(1 + Math.floor(rng() * 2_000), T0));
+      const vp = new tf.ChartViewport(grow);
+      vp.setSize(1200, 700, 1);
+      vp.setPanePlot(0, 0, 700);
+      vp.setPriceRange(0, 0, 2_000);
+      const node = new DrawingsNode("n");
+      const style = { colour: 0, width: 1, dash: 0 } as const;
+      const drawings = Array.from({ length: 5 }, (_, i) => {
+        const at = (): number[] => [T0 + rng() * 3_000 * 60e6 * (0.5 + rng()), rng() * 2_000];
+        return { id: `d${i}`, kind: "segment" as const, points: [...at(), ...at()], style };
+      });
+      node.apply({ op: "replace", drawings });
+      const ctx = new FrameContext(vp);
+      node.update(ctx);
+      vp.pan(-10);
+      node.update(ctx);
+      expect(node.reindexed).toBe(5);
+      const before = grow.length;
+      grow.append(bars(1 + Math.floor(rng() * 1_000), T0 + before * 60e6));
+      node.update(ctx);
+      expect(node.reindexed, `seed ${359_000 + c}`).toBe(10);
+      for (const r of node.set.order) {
+        for (let a = 0; a < r.idx.length; a += 1) {
+          expect(r.idx[a]).toBeCloseTo(tf.indexAt(grow, r.t[a] as number), 9);
+        }
+      }
+    }
   });
 });

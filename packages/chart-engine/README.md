@@ -581,18 +581,22 @@ and the splitter-drag bench (BQ-149, BQ-150, BQ-154, C-44 and G-35; scenario 5).
 ## Drawings layer (E14-T03 slice 1)
 
 `src/layers/drawings/` (DOM-free, internal) holds the model and its projection; nothing is drawn
-yet (#358 BQ-1 to BQ-6, ruled as proposed). `model.ts` is the engine's minimal `DrawingInput`
-(BQ-3): ten primitives, not tools, anchored at (µs time, tick), with a numeric style
-(0xRRGGBBAA colours, width 1..8, a dash index) and a label clamped as data (120 code points,
-controls and bidi stripped, font 8..48; SR-E14-03, SR-E14-04). The worker boundary refuses an
-unknown kind, a wrong anchor count, a non-finite number, an unknown style key, over 1 000 drawings
-or 65 536 anchors, and a refusal changes nothing (E14-X01 DR29). `set.ts` folds `setDrawings`
-(`replace`, or a `patch` that removes then upserts by id); the host replays its fold as one
-`replace` after a worker restart. `DrawingsNode` (drawings layer, made on the first command) is
-marked DATA alone by a change, and TRANSFORM by a pan or zoom, which rewrites no record (each
-anchor's bar index is cached against the bar map); every pass posts each drawing's screen box as
-`drawingBounds`. Residuals: a same-length bar replace is not re-indexed until E12 wires the store;
-text bounds are the anchor until labels draw (slice 4, `GlyphSource`).
+yet. It follows the defaults of #358 BQ-1 to BQ-6 (the plan comment on #358); their rulings are
+pending. `model.ts` is the engine's minimal `DrawingInput` (BQ-3): ten primitives, not tools,
+anchored at (µs time, tick), with a numeric style (0xRRGGBBAA colours, width 1..8, a dash index)
+and a label clamped as data (120 code points, controls and bidi stripped, font 8..48; SR-E14-03,
+SR-E14-04). The worker boundary refuses an unknown top-level or style key, an unknown kind, a
+wrong anchor count, a non-finite number, a time past 2^53 µs or a tick past 2^30, a raw label over
+480 UTF-16 units, over 1 000 drawings or 65 536 anchors, and a refusal changes nothing (E14-X01
+DR29). Worker records and the host's replay set hold `copyInput`'s whitelisted copy, never the
+caller's objects. `set.ts` folds `setDrawings` (`replace`, or a `patch` that removes then upserts
+by id); the host replays its fold as one `replace` after a worker restart. `DrawingsNode`
+(drawings layer, made on the first command) is marked DATA alone by a change and TRANSFORM by a
+pan or zoom, which rewrites no record (each bar index is cached against the bar map). Its `update`
+allocates nothing (a guard test reads the AST); bounds are clamped to ±1e7 CSS px. The one
+accepted exception: the `drawingBounds` post, at most once a frame, copies the boxes (and the ids,
+only when the set changed) into the message. Residuals: a same-length bar replace is not
+re-indexed until E12 wires the store; text bounds are the anchor until labels draw (slice 4).
 
 ## Scripts
 

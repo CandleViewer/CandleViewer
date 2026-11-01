@@ -46,6 +46,10 @@ describe("setDrawings validation (E14-X01 DR8, DR9, DR29)", () => {
     ["a non-boolean visible", { visible: 1 }, "visible"],
     ["an id with markup", { id: "<b>" }, "drawing id"],
     ["an id over 64 chars", { id: "a".repeat(65) }, "drawing id"],
+    ["an unknown top-level key", { onclick: "x" }, "drawing key onclick"],
+    ["a raw label over 480 units", { label: "x".repeat(481) }, "label"],
+    ["a time past 2^53 µs", { points: [2 ** 53 + 2, 1, 0, 1] }, "point out of range"],
+    ["a tick past the int32 base", { points: [0, 2 ** 30 + 1, 0, 1] }, "point out of range"],
   ])("refuses %s", (_, change, why) => {
     expect(check([{ ...seg("a"), ...change }])).toBe(why);
   });
@@ -117,5 +121,24 @@ describe("the drawing set", () => {
     expect(s.apply({ op: "patch", drawings: [seg("p0"), poly("over")] })).toBeNull();
     const t = make(); // exactly at the cap is fine
     expect([t.apply({ op: "patch", drawings: many, remove: ["a"] }), t.size]).toEqual([null, 1000]);
+  });
+});
+
+describe("copyInput: the worker's and the host's own copy", () => {
+  it("keeps known keys only, copies the points and clamps the label and font", () => {
+    const points = [0, 10, 60e6, 20];
+    const d = { ...seg("a", { points, label: "a\u202eb", z: 3 }), extra: 1 } as m.DrawingInput;
+    const style = { ...d.style, fontSize: 99, css: "x" } as m.DrawingStyle;
+    const c = m.copyInput({ ...d, style });
+    expect(c).toEqual({
+      ...{ id: "a", kind: "segment", points: Float64Array.from(points), label: "ab", z: 3 },
+      style: { colour: 0xff8800ff, width: 2, dash: 0, fontSize: 48 },
+    });
+    points[0] = 99; // the caller mutates its array after the command
+    (style as { width: number }).width = 8;
+    expect([c.points[0], c.style.width]).toEqual([0, 2]);
+    expect(m.drawingReason(seg("b", { points: [-(2 ** 53), -(2 ** 30), 2 ** 53, 2 ** 30] }))).toBe(
+      null,
+    );
   });
 });

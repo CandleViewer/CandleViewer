@@ -2,6 +2,7 @@
 // maps to one or more inputs. Checked at the worker boundary (E14-X01 DR8, DR9, DR29; SR-E14-03,
 // SR-E14-04): finite numbers, bounded counts, a closed kind set, numeric colours (no CSS string is
 // built from a style) and labels clamped as data. DOM-free (C-2.16).
+import { INT32_TICKS } from "../../viewport/transform.js";
 
 /** The closed primitive set and the anchors each takes. */
 export const DRAWING_POINTS = {
@@ -25,6 +26,11 @@ export const MAX_DRAWINGS = 1_000;
 /** All anchors of one chart: 1 MiB of float64 pairs, inside the 8 MB layer bucket (§3.16). */
 export const MAX_ANCHORS = 65_536;
 export const LABEL_MAX = 120;
+/** A raw label longer than this (UTF-16 units) is refused, not clamped: memory stays bounded. */
+export const LABEL_RAW_MAX = 4 * LABEL_MAX;
+/** |time| in µs within float64's exact integers; |tick| inside the int32 uniform base (BQ-75). */
+export const TIME_MAX = 2 ** 53;
+export const TICK_MAX = INT32_TICKS;
 export const FONT_MIN = 8;
 export const FONT_MAX = 48;
 export const WIDTH_MAX = 8;
@@ -49,9 +55,20 @@ export interface DrawingInput {
   readonly points: readonly number[] | Float64Array;
   readonly style: DrawingStyle;
   readonly label?: string;
+  /** Draw order within the layer: carried, unused until slice 2 sorts the batches. */
   readonly z?: number;
   readonly visible?: boolean;
 }
+
+const KEYS: ReadonlySet<string> = new Set([
+  "id",
+  "kind",
+  "points",
+  "style",
+  "label",
+  "z",
+  "visible",
+]);
 
 /** `replace` swaps the whole set; `patch` removes `remove`, then upserts `drawings` by id. */
 export interface SetDrawings {
@@ -80,6 +97,7 @@ function styleReason(s: unknown): string | null {
 /** Why one drawing is refused, or null: checked before anything is stored (never throws). */
 export function drawingReason(d: unknown): string | null {
   if (!isObj(d) || !isDrawingId(d["id"])) return "drawing id";
+  for (const k of Object.keys(d)) if (!KEYS.has(k)) return `drawing key ${k}`;
   const kind = d["kind"];
   if (typeof kind !== "string" || !Object.hasOwn(DRAWING_POINTS, kind)) {
     return `unknown drawing kind ${String(kind)}`;
@@ -90,11 +108,16 @@ export function drawingReason(d: unknown): string | null {
   const n = pts.length / 2;
   if (!Number.isInteger(n) || n < span[0] || n > span[1]) return `${kind} takes ${span}`;
   for (let i = 0; i < pts.length; i += 1) {
-    if (typeof pts[i] !== "number" || !Number.isFinite(pts[i])) return "non-finite point";
+    const v = pts[i];
+    if (typeof v !== "number" || !Number.isFinite(v)) return "non-finite point";
+    if (Math.abs(v) > (i % 2 === 0 ? TIME_MAX : TICK_MAX)) return "point out of range";
   }
   const style = styleReason(d["style"]);
   if (style !== null) return style;
-  if (d["label"] !== undefined && typeof d["label"] !== "string") return "label";
+  const label = d["label"];
+  if (label !== undefined && (typeof label !== "string" || label.length > LABEL_RAW_MAX)) {
+    return "label";
+  }
   if (d["z"] !== undefined && !isInt(d["z"], -32768, 32767)) return "z";
   return d["visible"] === undefined || typeof d["visible"] === "boolean" ? null : "visible";
 }
@@ -144,3 +167,26 @@ export function clampLabel(s: string): string {
 }
 
 export const clampFont = (px: number): number => Math.min(FONT_MAX, Math.max(FONT_MIN, px));
+
+/**
+ * A validated input's own copy (the worker's records, the host's replay set): known keys only,
+ * the points copied, the label and font clamped. No reference to the caller's objects survives.
+ */
+export function copyInput(d: DrawingInput): DrawingInput {
+  const { colour, fill, width, dash, fontSize } = d.style;
+  return {
+    id: d.id,
+    kind: d.kind,
+    points: Float64Array.from(d.points),
+    style: {
+      colour,
+      width,
+      dash,
+      ...(fill !== undefined && { fill }),
+      ...(fontSize !== undefined && { fontSize: clampFont(fontSize) }),
+    },
+    ...(d.label !== undefined && { label: clampLabel(d.label) }),
+    ...(d.z !== undefined && { z: d.z }),
+    ...(d.visible !== undefined && { visible: d.visible }),
+  };
+}

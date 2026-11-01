@@ -8,21 +8,12 @@ import { ContentNode } from "../../scene/node.js";
 import type { BatchSink } from "../../scene/pool.js";
 import { indexAt, indexToScreen, priceToScreen } from "../../viewport/transform.js";
 import type { IndexTimeMap, ViewportState } from "../../viewport/types.js";
-import {
-  clampFont,
-  clampLabel,
-  MAX_DRAWINGS,
-  type DrawingInput,
-  type SetDrawings,
-} from "./model.js";
+import { copyInput, MAX_DRAWINGS, type DrawingInput, type SetDrawings } from "./model.js";
 import { DrawingSet } from "./set.js";
 
 export interface DrawingRecord {
-  /** A copy of the validated input: kind, style, z and visibility as sent. */
+  /** `copyInput`'s whitelisted copy: kind, style, z, visibility and the clamped label. */
   readonly input: DrawingInput;
-  /** Clamped as data (SR-E14-03): 120 code points, no controls or bidi; font 8..48. */
-  readonly label: string;
-  readonly fontSize: number;
   readonly t: Float64Array;
   readonly tick: Float64Array;
   /** Each anchor's fractional bar index under the map stamped in `stamp`. */
@@ -33,11 +24,10 @@ export interface DrawingRecord {
 }
 
 export function toRecord(d: DrawingInput): DrawingRecord {
-  const n = d.points.length / 2;
+  const input = copyInput(d);
+  const n = input.points.length / 2;
   const r = {
-    input: { ...d, style: { ...d.style } }, // inline mode shares objects: no later mutation
-    label: clampLabel(d.label ?? ""),
-    fontSize: clampFont(d.style.fontSize ?? 12),
+    input,
     t: new Float64Array(n),
     tick: new Float64Array(n),
     idx: new Float64Array(n),
@@ -45,8 +35,8 @@ export function toRecord(d: DrawingInput): DrawingRecord {
     stamp: -1,
   };
   for (let i = 0; i < n; i += 1) {
-    r.t[i] = d.points[2 * i] as number;
-    r.tick[i] = d.points[2 * i + 1] as number;
+    r.t[i] = input.points[2 * i] as number;
+    r.tick[i] = input.points[2 * i + 1] as number;
   }
   return r;
 }
@@ -79,6 +69,11 @@ export function reindex(r: DrawingRecord, map: IndexTimeMap, stamp: number): voi
 /** The scratch a pass writes: [x0, y0, x1, y1]; then the plot as [width, top, bottom]. */
 const SEG = new Float64Array(4);
 const PLOT = new Float64Array(3);
+/** A direction shorter than this is a point: no 1/dx blows up to ±Infinity or NaN. */
+const EPS = 1e-9;
+/** Bounds are clamped to ±1e7 CSS px before the Float32 write: always finite. */
+const LIMIT = 1e7;
+const px = (v: number): number => (v > LIMIT ? LIMIT : v >= -LIMIT ? v : -LIMIT); // NaN: -LIMIT
 function seg(x0: number, y0: number, x1: number, y1: number): void {
   SEG[0] = x0;
   SEG[1] = y0;
@@ -96,11 +91,11 @@ function extend(ax: number, ay: number, dx: number, dy: number, both: boolean): 
   const bottom = PLOT[2] as number;
   let hi = Infinity;
   let lo = -Infinity;
-  if (dx !== 0) {
+  if (Math.abs(dx) > EPS) {
     hi = Math.max(-ax / dx, (w - ax) / dx);
     lo = Math.min(-ax / dx, (w - ax) / dx);
   }
-  if (dy !== 0) {
+  if (Math.abs(dy) > EPS) {
     hi = Math.min(hi, Math.max((top - ay) / dy, (bottom - ay) / dy));
     lo = Math.max(lo, Math.min((top - ay) / dy, (bottom - ay) / dy));
   }
@@ -136,10 +131,10 @@ export function screenBounds(vp: ViewportState, r: DrawingRecord, out: Float32Ar
     seg(indexToScreen(vp, box[0] as number), y0, indexToScreen(vp, box[2] as number), y1);
   }
   const pad = style.width / 2;
-  out[o] = Math.min(SEG[0] as number, SEG[2] as number) - pad;
-  out[o + 1] = Math.min(SEG[1] as number, SEG[3] as number) - pad;
-  out[o + 2] = Math.max(SEG[0] as number, SEG[2] as number) + pad;
-  out[o + 3] = Math.max(SEG[1] as number, SEG[3] as number) + pad;
+  out[o] = px(Math.min(SEG[0] as number, SEG[2] as number) - pad);
+  out[o + 1] = px(Math.min(SEG[1] as number, SEG[3] as number) - pad);
+  out[o + 2] = px(Math.max(SEG[0] as number, SEG[2] as number) + pad);
+  out[o + 3] = px(Math.max(SEG[1] as number, SEG[3] as number) + pad);
 }
 
 export class DrawingsNode extends ContentNode {

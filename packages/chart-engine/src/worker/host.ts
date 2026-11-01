@@ -4,7 +4,7 @@
 // message per frame, keeps at most two unacknowledged `data` batches per store, transfers every
 // buffer, and restarts a lost worker. DOM side: this file is in tsconfig.dom.json's program.
 import { probeRenderProfile } from "../host/mount.js";
-import type { DrawingInput } from "../layers/drawings/model.js";
+import { copyInput, type DrawingInput } from "../layers/drawings/model.js";
 import { DrawingSet } from "../layers/drawings/set.js";
 import { createRenderRuntime, type RenderRuntime } from "./runtime.js";
 import {
@@ -381,7 +381,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   let theme = o.theme;
   const retained = new Map<string, Command>();
   /** E14-T03: the drawing set as the worker holds it, replayed as one `replace` on a restart. */
-  const drawings = new DrawingSet<DrawingInput>((d) => d);
+  const drawings = new DrawingSet<DrawingInput>(copyInput); // no caller references kept
   let disposed = false;
   let restoring = false;
   let flushQueued = false;
