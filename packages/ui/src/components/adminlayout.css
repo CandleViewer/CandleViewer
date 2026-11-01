@@ -33,7 +33,8 @@
     var(--type-ui-body-line-height) var(--type-ui-body-font-family);
 }
 
-/* The title and the items flow as one wrapping line, a second row starting under the title. */
+/* The title and the items flow as one wrapping line, a second row starting under the title. Nothing
+   trails the last pill: a trailing margin overflows the strip when the line is full (200 % text). */
 .cv-adminlayout__strip {
   padding-block: var(--space-inset-sm);
   color: var(--color-text-secondary);
@@ -46,16 +47,19 @@
 .cv-adminlayout__list {
   display: inline;
   margin: 0;
-  margin-inline-end: var(--space-inset-sm);
   padding: 0;
   list-style: none;
+}
+
+.cv-adminlayout__title {
+  margin-inline-end: var(--space-inset-sm);
 }
 
 .cv-adminlayout__item {
   --cv-adminlayout-fill: var(--color-status-warning-subtle);
   --cv-adminlayout-strong: var(--color-status-warning-strong);
   display: inline-flex;
-  max-width: 100%;
+  max-width: calc(100% - var(--space-inset-sm));
   margin-block: var(--space-inset-xs);
   margin-inline-end: var(--space-inset-sm);
   vertical-align: middle;
