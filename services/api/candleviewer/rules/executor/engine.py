@@ -81,7 +81,7 @@ _NOT_DONE: Final = frozenset({"failed", "blocked", "unknown"})
 _RETRIED: Final = frozenset({"no_answer", "pre_anchor"})
 _OUTCOME_OF: Final[Mapping[str, Outcome]] = {
     "accepted": "ok", "done": "ok", "refused": "failed", "pre_anchor": "failed",
-    "no_answer": "unknown", "in_flight": "unknown", "raised": "failed",
+    "no_answer": "unknown", "in_flight": "unknown", "raised": "failed", "skipped": "skipped",
 }  # fmt: skip
 
 
@@ -331,7 +331,8 @@ class ActionExecutor:
                 halted = halted or result.outcome not in ("ok", "simulated")
                 results.append(result)
                 self._metrics.result(result)
-                if writable and not await self._keep(fire, records, result, action.fields):
+                journal = None if action.answer is None else action.answer.journal
+                if writable and not await self._keep(fire, records, result, action.fields, journal):
                     writable = False
                     if stop in (None, "abort"):
                         stop = "write"  # a write after the answer stops the rest the same way
@@ -560,7 +561,7 @@ class ActionExecutor:
             return self._blocked(action, answer.blocked_by)
         return self._result(
             action, _OUTCOME_OF[answer.answer], error_code=answer.error_code,
-            order_id=answer.order_id, group_id=answer.group_id,
+            order_id=answer.order_id, group_id=answer.group_id, blocked_detail=answer.detail,
         )  # fmt: skip
 
     def _stop_after(self, action: _Action, result: ActionResult) -> Stop | None:
@@ -607,16 +608,21 @@ class ActionExecutor:
         )
 
     async def _keep(
-        self, fire: Fire, records: FireRecords, result: ActionResult, fields: ActionAuditFields
+        self,
+        fire: Fire,
+        records: FireRecords,
+        result: ActionResult,
+        fields: ActionAuditFields,
+        journal: Mapping[str, str | None] | None = None,
     ) -> bool:
-        """The result's records: a refusal's `action_fail` and `rules.blocked`, any other's event.
-        False when a write failed; the caller then writes nothing more for the fire but its
-        close."""
+        """The result's records: a refusal's `action_fail` and `rules.blocked`, any other's event,
+        with the `log` row of an `ok` result whose answer named one (E35-T13). False when a write
+        failed; the caller then writes nothing more for the fire but its close."""
         try:
             if result.blocked_by is not None:
                 await records.refused(result, fields)
             else:
-                await records.answered(result)
+                await records.answered(result, journal)
         except WriteAheadFailed as failed:
             self._records_failed(fire, failed)
             return False

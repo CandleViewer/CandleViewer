@@ -20,10 +20,13 @@ from typing import Any
 import pytest
 
 from candleviewer.rules import service as rules_service
+from candleviewer.rules.executor import control as control_module
+from candleviewer.rules.executor.control import NotificationHandler, NotifyRow
 from candleviewer.rules.executor.signals import SignalBus
 from candleviewer.rules.ir.models import MetricRef
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleRow, RulesManager
 from candleviewer.rules.runner import EvalTick, RuleEvaluationRunner
+from candleviewer.rules.scope import ActionRequest
 from candleviewer.rules.service import RulesService
 from tests.rules.executor.request_builders import Counted, Principals, Records, Switches
 from tests.rules.test_evaluator import Clock
@@ -50,6 +53,36 @@ def set_var(node: str, name: str, value: Any = 1, **params: Any) -> dict[str, An
     }
 
 
+def act(node: str, action_type: str, **params: Any) -> dict[str, Any]:
+    return {"node_id": node, "type": action_type, "params": params}
+
+
+class FakeOutbox:
+    """The outbox writer in memory: one row per key, as `ux_outbox_dedup` keeps it. `delivered` is
+    what a delivery would set, which nothing here does: a handler that awaited it would hang."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, NotifyRow] = {}
+        self.writes = 0
+        self.delivered = asyncio.Event()
+
+    async def enqueue(self, row: NotifyRow) -> None:
+        self.writes += 1
+        self.rows.setdefault(row.dedupe_key, row)
+
+
+class AskedStops:
+    """Check 8's port (`StopCheck`), admitting and recording each action that asks it: an action
+    that touches no stop never does."""
+
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    def admits(self, req: ActionRequest, account_id: uuid.UUID | None) -> bool:
+        self.asked.append(req.action_type)
+        return True
+
+
 @dataclass
 class EngineRig:
     svc: RulesService
@@ -60,6 +93,9 @@ class EngineRig:
     records: Records
     counted: Counted
     audits: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    outbox: FakeOutbox = field(default_factory=FakeOutbox)
+    principals: Principals = field(default_factory=lambda: Principals(frozenset({ACCOUNT})))
+    stops: AskedStops = field(default_factory=AskedStops)
 
     @property
     def bus(self) -> SignalBus:
@@ -137,6 +173,11 @@ async def engine(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[EngineRig]:
     clock = Clock()
     monkeypatch.setattr(rules_service, "default_clocks", lambda: (clock, clock))
     monkeypatch.setattr(RuleEvaluationRunner, "start", lambda self: None)  # driven by hand
+    # A control move's bound and a notification write's (2 s each) are tested at 0 by themselves;
+    # here they are lifted, so a loaded host (coverage, a load average far above the cores) never
+    # decides a scenario, as #5002's auto-disarm tests lift theirs.
+    monkeypatch.setattr(control_module, "CONTROL_TIMEOUT_S", 60.0)
+    monkeypatch.setattr(control_module, "NOTIFY_TIMEOUT_S", 60.0)
     audits: list[tuple[str, dict[str, Any]]] = []
 
     async def audit(event: str, data: dict[str, Any]) -> None:
@@ -145,17 +186,20 @@ async def engine(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[EngineRig]:
     async def scope_audit(_event: str, _data: dict[str, str]) -> None:
         return None
 
-    store, records, counted = InMemoryRuleStore(), Records(), Counted()
+    store, records, counted, outbox = InMemoryRuleStore(), Records(), Counted(), FakeOutbox()
     svc = RulesService()
-    svc.bind(store=store, audit=audit)
+    svc.bind(store=store, audit=audit, handlers={"send_notification": NotificationHandler(outbox)})
     svc.bind(records=(records, records), metrics=counted.metrics, switches=Switches())
-    svc.bind(principal=Principals(frozenset({ACCOUNT})))
+    principals, stops = Principals(frozenset({ACCOUNT})), AskedStops()
+    svc.bind(principal=principals, stop_check=stops)
     svc.wire_scope(Source(), "demo", scope_audit)
     ctx: Any = SimpleNamespace(settings=SimpleNamespace(rules_evaluator_enabled=True))
     await svc.start(ctx)
     mgr, runner = svc.manager(), svc.runner
     assert mgr is not None and runner is not None
     try:
-        yield EngineRig(svc, mgr, store, runner, clock, records, counted, audits)
+        yield EngineRig(
+            svc, mgr, store, runner, clock, records, counted, audits, outbox, principals, stops
+        )
     finally:
         await svc.stop(1.0)
