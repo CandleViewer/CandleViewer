@@ -16,6 +16,7 @@ import {
 } from "../../../src/features/positions/model/rowMapping";
 import {
   createPositionsStore,
+  DROPPED_ITEM_WARNING,
   MAX_TOMBSTONES,
   usePositions,
   type PositionsStore,
@@ -87,6 +88,25 @@ describe("the late-frame rule (23 §15)", () => {
     store.commit();
     expect(markOf(store, "SOLUSDT", SUB2)).toBe("147.8");
     expect(store.getSnapshot().rows).toHaveLength(5);
+  });
+
+  it("drops a contract-breaking id instead of throwing in the drain, logged once by field and never a value", () => {
+    const warn = vi.fn();
+    const store = createPositionsStore({ warn });
+    store.setStarted(true);
+    store.setAccounts(directory);
+    const sol = item("SOLUSDT", SUB2);
+    const broken = { ...item("BTCUSDT", MAIN), id: 42 };
+    const nulled = { ...sol, id: null, mark_price: "1", updated_at_ms: sol.updated_at_ms + 5 };
+    expect(() =>
+      store.applyFrames([snap({ positions: [broken, sol] }), delta({ positions: [nulled] })]),
+    ).not.toThrow();
+    store.commit();
+    expect(store.getSnapshot().rows.map((r) => r.symbol)).toEqual(["SOLUSDT"]);
+    expect(markOf(store, "SOLUSDT", SUB2)).toBe("147.8");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(DROPPED_ITEM_WARNING, { field: "id" });
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/BTCUSDT|63980|a1000000|42/);
   });
 });
 
