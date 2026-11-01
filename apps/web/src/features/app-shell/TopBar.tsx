@@ -16,6 +16,9 @@ export interface TopBarProps {
   readonly searchHint: string; // "Ctrl+K"
   /** Opens the command palette; absent while no palette is registered (E10-S03). */
   readonly onSearch?: () => void;
+  /** Opens the hotkey cheatsheet (SCR-013); absent while no `global.cheatsheet` handler is registered. */
+  readonly onHelp?: () => void;
+  readonly helpHint: string; // "Ctrl+/"
   readonly onSignOut: () => void;
   readonly signingOut: boolean;
   readonly signOutFailed: boolean;
@@ -25,6 +28,15 @@ export interface TopBarProps {
 export const PICKER_REASON = "Not available in this build.";
 export const PICKER_NOTE = "Pickers: not available in this build.";
 export const SEARCH_REASON = "The command palette is not available in this build.";
+
+/**
+ * The Help entry (E47-S05, WCAG 3.2.6): one slot on every screen, the first control of the trailing group, right
+ * after the connection chip and before the user's name (E10-D03 §2.1 names the trailing group "the user menu ...
+ * the Safety cluster at the right"; this adds no slot, it takes the head of that group).
+ */
+export const HELP_TRIGGER_ID = "cv-help-trigger";
+export const HELP_LABEL = "Help";
+export const HELP_REASON = "The hotkey cheatsheet is not available in this build.";
 
 /** CMP-084's id: focus lands here after SCR-157's Later (E10-D04 T-19) and its dialog (§9.1). */
 export const SEARCH_TRIGGER_ID = "cv-search-trigger";
@@ -62,7 +74,7 @@ function Placeholder({ label }: { readonly label: string }): JSX.Element {
 
 /**
  * CMP-072 TopBar, first row (#304 S2; E10-D02 SCR-010, E10-D03 §2.1), props only. DOM order is the
- * focus order: wordmark, env badge, pickers, search trigger, connection chip, name and role, Sign out.
+ * focus order: wordmark, env badge, pickers, search trigger, connection chip, Help, name and role, Sign out.
  * Stand-ins until their atoms land: T2 picker placeholders (CMP-105/220), a plain `<kbd>`
  * (CMP-022), name and role as text plus Sign out (CMP-061). The symbol picker (CMP-219, SCR-102's
  * trigger) is drawn only once a workspace binds a pane, and nothing stands in for it (E08-S09).
@@ -100,8 +112,19 @@ export function TopBar(props: TopBarProps): JSX.Element {
       </span>
       {props.connection}
       <span style={{ marginLeft: "auto" }}>
-        {user === null ? null : `${user.name} · ${roleWord(user.role)}`}
+        <Button
+          id={HELP_TRIGGER_ID}
+          variant="ghost"
+          size="sm"
+          {...(props.onHelp === undefined
+            ? { disabledReason: HELP_REASON }
+            : { onClick: props.onHelp, "aria-keyshortcuts": ariaKeys(props.helpHint) })}
+          data-cmp="CMP-094"
+        >
+          {HELP_LABEL} <kbd style={KBD}>{props.helpHint}</kbd>
+        </Button>
       </span>
+      <span>{user === null ? null : `${user.name} · ${roleWord(user.role)}`}</span>
       <Button variant="ghost" size="sm" loading={signingOut} onClick={props.onSignOut}>
         Sign out
       </Button>

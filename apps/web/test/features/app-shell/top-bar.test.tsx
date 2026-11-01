@@ -9,7 +9,8 @@ import { buildRoutes } from "../../../src/routes/tree";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
 import type { Role } from "../../../src/routes/rbac";
 import { clearAnnouncements, ShellAnnouncer } from "../../../src/features/app-shell/announcer";
-import { ariaKeys, TopBar } from "../../../src/features/app-shell/TopBar";
+import { registerCommand } from "../../../src/keymap/registry";
+import { ariaKeys, HELP_REASON, TopBar } from "../../../src/features/app-shell/TopBar";
 import {
   badgeLook,
   TopBarEnvBadge,
@@ -121,10 +122,10 @@ describe("E10-S01 S2: the top bar's controls", () => {
     const { bar } = await shellAt("/journal", "demo", "owner");
     const sel = "a[href], button:not([disabled]), input:not([disabled]), [tabindex]";
     const stops = [...document.querySelectorAll<HTMLElement>(sel)].filter((e) => e.tabIndex >= 0);
-    const names = stops.slice(0, 6).map((e) => e.getAttribute("aria-label") ?? e.textContent);
+    const names = stops.slice(0, 7).map((e) => e.getAttribute("aria-label") ?? e.textContent);
     // No Symbol control: SCR-102's trigger is drawn only once a workspace binds a pane (E08-S09).
     expect(names.join(" | ")).toMatch(
-      /^Skip to main content \| Account \| Interval \| Search commands Ctrl\+K \| Connection: [^|]+ \| Sign out$/,
+      /^Skip to main content \| Account \| Interval \| Search commands Ctrl\+K \| Connection: [^|]+ \| Help Ctrl\+\/ \| Sign out$/,
     );
     for (const name of ["Account", "Interval"]) {
       const picker = within(bar).getByRole("button", { name });
@@ -144,7 +145,14 @@ describe("E10-S01 S2: the top bar's controls", () => {
     const onSearch = vi.fn();
     render(
       <TopBar
-        {...{ env: "demo", user: null, connection: null, searchHint: "Ctrl+K", onSearch }}
+        {...{
+          env: "demo",
+          user: null,
+          connection: null,
+          searchHint: "Ctrl+K",
+          helpHint: "Ctrl+/",
+          onSearch,
+        }}
         {...{ onSignOut: vi.fn(), signingOut: false, signOutFailed: false }}
       />,
     );
@@ -153,6 +161,48 @@ describe("E10-S01 S2: the top bar's controls", () => {
     const enabled = screen.getByRole("button", { name: "Search commands Ctrl+K" });
     expect(enabled).toHaveAttribute("aria-keyshortcuts", "Control+K");
     expect([ariaKeys("Cmd+K"), ariaKeys("Meta+Shift+P")]).toEqual(["Meta+K", "Meta+Shift+P"]);
+  });
+});
+
+describe("E47-S05: the Help entry (WCAG 3.2.6)", () => {
+  const bare = {
+    env: "demo",
+    user: null,
+    connection: null,
+    searchHint: "Ctrl+K",
+    helpHint: "Ctrl+/",
+  } as const;
+  const rest = { onSignOut: vi.fn(), signingOut: false, signOutFailed: false } as const;
+
+  it("opens the cheatsheet through the shell's own command and says its key", async () => {
+    const opened = vi.fn();
+    const off = registerCommand("global.cheatsheet", opened);
+    const { bar } = await shellAt("/journal", "demo", "owner");
+    const help = within(bar).getByRole("button", { name: "Help Ctrl+/" });
+    expect(help).toHaveAttribute("aria-keyshortcuts", "Control+/");
+    fireEvent.click(help);
+    expect(opened).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it("sits after the connection chip and before the name and Sign out on every role", async () => {
+    for (const role of ROLES) {
+      const { bar, view } = await shellAt("/journal", "demo", role);
+      const names = within(bar)
+        .getAllByRole("button")
+        .map((b) => b.textContent);
+      const at = (t: string) => names.findIndex((n) => n?.startsWith(t));
+      expect(at("Connection")).toBeLessThan(at("Help"));
+      expect(at("Help")).toBeLessThan(at("Sign out"));
+      view.unmount();
+    }
+  });
+
+  it("is a disabled control with its reason while no handler is wired", () => {
+    render(<TopBar {...bare} {...rest} />);
+    const help = screen.getByRole("button", { name: "Help Ctrl+/" });
+    expect(help).toHaveAttribute("aria-disabled", "true");
+    expect(help).toHaveAccessibleDescription(HELP_REASON);
   });
 });
 

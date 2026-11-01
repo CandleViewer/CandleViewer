@@ -10,6 +10,7 @@
   - button "Search commands Ctrl+K" [disabled]
   - text: The command palette is not available in this build.
   - 'button "Connection: Reconnecting"': Reconnecting
+  - button "Help Ctrl+/"
   - button "Sign out"
 - navigation "Primary":
   - list:

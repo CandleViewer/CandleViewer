@@ -43,7 +43,7 @@ async function capture(
         return s / (d.length / 16);
       };
       let seed = 12345;
-      const rnd = (): number => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+      const rnd = (): number => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
       let update = 0;
       const paint = (): void => {
         if (scene === "strobe") {
@@ -55,7 +55,10 @@ async function capture(
           for (let y = 0; y < cv.height; y++) {
             const v = col[Math.floor((y / cv.height) * col.length)] ?? 0;
             const a = Math.min(1, Math.abs(v) / 60);
-            ctx.fillStyle = v >= 0 ? `rgb(0,${Math.round(40 + 160 * a)},${Math.round(80 * a)})` : `rgb(${Math.round(40 + 160 * a)},0,${Math.round(40 * a)})`;
+            ctx.fillStyle =
+              v >= 0
+                ? `rgb(0,${Math.round(40 + 160 * a)},${Math.round(80 * a)})`
+                : `rgb(${Math.round(40 + 160 * a)},0,${Math.round(40 * a)})`;
             ctx.fillRect(cv.width - 2, y, 2, 1);
           }
         } else {

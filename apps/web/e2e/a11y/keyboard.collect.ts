@@ -70,5 +70,8 @@ test("collect keyboard", async ({ page }) => {
     mouseEvents += n;
   }
   mkdirSync(REPORT_DIR, { recursive: true });
-  writeFileSync(`${REPORT_DIR}/keyboard.json`, JSON.stringify({ mouseEvents, perScreen, steps }, null, 2));
+  writeFileSync(
+    `${REPORT_DIR}/keyboard.json`,
+    JSON.stringify({ mouseEvents, perScreen, steps }, null, 2),
+  );
 });

@@ -3,6 +3,7 @@ import { useLocation } from "react-router";
 import type { Me } from "../../shell/bootstrap/store.js";
 import { useShellSelector } from "../../shell/useShellSelector.js";
 import { bindingFor } from "../../keymap/keymap";
+import { runCommand } from "../../keymap/registry";
 import { SymbolSearchTrigger } from "../symbol-search/SymbolSearch";
 import { useSymbolSearch } from "../symbol-search/searchSession";
 import { sessionApi, SIGN_OUT_FAILED, type SessionApi } from "../session/sessionApi";
@@ -61,6 +62,8 @@ export function TopBarSlot({
       connection={connection}
       {...(target === null ? {} : { symbol: <SymbolSearchTrigger target={target} /> })}
       searchHint={bindingFor("global.palette")}
+      helpHint={bindingFor("global.cheatsheet")}
+      onHelp={() => void runCommand("global.cheatsheet")}
       onSignOut={onSignOut}
       signingOut={signOut.busy}
       signOutFailed={signOut.failed}
