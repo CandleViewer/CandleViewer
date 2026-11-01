@@ -3,7 +3,7 @@
 // resolved once then. A compile or link failure is a typed error the backend reports (BQ-52).
 import { PROGRAM } from "../scene/instance-layout.js";
 import type { PaneUniforms } from "../viewport/transform.js";
-import type { BatchUniforms } from "./submit.js";
+import type { BatchUniforms } from "../scene/gpu-types.js";
 import { GL, type GL2Like, type GLObject } from "./gl-types.js";
 import type { GlRegistry, Handle } from "./registry.js";
 import { BAR_CELL } from "./shaders/bar-cell-stub.js";

@@ -96,10 +96,19 @@ describe("candleRect", () => {
     expect(fullOutline(3, geom(3, 1))).toBe(true); // 3 CSS px at dpr 1
   });
 
-  it("draws a doji 2 hairlines tall (1 below 8 px) and a zero-range bar at least 3 wide", () => {
+  it("draws a doji 2 hairlines tall (1 below 8 px) and a zero-range bar 3 px wide at dpr 1", () => {
     expect(rect(1, [4, 9, 1, 4], CANDLE_DIR.doji, g)).toEqual([31, 491, 9, 2]);
     expect(rect(1, [4, 9, 1, 4], CANDLE_DIR.doji, geom(6, 1))[3]).toBe(1);
     expect(rect(1, [4, 4, 4, 4], CANDLE_DIR.zeroRange, geom(2, 1))[2]).toBe(3);
+  });
+
+  it("D06 §9: a zero-range bar is 2 hairlines tall always, max(body, roundHalfUp(3 dpr)) wide", () => {
+    // dpr 1.5, s = 2: body 2 device px, hairline 1. Width roundHalfUp(4.5) = 5 (not 3 hairlines),
+    // height 2 even below 8 px (the doji's 1-hairline rule is not the zero-range bar's).
+    const z = rect(1, [4, 4, 4, 4], CANDLE_DIR.zeroRange, geom(2, 1.5));
+    expect([z[2], z[3]]).toEqual([5, 2]);
+    expect(rect(1, [4, 4, 4, 4], CANDLE_DIR.zeroRange, geom(6, 1))[3]).toBe(2);
+    expect(rect(1, [4, 4, 4, 4], CANDLE_DIR.zeroRange, geom(48, 1))[2]).toBe(35); // body wins
   });
 });
 

@@ -2,6 +2,7 @@
 // state-sorted order (BQ-42), switching program and texture only when they change. No allocation
 // per frame (§3.2 rule 4): plain loops over retained batches, counters on the trace.
 import type { RetainedBatch } from "../scene/batch-builder.js";
+import type { BatchUniforms } from "../scene/gpu-types.js";
 import type { PaneUniforms } from "../viewport/transform.js";
 import type { GlBuffers } from "./buffers.js";
 import { GL, type GL2Like } from "./gl-types.js";
@@ -20,17 +21,7 @@ export const PROGRAM_VERTICES: readonly number[] = [4, 4, 4, 4, 4];
 /** A batch's pane uniform block (E11-S03), written by `writePaneUniforms` once per frame. */
 export type PaneUniformSource = (batch: RetainedBatch) => PaneUniforms | null;
 
-/**
- * A batch's own uniforms (E12-S06): `u_batch` ints (the candle part and the ring's head, mask and
- * length), `u_geom` and `u_palette`. Retained per node and rewritten in place: no allocation.
- */
-export interface BatchUniforms {
-  readonly ints: Int32Array;
-  readonly geom: Float32Array;
-  readonly palette: Float32Array;
-  /** Strip vertices per instance; 0 takes `PROGRAM_VERTICES`. */
-  vertices: number;
-}
+export type { BatchUniforms };
 export type BatchUniformSource = (batch: RetainedBatch) => BatchUniforms | null;
 
 export function submitDrawList(

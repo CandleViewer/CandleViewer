@@ -5,7 +5,7 @@
 // once at write. Each sync writes only the mutated range [from, to) and records it for every node
 // drawing the ring (`BatchBuilder.patch`); a store reallocation re-linearised its slots, so the
 // ring takes a new array (a new identity: the next upload is a full one, BQ-46). No DOM, no GL.
-import type { VertexSource } from "../../gl/buffers.js";
+import type { VertexSource } from "../../scene/gpu-types.js";
 import type { BarStore } from "../../model/BarStore.js";
 import { type MutationRange, RangeSlot } from "../../model/counters.js";
 

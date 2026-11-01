@@ -3,26 +3,11 @@
 // physical slots (head + i) mod capacity: one `bufferSubData`, two when the range wraps. A new
 // backing array (the store reallocated, or the first upload) is uploaded in full (BQ-46).
 import type { RetainedBatch, UploadSink } from "../scene/batch-builder.js";
+import type { AttributeLayout, VertexSource } from "../scene/gpu-types.js";
 import { GL, type GL2Like, type GLObject } from "./gl-types.js";
 import type { GlRegistry, Handle } from "./registry.js";
 
-/** A store's ring as the GPU sees it; read on every upload, so getters over a store fit. */
-export interface VertexSource {
-  /** The ring's backing floats; a new identity means it was reallocated. */
-  readonly data: Float32Array;
-  /** The physical slot of logical index 0. */
-  readonly head: number;
-  /** Floats per slot; the capacity is `data.length / stride`. */
-  readonly stride: number;
-}
-
-/** E12-S06: int instance attributes a node's VAO binds (`INSTANCE_LAYOUTS` rows read as int). */
-export interface AttributeLayout {
-  /** Floats (4-byte words) per instance. */
-  readonly stride: number;
-  /** [location, word offset, components] per `in` the shader declares with `layout(location)`. */
-  readonly ints: readonly (readonly [location: number, offset: number, size: number])[];
-}
+export type { AttributeLayout, VertexSource };
 
 /** One GPU buffer per source (E12-S06): the nodes drawing one ring share it. */
 interface Shared {

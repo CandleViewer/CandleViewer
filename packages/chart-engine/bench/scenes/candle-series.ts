@@ -20,6 +20,12 @@ const THEME = {
   "color.candle.wick": "#787b86",
   "color.surface.canvas": "#131722",
 };
+/** The same tokens with up and down swapped: a theme switch (STYLE: uniforms, no upload). */
+const SWAPPED = {
+  ...THEME,
+  "color.candle.up": THEME["color.candle.down"],
+  "color.candle.down": THEME["color.candle.up"],
+};
 const W = 1600;
 const H = 900;
 
@@ -132,6 +138,13 @@ export class CandleSeriesBench {
     live.time[0] = this.next;
     ring.sync(store, store.append(live, true));
     for (const h of this.series.hosts) this.graph.markData(h.id);
+    this.frame(t);
+  }
+
+  /** A theme switch: the palette re-resolved (theme load), STYLE marked, then the frame. */
+  switchTheme(t: number): void {
+    this.series.setTheme(t % 32 < 16 ? SWAPPED : THEME);
+    this.graph.markTheme();
     this.frame(t);
   }
 
