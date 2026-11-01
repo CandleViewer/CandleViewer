@@ -268,7 +268,7 @@ def make_market_bars_router(
         param: str,
         from_: str | None = Query(default=None, alias="from"),
         to: str | None = Query(default=None, alias="to"),
-        # Refused by FastAPI (422) before this handler runs: not counted or logged (#452 m2).
+        # `limit` outside 1..MAX_LIMIT: NOT COVERED by the refusal counter (#452 F4a, owned row).
         limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
         cursor: str | None = Query(default=None),  # length enforced by decode_cursor (#2087 S1)
         include_open: bool = Query(default=False),

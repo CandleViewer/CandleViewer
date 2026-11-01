@@ -5,8 +5,8 @@ rejection and rebuild rates.
 Since #452 F4a every refusal the handlers make is counted in `api_request_rejected_total{route,
 reason}` (the ticket's `endpoint` label is `route`: the Semgrep allow-list has no `endpoint`) and in
 `bars_endpoint_param_rejected_total{reason}`, and logged once as `market_request_refused`. A `limit`
-outside 1..5000 is refused by FastAPI before the handler and is not counted (F4a-limit, NOT
-COVERED); no alert rule names a `bars_*` series (F4b).
+outside 1..5000 is NOT COVERED (F4a-limit, an owned row); no alert rule names a `bars_*` series
+(F4b).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from tests.contract._market_world import KLINES_NOW_US, NOW, T0
 from tests.security.bars.conftest import Stores
 from tests.security.bars.test_caps_and_cost import DAY_US, bars, klines
 
-F4A_LIMIT: Final = "#452 F4a: a `limit` refusal is FastAPI's 422, before the handler: not counted"
+F4A_LIMIT: Final = "#452 F4a: NOT COVERED, owned row: a `limit` outside 1..5000"
 F4B: Final = "#452 findings row F4 (F4b): an alert on the bars rejection and rebuild rates"
 _ALERTS: Final = Path(__file__).resolve().parents[5] / "infra" / "prometheus" / "alerts"
 _PROBE: Final = "\x1b[31m" + "A" * 100
@@ -57,7 +57,7 @@ _REFUSALS: Final = [
     ("bars", "getBars", {**bars("tick", "100", T0, NOW), "symbol": "NOPEUSDT"}),
     ("klines", "getKlines", klines(KLINES_NOW_US - 401 * DAY_US, KLINES_NOW_US)),
 ]
-#: `limit` is declared `ge=1, le=MAX_LIMIT` on the Query, so FastAPI refuses it first.
+#: `limit` outside 1..5000: NOT COVERED by the refusal counter (an owned row).
 _LIMIT_REFUSALS: Final = [
     pytest.param("bars", "getBars", {**bars("tick", "100", T0, NOW), "limit": 5_001}),
     pytest.param("klines", "getKlines", {**klines(T0, KLINES_NOW_US), "limit": 5_001}),
