@@ -9,7 +9,10 @@
 // for the optional `LossCapable` hooks, so no line here branches on which backend draws (S3).
 // E12-S06: the runtime owns one `BarStore` and its `CandleRing` per `addSeries` id; the main
 // series (the first on pane 0) is the viewport's time map (G-8) and rebases the ObjectIndex
-// (G-23). A refused batch (F-01 decode, F-02 store) leaves the store byte-identical.
+// (G-23). A refused batch (F-01 decode, F-02 store) leaves the store byte-identical. PR 2: OHLC
+// `bars` draw through `BarSeries`; a plot pick that misses every object tries the series' bars
+// (the geometry twin); a frame posts `dataState` when its visible range empties or fills, and an
+// empty one hides the background layer (the grid, BQ-9).
 import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
@@ -18,12 +21,19 @@ import {
   createStructuralHit,
   ObjectIndex,
   StructuralIndex,
+  toleranceFor,
   type PickHit,
   type StructuralHit,
 } from "../hit/index.js";
 import { Gestures } from "../interaction/gestures.js";
 import { CandleRing } from "../layers/candle/ring.js";
-import { CANDLE_ATTRIBUTES, CandleSeries } from "../layers/candle/series.js";
+import { BarSeries } from "../layers/candle/bars.js";
+import {
+  type BarHit,
+  CANDLE_ATTRIBUTES,
+  CandleSeries,
+  createBarHit,
+} from "../layers/candle/series.js";
 import type { HostDeps, HostTheme } from "../layers/host.js";
 import type { BatchUniforms } from "../gl/submit.js";
 import { type BarBatch, BarStore } from "../model/BarStore.js";
@@ -124,19 +134,23 @@ export interface RenderRuntime {
   /** Internal (E11-S11, BQ-272): `engine.atlas.*`; null until a WebGL2 chart with fonts opens. */
   atlasCounters(): Readonly<AtlasCounters> | null;
   /** Internal (E12-S06): one `addSeries` id's store and instance ring. */
-  series(id: ChartId, series: number): BarSeries | undefined;
+  series(id: ChartId, series: number): SeriesEntry | undefined;
   /** Internal (E12-S06): `engine.data.rejected{reason}`, per chart. */
   dataRejected(id: ChartId): Readonly<Record<string, number>> | undefined;
+  /** Internal (E12-S06, BQ-9): a chart's scene graph, read by tests (the hidden grid layer). */
+  graph(id: ChartId): scene.SceneGraph | undefined;
 }
 
 /** One runtime-owned series (E12-S06): its store is the CPU truth, the ring its GPU mirror. */
-export interface BarSeries {
+export interface SeriesEntry {
   readonly kind: BarSeriesKind;
   readonly pane: number;
   readonly store: BarStore;
   readonly ring: CandleRing;
-  /** E12-S06: the candle plugin drawing it; null for OHLC `bars` until PR 2. */
-  readonly candle: CandleSeries | null;
+  /** The plugin drawing it: a `CandleSeries` for candles, a `BarSeries` for OHLC bars. */
+  readonly candle: CandleSeries;
+  /** A bar pick's `objectId` (`series.<id>`), made once. */
+  readonly pickId: string;
 }
 
 /** `engine.resize.*` (BQ-153): backing-store reallocations and DPR changes, per chart. */
@@ -198,7 +212,7 @@ interface Instance {
   /** `init.fonts`, checked on their own (a bad option never rejects the init, BQ-258). */
   readonly fonts: readonly ChartFont[] | "invalid" | undefined;
   /** E12-S06: the `addSeries` ids, their stores and rings; the main series' id, else -1. */
-  readonly series: Map<number, BarSeries>;
+  readonly series: Map<number, SeriesEntry>;
   main: number;
   /** `engine.data.rejected{reason}`: a model `RejectReason`, or `decode` (F-01, the wire). */
   readonly dataRejected: Record<string, number>;
@@ -210,6 +224,9 @@ interface Instance {
   hostTheme: HostTheme;
   /** Mount generations: node ids stay unique across a remove and a re-add (no node removal). */
   mounts: number;
+  /** BQ-9: the last `dataState` posted (null before the first frame), and the bar pick's slot. */
+  dataState: "empty" | "ready" | null;
+  readonly barHit: BarHit;
 }
 
 /** The ObjectIndex's rebuild after the main series is removed (a `replace` of nothing). */
@@ -258,6 +275,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     render: () => void,
     opened: (o: OpenedBackend) => void,
     viewport: ChartViewport,
+    prepare: () => void,
   ) {
     const graph = new scene.SceneGraph();
     graph.addPane("main");
@@ -274,7 +292,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       return 1;
     }
     const scheduler = new scene.FrameScheduler(graph, clock, {
-      layout: () => layout.run(),
+      layout: () => {
+        prepare(); // before collect and build: the background layer's visibility (BQ-9)
+        layout.run();
+      },
       build: (sink) => {
         open(); // before the first build, so its full uploads reach the GPU
         builder.build(sink);
@@ -482,7 +503,35 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     hit.handle = -1;
     if (where.region !== "plot" || !obj) return;
     inst.objects.gesture = inst.gestures.active; // a drifted grid waits for the gesture (BQ-127)
-    inst.objects.pick(x, y, pointer, hit);
+    if (inst.objects.pick(x, y, pointer, hit)) return;
+    pickBar(inst, x, y, toleranceFor(pointer));
+  }
+
+  /**
+   * E12-S06: the bar under (x, y) on pane 0, after every object missed. The structural index gave
+   * the bar (the slot under x); each series on the pane measures its drawn parts there through the
+   * geometry twin, with the last frame's pane block: what is hit is what was drawn. The topmost
+   * (last added) series wins a tie.
+   */
+  function pickBar(inst: Instance, x: number, y: number, tol: number): void {
+    const { hit, where, barHit } = inst;
+    if (where.pane !== 0) return;
+    const u = inst.uniforms;
+    const i0 = u.ints[0] ?? 0;
+    const t0 = u.ints[1] ?? 0;
+    let best = Infinity;
+    for (const s of inst.series.values()) {
+      if (s.pane !== 0) continue;
+      const c = s.candle;
+      if (!c.hitTest(x, y, where.barIndex, u.floats, i0, t0, tol, barHit)) continue;
+      if (barHit.distancePx > best) continue;
+      best = barHit.distancePx;
+      hit.id = s.pickId;
+      hit.kind = "bar";
+      hit.part = "body";
+      hit.handle = -1;
+      hit.distancePx = best;
+    }
   }
 
   /** BQ-136: `bar` and `price` on every reply; a miss is `none`, or `axis` in a gutter. */
@@ -531,12 +580,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     const store = new BarStore();
     const ring = new CandleRing(inst.builder);
-    const candle = kind === "candles" ? new CandleSeries(ring) : null;
-    inst.series.set(sid, { kind, pane, store, ring, candle });
-    if (candle !== null) {
-      mountCandle(inst, sid, candle);
-      themeCandle(inst, candle);
-    }
+    const candle = kind === "candles" ? new CandleSeries(ring) : new BarSeries(ring);
+    inst.series.set(sid, { kind, pane, store, ring, candle, pickId: `series.${sid}` });
+    mountCandle(inst, sid, candle);
+    themeCandle(inst, candle);
     if (pane === 0 && inst.main < 0) {
       inst.main = sid;
       inst.viewport.setMap(store); // G-8: the store is the runtime's IndexTimeMap
@@ -550,7 +597,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
    */
   function mountCandle(inst: Instance, sid: number, c: CandleSeries): void {
     const deps: HostDeps = { viewport: inst.viewport, pane: 0, theme: () => inst.hostTheme };
-    const hosts = c.mount(inst.graph, "main", `series.candle.${sid}.${inst.mounts++}`, deps);
+    const base = `${c.shape === "candles" ? "series.candle" : "series.ohlc"}.${sid}.${inst.mounts++}`;
+    const hosts = c.mount(inst.graph, "main", base, deps);
     for (let p = 0; p < hosts.length; p += 1) {
       inst.blocks.set((hosts[p] as { id: string }).id, c.blocks[p] as BatchUniforms);
     }
@@ -560,7 +608,27 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   }
 
   function attachCandle(backend: RenderBackend, c: CandleSeries): void {
-    for (const h of c.hosts) backend.attach(h.id, c.ring, CANDLE_ATTRIBUTES);
+    const hs = c.hosts;
+    for (let p = 0; p < hs.length; p += 1) {
+      backend.attach((hs[p] as { id: string }).id, c.sources[p] ?? c.ring, CANDLE_ATTRIBUTES);
+    }
+  }
+
+  /**
+   * BQ-9: `dataState` when the main series' visible range empties or fills (edge-triggered; the
+   * first frame always posts). While empty the background layer (the grid) is hidden; the app
+   * draws SCR-047 over the canvas. Runs once per frame, before collect.
+   */
+  function dataState(inst: Instance): void {
+    const n = inst.series.get(inst.main)?.store.length ?? 0;
+    const vp = inst.viewport;
+    const first = Math.max(0, Math.floor(vp.leftIndex));
+    const last = Math.min(n - 1, Math.floor(vp.leftIndex + vp.plotWidth / vp.barSpacing));
+    const state = last >= first ? "ready" : "empty";
+    if (state === inst.dataState) return;
+    inst.dataState = state;
+    inst.graph.setVisible(`main/${scene.LAYER_ORDER[0]}`, state === "ready");
+    deps.post({ t: "dataState", id: inst.id, state });
   }
 
   /** BQ-4: a theme without a candle token is a recoverable error and no series drawn. */
@@ -591,6 +659,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         inst.blocks.delete(h.id);
       }
       c.ring.nodes.length = 0;
+      c.seams.nodes.length = 0;
       inst.candles.splice(inst.candles.indexOf(c), 1);
       inst.graph.markTheme();
       touch(inst);
@@ -637,7 +706,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       else if (op === "prepend") r = store.prepend(b);
       else r = patchAt(store, b);
       s.ring.sync(store, r);
-      for (const h of s.candle?.hosts ?? []) inst.graph.markData(h.id);
+      for (const h of s.candle.hosts) inst.graph.markData(h.id);
       if (sid !== inst.main) return;
       inst.objects.onMutation(r);
       inst.viewportDirty = true; // the map's length moved: the time range may have too
@@ -688,6 +757,14 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "removeSeries":
         removeSeries(inst, cmd.series);
         return;
+      case "setSeriesOptions": {
+        // BQ-12: `isTimeAligned` (default true) only switches the gap seam (and E11-S06's labels).
+        const s = inst.series.get(cmd.series);
+        const aligned = (cmd.options as { isTimeAligned?: unknown }).isTimeAligned;
+        if (s !== undefined && typeof aligned === "boolean") s.candle.timeAligned = aligned;
+        touch(inst);
+        return;
+      }
       case "release":
         retire(inst);
         charts.delete(inst.id);
@@ -697,7 +774,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         }
         return;
       default:
-        // setSeriesOptions / addDrawing: the scene graph that consumes them is E11-S01 / E14.
+        // addDrawing: the scene graph that consumes it is E14's.
         touch(inst);
     }
   }
@@ -732,6 +809,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         () => render(inst),
         (backend) => opened(inst, backend),
         viewport,
+        () => dataState(inst),
       );
       scene.layout.setSize(w, h);
       const inst: Instance = {
@@ -782,11 +860,12 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         blocks: new Map(),
         hostTheme: hostTheme(msg.theme),
         mounts: old?.mounts ?? 0,
+        dataState: null,
+        barHit: createBarHit(),
       };
       // BQ-53: the DataModel is kept; its rings now patch the fresh scene's batches.
       for (const [sid, s] of inst.series) {
         s.ring.sink = inst.builder;
-        if (s.candle === null) continue;
         mountCandle(inst, sid, s.candle); // the fresh scene's hosts; the backend attaches them
         themeCandle(inst, s.candle);
       }
@@ -859,8 +938,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       inst.uniforms.floats[5] = height;
       backend.setBackground(inst.theme[BACKGROUND_TOKEN]);
       const cs = inst.candles;
+      const vp = inst.viewport;
+      const first = Math.floor(vp.leftIndex);
+      const last = Math.floor(vp.leftIndex + vp.plotWidth / vp.barSpacing);
       for (let c = 0; c < cs.length; c += 1) {
-        (cs[c] as CandleSeries).frame(inst.viewport.barSpacing, inst.dpr); // u_geom and u_batch
+        (cs[c] as CandleSeries).frame(vp.barSpacing, inst.dpr, first, last); // u_geom, u_batch
       }
       const f = backend.submit(inst.builder.drawList, inst.builder.drawCount, width, height);
       // The R1 budget closes on the first complete frame after a restore (BQ-49).
@@ -986,5 +1068,6 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     atlasCounters: () => atlas?.counters ?? null,
     series: (id, sid) => charts.get(id)?.series.get(sid),
     dataRejected: (id) => charts.get(id)?.dataRejected,
+    graph: (id) => charts.get(id)?.graph,
   };
 }

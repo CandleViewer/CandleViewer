@@ -1,10 +1,22 @@
-// The candle geometry twin (E12-S06, E12-D06 §2-§4 at L0): the one float64 CPU copy of what the
-// `candle` shader draws, for the 2D painter and the tests (hit-testing joins in PR 2). Per frame
-// it reduces bar spacing and DPR to four numbers (`u_geom`); per bar it places a part's rect
-// exactly as the shader does, through the pane block and `projectRel` (BQ-114). No DOM.
+// The candle geometry twin (E12-S06, E12-D06 §2-§4 and §9 at L0): the one float64 CPU copy of
+// what the `candle` shader draws, for the 2D painter, hit-testing and the tests. Per frame it
+// reduces bar spacing and DPR to four numbers (`u_geom`); per bar it places a part's rect exactly
+// as the shader does, through the pane block and `projectRel` (BQ-114). No DOM.
 import { hairlineDevicePx } from "../../viewport/pixels.js";
 import { projectRel } from "../../viewport/transform.js";
+import { PALETTE } from "./palette.js";
 import { CANDLE_DIR } from "./ring.js";
+
+/**
+ * `u_batch.x`: what a batch draws. Candles: the wick and the body. OHLC bars (D06 §3.2): the stem
+ * and the open / close ticks (a 10-vertex strip, two quads joined by degenerate bridges, BQ-15).
+ * The gap seam (BQ-8): one hairline at the left edge of each `gap_before` bar's slot.
+ */
+export const CANDLE_PART = { wick: 0, body: 1, ticks: 2, stem: 3, seam: 4 } as const;
+/** Strip vertices per instance: 4 for a quad, 10 for the two ticks (BQ-15). */
+export const PART_VERTICES: readonly number[] = [4, 4, 10, 4, 4];
+/** D06 §3.2: OHLC ticks are drawn from 5 CSS px; below it the bar draws the candle mark. */
+export const OHLC_TICKS_FROM = 5;
 
 /**
  * `u_geom` (two vec4 rows): body width, hairline and OHLC tick in device px, spacing in CSS px;
@@ -41,10 +53,19 @@ export function candleGeometry(spacingCss: number, dpr: number, out: Float32Arra
 export const fullOutline = (w: number, geom: ArrayLike<number>): boolean =>
   w >= FULL_OUTLINE_CSS * (geom[GEOM.dpr] ?? 1);
 
+/** The palette row a part of a `dir` bar is drawn in (the shader's choice, line for line). */
+export function partColor(part: number, dir: number): number {
+  if (part === CANDLE_PART.wick || part === CANDLE_PART.seam || dir >= CANDLE_DIR.doji) {
+    return PALETTE.wick; // D06 §9: doji and zero-range marks are neutral; R-6
+  }
+  return dir === CANDLE_DIR.up ? PALETTE.up : PALETTE.down;
+}
+
 /**
- * Part `part` (0 wick, 1 body) of bar `index` (logical) as [x, y, w, h] in `u_viewport` px, y
- * down: the shader's arithmetic in float64. `k` is the pane block's floats (`u_k`, `u_log`),
- * `tickBase` / `indexBase` its ints; `dir` the ring's classification.
+ * Part `part` (`CANDLE_PART`) of bar `index` (logical) as [x, y, w, h] in `u_viewport` px, y
+ * down: the shader's arithmetic in float64. `k` is the pane block's floats (`u_k`, `u_viewport`,
+ * `u_log`), `tickBase` / `indexBase` its ints; `dir` the ring's classification. `sub` picks the
+ * OHLC tick (0 open, 1 close); a part with nothing to draw gets w = 0.
  */
 export function candleRect(
   part: number,
@@ -59,19 +80,43 @@ export function candleRect(
   tickBase: number,
   geom: ArrayLike<number>,
   out: Float64Array,
+  sub = 0,
 ): void {
   const hair = geom[GEOM.hair] ?? 1;
   const body = geom[GEOM.body] ?? 1;
+  const kx = k[0] ?? 0;
+  const centre = (index - indexBase + 0.5 - (k[3] ?? 0)) * kx; // the shader's evaluation order
+  if (part === CANDLE_PART.seam) {
+    // BQ-8: the slot's left edge, a hairline over the whole pane.
+    out[0] = Math.floor(centre - kx * 0.5 - hair * 0.5 + 0.5);
+    out[1] = 0;
+    out[2] = hair;
+    out[3] = k[5] ?? 0;
+    return;
+  }
   // The body's left edge snapped to a device pixel; every part is centred on it from there.
-  const left = Math.floor((index - indexBase + 0.5 - (k[3] ?? 0)) * (k[0] ?? 0) - body * 0.5 + 0.5);
-  let w: number;
+  const left = Math.floor(centre - body * 0.5 + 0.5);
+  // D06 §3.1 / §3.2: 1 hairline up, 2 down; doji and zero-range marks keep one.
+  const weight = dir === CANDLE_DIR.down ? 2 * hair : hair;
+  const stem = left + Math.floor((body - hair) * 0.5);
+  let x = stem;
+  let w = weight;
   let y0: number;
   let y1: number;
-  if (part === 0) {
-    w = dir === CANDLE_DIR.down ? 2 * hair : hair;
-    y0 = projectRel(k, l - tickBase);
-    y1 = projectRel(k, h - tickBase);
-  } else {
+  if (part === CANDLE_PART.ticks) {
+    const tick = geom[GEOM.tick] ?? 1;
+    if (dir === CANDLE_DIR.zeroRange)
+      w = 0; // the stem draws the zero-range mark
+    else {
+      x = sub === 0 ? stem - tick : stem + weight;
+      w = tick;
+    }
+    y0 = Math.floor(projectRel(k, (sub === 0 ? o : c) - tickBase) - weight * 0.5 + 0.5);
+    y1 = y0 + weight;
+  } else if (
+    part === CANDLE_PART.body ||
+    (part === CANDLE_PART.stem && dir === CANDLE_DIR.zeroRange)
+  ) {
     w = body;
     y0 = projectRel(k, o - tickBase);
     y1 = projectRel(k, c - tickBase);
@@ -84,11 +129,15 @@ export function candleRect(
       y0 = Math.floor(y0 - tall * 0.5 + 0.5);
       y1 = y0 + tall;
     }
+    x = left + Math.floor((body - w) * 0.5);
+  } else {
+    // The wick (candles) or the stem (OHLC): high → low on the centre column.
+    y0 = projectRel(k, l - tickBase);
+    y1 = projectRel(k, h - tickBase);
   }
   const top = Math.min(y0, y1);
   const bottom = Math.max(Math.max(y0, y1), top + hair);
-  // D06 §3.1: the wick on the centre column, a down wick widened to the column on its right.
-  out[0] = left + Math.floor((body - (part === 0 ? hair : w)) * 0.5);
+  out[0] = x;
   out[1] = top;
   out[2] = w;
   out[3] = bottom - top;
