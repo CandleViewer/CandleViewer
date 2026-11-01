@@ -9,7 +9,7 @@ real gate."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
@@ -22,6 +22,7 @@ from fastapi import FastAPI, Request
 from candleviewer.accounts.models import AccountKind, ExchangeAccount, ExchangeEnv
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
 from candleviewer.api.admin_reconciliation import make_admin_reconciliation_router
+from candleviewer.api.idempotency import IdempotencyCache
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.step_up import StepUpChallenge
@@ -94,12 +95,14 @@ class Granting:
 
 class Recorder:
     """The serving loop's audit writer, noting at each `oms.reconcile` record whether the account
-    is still refused and where its B19 rests; `fail` makes that record not durable."""
+    is still refused and where its B19 rests; `fail` makes that record not durable, and `then`
+    runs once it is, while the route still waits on the write."""
 
     def __init__(self, job: Job) -> None:
         self.job, self.fail = job, False
         self.driver: ReconcileJobs | None = None
         self.seen: list[tuple[str, bool, str]] = []
+        self.then: Callable[[], Awaitable[None]] | None = None
 
     async def emit(self, action: str, **kw: Any) -> None:
         if action != "oms.reconcile":
@@ -109,9 +112,13 @@ class Recorder:
         assert self.driver is not None
         state = leaf_of(self.driver._jobs[ACCOUNT].interp)
         self.seen.append((kw["after_state"]["stage"], self.job.standing.is_stale(ACCOUNT), state))
+        if self.then is not None:
+            await self.then()
 
 
-def _app(driver: ReconcileJobs, audit: Recorder) -> FastAPI:
+def _app(
+    driver: ReconcileJobs, audit: Recorder, replays: IdempotencyCache | None = None
+) -> FastAPI:
     audit.driver = driver
     serving = Serving(asyncio.get_running_loop(), Metrics("demo"))
     parts = SimpleNamespace(
@@ -123,14 +130,17 @@ def _app(driver: ReconcileJobs, audit: Recorder) -> FastAPI:
     app.include_router(
         make_admin_reconciliation_router(
             Accounts(), lambda: runtime, environment="demo", auth=cast(Any, Granting()),
-            resolver=Owner(), audit=audit,
+            resolver=Owner(), audit=audit, replays=replays,
         )
     )  # fmt: skip
     return app
 
 
-async def _post(app: FastAPI, path: str, **kw: Any) -> httpx.Response:
-    transport = httpx.ASGITransport(app=app)
+async def _post(
+    app: FastAPI, path: str, *, raise_app_exceptions: bool = True, **kw: Any
+) -> httpx.Response:
+    """`raise_app_exceptions=False` answers what the route did not map as the server does, 500."""
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=raise_app_exceptions)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.post(path, headers=HEADERS, **kw)
 
@@ -274,5 +284,67 @@ async def test_a_refused_snapshot_restarts_locked_and_only_the_owners_resolve_un
         assert again.status_code == 202 and await _resting(driver) == "idle"
         assert [r[2]["trigger"] for r in fresh.records.rows] == ["manual"]  # a pass, no relock
         assert not fresh.standing.is_stale(ACCOUNT)
+    finally:
+        await driver.stop()
+
+
+# --- A stop that overtakes a request: the jobs close while the route's record is written ---------
+
+
+async def test_a_manual_pass_whose_job_the_stop_closes_meanwhile_is_503_and_keeps_nothing(
+    job: Job, timers: Timers
+) -> None:
+    """The delta look's n2 on the final PR (`OnLaneReconciliation.reconcile_now`): the runtime's
+    stop closes and unregisters the job while the request's record is written, between the
+    driver's read of the job and its send, so the gateway knows it no more. That is
+    `ReconciliationUnavailable`, which the route answers `503 oms_not_ready` with `Retry-After`,
+    as it does a send B19 refuses, never a 500: nothing is kept under the key, no pass runs, and
+    the record written ahead stands."""
+    driver = _driver(job, timers)
+    await driver.start([ACCOUNT])
+    await _resting(driver)
+    reported, audit, kept = list(job.records.rows), Recorder(job), IdempotencyCache()
+    audit.then = driver.stop  # the stop's closer reaches the job while its record is written
+    try:
+        sent = await _post(
+            _app(driver, audit, kept), f"/admin/reconciliation/{ACCOUNT}",
+            raise_app_exceptions=False,
+        )  # fmt: skip
+        assert sent.status_code == 503, sent.text
+        body = sent.json()
+        assert body["code"] == "oms_not_ready" and body["retry_after_seconds"] > 0
+        assert sent.headers["retry-after"] == str(body["retry_after_seconds"])
+        assert audit.seen == [("requested", False, "idle")]  # written ahead, and it stands
+        assert driver.state(ACCOUNT) is None and len(kept) == 0  # the job gone, nothing kept
+        assert job.records.rows == reported  # no pass ran
+    finally:
+        await driver.stop()
+
+
+async def test_a_decision_whose_job_the_stop_closes_meanwhile_is_503_and_unlocks_nothing(
+    job: Job, timers: Timers
+) -> None:
+    """The same for the Owner's decision (`OnLaneReconciliation.resolve`): the stop closes the
+    job while the decision's record is written, so `OPERATOR_RESOLVED` finds no job. It is
+    `503 oms_not_ready` with `Retry-After`, never a 500 and never an unlock: nothing is kept under
+    the key, the account stays refused (the standing clears only once B19 records the unlock,
+    BQ-5, C-2.21) and the record written ahead stands."""
+    driver = _driver(job, timers)
+    await driver.start([])
+    await _locked(job, driver, timers)
+    audit, kept = Recorder(job), IdempotencyCache()
+    audit.then = driver.stop  # the stop's closer reaches the job while its record is written
+    try:
+        sent = await _post(
+            _app(driver, audit, kept), f"/admin/reconciliation/{ACCOUNT}/resolve", json=BODY,
+            raise_app_exceptions=False,
+        )  # fmt: skip
+        assert sent.status_code == 503, sent.text
+        body = sent.json()
+        assert body["code"] == "oms_not_ready" and body["retry_after_seconds"] > 0
+        assert sent.headers["retry-after"] == str(body["retry_after_seconds"])
+        assert audit.seen == [("resolved", True, "stale_lockout")]  # written ahead, and it stands
+        assert driver.state(ACCOUNT) is None and len(kept) == 0  # the job gone, nothing kept
+        assert job.standing.is_stale(ACCOUNT)  # nothing was unlocked
     finally:
         await driver.stop()

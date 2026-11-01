@@ -230,6 +230,7 @@ from candleviewer.settings import (
 )
 from candleviewer.statechart.bindings.b01_order import ALREADY_TERMINAL
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
+from candleviewer.statechart.gateway import UnknownMachineError
 from candleviewer.statechart.persistence import ChainTripLatch
 from candleviewer.statechart.plugins import LogPager, MachineEventSink, Pager
 from candleviewer.statechart.plugins.state_feed import (
@@ -2173,7 +2174,10 @@ class OnLaneReconciliation:
     their locks live, within `CV_COMMAND_TIMEOUT`, and its write-ahead record hops back to the
     serving loop (`Serving.call`), where the route's audit writer runs, so B19 is told nothing
     until that record is durable (C-2.9). What the record or the driver raises reaches the route
-    unchanged. `wired` is false where the stores compose no reconciliation."""
+    unchanged, but for a job the runtime's stop closes and unregisters while the record is
+    written: the driver's send then finds the gateway without it (`UnknownMachineError`), which
+    is `ReconciliationUnavailable` (`_job_call`). `wired` is false where the stores compose no
+    reconciliation."""
 
     parts: _Parts
 
@@ -2185,14 +2189,25 @@ class OnLaneReconciliation:
         self, account: AccountId, *, write_ahead: ServedAhead[PassTaken]
     ) -> PassTaken:
         jobs, ahead = self._jobs(), self._served(write_ahead)
-        return await _on_lane(self.parts, jobs.reconcile_now(account, write_ahead=ahead))
+        return await self._job_call(jobs.reconcile_now(account, write_ahead=ahead))
 
     async def resolve(
         self, account: AccountId, *, decided_by: str, write_ahead: ServedAhead[str]
     ) -> str:
         jobs, ahead = self._jobs(), self._served(write_ahead)
         resolving = jobs.resolve(account, decided_by=decided_by, write_ahead=ahead)
-        return await _on_lane(self.parts, resolving)
+        return await self._job_call(resolving)
+
+    async def _job_call[T](self, call: Coroutine[Any, Any, T]) -> T:
+        """`call`, a job's, on the lane (`_on_lane`). A job the runtime's stop closed and
+        unregistered meanwhile is gone from the gateway when the driver sends, so its
+        `UnknownMachineError` is `ReconciliationUnavailable`: the route's `503 oms_not_ready` with
+        `Retry-After`, as for a send B19 refuses. Nothing is unlocked or kept, and the record
+        written ahead stands (the delta look's n2 on the final PR)."""
+        try:
+            return await _on_lane(self.parts, call)
+        except UnknownMachineError:
+            raise ReconciliationUnavailable("the job stopped before it took the event") from None
 
     def _jobs(self) -> ReconcileJobs:
         if self.parts.reconcile is None:
