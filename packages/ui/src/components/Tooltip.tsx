@@ -143,6 +143,9 @@ export function Tooltip({
   }, [clearTimers]);
   const show = (): void => {
     clearTimers();
+    // A trigger whose popup is open (a Popover, a Menu) has its own surface and owns `Esc`: the echo stays
+    // away however the pointer or focus comes back to it, so it never takes the popup's first `Esc`.
+    if (trigger.current?.getAttribute("aria-expanded") === "true") return;
     if (!dismissed.current && !empty) setOpen(true);
   };
   const leave = (): void => {
@@ -176,11 +179,14 @@ export function Tooltip({
     if (!open) return undefined;
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
-      // The topmost layer takes Esc and stops it there (conventions 32); focus is never moved.
-      event.preventDefault();
-      event.stopPropagation();
       dismissed.current = true;
       hide();
+      // A trigger whose popup is open (a Popover, a Menu) is under that popup: the popup is the topmost layer,
+      // so the echo goes and the same `Esc` passes on to close it.
+      if (trigger.current?.getAttribute("aria-expanded") === "true") return;
+      // Otherwise the echo is the topmost layer: it takes Esc and stops it there (conventions 32); focus never moves.
+      event.preventDefault();
+      event.stopPropagation();
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
