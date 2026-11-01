@@ -128,8 +128,8 @@ SEND_TIMEOUT_S: Final = 5.0
 QUIESCE_TIMEOUT_S: Final = 10.0
 QUIESCE_POLL_S: Final = 0.01
 #: Each job's persist at the stop (C-2.18), under the share of the runtime's stop that its
-#: reconciliation closer gets (`oms_wiring._closed`), so one that hangs is cut here, logged and
-#: paged, and the stop goes on to the next job and to B19's port, never cut whole by that share.
+#: reconciliation closer gets (`oms_wiring._closed`): one persist that hangs is cut here and paged,
+#: and the stop goes on; several that hang still meet the closer's share.
 PERSIST_TIMEOUT_S: Final = 0.2
 #: Each step of a job's open the driver awaits (C-2.18): its snapshot's load, its restore, which
 #: starts the machine within the factory's own 5 s (CV-C56), and a fresh build's plugins. One that
