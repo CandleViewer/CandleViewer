@@ -6,8 +6,10 @@
 // a degenerate quad, so a prepend, an eviction and a pan are uniform writes (BQ-14). Ints are
 // subtracted before any float (BQ-75); y is bar-cell's log1p / series mix (BQ-113). `u_batch` =
 // (part, head, mask, n), part as `CANDLE_PART`: 0 wick, 1 body, 2 OHLC ticks, 3 OHLC stem, 4 the
-// gap seam. `u_geom[0]` = (body, hairline, tick) device px and spacing CSS px; `u_geom[1]` = (DPR, plot top, plot bottom) in device px;
-// the seam spans top to bottom. Mirrors `src/layers/candle/geometry.ts` line for line.
+// gap seam, 5 / 6 the hollow wick and body (E12-S07, D06 §4.2: placed as 0 / 1; `a_meta` bit 8
+// hollow, bit 9 colour-up, `CANDLE_META`). `u_geom[0]` = (body, hairline, tick) device px and
+// spacing CSS px; `u_geom[1]` = (DPR, plot top, plot bottom) in device px; the seam spans top to
+// bottom. Mirrors `src/layers/candle/geometry.ts` line for line.
 // `u_palette` = up, down, wick, up tint, down tint, neutral (E12-D06 §2-§4, §9).
 export const CANDLE = {
   name: "candle",
@@ -46,6 +48,7 @@ float yOf(int tick) {
 }
 void main() {
   int part = u_batch.x;
+  int base = part == 5 ? 0 : part == 6 ? 1 : part; // the hollow parts place as wick and body
   int i = ((part == 4 ? a_ohlc.x : gl_InstanceID) - u_batch.y) & u_batch.z;
   int vid = gl_VertexID;
   int sub = 0;
@@ -58,7 +61,9 @@ void main() {
     gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
     return;
   }
-  int dir = (a_meta >> 4) & 3;
+  int mark = a_meta >> 4;
+  int dir = mark & 3;
+  bool colourUp = (mark & 32) != 0;
   float h = u_geom[0].y;
   float body = u_geom[0].x;
   float centre = (float(i - u_indexBase) + 0.5 - u_k.w) * u_k.x;
@@ -76,7 +81,7 @@ void main() {
     y0 = u_geom[1].z > 0.0 ? u_geom[1].y : 0.0;
   } else {
     float left = floor(centre - body * 0.5 + 0.5);
-    float weight = dir == 1 ? 2.0 * h : h;
+    float weight = part == 5 && dir < 2 ? (colourUp ? h : 2.0 * h) : (dir == 1 ? 2.0 * h : h);
     float stem = left + floor((body - h) * 0.5);
     x0 = stem;
     w = weight;
@@ -90,7 +95,7 @@ void main() {
       }
       y0 = floor(yOf(sub == 0 ? a_ohlc.x : a_ohlc.w) - weight * 0.5 + 0.5);
       y1 = y0 + weight;
-    } else if (part == 1 || (part == 3 && dir == 3)) {
+    } else if (base == 1 || (part == 3 && dir == 3)) {
       w = body;
       y0 = yOf(a_ohlc.x);
       y1 = yOf(a_ohlc.w);
@@ -104,17 +109,22 @@ void main() {
       }
       x0 = left + floor((body - w) * 0.5);
     } else {
-      // The wick (candles) or the stem (OHLC): high to low on the centre column.
+      // The wick (candles, hollow) or the stem (OHLC): high to low on the centre column.
       y0 = yOf(a_ohlc.z);
       y1 = yOf(a_ohlc.y);
     }
   }
-  // partColor: the wick, the seam, doji and zero-range neutral; else up or down.
-  v_color = u_palette[part == 0 || part == 4 || dir >= 2 ? 2 : dir];
+  // partColor: the wicks, the seam, doji and zero-range neutral; the hollow body by colour-up;
+  // else up or down.
+  int row = base == 0 || part == 4 || dir >= 2 ? 2 : part == 6 ? (colourUp ? 0 : 1) : dir;
+  v_color = u_palette[row];
   v_fill = v_color;
+  int outline = w >= 3.0 * u_geom[1].x ? 2 : 1; // D06 §3.2: every side from 3 CSS px
   if (part == 1 && dir == 0) {
     v_fill = u_palette[3];
-    v_outline = w >= 3.0 * u_geom[1].x ? 2 : 1; // D06 §3.2: from 3 CSS px
+    v_outline = outline;
+  } else if (part == 6 && dir < 2 && (mark & 16) != 0) {
+    v_outline = outline + 4; // D06 §4.2: hollow, the interior unpainted
   }
   float top = min(y0, y1);
   float bottom = max(max(y0, y1), top + h);
@@ -135,8 +145,11 @@ flat in int v_outline;
 out vec4 o_color;
 void main() {
   float h = u_geom[0].y;
+  int mode = v_outline & 3;
   bool edgeY = v_local.y < h || v_local.y > v_size.y - h;
-  bool edgeX = v_outline == 2 && (v_local.x < h || v_local.x > v_size.x - h);
-  o_color = v_outline == 0 || edgeX || edgeY ? v_color : v_fill;
+  bool edgeX = mode == 2 && (v_local.x < h || v_local.x > v_size.x - h);
+  bool edge = mode == 0 || edgeX || edgeY;
+  if (!edge && v_outline >= 4) discard;
+  o_color = edge ? v_color : v_fill;
 }`,
 } as const;
