@@ -250,6 +250,36 @@ describe("Feature: The purge dialog (E16-D06 §13; KB-07, SD-01 to SD-03)", CASE
     expect(writes()[0]?.body).toMatchObject({ symbol: "BTCUSDT", include_pinned: true });
   });
 
+  it("a re-opening on another symbol is that symbol's from its first frame: the name said as focus lands, empty fields", async () => {
+    route();
+    const named: string[] = [];
+    const onFocus = (event: FocusEvent): void => {
+      const box = (event.target as HTMLElement).closest('[role="dialog"]');
+      if (box !== null) named.push(box.querySelector("h2")?.textContent ?? "");
+    };
+    document.addEventListener("focusin", onFocus);
+    try {
+      const view = render(<Host />);
+      press(screen.getByRole("button", { name: "Purge…" }));
+      await settleAll();
+      type(reason(), "space for the import");
+      press(within(dialog()).getByRole("button", { name: "Cancel" }));
+      await settleAll();
+      view.rerender(<Host symbol="BTCUSDT" />);
+      named.length = 0;
+      press(screen.getByRole("button", { name: "Purge…" }));
+      await settleAll();
+      expect(named).toEqual(["Purge BTCUSDT data?"]);
+      expect(
+        within(dialog("BTCUSDT")).getByRole("textbox", {
+          name: "Reason (required, 3–280 characters)",
+        }),
+      ).toHaveValue("");
+    } finally {
+      document.removeEventListener("focusin", onFocus);
+    }
+  });
+
   it("another symbol retitles the dialog and moves the typed token", async () => {
     route();
     render(<Host />);
