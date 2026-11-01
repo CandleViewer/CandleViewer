@@ -1,0 +1,46 @@
+{
+  "results": [
+    {
+      "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+      "ok": true,
+      "affected": 4,
+      "error": null
+    },
+    {
+      "exchange_account_id": "a1000000-0000-4000-8000-000000000002",
+      "ok": true,
+      "affected": 2,
+      "error": null
+    },
+    {
+      "exchange_account_id": "a1000000-0000-4000-8000-000000000003",
+      "ok": false,
+      "affected": 0,
+      "error": {
+        "code": "exchange_unavailable",
+        "message": "Exchange connectivity lost (WS down and REST failing)",
+        "exchange_ret_code": null,
+        "retryable": false
+      }
+    },
+    {
+      "exchange_account_id": "a1000000-0000-4000-8000-000000000004",
+      "ok": true,
+      "affected": 3,
+      "error": null
+    },
+    {
+      "exchange_account_id": "a1000000-0000-4000-8000-000000000005",
+      "ok": false,
+      "affected": 1,
+      "error": {
+        "code": "timeout",
+        "message": "Upstream exchange call exceeded the deadline",
+        "exchange_ret_code": null,
+        "retryable": true
+      }
+    }
+  ],
+  "requested": 5,
+  "succeeded": 3
+}
