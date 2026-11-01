@@ -203,6 +203,33 @@ describe("PositionsGrid (CMP-114): the treegrid", { timeout: 60_000 }, () => {
     );
   });
 
+  it("sets the plain numeric cells in type.num.base; CMP-116's cells and the words keep their own (D02 §12)", async () => {
+    await mount(<Host />);
+    const main = rowNamed(/^BTCUSDT · Long · 0\.250/);
+    const cellOf = (id: string): HTMLElement | null =>
+      main.querySelector<HTMLElement>(
+        `[data-cv-c="${headerOf(id).getAttribute("data-cv-c") ?? ""}"]`,
+      );
+    const num = (id: string): boolean =>
+      cellOf(id)?.classList.contains("cv-positions-grid__num") ?? false;
+    expect(["size", "entry", "mark", "liq_price", "liq_dist", "leverage"].map(num)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect(["account", "side", "upnl", "r", "rpnl_today", "margin"].map(num)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+  });
+
   it("every signed money cell is a CMP-116 badge; R and rPnL today read their absence", async () => {
     await mount(<Host />);
     const eth = rowNamed(/^ETHUSDT · Short/);

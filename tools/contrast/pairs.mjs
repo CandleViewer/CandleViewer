@@ -358,6 +358,9 @@ export const PAIRS = [
   { fg: "color.text.primary", bg: "color.neutral.subtle", threshold: THRESHOLD.TEXT },
   { fg: "color.focus.ring", bg: "color.surface.selected", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.focus.ring", bg: "color.surface.hover", threshold: THRESHOLD.NON_TEXT },
+  // CMP-114's column headers sit on surface.canvas (D02 §12): CMP-049's sort glyph there. Their 1 px border.default
+  // rule and the rows' border.subtle hairline are decorative, as CMP-049's own header rule is.
+  { fg: "color.text.tertiary", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
 
   // --- Dock sync-group edges (E15-D13 §6 P-1 … P-6) --------------------
   // The tile edge sits on the panel header (`raised`) or a grid cell's header (`canvas`);

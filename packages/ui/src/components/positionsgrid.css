@@ -1,8 +1,9 @@
 /*
  * CMP-114 PositionsGrid (E29-D04 §2.1, D04H §C.1; E29-D02 §12 redlines). Tokens only; static: every state swap is a
  * cut (Mo-8, Mo-10) and nothing animates per tick, so reduced motion needs nothing here. It dresses CMP-049's
- * treegrid: one fill per row kind instead of the zebra, the selected fill, the cell insets per density, the tier and
- * side glyphs, the Critical accent, the group header and the totals label, and the "Updates paused" chip.
+ * treegrid: one fill per row kind instead of the zebra, a hairline between data rows, the column headers, the selected
+ * fill, the cell insets per density, the numerals' face, the tier and side glyphs, the Critical accent, the group
+ * header and the totals label, and the "Updates paused" chip.
  */
 
 /* Rows (D02 §12): data rows on surface.raised, hover on surface.hover, selected on surface.selected (the box checked
@@ -25,6 +26,25 @@
 .cv-positions-grid .cv-positions-grid__group:nth-child(even),
 .cv-positions-grid .cv-positions-grid__group:hover {
   background: var(--color-surface-canvas);
+}
+
+/* Without the zebra, a 1 px border.subtle hairline under each data row (D02 §12, decorative), drawn inside its cells so
+   the row stays size.row.height tall and the window's spacers stay exact; forced colours keep CMP-049's real edge. */
+.cv-positions-grid .cv-positions-grid__row > .cv-table__cell {
+  box-shadow: inset 0 calc(var(--border-hairline) * -1 * 1px) 0 0 var(--color-border-subtle);
+}
+
+/* Column headers (D02 §12, board 01): on surface.canvas, the labels in text.secondary and the sorted column's in
+   text.primary, over a 1 px border.default rule (CMP-049's own header is surface.hover over border.subtle). */
+.cv-positions-grid .cv-table__header {
+  border-block-end-color: var(--color-border-default);
+  background: var(--color-surface-canvas);
+  color: var(--color-text-secondary);
+}
+
+.cv-positions-grid .cv-table__header[aria-sort="ascending"],
+.cv-positions-grid .cv-table__header[aria-sort="descending"] {
+  color: var(--color-text-primary);
 }
 
 /* Cells: space.inset.sm compact, space.inset.md comfortable; the 360 px dock takes space.inset.xs (D02 §11.5). */
@@ -74,6 +94,22 @@
   white-space: nowrap;
 }
 
+/* Numerals (D02 §12's type ramp, D-8): the plain numeric cells (Size, Entry, Mark, Liq price, Liq dist. %, Lev) in
+   type.num.base with tabular figures, as CMP-020's longhands set them (typography.css: the `font` shorthand would reset
+   font-variant-numeric); CMP-116 sets its own. The tier's word stays type.ui.body, as a word in a cell does. */
+.cv-positions-grid .cv-positions-grid__num {
+  font-family: var(--type-num-base-font-family);
+  font-size: var(--type-num-base-font-size);
+  font-weight: var(--type-num-base-font-weight);
+  line-height: var(--type-num-base-line-height);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-positions-grid .cv-positions-grid__tier-word {
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
 /* Account labels end in an ellipsis; the whole label stays in the DOM, the name and the echo (D02 D-8). */
 .cv-positions-grid__account {
   overflow: hidden;
@@ -112,9 +148,23 @@
   color: var(--color-status-danger-strong);
 }
 
-/* A Critical row: the 2 px leading accent on its first, pinned cell (D02 §5.3, §12). */
-.cv-positions-grid__row[data-liq="critical"] > :first-child {
-  box-shadow: inset calc(var(--border-thick) * 1px) 0 0 0 var(--color-status-danger-strong);
+/* A Critical row (D02 §5.3, §12): a border.thick × size.icon.sm accent (size.icon.md comfortable), centred at the start
+   of its first cell, which is pinned (a sticky box, so it positions the accent). */
+.cv-positions-grid__row[data-liq="critical"] > :first-child::before {
+  position: absolute;
+  inset-block-start: calc(50% - var(--size-icon-sm) / 2);
+  inset-inline-start: 0;
+  inline-size: calc(var(--border-thick) * 1px);
+  block-size: var(--size-icon-sm);
+  background: var(--color-status-danger-strong);
+  content: "";
+}
+
+.cv-positions-grid[data-density="comfortable"]
+  .cv-positions-grid__row[data-liq="critical"]
+  > :first-child::before {
+  inset-block-start: calc(50% - var(--size-icon-md) / 2);
+  block-size: var(--size-icon-md);
 }
 
 /* The group header (D02 §5.5): one cell, type.ui.body-strong in text.primary, the ▸ / ▾ in text.secondary. */
@@ -167,14 +217,21 @@
 }
 
 @media (forced-colors: active) {
-  /* D02 §12: the hue-only carriers take system colours; the words, glyphs and states still carry them. */
-  .cv-positions-grid__row[data-liq="critical"] > :first-child {
-    box-shadow: inset 2px 0 0 0 CanvasText;
+  /* D02 §12: the hue-only carriers take system colours; the words, glyphs and states still carry them. The Critical
+     accent keeps its fill as CanvasText, which forced colours would otherwise drop (pnlbadge.css's bar does the same). */
+  .cv-positions-grid__row[data-liq="critical"] > :first-child::before {
+    forced-color-adjust: none;
+    background: CanvasText;
   }
 
   .cv-positions-grid .cv-positions-grid__row[aria-selected="true"] {
     background: Highlight;
     color: HighlightText;
+  }
+
+  /* The header's rule stays CMP-049's real edge. */
+  .cv-positions-grid .cv-table__header {
+    border-block-end-color: CanvasText;
   }
 
   .cv-positions-grid__paused {

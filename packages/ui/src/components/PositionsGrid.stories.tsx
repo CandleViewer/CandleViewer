@@ -274,7 +274,7 @@ export const GroupedByTradeGroup: Story = {
 
 /**
  * The tiers (`CMP-114/liq-watch`, `liq-near`, `liq-critical`; D02 §5.3): glyph, word and distance, the D5 label the
- * row's description and the cell's echo; Critical adds the 2 px leading accent.
+ * row's description and the cell's echo; Critical adds the 2 × 12 px leading accent at the start of the row.
  */
 export const LiqWarningRows: Story = {
   render: () => (

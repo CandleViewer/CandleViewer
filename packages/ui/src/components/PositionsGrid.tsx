@@ -339,8 +339,9 @@ export interface UpdatesPausedChipProps {
 /**
  * CMP-114's `UpdatesPausedChip` (E29-D04 §2.1 frame `updates-paused-chip`; D02 §9.1, D01 D13 b): a button in the
  * toolbar, "Updates paused · 2 new · 1 closed", that applies the held changes. Values keep changing in place while it
- * shows; the held rows wait for it. An interactive chip takes the control height (D02 §12), and its words say why it
- * is critical only through the host's NO SL wording, never by colour alone. Not T2: it never refuses.
+ * shows; the held rows wait for it. An interactive chip takes the control height (D02 §12). Its critical tone (a held
+ * row carries NO SL) is its fill alone, which forced colours draw as the other tone: a word or glyph for it is a design
+ * gap for E29-D02's and E29-D03's owners, reachable once BQ-9's field ships. Not T2: it never refuses.
  */
 export function UpdatesPausedChip({
   newRows,
@@ -549,7 +550,9 @@ function PositionRow<R extends PositionsGridRow>({
   const size = shown(row.size) ?? row.size;
   const cell = (id: PositionsGridColumnId, i: number): JSX.Element => {
     const c = i + lead;
-    const numeric = { numeric: true };
+    // CMP-116 sets its own type; the plain numeric cells set theirs in `type.num.base` (D02 §12, D-8).
+    const money = { numeric: true };
+    const figure = { numeric: true, className: "cv-positions-grid__num" };
     switch (id) {
       case "account":
         return (
@@ -578,7 +581,7 @@ function PositionRow<R extends PositionsGridRow>({
         );
       case "size":
         return (
-          <td key={id} {...grid.cellProps(c, numeric)}>
+          <td key={id} {...grid.cellProps(c, figure)}>
             {size}
             {/* The base coin: a suffix in `color.text.secondary`; in the dock it leaves and stays in the name. */}
             <span className={parts.narrow ? "cv-visually-hidden" : "cv-positions-grid__unit"}>
@@ -592,7 +595,7 @@ function PositionRow<R extends PositionsGridRow>({
         const value = id === "entry" ? row.entry : id === "mark" ? row.mark : row.liqPrice;
         const text = shown(value);
         return (
-          <td key={id} {...grid.cellProps(c, numeric)}>
+          <td key={id} {...grid.cellProps(c, figure)}>
             {text ?? (
               <>
                 <span aria-hidden="true">—</span>
@@ -604,14 +607,14 @@ function PositionRow<R extends PositionsGridRow>({
       }
       case "upnl":
         return (
-          <td key={id} {...grid.cellProps(c, numeric)}>
+          <td key={id} {...grid.cellProps(c, money)}>
             <PnLBadge value={row.unrealisedPnl} format="abs" currency={parts.currency} />
           </td>
         );
       case "r": {
         const reading = rReading(row.r);
         return (
-          <td key={id} {...grid.cellProps(c, numeric)}>
+          <td key={id} {...grid.cellProps(c, money)}>
             <PnLBadge
               value={row.r.value}
               format="r"
@@ -623,20 +626,20 @@ function PositionRow<R extends PositionsGridRow>({
       }
       case "rpnl_today":
         return (
-          <td key={id} {...grid.cellProps(c, numeric)}>
+          <td key={id} {...grid.cellProps(c, money)}>
             <PnLBadge value={row.realisedToday.value} format="abs" currency={parts.currency} />
           </td>
         );
       case "liq_dist":
         return (
-          <td key={id} {...grid.cellProps(c, { numeric: true, echo: sentence })}>
+          <td key={id} {...grid.cellProps(c, { ...figure, echo: sentence })}>
             <LiqTierCell liq={row.liq} sentenceId={sentenceId} />
           </td>
         );
       case "leverage": {
         const lev = shown(row.leverage);
         return (
-          <td key={id} {...grid.cellProps(c, numeric)}>
+          <td key={id} {...grid.cellProps(c, figure)}>
             {lev === null ? "—" : `${lev}×`}
           </td>
         );
