@@ -1,5 +1,5 @@
-"""Persistence ports for `api_keys` envelope columns, `kek_versions`, `auth_keys` counts and
-the audit export signing keys (`audit_signing_keys`).
+"""Persistence ports for `api_keys` envelope columns, `kek_versions`, the auth keyring
+(`auth_keys`) and the audit export signing keys (`audit_signing_keys`).
 
 Records are plain dicts, keyed by `CredentialRow` field names (by `audit_signing_keys` column names
 for export keys), so the Postgres adapter in M10 (`storage`) satisfies these Protocols
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from itertools import count
 from typing import Any, Final, Protocol
@@ -33,6 +33,8 @@ EXPORT_KEY_SEALED: Final = (
 RETIRED_REASONS: Final = frozenset({"scheduled", "compromise", "unrecoverable"})
 _REQUEST = ("created_by", "client_ref", "client_body_sha256")
 _DEK_REF = re.compile(r"ek1:[0-9a-f]{120}")
+#: `auth_keys.dek_ref` (`ak_dek_ref`, 21 Sec.3.1.5a): `ak1:` and 120 lower-case hex digits.
+_AUTH_WRAP = re.compile(r"ak1:[0-9a-f]{120}")
 _KEY_ID = re.compile(r"cv-audit-export-v[1-9][0-9]*:[0-9a-f]{16}")
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 #: A rotation's `200` shows the key it made as it was then (decision 5), even once retired.
@@ -91,9 +93,44 @@ class CredentialStore(Protocol):
 
 
 class AuthKeyStore(Protocol):
-    """`auth_keys` (#2152, ADR-0009 Amendment 4): the environment's auth keyring rows, which
-    only the rotation boot re-wraps. A KEK re-wrap run counts them (#2266); #2152 S4 adds the
-    rest of this port."""
+    """`auth_keys` (#2152, ADR-0009 Amendment 4, 21 Sec.3.1.5a): the process environment's auth
+    keyring rows. Bound to it, a store refuses another environment, in a call or a record, before
+    any I/O (C-2.11). A record carries `id` (UUID), `env`, `purpose`, `key_version`, `origin`,
+    `dek_ref` and `kek_version`; `dek_ref` is the `ak1:` wrap, the only form the table stores
+    (C-2.7). `audit` is the `(action, fields)` record committed with a write (C-2.9, BQ-5): a
+    failure of either rolls back both. Only M2's boot writes: the keyring once, and the rotation
+    boot's re-wrap; a KEK re-wrap run counts the rows (#2266)."""
+
+    async def rows_for(self, env: str) -> list[dict[str, Any]]:
+        """Every row of `env`, by purpose then key version."""
+        ...
+
+    async def insert_keyring(
+        self, records: Sequence[Mapping[str, Any]], *, audit: tuple[str, dict[str, str]]
+    ) -> bool:
+        """Every record and then `audit`, in one transaction, or nothing: False when another boot
+        holds a `(env, purpose, key_version)` already, so concurrent boots converge on the first
+        one's keyring. A reused `id` raises."""
+        ...
+
+    async def count_mfa_material(self) -> int:
+        """Unrevoked TOTP methods plus unused recovery codes, in every environment: counts only.
+        A new keyring would strand them, so none is generated while any exists (AC7)."""
+        ...
+
+    async def rewrap(
+        self,
+        key_id: UUID,
+        *,
+        env: str,
+        from_version: int,
+        dek_ref: str,
+        kek_version: int,
+        audit: tuple[str, dict[str, str]],
+    ) -> bool:
+        """Compare-and-set on `kek_version` of the row `key_id` of `env`: True iff this call moved
+        it from `from_version`, and then `audit` committed with it."""
+        ...
 
     async def count_at_kek_version(self, version: int, env: str) -> int:
         """The rows of `env`, the process's environment, wrapped under KEK `version`."""
@@ -307,17 +344,83 @@ class InMemoryCredentialStore:
 
 
 class InMemoryAuthKeyStore:
-    """Test fake for `AuthKeyStore`: `rows` holds `auth_keys` records (`env`, `kek_version`) of any
-    environment. Bound to one, as the M10 adapter is, it refuses a call naming another (#3505)."""
+    """Test fake for `AuthKeyStore`: `rows` holds `auth_keys` records of any environment (a count
+    needs only `env` and `kek_version`), `audit` each record committed with a write, and
+    `mfa_material` what the probe counts. Bound to one environment, as the M10 adapter is, it
+    refuses what the adapter and the table refuse (#3505; 21 Sec.3.1.5a). While `audit_fails`
+    is set a record fails, and so does the write it records."""
 
-    def __init__(self, env: str = "demo") -> None:
+    def __init__(self, env: str = "demo", *, mfa_material: int = 0) -> None:
         self.rows: list[dict[str, Any]] = []
-        self.env = env
+        self.env, self.mfa_material = env, mfa_material
+        self.audit: list[tuple[str, dict[str, str]]] = []
+        self.audit_fails = False
+
+    def _own(self, *envs: object) -> None:
+        if any(env != self.env for env in envs):
+            raise ValueError("the auth key store serves only the process environment")
+
+    def _commit(self, rows: list[dict[str, Any]], audit: tuple[str, dict[str, str]]) -> None:
+        """The write and its record, or neither: one transaction."""
+        if self.audit_fails:
+            raise _AuthKeyAuditNotWritten("audit record not written")
+        self.audit.append((audit[0], dict(audit[1])))
+        self.rows = rows
+
+    async def rows_for(self, env: str) -> list[dict[str, Any]]:
+        self._own(env)
+        mine = (r for r in self.rows if r["env"] == env)
+        return [dict(r) for r in sorted(mine, key=lambda r: (r["purpose"], r["key_version"]))]
+
+    async def insert_keyring(
+        self, records: Sequence[Mapping[str, Any]], *, audit: tuple[str, dict[str, str]]
+    ) -> bool:
+        if not records:
+            raise ValueError("a keyring needs at least one record")
+        self._own(*(r.get("env") for r in records))
+        new = [{"key_version": 1, **r} for r in records]
+        if any(not _AUTH_WRAP.fullmatch(str(r["dek_ref"])) or r["kek_version"] < 1 for r in new):
+            raise ValueError("ak_dek_ref or ak_kek_version")  # the table's CHECKs fire first
+        if {r["id"] for r in new} & {r.get("id") for r in self.rows}:
+            raise ValueError("an auth key's id is unique")  # the primary key: never a lost race
+        held = {(r["env"], r.get("purpose"), r.get("key_version", 1)) for r in self.rows}
+        if any((r["env"], r["purpose"], r["key_version"]) in held for r in new):
+            return False  # ak_env_purpose_key_version: another boot's keyring, nothing written
+        self._commit([*self.rows, *new], audit)
+        return True
+
+    async def count_mfa_material(self) -> int:
+        return self.mfa_material
+
+    async def rewrap(
+        self,
+        key_id: UUID,
+        *,
+        env: str,
+        from_version: int,
+        dek_ref: str,
+        kek_version: int,
+        audit: tuple[str, dict[str, str]],
+    ) -> bool:
+        self._own(env)
+        if not _AUTH_WRAP.fullmatch(dek_ref) or kek_version < 1:
+            raise ValueError("ak_dek_ref or ak_kek_version")
+        for row in self.rows:
+            if (row.get("id"), row["env"], row["kek_version"]) == (key_id, env, from_version):
+                moved = row | {"dek_ref": dek_ref, "kek_version": kek_version}
+                self._commit([moved if r is row else r for r in self.rows], audit)
+                return True
+        return False  # no row matched: a stale or replayed call, as in SQL
 
     async def count_at_kek_version(self, version: int, env: str) -> int:
-        if env != self.env:
-            raise ValueError("the auth key store serves only the process environment")
+        self._own(env)
         return sum(r["env"] == env and r["kek_version"] == version for r in self.rows)
+
+
+class _AuthKeyAuditNotWritten(RuntimeError):
+    """The fake's `AuthKeyAuditNotWritten` (M10): a write's record failed, so did the write."""
+
+    code = "STORAGE_AUTH_KEY_AUDIT_NOT_WRITTEN"
 
 
 def _now() -> datetime:

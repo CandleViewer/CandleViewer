@@ -69,13 +69,20 @@ def test_the_real_backend_injects_a_row_builder_bound_to_the_process_environment
         built["export_keys"] = kwargs
         return SimpleNamespace()
 
+    def auth_keys(relational: Any, **kwargs: Any) -> Any:
+        built["auth_keys"] = kwargs
+        return SimpleNamespace()
+
     monkeypatch.setattr(app_module, "SqlAlchemyCredentialStore", store)
     monkeypatch.setattr(app_module, "SqlAlchemyExportKeyStore", export_keys)  # #889
+    monkeypatch.setattr(app_module, "SqlAlchemyAuthKeyStore", auth_keys)  # #2152 S4
     settings = Settings(environment=Environment.TESTNET, storage_backend="real")
     app_module._build_secrets(settings, app_module._build_audit(settings))
     assert built["audit_row"](ACTION, FIELDS)["env"] == "testnet"
     keys = built["export_keys"]  # the signing keys' records, bound to the process environment
     assert (keys["env"], keys["audit_row"](ACTION, FIELDS)["env"]) == ("testnet", "testnet")
+    ring = built["auth_keys"]  # the keyring's records, committed with its writes (BQ-5)
+    assert (ring["env"], ring["audit_row"](ACTION, FIELDS)["env"]) == ("testnet", "testnet")
 
 
 @pytest.mark.parametrize(

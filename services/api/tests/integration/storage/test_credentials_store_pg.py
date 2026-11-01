@@ -41,6 +41,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     sqlstate_of,
 )
 from tests.integration._refused import assert_no_row_values, server_text
+from tests.integration.storage.test_auth_keys_pg import ENROLLED, REWRAPPED, Records
 from tests.unit.credentials_m2._vectors import AuditLog
 
 pytestmark = pytest.mark.integration
@@ -673,7 +674,7 @@ async def test_a_run_counts_its_environment_keyring_through_the_auth_key_adapter
     """#3505: `rewrap_all` with the real `SqlAlchemyAuthKeyStore`: a keyring row left at the
     previous version keeps the run incomplete, counted; once it has moved, the run completes."""
     rel, store = _store(pg_dsn)
-    keyring, ring = SqlAlchemyAuthKeyStore(rel, env="demo"), uuid4()
+    keyring, ring = SqlAlchemyAuthKeyStore(rel, env="demo", audit_row=Records()), uuid4()
     # #889: a run also counts the signing keys; none here, so the keyring alone holds it back
     signing = SqlAlchemyExportKeyStore(rel, env="demo", audit_row=secrets_audit_row("demo"))
     row = {"id": ring, "env": "demo", "purpose": "totp_seal", "origin": "generated"}
@@ -686,14 +687,14 @@ async def test_a_run_counts_its_environment_keyring_through_the_auth_key_adapter
         await _keys(CredentialBroker(store, _audit, _kek(180, 40)), pg_dsn, 1, "RING")
         await _enrol(store, "demo", 41, _kek(190, 41).kcv())
         at_40 = row | {"dek_ref": "ak1:" + "0" * 120, "kek_version": 40}
-        assert await keyring.insert_keyring([at_40])
+        assert await keyring.insert_keyring([at_40], audit=ENROLLED)
         first, again = AuditLog(), AuditLog()
         rep = await run(first)
         assert (rep.rewrapped, rep.remaining, rep.complete) == (1, 1, False)
         assert first.records[-1][1]["auth_left"] == "1"
         moved = "ak1:" + "2" * 120  # the next rotation boot re-wraps the keyring row (#2152)
         assert await keyring.rewrap(
-            ring, env="demo", from_version=40, dek_ref=moved, kek_version=41
+            ring, env="demo", from_version=40, dek_ref=moved, kek_version=41, audit=REWRAPPED
         )
         rep = await run(again)
         assert (rep.remaining, rep.complete) == (0, True)

@@ -99,7 +99,7 @@ async def test_a_staged_rotation_runs_end_to_end_through_the_route(
         audit=secrets_audit_sink(cast(Any, audit)),
         sources=_bound_sources(_Src(KEK_V2, 2), _Src(KEK_V1, 1)),
         harden=lambda: True,
-        auth_keys=SqlAlchemyAuthKeyStore(rel, env="demo"),
+        auth_keys=SqlAlchemyAuthKeyStore(rel, env="demo", audit_row=_audit_row),
         export_keys=SqlAlchemyExportKeyStore(rel, env="demo", audit_row=_audit_row),  # #889
     )
     w, ctx = deploy(monkeypatch, staged)

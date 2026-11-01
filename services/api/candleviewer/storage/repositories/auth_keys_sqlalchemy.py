@@ -1,12 +1,15 @@
 """Postgres adapter for M2's auth keyring rows (#2152 S2, ADR-0009 Amendment 4).
 
-Lives in M10 so M2 never imports a driver; it moves plain dicts, so the `AuthKeyStore` port S4 adds
-to `secrets/store.py` is satisfied structurally (C-3.2). It moves only wrapped keys (`dek_ref`), ids
+Lives in M10 so M2 never imports a driver; it moves plain dicts, so `AuthKeyStore` in
+`secrets/store.py` is satisfied structurally (C-3.2). It moves only wrapped keys (`dek_ref`), ids
 and versions, and never logs a row. Bound to the process environment, it refuses a call that names
-another before any I/O (C-2.11). A database error leaves the two writes as `StorageQueryFailed`
-with the SQLSTATE alone: the driver's text carries the failing row, wrap included (C-12.6, class
-S). Static SQL with explicit columns (21 Sec.12 forbids `SELECT *`, enforced by the unit test);
-it never deletes (`cv_app` has no DELETE on `auth_keys`).
+another before any I/O (C-2.11). Each write commits its record in the same transaction (#2152 S4,
+BQ-5): the record is built before any I/O by the function the composition root injects
+(`admin.wiring.secrets_audit_row`) and inserted by `insert_audit_row_locked`, row locks first and
+the chain lock last, READ COMMITTED (C-2.9). A database error leaves the two writes as
+`StorageQueryFailed` with the SQLSTATE alone: the driver's text carries the failing row, wrap
+included (C-12.6, class S). Static SQL with explicit columns (21 Sec.12 forbids `SELECT *`,
+enforced by the unit test); it never deletes (`cv_app` has no DELETE on `auth_keys`).
 """
 
 from __future__ import annotations
@@ -19,7 +22,9 @@ import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 
 from candleviewer.domain.primitives import Environment
-from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.errors import AuthKeyAuditNotWritten, StorageQueryFailed
+from candleviewer.storage.repositories.audit_sqlalchemy import insert_audit_row_locked
+from candleviewer.storage.repositories.credentials_sqlalchemy import AuditRowBuilder
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -55,8 +60,14 @@ class AuthKeyEnvironmentError(ValueError):
 
 
 class SqlAlchemyAuthKeyStore:
-    def __init__(self, relational: SqlAlchemyRelationalRepository, *, env: Environment) -> None:
-        self._rel, self._env = relational, env
+    def __init__(
+        self,
+        relational: SqlAlchemyRelationalRepository,
+        *,
+        env: Environment,
+        audit_row: AuditRowBuilder,
+    ) -> None:
+        self._rel, self._env, self._audit_row = relational, env, audit_row
 
     def _own(self, *envs: object) -> None:
         if any(env != self._env for env in envs):
@@ -69,11 +80,15 @@ class SqlAlchemyAuthKeyStore:
             res: Any = await uow.session.execute(_ROWS, {"env": env})
             return [dict(row) for row in res.mappings().all()]
 
-    async def insert_keyring(self, records: Sequence[Mapping[str, Any]]) -> bool:
-        """Insert every record in one transaction, or none: False (nothing written) when a
-        `(env, purpose, key_version)` is taken already, so concurrent boots converge on the first
-        one's rows. Rows go in key order, so they cannot lock crosswise. `ValueError` for no
-        records, `AuthKeyEnvironmentError` for another environment's: both before any I/O."""
+    async def insert_keyring(
+        self, records: Sequence[Mapping[str, Any]], *, audit: tuple[str, dict[str, str]]
+    ) -> bool:
+        """Insert every record, then `audit`, in one transaction, or none: False (nothing written)
+        when a `(env, purpose, key_version)` is taken already, so concurrent boots converge on the
+        first one's rows. Rows go in key order, so they cannot lock crosswise. `ValueError` for no
+        records, `AuthKeyEnvironmentError` for another environment's and a refused record: all
+        before any I/O. A record whose id is stored already rolls the rows back too
+        (`AuthKeyAuditNotWritten`)."""
         if not records:
             raise ValueError("a keyring needs at least one record")
         self._own(*(r.get("env") for r in records))
@@ -81,6 +96,7 @@ class SqlAlchemyAuthKeyStore:
             ({"key_version": 1, **r} for r in records),
             key=lambda r: (r["env"], r["purpose"], r["key_version"]),
         )
+        record = self._audit_row(*audit)
         try:
             async with self._rel.unit_of_work() as uow:
                 inserted = 0
@@ -90,6 +106,7 @@ class SqlAlchemyAuthKeyStore:
                 if inserted != len(rows):
                     await uow.rollback()
                     return False
+                await _record(uow.session, record)
                 await uow.commit()
                 return True
         except DBAPIError as exc:
@@ -111,11 +128,19 @@ class SqlAlchemyAuthKeyStore:
             return int(res.scalar_one())
 
     async def rewrap(
-        self, key_id: UUID, *, env: str, from_version: int, dek_ref: str, kek_version: int
+        self,
+        key_id: UUID,
+        *,
+        env: str,
+        from_version: int,
+        dek_ref: str,
+        kek_version: int,
+        audit: tuple[str, dict[str, str]],
     ) -> bool:
         """Compare-and-set on `kek_version`; True iff this call moved the row of `env`, which must
-        be the process's."""
+        be the process's, and then `audit` committed with it, built before any I/O (C-2.9)."""
         self._own(env)
+        record = self._audit_row(*audit)
         params = {
             "id": key_id, "env": env, "from_v": from_version, "to_v": kek_version,
             "dek_ref": dek_ref,
@@ -123,8 +148,17 @@ class SqlAlchemyAuthKeyStore:
         try:
             async with self._rel.unit_of_work() as uow:
                 res: Any = await uow.session.execute(_REWRAP, params)
+                if int(res.rowcount) != 1:
+                    return False
+                await _record(uow.session, record)
                 await uow.commit()
-                return int(res.rowcount) == 1
+                return True
         except DBAPIError as exc:
             state = getattr(exc.orig, "sqlstate", None)
         raise StorageQueryFailed(state if isinstance(state, str) else None)  # nothing chained
+
+
+async def _record(session: Any, row: dict[str, Any]) -> None:
+    """The write's record, the chain lock last; a stored `record_id` rolls the write back."""
+    if not await insert_audit_row_locked(session, row):
+        raise AuthKeyAuditNotWritten("the auth keyring write's record was not written; nothing was")

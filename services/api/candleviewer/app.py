@@ -1022,8 +1022,11 @@ def _build_secrets(settings: Settings, audit: AuditHandle) -> SecretsBundle:
     relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "secrets")
     audit_row = secrets_audit_row(settings.environment.value)
     store = SqlAlchemyCredentialStore(relational, audit_row=audit_row)  # #2266: in-tx records
-    # #3505: a KEK re-wrap run counts this environment's auth keyring rows.
-    keyring = SqlAlchemyAuthKeyStore(relational, env=settings.environment.value)
+    # #3505: a KEK re-wrap run counts this environment's auth keyring rows; #2152 S4: each of its
+    # writes commits its record in the same transaction (BQ-5).
+    keyring = SqlAlchemyAuthKeyStore(
+        relational, env=settings.environment.value, audit_row=audit_row
+    )
     # #889: boot opens or generates the signing key; a re-wrap counts it, an enrolment may trial it.
     keys = SqlAlchemyExportKeyStore(relational, env=settings.environment.value, audit_row=audit_row)
 
