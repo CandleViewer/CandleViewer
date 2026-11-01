@@ -44,7 +44,7 @@ import {
   type ApiResult,
 } from "./recorderApi";
 import { refusalText } from "./refusal";
-import { useStepUpHost } from "./stepUpHost";
+import { useStepUpHost, type StepUpRoute } from "./stepUpHost";
 
 type Field = "symbol" | "streams" | "depth" | "retention_days";
 const FIELDS: readonly string[] = ["symbol", "streams", "depth", "retention_days"];
@@ -143,13 +143,13 @@ export function RecordSymbolDialog({
     setRefusal({ field, text: refusalText(res.route, "add") });
   }
 
-  async function submit(): Promise<void> {
+  async function submit(route: StepUpRoute): Promise<void> {
     setBusy(true);
     setRefusal(null);
     const res = await recorderApi.add(body);
     // A challenge holds the request: the primary is a control again while SCR-006 is open (§6.4).
     if (res.stepUp !== null) setBusy(false);
-    stepUp.route("addRecordedSymbol", res, answer);
+    route("addRecordedSymbol", res, answer);
   }
 
   const errorOf = (name: Field): string | undefined =>
@@ -187,15 +187,17 @@ export function RecordSymbolDialog({
   return (
     <Dialog
       open={open}
+      // Cancel, ✕, the scrim and Esc go through the host: while the add is on the wire the dialog holds (H22), so its
+      // answer, a challenge included, is this opening's (S-5347-d01).
       onOpenChange={(next) => {
-        if (!next) onClose();
+        if (!next) stepUp.cancel(onClose);
       }}
       title={DECK["d02.8.r07"][0]}
       busy={busy}
       {...(fallbackFocusRef === undefined ? {} : { fallbackFocusRef })}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={() => stepUp.cancel(onClose)}>
             {TEXT.add.cancel}
           </Button>
           {start}
