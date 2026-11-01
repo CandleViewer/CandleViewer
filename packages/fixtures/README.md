@@ -136,6 +136,14 @@ before commit.
   `bybit/2026-10-05/ws/private-execution.jsonl` push with E29-D03 §3.4's values through the shipped
   adapter, fill step and mappers, and one ADL fill through reconciliation's store path. Provenance,
   the mapper commits and regeneration: `golden/executions/README.md` and its `manifest.json`.
+- `golden/hotkeys/profile_cases.json` — E10-T05 (#5211, BQ-4) hotkey profile cases: bindings and
+  whole profiles with the answer each gets (the canonical binding, a `422` rule, a `409` pair, the
+  actions whose `requires_arm` or `confirm` is rewritten), one table for the server's port of the
+  client's binding rules (`services/api/candleviewer/api/hotkey_rules.py`) and the client itself
+  (`apps/web/src/keymap/validate.ts`). Run by `services/api/tests/unit/api/test_hotkey_rules_cases.py`
+  and `apps/web/test/keymap-server-parity.test.ts`. Hand-written, date 2026-10-31; no recorded data
+  (command ids of `keymap.json` and key names only), no credentials. Edit it by hand and keep both
+  suites green.
 
 ## Scripts
 
