@@ -361,14 +361,14 @@ Mapping — `kline.{interval}.{symbol}` and `GET /v5/market/kline`: `start`,`end
 class LiquidationEvent(MarketEvent):
     price: Px
     qty: Qty
-    side: Side                 # CLOSING order side: "sell" ⇒ a LONG was liquidated
+    side: Side                 # CLOSING order side, the opposite of the venue `S`: "sell" ⇒ a LONG was liquidated
     liquidated_side: Literal["long", "short"]   # derived, unambiguous
     notional: Notional
     batch_index: int           # position within the batched push
     ts_estimated: bool         # True when the record had no own timestamp
 ```
 
-Mapping — `allLiquidation.{symbol}` (the legacy singular `liquidation` topic is retired and 404s): `T→ts_event` (ms→µs), `s→symbol`, `S→side`, `v→qty`, `p→price`. `liquidated_side = "long" if side == "sell" else "short"`. Because the field is confusingly named at the exchange, **no code outside the adapter may read `side` on this event** — consumers use `liquidated_side` (lint-enforced).
+Mapping — `allLiquidation.{symbol}` (the legacy singular `liquidation` topic is retired and 404s): `T→ts_event` (ms→µs), `s→symbol`, `S→(side, liquidated_side)`, `v→qty`, `p→price`. `S` is the POSITION side at the venue (Bybit v5: "When you receive a `Buy` update, this means that a long position has been liquidated"; `bybit-exchange/docs@19518b90`, `websocket/public/all-liquidation.mdx`), so `S == "Buy"` ⇒ `liquidated_side = "long"`, `side = "sell"`, and `S == "Sell"` ⇒ `liquidated_side = "short"`, `side = "buy"`: the adapter derives `side`, the closing order's side, as the opposite of `S`, both in one function. Because the field is confusingly named at the exchange, **no code outside the adapter may read `side` on this event** — consumers use `liquidated_side` (lint-enforced).
 
 **Edge case:** the topic batches at most one push per symbol per 500 ms with a `data[]` array — the recorder must store every array element, not assume one record per push (research 08 §9).
 
@@ -6678,3 +6678,10 @@ The orchestrator assigned this number on 2026-10-31 (23:40Z, with #5267's unique
 - §6.3 gains "Read-time bucketing": how `GET /market/heatmap` builds a bucket from the stored native columns (grouped prices, summed sizes over the bucket's native count, `samples` summed, a NULL `samples` counting 1, `estimated` if any), how a window with no stored cell is rebuilt from the recorded book, and the snapshot `checksum` (CRC32 of the stored `bids` text then `asks` text), skipped on a mismatch and `estimated` when NULL. No writer computes the checksum yet (E16).
 - 22 `getHeatmap` documents the recorded read, the clamp (2 000 columns, 512 rows, the bucket coarsened along its enum), newest-first paging with a bound `cursor`, the 2-per-user backfill limit (`429 rate_limited`) and abort handling, and gains `401` and `429`. `HeatmapResponse` gains `first_available`, `history`, `samples`, `estimated_columns`, `effective_time_bucket_ms`, `segments` (the new `HeatmapSegment`), `clamped` and `next_cursor`, all additive (C-6.3). `getOrderbookSnapshot` is unchanged.
 - With them: `21-database-schema.md` §7 (the effective resolution past 180 days) and `23-ws-protocol.md` §6.1.1 (the REST fields of scroll-back). No WS frame, table, column, chart or `machine_hash` change, and no migration.
+
+### 19.72 2026-11-01 — §2.5: `allLiquidation` `S` is the position side, the mapping corrected (E24-T03, #667)
+
+The orchestrator assigned this number on 2026-11-01 (01:06Z); it is never renumbered (#5267's rule).
+
+- The coordinator's ruling: the venue is right and §2.5 was wrong. Bybit v5 (`bybit-exchange/docs@19518b90`, `websocket/public/all-liquidation.mdx`): "`S` - Position side. `Buy`, `Sell`. When you receive a `Buy` update, this means that a long position has been liquidated." §2.5 read `S` as the closing order's side; it now states `S` is the position side and the adapter derives `side` as its opposite: `Buy` ⇒ `liquidated_side = "long"`, `side = "sell"`; `Sell` ⇒ `liquidated_side = "short"`, `side = "buy"`.
+- The field semantics are unchanged: `side` stays the closing order's side and `liquidated_side` the derived one, so 22, 23 §14.9 (`side` is the closing order's side, `sell`: a long was liquidated) and every consumer stand as written; no 22 or 23 text describes the venue's `S`, so neither changes. L6 (§17.4) is unchanged. No wire frame, table, column or `machine_hash` change, and no migration.

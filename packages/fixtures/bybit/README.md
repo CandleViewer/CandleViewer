@@ -210,7 +210,7 @@ frame shape with generated (seeded) BTCUSDT values, built by `build_corpus.py`: 
 apart, two identical prints in push 2, five prints inside one second in push 4, and push 2 replayed
 as the last frame (a reconnect). A recording made with `capture_fixture.py` replaces both.
 
-- `docs-all-liquidation.jsonl`: source: docs-transcribed, `websocket/public/all-liquidation`; 2026-10-31; symbol ROSEUSDT; env none; redaction none.
+- `docs-all-liquidation.jsonl`: source: venue docs example @19518b90, `websocket/public/all-liquidation`; 2026-10-31; symbol ROSEUSDT; env none; redaction none.
 
 ## Gates
 
