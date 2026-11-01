@@ -1833,12 +1833,14 @@ def create_app(
     )
     # #2713: the shell bootstrap (`/me`, `/me/preferences`, `/me/keymap`), self only. Without an
     # identity provider (fake backend) it answers 503/501 after authenticating, never unchecked.
+    # `/me/keymap` reads the hotkey profile store `/settings/hotkeys*` writes (E10-T05, set below).
     app.include_router(
         make_me_router(
             ctx.auth,
             identity=identity,
             environment=resolved.environment,
             settings=lambda: app.state.user_settings_repository,
+            hotkeys=lambda: app.state.hotkey_profiles_repository,
             clock=auth_clock,
         )
     )

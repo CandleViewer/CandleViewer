@@ -850,8 +850,8 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     # E02-T13 (#5181): the per-user settings store `/settings` and `/me/preferences` read is
     # Postgres-only (`None` on this backend), so the world gives them the in-memory one.
     app.state.user_settings_repository = FakeUserSettings()
-    # E10-T05 (#5211): the hotkey profile store `/settings/hotkeys*` reads is Postgres-only
-    # too, so the world gives it the in-memory one.
+    # E10-T05 (#5211): the hotkey profile store `/settings/hotkeys*` and `/me/keymap` read is
+    # Postgres-only too, so the world gives them the in-memory one.
     app.state.hotkey_profiles_repository = FakeHotkeyProfileStore()
     _CSRF_CODEC[:] = [app.state.csrf_codec]
     ctx = app.state.app_context
