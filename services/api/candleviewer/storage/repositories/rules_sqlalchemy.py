@@ -93,11 +93,12 @@ _CLOSE_RUN = sa.text(
 )
 #: E35-T10 (24 Sec.11.7, BQ-7): no migration, `ix_rr_rule_time` serves the run filter.
 _ORDER_ACTION_AGES = sa.text(
-    "SELECT EXTRACT(EPOCH FROM now() - e.event_ts) AS age FROM rule_events e "
+    "SELECT EXTRACT(EPOCH FROM now() - MIN(e.event_ts)) AS age FROM rule_events e "
     "JOIN rule_runs r ON r.id = e.rule_run_id WHERE r.rule_id = CAST(:rule_id AS uuid) "
     "AND r.mode = 'armed' AND r.started_at >= now() - make_interval(secs => :since) "
     "AND e.kind = 'action_start' AND e.payload->>'action_type' = ANY(CAST(:types AS text[])) "
-    "ORDER BY e.event_ts DESC LIMIT :limit"
+    "GROUP BY COALESCE(e.payload->>'dedupe_key', CAST(e.id AS text)) "
+    "ORDER BY MIN(e.event_ts) DESC LIMIT :limit"
 )
 _PRUNE = sa.text(
     "DELETE FROM rule_runs WHERE NOT matched AND status <> 'error' "
@@ -272,9 +273,11 @@ class SqlAlchemyRulesRepository:
     async def order_action_ages(
         self, rule_id: str, action_types: Sequence[str], *, since_s: float, limit: int
     ) -> list[float]:
-        """The age in seconds, on the database's clock, of each `action_start` event of
-        `action_types` in the rule's armed runs started within `since_s`, newest first, at most
-        `limit` (the order budget's rebuild, 24 Sec.11.7). Nothing of the payload is returned."""
+        """The age in seconds, on the database's clock, of each order the rule's armed runs
+        started within `since_s` handed over: one per fire key (`dedupe_key`) among the
+        `action_start` events of `action_types`, its first, so a retried order counts once; newest
+        first, at most `limit` (the order budget's rebuild, 24 Sec.11.7). Nothing of the payload
+        is returned."""
         params = {"rule_id": rule_id, "types": list(action_types), "since": since_s, "limit": limit}
         async with self._relational.unit_of_work() as uow:
             rows = (await uow.session.execute(_ORDER_ACTION_AGES, params)).all()

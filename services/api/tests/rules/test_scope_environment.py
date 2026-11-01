@@ -26,6 +26,7 @@ class _Source:
 
     def __init__(self) -> None:
         self.asked: list[list[uuid.UUID]] = []
+        self.envs = {DEMO: "demo", TESTNET: "testnet"}
 
     async def load_grants(self, owner: uuid.UUID) -> list[tuple[uuid.UUID, bool, bool]]:
         return [(DEMO, True, False), (TESTNET, True, False), (UNREAD, True, False)]
@@ -37,17 +38,17 @@ class _Source:
         self, account_ids: Sequence[uuid.UUID]
     ) -> dict[uuid.UUID, str]:
         self.asked.append(list(account_ids))
-        return {DEMO: "demo", TESTNET: "testnet"}
+        return dict(self.envs)
 
 
-async def _resolver() -> tuple[ScopeResolver, _Source]:
+async def _resolver() -> tuple[ScopeResolver, _Source, SnapshotScopeState]:
     async def audit(event: str, data: dict[str, str]) -> None:
         return None
 
     source = _Source()
-    state = SnapshotScopeState(source, "demo")
+    state = SnapshotScopeState(source)
     await state.refresh(OWNER)
-    return ScopeResolver(state, audit), source
+    return ScopeResolver(state, audit), source, state
 
 
 def _on(account: uuid.UUID) -> ScopeInstanceRef:
@@ -55,7 +56,7 @@ def _on(account: uuid.UUID) -> ScopeInstanceRef:
 
 
 async def test_check_action_refuses_an_account_of_another_environment() -> None:
-    resolver, source = await _resolver()
+    resolver, source, _ = await _resolver()
     assert source.asked == [[DEMO, TESTNET, UNREAD]]  # one read, of the granted accounts
     assert resolver.check_action(SCOPE, OWNER, "demo", _on(DEMO)) is None
     assert resolver.check_action(SCOPE, OWNER, "demo", _on(TESTNET)) == "environment"
@@ -65,7 +66,18 @@ async def test_check_action_refuses_an_account_of_another_environment() -> None:
 async def test_an_account_whose_environment_was_not_read_is_refused() -> None:
     """Fail closed (BQ-3): an account the read does not name has no environment, and is refused
     as one of another environment is, never taken for the process's."""
-    resolver, _ = await _resolver()
+    resolver, _, _ = await _resolver()
     assert resolver.check_action(SCOPE, OWNER, "demo", _on(UNREAD)) == "environment"
     resolved = resolver.resolve(SCOPE, OWNER, "demo")  # the instances never include it either
     assert [i.account_id for i in resolved.instances] == [DEMO]
+
+
+async def test_an_account_the_next_read_no_longer_names_loses_its_environment() -> None:
+    """C-2.11 (R1C1-05): an account read in the process's environment at one refresh, then no
+    longer named by the read at the next (deleted meanwhile), keeps no environment from the first:
+    it is refused `environment`."""
+    resolver, source, state = await _resolver()
+    assert resolver.check_action(SCOPE, OWNER, "demo", _on(DEMO)) is None
+    del source.envs[DEMO]
+    await state.refresh(OWNER)
+    assert resolver.check_action(SCOPE, OWNER, "demo", _on(DEMO)) == "environment"

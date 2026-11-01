@@ -245,7 +245,9 @@ def rule_order_budget(
 
 
 #: The account B18 is asked about for an action that names none (24 §11.5 check 3): no grant names
-#: it, so no per-account engagement covers it, and its verdict is the global one.
+#: it, so no per-account engagement covers it, and its verdict is the global one. #956's B18 may
+#: resolve a scope by lookup: the kill-switch suite's run against it asks this account by name,
+#: or the binding moves to B18's global read once one exists.
 GLOBAL_ACCOUNT: Final = AccountId(UUID(int=0))
 
 

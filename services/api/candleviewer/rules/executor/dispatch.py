@@ -57,7 +57,7 @@ class Fire:
     rule_id: str
     run_id: UUID
     requests: tuple[ActionRequest, ...]
-    emit: Callable[[ActionRequest], Awaitable[object]]
+    emit: Callable[[ActionRequest], Awaitable[str | None]]  # `emit_checked`: a reason or None
     kind: JobKind = "fire"
     version_id: str | None = None
     trigger_type: str = ""

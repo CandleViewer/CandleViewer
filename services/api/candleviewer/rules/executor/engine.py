@@ -300,9 +300,14 @@ class ActionExecutor:
         stop: Stop | None = None
         writable, alerted = True, False
         for position, req in enumerate(fire.requests, start=1):
-            accounts, wide = self._gates.resolve_targets(
-                req, self._handlers.get(req.action_type), self._clock()
-            )
+            unresolved = False
+            try:  # the action's first guarded step: a raise is its `failed` result, recorded
+                accounts, wide = self._gates.resolve_targets(
+                    req, self._handlers.get(req.action_type), self._clock()
+                )
+            except Exception as exc:  # never `CancelledError`, which is no `Exception`
+                self._failed_log(fire, req, exc, not_run=None)
+                accounts, wide, unresolved = (None,), False, True
             resolved = tuple(a for a in accounts if a is not None)
             halted = False  # `abort_on_first`: the action's later accounts are not attempted
             for account in accounts or (None,):
@@ -313,6 +318,9 @@ class ActionExecutor:
                     result = self._blocked(action, "circuit_breaker")
                 elif stop is not None or halted:
                     result = self._skipped(action, stop)
+                elif unresolved:
+                    result = self._result(action, "failed", error_code="error")
+                    stop = self._stop_after(action, result)
                 elif not accounts:  # `all_accounts` resolved to no account (BQ-4)
                     result = self._blocked(action, "permission")
                     self._scoped(action, refused=True)
@@ -441,9 +449,13 @@ class ActionExecutor:
         action.answer, action.result = answer, self._answered(action, answer)
 
     def _before_scope(self, action: _Action) -> BlockedBy | None:
-        """Checks 2 and 3 on the action's account."""
+        """Checks 2 and 3 on the action's account; a `dry_run_only` action, which never reaches a
+        handler, is never `unavailable` (24 §11.5)."""
         spec = self._handlers.get(action.req.action_type)
-        return self._gates.before_scope(spec, action.account, stand_in=self._stand_in is not None)
+        return self._gates.before_scope(
+            spec, action.account, stand_in=self._stand_in is not None,
+            dry_run=action.req.payload.dry_run_only,
+        )  # fmt: skip
 
     async def _after_scope(
         self, spec: HandlerSpec, action: _Action, *, again: bool = False
@@ -504,9 +516,10 @@ class ActionExecutor:
 
     def _scoped(self, action: _Action, *, refused: bool) -> None:
         """A `scope` or `permission` refusal at dispatch, or a pass of check 5, for the service's
-        auto-disarm count (BQ-10), by rule and the account the checks read."""
+        auto-disarm count (BQ-10), by rule and the action's resolved account: `None` for an action
+        that names none, so its passes never clear an account's count."""
         if self._on_scope is not None:
-            self._on_scope(action.req.rule_id, action.req.instance.account_id, refused)
+            self._on_scope(action.req.rule_id, action.account, refused)
 
     async def _rechecked(self, action: _Action) -> bool:
         """Checks 1 to 8 again before a retry (24 §11.9), check 4 through the scope re-check

@@ -572,8 +572,9 @@ async def test_an_armed_fires_close_carries_its_duration() -> None:
     engine = Engine(Slow({"a1": [OK]}))
     engine.executor = ActionExecutor(
         check_one=engine.check_one, scope_check=engine.scope_check,
-        gates=Gates(switches=engine.switches, principal=Principals()), records=engine.records,
-        audit=engine.records, handlers=engine.executor._handlers, clock=lambda: now[0],
+        gates=Gates(switches=engine.switches, principal=Principals(clock=lambda: now[0])),
+        records=engine.records, audit=engine.records, handlers=engine.executor._handlers,
+        clock=lambda: now[0],
     )  # fmt: skip
     await engine.run("a1")
     assert engine.records.closed[RUN] == ("ok", 1250)

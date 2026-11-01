@@ -13,7 +13,7 @@ import asyncio
 import functools
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -227,6 +227,44 @@ async def test_the_evaluation_tick_never_awaits_dispatch(rig: DispatchRig) -> No
     assert rig.dispatch.queued == 2 and rig.sink.log == [("in", 1, "a1")]
     rig.sink.release(rid, 3)
     await rig.settle()
+
+
+@dataclass
+class _ReadWhere(Switches):
+    """`Switches` that log the task each read of checks 2 and 3 runs in."""
+
+    where: list[str] = field(default_factory=list)
+
+    def _read(self) -> None:
+        task = asyncio.current_task()
+        self.where.append("" if task is None else task.get_name())
+
+    def rules_enabled(self) -> bool:
+        self._read()
+        return super().rules_enabled()
+
+    def order_entry_killed(self) -> bool:
+        self._read()
+        return super().order_entry_killed()
+
+    def kill_switch_engaged(self, account_id: uuid.UUID | None) -> bool:
+        self._read()
+        return super().kill_switch_engaged(account_id)
+
+
+async def test_checks_2_and_3_are_read_in_a_dispatch_worker_never_at_offer(
+    rig: DispatchRig,
+) -> None:
+    """24 §11.5 (the carry from #5231; R1C1-08): the tick only offers; the switches of checks 2 and
+    3 are read after the dequeue, in a fire worker, and never in the tick's task."""
+    executor = rig.svc._executor
+    assert executor is not None
+    reads = executor._gates._switches = _ReadWhere()
+    await rig.add("armed")
+    await rig.fire()
+    await rig.settle()
+    assert len(rig.executor) == 1 and reads.where  # the action ran, its switches read
+    assert {name.rsplit("-", 1)[0] for name in reads.where} == {"rule-dispatch-worker"}
 
 
 async def test_stop_drains_dispatch_workers_within_grace(rig: DispatchRig) -> None:
@@ -568,7 +606,7 @@ async def test_the_recheck_before_a_retry_runs_check_one_then_the_scope_recheck(
 
 
 def _fire(
-    run: int, *nodes: str, emit: Callable[[ActionRequest], Awaitable[object]], rule: str = RULE
+    run: int, *nodes: str, emit: Callable[[ActionRequest], Awaitable[str | None]], rule: str = RULE
 ) -> dispatch.Fire:
     scope = RuleScope(level="account")
     reqs = tuple(
@@ -590,7 +628,7 @@ async def _never_executed(fire: dispatch.Fire) -> None:
     raise AssertionError("no fire is executed here")
 
 
-async def _never_run(_req: ActionRequest) -> bool:
+async def _never_run(_req: ActionRequest) -> str | None:
     raise AssertionError("no worker runs here")
 
 
@@ -652,8 +690,8 @@ async def test_workers_that_end_without_stop_page_at_once() -> None:
     """Only `stop()` ends the workers: any other end leaves the queued fires with no one to run
     them, so it pages at once, by the error's class alone."""
 
-    async def emit(_req: ActionRequest) -> bool:
-        return True
+    async def emit(_req: ActionRequest) -> str | None:
+        return None
 
     fires = dispatch.FireDispatch(_never_refused, _never_executed)
     fires.offer(_fire(1, "a1", emit=emit))
