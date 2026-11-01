@@ -422,6 +422,24 @@ describe("Table (CMP-049) treegrid: keys (APG Treegrid)", { timeout: 60_000 }, (
     await userEvent.keyboard(" ");
     expect(onRowSelect).toHaveBeenCalledWith(new Set(["g0", "g0-i0"]));
   });
+
+  it("a row whose rowActions are empty opens no context menu; a row with items opens its own", async () => {
+    await mount(
+      <TreeHost
+        open="all"
+        rowActions={(n) =>
+          n.kind === "group" ? [] : [{ id: "act", label: "Act", onSelect: () => undefined }]
+        }
+      />,
+    );
+    act(() => cellAt(1, 0).focus());
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    expect(page.queryByRole("menu")).toBeNull();
+    act(() => cellAt(2, 0).focus());
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = await page.findByRole("menu", { name: "Actions for Item 0.0" });
+    expect(within(menu).getByRole("menuitem", { name: "Act" })).toHaveFocus();
+  });
 });
 
 describe(

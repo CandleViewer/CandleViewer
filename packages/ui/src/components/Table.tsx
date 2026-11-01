@@ -274,7 +274,8 @@ export interface TableProps<T> {
   readonly onRowSelect?: ((selected: ReadonlySet<string>) => void) | undefined;
   /**
    * Renders the trailing actions column: an IconButton "Actions for {row}" opening a CMP-041 menu of these items;
-   * `Shift+F10` or the Menu key on a focused row opens the same items as a context menu at the row.
+   * `Shift+F10` or the Menu key on a focused row opens the same items as a context menu at the row, and on a row with
+   * none opens nothing.
    */
   readonly rowActions?: ((row: T) => readonly MenuItem[]) | undefined;
   /**
@@ -1231,8 +1232,16 @@ export function Table<T>({
     ...(pinEnd && c === lastC && span === 1 ? { "data-pin-end": "" as const } : {}),
   });
   usePinOffsets(shell, tableRef, pinStart, pinEnd, `${columns.map((c) => c.id).join()}:${lastC}`);
-  // The context menu is controlled so its items are asked for only while it is open.
+  // The context menu is controlled so its items are asked for only while it is open, for the row the render holds
+  // (a press remembers its cell before its `contextmenu`). A row with no actions (a group header before its own menu
+  // mounts) shows nothing, never an empty menu, and its request is dropped at once, so it never opens later on another.
   const [contextOpen, setContextOpen] = useState(false);
+  const contextItems =
+    contextOpen && activeRow !== undefined ? (rowActions?.(activeRow) ?? []) : [];
+  const contextShown = contextItems.length > 0;
+  useLayoutEffect(() => {
+    if (contextOpen && !contextShown) setContextOpen(false);
+  }, [contextOpen, contextShown]);
   // A cell a key moves focus to outside the window: focused once the host draws it.
   const pending = useRef<CellAt | null>(null);
   useLayoutEffect(() => {
@@ -2064,9 +2073,9 @@ export function Table<T>({
         <Menu
           contextTarget={tbody}
           aria-label={`Actions for ${labelOf(activeRow)}`}
-          open={contextOpen}
+          open={contextShown}
           onOpenChange={setContextOpen}
-          items={contextOpen ? rowActions(activeRow) : []}
+          items={contextItems}
           announceReason={say}
         />
       ) : null}
