@@ -12,6 +12,14 @@ import type {
   ColumnPickerProps,
   FileDropProps,
   FreshnessMarkerProps,
+  RecorderCellOptions,
+  RecorderCellProps,
+  RecorderColumnsOptions,
+  RecorderReason,
+  RecorderRowGrid,
+  RecorderRowState,
+  RecorderStatusRowData,
+  RecorderStatusRowProps,
   TableRowContext,
   WatchlistGroupTabsProps,
   WatchlistRowProps,
@@ -23,6 +31,7 @@ import type {
   DateRangeValue,
   DialogProps,
   DrawerProps,
+  FilterBarProps,
   FormFieldProps,
   FormSectionProps,
   IconButtonProps,
@@ -99,6 +108,7 @@ describe("@candleviewer/ui molecules (E05-S03)", () => {
     ["DateRangePicker", Atoms.DateRangePicker],
     ["Dialog", Atoms.Dialog],
     ["Drawer", Atoms.Drawer],
+    ["FilterBar", Atoms.FilterBar],
     ["FormField", Atoms.FormField],
     ["FormSection", Atoms.FormSection],
     ["InfoPanel", Atoms.InfoPanel],
@@ -124,6 +134,7 @@ describe("@candleviewer/ui molecules (E05-S03)", () => {
           DateRangeValue,
           DialogProps,
           DrawerProps,
+          FilterBarProps,
           FormFieldProps,
           FormSectionProps,
           InfoPanelProps,
@@ -135,6 +146,32 @@ describe("@candleviewer/ui molecules (E05-S03)", () => {
           TabItem,
           ToastProps,
           ToastRegionProps,
+        ]
+      | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui recorder components (E16-S01, CMP-177)", () => {
+  it.each([
+    ["RecorderStatusRow", Atoms.RecorderStatusRow],
+    ["recorderStatusColumns", Atoms.recorderStatusColumns],
+  ])("exports %s from the package entry as a function", (_name, value) => {
+    expect(typeof value).toBe("function");
+  });
+
+  it("exports its five reasons and its types (checked by the typechecker)", () => {
+    expect(Object.keys(Atoms.RECORDER_REASONS)).toHaveLength(5);
+    const props:
+      | [
+          RecorderCellOptions,
+          RecorderCellProps,
+          RecorderColumnsOptions,
+          RecorderReason,
+          RecorderRowGrid,
+          RecorderRowState,
+          RecorderStatusRowData,
+          RecorderStatusRowProps,
         ]
       | null = null;
     expect(props).toBeNull();
