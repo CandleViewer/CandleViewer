@@ -22,6 +22,11 @@ from candleviewer.bars.metrics import record_param_rejected, record_rejected
 MAX_VALUE_CHARS: Final = 32
 
 
+#: Keys whose value the server itself resolved (never the client): logged as is. `route` and
+#: `reason` are fixed by the caller and are not `values` at all.
+TRUSTED_KEYS: Final = frozenset({"user_id"})
+
+
 def escape_value(value: object) -> str:
     """`value` as a bounded, ASCII-only, single-line string, safe to put in a log field."""
     text = str(value)
@@ -34,12 +39,17 @@ def note_refused(route: str, reason: str, status: int, **values: object) -> None
     """Count one refusal of `route` (`bars` | `klines`) and log it once."""
     record_param_rejected(reason)  # the original per-reason series, kept for dashboards
     record_rejected(route, reason)
-    fields: dict[str, Any] = {
-        k: v if isinstance(v, int) else escape_value(v) for k, v in values.items() if v is not None
-    }
+    fields: dict[str, Any] = {}
+    for key, value in values.items():
+        if value is None:
+            continue
+        if key in TRUSTED_KEYS:
+            fields[key] = str(value)
+        else:
+            fields[key] = value if isinstance(value, int) else escape_value(value)
     structlog.get_logger(__name__).warning(
         "market_request_refused", route=route, reason=reason, status=status, **fields
     )
 
 
-__all__ = ["MAX_VALUE_CHARS", "escape_value", "note_refused"]
+__all__ = ["MAX_VALUE_CHARS", "TRUSTED_KEYS", "escape_value", "note_refused"]

@@ -92,6 +92,10 @@ def test_observability_refusal_is_logged_with_the_value_escaped_and_truncated(
     assert len(refusals) == 1, events
     logged = " ".join(str(v) for v in refusals[0].values())
     assert "\x1b" not in logged and "A" * 33 not in logged
+    everything = " ".join(
+        str(v) for e in events for v in e.values()
+    )  # a second event must not echo the probe either
+    assert "\x1b" not in everything and "A" * 33 not in everything
 
 
 def _rules() -> list[dict[str, Any]]:

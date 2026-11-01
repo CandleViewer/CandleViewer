@@ -231,7 +231,7 @@ def test_forbidden_refusal_logs_the_user_id_only() -> None:
         _klines(_NO_PERM).get("/market/klines", params=_KLINES_Q)
 
     first, second = _refusals(logs)
-    assert first["user_id"] == second["user_id"] == "'u2'"
+    assert first["user_id"] == second["user_id"] == "u2"
 
 
 def test_the_route_counter_drops_unknown_labels() -> None:
