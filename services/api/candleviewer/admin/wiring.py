@@ -168,6 +168,7 @@ __all__ = [
     "MachineEventSinkHandle",
     "MachineEventSinkMetrics",
     "MachineEventSinkUnavailable",
+    "RefusalBudget",
     "SecretsBundle",
     "SecretsHandle",
     "SecretsMeta",
@@ -551,12 +552,23 @@ def _before(data: dict[str, str]) -> dict[str, Any] | None:
     return {"rule_scope": json.loads(raw)} if raw else None
 
 
+class RefusalBudget(Protocol):
+    """The rule refusal records' budget (E35, #4834; built in `api/rules_refusals.py`) as the scope
+    sink sees it: a record written within the acting user's budget of its action, True when
+    written and False when counted over the cap; `AuditUnavailable` when due and unwritable."""
+
+    async def write(self, action: str, user: str, fields: dict[str, Any]) -> bool: ...
+
+
 def audit_writer_sink(
-    writer: Any, *, acting: Callable[[str], str]
+    writer: Any, *, acting: Callable[[str], str], refusals: RefusalBudget | None = None
 ) -> Callable[[str, dict[str, str]], Awaitable[None]]:
     """Adapt `AuditWriter.emit` (durable, write-ahead) to the scope audit port. `acting` names the
     record's actor for the caller: the app passes `acting_user`, so a request viewing as the
-    caller names the viewer (#3085, Q2), never the target the emitter's tripwire refuses."""
+    caller names the viewer (#3085, Q2), never the target the emitter's tripwire refuses. With
+    `refusals`, a request's scope refusal (`rule_scope_denied`) that names its caller is held to
+    the acting user's refusal budget (22 "Rule authoring refusal records"); a rule action's
+    denial while the rule runs (`rule_action_scope_denied`) and the armed record are never."""
     names = {
         "rule_scope_denied": "rules.scope_denied",
         "rule_live_scope_armed": "rules.live_scope_armed",
@@ -566,16 +578,19 @@ def audit_writer_sink(
     async def sink(event: str, data: dict[str, str]) -> None:
         caller = data.get("caller")
         actor = None if caller is None else acting(caller)
-        await writer.emit(
-            names[event],
-            actor_label=actor or "unknown",
-            actor_user_id=actor,
-            object_kind="rule_scope",
-            object_id=data.get("account") or data.get("environment"),
-            severity=Severity.ERROR if data.get("severity") == "high" else Severity.WARNING,
-            before_state=_before(data),
-            after_state={k: v for k, v in data.items() if k != "scope_before"},
-            request_id=current_request_uuid(),
-        )
+        fields: dict[str, Any] = {
+            "actor_label": actor or "unknown",
+            "actor_user_id": actor,
+            "object_kind": "rule_scope",
+            "object_id": data.get("account") or data.get("environment"),
+            "severity": Severity.ERROR if data.get("severity") == "high" else Severity.WARNING,
+            "before_state": _before(data),
+            "after_state": {k: v for k, v in data.items() if k != "scope_before"},
+            "request_id": current_request_uuid(),
+        }
+        if refusals is not None and actor is not None and event == "rule_scope_denied":
+            await refusals.write(names[event], actor, fields)
+            return
+        await writer.emit(names[event], **fields)
 
     return sink

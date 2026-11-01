@@ -28,6 +28,7 @@ from candleviewer.rules.vocabulary import build as vbuild
 from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS, RETIRED_ACTIONS, TRIGGERS
 from candleviewer.rules.vocabulary.metrics import kernel_params_schema
 from candleviewer.rules.vocabulary.registry import DuplicateMetricError
+from tests.rules._check_limiter import unthrottled
 
 GOLDEN = Path(__file__).parents[2] / "candleviewer/rules/vocabulary/metric_names.golden.txt"
 SPEC = Path(__file__).parents[4] / "docs/plan/22-api-openapi.yaml"
@@ -59,7 +60,10 @@ def _client(
     reg = default_registry() if registry is None else registry
     app.include_router(
         make_rules_router(
-            lambda: reg, principal_resolver=_Resolver(principal), recorded_symbols=lambda: recorded
+            lambda: reg,
+            principal_resolver=_Resolver(principal),
+            recorded_symbols=lambda: recorded,
+            check_limiter=unthrottled(),
         )
     )
     return TestClient(app)
@@ -299,7 +303,7 @@ def test_endpoint_rbac_fail_closed() -> None:
     assert _client(None).get("/rules/vocabulary").status_code == 401
     assert _client(_P()).get("/rules/vocabulary").status_code == 403
     app = FastAPI()
-    app.include_router(make_rules_router(default_registry))
+    app.include_router(make_rules_router(default_registry, check_limiter=unthrottled()))
     assert TestClient(app).get("/rules/vocabulary").status_code == 501
 
 
@@ -307,7 +311,11 @@ def test_engine_offline_is_503() -> None:
     r = _client(_P("rules:read"), registry=MetricRegistry()).get("/rules/vocabulary")
     assert r.status_code == 503 and r.json()["title"] == "Service unavailable"
     app = FastAPI()
-    app.include_router(make_rules_router(lambda: None, principal_resolver=_Resolver(_P("*"))))
+    app.include_router(
+        make_rules_router(
+            lambda: None, principal_resolver=_Resolver(_P("*")), check_limiter=unthrottled()
+        )
+    )
     assert TestClient(app).get("/rules/vocabulary").status_code == 503
 
 
@@ -344,7 +352,11 @@ def test_simulate_only_through_real_session_resolver() -> None:
 
     app = FastAPI()
     resolver = SessionAuditPrincipalResolver(lambda: _RealSessions(), _RealIdentity())
-    app.include_router(make_rules_router(default_registry, principal_resolver=resolver))
+    app.include_router(
+        make_rules_router(
+            default_registry, principal_resolver=resolver, check_limiter=unthrottled()
+        )
+    )
     c = TestClient(app)
 
     def actions(tok: str) -> list[dict[str, typing.Any]]:

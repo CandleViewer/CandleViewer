@@ -325,6 +325,7 @@ def _http(st: FakeState, sink: Any = _noop) -> Any:
 
     from candleviewer.api.rules import make_rules_router
     from candleviewer.rules.vocabulary import default_registry
+    from tests.rules._check_limiter import unthrottled
 
     class P:
         user_id = OWNER
@@ -339,7 +340,10 @@ def _http(st: FakeState, sink: Any = _noop) -> Any:
     app = FastAPI()
     app.include_router(
         make_rules_router(
-            default_registry, principal_resolver=R(), scope_resolver=ScopeResolver(st, sink)
+            default_registry,
+            principal_resolver=R(),
+            scope_resolver=ScopeResolver(st, sink),
+            check_limiter=unthrottled(),
         )
     )
     return TestClient(app)

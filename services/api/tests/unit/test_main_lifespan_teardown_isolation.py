@@ -66,6 +66,7 @@ _STEPS = (
     "csrf_refusal_audits",
     "audit_budget_flush",
     "view_as_refusal_flush",
+    "rules_refusal_flush",
     "account_health",
     "profiles",
 )

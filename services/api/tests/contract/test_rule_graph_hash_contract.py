@@ -25,6 +25,7 @@ from candleviewer.rules.compiler import to_graph_model
 from candleviewer.rules.ir import Rule
 from candleviewer.rules.scope import AccountState, ScopeResolver, ScopeState
 from candleviewer.rules.vocabulary import default_registry
+from tests.rules._check_limiter import unthrottled
 
 VECTORS = Path(__file__).resolve().parents[4] / "packages/fixtures/golden/rule-ir/hash_vectors.json"
 #: The bodies a JS client sends the same values in (``js``) that the server hashes.
@@ -74,6 +75,7 @@ APP.include_router(
     make_rules_router(
         default_registry,
         principal_resolver=Caller(),
+        check_limiter=unthrottled(),
         scope_resolver=ScopeResolver(cast(ScopeState, GRANTS), _audit),
     )
 )

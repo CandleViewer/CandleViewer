@@ -184,6 +184,7 @@ from candleviewer.api.response_headers import NoSniff
 from candleviewer.api.rules import CHECK_BURST_FACTOR, CHECK_ROUTES
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
+from candleviewer.api.rules_refusals import RuleRefusalBudgets
 from candleviewer.api.scanner import make_scanner_router
 from candleviewer.api.scanner_service import ScannerMetrics, ScannerService
 from candleviewer.api.session_backstop_audit import SessionBackstopAudit
@@ -1480,9 +1481,13 @@ class _RuleCompileTelemetry:
         limited = metrics.get("rule_authoring_rate_limited_total")
         self._capped = {cap: capped.labels(cap) for cap in REFUSED_CAPS}
         self._limited = {route: limited.labels(route) for route in CHECK_ROUTES}
+        self._suppressed = metrics.get("rule_authoring_refusals_suppressed_total").child()
 
     def on_cap_refused(self, cap: str) -> None:
         self._capped.get(cap, NOOP_CHILD).inc()
+
+    def on_refusal_suppressed(self) -> None:
+        self._suppressed.inc()
 
     def on_rate_limited(self, route: str) -> None:
         self._limited.get(route, NOOP_CHILD).inc()
@@ -3322,6 +3327,18 @@ def create_app(
     )
     # E35-T03: rule vocabulary + IR schema (fail-closed 501 without a resolver).
     rule_telemetry = _RuleCompileTelemetry(metrics_facade)
+    # E35 (#4834, G-2): the rule routes' refusal records under each acting user's own hourly cap,
+    # per action, never a slot of the budgets above, whose other settings they share. Both writers
+    # of `rules.scope_denied` share it; the lifespan runs its flush task and drains it.
+    rule_refusals = RuleRefusalBudgets(
+        _LazyAuditEmitter(ctx.audit),
+        per_hour=resolved.rules_refusal_budget_per_hour,
+        tracked_users=resolved.audit_budget_tracked_users,
+        inflight_cap=resolved.audit_inflight_writes,
+        flush_seconds=resolved.audit_read_flush_seconds,
+        on_suppressed=rule_telemetry.on_refusal_suppressed,
+    )
+    app.state.rules_refusal_flush = rule_refusals.flush
     # E35-S04: scope enforcement is backed by user_account_access (real backend only);
     # on the fake backend there is no resolver, so scoped/live rules fail closed (501).
     if resolved.storage_backend == "real":
@@ -3330,7 +3347,9 @@ def create_app(
                 SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "rule_scope")
             ),
             resolved.environment.value,
-            audit_writer_sink(_LazyAuditEmitter(ctx.audit), acting=acting_user),
+            audit_writer_sink(
+                _LazyAuditEmitter(ctx.audit), acting=acting_user, refusals=rule_refusals
+            ),
         )
     app.include_router(
         make_rules_router(
@@ -3353,7 +3372,7 @@ def create_app(
     # E35-S01: rule store / versions / active-version / mode routes (fail-closed 501
     # without an identity provider). Audit (C-2.9) is write-ahead via the M19 emitter and
     # state changes are published on the `{env}.rules` bus topic that the WS gateway fans out.
-    _rules_audit = make_rules_audit(_LazyAuditEmitter(ctx.audit))
+    _rules_audit = make_rules_audit(_LazyAuditEmitter(ctx.audit), refusals=rule_refusals)
 
     async def _rules_broadcast(payload: dict[str, Any]) -> None:
         await ctx.bus.bus.publish(

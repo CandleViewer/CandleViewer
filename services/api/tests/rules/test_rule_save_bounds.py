@@ -53,6 +53,8 @@ RULES = {
 LOOSENS = "20_widen_stop_through_funding_owner.json"
 KINDS = pytest.mark.parametrize("kind", ["values", "depth"])
 BOUNDS = [("$", "schema_error", "syntax")]
+#: The bounds' issue as a save names it (`_errors`).
+BOUND_ERRORS = [("$", "schema_error")]
 LIMITS = f"(limit {MAX_ITEMS} values, {MAX_DEPTH} levels)"
 JSON = {"content-type": "application/json"}
 #: A body nested past what the JSON decoder can recurse, still under the ceiling.
@@ -119,11 +121,19 @@ def _issues(issues: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
     return [(i["path"], i["code"], i["class"]) for i in issues]
 
 
+def _errors(errors: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Each issue a save names, as 22's `errors[{field, rule, message}]` carries it (#4834's C-row):
+    `field` its path and `rule` its code, and no other member."""
+    assert all(set(e) == {"field", "rule", "message"} for e in errors), errors
+    return [(e["field"], e["rule"]) for e in errors]
+
+
 def _bounds_problem(r: httpx.Response) -> None:
     assert r.status_code == 422, r.text[:300]
     body = r.json()
-    assert body["code"] == "rule_ir_invalid" and _issues(body["issues"]) == BOUNDS
-    assert LIMITS in body["detail"]
+    assert body["code"] == "rule_ir_invalid" and _errors(body["errors"]) == BOUND_ERRORS
+    assert "issues" not in body
+    assert LIMITS in body["errors"][0]["message"] and body["detail"] == "1 error in the rule IR."
 
 
 def _padded(size: int) -> bytes:
@@ -197,7 +207,8 @@ async def test_create_document_over_a_bound_is_refused_and_stores_nothing(kind: 
     with pytest.raises(RuleError) as refused:
         await m.create(_over(kind), OWNER)
     assert (refused.value.status, refused.value.code) == (422, "rule_ir_invalid")
-    assert _issues(refused.value.extra["issues"]) == BOUNDS and LIMITS in refused.value.message
+    assert _errors(refused.value.extra["errors"]) == BOUND_ERRORS
+    assert LIMITS in refused.value.extra["errors"][0]["message"]
     assert (await m.list_rules(OWNER))["items"] == [] and audits == []
 
 
@@ -208,7 +219,7 @@ async def test_update_document_over_a_bound_is_refused_and_writes_no_version(kin
     with pytest.raises(RuleError) as refused:
         await m.update(rid, _over(kind, threshold="2"), 1, OWNER)
     assert (refused.value.status, refused.value.code) == (422, "rule_ir_invalid")
-    assert _issues(refused.value.extra["issues"]) == BOUNDS
+    assert _errors(refused.value.extra["errors"]) == BOUND_ERRORS
     assert [v["version"] for v in await m.versions(rid)] == [1]
     assert [a for a, _ in audits] == ["rule.created"]
 
@@ -270,7 +281,7 @@ async def test_create_over_a_bound_and_schema_invalid_answers_the_bounds_first()
     m, audits, _ = _mgr()
     with pytest.raises(RuleError) as refused:  # the same value count, and a schema error too
         await m.create({**_over("values"), "name": 123}, OWNER)
-    assert _issues(refused.value.extra["issues"]) == BOUNDS and audits == []
+    assert _errors(refused.value.extra["errors"]) == BOUND_ERRORS and audits == []
 
 
 @pytest.mark.parametrize("name", sorted(RULES))
@@ -281,7 +292,7 @@ async def test_save_corpus_rule_within_the_bounds_keeps_its_golden_hash(name: st
     if name == LOOSENS:  # refused by the validator for every role, never by the bounds
         with pytest.raises(RuleError) as refused:
             m._validated(doc, doc["rule_id"])
-        assert [i["code"] for i in refused.value.extra["issues"]] == ["stop_loosening"]
+        assert [e["rule"] for e in refused.value.extra["errors"]] == ["stop_loosening"]
         return
     assert m._validated(doc, doc["rule_id"])[1] == GOLDEN[name]
     if not is_reserved_name(doc["name"]):
