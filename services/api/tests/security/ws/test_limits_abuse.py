@@ -224,7 +224,8 @@ def deployed(wire: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[Deployed]:
     ours."""
     mono = Clock()
     monkeypatch.setattr(_stack, "make_ws_router", functools.partial(make_ws_router, clock=mono))
-    with open_stack(monkeypatch, snapshot_loader=Grants().load) as stack:
+    # `open_stack` leaves the gateway's clock to the `mono` wired above
+    with open_stack(monkeypatch, snapshot_loader=Grants().load, gateway_clock=False) as stack:
         yield Deployed(stack, mono)
 
 

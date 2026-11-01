@@ -199,11 +199,15 @@ def open_stack(
     *,
     listed: tuple[str, ...] = (),
     backend_connection: bool = False,
+    gateway_clock: bool = True,
     **create_app_kwargs: Any,
 ) -> Iterator[Stack]:
     """*listed* origins join `ORIGIN` in the SR-042 allow-list (the shell's `app://candleviewer`,
     say), and `desktop.backend_connection` answers *backend_connection*: its reader is never
-    started here, so it keeps the value it is given (S3's seam, ADR-0038 2e)."""
+    started here, so it keeps the value it is given (S3's seam, ADR-0038 2e). With
+    *gateway_clock* the gateway's monotonic clock is the stack's injected one (below); without
+    it, `open_stack` leaves that clock alone: the real one for a test that waits out a gateway
+    window, or one the caller wired into `make_ws_router` itself."""
     clock = Clock()
     monkeypatch.setenv("CV_ALLOWED_ORIGINS", ",".join((ORIGIN, *listed)))
     users, mfa, sessions = FakeUserRepository(), FakeMfaRepository(), FakeSessionRepository()
@@ -221,8 +225,15 @@ def open_stack(
     )
     monkeypatch.setattr(appmod, "build_auth_service", lambda *_a, **_k: auth)
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _s: Identity())
-    # The gateway checks token expiry on its wall clock (#2259): share the injected clock.
-    wall = functools.partial(make_ws_router, wall_ms=lambda: int(clock.now.timestamp() * 1000))
+    # The gateway on the injected clock: its token-expiry check (`wall_ms`, #2259), and its
+    # monotonic `clock`, which times the §8.3 classification. On real time a socket's first
+    # classification, an interval after its `auth_ok`, queues an RTT `ping` and the next a
+    # `connection_quality` notice: on a loaded runner, frames ahead of the ones a test reads
+    # (#5328).
+    on_clock: dict[str, Any] = {"wall_ms": lambda: int(clock.now.timestamp() * 1000)}
+    if gateway_clock:
+        on_clock["clock"] = lambda: clock.now.timestamp()
+    wall = functools.partial(make_ws_router, **on_clock)
     monkeypatch.setattr(appmod, "make_ws_router", wall)
     resolver = Resolver()
     create_app_kwargs.setdefault("principal_resolver", resolver)

@@ -53,12 +53,12 @@ _PROBES = [*_LABELLED_PROBES, "/health/live", "/health/ready"]
 
 
 @contextlib.contextmanager
-def _open(monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
+def _open(monkeypatch: pytest.MonkeyPatch, *, gateway_clock: bool = True) -> Iterator[Stack]:
     """The shared abuse-case stack with a WS principal source, built with a known label and
     sha (`get_settings()` reads the environment afresh for every app)."""
     monkeypatch.setenv("CV_VERSION", _LABEL)
     monkeypatch.setenv("CV_GIT_SHA", _SHA)
-    with open_stack(monkeypatch, snapshot_loader=Grants().load) as s:
+    with open_stack(monkeypatch, snapshot_loader=Grants().load, gateway_clock=gateway_clock) as s:
         yield s
 
 
@@ -74,7 +74,7 @@ def window_stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
     authenticates is closed by it inside a test's own deadline: the gateway runs on the real
     clock here, and nothing sleeps."""
     monkeypatch.setenv("CV_WS_AUTH_TIMEOUT_S", "0.2")
-    with _open(monkeypatch) as s:
+    with _open(monkeypatch, gateway_clock=False) as s:  # the window waits on the real clock
         yield s
 
 
