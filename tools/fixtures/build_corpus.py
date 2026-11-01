@@ -197,6 +197,7 @@ ERRORS: dict[str, tuple[int, Any]] = {
 
 SERVER_TIME = _rest_ok({"timeSecond": "1700000000", "timeNano": "1700000000123456789"}, T0)
 
+
 def funding_history(symbol: str, step_h: int) -> dict[str, Any]:
     """`GET /v5/market/funding/history`: `fundingRate` + `fundingRateTimestamp`
     strings, newest first, `step_h` hours apart (24-internal-schemas §2.7). The
@@ -322,6 +323,30 @@ _DOCS_FRAMES: dict[str, tuple[str, str, str, str, str]] = {
     "private-wallet": ("wallet", "websocket/private/wallet", "websocket/private/wallet", "*",
                        "one unified wallet push with one BTC coin row"),
 }  # fmt: skip
+#: #1955 (C-13.5 deviation, orchestrator-approved): DERIVED, not evidence. The public socket's
+#: subscribe acks (`ws/public-subscribe-ack-derived.jsonl`) are the recorded private ack
+#: (`ws/private-subscribe-ok.jsonl`, key order success, ret_msg, op, conn_id) plus the `req_id`
+#: echo the Bybit docs describe (`ws/connect`: a request `req_id` is echoed in its reply), in the
+#: documented order success, ret_msg, conn_id, req_id, op. The refused frame's `ret_msg` echoing
+#: the 10-topic args list is the documented failure shape, not a capture. A capture row is owned
+#: by the recorder lane once the demo stack is up; it then replaces this file.
+_DERIVED_ACK_SRC = "ws/private-subscribe-ok.jsonl"
+_DERIVED_ACK_TOPICS = [
+    f"publicTrade.{s}USDT"
+    for s in ("BTC", "ETH", "SOL", "XRP", "DOGE", "ADA", "LTC", "LINK", "AVAX", "DOT")
+]
+
+
+def derived_subscribe_acks() -> list[str]:
+    """One accepted and one refused public subscribe ack, each echoing its `req_id`."""
+    ok = {"success": True, "ret_msg": "", "conn_id": "cv-derived-conn-1", "req_id": "cv-1",
+          "op": "subscribe"}  # fmt: skip
+    refused = {"success": False,
+               "ret_msg": "error:handler not found,args:[" + ",".join(_DERIVED_ACK_TOPICS) + "]",
+               "conn_id": "cv-derived-conn-1", "req_id": "cv-2", "op": "subscribe"}  # fmt: skip
+    return [_dump(ok), _dump(refused)]
+
+
 _MAX = 1_500_000  # bytes; the E08-S05 3 h depth-200 book is the only file near it
 
 
@@ -442,6 +467,27 @@ def build() -> list[dict[str, Any]]:
         | {"source_url": _DOCS_URL + page, "source_ref": f"{_DOCS_REF}:docs/v5/{source}.mdx"}
         for name, (stream, page, source, symbol, event) in _DOCS_FRAMES.items()
     ]  # fmt: skip
+    _write_lines("ws/public-subscribe-ack-derived.jsonl", derived_subscribe_acks())
+    m.append(
+        _entry(
+            "ws/public-subscribe-ack-derived.jsonl",
+            "*",
+            "op subscribe",
+            "DERIVED, not a capture and not evidence: ws/private-subscribe-ok.jsonl plus the "
+            "documented req_id echo (Bybit docs ws/connect); one accepted and one refused "
+            "(10-topic ret_msg echo) public subscribe ack; a recorder-lane capture replaces it",
+            host="bybit-exchange.github.io",
+            cap=4_000,
+        )
+        | {
+            "source": "derived",
+            "derived_from": _DERIVED_ACK_SRC,
+            "retrieved": "2026-11-01",
+            "capture_date": "2026-11-01",
+            "http_status": None,
+            "source_url": _DOCS_URL + "ws/connect",
+        }
+    )
     return sorted(m, key=lambda e: str(e["path"]))
 
 

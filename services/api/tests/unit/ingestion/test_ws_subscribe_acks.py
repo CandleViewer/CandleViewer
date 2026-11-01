@@ -1,7 +1,8 @@
 """#1955: topic-level subscribe/unsubscribe acks tracked by `req_id` (fake socket + clock).
 
-No recorded PUBLIC-socket ack exists under packages/fixtures/bybit; the shape used is the
-recorded private ack (`private-subscribe-ok.jsonl`) plus the documented Bybit v5 `req_id` echo.
+No recorded PUBLIC-socket ack exists under packages/fixtures/bybit. The accepted and refused
+acks come from `ws/public-subscribe-ack-derived.jsonl`: DERIVED (manifest `source` `derived`),
+the recorded private ack plus the documented `req_id` echo, not a capture and not evidence.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from candleviewer.ingestion.metrics import ingest_subscribe_rejected_total
 from candleviewer.ingestion.planner import SubscriptionPlanner
 from candleviewer.ingestion.reconnect import ConnectionRateGuard, ReconnectPolicy
 from candleviewer.ingestion.watchdog import StalenessWatchdog
+from tests import _corpus as corpus
 
 TOPIC = "orderbook.50.BTCUSDT"
 OTHER = "publicTrade.ETHUSDT"
@@ -275,23 +277,25 @@ async def test_overflow_drops_oldest_unsubscribe_before_any_subscribe() -> None:
     assert "cv-1" not in m._pending
 
 
-async def test_long_ret_msg_rejection_with_success_first_is_rejected() -> None:
-    """The `ret_msg` args echo is from Bybit's docs, not a recorded fixture."""
-    clk, sock = _Clock(), _Sock()
-    m, _ = _mgr(clk, sock)
-    topics = {f"publicTrade.LONGSYMBOL{i}USDT" for i in range(10)}
+async def test_derived_fixture_acks_settle_by_req_id() -> None:
+    """Accepted then refused public acks from the DERIVED corpus file (not a capture)."""
+    accepted, refused = corpus.frames("ws/public-subscribe-ack-derived.jsonl")
+    sock = _Sock()
+    m, wd = _mgr(_Clock(), sock)
+    topics = set(json.loads(refused)["ret_msg"].split("args:[")[1].rstrip("]").split(","))
+    assert len(topics) == 10
     m.set_desired(topics)
     await m.subscribe()
-    rid = sock.sent[0]["req_id"]
-    ret_msg = "error:handler not found,args:[" + ",".join(sorted(topics)) + "]"
-    frame = json.dumps(
-        {"success": False, "ret_msg": ret_msg, "conn_id": "c-1", "req_id": rid, "op": "subscribe"}
-    )
-    assert len(ret_msg) > 250 and frame.index('"req_id"') > 250
-    sock._frames = [frame]
+    assert [f["req_id"] for f in sock.sent] == ["cv-1"]  # the fixtures echo cv-1 / cv-2
     rej = _count("rejected")
+    m._on_ack(accepted)
+    assert m._pending == {} and _count("rejected") == rej
+    await m._send_tracked(sock, "subscribe", ["publicTrade.BTCUSDT"])  # cv-2
+    assert refused.index('"req_id"') > 250  # long ret_msg: req_id sits far into the frame
+    sock._frames = [refused]
     try:
         await m._read(sock)
     except ConnectionError:
         pass
     assert _count("rejected") == rej + 1 and m._pending == {}
+    assert wd.check() == ["publicTrade.BTCUSDT"]

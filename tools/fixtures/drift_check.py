@@ -92,6 +92,8 @@ def load_docs(directory: Path) -> list[tuple[str, Any]]:
             EXPECTATIONS.name,
         }:
             continue
+        if path.stem.endswith("-derived"):  # #1955: built, never evidence: no expectations
+            continue
         if path.suffix == ".jsonl":
             for line in path.read_text(encoding="utf-8").splitlines():
                 if line.strip():
