@@ -8148,7 +8148,7 @@ paths:
         validation, is exempt from the server's own `min_order_qty` check too, so a position
         under the instrument's minimum stays closable and the exchange arbitrates (C-2.6, the
         orchestrator's ruling (a) of 2026-11-01): its order's `orders.submit` record names the
-        exemption (`exemption: min_order_qty_whole_close`), and the exchange's rejection is the
+        exemption (`min_qty_exempt: full_close`), and the exchange's rejection is the
         `502 exchange_error` with its return code, never sent again under a new `orderLinkId`
         (C-2.10).
 
