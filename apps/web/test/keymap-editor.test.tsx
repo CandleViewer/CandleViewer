@@ -277,7 +277,9 @@ describe("names and states a reader gets (A11Y-305BD-02)", () => {
       expect(screen.getByLabelText(`Key for ${arm}`), view).toBeInTheDocument();
       expect(screen.getByLabelText(`Ctrl for ${arm}`), view).toBeInTheDocument();
     }
-    const label = keyOf("Submit order").closest("td")?.querySelector("label[for]");
+    const label = keyOf("Submit order")
+      .closest("td")
+      ?.querySelector("label:not(:has(input[type=checkbox]))");
     expect(label?.firstChild?.textContent).toBe("Key"); // the word a sighted user reads
   });
 

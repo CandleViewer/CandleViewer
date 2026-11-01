@@ -1,5 +1,13 @@
 import "./hotkey-editor.css";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { announce, forget } from "../features/app-shell/announcer";
 import { KEYMAP, eventBinding, isDangerous, type KeymapCommand } from "./keymap";
 import { reportHotkey, reportRebound } from "./analytics";
@@ -122,19 +130,42 @@ export function HotkeyEditor(): JSX.Element {
   const [query, setQuery] = useState("");
   const [ctx, setCtx] = useState(ALL);
   const needle = query.trim().toLowerCase();
-  const [editing, setEditing] = useState<string | null>(null);
-  const matches = KEYMAP.filter(
-    (c) =>
-      (ctx === ALL || c.context === ctx) &&
-      (needle === "" ||
-        `${c.label} ${c.context} ${bindings.get(c.id) ?? c.defaultBinding}`
-          .toLowerCase()
-          .includes(needle)),
+  /**
+   * The row last focused: a ref, so focusing a row renders nothing. Only when the row it releases was listed solely
+   * because it was being edited does the list change, and then one render drops it.
+   */
+  const editingRef = useRef<string | null>(null);
+  const matchesRef = useRef<ReadonlySet<KeymapCommand>>(new Set());
+  const [, setListed] = useState(0);
+  const onEdit = useCallback((id: string) => {
+    const prev = editingRef.current;
+    if (prev === id) return;
+    editingRef.current = id;
+    const held = KEYMAP.find((c) => c.id === prev);
+    if (held !== undefined && !matchesRef.current.has(held)) setListed((n) => n + 1);
+  }, []);
+  const matches = useMemo(
+    () =>
+      new Set(
+        KEYMAP.filter(
+          (c) =>
+            (ctx === ALL || c.context === ctx) &&
+            (needle === "" ||
+              `${c.label} ${c.context} ${bindings.get(c.id) ?? c.defaultBinding}`
+                .toLowerCase()
+                .includes(needle)),
+        ),
+      ),
+    [ctx, needle, bindings],
   );
-  const matched = matches.length;
+  matchesRef.current = matches;
+  const matched = matches.size;
   /** The row being edited, or holding the last message, stays listed whatever the search says. */
-  const keep = notice?.id ?? editing;
-  const shown = KEYMAP.filter((c) => matches.includes(c) || c.id === keep);
+  const keep = notice?.id ?? editingRef.current;
+  const shown = useMemo(
+    () => KEYMAP.filter((c) => matches.has(c) || c.id === keep),
+    [matches, keep],
+  );
   const count = shown.length; // the announcement counts the rows on screen
   const filtering = needle !== "" || ctx !== ALL;
   useEffect(() => {
@@ -256,6 +287,17 @@ export function HotkeyEditor(): JSX.Element {
     exportRef.current?.focus(); // already shown: refreshed in place
   }
 
+  // Rows are memoised: the handlers they get never change identity, and call the latest closures.
+  const latest = useRef({ tryBind, swap, resetOne, unbind });
+  latest.current = { tryBind, swap, resetOne, unbind };
+  const onBind = useCallback(
+    (c: KeymapCommand, raw: string, ack?: boolean) => latest.current.tryBind(c, raw, ack),
+    [],
+  );
+  const onSwap = useCallback((c: KeymapCommand, r: Refusal) => latest.current.swap(c, r), []);
+  const onUnbind = useCallback((c: KeymapCommand) => latest.current.unbind(c), []);
+  const onReset = useCallback((c: KeymapCommand) => latest.current.resetOne(c), []);
+
   return (
     <section aria-labelledby="hk-h" data-keymap-context="Settings">
       <h1 id="hk-h">Hotkeys</h1>
@@ -314,11 +356,11 @@ export function HotkeyEditor(): JSX.Element {
               cmd={c}
               binding={bindings.get(c.id) ?? c.defaultBinding}
               notice={notice?.id === c.id ? notice : null}
-              onBind={tryBind}
-              onSwap={swap}
-              onUnbind={unbind}
-              onReset={resetOne}
-              onEdit={setEditing}
+              onBind={onBind}
+              onSwap={onSwap}
+              onUnbind={onUnbind}
+              onReset={onReset}
+              onEdit={onEdit}
             />
           ))}
         </tbody>
@@ -366,7 +408,7 @@ export function HotkeyEditor(): JSX.Element {
   );
 }
 
-function Row(props: {
+const Row = memo(function Row(props: {
   cmd: KeymapCommand;
   binding: string;
   notice: Notice | null;
@@ -434,16 +476,18 @@ function Row(props: {
                 <ForRow cmd={cmd} joiner=" for " />
               </label>
             ))}
-            <label htmlFor={`hk-key-${cmd.id}`}>
+            {/* The field sits inside its label: an implicit association, which jsdom (and a reader's tree) resolves
+                without a document-wide id search per label. */}
+            <label>
               Key
               <ForRow cmd={cmd} joiner=" for " />
+              <input
+                id={`hk-key-${cmd.id}`}
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                size={6}
+              />
             </label>
-            <input
-              id={`hk-key-${cmd.id}`}
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              size={6}
-            />
             <button
               type="button"
               aria-pressed={recording}
@@ -518,4 +562,4 @@ function Row(props: {
       </td>
     </tr>
   );
-}
+});
