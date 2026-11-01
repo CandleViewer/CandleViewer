@@ -8,6 +8,9 @@
 export { createChart } from "./api/chart.js";
 // E12-S06 (BQ-10, additive): the checked price → tick narrowing the data binding must use (F-01).
 export { toTicks } from "./worker/protocol.js";
+// E14-T03 PR 2 (#358 BQ-358-7, ruled additive): the dash table E14-T02 reads, so a change to the
+// engine default pending E14-D04's value is one line and moves no baseline silently.
+export { DRAWING_DASH } from "./layers/drawings/model.js";
 export type {
   BarView,
   BubbleOptions,
