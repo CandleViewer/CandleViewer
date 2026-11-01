@@ -36,7 +36,8 @@ def test_parse_docs_example_maps_every_field_and_computes_notional() -> None:
     assert event.ts_event == 1739502302929 * 1000 and event.ts_ingest == NOW_US
     assert (event.price, event.qty) == (Decimal("0.04499"), Decimal("20000"))
     assert event.notional == Decimal("0.04499") * Decimal("20000")
-    assert event.liquidated_side == "long"  # `Sell` closes a long (24 §2.5)
+    # venue `S` is the POSITION side: `Sell` ⇒ a short was liquidated, closed by a buy (24 §2.5)
+    assert (event.liquidated_side, event.side) == ("short", "buy")
     assert (event.batch_index, event.ts_estimated, event.source) == (0, False, "live")
 
 
@@ -47,8 +48,22 @@ def test_parse_push_keeps_every_print_apart_by_batch_index() -> None:
     assert (twin_a.ts_event, twin_a.price) == (twin_b.ts_event, twin_b.price)
     assert twin_a.qty == twin_b.qty
     wire = [row["S"] for row in json.loads(BURST[1])["data"]]
-    closed = {"Buy": "short", "Sell": "long"}  # `Buy` closes a short, `Sell` a long (24 §2.5)
-    assert [e.liquidated_side for e in events] == [closed[w] for w in wire]
+    liquidated = {"Buy": "long", "Sell": "short"}  # `S` is the position side (24 §2.5)
+    assert [e.liquidated_side for e in events] == [liquidated[w] for w in wire]
+    closing = {"Buy": "sell", "Sell": "buy"}
+    assert [e.side for e in events] == [closing[w] for w in wire]
+
+
+@pytest.mark.parametrize(
+    ("wire", "liquidated_side", "side"), [("Buy", "long", "sell"), ("Sell", "short", "buy")]
+)
+def test_parse_wire_side_maps_to_liquidated_and_closing_side(
+    wire: str, liquidated_side: str, side: str
+) -> None:
+    msg = _push()
+    msg["data"] = [{**msg["data"][0], "S": wire}]
+    (event,) = parse_liquidation_frame(json.dumps(msg), NOW_US) or []
+    assert (event.liquidated_side, event.side) == (liquidated_side, side)
 
 
 def test_parse_print_without_own_time_takes_the_envelope_and_says_so() -> None:

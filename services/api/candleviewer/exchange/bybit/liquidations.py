@@ -64,11 +64,17 @@ def liquidation_topic(symbol: str) -> str:
     return f"{TOPIC_PREFIX}{symbol}"
 
 
-def _closing_side(wire: str) -> Literal["buy", "sell"]:
-    """`S` is read as the side of the liquidated position's CLOSING order (24 §2.5, the
-    project's mapping): `Sell` closes a long. Keep this the one place `S` is interpreted; every
-    consumer outside the adapter reads `liquidated_side` (24 §17.4 L6)."""
-    return "sell" if wire == "Sell" else "buy"
+def _sides(wire: str) -> tuple[Literal["buy", "sell"], Literal["long", "short"]]:
+    """Return `(side, liquidated_side)` from the wire `S`: the one place `S` is interpreted.
+
+    Bybit v5 (`bybit-exchange/docs@19518b90`, `websocket/public/all-liquidation.mdx`): "`S` -
+    Position side. `Buy`, `Sell`. When you receive a `Buy` update, this means that a long
+    position has been liquidated." So `S` is the POSITION side; `side` is the closing order's
+    side, its opposite (24 §2.5). Every consumer outside the adapter reads `liquidated_side`
+    (24 §17.4 L6)."""
+    if wire == "Buy":
+        return "sell", "long"
+    return "buy", "short"
 
 
 def _decimal(text: str, what: str, symbol: str) -> Decimal:
@@ -112,7 +118,7 @@ def parse_liquidation_frame(frame: str, ts_ingest_us: int) -> list[LiquidationEv
         check_event_ts(ts_ms, push.ts, symbol=symbol)
         price = check_price(_decimal(item.p, "price", symbol), symbol=symbol)
         qty = check_qty(_decimal(item.v, "qty", symbol), symbol=symbol)
-        side = _closing_side(item.S)
+        side, liquidated_side = _sides(item.S)
         events.append(
             LiquidationEvent(
                 event_id=EventId(uuid7(ts_ms)),
@@ -123,7 +129,7 @@ def parse_liquidation_frame(frame: str, ts_ingest_us: int) -> list[LiquidationEv
                 price=price,
                 qty=qty,
                 side=side,
-                liquidated_side="long" if side == "sell" else "short",
+                liquidated_side=liquidated_side,
                 notional=price * qty,  # computed once, here, in Decimal (21 §4.6)
                 batch_index=index,
                 ts_estimated=item.T is None,
