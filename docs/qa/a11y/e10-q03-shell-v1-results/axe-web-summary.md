@@ -1,9 +1,9 @@
 ## web
 
-sha trees apps=2ecb4a57a90a docs/plan/a11y/_tools=436dc9279ba4 (identical to the PR head); states 17; cells 204 (3 themes x 2 densities x 2 motion); axe via playwright; disabled rules: none
+sha trees apps=b73fa62081ef docs/plan/a11y/_tools=d6e3e825e7cb (identical to the PR head); states 17; cells 204 (3 themes x 2 densities x 2 motion); axe via playwright; disabled rules: none
 violations: critical 0, serious 0, moderate 0, minor 0; errored 0; axe incomplete rules color-contrast (in 180 cells)
 negative control: tripped (button-name, color-contrast, empty-heading, heading-order, image-alt, region); tags wcag2a, wcag2aa, wcag21a, wcag21aa, wcag22a, wcag22aa, best-practice
-results.json.gz sha256 62b6b5e84ff42560a44b5bccc6018cbcb7571802943a8a5a8f922c7bea023838
+results.json.gz sha256 c9fd8939626b157051530360d416a4e5535098cbea7619d865e1840e59d64618
 
 ```text
 22d3be3f744c87a6486360c9ace7eccd426ed43f7ee440d2b36bf198df23e92b  states/cheatsheet.json
@@ -16,9 +16,9 @@ b869c5a58d5578ffc429445efd8692c13a42cafbbe453b4a44b216c1e603dc01  states/drawer.
 9d643721b63dbf30a8887ea93a3a9fa0078469da282383b91a013831c2108896  states/forbidden-403.json
 fc7b73ec759290958584c7245ee99d54ef218fc4b0f70f6af5abb6997a643c1e  states/not-found-404.json
 bb60988df74a0df8b60fd0e6532bc34cc7a42a21f9a29dd94a211a0d99a7cbad  states/offline-page.json
-543a71d49cdb1c137e436abc9fc95d259a50b42482e69b0c7558b0369804310a  states/rail-collapsed.json
+42b0ff2ba83590fe9de7527c0a507772cbe4b17d5d29776794abb94279f97226  states/rail-collapsed.json
 5fc208b0af60add638d8928d45bb69b11b113884f57114e321d2584000fcdcb0  states/rail-expanded.json
-455c9d2c02a96ea9d5c7d4f5f10ebddee65aa5d8c81904a5ab5ab1fa05e1c829  states/rail-overlay-320.json
+1d3e028723e5a1365920c1f4f2f5d89559741a3a2d1d5692d2f1edb30c01455c  states/rail-overlay-320.json
 244fb20f23085d025de9f9429eebe4c0b1759f4abc7dc4bca32382954fb77435  states/route-crash.json
 c66019eecdf6bbc3f17a8475c0012e4c423eed11515947cb0a165285b1fcb0ea  states/toast.json
 133aa9f1659b993c935e21d250ee141fb845b5ac1f74ae56a30d8a0e13ccf859  states/version-banner.json
