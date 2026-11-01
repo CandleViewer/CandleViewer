@@ -64,6 +64,11 @@ export interface RecorderStatusRowData {
   readonly budgetShare?: number | null;
   readonly diskLevel?: 0 | 1 | 2 | 3;
   readonly retentionDays?: number | null;
+  /**
+   * As built: while `accelerate_retention` holds, the effective days of an unpinned row (the host's; the reaper
+   * halves retention, `21-database-schema.md`): Retention reads "30 d → 15 d (accelerated)" (D02 §2, §3 `paused`).
+   */
+  readonly retentionAcceleratedDays?: number | null;
   readonly pinned?: boolean;
   /** No `recorder` frame for 2 s: the sunken row and a "stale" tag; the words are kept. */
   readonly stale?: boolean;
@@ -256,14 +261,13 @@ const sinceOf = (p: RecorderStatusRowData): string =>
   at(p.startedAt)?.toISOString().slice(0, 10) ?? DASH;
 const depthOf = (p: RecorderStatusRowData): string =>
   p.state === "refused" || p.depth == null ? DASH : String(p.depth);
-const retentionOf = (p: RecorderStatusRowData): string =>
-  p.state === "refused"
-    ? DASH
-    : p.pinned === true
-      ? "Forever"
-      : p.retentionDays == null
-        ? DASH
-        : `${p.retentionDays} d`;
+const retentionOf = (p: RecorderStatusRowData): string => {
+  if (p.state === "refused") return DASH;
+  if (p.pinned === true) return "Forever";
+  if (p.retentionDays == null) return DASH;
+  const fast = p.retentionAcceleratedDays;
+  return fast == null ? `${p.retentionDays} d` : `${p.retentionDays} d → ${fast} d (accelerated)`;
+};
 
 /** "34.8 GB · 0.71/d", "est." while estimated, "· 17 % of budget" from disk level 1; "—" with nothing written. */
 function sizeOf(p: RecorderStatusRowData): string {

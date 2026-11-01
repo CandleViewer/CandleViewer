@@ -179,6 +179,26 @@ export const ProtectionPendingSolidEdge: Story = {
   },
 };
 
+/** A busy action (E16-D02 §6.5): the level-3 banner's "Purge data…" while this client's purge runs, CMP-001 loading. */
+export const BusyAction: Story = {
+  args: {
+    tone: "danger",
+    title: "Recording stopped: the recording budget is 95 % used (190.4 GB of 200 GB).",
+    children:
+      "Data for symbols without an open position is being dropped and recorded as gaps; open positions keep recording.",
+    actions: [
+      { label: "Purge data…", onClick: fn(), loading: true },
+      { label: "Retention policy", onClick: fn() },
+    ],
+  },
+  play: async ({ canvasElement, args }) => {
+    const busy = within(canvasElement).getByRole("button", { name: "Purge data…" });
+    await expect(busy).toHaveAttribute("aria-busy", "true");
+    await userEvent.click(busy);
+    await expect(args.actions?.[0]?.onClick).not.toHaveBeenCalled();
+  },
+};
+
 /** A host's registered glyph replaces the tone's. */
 export const CustomIcon: Story = {
   args: { icon: "lock", title: "Read-only: your role can't trade.", children: undefined },
