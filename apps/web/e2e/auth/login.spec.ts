@@ -166,7 +166,9 @@ test("E09-TC-A03 disabled account is refused with no session @electron", async (
   await page.route("**/api/v1/auth/login", (r) => r.fulfill(REFUSED));
   await page.goto("/login");
   await signIn(page);
-  await expect(page.getByRole("alert")).toHaveText("Username or password is incorrect");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Couldn't sign you in. Check your details and try again.",
+  );
   expect(await page.context().cookies()).toEqual([]);
 });
 
@@ -181,7 +183,9 @@ test("E09-TC-A07 unknown user and wrong password are indistinguishable in the UI
     await page.getByLabel("Password", { exact: true }).fill("pw-bad");
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByRole("alert")).not.toBeEmpty();
-    await expect(page.getByRole("alert")).toHaveText("Username or password is incorrect");
+    await expect(page.getByRole("alert")).toHaveText(
+      "Couldn't sign you in. Check your details and try again.",
+    );
     messages.push(id);
   }
   expect(messages).toHaveLength(2);
@@ -191,7 +195,9 @@ test("E09-TC-A08 (UI half) a locked account reads as the one failure string", as
   await page.route("**/api/v1/auth/login", (r) => r.fulfill(REFUSED));
   await page.goto("/login");
   await signIn(page);
-  await expect(page.getByRole("alert")).toHaveText("Username or password is incorrect");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Couldn't sign you in. Check your details and try again.",
+  );
   await expect(page.getByRole("button", { name: "Sign in" })).toBeEnabled();
 });
 

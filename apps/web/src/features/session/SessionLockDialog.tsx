@@ -140,7 +140,8 @@ export function SessionLockDialog({
                 Sign out instead
               </button>
             )}
-            <button type="submit" style={primary} disabled={verifying}>
+            {/* R-5: the pressed Unlock stays focusable while verifying (E09-D10 T-44; #5254 DF-14) */}
+            <button type="submit" style={primary} aria-disabled={verifying}>
               {verifying ? "Verifying..." : "Unlock"}
             </button>
           </div>

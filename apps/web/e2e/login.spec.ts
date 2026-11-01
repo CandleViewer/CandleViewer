@@ -34,7 +34,9 @@ test("invalid: uniform message, focus on alert, axe clean", async ({ page }) => 
   await page.route("**/api/v1/auth/login", (r) => r.fulfill(json({}, 401)));
   await page.goto("/login");
   await fill(page);
-  await expect(page.getByRole("alert")).toHaveText("Username or password is incorrect");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Couldn't sign you in. Check your details and try again.",
+  );
   await expect(page.getByRole("alert")).toBeFocused();
   expect(await serious(page)).toEqual([]);
 });
@@ -50,7 +52,9 @@ test("submitting: fields locked while the request is pending", async ({ page }) 
   await fill(page);
   await expect(page.getByLabel("Password", { exact: true })).toBeDisabled();
   release();
-  await expect(page.getByRole("alert")).toHaveText("Username or password is incorrect");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Couldn't sign you in. Check your details and try again.",
+  );
 });
 
 test("disabled or locked account: the one failure string (SR-014)", async ({ page }) => {
@@ -59,7 +63,9 @@ test("disabled or locked account: the one failure string (SR-014)", async ({ pag
   );
   await page.goto("/login");
   await fill(page);
-  await expect(page.getByRole("alert")).toHaveText("Username or password is incorrect");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Couldn't sign you in. Check your details and try again.",
+  );
 });
 
 test("rate-limited: remaining time shown, submit disabled", async ({ page }) => {

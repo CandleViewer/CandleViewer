@@ -300,6 +300,7 @@ export function StepUpDialog({
             type="password"
             autoComplete="current-password"
             required
+            readOnly={submitting}
             {...marks("password")}
             aria-describedby={describe(missing?.field === "password" && `${id}-missing`)}
             style={field}
@@ -318,6 +319,7 @@ export function StepUpDialog({
             autoComplete="one-time-code"
             maxLength={6}
             required
+            readOnly={submitting}
             aria-invalid={refused || missing?.field === "code" ? true : undefined}
             aria-describedby={describe(
               `${id}-code-hint`,
@@ -356,6 +358,7 @@ export function StepUpDialog({
                 autoComplete="off"
                 spellCheck={false}
                 required
+                readOnly={submitting}
                 {...marks("typed")}
                 aria-describedby={describe(missing?.field === "typed" && `${id}-missing`)}
                 style={field}
@@ -373,7 +376,8 @@ export function StepUpDialog({
             <button type="button" style={button} onClick={onCancel}>
               Cancel
             </button>
-            <button type="submit" style={primary} aria-disabled={!ready} disabled={submitting}>
+            {/* R-5: never natively disabled, so a pressed Confirm keeps focus (#5254 DF-14) */}
+            <button type="submit" style={primary} aria-disabled={!ready}>
               Confirm
             </button>
           </div>

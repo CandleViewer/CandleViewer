@@ -43,6 +43,8 @@ test("expired and reused links show the same uniform message", async ({ page }) 
   for (const tok of ["tok-expired-0123456789", "tok-reused-0123456789"]) {
     await page.goto(`/invite/${tok}`);
     await expect(page.getByRole("heading", { name: "Invitation not valid" })).toBeVisible();
-    await expect(page.getByText(/re-issue it from Admin/)).toBeVisible();
+    await expect(
+      page.getByText("This invitation is no longer valid. Ask the owner for a new one."),
+    ).toBeVisible();
   }
 });

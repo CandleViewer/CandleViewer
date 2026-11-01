@@ -57,7 +57,7 @@ function Step({
     <li>
       <span aria-hidden="true">{ICON[item.state]}</span> <strong>{label}</strong>:{" "}
       <span>{STATE_TEXT[item.state]}</span>
-      {item.reason ? <span> - {item.reason}</span> : null}
+      {/* `reason` is free text: never rendered raw, the state word stands (E09-D12 §5.8, §8.3) */}
       {item.state === "blocked" && item.unblock_at ? (
         <>
           {" "}

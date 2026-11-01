@@ -138,6 +138,9 @@ test("E09-TC-E03 keyboard-only: the whole wizard is reachable and submittable wi
   await expect(page.getByRole("button", { name: "Activate account" })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "You are set up" })).toBeVisible();
-  await tabTo(page, page.getByRole("link", { name: "Go to sign in" }));
+  // frozen (3): the acknowledgement is the step's first control and gates the way on (#5254)
+  await tabTo(page, page.getByRole("checkbox", { name: "I've saved these codes somewhere safe" }));
+  await page.keyboard.press("Space");
+  await tabTo(page, page.getByRole("button", { name: "Go to sign in" }));
   expect(confirms).toEqual([{ method_id: "m1", code }]);
 });

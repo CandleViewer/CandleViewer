@@ -55,7 +55,9 @@ describe("LoginScreen (SCR-001)", () => {
     expect((screen.getByLabelText("Password") as HTMLInputElement).disabled).toBe(true);
     resolve(reply(401, {}));
     await waitFor(() =>
-      expect(screen.getByRole("alert").textContent).toBe("Username or password is incorrect"),
+      expect(screen.getByRole("alert").textContent).toBe(
+        "Couldn't sign you in. Check your details and try again.",
+      ),
     );
     expect(document.activeElement).toBe(screen.getByRole("alert"));
     expect(await serious()).toEqual([]);

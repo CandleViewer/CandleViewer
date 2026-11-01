@@ -12,7 +12,7 @@ import { completeMfa, submitPassword } from "../support/real/signIn";
 const LOCKOUT_THRESHOLD = 5;
 const LOCKOUT_S = 15 * 60;
 const MARGIN_S = 60;
-const REFUSED = "Username or password is incorrect";
+const REFUSED = "Couldn't sign you in. Check your details and try again.";
 
 test("E09-TC-A08 (server half) five wrong passwords lock the account: the right one is refused until the server clock passes 15 min, then the sign-in completes @clock", async ({
   page,
