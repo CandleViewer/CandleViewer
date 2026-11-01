@@ -383,6 +383,7 @@ from candleviewer.recorder_wiring import (
     build_recorder,
     policy_config,
     questdb_sinks,
+    stored_presence,
 )
 from candleviewer.replay.metrics import export_replay_metrics
 from candleviewer.replay.service import ReplayService
@@ -1568,6 +1569,7 @@ def create_app(
     app.state.kline_boundary_pg = _kb_pg
     # E16-T04: sessions-backed coverage + `recording_started_at` (real backend only; the fake
     # backend keeps the tape-based provider, and the coverage route answers 503).
+    presence = stored_presence(resolved) if _kb_pg is not None else None
     coverage_service = (
         CoverageService(
             SqlAlchemyRecorderRepository(_kb_pg),
@@ -1576,6 +1578,7 @@ def create_app(
             watermarks=FileWatermarkStore(DatasetRegistry(resolved.parquet_root)),
             # E16-T10: imported archive windows -> `trades` coverage labelled `archive`.
             archive=FileImportLedger(DatasetRegistry(resolved.parquet_root)),
+            presence=presence,  # E16-FR-03: hot tier reconciled with its rows
         )
         if _kb_pg is not None
         else None
@@ -1583,6 +1586,8 @@ def create_app(
     app.state.coverage_service = coverage_service
     if coverage_service is not None:
         ctx.recorder.attach_coverage(coverage_service)
+    if presence is not None:  # its wire closes when the recorder module stops
+        ctx.recorder.attach_closer(presence.close)
     # E17-T08: the gateway's one hub and the `machines.{entity}.state` registry come first, so each
     # module that owns a machine is handed the one feed it publishes through (23 §6.4). The timers
     # are the running loop's, and `WsRuntime` closes them.

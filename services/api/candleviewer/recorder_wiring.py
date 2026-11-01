@@ -61,6 +61,7 @@ from candleviewer.recorder.writer import (
 )
 from candleviewer.settings import QUESTDB_PG_DEFAULT_PORT, Settings
 from candleviewer.storage.questdb.schemas import ALL_SCHEMAS
+from candleviewer.storage.questdb.stored_presence import QuestDbStoredPresence
 from candleviewer.storage.questdb.wiring import LazyPgWire, TcpIlpTransport, build_hot_tier_writer
 
 #: Bound on one call of the policy's store (the sessions and the writer bound their own).
@@ -191,7 +192,25 @@ def policy_config(settings: Settings) -> PolicyConfig:
         autorecord_enabled=settings.recorder_autorecord_enabled,
         max_symbols=settings.recorder_max_symbols,
         default_retention_days=settings.recorder_retention_days,
+        max_auto_symbols=settings.recorder_max_auto_symbols,
+        max_auto_per_session=settings.recorder_max_auto_per_session,
+        auto_start_rate_per_min=settings.recorder_auto_start_rate_per_min,
     )
+
+
+def stored_presence(settings: Settings) -> QuestDbStoredPresence | None:
+    """E16-FR-03 (#1739): the hot-tier presence reader `CoverageService` reconciles with (and
+    `IntegrityJob` can read as its `StoredData`), on its own lazy wire; None off the `real`
+    backend. Connects on its first read, never here; the reader owns the wire, so its `close()`
+    (registered on the recorder module, run on its `stop`) releases it at shutdown."""
+    if settings.storage_backend != "real":
+        return None
+    host, _, port = settings.questdb_pg.partition(":")
+    wire = LazyPgWire(
+        host, int(port or QUESTDB_PG_DEFAULT_PORT), settings.questdb_pg_user,
+        settings.questdb_pg_password.get_secret_value(), name="storage",
+    )  # fmt: skip
+    return QuestDbStoredPresence(wire, close=wire.close)
 
 
 def questdb_sinks(settings: Settings) -> SinkFactory:

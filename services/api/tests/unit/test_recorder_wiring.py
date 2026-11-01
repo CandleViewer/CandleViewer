@@ -361,3 +361,34 @@ async def test_build_recorder_with_books_anchors_on_the_settings_interval(tmp_pa
     mono.advance(1)
     await rec.anchors.tick()
     assert counted._value.get() == before + 1 and books.asked == ["BTCUSDT"] * 3
+
+
+class _Wire:
+    """`LazyPgWire` stand-in: records its address and whether it was closed; never connects."""
+
+    def __init__(self, host: str, port: int, *_a: object, **_kw: object) -> None:
+        self.address, self.closed = (host, port), 0
+
+    async def close(self) -> None:
+        self.closed += 1
+
+
+async def test_the_presence_reader_closes_its_own_wire_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E16-FR-03 (#1739): the reader's `close()`, the recorder module's closer, frees its wire."""
+    wires: list[_Wire] = []
+
+    def wire(host: str, port: int, *a: object, **kw: object) -> _Wire:
+        wires.append(_Wire(host, port, *a, **kw))
+        return wires[-1]
+
+    monkeypatch.setattr(rw, "LazyPgWire", wire)
+    assert rw.stored_presence(Settings(environment=Environment.DEMO)) is None  # the fake backend
+    reader = rw.stored_presence(
+        Settings(environment=Environment.DEMO, storage_backend="real", questdb_pg="qdb")
+    )
+    assert reader is not None and [w.address for w in wires] == [("qdb", 8812)]
+    await reader.close()
+    await reader.close()
+    assert wires[0].closed == 1

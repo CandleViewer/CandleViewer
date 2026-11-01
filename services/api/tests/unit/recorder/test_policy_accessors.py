@@ -60,12 +60,12 @@ async def test_linger_until_is_the_grace_end_as_an_aware_utc_instant(
 
 async def test_chart_open_holds_while_any_chart_ref_is_held(capped: RecordingPolicy) -> None:
     assert not capped.chart_open("BTCUSDT")  # unknown
-    await capped.on_chart_opened("BTCUSDT", "c1")
-    await capped.on_chart_opened("BTCUSDT", "c2")
+    await capped.on_chart_opened("BTCUSDT", "c1", session_id=None)
+    await capped.on_chart_opened("BTCUSDT", "c2", session_id=None)
     assert capped.chart_open("BTCUSDT") and capped.leaf("BTCUSDT") is None  # not recording yet
-    await capped.on_chart_closed("BTCUSDT", "c1")
+    await capped.on_chart_closed("BTCUSDT", "c1", session_id=None)
     assert capped.chart_open("BTCUSDT")  # c2 remains
-    await capped.on_chart_closed("BTCUSDT", "c2")
+    await capped.on_chart_closed("BTCUSDT", "c2", session_id=None)
     assert not capped.chart_open("BTCUSDT")
     await capped.on_position_opened("ETHUSDT", "p1")
     assert not capped.chart_open("ETHUSDT")  # a position is not a chart
@@ -75,7 +75,7 @@ async def test_start_refusal_names_its_cause_until_the_start_succeeds(
     capped: RecordingPolicy, clock: FakeClock, disk: list[bool]
 ) -> None:
     assert capped.start_refusal("SOLUSDT") is None  # unknown
-    await capped.on_chart_opened("SOLUSDT", "c1")
+    await capped.on_chart_opened("SOLUSDT", "c1", session_id=None)
     disk[0] = True
     clock.advance(60)
     await capped.tick()
@@ -84,7 +84,7 @@ async def test_start_refusal_names_its_cause_until_the_start_succeeds(
     disk[0] = False
     await capped.tick()  # the pressure eases and it starts
     assert capped.leaf("SOLUSDT") == "recording" and capped.start_refusal("SOLUSDT") is None
-    await capped.on_chart_opened("ETHUSDT", "c2")
+    await capped.on_chart_opened("ETHUSDT", "c2", session_id=None)
     clock.advance(60)
     await capped.tick()  # the one slot is SOL's
     assert capped.start_refusal("ETHUSDT") == "symbol_cap"
@@ -94,15 +94,19 @@ async def test_start_refusal_follows_the_latest_cause_and_lapses_with_the_trigge
     capped: RecordingPolicy, clock: FakeClock, disk: list[bool]
 ) -> None:
     await capped.add_manual("BTCUSDT", OWNER)  # takes the slot
-    await capped.on_chart_opened("SOLUSDT", "c1")
+    await capped.on_chart_opened("SOLUSDT", "c1", session_id=None)
     clock.advance(60)
     await capped.tick()
     assert capped.start_refusal("SOLUSDT") == "symbol_cap"
     disk[0] = True
     await capped.tick()  # still wanted, now refused for the disk too
     assert capped.start_refusal("SOLUSDT") == "disk_pressure"
-    await capped.on_chart_opened("SOLUSDT", "c2")  # a young second chart keeps the entry
-    await capped.on_chart_closed("SOLUSDT", "c1")  # the one that waited goes: nothing is wanted
+    await capped.on_chart_opened(
+        "SOLUSDT", "c2", session_id=None
+    )  # a young second chart keeps the entry
+    await capped.on_chart_closed(
+        "SOLUSDT", "c1", session_id=None
+    )  # the one that waited goes: nothing is wanted
     assert capped.start_refusal("SOLUSDT") is None
 
 
@@ -111,7 +115,7 @@ async def test_start_refusal_with_two_reasons_refused_answers_the_last_one(
 ) -> None:
     await capped.add_manual("BTCUSDT", OWNER)  # takes the slot
     await capped.on_position_opened("SOLUSDT", "p1")  # refused for the cap
-    await capped.on_chart_opened("SOLUSDT", "c1")
+    await capped.on_chart_opened("SOLUSDT", "c1", session_id=None)
     clock.advance(60)
     disk[0] = True
     await capped.tick()  # the chart's start is refused too, for the disk
@@ -124,7 +128,7 @@ async def test_an_accessor_is_sync_and_changes_nothing(
 ) -> None:
     await capped.add_manual("BTCUSDT", OWNER)
     await capped.remove_manual("BTCUSDT", OWNER)  # lingers, holding the slot
-    await capped.on_chart_opened("SOLUSDT", "c1")
+    await capped.on_chart_opened("SOLUSDT", "c1", session_id=None)
     clock.advance(60)
     await capped.tick()  # SOL waits, refused for the cap
     before = copy.deepcopy(capped._syms)
@@ -139,7 +143,7 @@ async def test_start_refused_lists_a_cap_refusal_with_its_reasons_top_first(
     capped: RecordingPolicy, clock: FakeClock
 ) -> None:
     await capped.add_manual("BTCUSDT", OWNER)  # takes the one slot
-    await capped.on_chart_opened("SOLUSDT", "c1")
+    await capped.on_chart_opened("SOLUSDT", "c1", session_id=None)
     clock.advance(60)
     await capped.tick()  # the chart's start is refused for the cap first ...
     await capped.on_position_opened("SOLUSDT", "p1")  # ... then the position's
@@ -153,7 +157,7 @@ async def test_start_refused_is_empty_until_a_start_is_refused_and_after_it_succ
 ) -> None:
     assert capped.start_refused() == ()  # nothing tracked
     disk[0] = True
-    await capped.on_chart_opened("SOLUSDT", "c1")
+    await capped.on_chart_opened("SOLUSDT", "c1", session_id=None)
     assert capped.start_refused() == ()  # waiting out its dwell: not refused yet
     clock.advance(60)
     await capped.tick()
@@ -167,13 +171,17 @@ async def test_start_refused_drops_a_symbol_whose_trigger_lapses_and_lists_in_sy
     capped: RecordingPolicy, clock: FakeClock
 ) -> None:
     await capped.add_manual("BTCUSDT", OWNER)
-    await capped.on_chart_opened("SOLUSDT", "c1")
-    await capped.on_chart_opened("ETHUSDT", "c2")
+    await capped.on_chart_opened("SOLUSDT", "c1", session_id=None)
+    await capped.on_chart_opened("ETHUSDT", "c2", session_id=None)
     clock.advance(60)
     await capped.tick()
     assert [r.symbol for r in capped.start_refused()] == ["ETHUSDT", "SOLUSDT"]  # not arrival order
-    await capped.on_chart_opened("ETHUSDT", "c3")  # a young second chart keeps the entry
-    await capped.on_chart_closed("ETHUSDT", "c2")  # the one that waited goes: nothing is wanted
+    await capped.on_chart_opened(
+        "ETHUSDT", "c3", session_id=None
+    )  # a young second chart keeps the entry
+    await capped.on_chart_closed(
+        "ETHUSDT", "c2", session_id=None
+    )  # the one that waited goes: nothing is wanted
     assert [r.symbol for r in capped.start_refused()] == ["SOLUSDT"]
 
 
@@ -183,8 +191,8 @@ async def test_start_refused_agrees_with_start_refusal_for_every_symbol(
     await capped.add_manual("BTCUSDT", OWNER)  # takes the one slot
     await capped.on_position_opened("SOLUSDT", "p1")  # refused for the cap
     await capped.on_position_opened("XRPUSDT", "p2")  # likewise
-    await capped.on_chart_opened("SOLUSDT", "c1")
-    await capped.on_chart_opened("ETHUSDT", "c2")
+    await capped.on_chart_opened("SOLUSDT", "c1", session_id=None)
+    await capped.on_chart_opened("ETHUSDT", "c2", session_id=None)
     clock.advance(60)
     disk[0] = True
     await capped.tick()  # the chart starts are refused for the disk; SOL's position still the cap
@@ -199,7 +207,7 @@ async def test_start_refused_is_a_snapshot_that_later_changes_do_not_touch(
     capped: RecordingPolicy, clock: FakeClock, disk: list[bool]
 ) -> None:
     disk[0] = True
-    await capped.on_chart_opened("SOLUSDT", "c1")
+    await capped.on_chart_opened("SOLUSDT", "c1", session_id=None)
     clock.advance(60)
     await capped.tick()
     snapshot = capped.start_refused()
@@ -216,7 +224,7 @@ async def test_start_refused_is_sync_and_changes_nothing(
     capped: RecordingPolicy, clock: FakeClock
 ) -> None:
     await capped.add_manual("BTCUSDT", OWNER)
-    await capped.on_chart_opened("SOLUSDT", "c1")
+    await capped.on_chart_opened("SOLUSDT", "c1", session_id=None)
     clock.advance(60)
     await capped.tick()  # SOL waits, refused for the cap
     before = copy.deepcopy(capped._syms)

@@ -41,7 +41,7 @@ async def test_position_preempts_chart_only_entry_at_cap(
     p = _cap1(clock, bus, audit)
     before = _value(recorder_cap_preempted_total)
     try:
-        await p.on_chart_opened("SOLUSDT", "c1")
+        await p.on_chart_opened("SOLUSDT", "c1", session_id=None)
         clock.advance(60)
         await p.tick()
         await p.on_position_opened("XRPUSDT", "p1")
@@ -92,7 +92,9 @@ async def test_a_refusal_whose_trigger_lapses_and_returns_is_announced_again(
 
     try:
         await p.add_manual("BTCUSDT", OWNER)  # takes the slot
-        await p.on_chart_opened("SOLUSDT", "c1")  # a young chart keeps the entry, wanting nothing
+        await p.on_chart_opened(
+            "SOLUSDT", "c1", session_id=None
+        )  # a young chart keeps the entry, wanting nothing
         await p.on_position_opened("SOLUSDT", "p1")  # refused for the cap
         for _ in range(3):
             clock.advance(1)
@@ -163,10 +165,10 @@ async def test_preemption_waits_for_warmup_gate(
         recorded=Mem(),
     )
     try:
-        await p.on_chart_opened("ETHUSDT", "c1")
+        await p.on_chart_opened("ETHUSDT", "c1", session_id=None)
         clock.advance(60)
         await p.tick()
-        await p.on_chart_closed("ETHUSDT", "c1")
+        await p.on_chart_closed("ETHUSDT", "c1", session_id=None)
         assert p.effective_set()["ETHUSDT"].lingering
         await p.on_position_opened("XRPUSDT", "p1")
         assert set(p.effective_set()) == {"ETHUSDT"}  # not stopped: gate closed
@@ -186,7 +188,7 @@ async def test_pinned_symbol_is_never_preempted(
 ) -> None:
     p = _cap1(clock, bus, audit)
     try:
-        await p.on_chart_opened("ETHUSDT", "c1")
+        await p.on_chart_opened("ETHUSDT", "c1", session_id=None)
         clock.advance(60)
         await p.tick()
         await p.set_pin("ETHUSDT", True, OWNER, restricted=False)
@@ -206,7 +208,7 @@ async def test_preemption_with_failing_stop_audit_frees_no_slot(
     p = _cap1(clock, bus, audit)
     before = _value(recorder_b11_error_total, env="demo")
     try:
-        await p.on_chart_opened("ETHUSDT", "c1")
+        await p.on_chart_opened("ETHUSDT", "c1", session_id=None)
         clock.advance(60)
         await p.tick()
         real_emit = audit.emit

@@ -4105,7 +4105,7 @@ class RecordingState(BaseModel):
 
 | Value            | Field               | Raised by                   | Meaning                                                                           |
 | ---------------- | ------------------- | --------------------------- | --------------------------------------------------------------------------------- |
-| `symbol_cap`     | `refusal`           | `RecordingPolicy` (E16-T02) | an auto-start is refused at `CV_RECORDER_MAX_SYMBOLS` and retried every tick      |
+| `symbol_cap`     | `refusal`           | `RecordingPolicy` (E16-T02) | an auto-start is refused at `CV_RECORDER_MAX_SYMBOLS`, or a chart-open start at `CV_RECORDER_MAX_AUTO_SYMBOLS` (E16-FR-01), and retried every tick |
 | `disk_pressure`  | `refusal`           | `RecordingPolicy` (E16-T07) | a chart-open start is refused from disk level 2, or on a refused volume           |
 | `chart_open`     | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a chart of the symbol is open                             |
 | `position_open`  | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a position is open (INV-B11-a)                            |
@@ -4181,7 +4181,13 @@ across a gap row). Tier from the E16-T05 roll-off watermark: older → `parquet`
 never reconstructed from bars. DB `cause` → REST `reason`: `ws_disconnect`, `exchange_outage`
 1:1; `process_restart`→`backend_restart`; `seq_jump`, `backpressure_drop` 1:1 (#2216). `reason` is
 open-ended for readers; a cause with no contract value is omitted, never relabelled.
-`GET /market/data-coverage` is
+Reconcile (E16-FR-03, #1739): on the `real` backend the hot-tier (`questdb`) intervals of
+`orderbook_delta` and `tickers` (90 s tolerance) and `trades` (900 s) are checked against the
+1-minute buckets that hold stored rows (`storage.questdb.stored_presence`, cached 60 s); a span
+claimed covered with no rows past the tolerance becomes a gap with cause `unverified_data` (no
+`reason`), counted in `recorder_coverage_reconcile_mismatch_total{stream}`, and a failed
+presence read reports the hot span that way (fail closed); the cold tier is trusted via its
+watermark and manifest. `GET /market/data-coverage` is
 capped server-side to the last 90 days (cache horizon) until the contract adds `from`/`to`
 (#2216). A `stale` feed topic (resubscribed on the live socket, no per-topic `healthy`) writes
 its observed silent window as a `ws_disconnect` gap; the session continues. Crash gaps start at

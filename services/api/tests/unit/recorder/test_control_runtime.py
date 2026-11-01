@@ -118,7 +118,7 @@ async def test_status_carries_the_stored_settings_the_policy_and_a_stop_that_lin
 
 async def test_a_live_chart_adds_its_reason_and_refuses_a_stop_unless_forced(env: Any) -> None:
     entry, _ = await env.c.add("BTCUSDT", rc.EntrySpec(), OWNER, restricted=False)
-    await env.p.on_chart_opened("BTCUSDT", "c1")
+    await env.p.on_chart_opened("BTCUSDT", "c1", session_id=None)
     held = await _one(env.c, "BTCUSDT")
     assert (held.reasons, held.refusals) == (("manual", "chart_open"), ("chart_open",))
     before = env.audit.actions()
@@ -132,7 +132,7 @@ async def test_a_live_chart_adds_its_reason_and_refuses_a_stop_unless_forced(env
 async def test_a_start_refusal_heads_the_refusals_of_a_stored_row(env: Any) -> None:
     env.rows.store._new("SOLUSDT", "demo", "chart_open")  # a row from a past run
     env.disk[0] = True
-    await env.p.on_chart_opened("SOLUSDT", "c1")
+    await env.p.on_chart_opened("SOLUSDT", "c1", session_id=None)
     env.clock.advance(CONFIG.autostart_delay_s)
     await env.p.tick()
     assert (await _one(env.c, "SOLUSDT")).refusals == ("disk_pressure", "chart_open")
@@ -338,7 +338,7 @@ async def _refused_at_the_cap(env: Any) -> None:
     for symbol in _FULL:
         await env.c.add(symbol, rc.EntrySpec(), OWNER, restricted=False)
     for symbol in ("SOLUSDT", "AVAXUSDT"):
-        await env.p.on_chart_opened(symbol, "c1")
+        await env.p.on_chart_opened(symbol, "c1", session_id=None)
     for symbol in ("LINKUSDT", "AVAXUSDT"):
         await env.p.on_position_opened(symbol, "p1")
     env.clock.advance(CONFIG.autostart_delay_s)

@@ -168,8 +168,10 @@ async def test_a_re_add_of_a_manual_entry_changes_nothing_and_writes_no_record(
 async def test_an_add_writes_the_refs_the_symbol_already_holds(
     policy: RecordingPolicy, store: Mem
 ) -> None:
-    await policy.on_chart_opened("BTCUSDT", "c1")  # not recording yet: no row to mirror to
-    await policy.on_chart_opened("BTCUSDT", "c2")
+    await policy.on_chart_opened(
+        "BTCUSDT", "c1", session_id=None
+    )  # not recording yet: no row to mirror to
+    await policy.on_chart_opened("BTCUSDT", "c2", session_id=None)
     await policy.add_manual("BTCUSDT", OWNER)
     assert _row(store)["reason_refs"] == [CHART, {"kind": "chart", "id": "c2"}]
 
@@ -205,7 +207,7 @@ async def test_remove_manual_audits_the_remover_before_it_clears_the_row(
 async def test_a_remove_on_a_symbol_that_keeps_a_chart_writes_one_user_record(
     policy: RecordingPolicy, audit: FakeAudit, clock: FakeClock
 ) -> None:
-    await policy.on_chart_opened("BTCUSDT", "c1")
+    await policy.on_chart_opened("BTCUSDT", "c1", session_id=None)
     clock.advance(60)
     await policy.tick()  # recording for the chart
     await policy.add_manual("BTCUSDT", OWNER)
@@ -247,7 +249,7 @@ async def test_a_remove_writes_a_ref_whose_mirror_failed(
 async def test_a_trigger_held_before_the_manual_row_survives_the_remove(
     policy: RecordingPolicy, store: Mem, clock: FakeClock
 ) -> None:
-    await policy.on_chart_opened("BTCUSDT", "c1")
+    await policy.on_chart_opened("BTCUSDT", "c1", session_id=None)
     await policy.add_manual("BTCUSDT", OWNER)
     clock.advance(60)
     await policy.tick()  # the chart's dwell passes
@@ -326,7 +328,7 @@ async def test_unpinning_keeps_the_row_and_the_entry_of_a_symbol_still_held(
         await policy.add_manual("BTCUSDT", OWNER)
     elif held == "chart":  # not recording (the dwell is 60 s): the row is one from an earlier run
         await _stale_row(store)
-        await policy.on_chart_opened("BTCUSDT", "c1")
+        await policy.on_chart_opened("BTCUSDT", "c1", session_id=None)
     elif held == "position":
         await policy.on_position_opened("BTCUSDT", "p1")
     else:
@@ -349,7 +351,7 @@ async def test_an_unpinned_lingering_symbol_still_stops_after_the_grace(
 async def test_a_start_writes_the_auto_row_with_the_refs_the_symbol_holds(
     policy: RecordingPolicy, store: Mem, clock: FakeClock
 ) -> None:
-    await policy.on_chart_opened("BTCUSDT", "c1")
+    await policy.on_chart_opened("BTCUSDT", "c1", session_id=None)
     clock.advance(60)
     await policy.on_position_opened("BTCUSDT", "p1")
     row = _row(store)
@@ -364,10 +366,10 @@ async def test_refs_follow_triggers_as_they_open_and_close(
     policy: RecordingPolicy, store: Mem
 ) -> None:
     await policy.on_position_opened("BTCUSDT", "p1")
-    await policy.on_chart_opened("BTCUSDT", "c1")
+    await policy.on_chart_opened("BTCUSDT", "c1", session_id=None)
     assert _row(store)["reason_refs"] == [POS, CHART]
     await policy.on_position_closed("BTCUSDT", "p1")
-    await policy.on_chart_closed("BTCUSDT", "c1")
+    await policy.on_chart_closed("BTCUSDT", "c1", session_id=None)
     assert _row(store)["reason_refs"] == []
 
 
@@ -375,10 +377,10 @@ async def test_a_trigger_that_is_already_held_is_not_mirrored_again(
     policy: RecordingPolicy, trace: list[str]
 ) -> None:
     await policy.on_position_opened("BTCUSDT", "p1")
-    await policy.on_chart_opened("BTCUSDT", "c1")
+    await policy.on_chart_opened("BTCUSDT", "c1", session_id=None)
     trace.clear()
     await policy.on_position_opened("BTCUSDT", "p1")  # the same ids again
-    await policy.on_chart_opened("BTCUSDT", "c1")
+    await policy.on_chart_opened("BTCUSDT", "c1", session_id=None)
     assert trace == []
 
 
@@ -623,7 +625,7 @@ async def test_a_failed_ref_sync_at_the_add_still_applies_the_entry(
 ) -> None:
     """Delta D-2: the refs are written best effort after the entry is applied; the remove
     brings them up to date before it decides, so the row is demoted, not lost."""
-    await policy.on_chart_opened("BTCUSDT", "c1")
+    await policy.on_chart_opened("BTCUSDT", "c1", session_id=None)
     store.fail.add("add_reason_ref")
     with capture_logs() as logs:
         await policy.add_manual("BTCUSDT", OWNER)

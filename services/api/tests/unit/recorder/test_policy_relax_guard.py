@@ -75,7 +75,7 @@ async def test_relax_allowed_is_true_when_restricted_and_only_visible_causes_hol
     policy: RecordingPolicy,
 ) -> None:
     await _held(policy, hidden=False)
-    await policy.on_chart_opened("BTCUSDT", "c1")
+    await policy.on_chart_opened("BTCUSDT", "c1", session_id=None)
     assert policy.relax_allowed("BTCUSDT", restricted=True)
     assert policy.relax_allowed("ETHUSDT", restricted=True)  # nothing holds an unknown symbol
 

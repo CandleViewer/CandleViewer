@@ -25,6 +25,17 @@ recorder_cap_preempted_total = Counter(
     "recorder_cap_preempted_total",
     "Chart-only recordings stopped to make room for an open position.",
 )
+#: E16-FR-01 (#1738): symbols recording for `chart_open` alone, and the auto-record triggers
+#: refused by `cause`: `auto_cap` (CV_RECORDER_MAX_AUTO_SYMBOLS), `session_cap`
+#: (CV_RECORDER_MAX_AUTO_PER_SESSION), `session_rate` (CV_RECORDER_AUTO_START_RATE_PER_MIN).
+recorder_auto_record_active = Gauge(
+    "recorder_auto_record_active", "Symbols recording for an open chart alone (E16-FR-01)."
+)
+recorder_auto_record_refused_total = Counter(
+    "recorder_auto_record_refused_total",
+    "Auto-record triggers refused: auto_cap, session_cap or session_rate (E16-FR-01).",
+    ["cause"],
+)
 recorder_b11_error_total = Counter(
     "recorder_b11_error_total",
     "B11 recording machines that entered `error` (retried with backoff).",
@@ -39,6 +50,13 @@ recorder_gap_seconds_total = Counter(
     "recorder_gap_seconds_total", "Seconds of recorded data lost to gaps.", ["symbol"]
 )
 recorder_sessions_open = Gauge("recorder_sessions_open", "Open recording sessions.")
+#: E16-FR-03 (#1739): fresh coverage reconciles where session windows minus gap rows claimed a
+#: hot-tier span that holds no stored rows (the span is reported as a gap instead).
+recorder_coverage_reconcile_mismatch_total = Counter(
+    "recorder_coverage_reconcile_mismatch_total",
+    "Coverage reconciles that found claimed coverage with no stored data (E16-FR-03).",
+    ["stream"],
+)
 recorder_integrity_anomalies_total = Counter(
     "recorder_integrity_anomalies_total",
     "Daily integrity-job anomalies (gap = explained, event = unexplainable).",
