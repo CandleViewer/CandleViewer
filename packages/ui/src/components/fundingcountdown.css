@@ -11,15 +11,20 @@
   min-width: 0;
 }
 
+/* Wraps at the "·" for 200 % zoom (R1): each part stays whole, the two may stack. */
 .cv-funding__count {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-inset-xs);
-  white-space: nowrap;
 }
 
 .cv-funding .cv-funding__digits {
   color: inherit;
+}
+
+.cv-funding__part {
+  white-space: nowrap;
 }
 
 .cv-funding__warn {

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, StrictMode } from "react";
 import { createRequire } from "node:module";
+import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { expect, within } from "storybook/test";
 import {
@@ -22,6 +23,8 @@ const axe = createRequire(createRequire(import.meta.url).resolve("@storybook/add
 /** 08:00 UTC, and the clock 1 h 24 min 13.771 s before it (D06 §7's recorded frame). */
 const TARGET = Date.UTC(2026, 9, 27, 8, 0, 0);
 const T0 = TARGET - 5_053_771;
+
+const utcHm = (ms: number): string => new Date(ms).toISOString().slice(11, 16);
 
 const advance = async (ms: number): Promise<void> => {
   await act(async () => {
@@ -114,6 +117,27 @@ describe("FundingCountdown (CMP-126)", () => {
     expect(status(host)).toHaveTextContent("BTCUSDT funding settles in 1 minute.");
   });
 
+  it("each threshold is announced exactly once: the status node says each line once over the whole run", async () => {
+    const host = await mount(ui({ nextFundingTimeMs: T0 + 301_000 }));
+    const node = status(host);
+    const said: string[] = [];
+    const watch = new MutationObserver(() => said.push(node.textContent ?? ""));
+    watch.observe(node, { childList: true, characterData: true, subtree: true });
+    for (let i = 0; i < 302; i += 1) {
+      await advance(1_000);
+      said.push(...watch.takeRecords().map(() => node.textContent ?? ""));
+    }
+    watch.disconnect();
+    expect(status(host)).toBe(node);
+    expect([...new Set(said)]).toEqual([
+      "BTCUSDT funding settles in 5 minutes.",
+      "BTCUSDT funding settles in 1 minute.",
+      "Settlement time passed — waiting for an update",
+    ]);
+    expect(said.filter((text) => text.includes("5 minutes"))).toHaveLength(1);
+    expect(said.filter((text) => text.includes("1 minute."))).toHaveLength(1);
+  });
+
   it("a threshold already passed at mount never speaks", async () => {
     const host = await mount(ui({ nextFundingTimeMs: T0 + 200_000 }));
     expect(status(host)).toBeEmptyDOMElement();
@@ -123,13 +147,37 @@ describe("FundingCountdown (CMP-126)", () => {
     expect(status(host)).toHaveTextContent("1 minute");
   });
 
-  it("past the settlement it says so once and waits, and a new time restarts the count", async () => {
+  it("past the settlement it says so once and waits", async () => {
     const host = await mount(<StrictMode>{ui({ nextFundingTimeMs: T0 + 2_000 })}</StrictMode>);
     await advance(3_000);
     expect(root(host)).toHaveAttribute("data-state", "elapsed");
     expect(
       within(host).getAllByText("Settlement time passed — waiting for an update").length,
     ).toBeGreaterThan(0);
+    expect(status(host)).toHaveTextContent("Settlement time passed — waiting for an update");
+  });
+
+  it("a new time restarts the count and clears the old message", async () => {
+    const host = document.body.appendChild(document.createElement("div"));
+    const tree = createRoot(host);
+    await act(async () => tree.render(ui({ nextFundingTimeMs: T0 + 2_000 })));
+    await advance(3_000);
+    expect(status(host)).toHaveTextContent("Settlement time passed — waiting for an update");
+    await act(async () => tree.render(ui({ nextFundingTimeMs: T0 + 3_000 + 3_600_000 })));
+    expect(digits(host)).toBe(`next in 01:00:00 · ${utcHm(T0 + 3_000 + 3_600_000)} UTC`);
+    expect(root(host)).toHaveAttribute("data-state", "ahead");
+    expect(status(host)).toBeEmptyDOMElement();
+    await act(async () => tree.unmount());
+  });
+
+  it("the passed deadline wins over the clock alarm, and the alarm silences the thresholds", async () => {
+    const host = await mount(ui({ nextFundingTimeMs: T0 + 301_000, clockAlarm: true }));
+    expect(root(host)).toHaveAttribute("data-state", "clock-alarm");
+    await advance(250_000);
+    expect(status(host)).toBeEmptyDOMElement();
+    await advance(60_000);
+    expect(root(host)).toHaveAttribute("data-state", "elapsed");
+    expect(host.textContent).not.toMatch(/at \d{2}:\d{2}:\d{2} UTC/);
     expect(status(host)).toHaveTextContent("Settlement time passed — waiting for an update");
   });
 
@@ -167,8 +215,12 @@ describe("FundingCountdown (CMP-126)", () => {
   });
 
   it("clears its timer on unmount", async () => {
-    await mount(ui());
+    const host = document.body.appendChild(document.createElement("div"));
+    const tree = createRoot(host);
+    await act(async () => tree.render(ui()));
     expect(vi.getTimerCount()).toBeGreaterThan(0);
+    await act(async () => tree.unmount());
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it.each([

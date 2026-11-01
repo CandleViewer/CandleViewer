@@ -41,7 +41,10 @@ const ANNOUNCE_AT: readonly number[] = [5 * MINUTE, MINUTE];
 const pad = (n: number): string => String(n).padStart(2, "0");
 const plural = (n: number, unit: string): string => `${n} ${unit}${n === 1 ? "" : "s"}`;
 
-/** Whole seconds left, rounded down (D06 §7 draws 5,053,771 ms as 01:24:13), never negative. */
+/**
+ * Whole seconds left, never negative. The floor is deliberate (D06 §7 draws 5,053,771 ms as 01:24:13) and
+ * differs from CMP-035's ceil.
+ */
 const secondsTo = (target: number, at: number): number =>
   Math.max(0, Math.floor((target - at) / 1000));
 
@@ -64,7 +67,10 @@ export function spokenFundingCount(total: number): string {
   return plural(s, "second");
 }
 
-/** "1 h 24 min" / "12 min": the clock-alarm form's rough distance (PROPOSED; D06 draws "about 1 h 24 min"). */
+/**
+ * "1 h 24 min" / "12 min": the clock-alarm form's rough distance (D06 draws "about 1 h 24 min").
+ * PROPOSED (not verbatim): the `Math.max(1, …)` rounding, so the last minute reads "1 min", never "0 min".
+ */
 const approxCount = (total: number): string => {
   const minutes = Math.max(1, Math.round(total / MINUTE));
   const h = Math.floor(minutes / 60);
@@ -78,7 +84,10 @@ export function fundingRateSign(rate: string): FundingRateSign {
   return /^[-−]/.test(text) ? "negative" : "positive";
 }
 
-/** A positive rate carries its "+" in the text, so the sign never rests on colour (D06 §7, 05 §4). */
+/**
+ * PROPOSED (not verbatim): the "+" added to an unsigned positive rate, so the sign never rests on colour
+ * (D06 §7, 05 §4).
+ */
 const signed = (rate: string, sign: FundingRateSign): string =>
   sign === "positive" && !rate.trim().startsWith("+") ? `+${rate.trim()}` : rate.trim();
 
@@ -92,10 +101,7 @@ export function fundingCountdownState(
   return secondsTo(nextFundingTimeMs, at) < 5 * MINUTE ? "settling" : "ahead";
 }
 
-/**
- * PROPOSED (not verbatim in D06 §7): the "+" added to an unsigned positive rate; the settling state's spoken twin
- * ("Next funding in …", D06 says "as above"); the clock-alarm distance's under-a-minute rounding.
- */
+/** D06 §7, verbatim. */
 const ELAPSED = "Settlement time passed — waiting for an update";
 
 /**
@@ -116,13 +122,15 @@ export function FundingCountdown({
 }: FundingCountdownProps): JSX.Element {
   const [at, setAt] = useState(() => now());
   const [message, setMessage] = useState("");
-  const latest = useRef({ now, symbol, clockSkewMs });
+  const latest = useRef({ now, symbol, clockSkewMs, clockAlarm });
   useEffect(() => {
-    latest.current = { now, symbol, clockSkewMs };
+    latest.current = { now, symbol, clockSkewMs, clockAlarm };
   });
   const running = !notTrading && nextFundingTimeMs !== undefined;
 
   useEffect(() => {
+    // A new deadline forgets what the old one said (a stale "settles in 1 minute" or the elapsed line).
+    setMessage("");
     if (!running || nextFundingTimeMs === undefined) return undefined;
     const target = nextFundingTimeMs;
     const start = secondsTo(target, latest.current.now());
@@ -137,8 +145,12 @@ export function FundingCountdown({
       if (crossed.length > 0 && target > read) {
         crossed.forEach((t) => spoken.add(t));
         // Several at once (a tab back from the background): the latest, the smallest, speaks alone.
+        // While the clock alarm is on the count is not shown, so the thresholds are marked but never spoken.
         const t = Math.min(...crossed);
-        setMessage(`${latest.current.symbol} funding settles in ${plural(t / MINUTE, "minute")}.`);
+        if (!latest.current.clockAlarm)
+          setMessage(
+            `${latest.current.symbol} funding settles in ${plural(t / MINUTE, "minute")}.`,
+          );
       }
       if (target <= read) {
         setMessage(ELAPSED);
@@ -163,9 +175,11 @@ export function FundingCountdown({
     ? "not-trading"
     : nextFundingTimeMs === undefined
       ? "unknown"
-      : clockAlarm
-        ? "clock-alarm"
-        : fundingCountdownState(nextFundingTimeMs, at);
+      : fundingCountdownState(nextFundingTimeMs, at) === "elapsed"
+        ? "elapsed" // the passed deadline wins over the clock alarm
+        : clockAlarm
+          ? "clock-alarm"
+          : fundingCountdownState(nextFundingTimeMs, at);
   const left = nextFundingTimeMs === undefined ? 0 : secondsTo(nextFundingTimeMs, at);
   const sign = rate === undefined ? undefined : fundingRateSign(rate);
   const target = nextFundingTimeMs ?? 0;
@@ -181,7 +195,9 @@ export function FundingCountdown({
           </span>
         ) : null}
         <MonoText size="base" className="cv-funding__digits" aria-hidden="true">
-          {`${lead} ${formatFundingCount(left)} · ${utcClock(target)} UTC`}
+          <span className="cv-funding__part">{`${lead} ${formatFundingCount(left)}`}</span>
+          {" · "}
+          <span className="cv-funding__part">{`${utcClock(target)} UTC`}</span>
         </MonoText>
         <span className="cv-visually-hidden">
           {`Next funding in ${spokenFundingCount(left)}, at ${utcClock(target)} UTC`}

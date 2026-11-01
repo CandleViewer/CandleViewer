@@ -1,6 +1,7 @@
 /*
  * CMP-125 SymbolInfoPopover body (E08-D06 §9), inside CMP-017's surface. Tokens only; static. Band labels are
- * type.ui.label in color.text.secondary and carry the boundary by heading, not by colour; the stale marker
+ * type.ui.label in color.text.primary and carry the boundary by heading, not by colour; messages and the
+ * recording word are color.text.secondary (tertiary when a value is absent); the stale marker
  * (CMP-239) sits in the live band's head. Long text wraps: nothing truncates at 200 % zoom.
  */
 .cv-symbol-info {

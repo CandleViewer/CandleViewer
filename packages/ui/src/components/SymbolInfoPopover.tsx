@@ -49,6 +49,7 @@ export interface SymbolInfoPopoverProps {
 const NOT_AVAILABLE = "not available";
 
 /** PROPOSED (not verbatim in D06 / D13): the trigger's name "Symbol info for {symbol}" (§9 names no label). */
+const triggerLabel = (symbol: string): string => `Symbol info for ${symbol}`;
 
 function Band({
   label,
@@ -117,7 +118,7 @@ export function SymbolInfoPopover({
     <Popover
       {...control}
       heading={symbol}
-      anchor={<IconButton icon="info" label={`Symbol info for ${symbol}`} variant="ghost" />}
+      anchor={<IconButton icon="info" label={triggerLabel(symbol)} variant="ghost" />}
       footer={
         <Button variant="secondary" onClick={onOpenFullDetails}>
           Open full details
