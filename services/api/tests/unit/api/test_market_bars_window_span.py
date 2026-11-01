@@ -6,6 +6,7 @@ No storage is reachable: the fake reader fails the test if a refused request rea
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -13,11 +14,15 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from prometheus_client import REGISTRY
 
-from candleviewer.api.market import MarketDataPrincipal
-from candleviewer.api.market_bars import make_market_bars_router, window_span_us
+from candleviewer.api.market import MarketDataPrincipal, make_market_router
+from candleviewer.api.market_bars import _ts_us, make_market_bars_router, window_span_us
 from candleviewer.bars.limits import MAX_TIME_WINDOW_US
 from candleviewer.bars.reader import BarPage
+from candleviewer.domain.sql_names import ts_param
+from candleviewer.storage.models import TimeRange
+from candleviewer.storage.repositories.rows import TradeTotals
 
 _NOW = 1_800_000_000_000_000
 _US_PER_DAY = 86_400_000_000
@@ -36,8 +41,22 @@ class _Reader:
 
 
 class _EmptyReader:
-    async def read_bars(self, *a: object, **k: object) -> BarPage:
+    """Binds its window the way `bars.reader` does, so an unrepresentable instant raises here."""
+
+    async def read_bars(
+        self, symbol: str, spec: object, from_us: int, to_us: int, *a: object, **k: object
+    ) -> BarPage:
+        ts_param(from_us)
+        ts_param(to_us)
         return BarPage(rows=[], next_cursor=None, stale=False)
+
+
+async def _recording_started(symbol: str) -> int | None:
+    return 0
+
+
+async def _no_prints(symbol: str, rng: TimeRange) -> TradeTotals:
+    return TradeTotals(prints=0, qty=Decimal(0))
 
 
 def _client(reader: _Reader | _EmptyReader | None = None) -> TestClient:
@@ -46,6 +65,9 @@ def _client(reader: _Reader | _EmptyReader | None = None) -> TestClient:
     app.include_router(
         make_market_bars_router(
             lambda: served,
+            recording_started_at_us=_recording_started,
+            trade_totals=_no_prints,
+            qty_step=lambda s: Decimal("0.001"),
             principal_resolver=_Resolver(),
             symbol_listed=lambda s: True,
             now_us=lambda: _NOW,
@@ -119,3 +141,85 @@ def test_property_every_served_window_is_within_the_cap(start: int, end: int) ->
     assert resp.status_code in {200, 400, 422}
     if resp.status_code == 200:
         assert 0 <= end - start <= MAX_TIME_WINDOW_US // 1_000_000
+
+
+# --- F7: exact integer time conversion, so the last representable instant is not a 500 ------------
+
+_MAX_ISO = "9999-12-31T23:59:59.999999Z"
+_US = st.integers(min_value=-62_135_596_800_000_000, max_value=253_402_300_799_999_999)
+
+
+@given(micros=_US)
+def test_property_ts_us_round_trips_whole_microseconds(micros: int) -> None:
+    moment = _EPOCH + timedelta(microseconds=micros)
+    assert _ts_us(moment.isoformat()) == micros
+    assert _ts_us(moment.isoformat().replace("+00:00", "Z")) == micros
+
+
+def test_ts_us_is_exact_at_the_last_representable_microsecond() -> None:
+    assert _ts_us(_MAX_ISO) == 253_402_300_799_999_999  # float math gave 253402300800000000
+    assert _ts_us("0001-01-01T00:00:00Z") == -62_135_596_800_000_000
+
+
+@pytest.mark.parametrize("bound", ["9999-12-31T23:59:59.999999-01:00", "0001-01-01T00:00:00+01:00"])
+def test_ts_us_refuses_an_instant_outside_the_bind_range(bound: str) -> None:
+    with pytest.raises(ValueError, match="range"):
+        _ts_us(bound)
+
+
+@pytest.mark.parametrize(
+    ("bar_type", "param"),
+    [("time", "1"), ("tick", "100"), ("volume", "5"), ("range", "20"), ("delta", "1"),
+     ("renko", "20")],
+)  # fmt: skip
+def test_to_at_the_last_microsecond_is_not_a_500_for_any_bar_type(
+    bar_type: str, param: str
+) -> None:
+    resp = _client(_EmptyReader()).get(
+        "/market/bars",
+        params={
+            "symbol": "BTCUSDT", "bar_type": bar_type, "param": param,
+            "from": "9999-12-30T00:00:00Z", "to": _MAX_ISO,
+        },
+    )  # fmt: skip
+    assert resp.status_code == 200
+
+
+def test_an_instant_past_the_range_is_a_counted_400_not_a_500() -> None:
+    before = REGISTRY.get_sample_value("api_request_rejected_total", _LABELS) or 0.0
+    resp = _client(_EmptyReader()).get(
+        "/market/bars",
+        params={**_Q, "from": "9999-12-30T00:00:00Z", "to": "9999-12-31T23:59:59.999999-01:00"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "validation_failed"
+    assert (REGISTRY.get_sample_value("api_request_rejected_total", _LABELS) or 0.0) == before + 1
+
+
+def test_klines_is_unaffected_at_the_last_microsecond() -> None:
+    # Klines floors its window at `now` before any read, so a far-future window reads nothing.
+    app = FastAPI()
+    app.include_router(
+        make_market_router(
+            lambda: _Cache(), principal_resolver=_Resolver(), symbol_listed=lambda s: True,
+            now_us=lambda: _NOW,
+        )
+    )  # fmt: skip
+    resp = TestClient(app, client=("127.0.0.1", 50000)).get(
+        "/market/klines",
+        params={
+            "symbol": "BTCUSDT",
+            "interval": "1",
+            "from": "9999-12-30T00:00:00Z",
+            "to": _MAX_ISO,
+        },
+    )
+    assert resp.status_code < 500
+
+
+class _Cache:
+    async def read_klines(self, *a: object, **k: object) -> Any:
+        raise AssertionError("a window after now must not be read")
+
+
+_LABELS = {"route": "bars", "reason": "bad_window"}
