@@ -1,6 +1,17 @@
-import { useId, useRef, useState, type JSX, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type JSX,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { Icon } from "../icons/Icon.js";
 import { Badge } from "./Badge.js";
+import { Button } from "./Button.js";
 import { useFocusRing } from "./FocusRing.js";
 import { IconButton } from "./IconButton.js";
 import { Popover } from "./Popover.js";
@@ -10,7 +21,6 @@ import type { TableColumn } from "./Table.js";
 import { Tag } from "./Tag.js";
 import { cx } from "./internal/cx.js";
 import { useGatedAnnounce } from "./internal/disabledReason.js";
-import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { formatRbacReason } from "./rbacReasons.js";
 
 export type RecorderReason =
@@ -72,6 +82,8 @@ export interface RecorderStatusRowData {
   readonly onStop?: () => void;
   readonly onKeepRecording?: () => void;
   readonly onRecordAgain?: () => void;
+  /** The action's write is in flight (Keep recording, Record again): CMP-001 `loading`, a press sends nothing. */
+  readonly actionBusy?: boolean;
   /** Asks for the other value; the host confirms and steps up (D02 §6.4). */
   readonly onTogglePin?: (pinned: boolean) => void;
   /** A press on the symbol: the row detail (D02 §6.7). */
@@ -80,12 +92,14 @@ export interface RecorderStatusRowData {
   readonly onWhyOpen?: () => void;
 }
 
-/** What a cell asks of the host's grid (#5146's CMP-049 `TableCellOptions` takes both). */
+/** What a cell asks of the host's grid (#5146's CMP-049 `TableCellOptions` takes these). */
 export interface RecorderCellOptions {
   /** The symbol: the row's header (`th scope="row"`). */
   readonly header?: boolean;
-  /** Since, Depth and Size: end-aligned numbers (D02 §9.1). */
+  /** Since and Depth: end-aligned numbers that never wrap (D02 §9.1). */
   readonly numeric?: boolean;
+  /** The Action cell's T2 reason, which the grid's one CMP-016 echo shows on the cell's focus and hover (2b). */
+  readonly echo?: string | undefined;
 }
 
 /** What the host spreads on a cell (a subset of #5146's `TableCellProps`): its role and roving `tabindex`. */
@@ -112,12 +126,19 @@ export interface RecorderRowGrid {
   readonly cellProps: (column: number, options?: RecorderCellOptions) => RecorderCellProps;
   /** Stacked, the visible header label a cell leads with. */
   readonly label: (column: number) => ReactNode;
+  /**
+   * The grid stacked into cards (CMP-049's reflow, a table of Tab stops): a T2 reason shows inline (2a, D02 §1's
+   * 200 % paragraph), and a control a frame removes hands focus to the row's next stop.
+   */
+  readonly stacked?: boolean;
 }
 
 /** SCR-140: a `row` of the host's grid. `ReadOnly` is the standalone variant's alone (D02 §4.2). */
 interface TableVariant {
   readonly variant: "table";
   readonly grid: RecorderRowGrid;
+  /** D02 §1's 1280 × 800 plan: no Since and Depth cells, as `recorderStatusColumns({ narrow })` gives the host. */
+  readonly narrow?: boolean;
   readonly writeReason?: never;
   readonly viewAsUser?: never;
 }
@@ -169,21 +190,20 @@ const ACTIVE = new Set<RecorderRowState>([
 ]);
 const DASH = "—";
 const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
-const UNITS = [
-  [1e9, "GB"],
-  [1e6, "MB"],
-  [1e3, "KB"],
-] as const;
+/** en-US grouping, one decimal: the page's own figures' form ("1,188.0 GB", E16-D04 §14). */
+const ONE_DECIMAL = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
 
 const at = (iso: string | null | undefined): Date | undefined => {
   const ms = iso == null ? Number.NaN : Date.parse(iso);
   return Number.isNaN(ms) ? undefined : new Date(ms);
 };
 const dayMonth = (d: Date): string => `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()] ?? ""}`;
-const bytes = (n: number): string => {
-  for (const [size, unit] of UNITS) if (n >= size) return `${(n / size).toFixed(1)} ${unit}`;
-  return `${n} B`;
-};
+/** "34.8 GB", "1.3 MB": GB from 999.95 MB, where one decimal of MB would print "1,000.0" (as the page's). */
+const bytes = (n: number): string =>
+  n >= 1e9 - 5e4 ? `${ONE_DECIMAL.format(n / 1e9)} GB` : `${ONE_DECIMAL.format(n / 1e6)} MB`;
 /** D02 §8: "60 s", "30 min", "1 h 30 min". */
 const duration = (s: number): string => {
   const m = Math.round(s / 60);
@@ -247,23 +267,45 @@ const retentionOf = (p: RecorderStatusRowData): string =>
 
 /** "34.8 GB · 0.71/d", "est." while estimated, "· 17 % of budget" from disk level 1; "—" with nothing written. */
 function sizeOf(p: RecorderStatusRowData): string {
-  if (p.state === "refused" || p.state === "starting") return DASH;
+  const [size, share] = sizeParts(p);
+  return share === null ? size : `${size} ${share}`;
+}
+
+/**
+ * The Size cell's two parts (D02 §1, board 05): the figures, then from disk level 1 the share of the budget, which the
+ * grid draws on its own line; "—" with no size yet (refused, starting) or nothing written.
+ */
+function sizeParts(p: RecorderStatusRowData): readonly [string, string | null] {
+  if (p.state === "refused" || p.state === "starting" || p.diskUsageBytes == null) {
+    return [DASH, null];
+  }
   const g = p.state === "stopped" ? null : p.dailyGrowthBytes;
   const rate =
     g == null ? "" : ` · ${(g / 1e9).toFixed(2)}/d${p.growthEstimated === true ? " est." : ""}`;
-  const share = (p.diskLevel ?? 0) >= 1 && p.budgetShare != null;
-  return `${bytes(p.diskUsageBytes ?? 0)}${rate}${share ? ` · ${Math.round((p.budgetShare ?? 0) * 100)} % of budget` : ""}`;
+  const share =
+    (p.diskLevel ?? 0) >= 1 && p.budgetShare != null
+      ? `· ${Math.round(p.budgetShare * 100)} % of budget`
+      : null;
+  return [`${bytes(p.diskUsageBytes)}${rate}`, share];
 }
 
-/** The row's name (D02H table 3): "BTCUSDT, manual, recording since 1 Sep 2026, 34.8 GB, keep forever on". */
+/** The states whose leading word is "Recording": the start date reads as how long it has recorded. */
+const RECORDING = new Set<RecorderRowState>(["recording", "lingering"]);
+
+/**
+ * The row's name (D02H table 3): "BTCUSDT, manual, recording since 1 Sep 2026, 34.8 GB, keep forever on". The start
+ * date joins the state's leading word only while it is "recording" ("recording since 20 Oct 2026, position"), so it
+ * never dates a degraded, gated or silent state (B-5309-04, D-5309-12).
+ */
 function recorderStatusSummary(p: RecorderStatusRowData): string {
-  const start = ACTIVE.has(p.state) ? at(p.startedAt) : undefined;
+  const [head = "", ...detail] = wordsOf(p).split(" · ");
+  const start = RECORDING.has(p.state) ? at(p.startedAt) : undefined;
   const since = start === undefined ? "" : ` since ${dayMonth(start)} ${start.getUTCFullYear()}`;
-  const parts = [p.symbol, lower(TAGS[p.reason]), `${lower(wordsOf(p))}${since}`];
-  if (sizeOf(p) !== DASH) parts.push(bytes(p.diskUsageBytes ?? 0));
+  const parts = [p.symbol, lower(TAGS[p.reason]), `${lower(head)}${since}`, ...detail];
+  if (p.diskUsageBytes != null && sizeParts(p)[0] !== DASH) parts.push(bytes(p.diskUsageBytes));
   if (p.state !== "refused") parts.push(`keep forever ${p.pinned === true ? "on" : "off"}`);
   if (p.stale === true) parts.push("stale");
-  return parts.join(", ").replaceAll(" · ", ", ");
+  return parts.join(", ");
 }
 
 /** The row's one action (D02 §4.1): its label (the name completes it), its T2 reason, its handler. */
@@ -325,9 +367,12 @@ function useHoldOnce(gated: boolean): {
   };
 }
 
-/** CMP-019 `lock`, named "Not available", leading a T2 control's label (E09-D09 §2.2, G-T2.1d). */
+/**
+ * CMP-019 `lock`, named "Not available", for a T2 switch (E09-D09 §2.2, G-T2.1d): CMP-004's centred lock (ChoiceRow's
+ * `cv-choice__lock`), leading the visible label, or trailing the switch where the label is hidden (B-5309-09).
+ */
 const Lock = ({ id }: { readonly id?: string }): JSX.Element => (
-  <span id={id} className="cv-rsr__lock">
+  <span id={id} className="cv-choice__lock">
     <Icon name="lock" decorative={false} label="Not available" />
   </span>
 );
@@ -338,41 +383,39 @@ interface RowButtonProps {
   readonly disabledReason?: string;
   /** The node that shows the reason: the row's 2a line, the read-only notice, or the grid's hidden node (2b). */
   readonly reasonId: string;
-  /** 2b: CMP-016 echoes the reason on hover and focus (the grid's Action cell, D02 D-15). */
-  readonly echo: boolean;
+  /** The action's write is in flight: CMP-001 `loading`. */
+  readonly busy?: boolean;
   readonly onPress: (() => void) | undefined;
 }
 
 /**
- * CMP-001 (ghost) as the row draws it: main's atom can neither point at a host's reason node nor lead with the named
- * lock (#5146's `disabledReasonId`), so CMP-177 owns this button's T2 on CMP-001's classes. A gate that engages or
- * lifts, or Stop turning into Keep recording, updates this element in place: it keeps focus (D02 §9.1).
+ * CMP-001 (ghost) composed as CMP-055's controls are (rendering 2a: `disabledReasonId`, so the lock leads the full
+ * label, named "Not available", and the row's reason node describes it; the T2 look is the atom's, #262's C-row). In
+ * the grid the node is hidden and the grid's one CMP-016 echo shows it on the cell (2b, D02 D-15). The atom says a
+ * refused press once through the gated announcement; a held key's repeats press nothing; while `busy` a press sends
+ * nothing. A gate that engages or lifts, or Stop turning into Keep recording, updates this element in place: it keeps
+ * focus (D02 §9.1).
  */
 function RowButton({
   children,
   disabledReason,
   reasonId,
-  echo,
+  busy = false,
   onPress,
 }: RowButtonProps): JSX.Element {
-  const ring = useFocusRing();
-  const announce = useGatedAnnounce();
   const reason = disabledReason?.trim() || undefined;
   const hold = useHoldOnce(reason !== undefined);
-  const control = (
-    <button
-      type="button"
-      className={cx("cv-control", ring.className, "cv-button", "cv-rsr__action")}
-      data-variant="ghost"
-      aria-disabled={reason === undefined ? undefined : true}
-      aria-describedby={reason === undefined ? undefined : reasonId}
+  return (
+    <Button
+      variant="ghost"
+      loading={busy}
+      {...(reason === undefined ? {} : { disabledReason: reason, disabledReasonId: reasonId })}
       {...hold}
-      onClick={() => (reason === undefined ? onPress?.() : announce(reason))}
+      onClick={() => onPress?.()}
     >
-      {reason === undefined ? null : <Lock />} <span className="cv-button__label">{children}</span>
-    </button>
+      {children}
+    </Button>
   );
-  return echo ? <ReasonEcho text={reason}>{control}</ReasonEcho> : control;
 }
 
 interface KeepSwitchProps {
@@ -383,17 +426,21 @@ interface KeepSwitchProps {
   readonly visible: boolean;
 }
 
-/** CMP-004 as the row draws it, for the same reason as RowButton: named "Keep {symbol} data forever". */
+/**
+ * CMP-004 as the row draws it, for the same reason as RowButton: named "Keep {symbol} data forever". T2, the named
+ * lock leads the visible label as CMP-004's own does (ChoiceRow); with the label hidden (the grid) it trails the
+ * switch, and the switch's name still starts with it.
+ */
 function KeepSwitch({ row, disabledReason, reasonId, visible }: KeepSwitchProps): JSX.Element {
   const id = useId();
   const announce = useGatedAnnounce();
   const reason = disabledReason?.trim() || undefined;
   const hold = useHoldOnce(reason !== undefined);
   const on = row.pinned === true;
+  const lock = reason === undefined ? null : <Lock id={`${id}-lock`} />;
   return (
     <div className="cv-choice cv-rsr__keep" data-gated={reason === undefined ? undefined : ""}>
       <label className="cv-choice__target" htmlFor={id}>
-        {reason === undefined ? null : <Lock id={`${id}-lock`} />}
         <span className="cv-choice__control">
           <button
             id={id}
@@ -402,7 +449,7 @@ function KeepSwitch({ row, disabledReason, reasonId, visible }: KeepSwitchProps)
             className="cv-switch"
             data-checked={on ? "" : undefined}
             aria-checked={on}
-            aria-labelledby={cx(reason !== undefined && `${id}-lock`, `${id}-name`)}
+            aria-labelledby={cx(!visible && lock !== null && `${id}-lock`, `${id}-name`)}
             aria-disabled={reason === undefined ? undefined : true}
             aria-describedby={reason === undefined ? undefined : reasonId}
             {...hold}
@@ -411,10 +458,18 @@ function KeepSwitch({ row, disabledReason, reasonId, visible }: KeepSwitchProps)
             <span className="cv-switch__knob" />
           </button>
         </span>
-        <span id={`${id}-name`} className={visible ? "cv-choice__label" : "cv-visually-hidden"}>
-          Keep{hidden(` ${row.symbol} data`)} forever
-        </span>
+        {visible ? (
+          <span id={`${id}-name`} className="cv-choice__label">
+            {lock}
+            Keep{hidden(` ${row.symbol} data`)} forever
+          </span>
+        ) : (
+          <span id={`${id}-name`} className="cv-visually-hidden">
+            Keep {row.symbol} data forever
+          </span>
+        )}
       </label>
+      {visible ? null : lock}
     </div>
   );
 }
@@ -438,7 +493,6 @@ function Why({
   const keep = (
     <RowButton
       reasonId={`${id}-why`}
-      echo={false}
       onPress={() => {
         row.onKeepRecording?.();
         setOpen(false);
@@ -473,15 +527,27 @@ function Why({
   );
 }
 
-function SymbolView({ row }: { readonly row: RecorderStatusRowData }): JSX.Element {
+/**
+ * The symbol; with `onOpenDetail`, a button that opens the row's detail. In the roving grid it is no Tab stop of its
+ * own (`stop` false): Enter on its cell opens the detail (the row's key), and a press still does.
+ */
+function SymbolView({
+  row,
+  stop = true,
+}: {
+  readonly row: RecorderStatusRowData;
+  readonly stop?: boolean;
+}): JSX.Element {
   const ring = useFocusRing();
-  return row.onOpenDetail === undefined ? (
+  const open = row.onOpenDetail;
+  return open === undefined ? (
     <span className="cv-rsr__symbol">{row.symbol}</span>
   ) : (
     <button
       type="button"
       className={cx(ring.className, "cv-rsr__symbol")}
-      onClick={row.onOpenDetail}
+      tabIndex={stop ? undefined : -1}
+      onClick={() => open()}
     >
       {row.symbol}
     </button>
@@ -525,24 +591,36 @@ function StateView({ row }: { readonly row: RecorderStatusRowData }): JSX.Elemen
           )}
         </span>
       )}
-      <span className="cv-rsr__words">{wordsOf(row)}</span>
+      {/* One line in the grid, cut with an ellipsis; CMP-049's echo shows the whole words while cut (D02 §9.1). */}
+      <span className="cv-rsr__words" data-cv-cut={wordsOf(row)}>
+        {wordsOf(row)}
+      </span>
       {stale ? <Tag label="stale" icon="pending" /> : null}
     </span>
   );
 }
 
+/**
+ * E16-D02 §1's column plan, in px at its 1440 × 900 frame (content 1152 px), and `narrowPx` at 1280 × 800 (content
+ * 992 px), where Since and Depth go to the row detail. In `em` of the table's own font: the app sets none, so a
+ * `<col>`'s em is the root's 16 px, and 72 em is 1152 px, scaling with zoom and the in-app text scale.
+ * Deviation, measured in the pinned faces (B-5309-01): CMP-001's "Record again" with its T2 lock is 121 px and
+ * "Keep recording" 113, so Action takes 138 px where D02 has 104 and 112; State, which cuts its words with an
+ * ellipsis and the echo, gives the 34 and 26 px (216 and 224).
+ */
 const COLUMNS = [
-  ["symbol", "Symbol", 7.5],
-  ["reason", "Reason", 9.5],
-  ["state", "State", 15.5],
-  ["since", "Since", 6.5],
-  ["depth", "Depth", 4],
-  ["size", "Size", 9.5],
-  ["retention", "Retention", 7.5],
-  ["keep", "Keep forever", 5.5],
-  ["action", "Action", 6.5],
+  { id: "symbol", header: "Symbol", px: 120, narrowPx: 120 },
+  { id: "reason", header: "Reason", px: 150, narrowPx: 150 },
+  { id: "state", header: "State", px: 216, narrowPx: 224 },
+  { id: "since", header: "Since", px: 104, narrowPx: null },
+  { id: "depth", header: "Depth", px: 64, narrowPx: null },
+  { id: "size", header: "Size", px: 150, narrowPx: 150 },
+  { id: "retention", header: "Retention", px: 120, narrowPx: 120 },
+  { id: "keep", header: "Keep forever", px: 90, narrowPx: 90 },
+  { id: "action", header: "Action", px: 138, narrowPx: 138 },
 ] as const;
-type ColumnId = (typeof COLUMNS)[number][0];
+type ColumnId = (typeof COLUMNS)[number]["id"];
+const EM_PX = 16;
 /** A column's words (the host's default row name reads the first); the table variant draws the cells. */
 const TEXT: Readonly<Record<ColumnId, (r: RecorderStatusRowData) => string>> = {
   symbol: (r) => r.symbol,
@@ -556,77 +634,219 @@ const TEXT: Readonly<Record<ColumnId, (r: RecorderStatusRowData) => string>> = {
   action: () => "",
 };
 
-/**
- * The host grid's columns for CMP-177 (E16-D02 §1): the table variant's cell order, D02 §1's widths at 16 px as
- * `minWidthEm`, Symbol, Since and Size sortable, and the cells with controls `interactive`.
- */
-export function recorderStatusColumns(): TableColumn<RecorderStatusRowData>[] {
-  return COLUMNS.map(([id, header, minWidthEm]) => ({
-    id,
-    header,
-    minWidthEm,
-    sortable: id === "symbol" || id === "since" || id === "size",
-    interactive: id === "symbol" || id === "reason" || id === "keep" || id === "action",
-    cell: TEXT[id],
-  }));
+export interface RecorderColumnsOptions {
+  /** D02 §1's 1280 × 800 plan: no Since and Depth (they are the row detail's), 62 em in all. */
+  readonly narrow?: boolean;
 }
 
-/** The table variant: the row's nine cells for the host's grid, named by the row's summary (D02H table 3). */
-function GridRow({ grid, ...row }: RecorderStatusRowData & TableVariant): JSX.Element {
+/**
+ * The host grid's columns for CMP-177 (E16-D02 §1): the table variant's cell order; D02 §1's widths as `widthEm` and
+ * as `minWidthEm` alike, so the grid stacks into cards rather than squeeze a column (B-5309-01); Since, Depth and
+ * Size end-aligned (B-5309-02); Symbol, Since and Size sortable; the cells with controls `interactive` (the symbol's
+ * cell is not: Enter on it opens the row's detail, B-5309-03).
+ */
+export function recorderStatusColumns(
+  options: RecorderColumnsOptions = {},
+): TableColumn<RecorderStatusRowData>[] {
+  const narrow = options.narrow === true;
+  return COLUMNS.flatMap(({ id, header, px, narrowPx }) => {
+    const width = narrow ? narrowPx : px;
+    if (width === null) return [];
+    const em = width / EM_PX;
+    return [
+      {
+        id,
+        header,
+        widthEm: em,
+        minWidthEm: em,
+        ...(id === "since" || id === "depth" || id === "size" ? { align: "end" as const } : {}),
+        sortable: id === "symbol" || id === "since" || id === "size",
+        interactive: id === "reason" || id === "keep" || id === "action",
+        cell: TEXT[id],
+      },
+    ];
+  });
+}
+
+/** The cell index of the row's element `node` holds focus in, by DOM order. */
+const cellIndexOf = (row: HTMLTableRowElement, node: Element): number => {
+  const cell = node.closest("td, th");
+  return cell === null ? -1 : [...row.cells].indexOf(cell as HTMLTableCellElement);
+};
+/** The row's own Tab stops while stacked (CMP-049 gives each control back its own `tabindex`). */
+const STOPS = "button:not([tabindex='-1']), a[href], input, select, textarea";
+
+/**
+ * D-5309-07: stacked, a control a frame removes (Why? once the row turns manual, the action once it stops) took focus
+ * with it, so the row hands focus to its next stop, else its previous one; never while focus went elsewhere. In the
+ * roving grid CMP-049 keeps the Tab stop on the cell.
+ */
+function useFocusHandoff(stacked: boolean): {
+  readonly ref: RefObject<HTMLTableRowElement>;
+  readonly onFocus: (event: FocusEvent<HTMLTableRowElement>) => void;
+} {
+  const ref = useRef<HTMLTableRowElement>(null);
+  const held = useRef<{ readonly node: Element; readonly cell: number } | null>(null);
+  useLayoutEffect(() => {
+    const was = held.current;
+    const row = ref.current;
+    if (was === null || row === null || was.node.isConnected) return;
+    held.current = null;
+    const active = document.activeElement;
+    if (!stacked || (active !== null && active !== document.body)) return;
+    const stops = [...row.querySelectorAll<HTMLElement>(STOPS)];
+    const next = stops.find((stop) => cellIndexOf(row, stop) >= was.cell) ?? stops.at(-1);
+    next?.focus();
+  });
+  return {
+    ref,
+    onFocus: (event) => {
+      const row = event.currentTarget;
+      held.current = { node: event.target, cell: cellIndexOf(row, event.target) };
+    },
+  };
+}
+
+/** The cells each plan draws, in order. */
+const WIDE_IDS: readonly ColumnId[] = COLUMNS.map((column) => column.id);
+const NARROW_IDS: readonly ColumnId[] = COLUMNS.filter((c) => c.narrowPx !== null).map((c) => c.id);
+
+/** How the row draws one cell: its controls (CMP-049's interactive cell), a number, the echo's words. */
+interface CellPlan {
+  readonly controls?: boolean;
+  readonly numeric?: boolean;
+  readonly echo?: string;
+}
+
+/** A figure and its unit stay on one line ("34.8 GB", "0.71/d est."): the figures wrap at their " · " alone. */
+const unbroken = (figures: string): string =>
+  figures.replace(/(\d) (GB|MB)\b/g, "$1\u00a0$2").replace(" est.", "\u00a0est.");
+
+/**
+ * The Size cell: the figures, then the share of the budget on its own line (a break, so the cell's words read as one
+ * text), end-aligned under its end-aligned header (board 05).
+ */
+function SizeView({ row }: { readonly row: RecorderStatusRowData }): JSX.Element {
+  const [size, share] = sizeParts(row);
+  return (
+    <span className="cv-rsr__num">
+      {unbroken(size)}
+      {share === null ? null : (
+        <>
+          <br /> {share}
+        </>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The table variant: the row's cells for the host's grid (nine, or seven `narrow`), named by the row's summary (D02H
+ * table 3). Enter on a cell with no control opens the row's detail (D02 §10.1, B-5309-03).
+ */
+function GridRow({
+  grid,
+  narrow = false,
+  ...row
+}: RecorderStatusRowData & TableVariant): JSX.Element {
   const id = useId();
   const action = actionOf(row);
-  const cell = (column: number, content: ReactNode, controls = false, numeric = false) => (
-    <td
-      {...grid.cellProps(column, numeric ? { numeric } : undefined)}
-      data-cv-interactive={controls ? "" : undefined}
-    >
-      {grid.label(column)}
-      {numeric ? <span className="cv-rsr__num">{content}</span> : content}
-    </td>
-  );
+  const stacked = grid.stacked === true;
+  const handoff = useFocusHandoff(stacked);
+  const shown: readonly ColumnId[] = narrow ? NARROW_IDS : WIDE_IDS;
+  const cell = (
+    column: ColumnId,
+    content: ReactNode,
+    options: CellPlan = {},
+  ): JSX.Element | null => {
+    const place = shown.indexOf(column);
+    if (place < 0) return null;
+    const { controls = false, numeric = false, echo } = options;
+    return (
+      <td
+        {...grid.cellProps(place, {
+          ...(numeric ? { numeric } : {}),
+          ...(echo === undefined ? {} : { echo }),
+        })}
+        data-cv-interactive={controls ? "" : undefined}
+      >
+        {grid.label(place)}
+        {numeric ? <span className="cv-rsr__num">{content}</span> : content}
+      </td>
+    );
+  };
+  // A held Enter opens the detail once: its repeats before a keyup or a blur open nothing (as useHoldOnce).
+  const held = useRef(false);
+  const onKeyDown = (event: KeyboardEvent<HTMLTableRowElement>): void => {
+    const open = row.onOpenDetail;
+    const bare = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+    if (open === undefined || event.defaultPrevented || event.key !== "Enter" || !bare) return;
+    // From a cell itself, never a control in it; Enter on a cell with controls is CMP-049's way into them.
+    const target = event.target as HTMLElement;
+    if (!target.matches("td, th") || target.hasAttribute("data-cv-interactive")) return;
+    event.preventDefault();
+    if (held.current || event.repeat) return;
+    held.current = true;
+    open();
+  };
+  const release = (): void => {
+    held.current = false;
+  };
   return (
     <tr
       {...grid.rowProps}
+      ref={handoff.ref}
       className={cx(grid.rowProps.className, "cv-rsr-row")}
       aria-label={recorderStatusSummary(row)}
       data-cmp="CMP-177"
       data-stale={row.stale === true ? "" : undefined}
+      data-stacked={stacked ? "" : undefined}
+      onKeyDown={onKeyDown}
+      onKeyUp={release}
+      onBlur={release}
+      onFocus={handoff.onFocus}
     >
-      <th
-        {...grid.cellProps(0, { header: true })}
-        data-cv-interactive={row.onOpenDetail === undefined ? undefined : ""}
-      >
+      <th {...grid.cellProps(0, { header: true })}>
         {grid.label(0)}
-        <SymbolView row={row} />
+        <SymbolView row={row} stop={stacked} />
       </th>
-      {cell(1, <ReasonView row={row} />, row.reason !== "manual")}
-      {cell(2, <StateView row={row} />)}
-      {cell(3, sinceOf(row), false, true)}
-      {cell(4, depthOf(row), false, true)}
-      {cell(5, sizeOf(row), false, true)}
-      {cell(6, retentionOf(row))}
+      {cell("reason", <ReasonView row={row} />, { controls: row.reason !== "manual" })}
+      {cell("state", <StateView row={row} />)}
+      {cell("since", sinceOf(row), { numeric: true })}
+      {cell("depth", depthOf(row), { numeric: true })}
+      {cell("size", <SizeView row={row} />)}
+      {cell("retention", retentionOf(row))}
       {row.state === "refused"
-        ? cell(7, DASH)
-        : cell(7, <KeepSwitch row={row} reasonId="" visible={false} />, true)}
+        ? cell("keep", DASH)
+        : cell("keep", <KeepSwitch row={row} reasonId="" visible={false} />, { controls: true })}
       {action === undefined
-        ? cell(8, null)
+        ? cell("action", null)
         : cell(
-            8,
+            "action",
             <>
-              {/* 2b (D02 D-15): the reason's node, hidden and in the DOM at mount; CMP-016 echoes it. */}
               <RowButton
                 {...(action.reason === undefined ? {} : { disabledReason: action.reason })}
                 reasonId={`${id}-reason`}
-                echo
+                busy={row.actionBusy === true}
                 onPress={action.onPress}
               >
                 {action.label}
               </RowButton>
-              <span id={`${id}-reason`} className="cv-visually-hidden">
+              {/*
+                The reason's node, in the DOM at mount: hidden in the grid, whose one CMP-016 echo shows it on the cell
+                (2b, D02 D-15); inline under the action once the grid stacks into cards (2a, D02 §1's 200 % paragraph).
+              */}
+              <span
+                id={`${id}-reason`}
+                className={stacked ? "cv-rsr__reason" : "cv-visually-hidden"}
+              >
                 {action.reason}
               </span>
             </>,
-            true,
+            {
+              controls: true,
+              ...(stacked || action.reason === undefined ? {} : { echo: action.reason }),
+            },
           )}
     </tr>
   );
@@ -691,7 +911,7 @@ function Card({
             <RowButton
               {...(action.reason === undefined ? {} : { disabledReason: action.reason })}
               reasonId={reasonId}
-              echo={false}
+              busy={row.actionBusy === true}
               onPress={action.onPress}
             >
               {action.label}

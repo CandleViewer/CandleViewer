@@ -8,7 +8,6 @@ import {
   type JSX,
   type KeyboardEvent,
 } from "react";
-import { Icon } from "../icons/Icon.js";
 import { Button } from "./Button.js";
 import { GatedAnnounceProvider } from "./internal/disabledReason.js";
 import { Menu, type MenuActionItem, type MenuItem } from "./Menu.js";
@@ -81,22 +80,14 @@ function changeSentence(
   return after.length === 0 ? COPY.cleared : COPY.changed(after.map(chipOf).join(", "));
 }
 
-/** T2 rendering 2a (G-T2.1d): the CMP-019 `lock`, named "Not available", leads the full label. */
-const Locked = ({ label }: { readonly label: string }): JSX.Element => (
-  <>
-    <span className="cv-filterbar__lock">
-      <Icon name="lock" decorative={false} label="Not available" />
-    </span>
-    {label}
-  </>
-);
-
 /**
  * CMP-055 FilterBar: a `role="group"` "Active filters" of removable CMP-011 chips, "{field}: {value}", then "Add
  * filter", a CMP-041 menu of the fields whose value submenus check the applied values, then "Clear all" from two
  * chips on. Enter, Space, Delete or Backspace on a chip removes it; focus goes to the next chip, else the previous,
  * else Add filter, and a held key acts once. Each change of the set, whoever made it, is said once, politely, never
- * at mount or per key. With `writeReason` every control is T2 and the reason is drawn once, beside them.
+ * at mount or per key. With `writeReason` every control is T2 and the reason is drawn once, beside them: Add filter
+ * and Clear all point at it (rendering 2a, CMP-001's named lock leading the full label, as CMP-177's controls do);
+ * a chip's remove, icon-only, echoes it (2b).
  */
 export function FilterBar({
   fields,
@@ -108,6 +99,7 @@ export function FilterBar({
 }: FilterBarProps): JSX.Element {
   const reason = writeReason?.trim() || undefined; // whitespace is no reason, as CMP-001 reads it
   const addId = useId();
+  const reasonId = useId();
   const root = useRef<HTMLDivElement>(null);
   // The bar's own region re-keys its node, so the same sentence said twice is read twice.
   const [said, setSaid] = useState({ text: "", n: 0 });
@@ -185,15 +177,18 @@ export function FilterBar({
       };
     }),
   }));
-  const gate = reason === undefined ? {} : { disabledReason: reason };
+  // The one notice beside the controls describes every one of them (E09-D09 §2.2, one notice, many pointers): Add
+  // filter and Clear all lead with CMP-001's named lock (2a), each chip's remove keeps its badge and echo (2b).
+  const pointed =
+    reason === undefined ? {} : { disabledReason: reason, disabledReasonId: reasonId };
   const add = (
     <Button
       id={addId}
       variant="secondary"
-      {...(reason === undefined ? { iconLeft: "plus" as const } : gate)}
+      {...(reason === undefined ? { iconLeft: "plus" as const } : pointed)}
       onKeyDown={onAddKey}
     >
-      {reason === undefined ? COPY.add : <Locked label={COPY.add} />}
+      {COPY.add}
     </Button>
   );
 
@@ -218,20 +213,19 @@ export function FilterBar({
                 className="cv-filterbar__chip"
                 onKeyDown={(event) => onChipKey(event, at)}
               >
-                <Tag label={chipOf(filter)} removable onRemove={() => drop(at)} {...gate} />
+                <Tag label={chipOf(filter)} removable onRemove={() => drop(at)} {...pointed} />
               </li>
             ))}
           </ul>
         )}
         <Menu trigger={add} items={items} announceReason={say} />
         {value.length < 2 ? null : (
-          <Button variant="ghost" {...gate} onClick={() => drop(-1)}>
-            {reason === undefined ? COPY.clearAll : <Locked label={COPY.clearAll} />}
+          <Button variant="ghost" {...pointed} onClick={() => drop(-1)}>
+            {COPY.clearAll}
           </Button>
         )}
         {reason === undefined ? null : (
-          // The one visible copy (2a, one notice); each control's own reason node is its description.
-          <span className="cv-filterbar__reason" aria-hidden="true">
+          <span id={reasonId} className="cv-filterbar__reason">
             {reason}
           </span>
         )}

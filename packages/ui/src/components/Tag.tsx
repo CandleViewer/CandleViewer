@@ -38,6 +38,11 @@ interface NeutralRemovable extends TagBase {
   disabled?: boolean;
   /** Gated removal (E09-D09 §2.2 T2) through the nested CMP-002: lock badge, reason as its description. */
   disabledReason?: string;
+  /**
+   * The node in which the host already shows `disabledReason` (one notice, many pointers: CMP-055's bar): the remove is
+   * described by it and renders no copy of its own; the lock badge and the echo stay (2b).
+   */
+  disabledReasonId?: string;
 }
 
 /** A status chip: its registry glyph always renders, so `icon` is not accepted, and it is never removable. */
@@ -95,6 +100,9 @@ export function Tag(props: TagProps): JSX.Element {
           {...(removable.disabledReason === undefined
             ? {}
             : { disabledReason: removable.disabledReason })}
+          {...(removable.disabledReasonId === undefined
+            ? {}
+            : { disabledReasonId: removable.disabledReasonId })}
           onClick={() => removable.onRemove()}
         />
       ) : null}
