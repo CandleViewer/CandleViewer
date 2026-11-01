@@ -31,6 +31,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
+from candleviewer.accounts.models import ExchangeAccount
 from candleviewer.accounts.selfcheck import (
     BOOT_DEADLINE_S,
     FAILED,
@@ -41,6 +42,7 @@ from candleviewer.accounts.selfcheck import (
     KeySelfCheck,
     Outcome,
     is_fresh,
+    lapsed,
     policy_violation,
 )
 from candleviewer.accounts.service import AccountsService
@@ -74,6 +76,7 @@ from candleviewer.secrets.errors import SnapshotInvalid, WithdrawPermissionRejec
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import (
     ExchangeAccountRow,
+    InvalidKey,
     PolicyDisarm,
     SelfCheckTargetRow,
     VerifiedKey,
@@ -95,9 +98,11 @@ FAILURE = {"outcome", "severity", "reason"}
 #: No audit record names an exchange UID: it is Confidential, and Viewers read the audit log (4b).
 FACTS = {"fetched_at", "readOnly", "permissions", "expiredAt", "uta", "withdraw_enabled"}
 CODES = {"warnings", "failures"}
+#: A failure's record also names the key's new status, ahead of its write (#5281, C-2.9).
+STATUS = {"key_status"}
 WITHDRAW_FAILURE = [
     ("latch", FAILED), ("audit", TESTED), ("error", KEY), ("disable", ACCT), ("audit", DISABLED),
-    ("mark", ACCT), ("audit", VIOLATION),
+    ("mark", ACCT), ("retire", KEY), ("audit", VIOLATION),
 ]  # fmt: skip
 
 
@@ -171,6 +176,12 @@ class World:
         self.armed = {row.account.id: row.account.trading_enabled for row in rows}
         #: The policy-disarm columns by account: [rule code, disarmed at, record marked at].
         self.disarms: dict[UUID, list[Any]] = {}
+        #: `api_keys.status` of each key a failed check retired (#5281), and the stored `invalid`
+        #: keys the boot pass reads; `None` until a test plants them.
+        self.statuses: dict[UUID, str] = {}
+        self.invalid: tuple[InvalidKey, ...] = ()
+        self.invalid_error: Exception | None = None
+        self.retire_error: Exception | None = None
         self.events: list[tuple[Any, ...]] = []
         self.built: list[tuple[UUID, str]] = []
         self.gate = ReadOnlyGate()
@@ -223,6 +234,22 @@ class World:
         if self.disable_error is not None:  # applied, but the answer never came back
             raise self.disable_error
         return armed
+
+    async def retire_key(self, key_id: UUID, *, status: str) -> bool:
+        await self._io("retire_key")
+        self.events.append(("retire", key_id, status))
+        if self.retire_error is not None:
+            raise self.retire_error
+        if key_id in self.statuses:  # one conditional update: only a usable key changes
+            return False
+        self.statuses[key_id] = status
+        return True
+
+    async def invalid_keys(self) -> tuple[InvalidKey, ...]:
+        await self._io("invalid_keys")
+        if self.invalid_error is not None:
+            raise self.invalid_error
+        return self.invalid
 
     async def owed_disarms(self) -> tuple[PolicyDisarm, ...]:
         await self._io("owed_disarms")
@@ -396,6 +423,7 @@ async def test_verdict_failure_latches_records_the_rule_and_disables(
         ("error", KEY),
         ("disable", ACCT),
         ("mark", ACCT),
+        ("retire", KEY),
     ]
     check = w.check.results[KEY]
     assert (check.outcome, check.code, check.egress_ip) == ("failed", rule, EGRESS)
@@ -407,8 +435,8 @@ async def test_verdict_failure_latches_records_the_rule_and_disables(
     ("info", "fields", "state"),
     [
         (None, RECORD, FACTS | CODES),
-        (facts(ips=["198.51.100.9"]), RECORD | FAILURE, FACTS | CODES),
-        (KeyRefused(Refusal.UNKNOWN_KEY, 10003), RECORD | FAILURE, CODES),
+        (facts(ips=["198.51.100.9"]), RECORD | FAILURE, FACTS | CODES | STATUS),
+        (KeyRefused(Refusal.UNKNOWN_KEY, 10003), RECORD | FAILURE, CODES | STATUS),
     ],
     ids=["pass", "ip-mismatch", "refusal"],
 )
@@ -452,7 +480,7 @@ async def test_every_key_of_a_pass_is_judged_and_recorded_on_its_own() -> None:
 async def test_an_unarmed_account_is_not_recorded_as_disabled() -> None:
     w = World(target(armed=False), info=facts(permissions=WITHDRAW))
     await w.run()
-    assert (w.kinds(), w.disarms) == (WITHDRAW_FAILURE[:4] + WITHDRAW_FAILURE[-1:], {})
+    assert (w.kinds(), w.disarms) == (WITHDRAW_FAILURE[:4] + WITHDRAW_FAILURE[-2:], {})
 
 
 async def test_an_account_armed_after_the_key_list_read_is_still_disabled() -> None:
@@ -466,7 +494,8 @@ async def test_a_refused_audit_never_stops_the_force_disable() -> None:
     w = World(target(), info=facts(permissions=WITHDRAW))
     w.fail_audit = True
     await w.run()
-    assert (w.kinds(), w.armed[ACCT]) == ([("latch", FAILED), ("disable", ACCT)], False)
+    enforced = [("latch", FAILED), ("disable", ACCT)]  # the status waits for its record
+    assert (w.kinds(), w.armed[ACCT]) == (enforced, False)
 
 
 async def test_a_refused_disable_record_is_sent_on_the_next_pass_and_then_cleared() -> None:
@@ -475,7 +504,7 @@ async def test_a_refused_disable_record_is_sent_on_the_next_pass_and_then_cleare
     await w.run()
     w.fail_audit, w.events = False, []
     await w.run()
-    repeat = [*WITHDRAW_FAILURE[1:4], ("audit", VIOLATION)]  # disarmed already: nothing to record
+    repeat = [*WITHDRAW_FAILURE[1:4], *WITHDRAW_FAILURE[-2:]]  # disarmed already: no record
     assert w.kinds() == [("audit", DISABLED), ("mark", ACCT), *repeat]
     assert w.audit(DISABLED) == disarm_record()
     w.events = []
@@ -755,8 +784,9 @@ async def test_a_hanging_write_never_undoes_the_failure_latch(step: str) -> None
 
 def test_the_overall_deadline_covers_every_bounded_step_of_a_check() -> None:
     check = World(timeout_s=25.0, key_deadline_s=15.0).check
-    # verify(); then the close, six audit or store steps and one step of margin
-    assert check._deadline_s == 15.0 + (1 + 6 + 1) * 25.0
+    # verify(); then the close, seven audit or store steps (the status write is the seventh) and
+    # one step of margin
+    assert check._deadline_s == 15.0 + (1 + 7 + 1) * 25.0
 
 
 async def test_a_check_past_its_deadline_fails_closed() -> None:
@@ -1343,11 +1373,20 @@ async def test_a_refused_violation_record_withholds_neither_the_rule_code_nor_th
 @pytest.mark.parametrize(
     ("hang", "started"),
     [
+        # a cut `account.tested` withholds the status write (C-2.9: no change without its record)
         ({"emit"}, [TESTED, "disable_trading", DISABLED, VIOLATION]),
         ({TESTED}, [TESTED, "disable_trading", DISABLED, "mark_disarm_audited", VIOLATION]),
         (
             {VIOLATION},
-            [TESTED, "record_error", "disable_trading", DISABLED, "mark_disarm_audited", VIOLATION],
+            [
+                TESTED,
+                "record_error",
+                "disable_trading",
+                DISABLED,
+                "mark_disarm_audited",
+                "retire_key",
+                VIOLATION,
+            ],
         ),
     ],
     ids=["every-record", "account-tested", "violation-record"],
@@ -1409,7 +1448,7 @@ async def test_a_borrow_the_c28_recheck_refuses_is_a_withdraw_verdict_not_check_
     assert (w.kinds(), w.check.results[KEY].code) == (WITHDRAW_FAILURE, "key_withdraw_permission")
     assert (w.armed[ACCT], w.audit(VIOLATION)["severity"]) == (False, "critical")
     # the runbook's tamper discriminator: its record lists no key-info fact, `permissions` included
-    assert set(w.audit(TESTED)["after_state"]) == CODES
+    assert set(w.audit(TESTED)["after_state"]) == CODES | STATUS
 
 
 async def test_a_code_the_disarm_check_refuses_is_replaced_and_never_blocks_the_disarm() -> None:
@@ -1428,3 +1467,207 @@ async def test_a_mark_that_finds_the_disarm_no_longer_owed_is_logged() -> None:
         await within(w.check._settle(PolicyDisarm(ACCT, "key_withdraw_permission", NOW - HOUR)))
     unchanged = {"event": "key_selfcheck_disable_mark_unchanged", "account_id": str(ACCT)}
     assert ({**unchanged, "log_level": "error"} in logs, w.disarms[ACCT][2]) == (True, None)
+
+
+# --- #5281 (E49-S01, #1337): a failed check retires the key; one latch, the lapsed key apart ---
+
+#: Before NOW: the key's own expiry has passed.
+LAPSED = "2026-10-01T00:00:00Z"
+#: One case per verdict class of the ruling (6556905061): a key rejected on verified facts, an
+#: expired key whose check also failed (on its facts, or refused by the venue as expired, so
+#: nothing was verified), and a key the check cannot verify (deleted at the venue: 10003).
+FAILED_CLASSES = pytest.mark.parametrize(
+    ("info", "rule"),
+    [
+        (facts(permissions=WITHDRAW), "key_withdraw_permission"),
+        (facts(expiredAt=LAPSED, ips=["198.51.100.9"]), "key_ip_whitelist_mismatch"),
+        (KeyRefused(Refusal.KEY_EXPIRED, 33004), "key_expired"),
+        (KeyRefused(Refusal.UNKNOWN_KEY, 10003), "key_wrong_environment"),
+    ],
+    ids=["rejected", "expired-with-failed-check", "expired-refused", "cannot-verify"],
+)
+
+
+@FAILED_CLASSES
+async def test_selfcheck_failed_check_marks_the_key_invalid_and_latches_the_system(
+    info: object, rule: str
+) -> None:
+    w = World(target(), info=info)
+    await w.run()
+    assert w.statuses == {KEY: "invalid"}
+    assert w.gate.latched_reason_code == FAILED  # the whole system read-only (SR-032)
+    assert w.armed[ACCT] is False  # and the account disabled
+    assert [k for k in w.kinds() if k[0] != "audit"] == [
+        ("latch", FAILED), ("error", KEY), ("disable", ACCT), ("mark", ACCT), ("retire", KEY),
+    ]  # fmt: skip
+    check = w.check.results[KEY]
+    assert (check.outcome, check.code, w.check.failing) == ("failed", rule, 1)
+
+
+@FAILED_CLASSES
+async def test_selfcheck_failed_check_audits_each_state_change_ahead_of_the_status(
+    info: object, rule: str
+) -> None:
+    """C-2.9: `account.tested` names the key's new status and comes before its write; the
+    account's disable has its own record."""
+    w = World(target(), info=info)
+    await w.run()
+    tested = w.audit(TESTED)
+    assert (tested["outcome"], tested["reason"], tested["after_state"]["key_status"]) == (
+        "failure", rule, "invalid",
+    )  # fmt: skip
+    disabled = w.audit(DISABLED)
+    assert (disabled["object_id"], disabled["reason"]) == (str(ACCT), rule)
+    kinds = w.kinds()
+    assert kinds.index(("audit", TESTED)) < kinds.index(("retire", KEY))
+
+
+async def test_selfcheck_compliant_key_never_latches_or_changes_status() -> None:
+    """The negative control: a passing key is never retired, disarmed or latched on."""
+    w = World(target())
+    await w.run()
+    await w.run()
+    assert (w.statuses, w.of("retire"), w.of("disable")) == ({}, [], [])
+    assert (w.gate.latched_reason_code, w.armed[ACCT]) == (None, True)
+    assert w.check.results[KEY].outcome == "passed"
+
+
+async def test_selfcheck_lapsed_verifiable_key_disables_its_account_only() -> None:
+    """US-ACCT-005 / TC-212 (SR-034): the key's own expiry, withdrawal-off and the allowlist
+    verified, disables order placement for that account alone; no system latch."""
+    w = World(target(), target(key=KEY2, acct=ACCT2))
+    w.infos[KEY] = facts(expiredAt=LAPSED)
+    await w.run()
+    assert w.gate.latched_reason_code is None
+    assert w.statuses == {KEY: "expired"}
+    assert (w.armed[ACCT], w.armed[ACCT2]) == (False, True)
+    disabled = w.audit(DISABLED)
+    assert (disabled["object_id"], disabled["reason"]) == (str(ACCT), "key_expired")
+    [tested] = [e[2] for e in w.of("audit") if e[1] == TESTED and e[2]["object_id"] == str(KEY)]
+    assert (tested["outcome"], tested["after_state"]["key_status"]) == ("failure", "expired")
+    assert (w.check.results[KEY].outcome, w.check.results[KEY2].outcome) == ("failed", "passed")
+
+
+@pytest.mark.parametrize(
+    ("info", "lapsed_key"),
+    [
+        (facts(expiredAt=LAPSED), True),
+        (facts(expiredAt=LAPSED, ips=["198.51.100.9"]), False),
+        (KeyRefused(Refusal.KEY_EXPIRED, 33004), False),
+        (facts(), False),
+    ],
+    ids=["lapsed", "expired-with-failed-check", "expired-refused", "passing"],
+)
+async def test_lapsed_is_only_a_verified_key_whose_one_failure_is_its_expiry(
+    info: object, lapsed_key: bool
+) -> None:
+    w = World(target(), info=info)
+    await w.run()
+    verdict = w.check.results[KEY].result
+    assert verdict is not None and lapsed(verdict) is lapsed_key
+
+
+async def test_selfcheck_on_demand_failure_takes_the_same_path() -> None:
+    """`testApiKey` (decision 11 on #836): a failure found on demand retires and latches too."""
+    w = World(target(), info=KeyRefused(Refusal.UNKNOWN_KEY, 10003))
+    account = ExchangeAccount.model_validate(target().account, from_attributes=True)
+    owner = {"actor_label": "user:owner", "actor_user_id": str(UUID(int=99))}
+    await within(w.check.test(target(), account, NOW, owner))
+    assert (w.statuses, w.gate.latched_reason_code, w.armed[ACCT]) == (
+        {KEY: "invalid"}, FAILED, False,
+    )  # fmt: skip
+
+
+async def test_selfcheck_boot_latches_again_on_a_stored_invalid_key() -> None:
+    """A restart: the key left the key list as `invalid`, so the boot pass reads it, latches
+    `FAILED` and keeps its result on display, signing nothing for it; the read runs at boot only."""
+    w = World(target(key=KEY2, acct=ACCT2))
+    w.invalid = (InvalidKey(KEY, ACCT, "key_wrong_environment", NOW - HOUR),)
+    await w.run()
+    assert w.gate.latched_reason_code == FAILED
+    check = w.check.results[KEY]
+    assert (check.outcome, check.code, check.account_id) == (
+        "failed", "key_wrong_environment", ACCT,
+    )  # fmt: skip
+    assert [built for built in w.built if built[0] == KEY] == []
+    await w.run()
+    assert (w.started.count("invalid_keys"), w.check.failing) == (1, 1)
+
+
+async def test_selfcheck_boot_with_the_invalid_key_revoked_latches_nothing() -> None:
+    """Once the Owner revokes it, the read finds none: the restart serves again."""
+    w = World(target())
+    await w.run()
+    assert (w.gate.latched_reason_code, w.started.count("invalid_keys")) == (None, 1)
+
+
+async def test_selfcheck_boot_invalid_key_read_failure_latches_unavailable() -> None:
+    w = World(target())
+    w.invalid_error = RuntimeError("store unavailable")
+    await w.run()
+    assert w.gate.latched_reason_code == UNAVAILABLE
+
+
+async def test_selfcheck_invalid_key_stays_failing_after_it_leaves_the_key_list() -> None:
+    w = World(target(), info=facts(permissions=WITHDRAW))
+    await w.run()
+    w.rows = []  # stored `invalid`: the usable-key read no longer lists it
+    await w.run()
+    assert (w.check.results[KEY].outcome, w.check.failing) == ("failed", 1)
+    assert w.gate.latched_reason_code == FAILED
+
+
+@pytest.mark.parametrize(
+    ("info", "status"),
+    [(facts(permissions=WITHDRAW), "invalid"), (facts(expiredAt=LAPSED), "expired")],
+    ids=["invalid", "expired"],
+)
+async def test_selfcheck_refused_tested_record_withholds_the_status_until_it_is_written(
+    info: object, status: str
+) -> None:
+    """C-2.9, write-ahead: no status change without its `account.tested`. A refused record
+    leaves the key as it was (the latch and the disarm hold, the disarm's record owed), and the
+    next pass, with the sink answering, records the status and then writes it."""
+    w = World(target(), info=info)
+    w.refused = {TESTED}
+    with capture_logs() as logs:
+        await w.run()
+    assert (w.statuses, w.of("retire"), w.armed[ACCT]) == ({}, [], False)
+    [withheld] = [e for e in logs if e["event"] == "key_selfcheck_retire_withheld"]
+    assert (withheld["log_level"], withheld["key_status"]) == ("critical", status)
+    w.refused, w.events = set(), []
+    await w.run()
+    assert w.statuses == {KEY: status}
+    assert w.audit(TESTED)["after_state"]["key_status"] == status
+    kinds = w.kinds()
+    assert kinds.index(("audit", TESTED)) < kinds.index(("retire", KEY))
+
+
+async def test_selfcheck_latch_notice_names_what_ends_each_latch() -> None:
+    """A `FAILED` latch holds across restarts until the Owner revokes the key (#5281)."""
+    w = World(target(), info=facts(permissions=WITHDRAW))
+    await w.run()
+    assert w.gate.reason_text == (
+        "A stored API key failed its self-check. Order entry stays off until the Owner revokes"
+        " the failing key and a restart passes the check."
+    )
+    unknown = World(target())
+    unknown.invalid_error = RuntimeError("store unavailable")
+    await unknown.run()
+    assert unknown.gate.reason_text == (
+        "The stored API keys could not be checked. Order entry stays off until a restart passes"
+        " the check."
+    )
+
+
+async def test_selfcheck_refused_status_write_still_latches_disarms_and_records() -> None:
+    """The status write is bounded and never undoes the enforcement before it."""
+    w = World(target(), info=facts(permissions=WITHDRAW))
+    w.retire_error = RuntimeError("store unavailable")
+    with capture_logs() as logs:
+        await w.run()
+    assert (w.gate.latched_reason_code, w.armed[ACCT]) == (FAILED, False)
+    assert ("audit", VIOLATION) in w.kinds()  # the last step still runs
+    [failed] = [e for e in logs if e["event"] == "key_selfcheck_retire_failed"]
+    assert (failed["log_level"], failed["key_status"]) == ("critical", "invalid")
+    assert KEY not in w.check._invalid  # the next pass checks it again

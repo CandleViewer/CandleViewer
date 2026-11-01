@@ -221,6 +221,20 @@ async def test_cancel_admitted_sends_one_cancel_and_answers_once_b1_settled_it(
     assert requests(rig, "orders.cancel") == [("success", reason), ("success", "cancelled")]
 
 
+@pytest.mark.parametrize("reason", ["user", "cancel_all"])
+async def test_cancel_admitted_proceeds_while_the_read_only_gate_is_tripped(
+    rig: SubmitRig, reason: ex.CancelReason
+) -> None:
+    """#5281 (SR-032, the ruling of record on #1337): the stored-key latch makes the system read
+    only, and a cancel, per order or cancel-all's, still reaches the venue."""
+    row = await placed(rig)
+    rig.read_only.is_read_only, rig.read_only.reason_code = True, "accounts.key_selfcheck_failed"
+    got = await exits_of(rig).cancel_admitted(row, actor=actor(), reason=reason, request_id=None)
+    assert (got.kind, got.status, got.lifecycle_state) == ("accepted", 202, "cancelled")
+    assert [c.method for c in rig.port.demo.calls].count("cancel_order") == 1
+    assert requests(rig, "orders.cancel") == [("success", reason), ("success", "cancelled")]
+
+
 async def test_a_final_order_is_answered_as_it_stands_and_nothing_is_sent(rig: SubmitRig) -> None:
     """C-2.9 (the orchestrator's ruling of 2026-10-24 21:47Z (2)): the user's cancel is the action
     even when nothing is sent, so it is recorded ahead of its `202`, `orders.cancel` with the

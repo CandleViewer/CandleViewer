@@ -43,8 +43,11 @@ METHODS = frozenset(
         "disable_trading",
         "owed_disarms",
         "mark_disarm_audited",
+        "retire_key",
+        "invalid_keys",
     }
 )
+#: The writes, and the boot pass's invalid-key read (#5281): the wiring has no use for either.
 WRITES = METHODS - {"targets"}
 #: Ways to reach an attribute by a name built at run time: the wiring has no use for one.
 DYNAMIC = frozenset({"getattr", "setattr", "vars", "eval", "exec"})
