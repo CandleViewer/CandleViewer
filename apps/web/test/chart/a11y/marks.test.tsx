@@ -1,6 +1,7 @@
+import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import {
   FootprintCellContent,
@@ -16,6 +17,15 @@ const CSS = readFileSync(
   "utf8",
 );
 const mount = (node: JSX.Element): HTMLElement => render(node).container;
+
+const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
+  "axe-core",
+) as {
+  run: (
+    el: Element,
+    o?: object,
+  ) => Promise<{ violations: { id: string; impact?: string | null }[] }>;
+};
 
 describe("no-hue-alone (05 §4): every state survives without colour", () => {
   it("footprint: delta −8 and +8, flagged and plain cells", () => {
@@ -145,5 +155,48 @@ describe("the marks' channels", () => {
   it("a book side reads as its word", () => {
     expect(mount(<SideMark side="bid" />).textContent).toBe("Bid");
     expect(mount(<SideMark side="sell" />).textContent).toBe("▼ Sell");
+  });
+});
+
+describe("faults and the tree (record minors, C-14.1)", () => {
+  it("one bad field draws a dash; the cell and the value still render (no RangeError)", () => {
+    expect(mount(<SignedValue value="1e3" />).textContent).toBe("—");
+    expect(mount(<SignedValue value="x" />).querySelector("[aria-hidden='true']")).toBeNull();
+    const cell = mount(
+      <FootprintCellContent
+        cell={{ price: "1", bid: "-2", ask: "1e3", delta: "NaN", imbalance: "bid" }}
+      />,
+    );
+    expect(cell.textContent).toBe("— × ——◢Bid imbalance");
+  });
+
+  it("every mark has no serious or critical axe violation", async () => {
+    // axe probes icon ligatures on a canvas jsdom lacks; without one it skips the probe.
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    const { container } = render(
+      <main>
+        <SideLegend />
+        <p>
+          <SignedValue value="8" /> <SignedValue value="-8" /> <SignedValue value="0" />{" "}
+          <SignedValue value="bad" />
+        </p>
+        <p>
+          <ImbalanceMark side="bid" /> <ImbalanceMark side="ask" />
+        </p>
+        <p>
+          <SideMark side="bid" /> <SideMark side="ask" /> <SideMark side="buy" />{" "}
+          <SideMark side="sell" />
+        </p>
+        <p>
+          <FootprintCellContent
+            cell={{ price: "1", bid: "2", ask: "10", delta: "8", imbalance: "ask" }}
+          />
+        </p>
+      </main>,
+    );
+    const res = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    const bad = res.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+    expect(bad.map((v) => v.id)).toEqual([]);
+    vi.restoreAllMocks();
   });
 });

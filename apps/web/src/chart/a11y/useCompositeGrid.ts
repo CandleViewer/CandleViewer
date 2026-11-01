@@ -1,8 +1,9 @@
 /**
  * The thin React host of `compositeGrid` (E47-S02, #1358): spreads `gridProps` on the `role="grid"` element,
  * `rowProps(row)` on each drawn row and `cellProps(row, col)` on each cell. Keys the model knows move the one Tab stop
- * and focus follows; every other key (Enter, letters, chords) is left to the host. Focus moves only on a user key, or
- * back to the stop when churn removed the focused row while focus was in the grid (`05` §3.4.3: never stolen).
+ * and focus follows; every other key (Enter, letters, chords), and every key in an editable control inside a cell,
+ * is left to the host. Focus moves only on a user key, or back to the stop when churn removed the focused row while
+ * focus was in the grid (`05` §3.4.3: never stolen).
  */
 import { useReducer, useRef, useLayoutEffect, useState } from "react";
 import type { FocusEvent, KeyboardEvent, RefObject } from "react";
@@ -73,6 +74,24 @@ const step = (s: GridState, { action, keys, nearest }: Step): GridState =>
 const cellIn = (root: HTMLElement | null, pos: GridPos): HTMLElement | null =>
   root?.querySelector<HTMLElement>(`[data-cg-row="${pos.row}"][data-cg-col="${pos.col}"]`) ?? null;
 
+const NOT_TEXT = new Set([
+  "button",
+  "checkbox",
+  "radio",
+  "submit",
+  "reset",
+  "image",
+  "color",
+  "file",
+]);
+
+/** A control that owns the arrows, Home and End itself (a text field, a select, an editable region). */
+const isEditable = (target: EventTarget | null): boolean =>
+  (target instanceof HTMLInputElement && !NOT_TEXT.has(target.type)) ||
+  target instanceof HTMLTextAreaElement ||
+  target instanceof HTMLSelectElement ||
+  (target instanceof HTMLElement && target.isContentEditable);
+
 const placeOf = (target: EventTarget | null): GridPos | null => {
   const cell = target instanceof Element ? target.closest("[data-cg-row]") : null;
   if (cell === null) return null;
@@ -97,10 +116,18 @@ export function useCompositeGrid(options: UseCompositeGridOptions): CompositeGri
   );
   // Churn is folded in during render (React's "adjust state on a prop change"), so no commit ever shows a stop on a
   // row that has gone, and the restore below sees the settled stop.
-  const [seen, setSeen] = useState({ rows, cols, rowKeys });
-  if (seen.rows !== rows || seen.cols !== cols || seen.rowKeys !== rowKeys) {
-    setSeen({ rows, cols, rowKeys });
-    dispatch({ action: { type: "data", rows, cols }, keys: rowKeys, nearest: options.nearestRow });
+  // The layout options are followed too: a host that changes its paging, ends or window is not read once.
+  const { page, homeEnd, pageRows, windowRows } = config;
+  const now = { rows, cols, rowKeys, page, homeEnd, pageRows, windowRows };
+  const [seen, setSeen] = useState(now);
+  if ((Object.keys(now) as (keyof typeof now)[]).some((k) => seen[k] !== now[k])) {
+    setSeen(now);
+    const layout = { page, homeEnd, pageRows, windowRows };
+    dispatch({
+      action: { type: "data", rows, cols, layout },
+      keys: rowKeys,
+      nearest: options.nearestRow,
+    });
   }
 
   const ref = useRef<HTMLDivElement>(null);
@@ -120,6 +147,7 @@ export function useCompositeGrid(options: UseCompositeGridOptions): CompositeGri
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
     if (event.defaultPrevented || placeOf(event.target) === null) return;
+    if (isEditable(event.target)) return; // the control's own caret and option keys, never the grid's
     const move = gridMoveOf(event);
     if (move === null) return; // the host's key
     event.preventDefault();

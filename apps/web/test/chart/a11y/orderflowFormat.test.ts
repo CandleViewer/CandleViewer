@@ -163,4 +163,21 @@ describe("sign and size helpers", () => {
     );
     expect(orUnavailable(sizeText, "-3", "—")).toBe("—");
   });
+
+  it("a footprint cell and a heatmap cell never throw: a faulty field reads 'not available' (record minor)", () => {
+    expect(
+      footprintCellSentence({ price: "x", bid: "-1", ask: "1e3", delta: "NaN", imbalance: "ask" }),
+    ).toBe(
+      "not available, bid not available, ask not available, delta not available, ask imbalance",
+    );
+    expect(
+      footprintCellSentence({ price: "1", bid: "2", ask: "3", delta: "-", imbalance: null }),
+    ).toBe("1, bid 2, ask 3, delta not available");
+    expect(heatmapCellSentence({ price: "64010", size: "-5", side: "bid" })).toBe(
+      "64,010, resting not available, bid side",
+    );
+    expect(heatmapCellSentence({ price: "", size: "5", side: "ask" })).toBe(
+      "not available, resting 5, ask side",
+    );
+  });
 });

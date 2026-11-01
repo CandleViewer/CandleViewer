@@ -9,15 +9,20 @@ import { signedDecimal } from "./format";
 import {
   DIRECTION_GLYPH,
   directionOf,
+  orUnavailable,
   sizeText,
   type FootprintCellFields,
 } from "./orderflowFormat";
-import { LEGEND, MARK, type BookSide, type OrderSide } from "./orderflowCopy";
+import { LEGEND, MARK, UNAVAILABLE, type BookSide, type OrderSide } from "./orderflowCopy";
 import "./orderflowMarks.css";
 
-/** A signed value (delta, CVD, imbalance-tracker change): the sign and the glyph survive grayscale. */
+/**
+ * A signed value (delta, CVD, imbalance-tracker change): the sign and the glyph survive grayscale. A faulty value
+ * draws a dash with no glyph, so one bad field never unmounts the surface.
+ */
 export function SignedValue({ value }: { readonly value: string }): JSX.Element {
-  const direction = directionOf(value);
+  const shown = orUnavailable(signedDecimal, value, UNAVAILABLE.shown);
+  const direction = shown === UNAVAILABLE.shown ? "flat" : directionOf(value);
   return (
     <span className={`cv-of-signed cv-of-signed--${direction}`} data-cv-direction={direction}>
       {direction === "flat" ? null : (
@@ -25,7 +30,7 @@ export function SignedValue({ value }: { readonly value: string }): JSX.Element 
           {DIRECTION_GLYPH[direction]}
         </span>
       )}
-      {signedDecimal(value)}
+      {shown}
     </span>
   );
 }
@@ -57,19 +62,20 @@ export function SideMark({ side }: { readonly side: BookSide | OrderSide }): JSX
   );
 }
 
-/** The footprint cell's visible content: bid × ask, the signed delta, and the imbalance mark when flagged. */
+/** The footprint cell's visible content: bid × ask, the signed delta, the imbalance mark when flagged; "—" on a fault. */
 export function FootprintCellContent({
   cell,
 }: {
   readonly cell: FootprintCellFields;
 }): JSX.Element {
   const flagged = cell.imbalance !== null;
+  const size = (v: string): string => orUnavailable(sizeText, v, UNAVAILABLE.shown);
   return (
     <span
       className={`cv-of-cell${flagged ? " cv-of-cell--imbalance" : ""}`}
       data-cv-pattern={flagged ? "dashed" : undefined}
     >
-      <span className="cv-of-cell__volumes">{`${sizeText(cell.bid)} × ${sizeText(cell.ask)}`}</span>
+      <span className="cv-of-cell__volumes">{`${size(cell.bid)} × ${size(cell.ask)}`}</span>
       <SignedValue value={cell.delta} />
       {cell.imbalance === null ? null : <ImbalanceMark side={cell.imbalance} />}
     </span>

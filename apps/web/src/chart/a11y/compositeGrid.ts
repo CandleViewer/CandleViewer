@@ -45,8 +45,19 @@ export type GridAction =
   | { readonly type: "move"; readonly move: GridMove }
   /** Focus landed on a cell by pointer or by the AT: the stop follows it. */
   | { readonly type: "focus"; readonly row: number; readonly col: number }
-  /** Data churn: a new row count or new columns; the new row keys are the reducer's `rowKeys` argument. */
-  | { readonly type: "data"; readonly rows: number; readonly cols: number };
+  /**
+   * Data churn: a new row count or new columns, and the host's current layout (paging, ends, window), so a host that
+   * changes them is followed, not read once. The new row keys are the reducer's `rowKeys` argument.
+   */
+  | {
+      readonly type: "data";
+      readonly rows: number;
+      readonly cols: number;
+      readonly layout?: Partial<GridLayout>;
+    };
+
+/** The host's layout options: what `PageUp`/`PageDown` and `Home`/`End` move along, and the window. */
+export type GridLayout = Pick<GridConfig, "page" | "homeEnd" | "pageRows" | "windowRows">;
 
 /**
  * Where the stop goes when its row's key has left the data: the index of the nearest remaining key, or -1 to keep
@@ -177,17 +188,19 @@ function place(s: GridState, to: GridPos, key: string | null): GridState {
   return { ...s, focus, key, first: scrollToShow(s.first, s.windowRows, focus.row, s.rows) };
 }
 
+/** A window or page under one row would draw nothing or never move: at least one row each. */
+const sizedOf = <T extends GridConfig>(c: T): T => ({
+  ...c,
+  windowRows: Math.max(1, Math.floor(c.windowRows) || 1),
+  pageRows: Math.max(1, Math.floor(c.pageRows) || 1),
+});
+
 export function createGridState(
   config: GridConfig,
   start: Partial<GridPos> = {},
   rowKeys?: readonly string[],
 ): GridState {
-  // A window or page under one row would draw nothing or never move: at least one row each.
-  const sized: GridConfig = {
-    ...config,
-    windowRows: Math.max(1, Math.floor(config.windowRows) || 1),
-    pageRows: Math.max(1, Math.floor(config.pageRows) || 1),
-  };
+  const sized = sizedOf(config);
   const base: GridState = { ...sized, focus: { row: 0, col: 0 }, key: null, first: 0 };
   const row = clampIndex(start.row ?? 0, 0, lastRow(sized));
   return place(base, { row, col: start.col ?? 0 }, rowKeys?.[row] ?? null);
@@ -213,7 +226,7 @@ export function reduceGrid(
     case "focus":
       return place(s, { row: action.row, col: action.col }, rowKeys?.[action.row] ?? null);
     case "data": {
-      const next: GridState = { ...s, rows: action.rows, cols: action.cols };
+      const next = sizedOf({ ...s, ...action.layout, rows: action.rows, cols: action.cols });
       const keys = rowKeys;
       let found = s.key === null || keys === undefined ? -1 : keys.indexOf(s.key);
       if (found < 0 && s.key !== null && keys !== undefined && nearest !== undefined)

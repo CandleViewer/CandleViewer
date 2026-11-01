@@ -56,13 +56,16 @@ export interface FootprintCellFields {
   readonly estimated?: boolean;
 }
 
-/** "64,010.5, bid 12, ask 20, delta +8, ask imbalance": price first, a flagged imbalance said as a word. */
+/**
+ * "64,010.5, bid 12, ask 20, delta +8, ask imbalance": price first, a flagged imbalance said as a word. Never throws:
+ * a faulty field reads "not available" and the rest of the cell still reads.
+ */
 export function footprintCellSentence(cell: FootprintCellFields): string {
   const parts = [
-    displayDecimal(cell.price),
-    CELL.bid(sizeText(cell.bid)),
-    CELL.ask(sizeText(cell.ask)),
-    CELL.delta(signedDecimal(cell.delta)),
+    orUnavailable(displayDecimal, cell.price),
+    CELL.bid(orUnavailable(sizeText, cell.bid)),
+    CELL.ask(orUnavailable(sizeText, cell.ask)),
+    CELL.delta(orUnavailable(signedDecimal, cell.delta)),
   ];
   if (cell.imbalance !== null) parts.push(CELL.imbalance[cell.imbalance]);
   if (cell.estimated === true) parts.push(CELL.estimated);
@@ -133,11 +136,11 @@ export interface HeatmapCellFields {
   readonly side: BookSide;
 }
 
-/** The focused heatmap cell's readout: "64,010.0, resting 125.5, bid side" (05 §4.1). */
+/** The focused heatmap cell's readout: "64,010.0, resting 125.5, bid side" (05 §4.1); a faulty field reads "not available". */
 export function heatmapCellSentence(cell: HeatmapCellFields): string {
   return [
-    displayDecimal(cell.price),
-    HEATMAP.size(sizeText(cell.size)),
+    orUnavailable(displayDecimal, cell.price),
+    HEATMAP.size(orUnavailable(sizeText, cell.size)),
     HEATMAP.side[cell.side],
   ].join(", ");
 }
