@@ -1608,7 +1608,8 @@ def create_app(
     bars_reader: BarReader | None = None
     snapshot_adapters: dict[str, SnapshotSource] = {}
     bars_sink = _build_bars_sink(resolved)
-    bars_clock = bars_now_us or (lambda: time.time_ns() // 1000)
+    # #529: bars run on the exchange-corrected clock (US-MKT-009), as the event window does.
+    bars_clock = bars_now_us or exchange_corrected_clock(ctx)
     # #2787 D2-G2 (D-G2 = A): the store's reads on their own connection, closed after the
     # sink; REST bars, klines and the writer keep the sink's (20-architecture.md §4.2).
     hydrate_wire: LazyPgWire | None = None
@@ -4218,6 +4219,18 @@ def trade_totals_source(ctx: AppContext) -> TradeTotalsSource:
         return await ctx.storage.market_data.trade_totals(symbol, rng)
 
     return totals
+
+
+def exchange_corrected_clock(ctx: AppContext) -> Callable[[], int]:
+    """Exchange-corrected "now" in µs for the bar builders (#529): the host wall clock plus
+    `ClockGuard.offset_us()`, resolved per call (the guard attaches when the public WS is
+    wired, and is absent with ingestion off: then the offset is 0, the raw host clock)."""
+
+    def _offset_us() -> int:
+        guard = ctx.ingestion.clock
+        return guard.offset_us() if guard is not None else 0
+
+    return corrected_now_us(_offset_us)
 
 
 def wire_clock_offset(ctx: AppContext, fetch_server_time: ServerTimeFetcher) -> ClockGuard:
