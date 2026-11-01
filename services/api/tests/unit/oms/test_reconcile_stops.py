@@ -129,7 +129,7 @@ async def test_an_attach_the_gate_holds_or_the_audit_refuses_sends_nothing() -> 
     assert (_sent(venue), _sent(venue2), log) == ([], [], [])
 
 
-async def test_an_attach_the_venue_refuses_is_refused() -> None:
+async def test_an_attach_the_venue_refuses_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     writer, venue, _, _ = _writer()
     naked = position(stop_loss=None)
     venue.seed_position(naked)
@@ -137,7 +137,7 @@ async def test_an_attach_the_venue_refuses_is_refused() -> None:
     async def refused(_request: Any) -> Any:
         return SimpleNamespace(ok=False)  # the writer reads the ack's `ok` alone
 
-    venue.set_trading_stop = refused  # type: ignore[method-assign]
+    monkeypatch.setattr(venue, "set_trading_stop", refused)
     assert await writer.attach_recorded(ref(), naked, record(), pass_id=RUN_ID) == "refused"
 
 

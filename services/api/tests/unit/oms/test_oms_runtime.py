@@ -800,7 +800,8 @@ async def test_with_its_stores_b1s_reconciliation_request_is_its_jobs_unknown_tr
             await runtime._composed().machines._ports.notices.notify(notice)
         pages.append([call for call in world.pager.calls if "request_reconciliation" in call])
     assert asked == [(AccountId(ACCOUNT), "unknown")]
-    assert pages == [[], ["order notice request_reconciliation has no owner until E29-T06"]]
+    unbound = "order notice request_reconciliation has no owner: no reconciliation is composed"
+    assert pages == [[], [unbound]]
 
 
 async def test_a_job_opens_at_start_only_for_an_account_that_resolves_to_a_trading_account(

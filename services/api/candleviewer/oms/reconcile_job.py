@@ -39,10 +39,18 @@ from `retry_s[0]` to `retry_s[1]`, never an `after:` timer (28 Sec.1.2, A2).
 **Restore** (INV-B19-e): a job with a sealed snapshot is restored, the account's standing rebuilt
 from its restored state (`ReconcileStanding.restored`, so a restart never unlocks a stale
 account), and what `redrive_after_restore` names is sent; a job restored mid-diff or remediation
-is rebuilt afresh. A refused snapshot is quarantined and paged by the `Restorer` and the job is
-built afresh. **Stop**: the timers end, then each job is drained to quiescence, persisted (drain,
-journal, sealed snapshot, then `stop`) where a persister is wired, else stopped, and unregistered;
-only then is B19's port unwired.
+is rebuilt afresh. A refused snapshot (quarantined and paged by the `Restorer`) leaves the job's
+state unknown, so it fails closed (INV-B19-a, 24 Sec.8.5): the account is refused at once, and the
+job, built afresh, fails its first fetch with the stale window spent (`REFUSED_SNAPSHOT`, through
+B19's port, `_Ports`), so B19 records `stale_lockout`, paged, which its snapshot keeps and only the
+Owner's `OPERATOR_RESOLVED` leaves; no pass runs until then. **Stop**: the timers end, then each
+job is drained to quiescence, persisted (drain, journal, sealed snapshot, then `stop`) where a
+persister is wired, else stopped, and unregistered; only then is B19's port unwired. Each persist
+is bounded (`PERSIST_TIMEOUT_S`): one that overruns is logged and paged as a failed one is, and its
+job stopped unsnapshotted, so the next start restores its last snapshot. A job whose refused
+snapshot's lock is not recorded yet persists nothing, so the next start refuses it again.
+An open the stop overtakes, at any await, registers no job and spawns no timer: it stops what it
+built and persists nothing (`_unless_stopped`).
 
 **`auto_remediate`** (INV-B19-d, 24 Sec.14.3, C-4.14) comes only from the account's environment's
 capability record (`remediates`), never a setting, a flag or a role, and a live or demo record
@@ -56,10 +64,10 @@ Logs carry account ids, pass ids, triggers and states only (C-12.6).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -87,6 +95,7 @@ from .reconcile_standing import ReconcileStanding
 __all__ = [
     "JITTER_S",
     "MACHINE",
+    "REFUSED_SNAPSHOT",
     "RETRY_S",
     "SPACING_S",
     "JobLocked",
@@ -118,6 +127,10 @@ _AWAIT_STEP: Final = True
 SEND_TIMEOUT_S: Final = 5.0
 QUIESCE_TIMEOUT_S: Final = 10.0
 QUIESCE_POLL_S: Final = 0.01
+#: Each job's persist at the stop (C-2.18), under the share of the runtime's stop that its
+#: reconciliation closer gets (`oms_wiring._closed`), so one that hangs is cut here, logged and
+#: paged, and the stop goes on to the next job and to B19's port, never cut whole by that share.
+PERSIST_TIMEOUT_S: Final = 0.2
 #: Each step of a job's open the driver awaits (C-2.18): its snapshot's load, its restore, which
 #: starts the machine within the factory's own 5 s (CV-C56), and a fresh build's plugins. One that
 #: hangs is a job that did not open: logged, and its account refused order entry at the start.
@@ -131,6 +144,8 @@ _RECONNECTS: Final[frozenset[str]] = frozenset({"connected", "reconnected", "rej
 _STALE_GAUGE: Final = "oms_stale_accounts"
 #: The environments whose jobs always remediate (24 Sec.14.3): never `False` there (C-2.6).
 _ALWAYS_REMEDIATE: Final[frozenset[str]] = frozenset({"live", "demo"})
+#: The kind of the failed fetch that locks a job whose sealed snapshot was refused (INV-B19-a).
+REFUSED_SNAPSHOT: Final = "refused_snapshot"
 
 
 def _log() -> Any:
@@ -236,40 +251,66 @@ class ReconcileJobs:
         self._opening = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
         self._pass_ids: dict[AccountId, str] = {}
+        #: The accounts held refused since their start failed (`start`): each until a trigger
+        #: opens its job or reaches it (`_reached`), which rebuilds its standing.
+        self._unstarted: set[AccountId] = set()
+        #: The accounts whose sealed snapshot was refused and whose job's lock B19 has not
+        #: recorded yet: the next fetch of each fails with its window spent (`_Ports`).
+        self._escalating: set[AccountId] = set()
+        self._ports = _Ports(phases, self._escalating)
         self._remediate = True
         self._spacing = SPACING_S
         self._t0 = 0.0
         self._wired = self._stopping = False
+        #: Each stop ends a life: an open begun in an earlier one registers nothing, a start
+        #: since included (`_unless_stopped`).
+        self._life = 0
 
     # --- Life -------------------------------------------------------------------------------------
 
     async def start(self, accounts: Iterable[AccountId]) -> None:
         """Wires B19's port, then opens each account's job (restored, or built afresh) and sends
-        it `startup` (BQ-14: the caller reports ready after it, never after the pass). One
-        account whose job cannot open is logged, paged and refused order entry (its standing
-        set, fail closed) until a later trigger opens it; the others start."""
+        it `startup` (BQ-14: the caller reports ready after it, never after the pass). Each
+        account with no job yet is marked stale before the loop begins, and only its job's open
+        clears the mark (`_open`, its standing rebuilt from its state), so a start its caller's
+        bound cuts short, its task cancelled, leaves every account it did not open refused (the
+        delta look's m-a on the wiring, INV-B19-a). One account whose start fails, whatever the
+        failure (its job not opened, or a send that did not answer), is logged, paged and refused
+        order entry (its standing set, fail closed) until a later trigger opens its job or
+        reaches it (`_reached`); the others start. A stop that overtakes the start ends it,
+        raised: the open it meets registers nothing (`_unless_stopped`), and no account is held or
+        paged once the stop has begun (the orchestrator's read of the wiring, L1)."""
         remediate = self._remediates(self._env)
         if not remediate and self._env in _ALWAYS_REMEDIATE:  # C-2.6, C-4.14: never on live or demo
             raise ValueError("a live or demo reconciliation job always remediates (24 Sec.14.3)")
-        self._remediate, self._stopping = remediate, False
-        b19.set_ports(self._phases)
+        self._remediate, self._stopping, life = remediate, False, self._life
+        b19.set_ports(self._ports)
         self._wired = True
         self._t0 = self._now()
         ordered = sorted(set(accounts), key=str)
         self._spacing = max(SPACING_S, self._jitter_s / max(len(ordered), 1))
         self._gauge(lambda: float(self._standing.stale_count))
+        for account in ordered:  # fail closed first: only an open clears it, never a cut start
+            if account not in self._jobs:
+                self._standing.mark_stale(account)
         for account in ordered:
             try:
                 await self.trigger(account, "startup")
-            except ReconciliationUnavailable:
-                self._standing.mark_stale(account)  # unknown: refused until a job opens it
-                _log().critical("reconcile_job_unopened", account_id=str(account), cv_page=True)
+            except Exception as exc:  # any failure holds this account; the others still start
+                if self._life != life:  # a stop overtook the start: it holds and pages nothing
+                    raise
+                self._standing.mark_stale(account)  # unknown: refused until a trigger reaches it
+                self._unstarted.add(account)
+                _log().critical("reconcile_job_unopened", account_id=str(account),
+                                failure=type(exc).__name__, cv_page=True)  # fmt: skip
                 self._pager.raise_alert("page", _UNOPENED, machine_kind=MACHINE)
 
     async def stop(self) -> None:
         """The timers end, then each job is drained to quiescence and persisted (or stopped), and
-        unregistered; B19's port is unwired last, once every job is stopped and snapshotted."""
-        self._stopping = True
+        unregistered; B19's port is unwired last, once every job is stopped and snapshotted. An
+        open the stop overtakes registers nothing, and stops what it built at its next step
+        (`_unless_stopped`)."""
+        self._stopping, self._life = True, self._life + 1
         tasks = [t for t in self._tasks if not t.done()]
         for task in tasks:
             task.cancel()
@@ -277,6 +318,8 @@ class ReconcileJobs:
         for job in list(self._jobs.values()):
             await self._close(job)
         self._jobs.clear()
+        self._unstarted.clear()  # the standing keeps their marks until a start rebuilds them
+        self._escalating.clear()  # their refused snapshots stay: the next start refuses them again
         self._gauge(lambda: 0.0)
         if self._wired:  # a stopped driver never unwires the port of the one after it
             self._wired = False
@@ -307,10 +350,10 @@ class ReconcileJobs:
     ) -> PassTaken:
         """`reconcileAccount` (22, BQ-7): a pass started now (`SWEEP_DUE`, `trigger: manual`), or
         the running one's id (`joined`); `write_ahead` records the request first (`oms.reconcile`,
-        `stage: requested`) and a raise sends nothing. `NoSuchJob`, or `JobLocked` while locked."""
-        job = self._jobs.get(account)
-        if job is None:
-            raise NoSuchJob(str(account))
+        `stage: requested`) and a raise sends nothing. A trigger like any other, it opens the
+        account's job when it has none (24 Sec.8.5), so `ReconciliationUnavailable` when none can
+        open, or when B19 does not take the pass (`_took`); `JobLocked` while locked."""
+        job = await self._job(account)
         async with job.lock:
             state = leaf_of(job.interp)
             if state == "stale_lockout":
@@ -322,7 +365,9 @@ class ReconcileJobs:
             taken = PassTaken(str(uuid4()), joined=False)
             await write_ahead(taken)
             await self._send_job(job, "SWEEP_DUE", {"trigger": "manual", "pass_id": taken.pass_id})
+            self._took(job, state)
             self._pass_ids[account] = taken.pass_id
+            self._reached(job, state)
             return taken
 
     async def resolve(
@@ -331,7 +376,8 @@ class ReconcileJobs:
         """`resolveReconciliation` (22, BQ-7): `OPERATOR_RESOLVED`, the one event that leaves
         `stale_lockout` (INV-B19-b), or ends `divergent`'s wait; `write_ahead` records the
         decision first (`stage: resolved`) and a raise sends nothing. The state it left, once B19
-        recorded it, so the standing has cleared (BQ-5). `NoSuchJob`, or `NothingToResolve`."""
+        recorded it, so the standing has cleared (BQ-5). `NoSuchJob`, or `NothingToResolve`;
+        `ReconciliationUnavailable` when B19 does not take it (`_took`), nothing unlocked."""
         job = self._jobs.get(account)
         if job is None:
             raise NoSuchJob(str(account))
@@ -341,6 +387,7 @@ class ReconcileJobs:
                 raise NothingToResolve(str(account))
             await write_ahead(state)
             await self._send_job(job, "OPERATOR_RESOLVED", {"decided_by": decided_by[:64]})
+            self._took(job, state)
             return state
 
     def state(self, account: AccountId) -> str | None:
@@ -399,14 +446,19 @@ class ReconcileJobs:
     async def _open(self, account: AccountId) -> _Job:
         """The account's job: restored from its sealed snapshot where one is held, else built
         afresh, only once B19's port is wired (#5121's carry: unwired, a pass locks). Restored, its
-        standing is rebuilt from its state and what the restore leaves owed is sent."""
+        standing is rebuilt from its state and what the restore leaves owed is sent. A stop that
+        begins meanwhile ends it after the await it meets (`_unless_stopped`): nothing is
+        registered, spawned or persisted, and no standing changes, once the stop has begun."""
         if self._stopping or not b19.ports_wired():
-            raise ReconciliationUnavailable("no reconciliation job can open: stopping or unwired")
-        key = MachineKey(MACHINE, str(account), self._env)
+            raise ReconciliationUnavailable(_NONE_OPENS)
+        life, key = self._life, MachineKey(MACHINE, str(account), self._env)
         try:
-            interp, owed = await self._restored(account, key)
+            interp, owed = await self._restored(account, key, life)
             if interp is None:
-                interp = await self._built(account, key)
+                interp = await self._built(account, key, life)
+        except _Overtaken:  # the stop's own end: nothing of this open outlives it
+            _log().info("reconcile_job_open_overtaken", account_id=str(account))
+            raise ReconciliationUnavailable(_NONE_OPENS) from None
         except Exception as exc:  # the store or the build: no job, the caller decides
             _log().error("reconcile_job_open_failed", account_id=str(account),
                          failure=type(exc).__name__)  # fmt: skip
@@ -417,19 +469,24 @@ class ReconcileJobs:
                                metrics=recorder, machine_key=key)  # fmt: skip
         self._jobs[account] = job
         state = leaf_of(interp)
-        self._standing.restored(account, state)  # a restart never unlocks (BQ-5)
+        if account not in self._escalating:  # a refused snapshot's lock is coming (INV-B19-a)
+            self._standing.restored(account, state)  # a restart never unlocks (BQ-5)
+        self._unstarted.discard(account)  # its standing is its job's now
         pass_id = interp.context.get("pass_id")
         if isinstance(pass_id, str):
             self._pass_ids[account] = pass_id
+        # the cadence first: an owed send that fails still leaves the job ticking
+        job.cadence = self._spawn(self._cadence(job), "reconcile-cadence")
         for event, payload in owed:
             await self._send_job(job, event, payload)
-        job.cadence = self._spawn(self._cadence(job), "reconcile-cadence")
+            if self._life != life:  # registered before the stop began, which closes it
+                raise ReconciliationUnavailable(_NONE_OPENS)
         _log().info("reconcile_job_opened", account_id=str(account), state=state,
                     restored=bool(owed) or state != "idle")  # fmt: skip
         return job
 
     async def _restored(
-        self, account: AccountId, key: MachineKey
+        self, account: AccountId, key: MachineKey, life: int
     ) -> tuple[Any | None, tuple[tuple[str, dict[str, Any]], ...]]:
         """The job restored, with what it is owed (`redrive_after_restore`), or None to build
         afresh: no persistence, no snapshot, a refused one (the `Restorer` quarantines and pages
@@ -440,25 +497,32 @@ class ReconcileJobs:
         if self._persistence is None:
             return None, ()
         sealed = await _opening_step(self._persistence.load(key))
+        await self._unless_stopped(life)
         if sealed is None:
             return None, ()
         try:
             interp = await _opening_step(self._persistence.restore(key, sealed))
-        except RestoreRefusedError:
+        except RestoreRefusedError:  # its state unknown: refused at once, then locked by B19
+            await self._unless_stopped(life)  # stopping: the next start refuses it again
             _log().error("reconcile_job_restore_refused", account_id=str(account))
+            self._standing.mark_stale(account)
+            self._escalating.add(account)
             return None, ()
+        await self._unless_stopped(life, interp)
         if interp.context.get("auto_remediate") is not self._remediate:
             await interp.stop()
             raise ValueError("a restored job's auto_remediate is not its record's (24 Sec.14.3)")
         owed = b19.redrive_after_restore(leaf_of(interp), interp.context)
         if owed is None:
             await interp.stop()
+            await self._unless_stopped(life)
             return None, ()
         return interp, owed
 
-    async def _built(self, account: AccountId, key: MachineKey) -> Any:
+    async def _built(self, account: AccountId, key: MachineKey, life: int) -> Any:
         if self._persistence is not None:  # its chain seeded and the orphan scan run first
             plugins = await _opening_step(self._persistence.plugins(key))
+            await self._unless_stopped(life)
         else:
             plugins = cv_plugins(
                 machine_kind=MACHINE, lane=LANE, entity_id=str(account), env=self._env,
@@ -466,7 +530,19 @@ class ReconcileJobs:
             )  # fmt: skip
         ctx = {"account_id": str(account), "auto_remediate": self._remediate}
         built = await build(MACHINE, ctx=ctx, clock=default_clock(), lane=LANE, plugins=plugins)
+        await self._unless_stopped(life, built.interpreter)
         return built.interpreter
+
+    async def _unless_stopped(self, life: int, built: Any = None) -> None:
+        """After each await of an open (the orchestrator's read of the wiring, L1): a stop begun
+        since the open began (`life`) ends it here, so it registers no job, spawns no cadence,
+        persists nothing and changes no standing after the stop has cleared them; what it built
+        or restored is stopped, never snapshotted (`_Overtaken`)."""
+        if life == self._life:
+            return
+        if built is not None and built.is_running:
+            await built.stop()
+        raise _Overtaken
 
     async def _sent(self, job: _Job, trigger: Trigger) -> str | None:
         """The rule (module docstring), under the job's lock."""
@@ -487,13 +563,33 @@ class ReconcileJobs:
             payload["trigger"] = trigger
         await self._send_job(job, event, payload)
         self._pass_ids[job.account] = pass_id
+        self._reached(job, state)
         return pass_id
+
+    def _reached(self, job: _Job, state: str) -> None:
+        """A trigger the job took from `state`, a rest: an account held since its start failed
+        (`start`) has its standing rebuilt from that state, as an open rebuilds it, once B19 has
+        moved on from it, so took the event; a job still there lifts nothing."""
+        if job.account in self._escalating:  # its lock is coming: B19 records it
+            return
+        if job.account in self._unstarted and leaf_of(job.interp) != state:
+            self._unstarted.discard(job.account)
+            self._standing.restored(job.account, state)
 
     def _skipped(self, job: _Job, trigger: Trigger, state: str, why: str) -> None:
         """A trigger that finds a pass running, or the job locked, is logged, never sent (24
         Sec.8.5): no series counts it, as 24 names none."""
         _log().info("reconcile_trigger_skipped", account_id=str(job.account), trigger=trigger,
                     state=state or "none", reason=why)  # fmt: skip
+
+    @staticmethod
+    def _took(job: _Job, state: str) -> None:
+        """A route's event, read by B19's state after its send (CV-C06: a receipt is no gate):
+        a job still resting in `state` did not take it, its send refused, so
+        `ReconciliationUnavailable`, which the route answers 503, keeping nothing; the record it
+        wrote ahead stands (the code look's n1 on the final PR)."""
+        if leaf_of(job.interp) == state:
+            raise ReconciliationUnavailable("B19 did not take the event")
 
     @staticmethod
     def _resting(job: _Job, state: str) -> bool:
@@ -528,8 +624,16 @@ class ReconcileJobs:
                 await self._quiesced(interp)
             finally:
                 self._gateway.unregister(job.key)
-            if self._persistence is not None and leaf_of(interp) in b19.REST_STATES:
-                await self._persistence.persist(interp, job.machine_key)
+            pending = job.account in self._escalating  # its refused snapshot must stay
+            if self._persistence is not None and leaf_of(interp) in b19.REST_STATES and not pending:
+                bound = asyncio.timeout(PERSIST_TIMEOUT_S)
+                try:
+                    async with bound:
+                        await self._persistence.persist(interp, job.machine_key)
+                except TimeoutError:
+                    if bound.expired():  # it hung: paged here, as a failed persist pages itself
+                        self._pager.raise_alert("page", _UNSNAPSHOTTED, machine_kind=MACHINE)
+                    raise
                 return
         except Exception as exc:  # a faulted job: stopped without a snapshot, the next restores
             _log().error("reconcile_job_persist_failed", account_id=str(job.account),
@@ -572,6 +676,12 @@ class ReconcileJobs:
 
 
 _UNOPENED: Final = "A reconciliation job could not open: its account's order entry is refused."
+_UNSNAPSHOTTED: Final = "A reconciliation job's persist overran its bound: it stopped unsaved."
+_NONE_OPENS: Final = "no reconciliation job can open: stopping or unwired"
+
+
+class _Overtaken(Exception):
+    """An open a stop overtook (`ReconcileJobs._unless_stopped`): it ends with nothing kept."""
 
 
 async def _opening_step[T](step: Awaitable[T]) -> T:
@@ -579,6 +689,80 @@ async def _opening_step[T](step: Awaitable[T]) -> T:
     turns into a job that did not open (C-2.18): a hang is logged, never waited on in silence."""
     async with asyncio.timeout(OPEN_TIMEOUT_S):
         return await step
+
+
+def _account_of(account_id: str) -> AccountId | None:
+    try:
+        return AccountId(UUID(account_id))
+    except ValueError:
+        return None
+
+
+class _Ports:
+    """B19's port as the driver binds it (`b19.set_ports`): the pass's phases, but for an account
+    whose sealed snapshot was refused (`escalating`), whose next fetch fails with the stale window
+    spent (`REFUSED_SNAPSHOT`), so its job locks in `stale_lockout` before any pass runs (INV-B19-a,
+    24 Sec.8.5), and B19's own record of that lock (`lock`) ends it. No chart change: B19's
+    `fetching` already locks on a failed fetch whose window is spent (`failures_exhausted`)."""
+
+    def __init__(self, phases: b19.JobPorts, escalating: set[AccountId]) -> None:
+        self._phases, self._escalating = phases, escalating
+
+    def now_us(self) -> int:
+        return self._phases.now_us()
+
+    async def fetch(self, account_id: str, *, pass_id: str, trigger: str) -> Mapping[str, Any]:
+        if _account_of(account_id) in self._escalating:  # no read: the lock comes first
+            now = self._phases.now_us()
+            raise b19.FetchFailed(REFUSED_SNAPSHOT, failing_since_us=now, failed_at_us=now,
+                                  window_us=0)  # fmt: skip
+        return await self._phases.fetch(account_id, pass_id=pass_id, trigger=trigger)
+
+    async def diff(self, account_id: str, *, pass_id: str) -> Mapping[str, Any]:
+        return await self._phases.diff(account_id, pass_id=pass_id)
+
+    async def remediate(self, account_id: str, *, pass_id: str) -> Mapping[str, Any]:
+        return await self._phases.remediate(account_id, pass_id=pass_id)
+
+    async def report(
+        self, account_id: str, *, pass_id: str, trigger: str, episode_open: bool,
+        failure: str | None,
+    ) -> Mapping[str, Any]:  # fmt: skip
+        return await self._phases.report(
+            account_id, pass_id=pass_id, trigger=trigger, episode_open=episode_open,
+            failure=failure,
+        )  # fmt: skip
+
+    def observe(self, account_id: str, *, pass_id: str) -> None:
+        self._phases.observe(account_id, pass_id=pass_id)
+
+    def publish(self, account_id: str, notices: Sequence[Sequence[str]]) -> None:
+        self._phases.publish(account_id, notices)
+
+    def fetch_failed(self, account_id: str, *, trigger: str) -> None:
+        self._phases.fetch_failed(account_id, trigger=trigger)
+
+    def schedule_retry(self, account_id: str, *, attempt: int) -> None:
+        self._phases.schedule_retry(account_id, attempt=attempt)
+
+    def lock(self, account_id: str, *, trigger: str) -> None:
+        """`stale_lockout`'s entry: the standing set again first, then a refused snapshot's
+        pending lock ends, as B19 has recorded it and its snapshot keeps it."""
+        self._phases.lock(account_id, trigger=trigger)
+        if (account := _account_of(account_id)) is not None:
+            self._escalating.discard(account)
+
+    def stale(self, account_id: str) -> None:
+        self._phases.stale(account_id)
+
+    def unlock(self, account_id: str) -> None:
+        self._phases.unlock(account_id)
+
+    def reset_failures(self, account_id: str) -> None:
+        self._phases.reset_failures(account_id)
+
+    def alert(self, account_id: str, *, reason: str, page: bool) -> None:
+        self._phases.alert(account_id, reason=reason, page=page)
 
 
 class RetryHop:

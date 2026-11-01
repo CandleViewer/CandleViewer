@@ -7,15 +7,17 @@ test releases them; no sleeps, no network."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import AsyncIterator, Callable
 from itertools import pairwise
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.domain.primitives import AccountId
+from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.models import RateHeadroom
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms import reconcile_job as rj
@@ -29,7 +31,9 @@ from candleviewer.oms.reconcile_job import (
     RetryHop,
     leaf_of,
 )
+from candleviewer.oms.reconcile_report import STALE_NOTICE
 from candleviewer.oms.reconcile_standing import STALE_AFTER_S
+from candleviewer.statechart import build as build_chart
 from candleviewer.statechart.bindings import b19_reconciliation as b19
 from candleviewer.statechart.factory import default_clock
 from candleviewer.statechart.factory import restore as restore_chart
@@ -44,7 +48,7 @@ from candleviewer.statechart.persistence import (
 )
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
 from candleviewer.statechart.registry import default_registry
-from tests.unit.oms.reconcile_rig import ACCOUNT, Job, remote, rest, row
+from tests.unit.oms.reconcile_rig import ACCOUNT, OTHER, Job, remote, rest, row
 from tests.xstate_contract._harness import Audit, Keys, Pager, Repo
 
 WINDOW_US = round(STALE_AFTER_S * 1_000_000)
@@ -115,15 +119,14 @@ def _driver(
     job: Job,
     timers: Timers,
     *,
-    environment: str = "demo",
+    environment: Environment = "demo",
     persistence: Memory | None = None,
     remediates: Callable[[str], bool] = lambda _env: True,
 ) -> ReconcileJobs:
     hop = job.phases._retries
     assert isinstance(hop, RetryHop)
-    # `environment` is the tests' plain `str`, not the `Environment` literal the driver takes
     driver = ReconcileJobs(
-        job.phases, standing=job.standing, environment=environment,  # type: ignore[arg-type]
+        job.phases, standing=job.standing, environment=environment,
         remediates=remediates, metrics=job.metrics, pager=job.world.oms,
         sink=InMemoryMachineEventSink(), persistence=persistence, sleep=timers.sleep,
     )  # fmt: skip
@@ -164,6 +167,12 @@ async def _until(driver: ReconcileJobs, state: str, account: AccountId = ACCOUNT
             break
         await asyncio.sleep(0)
     return leaf_of(driver._jobs[account].interp)
+
+
+async def _refused(_key: str, _event: Any, *, wait: bool = False) -> Any:
+    """B19's receipt for an event it refused, a conclusive error (`_gateway.send`): the job
+    takes nothing and stays where it rests."""
+    return SimpleNamespace(deferred=False, changed=False, error=ValueError("denied"))
 
 
 def _starve(job: Job, starved: bool = True) -> None:
@@ -219,11 +228,11 @@ async def test_a_trigger_for_an_account_with_no_job_opens_one(job: Job, timers: 
     driver = _driver(job, timers)
     await driver.start([])
     try:
-        assert await driver.request_reconciliation(ACCOUNT, reason="reconnected") is None
+        await driver.request_reconciliation(ACCOUNT, reason="reconnected")  # taken, no answer
         assert await _resting(driver) == "idle"
         assert [r[2]["trigger"] for r in job.records.rows] == ["reconnect"]
         with pytest.raises(ValueError):  # "bogus" is no `ResyncReason`, on purpose
-            await driver.request_reconciliation(ACCOUNT, reason="bogus")  # type: ignore[arg-type]
+            await driver.request_reconciliation(ACCOUNT, reason=cast(Any, "bogus"))
     finally:
         await driver.stop()
 
@@ -336,11 +345,35 @@ async def test_a_manual_request_writes_ahead_then_starts_a_pass_or_joins_the_run
         assert await _resting(driver) == "idle"
         assert job.records.rows[-1][1:] == (started.pass_id, job.records.rows[-1][2])
         assert job.records.rows[-1][2]["trigger"] == "manual"
-        with pytest.raises(NoSuchJob):
-            await driver.reconcile_now(AccountId(UUID(int=7)), write_ahead=write_ahead)
     finally:
         gate.set()
         await driver.stop()
+
+
+async def test_a_manual_request_opens_the_job_of_an_account_with_none_but_never_once_stopping(
+    job: Job, timers: Timers
+) -> None:
+    """24 Sec.8.5: an on-demand request is a trigger like any other, so it opens the account's
+    job (restored, or built afresh) and starts its pass; once the driver stops, none opens and
+    nothing is written."""
+    driver = _driver(job, timers)
+    await driver.start([])
+    written: list[PassTaken] = []
+
+    async def write_ahead(taken: PassTaken) -> None:
+        written.append(taken)
+
+    try:
+        assert ACCOUNT not in driver._jobs
+        taken = await driver.reconcile_now(ACCOUNT, write_ahead=write_ahead)
+        assert ACCOUNT in driver._jobs and written == [taken] and taken.joined is False
+        assert await _resting(driver) == "idle"
+        assert job.records.rows[-1][1] == taken.pass_id
+    finally:
+        await driver.stop()
+    with pytest.raises(ReconciliationUnavailable):
+        await driver.reconcile_now(AccountId(UUID(int=7)), write_ahead=write_ahead)
+    assert len(written) == 1
 
 
 async def test_a_manual_request_on_a_locked_job_is_refused_and_writes_nothing(
@@ -404,6 +437,60 @@ async def test_a_decision_whose_record_fails_changes_nothing(job: Job, timers: T
         await driver.stop()
 
 
+async def test_a_manual_pass_b19_does_not_take_is_unavailable_and_runs_no_pass(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The code look's n1 and the security look's nit on the final PR: a manual pass whose
+    `SWEEP_DUE` B19 refuses, the job still resting in `idle` (read by its state, CV-C06), is
+    `ReconciliationUnavailable`, so the route answers 503 and keeps nothing; the request's record,
+    written ahead, stands, and no pass runs."""
+    driver = _driver(job, timers)
+    await driver.start([ACCOUNT])
+    assert await _resting(driver) == "idle"
+    reported, written = list(job.records.rows), list[PassTaken]()
+
+    async def write_ahead(taken: PassTaken) -> None:
+        written.append(taken)
+
+    try:
+        monkeypatch.setattr(driver._gateway, "send", _refused)
+        with pytest.raises(ReconciliationUnavailable):
+            await driver.reconcile_now(ACCOUNT, write_ahead=write_ahead)
+        [taken] = written
+        assert driver._pass_ids[ACCOUNT] != taken.pass_id and await _resting(driver) == "idle"
+        assert job.records.rows == reported
+    finally:
+        monkeypatch.undo()
+        await driver.stop()
+
+
+async def test_a_decision_b19_does_not_take_is_unavailable_and_unlocks_nothing(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same for the Owner's decision: an `OPERATOR_RESOLVED` B19 refuses leaves the job
+    locked and the account refused, and is `ReconciliationUnavailable`, never answered
+    `resolved`; its record stands. The next decision B19 takes unlocks it."""
+    driver = _driver(job, timers)
+    await driver.start([])
+    await _locked(job, driver, timers)
+    seen: list[str] = []
+
+    async def write_ahead(state: str) -> None:
+        seen.append(state)
+
+    try:
+        monkeypatch.setattr(driver._gateway, "send", _refused)
+        with pytest.raises(ReconciliationUnavailable):
+            await driver.resolve(ACCOUNT, decided_by="owner", write_ahead=write_ahead)
+        assert seen == ["stale_lockout"] and job.standing.is_stale(ACCOUNT)
+        assert await _resting(driver) == "stale_lockout"
+        monkeypatch.undo()
+        resolved = await driver.resolve(ACCOUNT, decided_by="owner", write_ahead=write_ahead)
+        assert resolved == "stale_lockout" and not job.standing.is_stale(ACCOUNT)
+    finally:
+        await driver.stop()
+
+
 async def test_kill_is_never_sent_to_b19(
     job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -428,7 +515,7 @@ async def test_kill_is_never_sent_to_b19(
 
 @pytest.mark.parametrize("environment", ["live", "demo"])
 async def test_a_live_or_demo_record_that_does_not_remediate_refuses_start(
-    job: Job, timers: Timers, environment: str
+    job: Job, timers: Timers, environment: Environment
 ) -> None:
     driver = _driver(job, timers, environment=environment, remediates=lambda _env: False)
     with pytest.raises(ValueError, match="always remediates"):
@@ -604,11 +691,207 @@ async def test_an_open_whose_step_hangs_is_bounded_and_refuses_the_account(
         await driver.stop()
 
 
+#: Each await of an open a stop can overtake it at (the orchestrator's read of the wiring, L1): the
+#: snapshot's load, its restore (answered, or refused), a fresh build's plugins, the build itself,
+#: and the send a restored job is owed.
+_AWAITS = ("load", "restore", "refused", "plugins", "build", "owed")
+
+
+async def _left_for(held: str, job: Job, timers: Timers, memory: Memory) -> None:
+    """What a first process leaves for an open held at `held`: a snapshot to load and restore
+    (refused, or owing `RETRY_DUE`), or none, so the open builds afresh."""
+    if held in ("plugins", "build"):
+        return
+    first = _driver(job, timers, persistence=memory)
+    await first.start([])
+    if held == "owed":  # snapshotted backing off: its restore owes `RETRY_DUE`
+        _starve(job)
+        await first.trigger(ACCOUNT, "periodic")
+        assert await _until(first, "backing_off") == "backing_off"
+        snapshotted = first._jobs.pop(ACCOUNT)  # the store's now: the stop has none to close
+        await memory.persist(snapshotted.interp, snapshotted.machine_key)
+    else:
+        await first.trigger(ACCOUNT, "periodic")
+        assert await _resting(first) == "idle"
+    await first.stop()
+    if held == "refused":
+        _refusing(memory)
+
+
+def _held_at(
+    held: str, driver: ReconcileJobs, memory: Memory, monkeypatch: pytest.MonkeyPatch,
+    gate: asyncio.Event, made: list[Any],
+) -> asyncio.Event:  # fmt: skip
+    """The open waits for `gate` at `held`, once its await has answered; what it built or
+    restored is kept in `made`. The event returned is set once the open waits."""
+    waiting = asyncio.Event()
+
+    async def pause() -> None:
+        waiting.set()
+        await gate.wait()
+
+    if held == "load":
+        load = memory.load
+
+        async def loaded(key: MachineKey) -> SealedSnapshot | None:
+            sealed = await load(key)
+            await pause()
+            return sealed
+
+        monkeypatch.setattr(memory, "load", loaded)
+    elif held in ("restore", "refused"):
+        restore = memory.restore
+
+        async def restored(key: MachineKey, sealed: SealedSnapshot) -> Any:
+            try:
+                made.append(await restore(key, sealed))
+            finally:
+                await pause()  # answered or refused, either way once the stop has run
+            return made[-1]
+
+        monkeypatch.setattr(memory, "restore", restored)
+    elif held == "plugins":
+
+        async def plugins(_key: MachineKey) -> tuple[Any, ...]:
+            await pause()
+            return ()
+
+        monkeypatch.setattr(memory, "plugins", plugins)
+    elif held == "build":
+
+        async def built(*args: Any, **kwargs: Any) -> Any:
+            out = await build_chart(*args, **kwargs)  # the driver's own, `rj.build`
+            made.append(out.interpreter)
+            await pause()
+            return out
+
+        monkeypatch.setattr(rj, "build", built)
+    else:  # the owed `RETRY_DUE`: taken by B19, its answer held
+        send = driver._gateway.send
+
+        async def sent(key: str, event: Any, *, wait: bool = False) -> Any:
+            receipt = await send(key, event, wait=wait)
+            if event["type"] == "RETRY_DUE":
+                await pause()
+            return receipt
+
+        monkeypatch.setattr(driver._gateway, "send", sent)
+    return waiting
+
+
+@pytest.mark.parametrize("held", _AWAITS)
+async def test_an_open_a_stop_overtakes_keeps_nothing_and_leaves_the_standing_as_the_stop_did(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch, held: str
+) -> None:
+    """The orchestrator's read of the wiring, L1: `stop` takes no open's lock, so an open waiting
+    at any of its awaits while the stop runs meets the stop at the next. Once the stop has
+    cleared the jobs and unwired B19's port, the open registers no job, spawns no timer, persists
+    nothing and stops what it built or restored, and the standing stays as the stop left it (the
+    start's pre-mark, never lifted by a late open); the start it served ends raised, holding and
+    paging nothing more."""
+    memory = Memory()
+    await _left_for(held, job, timers, memory)
+    fresh = Job(retries=cast(Any, RetryHop()))
+    driver = _driver(fresh, timers, persistence=memory)
+    gate, made = asyncio.Event(), list[Any]()
+    waiting = _held_at(held, driver, memory, monkeypatch, gate, made)
+    opening = asyncio.ensure_future(driver.start([ACCOUNT]))
+    try:
+        await asyncio.wait_for(waiting.wait(), 10)  # a bound on the test
+        await driver.stop()
+        standing = fresh.standing
+        left = (standing.is_stale(ACCOUNT), standing.stale_count, standing.held)
+        kept = (list(fresh.world.oms.pages), list(memory.persisted), dict(memory.repo.rows))
+        gate.set()
+        with pytest.raises(ReconciliationUnavailable):
+            await asyncio.wait_for(opening, 10)
+    finally:
+        gate.set()
+    assert (driver._jobs, driver._tasks, driver._gateway._entries) == ({}, set(), {})
+    assert (driver._unstarted, driver._escalating) == (set(), set())
+    # the start's pre-mark, which only an open clears: the owed job's, registered before the stop
+    assert left == ((False, 0, False) if held == "owed" else (True, 1, False))
+    assert (standing.is_stale(ACCOUNT), standing.stale_count, standing.held) == left
+    assert (list(fresh.world.oms.pages), list(memory.persisted), dict(memory.repo.rows)) == kept
+    assert not any(interp.is_running for interp in made) and not b19.ports_wired()
+
+
+def _failing(
+    driver: ReconcileJobs, monkeypatch: pytest.MonkeyPatch, event: str, account: Any
+) -> None:
+    """The driver's sends of `event` to `account`'s job do not answer (a bounded send's
+    `TimeoutError`); every other send goes through."""
+    send = driver._send_job
+
+    async def failing(job: Any, sent: str, payload: Any) -> None:
+        if (sent, job.account) == (event, account):
+            raise TimeoutError
+        await send(job, sent, payload)
+
+    monkeypatch.setattr(driver, "_send_job", failing)
+
+
+async def test_a_start_send_that_fails_holds_that_account_alone_until_a_trigger_reaches_it(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The code look's m1: any failure of an account's start, a send that does not answer
+    included, holds that account (paged) and the others still start; its job is open, so the
+    next trigger B19 takes from a rest rebuilds its standing from that state, and one B19
+    refuses, the job still resting there, lifts nothing (the code look's m3 on the final PR)."""
+    driver = _driver(job, timers)
+    _failing(driver, monkeypatch, "STARTUP", ACCOUNT)
+    with capture_logs() as logs:
+        await driver.start([ACCOUNT, OTHER])
+    try:
+        unopened = [e for e in logs if e["event"] == "reconcile_job_unopened"]
+        assert [(e["account_id"], e["failure"]) for e in unopened] == [
+            (str(ACCOUNT), "TimeoutError")
+        ]
+        assert ("page", rj._UNOPENED) in job.world.oms.pages
+        assert job.standing.is_stale(ACCOUNT) and set(driver._jobs) == {ACCOUNT, OTHER}
+        assert OTHER in driver._pass_ids  # its STARTUP went out
+        monkeypatch.undo()
+        assert await _resting(driver) == "idle"
+        monkeypatch.setattr(driver._gateway, "send", _refused)
+        await driver.trigger(ACCOUNT, "periodic")  # refused: the job rests in `idle` still
+        assert job.standing.is_stale(ACCOUNT) and await _resting(driver) == "idle"
+        monkeypatch.undo()
+        assert await driver.trigger(ACCOUNT, "periodic") is not None  # B19 takes it
+        assert not job.standing.is_stale(ACCOUNT)
+    finally:
+        await driver.stop()
+
+
+async def test_an_owed_send_that_fails_still_leaves_the_restored_job_its_cadence(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The code look's m1: the cadence is spawned before the sends a restore owes, so a job whose
+    owed `RETRY_DUE` did not answer is held (its start failed) yet still has its timer."""
+    memory = Memory()
+    first = _driver(job, timers, persistence=memory)
+    await first.start([])
+    _starve(job)
+    await first.trigger(ACCOUNT, "periodic")
+    assert await _until(first, "backing_off") == "backing_off"
+    await memory.persist(first._jobs[ACCOUNT].interp, first._jobs[ACCOUNT].machine_key)
+    await first.stop()
+    fresh = Job(retries=cast(Any, RetryHop()))  # the driver's hop, as its phases take it
+    later = _driver(fresh, timers, persistence=memory)
+    _failing(later, monkeypatch, "RETRY_DUE", ACCOUNT)
+    await later.start([ACCOUNT])
+    try:
+        restored = later._jobs[ACCOUNT]
+        assert restored.cadence is not None and not restored.cadence.done()
+        assert fresh.standing.is_stale(ACCOUNT)  # its start failed: held, fail closed
+    finally:
+        await later.stop()
+
+
 # --- The host timers: the cadence and the retry (C-12.7, A2) ---------------------------------
 
 
 async def test_the_cadence_spreads_the_accounts_under_five_seconds_apart_and_ticks(
-    job: Job, timers: Timers
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     now = [100.0]
     accounts = [AccountId(UUID(int=0xA0 + n)) for n in range(1, 4)]
@@ -624,7 +907,7 @@ async def test_the_cadence_spreads_the_accounts_under_five_seconds_apart_and_tic
         ticks.append((account, kind))
         return await trigger(account, kind)
 
-    driver.trigger = counted  # type: ignore[method-assign]  # a spy over the real trigger
+    monkeypatch.setattr(driver, "trigger", counted)  # a spy over the real trigger
     await driver.start(accounts)
     try:
         await _asked(timers, lambda asked: len(asked) >= 3)
@@ -692,7 +975,7 @@ async def test_unknown_triggers_and_accounts_are_refused(job: Job, timers: Timer
     await driver.start([ACCOUNT])
     try:
         with pytest.raises(ValueError, match="triggers"):  # "kill" is no `Trigger`, on purpose
-            await driver.trigger(ACCOUNT, "kill")  # type: ignore[arg-type]
+            await driver.trigger(ACCOUNT, cast(Any, "kill"))
         nobody = AccountId(UUID(int=7))
 
         async def never(_state: str) -> None:
@@ -751,35 +1034,143 @@ async def test_a_job_restored_backing_off_is_sent_its_owed_retry_due(
         await later.stop()
 
 
-async def test_a_refused_or_mid_pass_restore_builds_the_job_afresh(
+async def test_a_mid_pass_restore_builds_the_job_afresh(
     job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from candleviewer.statechart.persistence import RestoreRefusedError
-
+    """A job restored in `diffing` or `remediating`, which no event leaves, is rebuilt afresh and
+    runs a `startup` pass; a refused snapshot locks instead (the tests below)."""
     memory = Memory()
     first = _driver(job, timers, persistence=memory)
     await first.start([ACCOUNT])
     await _resting(first)
     await first.stop()
-    [key] = memory.repo.rows
+    fresh = Job(retries=cast(Any, RetryHop()))  # the driver's hop, as its phases take it
+    later = _driver(fresh, timers, persistence=memory)
+    with monkeypatch.context() as patch:
+        patch.setattr(b19, "redrive_after_restore", lambda _state, _context: None)
+        await later.start([ACCOUNT])
+    try:
+        assert await _resting(later) == "idle"
+        assert [r[2]["trigger"] for r in fresh.records.rows] == ["startup"]
+        assert not fresh.standing.is_stale(ACCOUNT)
+    finally:
+        await later.stop()
 
-    async def refused(_key: MachineKey, _sealed: SealedSnapshot) -> Any:
-        raise RestoreRefusedError(key, "machine_hash")
 
-    for case in ("refused", "mid_pass"):
-        fresh = Job(retries=RetryHop())  # type: ignore[arg-type]  # the driver's hop, not the rig's
-        later = _driver(fresh, timers, persistence=memory)
-        with monkeypatch.context() as patch:
-            if case == "refused":
-                patch.setattr(memory, "restore", refused)
-            else:  # diffing or remediating: no event leaves them, so the job is rebuilt
-                patch.setattr(b19, "redrive_after_restore", lambda _state, _context: None)
-            await later.start([ACCOUNT])
-        try:
-            assert await _resting(later) == "idle"
-            assert [r[2]["trigger"] for r in fresh.records.rows] == ["startup"]
-        finally:
-            await later.stop()
+def _refusing(memory: Memory) -> tuple[MachineKey, SealedSnapshot]:
+    """The held snapshot, its machine hash replaced by one no upcaster carries, as a B19 chart
+    change without one leaves it: the real `Restorer` refuses it, quarantines and pages it."""
+    [(key, sealed)] = memory.repo.rows.items()
+    refused = dataclasses.replace(sealed, machine_hash="0" * 64)
+    memory.repo.rows[key] = refused
+    return key, refused
+
+
+async def _no_record(_state: str) -> None:
+    return None
+
+
+async def test_a_refused_snapshot_locks_its_job_before_any_pass_and_the_lock_outlives_restarts(
+    job: Job, timers: Timers
+) -> None:
+    """Low 1, ruled (ii) (INV-B19-a, 24 Sec.8.5): a snapshot the restore refuses leaves the job's
+    state unknown, so the restart refuses the account at once and its job, built afresh, locks on
+    its first fetch, paged, before any pass runs; no trigger unlocks it, the stop persists the lock
+    and the next restart restores it locked. Only the Owner's `OPERATOR_RESOLVED` leaves it, and
+    passes run again after it."""
+    memory = Memory()
+    first = _driver(job, timers, persistence=memory)
+    await first.start([ACCOUNT])
+    assert await _resting(first) == "idle"
+    await first.stop()
+    _refusing(memory)
+    fresh = Job(retries=cast(Any, RetryHop()))
+    later = _driver(fresh, timers, persistence=memory)
+    with capture_logs() as logs:
+        await later.start([ACCOUNT])
+    try:
+        assert "reconcile_job_restore_refused" in {e["event"] for e in logs}
+        assert fresh.standing.is_stale(ACCOUNT) and await _resting(later) == "stale_lockout"
+        assert fresh.records.rows == []  # no pass ran: none reported
+        assert (ACCOUNT, STALE_NOTICE) in fresh.notices.published  # the stale episode, paged
+        assert any(severity == "page" for severity, _ in fresh.world.oms.pages)
+        for trigger in ("startup", "periodic", "reconnect", "unknown"):
+            await later.trigger(ACCOUNT, trigger)
+        assert fresh.standing.is_stale(ACCOUNT) and await _resting(later) == "stale_lockout"
+    finally:
+        await later.stop()
+    again = Job(retries=cast(Any, RetryHop()))
+    third = _driver(again, timers, persistence=memory)
+    await third.start([ACCOUNT])
+    try:  # the stop persisted the lock over the refused snapshot: restored, still locked
+        assert again.standing.is_stale(ACCOUNT) and await _resting(third) == "stale_lockout"
+        resolved = await third.resolve(ACCOUNT, decided_by="owner", write_ahead=_no_record)
+        assert resolved == "stale_lockout" and not again.standing.is_stale(ACCOUNT)
+        await third.trigger(ACCOUNT, "periodic")
+        assert await _resting(third) == "idle" and not again.standing.is_stale(ACCOUNT)
+        assert [r[2]["trigger"] for r in again.records.rows] == ["periodic"]
+    finally:
+        await third.stop()
+
+
+async def test_a_stop_before_the_lock_is_recorded_keeps_the_refused_snapshot(
+    job: Job, timers: Timers
+) -> None:
+    """The refused account is refused from the moment its job opens, whatever the fresh build's
+    state, and a stop before B19 has recorded the lock persists nothing: the refused snapshot
+    stays, so the next start refuses it again and locks the job then."""
+    memory = Memory()
+    first = _driver(job, timers, persistence=memory)
+    await first.start([ACCOUNT])
+    assert await _resting(first) == "idle"
+    await first.stop()
+    key, refused = _refusing(memory)
+    fresh = Job(retries=cast(Any, RetryHop()))
+    later = _driver(fresh, timers, persistence=memory)
+    await later.start([])
+    persisted = len(memory.persisted)
+    try:
+        await later._job(ACCOUNT)  # opened, built afresh, sent nothing yet
+        assert leaf_of(later._jobs[ACCOUNT].interp) == "idle"
+        assert fresh.standing.is_stale(ACCOUNT)  # refused at once, never by the fresh state
+    finally:
+        await later.stop()
+    assert len(memory.persisted) == persisted and memory.repo.rows[key] is refused
+    again = Job(retries=cast(Any, RetryHop()))
+    third = _driver(again, timers, persistence=memory)
+    await third.start([ACCOUNT])
+    try:
+        assert again.standing.is_stale(ACCOUNT) and await _resting(third) == "stale_lockout"
+    finally:
+        await third.stop()
+
+
+async def test_a_refused_snapshot_whose_startup_send_fails_stays_refused_on_its_way_to_the_lock(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The code look's m3 on the final PR (`_reached`): an account held since its start failed
+    whose snapshot was refused too is never lifted by the trigger B19 then takes from `idle`: its
+    fetch fails with the window spent, and B19's lock keeps it refused; no instant passes with
+    the account open (INV-B19-a)."""
+    memory = Memory()
+    first = _driver(job, timers, persistence=memory)
+    await first.start([ACCOUNT])
+    assert await _resting(first) == "idle"
+    await first.stop()
+    _refusing(memory)
+    fresh = Job(retries=cast(Any, RetryHop()))
+    driver = _driver(fresh, timers, persistence=memory)
+    _failing(driver, monkeypatch, "STARTUP", ACCOUNT)
+    await driver.start([ACCOUNT])
+    try:
+        assert (driver._unstarted, driver._escalating) == ({ACCOUNT}, {ACCOUNT})
+        monkeypatch.undo()
+        assert await driver.trigger(ACCOUNT, "periodic") is not None  # B19 takes it from idle
+        assert fresh.standing.is_stale(ACCOUNT)  # as `_reached` left it, before the lock lands
+        assert await _until(driver, "stale_lockout") == "stale_lockout"
+        assert fresh.standing.is_stale(ACCOUNT) and driver._escalating == set()
+    finally:
+        await driver.stop()
 
 
 async def test_a_persist_that_fails_stops_the_job_without_a_snapshot(
@@ -799,6 +1190,66 @@ async def test_a_persist_that_fails_stops_the_job_without_a_snapshot(
         await driver.stop()
     assert "reconcile_job_persist_failed" in {e["event"] for e in logs}
     assert not interp.is_running and not b19.ports_wired()
+
+
+async def test_a_persist_that_hangs_is_cut_and_paged_and_the_stop_goes_on_to_the_next_job(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The orchestrator's read of the wiring, L2 (C-2.18): each job's persist at the stop has its
+    own bound (`PERSIST_TIMEOUT_S`), under the reconciliation closer's share of the runtime's
+    stop. One that hangs is cut there, logged and paged as a failed persist is, and its job
+    stopped unsnapshotted; the stop goes on to the next job, which it persists, and to B19's
+    port."""
+    memory = Memory()
+    driver = _driver(job, timers, persistence=memory)
+    await driver.start([ACCOUNT, OTHER])
+    assert await _resting(driver) == "idle"
+    await _resting(driver, OTHER)  # backing off (no headroom read for it): the stop cancels it
+    interps = [driver._jobs[account].interp for account in (ACCOUNT, OTHER)]
+    persist = memory.persist
+
+    async def hangs_for_the_first(interp: Any, key: MachineKey) -> None:
+        if key.entity_id == str(ACCOUNT):  # the first job the stop closes
+            await asyncio.Event().wait()
+        await persist(interp, key)
+
+    monkeypatch.setattr(memory, "persist", hangs_for_the_first)
+    with capture_logs() as logs:
+        await asyncio.wait_for(driver.stop(), 10)  # a bound on the test, well past the persist's
+    failed = [(e["account_id"], e["failure"]) for e in logs
+              if e["event"] == "reconcile_job_persist_failed"]  # fmt: skip
+    assert failed == [(str(ACCOUNT), "TimeoutError")]
+    assert job.world.oms.pages.count(("page", rj._UNSNAPSHOTTED)) == 1
+    assert [key.entity_id for key, _ in memory.persisted] == [str(OTHER)]  # the next, persisted
+    assert not any(interp.is_running for interp in interps) and not b19.ports_wired()
+
+
+async def test_a_stop_cancelled_while_a_persist_hangs_ends_cancelled(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L2's other half: the persist's bound never swallows a cancellation, as the closer's share
+    running out cancels the stop's task; a later stop closes what that one left."""
+    memory = Memory()
+    driver = _driver(job, timers, persistence=memory)
+    await driver.start([ACCOUNT])
+    assert await _resting(driver) == "idle"
+    persist, entered = memory.persist, asyncio.Event()
+
+    async def hangs(_interp: Any, _key: MachineKey) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(memory, "persist", hangs)
+    monkeypatch.setattr(rj, "PERSIST_TIMEOUT_S", 60.0)  # the cancellation comes first
+    stopping = asyncio.ensure_future(driver.stop())
+    await asyncio.wait_for(entered.wait(), 10)  # a bound on the test
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+    monkeypatch.setattr(memory, "persist", persist)
+    await driver.stop()
+    assert [key.entity_id for key, _ in memory.persisted] == [str(ACCOUNT)]
+    assert not b19.ports_wired()
 
 
 async def test_a_refused_send_and_a_failed_timer_are_logged(

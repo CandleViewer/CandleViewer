@@ -93,6 +93,8 @@ from candleviewer.oms.errors import (
     OmsNotReady,
     OrderEntryRefused,
     OrderHistoryRefused,
+    OrderRefused,
+    ReconciliationUnavailable,
     StoreUnavailable,
     TradingDisabled,
 )
@@ -159,6 +161,7 @@ from candleviewer.oms.position_writes import (
     PositionWritesDeps,
     VenuePosition,
 )
+from candleviewer.oms.reconcile_job import PassTaken, ReconcileJobs, WriteAhead
 from candleviewer.oms.reconcile_standing import STALE_AFTER_S, ReconcileStanding
 from candleviewer.oms.repository import (
     ExecutionRepository,
@@ -879,8 +882,10 @@ class OmsAudit:
             await self._writer.emit(record.action, **fields)
 
 
-#: The notices whose owners have not landed: an ERROR and a page each until they do.
-#: `request_reconciliation` is E29-T06's once the runtime binds its jobs (`bind_reconciliation`).
+#: The notices no owner takes, by the ticket that owns each: an ERROR and a page each.
+#: `request_reconciliation` is E29-T06's reconciliation jobs' wherever the runtime binds them
+#: (`bind_reconciliation`), so it goes unowned only where the stores compose no reconciliation;
+#: `request_fallback_sl` waits for E32.
 UNOWNED_NOTICES: Final = MappingProxyType(
     {"request_reconciliation": "E29-T06", "request_fallback_sl": "E32"}
 )
@@ -973,6 +978,8 @@ class OrderNoticesRouter:
             if reason == ALREADY_TERMINAL and notice.detail.get("alerted") is True:
                 return  # its case's `order_already_terminal` alert is the one ticket (14:30Z)
             summary = f"order notice {kind} has no owner until {owner}"
+            if kind == "request_reconciliation":  # E29-T06 has landed: unbound, none is composed
+                summary = f"order notice {kind} has no owner: no reconciliation is composed"
             if refused:
                 summary = f"order notice {kind} was refused: no reconciliation job took it"
             self._raise("alert" if reason == ALREADY_TERMINAL else "page", summary)
@@ -1931,8 +1938,14 @@ class _Parts:
     #: (BQ-14); None where the stores compose none.
     reconcile: ReconcileWiring | None = None
     #: The accounts a job opens for at start: the environment's that resolve to a trading
-    #: account (an active key, not deleted); the rest open on their stream's first trigger.
-    tradable: Callable[[Sequence[UUID]], Awaitable[list[AccountId]]] | None = None
+    #: account (an active key, not deleted), and those whose read failed, which are held; the
+    #: rest open on their first trigger.
+    tradable: (
+        Callable[[Sequence[UUID]], Awaitable[tuple[list[AccountId], list[AccountId]]]] | None
+    ) = None
+    #: The way back to the serving loop, where the reconciliation routes' records are written
+    #: ahead (`OnLaneReconciliation`, E29-T06 #914).
+    serving: Serving | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2083,6 +2096,54 @@ class OnLaneLeverage:
     ) -> LeverageOutcome:
         change = self.parts.leverage.apply(request, actor=actor, request_id=request_id)
         return await _on_lane(self.parts, change, None)
+
+
+#: A route's write-ahead record, a coroutine function run on the serving loop (`Serving.call`).
+type ServedAhead[T] = Callable[[T], Coroutine[Any, Any, None]]
+
+
+@dataclass(frozen=True, slots=True)
+class OnLaneReconciliation:
+    """`OmsRuntime.reconciliation` from the serving loop (E29-T06 #914; 22 `reconcileAccount`,
+    `resolveReconciliation`): each call hops to the order lane (`Lane.call`), where the jobs and
+    their locks live, within `CV_COMMAND_TIMEOUT`, and its write-ahead record hops back to the
+    serving loop (`Serving.call`), where the route's audit writer runs, so B19 is told nothing
+    until that record is durable (C-2.9). What the record or the driver raises reaches the route
+    unchanged. `wired` is false where the stores compose no reconciliation."""
+
+    parts: _Parts
+
+    @property
+    def wired(self) -> bool:
+        return self.parts.reconcile is not None and self.parts.serving is not None
+
+    async def reconcile_now(
+        self, account: AccountId, *, write_ahead: ServedAhead[PassTaken]
+    ) -> PassTaken:
+        jobs, ahead = self._jobs(), self._served(write_ahead)
+        return await _on_lane(self.parts, jobs.reconcile_now(account, write_ahead=ahead))
+
+    async def resolve(
+        self, account: AccountId, *, decided_by: str, write_ahead: ServedAhead[str]
+    ) -> str:
+        jobs, ahead = self._jobs(), self._served(write_ahead)
+        resolving = jobs.resolve(account, decided_by=decided_by, write_ahead=ahead)
+        return await _on_lane(self.parts, resolving)
+
+    def _jobs(self) -> ReconcileJobs:
+        if self.parts.reconcile is None:
+            raise ReconciliationUnavailable("no reconciliation is composed")
+        return self.parts.reconcile.jobs
+
+    def _served[T](self, write_ahead: ServedAhead[T]) -> WriteAhead[T]:
+        serving = self.parts.serving
+        if serving is None:
+            raise ReconciliationUnavailable("no serving loop to write the record on")
+
+        async def ahead(value: T) -> None:
+            await serving.call(write_ahead(value))
+
+        return ahead
 
 
 @dataclass(frozen=True, slots=True)
@@ -2510,6 +2571,13 @@ class OmsRuntime:
         (`OnLanePositions`); `OmsNotReady` before it is composed."""
         return OnLanePositions(self._composed())
 
+    @property
+    def reconciliation(self) -> OnLaneReconciliation:
+        """The reconciliation routes' service (E29-T06 #914): the on-demand pass and the operator's
+        decision, each awaited on the order lane, its record written ahead on the serving loop
+        (`OnLaneReconciliation`); `OmsNotReady` before it is composed."""
+        return OnLaneReconciliation(self._composed())
+
     def _composed(self) -> _Parts:
         if self._parts is None:
             raise OmsNotReady
@@ -2806,39 +2874,74 @@ class OmsRuntime:
                 continue
             if swept and not self._stopping:
                 await self._seeded(parts)  # before `ready`, so before any group write (E28-T05)
-            if swept and not self._stopping:  # E29-T06: STARTUP before `ready` (BQ-14)
-                await self._reconcile_started(parts)
+            unstarted = False  # E29-T06: STARTUP before `ready` (BQ-14)
+            if swept and not self._stopping:
+                unstarted = not await self._reconcile_started(parts)
             if swept and not self._stopping:  # a stop that began meanwhile clears `ready` for good
                 self._ready.set()
                 _log().info("oms_ready")
                 if self._topics is not None:  # E29-T13: snapshots read on the lane from now on
                     self._topics.attach(OnLaneTopicReads(parts))
                 await self._stream_started(parts)
+                if unstarted:  # its entry held meanwhile (INV-B19-a), this task retries the start
+                    await self._reconcile_retried(parts)
             return
 
-    async def _reconcile_started(self, parts: _Parts) -> None:
+    async def _reconcile_started(self, parts: _Parts, *, retried: bool = False) -> bool:
         """E29-T06 #914 (24 Sec.8.5, BQ-14): the reconciliation jobs open on the lane, each sent
         `startup`, before `ready` is set; order entry never waits for their passes. The accounts
         are the environment's that resolve to a trading account; another opens on its stream's
-        first trigger. The start is bounded as the seed is (`_bounded`), so it delays `ready` by
-        at most 17 s, and one that overruns has failed. A start that fails is logged CRITICAL and
-        paged, and the runtime goes on to `ready`: each account whose job did not open is refused
-        order entry (its standing set), never left unreconciled silently."""
+        first trigger, and one whose read failed is held refused until then (`tradable`). The
+        start is bounded as the seed is (`_bounded`), so it delays `ready` by at most 17 s, and
+        one that overruns has failed, its task on the lane cancelled: an account it did not open
+        keeps the stale mark `ReconcileJobs.start` sets on each before its loop, which only the
+        account's open clears. A start that fails also holds the whole environment's order entry
+        (the standing refuses every account, `account_stale`), as one that fails before the jobs'
+        start marks no account (INV-B19-a, C-2.21): the first is logged CRITICAL and paged, a
+        retry's failure logged. The runtime goes on to `ready`, so a cancel, a close and a stop
+        write pass (C-2.6), and the startup task retries the start (`_reconcile_retried`).
+        Whether the jobs started, or none are composed; either lifts a hold an earlier start
+        left, never an account's stale mark."""
         if parts.reconcile is None or parts.tradable is None:
-            return
+            self._standing.release()
+            return True
         jobs, tradable = parts.reconcile.jobs, parts.tradable
 
         async def opened() -> None:
             ids = await self._bounded(parts.sweep.environment_accounts(self._env))
-            await jobs.start(await tradable(ids))
+            found, unread = await tradable(ids)
+            for account in unread:  # no refusal: held until its job opens (24 Sec.8.5)
+                self._standing.mark_stale(account)
+            await jobs.start(found)
 
         try:
             await self._bounded(parts.lane.call(opened()))
         except Exception as exc:
             if self._stopping:
                 raise asyncio.CancelledError from exc
+            self._standing.hold()  # first: no entry is admitted on an account not rebuilt
+            if retried:  # the first failure paged
+                _log().warning("oms_reconcile_start_retry_failed", error=type(exc).__name__)
+                return False
             _log().critical("oms_reconcile_unstarted", error=type(exc).__name__)
             _page(self._pager, "oms_reconcile_unstarted")
+            return False
+        self._standing.release()
+        return True
+
+    async def _reconcile_retried(self, parts: _Parts) -> None:
+        """#914's security look, Low 2 (24 Sec.8.5): the jobs' start again, after the sweep's
+        backoff (`SWEEP_RETRY_S`, doubling to its ceiling), until it works or the runtime stops.
+        The hold lifts once the jobs have started, each account's standing rebuilt first."""
+        delay, ceiling = SWEEP_RETRY_S
+        while not self._stopping:
+            await self._sleep(delay)
+            if self._stopping:
+                return
+            if await self._reconcile_started(parts, retried=True):
+                _log().info("oms_reconcile_started_on_retry")
+                return
+            delay = min(2 * delay, ceiling)
 
     async def _stream_started(self, parts: _Parts) -> None:
         """S8b (20 Sec.6.2, the orchestrator's Q4), where `ready` is set: account health's boot
@@ -3341,25 +3444,36 @@ class OmsRuntime:
                 environment=env, clock=lane_clock,
             )  # fmt: skip
 
-            async def tradable(ids: Sequence[UUID]) -> list[AccountId]:
-                """The accounts that resolve to a trading account now, each read bounded."""
+            async def tradable(
+                ids: Sequence[UUID],
+            ) -> tuple[list[AccountId], list[AccountId]]:
+                """The accounts that resolve to a trading account now, each read bounded, and
+                those whose read failed: one refused (deleted, keyless or of another environment)
+                is skipped, as its stream opens it; one unread (the store down or slow, which the
+                binding answers `StoreUnavailable`) is held (24 Sec.8.5)."""
                 found: list[AccountId] = []
+                unread: list[AccountId] = []
                 for account_id in ids:
                     try:
                         async with asyncio.timeout(ACCOUNT_READ_TIMEOUT_S):
                             found.append(
                                 (await accounts.trading_account(AccountId(account_id))).account_id
                             )
-                    except Exception as exc:  # deleted, keyless or unread: its stream opens it
-                        _log().info("oms_reconcile_account_skipped", account_id=str(account_id),
-                                    reason=type(exc).__name__)  # fmt: skip
-                return found
+                    except Exception as exc:
+                        why = {"account_id": str(account_id), "reason": type(exc).__name__}
+                        refused = not isinstance(exc, StoreUnavailable)
+                        if isinstance(exc, OrderRefused) and refused:  # its stream opens it
+                            _log().info("oms_reconcile_account_skipped", **why)
+                        else:  # unread, no refusal: held until its job opens
+                            _log().warning("oms_reconcile_account_unread", **why)
+                            unread.append(AccountId(account_id))
+                return found, unread
 
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
                 stream, admit_after, preview, leverage, writes, reads, observed, reconcile,
-                tradable,
+                tradable, serving,
             )  # fmt: skip
             with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
                 stopping = self._stopping
