@@ -4,9 +4,9 @@ No check reads an interpreter (C-2.21), and each answers its refusal or `None`, 
 winning in the ruled order. Checks 2 and 3 read memory and never await (C-2.20); they run before
 the routing emitter (check 4), and checks 5 to 8 in its sink, `ActionExecutor.hand_over`, in the
 dispatch worker and never on the evaluation tick, before the records written ahead, so a refusal
-writes `rules.blocked` and never `rules.fired`. Of those, only check 6's day rebuild awaits a read,
-bounded by `NOTIONAL_REBUILD_TIMEOUT_S`. No switch, flag or setting turns a check off (C-4.14):
-each only refuses, and a port the composition root has not bound refuses too.
+writes `rules.blocked` and never `rules.fired`. Of those, only two reads are awaited, each bounded:
+check 6's day rebuild here, and check 7's in `budget.py`. No switch, flag or setting turns a check
+off (C-4.14): each only refuses, and a port the composition root has not bound refuses too.
 """
 
 from __future__ import annotations

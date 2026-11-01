@@ -45,6 +45,13 @@ MEETS_ALLOWANCE: Final = frozenset(
     {"place_order", "scale_in", "reverse_position", "arm_chase_limit", "start_iceberg_slice",
      "start_twap"}
 )  # fmt: skip
+#: The types that hand an order to the OMS, entries and reduce-only orders alike, each counted once
+#: per OMS call per resolved account by the order budget (24 §11.7, check 7; BQ-6). Amends,
+#: cancels, lockouts, leverage and the engine's own actions never count.
+COUNTS_ORDERS: Final = frozenset(
+    {"place_order", "scale_in", "scale_out", "flatten_position", "flatten_all_positions",
+     "reverse_position", "arm_chase_limit", "start_iceberg_slice", "start_twap"}
+)  # fmt: skip
 #: The actions that set, move or cancel a stop, which check 8 asks the stop in force about (24
 #: §11.5; BQ-12): a cancel may select a native stop-loss.
 TOUCHES_STOP: Final = frozenset(
@@ -129,6 +136,7 @@ class HandlerSpec:
     handler: Handler | None = None
     refused_as: BlockedBy | None = None  # a type refused for good, bound or not
     meets_allowance: bool = False  # an entry (`MEETS_ALLOWANCE`)
+    counts_orders: bool = False  # hands an order to the OMS (`COUNTS_ORDERS`)
     touches_stop: bool = False  # a stop action (`TOUCHES_STOP`)
 
     def __post_init__(self) -> None:
@@ -213,6 +221,7 @@ def build_handlers(
             action_type, *flags, guard=bound.guard, capability=bound.capability,
             bound_by=bound.bound_by, refused_as=bound.refused_as,
             meets_allowance=action_type in MEETS_ALLOWANCE,
+            counts_orders=action_type in COUNTS_ORDERS,
             touches_stop=action_type in TOUCHES_STOP,
         )  # fmt: skip
     return MappingProxyType(table)

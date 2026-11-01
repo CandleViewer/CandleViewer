@@ -27,6 +27,9 @@ OUTCOMES: Final[tuple[Outcome, ...]] = get_args(Outcome)
 #: The detail of a `mode_changed` skip whose check-1 read failed or answered late (24 §11.5, BQ-6):
 #: the row was not confirmed armed, which is not the same as found disarmed.
 ROW_UNREAD: Final = "row_unread"
+#: The detail of an `order_budget` refusal whose counts could not be rebuilt since a start (24
+#: §11.7, BQ-7): not confirmed, which is not the same as spent.
+BUDGET_UNREAD: Final = "budget_unread"
 #: The rule's own limits a `cap` refusal names (24 §11.9; check 6, E35-T10): each its own detail.
 RuleLimit = Literal["max_actions_per_fire", "max_notional_per_fire", "max_daily_notional"]
 RULE_LIMITS: Final[tuple[RuleLimit, ...]] = get_args(RuleLimit)
@@ -59,6 +62,7 @@ BLOCKED_DETAIL: Final[Mapping[str, str]] = MappingProxyType(
         "max_daily_notional": (
             "Not done — the rule's daily notional limit is used up or unconfirmed."
         ),
+        BUDGET_UNREAD: "Not done — the rule's recent order count was not confirmed.",
     }
 )
 

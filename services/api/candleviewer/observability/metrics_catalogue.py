@@ -3880,14 +3880,15 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E35",
         max_series=100,
     ),
+    # E35-T10 (#5002; 24 Sec.11.5, BQ-10): live in `rules/executor/metrics.py`.
     _s(
         "rule_autodisarm_total",
         "counter",
         "disarms",
         (),
-        "Rules auto-disarmed.",
+        "Rules disarmed after repeated scope or permission refusals on one account.",
         "rule storm",
-        _P,
+        _L,
         "E35",
     ),
     # E35 authoring limits (#4834): refusals by closed sets (`rules/manager.REFUSED_CAPS`,
@@ -5019,14 +5020,16 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _P,
         "E27",
     ),
+    # E35-T10 (#5002; 24 Sec.11.7, BQ-8): live in `rules/executor/metrics.py`; the page is the
+    # breaker's `cv_page` CRITICAL line, on every trip, so no alert rule keys on the counter.
     _s(
         "rule_circuit_breaker_trips_total",
         "counter",
         "trips",
         (),
-        "Rule circuit-breaker trips.",
-        "alert on any",
-        _P,
+        "Rule circuit-breaker trips, each once.",
+        "pages via the cv_page CRITICAL log line naming the rule, on every trip",
+        _L,
         "E35",
     ),
     # --- Audit read path (E42-T02) -------------------------------------------

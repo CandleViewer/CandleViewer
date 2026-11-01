@@ -22,6 +22,7 @@ from candleviewer.rules.executor.ports import TRIGGER_REASON, trigger_reason
 from candleviewer.rules.executor.results import (
     BLOCKED_BY,
     BLOCKED_DETAIL,
+    BUDGET_UNREAD,
     OUTCOMES,
     ROW_UNREAD,
     RULE_LIMITS,
@@ -99,8 +100,9 @@ def test_blocked_by_set_equals_the_metric_reason_labels() -> None:
 def test_blocked_detail_is_one_plain_sentence_per_reason() -> None:
     """BQ-12: E35-D03's register, at most 80 characters, one sentence ending in a full stop,
     naming the condition and never data (no digit, id, account or figure; C-12.6). E35-T10: `cap`
-    has one more per rule limit it names, each PROPOSED as the others are."""
-    assert set(BLOCKED_DETAIL) == {*BLOCKED_BY, ROW_UNREAD, *RULE_LIMITS}
+    has one more per rule limit it names, and `order_budget` one for a count not confirmed since a
+    start, each PROPOSED as the others are."""
+    assert set(BLOCKED_DETAIL) == {*BLOCKED_BY, ROW_UNREAD, *RULE_LIMITS, BUDGET_UNREAD}
     for reason, sentence in BLOCKED_DETAIL.items():
         assert sentence.startswith("Not done — ") and len(sentence) <= 80, reason
         assert sentence.endswith(".") and sentence.count(".") == 1, reason

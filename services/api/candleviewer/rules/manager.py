@@ -702,14 +702,21 @@ class RulesManager:
             row = await self._force_disarm(row)
         return self._view(row)
 
-    async def _force_disarm(self, row: RuleRow) -> RuleRow:
+    async def _force_disarm(
+        self, row: RuleRow, named: tuple[StopReason, dict[str, Any]] | None = None
+    ) -> RuleRow:
         """B9 `DISARM`, audited as `rule.disarmed` with its cause (no actor: the server does it);
         the `rules` broadcast carries the reason only. `row` may be stale, so forced disarms run
         one at a time on the row read again (returned), only while it still has a cause and its
-        chart still takes DISARM (one that does not would park it: `onUnhandled: "defer"`)."""
+        chart still takes DISARM (one that does not would park it: `onUnhandled: "defer"`). The
+        cause is the row's own (`_disarm_cause`), or one a caller names for an armed row (E35-T10:
+        `scope_denied`), which `rule_stopped` hears once the rule has moved."""
         async with self._disarming:
             row = await self._s.get(row.id) or row
-            cause = _disarm_cause(row)
+            own = _disarm_cause(row)
+            cause: tuple[str, dict[str, Any]] | None = (
+                own if named is None else (named if row.mode == "armed" else None)
+            )
             if cause is None or not await self.lifecycle.handled_event(
                 row.id, row.mode, row.disabled_reason, "disabled"
             ):
@@ -721,6 +728,8 @@ class RulesManager:
             if await self._record_b9(
                 row, "DISARM", "rule.disarmed", payload | detail, reason=reason
             ):
+                if named is not None:
+                    self._rule_stopped(row.id, named[0])
                 await self._bc({"topic": "rules", **payload})
         return row
 
@@ -1100,6 +1109,34 @@ class RulesManager:
                 moved.append(row.id)
                 self._rule_stopped(row.id, reason)
         return tuple(moved)
+
+    async def trip_breaker(self, rule_id: str) -> bool:
+        """The circuit breaker's move (24 §11.7; BQ-8): B9 `KILL_SWITCH`, so only a human re-arm
+        with step-up leaves it (INV-B9-d), recorded `rule.kill_switched` with the reason
+        `order_budget` and no actor (`system`). True when the rule moved; its caller bounds it."""
+        return await self._stop_rule(rule_id, "KILL_SWITCH", "order_budget")
+
+    def auto_disarm(self, rule_id: str, reason: Literal["scope_denied"]) -> None:
+        """Disarm a rule after repeated scope or permission refusals (24 §11.5; RE-E1, BQ-10):
+        synchronous, it starts one tracked task per rule beside the tick and the dispatch, never
+        awaited on either, which runs the forced disarm (B9 `DISARM`, `rule.disarmed` with
+        `reason`) under `TICK_DISARM_TIMEOUT_S`; one already in flight takes no second."""
+        if rule_id in self._tick_disarms:
+            return
+        task = spawn(self._scope_disarm(rule_id, reason), name="rule-scope-disarm")
+        self._tick_disarms[rule_id] = task
+        task.add_done_callback(lambda _done: self._tick_disarms.pop(rule_id, None))
+
+    async def _scope_disarm(self, rule_id: str, reason: Literal["scope_denied"]) -> None:
+        """One attempt, logged by the error's class alone when it fails; the next refusal past
+        the count tries again."""
+        try:
+            async with asyncio.timeout(TICK_DISARM_TIMEOUT_S):
+                row = await self._s.get(rule_id)
+                if row is not None:
+                    await self._force_disarm(row, (reason, {}))
+        except Exception as lost:  # the hook names no error type: `rules` may not import `audit`
+            _log().error("rules.scope_disarm_failed", rule_id=rule_id, error=type(lost).__name__)
 
     async def _stop_rule(self, rule_id: str, event: str, reason: str) -> bool:
         """B9 `event` (`KILL` or `KILL_SWITCH`) to the rule while its row is armed, recorded

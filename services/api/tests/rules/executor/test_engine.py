@@ -124,6 +124,14 @@ class Alerts:
     def settled(self, rule_id: str) -> None:
         self.settled_rules.append(rule_id)
 
+    def breaker_tripped(self, rule_id: str, run_id: uuid.UUID, node_id: str) -> None:
+        self.raised.append(("breaker_tripped", rule_id, run_id, node_id))  # E35-T10: no order here
+
+    async def breaker_moved(
+        self, rule_id: str, run_id: uuid.UUID, node_id: str, *, moved: bool
+    ) -> None:
+        self.raised.append(("breaker_moved", rule_id, run_id, node_id))
+
 
 @dataclass
 class Engine:
