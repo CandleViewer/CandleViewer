@@ -361,6 +361,8 @@ function retainKey(cmd: Command): string | null {
       return "viewport";
     case "setLod":
       return "lod";
+    case "setCrosshair":
+      return "crosshair"; // the magnet survives a worker restart (E11-S07)
     case "setSeriesOptions":
       return `series:${cmd.series}`;
     case "addDrawing":

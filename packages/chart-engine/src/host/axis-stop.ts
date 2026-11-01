@@ -18,6 +18,8 @@ import { type InputSink, PRICE_SCALE_MENU_EVENT } from "./input-router.js";
 export const ANNOUNCE_EVENT = "candleviewer:announce";
 /** The writer's key in the shell announcer: each message replaces the last (latest state). */
 export const ANNOUNCE_KEY = "chart:axis";
+/** E11-S07 (BQ-9): the magnet's own key, so it never replaces an axis announcement. */
+export const MAGNET_ANNOUNCE_KEY = "chart:magnet";
 /** E06-D03 D5 `repeatWindow`: while requests keep coming, at most one announcement per window. */
 export const ANNOUNCE_WINDOW_MS = 500;
 /** E06-D03 D5 `trailingFlush`: the final state is announced within this long of the last request. */
@@ -45,9 +47,14 @@ export interface AxisStops {
  * a request with none pending and the window passed dispatches at once; later ones are coalesced
  * to the latest state, dispatched at each window's end while they keep coming, and the final state
  * lands at most 250 ms after the last request (which may be inside a window: a bounded one-off per
- * release, as D5 allows). A pending state is dropped once the target is unmounted.
+ * release, as D5 allows). A pending state is dropped once the target is unmounted. `key` is the
+ * writer's key in the shell announcer (E11-S07, additive: the axes by default).
  */
-export function createAnnouncer(target: HTMLElement, clock: AnnounceClock): (text: string) => void {
+export function createAnnouncer(
+  target: HTMLElement,
+  clock: AnnounceClock,
+  key: string = ANNOUNCE_KEY,
+): (text: string) => void {
   let last = Number.NEGATIVE_INFINITY;
   let lastAsk = 0;
   let pending: string | null = null;
@@ -57,7 +64,7 @@ export function createAnnouncer(target: HTMLElement, clock: AnnounceClock): (tex
     last = clock.now();
     const Custom = target.ownerDocument.defaultView?.CustomEvent;
     if (typeof Custom !== "function") return;
-    const detail = { politeness: "polite", text, key: ANNOUNCE_KEY };
+    const detail = { politeness: "polite", text, key };
     target.dispatchEvent(new Custom(ANNOUNCE_EVENT, { bubbles: true, detail }));
   };
   const flush = (): void => {

@@ -3,7 +3,12 @@
 // shared render runtime, in a worker or inline (`ChartOptions.runMode`, src/worker/host.ts); the
 // scene graph and GL backend land in E11-S01 / E11-S02 behind this same surface.
 import { mountSurface, probeRenderProfile } from "../host/mount.js";
-import { type AxisStops, createAxisStops } from "../host/axis-stop.js";
+import {
+  type AxisStops,
+  createAnnouncer,
+  createAxisStops,
+  MAGNET_ANNOUNCE_KEY,
+} from "../host/axis-stop.js";
 import { createScaleBadge } from "../host/scale-badge.js";
 import { readReducedMotion, watchMotion } from "../host/motion.js";
 import { watchSize } from "../host/resize.js";
@@ -30,9 +35,12 @@ import type {
   Density,
   FocusedUnit,
   FrameStats,
+  MagnetMode,
   Pane,
   PaneId,
   PaneOptions,
+  ReadoutEvent,
+  ReadoutFieldValue,
   ThemeTokens,
   Unsubscribe,
   VisibleWindow,
@@ -72,6 +80,19 @@ const copyDetails = (d: ErrorDetails | DegradeDetails): ErrorDetails =>
 
 type Listener<E extends keyof ChartEvents> = (p: ChartEvents[E]) => void;
 
+const MAGNET_MODES: ReadonlySet<unknown> = new Set(["off", "weak", "strong"]);
+
+/** E11-D02 §7.3's copy (BQ-9): what the polite announcement says. */
+export const magnetText = (m: MagnetMode): string => `Crosshair magnet: ${m}`;
+
+function magnetMode(m: unknown): MagnetMode {
+  if (!MAGNET_MODES.has(m))
+    throw new RangeError("chart-engine: magnetMode must be off, weak or strong");
+  return m as MagnetMode;
+}
+
+type CrosshairMessage = Extract<FromWorker, { t: "crosshair" }>;
+
 function positiveInt(value: number | undefined, fallback: number, name: string): number {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -88,6 +109,7 @@ export function createChart(opts: ChartOptions): Chart {
   // The hard ceilings are checked up front (E11-T01 security notes: no unbounded allocation).
   positiveInt(opts.maxBars, CHART_DEFAULTS.maxBars, "maxBars");
   positiveInt(opts.memoryBudgetMb, CHART_DEFAULTS.memoryBudgetMb, "memoryBudgetMb");
+  let magnet = magnetMode(opts.magnetMode ?? "off");
 
   const surface = mountSurface(opts.container);
   const doc = opts.container.ownerDocument;
@@ -101,6 +123,11 @@ export function createChart(opts: ChartOptions): Chart {
   let lastStats: FrameStats | null = null;
   let lastRange = { from: 0, to: 1 };
   let stops: AxisStops | null = null; // the axis stops (E11-S06), from the first `axes` message
+  // E11-S07: the last crosshair and readout fields the worker posted, and the event's bar edge.
+  let cursor: CrosshairMessage | null = null;
+  let fields: readonly ReadoutFieldValue[] = [];
+  let emittedBar = -1;
+  let sayMagnet: ((text: string) => void) | null = null;
 
   function emit<E extends keyof ChartEvents>(e: E, payload: ChartEvents[E]): void {
     const set = listeners.get(e);
@@ -189,9 +216,44 @@ export function createChart(opts: ChartOptions): Chart {
         });
         stops.update(msg);
         return;
+      case "crosshair": {
+        const prev = cursor;
+        cursor = msg;
+        // BQ-10: the bar's edge only; a price-only move and the pointer leaving never fire.
+        if (msg.visible && msg.bar !== emittedBar) {
+          emittedBar = msg.bar;
+          emit("crosshair", { time: msg.time, price: msg.price, barIndex: msg.bar });
+        }
+        // A moved bar or snap brings its `readout` next (the worker's rule): one event a frame.
+        const follows = msg.visible && (prev?.bar !== msg.bar || prev?.snap !== msg.snap);
+        if (!follows) emitReadout();
+        return;
+      }
+      case "readout":
+        fields = msg.fields;
+        emitReadout();
+        return;
       default:
       // pick and a11y are the hit-test and live-region layers' (E11-S08 / E11-S13).
     }
+  }
+
+  /** BQ-11: the crosshair and the fields at its bar, on each change of either. */
+  function emitReadout(): void {
+    if (cursor === null) return;
+    const c = cursor;
+    const e: ReadoutEvent = {
+      visible: c.visible,
+      x: c.x,
+      y: c.y,
+      bar: c.bar,
+      time: c.time,
+      priceText: c.priceText,
+      timeText: c.timeText,
+      snap: c.snap,
+      fields: c.visible ? fields : [], // a hidden crosshair carries no values
+    };
+    emit("readout", e);
   }
 
   const badge = createScaleBadge(
@@ -244,6 +306,7 @@ export function createChart(opts: ChartOptions): Chart {
   const detachMotion = watchMotion(doc, surface.mirrorRoot, reducedMotion, (reduce) =>
     host.command({ k: "setMotion", reduce }),
   );
+  if (magnet !== "off") host.command({ k: "setCrosshair", magnetMode: magnet });
   const timeScale = createTimeScale((r) => {
     host.command({ k: "setViewport", timeStart: r.from, timeEnd: r.to });
   });
@@ -304,6 +367,20 @@ export function createChart(opts: ChartOptions): Chart {
       if (disposed) return;
       density = d;
     },
+    setMagnetMode(m: MagnetMode): void {
+      if (disposed) return;
+      const next = magnetMode(m);
+      if (next === magnet) return;
+      magnet = next;
+      host.command({ k: "setCrosshair", magnetMode: next });
+      // BQ-9: through the #5322 announcer, under its own key (never the axes').
+      sayMagnet ??= createAnnouncer(
+        opts.container,
+        { now: () => env.now(), setTimer: (cb, ms) => env.setTimer(cb, ms) },
+        MAGNET_ANNOUNCE_KEY,
+      );
+      sayMagnet(magnetText(next));
+    },
     subscribe<E extends keyof ChartEvents>(e: E, cb: (p: ChartEvents[E]) => void): Unsubscribe {
       if (disposed) return () => undefined;
       let set = listeners.get(e);
@@ -329,7 +406,15 @@ export function createChart(opts: ChartOptions): Chart {
     getDomMirrorRoot: () => surface.mirrorRoot,
     // No data plane yet (E11-T03): nothing is visible or focused until series hold bars.
     getVisibleWindow: (): VisibleWindow | null => null,
-    getFocusedUnit: (): FocusedUnit | null => null,
+    // BQ-23: a bar while a key-driven cursor is placed (key wiring is BQ-7's); null otherwise.
+    getFocusedUnit(): FocusedUnit | null {
+      const pane = panes[0];
+      if (cursor === null || !cursor.visible || cursor.driver !== "key" || pane === undefined) {
+        return null;
+      }
+      const unit = { kind: "bar" as const, paneId: pane.id, barIndex: cursor.bar };
+      return Number.isFinite(cursor.price) ? { ...unit, priceLevel: cursor.price } : unit;
+    },
     dispose(): void {
       if (disposed) return;
       disposed = true;

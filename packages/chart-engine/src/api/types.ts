@@ -19,6 +19,8 @@ export interface ChartOptions {
   // Design delta BQ-258 (E11-S11): the design fonts' bytes for the SDF atlas (C-2.16: the
   // engine fetches nothing). Copied per chart; absent means no atlas is built.
   fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[];
+  // E11-S07 (BQ-9, in §8; E11-D01 D3): the crosshair magnet, default 'off'.
+  magnetMode?: MagnetMode;
 }
 
 export interface Chart {
@@ -37,6 +39,8 @@ export interface Chart {
   getDomMirrorRoot(): HTMLElement;
   getVisibleWindow(): VisibleWindow | null;
   getFocusedUnit(): FocusedUnit | null;
+  // E11-S07 (BQ-9, in §8): the magnet; the change is announced politely.
+  setMagnetMode(m: MagnetMode): void;
 }
 
 export interface Pane {
@@ -147,7 +151,11 @@ export interface OrderLine {
 }
 
 export interface ChartEvents {
+  // E11-S07 (BQ-10): fires on a `barIndex` change only, price in ticks; leaving the plot and
+  // re-entering the same bar fires nothing.
   crosshair: { time: number; price: number; barIndex: number; cell?: FootprintCellRef };
+  // E11-S07 (BQ-11, in §8): the tooltip's values, at most once per frame.
+  readout: ReadoutEvent;
   click: { time: number; price: number; button: number; modifiers: Modifiers };
   orderLineDragged: { id: string; price: number; commit: boolean };
   drawingChanged: { drawing: Drawing; phase: "create" | "update" | "delete" };
@@ -236,6 +244,35 @@ export interface ThemeTokens {
 }
 
 export type Density = "comfortable" | "compact" | "dense";
+
+/** E11-S07 (BQ-8, BQ-9): `weak` snaps within 12 px of an O/H/L/C, `strong` always snaps. */
+export type MagnetMode = "off" | "weak" | "strong";
+
+/** One readout row, formatted in the engine (BQ-2): `open|high|low|close|volume|delta|ind:<id>`. */
+export interface ReadoutFieldValue {
+  readonly key: string;
+  readonly label: string;
+  readonly value: string;
+  readonly unit: string;
+  readonly colorToken: string;
+}
+
+/**
+ * `ChartEvents.readout` (BQ-11): the crosshair and the fields at its bar, at most once a frame, on
+ * each crosshair or readout change. `visible: false` once the crosshair hides, and then `fields`
+ * is empty. `x`, `y` are CSS px; `timeText` is the bar time in the chart's zone ("14 Oct 13:42").
+ */
+export interface ReadoutEvent {
+  readonly visible: boolean;
+  readonly x: number;
+  readonly y: number;
+  readonly bar: number;
+  readonly time: number;
+  readonly priceText: string;
+  readonly timeText: string;
+  readonly snap: "open" | "high" | "low" | "close" | null;
+  readonly fields: readonly ReadoutFieldValue[];
+}
 
 /** Opaque pane id, minted by `Chart.addPane`. */
 export type PaneId = string & { readonly __brand: "PaneId" };

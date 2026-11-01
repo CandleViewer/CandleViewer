@@ -407,6 +407,8 @@ Shipped by E11-S10 PR 2 (package README BQ-149), additive: `resize` gains option
 
 Shipped by E11-S06 PR 1 (package README BQ-194, BQ-199, BQ-203), additive: `KEY` codes `up` 9, `down` 10, `pageUp` 11 and `pageDown` 12, and a `key` row's `y` slot names its target (0 the plot, 1 the time axis, 2 the price axis; anything else is rejected); `init.config.timeZone?` (a string, UTC by default); worker → main `axes { id, price, time, priceName, timeName, priceGutter, timeZone, say? }`, the retained axis labels in value order, the axis stops' names, the measured price gutter and an axis key's announcement, posted when one of them changes, never on a still frame.
 
+Shipped by E11-S07 (#388; package README BQ-1 to BQ-5), additive: `command { k: "setCrosshair", magnetMode }` (`off`, `weak` or `strong`; retained across a worker restart); worker → main `crosshair { id, bar, time, price, priceText, timeText, x, y, snap, driver, visible }`, the local crosshair (price in ticks, `x`/`y` the snapped intersection in CSS px), posted at most once per frame and only when a field changed, never per pointer move; worker → main `readout { id, bar, fields }`, the fields at the crosshair bar formatted in the worker, posted when the bar or the data at that bar changes and always right after, in the same frame, a `crosshair` whose bar or snap moved while visible (so the facade emits one `readout` event a frame). `a11y` is posted for key-driven cursor moves only, with the additive `short?` (the held-key form) and `origin?: "key"`; pointer hover never posts it. A `sync` crosshair is the remote crosshair only: drawn, never a `crosshair`, `readout` or `a11y` message, and never re-published to the group.
+
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
 ---
@@ -448,6 +450,7 @@ export interface ChartOptions {
   maxBars?: number; // default 200_000
   memoryBudgetMb?: number; // default 600
   fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[]; // SDF atlas (E11-S11 BQ-258)
+  magnetMode?: MagnetMode; // default 'off' (E11-S07, E11-D01 D3)
 }
 
 export interface Chart {
@@ -466,6 +469,8 @@ export interface Chart {
   getDomMirrorRoot(): HTMLElement;
   getVisibleWindow(): VisibleWindow | null;
   getFocusedUnit(): FocusedUnit | null;
+  // E11-S07: the crosshair magnet; the change is announced politely by the host.
+  setMagnetMode(m: MagnetMode): void;
 }
 
 // Mounts into `container` and returns synchronously; capability detection is lazy (E11-T01).
@@ -579,7 +584,10 @@ export interface OrderLine {
 }
 
 export interface ChartEvents {
+  // Fires on a barIndex change only (price in ticks); a price-only move, leaving the plot, and
+  // leaving and re-entering the same bar fire nothing (E11-S07).
   crosshair: { time: number; price: number; barIndex: number; cell?: FootprintCellRef };
+  readout: ReadoutEvent; // E11-S07: the tooltip's values, at most once per frame
   click: { time: number; price: number; button: number; modifiers: Modifiers };
   orderLineDragged: { id: string; price: number; commit: boolean };
   drawingChanged: { drawing: Drawing; phase: "create" | "update" | "delete" };
@@ -600,6 +608,29 @@ export interface ChartEvents {
         } // NO_WEBGL2 only, E11-T05 BQ-90
       | { atlasReason: "no-font" | "font-load" | "coverage" | "overflow" | "raster" }; // ATLAS_GENERATION_FAILED only, E11-S11 BQ-272
   };
+}
+
+// E11-S07: weak snaps within 12 px of the bar's O/H/L/C (released 2 px further), strong always.
+export type MagnetMode = "off" | "weak" | "strong";
+
+export interface ReadoutFieldValue {
+  key: string; // 'open' | 'high' | 'low' | 'close' | 'volume' | 'delta' | 'ind:<id>'
+  label: string; // 'O', 'H', …; the snapped field in full ('High')
+  value: string; // formatted in the engine at tick precision; 'unavailable', never 0, when missing
+  unit: string;
+  colorToken: string; // never coloured by direction
+}
+
+export interface ReadoutEvent {
+  visible: boolean;
+  x: number; // CSS px: the bar centre and the line's y
+  y: number;
+  bar: number;
+  time: number; // µs: the bar's open time
+  priceText: string;
+  timeText: string; // the bar time in the chart's time zone, e.g. '14 Oct 13:42'
+  snap: "open" | "high" | "low" | "close" | null;
+  fields: readonly ReadoutFieldValue[]; // empty while !visible
 }
 
 export interface FrameStats {
