@@ -834,6 +834,27 @@ async def test_a_resumed_protective_close_is_still_refused_by_the_clock_halt() -
     assert rig.calls(rig.live) == _LOOKUP
 
 
+@pytest.mark.parametrize("raising", [False, True], ids=["lock_fence", "stalled_serving_loop"])
+async def test_a_resumed_protective_close_on_a_fenced_lane_is_still_refused(raising: bool) -> None:
+    """#2904 (coordinator, PR 2 row a; `_protective`): the carve-out is the switches'
+    `TradingDisabled` only (C-2.6 lets a close past the kill switch and the audit-break halt), so
+    the fence's `OmsNotReady`, returned for a lost environment lock (#913 L2) or raised while the
+    serving loop stalls (#913 L4), still refuses the re-send: a lane that may no longer own its
+    environment sends nothing, and no carve-out is logged."""
+    rig = build_rig()
+    rig.switches.refusals[LIVE_ACCOUNT] = OmsNotReady()
+    rig.switches.raising = raising
+    with capture_logs() as logs, pytest.raises((OmsNotReady, ResendRefused)) as refused:
+        await _resumed(rig, _protective_close(), age_us=SECOND_US)
+    not_ready = refused.value if raising else getattr(refused.value, "refusal", None)
+    assert isinstance(refused.value, OmsNotReady if raising else ResendRefused)
+    assert isinstance(not_ready, OmsNotReady)
+    assert rig.calls(rig.live) == _LOOKUP and rig.audits.written == []
+    assert [e for e in logs if e["event"] == "oms_resend_protective_close_admitted"] == []
+    [line] = [e for e in logs if e["event"] == "oms_resend_refused"]
+    assert line["code"] == "oms_not_ready"
+
+
 async def test_a_resumed_reduce_only_order_that_is_no_flatten_is_still_refused() -> None:
     """Only the protective routes' `flatten` is carved out: a reduce-only `scale_out` placed by
     `placeOrder` is refused as any create is."""

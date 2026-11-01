@@ -25,6 +25,7 @@ from candleviewer.admin.audit_break_ack import (
     ConsoleAckUnavailable,
     acknowledge_from_console,
 )
+from candleviewer.api import audit_verify_runner as verify_runner_module
 from candleviewer.api.audit_verify_runner import ChainVerifyRunner
 from candleviewer.audit import break_halt as break_halt_module
 from candleviewer.audit.break_halt import (
@@ -53,6 +54,7 @@ from candleviewer.audit.service import AuditService
 from candleviewer.audit.verify_runner import VerifyOutcomeKind, VerifyRunRequest, VerifyTrigger
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId
+from candleviewer.observability.health_probes import SystemEvent
 from candleviewer.oms.errors import OmsNotReady, OrderEntryRefused, TradingDisabled
 from candleviewer.oms_wiring import HaltingKillSwitch, InterimKillSwitch, TradingSwitchesBinding
 
@@ -643,12 +645,35 @@ class _ResumeQuery:
         return answer
 
 
-def _acked_service(query: _ResumeQuery) -> tuple[AuditBreakHaltService, ChainVerifyRunner]:
+def _acked_service(
+    query: _ResumeQuery,
+    *acked: BreakIdentity,
+    events: _Events | None = None,
+    writer: _Writer | None = None,
+) -> tuple[AuditBreakHaltService, ChainVerifyRunner]:
     halt = AuditBreakHalt(unread=False)
-    halt.apply(ChainHaltView(acknowledged=frozenset({BREAK})))
-    audit = SimpleNamespace(query=query, writer=_Writer())
+    halt.apply(ChainHaltView(acknowledged=frozenset({BREAK, *acked})))
+    audit = SimpleNamespace(query=query, writer=writer or _Writer())
     service = AuditBreakHaltService(halt, audit)
-    return service, ChainVerifyRunner(audit, None, halt=service)
+    return service, ChainVerifyRunner(audit, events, halt=service)
+
+
+class _Events:
+    """The system event writer: each event kept."""
+
+    def __init__(self) -> None:
+        self.written: list[SystemEvent] = []
+
+    async def write(self, event: SystemEvent) -> None:
+        self.written.append(event)
+
+
+def _failures() -> float:
+    return REGISTRY.get_sample_value("audit_chain_verification_failures_total") or 0.0
+
+
+def _chain_state() -> float | None:
+    return REGISTRY.get_sample_value("cv_audit_chain_verified_state")
 
 
 async def test_scheduled_run_resumes_from_the_id_after_each_acknowledged_break() -> None:
@@ -678,6 +703,63 @@ async def test_scheduled_run_whose_resume_finds_no_new_break_stays_clear(
     assert [e["error"] for e in stopped] == (
         ["TimeoutError"] if isinstance(resumed, Exception) else []
     )
+
+
+async def test_scheduled_run_a_resumed_break_is_counted_and_raised_as_a_first_walk_break() -> None:
+    """#2904 (coordinator, PR 2 row c): the break B past the acknowledged A raises its own
+    critical `audit_chain_break` event and counts in the failures series, as A's walk did."""
+    events = _Events()
+    service, runner = _acked_service(_ResumeQuery(_result(), _result(bad=7)), events=events)
+    before = _failures()
+    await runner.run(VerifyRunRequest(trigger=VerifyTrigger.SCHEDULED, deadline_s=60))
+    assert _failures() - before == 2 and _chain_state() == 0
+    assert [(e.kind, e.severity, e.details["first_bad_id"]) for e in events.written] == [
+        ("audit_chain_break", "critical", "3"),
+        ("audit_chain_break", "critical", "7"),
+    ]
+    assert events.written[1].details["kind"] == "entry_hash_mismatch"
+    assert service.halt.breaks == (BreakIdentity(7, "entry_hash_mismatch"),)
+
+
+async def test_scheduled_run_at_the_resume_bound_halts_on_the_first_entry_not_walked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2904 (coordinator, PR 2 row b; 04 §8.1 fail closed): past more acknowledged breaks than
+    one run resumes, the run halts on the first entry it has not walked, kind `unknown`, and
+    records that halt; the bound is no break, so it raises no event and counts no failure."""
+    monkeypatch.setattr(verify_runner_module, "_MAX_RESUMES", 2)
+    query = _ResumeQuery(_result(), _result(bad=4), _result(bad=5))
+    acked = (BreakIdentity(4, "entry_hash_mismatch"), BreakIdentity(5, "entry_hash_mismatch"))
+    events, writer = _Events(), _Writer()
+    service, runner = _acked_service(query, *acked, events=events, writer=writer)
+    before = _failures()
+    with capture_logs() as logs:
+        await runner.run(VerifyRunRequest(trigger=VerifyTrigger.SCHEDULED, deadline_s=60))
+    assert service.halt.engaged and service.halt.breaks == (BreakIdentity(6, "unknown"),)
+    assert [p.from_id for p in query.plans] == [None, 4, 5]
+    [capped] = [e for e in logs if e["event"] == "audit.verify.resume_capped"]
+    assert (capped["resumes"], capped["at"], capped["log_level"]) == (2, 6, "error")
+    halted = [r for r in writer.records if r["action"] == HALTED]
+    assert [r["object_id"] for r in halted] == ["6:unknown"]
+    assert _failures() - before == 1 and len(events.written) == 1  # the first walk's only
+
+
+async def test_scheduled_run_past_an_acknowledged_resume_bound_walks_on_to_a_later_break(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acknowledging the bound lets the run walk past it, so the bound never hides a later
+    break: B at 9, past the bound at 6, trips."""
+    monkeypatch.setattr(verify_runner_module, "_MAX_RESUMES", 2)
+    query = _ResumeQuery(_result(), _result(bad=4), _result(bad=5), _result(bad=9))
+    acked = (
+        BreakIdentity(4, "entry_hash_mismatch"),
+        BreakIdentity(5, "entry_hash_mismatch"),
+        BreakIdentity(6, "unknown"),
+    )
+    service, runner = _acked_service(query, *acked)
+    await runner.run(VerifyRunRequest(trigger=VerifyTrigger.SCHEDULED, deadline_s=60))
+    assert [p.from_id for p in query.plans] == [None, 4, 5, 6]
+    assert service.halt.breaks == (BreakIdentity(9, "entry_hash_mismatch"),)
 
 
 # ---- the acknowledgement ----------------------------------------------------------------------

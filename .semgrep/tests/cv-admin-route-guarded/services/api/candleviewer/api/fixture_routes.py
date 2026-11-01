@@ -58,6 +58,9 @@ def make_audit_router() -> APIRouter:
     @router.get("/signing-keys")  # ok: cv-admin-route-guarded
     async def list_audit_signing_keys() -> None: ...
 
+    @router.post("/chain-breaks/{firstBadId}/acknowledge")  # ok: cv-admin-route-guarded
+    async def acknowledge_audit_chain_break() -> None: ...
+
     @router.delete("")  # ruleid: cv-admin-route-guarded
     async def wipe_audit_log() -> None: ...
 

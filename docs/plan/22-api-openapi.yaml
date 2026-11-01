@@ -11229,6 +11229,112 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /admin/audit/chain-breaks/{firstBadId}/acknowledge:
+    parameters:
+      - name: firstBadId
+        in: path
+        required: true
+        description: "The break's first divergent entry id, as the verifier reported it (`first_bad_id`; `0` when a break carried none)."
+        schema: { type: integer, format: int64, minimum: 0 }
+    post:
+      tags: [admin]
+      operationId: acknowledgeAuditChainBreak
+      summary: Acknowledge an audit-chain break and lift its order-entry halt (owner, step-up `killswitch`)
+      description: |
+        A verified audit-chain break halts every new position-opening order until the Owner
+        acknowledges that named break (`04-security-program.md` §8.1 "Enforced posture" owns the
+        rules, #2904). This operation is that acknowledgement. The request names the break by
+        its first divergent entry (`firstBadId`) and its `kind`, and carries a typed `reason`. It
+        is not `acknowledgeIncident`, and releasing the kill switch (`setKillSwitch`) never
+        clears this halt, nor does this acknowledgement release an engaged kill switch.
+
+        **Who.** Owner only (`04-security-program.md` §7.2.2 row 49c), with a step-up of the
+        `killswitch` action class, which has no grace window: each acknowledgement spends a fresh
+        one-shot grant bound to this request (`POST /auth/step-up`, Challenges). A Manager
+        holding `killswitch:write` is refused with `403 forbidden`, as a Viewer is.
+
+        **Order of the checks.** `503 store_unavailable` when the audit backend is not wired;
+        authentication (`401`); authorisation (`403 forbidden`, recorded as `admin.audit_denied`
+        under the audit budget described on `queryAuditLog`); the body (`422 validation_failed`,
+        a `kind` outside the verifier's vocabulary included); the step-up (`403
+        step_up_required` with `action_class: killswitch`, whose `action_summary` restates the
+        break); then the break: one this process does not hold engaged (unknown, already
+        acknowledged, or a different `kind`) is `409 conflict`, recorded as
+        `audit.chain_break_ack_denied` with reason `not_engaged`. Every process re-reads the
+        halt records at most every 5 s, so a break another process found just now may answer
+        `409` until then; retry after about 10 s. Last, the write-ahead
+        `audit.chain_break_acknowledged` record (severity `critical`, the reason in it): when it
+        cannot be written the answer is `503 audit_unavailable` and the halt stays engaged. Then
+        this process lifts the halt on that break at once, and every other process within 5 s.
+
+        **Response.** `halted` is whether order entry is still halted in this process after the
+        acknowledgement: by another unacknowledged break, or while the halt records are unread.
+      x-rbac: { permissions: [killswitch:write], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind, reason]
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - prev_hash_mismatch
+                    - entry_hash_mismatch
+                    - checkpoint_mismatch
+                    - checkpoint_missing
+                    - tail_truncated
+                    - unknown
+                  description: "How the break diverges, as the verifier reported it (`unknown` when it carried no kind)."
+                reason:
+                  type: string
+                  minLength: 3
+                  maxLength: 280
+                  description: "Why the Owner resumes order entry, written to the audit chain: printable, at least 3 characters that are not blank (else `422`)."
+            examples:
+              acknowledge:
+                value:
+                  {
+                    kind: entry_hash_mismatch,
+                    reason: "Restored row 41207 from the off-box mirror; IR-06 closed",
+                  }
+      responses:
+        "200":
+          description: The break is acknowledged; its halt is lifted.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [first_bad_id, kind, halted]
+                properties:
+                  first_bad_id: { type: integer, format: int64, minimum: 0 }
+                  kind:
+                    type: string
+                    enum:
+                      - prev_hash_mismatch
+                      - entry_hash_mismatch
+                      - checkpoint_mismatch
+                      - checkpoint_missing
+                      - tail_truncated
+                      - unknown
+                  halted:
+                    type: boolean
+                    description: "Order entry is still halted here: another break, or the halt records unread."
+              examples:
+                lifted: { value: { first_bad_id: 41207, kind: entry_hash_mismatch, halted: false } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /admin/audit/export:
     post:
       tags: [admin]

@@ -3508,6 +3508,16 @@
         }
       }
     },
+    "/admin/audit/chain-breaks/{firstBadId}/acknowledge": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "killswitch:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
     "/admin/audit/export": {
       "post": {
         "x-rbac": {

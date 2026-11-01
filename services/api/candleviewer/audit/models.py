@@ -14,7 +14,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -352,6 +352,25 @@ class AuditVerifyRequest(BaseModel):
         if self.from_id is not None and self.to_id is not None and self.from_id > self.to_id:
             raise ValueError("from_id must be <= to_id")
         return self
+
+
+class AuditBreakAckRequest(BaseModel):
+    """Validated body for `acknowledgeAuditChainBreak` (#2904): the break's `kind`, a verifier's
+    `ChainBreakKind` or `unknown` (a break reported without one), and the typed reason."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: ChainBreakKind | Literal["unknown"]
+    reason: str = Field(min_length=3, max_length=280)
+
+    @field_validator("reason")
+    @classmethod
+    def _typed(cls, value: str) -> str:
+        """An audited override names its why: 3 characters that are not blank, printable, as
+        the console's `--reason` (`audit_ack_break`). The value is kept as sent."""
+        if len(value.strip()) < 3 or not value.isprintable():
+            raise ValueError("reason must be 3 to 280 printable, non-blank characters")
+        return value
 
 
 class AuditExportRequest(BaseModel):

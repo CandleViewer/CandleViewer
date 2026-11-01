@@ -16,7 +16,11 @@ One run, in order:
    order entry (#2904, `BreakHalt.trip`), whose record follows the event. A break the Owner has
    acknowledged trips nothing, so the walk resumes past it, to the head, and the first break past
    it that is not acknowledged trips the halt (the verifier names only the first break: without
-   this an acknowledged break would hide every later one). A pass sets the gauge to 1
+   this an acknowledged break would hide every later one), counted and raised as a first-walk
+   break is. One run resumes past at most `_MAX_RESUMES` acknowledged breaks; at that bound it
+   trips the halt on the first entry it has not walked (kind `unknown`), and only the Owner's
+   acknowledgement of that bound lets a run walk on past it, so the bound never hides a later
+   break either (fail closed, 04 §8.1). A pass sets the gauge to 1
    once its result record is written. Anything else is `stopped`: its stop record carries the
    reason, and a stop turns a gauge of 1 into NaN (a known break, 0, stays).
 
@@ -66,8 +70,9 @@ from candleviewer.storage.errors import AuditEntryTooLarge
 #: largest id an entry can have it always starts at the first entry: the whole chain.
 _WHOLE_CHAIN_SPAN: Final = 2**63 - 1
 _SUCCESS, _FAILURE = AuditOutcome.SUCCESS, AuditOutcome.FAILURE
-#: Bound on the walks one run resumes past acknowledged breaks (#2904); each must move past
-#: the last, so a chain with more acknowledged breaks than this is logged and looked at no further.
+#: Bound on the walks one run resumes past acknowledged breaks (#2904) before it halts on the
+#: first entry it has not walked; each walk must move past the last. Once the Owner acknowledges
+#: that bound's halt, a run resumes past it for as many walks again (fail closed).
 _MAX_RESUMES: Final = 64
 _INFO, _WARNING = Severity.INFO, Severity.WARNING
 
@@ -175,12 +180,18 @@ class ChainVerifyRunner:
                 await raise_break_event(self._events, result, None)
                 await record_halt(self._halt, owed, result, trigger)
             if self._halt is not None and self._halt.acknowledges(result):
-                later = await self._past_acknowledged(
+                found = await self._past_acknowledged(
                     self._halt, query, result, records.request.deadline_s
                 )
-                if later is not None:
+                if found is not None:
+                    later, is_break = found
                     owed = self._halt.trip(later)  # synchronous, as soon as it is found
-                    await record_halt(self._halt, owed, later, trigger)
+                    try:
+                        if is_break:  # counted and raised as a first-walk break is
+                            observe_verify(later)
+                            await raise_break_event(self._events, later, None)
+                    finally:
+                        await record_halt(self._halt, owed, later, trigger)
             return VerifyOutcome(
                 outcome=VerifyOutcomeKind.MISMATCH,
                 started_at=started_at,
@@ -210,17 +221,30 @@ class ChainVerifyRunner:
 
     async def _past_acknowledged(
         self, halt: ResumingBreakHalt, query: Any, found: VerifyResult, deadline_s: float
-    ) -> VerifyResult | None:
-        """The first break past the acknowledged `found` that is not acknowledged itself (#2904),
-        or None. Each walk resumes from the id after the last break (`VerifyPlan.resumed`: its
-        anchor is that entry's stored hash) to the head, under the run's deadline; one that
-        names no break later than the last, or stops, ends the search (logged, by class): as a
-        stopped run, it never trips, and the next run looks again."""
+    ) -> tuple[VerifyResult, bool] | None:
+        """What to halt on past the acknowledged `found` (#2904), with whether it is a break, or
+        None. Each walk resumes from the id after the last break (`VerifyPlan.resumed`: its
+        anchor is that entry's stored hash) to the head, under the run's deadline; the first
+        break that is not acknowledged is the answer; one that names no break later than the
+        last, or stops, ends the search (logged, by class): as a stopped run, it never trips, and
+        the next run looks again. After `_MAX_RESUMES` walks the answer is the bound, the first
+        entry not walked (kind `unknown`, not a break, logged), unless the Owner acknowledged
+        that bound: then the walks go on past it, so no acknowledgement hides a later break."""
         current: VerifyResult = found
-        for _ in range(_MAX_RESUMES):
+        resumes = 0
+        while True:
             last = current.first_bad_id
             if last is None:
                 return None
+            if resumes == _MAX_RESUMES:
+                bound = current.model_copy(
+                    update={"first_bad_id": last + 1, "from_id": last + 1, "kind": None}
+                )
+                if not halt.acknowledges(bound):
+                    _log().error("audit.verify.resume_capped", resumes=_MAX_RESUMES, at=last + 1)
+                    return bound, False
+                resumes = 0
+            resumes += 1
             try:
                 plan = await query.plan_verify(
                     from_id=last + 1, to_id=None, max_span=_WHOLE_CHAIN_SPAN
@@ -236,11 +260,9 @@ class ChainVerifyRunner:
             if current.verified:
                 return None
             if not halt.acknowledges(current):
-                return current
+                return current, True
             if current.first_bad_id is None or current.first_bad_id <= last:  # no way past it
                 return None
-        _log().error("audit.verify.resume_capped", resumes=_MAX_RESUMES)
-        return None
 
     async def _stop(
         self,
