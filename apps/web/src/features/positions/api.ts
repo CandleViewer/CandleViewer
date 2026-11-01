@@ -53,7 +53,8 @@ export const MAX_ACCOUNT_IDS = 25;
 const PAGE = 500;
 const MAX_PAGES = 10;
 
-async function failure(res: Response): Promise<ReadFailure> {
+/** A refused read's fixed kind, never its `detail` (the Working-orders reads share it). */
+export async function failure(res: Response): Promise<ReadFailure> {
   if (res.status === 400) return "invalid";
   if (res.status !== 403) return "unavailable"; // 503, 401 after the renewal, anything unexpected
   try {
@@ -64,7 +65,8 @@ async function failure(res: Response): Promise<ReadFailure> {
   }
 }
 
-const isObjectArray = (value: unknown): value is object[] =>
+/** A page's `items`: an array of objects, else the read is `unavailable`. */
+export const isObjectArray = (value: unknown): value is object[] =>
   Array.isArray(value) && value.every((v) => typeof v === "object" && v !== null);
 
 /** The query string, `exchange_account_ids` repeated (`22`: `explode: true`). */

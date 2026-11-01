@@ -187,6 +187,27 @@ describe("23 §15: the late-frame rule", () => {
     expect(idsOf(store)).not.toContain(TP);
   });
 
+  it("a removal outlives a resnapshot: the snapshot's older item never brings the order back", () => {
+    const store = live();
+    apply(store, [d("cancel_request", TS + 3_000), d("cancel_lost_race", TS + 4_000)]);
+    store.expire(NOW + LINGER_MS);
+    store.commit();
+    expect(idsOf(store)).not.toContain(TP);
+    // the snapshot's TP is stamped before its fill: late against the tomb kept across baselines
+    apply(store, [reset("resnapshot"), snap(snapshotBody(), TS + 9_000)], NOW + LINGER_MS);
+    expect(store.getSnapshot().status).toBe("live");
+    expect(idsOf(store)).not.toContain(TP);
+  });
+
+  it("a second removal stamped earlier keeps the later tomb, so an item between them stays out", () => {
+    const store = live();
+    apply(store, [delta({ orders: [], removed: [HELD] }, TS + 9_000)]);
+    apply(store, [delta({ orders: [], removed: [HELD] }, TS + 5_000)]);
+    const between = { ...wsItem(snapshotBody(), TP), id: HELD, updated_at_ms: TS + 6_000 };
+    apply(store, [delta({ orders: [between] }, TS + 9_500)]);
+    expect(idsOf(store)).not.toContain(HELD);
+  });
+
   it("the store remembers at most MAX_TOMBSTONES removals, the oldest forgotten first", () => {
     const store = live();
     const base = wsItem(snapshotBody(), TP);
@@ -273,6 +294,18 @@ describe("the focused row is kept (D01 D13 d, 05 §3.4.3)", () => {
     store.commit();
     expect(idsOf(store)).not.toContain(ETH);
   });
+
+  it("an ended row keeps lingering through a resnapshot that no longer lists it (D01 D13 d)", () => {
+    const store = live();
+    apply(store, [d("cancel_lost_race", TS + 4_000)]);
+    const without = snapshotBody().orders.filter((o) => o.id !== TP);
+    apply(store, [reset("resnapshot"), snap({ orders: without }, TS + 9_000)], NOW + 1_000);
+    expect(rowOf(store, TP)?.state.word).toBe("Filled");
+    expect(store.getSnapshot().lingering.has(TP)).toBe(true);
+    store.expire(NOW + LINGER_MS);
+    store.commit();
+    expect(idsOf(store)).not.toContain(TP);
+  });
 });
 
 describe("BQ-1: every amend step says amend; the state and the terms tell them apart", () => {
@@ -342,6 +375,60 @@ describe("held and untracked (BQ-6, S9): shown, never managed, and kept when rem
     const store = live();
     apply(store, [delta({ orders: [], removed: [HELD] }, TS + 9_000)]);
     expect(idsOf(store)).not.toContain(HELD);
+  });
+
+  /** COND put on hold over WS, then a reconnect whose snapshot (open orders only) leaves it out. */
+  function carriedHeld(): OrdersStore {
+    const store = live();
+    apply(store, [d("held", TS + 8_000)]);
+    const without = snapshotBody().orders.filter((o) => o.id !== COND);
+    apply(store, [reset("reconnect"), snap({ orders: without }, TS + 9_000)]);
+    expect(rowOf(store, COND)?.state.word).toBe("Held — owner review");
+    return store;
+  }
+  const readWithout = (id: string) => restOpen().filter((o) => o.id !== id);
+
+  it("a carried held row a complete open read no longer lists has closed: it leaves at the next frame", () => {
+    const store = carriedHeld();
+    store.applyRest(readWithout(COND), WALL + 10_000, NOW + 2_000);
+    store.commit();
+    store.expire(NOW + 2_016);
+    store.commit();
+    expect(idsOf(store)).not.toContain(COND);
+    expect(idsOf(store)).toContain(UNTRACKED); // REST-only rows keep following the read
+  });
+
+  it("a truncated read settles nothing, and a read that lists the order keeps it", () => {
+    const store = carriedHeld();
+    store.applyRest(readWithout(COND), WALL + 10_000); // truncated: no settle time
+    store.expire(NOW + LINGER_MS * 2);
+    store.commit();
+    expect(rowOf(store, COND)?.state.word).toBe("Held — owner review");
+    const other = carriedHeld();
+    other.applyRest(restOpen(), WALL + 10_000, NOW + 2_000);
+    other.expire(NOW + LINGER_MS * 2);
+    other.commit();
+    expect(rowOf(other, COND)?.state.word).toBe("Held — owner review");
+  });
+
+  it("a WS frame for it after the snapshot wins over the read; a focused one leaves once focus moves", () => {
+    const store = carriedHeld();
+    const held = deltaBody("held").orders[0] as WsOrder;
+    apply(store, [delta({ orders: [{ ...held, updated_at_ms: held.updated_at_ms + 1 }] })]);
+    store.applyRest(readWithout(COND), WALL + 10_000, NOW + 2_000);
+    store.expire(NOW + LINGER_MS * 2);
+    store.commit();
+    expect(idsOf(store)).toContain(COND);
+    const focused = carriedHeld();
+    focused.setFocused(COND);
+    focused.applyRest(readWithout(COND), WALL + 10_000, NOW + 2_000);
+    focused.expire(NOW + LINGER_MS * 2);
+    focused.commit();
+    expect(idsOf(focused)).toContain(COND);
+    focused.setFocused(null);
+    focused.expire(NOW + LINGER_MS * 2);
+    focused.commit();
+    expect(idsOf(focused)).not.toContain(COND);
   });
 });
 

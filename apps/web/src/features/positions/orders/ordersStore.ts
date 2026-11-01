@@ -11,7 +11,10 @@
  *   never leaves while it has focus (`05` §3.4.3); it goes once focus moves off it.
  * - **Held and untracked (BQ-6).** The topic lists both as `removed` (neither is in the OMS's open
  *   set) and its snapshot never carries them, yet they are shown, not managed (S9): such a row
- *   stays when its id is removed, and REST supplies the ones WS has not sent.
+ *   stays when its id is removed, and REST supplies the ones WS has not sent. A snapshot carries
+ *   the held and untracked rows WS showed; the next complete `open_only` read settles them: one it
+ *   no longer lists has closed, and leaves at the next frame (the focused row once focus moves),
+ *   unless a WS frame for it came after the snapshot.
  * - **REST, the side map (BQ-6).** `listOrders?open_only=true`, read at first paint and after each
  *   snapshot (`wsOrders.ts`), never on a timer. Before the first snapshot its rows are the view;
  *   after it, only its held and untracked rows are shown, while WS does not hold their id. Each
@@ -132,8 +135,11 @@ export interface OrdersStore {
   /**
    * A `listOrders?open_only=true` read (BQ-6): it replaces the last read whole, and its constants
    * are kept. Ignored while revoked; a withdrawn, narrowed-away or over-cap account brings no row.
+   * `settleAtMs` (the frame clock) marks a complete read, one the feed asked for after the latest
+   * snapshot: the held and untracked rows that snapshot carried and it no longer lists leave from
+   * then. A truncated read passes none and settles nothing.
    */
-  applyRest(items: readonly RestOrder[], atMs: number): void;
+  applyRest(items: readonly RestOrder[], atMs: number, settleAtMs?: number): void;
   /** What the `orders` handle's `read()` returned, in order; `nowMs` starts each linger. */
   applyFrames(frames: readonly TopicFrame[], nowMs: number): void;
   /** Ends each linger that is due, the focused row's excepted. */
@@ -171,6 +177,8 @@ export function createOrdersStore(): OrdersStore {
   let tombs = new Map<string, number>();
   /** id -> when it leaves: an ended order's linger, oldest first. */
   let lingers = new Map<string, number>();
+  /** Held and untracked ids a snapshot carried unlisted, until a complete REST read settles them. */
+  let carried = new Set<string>();
   let wsBaseline = false;
   let everSnapped = false;
   let wsAsOf: number | null = null;
@@ -212,8 +220,9 @@ export function createOrdersStore(): OrdersStore {
   };
 
   function tomb(id: string, stamp: number): void {
+    const before = tombs.get(id) ?? -1; // read before the delete: the larger stamp is kept
     tombs.delete(id); // the newest removal goes last, so the oldest is forgotten first
-    tombs.set(id, Math.max(stamp, tombs.get(id) ?? -1));
+    tombs.set(id, Math.max(stamp, before));
     if (tombs.size > MAX_TOMBSTONES) {
       const oldest = tombs.keys().next();
       if (oldest.done !== true) tombs.delete(oldest.value);
@@ -245,6 +254,7 @@ export function createOrdersStore(): OrdersStore {
   /** An order's per-id state leaves with it: its linger, its creation stamp, its cached row. */
   function forget(id: string): void {
     lingers.delete(id);
+    carried.delete(id);
     createdStamps.delete(id);
     merged.delete(id);
     mapped.delete(id);
@@ -273,6 +283,7 @@ export function createOrdersStore(): OrdersStore {
     if (held === undefined && removedAt !== undefined && stamp <= removedAt) return; // late
     if (accountOf(item) === null) return; // the server scopes the topic; an item names its account
     ws.set(id, item as WsOrder);
+    carried.delete(id); // a frame after the snapshot: WS knows it better than any read
     tombs.delete(id);
     if (held === undefined) touch(true);
     if (isRecord(item) && item["change"] === "created" && !createdStamps.has(id)) {
@@ -366,8 +377,10 @@ export function createOrdersStore(): OrdersStore {
     // focused one stay; any other order it does not list is gone (`23` §6.2.3).
     for (const [id, wire] of before) {
       if (ws.has(id)) continue;
-      if (unowned(wire) || lingers.has(id)) ws.set(id, wire);
-      else if (id === focusedId) {
+      if (unowned(wire) || lingers.has(id)) {
+        ws.set(id, wire);
+        if (unowned(wire)) carried.add(id); // unlisted by design: the next complete read settles it
+      } else if (id === focusedId) {
         ws.set(id, wire);
         startLinger(id, nowMs);
       } else {
@@ -409,6 +422,7 @@ export function createOrdersStore(): OrdersStore {
       ws = new Map();
       tombs = new Map(); // ids of accounts that may have left: the next `snap` says what is open
       lingers = new Map();
+      carried = new Set();
       createdStamps = new Map();
       merged.clear();
       rest = null;
@@ -537,6 +551,7 @@ export function createOrdersStore(): OrdersStore {
         ws = new Map();
         tombs = new Map();
         lingers = new Map();
+        carried = new Set();
         wsBaseline = false;
         everSnapped = false;
         wsAsOf = null;
@@ -574,7 +589,7 @@ export function createOrdersStore(): OrdersStore {
         snapshotFailed = false;
       touch(true);
     },
-    applyRest(items, atMs) {
+    applyRest(items, atMs, settleAtMs) {
       if (revoked) return; // nothing is read back until Retry (SR-E29-11)
       const out = barred();
       const rows = new Map<string, RestOrder>();
@@ -587,6 +602,11 @@ export function createOrdersStore(): OrdersStore {
         keep(id, constantsOf(item));
       }
       rest = { rows, asOfMs: atMs };
+      if (settleAtMs !== undefined) {
+        // BQ-6: the open set no longer holds it, so it closed; `expire` takes it at the next frame
+        for (const id of carried) if (ws.has(id) && !rows.has(id)) lingers.set(id, settleAtMs);
+        carried = new Set();
+      }
       touch(true);
     },
     applyFrames(frames, nowMs) {
