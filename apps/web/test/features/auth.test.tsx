@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { LoginScreen } from "../../src/features/auth/LoginScreen";
 import { ChangePasswordScreen } from "../../src/features/auth/ChangePasswordScreen";
 import { formatRemaining, login } from "../../src/features/auth/authApi";
@@ -271,17 +271,24 @@ describe("LoginScreen (SCR-001)", () => {
 describe("ChangePasswordScreen (SCR-004)", () => {
   it("is axe clean, lists rules, and validates", async () => {
     render(<ChangePasswordScreen />);
-    expect(screen.getByText(/Not met: at least 12 characters/)).toBeTruthy();
+    // E09-D05 §4: the checklist item reads "≥14 chars, not met" (the policy minimum is now 14)
+    expect(screen.getByText("≥14 chars").closest("li")?.textContent).toMatch(/, not met$/u);
     expect(await serious()).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Change password" }));
-    expect(screen.getByRole("alert").textContent).toBe("Use at least 12 characters.");
+    // E09-D05 §9.1: the rule's sentence is the field's own error; the alert is form-level only
+    expect(screen.getByLabelText("New password")).toHaveAccessibleDescription(
+      /^Use at least 14 characters\./u,
+    );
+    expect(screen.getByRole("alert")).toBeEmptyDOMElement();
   });
 
   it("the reveal toggle keeps one name while aria-pressed flips (A11Y-F-0003)", async () => {
     render(<ChangePasswordScreen />);
-    const toggle = screen.getByRole("button", { name: "Show passwords" });
+    // E09-D05 §5.1: one reveal per field, each with the constant name "Show password"
+    const row = screen.getByLabelText("New password").parentElement as HTMLElement;
+    const toggle = within(row).getByRole("button", { name: "Show password" });
     fireEvent.click(toggle);
-    expect(screen.getByRole("button", { name: "Show passwords" })).toBe(toggle);
+    expect(within(row).getByRole("button", { name: "Show password" })).toBe(toggle);
     expect(toggle).toHaveAttribute("aria-pressed", "true");
     expect((screen.getByLabelText("New password") as HTMLInputElement).type).toBe("text");
     expect(await serious()).toEqual([]);
@@ -299,7 +306,7 @@ describe("ChangePasswordScreen (SCR-004)", () => {
     fill("old", "short", "short");
     const field = screen.getByLabelText("New password");
     expect(field).toHaveAttribute("aria-invalid", "true");
-    expect(field).toHaveAccessibleDescription(/Use at least 12 characters\./);
+    expect(field).toHaveAccessibleDescription(/Use at least 14 characters\./);
     expect(field).toHaveFocus();
     expect(screen.getByLabelText("Confirm new password")).not.toHaveAttribute("aria-invalid");
     expect(await serious()).toEqual([]);
@@ -311,7 +318,7 @@ describe("ChangePasswordScreen (SCR-004)", () => {
     const field = screen.getByLabelText("New password");
     fireEvent.change(field, { target: { value: "shorter" } });
     expect(field).not.toHaveAttribute("aria-invalid");
-    expect(field).not.toHaveAccessibleDescription(/Use at least 12 characters/);
+    expect(field).not.toHaveAccessibleDescription(/Use at least 14 characters/);
     expect(screen.getByRole("alert")).toBeEmptyDOMElement();
   });
 
@@ -320,7 +327,8 @@ describe("ChangePasswordScreen (SCR-004)", () => {
     fill("old", "correct horse battery", "correct horse batterz");
     const field = screen.getByLabelText("Confirm new password");
     expect(field).toHaveAttribute("aria-invalid", "true");
-    expect(field).toHaveAccessibleDescription("Passwords don't match.");
+    // the pre-rendered, empty Caps Lock status also describes the field (E09-D05 §5.1)
+    expect(field).toHaveAccessibleDescription(/^Passwords don't match\.\s*$/u);
     expect(field).toHaveFocus();
     expect(screen.getByLabelText("New password")).not.toHaveAttribute("aria-invalid");
     expect(await serious()).toEqual([]);
@@ -345,7 +353,7 @@ describe("ChangePasswordScreen (SCR-004)", () => {
     render(<ChangePasswordScreen />);
     fill("old", "correct horse battery", "correct horse battery");
     await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
-    expect(screen.getByRole("alert")).toHaveTextContent(/Cannot reach/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/Can't reach the server/);
     for (const name of ["Current password", "New password", "Confirm new password"]) {
       expect(screen.getByLabelText(name)).not.toHaveAttribute("aria-invalid");
     }
@@ -363,7 +371,12 @@ describe("ChangePasswordScreen (SCR-004)", () => {
     fireEvent.change(screen.getByLabelText("New password"), { target: { value: pw } });
     fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: pw } });
     fireEvent.click(screen.getByRole("button", { name: "Change password" }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/last 5/));
+    // E09-D05 §6.1: the reuse refusal is the new field's own error and both new fields clear
+    await waitFor(() =>
+      expect(screen.getByLabelText("New password")).toHaveAccessibleDescription(/last 5/),
+    );
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: pw } });
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: pw } });
     fireEvent.click(screen.getByRole("button", { name: "Change password" }));
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "Password changed" })).toBeTruthy(),

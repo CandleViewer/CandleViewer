@@ -100,12 +100,21 @@ test("server unreachable", async ({ page }) => {
 });
 
 test("SCR-004 forced password change", async ({ page }) => {
-  await page.route("**/api/v1/auth/password", (r) => r.fulfill({ status: 204 }));
+  await page.route("**/api/v1/auth/password", (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        status: "password_changed",
+        tokens: { access_token: "e2e-rotated", token_type: "Bearer", expires_in: 720 },
+      }),
+    }),
+  );
   await page.goto("/login/change-password");
   expect(await serious(page)).toEqual([]);
   await page.getByLabel("Current password").fill("old");
-  await page.getByLabel("New password", { exact: true }).fill("correct horse battery");
-  await page.getByLabel("Confirm new password").fill("correct horse battery");
+  await page.getByLabel("New password", { exact: true }).fill("correct horse battery staple");
+  await page.getByLabel("Confirm new password").fill("correct horse battery staple");
   await page.getByRole("button", { name: "Change password" }).click();
   await expect(page.getByRole("heading", { name: "Password changed" })).toBeVisible();
 });
