@@ -1,8 +1,9 @@
 """#270 (E05-T04): the visual-regression job, `_job-a11y.yml`'s `vr`, beside `a11y` and `storybook`.
 
-These tests pin its wiring (it fails the required `a11y` check as its neighbours do), its ten
-compare shards (`VR_SHARD`), the `vr_update` dispatch that alone writes baselines, and its uploads;
-and they run its compare and budget steps under bash with stand-in `pnpm`, `fc-match` and `date`, as
+These tests pin its wiring (it fails the required `a11y` check as its neighbours do), its fourteen
+compare shards (`VR_SHARD`, ten until #5275), the `vr_update` dispatch that alone writes baselines,
+and its uploads; and they run its font, compare and budget steps under bash with stand-in `pnpm`,
+`apt-get`, `fuser`, `sleep`, `fc-match` and `date` (`sudo` runs its arguments), as
 test_storybook_job.py does for the storybook job."""
 
 from __future__ import annotations
@@ -32,6 +33,17 @@ with open(os.environ["CALLS"], "a", encoding="utf-8") as log:
 print(os.environ.get(name + "_OUT", ""))
 sys.exit(int(os.environ.get(name + "_EXIT", "0")))
 """
+#: `sudo` runs its arguments, so the stand-ins behind it log under their own names.
+SUDO = '#!/bin/bash\nexec "$@"\n'
+#: `fuser` reports the apt locks held (exit 0) on its first FUSER_HELD calls, then free (exit 1).
+FUSER = """import json, os, sys
+with open(os.environ["CALLS"], "a", encoding="utf-8") as log:
+    log.write(json.dumps(["FUSER", sys.argv[1:], None]) + "\\n")
+count = os.path.join(os.environ["RUNNER_TEMP"], "fuser-calls")
+n = int(open(count).read()) if os.path.exists(count) else 0
+open(count, "w").write(str(n + 1))
+sys.exit(0 if n < int(os.environ.get("FUSER_HELD", "0")) else 1)
+"""
 
 
 def _doc() -> dict[Any, Any]:
@@ -58,7 +70,8 @@ def test_vr_job_runs_beside_the_others_hardened_and_able_to_fail_the_a11y_check(
     assert (job["if"], job["runs-on"]) == ("${{ !inputs.storybook_only }}", "ubuntu-24.04")
     assert job["permissions"] == {"contents": "read"}
     assert job["timeout-minutes"] == "${{ inputs.vr_update && 40 || 12 }}"
-    shards = "${{ fromJSON(inputs.vr_update && '[0]' || '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]') }}"
+    every = ", ".join(str(k) for k in range(1, 15))
+    shards = f"${{{{ fromJSON(inputs.vr_update && '[0]' || '[{every}]') }}}}"
     assert job["strategy"] == {"fail-fast": False, "matrix": {"shard": shards}}
     steps = job["steps"]
     assert steps[0] == {
@@ -105,8 +118,12 @@ def _bash(
     if not shutil.which("bash"):  # CI must run these fail-closed proofs
         (pytest.fail if os.environ.get("CI") else pytest.skip)("bash runs the step")
     (tmp_path / "bin").mkdir(exist_ok=True)
-    for fake in ("pnpm", "fc-match", "fc-list", "sudo", "dpkg-query", "date"):
+    for fake in ("pnpm", "fc-match", "fc-list", "apt-get", "dpkg-query", "date", "sleep"):
         (tmp_path / "bin" / fake).write_text(f"#!{sys.executable}\n{FAKE}", encoding="utf-8")
+        (tmp_path / "bin" / fake).chmod(0o755)
+    (tmp_path / "bin" / "fuser").write_text(f"#!{sys.executable}\n{FUSER}", encoding="utf-8")
+    (tmp_path / "bin" / "sudo").write_text(SUDO, encoding="utf-8")
+    for fake in ("fuser", "sudo"):
         (tmp_path / "bin" / fake).chmod(0o755)
     calls, summary = tmp_path / "calls", tmp_path / "summary"
     base = {"PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}"}
@@ -121,12 +138,12 @@ def _bash(
 
 @pytest.mark.parametrize(
     ("shard", "update", "script", "cells"),
-    [("1", "", "vr", "1/10"), ("10", "", "vr", "10/10"), ("0", "1", "vr:update", None)],
+    [("1", "", "vr", "1/14"), ("14", "", "vr", "14/14"), ("0", "1", "vr:update", None)],
 )
 def test_run_step_compares_its_shard_or_updates_the_whole_matrix(
     tmp_path: Path, shard: str, update: str, script: str, cells: str | None
 ) -> None:
-    env = {"SHARD": shard, "TOTAL": "10", "VR_UPDATE": update, "DATE_OUT": "1000"}
+    env = {"SHARD": shard, "TOTAL": "14", "VR_UPDATE": update, "DATE_OUT": "1000"}
     proc, calls = _bash(tmp_path, _step(RUN)["run"], **env)
     assert proc.returncode == 0, proc
     # The spec picks the shard's cells itself (packages/ui/vr/matrix.ts), not Playwright's --shard.
@@ -153,9 +170,16 @@ def test_fonts_step_installs_the_pinned_packages_before_the_compare_and_names_th
     env = {**step["env"], "DPKG_QUERY_OUT": installed}
     proc, calls = _bash(tmp_path, step["run"], **env)
     assert proc.returncode == 0, proc
-    sudo = [args for name, args, _ in calls if name == "SUDO"]
-    assert sudo[-1][:2] == ["apt-get", "install"]
-    assert {"fonts-inter=4.0+ds-1", "fonts-jetbrains-mono=2.304+ds-4"} <= set(sudo[-1])
+    apt = [args for name, args, _ in calls if name == "APT_GET"]
+    lock = ["-o", "DPkg::Lock::Timeout=60"]
+    assert [args[:3] for args in apt] == [[*lock, "update"], [*lock, "install"]]
+    assert {"fonts-inter=4.0+ds-1", "fonts-jetbrains-mono=2.304+ds-4"} <= set(apt[-1])
+    # Each apt-get waits for apt's lists lock as well as dpkg's (#5275); free here, so no pause.
+    locks = ["/var/lib/apt/lists/lock", "/var/lib/dpkg/lock", "/var/lib/dpkg/lock-frontend"]
+    fuser = [args for name, args, _ in calls if name == "FUSER"]
+    assert len(fuser) == 2 and all(set(locks) <= set(args) for args in fuser)
+    assert not [name for name, _, _ in calls if name == "SLEEP"]
+    assert "::warning::" not in proc.stdout
     assert [args for name, args, _ in calls if name == "FC_LIST"] == [
         ["-q", "Inter"],
         ["-q", "JetBrains Mono"],
@@ -164,13 +188,45 @@ def test_fonts_step_installs_the_pinned_packages_before_the_compare_and_names_th
     assert "- Fonts installed: fonts-inter 4.0+ds-1, fonts-jetbrains-mono 2.304+ds-4\n" in summary
 
 
-@pytest.mark.parametrize("failing", ["SUDO_EXIT", "FC_LIST_EXIT"])
+@pytest.mark.parametrize("failing", ["APT_GET_EXIT", "FC_LIST_EXIT"])
 def test_fonts_step_fails_the_job_with_its_code_when_a_family_is_missing(
     tmp_path: Path, failing: str
 ) -> None:
     step = _step(FONTS)
-    proc, _ = _bash(tmp_path, step["run"], **step["env"], **{failing: "1"})
+    proc, calls = _bash(tmp_path, step["run"], **step["env"], **{failing: "1"})
     assert proc.returncode == 1 and "::error::CI-A11Y-008 " in proc.stdout, proc
+    if failing == "APT_GET_EXIT":  # three tries, 20 s apart (stubbed), a warning for each
+        assert len([n for n, _, _ in calls if n == "APT_GET"]) == 3
+        assert [args for n, args, _ in calls if n == "SLEEP"] == [["20"], ["20"]]
+        assert proc.stdout.count("::warning::CI-A11Y-008 apt attempt") == 3
+
+
+def test_fonts_step_waits_for_a_held_apt_lock_then_installs(tmp_path: Path) -> None:
+    # #5275: an apt-get left by an earlier step held /var/lib/apt/lists/lock, which
+    # DPkg::Lock::Timeout does not cover; the step waits it out instead of failing three times.
+    step = _step(FONTS)
+    installed = "fonts-inter 4.0+ds-1\nfonts-jetbrains-mono 2.304+ds-4"
+    env = {**step["env"], "DPKG_QUERY_OUT": installed, "FUSER_HELD": "3"}
+    proc, calls = _bash(tmp_path, step["run"], **env)
+    assert proc.returncode == 0, proc
+    names = [name for name, _, _ in calls if name in {"FUSER", "SLEEP", "APT_GET"}]
+    # Held on three polls, 2 s apart, then free: update, then a free poll and the install.
+    held = ["FUSER", "SLEEP"] * 3
+    assert names == [*held, "FUSER", "APT_GET", "FUSER", "APT_GET"]
+    assert [args for name, args, _ in calls if name == "SLEEP"] == [["2"]] * 3
+    assert "::warning::CI-A11Y-008 waited 6 s for the apt lock" in proc.stdout
+
+
+def test_fonts_step_fails_with_its_code_when_the_apt_lock_is_never_released(
+    tmp_path: Path,
+) -> None:
+    step = _step(FONTS)
+    proc, calls = _bash(tmp_path, step["run"], **step["env"], FUSER_HELD="1000")
+    assert proc.returncode == 1, proc
+    assert "::error::CI-A11Y-008 the apt lock was still held after 120 s" in proc.stdout
+    # Bounded: 60 two-second polls, then the code; apt-get never ran against a held lock.
+    assert [args for name, args, _ in calls if name == "SLEEP"] == [["2"]] * 60
+    assert not [name for name, _, _ in calls if name == "APT_GET"]
 
 
 def test_run_step_fails_with_its_code_when_a_cell_fails(tmp_path: Path) -> None:

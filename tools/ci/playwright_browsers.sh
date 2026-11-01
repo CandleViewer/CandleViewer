@@ -16,11 +16,20 @@
 # then killed 10 s later: 130 s of deps + 5 x 130 s + waits stays inside the 900 s job backstop), so
 # a slow CDN is retried and, if it never answers, fails here with the code instead of in a later step. The same retry shape as
 # tools/ci/prepull_images.sh. The cache key and hit or miss go to $GITHUB_STEP_SUMMARY.
+#
+# #5275: every bounded command runs in its own session (`setsid`, so its process group is its pid)
+# and the bound kills that whole group, TERM then KILL after PW_KILL_GRACE (default 10) seconds,
+# from outside it. coreutils `timeout` signalled only its own group: `sudo` ignores a signal sent
+# from its parent's process group (it assumes the command got it too), but the runner user cannot
+# signal the root `apt-get` that install-deps starts, so that `apt-get` outlived the bound and held
+# /var/lib/apt/lists/lock through the vr job's font step (CI-A11Y-008). Sent from outside the group,
+# the TERM is relayed by `sudo` to its `apt-get`. A bound that fires exits 124, as `timeout` did.
 set -euo pipefail
 
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 read -ra backoff <<<"${PW_BACKOFF-10 20 40 60}"
 attempt_timeout=${PW_INSTALL_TIMEOUT:-120}
+kill_grace=${PW_KILL_GRACE:-10}
 
 fail() {
   msg="CI-A11Y-005: $* - Playwright browser setup failed; re-run the job, never change a budget"
@@ -29,10 +38,50 @@ fail() {
 }
 
 [[ "$attempt_timeout" =~ ^[0-9]+$ ]] || fail "PW_INSTALL_TIMEOUT must be whole seconds"
+[[ "$kill_grace" =~ ^[0-9]+$ ]] || fail "PW_KILL_GRACE must be whole seconds"
 [ "${#backoff[@]}" -gt 0 ] || fail "PW_BACKOFF is empty"
 for wait_s in "${backoff[@]}"; do
   [[ "$wait_s" =~ ^[0-9]+$ ]] || fail "PW_BACKOFF must be whole seconds"
 done
+
+# pause <seconds>: the bound's clock, a builtin (`read -t` on a pipe that never writes), so a stand-in
+# `sleep` on PATH (the retry waits) never shortens it.
+pause() {
+  read -rt "$1" <> <(:) || true
+}
+
+# bounded <command...>: runs the command in its own session and process group, and kills the whole
+# group when it outlives attempt_timeout: TERM, then KILL once kill_grace seconds pass with any of
+# the group left. Returns the command's status, or 124 when the bound fired.
+bounded() {
+  local pid watchdog fired rc=0
+  fired=$(mktemp)
+  setsid "$@" &
+  pid=$!
+  (
+    pause "$attempt_timeout"
+    echo fired >"$fired"
+    kill -TERM -- "-$pid" 2>/dev/null || exit 0
+    for ((t = 0; t < kill_grace; t++)); do
+      kill -0 -- "-$pid" 2>/dev/null || exit 0
+      pause 1
+    done
+    kill -KILL -- "-$pid" 2>/dev/null || true
+  ) &
+  watchdog=$!
+  wait "$pid" || rc=$?
+  if [ -s "$fired" ]; then
+    # The leader is gone; the watchdog gives the rest of the group (sudo relaying the TERM to its
+    # apt-get) its grace, then kills what is left.
+    wait "$watchdog" 2>/dev/null || true
+    rc=124
+  else
+    kill "$watchdog" 2>/dev/null || true
+    wait "$watchdog" 2>/dev/null || true
+  fi
+  rm -f "$fired"
+  return "$rc"
+}
 
 current_version() {
   local out
@@ -66,7 +115,7 @@ case "${1:-}" in
       rc=0
       shift
       : >"$errf"
-      timeout --kill-after=10 "$attempt_timeout" "$@" 2>"$errf" || rc=$?
+      bounded "$@" 2>"$errf" || rc=$?
       if [ "$rc" -ne 0 ]; then
         echo "::group::$label failed (exit $rc), last lines of its stderr" >&2
         tail -n 20 "$errf" >&2

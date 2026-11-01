@@ -1,6 +1,7 @@
 """Tests for tools/ci/playwright_browsers.sh (CI-A11Y-005) and its use in _job-a11y.yml.
 
-A fake `npx` on PATH, no network. The workflow tests pin that the a11y lane's three jobs (a11y,
+A fake `pnpm` and `sleep` on PATH, no network; the bound is real (`setsid` and a process-group
+kill, #5275) and is driven with a one-second PW_INSTALL_TIMEOUT where a test needs it to fire. The workflow tests pin that the a11y lane's three jobs (a11y,
 storybook, vr) restore the browser cache before the install and key it by the runner OS and the
 lockfile's Playwright version."""
 
@@ -8,8 +9,10 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +30,13 @@ shift 2
 case "$1" in
   --version) echo "Version ${FAKE_VERSION:-1.64.1}" ;;
   install-deps)
+    if [ -n "${DEPS_STUCK:-}" ]; then
+      # Stands in for `sudo apt-get`: a child that ignores TERM (sudo ignores a signal from its
+      # parent's group; the runner user cannot signal root's apt-get) and outlives its parent.
+      bash -c 'trap "" TERM; while :; do "$REAL_SLEEP" 0.1; done' &
+      echo $! > "$FAKE/deps-child.pid"
+      wait
+    fi
     if [ -n "${DEPS_RC:-}" ]; then
       echo "E: Failed to fetch http://mirror/fonts-freefont-ttf (apt stub)" >&2
       exit "$DEPS_RC"
@@ -34,6 +44,7 @@ case "$1" in
     ;;
   install)
     n=$(cat "$FAKE/runs" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE/runs"
+    [ -z "${INSTALL_STUCK:-}" ] || "$REAL_SLEEP" 60
     [ "$((n + 1))" -gt "${INSTALL_FAILS:-0}" ] || { echo "download of chromium failed" >&2; exit 1; }
     ;;
   *) echo "unexpected playwright call: $*" >&2; exit 99 ;;
@@ -48,18 +59,17 @@ def env(tmp_path: Path) -> dict[str, str]:
     for name, body in {
         "pnpm": FAKE_PNPM,
         "sleep": '#!/bin/bash\necho "$*" >> "$FAKE/sleeps.log"\n',
-        "timeout": (
-            '#!/bin/bash\nwhile [[ "$1" == --* ]]; do echo "$1" >> "$FAKE/timeout-flags.log"; shift; done\n'
-            'echo "$1" >> "$FAKE/timeouts.log"\nshift\nexec "$@"\n'
-        ),
     }.items():
         tool = bindir / name
         tool.write_text(body, encoding="utf-8")
         tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
     state = tmp_path / "state"
     state.mkdir()
+    real_sleep = shutil.which("sleep")
+    assert real_sleep, "the stuck stand-ins need a real sleep"
     return {
         "PATH": f"{bindir}:{os.environ['PATH']}",
+        "REAL_SLEEP": real_sleep,
         "FAKE": str(state),
         "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
         "GITHUB_OUTPUT": str(tmp_path / "output.txt"),
@@ -180,24 +190,18 @@ def test_download_always_fails_ends_with_the_code_naming_the_download(
     assert len(_downloads(env)) == 5
 
 
-def test_each_attempt_is_bounded_and_the_bound_is_a_whole_number(
-    env: dict[str, str],
-) -> None:
-    ok = _run(
-        env, "install", PW_CACHE_KEY=KEY, PW_CACHE_HIT="false", PW_VERSION=VERSION
-    )
-    assert ok.returncode == 0 and (
-        Path(env["FAKE"]) / "timeouts.log"
-    ).read_text().split() == ["120", "120"]
+@pytest.mark.parametrize("var", ["PW_INSTALL_TIMEOUT", "PW_KILL_GRACE"])
+def test_the_bound_and_its_grace_are_whole_seconds(env: dict[str, str], var: str) -> None:
     bad = _run(
         env,
         "install",
         PW_CACHE_KEY=KEY,
         PW_CACHE_HIT="false",
         PW_VERSION=VERSION,
-        PW_INSTALL_TIMEOUT="soon",
+        **{var: "soon"},
     )
-    assert bad.returncode == 1 and "CI-A11Y-005" in bad.stderr
+    assert bad.returncode == 1 and "CI-A11Y-005" in bad.stderr and var in bad.stderr
+    assert _installs(env) == []
 
 
 def test_the_lockfile_binary_is_run_never_fetched_from_a_registry() -> None:
@@ -206,11 +210,65 @@ def test_the_lockfile_binary_is_run_never_fetched_from_a_registry() -> None:
     assert "npx" not in code and "pnpm exec playwright" in code
 
 
-def test_a_stuck_download_is_killed_after_its_bound(env: dict[str, str]) -> None:
-    r = _run(env, "install", PW_CACHE_KEY=KEY, PW_CACHE_HIT="false", PW_VERSION=VERSION)
-    assert r.returncode == 0
-    flags = (Path(env["FAKE"]) / "timeout-flags.log").read_text().split()
-    assert flags == ["--kill-after=10", "--kill-after=10"]
+def _alive(pid: int) -> bool:
+    """A live process, not a zombie waiting for its reaper."""
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        return False
+    return state != "Z"
+
+
+def test_the_bound_kills_the_whole_group_of_a_stuck_install_deps(env: dict[str, str]) -> None:
+    # #5275: the orphaned root apt-get. A child that ignores TERM outlives its parent's death; the
+    # bound kills it with the group, so nothing is left holding the apt lists lock.
+    if not shutil.which("setsid"):
+        pytest.fail("setsid (util-linux) runs the bounded commands")
+    started = time.monotonic()
+    r = _run(
+        env,
+        "install",
+        PW_CACHE_KEY=KEY,
+        PW_CACHE_HIT="true",
+        PW_VERSION=VERSION,
+        PW_INSTALL_TIMEOUT="1",
+        PW_KILL_GRACE="1",
+        DEPS_STUCK="1",
+    )
+    assert r.returncode == 0, r.stderr
+    (warn,) = [ln for ln in r.stderr.splitlines() if ln.startswith("::warning::")]
+    assert "install-deps failed (exit 124)" in warn
+    child = int((Path(env["FAKE"]) / "deps-child.pid").read_text())
+    assert not _alive(child), "the stuck install-deps child outlived the bound"
+    # The bound and its grace, not the stand-in's endless loop, decided when the step went on.
+    assert time.monotonic() - started < 20
+    # The retry waits' stand-in `sleep` never shortened the bound's clock.
+    assert not (Path(env["FAKE"]) / "sleeps.log").exists()
+
+
+def test_a_stuck_download_is_killed_after_its_bound_and_retried(env: dict[str, str]) -> None:
+    r = _run(
+        env,
+        "install",
+        PW_CACHE_KEY=KEY,
+        PW_CACHE_HIT="false",
+        PW_VERSION=VERSION,
+        PW_INSTALL_TIMEOUT="1",
+        PW_KILL_GRACE="1",
+        INSTALL_STUCK="1",
+    )
+    assert r.returncode == 1 and "CI-A11Y-005" in r.stderr
+    assert len(_downloads(env)) == 5
+    assert "playwright install chromium (attempt 5) failed (exit 124)" in r.stderr
+
+
+def test_a_bounded_command_runs_in_its_own_process_group() -> None:
+    text = SCRIPT.read_text()
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    assert 'setsid "$@" &' in code
+    assert 'kill -TERM -- "-$pid"' in code and 'kill -KILL -- "-$pid"' in code
+    # coreutils timeout signals only its own group, which sudo ignores (#5275).
+    assert not re.search(r"\btimeout\b", code)
 
 
 def test_failed_deps_on_a_miss_warns_then_downloads_with_the_cause_in_the_summary(

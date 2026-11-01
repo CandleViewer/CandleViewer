@@ -268,7 +268,7 @@ def _executed(workflow: str, on: set[str]) -> list[str]:
 
 
 # A matrix axis written as `${{ fromJSON(inputs.x && '[..]' || '[..]') }}` (the vr job's shards:
-# one leg for the vr_update dispatch, ten otherwise) is read with the caller's inputs; anything else
+# one leg for the vr_update dispatch, fourteen otherwise) is read with the caller's inputs; anything else
 # that is not a list fails here rather than counting the characters of an expression.
 _PICK = re.compile(
     r"\$\{\{\s*fromJSON\(\s*inputs\.(\w+)\s*&&\s*'(\[[^']*\])'\s*\|\|\s*'(\[[^']*\])'\s*\)\s*\}\}"
@@ -298,8 +298,9 @@ def _legs(axis: object, inputs: dict[str, object]) -> int:
     # and leaves `integration / integration` to the merge group, which a PR no longer runs (-1):
     # 5 / 30 / 30 / 50. #270 adds the vr job's ten compare shards beside `storybook` on the e2e
     # filter (the vr_update dispatch's single shard never runs on a PR): 5 / 30 / 30 / 60. #5193
-    # shards `py-perf` in three (+2) and adds `py-perf-index` (+1): 5 / 33 / 33 / 63.
-    [("docs", 5), ("py", 33), ("py,infra", 33), ("all", 63)],
+    # shards `py-perf` in three (+2) and adds `py-perf-index` (+1): 5 / 33 / 33 / 63. #5275 runs the
+    # vr job in fourteen shards (+4): 5 / 33 / 33 / 67.
+    [("docs", 5), ("py", 33), ("py,infra", 33), ("all", 67)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))

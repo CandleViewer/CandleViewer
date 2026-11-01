@@ -11,7 +11,7 @@ name: _job-a11y
 # storybook-nightly.yml sets `storybook_only` to run that job alone on `main` every night; pr.yml
 # keeps the default and runs both.
 # E05-T04 (#270): the `vr` job runs beside them and fails the same check: every story x 3 themes x
-# 2 densities against its committed baseline PNG (ADR-0019), in 10 shards of one browser per two CPUs
+# 2 densities against its committed baseline PNG (ADR-0019), in 14 shards of one browser per two CPUs
 # that each keep a 6 min budget (CI-A11Y-006, CI-A11Y-007). A `workflow_dispatch` with `vr_update`
 # runs it once, unsharded, as `vr:update` and uploads the baselines for a person to commit
 # (packages/ui/README.md).
@@ -316,7 +316,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.vr_update && '[0]' || '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]') }}
+        shard: ${{ fromJSON(inputs.vr_update && '[0]' || '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]') }}
     steps:
       - name: Start the budget clock
         run: date +%s > "$RUNNER_TEMP/vr-start"
@@ -380,8 +380,35 @@ jobs:
             echo "::error::CI-A11Y-008 $1 (docs/ci-runbook.md)"
             exit 1
           }
-          sudo apt-get update -qq || fail "apt-get update failed before the pinned fonts"
-          sudo apt-get install -y -qq --no-install-recommends \
+          # #5275: apt's lists lock and dpkg's locks may still be held when this step starts (the
+          # runner's unattended-upgrades after boot, or an apt-get an earlier step left behind), and
+          # DPkg::Lock::Timeout covers only dpkg's. Wait for all of them, up to 120 s, polling every
+          # 2 s, before each apt-get; then try it three times, 20 s apart, a warning per failure.
+          apt_locks=(/var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend
+            /var/cache/apt/archives/lock)
+          wait_for_apt() {
+            local waited=0
+            while sudo fuser "${apt_locks[@]}" >/dev/null 2>&1; do
+              if [ "$waited" -ge 120 ]; then
+                fail "the apt lock was still held after 120 s before the pinned fonts"
+              fi
+              sleep 2
+              waited=$((waited + 2))
+            done
+            if [ "$waited" -gt 0 ]; then echo "::warning::CI-A11Y-008 waited $waited s for the apt lock"; fi
+          }
+          apt_try() {
+            for attempt in 1 2 3; do
+              wait_for_apt
+              "$@" && return 0
+              echo "::warning::CI-A11Y-008 apt attempt $attempt of 3 failed ($*)"
+              if [ "$attempt" -lt 3 ]; then sleep 20; fi
+            done
+            return 1
+          }
+          apt_try sudo apt-get -o DPkg::Lock::Timeout=60 update -qq \
+            || fail "apt-get update failed before the pinned fonts"
+          apt_try sudo apt-get -o DPkg::Lock::Timeout=60 install -y -qq --no-install-recommends \
             "fonts-inter=$INTER" "fonts-jetbrains-mono=$JETBRAINS_MONO" \
             || fail "fonts-inter=$INTER and fonts-jetbrains-mono=$JETBRAINS_MONO did not install"
           for family in Inter "JetBrains Mono"; do
