@@ -28,7 +28,7 @@ from candleviewer.audit.lane import lane_dir
 from candleviewer.audit.lane_lock import LaneUnanchored, take_lane_lock
 from candleviewer.audit_lane_wiring import LaneKeyRefused, load_lane_keys
 from candleviewer.observability.logging import configure_logging
-from candleviewer.settings import Settings
+from candleviewer.settings import Settings, load_settings
 
 #: The operator's words (§15.6 Release): trimmed, printable (break-glass `_label`'s rule), capped.
 WORD_MAX = {"operator": 64, "ticket": 64, "operator_reason": 280}
@@ -136,7 +136,7 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     args = _parser().parse_args(argv)
     done: Released | None = None
     try:
-        config = Settings() if settings is None else settings
+        config = load_settings() if settings is None else settings
         if settings is None:  # the process entrypoint: the redacting log chain first (main.py)
             env, level, fmt = config.environment.value, config.log_level, config.log_format
             configure_logging(env=env, level=level, fmt=fmt)

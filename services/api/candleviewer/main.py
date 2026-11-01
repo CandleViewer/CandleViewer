@@ -34,14 +34,15 @@ from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_runtime import freeze_startup_heap, unfreeze_startup_heap
 from candleviewer.observability.metrics_server import MetricsRuntime
 from candleviewer.recorder.rolloff import RollOffTask
-from candleviewer.settings import Settings
+from candleviewer.settings import load_settings
 from candleviewer.statechart.registry import default_registry
 
 # E04-T01: logging must be configured before anything else logs a line, and
 # exactly once per process (`configure_logging()`'s own docstring). Every
 # worker entrypoint (ingestion/recorder/replay) added by later tickets must
 # call this the same way, at the top of its own `main.py`.
-_settings = Settings()
+# #5303: a refusal leaves as `SettingsRefusedError`, which holds only the refusal messages.
+_settings = load_settings()
 configure_logging(
     env=_settings.environment.value,
     level=_settings.log_level,
