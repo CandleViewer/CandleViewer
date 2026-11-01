@@ -45,4 +45,13 @@ if (componentFiles.length > 0) {
   await writeFile(path.join(dist, "components.css"), parts.join("\n"));
   written.push("components.css");
 }
+// The vendored fonts (E11-S11 PR C) ship as `./fonts/*` from `dist/fonts/`, never `src/` (§9 #18): the
+// WOFF2 files with their SHA-256 manifest and OFL texts beside them (§9 #14), byte for byte.
+const fontDir = path.join(UI_ROOT, "src/fonts");
+const fonts = (await readdir(fontDir).catch(() => [])).filter((n) => /\.(woff2|json|txt)$/.test(n));
+if (fonts.length > 0) {
+  await mkdir(path.join(dist, "fonts"), { recursive: true });
+  for (const n of fonts) await copyFile(path.join(fontDir, n), path.join(dist, "fonts", n));
+  written.push(`fonts/ (${fonts.length} files)`);
+}
 console.log(`[copy-css] dist/: ${written.join(", ")}`);

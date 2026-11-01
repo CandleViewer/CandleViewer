@@ -17,6 +17,7 @@ import {
   type ChartEvents,
   type ChartOptions,
 } from "@candleviewer/chart-engine";
+import { ChartFontsContext, type ChartFont, type ChartFontsState } from "./fonts/designFonts";
 
 /** The options a `<Chart>` takes: everything but the container, which the binding renders. */
 export type ChartProps = {
@@ -46,6 +47,9 @@ type Applied = { theme: ChartOptions["theme"]; density: ChartOptions["density"] 
 
 const ChartContext = createContext<ChartApi | null>(null);
 const ContainerContext = createContext<HTMLElement | null>(null);
+// No `ChartFontsContext` source: nothing to wait for (tests, stories, any chart outside `<App>`).
+const noSubscribe = (): (() => void) => () => undefined;
+const noStore = (): ChartFontsState | null => null;
 
 /** The mounted chart's API, or null before mount and after unmount. */
 export function useChartApi(): ChartApi | null {
@@ -75,11 +79,22 @@ export function Chart({ options, label, onFrameStats, onError, children }: Chart
 
   const recreateKey = JSON.stringify(RECREATE_KEYS.map((k) => options[k] ?? null));
 
+  const fontStore = useContext(ChartFontsContext);
+  const fontState = useSyncExternalStore(
+    fontStore?.subscribe ?? noSubscribe,
+    fontStore?.snapshot ?? noStore,
+  );
+  useEffect(() => fontStore?.start(), [fontStore]);
+  const fontsSettled = fontState?.status !== "loading";
+  const fontsRef = useRef<readonly ChartFont[] | undefined>(undefined);
+  fontsRef.current = fontState?.status === "ready" ? fontState.fonts : undefined;
+
   useEffect(() => {
     const container = containerRef.current;
-    if (container === null) return undefined;
+    if (container === null || !fontsSettled) return undefined;
     const initial = optionsRef.current;
-    const created = createChart({ ...initial, container });
+    const fonts = initial.fonts ?? fontsRef.current;
+    const created = createChart({ ...initial, ...(fonts !== undefined && { fonts }), container });
     applied.current = { theme: initial.theme, density: initial.density };
     const offStats = created.subscribe("frameStats", (s) => onFrameStatsRef.current?.(s));
     // Subscribed in the creating effect, so no error the engine emits after creation is missed.
@@ -96,7 +111,7 @@ export function Chart({ options, label, onFrameStats, onError, children }: Chart
       setChart(null);
       setContainer(null);
     };
-  }, [recreateKey]);
+  }, [recreateKey, fontsSettled]);
 
   useEffect(() => {
     if (chart === null || options.theme === applied.current.theme) return;
