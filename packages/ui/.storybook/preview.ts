@@ -1,6 +1,7 @@
 import type { Preview } from "@storybook/react-vite";
 import { DENSITIES, MOTION_OVERRIDES, THEMES } from "../src/theme/index.js";
 import { withMountCount, withTokenBackground } from "./decorators.js";
+import { inVitestTester, muteIdlePointer } from "./idlePointer.js";
 import { mountAfterEffects, withMountSignal } from "./mountAfterEffects.js";
 import "./theme-bundles.js";
 import { withThemeRuntime } from "./withThemeRuntime.js";
@@ -66,6 +67,8 @@ const preview: Preview = {
   decorators: [withMountCount, withTokenBackground, withThemeRuntime, withMountSignal],
   // A play starts once those effects ran, in a production build too (mountAfterEffects.tsx).
   mount: mountAfterEffects,
+  // In Vitest's tester a play is the story's only pointer: the runner's idle one is muted (idlePointer.ts, #5274).
+  beforeEach: () => (inVitestTester() ? muteIdlePointer() : undefined),
 };
 
 export default preview;
