@@ -78,6 +78,7 @@ async def test_sr040_negative_control_the_helper_rejects_a_hostile_print() -> No
     hostile = tapes.event(0, 1, Decimal(100), Decimal(1), "buy", SYMBOL, HOSTILE_ID)
     with pytest.raises(AssertionError, match="never printed"):
         assert_only_venue_prints([hostile], [], venue, "leaked row")
-    nan = tapes.event(0, 1, Decimal("NaN"), Decimal(1), "buy", SYMBOL, "a")
+    nan = tapes.event(0, 1, Decimal(100), Decimal(1), "buy", SYMBOL, "a")
+    nan = nan.model_copy(update={"price": Decimal("NaN")})
     with pytest.raises(AssertionError, match="bad price"):
         assert_only_venue_prints([nan], [], venue, "NaN price")
