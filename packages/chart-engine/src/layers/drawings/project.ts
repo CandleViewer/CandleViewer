@@ -12,6 +12,7 @@ import { indexAt, indexToScreen, priceToScreen } from "../../viewport/transform.
 import type { IndexTimeMap, ViewportState } from "../../viewport/types.js";
 import { MAX_DRAWINGS, type SetDrawings } from "./model.js";
 import { toRecord, type DrawingRecord } from "./record.js";
+import { FillInstances } from "./fills.js";
 import { LineInstances } from "./lines.js";
 import { DrawingSet } from "./set.js";
 
@@ -115,6 +116,30 @@ export function screenBounds(vp: ViewportState, r: DrawingRecord, out: Float32Ar
   out[o + 3] = px(Math.max(SEG[1] as number, SEG[3] as number) + pad);
 }
 
+/**
+ * The `drawing-fill` batch's node (slice 3): the batch builder keeps one batch per node, so the
+ * fills ride a sibling attached right after its `DrawingsNode`, which encodes for both and marks
+ * it DATA; its own update does nothing, its collect reads the owner's fill ring.
+ */
+export class DrawingFillsNode extends ContentNode {
+  constructor(
+    id: string,
+    readonly fills: FillInstances,
+  ) {
+    super(id);
+  }
+
+  collect(sink: BatchSink): boolean {
+    const e = sink.append();
+    e.nodeId = this.id;
+    e.program = PROGRAM.drawingFill;
+    e.texture = 0;
+    e.first = 0;
+    e.count = this.fills.count;
+    return true;
+  }
+}
+
 export class DrawingsNode extends ContentNode {
   readonly set = new DrawingSet<DrawingRecord>(toRecord);
   /** [x0, y0, x1, y1] per drawing in `set.order`, CSS px; reused, never reallocated. */
@@ -126,15 +151,23 @@ export class DrawingsNode extends ContentNode {
   boundsPasses = 0;
   /** The `drawing-line` ring (slice 2): rewritten on DATA, a re-index or a DPR change only. */
   readonly lines = new LineInstances();
+  /** The `drawing-fill` ring and its batch's node (slice 3), attached after this one. */
+  readonly fills = new FillInstances();
+  readonly fillNode: DrawingFillsNode;
   /** Encodes so far: a pan adds none. */
   encodes = 0;
-  /** Where a changed instance range goes: the runtime's `BatchBuilder.patch` (one per encode). */
-  onRange: ((r: MutationRange) => void) | null = null;
+  /** Where a ring's changed instance range goes: the runtime's `BatchBuilder.patch`. */
+  onRange: ((nodeId: string, r: MutationRange) => void) | null = null;
   private readonly range = { op: "patch" as const, from: 0, to: 0, indexShift: 0 };
   private map: IndexTimeMap | null = null;
   private mapLength = -1;
   private stamp = 0;
   private dpr = 0;
+
+  constructor(id: string) {
+    super(id);
+    this.fillNode = new DrawingFillsNode(`${id}/fills`, this.fills);
+  }
 
   /** A `setDrawings`: DATA on this node only; a refusal changes nothing (E14-X01 DR29). */
   apply(cmd: SetDrawings): string | null {
@@ -166,11 +199,18 @@ export class DrawingsNode extends ContentNode {
     if (!encode) return; // TRANSFORM alone: the shader re-projects from the pane block
     this.dpr = vp.dpr;
     this.lines.encode(order, vp.dpr);
+    this.fills.encode(order, vp.dpr);
     this.encodes += 1;
-    if (this.lines.lo >= this.lines.hi) return;
-    this.range.from = this.lines.lo;
-    this.range.to = this.lines.hi;
-    this.onRange?.(this.range);
+    this.fillNode.dirty |= Dirty.DATA; // collected after this node: its count is this encode's
+    this.report(this.id, this.lines.lo, this.lines.hi);
+    this.report(this.fillNode.id, this.fills.lo, this.fills.hi);
+  }
+
+  private report(nodeId: string, lo: number, hi: number): void {
+    if (lo >= hi) return;
+    this.range.from = lo;
+    this.range.to = hi;
+    this.onRange?.(nodeId, this.range);
   }
 
   /** One `drawing-line` batch for every line-type drawing (26 §3.10: ≤ 3 draws for the layer). */

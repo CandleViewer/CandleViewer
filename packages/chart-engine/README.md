@@ -625,6 +625,26 @@ SwiftShader goldens: the tests prove the geometry (endpoints within 0.05 px thro
 stand-in of the shader, also at bar ~1e6 and ticks ~1e8, widths and patterns at dpr 1, 1.5, 2),
 the bindings and the uploads. Hover and selection outlines are E14-T04's.
 
+## Drawings layer: fills (E14-T03 slice 3)
+
+`drawing-fill` (`src/gl/shaders/drawing-fill.ts`, program 6) is the layer's second draw call: one
+instanced quad per rect, band or ellipse. A new program rather than `drawing-line` extended: a
+fill is one area per drawing, not a capsule per segment, so it needs other inputs (three corners)
+and another fragment, and the budget still holds (lines, fills, labels: 3). Corners A, B, C ride
+as `ivec4`s in chart space (`FILL_ATTRIBUTES`, bound like the lines'); the shader forms D = B + C
+− A in chart space, as `drawing-line`'s outlines do (a rect's four edges, a band's two parallel
+edges; `src/layers/drawings/lines.ts` `corner`), so fill, outline and bounds share every corner
+under every scale. The batch builder draws programs in order, so fills land after strokes: a
+rect's or band's fill therefore stops half a stroke inside every edge (a fragment edge distance;
+the 2D painter insets the path), and never tints its own outline. An ellipse is inscribed in its
+projected box and filled and stroked by a fragment SDF in this program (no tessellation); its
+dashes follow the angle times the mean radius, an approximation of arc length. Fill alpha is the
+fill colour's own; a rect or band without a fill draws its outline alone. Pan, zoom and changed
+ranges behave as the lines' (a shared `InstanceRing`, `src/layers/drawings/ring.ts`). Known
+limits: across drawings, every fill draws after every line in the layer, so a fill can tint
+another drawing's line below it in z (z orders within a program only); pixel-level fill, ring and
+dash parity defers to E11-T08's goldens.
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/chart-engine build` — tsup ESM build with `.d.ts` (entries:

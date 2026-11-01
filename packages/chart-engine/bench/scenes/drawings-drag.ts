@@ -1,13 +1,15 @@
 // `drawings-drag` scene (E14-T03, the B8 skeleton; R5): 100 000 bars, 200 seeded drawings plus 50
 // order lines (hlines) in the drawings layer, with candle and footprint stand-ins in the series and
 // overlays layers. Slice 2: the frame runs the batch builder and, given one, a real backend (the
-// GL fake or Canvas 2D) on the pane block, so the `drawing-line` batch's uploads and draws count.
+// GL fake or Canvas 2D) on the pane block, so the `drawing-line` and (slice 3) `drawing-fill`
+// batches' uploads and draws count.
 // `run` drags one segment for 180 frames (a `patch`, then a frame); `pan` is TRANSFORM only. The
 // unit tests count; slice T03-f adds the timed half (B8 ≤ 12 ms).
 import { mulberry32 } from "../fixtures/rng.mjs";
 import type { RenderBackend } from "../../src/gl/backend.js";
 import { BarStore } from "../../src/model/BarStore.js";
 import type { DrawingInput, DrawingKind, SetDrawings } from "../../src/layers/drawings/model.js";
+import { FILL_ATTRIBUTES } from "../../src/layers/drawings/fills.js";
 import { LINE_ATTRIBUTES } from "../../src/layers/drawings/lines.js";
 import { DrawingsNode } from "../../src/layers/drawings/project.js";
 import { BatchBuilder } from "../../src/scene/batch-builder.js";
@@ -25,8 +27,12 @@ const KINDS: readonly DrawingKind[] = [
 const US = 60e6; // one bar
 const style = { colour: 0x2962ffff, width: 2, dash: 0 } as const;
 export const DRAG_FRAMES = 180; // 3 s at 60 fps (Scenario 1)
-/** Line instances seeded: 25 each of segment, ray, line and two-point polyline, + 50 hlines. */
-export const LINE_INSTANCES = 150;
+/**
+ * Line instances seeded: 25 each of segment, ray, line and two-point polyline, 25 rects × 4 and
+ * 25 bands × 2 edges, + 50 hlines; fill instances: the 25 each of rect, band and ellipse.
+ */
+export const LINE_INSTANCES = 300;
+export const FILL_INSTANCES = 75;
 export const PLOT = { width: 1920, height: 1080 };
 
 export class DrawingsDragBench {
@@ -59,10 +65,12 @@ export class DrawingsDragBench {
     this.graph.addNode("p0", "series", this.price);
     this.graph.addNode("p0", "overlays", this.footprint);
     this.graph.addNode("p0", "drawings", this.drawings);
+    this.graph.addNode("p0", "drawings", this.drawings.fillNode);
     this.ctx = new FrameContext(this.viewport);
     this.builder = new BatchBuilder(this.graph, backend ?? { uploadSubRange: () => undefined });
-    this.drawings.onRange = (r) => this.builder.patch(this.drawings.id, r);
+    this.drawings.onRange = (id, r) => this.builder.patch(id, r);
     backend?.attach(this.drawings.id, this.drawings.lines, LINE_ATTRIBUTES);
+    backend?.attach(this.drawings.fillNode.id, this.drawings.fills, FILL_ATTRIBUTES);
     backend?.setPaneUniforms(() => this.uniforms);
     const rng = mulberry32(seed);
     const at = (): number[] => [(n - 200 + rng() * 200) * US, 1_000 + Math.round(rng() * 50)];
@@ -71,7 +79,8 @@ export class DrawingsDragBench {
       const kind = i < 200 ? (KINDS[i % KINDS.length] as DrawingKind) : "hline";
       const k = kind === "text" || kind === "hline" ? 1 : kind === "band" ? 3 : 2;
       const points = Array.from({ length: k }, at).flat();
-      const s = { ...style, dash: (i % 3) as 0 | 1 | 2 };
+      const filled = kind === "rect" || kind === "band" || kind === "ellipse";
+      const s = { ...style, dash: (i % 3) as 0 | 1 | 2, ...(filled && { fill: 0x2962ff33 }) };
       drawings.push({ id: i < 200 ? `d${i}` : `o${i}`, kind, points, style: s });
     }
     this.drawings.apply({ op: "replace", drawings });

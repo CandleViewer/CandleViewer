@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   DRAG_FRAMES,
   DrawingsDragBench,
+  FILL_INSTANCES,
   LINE_INSTANCES,
 } from "../../../bench/scenes/drawings-drag.js";
 import { GLBackend } from "../../../src/gl/backend.js";
@@ -30,10 +31,12 @@ describe("drawings-drag on the GL fake (slice 2): uniforms-only pan, one-instanc
     return { gl, backend, bench: new DrawingsDragBench(100_000, 358, backend) };
   };
 
-  it("one drawing-line draw a frame (26 §3.10's drawings budget is 3); every line-type instance", () => {
+  it("two draws a frame, lines and fills (26 §3.10's drawings budget is 3)", () => {
     const { backend, bench } = gpu();
     expect(bench.drawings.lines.count).toBe(LINE_INSTANCES);
-    expect([backend.trace.draws, backend.trace.triangles]).toEqual([1, 2 * LINE_INSTANCES]);
+    expect(bench.drawings.fills.count).toBe(FILL_INSTANCES);
+    const instances = LINE_INSTANCES + FILL_INSTANCES; // two draws: lines, then fills
+    expect([backend.trace.draws, backend.trace.triangles]).toEqual([2, 2 * instances]);
   });
 
   it("100 pans: no buffer write, no re-encode, the ring kept; the pane block is rewritten", () => {
@@ -47,16 +50,17 @@ describe("drawings-drag on the GL fake (slice 2): uniforms-only pan, one-instanc
       true,
       true, // the first frame's full upload, and nothing since
     ]);
-    expect(gl.uniforms.length - uniforms).toBe(100 * 5); // u_viewport, the bases, u_k, u_log
-    expect(backend.trace.draws).toBe(1);
+    // u_viewport, the bases, u_k, u_log: per program (drawing-line, drawing-fill), per frame.
+    expect(gl.uniforms.length - uniforms).toBe(100 * 2 * 5);
+    expect(backend.trace.draws).toBe(2);
   });
 
   it("a 180-frame drag uploads one 64-byte instance a frame, at the dragged drawing's slot", () => {
     const { gl, bench } = gpu();
     const from = gl.writes.length;
     bench.run();
-    // d8 is the fifth line-type record (d0..d3 draw one each; d4..d7 are fills and text).
-    expect(gl.writes.slice(from)).toEqual(Array.from({ length: 180 }, () => "sub 256 64 16"));
+    // d8's segment is line instance 10: d0..d3 draw one each, d4's rect 4, d6's band 2.
+    expect(gl.writes.slice(from)).toEqual(Array.from({ length: 180 }, () => "sub 640 160 16"));
   });
 
   it("a DPR change re-encodes the widths once: one upload of every instance", () => {
@@ -65,6 +69,9 @@ describe("drawings-drag on the GL fake (slice 2): uniforms-only pan, one-instanc
     bench.viewport.setSize(1920, 1080, 2);
     bench.graph.markTheme(); // what the runtime marks on a DPR change (BQ-152)
     bench.frame();
-    expect(gl.writes.slice(from)).toEqual([`sub 0 0 ${16 * LINE_INSTANCES}`]);
+    expect(gl.writes.slice(from)).toEqual([
+      `sub 0 0 ${16 * LINE_INSTANCES}`,
+      `sub 0 0 ${24 * FILL_INSTANCES}`, // the fills' ring widths too
+    ]);
   });
 });

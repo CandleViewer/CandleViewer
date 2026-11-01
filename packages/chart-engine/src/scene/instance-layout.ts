@@ -10,6 +10,7 @@ export const PROGRAM = {
   barCell: 3,
   candle: 4,
   drawingLine: 5,
+  drawingFill: 6,
 } as const;
 
 /** [shader attribute, float offset in the slot, components, read as int32 bits]. */
@@ -77,6 +78,20 @@ export const INSTANCE_LAYOUTS: readonly InstanceLayout[] = [
       ["a_anchor1", 4, 4, true],
       ["a_style", 8, 4, true],
       ["a_color", 12, 4, true],
+    ],
+  },
+  // E14-T03 `drawing-fill`, ivec4s as `drawing-line`'s: corners A, B, C (D = B + C − A in the
+  // shader); fill and stroke RGBA float bits; style float bits (kind 0 rect / 1 ellipse / 2
+  // band, stroke width in device px, dash index, unused).
+  {
+    stride: 24,
+    attributes: [
+      ["a_cornerA", 0, 4, true],
+      ["a_cornerB", 4, 4, true],
+      ["a_cornerC", 8, 4, true],
+      ["a_fill", 12, 4, true],
+      ["a_stroke", 16, 4, true],
+      ["a_style", 20, 4, true],
     ],
   },
 ];

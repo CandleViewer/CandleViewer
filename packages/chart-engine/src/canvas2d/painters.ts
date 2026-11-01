@@ -176,6 +176,119 @@ export function paintDrawingLine(ctx: Ctx2DLike, a: PaintArgs): void {
   ctx.lineTo((x0 + ux * s1) * sx, (y0 + uy * s1) * sy);
 }
 
+const FA = attributeOffset(PROGRAM.drawingFill, "a_cornerA");
+const FSTYLE = attributeOffset(PROGRAM.drawingFill, "a_style");
+/** Projected corners A, B, D, C (the quad in edge order), then the inset ones: u_viewport px. */
+const QUAD = new Float64Array(8);
+const INSET = new Float64Array(8);
+
+/** `drawing-fill`'s corner (0 A, 1 B, 2 C, 3 D = B + C − A) through the block, as the shader. */
+function fillCorner(a: PaintArgs, b: PaneUniforms, c: number, out: Float64Array, o: number): void {
+  const w = a.at + FA;
+  const { ints, data } = a;
+  // D sums the ints and the fractions apart, as the shader's ivec arithmetic does.
+  const d = c === 3;
+  const at = w + 4 * (d ? 1 : c);
+  let ii = ints[at] ?? 0;
+  let it = ints[at + 1] ?? 0;
+  let fi = data[at + 2] ?? 0;
+  let ft = data[at + 3] ?? 0;
+  if (d) {
+    ii += (ints[w + 8] ?? 0) - (ints[w] ?? 0);
+    it += (ints[w + 9] ?? 0) - (ints[w + 1] ?? 0);
+    fi += (data[w + 10] ?? 0) - (data[w + 2] ?? 0);
+    ft += (data[w + 11] ?? 0) - (data[w + 3] ?? 0);
+  }
+  const ri = ii - (b.ints[0] ?? 0) + fi;
+  out[o] = (ri + 0.5 - (b.floats[3] ?? 0)) * (b.floats[0] ?? 0);
+  out[o + 1] = projectRel(b.floats, it - (b.ints[1] ?? 0) + ft);
+}
+
+/** Moves the quad's edges `hw` inward (toward its centre); false when it would fold over. */
+function inset(hw: number): boolean {
+  const mx = ((QUAD[0] as number) + (QUAD[4] as number)) / 2;
+  const my = ((QUAD[1] as number) + (QUAD[5] as number)) / 2;
+  let area = 0;
+  for (let v = 0; v < 4; v += 1) {
+    // Vertex v is where the inset edges (v - 1, v) and (v, v + 1) meet.
+    const p = 2 * ((v + 3) % 4);
+    const q = 2 * v;
+    const r = 2 * ((v + 1) % 4);
+    shift(p, q, mx, my, hw);
+    const ax = SHIFT[0] as number;
+    const ay = SHIFT[1] as number;
+    const ux = SHIFT[2] as number;
+    const uy = SHIFT[3] as number;
+    shift(q, r, mx, my, hw);
+    const bx = SHIFT[0] as number;
+    const by = SHIFT[1] as number;
+    const wx = SHIFT[2] as number;
+    const wy = SHIFT[3] as number;
+    const den = ux * wy - uy * wx;
+    const t = Math.abs(den) < 1e-12 ? 0 : ((bx - ax) * wy - (by - ay) * wx) / den;
+    INSET[q] = ax + ux * t;
+    INSET[q + 1] = ay + uy * t;
+  }
+  for (let v = 0; v < 4; v += 1) {
+    const n = 2 * ((v + 1) % 4);
+    area += (INSET[2 * v] as number) * (INSET[n + 1] as number);
+    area -= (INSET[n] as number) * (INSET[2 * v + 1] as number);
+  }
+  let was = 0;
+  for (let v = 0; v < 4; v += 1) {
+    const n = 2 * ((v + 1) % 4);
+    was += (QUAD[2 * v] as number) * (QUAD[n + 1] as number);
+    was -= (QUAD[n] as number) * (QUAD[2 * v + 1] as number);
+  }
+  return area * was > 0 && Math.abs(area) > 1e-9;
+}
+const SHIFT = new Float64Array(4);
+/** The edge i → j moved `hw` toward (mx, my), into `SHIFT` as [x, y, dx, dy]. */
+function shift(i: number, j: number, mx: number, my: number, hw: number): void {
+  const x = QUAD[i] as number;
+  const y = QUAD[i + 1] as number;
+  const dx = (QUAD[j] as number) - x;
+  const dy = (QUAD[j + 1] as number) - y;
+  const len = Math.hypot(dx, dy) || 1;
+  const side = (mx - x) * -dy + (my - y) * dx < 0 ? -1 : 1; // the normal toward the centre
+  SHIFT[0] = x + ((side * -dy) / len) * hw;
+  SHIFT[1] = y + ((side * dx) / len) * hw;
+  SHIFT[2] = dx;
+  SHIFT[3] = dy;
+}
+
+/**
+ * `drawing-fill` (E14-T03 slice 3), `sub` 0 the fill and 1 an ellipse's ring: the shader's
+ * corners; a rect's or band's fill inset half a stroke (its outline is `drawing-line`'s), an
+ * ellipse's fill inside its ring; the bucket fills or strokes the path.
+ */
+export function paintDrawingFill(ctx: Ctx2DLike, a: PaintArgs): void {
+  const b = a.block;
+  if (b === null) return;
+  fillCorner(a, b, 0, QUAD, 0);
+  fillCorner(a, b, 1, QUAD, 2);
+  fillCorner(a, b, 3, QUAD, 4);
+  fillCorner(a, b, 2, QUAD, 6);
+  const sx = scaleX(a);
+  const sy = scaleY(a);
+  const hw = (a.data[a.at + FSTYLE + 1] ?? 0) / 2;
+  if ((a.data[a.at + FSTYLE] ?? 0) === 1) {
+    const cx = ((QUAD[0] as number) + (QUAD[4] as number)) / 2;
+    const cy = ((QUAD[1] as number) + (QUAD[5] as number)) / 2;
+    const ring = a.sub === 1;
+    const rx = Math.abs((QUAD[4] as number) - (QUAD[0] as number)) / 2 - (ring ? 0 : hw);
+    const ry = Math.abs((QUAD[5] as number) - (QUAD[1] as number)) / 2 - (ring ? 0 : hw);
+    if (rx <= 0 || ry <= 0 || ctx.ellipse === undefined) return;
+    ctx.moveTo((cx + rx) * sx, cy * sy);
+    ctx.ellipse(cx * sx, cy * sy, rx * sx, ry * sy, 0, 0, 2 * Math.PI);
+    return;
+  }
+  if (!inset(hw)) return; // narrower than its stroke: the outline covers it
+  ctx.moveTo((INSET[0] as number) * sx, (INSET[1] as number) * sy);
+  for (let v = 1; v < 4; v += 1)
+    ctx.lineTo((INSET[2 * v] as number) * sx, (INSET[2 * v + 1] as number) * sy);
+}
+
 /** Indexed by `PROGRAM`; `sdf-text` has none: the 2D path cannot rebuild strings (BQ-88). */
 export const PAINTERS: readonly (((ctx: Ctx2DLike, a: PaintArgs) => void) | null)[] = [
   paintLine,
@@ -184,4 +297,5 @@ export const PAINTERS: readonly (((ctx: Ctx2DLike, a: PaintArgs) => void) | null
   paintBarCell,
   paintCandle,
   paintDrawingLine,
+  paintDrawingFill,
 ];

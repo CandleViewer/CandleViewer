@@ -16,7 +16,7 @@ export const QUAD_VERTICES = 4;
  * Strip vertices per instance, indexed by `PROGRAM` (E12-S06, BQ-15): every program draws one
  * quad today; a batch block's `vertices` overrides it (the OHLC ticks' 10-vertex strip, PR 2).
  */
-export const PROGRAM_VERTICES: readonly number[] = [4, 4, 4, 4, 4, 4]; // drawing-line: E14-T03
+export const PROGRAM_VERTICES: readonly number[] = [4, 4, 4, 4, 4, 4, 4]; // E14-T03: 5 and 6
 
 /** A batch's pane uniform block (E11-S03), written by `writePaneUniforms` once per frame. */
 export type PaneUniformSource = (batch: RetainedBatch) => PaneUniforms | null;

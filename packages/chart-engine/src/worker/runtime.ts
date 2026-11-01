@@ -28,6 +28,7 @@ import type { HostDeps, HostTheme } from "../layers/host.js";
 import type { BatchUniforms } from "../gl/submit.js";
 import { type BarBatch, BarStore } from "../model/BarStore.js";
 import { ModelRejection, type MutationRange, RangeSlot } from "../model/counters.js";
+import { FILL_ATTRIBUTES } from "../layers/drawings/fills.js";
 import { LINE_ATTRIBUTES } from "../layers/drawings/lines.js";
 import { DrawingsNode } from "../layers/drawings/project.js";
 import { plotWidthOf } from "../interaction/wheel.js";
@@ -300,8 +301,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     backend.setPaneUniforms(() => inst.uniforms); // one pane until E11-S09 (BQ-45)
     backend.setBatchUniforms((b) => inst.blocks.get(b.nodeId) ?? null); // E12-S06
     for (const c of inst.candles) attachCandle(backend, c);
-    const d = inst.drawings;
-    if (d !== null) backend.attach(d.id, d.lines, LINE_ATTRIBUTES); // E14-T03
+    if (inst.drawings !== null) attachDrawings(backend, inst.drawings); // E14-T03
     if (degraded !== null) {
       const { reason, message, reducedCapabilities } = degraded;
       post(ENGINE_NO_WEBGL2, message, true, { reducedCapabilities, reason }); // BQ-90
@@ -664,14 +664,21 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   /** The drawings layer's node: DATA on a drag never marks the series or footprint (B8). */
   function addDrawings(graph: scene.SceneGraph, node = new DrawingsNode("main/drawings/set")) {
     graph.addNode("main", "drawings", node);
-    node.dirty = scene.DIRTY_ALL;
+    graph.addNode("main", "drawings", node.fillNode); // after its owner: collected after it
+    node.dirty = node.fillNode.dirty = scene.DIRTY_ALL;
     return node;
+  }
+
+  /** Both rings on a backend, each with its program's int bindings. */
+  function attachDrawings(backend: RenderBackend, d: DrawingsNode): void {
+    backend.attach(d.id, d.lines, LINE_ATTRIBUTES);
+    backend.attach(d.fillNode.id, d.fills, FILL_ATTRIBUTES);
   }
 
   /** The node's ring on the open backend, and its changed instance ranges into the builder. */
   function wire(inst: Instance, node: DrawingsNode): DrawingsNode {
-    node.onRange = (r) => inst.builder.patch(node.id, r);
-    inst.gpu.backend?.attach(node.id, node.lines, LINE_ATTRIBUTES);
+    node.onRange = (id, r) => inst.builder.patch(id, r);
+    if (inst.gpu.backend !== undefined) attachDrawings(inst.gpu.backend, node);
     return node;
   }
 

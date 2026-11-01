@@ -8,6 +8,8 @@ export interface Ctx2DLike {
   /** E14-T03: round caps and dashes for `drawing-line`; optional, as a fake may omit them. */
   lineCap?: string;
   setLineDash?(segments: readonly number[]): void;
+  /** E14-T03 slice 3: `drawing-fill`'s ellipse; optional, as a fake may omit it (none drawn). */
+  ellipse?(x: number, y: number, rx: number, ry: number, rot: number, a0: number, a1: number): void;
   clearRect(x: number, y: number, w: number, h: number): void;
   fillRect(x: number, y: number, w: number, h: number): void;
   beginPath(): void;

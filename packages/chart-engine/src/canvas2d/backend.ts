@@ -43,6 +43,9 @@ const COLOR = INSTANCE_LAYOUTS.map(
 );
 const WIDTH = attributeOffset(PROGRAM.line, "a_width");
 const STYLE = attributeOffset(PROGRAM.drawingLine, "a_style");
+const FILL = attributeOffset(PROGRAM.drawingFill, "a_fill");
+const STROKE = attributeOffset(PROGRAM.drawingFill, "a_stroke");
+const FSTYLE = attributeOffset(PROGRAM.drawingFill, "a_style");
 const SOLID: readonly number[] = [];
 
 /** A `drawing-line` bucket's dash index and the [dash, gap] it strokes with (set per flush). */
@@ -180,7 +183,10 @@ export class Canvas2DBackend implements RenderBackend {
       }
       const capacity = Math.floor(data.length / stride);
       const n = Math.min(b.count, capacity);
-      if (b.program === PROGRAM.drawingLine) {
+      if (b.program === PROGRAM.drawingFill) {
+        for (let j = 0; j < n; j += 1)
+          this.fillRefs(data, ((head + b.first + j) % capacity) * stride, i);
+      } else if (b.program === PROGRAM.drawingLine) {
         // E14-T03: decided once per batch, so the other programs' per-instance path is unchanged.
         for (let j = 0; j < n; j += 1) {
           const at = ((head + b.first + j) % capacity) * stride;
@@ -255,20 +261,40 @@ export class Canvas2DBackend implements RenderBackend {
    * 2) × 2^16 × 2^32), its width the instance's device px.
    */
   private drawingBucket(data: Float32Array, at: number): Bucket {
-    const c = at + (COLOR[PROGRAM.drawingLine] ?? 0);
+    const index = Math.min(Math.max(Math.round(data[at + STYLE + 1] ?? 0), 0), 2);
+    const width = sixteenths(data[at + STYLE]);
+    return this.styled(
+      PROGRAM.drawingLine,
+      data,
+      at + (COLOR[PROGRAM.drawingLine] ?? 0),
+      width,
+      index,
+      16 + index,
+    );
+  }
+
+  /**
+   * A drawings bucket (E14-T03): `drawing-line` strokes (slots 16-18 by dash), `drawing-fill`
+   * fills (19, width 0) and ellipse rings (20-22 by dash): keys stay below 2^53 for any slot < 32.
+   */
+  private styled(
+    program: number,
+    data: Float32Array,
+    c: number,
+    width: number,
+    index: number,
+    slot: number,
+  ): Bucket {
     const rgba = byte(data[c]) * 0x1000000 + byte(data[c + 1]) * 0x10000;
     const packed = rgba + byte(data[c + 2]) * 0x100 + byte(data[c + 3]);
-    const width = sixteenths(data[at + STYLE]);
-    const index = Math.min(Math.max(Math.round(data[at + STYLE + 1] ?? 0), 0), 2);
-    const key = ((16 + index) * 65536 + width) * 2 ** 32 + packed;
+    const key = (slot * 65536 + width) * 2 ** 32 + packed;
     let bucket = this.buckets.get(key);
     if (bucket === undefined) {
       if (this.buckets.size >= MAX_BUCKETS) this.buckets.clear();
       const css = `rgba(${byte(data[c])}, ${byte(data[c + 1])}, ${byte(data[c + 2])}, ${byte(data[c + 3]) / 255})`;
-      const program = PROGRAM.drawingLine;
       bucket = { program, css, width: width / 16, refs: new Int32Array(64), n: 0, run: 0 };
       this.buckets.set(key, bucket);
-      this.dashes.set(bucket, { index, pattern: [0, 0] });
+      if (width > 0) this.dashes.set(bucket, { index, pattern: [0, 0] });
     }
     if (bucket.run !== this.run) {
       bucket.run = this.run;
@@ -276,6 +302,20 @@ export class Canvas2DBackend implements RenderBackend {
       this.order.push(bucket);
     }
     return bucket;
+  }
+
+  /** `drawing-fill`'s instance: its fill (ref sub 0) when visible, an ellipse's ring (sub 1). */
+  private fillRefs(data: Float32Array, at: number, i: number): void {
+    if ((data[at + FILL + 3] ?? 0) > 0)
+      this.push(this.styled(PROGRAM.drawingFill, data, at + FILL, 0, 0, 19), i, at * 2);
+    if ((data[at + FSTYLE] ?? 0) !== 1) return;
+    const index = Math.min(Math.max(Math.round(data[at + FSTYLE + 2] ?? 0), 0), 2);
+    const width = sixteenths(data[at + FSTYLE + 1]);
+    this.push(
+      this.styled(PROGRAM.drawingFill, data, at + STROKE, width, index, 20 + index),
+      i,
+      at * 2 + 1,
+    );
   }
 
   /**
@@ -323,9 +363,11 @@ export class Canvas2DBackend implements RenderBackend {
         a.data = slot.source.data;
         a.ints = slot.ints;
         const at = bucket.refs[r + 1] ?? 0;
+        // A candle or drawing-fill ref carries its sub-part in the low bit.
         const candle = bucket.program === PROGRAM.candle;
-        a.at = candle ? at >> 1 : at; // a candle ref carries its sub-rect in the low bit
-        a.sub = candle ? at & 1 : 0;
+        const twin = candle || bucket.program === PROGRAM.drawingFill;
+        a.at = twin ? at >> 1 : at;
+        a.sub = twin ? at & 1 : 0;
         a.batch = candle ? (this.frameBatches[i] ?? null) : null;
         a.block = this.frameBlocks[i] ?? null;
         paint(ctx, a);
@@ -336,7 +378,7 @@ export class Canvas2DBackend implements RenderBackend {
         ctx.strokeStyle = bucket.css;
         if (this.dashed) this.dash(ctx, null, 0);
         ctx.stroke();
-      } else if (bucket.program === PROGRAM.drawingLine) {
+      } else if (bucket.program === PROGRAM.drawingLine || bucket.width > 0) {
         const v = a.block?.floats[4] ?? a.w;
         const width = bucket.width * (v > 0 ? a.w / v : 0);
         ctx.lineWidth = width;

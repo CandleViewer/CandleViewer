@@ -4,20 +4,14 @@
 // shader (BQ-78's CPU stand-in until E11-T08's SwiftShader goldens) both put p0 and p1 where the
 // shared transform does, the stroke stays 4 CSS px and the dash period 24 CSS px at any zoom.
 import { describe, expect, it } from "vitest";
-import { Canvas2DBackend } from "../../../src/canvas2d/backend.js";
-import { DASH_LUT, DRAWING_LINE } from "../../../src/gl/shaders/drawing-line.js";
-import { LINE_STRIDE, LineInstances, lineCount } from "../../../src/layers/drawings/lines.js";
+import { LineInstances, lineCount } from "../../../src/layers/drawings/lines.js";
 import type { DrawingInput } from "../../../src/layers/drawings/model.js";
-import { DrawingsNode, reindex, toRecord } from "../../../src/layers/drawings/project.js";
-import { BatchBuilder } from "../../../src/scene/batch-builder.js";
-import { FrameContext } from "../../../src/scene/frame-context.js";
-import { SceneGraph } from "../../../src/scene/graph.js";
+import { reindex, toRecord } from "../../../src/layers/drawings/project.js";
 import { PROGRAM } from "../../../src/scene/instance-layout.js";
 import { NullSeries } from "../../../src/scene/null-series.js";
-import { PooledBatchSink } from "../../../src/scene/pool.js";
 import * as tf from "../../../src/viewport/index.js";
-import { FakeCtx2D } from "../../canvas2d/fake-ctx2d.js";
 import { minuteMap } from "../../interaction/fixtures.js";
+import { harness, nums, standIn } from "./harness.js";
 
 const T = (i: number): number => minuteMap().indexToTime(i);
 const style = { colour: 0x2962ff80, width: 4, dash: 1 } as const;
@@ -34,7 +28,7 @@ describe("the drawing-line ring", () => {
     return r;
   };
 
-  it("draws one instance per segment of a visible line-type kind, none for fills or text", () => {
+  it("draws one instance per segment of a line kind or outline, none for ellipse or text", () => {
     const counts = [
       input("segment", [T(1), 1, T(2), 2]),
       input("ray", [T(1), 1, T(2), 2]),
@@ -47,7 +41,7 @@ describe("the drawing-line ring", () => {
       input("text", [T(1), 1]),
       input("segment", [T(1), 1, T(2), 2], { visible: false }),
     ].map((d) => lineCount(rec(d)));
-    expect(counts).toEqual([1, 1, 1, 1, 1, 3, 0, 0, 0, 0]);
+    expect(counts).toEqual([1, 1, 1, 1, 1, 3, 4, 2, 0, 0]); // a rect's 4 edges, a band's 2
   });
 
   it("writes each anchor as an ivec4, width × dpr, dash, extend, direction and RGBA", () => {
@@ -82,82 +76,7 @@ describe("the drawing-line ring", () => {
     ring.encode(many(100), 1);
     expect([ring.data === before, ring.data.length, ring.count]).toEqual([false, 128 * 16, 100]);
   });
-
-  it("the dash LUT is the shader's DASH, entry for entry", () => {
-    const glsl = /const vec2 DASH\[3\] = vec2\[3\]\((.*)\);/.exec(DRAWING_LINE.vertex)?.[1] ?? "";
-    const entries = [...glsl.matchAll(/vec2\(([\d.]+), ([\d.]+)\)/g)].map((m) => [+m[1]!, +m[2]!]);
-    expect(entries).toEqual(DASH_LUT.map((e) => [...e]));
-  });
 });
-
-/** A 2D context that also records caps and dashes. */
-class DashCtx extends FakeCtx2D {
-  lineCap = "butt";
-  readonly dashes: number[][] = [];
-  setLineDash(s: readonly number[]): void {
-    this.dashes.push([...s]);
-  }
-}
-
-const fr = Math.fround;
-/** The vertex shader's `project()` in float32 on the real block and ring: device px, y down. */
-function standIn(ring: LineInstances, at: number, k: number, b: tf.PaneUniforms): [number, number] {
-  const [i, f, u] = [ring.ints, ring.data, b.floats];
-  const o = at * LINE_STRIDE + 4 * k; // a_anchor<k>: ints, then intBitsToFloat of the fractions
-  const rx = fr(fr((i[o] ?? 0) - (b.ints[0] ?? 0)) + (f[o + 2] ?? 0));
-  const ry = fr(fr((i[o + 1] ?? 0) - (b.ints[1] ?? 0)) + (f[o + 3] ?? 0));
-  const x = fr(fr(fr(rx + 0.5) - (u[3] ?? 0)) * (u[0] ?? 0));
-  const r = fr(Math.max(fr(ry * (u[6] ?? 0)), fr(-0.999999)));
-  const l =
-    Math.abs(r) <= 0.05 ? fr(r * (1 - r * (0.5 - r * (0.33333333 - r * 0.25)))) : fr(Math.log1p(r));
-  const y = fr(fr(fr(ry * (1 - (u[7] ?? 0))) + fr(l * (u[7] ?? 0))) * (u[1] ?? 0)) + (u[2] ?? 0);
-  return [x, fr(y)];
-}
-
-/** Where the view sits: its bar map, left index and price window (ticks). */
-interface At {
-  readonly map?: tf.IndexTimeMap;
-  readonly left?: number;
-  readonly low?: number;
-  readonly high?: number;
-}
-
-function harness(dpr: number, log: boolean, drawings: DrawingInput[], at: At = {}) {
-  const vp = new tf.ChartViewport(at.map ?? minuteMap());
-  vp.setSize(1200, 700, dpr);
-  vp.setPanePlot(0, 0, 700);
-  vp.setPriceInfo(0, 0, 0.5);
-  (vp.panes[0] as tf.PaneTransform).logReason = null;
-  vp.setScale(0, { mode: log ? "log" : "linear" });
-  vp.setPriceRange(0, at.low ?? 990, at.high ?? 1_060);
-  vp.scrollTo(at.left ?? 0);
-  const graph = new SceneGraph();
-  graph.addPane("p0");
-  const node = new DrawingsNode("p0/drawings/set");
-  graph.addNode("p0", "drawings", node);
-  const ctx2d = new DashCtx();
-  const backend = new Canvas2DBackend(ctx2d);
-  const builder = new BatchBuilder(graph, backend);
-  const block = tf.createPaneUniforms();
-  backend.attach(node.id, node.lines);
-  backend.setPaneUniforms(() => block);
-  node.apply({ op: "replace", drawings });
-  const fctx = new FrameContext(vp);
-  const sink = new PooledBatchSink();
-  const frame = (): void => {
-    sink.reset();
-    fctx.begin(0, 16);
-    graph.frame(fctx, sink);
-    builder.build(sink);
-    tf.writePaneUniforms(vp, 0, block);
-    ctx2d.paths.length = ctx2d.dashes.length = 0;
-    backend.submit(builder.drawList, builder.drawCount, vp.plotWidth * dpr, vp.height * dpr);
-  };
-  frame();
-  return { vp, graph, node, ctx2d, block, frame, backend, builder };
-}
-
-const nums = (part: string): number[] => part.split(" ").slice(1).map(Number);
 
 describe("Scenario: Thick lines and dashes survive zoom (2D and the GL stand-in agree)", () => {
   it.each([
