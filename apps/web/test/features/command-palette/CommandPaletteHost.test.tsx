@@ -537,7 +537,46 @@ describe("E10-S05 lens r1 fold", () => {
     expect(screen.getByRole("main")).toHaveFocus();
   });
 
-  it("a11y m1 opened from body, a non-navigating Action also ends on main; a route leaves it to the shell", async () => {
+  it("a11y m1 opened from body, a non-navigating Action ends on main", async () => {
+    const run = vi.fn();
+    offs.push(registerCommand("positions.close", run));
+    offs.push(
+      registerPaletteSource({
+        id: "fixture-focus",
+        group: "Action",
+        rows: () => [
+          {
+            id: "fixture:focus",
+            label: "Fixture action",
+            group: "Action",
+            target: { kind: "command", commandId: "positions.close" },
+          },
+        ],
+      }),
+    );
+    await shellAt("/journal");
+    (document.activeElement as HTMLElement | null)?.blur();
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "fixture action" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("main")).toHaveFocus();
+  });
+
+  it("a11y m1 a route run from a focused opener does not suppress a later fallback to main", async () => {
+    await shellAt("/journal");
+    trigger().focus();
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "alerts" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    await screen.findByRole("heading", { level: 1, name: /R-190/ });
+    (document.activeElement as HTMLElement | null)?.blur();
+    pressCtrlK();
+    fireEvent.keyDown(input(), { key: "Escape" });
+    expect(screen.getByRole("main")).toHaveFocus();
+  });
+
+  it("a11y m1 opened from body, a route run leaves focus to the shell's heading move", async () => {
     const { router } = await shellAt("/journal");
     (document.activeElement as HTMLElement | null)?.blur();
     pressCtrlK();
