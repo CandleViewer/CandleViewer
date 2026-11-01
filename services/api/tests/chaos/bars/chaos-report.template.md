@@ -48,7 +48,7 @@ no signal, with the issue filed against the owning ticket.
 ## Not covered by this suite
 
 UX live-region and banner assertions (#419), catch-up CPU and 30 fps targets (load harness),
-the `/readyz` bars component under a degraded writer.
+the `/readyz` bars component under a degraded writer, a bars-side stale flag after a delist.
 
 ## Sign-off
 

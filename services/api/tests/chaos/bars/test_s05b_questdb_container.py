@@ -28,6 +28,7 @@ from candleviewer.storage.questdb.ilp_writer import IlpWriter
 from candleviewer.storage.questdb.runner import run_migrations
 from candleviewer.storage.questdb.schemas import ALL_SCHEMAS
 from tests.chaos.bars import _golden as golden
+from tests.chaos.bars._gate import questdb_ownership_skip, stack_skip_reason
 from tests.chaos.bars._rig import VOLUME_1
 from tests.chaos.ingestion._clock import EPOCH_S
 from tests.chaos.storage import _stack as st
@@ -51,8 +52,10 @@ class _Exec:
 
 @pytest.fixture(autouse=True)
 async def _questdb_reachable() -> None:
-    if not (os.environ.get("GITHUB_ACTIONS") or os.environ.get("CV_CHAOS_STACK") == "1"):
-        pytest.skip("stops the compose QuestDB: CI, or CV_CHAOS_STACK=1 on a stack you own")
+    if (reason := stack_skip_reason(os.environ)) is not None:
+        pytest.skip(reason)
+    if (reason := questdb_ownership_skip([st.QDB_PG_PORT, st.QDB_ILP_PORT])) is not None:
+        pytest.skip(reason)  # never talk to a port we cannot prove is our own container
     if not await st.qdb_up():
         pytest.skip("QuestDB compose stack not reachable: nightly integration lane only")
 

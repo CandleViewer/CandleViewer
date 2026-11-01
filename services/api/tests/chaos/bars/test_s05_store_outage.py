@@ -128,11 +128,17 @@ async def _expected(rig: Rig) -> dict[str, list[Bar]]:
     return await golden.golden_bars(golden.venue_tape(rig, SYMBOL), STORE_SPECS, SYMBOL)
 
 
+class StoreMismatchError(AssertionError):
+    """The persisted rows differ from the golden. Its own type, so the strict xfail names exactly
+    this failure (`ScenarioTimeoutError` is also an `AssertionError`)."""
+
+
 async def _assert_store_equals_golden(stack: _Stack) -> None:
     expected = await _expected(stack.rig)
     for label, table in TABLES.items():
         problems = golden.row_problems(expected[label], stack.sink.stored(table))
-        assert not problems, f"{table}: {problems[:3]}"
+        if problems:
+            raise StoreMismatchError(f"{table}: {problems[:3]}")
 
 
 async def test_s05_short_outage_loses_nothing_and_the_store_equals_the_golden(
@@ -185,7 +191,7 @@ async def test_s05_long_outage_drops_loudly_and_the_accounting_closes(rig: Rig, 
 
 @pytest.mark.xfail(
     strict=True,
-    raises=AssertionError,
+    raises=StoreMismatchError,
     reason="rows an exhausted batch dropped are never re-emitted: replay is carried to #531",
 )
 async def test_s05_rows_dropped_by_an_exhausted_batch_are_replayed_exactly_once(
