@@ -226,7 +226,7 @@ def test_integrity_control_without_the_checksum_check_the_edited_row_is_served(
         check_edited_row_withheld(stores, monkeypatch)
 
 
-F9: Final = "#452 findings row F9: a withheld row is a silent gap; no field of the page names it"
+F9: Final = "#452 F9 (P2, owned row): a withheld row is a silent gap; no field of the page names it"
 
 
 class SilentGap(AssertionError):

@@ -504,14 +504,16 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
       Owner: the Security engineer, with infra-devops for the rule; trigger: filed when the filing freeze lifts, at the latest before the E12-X04 sign-off. #5348 does not fix it: it needs an alert rule with a runbook anchor and promtool tests.
     - F8 (SR-E12-03): the `volume`/`delta` floor applied is 1, so 10 x `qty_step` is unreachable over the integer
       wire grammar. Owner: the E12-T05 limits owner (SR-E12-03); trigger: the X01 §3 per-liquidity-tier review of the floors, or the filing freeze lifting, whichever comes first.
-    - F9 (BR-08, SR-E12-11): a row withheld for a failed checksum leaves a silent gap in the REST page. Owner:
-      post-freeze filing (contract first, 22 `DataMeta`).
+    - F9 (BR-08, SR-E12-11), P2: a row withheld for a failed checksum leaves a silent gap in the REST page.
+      Owned row on #452: owner vw1, trigger: the next E12 bars fix PR, which sets `meta.coverage_holes` for the withheld range and flips the xfail.
     - The ADR-0033 Decision 2 abuse cases (AC-05, AC-08, AC-11 `rebuild_id`). Owner: #535.
     - The 10-minute k6 battery: built (`tests/load/k6/bars_abuse.js`), MANUAL / NOT RUN. Its CI run: owner #528
       (E12-Q05).
     - Follow-ups (the klines float time is fixed in #5348): one WARN per
-      unauthenticated refusal, to sample if F3's limiter slips; a `limit` outside 1..5000 is FastAPI's 422, not
-      counted; the E08-X02 long parser fuzz is not selected by `fuzz-nightly.yml`. Owner: post-freeze filing.
+      unauthenticated refusal, to sample if F3's limiter slips; the E08-X02 long parser fuzz is not selected by
+      `fuzz-nightly.yml`. Owner: post-freeze filing.
+    - NOT COVERED: a `limit` outside 1..5000 is answered 422 but neither counted nor logged. Owned row on #452:
+      owner vw1, trigger: the next E12 bars fix PR, which counts and logs it and flips the xfails.
   - SR-E12-07's subscribe rate limit is built per connection (SR-193; #2293, built by #3301) and per user across a
     user's connections (#3476, K = 4), in each gateway process: a second one would keep its own (E17 model §10).
 - A High residual with no mitigation and no Owner acceptance blocks the E12 epic DoD (ticket acceptance
