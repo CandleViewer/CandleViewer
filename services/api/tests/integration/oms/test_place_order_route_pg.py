@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import re
+import threading
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -102,6 +104,37 @@ async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
     writer.close()
 
 
+@dataclass
+class AuditLog(Writer):
+    """The world's audit log: the order lane's own writer (`Writer`, #913 L2), every process's.
+    Each record that lands is noticed (`landed`) on the thread it lands on, the lane's or the
+    serving loop's, so a test waits for one on a thread of its own (`recorded`), never on the
+    serving loop."""
+
+    landed: threading.Condition = field(default_factory=threading.Condition)
+
+    async def emit(self, action: str, **fields: Any) -> None:
+        await super().emit(action, **fields)
+        self._noticed()
+
+    async def emit_keyed(self, action: str, name: str, **fields: Any) -> None:
+        await super().emit_keyed(action, name, **fields)
+        self._noticed()
+
+    def _noticed(self) -> None:
+        with self.landed:
+            self.landed.notify_all()
+
+    def count(self, action: str) -> int:
+        return sum(landed == action for landed, _ in self.actions)
+
+    def recorded(self, action: str, *, above: int, timeout_s: float) -> bool:
+        """Blocks the calling thread until more than `above` records of `action` have landed, at
+        most `timeout_s`: whether they have."""
+        with self.landed:
+            return self.landed.wait_for(lambda: self.count(action) > above, timeout_s)
+
+
 class _Relay:
     """A loopback relay in front of the database: `cut` makes Postgres unreachable, its port
     refusing every connection and each connection through it reset."""
@@ -147,7 +180,7 @@ class World:
     user: UUID
     clock: c6.Clock
     wal: Path
-    writer: Writer = field(default_factory=Writer)
+    writer: AuditLog = field(default_factory=AuditLog)
     pager: Pager = field(default_factory=Pager)
     retrying: asyncio.Event = field(default_factory=asyncio.Event)
     beats: Beats = field(default_factory=Beats)
@@ -352,19 +385,29 @@ async def _post(client: httpx.AsyncClient, body: dict[str, Any]) -> httpx.Respon
     return await client.post("/orders", json=body, headers={"Idempotency-Key": str(KEY)})
 
 
+#: The reconciliation pass's record (24 Sec.15.5), which `_reconciled` waits for.
+_RECONCILE = "oms.reconcile"
+
+
 def _passes(world: World) -> int:
     """The reconciliation passes recorded so far (`oms.reconcile`, 24 Sec.15.5), every process's
     on the world's audit log."""
-    return sum(action == "oms.reconcile" for action, _ in world.writer.actions)
+    return world.writer.count(_RECONCILE)
 
 
 async def _reconciled(world: World, before: int) -> None:
     """E29-T06 (#914): the process's startup reconciliation pass, which `ready` never waits for
     (BQ-14), has made its venue reads and recorded itself, so the calls a test counts from here are
-    its request's own. The bound only turns a hang into a failure."""
-    async with asyncio.timeout(_READY_BOUND_S):
-        while _passes(world) == before:  # noqa: ASYNC110 - the lane's record, bounded above
-            await asyncio.sleep(0)
+    its request's own. A thread of its own waits on the world's audit log, so the serving loop
+    stays idle meanwhile. Turning it in place until the record landed held the GIL and a core
+    against the order lane's thread, whose step writes for the requests the startup resumed come
+    before that record (24 Sec.8.5), and on a slow runner they missed their 1 s bound
+    (`CV_PERSIST_TIMEOUT`, #5185). The bound only turns a hang into a failure."""
+    wait = functools.partial(
+        world.writer.recorded, _RECONCILE, above=before, timeout_s=_READY_BOUND_S
+    )
+    if not await asyncio.to_thread(wait):
+        raise TimeoutError("the process's startup reconciliation pass did not record itself")
 
 
 def _entry(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
