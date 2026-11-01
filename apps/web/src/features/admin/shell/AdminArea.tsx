@@ -1,6 +1,7 @@
 import { useEffect, type CSSProperties, type JSX, type ReactNode } from "react";
 import { AdminLayout } from "@candleviewer/ui";
 import { AdminInviteScreen } from "../../invites/AdminInviteScreen";
+import { RecorderScreen } from "../../recorder/RecorderScreen";
 import { StubRoute } from "../../../routes/StubRoute";
 import { ROUTE_TITLES } from "../../../routes/titles";
 import { SecurityCentrePlaceholder } from "./SecurityCentrePlaceholder";
@@ -25,6 +26,7 @@ export function adminRouteLabel(routeId: string): string {
 /** Each admin route's page: the one that ships today, else the stub naming its owner. */
 function pageFor(routeId: string, owner: string | null): ReactNode {
   if (routeId === "R-303") return <AdminInviteScreen />; // SCR-123 (E09-S05)
+  if (routeId === "R-340") return <RecorderScreen />; // SCR-140 (E16-S01), in this chunk: behind the guard
   if (routeId === "R-354") return <SecurityCentrePlaceholder />; // until E43's SCR-137
   return <StubRoute routeId={routeId} owner={owner ?? "E42"} />;
 }
