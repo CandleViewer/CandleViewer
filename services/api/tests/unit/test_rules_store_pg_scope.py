@@ -96,6 +96,26 @@ def test_owner_and_grant_variants_differ_only_in_their_scope_predicate(
     assert owner in mod.OWNER_STATEMENTS and other in mod.GRANT_STATEMENTS
 
 
+@pytest.mark.parametrize(
+    ("statement", "parts"),
+    [
+        (mod._PAGE_OWNER, (mod._PAGE_HEAD, mod._OWNER_PRED, mod._PAGE_TAIL)),
+        (mod._PAGE_GRANT, (mod._PAGE_HEAD, mod._GRANT_PRED, mod._PAGE_TAIL)),
+        (mod._IDS_OWNER, (mod._IDS_HEAD, mod._OWNER_PRED, " ORDER BY rl.id")),
+        (mod._IDS_GRANT, (mod._IDS_HEAD, mod._GRANT_PRED, " ORDER BY rl.id")),
+        (mod._NAME_OWNER, (mod._NAME_HEAD, mod._OWNER_PRED, ")")),
+        (mod._NAME_OWN, (mod._NAME_HEAD, mod._OWN_PRED, ")")),
+    ],
+    ids=["page-owner", "page-grant", "ids-owner", "ids-grant", "name-owner", "name-own"],
+)
+def test_each_scoped_statement_is_written_out_as_its_parts(
+    statement: sa.TextClause, parts: tuple[str, str, str]
+) -> None:
+    """The statements are written out whole (no string built by `+` at import); each stays equal,
+    byte for byte, to its head, its scope predicate and its tail."""
+    assert statement.text == "".join(parts)
+
+
 def test_the_owner_predicate_is_the_accounts_stores() -> None:
     assert mod._OWNER_PRED == accounts_sqlalchemy._OWNER_PRED
 

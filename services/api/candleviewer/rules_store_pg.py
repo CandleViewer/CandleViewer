@@ -134,18 +134,78 @@ _PAGE_TAIL: Final = (
     " AND (CAST(:only AS uuid) IS NULL OR rl.id = CAST(:only AS uuid))"
     " ORDER BY rl.id LIMIT :limit"
 )
-_PAGE_OWNER: Final = sa.text(_PAGE_HEAD + _OWNER_PRED + _PAGE_TAIL)
-_PAGE_GRANT: Final = sa.text(_PAGE_HEAD + _GRANT_PRED + _PAGE_TAIL)
+#: Each scoped statement is written out whole, its predicate verbatim, as the accounts store's are:
+#: no SQL string is built by `+` at import (the SAST scan's `sqlalchemy.text` rule). A unit pin
+#: holds every statement equal to its parts above.
+_PAGE_OWNER: Final = sa.text(
+    "SELECT rl.id::text AS id, rl.name AS name, rl.owner_user_id::text AS owner, "
+    "rl.scope::text AS scope, rl.mode::text AS mode, "
+    "rl.active_version_id::text AS active_version_id, rl.armed_by::text AS armed_by, "
+    "rl.disabled_reason AS disabled_reason, rl.deleted_at IS NOT NULL AS deleted, "
+    "rl.last_edit_session_id AS last_session, rl.updated_by::text AS last_editor "
+    "FROM rules rl WHERE rl.deleted_at IS NULL AND "
+    "EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+    "JOIN users u ON u.id = ur.user_id WHERE ur.user_id = CAST(:caller AS uuid) "
+    "AND r.name = 'owner' AND u.deleted_at IS NULL AND u.status = 'active' "
+    "AND (ur.expires_at IS NULL OR ur.expires_at > now()))"
+    " AND (CAST(:mode AS text) IS NULL OR rl.mode::text = CAST(:mode AS text))"
+    " AND (CAST(:level AS text) IS NULL OR rl.scope::text = CAST(:level AS text))"
+    " AND (CAST(:after AS uuid) IS NULL OR rl.id > CAST(:after AS uuid))"
+    " AND (CAST(:only AS uuid) IS NULL OR rl.id = CAST(:only AS uuid))"
+    " ORDER BY rl.id LIMIT :limit"
+)
+_PAGE_GRANT: Final = sa.text(
+    "SELECT rl.id::text AS id, rl.name AS name, rl.owner_user_id::text AS owner, "
+    "rl.scope::text AS scope, rl.mode::text AS mode, "
+    "rl.active_version_id::text AS active_version_id, rl.armed_by::text AS armed_by, "
+    "rl.disabled_reason AS disabled_reason, rl.deleted_at IS NOT NULL AS deleted, "
+    "rl.last_edit_session_id AS last_session, rl.updated_by::text AS last_editor "
+    "FROM rules rl WHERE rl.deleted_at IS NULL AND "
+    "rl.owner_user_id = CAST(:caller AS uuid) AND NOT EXISTS (SELECT 1 FROM rule_versions v "
+    "WHERE v.rule_id = rl.id "
+    "AND (v.account_refs IS NULL OR NOT v.account_refs <@ CAST(:granted AS text[])))"
+    " AND (CAST(:mode AS text) IS NULL OR rl.mode::text = CAST(:mode AS text))"
+    " AND (CAST(:level AS text) IS NULL OR rl.scope::text = CAST(:level AS text))"
+    " AND (CAST(:after AS uuid) IS NULL OR rl.id > CAST(:after AS uuid))"
+    " AND (CAST(:only AS uuid) IS NULL OR rl.id = CAST(:only AS uuid))"
+    " ORDER BY rl.id LIMIT :limit"
+)
 _IDS_HEAD: Final = "SELECT rl.id::text AS id FROM rules rl WHERE rl.deleted_at IS NULL AND "
-_IDS_OWNER: Final = sa.text(_IDS_HEAD + _OWNER_PRED + " ORDER BY rl.id")
-_IDS_GRANT: Final = sa.text(_IDS_HEAD + _GRANT_PRED + " ORDER BY rl.id")
+_IDS_OWNER: Final = sa.text(
+    "SELECT rl.id::text AS id FROM rules rl WHERE rl.deleted_at IS NULL AND "
+    "EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+    "JOIN users u ON u.id = ur.user_id WHERE ur.user_id = CAST(:caller AS uuid) "
+    "AND r.name = 'owner' AND u.deleted_at IS NULL AND u.status = 'active' "
+    "AND (ur.expires_at IS NULL OR ur.expires_at > now()))"
+    " ORDER BY rl.id"
+)
+_IDS_GRANT: Final = sa.text(
+    "SELECT rl.id::text AS id FROM rules rl WHERE rl.deleted_at IS NULL AND "
+    "rl.owner_user_id = CAST(:caller AS uuid) AND NOT EXISTS (SELECT 1 FROM rule_versions v "
+    "WHERE v.rule_id = rl.id "
+    "AND (v.account_refs IS NULL OR NOT v.account_refs <@ CAST(:granted AS text[])))"
+    " ORDER BY rl.id"
+)
 #: The save's name check (G-14): the exact name among live rules, the edited rule excluded.
 _NAME_HEAD: Final = (
     "SELECT EXISTS (SELECT 1 FROM rules rl WHERE rl.deleted_at IS NULL AND rl.name = :name "
     "AND (CAST(:exclude AS uuid) IS NULL OR rl.id <> CAST(:exclude AS uuid)) AND "
 )
-_NAME_OWNER: Final = sa.text(_NAME_HEAD + _OWNER_PRED + ")")
-_NAME_OWN: Final = sa.text(_NAME_HEAD + _OWN_PRED + ")")
+_NAME_OWNER: Final = sa.text(
+    "SELECT EXISTS (SELECT 1 FROM rules rl WHERE rl.deleted_at IS NULL AND rl.name = :name "
+    "AND (CAST(:exclude AS uuid) IS NULL OR rl.id <> CAST(:exclude AS uuid)) AND "
+    "EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+    "JOIN users u ON u.id = ur.user_id WHERE ur.user_id = CAST(:caller AS uuid) "
+    "AND r.name = 'owner' AND u.deleted_at IS NULL AND u.status = 'active' "
+    "AND (ur.expires_at IS NULL OR ur.expires_at > now()))"
+    ")"
+)
+_NAME_OWN: Final = sa.text(
+    "SELECT EXISTS (SELECT 1 FROM rules rl WHERE rl.deleted_at IS NULL AND rl.name = :name "
+    "AND (CAST(:exclude AS uuid) IS NULL OR rl.id <> CAST(:exclude AS uuid)) AND "
+    "rl.owner_user_id = CAST(:caller AS uuid)"
+    ")"
+)
 #: The versions of one scoped page, by the page's rule ids.
 _VERSIONS_OF_PAGE: Final = sa.text(
     "SELECT id::text AS id, rule_id::text AS rule_id, version, ir, ir_hash::text AS ir_hash, "
