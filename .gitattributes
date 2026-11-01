@@ -43,3 +43,7 @@ packages/ui/src/icons/generated/** linguist-generated=true
 
 # E05-T04's visual-regression baselines: PNGs written by the vr_update dispatch, never diffed as text.
 packages/ui/vr/baselines/*.png binary
+
+# E15-K01 (#371): the spike's results, written by docs/plan/spikes/E15-K01-harness/run.mjs and never
+# hand-edited (every figure in E15-K01.md is printed from it); linguist-generated hides its diff by default.
+docs/plan/spikes/E15-K01-results.json linguist-generated=true

@@ -130,3 +130,7 @@ packages/chart-engine/bench/matrix/baselines/*.json
 # publish_board.py writes its ledger as `json.dump(indent=2, sort_keys=True)` + LF and rewrites it whole on
 # every run; prettier would refold its arrays and the next tool run would undo that (a 6,000-line diff each way)
 docs/plan/backlog/_tools/published.json
+
+# E15-K01 (#371): the spike's results, written by docs/plan/spikes/E15-K01-harness/run.mjs (Prettier-formatted
+# when first committed) and never hand-edited; ignored so no later commit reflows the generated file
+docs/plan/spikes/E15-K01-results.json
