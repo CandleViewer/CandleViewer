@@ -46,6 +46,7 @@ from candleviewer.observability.health_probes import SystemEventWriter
 from candleviewer.observability.metrics import CollectorRegistry
 from candleviewer.settings import Settings
 from tests.unit.auth.auth_fakes import no_wait
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
 from .auth_fakes import FakeUserRepository, make_user
 from .mfa_fakes import FakeMfaRepository, RecordingSystemEvents, SkewRig, StalledSystemEvents
@@ -323,7 +324,7 @@ async def test_auth_service_gives_login_and_step_up_one_reporter_and_runs_its_pu
         FakeUserRepository(),
         pepper="pepper",
         mfa_repository=FakeMfaRepository(),
-        totp_encryption_key=os.urandom(32),
+        mfa_keyring=FakeMfaKeyring(os.urandom(32)),
         session_repository=FakeSessionRepository(),
         system_events=events,
     )

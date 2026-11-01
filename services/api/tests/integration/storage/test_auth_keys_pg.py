@@ -1,6 +1,7 @@
 """Integration: `0030_auth_keys` and `SqlAlchemyAuthKeyStore` on real Postgres 16 (#2152 S2),
 bootstrapped with `infra/scripts/pg_bootstrap.sql` and migrated as `cv_owner` like the CI
-`migrations` job, so runtime writes run as `cv_app`. Placeholders only; needs docker (CI)."""
+`migrations` job, so runtime writes run as `cv_app`; each write commits its record in its own
+transaction (#2152 S4, BQ-5). Placeholders only; needs docker (CI)."""
 
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ from psycopg import sql
 from psycopg.abc import Params
 from testcontainers.postgres import PostgresContainer
 
-from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.errors import AuthKeyAuditNotWritten, StorageQueryFailed
 from candleviewer.storage.repositories import auth_keys_sqlalchemy as keys
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -48,6 +49,25 @@ _DEK_REF = kek().wrap_auth_key(bytearray(32), key_id=UUID(int=1), purpose="totp_
 _NEXT_REF = kek(KEK_V2, 2).wrap_auth_key(bytearray(32), key_id=UUID(int=1), purpose="totp_seal")
 _RAW = bytes(range(32)).hex()  # a plaintext 32-byte key, as a buggy caller might store it
 Rows = list[tuple[Any, ...]]
+#: What M2 records with each write (#2152 S4): the keyring's insert, and a row's re-wrap.
+ENROLLED = ("security.auth_keyring_enrolled", {"env": "demo", "origin": "generated"})
+REWRAPPED = ("security.auth_keyring_rewrapped", {"env": "demo", "from": "1", "to": "2"})
+
+
+class Records:
+    """The WAL format `secrets_audit_row` builds, without its action registry, keeping each record
+    built; `reuse` repeats a record id (as `test_export_key_store_pg.py`'s builder does)."""
+
+    def __init__(self, env: str = "demo") -> None:
+        self.env, self.reuse = env, ""
+        self.built: list[dict[str, Any]] = []
+
+    def __call__(self, action: str, fields: dict[str, str]) -> dict[str, Any]:
+        row = {"record_id": self.reuse or str(uuid4()), "actor_label": "system:secrets",
+               "action": action, "outcome": "success", "severity": "info", "env": self.env,
+               "after_state": fields, "event_ts": datetime.now(UTC).isoformat()}  # fmt: skip
+        self.built.append(row)
+        return row
 
 
 @pytest.fixture(scope="module")
@@ -256,9 +276,14 @@ def test_downgrade_gives_up_on_a_held_writer_lock_instead_of_queueing(pg: str) -
 
 # --- The store, as the runtime role -------------------------------------------------------------
 @pytest.fixture
-async def store(pg: str) -> AsyncIterator[Store]:
+def records() -> Records:
+    return Records()
+
+
+@pytest.fixture
+async def store(pg: str, records: Records) -> AsyncIterator[Store]:
     rel = SqlAlchemyRelationalRepository(_as(pg, "cv_app", "postgresql+asyncpg"))
-    yield Store(rel, env="demo")
+    yield Store(rel, env="demo", audit_row=records)
     await rel.dispose()
 
 
@@ -270,7 +295,7 @@ def _ring(env: str = "demo") -> list[dict[str, Any]]:
 async def test_a_keyring_is_written_whole_and_read_by_environment(pg: str, store: Store) -> None:
     _insert(pg, env="live")  # another environment's key sits in the same table
     ring = _ring()
-    assert await store.insert_keyring(ring) is True
+    assert await store.insert_keyring(ring, audit=ENROLLED) is True
     rows = await store.rows_for("demo")
     assert [(r["purpose"], r["key_version"], r["origin"], r["kek_version"]) for r in rows] == [
         ("recovery_hmac", 1, "generated", 1), ("totp_seal", 1, "generated", 1)
@@ -286,7 +311,7 @@ async def test_the_store_refuses_another_environment_and_an_empty_keyring(
         await store.rows_for("live")
     for refused in ([], _ring("live"), _ring() + _ring("live")):  # a mixed batch writes nothing
         with pytest.raises(ValueError, match=r"keyring|environment"):
-            await store.insert_keyring(refused)
+            await store.insert_keyring(refused, audit=ENROLLED)
     assert _exec(pg, "SELECT count(*) FROM auth_keys") == [(0,)]
 
 
@@ -305,10 +330,10 @@ async def test_the_count_at_a_kek_version_is_of_the_environment_rows_only(
 async def test_only_a_taken_key_is_a_lost_race_a_reused_id_raises(pg: str, store: Store) -> None:
     """A plain `ON CONFLICT DO NOTHING` would report the primary-key clash as a boot that lost."""
     taken = _insert(pg, purpose="recovery_hmac")  # another boot got there first with one of them
-    assert await store.insert_keyring(_ring()) is False
+    assert await store.insert_keyring(_ring(), audit=ENROLLED) is False
     assert [r["purpose"] for r in await store.rows_for("demo")] == ["recovery_hmac"]
     with pytest.raises(StorageQueryFailed) as clash:
-        await store.insert_keyring([_key(id=taken["id"], purpose="totp_seal")])
+        await store.insert_keyring([_key(id=taken["id"], purpose="totp_seal")], audit=ENROLLED)
     assert clash.value.sqlstate == "23505" and _exec(pg, "SELECT count(*) FROM auth_keys") == [(1,)]
 
 
@@ -330,7 +355,10 @@ async def gate(pg: str) -> AsyncIterator[psycopg.AsyncConnection[Any]]:
 async def test_two_concurrent_boots_converge_on_the_first_keyring(store: Store, gate: Any) -> None:
     """Unsorted, boots in opposite orders lock the two rows crosswise: `DeadlockDetected`. Both
     hold their first row, or queue behind the boot that does, before either goes on."""
-    boots = asyncio.gather(store.insert_keyring(_ring()), store.insert_keyring(_ring()[::-1]))
+    boots = asyncio.gather(
+        store.insert_keyring(_ring(), audit=ENROLLED),
+        store.insert_keyring(_ring()[::-1], audit=ENROLLED),
+    )
     q = "SELECT count(*) FROM pg_stat_activity WHERE usename='cv_app' AND wait_event_type='Lock'"
     async with asyncio.timeout(30):  # fails a missed wait fast
         while await (await gate.execute(q)).fetchone() != (2,):
@@ -345,8 +373,9 @@ async def test_two_concurrent_boots_converge_on_the_first_keyring(store: Store, 
         ("SELECT 1", 3),  # one TOTP method and two unused codes
         ("UPDATE mfa_methods SET revoked_at = now()", 2),  # a revoked method is left out
         ("UPDATE recovery_codes SET used_at = now()", 1),  # used codes are left out
+        ("UPDATE mfa_methods SET confirmed_at = NULL", 3),  # a pending enrolment's seed counts
     ],
-    ids=["all_counted", "revoked_method", "used_codes"],
+    ids=["all_counted", "revoked_method", "used_codes", "pending_method"],
 )
 async def test_the_probe_counts_live_totp_methods_and_unused_codes(
     pg: str, store: Store, change: str, counted: int
@@ -356,7 +385,9 @@ async def test_the_probe_counts_live_totp_methods_and_unused_codes(
     assert await store.count_mfa_material() == counted
 
 
-_MOVE: dict[str, Any] = {"env": "demo", "from_version": 1, "dek_ref": _NEXT_REF, "kek_version": 2}
+_MOVE: dict[str, Any] = {
+    "env": "demo", "from_version": 1, "dek_ref": _NEXT_REF, "kek_version": 2, "audit": REWRAPPED
+}  # fmt: skip
 
 
 async def test_a_scoped_rewrap_compares_and_sets_and_touches_the_row(pg: str, store: Store) -> None:
@@ -378,6 +409,47 @@ async def test_a_scoped_rewrap_compares_and_sets_and_touches_the_row(pg: str, st
     assert created == old and updated > old  # `trg_auth_keys_touch` set it to now()
 
 
+def _recorded(dsn: str, records: Records) -> Rows:
+    """The `audit_log` rows of the records built, by action, in the order they were built."""
+    ids = [r["record_id"] for r in records.built]
+    query = "SELECT record_id::text, action FROM audit_log WHERE record_id::text = ANY(%s)"
+    rows = _exec(dsn, query, (ids,))
+    return sorted(rows, key=lambda r: ids.index(r[0]))
+
+
+async def test_each_write_commits_its_record_in_its_transaction(
+    pg: str, store: Store, records: Records
+) -> None:
+    """BQ-5 (C-2.9): the keyring's insert and a row's re-wrap each commit with their record, and
+    a write that moves nothing (a lost race, a stale re-wrap) records nothing."""
+    ring = _ring()
+    assert await store.insert_keyring(ring, audit=ENROLLED)
+    assert not await store.insert_keyring(_ring(), audit=ENROLLED)  # another boot's keyring
+    assert not await store.rewrap(ring[0]["id"], **_MOVE | {"from_version": 9})  # stale
+    assert await store.rewrap(ring[0]["id"], **_MOVE)
+    actions = [action for _, action in _recorded(pg, records)]
+    assert actions == ["security.auth_keyring_enrolled", "security.auth_keyring_rewrapped"]
+    assert len(records.built) == 4  # built before any I/O, written only with a change
+
+
+async def test_a_record_that_cannot_be_written_rolls_its_write_back(
+    pg: str, store: Store, records: Records
+) -> None:
+    """A record id stored already: neither the keyring nor the re-wrap commits, nothing chained."""
+    totp = _insert(pg)["id"]
+    assert await store.rewrap(totp, **_MOVE)  # a first record, whose id the next ones reuse
+    records.reuse = records.built[0]["record_id"]
+    before = _exec(pg, "SELECT k::text FROM auth_keys k ORDER BY id")
+    for call in (
+        store.insert_keyring(_ring("demo")[1:], audit=ENROLLED),
+        store.rewrap(totp, **_MOVE | {"from_version": 2, "kek_version": 3}),
+    ):
+        with pytest.raises(AuthKeyAuditNotWritten) as unwritten:
+            await call
+        assert unwritten.value.__context__ is None and "ak1:" not in repr(unwritten.value)
+    assert _exec(pg, "SELECT k::text FROM auth_keys k ORDER BY id") == before
+
+
 @pytest.mark.parametrize(
     ("bad", "sqlstate"),
     [({"dek_ref": _RAW}, "23514"), ({"kek_version": 0}, "23514"), ({"dek_ref": None}, "23502")],
@@ -389,7 +461,7 @@ async def test_a_refused_write_surfaces_its_sqlstate_and_nothing_of_the_row(
     """The driver's message ends in `DETAIL: Failing row contains (...)`: id and wrap (C-12.6)."""
     totp, fresh = _insert(pg)["id"], UUID(int=0xBEEF)
     for call in (
-        store.insert_keyring([_key(id=fresh, purpose="recovery_hmac") | bad]),
+        store.insert_keyring([_key(id=fresh, purpose="recovery_hmac") | bad], audit=ENROLLED),
         store.rewrap(totp, **_MOVE | bad),
     ):
         with pytest.raises(StorageQueryFailed) as refused:

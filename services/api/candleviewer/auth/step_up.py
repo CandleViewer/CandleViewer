@@ -73,6 +73,7 @@ from candleviewer.auth.metrics import (
     auth_step_up_total,
     auth_stepup_failures_total,
 )
+from candleviewer.auth.mfa_keyring import MfaKeyring, zero_seeds
 from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import SessionRecord, UserRecord
 from candleviewer.auth.repository import UserRepository
@@ -169,10 +170,6 @@ Clock = Callable[[], datetime]
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-class Decrypter(Protocol):
-    def decrypt(self, blob: bytes) -> bytes: ...
 
 
 class PositionStateProvider(Protocol):
@@ -423,7 +420,7 @@ class StepUpService:
         self,
         mfa_repository: MfaRepository,
         session_repository: SessionRepository,
-        encryptor: Decrypter,
+        keyring: MfaKeyring,
         user_repository: UserRepository,
         hasher: Hasher,
         *,
@@ -445,7 +442,8 @@ class StepUpService:
         self._publish_revocation = publish_revocation
         self._mfa = mfa_repository
         self._sessions = session_repository
-        self._encryptor = encryptor
+        #: Opens each TOTP seed the step-up checks (#2152 S5a); the keys stay behind it.
+        self._keyring = keyring
         self._users = user_repository
         self._hasher = hasher
         self._clock = clock
@@ -684,20 +682,31 @@ class StepUpService:
         return PasswordVerdict(ok=False, locked_until=locked_until)
 
     async def _verify(self, user_id: str, code: str, now: datetime) -> bool:
-        refused: list[tuple[bytes, int | None]] = []
-        for method in await self._mfa.find_active_totp_methods(user_id):
-            if method.secret_enc is None:
-                continue
-            seed = self._encryptor.decrypt(method.secret_enc)
-            step = verify_code(seed, code, unix_time=now.timestamp())
-            if step is None:
+        refused: list[tuple[bytes | bytearray, int | None]] = []
+        seeds: list[bytearray] = []
+        accepted: tuple[str, int] | None = None
+        try:
+            for method in await self._mfa.find_active_totp_methods(user_id):
+                if method.secret_enc is None:
+                    continue
+                seed = await self._keyring.open_totp_seed(
+                    method.secret_enc, method.secret_key_ref or "", uuid.UUID(user_id)
+                )
+                seeds.append(seed)
+                step = verify_code(seed, code, unix_time=now.timestamp())
+                if step is not None:
+                    accepted = (str(method.id), step)
+                    break
                 refused.append((seed, method.last_accepted_time_step))
-                continue
-            # Same replay protection as login codes (ticket Security notes).
-            return await self._mfa.record_time_step(str(method.id), time_step=step)
-        # #2146: reached only with a correct password; holds a report for a skewed clock.
-        self._skew_reporter.report_rejection(refused, code, unix_time=now.timestamp())
-        return False
+            if accepted is None:
+                # #2146: reached only with a correct password; holds a report for a skewed clock.
+                self._skew_reporter.report_rejection(refused, code, unix_time=now.timestamp())
+        finally:
+            zero_seeds(seeds)  # #2152 BQ-6: no seed outlives the check
+        if accepted is None:
+            return False
+        # Same replay protection as login codes (ticket Security notes).
+        return await self._mfa.record_time_step(accepted[0], time_step=accepted[1])
 
     async def remaining_grace(self, session_id: str, action_class: str) -> timedelta | None:
         """Remaining window for the dialog text; None if none / no-grace."""

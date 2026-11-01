@@ -27,7 +27,6 @@ import pytest
 from structlog.testing import capture_logs
 
 import candleviewer
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
     RefreshReuseDetected,
     SessionRevoked,
@@ -46,6 +45,7 @@ from candleviewer.auth.session_service import (
 )
 from candleviewer.auth.step_up import GRACE_WINDOW, StepUpService
 from tests.unit.auth.auth_fakes import InMemoryOwnerReset, no_wait
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
 from .auth_fakes import FakeUserRepository
 from .mfa_fakes import FakeMfaRepository
@@ -99,7 +99,7 @@ class _World:
         self.step_up = StepUpService(
             mfa,
             self.repo,
-            TotpEncryptor(os.urandom(32)),
+            FakeMfaKeyring(os.urandom(32)),
             users,
             self.hasher,
             clock=self.clock,

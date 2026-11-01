@@ -88,7 +88,10 @@ class SnapshotInvalid(WithdrawPermissionRejected):
 class AuthKeyringUnavailable(SecretsError):
     """MFA fails closed (`503 auth_unavailable`, ADR-0009 Amendment 4). `reason` is one of
     `auth_keyring_missing`, `auth_keyring_mismatch`, `auth_keyring_stranded`, `auth_keyring_closed`
-    and `auth_key_not_held` (a seal under a key not held here, never "no method")."""
+    and `auth_key_not_held` (a seal under a key not held here, never "no method"); since S4 also
+    `auth_keyring_store_unavailable` and `auth_keyring_audit_unavailable` (a boot whose store or
+    record failed: a restart retries), `auth_keyring_unopenable` (a boot whose open failed on an
+    error M2 did not expect) and `kek_unavailable` (no KEK is held)."""
 
     code = "auth_keyring_unavailable"
 

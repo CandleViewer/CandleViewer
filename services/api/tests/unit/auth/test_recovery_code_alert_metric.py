@@ -28,7 +28,6 @@ from candleviewer.api.auth import LoginServiceLike, make_auth_router
 from candleviewer.app import create_app
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.csrf import CsrfCodec
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
 from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP, MfaService, _hash_token
 from candleviewer.auth.models import UserRecord, UserStatus
@@ -37,6 +36,7 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
 from tests.unit.api._fakes import Identity, WriterLane, sessions
 from tests.unit.auth.auth_fakes import no_wait
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
 from .mfa_fakes import FakeMfaRepository
 
@@ -145,8 +145,7 @@ async def _repo_with(
 def _client(repo: FakeMfaRepository, audit: _Audit, *, mfa_active: bool = True) -> TestClient:
     mfa = MfaService(
         repo,
-        TotpEncryptor(os.urandom(32)),
-        recovery_code_key=_RC_KEY,
+        FakeMfaKeyring(os.urandom(32), _RC_KEY),
         clock=lambda: _NOW,
         sleep=no_wait,
     )

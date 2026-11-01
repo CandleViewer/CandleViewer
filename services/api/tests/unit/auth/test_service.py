@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.service import AuthService
 from candleviewer.observability.health import HealthStatus
 from candleviewer.settings import Environment
@@ -86,7 +87,9 @@ async def test_auth_service_start_without_mfa_repository_stays_scaffold() -> Non
 
 
 async def test_auth_service_start_with_mfa_repository_wires_mfa_service() -> None:
-    service = AuthService(mfa_repository=FakeMfaRepository(), totp_encryption_key=b"0" * 32)
+    service = AuthService(
+        mfa_repository=FakeMfaRepository(), mfa_keyring=EnvMfaKeyring(b"0" * 32, b"1" * 32)
+    )
 
     await service.start(ctx=None)  # type: ignore[arg-type]
 
@@ -95,7 +98,9 @@ async def test_auth_service_start_with_mfa_repository_wires_mfa_service() -> Non
 
 
 async def test_auth_service_stop_clears_mfa_and_marks_inactive() -> None:
-    service = AuthService(mfa_repository=FakeMfaRepository(), totp_encryption_key=b"0" * 32)
+    service = AuthService(
+        mfa_repository=FakeMfaRepository(), mfa_keyring=EnvMfaKeyring(b"0" * 32, b"1" * 32)
+    )
     await service.start(ctx=None)  # type: ignore[arg-type]
 
     await service.stop(grace_s=1.0)
@@ -121,29 +126,28 @@ async def test_auth_service_start_without_key_refuses_live_environment() -> None
     service = AuthService(mfa_repository=FakeMfaRepository())
     ctx = _FakeAppContext(settings=_FakeSettings(environment=Environment.LIVE))
 
-    with pytest.raises(RuntimeError, match="totp_encryption_key"):
+    with pytest.raises(RuntimeError, match="no MFA keyring"):
         await service.start(ctx=ctx)  # type: ignore[arg-type]
 
     assert service.mfa_is_active is False
 
 
-async def test_auth_service_start_without_recovery_key_refuses_live_environment() -> None:
-    """PR #1618 security review, blocking 1: the recovery-code HMAC key
-    follows the same live fail-fast rule as the TOTP key."""
-    service = AuthService(mfa_repository=FakeMfaRepository(), totp_encryption_key=b"0" * 32)
-    ctx = _FakeAppContext(settings=_FakeSettings(environment=Environment.LIVE))
+async def test_auth_service_hands_mfa_the_injected_keyring_and_holds_no_key() -> None:
+    """#2152 S5a: both keys sit behind the one keyring the composition root injects (PR #1618
+    security review, blocking 1: the recovery-code HMAC key follows the TOTP key's custody)."""
+    keyring = EnvMfaKeyring(b"0" * 32, b"1" * 32)
+    service = AuthService(mfa_repository=FakeMfaRepository(), mfa_keyring=keyring)
+    live = _FakeAppContext(settings=_FakeSettings(environment=Environment.LIVE))
+    await service.start(ctx=live)  # type: ignore[arg-type]
 
-    with pytest.raises(RuntimeError, match="recovery_code_hmac_key"):
-        await service.start(ctx=ctx)  # type: ignore[arg-type]
-
-    assert service.mfa_is_active is False
+    assert service.mfa._keyring is keyring
+    assert not [n for n in vars(service) if "key" in n and n != "_mfa_keyring"]
 
 
 async def test_auth_service_start_with_explicit_key_allows_live_environment() -> None:
     service = AuthService(
         mfa_repository=FakeMfaRepository(),
-        totp_encryption_key=b"0" * 32,
-        recovery_code_hmac_key=b"1" * 32,
+        mfa_keyring=EnvMfaKeyring(b"0" * 32, b"1" * 32),
     )
     ctx = _FakeAppContext(settings=_FakeSettings(environment=Environment.LIVE))
 

@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
     AuthServiceUnavailable,
     ResetTargetNotFound,
@@ -26,6 +25,7 @@ from candleviewer.auth.step_up import NO_GRACE_ACTION_CLASSES, StepUpService
 from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.storage.errors import ActorNotAuthorised
 from tests.unit.auth.auth_fakes import InMemoryOwnerReset, no_wait
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
 from .auth_fakes import FakeUserRepository, make_user
 from .mfa_fakes import FakeMfaRepository
@@ -78,8 +78,8 @@ class _NoStore:
 async def _setup() -> tuple[StepUpService, _Clock, bytes, uuid.UUID, FakeSessionRepository]:
     clock = _Clock()
     repo = FakeMfaRepository()
-    enc = TotpEncryptor(os.urandom(32))
-    mfa = MfaService(repo, enc, recovery_code_key=_RC_KEY, clock=clock, sleep=no_wait)
+    enc = FakeMfaKeyring(os.urandom(32), _RC_KEY)
+    mfa = MfaService(repo, enc, clock=clock, sleep=no_wait)
     user = uuid.uuid4()
     res = await mfa.enroll(
         str(user), MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="o"
@@ -300,7 +300,7 @@ async def test_elevation_persists_on_session_row_across_restart() -> None:
     rebuilt = StepUpService(
         FakeMfaRepository(),
         sessions,
-        svc._encryptor,
+        svc._keyring,
         svc._users,
         svc._hasher,
         clock=clock,
@@ -319,12 +319,12 @@ async def test_strikes_and_readonly_persist_across_restart() -> None:
         with pytest.raises(StepUpCodeInvalid):
             await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
     rebuilt = StepUpService(
-        svc._mfa, sessions, svc._encryptor, svc._users, svc._hasher, clock=clock, sleep=no_wait
+        svc._mfa, sessions, svc._keyring, svc._users, svc._hasher, clock=clock, sleep=no_wait
     )
     with pytest.raises(SessionReadOnly):  # third strike counted after restart
         await rebuilt.step_up(str(user), "s1", "keys", "000000", PASSWORD)
     again = StepUpService(
-        svc._mfa, sessions, svc._encryptor, svc._users, svc._hasher, clock=clock, sleep=no_wait
+        svc._mfa, sessions, svc._keyring, svc._users, svc._hasher, clock=clock, sleep=no_wait
     )
     with pytest.raises(SessionReadOnly):
         await again.assert_writable("s1")

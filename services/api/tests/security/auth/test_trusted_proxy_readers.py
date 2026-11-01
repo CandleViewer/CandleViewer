@@ -23,7 +23,7 @@ from candleviewer.auth.service import AuthService
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.security.auth.test_csrf_double_submit import _ORIGIN, _PW, _Audit, _Clock, _Identity
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.auth.test_invite_service import FakeRepo
 
@@ -106,8 +106,7 @@ def proxied(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Proxied]:
         users,
         pepper=pepper,
         mfa_repository=mfa_repo,
-        totp_encryption_key=os.urandom(32),
-        recovery_code_hmac_key=os.urandom(32),
+        mfa_keyring=FakeMfaKeyring(os.urandom(32), os.urandom(32)),
         session_repository=FakeSessionRepository(),
         clock=clock,
         invite_repository=FakeRepo(),
@@ -128,7 +127,7 @@ def proxied(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Proxied]:
         mfa = ctx.auth.mfa
         enrol = MfaEnrollRequest(method=MfaMethodKind.TOTP, label="")
         method = portal.call(lambda: mfa.enroll(str(user.id), enrol, account_name="o")).method_id
-        seed = mfa._encryptor.decrypt(mfa_repo.methods[str(method)].secret_enc)
+        seed = mfa._keyring.decrypt(mfa_repo.methods[str(method)].secret_enc)
         code = generate_code(seed, time_step_for(clock.now.timestamp()) - 1)
         portal.call(lambda: mfa.confirm_enrollment(str(user.id), method_id=str(method), code=code))
         yield _Proxied(client, peer, ctx, audit, clock, seed)

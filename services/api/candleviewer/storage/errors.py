@@ -306,6 +306,13 @@ class ExportKeyAuditNotWritten(StorageError):
     code = "STORAGE_EXPORT_KEY_AUDIT_NOT_WRITTEN"
 
 
+class AuthKeyAuditNotWritten(StorageError):
+    """An auth keyring write's record was not written (its `record_id` is stored already): the
+    keyring's insert or a row's re-wrap rolled back with it (#2152 S4, BQ-5; C-2.9)."""
+
+    code = "STORAGE_AUTH_KEY_AUDIT_NOT_WRITTEN"
+
+
 class ExportKeyRequestTaken(StorageError):
     """A rotation's request is stored already (`ask_env_request`, 23505): a retry that raced."""
 
@@ -406,6 +413,7 @@ ERROR_CODES: dict[type[StorageError], str] = {
     RewrapAuditNotWired: RewrapAuditNotWired.code,
     RewrapAuditNotWritten: RewrapAuditNotWritten.code,
     ExportKeyAuditNotWritten: ExportKeyAuditNotWritten.code,
+    AuthKeyAuditNotWritten: AuthKeyAuditNotWritten.code,
     ExportKeyRequestTaken: ExportKeyRequestTaken.code,
     BackupWriteOnceViolation: BackupWriteOnceViolation.code,
     BackupCheckViolation: BackupCheckViolation.code,

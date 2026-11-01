@@ -14,13 +14,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import RefreshReuseDetected, SessionReadOnly
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MintedSession, SessionRecord
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import FAILURE_CAP, READONLY_WINDOW, StepUpService
 from tests.unit.auth.auth_fakes import no_wait
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
 from .auth_fakes import FakeUserRepository
 from .mfa_fakes import FakeMfaRepository
@@ -68,7 +68,7 @@ async def test_a_refresh_keeps_the_read_only_window_and_the_strike_count() -> No
     step_up = StepUpService(
         FakeMfaRepository(),
         repo,
-        TotpEncryptor(os.urandom(32)),
+        FakeMfaKeyring(os.urandom(32)),
         FakeUserRepository(),
         Hasher(),
         clock=lambda: _T0,

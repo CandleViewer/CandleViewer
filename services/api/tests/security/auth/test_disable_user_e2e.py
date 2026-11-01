@@ -35,7 +35,6 @@ from pydantic import SecretStr
 from starlette.websockets import WebSocketDisconnect
 
 import candleviewer.app as appmod
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import UserDisabled
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import SessionRecord, UserRecord, UserStatus
@@ -61,7 +60,7 @@ from tests.csrf_helpers import csrf_headers
 from tests.rules.test_rules_manager import _active_hash, _ir
 from tests.security.auth.test_disable_user_drill import _ORIGIN, _auth_ws, _Clock, _recv
 from tests.unit.auth.auth_fakes import FakeUserRepository, FullUsers, no_wait
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.test_user_cascade_wiring import _actor
 
@@ -436,7 +435,7 @@ def deployed(
         await ctx.auth._publish_revocation(session_id, reason)
 
     ctx.auth._sessions = SessionService(w.repo, Hasher(), clock=w.clock, publish_revocation=publish)
-    hasher, mfa, keys = Hasher(), FakeMfaRepository(), TotpEncryptor(bytes(range(32)))
+    hasher, mfa, keys = Hasher(), FakeMfaRepository(), FakeMfaKeyring(bytes(range(32)))
     step_up = StepUpService(
         mfa, w.repo, keys, FakeUserRepository(), hasher, clock=w.clock, sleep=no_wait
     )

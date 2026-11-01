@@ -42,6 +42,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 import candleviewer.app as appmod
 from candleviewer.admin.backups.catalogue import BackupCatalogue
 from candleviewer.audit.actions import validate_action
+from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.metrics import normalise_permission
@@ -280,8 +281,7 @@ def open_admin_world(mp: pytest.MonkeyPatch) -> Iterator[AdminWorld]:
     auth = AuthService(
         users,
         mfa_repository=FakeMfaRepository(),
-        totp_encryption_key=bytes(range(32)),  # fixed test keys (determinism)
-        recovery_code_hmac_key=bytes(range(32, 64)),
+        mfa_keyring=EnvMfaKeyring(bytes(range(32)), bytes(range(32, 64))),  # fixed test keys
         session_repository=FakeSessionRepository(),
         invite_repository=FakeInviteRepository(),
         pepper=_PEPPER,

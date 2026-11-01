@@ -16,7 +16,6 @@ import pytest
 
 from candleviewer.accounts.profile_repository import ProfilesRepository
 from candleviewer.audit.models import AuditOutcome
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.step_up import GRACE_WINDOW, StepUpService
 from candleviewer.bus import QueuePolicy, Subscription, TopicPattern
@@ -42,7 +41,7 @@ from tests.contract.test_account_profile_writes_provider import (
     send,
 )
 from tests.unit.auth.auth_fakes import FakeUserRepository, no_wait
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.test_profile_notices_wiring import _notice
 
@@ -81,7 +80,7 @@ def _step_up(actor: str, live: bool) -> StepUpService:
     sessions, row = FakeSessionRepository(), rbac.session_record(rbac.token_of(actor))
     window = {"risk_caps": row.issued_at + GRACE_WINDOW} if live else {}
     sessions.sessions[str(row.id)] = row.model_copy(update={"step_up_elevations": window})
-    mfa, users, key = FakeMfaRepository(), FakeUserRepository(), TotpEncryptor(bytes(32))
+    mfa, users, key = FakeMfaRepository(), FakeUserRepository(), FakeMfaKeyring(bytes(32))
     return StepUpService(mfa, sessions, key, users, Hasher(), sleep=no_wait)
 
 

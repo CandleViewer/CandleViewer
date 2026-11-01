@@ -8,6 +8,7 @@ import os
 import uuid
 from typing import Any, cast
 
+from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_chart import SessionChart
 from candleviewer.ws.topics import EntityScope
@@ -89,7 +90,7 @@ async def test_the_auth_service_gives_its_step_up_charts_the_feed_attached_befor
         FakeUserRepository(),
         pepper="pepper",
         mfa_repository=FakeMfaRepository(),
-        totp_encryption_key=os.urandom(32),
+        mfa_keyring=EnvMfaKeyring(os.urandom(32), os.urandom(32)),
         session_repository=FakeSessionRepository(),
     )
     service.attach_machine_feed(feed.port)

@@ -18,7 +18,6 @@ from typing import Any
 import pytest
 from prometheus_client import REGISTRY
 
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
     MfaChallengeInvalid,
     MfaChallengeLocked,
@@ -45,6 +44,7 @@ from candleviewer.auth.session_repository import StepUpChange
 from candleviewer.auth.step_up import FAILURE_CAP, StepUpService
 from candleviewer.auth.totp import generate_code, generate_secret, time_step_for
 from candleviewer.settings import AUTH_LOGIN_FAILURE_FLOOR_MIN_MS
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
 from .auth_fakes import FakeUserRepository, make_user
 from .mfa_fakes import FakeMfaRepository
@@ -113,13 +113,12 @@ class _MfaWorld:
         self.events: list[Event] = []
         self.time = _FakeTime(self.events, work_s=work_s)
         self.repo = _SpyMfaRepository(self.events, self.time)
-        self.enc = TotpEncryptor(os.urandom(32))
+        self.enc = FakeMfaKeyring(os.urandom(32), _RC_KEY)
         self.user = uuid.uuid4()
         self.seed = generate_secret()
         self.svc = MfaService(
             self.repo,
             self.enc,
-            recovery_code_key=_RC_KEY,
             clock=lambda: _NOW,
             monotonic=self.time.monotonic,
             sleep=self.time.sleep,
@@ -367,8 +366,7 @@ def test_mfa_service_refuses_a_minimum_time_below_the_settings_lowest_value(
     with pytest.raises(ValueError, match=str(AUTH_LOGIN_FAILURE_FLOOR_MIN_MS)):
         MfaService(
             FakeMfaRepository(),
-            TotpEncryptor(os.urandom(32)),
-            recovery_code_key=_RC_KEY,
+            FakeMfaKeyring(os.urandom(32), _RC_KEY),
             failure_floor=below,
         )
 
@@ -643,7 +641,7 @@ def test_step_up_service_refuses_a_minimum_time_below_the_settings_lowest_value(
         StepUpService(
             FakeMfaRepository(),
             FakeSessionRepository(),
-            TotpEncryptor(os.urandom(32)),
+            FakeMfaKeyring(os.urandom(32)),
             FakeUserRepository(),
             _HASHER,
             failure_floor=below,

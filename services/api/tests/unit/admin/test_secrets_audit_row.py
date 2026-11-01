@@ -69,13 +69,39 @@ def test_the_real_backend_injects_a_row_builder_bound_to_the_process_environment
         built["export_keys"] = kwargs
         return SimpleNamespace()
 
+    def auth_keys(relational: Any, **kwargs: Any) -> Any:
+        built["auth_keys"] = kwargs
+        return SimpleNamespace()
+
     monkeypatch.setattr(app_module, "SqlAlchemyCredentialStore", store)
     monkeypatch.setattr(app_module, "SqlAlchemyExportKeyStore", export_keys)  # #889
+    monkeypatch.setattr(app_module, "SqlAlchemyAuthKeyStore", auth_keys)  # #2152 S4
     settings = Settings(environment=Environment.TESTNET, storage_backend="real")
     app_module._build_secrets(settings, app_module._build_audit(settings))
     assert built["audit_row"](ACTION, FIELDS)["env"] == "testnet"
     keys = built["export_keys"]  # the signing keys' records, bound to the process environment
     assert (keys["env"], keys["audit_row"](ACTION, FIELDS)["env"]) == ("testnet", "testnet")
+    ring = built["auth_keys"]  # the keyring's records, committed with its writes (BQ-5)
+    assert (ring["env"], ring["audit_row"](ACTION, FIELDS)["env"]) == ("testnet", "testnet")
+
+
+@pytest.mark.parametrize(
+    ("action", "fields", "kind", "severity"),
+    [
+        ("security.auth_keyring_rewrapped", {"auth_key_id": "k-1", "key_id": "x"}, "k-1", "info"),
+        ("security.auth_keyring_enrolled", {"totp_seal_id": "t", "recovery_hmac_id": "r"}, None,
+         "info"),
+        ("security.auth_keyring_load_failed", {"reason": "auth_keyring_missing"}, None, "error"),
+    ],
+    ids=["rewrapped", "enrolled", "load_failed"],
+)  # fmt: skip
+def test_an_auth_keyring_record_is_an_auth_key_s_never_an_api_key_s(
+    action: str, fields: dict[str, str], kind: str | None, severity: str
+) -> None:
+    """#2152 S4 (BQ-8): `object_kind` `auth_key` and the row it names by `auth_key_id`, even
+    beside a `key_id`; the load failure pages at error."""
+    row = secrets_audit_row("demo")(action, fields)
+    assert (row["object_kind"], row["object_id"], row["severity"]) == ("auth_key", kind, severity)
 
 
 @pytest.mark.parametrize(

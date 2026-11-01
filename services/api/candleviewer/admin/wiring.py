@@ -46,10 +46,15 @@ from candleviewer.audit.writer import (
     AuditWriter,
     keyed_record_id,  # the OMS's keyed audit ids (#913, C-3.3)
 )
+from candleviewer.auth.errors import MfaKeyringUnavailable, MfaSealInvalid
+from candleviewer.auth.mfa_keyring import MfaKeyring
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.metrics import Metrics
 from candleviewer.secrets import (
+    AuthKeyring,
+    AuthKeyringUnavailable,
     AuthKeyStore,
+    AuthSealInvalid,
     CandidateKeys,
     CredentialBorrower,
     CredentialStore,
@@ -69,6 +74,7 @@ from candleviewer.secrets import (
     SigningKeyRotator,
     SigningKeys,
     export_secrets_metrics,
+    mint_auth_keyring,
     mint_borrower,
     mint_candidate_keys,
     mint_export_signer,
@@ -132,7 +138,10 @@ class SecretsBundle:
     `rotateAuditSigningKey`, and the running rotation the export route's, for its own `409`.
     `lane_signing(audit=)`, called on the order lane's loop with the lane's own audit writer, binds
     signing there (#913 L3b) over a credential store M2 builds on that loop (#913 L1d).
-    `key_destroyer` destroys one stored key of one account (#898's delete and revoke)."""
+    `key_destroyer` destroys one stored key of one account (#898's delete and revoke).
+    `mfa_keyring` is the environment's auth keyring as `auth`'s `MfaKeyring` (#2152 S4): M2's
+    `AuthKeyring`, its refusals mapped to `auth`'s errors. Nothing holds it until #2152's
+    switch-over passes the keyring's store to `SecretsService`; until then it refuses every call."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
@@ -144,6 +153,7 @@ class SecretsBundle:
     rotation_running: RotationRunning
     lane_signing: LaneSigningBinder
     key_destroyer: KeyDestroyer
+    mfa_keyring: MfaKeyring
 
 
 __all__ = [
@@ -191,7 +201,7 @@ MachineEventSinkUnavailable = MachineEventUnavailable
 
 #: The M2 records that page: a KEK that failed to load or re-wrap, and stranded rows (#2266);
 #: a signing key that cannot be used, and a retired one that still held its seed (#889, ADR-0039
-#: decision 2, Q3).
+#: decision 2, Q3); an auth keyring MFA cannot use (#2152 S4, BQ-8).
 _SECRETS_ERRORS = frozenset(
     {
         "security.kek_load_failed",
@@ -200,6 +210,7 @@ _SECRETS_ERRORS = frozenset(
         "security.audit_signing_key_unavailable",
         "security.audit_signing_key_material_destroyed",
         "security.audit_signing_key_rotation_failed",  # #889 S7: a rotation that did not commit
+        "security.auth_keyring_load_failed",
     }
 )
 #: M2 refusals (#2266; #889 S7's rotation): stored as denied, at warning, as the other refusals
@@ -210,6 +221,9 @@ _SECRETS_REFUSED = frozenset(
 #: The audit export signing key's records (#889, ADR-0039 decision 7): `object_kind`
 #: `audit_signing_key`, whose `key_id` is the export key's id, never an API key's.
 _SIGNING_KEY_ACTIONS = ("security.audit_signing_key_", "security.audit_export_")
+#: The auth keyring's records (#2152 S4, BQ-8): `object_kind` `auth_key`, the row a record names
+#: by `auth_key_id` (a `key_id` would read as an API key's).
+_AUTH_KEY_ACTIONS = "security.auth_keyring_"
 #: Members M2's `(action, fields)` port carries as `"true"`/`"false"`, stored as JSON booleans
 #: (22 `rotateAuditSigningKey`: `retired_material_destroyed: true`); any other value raises
 #: (`KeyError`) before the record is written or built, so a typo never records `false`.
@@ -220,14 +234,17 @@ _BOOL = {"true": True, "false": False}
 def _secrets_audit_columns(action: str, fields: dict[str, str]) -> dict[str, Any]:
     """The audit columns of one M2 record, for the WAL sink and the row builder alike. Fields
     are ids only; the actor comes from the wiring-bound caller identity, never the borrower."""
-    signing_key = action.startswith(_SIGNING_KEY_ACTIONS)
+    if action.startswith(_AUTH_KEY_ACTIONS):
+        kind, object_id = "auth_key", fields.get("auth_key_id")
+    else:
+        signing_key = action.startswith(_SIGNING_KEY_ACTIONS)
+        kind = "audit_signing_key" if signing_key else "api_key" if "key_id" in fields else "kek"
+        object_id = fields.get("key_id", fields.get("active_key_id"))  # a rotation's new key
     columns: dict[str, Any] = {
         "actor_label": f"{fields.get('actor_kind', 'system')}:{fields.get('actor_role', '')}",
         "actor_user_id": fields.get("actor_user_id"),
-        "object_kind": (
-            "audit_signing_key" if signing_key else "api_key" if "key_id" in fields else "kek"
-        ),
-        "object_id": fields.get("key_id", fields.get("active_key_id")),  # a rotation's new key
+        "object_kind": kind,
+        "object_id": object_id,
         "severity": Severity.ERROR if action in _SECRETS_ERRORS else Severity.INFO,
         "after_state": {k: _BOOL[v] if k in _BOOLEANS else v for k, v in fields.items()},
         "request_id": current_request_uuid(),  # the request the change is part of (#3990)
@@ -339,7 +356,55 @@ def secrets_bundle(
         mint_rotation_running(svc),
         lane_signing,
         mint_key_destroyer(svc),
+        _MfaKeyring(mint_auth_keyring(svc)),
     )
+
+
+class _MfaKeyring:
+    """`auth`'s `MfaKeyring` over M2's `AuthKeyring` (#2152 S4, BQ-6): an M2 refusal leaves as
+    `auth`'s, raised after the handler, so nothing is chained (C-12.6): `AuthSealInvalid` as
+    `MfaSealInvalid` (a wrong code, AC9), `AuthKeyringUnavailable` as `MfaKeyringUnavailable`
+    with its reason (a 503, AC6). A code over the bound stays a `ValueError` (a wrong code). It
+    writes no audit record: the MFA flows that call it record their own (C-2.9)."""
+
+    __slots__ = ("_keyring",)
+
+    def __init__(self, keyring: AuthKeyring) -> None:
+        self._keyring = keyring
+
+    @audit_exempt("read")  # metadata only
+    async def available(self, *key_refs: str) -> bool:
+        return await self._keyring.available(*key_refs)
+
+    @audit_exempt("read")  # derives a seal, a seed or digests: nothing stored changes
+    async def seal_totp_seed(
+        self, seed: bytes | bytearray, user_id: uuid.UUID
+    ) -> tuple[bytes, str]:
+        try:
+            return await self._keyring.seal_totp_seed(seed, user_id)
+        except AuthKeyringUnavailable as exc:
+            reason = exc.reason
+        raise MfaKeyringUnavailable(reason)
+
+    @audit_exempt("read")  # derives a seal, a seed or digests: nothing stored changes
+    async def open_totp_seed(self, blob: bytes, key_ref: str, user_id: uuid.UUID) -> bytearray:
+        try:
+            return await self._keyring.open_totp_seed(blob, key_ref, user_id)
+        except AuthSealInvalid:
+            reason = None
+        except AuthKeyringUnavailable as exc:
+            reason = exc.reason
+        if reason is None:
+            raise MfaSealInvalid("auth_seal_invalid")
+        raise MfaKeyringUnavailable(reason)
+
+    @audit_exempt("read")  # derives a seal, a seed or digests: nothing stored changes
+    async def recovery_code_digests(self, code: str, user_id: uuid.UUID) -> tuple[str, ...]:
+        try:
+            return await self._keyring.recovery_code_digests(code, user_id)
+        except AuthKeyringUnavailable as exc:
+            reason = exc.reason
+        raise MfaKeyringUnavailable(reason)
 
 
 #: M2's export-signing refusals as the job's codes (22 `Job.error`), else `signing_unavailable`.

@@ -1,4 +1,5 @@
-"""Auth keyring core (#2152, ADR-0009 Amendment 4). Private to M2; unused until S4 and S5b.
+"""Auth keyring core (#2152, ADR-0009 Amendment 4). Private to M2; opened at boot by
+`_auth_custody` (S4), and wired to MFA at #2152's switch-over.
 
 The keyring is two 256-bit keys per environment, `totp_seal` (AES-256-GCM over TOTP seeds) and
 `recovery_hmac` (HMAC-SHA256 over recovery codes), plaintext only here and at rest only as
@@ -66,8 +67,12 @@ class LoadedAuthKeyring:
         self._ak_env, self._ak_imported, self._ak_closed = env_name, imported, False
         self._totp_ref, self._totp_key, self._rc_key = f"akey:{totp_id}", totp, recovery
 
-    def available(self) -> bool:
-        return not self._ak_closed
+    def available(self, *key_refs: str) -> bool:
+        """Open, and holding the key of every `key_refs` (BQ-6): metadata only, nothing opens."""
+        return not self._ak_closed and all(map(self._holds, key_refs))
+
+    def _holds(self, key_ref: str) -> bool:
+        return key_ref == self._totp_ref or (key_ref == LEGACY_TOTP_REF and self._ak_imported)
 
     def _require_open(self) -> None:
         if self._ak_closed:
@@ -90,12 +95,9 @@ class LoadedAuthKeyring:
         """The seed, as a `bytearray` the caller zeroes. `AuthSealInvalid` when a seal under a
         key held here fails authentication (a wrong code); `auth_key_not_held` for any other."""
         self._require_open()
-        if key_ref == self._totp_ref:
-            aad = env.totp_aad(self._ak_env, user_id)
-        elif key_ref == LEGACY_TOTP_REF and self._ak_imported:
-            aad = b""
-        else:
+        if not self._holds(key_ref):
             raise AuthKeyringUnavailable("auth_key_not_held")
+        aad = env.totp_aad(self._ak_env, user_id) if key_ref == self._totp_ref else b""
         try:
             return env.open_(self._totp_key, blob, aad)
         except BaseException as exc:
@@ -107,18 +109,20 @@ class LoadedAuthKeyring:
     def recovery_code_digests(self, code: str, user_id: UUID) -> tuple[str, ...]:
         """Hex digests of `code` for `user_id`: the one to store (bound to the user), then, on an
         imported keyring only, the env key's old digest, which a lookup also accepts. Over the cap
-        (no contract body is), `ValueError`: S5's adapter counts that as a wrong code."""
+        (no contract body is), `ValueError`: S5's adapter counts that as a wrong code. A failure
+        after the code is normalised (a `user_id` of another type) leaves no code in a frame."""
+        norm = b""
         try:
             self._require_open()
             norm = normalise_code(code)
+            bound = hmac.new(self._rc_key, env.rc_preimage(user_id, norm), sha256).hexdigest()
+            old = hmac.new(self._rc_key, norm, sha256).hexdigest() if self._ak_imported else None
         except BaseException as exc:
-            scrub_frames(exc)  # `normalise_code`'s frame holds the code
-            del code  # and so does this one
+            scrub_frames(exc)  # the frames below hold the code and the key
+            del code  # and this one held the code, as typed and normalised
+            norm = b""
             raise
-        out = [hmac.new(self._rc_key, env.rc_preimage(user_id, norm), sha256).hexdigest()]
-        if self._ak_imported:
-            out.append(hmac.new(self._rc_key, norm, sha256).hexdigest())
-        return tuple(out)
+        return (bound,) if old is None else (bound, old)
 
     def close(self) -> None:
         self._ak_closed = True
@@ -187,12 +191,18 @@ def _new_keyring(
 
 
 def wrap_verified(kek: LoadedKek, key: bytearray, key_id: UUID, purpose: str) -> str:
-    """Wrap `key`, then prove (in constant time) the wrap opens to it before anyone stores it."""
-    ref = kek.wrap_auth_key(key, key_id=key_id, purpose=purpose)
-    check = kek.unwrap_auth_key(ref, key_id=key_id, purpose=purpose)
+    """Wrap `key`, then prove (in constant time) the wrap opens to it before anyone stores it. A
+    failure leaves no key in a frame: the frames below are cleared, the opened copy zeroed."""
+    check = bytearray()
     try:
+        ref = kek.wrap_auth_key(key, key_id=key_id, purpose=purpose)
+        check = kek.unwrap_auth_key(ref, key_id=key_id, purpose=purpose)
         if not hmac.compare_digest(check, key):
             raise AuthKeyringUnavailable("auth_keyring_mismatch")
+    except BaseException as exc:
+        scrub_frames(exc)  # `env.seal`'s and `env.open_`'s frames hold the KEK and the key
+        del key  # and this one held it: the caller zeroes it
+        raise
     finally:
         env.zero(check)
     return ref

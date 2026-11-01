@@ -26,7 +26,7 @@ from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _CODEC_OTHER = CsrfCodec(b"\x09" * 32)  # an attacker's own key: never verifies here
@@ -99,8 +99,7 @@ def stack(monkeypatch: pytest.MonkeyPatch) -> Any:
         users,
         pepper=pepper,
         mfa_repository=mfa_repo,
-        totp_encryption_key=os.urandom(32),
-        recovery_code_hmac_key=os.urandom(32),
+        mfa_keyring=FakeMfaKeyring(os.urandom(32), os.urandom(32)),
         session_repository=sessions,
         clock=clock,
     )
@@ -125,7 +124,7 @@ def stack(monkeypatch: pytest.MonkeyPatch) -> Any:
             )
         )
         s = _Stack(client, ctx, audit, clock)
-        s.seed = mfa._encryptor.decrypt(mfa_repo.methods[str(res.method_id)].secret_enc)
+        s.seed = mfa._keyring.decrypt(mfa_repo.methods[str(res.method_id)].secret_enc)
         client.portal.call(
             lambda: mfa.confirm_enrollment(uid, method_id=str(res.method_id), code=s.code(-1))
         )

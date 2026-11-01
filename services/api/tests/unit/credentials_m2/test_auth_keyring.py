@@ -394,3 +394,45 @@ def test_no_kek_auth_key_seed_or_code_reaches_a_repr_exception_or_log(
     text = "\n".join([*shown, *map(_with_locals, raised), *logged, repr(logs)])
     assert not [s for s in SENTINELS if s in text]
     assert not [e for e in raised if e.__context__ is not None]  # nothing chained, nothing hidden
+
+
+def test_a_wrap_proof_that_fails_leaves_no_key_in_a_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S3's open Low (#2152 BQ-17): `wrap_verified`'s own unwrap failing (a KEK closed under it,
+    a cipher error) leaves no key or KEK in any frame of its traceback, and chains nothing."""
+
+    def failing(self: LoadedKek, ref: str, **kw: object) -> bytearray:
+        local_key = self._live_key()  # a key bound to a local, as `env.open_`'s frame holds one
+        raise InvalidTag if local_key else AssertionError
+
+    monkeypatch.setattr(LoadedKek, "unwrap_auth_key", failing)
+    holder = kek()
+    exc = _raised_any(lambda: ak.wrap_verified(holder, bytearray(AK_T), RID, "totp_seal"))
+    frames = [f for f, _ in traceback.walk_tb(exc.__traceback__)]
+    keys = {AK_T, KEK_V1}
+    assert isinstance(exc, InvalidTag) and exc.__context__ is None
+    assert not [n for f in frames for n, v in f.f_locals.items() if _is_one_of(v, keys)]
+    assert not [s for s in SENTINELS if s in _with_locals(exc)]
+
+
+def test_a_digest_that_fails_after_normalising_leaves_no_code_in_a_frame() -> None:
+    """S3's other open Low (#2152 BQ-17): a `user_id` of another type fails after the code is
+    normalised; no frame keeps the code, typed or normalised, or a key."""
+    ring = generated()
+    exc = _raised_any(lambda: ring.recovery_code_digests(CODE, str(ALICE)))  # type: ignore[arg-type]
+    held = {id(ring._totp_key), id(ring._rc_key)}
+    frames = [f for f, _ in traceback.walk_tb(exc.__traceback__)]
+    assert isinstance(exc, AttributeError) and exc.__context__ is None
+    assert not [n for f in frames for n, v in f.f_locals.items() if id(v) in held]
+    assert not [s for s in SENTINELS if s in _with_locals(exc)]
+
+
+def _is_one_of(value: object, keys: set[bytes]) -> bool:
+    return isinstance(value, bytes | bytearray) and bytes(value) in keys
+
+
+def _raised_any(call: Callable[[], object]) -> BaseException:
+    try:
+        call()
+    except Exception as exc:
+        return exc
+    raise AssertionError("did not raise")

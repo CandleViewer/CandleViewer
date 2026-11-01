@@ -30,7 +30,6 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import SessionReadOnly, StepUpCodeInvalid
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, SessionRecord
@@ -44,7 +43,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
 from scripts.seed_fixture_user import seed
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.test_step_up import _HASHER, PASSWORD, _pw_hash
 
 pytestmark = pytest.mark.integration
@@ -104,8 +103,8 @@ class _Session:
 
 async def _service(repo: SqlAlchemySessionRepository, user: str) -> tuple[StepUpService, bytes]:
     """`StepUpService` on the Postgres rows; the factors (password, TOTP) from the unit fakes."""
-    methods, encryptor = FakeMfaRepository(), TotpEncryptor(os.urandom(32))
-    mfa = MfaService(methods, encryptor, recovery_code_key=b"k" * 32, clock=lambda: _NOW)
+    methods, encryptor = FakeMfaRepository(), FakeMfaKeyring(os.urandom(32), b"k" * 32)
+    mfa = MfaService(methods, encryptor, clock=lambda: _NOW)
     enrolled = await mfa.enroll(
         user, MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="o"
     )

@@ -23,6 +23,11 @@ refusal of a code a concurrent request spent first: the code has already matched
 As with `LoginService`, audit emission is the router's job (`auth` may not
 import `audit` — `forbidden-M18` import-linter contract); this module
 raises typed errors and returns typed results only.
+
+#2152 S5a: seeds are sealed and opened, and recovery codes digested, through the injected
+`MfaKeyring`; this module holds no key. An opened seed is a `bytearray` zeroed once the code is
+checked; a recovery code is looked up by every candidate digest in one query, and a new code
+stores the first (BQ-3).
 """
 
 from __future__ import annotations
@@ -32,8 +37,8 @@ import hashlib
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
     MfaChallengeInvalid,
     MfaChallengeLocked,
@@ -45,6 +50,7 @@ from candleviewer.auth.errors import (
     UserDisabled,
 )
 from candleviewer.auth.failure_hold import FAILURE_MINIMUM, FailureHold, MonotonicClock, Sleep
+from candleviewer.auth.mfa_keyring import MfaKeyring, zero_seeds
 from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import (
     MfaChallengeRecord,
@@ -57,7 +63,7 @@ from candleviewer.auth.models import (
     MfaVerifyRequest,
     RecoveryCodesRegenerated,
 )
-from candleviewer.auth.recovery_codes import generate_recovery_codes, hash_recovery_code
+from candleviewer.auth.recovery_codes import generate_recovery_codes
 from candleviewer.auth.totp import generate_secret, otpauth_uri, secret_to_base32, verify_code
 from candleviewer.auth.totp_skew import TotpSkewReporter
 
@@ -97,9 +103,8 @@ class MfaService:
     def __init__(
         self,
         repository: MfaRepository,
-        encryptor: TotpEncryptor,
+        keyring: MfaKeyring,
         *,
-        recovery_code_key: bytes,
         clock: Clock = _utc_now,
         issuer: str = "CandleViewer",
         skew_reporter: TotpSkewReporter | None = None,
@@ -110,10 +115,9 @@ class MfaService:
         self._repository = repository
         #: #4664: refuses a minimum time below the setting's lowest value (ValueError).
         self._failure_hold = FailureHold(failure_floor, monotonic=monotonic, sleep=sleep)
-        self._encryptor = encryptor
-        # Server-side HMAC key for recovery-code hashes (PR #1618 security
-        # review, blocking 1); never logged or returned.
-        self._recovery_code_key = recovery_code_key
+        #: Seals, seeds and digests (#2152 S5a); the keys stay behind it (PR #1618 security
+        #: review, blocking 1: never logged or returned).
+        self._keyring = keyring
         self._clock = clock
         self._issuer = issuer
         self._skew_reporter = skew_reporter or TotpSkewReporter()
@@ -152,22 +156,31 @@ class MfaService:
         now = self._clock()
         accepted_step: int | None = None
         matched_method_id: str | None = None
-        refused: list[tuple[bytes, int | None]] = []
-        for method in methods:
-            if method.secret_enc is None:
-                continue  # mfa_totp_shape CHECK should prevent this; defend anyway
-            seed = self._encryptor.decrypt(method.secret_enc)
-            refused.append((seed, method.last_accepted_time_step))
-            step = verify_code(seed, request.code, unix_time=now.timestamp())
-            if step is not None:
-                accepted_step = step
-                matched_method_id = str(method.id)
-                break
+        refused: list[tuple[bytes | bytearray, int | None]] = []
+        seeds: list[bytearray] = []
+        try:
+            for method in methods:
+                if method.secret_enc is None:
+                    continue  # mfa_totp_shape CHECK should prevent this; defend anyway
+                seed = await self._keyring.open_totp_seed(
+                    method.secret_enc, method.secret_key_ref or "", challenge.user_id
+                )
+                seeds.append(seed)
+                refused.append((seed, method.last_accepted_time_step))
+                step = verify_code(seed, request.code, unix_time=now.timestamp())
+                if step is not None:
+                    accepted_step = step
+                    matched_method_id = str(method.id)
+                    break
+            if accepted_step is None or matched_method_id is None:
+                # #2146: holds a report for a skewed clock. It awaits nothing, so it cannot delay
+                # or cancel the attempt count, and it runs first so the locking attempt reports.
+                when = now.timestamp()
+                self._skew_reporter.report_rejection(refused, request.code, unix_time=when)
+        finally:
+            zero_seeds(seeds)
 
         if accepted_step is None or matched_method_id is None:
-            # #2146: holds a report for a skewed clock. It awaits nothing, so it cannot delay or
-            # cancel the attempt count, and it runs first so the locking attempt reports too.
-            self._skew_reporter.report_rejection(refused, request.code, unix_time=now.timestamp())
             await self._record_failed_attempt(challenge)
             raise MfaCodeInvalid("invalid TOTP code")
 
@@ -217,14 +230,14 @@ class MfaService:
             raise MfaCodeInvalid("only method=totp enrolment is implemented")
 
         seed = generate_secret()
-        secret_enc = self._encryptor.encrypt(seed)
+        secret_enc, key_ref = await self._keyring.seal_totp_seed(seed, UUID(user_id))
         # #2295: each enrolment supersedes the user's earlier pending methods, so only
         # the latest can be confirmed.
         await self._repository.supersede_pending_methods(user_id, now=self._clock())
         method = await self._repository.create_pending_method(
             user_id,
             secret_enc=secret_enc,
-            secret_key_ref=self._encryptor.key_ref,
+            secret_key_ref=key_ref,
             label=request.label,
         )
         uri = otpauth_uri(secret=seed, account_name=account_name, issuer=self._issuer)
@@ -263,12 +276,18 @@ class MfaService:
         if method.secret_enc is None:  # mfa_totp_shape CHECK should prevent this
             raise MfaEnrollmentNotFound("pending method has no TOTP secret")
 
-        seed = self._encryptor.decrypt(method.secret_enc)
+        seed = await self._keyring.open_totp_seed(
+            method.secret_enc, method.secret_key_ref or "", UUID(user_id)
+        )
         now = self._clock()
-        accepted_step = verify_code(seed, code, unix_time=now.timestamp())
+        try:
+            accepted_step = verify_code(seed, code, unix_time=now.timestamp())
+            if accepted_step is None:
+                refused = [(seed, method.last_accepted_time_step)]
+                self._skew_reporter.report_rejection(refused, code, unix_time=now.timestamp())
+        finally:
+            zero_seeds([seed])
         if accepted_step is None:
-            refused = [(seed, method.last_accepted_time_step)]
-            self._skew_reporter.report_rejection(refused, code, unix_time=now.timestamp())
             raise MfaCodeInvalid("invalid TOTP code")
         return accepted_step
 
@@ -284,7 +303,7 @@ class MfaService:
         `UserDisabled`, with nothing changed, when the user is disabled or gone, read under
         the user-row lock in that transaction (#2911), so a disable that commits first wins."""
         plaintext_codes = generate_recovery_codes()
-        hashes = tuple(hash_recovery_code(c, key=self._recovery_code_key) for c in plaintext_codes)
+        hashes = await self._digests_to_store(user_id, plaintext_codes)
         confirmed = await self._repository.complete_enrollment(
             user_id, method_id=method_id, time_step=time_step, now=self._clock(), code_hashes=hashes
         )
@@ -294,9 +313,14 @@ class MfaService:
             raise MfaEnrollmentNotFound("the pending method is no longer confirmable")
         return confirmed, tuple(plaintext_codes)
 
+    async def _digests_to_store(self, user_id: str, codes: list[str]) -> tuple[str, ...]:
+        """Each new code's digest to store: the first candidate, bound to the user (BQ-3)."""
+        user = UUID(user_id)
+        return tuple([(await self._keyring.recovery_code_digests(c, user))[0] for c in codes])
+
     async def _issue_recovery_codes(self, user_id: str) -> tuple[str, ...]:
         plaintext_codes = generate_recovery_codes()
-        hashes = tuple(hash_recovery_code(c, key=self._recovery_code_key) for c in plaintext_codes)
+        hashes = await self._digests_to_store(user_id, plaintext_codes)
         await self._repository.replace_recovery_codes(user_id, code_hashes=hashes)
         return tuple(plaintext_codes)
 
@@ -315,10 +339,10 @@ class MfaService:
         started and after its attempt count is written (#4664); a match is never held.
 
         Constant-time against the hashed set (ticket "Technical notes":
-        "constant-time against the hashed set") is delivered by hashing the
-        candidate once and doing an equality-indexed lookup on the keyed
-        HMAC-SHA256 digest, never on the code itself, so how long the lookup
-        takes does not depend on how much of a guess matches a stored code."""
+        "constant-time against the hashed set") is delivered by computing every candidate
+        digest of the code first and doing one index lookup on the keyed HMAC-SHA256 digests
+        (`code_hash = ANY`, #2152 BQ-3), never on the code itself, so how long the lookup takes
+        does not depend on how much of a guess matches a stored code."""
         started = self._failure_hold.start()
         try:
             return await self._check_recovery(mfa_token, recovery_code)
@@ -341,9 +365,9 @@ class MfaService:
             await self._record_failed_attempt(challenge)
             raise RecoveryCodesExhausted("all recovery codes have been used")
 
-        code_hash = hash_recovery_code(recovery_code, key=self._recovery_code_key)
+        digests = await self._keyring.recovery_code_digests(recovery_code, challenge.user_id)
         code_id = await self._repository.find_unused_recovery_code(
-            str(challenge.user_id), code_hash=code_hash
+            str(challenge.user_id), code_hashes=digests
         )
         if code_id is None:
             await self._record_failed_attempt(challenge)

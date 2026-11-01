@@ -30,7 +30,6 @@ from starlette.websockets import WebSocketDisconnect
 
 from candleviewer import app as app_module
 from candleviewer.app import create_app
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import UserStatus
@@ -41,7 +40,7 @@ from candleviewer.settings import Settings
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import CLOSE_USER_DISABLED, RevocationHub
 from tests.unit.auth.auth_fakes import FakeUserRepository, FullUsers, no_wait
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _T0 = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
@@ -89,7 +88,7 @@ class _Env:
         self.step_up = StepUpService(
             FakeMfaRepository(),
             self.repo,
-            TotpEncryptor(os.urandom(32)),
+            FakeMfaKeyring(os.urandom(32)),
             FakeUserRepository(),
             Hasher(),
             clock=self.clock,

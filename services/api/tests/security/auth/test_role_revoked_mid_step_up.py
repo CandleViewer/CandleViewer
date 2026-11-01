@@ -45,6 +45,7 @@ from fastapi import Request
 import candleviewer.app as appmod
 import candleviewer.auth as auth_pkg
 from candleviewer.audit.actions import validate_action
+from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, MfaMethodRecord
@@ -244,8 +245,7 @@ class World:
         self.auth = AuthService(
             self.users,
             mfa_repository=self.mfa_repo,
-            totp_encryption_key=os.urandom(32),
-            recovery_code_hmac_key=os.urandom(32),
+            mfa_keyring=EnvMfaKeyring(os.urandom(32), os.urandom(32)),
             session_repository=self.sessions_repo,
             pepper=_PEPPER,
             clock=_Clock(),

@@ -39,7 +39,6 @@ from candleviewer.api.step_up_challenge import (
 )
 from candleviewer.api.users import make_users_router
 from candleviewer.audit.models import AuditOutcome
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.mfa_service import MfaService
@@ -73,7 +72,7 @@ from tests.unit.api.test_step_up_router import (
 )
 from tests.unit.api.test_users_router import _Notifier, _Resolver, _Store
 from tests.unit.auth.auth_fakes import FakeUserRepository, InMemoryOwnerReset, make_user, no_wait
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _IDEM = str(uuid.UUID(int=0x5F0C6B1E2D3A4C4B9E8F7A6B5C4D3E2F))  # the held request's Idempotency-Key
@@ -143,9 +142,9 @@ class _World:
 
 
 async def _world() -> _World:
-    clock, repo, enc = _Clock(), FakeMfaRepository(), TotpEncryptor(os.urandom(32))
+    clock, repo, enc = _Clock(), FakeMfaRepository(), FakeMfaKeyring(os.urandom(32), b"k" * 32)
     clock.now = _T0
-    mfa = MfaService(repo, enc, recovery_code_key=b"k" * 32, clock=clock, sleep=no_wait)
+    mfa = MfaService(repo, enc, clock=clock, sleep=no_wait)
     user = uuid.uuid4()
     res = await mfa.enroll(
         str(user), MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="o"

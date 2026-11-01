@@ -60,6 +60,22 @@ class AuthServiceUnavailable(AuthError):
     """The auth module has not been started with a real repository."""
 
 
+class MfaKeyringUnavailable(AuthError):
+    """The keyring MFA seals and digests through cannot serve this call (#2152, ADR-0009
+    Amendment 4): the KEK or the auth key is unavailable, or the key a method is sealed under is
+    not held here. `reason` is the keyring's bounded code; the HTTP edge answers
+    `503 auth_unavailable`, never "no method" (AC6), and names no cause (C-12.6)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class MfaSealInvalid(AuthError):
+    """A TOTP seal under a key the keyring holds failed authentication (moved to another user or
+    tampered with): it verifies like a wrong code (#2152 AC9)."""
+
+
 class MfaChallengeInvalid(AuthError):
     """The `mfa_token` does not correspond to an open, unexpired challenge —
     unknown token, already-satisfied challenge, or an expired one (ticket

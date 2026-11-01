@@ -48,7 +48,6 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import create_async_engine
 from testcontainers.postgres import PostgresContainer
 
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import InviteService
 from candleviewer.auth.mfa_service import MfaService
@@ -63,6 +62,7 @@ from tests.integration.admin.test_user_lifecycle_pg import _ROLE, _USER
 from tests.security.auth._stack import INVITE_PW
 from tests.security.auth.test_disable_user_drill import _Clock
 from tests.security.auth.test_disable_user_e2e import _owner_headers, _settings, deployed
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
 pytestmark = pytest.mark.integration
 
@@ -184,8 +184,8 @@ def _wire_invites(app: Any, w: SimpleNamespace) -> None:
     auth = app.state.app_context.auth
     mfa, invites = auth._mfa_repository, auth._invite_repository
     assert mfa is not None and invites is not None
-    keys = TotpEncryptor(bytes(range(32)))
-    mfa_service = MfaService(mfa, keys, recovery_code_key=bytes(range(32, 64)), clock=w.clock)
+    keys = FakeMfaKeyring(bytes(range(32)), bytes(range(32, 64)))
+    mfa_service = MfaService(mfa, keys, clock=w.clock)
     pepper = _settings().auth_pepper.get_secret_value()
     auth._invites = InviteService(invites, Hasher(pepper=pepper), mfa_service, clock=w.clock)
 

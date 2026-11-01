@@ -69,6 +69,18 @@ PROBES: dict[str, str] = {
         "from candleviewer.secrets import mint_rotation_running\nmint_rotation_running(s)"
     ),
     "export_unwrap": "dek = kek.unwrap_export_dek(row['dek_ref'], key_id=row['key_id'])",
+    # #2152 S4 (BQ-6): MFA's keyring is minted in wiring alone, its last hops pinned by name
+    "mint_auth_keyring_elsewhere": (
+        "from candleviewer.secrets import mint_auth_keyring\nmint_auth_keyring(s)"
+    ),
+    "auth_key_unwrap": "k = kek.unwrap_auth_key(row['dek_ref'], key_id=i, purpose='totp_seal')",
+    "auth_key_wrap": "r = kek.wrap_auth_key(k, key_id=i, purpose='totp_seal')",
+    "auth_aad": "a = env.akey_aad('live', 'totp_seal', i, 1)",
+    "totp_aad": "a = env.totp_aad('live', i)",
+    "rc_preimage": "p = env.rc_preimage(i, b)",
+    "load_keyring": "ring = ak.load_keyring(kek, rows)",
+    "generate_keyring": "rows, ring = ak.generate_keyring(kek)",
+    "import_keyring": "rows, ring = ak.import_keyring(kek, a, b)",
     # boundary review: R1 literal-name reflection
     "getattr_closure": "x = getattr(ctx.secrets.health, '__closure__')",
     "getattr_mangled": "x = getattr(borrower, '_CredentialBorrower__borrow')",
@@ -122,7 +134,7 @@ SELF_PROBES: dict[str, str] = {
 }
 
 _PARAMS = "ctx, key_id, t, row, f, svc, broker, ref, i, k, b, a, s, aad, borrower, noop, w, "
-_PARAMS += "request, exc, e, transformer, env, c, os, settings, context"
+_PARAMS += "request, exc, e, transformer, env, c, os, settings, context, kek, rows, ak"
 
 
 def _free(src: str) -> ast.Module:
