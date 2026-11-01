@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
@@ -15,11 +16,14 @@ from uuid import UUID
 import pytest
 import sqlalchemy as sa
 
+from candleviewer.secrets import store as m2
 from candleviewer.storage.errors import AuthKeyAuditNotWritten
 from candleviewer.storage.repositories import auth_keys_sqlalchemy as m
 
 # Self-discovering: a statement added later cannot dodge the scope guard.
 _STATEMENTS = {n: v for n, v in vars(m).items() if isinstance(v, sa.TextClause)}
+#: The table's DDL (21 Sec.3.1.5a verbatim), whose `ak_dek_ref` CHECK M2's fake copies.
+_MIGRATION = Path(m.__file__).parents[2] / "migrations" / "versions" / "0030_auth_keys.py"
 KEY = UUID(int=11)
 WRAP = "ak1:" + "ab" * 60
 MOVE: dict[str, Any] = {
@@ -106,6 +110,16 @@ def test_the_rewrap_is_a_compare_and_set_on_the_row_s_environment_and_kek_versio
     assert " ".join(where) == (
         "id = :id AND env = CAST(:env AS exchange_env) AND kek_version = :from_v"
     )
+
+
+def test_the_fakes_copies_of_the_table_and_m10_have_not_drifted() -> None:
+    """M2's fake refuses the wraps `ak_dek_ref` refuses and raises M10's error by its code (as
+    `test_export_keys_sqlalchemy.py` pins the export key's copies)."""
+    check = re.search(
+        r"CONSTRAINT ak_dek_ref\s+CHECK \(dek_ref ~ '\^(.+?)\$'\)", _MIGRATION.read_text()
+    )
+    assert check is not None and m2._AUTH_WRAP.pattern == check[1]
+    assert m2._AuthKeyAuditNotWritten.code == AuthKeyAuditNotWritten.code
 
 
 @pytest.mark.parametrize(

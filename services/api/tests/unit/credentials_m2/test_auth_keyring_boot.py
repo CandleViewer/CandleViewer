@@ -166,11 +166,14 @@ async def test_a_later_boot_opens_the_keyring_with_its_record() -> None:
                                "kek_version": "1"} | named  # fmt: skip
 
 
+@pytest.mark.parametrize("material", [0, 1], ids=["fresh", "enrolled_under_the_env_keys"])
 @pytest.mark.parametrize("env_name", ["demo", "testnet"])
-async def test_the_first_boot_imports_both_env_keys_once(env_name: str) -> None:
-    """AC3: imported as `imported_env` wraps with their record; a seed and a code made under the env
-    keys keep working; a later boot with the settings still set warns, names them, ignores them."""
-    keyring = InMemoryAuthKeyStore(env_name)
+async def test_the_first_boot_imports_both_env_keys_once(env_name: str, material: int) -> None:
+    """AC3: imported as `imported_env` wraps with their record, also over MFA material made under
+    the env keys (D3: a demo database keeps its enrolments; AC7's probe guards generation only); a
+    seed and a code made under the env keys keep working; a later boot with the settings still set
+    warns, names them, ignores them."""
+    keyring = InMemoryAuthKeyStore(env_name, mfa_material=material)
     keys: dict[str, Any] = {"environment": env_name, **_ENV_KEYS}
     store = InMemoryCredentialStore()
     svc, ctx = await _booted(keyring, _Src(KEK_V1, 1), store=store, **keys)
@@ -418,6 +421,26 @@ async def test_the_load_record_names_the_kek_version_its_rows_are_stored_at(
     assert moved == {"recovery_hmac", "totp_seal"} - set(failing)
     [(_, fields)] = [r for r in audit.records if r[0] == custody.LOADED]
     assert fields["kek_version"] == kek_version
+
+
+async def test_a_cancellation_inside_the_rotation_rewrap_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancelled boot is never a counted re-wrap step: `start()` re-raises it, the KEK is
+    unpublished and latched, and no row moved."""
+    keyring, store = await _generated()
+
+    async def cancelled(*_: object, **__: object) -> bool:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(keyring, "rewrap", cancelled)
+    count = m.auth_keyring_boot_failures_total.labels(step="rewrap")
+    before = count._value.get()
+    svc, ctx = _service(_Src(KEK_V2, 2), _Src(KEK_V1, 1), keyring=keyring, store=store), _ctx()
+    with pytest.raises(asyncio.CancelledError):
+        await svc.start(ctx)
+    assert (svc.health().detail, ctx.oms_read_only_gate.is_read_only) == ("kek_unavailable", True)
+    assert count._value.get() == before and {r["kek_version"] for r in keyring.rows} == {1}
 
 
 async def test_a_new_wrap_not_proven_to_open_is_never_stored(
@@ -717,6 +740,8 @@ async def test_the_wiring_adapter_maps_every_m2_refusal_with_nothing_chained() -
     await svc.start(_ctx())
     blob, ref = await mfa.seal_totp_seed(SEED, ALICE)
     assert bytes(await mfa.open_totp_seed(blob, ref, ALICE)) == SEED and await mfa.available(ref)
+    # BQ-6, AC6: the refs reach M2; a generated keyring holds neither the env key nor another's.
+    assert not await mfa.available("local-dev-v1") and not await mfa.available(f"akey:{BOB}")
     with pytest.raises(MfaSealInvalid) as moved:
         await mfa.open_totp_seed(blob, ref, BOB)  # AC9: another user's seal is a wrong code
     with pytest.raises(MfaKeyringUnavailable, match=r"^auth_key_not_held$") as not_held:

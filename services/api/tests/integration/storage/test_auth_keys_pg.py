@@ -373,8 +373,9 @@ async def test_two_concurrent_boots_converge_on_the_first_keyring(store: Store, 
         ("SELECT 1", 3),  # one TOTP method and two unused codes
         ("UPDATE mfa_methods SET revoked_at = now()", 2),  # a revoked method is left out
         ("UPDATE recovery_codes SET used_at = now()", 1),  # used codes are left out
+        ("UPDATE mfa_methods SET confirmed_at = NULL", 3),  # a pending enrolment's seed counts
     ],
-    ids=["all_counted", "revoked_method", "used_codes"],
+    ids=["all_counted", "revoked_method", "used_codes", "pending_method"],
 )
 async def test_the_probe_counts_live_totp_methods_and_unused_codes(
     pg: str, store: Store, change: str, counted: int
