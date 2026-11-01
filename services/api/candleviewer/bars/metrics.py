@@ -153,7 +153,23 @@ bars_heal_refresh_total = Counter(
 #: Allow-listed label values (bounded cardinality; never client text).
 ENDPOINT_ROUTES: Final = frozenset({"klines", "bars"})
 SOURCE_TIERS: Final = frozenset({"questdb", "parquet", "exchange_rest", "tape"})
-PARAM_REJECT_REASONS: Final = frozenset({"invalid", "unsupported", "out_of_range"})
+#: Why a bars/klines request was refused (#452 F4a). The first three are the bar_type/param and
+#: interval/price_type refusals; the rest are every other refusal of the two routes.
+PARAM_REJECT_REASONS: Final = frozenset(
+    {
+        "invalid",
+        "unsupported",
+        "out_of_range",
+        "unauthenticated",
+        "forbidden",
+        "bad_window",
+        "invalid_cursor",
+        "unknown_symbol",
+        "window_too_large",
+        "no_data_recorded",
+        "unavailable",
+    }
+)
 
 bars_endpoint_rows_returned_total = Counter(
     "bars_endpoint_rows_returned_total",
@@ -166,7 +182,7 @@ bars_endpoint_422_no_data_recorded_total = Counter(
 )
 bars_endpoint_param_rejected_total = Counter(
     "bars_endpoint_param_rejected_total",
-    "bar_type/param pairs refused before any read.",
+    "bars/klines requests refused, by reason (bounded set).",
     labelnames=("reason",),
 )
 bars_endpoint_source_tier_total = Counter(

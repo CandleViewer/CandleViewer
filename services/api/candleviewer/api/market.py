@@ -50,6 +50,7 @@ from typing import Protocol
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from candleviewer.api.market_refusal import note_refused
 from candleviewer.api.market_response import (
     BarSegments,
     InvalidCursor,
@@ -61,7 +62,7 @@ from candleviewer.api.market_response import (
     problem,
 )
 from candleviewer.bars.limits import DEFAULT_LIMIT, MAX_LIMIT, MAX_TIME_WINDOW_US
-from candleviewer.bars.metrics import record_page, record_param_rejected
+from candleviewer.bars.metrics import record_page
 from candleviewer.ingestion.kline_coverage import CoverageIndex, Range
 from candleviewer.ingestion.kline_read import SOURCE_HOT, KlineReadService
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -220,6 +221,12 @@ def _wall_now_us() -> int:
     return time.time_ns() // 1000
 
 
+def _refused(reason: str, response: JSONResponse, **values: object) -> JSONResponse:
+    """Count and log one klines refusal (`api.market_refusal`), then hand the response back."""
+    note_refused("klines", reason, response.status_code, **values)
+    return response
+
+
 def _window_too_large() -> JSONResponse:
     return problem(
         422, "bar_window_too_large", "Window too large",
@@ -288,15 +295,27 @@ def make_market_router(
     async def _authorize_or_raise(request: Request) -> None:
         if principal_resolver is None:
             raise _HttpProblem(
-                _problem(501, "Not implemented", "Session verification is not wired yet.")
+                _refused(
+                    "unavailable",
+                    _problem(501, "Not implemented", "Session verification is not wired yet."),
+                )
             )
         got = principal_resolver.resolve(request)
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
-            raise _HttpProblem(_problem(401, "Unauthorized", "Sign in to read market data."))
+            raise _HttpProblem(
+                _refused(
+                    "unauthenticated", _problem(401, "Unauthorized", "Sign in to read market data.")
+                )
+            )
         if not principal.has(_REQUIRED_PERMISSION):
             raise _HttpProblem(
-                _problem(403, "Forbidden", f"Reading market data requires {_REQUIRED_PERMISSION}.")
+                _refused(
+                    "forbidden",
+                    _problem(
+                        403, "Forbidden", f"Reading market data requires {_REQUIRED_PERMISSION}."
+                    ),
+                )
             )
 
     @router.get("/market/klines")
@@ -323,31 +342,52 @@ def make_market_router(
         except StorageTierUnavailable:
             cache = None
         if cache is None:
-            return _problem(503, "Service unavailable", "Market data storage is not ready yet.")
+            return _refused(
+                "unavailable",
+                _problem(503, "Service unavailable", "Market data storage is not ready yet."),
+            )
         if interval not in _VALID_INTERVALS:
-            record_param_rejected("invalid")  # A6
-            return _problem(400, "Bad request", "The interval is not a supported interval code.")
+            return _refused(
+                "invalid",
+                _problem(400, "Bad request", "The interval is not a supported interval code."),
+                interval=interval,
+            )
         if price_type not in _PRICE_TYPES:
-            record_param_rejected("invalid")
-            return _problem(
-                400, "Bad request", "price_type must be trade, mark, index or premium_index."
+            return _refused(
+                "invalid",
+                _problem(
+                    400, "Bad request", "price_type must be trade, mark, index or premium_index."
+                ),
+                price_type=price_type,
             )
         if price_type not in _SERVED_PRICE_TYPES:
-            record_param_rejected("unsupported")
-            return _problem(
+            return _refused("unsupported", _problem(
                 422, "Unprocessable entity",
                 f"{price_type} candles are not recorded yet; request price_type=trade.",
-            )  # fmt: skip
+            ), price_type=price_type)  # fmt: skip
         now = now_us()
         try:
             end_dt = _parse_time(to, default=datetime.fromtimestamp(now / 1e6, tz=UTC))
             start_dt = _parse_time(from_, default=None)
         except ValueError:
-            return _problem(400, "Bad request", "from/to must be RFC 3339 timestamps.")
+            return _refused(
+                "bad_window",
+                _problem(400, "Bad request", "from/to must be RFC 3339 timestamps."),
+                symbol=symbol,
+                from_=from_,
+                to=to,
+            )
         if end_dt is None or start_dt is None:
-            return _problem(400, "Bad request", "'from' is required.")
+            return _refused("bad_window", _problem(400, "Bad request", "'from' is required."),
+                            symbol=symbol, to=to)  # fmt: skip
         if start_dt > end_dt:
-            return _problem(400, "Bad request", "'from' must not be after 'to'.")
+            return _refused(
+                "bad_window",
+                _problem(400, "Bad request", "'from' must not be after 'to'."),
+                symbol=symbol,
+                from_=from_,
+                to=to,
+            )
         start_us = int(start_dt.timestamp() * 1_000_000)
         end_us = int(end_dt.timestamp() * 1_000_000) if to is not None else now
         width = _INTERVAL_US[interval]
@@ -360,26 +400,38 @@ def make_market_router(
                     grid_us=grid,
                 ))  # fmt: skip
             except InvalidCursor:
-                return problem(
+                return _refused("invalid_cursor", problem(
                     400, "invalid_cursor", "Invalid cursor",
                     "The cursor is not valid for this request; restart without a cursor.",
-                )  # fmt: skip
+                ), symbol=symbol, interval=interval, cursor=cursor)  # fmt: skip
         if end_us - start_us > MAX_TIME_WINDOW_US:
             # The only window refusal (22-api): the SR-E12-02 hard cap. Anything narrower is
             # served page by page.
-            return _window_too_large()
+            return _refused(
+                "window_too_large",
+                _window_too_large(),
+                symbol=symbol,
+                interval=interval,
+                from_=from_,
+                to=to,
+            )
         # #3808: no bar exists after now, so the server bounds the window there: a later part
         # (a client clock ahead of the exchange, or any future window) is never read, paged or
         # backfilled, and is declared uncovered in `meta.coverage_holes` below.
         requested_end_us, end_us = end_us, min(end_us, now)
         service = read_service_provider() if read_service_provider is not None else None
         if service is not None and symbol_listed is None:
-            return _problem(
-                503, "Service unavailable", "The instrument catalogue is not ready yet."
+            return _refused(
+                "unavailable",
+                _problem(503, "Service unavailable", "The instrument catalogue is not ready yet."),
             )
         if symbol_listed is not None and not symbol_listed(symbol):
             # 422, not 404: the only client-error statuses this route declares are 400/422.
-            return _problem(422, "Unprocessable entity", "This symbol is not a listed instrument.")
+            return _refused(
+                "unknown_symbol",
+                _problem(422, "Unprocessable entity", "This symbol is not a listed instrument."),
+                symbol=symbol,
+            )
         # A1/A4: row-based paging. Time bars have a fixed width, so a slice of `limit` widths
         # holds at most `limit` bars; read slices oldest-first (each read asks for `limit + 1`
         # rows, bounded) until a full page plus one row proves `has_more`, the window ends, or
@@ -396,8 +448,11 @@ def make_market_router(
                 try:
                     read = await service.read_page(symbol, interval, rng, limit=limit + 1)
                 except StorageTierUnavailable:  # e.g. cold-tier DuckDB timeout: typed 503
-                    return _problem(
-                        503, "Service unavailable", "A kline storage tier is unavailable."
+                    return _refused(
+                        "unavailable",
+                        _problem(
+                            503, "Service unavailable", "A kline storage tier is unavailable."
+                        ),
                     )
                 if read.cold_page is not None:  # emitted-JSON cold bars, oldest first
                     page = read.cold_page

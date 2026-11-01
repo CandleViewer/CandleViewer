@@ -1665,11 +1665,13 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "requests",
         ("reason",),
-        "bar_type/param pairs refused before any read (invalid|unsupported|out_of_range).",
+        "bars/klines requests refused, by reason (param: invalid|unsupported|out_of_range; the "
+        "rest: unauthenticated|forbidden|bad_window|invalid_cursor|unknown_symbol|"
+        "window_too_large|no_data_recorded|unavailable).",
         "spike = probing / fuzzing (SR-E12-03)",
         _L,
         "E12",
-        max_series=3,
+        max_series=11,
         exported=True,
     ),
     _s(
