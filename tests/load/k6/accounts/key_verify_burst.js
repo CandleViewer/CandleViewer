@@ -111,5 +111,6 @@ export function probe(data) {
 }
 
 export function handleSummary(data) {
+  delete data.setup_data; // setup() returns session tokens: never written to a file (C-12.2)
   return { [__ENV.CV_E27_SUMMARY || "k6-summary-key-verify-burst.json"]: JSON.stringify(data) };
 }

@@ -15,6 +15,7 @@ from typing import Final
 from urllib.parse import urlsplit
 
 ALLOWED_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1", "api"})
+# nosemgrep: cv-adapter-isolation reason=deny-table owner=@CandleViewer/security review=2027-03-25
 _EXCHANGE: Final = re.compile(r"(^|\.)(bybit|bytick)\.com$", re.IGNORECASE)
 
 

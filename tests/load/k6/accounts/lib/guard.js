@@ -9,6 +9,9 @@
 // Case-insensitive, as the Python guard (a URL's scheme and host compare without case).
 const ALLOWED = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\]|api)(:\d{1,5})?$/i; // BQ-11
 const EXCHANGE = /(^|\.)(bybit|bytick)\.com(:\d+)?(\/|$)/i; // C-13.5 deny list
+// A path joined to the guarded base: a leading `/`, then word characters, `/` and `-` only, so no
+// `@`, `.`, `:`, `?` or `#` can move the joined URL off the allowed host.
+const PATH = /^\/[\w/-]*$/;
 
 export function guardedBase() {
   const base = (__ENV.BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -24,4 +27,13 @@ export function guardedBase() {
     );
   }
   return base;
+}
+
+// The WS path the wallet script joins to the guarded base (BQ-11): refused unless PATH matches.
+export function guardedPath(raw) {
+  const path = raw === undefined || raw === "" ? "/ws" : String(raw);
+  if (!PATH.test(path)) {
+    throw new Error("refusing a WS path that is not a plain absolute path");
+  }
+  return path;
 }

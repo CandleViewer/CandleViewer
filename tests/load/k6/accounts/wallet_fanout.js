@@ -25,7 +25,7 @@ import http from "k6/http";
 import { WebSocket } from "k6/websockets";
 import { check, fail } from "k6";
 import { Counter, Trend } from "k6/metrics";
-import { guardedBase } from "./lib/guard.js";
+import { guardedBase, guardedPath } from "./lib/guard.js";
 import { auth, loadUsers, signIn } from "./lib/session.js";
 import {
   COMPLIANT_WALLET_PERIOD_MS,
@@ -42,7 +42,7 @@ const CONNS = 5; // 06 section 10: 5 concurrent users
 const PERIOD_MS = Number(__ENV.CV_E27_WALLET_PERIOD_MS || COMPLIANT_WALLET_PERIOD_MS);
 const RUN_S = Number(__ENV.CV_E27_WS_RUN_S || 600);
 const MIN_FRAMES = 20;
-const WS_URL = BASE.replace(/^http/, "ws") + (__ENV.WS_PATH || "/ws"); // profiles.json ws_path
+const WS_URL = BASE.replace(/^http/, "ws") + guardedPath(__ENV.WS_PATH); // profiles.json ws_path
 const ORIGIN = "http://127.0.0.1:5173"; // profiles.json origin
 const SUBPROTOCOL = "cv.v1.json"; // profiles.json subprotocol
 
@@ -187,5 +187,6 @@ export function teardown(data) {
 }
 
 export function handleSummary(data) {
+  delete data.setup_data; // setup() returns session tokens: never written to a file (C-12.2)
   return { [__ENV.CV_E27_SUMMARY || "k6-summary-wallet-fanout.json"]: JSON.stringify(data) };
 }

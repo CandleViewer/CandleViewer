@@ -143,6 +143,7 @@ def test_burst_check_refuses_a_signed_non_get_call_to_any_path(path: str) -> Non
     ]
 
 
+# nosemgrep: cv-withdrawal-endpoint-ban reason=deny-table owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
 @pytest.mark.parametrize("path", ["/v5/order/realtime", "/v5/asset/transfer/query-account-coin"])
 def test_burst_check_refuses_an_order_or_fund_path_even_as_a_get(path: str) -> None:
     rows = [_line(IN_WINDOW, path=path)]
@@ -223,12 +224,15 @@ PLAN = (REPO / "qa/plans/e27/chaos.md").read_text()
 DOC_06 = (REPO / "docs/plan/06-performance-and-load-standard.md").read_text().splitlines()
 DOC_23 = (REPO / "docs/plan/23-ws-protocol.md").read_text().splitlines()
 THRESHOLDS = REPO / "tests/load/k6/accounts/lib/thresholds.js"
+GUARD_JS = REPO / "tests/load/k6/accounts/lib/guard.js"
+K6_DIR = REPO / "tests/load/k6/accounts"
+K6_SCRIPTS = ["health_poll.js", "key_verify_burst.js", "wallet_fanout.js"]
 
 
-def _node(body: str) -> str:
+def _node(body: str, module: Path = THRESHOLDS) -> str:
     node = shutil.which("node")
-    assert node, "node is required: the k6 threshold module is checked with it (never skipped)"
-    script = f"import * as t from {json.dumps(THRESHOLDS.as_uri())};\n{body}"
+    assert node, "node is required: the k6 lib modules are checked with it (never skipped)"
+    script = f"import * as t from {json.dumps(module.as_uri())};\n{body}"
     done = subprocess.run(  # noqa: S603 - fixed argv, a script built from constants here
         [node, "--input-type=module", "-e", script],
         capture_output=True, text=True, timeout=60, check=False,
@@ -303,3 +307,36 @@ def test_proposed_numbers_match_the_plan_and_say_proposed() -> None:
     assert k6["slack"] == 50 and "tolerance 50 ms, PROPOSED" in PLAN
     assert sampler.MIN_SAMPLES == 100 and sampler.WINDOW_S == 12 * 3600
     assert "last 12h ≤0.18MB/h over ≥100 samples" in DOC_06[212]  # 06 line 213
+
+
+# -- the WS path the wallet script joins to the guarded base (BQ-11) -----------------------------
+@pytest.mark.parametrize("raw", [None, "", "/ws", "/v1/ws", "/a_b-c/ws"])
+def test_k6_ws_path_accepts_a_plain_absolute_path(raw: str | None) -> None:
+    arg = "undefined" if raw is None else json.dumps(raw)
+    assert _node("console.log(t.guardedPath(" + arg + "));", GUARD_JS) == (raw or "/ws")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["@evil.example/ws", ".evil.example/ws", "ws", "//evil.example/ws", "/ws?x=1", "/ws#f",
+     "/../ws", "/ws:9", "/ws\\x", "/ ws"],
+)  # fmt: skip
+def test_k6_ws_path_refuses_a_value_that_could_move_the_socket_off_the_host(raw: str) -> None:
+    script = "try { t.guardedPath(" + json.dumps(raw) + "); console.log('ran'); }"
+    assert _node(script + " catch (e) { console.log('refused'); }", GUARD_JS) == "refused"
+
+
+def test_the_wallet_script_joins_only_the_guarded_path() -> None:
+    src = (K6_DIR / "wallet_fanout.js").read_text()
+    assert 'BASE.replace(/^http/, "ws") + guardedPath(__ENV.WS_PATH);' in src
+    assert src.count("__ENV.WS_PATH") == 1
+
+
+# -- the summary file never carries what setup() returned (session tokens, C-12.2) ---------------
+@pytest.mark.parametrize("name", K6_SCRIPTS)
+def test_the_summary_drops_the_setup_data_before_it_is_written(name: str) -> None:
+    src = (K6_DIR / name).read_text()
+    assert src.count("export function handleSummary(data) {") == 1
+    body = src.split("export function handleSummary(data) {", 1)[1].split("\n}\n", 1)[0]
+    assert body.count("JSON.stringify(data)") == 1
+    assert 0 <= body.find("delete data.setup_data;") < body.index("JSON.stringify(data)")

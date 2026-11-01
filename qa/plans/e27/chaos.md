@@ -69,6 +69,7 @@ label is the orchestrator's. <!-- BQ-12 -->
 | `services/api/tests/chaos/accounts/_e27_stack.py`              | chaos helper: switch CLI, request log, REST, `/metrics`                                               |
 | `services/api/tests/chaos/accounts/test_e27_health_chaos.py`   | E27-C1 to C4 (marked `chaos` and `harness`)                                                           |
 | `services/api/tests/chaos/accounts/test_e27_kek_and_memory.py` | E27-C5a, E27-C5b, E27-M1, E27-A1: in process, no stack, ordinary PR lane <!-- BQ-06 --><!-- BQ-14 --> |
+| `services/api/tests/chaos/accounts/_e27_memory_probe.py`       | E27-M1's walk and its control, run in a fresh interpreter; a module, not a test                       |
 | `services/api/tests/chaos/accounts/test_e27_harness_guards.py` | harness self-tests, no stack, ordinary PR lane                                                        |
 | `services/api/tests/chaos/accounts/_e27_stub_cost.py`          | the stub's own cost per signed call, in process (F7); a script, not a test                            |
 | `services/api/cvdev/account_fixture/seed.py`                   | `ACCOUNTS`: six registered accounts, fixture data only <!-- BQ-04 -->                                 |
@@ -152,14 +153,28 @@ fails loudly (a stack-less run is an error, never a pass). The in-process module
    a page <!-- BQ-14 -->.
 6. **Narrowing (memory):** "no plaintext credential recoverable from memory dumps" is met in process
    by a walk of live objects after the signing call returns, with a fixture marker secret made at
-   run time. It does not see freed memory not yet reused, or copies inside C buffers; a core-dump
-   scan is an owner-run item on the dev host <!-- BQ-14 -->.
+   run time. The walk and its positive control run in a fresh interpreter
+   (`tests/chaos/accounts/_e27_memory_probe.py`), so their cost is bounded by what that module
+   imports, not by what the lane ran before them. It does not see freed memory not yet reused, or
+   copies inside C buffers; a core-dump scan is an owner-run item on the dev host <!-- BQ-14 -->.
 7. **Narrowing (KEK):** both KEK cases run on M2's own service with a fake source, not on the
    stack: the control CLI has no KEK command (F1). TC-120's HTTP answers (`403` per route, the
    `system` notice) stay with TC-120; these cases assert the typed error under them <!-- BQ-06 -->.
 8. Network faults are injected in process (pack scenarios, the switch CLI), never `tc netem` or a
    proxy: C-13.6 names outcomes, not mechanisms; recorded against the ticket's tech note
    <!-- BQ-06 -->.
+9. **Deviation (C-13.7, real waits in the stack cases):** C-13.7 binds every test, and the stack
+   cases keep bounded wall-clock waits: the per-key test throttle (`test_e27_health_chaos.py`,
+   `TEST_THROTTLE_S`), the 5xx hold (`HOLD_5XX_S`), the 30 s no-retry window, the TOTP step retry
+   and the poll step of `wait_until` (`_e27_stack.py`). The fixture clock cannot drive them: the
+   control CLI's `clock` moves only the stub's scenario time, exchange time and request-log `ts`
+   (`cvdev/account_fixture/cli.py` header), while every one of these timers is the api process's
+   own: the throttle stamps `datetime.now(UTC)` (`key_test_wiring.py`), the health ages run on
+   `CLOCK_BOOTTIME` (`accounts/health.py`), the TOTP step and the retry schedule run on the host
+   clock, and `bybit_5xx` answers 503 at every scenario time. Moving the stub's exchange time ahead
+   is also the `clock_skew` fault itself (C4), so advancing it inside another case would add a
+   second fault. The harness therefore carries no clock helper; every wait is bounded and polls an
+   observable. Recorded per the security read of record 6556583904, item 5.
 
 ## 5. Not asserted (and why)
 
@@ -196,7 +211,7 @@ fails loudly (a stack-less run is an error, never a pass). The in-process module
    fails that criterion (F8).
 4. Request-log JSON key names beyond `signing_key_id` and `method` (the module docstring names those); the
    first run confirms them.
-5. Whether the fixture clock affects the monitor's monotonic timers: the chaos cases use wall-clock polling.
+5. Answered: the fixture clock does not reach the monitor's timers (section 4 item 9).
 6. Whether `POST .../keys/{keyId}/test` needs a step-up on the fixture stack, and the roster's Owner username.
 7. Shape of the `wallet` sub frame: checked against 23 section 6.2 (the `wallet` row: option
    `exchange_account_ids`, throttle 500 ms), the section 12.1 sub example (`{ch: "wallet", opts:

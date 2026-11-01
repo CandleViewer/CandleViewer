@@ -11,8 +11,10 @@ narrowing written into qa/plans/e27/chaos.md (section 0 and E27-C5, E27-M1, E27-
   KEK in memory, the source unread. The ruled refusals of add, rotate and verify and the critical
   alert are not what the code does today; they are finding rows in the plan, not assertions here.
 - Memory: after a signing call returns, a walk of every live object the collector reaches finds
-  no object holding the marker secret (a fixture marker, made at run time; never a real key). A
-  core-dump scan stays an owner-run item on the dev host.
+  no object holding the marker secret (a fixture marker, made at run time; never a real key). The
+  walk runs in a fresh interpreter (`_e27_memory_probe.py`), so its cost is bounded by what that
+  module imports, never by what the lane ran before it. A core-dump scan stays an owner-run item
+  on the dev host.
 
 The rule check is a Python evaluation of the rule's own expression against the metric (no promtool
 binary in the PR lane); the generated promtool cases in `infra/prometheus/tests/` stay the CI gate.
@@ -20,10 +22,11 @@ binary in the PR lane); the generated promtool cases in `infra/prometheus/tests/
 
 from __future__ import annotations
 
-import gc
-import os
+import json
 import re
-from collections.abc import Iterator
+import subprocess
+import sys
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -36,20 +39,24 @@ from candleviewer.secrets import KEY_ID_SLOT
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets.errors import KekUnavailable
 from candleviewer.secrets.metrics import export_secrets_metrics
-from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.service import SecretsService, mint_borrower, mint_candidate_keys
 from tests.unit.credentials_m2._service_fakes import _borrow, _ctx, _Src, _store_one, _svc
 from tests.unit.credentials_m2._vectors import ACCOUNT, KEK_V1, SNAPSHOT
 from tests.unit.credentials_m2.test_candidate_keys import run, signing
 
+# A bound well inside the lane's 30-minute job cap: every case here runs in process in well under
+# a second, or waits on the probe, which `PROBE_TIMEOUT_S` bounds (security read 6556583904 item 2).
+pytestmark = pytest.mark.timeout(90)
+
 RULES = Path(__file__).resolve().parents[5] / "infra/prometheus/alerts/system_page.yml"
+API_ROOT = Path(__file__).resolve().parents[3]  # services/api: the probe runs as a module from here
+PROBE = "tests.chaos.accounts._e27_memory_probe"
+PROBE_TIMEOUT_S = 60.0
 GAUGE = "cv_kek_degraded_state"
 #: The label the page groups by: M2's exporter adds it to every served series (secrets/metrics.py).
 BY = "env"
 #: The one expression shape this evaluator reads; any other shape fails the test, never passes it.
 _EXPR = re.compile(r"max by \((\w+)\) \((\w+)\) == (\d+)")
-#: Fixture-only marker: a fixed prefix and random hex made per run, so no copy sits in the source.
-MARK_PREFIX = "e27q03-marker-"
 
 
 @pytest.fixture(autouse=True)
@@ -58,6 +65,15 @@ def _gauge_restored() -> Iterator[None]:
     before = m.kek_degraded_state._value.get()
     yield
     m.kek_degraded_state.set(before)
+
+
+@pytest.fixture
+async def started() -> AsyncIterator[list[SecretsService]]:
+    """C-13.7: every service a case starts is stopped in teardown, so none outlives its case."""
+    services: list[SecretsService] = []
+    yield services
+    for svc in services:
+        await svc.stop(0)
 
 
 def _kek_page() -> dict[str, Any]:
@@ -94,9 +110,12 @@ def _served() -> tuple[float | None, dict[str, str]]:
     return None, {}
 
 
-async def test_kek_refused_at_start_refuses_key_operations_and_fires_the_page() -> None:
+async def test_kek_refused_at_start_refuses_key_operations_and_fires_the_page(
+    started: list[SecretsService],
+) -> None:
     svc, ctx = _svc(_Src(None, 1)), _ctx()
     await svc.start(ctx)
+    started.append(svc)
 
     assert svc.health().status is HealthStatus.DEGRADED
     assert ctx.oms_read_only_gate.is_read_only
@@ -104,17 +123,22 @@ async def test_kek_refused_at_start_refuses_key_operations_and_fires_the_page() 
         await run(mint_candidate_keys(svc), signing(SNAPSHOT))
     with pytest.raises(KekUnavailable):  # rotate: the KEK re-wrap
         await svc.rewrap_deks(2, environment="demo", actor_user_id=ACCOUNT.hex, actor_role="owner")
-    with pytest.raises(KekUnavailable):  # verify: a self-check signs, and cannot
-        await _borrow(svc, ACCOUNT)
+    with pytest.raises(KekUnavailable):  # verify: signs as the self-check does (key_verify.py)
+        await mint_borrower(svc, "exchange_adapter").sign(
+            ACCOUNT, (KEY_ID_SLOT,), purpose="key_verify"
+        )
     rule = _kek_page()
     assert rule["labels"]["severity"] == "page" and rule["labels"]["component"] == "secrets"
     assert _sample() == 1 and _served() == (1.0, {BY: "demo"}) and _fires(rule, _served())
 
 
-async def test_kek_refused_after_start_signing_goes_on_from_memory() -> None:
+async def test_kek_refused_after_start_signing_goes_on_from_memory(
+    started: list[SecretsService],
+) -> None:
     source = _Src(KEK_V1, 1)
     svc = _svc(source)
     await svc.start(_ctx())
+    started.append(svc)
     meta = await _store_one(svc)
     loads = len(source.handed)
 
@@ -136,64 +160,19 @@ def test_the_page_rule_evaluator_fires_only_on_the_degraded_value() -> None:
         _fires({**rule, "expr": f"max by (foo) ({GAUGE}) == 1"}, (1.0, {BY: "demo"}))
 
 
-def _marked() -> tuple[str, Secret[str]]:
-    """The needle and the secret, as two distinct objects of equal text: the walk skips the needle
-    by identity only, so a reference to the secret's own object is never hidden."""
-    text = MARK_PREFIX + os.urandom(12).hex()
-    return "".join(list(text)), Secret(text)
-
-
-def _holders(needle: str) -> list[str]:
-    """Type names of live objects holding `needle`'s text in a str, bytes or bytearray. Starts at
-    every object the collector tracks and descends into the containers it does not track (a dict
-    or tuple of strings only), so a string is found wherever a reachable container holds it."""
-    raw = needle.encode()
-    found: list[str] = []
-    seen: set[int] = set()
-    stack: list[Any] = gc.get_objects()
-    while stack:
-        obj = stack.pop()
-        if id(obj) in seen:
-            continue
-        seen.add(id(obj))
-        for ref in gc.get_referents(obj):
-            if ref is needle or ref is raw:
-                continue
-            if isinstance(ref, str):
-                hit = needle in ref
-            elif isinstance(ref, bytes | bytearray):
-                hit = raw in ref
-            else:
-                hit = False
-                if not gc.is_tracked(ref) and isinstance(ref, dict | tuple | list | frozenset):
-                    stack.append(ref)
-            if hit:
-                found.append(type(obj).__name__)
-    return found
+def _probe(mode: str) -> list[str]:
+    """The probe's verdict: the type names of objects holding its marker, from a fresh process."""
+    done = subprocess.run(  # noqa: S603 - this interpreter and constant arguments only
+        [sys.executable, "-m", PROBE, mode],
+        cwd=API_ROOT, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S, check=False,
+    )  # fmt: skip
+    assert done.returncode == 0, f"the memory probe exited {done.returncode}: {done.stderr[-2000:]}"
+    return list(json.loads(done.stdout.splitlines()[-1]))
 
 
 def test_the_walk_finds_a_marker_held_in_an_untracked_container() -> None:
-    needle, kept = _marked()
-    holder = {"held": "".join(list(needle))}  # a dict of strings only: not tracked by gc
-    box = [holder]  # a tracked list, as any live structure that keeps such a dict is
-    assert not gc.is_tracked(holder) and gc.is_tracked(box)
-    assert "dict" in _holders(needle)
-    del box, holder, kept
+    assert "dict" in _probe("control")
 
 
-async def test_no_live_object_holds_the_marker_secret_after_signing() -> None:
-    svc: SecretsService = _svc(_Src(KEK_V1, 1))
-    await svc.start(_ctx())
-    needle, secret = _marked()
-    broker = svc._require()
-    meta = await broker.store("demo", ACCOUNT, "m", Secret("ABCD1234"), secret, SNAPSHOT)
-    broker._store.activate(meta.key_id)  # type: ignore[attr-defined]  # in-memory fake helper
-    del secret
-
-    signed = await mint_borrower(svc, "exchange_adapter").sign(
-        meta.key_id, (KEY_ID_SLOT,), purpose="sign_rest"
-    )
-    assert signed.signature  # the call returned a MAC
-    gc.collect()
-
-    assert _holders(needle) == []
+def test_no_live_object_holds_the_marker_secret_after_signing() -> None:
+    assert _probe("signing") == []

@@ -97,6 +97,7 @@ def _test_once(api: Api, account: str, key_row: dict[str, Any]) -> dict[str, Any
         if status in end_ok:
             return dict(body)
         assert status == 429, f"testApiKey answered {status}"
+        # the throttle runs on the API host's clock, out of the fixture clock's reach (plan 4.9)
         wait_until(lambda: False, TEST_THROTTLE_S, TEST_THROTTLE_S)
     raise AssertionError("testApiKey stayed throttled")
 
@@ -155,7 +156,8 @@ def test_rest_5xx_during_self_check_fails_closed_and_keeps_prior_verdict(
     switch(KEY_ID, "bybit_5xx")
     first = _test_once(api, account, key_row)
     _fails_closed(first, "service_unavailable")  # KeyProbeError: HTTP 5xx
-    # the window of the ticket: the check keeps failing closed through HOLD_5XX_S, never a pass
+    # the window of the ticket: the check keeps failing closed through HOLD_5XX_S, never a pass;
+    # wall time, as `bybit_5xx` answers alike at every scenario time (plan section 4 item 9)
     wait_until(lambda: False, max(0.0, HOLD_5XX_S - TEST_THROTTLE_S), 5.0)
     _fails_closed(_test_once(api, account, key_row), "service_unavailable")
     after = _verdicts()
@@ -178,7 +180,8 @@ def test_rate_limit_10018_on_self_check_is_inconclusive_and_does_not_loop(
     switch(KEY_ID, "rate_limited_10018")
     _fails_closed(_test_once(api, account, key_row), "rate_limited")
     first_pass = len(request_log()) - logged  # calls one check makes (one pass, no retry)
-    # no retry loop (TC-123): nothing more is sent to the stub for a quiet 30 s
+    # no retry loop (TC-123): nothing more is sent to the stub for a quiet 30 s; any retry would
+    # be scheduled on the api process's clock, which the fixture clock does not move (plan 4.9)
     wait_until(lambda: False, 30.0, 30.0)
     assert len(request_log()) - logged == first_pass, (
         "the rate-limited check kept calling the exchange"

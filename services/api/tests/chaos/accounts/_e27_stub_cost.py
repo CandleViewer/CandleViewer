@@ -21,6 +21,7 @@ import threading
 import time
 from pathlib import Path
 
+# nosemgrep: cv-adapter-isolation reason=test-stub owner=@CandleViewer/security review=2027-03-25
 from candleviewer.exchange.bybit.key_info import KEY_INFO_PATH
 from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.settings import Environment
@@ -30,6 +31,8 @@ from cvdev.account_fixture.transport import FixtureTransport
 from tests._account_fixtures import PACK
 from tests.unit.cvdev.test_transport_guards import _get
 from tests.unit.cvdev.test_transport_serving import KEY_IDS, WALLET
+
+# nosemgrep: cv-adapter-isolation reason=test-stub owner=@CandleViewer/security review=2027-03-25
 from tests.unit.exchange.bybit.test_account_fixture_pack import NOW
 
 

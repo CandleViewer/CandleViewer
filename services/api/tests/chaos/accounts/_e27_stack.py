@@ -91,17 +91,6 @@ def switch(key_id: str, scenario: str) -> None:
     _exec("python", "-m", "cvdev.account_fixture.cli", "switch", key_id, "--to", scenario)
 
 
-def advance_clock(seconds: int) -> None:
-    _exec(
-        "python",
-        "-m",
-        "cvdev.account_fixture.cli",
-        "clock",
-        "advance",
-        str(int(seconds)),
-    )
-
-
 def request_log() -> list[dict[str, Any]]:
     """The stub's request log (cvdev/account_fixture/requestlog.py); never a signature or secret."""
     return [
@@ -136,7 +125,7 @@ class Api:
             )  # fmt: skip
             if status == 200 or time.monotonic() > deadline:
                 break
-            wait_until(lambda: False, 1.0, 1.0)
+            wait_until(lambda: False, 1.0, 1.0)  # the API's own TOTP clock (plan section 4 item 9)
         assert status == 200, f"mfa/verify {status}"
         self.token = body["tokens"]["access_token"]
         m = re.search(rf"{re.escape(CSRF_COOKIE)}=([^;,\s]+)", headers.get("Set-Cookie", ""))
@@ -206,9 +195,9 @@ def health_count(state: str) -> float:
 
 
 def wait_until(cond: Callable[[], bool], timeout_s: float, step_s: float = 1.0) -> bool:
-    """Poll `cond` until true or `timeout_s` passes. Bounded, and the only wait: the stack runs on
-    wall-clock time, so a fake clock cannot stand in (C-13.7 binds unit tests; qa/plans/e27/chaos.md
-    section 6 item 5).
+    """Poll `cond` until true or `timeout_s` passes. Bounded, and the only wait: the timers under
+    test are the api process's own, which the fixture clock does not reach, so a fake clock cannot
+    stand in (a C-13.7 deviation, recorded in qa/plans/e27/chaos.md section 4 item 9).
     """
     end = time.monotonic() + timeout_s
     while time.monotonic() < end:

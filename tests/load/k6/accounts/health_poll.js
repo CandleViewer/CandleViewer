@@ -104,5 +104,6 @@ export function peak(data) {
 
 // One JSON summary for the results file (the plan: where results go).
 export function handleSummary(data) {
+  delete data.setup_data; // setup() returns session tokens: never written to a file (C-12.2)
   return { [__ENV.CV_E27_SUMMARY || "k6-summary-health-poll.json"]: JSON.stringify(data) };
 }
