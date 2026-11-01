@@ -26,7 +26,7 @@ from candleviewer.domain.events import Instrument
 from candleviewer.exchange.base.fakes import FakeReject
 from candleviewer.exchange.base.models import PlaceOrderRequest, Position
 from candleviewer.exchange.bybit.mapping import map_ret_code
-from candleviewer.oms.errors import OrderInvalid, PositionChanged
+from candleviewer.oms.errors import LotSizeViolation, OrderInvalid, PositionChanged
 from candleviewer.oms.ports import NoPositionProtection
 from candleviewer.oms.position_writes import (
     CloseSize,
@@ -271,3 +271,67 @@ async def test_the_venue_read_refusal_is_a_close_routes_never_a_plain_reduce_onl
         await rig.pipeline.submit(close_request(held("0.250"), HALF, Decimal("0.125")), plain)
     assert not isinstance(refused.value, PositionChanged)
     assert rig.calls() == ["positions"]
+
+
+# --- a close of the whole position under the minimum (the orchestrator's ruling (a)) -----------
+
+WHOLE = CloseTerms("market", pct=Decimal(100))
+
+
+async def test_whole_close_a_position_under_the_minimum_reaches_the_venue_its_exemption_named(
+    rig: SubmitRig,
+) -> None:
+    """C-2.6's carve-out: a position under the instrument's minimum stays closable. Its whole
+    close passes the server's own `min_order_qty` to the venue, which arbitrates, reduce-only,
+    and the order's write-ahead record names the exemption."""
+    lot(rig, qty_step="0.001", min_order_qty="0.010")
+    rig.port.demo.seed_position(venue("0.004"))
+    size, outcome = await close(rig, held("0.004"), WHOLE)
+    assert (size.full, outcome.status) == (True, 202)
+    [create] = creates(rig)
+    assert (create.qty, create.reduce_only) == (Decimal("0.004"), True)
+    [written] = [r for r in rig.records("orders.submit") if r.reason == "validated"]
+    assert written.detail["exemption"] == "min_order_qty_whole_close"  # its write-ahead record
+    assert_never_opens(rig)
+
+
+async def test_whole_close_an_ordinary_close_names_no_exemption(rig: SubmitRig) -> None:
+    rig.port.demo.seed_position(venue("0.250"))
+    _size, outcome = await close(rig, held("0.250"), WHOLE)
+    assert outcome.status == 202
+    [written] = [r for r in rig.records("orders.submit") if r.reason == "validated"]
+    assert "exemption" not in written.detail  # its write-ahead record, nor the outcome's
+    assert all("exemption" not in r.detail for r in rig.records("orders.submit"))
+
+
+async def test_whole_close_a_partial_reduce_only_order_under_the_minimum_keeps_its_400(
+    rig: SubmitRig,
+) -> None:
+    """Only the whole position's close is exempt: a partial reduce-only order under the minimum
+    is refused before anything is recorded or sent."""
+    lot(rig, qty_step="0.001", min_order_qty="0.010")
+    rig.port.demo.seed_position(venue("0.020"))
+    partial = CloseTerms("market", qty=Decimal("0.004"))
+    with pytest.raises(LotSizeViolation) as refused:
+        await rig.pipeline.submit(close_request(held("0.020"), partial, Decimal("0.004")), CLOSING)
+    assert ("qty", "min_order_qty") in [(e.field, e.rule) for e in refused.value.errors]
+    assert rig.calls() == ["positions"] and rig.written()[0] == 0
+
+
+async def test_whole_close_the_venues_rejection_is_the_typed_502_sent_once_under_one_id(
+    rig: SubmitRig,
+) -> None:
+    """The venue arbitrates the whole close: its rejection (the plan-origin `close_rejected`
+    reply, the pack's one refusal of a reduce-only create, until E29-K01 records the venue's
+    answer to a close under its minimum) is the 502 with its return code alone, and the close is
+    sent once, under the `order_link_id` it was recorded with, never again under a new one
+    (C-2.10)."""
+    lot(rig, qty_step="0.001", min_order_qty="0.010")
+    rig.port.demo.seed_position(venue("0.004"))
+    rig.port.demo.script("place_order", close_rejected())
+    _size, outcome = await close(rig, held("0.004"), WHOLE)
+    assert (outcome.status, outcome.code, outcome.ret_code) == (502, "exchange_error", 110017)
+    assert outcome.order_id is not None
+    [create] = creates(rig)
+    assert create.order_link_id == rig.store._orders[outcome.order_id].order_link_id
+    assert_never_opens(rig)

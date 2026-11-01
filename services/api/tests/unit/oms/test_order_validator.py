@@ -46,7 +46,12 @@ from candleviewer.oms.ports import (
     SizedOrder,
     StopOffset,
 )
-from candleviewer.oms.validator import OrderPlacementRefused, Validator, symbol_allowed
+from candleviewer.oms.validator import (
+    OrderPlacementRefused,
+    Validator,
+    closes_whole,
+    symbol_allowed,
+)
 
 ACCOUNT = AccountId(UUID("7d3c9a10-28a1-4c1e-9e01-0000000000a2"))
 _PROFILES = Path(__file__).resolve().parents[2] / "fixtures" / "profiles"
@@ -957,3 +962,54 @@ def test_property_check_order_answers_any_finite_figures_with_a_typed_refusal_on
         assert outside or named or isinstance(refused.__cause__, InvalidOperation)
     else:
         assert not outside  # a figure outside its bounds is never passed
+
+
+# --- a close of the whole position (the orchestrator's ruling (a) of 2026-11-01) --------------
+
+#: A sell of 0.005, under the instrument's minimum of 0.01.
+_TINY: dict[str, Any] = {"qty": Decimal("0.005")}
+
+
+def _check_closing(order: SizedOrder, position_qty: Decimal | None) -> None:
+    validator = Validator(read_only_gate=_Gate())
+    validator.check_order(
+        order, instrument=_instrument(), profile=_profile(), position_qty=position_qty
+    )
+
+
+def test_whole_close_a_reduce_only_close_of_the_whole_position_under_the_minimum_passes() -> None:
+    """C-2.6's carve-out: a position under the instrument's minimum stays closable; the venue
+    arbitrates its whole close."""
+    _check_closing(_order(**(_REDUCE | _TINY)), Decimal("0.005"))
+
+
+def test_whole_close_a_partial_reduce_only_order_under_the_minimum_keeps_its_400() -> None:
+    with pytest.raises(LotSizeViolation) as refused:
+        _check_closing(_order(**(_REDUCE | _TINY)), Decimal("0.008"))
+    assert _rules(refused.value) == [("qty", "min_order_qty")]
+
+
+def test_whole_close_an_order_not_reduce_only_is_never_exempt_whatever_its_size() -> None:
+    with pytest.raises(LotSizeViolation) as refused:
+        _check_closing(_order(**_TINY), Decimal("0.005"))
+    assert ("qty", "min_order_qty") in _rules(refused.value)
+
+
+def test_whole_close_with_no_position_read_keeps_the_minimum() -> None:
+    with pytest.raises(LotSizeViolation):
+        _check_closing(_order(**(_REDUCE | _TINY)), None)
+
+
+def test_whole_close_is_held_to_every_other_filter() -> None:
+    off_step = {"qty": Decimal("0.0055")}
+    with pytest.raises(LotSizeViolation) as refused:
+        _check_closing(_order(**(_REDUCE | off_step)), Decimal("0.0055"))
+    assert _rules(refused.value) == [("qty", "qty_step")]
+
+
+def test_closes_whole_needs_reduce_only_and_the_whole_size_the_read_showed() -> None:
+    order = _order(**(_REDUCE | _TINY))
+    assert closes_whole(order, Decimal("0.005")) is True
+    assert closes_whole(order, Decimal("0.006")) is False
+    assert closes_whole(order, None) is False
+    assert closes_whole(_order(**_TINY), Decimal("0.005")) is False
