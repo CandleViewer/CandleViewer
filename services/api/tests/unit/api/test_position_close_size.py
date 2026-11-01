@@ -13,7 +13,7 @@ import re
 import uuid
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from prometheus_client import generate_latest
@@ -153,6 +153,19 @@ async def test_close_position_a_symbol_the_floor_does_not_list_keeps_the_minimum
     assert world.submitted()[0].sizing.qty == Decimal("0.150")
 
 
+async def test_close_position_bq5_a_floor_that_cannot_be_read_is_left_out_never_refusing() -> None:
+    """The floor is advisory (C-2.6): one that fails leaves the close held to `min_order_qty`
+    alone, so the 75 % close the floor of 0.060 would refuse is sent, never refused for it."""
+
+    def unread(symbol: str) -> Decimal | None:
+        raise RuntimeError("no reference price")
+
+    world = World(floor=unread)
+    assert (await close(world, {"order_type": "market", "pct": "75"})).status_code == 202
+    assert world.submitted()[0].sizing.qty == Decimal("0.150")
+    assert counted(world) == {"accepted": 1.0}
+
+
 def test_create_app_hands_the_close_route_the_apps_own_sr_e22_03_floor() -> None:
     """BQ-5: the close route's dust floor is the app's SR-E22-03 helper, the one the trades
     topic and `/market/trades` read, never a second copy of the rule."""
@@ -252,6 +265,20 @@ async def test_close_position_only_a_first_502_re_reads_the_position(status: Any
         )  # fmt: skip
     await close(world, HALF, key=key)
     assert world.positions.refreshes == []
+
+
+@pytest.mark.parametrize("status", [429, 502])
+async def test_close_position_a_repeat_the_pipeline_answers_is_never_counted(
+    status: Literal[429, 502],
+) -> None:
+    """20 Sec.12.1: a repeat answered from the anchor is not counted, the pipeline's own answer
+    to a concurrent repeat (`replayed`) included, and it re-reads nothing."""
+    world = World()
+    code = {429: "exchange_rate_limited", 502: "exchange_error"}[status]
+    world.pipeline.close = SubmitOutcome(status, uuid.uuid4(), uuid.uuid4(), code=code,
+                                         replayed=True)  # fmt: skip
+    assert (await close(world, HALF)).status_code == status
+    assert counted(world) == {} and world.positions.refreshes == []
 
 
 # --- the helpers ------------------------------------------------------------------------------

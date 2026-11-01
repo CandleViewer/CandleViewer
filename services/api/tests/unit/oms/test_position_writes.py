@@ -727,6 +727,19 @@ def test_resolve_close_refuses_a_partial_close_leaving_dust_or_under_the_minimum
     assert refused.value.detail == detail
 
 
+def test_resolve_close_a_refusals_figures_never_show_in_its_repr() -> None:
+    """C-12.6: the limit, the resolved size and the remainder are the problem body's alone; a
+    repr, which a log could carry, names the field, the rule, the sentence and the symbol."""
+    with pytest.raises(OrderInvalid) as refused:
+        resolve_close(row(size=Decimal("0.15")), pct("50"), lot("0.01", "0.1"))
+    for error in refused.value.errors:
+        assert (error.limit, error.resolved) == (Decimal("0.1"), Decimal("0.07"))
+        assert repr(error) == (
+            f"FieldError(field='pct', rule={error.rule!r}, message={error.message!r}, "
+            "symbol='BTCUSDT')"
+        )
+
+
 def test_resolve_close_bq5_a_remainder_under_the_floor_is_dust_above_the_minimum() -> None:
     """BQ-5 as ruled: until E29-K01 confirms the venue fact, a remainder under SR-E22-03's
     `MIN_SIZE_FLOOR` is dust even above `min_order_qty`, named with that floor as its limit; at the

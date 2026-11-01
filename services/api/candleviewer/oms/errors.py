@@ -8,6 +8,7 @@ or a secret (C-12.6).
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -274,15 +275,16 @@ class FieldError:
     """One `errors[]` item of a refusal (22 `Problem.errors`): the request field, the rule that
     failed and a fixed sentence, which names no value but the instrument's own limits. A rule
     that checks a size against the instrument also names the symbol, the `limit` it breaks and,
-    for `closePosition`'s size rules (E29-S03), the size `resolved` and the `remaining` one."""
+    for `closePosition`'s size rules (E29-S03), the size `resolved` and the `remaining` one:
+    figures for the problem body alone, which its repr never shows (C-12.6)."""
 
     field: str
     rule: str
     message: str
     symbol: str | None = None
-    limit: Decimal | None = None
-    resolved: Decimal | None = None
-    remaining: Decimal | None = None
+    limit: Decimal | None = dataclasses.field(default=None, repr=False)
+    resolved: Decimal | None = dataclasses.field(default=None, repr=False)
+    remaining: Decimal | None = dataclasses.field(default=None, repr=False)
 
 
 class OrderRefused(OmsError):
