@@ -17,8 +17,8 @@ const PKG = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REPO = join(PKG, "..", "..");
 const C216_RULES = ["no-restricted-imports", "no-restricted-globals", "no-restricted-syntax"];
 // E11-S02: the WebGL2 backend, E11-S03: the shared transform, E11-T05: the Canvas 2D backend and
-// E11-S04: the gesture logic, E11-S08: picking (BQ-140) and E11-S11: the SDF atlas (BQ-261) join
-// every DOM-free list below.
+// E11-S04: the gesture logic, E11-S08: picking (BQ-140), E11-S11: the SDF atlas (BQ-261) and
+// E11-T04: the theme ingest join every DOM-free list below.
 const GL = [
   "src/gl/probe.ts",
   "src/viewport/probe.ts",
@@ -26,6 +26,7 @@ const GL = [
   "src/interaction/probe.ts",
   "src/hit/probe.ts",
   "src/text/probe.ts",
+  "src/theme/probe.ts",
 ];
 // Generous per-test budget for the loops, the tsc programs and the project-service lint: they
 // pass in ~2 s alone but share the runner with the whole unit project under load (C-9.3).

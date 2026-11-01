@@ -615,6 +615,33 @@ vendored fonts, the table edit and the `<Chart>` font binding are PR C.
 | G-90   | `digest` falls back to FNV-64 outside a secure context.                                                                                                                                                                                       |
 | BQ-272 | The per-launch generation-time log line waits for a log seam (E11-T07, as G-33); `generateMs` is counted.                                                                                                                                     |
 
+## Theme ingest (E11-T04 PR-2)
+
+`src/theme/` turns the host's token object into the engine's own data, with no CSS, no DOM and no
+`packages/ui` import (C-2.16). It is internal (never a root export, BQ-2) and is not wired to
+`setTheme` / `setDensity` or the worker yet: that is PR-4.
+
+- `slots.ts`: `THEME_SLOTS`, the 35 colour slots the engine reads (E11-D05 §4.1, §4.1b, §4.2, §5.3),
+  append-only, and `ENGINE_SLOT_PAIRS`, every fg/bg pair with its class (`text`, `non-text`,
+  `decorative`), which a packages/ui test measures over the three themes (PR-5).
+- `ThemeIngest.ts`: `ingestTheme` resolves `#rgb` / `#rrggbb` / `#rrggbbaa` to straight sRGB 0..1
+  and returns a deep-frozen `EngineTheme`. A missing or invalid slot or field throws
+  `ThemeIngestError` (`ENGINE_THEME_INVALID`) naming the first bad key; `ThemeState.apply` installs
+  all of a theme or nothing. `packTheme` writes the quads into a caller-owned `Float32Array`.
+- `Density.ts`: `densityRecord(mode)` returns E11-D05 §6's whole frozen record; no API sets one member.
+- `patterns.ts`: D05 §7's eight pattern ids and §7.2's five dash ids, with fixed indices.
+
+## Design deltas (E11-T04 PR-2; the BQ-T04 PROPOSED defaults, not yet ruled)
+
+| BQ        | Where   | The ticket / `26`                           | Shipped                                                                                                                                                                                                                   |
+| --------- | ------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BQ-T04-03 | Colour  | A flat `EngineTheme` of premultiplied RGBA. | Straight sRGB 0..1 (ADR-0024 §5; linearised in the shader). Each slot is a frozen 4-tuple, since a typed array cannot be frozen; `packTheme` fills the GPU buffer. The input is §8 `ThemeTokens` plus an optional `name`. |
+| BQ-T04-04 | Errors  | "Missing key throws, names the key".        | Thrown synchronously by the ingest, which PR-4 runs on the main thread. Unknown colour keys are ignored, so the host may pass the whole engine export.                                                                    |
+| BQ-T04-05 | Density | Three members; dense "steps down later".    | D05 §6's four members (`cellPadPx`, `fontSizeClass`, `axisFontSizeClass`, `lodBias` px) plus the axis gap `G`; dense keeps compact's `lodBias` 0. An unknown mode throws `ENGINE_THEME_INVALID` naming `density`.         |
+| BQ-T04-07 | Pairs   | Every pair ≥ 3:1.                           | Classes per D05 Q4: eight decorative slots, measured on the ninth (pane.bg.default), are listed as `decorative`, not omitted.                                                                                             |
+| —         | Slots   | —                                           | No `color.cvd.*` slot (G16: no engine route yet) and no `color.chart.line` / `.baseline` (E12-D09's).                                                                                                                     |
+| —         | Hatch   | E06-D01 §3: 45°, 2 px pitch, no line width. | `pattern.hatch.estimated` takes a 1 px line.                                                                                                                                                                              |
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/chart-engine build` — tsup ESM build with `.d.ts` (entries:
