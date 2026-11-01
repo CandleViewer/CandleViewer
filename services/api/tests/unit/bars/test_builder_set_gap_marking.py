@@ -320,3 +320,27 @@ async def test_a_post_hole_print_amending_a_clock_closed_bar_flags_that_bar(tmp_
         (0, "close", True),  # the amended close
     ]
     await s.stop()
+
+
+async def test_a_pre_hole_straggler_does_not_take_the_flag_the_post_hole_bar_does(
+    tmp_path: Path,
+) -> None:
+    clock, bus, sink = Clock(T0), Bus(), RecordingSink()
+    s = _make(tmp_path, bus, sink, clock=clock)
+    await s.register(SPECS["time"], SYM, "a")
+    await bus.publish(TOPIC, trade(T0 + 40_000_000, seq=1))  # the newest print before the hole
+    await settle(bus, s)
+    clock.t = T0 + 61_000_000
+    await s.tick()  # bar 0 closed by the clock
+    await bus.publish(GAP_TOPIC, _gap(False))
+    await bus.publish(TOPIC, trade(T0 + 10_000_000, seq=2))  # belongs before the hole: amends bar 0
+    await bus.publish(TOPIC, trade(T0 + 130_000_000, seq=3))  # the first post-hole print: bar 1
+    await settle(bus, s)
+    flags = [(b.index, k, b.gap_before) for _, k, b in sink.bars]
+    assert flags == [
+        (0, "open", False),
+        (0, "close", False),
+        (0, "close", False),  # the straggler's amendment: unflagged
+        (1, "open", True),  # the post-hole bar, flagged once
+    ]
+    await s.stop()

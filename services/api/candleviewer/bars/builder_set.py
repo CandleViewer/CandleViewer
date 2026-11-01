@@ -26,10 +26,13 @@ no catalogue lifecycle (B1-B20), so lease state is plain bookkeeping in `leases.
   if `tick()` closes the pre-hole bar and no post-hole print falls in it, the next bar is the
   flagged one. Only the value of the existing field changes. The pending flag is in memory
   (the flagged open bar's own state is snapshotted), so a restart never re-flags a later bar;
-  replayed trades never carry it. The gap queue is drained before every trade (the gap was
-  queued first) and at `stop()`, so the order is exact, and `bars_gap_detected_total{reason}`
-  counts each event once. Per trade this adds an empty-queue check and a flag test in the
-  builder: no allocation, and `bar_builder_fanout_latency_seconds` is unaffected.
+  replayed trades never carry it. Loss window: a gap drained at `stop()`, or with no post-hole
+  trade before a crash, is not carried across a restart. A print at or before the newest one
+  seen when the gap arrived (an out-of-order straggler) never takes the flag. The gap queue is
+  drained before every trade (the gap was queued first) and at `stop()`, so the order is exact,
+  and `bars_gap_detected_total{reason}` counts each event once. Per trade this adds an
+  empty-queue check and a flag test in the builder: no allocation, and
+  `bar_builder_fanout_latency_seconds` is unaffected.
 - **Restart.** A new series loads its blob (`state_store.py`). If the blob is usable it
   restores (keeping the generation the blob recorded), then replays from the tape only the
   trades after the watermark, then goes live. Live trades the watermark covers are skipped once,

@@ -137,6 +137,8 @@ class RangeBarBuilder(_ThresholdBuilder):
 
     def on_trade(self, t: TradeEvent) -> Sequence[BarUpdate]:
         self._guard(t)
+        if t.ts_event > self._max_ts:
+            self._max_ts = t.ts_event
         d = self._cur
         if d is None:
             d = self._draft(t)
@@ -145,7 +147,7 @@ class RangeBarBuilder(_ThresholdBuilder):
                 d.open = d.high = d.low = self._open_px
             d.gap_before, self._gap = d.gap_before or self._gap, False
             self._open_src = t.ts_event
-        elif self._gap_pending:  # `_draft` stamps a new bar; this one was already open
+        elif self._gap_pending and t.ts_event > self._gap_floor:  # `_draft` stamps a new bar
             d.gap_before, self._gap_pending = True, False
         d.apply(t)
         if self._open_px is not None:

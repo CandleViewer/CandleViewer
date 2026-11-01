@@ -242,6 +242,7 @@ class TimeBarBuilder:
         self._watermark = -(2**63)
         self._last_seq: int | None = None
         self._gap_pending = False  # #529: in memory only, never snapshotted
+        self._max_ts = self._gap_floor = -(2**63)  # newest print; its value at `mark_gap`
         self._built = bars_built_total.labels(symbol=symbol, kind="time")
         self._amended = bars_amended_total.labels(symbol=symbol)
         self._drop_old = bars_late_trade_dropped_total.labels(symbol=symbol, reason="late_window")
@@ -274,9 +275,11 @@ class TimeBarBuilder:
         self._last_seq = t.seq
         if ts > self._watermark:
             self._watermark = ts
+        if ts > self._max_ts:
+            self._max_ts = ts
         cur = self._cur
         if cur is not None and cur.open_time <= ts < cur.close_time:
-            if self._gap_pending:
+            if self._gap_pending and ts > self._gap_floor:
                 cur.gap_before, self._gap_pending = True, False
             cur.apply(t)
             return (self._emit("update", cur, closed=False),)
@@ -288,10 +291,10 @@ class TimeBarBuilder:
         start, end = bucket_bounds(self.spec, ts)
         d = _Draft(self._next_index, start, end, t.price)
         d.partial = self._next_index == 0
-        d.gap_before = self._gap_pending or (
-            self._last_close is not None and self._last_close != start
-        )
-        self._gap_pending = False
+        post_hole = self._gap_pending and ts > self._gap_floor
+        d.gap_before = post_hole or (self._last_close is not None and self._last_close != start)
+        if post_hole:
+            self._gap_pending = False
         self._next_index += 1
         d.apply(t)
         self._cur = d
@@ -300,15 +303,21 @@ class TimeBarBuilder:
 
     def mark_gap(self) -> None:
         """An unrecovered tape gap: the bar that takes the next trade carries `gap_before` on
-        every later emission (trade, clock close, snapshot). Not persisted (#529)."""
-        self._gap_pending = True
+        every later emission (trade, clock close, snapshot). A print at or before the newest one
+        seen now (a straggler from before the hole) never takes it.
+
+        The pending flag is not snapshotted: a gap drained at `stop()`, or with no post-hole
+        trade before a crash, is not carried across a restart (#529)."""
+        self._gap_floor, self._gap_pending = self._max_ts, True
 
     def _late(self, t: TradeEvent) -> Sequence[BarUpdate]:
         ts = t.ts_event
         for d in self._closed:
             if d.open_time <= ts < d.close_time:
                 if self._watermark - d.close_time <= LATE_WINDOW_US:
-                    if self._gap_pending:  # the clock closed it before the post-hole print landed
+                    # The clock closed it before the post-hole print landed. A straggler from
+                    # before the hole (`ts` at or under the floor) amends without touching it.
+                    if self._gap_pending and ts > self._gap_floor:
                         d.gap_before, self._gap_pending = True, False
                     d.apply(t)
                     self._amended.inc()
