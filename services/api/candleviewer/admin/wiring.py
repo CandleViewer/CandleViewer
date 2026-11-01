@@ -46,10 +46,15 @@ from candleviewer.audit.writer import (
     AuditWriter,
     keyed_record_id,  # the OMS's keyed audit ids (#913, C-3.3)
 )
+from candleviewer.auth.errors import MfaKeyringUnavailable, MfaSealInvalid
+from candleviewer.auth.mfa_keyring import MfaKeyring
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.metrics import Metrics
 from candleviewer.secrets import (
+    AuthKeyring,
+    AuthKeyringUnavailable,
     AuthKeyStore,
+    AuthSealInvalid,
     CandidateKeys,
     CredentialBorrower,
     CredentialStore,
@@ -69,6 +74,7 @@ from candleviewer.secrets import (
     SigningKeyRotator,
     SigningKeys,
     export_secrets_metrics,
+    mint_auth_keyring,
     mint_borrower,
     mint_candidate_keys,
     mint_export_signer,
@@ -132,7 +138,10 @@ class SecretsBundle:
     `rotateAuditSigningKey`, and the running rotation the export route's, for its own `409`.
     `lane_signing(audit=)`, called on the order lane's loop with the lane's own audit writer, binds
     signing there (#913 L3b) over a credential store M2 builds on that loop (#913 L1d).
-    `key_destroyer` destroys one stored key of one account (#898's delete and revoke)."""
+    `key_destroyer` destroys one stored key of one account (#898's delete and revoke).
+    `mfa_keyring` is the environment's auth keyring as `auth`'s `MfaKeyring` (#2152 S4): M2's
+    `AuthKeyring`, its refusals mapped to `auth`'s errors. Nothing holds it until #2152's
+    switch-over passes the keyring's store to `SecretsService`; until then it refuses every call."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
@@ -144,6 +153,7 @@ class SecretsBundle:
     rotation_running: RotationRunning
     lane_signing: LaneSigningBinder
     key_destroyer: KeyDestroyer
+    mfa_keyring: MfaKeyring
 
 
 __all__ = [
@@ -346,7 +356,55 @@ def secrets_bundle(
         mint_rotation_running(svc),
         lane_signing,
         mint_key_destroyer(svc),
+        _MfaKeyring(mint_auth_keyring(svc)),
     )
+
+
+class _MfaKeyring:
+    """`auth`'s `MfaKeyring` over M2's `AuthKeyring` (#2152 S4, BQ-6): an M2 refusal leaves as
+    `auth`'s, raised after the handler, so nothing is chained (C-12.6): `AuthSealInvalid` as
+    `MfaSealInvalid` (a wrong code, AC9), `AuthKeyringUnavailable` as `MfaKeyringUnavailable`
+    with its reason (a 503, AC6). A code over the bound stays a `ValueError` (a wrong code). It
+    writes no audit record: the MFA flows that call it record their own (C-2.9)."""
+
+    __slots__ = ("_keyring",)
+
+    def __init__(self, keyring: AuthKeyring) -> None:
+        self._keyring = keyring
+
+    @audit_exempt("read")  # metadata only
+    async def available(self, *key_refs: str) -> bool:
+        return await self._keyring.available(*key_refs)
+
+    @audit_exempt("read")  # derives a seal, a seed or digests: nothing stored changes
+    async def seal_totp_seed(
+        self, seed: bytes | bytearray, user_id: uuid.UUID
+    ) -> tuple[bytes, str]:
+        try:
+            return await self._keyring.seal_totp_seed(seed, user_id)
+        except AuthKeyringUnavailable as exc:
+            reason = exc.reason
+        raise MfaKeyringUnavailable(reason)
+
+    @audit_exempt("read")  # derives a seal, a seed or digests: nothing stored changes
+    async def open_totp_seed(self, blob: bytes, key_ref: str, user_id: uuid.UUID) -> bytearray:
+        try:
+            return await self._keyring.open_totp_seed(blob, key_ref, user_id)
+        except AuthSealInvalid:
+            reason = None
+        except AuthKeyringUnavailable as exc:
+            reason = exc.reason
+        if reason is None:
+            raise MfaSealInvalid("auth_seal_invalid")
+        raise MfaKeyringUnavailable(reason)
+
+    @audit_exempt("read")  # derives a seal, a seed or digests: nothing stored changes
+    async def recovery_code_digests(self, code: str, user_id: uuid.UUID) -> tuple[str, ...]:
+        try:
+            return await self._keyring.recovery_code_digests(code, user_id)
+        except AuthKeyringUnavailable as exc:
+            reason = exc.reason
+        raise MfaKeyringUnavailable(reason)
 
 
 #: M2's export-signing refusals as the job's codes (22 `Job.error`), else `signing_unavailable`.

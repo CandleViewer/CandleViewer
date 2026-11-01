@@ -27,15 +27,18 @@ class RotatingBroker(CredentialBroker):
         *,
         must_exist: bool,
         export_keys: ExportKeyStore | None = None,
+        auth_keys: AuthKeyStore | None = None,
     ) -> None:
         """No trust-on-first-use, inside this process's environment lineage (#2338).
 
         An unknown KCV is recorded only if no live row exists at that version, or after a
-        trial unwrap of one such row succeeds: an API key row's, else, with none, the active
-        audit export signing key's when it is wrapped at that version, so a wrong KEK never pins
-        the lineage (#889, ADR-0039 decision 6); `must_exist` (previous KEK) refuses unknown.
-        An enrolment commits its `security.kek_enrolled` record with the row (#2266), and the
-        KCV the store holds afterwards, a concurrent winner's included, is the one checked.
+        trial unwrap of one such row succeeds, in this order (#2152 S4, BQ-4): an API key row's,
+        else an auth keyring row's at that version (`auth_keys`, the keyring once wired), else
+        the active audit export signing key's when it is wrapped at that version, so a wrong KEK
+        never pins the lineage (#889, ADR-0039 decision 6); any failure is `kek_mismatch`.
+        `must_exist` (previous KEK) refuses unknown. An enrolment commits its
+        `security.kek_enrolled` record with the row (#2266), and the KCV the store holds
+        afterwards, a concurrent winner's included, is the one checked.
         """
         expected = await self._io(kcvs.kcv_for(self._env, kek.version), "kcv_store_unavailable")
         if expected is None:
@@ -50,8 +53,8 @@ class RotatingBroker(CredentialBroker):
                     env.zero(kek.unwrap_dek(row.dek_ref, credential_id=row.id))
                 except (InvalidTag, ValueError):
                     raise KekLoadError("kek_mismatch") from None
-            elif export_keys is not None:  # no API key row as evidence: the signing key
-                await self._trial_export(kek, export_keys)
+            elif not await self._trial_auth(kek, auth_keys) and export_keys is not None:
+                await self._trial_export(kek, export_keys)  # no key row as evidence: this one
             kind, role, _ = _SYSTEM
             fields = {"actor_kind": kind, "actor_role": role, "env": self._env}
             fields |= {"kek_version": str(kek.version), "kcv": kek.kcv().hex()}
@@ -62,6 +65,25 @@ class RotatingBroker(CredentialBroker):
             expected = stored
         if not kcv_matches(kek, expected):
             raise KekLoadError("kek_mismatch")
+
+    async def _trial_auth(self, kek: LoadedKek, keys: AuthKeyStore | None) -> bool:
+        """Whether an auth keyring row at `kek`'s version was the evidence (#2152 S4): it opens
+        under `kek`, else `kek_mismatch`; its key is zeroed and a failure's frames cleared (they
+        hold the KEK). False with no such row, or no store (the keyring not wired)."""
+        if keys is None:
+            return False
+        rows = await self._io(keys.rows_for(self._env), "store")
+        row = next((r for r in rows if r["kek_version"] == kek.version), None)
+        if row is None:
+            return False
+        try:
+            env.zero(kek.unwrap_auth_key(row["dek_ref"], key_id=row["id"], purpose=row["purpose"]))
+            return True
+        except BaseException as exc:
+            scrub_frames(exc)
+            if not isinstance(exc, InvalidTag | ValueError):
+                raise  # not the KEK's doing (a cancellation): scrubbed, never a mismatch
+        raise KekLoadError("kek_mismatch")  # after the handler: nothing chained
 
     async def _trial_export(self, kek: LoadedKek, keys: ExportKeyStore) -> None:
         """The active signing key, when wrapped at `kek`'s version, opens under `kek`, else

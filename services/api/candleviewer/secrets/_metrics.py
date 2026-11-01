@@ -45,6 +45,18 @@ export_key_boot_failures_total = Counter(
 )
 for _step in ("destroy", "rewrap"):  # Q3's destroy retried, the rotation boot's re-wrap
     export_key_boot_failures_total.labels(step=_step)
+#: #2152 S4 (BQ-14): set only once the keyring is wired (#2152's switch-over); PR 2 serves both on
+#: `/metrics` with their alert.
+auth_keyring_unavailable_state = Gauge(
+    "cv_auth_keyring_unavailable_state",
+    "1 while the auth keyring cannot be used with the KEK up (MFA 503), else 0 (#2152).",
+)
+auth_keyring_boot_failures_total = Counter(
+    "cv_auth_keyring_boot_failures_total",
+    "Auth keyring boot steps that failed, degrading nothing: the rotation boot's re-wrap (#2152).",
+    labelnames=("step",),
+)
+auth_keyring_boot_failures_total.labels(step="rewrap")
 process_hardening_failures_total = Counter(
     "cv_process_hardening_failures_total", "SR-009 hardening that did not take effect."
 )

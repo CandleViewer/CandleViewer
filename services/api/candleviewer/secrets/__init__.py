@@ -17,6 +17,9 @@ with public key material, or `ExportKeyRotationError`; and `RotationRunning` for
 (#889 S10): whether a rotation runs, a bool; and `LoopSigning`, the order lane's (#913 L3b), over
 a store M2 builds with the root's `LoopStoreFactory` (#913 L1d). `KeyDestroyer` (#898), minted
 there for the account delete and the key revoke, destroys one stored key of one account.
+`AuthKeyring` (#2152 S4), minted there too by `mint_auth_keyring` and adapted to `auth`'s
+`MfaKeyring`, gives MFA the environment's auth keyring as seals, seeds and digests, never a key;
+`AuthKeyringUnavailable` and `AuthSealInvalid` are its refusals. `_auth_custody` is internal.
 """
 
 from __future__ import annotations
@@ -24,6 +27,8 @@ from __future__ import annotations
 from candleviewer.secrets.broker import Purpose
 from candleviewer.secrets.candidate import CandidateKeys, CandidateSigner
 from candleviewer.secrets.errors import (
+    AuthKeyringUnavailable,
+    AuthSealInvalid,
     CredentialUnavailable,
     ExportKeyRotationError,
     KekRotationError,
@@ -38,6 +43,7 @@ from candleviewer.secrets.metrics import export_secrets_metrics
 from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
 from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.service import (
+    AuthKeyring,
     CredentialBorrower,
     KeyDestroyer,
     LoopSigning,
@@ -48,6 +54,7 @@ from candleviewer.secrets.service import (
     SecretsMetadataFacade,
     SecretsService,
     SigningCapability,
+    mint_auth_keyring,
     mint_borrower,
     mint_candidate_keys,
     mint_export_signer,
@@ -71,6 +78,9 @@ __all__ = [
     "KEY_ID_SLOT",
     "AuditSink",
     "AuthKeyStore",
+    "AuthKeyring",
+    "AuthKeyringUnavailable",
+    "AuthSealInvalid",
     "CandidateKeys",
     "CandidateSigner",
     "CredentialBorrower",
@@ -104,6 +114,7 @@ __all__ = [
     "StoredCredential",
     "WithdrawPermissionRejected",
     "export_secrets_metrics",
+    "mint_auth_keyring",
     "mint_borrower",
     "mint_candidate_keys",
     "mint_export_signer",

@@ -21,6 +21,10 @@ material, never a seed. So is `SigningKeyRotator` (#889 S7), the signing key's r
 `admin`, which answers with public key material and, once its new key passes the check, makes
 export available again with no restart, and `RotationRunning` (#889 S10), which tells the export
 route only whether a rotation runs. `mint_loop_signing` (#913 L3b) binds signing to the order lane.
+The environment's auth keyring (#2152 S4, ADR-0009 Amendment 4) opens after the KEK, only once the
+composition seam `auth_keyring=` is passed (`_auth_custody`); a failure degrades `secrets` and
+pages but latches nothing (D4). `mint_auth_keyring` mints its `AuthKeyring` for MFA: seals, seeds
+and digests, never a key.
 """
 
 from __future__ import annotations
@@ -39,12 +43,21 @@ import structlog
 
 from candleviewer.observability.context import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
-from candleviewer.secrets import _export_custody, _kek, _source, export_rotator, export_signer
+from candleviewer.secrets import (
+    _auth_custody,
+    _export_custody,
+    _kek,
+    _source,
+    export_rotator,
+    export_signer,
+)
 from candleviewer.secrets import _metrics as m
+from candleviewer.secrets._auth_keyring import LoadedAuthKeyring
 from candleviewer.secrets._rotation import RotatingBroker
 from candleviewer.secrets.broker import _IO_TIMEOUT_S, ALLOWED_CALLERS, Purpose, _LoopIo, _m2_only
 from candleviewer.secrets.candidate import CANDIDATE_HOLD_S, CandidateKeys, hold_candidate
 from candleviewer.secrets.errors import (
+    AuthKeyringUnavailable,
     CredentialUnavailable,
     ExportKeyRotationError,
     KekLoadError,
@@ -90,6 +103,15 @@ ROTATION_REMEDIATION = (
 EXPORT_REMEDIATION = (
     "Audit export signing key unavailable (reason={reason}): export is refused, trading is not. "
     "A stranded key needs CV_KEK_PREV_HANDLE at a restart. See docs/ops/runbooks/kek-custody.md."
+)
+#: #2152 S4 (BQ-9): the auth keyring cannot be used; MFA alone fails closed (D4).
+AUTH_REMEDIATION = (
+    "Auth keyring unavailable (reason={reason}): MFA answers 503 auth_unavailable, trading is not "
+    "latched. Never delete MFA material to force a new keyring. auth_keyring_missing or _mismatch: "
+    "restore the environment's two auth_keys rows from a backup (on demo or testnet, both old env "
+    "settings import them once); _stranded: restart with CV_KEK_PREV_HANDLE; _store_unavailable "
+    "or _audit_unavailable: fix Postgres or the audit writer, then restart. See "
+    "docs/ops/runbooks/kek-custody.md."
 )
 #: The broker's reasons for a record it could not write (`CredentialBroker._audit`).
 _AUDIT_FAILURES = frozenset({"audit_unavailable", "audit_timeout"})
@@ -264,6 +286,59 @@ class KeyDestroyer:
         await self.__destroy(account_id, key_id, actor_user_id, actor_role)
 
 
+@final
+class AuthKeyring:
+    """MFA's view of the environment's auth keyring (#2152 S4, ADR-0009 Amendment 4, BQ-6): seals,
+    seeds and digests, never a key. Minted once in `admin.wiring` (`mint_auth_keyring`) and adapted
+    there to `auth`'s `MfaKeyring`, it holds closures only and resolves the keyring on each call,
+    so it refuses (`AuthKeyringUnavailable`) before `start()`, after `stop()`, while the KEK is down
+    and while the keyring is unavailable or not wired. Plain data in and out, so #2279 can serve it
+    out of process; renders as `***` and cannot be pickled (C-3.2, C-12.6)."""
+
+    def __init_subclass__(cls, **kw: Any) -> None:
+        _m2_only(cls)
+        super().__init_subclass__(**kw)
+
+    __slots__ = ("__available", "__digests", "__open", "__seal")
+
+    def __init__(
+        self,
+        available: Callable[[tuple[str, ...]], bool],
+        seal: Callable[[bytes | bytearray, UUID], tuple[bytes, str]],
+        open_seal: Callable[[bytes, str, UUID], bytearray],
+        digests: Callable[[str, UUID], tuple[str, ...]],
+    ) -> None:
+        self.__available, self.__seal, self.__open, self.__digests = (
+            available, seal, open_seal, digests
+        )  # fmt: skip
+
+    async def available(self, *key_refs: str) -> bool:
+        """Whether the keyring is open and holds the key of every `key_refs` (none: open at all).
+        Metadata only: no seed is opened (BQ-6), so MFA can answer 503 before touching one."""
+        return self.__available(key_refs)
+
+    async def seal_totp_seed(self, seed: bytes | bytearray, user_id: UUID) -> tuple[bytes, str]:
+        """`(secret_enc, secret_key_ref)` of a new seal of `seed`, bound to the user."""
+        return self.__seal(seed, user_id)
+
+    async def open_totp_seed(self, blob: bytes, key_ref: str, user_id: UUID) -> bytearray:
+        """The seed, as a `bytearray` the caller zeroes; `AuthSealInvalid` for a seal under a key
+        held here that fails authentication (a wrong code), else `AuthKeyringUnavailable`."""
+        return self.__open(blob, key_ref, user_id)
+
+    async def recovery_code_digests(self, code: str, user_id: UUID) -> tuple[str, ...]:
+        """Every candidate digest of `code` for `user_id`, the one to store first."""
+        return self.__digests(code, user_id)
+
+    def __repr__(self) -> str:
+        return "***"
+
+    __str__ = __repr__
+
+    def __reduce_ex__(self, protocol: object) -> NoReturn:
+        raise TypeError("AuthKeyring cannot be pickled")
+
+
 class SecretsLifecycleFacade:
     """What `AppContext.secrets` holds: start/stop/health only. Closures, no service field."""
 
@@ -322,12 +397,22 @@ class SecretsService:
         auth_keys: AuthKeyStore | None = None,
         export_keys: ExportKeyStore | None = None,
         clock: Callable[[], float] = time.monotonic,
+        auth_keyring: AuthKeyStore | None = None,
     ) -> None:
         self._store, self._kcv, self._audit_sink = store, kcv_store, audit
         self._sources, self._harden = sources, harden
         self._load_timeout = load_timeout_s
         #: The environment's auth keyring rows a re-wrap run counts (#3505).
         self._auth_keys = auth_keys
+        #: #2152 S4 (BQ-7): the composition seam. The store the environment's auth keyring is
+        #: provisioned into and opened from at `start()`, which the KCV trial reads too; only
+        #: #2152's switch-over passes it, from `admin.wiring`. Without it the keyring is dormant:
+        #: nothing is read, generated, imported or opened, health and the gauge are unchanged, and
+        #: `AuthKeyring` refuses every call. No setting, env var or flag turns it on (C-4.14).
+        self._auth_keyring = auth_keyring
+        self._auth_ring: LoadedAuthKeyring | None = None
+        #: Why the keyring cannot be used while the KEK is up; None while it opens, or is dormant.
+        self._auth_reason: str | None = None
         #: Its audit export signing keys: boot opens or generates one, a re-wrap run counts them,
         #: and a KEK enrolment with no API key row as evidence trials it (#889, ADR-0039).
         self._export_keys = export_keys
@@ -452,6 +537,8 @@ class SecretsService:
         env_name = settings.environment.value
         live = env_name == "live"
         srcs = self._sources(settings)  # KekSourceNotPermitted propagates: fatal
+        if self._auth_keyring is not None:  # AuthKeyEnvForbidden propagates: fatal (AC2)
+            _auth_custody.refuse_env_keys_in_live(env_name, _auth_custody.env_keys(settings))
         self._started = True
         self._gate, self._env = ctx.oms_read_only_gate, env_name
         self._rotate_rate = settings.audit_signing_rotate_rate_per_hour
@@ -474,8 +561,9 @@ class SecretsService:
                 if prev is not None:
                     await broker.verify_kcv(prev, self._kcv, must_exist=True)
                 await broker.verify_kcv(
-                    kek, self._kcv, must_exist=False, export_keys=self._export_keys
-                )
+                    kek, self._kcv, must_exist=False, export_keys=self._export_keys,
+                    auth_keys=self._auth_keyring,
+                )  # fmt: skip
             except KekLoadError:
                 raise
             except Exception:
@@ -508,18 +596,72 @@ class SecretsService:
         m.kek_version.set(kek.version)
         self._kek_version = kek.version
         self._broker = broker
-        if self._export_keys is not None:
-            try:
+        try:
+            if self._auth_keyring is not None:  # #2152 S4: MFA's keyring, after the KEK (D4)
+                await self._open_auth_keyring(self._auth_keyring, kek, prev, settings)
+            if self._export_keys is not None:
                 await self._open_export_key(self._export_keys, kek, prev)
-            except BaseException as exc:  # a cancelled boot: unpublished, KEKs zeroed, latched
-                self._broker = None
-                if isinstance(exc, GeneratorExit):  # the collector's, maybe holding `_guard`
-                    broker._zero_keks()  # no lock: nothing signs before this returns
-                else:
-                    broker.drop_kek()
-                m.kek_version.set(0)
-                self._latch(ctx, "kek_unavailable")
-                raise
+        except BaseException as exc:  # a cancelled boot: unpublished, keys zeroed, latched
+            self._broker = None
+            self._drop_auth_keyring()
+            if isinstance(exc, GeneratorExit):  # the collector's, maybe holding `_guard`
+                broker._zero_keks()  # no lock: nothing signs before this returns
+            else:
+                broker.drop_kek()
+            m.kek_version.set(0)
+            self._latch(ctx, "kek_unavailable")
+            raise
+
+    async def _open_auth_keyring(
+        self,
+        keys: AuthKeyStore,
+        kek: _kek.LoadedKek,
+        prev: _kek.LoadedKek | None,
+        settings: Settings,
+    ) -> None:
+        """#2152 S4, once the KEK is published (ADR-0009 Amendment 4). A failure degrades `secrets`
+        and pages, then records it at error; it latches no order entry: MFA alone is unavailable
+        (D4). A row M2 cannot read is never a reason to stop the boot, nor to generate."""
+        env_keys = _auth_custody.env_keys(settings)
+        try:
+            ring, reason = await _auth_custody.open_at_boot(keys, kek, prev, env_keys, self._audit)
+        except Exception as exc:
+            _log().error("secrets.auth_keyring_open_failed", error=type(exc).__name__)
+            ring, reason = None, _auth_custody.MISMATCH
+        if ring is None:
+            await self._auth_unavailable(reason or _auth_custody.MISMATCH)
+            return
+        self._auth_ring, self._auth_reason = ring, None
+        m.auth_keyring_unavailable_state.set(0)
+
+    async def _auth_unavailable(self, reason: str) -> None:
+        """MFA alone unavailable from now on (D4, BQ-9): `secrets` degraded, the gauge, a critical
+        log with the remediation, then the record at error, which carries it too (AC7)."""
+        self._auth_reason = reason
+        m.auth_keyring_unavailable_state.set(1)
+        text = AUTH_REMEDIATION.format(reason=reason)
+        _log().critical("secrets.auth_keyring_unavailable", reason=reason, remediation=text)
+        fields = {"env": self._env, "reason": reason, "remediation": text}
+        try:  # an audit outage must not hide the page above
+            await self._audit(_auth_custody.LOAD_FAILED, fields)
+        except Exception:
+            m.credential_outcome_audit_failures_total.inc()
+
+    def _drop_auth_keyring(self) -> None:
+        """The keyring zeroed and unpublished with the KEK (`stop()`, a cancelled boot), so MFA
+        can never outlive the KEK it was opened under."""
+        ring, self._auth_ring = self._auth_ring, None
+        if ring is not None:
+            ring.close()
+            self._auth_reason = "auth_keyring_closed"
+
+    def _auth_ring_or_refuse(self) -> LoadedAuthKeyring:
+        """`mint_auth_keyring`'s resolver: the opened keyring, only while the KEK is up."""
+        ring = self._auth_ring
+        if self._broker is None or ring is None:
+            down = "kek_unavailable" if self._broker is None else _auth_custody.MISSING
+            raise AuthKeyringUnavailable(self._auth_reason or down)
+        return ring
 
     async def _open_export_key(
         self, keys: ExportKeyStore, kek: _kek.LoadedKek, prev: _kek.LoadedKek | None
@@ -863,6 +1005,7 @@ class SecretsService:
 
     async def stop(self, grace_s: float) -> None:
         broker, self._broker = self._broker, None
+        self._drop_auth_keyring()  # zeroed with the KEKs, before any drain below
         self._started = False
         if broker is not None:
             broker.drop_kek()  # zeroed first, so a slow drain below can never delay it
@@ -879,6 +1022,10 @@ class SecretsService:
         if self._broker is None or self._latched:  # stranded rows keep the broker (#2266)
             return HealthReport(
                 module="secrets", status=HealthStatus.DEGRADED, detail=self._reason or ""
+            )
+        if self._auth_reason is not None:  # MFA alone is unavailable (#2152, D4, BQ-14)
+            return HealthReport(
+                module="secrets", status=HealthStatus.DEGRADED, detail=self._auth_reason
             )
         if self._export_reason is not None:  # export alone is unavailable (#889)
             return HealthReport(
@@ -1038,6 +1185,31 @@ def mint_rotation_running(service: SecretsService) -> RotationRunning:
         return service._export_rotating is not None
 
     return RotationRunning(running)
+
+
+def mint_auth_keyring(service: SecretsService) -> AuthKeyring:
+    """Wiring-time capability of the environment's auth keyring (#2152 S4, BQ-6), for MFA through
+    `admin.wiring`'s adapter. Called once, in `admin.wiring.secrets_bundle`. Each call resolves the
+    keyring, so the capability holds none: it refuses before `start()`, after `stop()`, while the
+    KEK is down and while the keyring is unavailable or not wired."""
+    resolve = service._auth_ring_or_refuse
+
+    def available(key_refs: tuple[str, ...]) -> bool:
+        try:
+            return resolve().available(*key_refs)
+        except AuthKeyringUnavailable:
+            return False
+
+    def seal(seed: bytes | bytearray, user_id: UUID) -> tuple[bytes, str]:
+        return resolve().seal_totp_seed(seed, user_id)
+
+    def open_seal(blob: bytes, key_ref: str, user_id: UUID) -> bytearray:
+        return resolve().open_totp_seed(blob, key_ref, user_id)
+
+    def digests(code: str, user_id: UUID) -> tuple[str, ...]:
+        return resolve().recovery_code_digests(code, user_id)
+
+    return AuthKeyring(available, seal, open_seal, digests)
 
 
 async def prove_kek_possession(

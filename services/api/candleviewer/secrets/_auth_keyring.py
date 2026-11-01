@@ -1,4 +1,5 @@
-"""Auth keyring core (#2152, ADR-0009 Amendment 4). Private to M2; unused until S4 and S5b.
+"""Auth keyring core (#2152, ADR-0009 Amendment 4). Private to M2; opened at boot by
+`_auth_custody` (S4), and wired to MFA at #2152's switch-over.
 
 The keyring is two 256-bit keys per environment, `totp_seal` (AES-256-GCM over TOTP seeds) and
 `recovery_hmac` (HMAC-SHA256 over recovery codes), plaintext only here and at rest only as
@@ -66,8 +67,12 @@ class LoadedAuthKeyring:
         self._ak_env, self._ak_imported, self._ak_closed = env_name, imported, False
         self._totp_ref, self._totp_key, self._rc_key = f"akey:{totp_id}", totp, recovery
 
-    def available(self) -> bool:
-        return not self._ak_closed
+    def available(self, *key_refs: str) -> bool:
+        """Open, and holding the key of every `key_refs` (BQ-6): metadata only, nothing opens."""
+        return not self._ak_closed and all(map(self._holds, key_refs))
+
+    def _holds(self, key_ref: str) -> bool:
+        return key_ref == self._totp_ref or (key_ref == LEGACY_TOTP_REF and self._ak_imported)
 
     def _require_open(self) -> None:
         if self._ak_closed:
@@ -90,12 +95,9 @@ class LoadedAuthKeyring:
         """The seed, as a `bytearray` the caller zeroes. `AuthSealInvalid` when a seal under a
         key held here fails authentication (a wrong code); `auth_key_not_held` for any other."""
         self._require_open()
-        if key_ref == self._totp_ref:
-            aad = env.totp_aad(self._ak_env, user_id)
-        elif key_ref == LEGACY_TOTP_REF and self._ak_imported:
-            aad = b""
-        else:
+        if not self._holds(key_ref):
             raise AuthKeyringUnavailable("auth_key_not_held")
+        aad = env.totp_aad(self._ak_env, user_id) if key_ref == self._totp_ref else b""
         try:
             return env.open_(self._totp_key, blob, aad)
         except BaseException as exc:

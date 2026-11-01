@@ -222,6 +222,10 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "KeyDestroyer",  # #898: destroys one stored key of one account, minted in wiring
         "mint_key_destroyer",  # #898: its mint, pinned to admin/wiring.py likewise
         "LoopStoreFactory",  # #913 L1d: the type of the root's lane store factory, M2's to call
+        "AuthKeyring",  # #2152 S4: MFA's keyring capability, adapted to `auth`'s in wiring
+        "mint_auth_keyring",  # #2152 S4: its mint, pinned to admin/wiring.py likewise
+        "AuthKeyringUnavailable",  # #2152 S4: its refusals, which wiring maps to `auth`'s
+        "AuthSealInvalid",
     },
     # E26-T02: the replay read path's request, in-stream gap marker, storage ports, typed
     # errors and bounded read-ahead source (docs/plan/24-internal-schemas.md Sec.13.7).
