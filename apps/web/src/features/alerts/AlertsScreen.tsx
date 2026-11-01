@@ -107,6 +107,10 @@ type Confirm =
   | { readonly kind: "enable"; readonly alert: Alert };
 
 const utcClock = (ms: number): string => `${new Date(ms).toISOString().slice(11, 16)} UTC`;
+const utcSeconds = (iso: string | undefined): string => {
+  const ms = Date.parse(iso ?? "");
+  return Number.isNaN(ms) ? "--:--:--" : new Date(ms).toISOString().slice(11, 19);
+};
 const dayClock = (ms: number): string =>
   `${new Date(ms).toISOString().slice(0, 19).replace("T", " ")} UTC`;
 
@@ -263,6 +267,16 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
     if (load === "ready") setAnnounce(COPY.showing(latest.current.shown, latest.current.total));
   }, [load, tab, symbol, statusFilter, search]);
 
+  // LR-8: the bulk result is said once, then it goes. A new tab or filter hands the region back to
+  // "Showing N of M"; a user change of the selection blanks it, so no stale result is read twice.
+  useEffect(() => {
+    setReport(null);
+  }, [tab, symbol, statusFilter, search]);
+  const pickRows = (next: ReadonlySet<string>): void => {
+    setReport((prev) => (prev === null ? null : ""));
+    setSelected(next);
+  };
+
   const failure = (kind: AlertsFailure): string =>
     kind === "forbidden" ? COPY.readOnly : COPY.failReason[kind];
 
@@ -348,7 +362,10 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
     const write: MenuItem[] = [
       isSnoozed(a, nowMs)
         ? { id: "wake", label: COPY.actions.wake, onSelect: () => void snooze(a, null), ...denied }
-        : { id: "snooze", label: `${COPY.actions.snooze} ▸`, items: snoozeItems(a), ...denied },
+        : // Lock gap (cite): the Snooze ▸ trigger is the one gated item that opens a submenu. It carries
+          // `disabledReason` and draws the lock row like the leaf items (checked), but the read-only
+          // test asserts the lock glyph for Disable and Delete only; the trigger has no lock assertion.
+          { id: "snooze", label: `${COPY.actions.snooze} ▸`, items: snoozeItems(a), ...denied },
       a.enabled === false
         ? {
             id: "enable",
@@ -395,7 +412,8 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
         {key === "disarmed" ? (
           <span>
             {" "}
-            {COPY.disarmTitle(signals?.get(metric)?.display_name ?? metric)}. {COPY.disarmWhy}
+            {COPY.disarmTitle(signals?.get(metric)?.display_name ?? metric)}.{" "}
+            {COPY.disarmWhy(signals?.get(metric)?.display_name ?? metric, utcSeconds(a.updated_at))}
             <WriteGate allowed={canWrite}>
               <Button
                 variant="secondary"
@@ -519,7 +537,7 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
           <Button
             variant="ghost"
             onClick={() => {
-              setSelected(new Set());
+              pickRows(new Set());
               setRefocus(true);
             }}
           >
@@ -566,7 +584,7 @@ export function AlertsScreen(props: AlertsScreenProps): JSX.Element {
         emptyState={emptyState}
         rowActions={rowActions}
         selected={selected}
-        onRowSelect={setSelected}
+        onRowSelect={pickRows}
         {...(canWrite ? {} : { selectDisabledReason: READ_ONLY })}
       />
     </div>

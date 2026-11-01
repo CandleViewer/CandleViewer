@@ -30,8 +30,9 @@ export const COPY = {
   resyncing: "Resyncing alerts…",
   estimated: "(estimated)",
   disarmTitle: (metric: string): string => `Alert disarmed: ${metric} data source unavailable`,
-  disarmWhy:
-    "The data source stopped arriving, so the alert was disarmed instead of firing on missing data. It stays off until you enable it.",
+  /** E40-D02 §2.5 and the handoff copy deck ("disarm why"), verbatim; `at` is `HH:MM:SS` UTC. */
+  disarmWhy: (metric: string, at: string): string =>
+    `The ${metric} values stopped arriving at ${at} UTC, so the alert was disarmed instead of firing on missing data. It stays off until you enable it.`,
   enableConfirm: "If the source is still unavailable, it will disarm again and tell you.",
   deliveryProblem: "Desktop notification blocked by the OS — enable it in Settings",
   deliveryChip: "Desktop blocked",
@@ -39,7 +40,10 @@ export const COPY = {
   capped: (shown: number, total: number): string =>
     `Showing the first ${shown} of ${total} — refine the filters to see the rest.`,
   truncated: "Only the newest firings are shown; the export holds the same rows.",
-  /** Parser-safe: documented here and shown in the dialog, never as a comment line in the CSV. */
+  /**
+   * Parser-safe: documented here and shown in the dialog, never as a comment line in the CSV.
+   * Cite: values at fire time wait for CC-2, so the CSV carries the delivery row's message text.
+   */
   csvNote:
     "One CSV row is one channel delivery. Values at fire time are not stored; the message text stands in for them.",
   selected: (n: number): string => `${n} selected`,

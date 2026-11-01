@@ -1169,6 +1169,9 @@ describe("Table (CMP-049) grid mode, selection and row actions", () => {
     }
     await userEvent.click(page.getByRole("checkbox", { name: "Select alex" }));
     await userEvent.click(page.getByRole("checkbox", { name: "Select all rows" }));
+    act(() => target(2, 2).focus());
+    await press(" ");
+    expect(page.getAllByRole("row")[2]).not.toHaveAttribute("aria-selected", "true");
     expect(onRowSelect).not.toHaveBeenCalled();
   });
 

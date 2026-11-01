@@ -1587,6 +1587,7 @@ export function Table<T>({
       } else if (
         event.key === " " &&
         selectable &&
+        selectDisabledReason === undefined &&
         r >= 1 &&
         r <= bodyRows &&
         !cell.hasAttribute("data-cv-widget")
