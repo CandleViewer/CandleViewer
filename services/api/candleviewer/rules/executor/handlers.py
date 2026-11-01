@@ -7,10 +7,10 @@ capability, the binder and the handler. Building the table refuses a type with n
 key outside `ActionType` and a type left undeclared, so the table is complete or the module does
 not import.
 
-No handler is bound in E35-T09: every type blocks `unavailable` until its slice binds it, and
-`widen_stop`, retired, is refused for good as `native_sl` (24 §8.8 rule 5), bound or not. No order
-path is reachable from here (C-2.6): an order-placing handler arrives with its slice's native-stop
-suite.
+No handler is bound in E35-T09: check 2 blocks every type `unavailable` until its slice binds it,
+and check 8 refuses `widen_stop`, retired, for good as `native_sl` (24 §8.8 rule 5), bound or not
+(`rules/executor/gates.py`, E35-T10). No order path is reachable from here (C-2.6): an
+order-placing handler arrives with its slice's native-stop suite.
 """
 
 from __future__ import annotations
@@ -32,6 +32,12 @@ Capability = Literal[
     "leverage", "algos", "notifications", "journal", "variables", "signals", "rule_control",
     "none",
 ]  # fmt: skip
+#: The capabilities whose handlers run inside the engine (E35-T13): only these may be served by a
+#: bound stand-in sink, so no stand-in ever reaches an OMS path, and only their six types name no
+#: account. Every other capability reaches past the engine, behind the rollout port (24 §11.5).
+ENGINE_INTERNAL: Final[frozenset[Capability]] = frozenset(
+    {"notifications", "journal", "variables", "signals", "rule_control"}
+)
 #: How a handler's call ended, which `on_error` reads (24 §11.9): `accepted` and `done` took
 #: effect; `refused` is a definite refusal, never retried (`blocked_by` when a check of the set
 #: maps it); `pre_anchor` a refusal before the OMS anchor existed and `no_answer` a timeout or a
@@ -116,14 +122,6 @@ class HandlerBinding:
     bound_by: str | None
     guard: str | None = None
     refused_as: BlockedBy | None = None
-
-
-def refusal(spec: HandlerSpec) -> BlockedBy | None:
-    """Why the executor refuses the action before its records written ahead: `native_sl` for a
-    type refused for good, `unavailable` while no handler is bound, else `None`."""
-    if spec.refused_as is not None:
-        return spec.refused_as
-    return "unavailable" if spec.handler is None else None
 
 
 def _b(capability: Capability, bound_by: str | None, guard: str | None = None) -> HandlerBinding:

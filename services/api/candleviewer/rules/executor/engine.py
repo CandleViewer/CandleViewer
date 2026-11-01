@@ -1,9 +1,10 @@
 """The rule action executor (E35-T09; 24 §11.5, §11.9): one fire, its actions in IR order (E5).
 
-For an armed fire, per action: check 1, the row read again, before the scope re-check (BQ-6); then
-the routing emitter, still the only path to a sink, whose sink hands the action back here
-(`hand_over`); then the handler table (`unavailable` while no handler is bound, `native_sl` for
-good for `widen_stop`); then the records written ahead, the hand-over and the answer. `on_error`
+For an armed fire, per action: check 1, the row read again (BQ-6); checks 2 and 3, synchronous
+reads with no await (E35-T10, `gates.py`); then the routing emitter (check 4), still the only path
+to a sink, whose sink hands the action back here (`hand_over`); then checks 5 to 8; then the
+records written ahead, the hand-over and the answer, so every refusal is decided before
+`rules.fired` could be written (24 §11.5). `on_error`
 decides what follows a result other than `ok`, `simulated` or `skipped`; a failed write, or a row no
 longer armed or not confirmed, stops the fire whatever it says. The run row is closed with the
 fire's status (`error` after a failed write, its close still tried once), every result is counted,
@@ -28,7 +29,8 @@ import structlog
 
 from candleviewer.rules.executor import dispatch
 from candleviewer.rules.executor.dispatch import Fire
-from candleviewer.rules.executor.handlers import HANDLERS, HandlerAnswer, HandlerSpec, refusal
+from candleviewer.rules.executor.gates import Gates
+from candleviewer.rules.executor.handlers import HANDLERS, HandlerAnswer, HandlerSpec
 from candleviewer.rules.executor.keys import client_ref, dedupe_key
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.ports import (
@@ -59,15 +61,12 @@ from candleviewer.rules.scope import ActionRequest, ActionSink
 #: longer so (`mode_changed`), or not confirmed: its read failed or answered late (BQ-6).
 RowVerdict = Literal["armed", "mode_changed", "unread"]
 CheckOne = Callable[[ActionRequest], Awaitable[RowVerdict]]
-#: The checks that exist, run again before `retry_once`'s retry (24 §11.9): check 1 and the scope
-#: re-check; E35-T10 extends this one hook with its checks.
-Recheck = Callable[[ActionRequest], Awaitable[BlockedBy | None]]
+#: Check 4 run again before `retry_once`'s retry (24 §11.9), outside the emitter, which hands over:
+#: the scope re-check's reason, or `None` when the action is still in scope.
+ScopeCheck = Callable[[ActionRequest], str | None]
 Stop = Literal["abort", "mode_changed", "unread", "write"]
 _DONE: Final = frozenset({"ok", "simulated", "skipped"})
 _NOT_DONE: Final = frozenset({"failed", "blocked", "unknown"})
-#: The capabilities whose handlers run inside the engine (E35-T13): only these may be served by a
-#: bound stand-in sink, so no stand-in ever reaches an OMS path, whatever is bound there.
-_STAND_IN: Final = frozenset({"notifications", "journal", "variables", "signals", "rule_control"})
 #: The answers `retry_once` may retry: no answer, or a refusal before the anchor existed.
 _RETRIED: Final = frozenset({"no_answer", "pre_anchor"})
 _OUTCOME_OF: Final[Mapping[str, Outcome]] = {
@@ -169,14 +168,16 @@ class ActionExecutor:
     """`execute(fire)` from a dispatch worker; `hand_over(req)` from the routing emitter's sink,
     for an armed action the emitter passed. A bound `stand_in` sink (`RulesService.bind`'s
     `action_sink`) stands in for a handler no slice has bound yet, of an engine-internal capability
-    only (`_STAND_IN`): an action that would reach the OMS stays `unavailable` until its slice binds
-    its handler (C-2.6)."""
+    only (`handlers.ENGINE_INTERNAL`, check 2): an action that would reach the OMS stays
+    `unavailable` until its slice binds its handler (C-2.6). `gates` holds the checks' ports; its
+    unbound ports refuse."""
 
     def __init__(
         self,
         *,
         check_one: CheckOne,
-        recheck: Recheck,
+        scope_check: ScopeCheck,
+        gates: Gates | None = None,
         records: RunRecords | None = None,
         audit: ActionAudit | None = None,
         alerts: AlertPort | None = None,
@@ -185,7 +186,8 @@ class ActionExecutor:
         handlers: Mapping[str, HandlerSpec] = HANDLERS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._check_one, self._recheck = check_one, recheck
+        self._check_one, self._scope_check = check_one, scope_check
+        self._gates = Gates() if gates is None else gates
         unbound = _Unbound()
         self._records: RunRecords = unbound if records is None else records
         self._audit: ActionAudit = unbound if audit is None else audit
@@ -291,6 +293,9 @@ class ActionExecutor:
         action.verdict = await self._check_one(req)  # check 1 comes before the scope re-check
         if action.verdict != "armed":
             return self._skipped(req, action.key, action.verdict)
+        refused = self._before_scope(action)  # checks 2 and 3: synchronous, never awaited
+        if refused is not None:
+            return self._blocked(action, refused)
         token = _CURRENT.set(action)
         try:
             passed = await fire.emit(req)
@@ -308,13 +313,13 @@ class ActionExecutor:
         return action.result
 
     async def hand_over(self, req: ActionRequest) -> None:
-        """The routing emitter's sink for an armed action (`RulesService._route`): the handler
-        table, then the records written ahead, then the hand-over, once (24 §11.5)."""
+        """The routing emitter's sink for an armed action (`RulesService._route`): checks 5 to 8,
+        then the records written ahead, then the hand-over, once (24 §11.5)."""
         action = _CURRENT.get()
         if action is None or action.req is not req:
             raise RuntimeError("an armed action is handed over only inside its fire")
         spec = self._handlers.get(req.action_type)
-        reason = self._refusal(spec)
+        reason = "unavailable" if spec is None else self._after_scope(spec, action)
         if reason is not None or spec is None:
             action.result = self._blocked(action, reason or "unavailable")
             return
@@ -328,10 +333,10 @@ class ActionExecutor:
         action.answer, action.result = answer, self._answered(action, answer)
 
     async def _retry(self, action: _Action) -> None:
-        """`retry_once` (24 §11.9): after the checks run again, the same request under the same
+        """`retry_once` (24 §11.9): after checks 1 to 8 run again, the same request under the same
         `client_ref`, its write ahead again (one `rules.fired`: the record is keyed). A check that
         refuses now sends nothing, and the first call's result stands."""
-        if await self._recheck(action.req) is not None or action.send_it is None:
+        if not await self._rechecked(action) or action.send_it is None:
             return
         try:
             answer = await action.records.admitted(action.fields, action.send_it)
@@ -340,17 +345,31 @@ class ActionExecutor:
             return
         action.answer, action.result = answer, self._answered(action, answer)
 
-    def _refusal(self, spec: HandlerSpec | None) -> BlockedBy | None:
-        if spec is None:
-            return "unavailable"
-        if spec.handler is None and spec.refused_as is None and spec.capability in _STAND_IN:
-            return None if self._stand_in is not None else "unavailable"
-        return refusal(spec)
+    def _before_scope(self, action: _Action) -> BlockedBy | None:
+        """Checks 2 and 3 on the action's account."""
+        spec = self._handlers.get(action.req.action_type)
+        account = action.req.instance.account_id
+        return self._gates.before_scope(spec, account, stand_in=self._stand_in is not None)
+
+    def _after_scope(self, spec: HandlerSpec, action: _Action) -> BlockedBy | None:
+        """Checks 5 to 8 on the action's account."""
+        return self._gates.after_scope(spec)
+
+    async def _rechecked(self, action: _Action) -> bool:
+        """Checks 1 to 8 again before a retry (24 §11.9), check 4 through the scope re-check
+        alone: True when every one passes. A refusal here is no result of its own."""
+        req = action.req
+        if await self._check_one(req) != "armed" or self._before_scope(action) is not None:
+            return False
+        spec = self._handlers.get(req.action_type)
+        if spec is None or self._scope_check(req) is not None:
+            return False
+        return self._after_scope(spec, action) is None
 
     def _sender(self, spec: HandlerSpec, action: _Action) -> Callable[[], Awaitable[HandlerAnswer]]:
         """The hand-over, built once: a retry sends the same request under the same key."""
         handler, req = spec.handler, action.req
-        if handler is None:  # `_refusal` admits a handler-less type only with a stand-in bound
+        if handler is None:  # check 2 admits a handler-less type only with a stand-in bound
             sink = cast(ActionSink, self._stand_in)
 
             async def via_sink() -> HandlerAnswer:
