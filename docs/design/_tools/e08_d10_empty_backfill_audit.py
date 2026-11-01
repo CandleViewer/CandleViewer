@@ -18,7 +18,7 @@ follows the E12-D07 tool (the same modes, the anchored values, the default-deny 
 3. **Gates.** One FAIL line per gate: G-RULED (the BQ heading names the ruling's comment id, the
    ruled sentences stand verbatim, and every row reads RULED, "with a change" exactly for BQ-2,
    BQ-10 and BQ-11), G-BQ (the BQ ids are BQ-0 … BQ-15 and every "Built in" section exists), G-BOARDS (at
-   most ten boards, twins at most a third, each PENDING or drawn with its id and PNG, none drawing
+   most ten boards, twins at most a third, each PENDING or drawn with its id, PNG and own gate, none drawing
    the chart canvas or E16-D05's role legs), G-VARIANT (each variant table has the nine rows in
    order; its W-n exist; its `color.*` tokens resolve in every theme; its announcement row carries
    a `max_rate`), G-MAP (the variant map uses CMP-026's enum at the base, E08-D04's states and the
@@ -75,8 +75,12 @@ OWN_BOARDS = re.compile(
 )
 DRAWN_CELL = re.compile(
     r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
-    r"`docs/design/E08/img/E08-D10-\d\d-[a-z0-9-]+\.png` \(\d+ × \d+\)"
+    r"`docs/design/E08/img/E08-D10-(?P<nn>\d\d)-[a-z0-9-]+\.png` \(\d+ × \d+\), "
+    r"\d+ frames?, [\d,]+ shapes / [\d,]+ text nodes; (?P<gate>dark|light|high-contrast) gate PASS "
+    r"\((?:own [\d,]+ px, other [\d,]+ px|hc primary [\d,]+ px, light [\d,]+ px)\)"
 )
+# a drawn cell's gate is its row's theme
+GATE_OF = {"dark": "dark", "light": "light", "hc": "high-contrast"}
 PENDING_CELL = "PENDING — drawn later in this PR"
 POINTER_HEAD = "- **Hi-fi, the E08 variants (E08-D10, #178):**"
 SPEC_BUDGET = 600
@@ -523,7 +527,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-BOARDS",
         "spec",
         "## 0.",
-        PENDING_CELL,
+        "drawn: board id `e4de416d-a820-8072-8008-e095c001a84f`, "
+        "`docs/design/E08/img/E08-D10-01-backfill-in-progress.png`",
         "drawn",
     ),
     Mutation(
@@ -966,8 +971,11 @@ def g_boards(t: Texts) -> list[Finding]:
         if len(r) < 5 or r[3] not in ("dark", "light", "hc"):
             bad.append(f"board {r[0]} has no theme")
             continue
-        if r[4] != PENDING_CELL and not DRAWN_CELL.fullmatch(r[4]):
+        drawn = DRAWN_CELL.fullmatch(r[4])
+        if r[4] != PENDING_CELL and not drawn:
             bad.append(f"board {r[0]} is neither PENDING nor drawn with its id and PNG")
+        elif drawn and (drawn["nn"] != r[0] or drawn["gate"] != GATE_OF[r[3]]):
+            bad.append(f"board {r[0]}'s drawn cell names another board's PNG or theme's gate")
         if re.search(r"canvas|view-as|sentence-form", r[2]):
             bad.append(f"board {r[0]} draws a cited-only frame")
     if "**Not drawn — the text is binding**" not in body_text(t.spec, "## 0."):
