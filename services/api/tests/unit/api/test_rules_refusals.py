@@ -12,6 +12,7 @@ and `test_audit_budget`'s fake writer; nothing sleeps.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -19,17 +20,18 @@ from fastapi import FastAPI
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from prometheus_client import generate_latest
+from pydantic import SecretStr
 
 from candleviewer.admin.wiring import audit_writer_sink
 from candleviewer.api.audit_budget import SUMMARY_REASON
-from candleviewer.api.rules_actor import make_rules_audit
+from candleviewer.api.rules_actor import _ACTIONS, _BUDGETED, make_rules_audit
 from candleviewer.api.rules_refusals import ACTIONS, ARM, SCOPE_DENIED, RuleRefusalBudgets
 from candleviewer.audit.actions import validate_action
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.main import _lifespan
 from candleviewer.observability.metrics_catalogue import CATALOGUE
-from candleviewer.settings import RULES_REFUSAL_BUDGET_PER_HOUR, Settings
+from candleviewer.settings import RULES_REFUSAL_BUDGET_PER_HOUR, Environment, Settings
 from tests.unit.api.test_audit_budget import _Clock, _Writer
 from tests.unit.test_main_lifespan import _fake_ctx
 
@@ -113,6 +115,8 @@ async def test_the_suppressed_count_rides_the_next_record_and_the_window_summary
     summary = rig.of(SCOPE_DENIED)[-1]
     assert (summary["reason"], summary["after_state"]) == (SUMMARY_REASON, {"suppressed": 2})
     assert (summary["object_kind"], summary["outcome"]) == ("rule", AuditOutcome.DENIED)
+    label = rig.of(SCOPE_DENIED)[0]["actor_label"]  # the user's own, as on each record of theirs
+    assert summary["actor_label"] == label == "u1"
     await rig.scope()  # counted again, within the summary's window
     await rig.budgets.flush.run_once()
     assert len(rig.of(SCOPE_DENIED)) == 3  # one summary per user, action and window
@@ -264,6 +268,64 @@ def test_create_app_wires_the_budget_from_the_setting_the_hooks_and_the_counter(
     assert re.search(line, text, re.MULTILINE), "the suppressed counter is not wired"
     (spec,) = [s for s in CATALOGUE if s.name == "rule_authoring_refusals_suppressed_total"]
     assert (spec.kind, spec.labels, spec.max_series, spec.status) == ("counter", (), 1, "live")
+
+
+def _real(tmp_path: Path, **extra: Any) -> Settings:
+    """The real backend's settings: the only one that wires the scope resolver's sink."""
+    return Settings(
+        storage_backend="real",
+        environment=Environment.DEMO,
+        metrics_enabled=False,
+        bars_state_root=str(tmp_path / "bars"),
+        auth_pepper=SecretStr("test-pepper"),
+        auth_totp_key_hex=SecretStr("11" * 32),
+        auth_recovery_hmac_key_hex=SecretStr("22" * 32),
+        auth_csrf_key_hex=SecretStr("33" * 32),
+        **extra,
+    )
+
+
+def test_create_app_wires_the_scope_sink_over_the_budget_on_the_real_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """On the real backend the scope resolver's sink is built over the app's one budget, so both
+    writers of `rules.scope_denied` share one count; each action's budget takes the cap, the
+    tracking, the in-flight and the window limits from the settings, not from their defaults."""
+    from candleviewer import app as app_module
+
+    built: list[RuleRefusalBudgets] = []
+    sunk: list[dict[str, Any]] = []
+
+    class _Built(RuleRefusalBudgets):
+        def __init__(self, *args: Any, **kw: Any) -> None:
+            super().__init__(*args, **kw)
+            built.append(self)
+
+    def sink(writer: Any, **kw: Any) -> Any:
+        sunk.append(kw)
+        return audit_writer_sink(writer, **kw)
+
+    monkeypatch.setattr(app_module, "RuleRefusalBudgets", _Built)
+    monkeypatch.setattr(app_module, "audit_writer_sink", sink)
+    limits = {
+        "rules_refusal_budget_per_hour": 7,
+        "audit_budget_tracked_users": 77,
+        "audit_inflight_writes": 5,
+        "audit_read_flush_seconds": 42.0,
+    }
+    app_module.create_app(_real(tmp_path, **limits))
+    (budgets,), (given,) = built, sunk
+    assert given.get("refusals") is budgets
+    for action in ACTIONS:
+        b = budgets.budget(action)
+        assert (b._per_hour, b._owner_per_hour) == (7, 7)
+        assert (b._tracked, b._inflight_cap, b._flush_s) == (77, 5, 42.0)
+
+
+def test_every_budgeted_event_is_filed_under_an_action_the_budgets_hold() -> None:
+    """The manager's hook files each budgeted refusal event under a verb one of the instances
+    writes, so `write` never meets an action it holds no budget for."""
+    assert {_ACTIONS[event] for event in _BUDGETED} <= set(ACTIONS)
 
 
 def test_one_instance_per_action_each_writing_its_own() -> None:

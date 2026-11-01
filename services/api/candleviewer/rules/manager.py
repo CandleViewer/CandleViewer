@@ -830,13 +830,18 @@ class RulesManager:
         `max_rules_per_user` rules that are not deleted, the Owner too, is refused `409 conflict`
         (`limit_reached`, the cap in the message, never a count): the count and the write it admits
         run under one lock, so two creates at the cap never both pass (G-16, #4834). An import
-        lands here too, and is held to the same cap."""
+        lands here too, and is held to the same cap. A name in the reserved `sys.` namespace is
+        refused `403`, its refusal recorded (`op` `create`) as a rename's is."""
         check_text_bound("note", notes)
         rid = str(uuid.uuid4())
         rule, h = self._validated({**ir, "mode": "disabled", "enabled": False}, rid)
         await self._require_grants(rule, actor, "create", rid)
         await self._require_owner_for_raised_limits(rule, actor, "create", rid)
         if is_reserved_name(rule.name):
+            await self._write_refusal(
+                "rule.system_rule_refused",
+                {"rule_id": rid, "name": rule.name, "op": "create", "actor": actor.user_id},
+            )
             raise RuleError(403, "system_rule_reserved", "The 'sys.' name prefix is reserved.")
         async with self._creating:
             rows = await self._s.all()
