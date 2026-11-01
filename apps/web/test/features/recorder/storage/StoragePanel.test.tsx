@@ -5,9 +5,7 @@
  * network (C-13.5). The section reads `/recording/storage` and `/admin/health` on entry and every 60 s, never a
  * figure computed for it; its one polite region says the turn to stale once.
  */
-import { createRequire } from "node:module";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiFetch } = vi.hoisted(() => ({
@@ -15,17 +13,29 @@ const { apiFetch } = vi.hoisted(() => ({
 }));
 vi.mock("../../../../src/lib/http/csrfFetch", () => ({ apiFetch }));
 
-import { ShellAnnouncer, clearAnnouncements } from "../../../../src/features/app-shell/announcer";
-import {
-  registerRecorderExtensions,
-  type StoragePanelProps,
-} from "../../../../src/features/recorder/extensions";
+import { clearAnnouncements } from "../../../../src/features/app-shell/announcer";
+import { registerRecorderExtensions } from "../../../../src/features/recorder/extensions";
 import type { HealthReport, StorageUsage } from "../../../../src/features/recorder/recorderApi";
-import {
-  StoragePanel,
-  type StoragePanelOptions,
-} from "../../../../src/features/recorder/storage/StoragePanel";
 import { STORAGE_DECK } from "../../../../src/features/recorder/storage/storageCopy";
+import {
+  HEADING,
+  advance,
+  card,
+  flush,
+  held,
+  json,
+  mount as mountPanel,
+  panel,
+  region,
+  rowsOf,
+  section,
+  sent,
+  serve,
+  seriousAxe,
+  utterances,
+  type PanelProps,
+  type Route,
+} from "./panelHarness";
 import {
   CLOCK,
   HEALTH,
@@ -39,115 +49,30 @@ import {
   frameWith,
 } from "./storageFixtures";
 
-const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
-  "axe-core",
-) as { run: (el: Element, o?: object) => Promise<{ violations: { impact?: string | null }[] }> };
-
-const HEADING = "cv-recorder-storage";
-const json = (status: number, body?: unknown): Response =>
-  new Response(body === undefined ? null : JSON.stringify(body), { status });
 const unavailable = () =>
   json(503, { code: "store_unavailable", status: 503, title: "x", type: "about:blank" });
-const flush = () => act(async () => void (await vi.advanceTimersByTimeAsync(0)));
-const advance = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
 
-type Route = (method: string, url: string) => Response | undefined;
 type Answer = () => Response | Promise<Response>;
 let storageAnswer: Answer = () => json(200, REPORT);
 let healthAnswer: Answer = () => json(200, HEALTH);
-/** An answer held until the test lets it land. */
-function held(): { readonly answer: Answer; readonly land: (response: Response) => void } {
-  let land: (response: Response) => void = () => undefined;
-  const pending = new Promise<Response>((resolve) => {
-    land = resolve;
-  });
-  return { answer: () => pending, land: (response) => land(response) };
-}
-
-/** The section's reads by path; `over` answers first. */
-function serve(over: Route = () => undefined) {
-  return async (url: string, init?: RequestInit): Promise<Response> => {
-    const method = init?.method ?? "GET";
-    const first = over(method, url);
-    if (first !== undefined) return first;
-    const path = url.replace("/api/v1", "");
-    if (path === "/recording/storage") return storageAnswer();
-    if (path === "/admin/health") return healthAnswer();
-    return json(404, { code: "not_found", status: 404, title: "x", type: "about:blank" });
-  };
-}
-const calls = (): string[] =>
-  apiFetch.mock.calls.map(
-    ([url, init]) => `${init?.method ?? "GET"} ${url.replace("/api/v1", "")}`,
-  );
+/** The section's two reads answer with the case's answers of the moment (the shared harness, C-486P3-13). */
+const reads: Route = (_, url) => {
+  const path = url.replace("/api/v1", "");
+  if (path === "/recording/storage") return storageAnswer();
+  if (path === "/admin/health") return healthAnswer();
+  return undefined;
+};
+const mount = (props: PanelProps = {}) => mountPanel(props, reads);
 
 let reported: unknown[] = [];
 const onAnalytics = (event: Event): void => void reported.push((event as CustomEvent).detail);
 
-type PanelProps = Partial<StoragePanelProps & StoragePanelOptions>;
-const base: StoragePanelProps = {
-  headingId: HEADING,
-  status: STATUS,
-  storage: null,
-  frame: frameWith(),
-  stale: false,
-};
-
-function panel(props: PanelProps = {}) {
-  return (
-    <MemoryRouter>
-      <StoragePanel {...base} {...props} />
-      <ShellAnnouncer />
-    </MemoryRouter>
-  );
-}
-async function mount(props: PanelProps = {}, over?: Route) {
-  apiFetch.mockImplementation(serve(over));
-  const view = render(panel(props));
-  await flush();
-  return view;
-}
-
-const section = (): HTMLElement => screen.getByRole("region", { name: "Storage and database" });
-/** RG-13: the section's one polite region. */
-const region = (): HTMLElement =>
-  section().querySelector(':scope > [role="status"][aria-live="polite"]') as HTMLElement;
-function utterances(): () => string[] {
-  const said: string[] = [];
-  const observer = new MutationObserver(() => {
-    const text = region().textContent ?? "";
-    if (text !== "" && said.at(-1) !== text) said.push(text);
-  });
-  observer.observe(region(), { childList: true, subtree: true, characterData: true });
-  return () => said;
-}
-const card = (title: string): HTMLElement =>
-  screen
-    .getByRole("heading", { level: 3, name: new RegExp(`^${title}`) })
-    .closest("[data-cmp='CMP-050']") as HTMLElement;
-/** A card's rows as "term: definition", the definition as read (an aria-hidden "—" left out). */
-function rowsOf(host: HTMLElement): Record<string, string> {
-  const terms = within(host).getAllByRole("term");
-  const defs = within(host).getAllByRole("definition");
-  return Object.fromEntries(
-    terms.map((term, i) => {
-      const def = defs[i]?.cloneNode(true) as HTMLElement;
-      def.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove());
-      return [term.textContent ?? "", (def.textContent ?? "").trim()];
-    }),
-  );
-}
 /** The definition of a card's row `term`, as rendered (its glyph included). */
 function definitionOf(host: HTMLElement, term: string): HTMLElement {
   const at = within(host)
     .getAllByRole("term")
     .findIndex((node) => node.textContent === term);
   return within(host).getAllByRole("definition")[at] as HTMLElement;
-}
-async function seriousAxe(element: Element): Promise<unknown[]> {
-  vi.useRealTimers();
-  const res = await axe.run(element, { rules: { "color-contrast": { enabled: false } } });
-  return res.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
 }
 
 beforeEach(() => {
@@ -285,9 +210,9 @@ describe(
 describe("the reads: sampled, never computed on request (AC 2; D04 §3; C-w)", CASE, () => {
   it("reads storage and health on entry and every 60 s, and nothing else", async () => {
     await mount();
-    expect(calls()).toEqual(["GET /recording/storage", "GET /admin/health"]);
+    expect(sent()).toEqual(["GET /recording/storage", "GET /admin/health"]);
     await advance(60_000);
-    expect(calls()).toEqual([
+    expect(sent()).toEqual([
       "GET /recording/storage",
       "GET /admin/health",
       "GET /recording/storage",
@@ -309,7 +234,7 @@ describe("the reads: sampled, never computed on request (AC 2; D04 §3; C-w)", C
       } satisfies StorageUsage);
     await advance(60_000);
     expect(section()).toHaveTextContent("Sampled 10:32:03 UTC (every 60 s)");
-    expect(rowsOf(card("QuestDB · hot")).Size).toBe("641.0 GB");
+    expect(rowsOf(card("QuestDB · hot"))["Size"]).toBe("641.0 GB");
     expect(said()).toEqual([]);
   });
 
@@ -380,7 +305,7 @@ describe("the reads: sampled, never computed on request (AC 2; D04 §3; C-w)", C
 
 describe("SCR-142/loading and SCR-142/unavailable (D04 §5)", CASE, () => {
   it("loading: 'Sampling…', the region busy, nothing claimed", async () => {
-    apiFetch.mockImplementation(() => new Promise<Response>(() => undefined));
+    apiFetch.mockImplementation(held().answer);
     const { container } = render(panel());
     await flush();
     expect(section()).toHaveTextContent("Sampling…");
@@ -396,8 +321,12 @@ describe("SCR-142/loading and SCR-142/unavailable (D04 §5)", CASE, () => {
     expect(section()).toHaveTextContent("Disk figures could not be loaded.");
     expect(section()).toHaveTextContent("Sampled 10:31:03 UTC, stale (1 s old)");
     expect(within(section()).queryByRole("alert")).toBeNull();
-    expect(section().querySelectorAll('[role="status"]')).toHaveLength(1);
-    expect(rowsOf(card("QuestDB · hot")).Health).toBe("healthy");
+    // RG-13: one polite region of the section's own (a component's own words, CMP-047's, stay its own).
+    const own = [...section().querySelectorAll('[role="status"]')].filter(
+      (node) => node.closest("[data-cmp]") === null,
+    );
+    expect(own).toHaveLength(1);
+    expect(rowsOf(card("QuestDB · hot"))["Health"]).toBe("healthy");
     expect(await seriousAxe(container)).toEqual([]);
   });
 
@@ -425,7 +354,7 @@ describe("SCR-142/loading and SCR-142/unavailable (D04 §5)", CASE, () => {
 
   it("a first read that fails says so once; a failed Retry says nothing more (A-486P3-07)", async () => {
     storageAnswer = unavailable;
-    apiFetch.mockImplementation(serve());
+    apiFetch.mockImplementation(serve(reads));
     render(panel());
     const said = utterances();
     await flush();
@@ -446,7 +375,7 @@ describe("SCR-142/loading and SCR-142/unavailable (D04 §5)", CASE, () => {
     storageAnswer = unavailable;
     await advance(60_000);
     expect(section()).toHaveTextContent("Sampled 10:31:03 UTC, stale (1 min old)");
-    expect(rowsOf(card("QuestDB · hot")).Size).toBe("640.0 GB");
+    expect(rowsOf(card("QuestDB · hot"))["Size"]).toBe("640.0 GB");
     expect(said()).toEqual(["Storage figures are stale"]);
   });
 });
@@ -468,7 +397,7 @@ describe("SCR-142/stale-sample: figures never silently go stale (AC 7; SR-27; FM
     const focusable = section().querySelectorAll("button, a[href], [tabindex='0']");
     expect(focusable[0]).toHaveAccessibleName("Retry");
     expect(within(section()).getAllByText("stale").length).toBeGreaterThanOrEqual(4);
-    expect(rowsOf(card("Parquet/DuckDB · cold")).Size).toBe("548.0 GB");
+    expect(rowsOf(card("Parquet/DuckDB · cold"))["Size"]).toBe("548.0 GB");
     expect(await seriousAxe(container)).toEqual([]);
   });
 
@@ -506,9 +435,9 @@ describe("SCR-142/tier-unreachable-questdb (AC 4; D04 §5; F-05, FM-14)", CASE, 
     expect(questdb).toHaveTextContent("QuestDB unreachable since 10:24:03 UTC");
     expect(within(questdb).getByRole("button", { name: "Retry" })).toBeVisible();
     expect(within(questdb).getByText("stale")).toBeVisible();
-    expect(rowsOf(questdb).Health).toBe("down");
-    expect(rowsOf(card("Parquet/DuckDB · cold")).Size).toBe("548.0 GB");
-    expect(rowsOf(card("Postgres · relational")).Size).toBe("16.0 GB");
+    expect(rowsOf(questdb)["Health"]).toBe("down");
+    expect(rowsOf(card("Parquet/DuckDB · cold"))["Size"]).toBe("548.0 GB");
+    expect(rowsOf(card("Postgres · relational"))["Size"]).toBe("16.0 GB");
     expect(within(section()).queryByRole("alert")).toBeNull();
     expect(section()).not.toHaveTextContent("Disk figures could not be loaded.");
     expect(await seriousAxe(container)).toEqual([]);
@@ -535,7 +464,7 @@ describe("SCR-142/tier-unreachable-questdb (AC 4; D04 §5; F-05, FM-14)", CASE, 
       json(403, { code: "forbidden", status: 403, title: "x", type: "about:blank" });
     await mount();
     for (const title of ["QuestDB · hot", "Parquet/DuckDB · cold", "Postgres · relational"]) {
-      expect(rowsOf(card(title)).Health).toBe("not reported");
+      expect(rowsOf(card(title))["Health"]).toBe("not reported");
     }
   });
 });
@@ -640,7 +569,7 @@ describe("SCR-142/lag-warning (D04 §5; D04-D8, D04-Q4)", CASE, () => {
     view.rerender(panel({ frame: frameWith({}, { backlog: 25000 }) }));
     await flush();
     expect(section()).toHaveTextContent(STORAGE_DECK["storage.lag.banner"][1]);
-    expect(rowsOf(card("QuestDB · hot")).Ingestion).toBe(
+    expect(rowsOf(card("QuestDB · hot"))["Ingestion"]).toBe(
       "Ingest 18,400 msg/s, backlog 25,000 rows, lag —",
     );
     expect(within(section()).queryByRole("alert")).toBeNull();
@@ -649,7 +578,7 @@ describe("SCR-142/lag-warning (D04 §5; D04-D8, D04-Q4)", CASE, () => {
 
   it("before a frame the status's numbers stand in", async () => {
     await mount({ frame: null });
-    expect(rowsOf(card("QuestDB · hot")).Ingestion).toBe(
+    expect(rowsOf(card("QuestDB · hot"))["Ingestion"]).toBe(
       "Ingest 18,422 msg/s, backlog 0 rows, lag —",
     );
   });
@@ -685,7 +614,7 @@ describe("SCR-142/view-as: the one T2 leg, dormant (BQ-8; D04 §9; T2-09; G-T2.5
     expect(section()).toHaveTextContent("Read-only — read-only while viewing as alex.");
     expect(screen.getByRole("meter", { name: "Recording budget" })).toBeVisible();
     await advance(60_000);
-    expect(calls().filter((c) => c === "GET /recording/storage")).toHaveLength(2);
+    expect(sent().filter((c) => c === "GET /recording/storage")).toHaveLength(2);
     expect(await seriousAxe(container)).toEqual([]);
   });
 });
@@ -750,5 +679,80 @@ describe("health input never leaks (E16-D06 §20.3; R-I1)", CASE, () => {
       } satisfies HealthReport);
     await mount();
     expect(section()).not.toHaveTextContent("server detail, never rendered");
+  });
+});
+
+describe("where focus goes when a Retry is gone (FM-14; E09-D09 §9.4)", CASE, () => {
+  const heading = (): HTMLElement =>
+    screen.getByRole("heading", { level: 2, name: "Storage and database" });
+  const fresh = (at: string) => () => json(200, { ...REPORT, generated_at: at });
+
+  it("a read that takes away the stamp's focused Retry lands on the section's heading (A-486P3-04)", async () => {
+    await mount();
+    await advance(121_000);
+    const retry = within(section()).getByRole("button", { name: "Retry" });
+    act(() => retry.focus());
+    storageAnswer = fresh("2026-09-14T10:34:03.000Z");
+    await advance(60_000); // the 180 s read
+    expect(retry.isConnected).toBe(false);
+    expect(heading()).toHaveFocus();
+  });
+
+  it("a read that brings a down tier back lands on its card's heading (A-486P3-04)", async () => {
+    healthAnswer = () => json(200, QUESTDB_DOWN);
+    await mount();
+    const retry = within(card("QuestDB · hot")).getByRole("button", { name: "Retry" });
+    act(() => retry.focus());
+    healthAnswer = () => json(200, HEALTH);
+    await advance(60_000);
+    expect(card("QuestDB · hot")).not.toHaveTextContent("unreachable");
+    expect(screen.getByRole("heading", { level: 3, name: "QuestDB · hot" })).toHaveFocus();
+  });
+
+  it("a report arriving takes away the banner's focused Retry and lands on the heading (A-486P3-04)", async () => {
+    storageAnswer = unavailable;
+    await mount();
+    const retry = within(section()).getByRole("button", { name: "Retry" });
+    act(() => retry.focus());
+    storageAnswer = () => json(200, REPORT);
+    await advance(60_000);
+    expect(section()).not.toHaveTextContent("Disk figures could not be loaded.");
+    expect(heading()).toHaveFocus();
+  });
+
+  it("focus elsewhere stays where it is when a Retry goes", async () => {
+    await mount();
+    await advance(121_000);
+    const link = screen.getByRole("link", { name: "System health →" });
+    act(() => link.focus());
+    storageAnswer = fresh("2026-09-14T10:34:03.000Z");
+    await advance(60_000);
+    expect(within(section()).queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(link).toHaveFocus();
+  });
+
+  it("the stamp's Retry whose read fails lands on the banner's Retry, the next stop (C-486P3-10)", async () => {
+    await mount();
+    await advance(121_000);
+    const retry = within(section()).getByRole("button", { name: "Retry" });
+    act(() => retry.focus());
+    storageAnswer = unavailable;
+    fireEvent.click(retry);
+    await flush();
+    expect(section()).toHaveTextContent("Disk figures could not be loaded.");
+    const banner = within(section()).getByRole("button", { name: "Retry" });
+    expect(banner).not.toBe(retry);
+    expect(banner).toHaveFocus();
+  });
+
+  it("a press that does not focus its Retry still lands, as in Safari (C-486P3-10)", async () => {
+    await mount();
+    await advance(121_000);
+    expect(document.activeElement).toBe(document.body);
+    storageAnswer = fresh("2026-09-14T10:33:03.000Z");
+    fireEvent.click(within(section()).getByRole("button", { name: "Retry" }));
+    await flush();
+    expect(within(section()).queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(heading()).toHaveFocus();
   });
 });
