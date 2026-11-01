@@ -138,6 +138,16 @@ proposal for E12-Q05 and E12-T05 to confirm against real tape density, not a set
 `tick` floor of 100: on an illiquid symbol 100 prints can span hours, so a floor that is right for BTCUSDT may
 make a legitimate setting unreachable (or, set lower, reopen BR-29); it must be validated per liquidity tier first.
 
+**Rejection cost (SR-E12-01; E12-X02 BQ-5), interim, ruled 2026-11-01, owner ratification on #2701:** a refused
+request costs at most **2 ms** of CPU, the median `process_time` it adds over an unauthenticated refusal, in
+process, and a refused `tick:1` request makes no storage call (no recording-start read, no print count, no bar
+read). Held by `test_caps_tick_1_refusal_costs_under_the_cpu_budget` and the call-set spies of the E12-X02 suite
+(`docs/security/abuse-cases/e12-bars.md`).
+
+**Timestamp grammar (E12-X02 F6, accepted 2026-11-01):** `from` and `to` are read by `datetime.fromisoformat`,
+which takes a superset of RFC 3339 (date-only, basic format, week dates). The superset is harmless: each form
+names one instant, the window caps apply to it, and it is pinned so a stricter parser is a reviewed change.
+
 ## 4. STRIDE table
 
 Risk = L x I (Low/Med/High) is the inherent risk; the Residual column is the risk after the stated control
@@ -336,6 +346,8 @@ the module, not literals.
 | AC-12 | Production build scan for `SCR-046`, probe routes and debug dumps                                           | BR-26        | E12-X03          |
 | AC-13 | QuestDB outage with builders live; feed gap and clock skew on time bars                                     | BR-34, BR-35 | E12-Q06          |
 | AC-14 | Backfill under 10018 responses next to live order flow                                                      | BR-33        | E12-Q06          |
+
+E12-X02 (#452) executed the seeds it owns: `docs/security/abuse-cases/e12-bars.md` (cases, verdicts, findings).
 
 ## 10. Observability signals
 
