@@ -146,7 +146,8 @@ export const T2ReasonMenu: Story = {
  * Which reason wins, a demo only: CMP-079 RbacGate's role leg (view-as) wins over the row's own reason on the primary,
  * as E09-D09 §2.1 checks the role legs first. On SCR-063 a role leg renders through the panel's notice instead, one
  * node every gated control points at, with no echo and no second line (E29-D02 §10.4; CMP-079 `form="notice"`, E05's).
- * The items keep their host's gates: view-as covers the five that send; SL/TP… and Chart stay enabled.
+ * The items keep their host's gates: view-as covers the five that send; SL/TP… and Chart stay enabled. In the open menu
+ * view-as shows as each of the five's second line, the interim rendering until E05's notice form (#30).
  */
 export const T2ViaRbacGate: Story = {
   args: { allowed: false, reason: FROZEN },
