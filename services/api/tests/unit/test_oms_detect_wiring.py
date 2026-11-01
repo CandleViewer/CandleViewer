@@ -8,6 +8,7 @@ the bus is the real in-process one, the stores and the port are doubles, and the
 from __future__ import annotations
 
 import asyncio
+import functools
 import math
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -17,14 +18,17 @@ import pytest
 from prometheus_client import generate_latest
 from pydantic import ValidationError
 
+from candleviewer import oms_detect_wiring
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import QueuePolicy
 from candleviewer.domain.primitives import AccountId
+from candleviewer.exchange.base.fakes import FRESH_HEADROOM_TOKENS
 from candleviewer.exchange.base.models import AccountRef, RateHeadroom
 from candleviewer.observability.health_probes import SystemEvent
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import OrderRefused
 from candleviewer.oms.incidents import DETAILS, OmsIncident, incident
+from candleviewer.oms.stuck_detector import StuckDetector
 from candleviewer.oms_detect_wiring import (
     DETECT_POOL_NAME,
     DETECT_POOL_SIZE,
@@ -52,6 +56,8 @@ from tests.unit.oms.stuck_rig import ACCOUNT, OTHER, T0, link
 STUCK = incident("in_flight", account_id=ACCOUNT, age_s=31.5, detected_at=T0,
                  order_link_id=link(1), symbol="BTCUSDT")  # fmt: skip
 NAKED = incident("naked", account_id=OTHER, age_s=3.5, detected_at=T0, symbol="ETHUSDT")
+#: An active key's id in its canonical form, as the trading port requires (ruling R13).
+KEY_REF = str(UUID(int=7))
 
 
 def test_the_thresholds_are_the_settings_and_one_cycle() -> None:
@@ -340,8 +346,9 @@ async def test_the_stop_runs_the_lanes_half_then_the_serving_loops() -> None:
 # --- In the runtime -----------------------------------------------------------------------------
 
 
-def _with_detection(world: Any, stores: DetectStores) -> Any:
-    return world.runtime(stores=lambda: replace(world.stores(), detect=stores), bus=Bus())
+def _with_detection(world: Any, stores: DetectStores, bus: Bus | None = None) -> Any:
+    held = Bus() if bus is None else bus
+    return world.runtime(stores=lambda: replace(world.stores(), detect=stores), bus=held)
 
 
 async def test_the_runtime_composes_it_closes_it_first_and_degrades_on_its_stall(
@@ -376,6 +383,72 @@ async def test_the_runtime_composes_it_closes_it_first_and_degrades_on_its_stall
         monkeypatch.setattr(parts.detect, "stalled", lambda: True)
         assert runtime.readyz == "degraded" and runtime.readiness == "ok"  # entry never waits
     assert released.calls == ["release"]
+
+
+class Parked:
+    """The detector's sleep in the runtime, on logical time: each wait is noted, then parks until
+    the test lets one through, so the loop scans only as far as the test moves it."""
+
+    def __init__(self) -> None:
+        self.waits: list[float] = []
+        self._through = asyncio.Semaphore(0)
+        self._noted = asyncio.Condition()
+
+    async def sleep(self, seconds: float) -> None:
+        async with self._noted:
+            self.waits.append(seconds)
+            self._noted.notify_all()
+        await self._through.acquire()
+
+    def through(self, waits: int) -> None:
+        for _ in range(waits):
+            self._through.release()
+
+    async def parked(self, waits: int) -> None:
+        async with self._noted:
+            await self._noted.wait_for(lambda: len(self.waits) >= waits)
+
+
+async def test_the_runtime_scans_its_own_standing_and_refreshes_the_rate_gauge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """As composed (BQ-2, BQ-11): an account the runtime's own standing marks stale is raised at
+    the next scan, recorded ahead and offered to the bus, and the scan's chore has the rate gauge
+    read the trading port's headroom."""
+    from tests.unit.oms.test_handovers import _Store
+    from tests.unit.oms.test_oms_runtime import World, started
+    from tests.unit.test_oms_reconcile_wiring import Reads
+
+    parked = Parked()
+    held = functools.partial(StuckDetector, sleep=parked.sleep)  # the loop's waits, the test's
+    monkeypatch.setattr(oms_detect_wiring, "StuckDetector", held)
+
+    async def accounts(_env: str) -> tuple[UUID, ...]:
+        return (ACCOUNT,)
+
+    async def resolve(account_id: AccountId) -> AccountRef:  # a key the trading port takes
+        return AccountRef(account_id=account_id, uid="u1", environment="demo", key_ref=KEY_REF)
+
+    stores = DetectStores(
+        reads=InMemoryStuckReads(), events=EventWriter(), account_ids=accounts, resolve=resolve,
+        release=Released().release,
+    )  # fmt: skip
+    bus = Bus()
+    sub = bus.subscribe("t", "demo.oms.incident", QueuePolicy.NEVER_DROP)
+    world = World(handover_store=_Store(), reconcile_reads=Reads())
+    for flag in world.flags:
+        flag.read()
+    async with started(_with_detection(world, stores, bus)) as runtime:
+        await asyncio.wait_for(runtime.wait_ready(), 10)  # a bound on the test
+        assert math.isnan(_scraped(world.metrics, "entry"))  # no scan has run its chore yet
+        runtime._standing.mark_stale(AccountId(ACCOUNT))
+        parked.through(2)  # the poll for `ready`, then tick 0's jittered phase
+        await asyncio.wait_for(parked.parked(3), 2)  # parked at its next tick: a scan ended
+        assert ("oms.incident", "account_stale") in world.writer.actions
+        published = await asyncio.wait_for(sub.get(), 2)
+        assert isinstance(published, OmsIncident)
+        assert (published.kind, published.account_id) == ("account_stale", ACCOUNT)
+        assert _scraped(world.metrics, "entry") == FRESH_HEADROOM_TOKENS  # the port's headroom
 
 
 async def test_without_its_stores_or_the_bus_the_runtime_composes_none() -> None:
