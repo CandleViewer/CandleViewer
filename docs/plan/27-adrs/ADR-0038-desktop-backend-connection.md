@@ -370,7 +370,7 @@ credential that outlives the page.
   (`api/sessions.py:1052-1055`), otherwise the verified cookie value.
   - The header is the same in every deployment: a same-origin page can read the cookie anyway, and CORS
     hides the header from unlisted origins.
-  - Since S4.1 (2026-10-21): six operations issue the token in code (F5), and the header goes only to a
+  - Since S4.1 (2026-10-21): six operations issue the token in code (F5; seven with `PUT /auth/password`, #2110, and eight since #2101), and the header goes only to a
     request whose `Origin` is listed; an absent or unlisted `Origin` gets none (2e, `22-api-openapi.yaml` CSRF).
   - The value is a session-bound MAC, not a credential (`api/csrf.py:162-164`). The redaction filter
     (SR-006) adds this response header to its list. Any reverse proxy or access log in front of the
@@ -407,7 +407,7 @@ credential that outlives the page.
     the PR that makes it issue one; the header then follows from `set_csrf_cookie` (3b).
   - Since S4.1 (2026-10-21): the enrolment-only work (#3839, #3845) made login's enrolment-only answer,
     recovery and enroll/confirm issue the token, and they now declare the reference too; only step-up
-    remains (F5).
+    remains (F5), until #2101 makes it rotate the session and issue the token (2026-10-31).
   - The WS loopback wording also covers the packaged shell's backend, not only local development
     (SR-049; `23-ws-protocol.md:66`). S0 does the same for the cookie text (`22-api-openapi.yaml:107-109`).
   - `23-ws-protocol.md` §2.1: the endpoint is on the REST backend origin. That is the page's origin in a
@@ -819,9 +819,13 @@ scope of Amendment 1's measurement. S1 (#3712) merged after the decisions were t
     since made login's enrolment-only answer, `POST /auth/mfa/recovery` and `POST /auth/mfa/enroll/confirm`
     issue it too (`_signed_in`, `api/auth.py:427-436`), so code issues it at six operations, and the contract
     now declares `CsrfTokenIssued` on the `200` of all six.
-  - Still open: `POST /auth/step-up`. The contract says it rotates both cookies, but its route does not rotate
-    the session yet (#2101), so it issues no token and declares no header; it gains the header in the change
-    that makes it issue one.
+  - Open until #2101: `POST /auth/step-up`. The contract said it rotates both cookies, but its route
+    did not rotate the session yet, so it issued no token and declared no header; it was to gain the
+    header in the change that made it issue one.
+  - 2026-10-31 (#2101): closed. A successful step-up now rotates the session (SR-013) and issues the
+    new session's token through `set_csrf_cookie`, so its `200` declares `CsrfTokenIssued`: code
+    issues the token at the eight operations of the contract's issue list, `PUT /auth/password`
+    (#2110) included, and every one declares the header.
 - **F6.** C-16.1 step 2 titles an amendment PR `docs(repo)!: …`, but `repo` is not in commitlint's
   `scope-enum` (`commitlint.config.cjs:66`), which pr-metadata enforces (C-4.10), so S0 uses `docs` (4b).
   The owners of C-16.1 and `commitlint.config.cjs` align them: C-16.1's text or the scope list.
