@@ -28,8 +28,11 @@ says `starting in read-only mode (accounts.key_selfcheck_failed)`; the critical 
 account could trade, `account.disabled_by_policy` (with `disarmed_at`, the disarm's time), and last
 `security.key_policy_violation` (the same rule and key; critical when the key can move funds: a
 withdraw, transfer, fiat or card right; error otherwise). Order entry is off for **every** account
-and the key's account is disarmed (`trading_enabled` false). The key's status does not change:
-reads go on.
+and the key's account is disarmed (`trading_enabled` false). The key's status becomes `invalid`
+(#5281): it leaves the key list, nothing signs with it, and after a restart the boot pass latches
+`FAILED` again until the Owner revokes it. If the `account.tested` record is refused, the status
+write waits and the key stays `active` until the next pass. Cancel works on every other account;
+the failing key's own account cannot sign. Reads go on.
 
 An Owner's on-demand test of a stored key (`testApiKey`, the Admin - Accounts "Test connection")
 enforces its verdict the same way (decision 11 on #836): a failing test gives this symptom and these
