@@ -227,6 +227,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "setHeightRatio",
     ]);
     expect(Object.keys(surface.members("ChartEvents")).sort()).toEqual([
+      "barStateChanged",
       "click",
       "crosshair",
       "dataState",

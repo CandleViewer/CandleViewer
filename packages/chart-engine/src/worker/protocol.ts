@@ -288,6 +288,18 @@ export type FromWorker =
    * (`ready`); posted on a change only. While empty the engine draws no grid; SCR-047 is the app's.
    */
   | { readonly t: "dataState"; readonly id: ChartId; readonly state: "empty" | "ready" }
+  /**
+   * E12-S10 (additive): a main-series bar's state changed: it started or stopped forming (the
+   * confirm), or its corrected mark came or went. Once per change, never per tick; an evicted bar
+   * posts nothing. `time` is the bar's open time (µs epoch).
+   */
+  | {
+      readonly t: "barStateChanged";
+      readonly id: ChartId;
+      readonly time: number;
+      readonly forming: boolean;
+      readonly amended: boolean;
+    }
   | {
       readonly t: "error";
       readonly id: ChartId | null;

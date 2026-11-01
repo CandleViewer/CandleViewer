@@ -110,7 +110,12 @@ describe("setSeriesKind: the same store, no data resent", () => {
     const batch = gl.uniforms.filter((u) => u[0] === "u_batch").slice(-2);
     expect(batch.map((u) => u[1])).toEqual([5, 6]); // CANDLE_PART.hollowWick, .hollowBody
     expect([s.kind, s.ring.data, s.ring.hollow, acks()]).toEqual(["hollow", data, true, sent]);
-    expect(labels()).toEqual(["series.hollow.wick", "series.hollow.body", "series.hollow.seam"]);
+    expect(labels()).toEqual([
+      "series.hollow.wick",
+      "series.hollow.body",
+      "series.hollow.seam",
+      "series.hollow.marks",
+    ]);
     expect(Array.from({ length: N }, (_, i) => storeBar(s.store, i))).toEqual(before);
   });
 
@@ -118,14 +123,14 @@ describe("setSeriesKind: the same store, no data resent", () => {
     candles();
     cmd({ k: "setSeriesKind", series: 0, kind: "bars" });
     frame();
-    expect(entry().candle.blocks.map((b) => b.ints[0])).toEqual([3, 2, 4]);
+    expect(entry().candle.blocks.map((b) => b.ints[0])).toEqual([3, 2, 4, 7]);
     cmd({ k: "setSeriesKind", series: 0, kind: "candles" });
     frame();
-    expect(entry().candle.blocks.map((b) => b.ints[0])).toEqual([0, 1, 4]);
+    expect(entry().candle.blocks.map((b) => b.ints[0])).toEqual([0, 1, 4, 7]);
     cmd({ k: "addSeries", series: 1, kind: "hollow" });
     bars(undefined, 1);
     frame();
-    expect(rt.series(1, 1)?.candle.blocks.map((b) => b.ints[0])).toEqual([5, 6, 4]);
+    expect(rt.series(1, 1)?.candle.blocks.map((b) => b.ints[0])).toEqual([5, 6, 4, 7]);
   });
 
   it("Heikin-Ashi: HA bars drawn, the store and the pick stay real (R-4)", () => {

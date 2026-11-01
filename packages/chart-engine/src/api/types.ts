@@ -162,6 +162,11 @@ export interface ChartEvents {
   frameStats: FrameStats;
   /** E12-S06 (BQ-9, additive): the visible range holds no bar (`empty`, no grid drawn) or some. */
   dataState: { state: "empty" | "ready" };
+  /**
+   * E12-S10 (additive; noted for the E11-T09 #1404 freeze): a main-series bar's state changed:
+   * forming started or ended (the confirm), or the corrected mark came or went. Never per tick.
+   */
+  barStateChanged: { time: number; forming: boolean; amended: boolean };
   error: {
     code: string;
     message: string;

@@ -170,10 +170,16 @@ describe("hollow candle: the four marks (D06 §4.2)", () => {
       CANDLE_PART.hollowWick,
       CANDLE_PART.hollowBody,
       CANDLE_PART.seam,
+      CANDLE_PART.marks,
     ]);
     series.frame(2.9, 1);
-    expect(series.blocks.map((b) => b.ints[0])).toEqual([0, 1, CANDLE_PART.seam]);
-    expect(SERIES_PARTS.hollow.map(([n]) => n)).toEqual(["wick", "body", "seam"]);
+    expect(series.blocks.map((b) => b.ints[0])).toEqual([
+      0,
+      1,
+      CANDLE_PART.seam,
+      CANDLE_PART.marks,
+    ]);
+    expect(SERIES_PARTS.hollow.map(([n]) => n)).toEqual(["wick", "body", "seam", "marks"]);
   });
 });
 

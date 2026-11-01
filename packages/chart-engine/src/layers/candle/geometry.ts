@@ -1,7 +1,8 @@
-// The candle geometry twin (E12-S06, E12-D06 §2-§4 and §9 at L0): the one float64 CPU copy of
-// what the `candle` shader draws, for the 2D painter, hit-testing and the tests. Per frame it
-// reduces bar spacing and DPR to four numbers (`u_geom`); per bar it places a part's rect exactly
-// as the shader does, through the pane block and `projectRel` (BQ-114). No DOM.
+// The candle geometry twin (E12-S06, E12-D06 §2-§4 and §9 at L0; E12-S10 the §7 marks): the one
+// float64 CPU copy of what the `candle` shader draws, for the 2D painter, hit-testing and the
+// tests. Per frame it reduces bar spacing and DPR to four numbers (`u_geom`); per bar it places a
+// part's rect exactly as the shader does, through the pane block and `projectRel` (BQ-114). No DOM.
+import { BAR_FLAG } from "../../model/BarStore.js";
 import { hairlineDevicePx } from "../../viewport/pixels.js";
 import { projectRel } from "../../viewport/transform.js";
 import { PALETTE } from "./palette.js";
@@ -12,7 +13,8 @@ import { CANDLE_DIR, MARK } from "./ring.js";
  * and the open / close ticks (a 10-vertex strip, two quads joined by degenerate bridges, BQ-15).
  * The gap seam (BQ-8): one hairline at the left edge of each `gap_before` bar's slot. E12-S07,
  * the hollow candle (D06 §4.2): its wick (weight by the colour-up bit) and its body (colour by
- * the colour-up bit; outline-only, interior unpainted, by the hollow bit).
+ * the colour-up bit; outline-only, interior unpainted, by the hollow bit). The marks (E12-S10,
+ * D06 §7.1 / §7.3): the forming bar's dashed ring and a corrected bar's square.
  */
 export const CANDLE_PART = {
   wick: 0,
@@ -22,9 +24,10 @@ export const CANDLE_PART = {
   seam: 4,
   hollowWick: 5,
   hollowBody: 6,
+  marks: 7,
 } as const;
 /** Strip vertices per instance: 4 for a quad, 10 for the two ticks (BQ-15). */
-export const PART_VERTICES: readonly number[] = [4, 4, 10, 4, 4, 4, 4];
+export const PART_VERTICES: readonly number[] = [4, 4, 10, 4, 4, 4, 4, 4];
 /** D06 §3.2: OHLC ticks are drawn from 5 CSS px; below it the bar draws the candle mark. */
 export const OHLC_TICKS_FROM = 5;
 /** D06 §4.2 / §5.5: the hollow marks are L0's (s ≥ 3 CSS px); below, the candle's L1 / L2 mark. */
@@ -47,6 +50,21 @@ export const GEOM = {
 export const GEOM_FLOATS = 8;
 /** D06 §3.2: an up body is outlined on every side once it is ≥ 3 CSS px wide. */
 export const FULL_OUTLINE_CSS = 3;
+/**
+ * E12-D06 §7 (GEOM `ring.weight`, `ring.offset`, `corrected.square`, `corrected.lift`; E11-D05
+ * `dash.2-2`), in hairlines: each is that many `max(1, floor(dpr))` device px (D06 §2). The ring
+ * is 1 px wide, 1 px outside the mark, dashed 2 on / 2 off along its perimeter from its top-left
+ * corner; the square is 3 × 3 px, 2 px above the high. The `candle` shader spells the same numbers.
+ */
+export const MARK_GEOM = { ringWeight: 1, ringOffset: 1, dash: 2, square: 3, lift: 2 } as const;
+/**
+ * A mark entry's word 4 (`MarkRing`): `kind | dir << 4 | heavy`, `heavy` (bit 6, free in the ring's
+ * `meta`, `CANDLE_META`) when the drawn wick is 2 hairlines: a down bar's, or under hollow a
+ * colour-down bar's (D06 §4.2), so the ring's outer rect clears the wick that is drawn.
+ */
+export const MARK_HEAVY = 0x40;
+/** D06 §5.1 / §7.1: the marks draw at L0 only (s ≥ 3 CSS px); S09 owns the tier hysteresis. */
+export const MARKS_FROM = 3;
 
 /**
  * E12-D06 §3.1 / E12-D12 §5.2: body = clamp(roundHalfUp(0.7 s), 1, 35) CSS px, forced odd from
@@ -78,12 +96,17 @@ export const fullOutline = (w: number, geom: ArrayLike<number>): boolean =>
  * The palette row a part of a bar is drawn in (the shader's choice, line for line). `mark` is
  * `meta >> 4` (`MARK`): the dir, and for the hollow parts the colour-up bit (D06 §4.2). A hollow
  * doji keeps that colour (D06 §9 doji row: "Hollow: the body keeps §4.2's previous-close colour
- * and wick weight"); a zero-range bar stays neutral.
+ * and wick weight"); a zero-range bar stays neutral. The marks (E12-S10) are neutral.
  */
 export function partColor(part: number, mark: number): number {
   const dir = mark & MARK.dir;
-  if (part === CANDLE_PART.wick || part === CANDLE_PART.seam || part === CANDLE_PART.hollowWick) {
-    return PALETTE.wick; // R-6: wicks and the seam are neutral
+  if (
+    part === CANDLE_PART.wick ||
+    part === CANDLE_PART.seam ||
+    part === CANDLE_PART.hollowWick ||
+    part === CANDLE_PART.marks
+  ) {
+    return PALETTE.wick; // R-6: wicks and the seam are neutral; D06 §7 the marks
   }
   if (part === CANDLE_PART.hollowBody && dir !== CANDLE_DIR.zeroRange) {
     return mark & MARK.colourUp ? PALETTE.up : PALETTE.down;
@@ -196,4 +219,85 @@ export function candleRect(
   out[1] = top;
   out[2] = w;
   out[3] = bottom - top;
+}
+
+/**
+ * A mark (E12-S10, D06 §7) of bar `index` as [x, y, w, h] in `u_viewport` px, the shader's part-7
+ * arithmetic; `hi`, `lo`, `o` and `meta` (word 4: `kind | dir << 4 | heavy`) are the mark entry's,
+ * the drawn bar's (Heikin-Ashi's when on). `kind` is the mark entry's flag bit: `forming` places
+ * the ring's outer rect around
+ * the union of the bar's wick and body (the doji / zero-range body around `o`; an up / down body
+ * lies inside the wick's span), snapped out to whole pixels; `amended` the square, centred on the
+ * hairline column, `lift` above the high (below it on an inverted scale).
+ */
+export function markRect(
+  kind: number,
+  index: number,
+  hi: number,
+  lo: number,
+  o: number,
+  meta: number,
+  k: ArrayLike<number>,
+  indexBase: number,
+  tickBase: number,
+  geom: ArrayLike<number>,
+  out: Float64Array,
+): void {
+  const hair = geom[GEOM.hair] ?? 1;
+  if ((kind & BAR_FLAG.forming) !== 0) {
+    const dir = (meta >> 4) & MARK.dir;
+    // The wick as drawn: `heavy` is its 2-hairline weight (a down bar's; hollow: colour-down).
+    const wick = (meta & MARK_HEAVY) !== 0 ? CANDLE_DIR.down : CANDLE_DIR.up;
+    candleRect(CANDLE_PART.body, index, o, hi, lo, o, dir, k, indexBase, tickBase, geom, out);
+    const bx = out[0] as number;
+    const bw = out[2] as number;
+    const by = out[1] as number;
+    const bh = out[3] as number;
+    candleRect(CANDLE_PART.wick, index, o, hi, lo, o, wick, k, indexBase, tickBase, geom, out);
+    const x0 = Math.min(bx, out[0] as number);
+    const x1 = Math.max(bx + bw, (out[0] as number) + (out[2] as number));
+    let top = out[1] as number;
+    let bottom = top + (out[3] as number);
+    if (dir >= CANDLE_DIR.doji) {
+      top = Math.min(top, by);
+      bottom = Math.max(bottom, by + bh);
+    }
+    const pad = (MARK_GEOM.ringOffset + MARK_GEOM.ringWeight) * hair;
+    top = Math.floor(top) - pad;
+    bottom = Math.ceil(bottom) + pad;
+    out[0] = x0 - pad;
+    out[1] = top;
+    out[2] = x1 - x0 + 2 * pad;
+    out[3] = bottom - top;
+    return;
+  }
+  const body = geom[GEOM.body] ?? 1;
+  const centre = (index - indexBase + 0.5 - (k[3] ?? 0)) * (k[0] ?? 0);
+  const left = Math.floor(centre - body * 0.5 + 0.5);
+  const stem = left + Math.floor((body - hair) * 0.5);
+  const side = MARK_GEOM.square * hair;
+  const lift = MARK_GEOM.lift * hair;
+  const yh = projectRel(k, hi - tickBase);
+  const at = Math.floor(yh + 0.5);
+  out[0] = stem - (side - hair) * 0.5;
+  out[1] = yh <= projectRel(k, lo - tickBase) ? at - lift - side : at + lift;
+  out[2] = side;
+  out[3] = side;
+}
+
+/**
+ * Whether pixel (x, y) of a `w` × `h` ring rect is inked: the shader's fragment test. The band is
+ * `ringWeight` hairlines inside the rect's edge; its perimeter coordinate runs clockwise from the
+ * top-left corner (top, right, bottom, left, in that priority at the corners), dashed `dash` on,
+ * `dash` off. Anchored to the bar's own snapped rect, so a pan never moves the dash phase.
+ */
+export function ringOn(x: number, y: number, w: number, h: number, hair: number): boolean {
+  const t = MARK_GEOM.ringWeight * hair;
+  let s: number;
+  if (y < t) s = x;
+  else if (x >= w - t) s = w + y;
+  else if (y >= h - t) s = 2 * w + h - 1 - x;
+  else if (x < t) s = 2 * w + 2 * h - 1 - y;
+  else return false;
+  return Math.floor(s / (MARK_GEOM.dash * hair)) % 2 === 0;
 }

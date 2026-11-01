@@ -16,7 +16,7 @@ let gl: FakeGl;
 const on = new Map<string, Listener>();
 const frame = (ms = 16): void => void vi.advanceTimersByTime(ms);
 const cmd = (c: object): void => rt.handle({ t: "command", id: 1, cmd: c });
-const bars = (m: number, n: number, op = "replace"): void => {
+const bars = (m: number, n: number, op = "replace", flags?: number[]): void => {
   const open = Int32Array.from({ length: n }, (_, i) => 100 + ((m + i) % 7));
   const { layout, buffer } = encodeCandles({
     time: Float64Array.from({ length: n }, (_, i) => (m + i) * 60e6),
@@ -25,6 +25,7 @@ const bars = (m: number, n: number, op = "replace"): void => {
     low: open.map((o) => o - 2),
     close: open.map((o, i) => o + ((i % 3) - 1)),
     volume: new Float32Array(n).fill(1),
+    ...(flags !== undefined && { flags: Uint8Array.from(flags) }),
     priceOrigin: 0,
     tickSize: 1,
   });
@@ -79,6 +80,7 @@ describe("candle drawing (BQ-1)", () => {
     const capacity = rt.series(1, 0)?.ring.capacity;
     expect(gl.draws).toEqual([`4 ${capacity}`, `4 ${capacity}`]);
     // The ring once for both parts; the gap seams' 16-entry buffer once (no gap: never drawn).
+    // E12-S10: no forming or amended bar, so the marks batch spans nothing: no upload, no VAO.
     expect(gl.writes.filter((w) => w.startsWith("full"))).toEqual([
       `full ${(capacity ?? 0) * 20}`,
       `full ${16 * 20}`,
@@ -142,8 +144,12 @@ describe("candle drawing (BQ-1)", () => {
     on.get("webglcontextrestored")?.({ preventDefault: () => undefined });
     frame();
     const capacity = rt.series(1, 0)?.ring.capacity ?? 0;
-    expect(gl.writes.slice(before.writes)).toEqual([`full ${capacity * 20}`, `full ${16 * 20}`]);
-    expect(gl.attribs.length - before.attribs).toBe(12);
+    expect(gl.writes.slice(before.writes)).toEqual([
+      `full ${capacity * 20}`,
+      `full ${16 * 20}`,
+      `full ${4 * 20}`,
+    ]);
+    expect(gl.attribs.length - before.attribs).toBe(12); // the marks VAO binds on first draw
     expect(gl.draws.length - before.draws).toBe(2);
   });
 
@@ -152,5 +158,44 @@ describe("candle drawing (BQ-1)", () => {
     cmd({ k: "removeSeries", series: 0 });
     frame();
     expect(gl.draws.length - before.draws).toBe(0);
+  });
+});
+
+describe("bar state (E12-S10)", () => {
+  const states = (): string[] =>
+    out
+      .filter((m) => m.t === "barStateChanged")
+      .map((m) => {
+        const e = m as { time: number; forming: boolean; amended: boolean };
+        return `${e.time / 60e6} ${e.forming} ${e.amended}`;
+      });
+
+  it("posts a change once, never per tick: forming, the confirm, the next bar, a correction", () => {
+    out.length = 0;
+    bars(299, 1, "append", [2]); // the last bar starts forming (an equal-time merge)
+    bars(299, 1, "append", [2]); // a tick: same bits, no event
+    bars(299, 1, "append", [0]); // the confirm
+    bars(300, 1, "append", [2]); // the next bar opens forming
+    bars(299, 1, "patch", [8]); // a late trade corrects the closed bar
+    expect(states()).toEqual([
+      "299 true false",
+      "299 false false",
+      "300 true false",
+      "299 false true",
+    ]);
+  });
+
+  it("draws the marks batch while the forming bar is in view at L0, and stops on the confirm", () => {
+    cmd({ k: "setViewport", timeStart: 240 * 60e6, timeEnd: 300 * 60e6 });
+    frame();
+    const capacity = rt.series(1, 0)?.ring.capacity;
+    bars(299, 1, "append", [2]);
+    gl.draws.length = 0;
+    frame();
+    expect(gl.draws).toEqual([`4 ${capacity}`, `4 ${capacity}`, "4 1"]);
+    bars(299, 1, "append", [0]);
+    gl.draws.length = 0;
+    frame();
+    expect(gl.draws).toEqual([`4 ${capacity}`, `4 ${capacity}`]);
   });
 });
