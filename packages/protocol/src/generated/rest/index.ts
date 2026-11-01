@@ -5470,6 +5470,7 @@ export interface paths {
      * @description Each rule is presented as `getRule` presents it, so listing disarms an armed rule the
      *     engine must not run, audited and broadcast the same way. A page holds at most 200 rules
      *     whatever `limit` asks for (`Limit` takes up to 500), and `meta.next_cursor` carries the rest.
+     *     A `cursor` that is not a rule id is `400 invalid_cursor`.
      */
     get: operations["listRules"];
     put?: never;
@@ -20932,6 +20933,7 @@ export interface operations {
           };
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];

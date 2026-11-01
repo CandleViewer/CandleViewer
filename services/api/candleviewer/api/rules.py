@@ -88,6 +88,18 @@ class _Resolver(Protocol):
     def resolve(self, request: Request) -> Any: ...
 
 
+#: The scope resolver as `make_rules_router` takes it: the resolver itself, or a provider read on
+#: every request (the composition root wires the scope after it builds the router).
+_ResolverSource = ScopeResolver | Callable[[], ScopeResolver | None] | None
+
+
+def _scope_resolver(source: _ResolverSource) -> ScopeResolver | None:
+    """The resolver `source` names now: an instance as given, a provider called, `None` unwired."""
+    if source is None or isinstance(source, ScopeResolver):
+        return source
+    return source()
+
+
 def _problem(status: int, title: str, detail: str, *, code: str | None = None) -> JSONResponse:
     """An RFC 7807 problem; `code` is the contract's machine-readable code (22 `x-error-codes`),
     for the answers that have one."""
@@ -126,7 +138,7 @@ def make_rules_router(
     on_request: _Counter = lambda cache: None,
     on_compile: Callable[[str, str], None] = lambda editor, result: None,
     on_divergence: Callable[[str, int], Any] = lambda editor, n_diffs: None,
-    scope_resolver: ScopeResolver | None = None,
+    scope_resolver: _ResolverSource = None,
     scope_refresh: Callable[[UUID], Awaitable[None]] | None = None,
     check_limiter: PreviewLimiter | None = None,
     on_rate_limited: _Counter = lambda route: None,
@@ -164,7 +176,8 @@ def make_rules_router(
 
     async def _authorize_scope(principal: _Principal, rule: Any) -> JSONResponse | None:
         """C-12.4: 403 on any account/environment the caller may not use (no existence leak)."""
-        if scope_resolver is None:
+        resolver = _scope_resolver(scope_resolver)
+        if resolver is None:
             if rule.scope.account_ids or "live" in rule.scope.environments:
                 return _problem(501, "Not implemented", "no scope resolver wired")  # fail closed
             return None
@@ -174,10 +187,10 @@ def make_rules_router(
         if scope_refresh is not None:
             await scope_refresh(caller)  # current grants/freeze, never a stale cache
         try:
-            await scope_resolver.authorize_accounts(
+            await resolver.authorize_accounts(
                 caller, [UUID(str(a)) for a in rule.scope.account_ids]
             )
-            await scope_resolver.authorize_environments(caller, rule.scope, audit_armed=False)
+            await resolver.authorize_environments(caller, rule.scope, audit_armed=False)
         except ScopeForbiddenError:
             return _problem(403, "Forbidden", ScopeForbiddenError.message)
         except AuditUnavailable:  # the scope's record was not written (C-2.9): nothing proceeds
@@ -195,16 +208,16 @@ def make_rules_router(
         principal, denied = await _authorize(request)
         if denied is not None or principal is None:
             return denied or _problem(401, "Unauthorized", "no session")
-        if scope_resolver is None:
+        # Read per request: the composition root wires the scope after it builds this router.
+        resolver = _scope_resolver(scope_resolver)
+        if resolver is None:
             return _problem(501, "Not implemented", "no scope resolver wired")
         caller = _caller(principal)
         if caller is None:
             return _problem(401, "Unauthorized", "no verified user identity")
         if scope_refresh is not None:
             await scope_refresh(caller)
-        return JSONResponse(
-            {"accounts": [str(a) for a in scope_resolver.listable_accounts(caller)]}
-        )
+        return JSONResponse({"accounts": [str(a) for a in resolver.listable_accounts(caller)]})
 
     @router.get("/rules/vocabulary")
     async def get_vocabulary(request: Request, symbol: str | None = None) -> Response:

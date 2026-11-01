@@ -24,6 +24,7 @@ from candleviewer.auth.errors import SessionReadOnly
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import Allow, Deny, decide
 from candleviewer.auth.step_up import ACTION_CLASSES, NO_GRACE_ACTION_CLASSES
+from candleviewer.rules.manager import Actor, GrantRead, RuleRow, VersionRow, rule_visible
 from tests.contract.rbac.rbac_harness import (
     ABSENT,
     ACTORS,
@@ -318,19 +319,119 @@ def test_list_with_one_grant_returns_only_that_accounts_rows(world: World) -> No
     assert _rules(world, "viewer") == []
 
 
+#: The walk's store (BQ-9 of #2291): fixed, interleaved ids; (name, maker, the account each version
+#: names, `None` for none, the last version active, deleted). The Manager granted A reads m-a1,
+#: m-none and m-a2; every other row is another user's, names B, or is deleted.
+_WALK: tuple[tuple[str, str, tuple[uuid.UUID | None, ...], bool], ...] = (
+    ("owner-b", "owner", (FOREIGN,), False),
+    ("m-a1", "manager_with_grant", (GRANTED,), False),
+    ("m-b", "manager_with_grant", (FOREIGN,), False),
+    ("owner-a", "owner", (GRANTED,), False),
+    ("m-none", "manager_with_grant", (None,), False),
+    ("m-was-b", "manager_with_grant", (FOREIGN, GRANTED), False),
+    ("m-gone", "manager_with_grant", (GRANTED,), True),
+    ("m-a2", "manager_with_grant", (GRANTED,), False),
+    ("owner-a2", "owner", (GRANTED,), False),
+)
+
+
+def _seeded(world: World) -> dict[str, str]:
+    """`_WALK` stored as it is listed, its ids `...0001` up in that order; name -> id."""
+    ids: dict[str, str] = {}
+    for n, (name, maker, accounts, deleted) in enumerate(_WALK, start=1):
+        rid, owner = f"00000000-0000-4000-8000-{n:012x}", str(user_id_of(maker))
+        versions = []
+        for v, account in enumerate(accounts, start=1):
+            ir = _rule_body(account or GRANTED, name)["ir"] | {"rule_id": rid, "version": v}
+            if account is None:
+                ir["scope"] = {"level": "symbol", "symbols": ["BTCUSDT"]}
+            vid = str(uuid.uuid5(uuid.UUID(rid), str(v)))
+            versions.append(VersionRow(vid, rid, v, ir, f"{v:064x}", "1.0.0", "", owner, "s"))
+        world.rule_store._rows[rid] = RuleRow(
+            rid, name, owner, active_version_id=versions[-1].id,
+            latest_version=len(versions), deleted=deleted, versions=versions,
+        )  # fmt: skip
+        ids[name] = rid
+    return ids
+
+
 def test_scope_is_part_of_the_query_not_a_post_filter(world: World) -> None:
-    """SQL-predicate hook: the rules store is asked for rows, and visibility is decided from the
-    caller's grants *inside* `RulesManager._visible` (before pagination), so a page of `limit`
-    rows can never be short-changed by rows a post-filter would drop."""
-    for i in range(3):
-        world.client.post("/rules", json=_rule_body(FOREIGN, f"f{i}"), headers=bearer("owner"))
-    world.client.post(
-        "/rules", json=_rule_body(GRANTED, "m0"), headers=bearer("manager_with_grant")
-    )
-    page = world.client.get("/rules", params={"limit": 1}, headers=bearer("manager_with_grant"))
-    names = [i["name"] for i in page.json()["items"]]
-    assert names == ["m0"], "pagination must run over the already-scoped set"
-    assert page.json()["meta"]["has_more"] is False
+    """SR-051 (#2291): the store is asked for the caller's rows with the caller's scope, and a page
+    is cut from what it returns. Walked a row at a time, a Manager granted A reads their own rules
+    naming A or no account, in id order; on no page does the store return a row they cannot read,
+    and the list never reads every rule."""
+    _seeded(world)
+    names: list[str] = []
+    more: list[bool] = []
+    cursor: str | None = None
+    while len(names) < len(_WALK):
+        query: dict[str, str | int] = {"limit": 1} | ({"cursor": cursor} if cursor else {})
+        page = world.client.get("/rules", params=query, headers=bearer("manager_with_grant"))
+        assert page.status_code == 200, page.text
+        body = page.json()
+        assert len(body["items"]) == 1 == body["meta"]["count"], body
+        names.append(body["items"][0]["name"])
+        more.append(body["meta"]["has_more"])
+        cursor = body["meta"]["next_cursor"]
+        if cursor is None:
+            break
+    assert names == ["m-a1", "m-none", "m-a2"], "pagination runs over the scoped set, by id"
+    assert more == [True, True, False]
+    reads = world.rule_store.reads
+    assert [method for method, _, _ in reads] == ["scoped_page"] * 3, "never every rule"
+    granted = frozenset({str(GRANTED)})
+    caller = Actor(str(user_id_of("manager_with_grant")), "s", granted_accounts=granted)
+    assert {scope for _, scope, _ in reads} == {GrantRead(caller.user_id, granted)}
+    returned = [world.rule_store._rows[rid] for _, _, ids in reads for rid in ids]
+    assert returned and all(rule_visible(row, caller) for row in returned)
+
+
+def test_version_reads_of_a_rule_outside_the_scope_are_the_unseen_404(world: World) -> None:
+    """SR-051 on the reads by id (RE-I5): a rule of another user on the caller's own granted
+    account is read inside the caller's scope and answers exactly as a missing rule does, with no
+    record; the store is never read outside the scope."""
+    made = world.client.post("/rules", json=_rule_body(GRANTED, "owners"), headers=bearer("owner"))
+    assert made.status_code == 201, made.text
+    rid, vid = made.json()["id"], made.json()["version"]["id"]
+    world.audit.records.clear()
+    world.rule_store.reads.clear()
+    gone = str(uuid.uuid4())
+    paths = (f"/rules/{rid}", f"/rules/{rid}/versions", f"/rules/{rid}/versions/{vid}")
+    for path in (*paths, f"/rules/{gone}/versions", f"/rules/{gone}/versions/{vid}"):
+        resp = world.client.get(path, headers=bearer("manager_with_grant"))
+        assert (resp.status_code, resp.json()["code"]) == (404, "not_found"), path
+        assert resp.json()["detail"] == "That rule does not exist.", path
+    assert not [r for r in world.audit.records if str(r["action"]).startswith("rule.")]
+    assert {method for method, _, _ in world.rule_store.reads} == {"scoped_page"}
+    assert all(ids == () for _, _, ids in world.rule_store.reads)
+    mine = world.client.get(f"/rules/{rid}/versions", headers=bearer("owner"))
+    assert mine.status_code == 200 and [v["id"] for v in mine.json()["items"]] == [vid]
+
+
+@pytest.mark.parametrize(
+    ("actor", "listed"),
+    [
+        ("owner", [str(GRANTED), str(FOREIGN)]),
+        ("manager_with_grant", [str(GRANTED)]),
+        ("manager_without_grant", []),
+        ("viewer", []),
+    ],
+)
+def test_rule_accounts_lists_each_actors_view_grants_and_no_other_account(
+    world: World, actor: str, listed: list[str]
+) -> None:
+    """#2291 (E35-S04 AC2): `GET /rules/accounts` answers from the caller's own view grants, as
+    the app wires it: the Owner its two, a Manager granted A just A, an ungranted Manager and a
+    Viewer none, and nobody the account no grant names."""
+    resp = world.client.get("/rules/accounts", headers=bearer(actor))
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"accounts": listed}
+    assert str(ABSENT) not in resp.json()["accounts"]
+
+
+def test_rule_accounts_without_a_session_is_401(world: World) -> None:
+    resp = world.client.get("/rules/accounts", headers=bearer("unauthenticated"))
+    assert resp.status_code == 401, resp.text
 
 
 # -- SR-026 / SR-025 -----------------------------------------------------------------------------

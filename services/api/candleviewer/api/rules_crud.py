@@ -187,7 +187,18 @@ def make_rules_crud_router(
         if isinstance(g, JSONResponse):
             return g
         actor, mgr = g
-        page = await mgr.list_rules(actor, mode, scope, cursor, max(1, min(limit, 200)))
+        after: str | None = None
+        if cursor:  # an empty cursor is the first page; any other is a rule id (22 `listRules`)
+            try:
+                after = str(UUID(cursor))
+            except ValueError:
+                return _problem(
+                    400,
+                    "invalid_cursor",
+                    "Pagination cursor is malformed or expired",  # 22's registered title
+                    "The cursor is not a rule id.",  # names the cursor, never its value
+                )
+        page = await mgr.list_rules(actor, mode, scope, after, max(1, min(limit, 200)))
         return JSONResponse(
             {
                 "items": page["items"],
@@ -294,8 +305,7 @@ def make_rules_crud_router(
             return g
         actor, mgr = g
         try:
-            await mgr.get(str(ruleId), actor)  # visibility (IDOR) check
-            items = await mgr.versions(str(ruleId))
+            items = await mgr.versions_for(str(ruleId), actor)  # one read in the caller's scope
         except RuleError as exc:
             return _from_error(exc)
         return JSONResponse(
@@ -309,8 +319,7 @@ def make_rules_crud_router(
             return g
         actor, mgr = g
         try:
-            await mgr.get(str(ruleId), actor)
-            return JSONResponse(await mgr.version(str(ruleId), str(versionId)))
+            return JSONResponse(await mgr.version_for(str(ruleId), str(versionId), actor))
         except RuleError as exc:
             return _from_error(exc)
 

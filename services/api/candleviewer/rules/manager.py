@@ -207,13 +207,59 @@ class StoredMode:
     ir_hash: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class OwnerRead:
+    """The Owner role's read scope (SR-051): every live rule. The store binds `user_id` to a live
+    owner role inside the query itself, so this scope handed to anyone else reads no row."""
+
+    user_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class GrantRead:
+    """Anyone else's read scope (SR-051): the caller's own live rules, every version of which names
+    only accounts in `granted`. An empty `granted` still reads the caller's rules naming none."""
+
+    user_id: str
+    granted: frozenset[str]
+
+
+#: The scope a store applies inside its query (SR-051: the scope is part of the query, never a
+#: filter after the fetch). `read_scope` builds it from the request's `Actor`.
+RuleReadScope = OwnerRead | GrantRead
+#: The rule scope levels (22 `RuleScope`, 21 `rule_scope`, the IR's `scope.level`; unit-pinned
+#: equal): a `GET /rules` `scope` filter outside them matches no rule.
+RULE_LEVELS: Final = ("global", "account", "symbol", "position", "trade_group")
+
+
 class RuleStore(Protocol):
+    """`get`, `put` and `all` read and write by id or whole (writes, the evaluator and the system
+    reads). Every read that answers a caller takes the caller's `RuleReadScope` in the query:
+    `scoped_page` (rows ordered by id, at most `limit`, after the id `after`, or the one id `only`),
+    `scoped_ids` and `name_taken` (the save's name check, G-14)."""
+
     async def get(self, rule_id: str) -> RuleRow | None: ...
     async def put(self, row: RuleRow) -> None: ...
     async def all(self) -> list[RuleRow]: ...
+    async def scoped_page(
+        self,
+        scope: RuleReadScope,
+        *,
+        mode: str | None,
+        level: str | None,
+        after: str | None,
+        limit: int,
+        only: str | None = None,
+    ) -> list[RuleRow]: ...
+    async def scoped_ids(self, scope: RuleReadScope) -> frozenset[str]: ...
+    async def name_taken(self, scope: RuleReadScope, name: str, exclude: str) -> bool: ...
 
 
 class InMemoryRuleStore:
+    """The unit and contract packs' store. A scoped read admits exactly what the reading rule
+    (`RulesManager._visible`) shows the reader the scope stands for, so the packs run the same
+    port the Postgres store serves."""
+
     def __init__(self) -> None:
         self._rows: dict[str, RuleRow] = {}
 
@@ -225,6 +271,46 @@ class InMemoryRuleStore:
 
     async def all(self) -> list[RuleRow]:
         return list(self._rows.values())
+
+    async def scoped_page(
+        self,
+        scope: RuleReadScope,
+        *,
+        mode: str | None,
+        level: str | None,
+        after: str | None,
+        limit: int,
+        only: str | None = None,
+    ) -> list[RuleRow]:
+        reader = _reader(scope)
+        rows = sorted(
+            (
+                r
+                for r in self._rows.values()
+                if RulesManager._visible(r, reader)
+                and (mode is None or r.mode == mode)
+                and (level is None or r.scope == level)
+                and (after is None or r.id > after)
+                and (only is None or r.id == only)
+            ),
+            key=lambda r: r.id,
+        )
+        return rows[:limit]
+
+    async def scoped_ids(self, scope: RuleReadScope) -> frozenset[str]:
+        reader = _reader(scope)
+        return frozenset(r.id for r in self._rows.values() if RulesManager._visible(r, reader))
+
+    async def name_taken(self, scope: RuleReadScope, name: str, exclude: str) -> bool:
+        """Every live rule counts for the Owner role; for anyone else, their own live rules only,
+        readable or not (names are unique per owner, 21 `ux_rules_name`)."""
+        return any(
+            r.name == name
+            and r.id != exclude
+            and not r.deleted
+            and (isinstance(scope, OwnerRead) or r.owner == scope.user_id)
+            for r in self._rows.values()
+        )
 
 
 def _owner_field(owner: str) -> dict[str, str]:
@@ -261,6 +347,21 @@ class Actor:
     #: by raising the `RuleError` it built (#2304: the `step_up_required` challenge it issued);
     #: False carries no challenge, so it is a defect and fails closed (`_consume_step_up`).
     consume_step_up: Callable[[], Awaitable[bool]] | None = None
+
+
+def read_scope(actor: Actor) -> RuleReadScope:
+    """The one builder of a read scope (SR-051): `OwnerRead` exactly when the actor holds the Owner
+    role, else `GrantRead` over the actor's live grants, a view-as session's target's included."""
+    if actor.is_owner:
+        return OwnerRead(actor.user_id)
+    return GrantRead(actor.user_id, actor.granted_accounts)
+
+
+def _reader(scope: RuleReadScope) -> Actor:
+    """The reader `scope` stands for, as the reading rule (`RulesManager._visible`) takes one."""
+    if isinstance(scope, OwnerRead):
+        return Actor(scope.user_id, "", is_owner=True)
+    return Actor(scope.user_id, "", granted_accounts=scope.granted)
 
 
 Audit = Callable[[str, dict[str, Any]], Awaitable[None]]
@@ -602,14 +703,38 @@ class RulesManager:
         return bad
 
     async def _visible_row(self, rule_id: str, actor: Actor, op: str | None = None) -> RuleRow:
-        """Row the actor may see. With `op` (a mutation/arm) an invisible row is a refusal and is
-        audited; plain reads/list filtering pass no `op` (that is scoping, not a refusal)."""
+        """Row the actor may see. With `op` (a mutation/arm) the row is read by its id and an
+        invisible one is a refusal, audited, since a write fails in full and records why (C-2.9).
+        The plain reads pass no `op` (that is scoping, not a refusal): one point read in the
+        caller's scope (SR-051), `_visible` re-checking the row it returns."""
+        if op is None:
+            return await self._scoped_row(rule_id, actor)
         row = await self._row(rule_id)
         if not self._visible(row, actor):
-            if op is not None:
-                await self._refuse_scope(rule_id, op, "rule_not_visible", actor)
+            await self._refuse_scope(rule_id, op, "rule_not_visible", actor)
             raise RuleError(404, "not_found", "That rule does not exist.")
         return row
+
+    async def _scoped_row(self, rule_id: str, actor: Actor) -> RuleRow:
+        """The point read of the plain reads by id: the store reads the one id inside the caller's
+        scope; a rule outside it, missing or deleted is the same 404, and no record is written."""
+        got = await self._s.scoped_page(
+            read_scope(actor), mode=None, level=None, after=None, limit=1, only=rule_id
+        )
+        shown = self._rechecked(got, actor)
+        if not shown:
+            raise RuleError(404, "not_found", "That rule does not exist.")
+        return shown[0]
+
+    def _rechecked(self, rows: list[RuleRow], actor: Actor) -> list[RuleRow]:
+        """`rows` as the reading rule admits them for `actor`: defence in depth behind the scope
+        the store applied in its query. A row it rejects is dropped, never presented, and logged
+        once per call by rule id and count, never its content (C-12.6)."""
+        shown = [r for r in rows if self._visible(r, actor)]
+        if len(shown) < len(rows):
+            dropped = [r.id for r in rows if not self._visible(r, actor)]
+            _log().error("rules.scope_mismatch", rule_ids=dropped, count=len(dropped))
+        return shown
 
     async def require_visible(self, rule_id: str, actor: Actor, op: str) -> None:
         """The route's look at the stored rule before it weighs what the request itself names: a
@@ -812,32 +937,36 @@ class RulesManager:
         cursor: str | None = None,
         limit: int = 100,
     ) -> dict[str, Any]:
-        everything = await self._s.all()
-        rows = sorted(
-            (r for r in everything if not r.deleted and self._visible(r, actor)),
-            key=lambda r: r.id,
+        """One page of the rules `actor` reads, by id (SR-051: the scope is part of the query).
+        The store reads the caller's scope, the filters and the cursor in its query, one row more
+        than the page, and `_visible` re-checks each row of the page (`_rechecked`). A falsy
+        `mode` or `scope` is no filter; one outside its vocabulary matches no rule, with no read.
+        `next_cursor` is the last row of the store's page while it holds more."""
+        if (mode and mode not in MODES) or (scope and scope not in RULE_LEVELS):
+            return {"items": [], "next_cursor": None}
+        got = await self._s.scoped_page(
+            read_scope(actor),
+            mode=mode or None,
+            level=scope or None,
+            after=cursor or None,
+            limit=limit + 1,
         )
-        if mode:
-            rows = [r for r in rows if r.mode == mode]
-        if scope:
-            rows = [r for r in rows if r.scope == scope]
-        if cursor:
-            rows = [r for r in rows if r.id > cursor]
-        page = rows[:limit]
+        page = got[:limit]
         return {
-            "items": [await self._present(r) for r in page],
-            "next_cursor": page[-1].id if len(rows) > limit else None,
+            "items": [await self._present(r) for r in self._rechecked(page, actor)],
+            "next_cursor": page[-1].id if len(got) > limit else None,
         }
 
     async def get(self, rule_id: str, actor: Actor) -> dict[str, Any]:
         return await self._present(await self._visible_row(rule_id, actor))
 
     async def visible_rule_ids(self, actor: Actor) -> frozenset[str]:
-        """The rules *actor* may read, exactly as `list_rules` lists them (not deleted, and the
-        `_visible` predicate, under which the Owner reaches every rule), for a read model that
-        joins rule history (`GET /notifications`, E40-T04)."""
-        rows = await self._s.all()
-        return frozenset(r.id for r in rows if not r.deleted and self._visible(r, actor))
+        """The rules *actor* may read, exactly as `list_rules` lists them, for a read model that
+        joins rule history (`GET /notifications`, E40-T04): the store's ids in the caller's scope
+        (SR-051), under which the Owner role reaches every live rule. It answers ids and presents
+        no row, so `_visible` has nothing to re-check; the property and seeded-population tests
+        hold the ids equal to the reading rule."""
+        return await self._s.scoped_ids(read_scope(actor))
 
     async def update(
         self,
@@ -896,11 +1025,11 @@ class RulesManager:
         """409 `name_taken` when another live rule holding `name` is the actor's own or one
         `rule_visible` lets them read (G-14): a rule they cannot read is never a conflict, so no
         answer names, counts or hints at it. Names are unique per owner in the store (21
-        `ux_rules_name`), so each of the actor's own rules counts, readable or not."""
-        for r in await self._s.all():
-            clash = r.name == name and r.id != rule_id and not r.deleted
-            if clash and (r.owner == actor.user_id or self._visible(r, actor)):
-                raise RuleError(409, "name_taken", f"A rule named '{name}' already exists.")
+        `ux_rules_name`), so each of the actor's own rules counts, readable or not. The store looks
+        the name up inside the caller's scope (SR-051): every live rule for the Owner role, the
+        caller's own live rules for anyone else."""
+        if await self._s.name_taken(read_scope(actor), name, rule_id):
+            raise RuleError(409, "name_taken", f"A rule named '{name}' already exists.")
 
     async def delete(self, rule_id: str, actor: Actor) -> None:
         row = await self._visible_row(rule_id, actor, "delete")
@@ -917,10 +1046,29 @@ class RulesManager:
 
     # ----- versions ----------------------------------------------------------------
     async def versions(self, rule_id: str) -> list[dict[str, Any]]:
+        """A rule's versions by its id, newest first, with no actor and no scope: a system and
+        test read. A route answers a caller through `versions_for`, in the caller's scope."""
         return [self._version_view(v) for v in reversed((await self._row(rule_id)).versions)]
 
     async def version(self, rule_id: str, version_id: str) -> dict[str, Any]:
+        """One version of a rule by id, with no actor and no scope: a system and test read, as
+        `versions`. A route answers a caller through `version_for`, in the caller's scope."""
         return self._pick_version(await self._row(rule_id), version_id)
+
+    async def versions_for(self, rule_id: str, actor: Actor) -> list[dict[str, Any]]:
+        """`GET /rules/{ruleId}/versions` from one scoped read (SR-051): the rule is presented
+        first, as `get` presents it, then its versions are answered from that row, newest first.
+        A rule outside the caller's scope is the 404 of a missing rule."""
+        row = await self._visible_row(rule_id, actor)
+        await self._present(row)
+        return [self._version_view(v) for v in reversed(row.versions)]
+
+    async def version_for(self, rule_id: str, version_id: str, actor: Actor) -> dict[str, Any]:
+        """`GET /rules/{ruleId}/versions/{versionId}` from one scoped read, as `versions_for`: on a
+        rule outside the caller's scope a real version and a missing one are the same 404."""
+        row = await self._visible_row(rule_id, actor)
+        await self._present(row)
+        return self._pick_version(row, version_id)
 
     async def visible_version(
         self, rule_id: str, version_id: str, actor: Actor, op: str
