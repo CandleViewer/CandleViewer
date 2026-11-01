@@ -206,7 +206,7 @@ def test_a_principal_with_no_user_id_shares_one_fallback_bucket() -> None:
 def test_the_routes_outside_the_limit_are_untouched() -> None:
     rig = _Rig()
     rig.exhaust()
-    for path in ("/rules/vocabulary", "/schemas/rule-ir.json"):
+    for path in ("/rules/vocabulary", "/rules/accounts", "/schemas/rule-ir.json"):
         assert rig.c.get(path, headers={"x-user": str(ONE)}).status_code == 200
 
 

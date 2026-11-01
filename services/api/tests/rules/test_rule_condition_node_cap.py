@@ -45,6 +45,7 @@ from candleviewer.rules.manager import (
 )
 from candleviewer.rules.vocabulary import default_registry
 from tests.rules.test_rule_save_bounds import (
+    BOUNDS,
     LIMITS,
     SHARED_DEEP,
     SHARED_WITHIN,
@@ -232,19 +233,27 @@ def test_a_document_over_the_cap_is_refused_by_check_bounds_with_one_issue(shape
     assert LIMIT_TEXT in str(refused.value)
 
 
-def test_a_document_over_the_value_bound_is_not_a_node_bound_refusal() -> None:
-    """The values and the depth keep their own issue, at `$`, and are not counted as a node cap."""
+@pytest.mark.parametrize(
+    "held",
+    [{}, {"conditions": _form_conditions(CAP + 1)}],
+    ids=["within_the_cap", "over_the_cap_too"],
+)
+def test_a_document_over_the_value_bound_is_not_a_node_bound_refusal(held: dict[str, Any]) -> None:
+    """The values and the depth keep their own issue, at `$`, and are not counted as a node cap: the
+    value and depth pass is first, so a document over both bounds is answered by it."""
+    doc = _sized(MAX_ITEMS + 1, **held)
     with pytest.raises(RuleCompileError) as refused:
-        check_bounds(_sized(MAX_ITEMS + 1), "rule")
+        check_bounds(doc, "rule")
     assert not isinstance(refused.value, ConditionNodeBoundError)
-    assert _issues([i.to_dict() for i in refused.value.issues]) == [("$", "schema_error", "syntax")]
+    assert _issues([i.to_dict() for i in refused.value.issues]) == BOUNDS
     assert LIMITS in refused.value.issues[0].message
     with pytest.raises(RuleError) as plain:
-        RulesManager.check_document(_sized(MAX_ITEMS + 1))
+        RulesManager.check_document(doc)
     assert not isinstance(plain.value, RuleCapRefused)  # never counted as a cap
+    assert _issues(plain.value.extra["issues"]) == BOUNDS and LIMITS in plain.value.message
     checks = _Checks()
-    r = checks.c.post("/rules/validate", json={"ir": _sized(MAX_ITEMS + 1)})
-    assert (r.json()["valid"], r.json()["errors"][0]["path"], checks.capped) == (False, "$", [])
+    r = checks.c.post("/rules/validate", json={"ir": doc})
+    assert (r.json()["valid"], _issues(r.json()["errors"]), checks.capped) == (False, BOUNDS, [])
 
 
 @SHAPES
@@ -324,6 +333,19 @@ def test_put_rule_over_the_node_cap_writes_no_version() -> None:
     assert saves.capped == ["condition_nodes"]
 
 
+def test_a_save_refused_for_another_reason_is_answered_unchanged_and_never_counted() -> None:
+    saves = _Saves()
+    rid = saves.c.post("/rules", json={"ir": _ir()}).json()["id"]
+    stale = saves.c.put(f"/rules/{rid}", json={"ir": _ir()}, headers={"If-Match": "7"})
+    assert (stale.status_code, stale.json()["code"]) == (412, "version_conflict")
+    member = saves.c.post("/rules", json={"ir": _ir(), "unknown": 1})
+    assert (member.status_code, member.json()["code"]) == (422, "rule_ir_invalid")
+    assert [e["rule"] for e in member.json()["errors"]] == ["unknown_field"]
+    values = saves.c.post("/rules", json={"ir": _sized(MAX_ITEMS + 1)})
+    assert (values.status_code, _issues(values.json()["issues"])) == (422, BOUNDS)
+    assert saves.capped == []  # each is answered as it is for any refusal, none counted as a cap
+
+
 def test_a_save_over_the_node_cap_is_decided_before_the_scope_check() -> None:
     """After the permission gate, the bound comes before the scope check reads the document's
     scope: an ungranted account in it is never looked up, so no scope record is written."""
@@ -344,9 +366,7 @@ def test_check_document_over_the_node_cap_raises_the_counted_refusal() -> None:
     assert isinstance(capped.__cause__, ConditionNodeBoundError)
 
 
-async def test_create_update_and_import_over_the_node_cap_store_nothing_and_write_no_record(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_create_and_update_over_the_node_cap_store_nothing_and_write_no_record() -> None:
     m, audits, _ = _mgr()
     with pytest.raises(RuleCapRefused):
         await m.create(_over(), OWNER)
@@ -355,6 +375,13 @@ async def test_create_update_and_import_over_the_node_cap_store_nothing_and_writ
     with pytest.raises(RuleCapRefused):
         await m.update(rid, _over(), 1, OWNER)
     assert [v["version"] for v in await m.versions(rid)] == [1]
+    assert [a for a, _p in audits] == ["rule.created"]  # no refusal wrote a record
+
+
+async def test_import_rule_over_the_node_cap_is_refused_before_the_bundle_is_copied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    m, audits, _ = _mgr()
 
     def walked(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("the bundle was walked before the node bound was decided")
@@ -364,7 +391,7 @@ async def test_create_update_and_import_over_the_node_cap_store_nothing_and_writ
     with pytest.raises(RuleCapRefused) as refused:
         await m.import_rule({"format": "cv-rule-bundle/1", "ir": _over()}, OWNER)
     assert refused.value.cap == "condition_nodes"
-    assert [a for a, _p in audits] == ["rule.created"]  # no refusal wrote a record
+    assert (await m.list_rules(OWNER))["items"] == [] and audits == []  # nothing stored or recorded
 
 
 # ----- compile --------------------------------------------------------------------------------
@@ -388,12 +415,36 @@ def _over_depth() -> int:
     return next(k for k in range(1, 40) if _expansion(_shared(k)) > CAP)
 
 
-def _graph_of(n: int) -> dict[str, Any]:
-    """A graph model that expands to exactly `n` condition nodes: a root over groups over one
-    shared comparison."""
+#: What a graph's shared node is, as `_rule` overrides: the base comparison; a temporal node over
+#: one; and a comparison over arithmetic operands, whose copy holds one condition node and an
+#: arithmetic node and two operands that are not condition nodes.
+COPIES = {
+    "comparison": {},
+    "temporal": {
+        "conditions": {
+            "node_id": "t1",
+            "op": "sustained_for",
+            "window_ms": 30_000,
+            "child": _comparison("c1"),
+        }
+    },
+    "arithmetic": {
+        "conditions": {
+            **_comparison("c1"),
+            "left": {"const": 1},
+            "right": {"node_id": "x1", "op": "add", "operands": [{"const": 2}, {"const": 3}]},
+        }
+    },
+}
+
+
+def _graph_of(n: int, kind: str = "comparison") -> dict[str, Any]:
+    """A graph model that expands to exactly `n` condition nodes: a root over groups over copies of
+    one shared node, by `kind` (`COPIES`); a comparison makes up the odd node of a temporal one."""
+    g = _jsonable(to_graph_model(_rule(**COPIES[kind])))
+    top = next(e["from"] for e in g["edges"] if e["port"] == "when")
     groups = -(-(n - 1) // 33)
-    below = n - 1 - groups
-    g = _jsonable(to_graph_model(_rule()))
+    copies, odd = divmod(n - 1 - groups, _expansion(g))
     g["nodes"] += [{"id": "root", "type": "boolean", "data": {"op": "any_of"}}]
     g["nodes"] += [
         {"id": f"g{i}", "type": "boolean", "data": {"op": "all_of"}} for i in range(groups)
@@ -402,8 +453,9 @@ def _graph_of(n: int) -> dict[str, Any]:
     g["edges"] += [{"from": "root", "to": "a1", "port": "when"}]
     g["edges"] += [{"from": f"g{i}", "to": "root", "port": "in"} for i in range(groups)]
     for i in range(groups):
-        size = below // groups + (i < below % groups)
-        g["edges"] += [{"from": "c1", "to": f"g{i}", "port": "in"}] * size
+        size = copies // groups + (i < copies % groups)
+        g["edges"] += [{"from": top, "to": f"g{i}", "port": "in"}] * size
+    g["edges"] += [{"from": "c1", "to": "g0", "port": "in"}] * odd
     return g
 
 
@@ -411,12 +463,14 @@ def test_compile_graph_charges_each_expanded_copy_at_the_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert _expansion(_shared(SHARED_WITHIN)) <= CAP < _expansion(_shared(SHARED_WITHIN + 1))
-    assert (_expansion(_graph_of(CAP)), _expansion(_graph_of(CAP + 1))) == (CAP, CAP + 1)
-    rule = compile_graph(_graph_of(CAP))  # exactly at the cap: compiled
-    stored = {"conditions": rule.model_dump(mode="json")["conditions"]}
-    assert count_condition_nodes(stored, limit=10**9) == CAP
+    for kind in COPIES:  # exactly at the cap: compiled, holding the nodes the expansion counts
+        graph = _graph_of(CAP, kind)
+        stored = {"conditions": compile_graph(graph).model_dump(mode="json")["conditions"]}
+        assert _expansion(graph) == count_condition_nodes(stored, limit=10**9) == CAP, kind
+        assert _expansion(_graph_of(CAP + 1, kind)) == CAP + 1, kind
     shared = _shared(_over_depth())
-    over, sent = (_graph_of(CAP + 1), shared, _shared(SHARED_DEEP)), _jsonable(shared)
+    over, sent = [_graph_of(CAP + 1, kind) for kind in COPIES], _jsonable(shared)
+    over += [shared, _shared(SHARED_DEEP)]
     _no_schema_walk(monkeypatch)  # past it: refused before any copy is built into a rule
     for model in over:
         with pytest.raises(ConditionNodeBoundError) as refused:
