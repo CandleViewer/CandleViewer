@@ -9,6 +9,7 @@ import type { GlRegistry, Handle } from "./registry.js";
 import { BAR_CELL } from "./shaders/bar-cell-stub.js";
 import { CANDLE } from "./shaders/candle.js";
 import { DRAWING_FILL } from "./shaders/drawing-fill.js";
+import { DRAWING_LABEL } from "./shaders/drawing-label.js";
 import { DRAWING_LINE } from "./shaders/drawing-line.js";
 import { LINE } from "./shaders/line.js";
 import { QUAD } from "./shaders/quad.js";
@@ -41,6 +42,7 @@ export const PROGRAMS: readonly ProgramSource[] = [
   CANDLE,
   DRAWING_LINE,
   DRAWING_FILL,
+  DRAWING_LABEL,
 ];
 export { PROGRAM };
 

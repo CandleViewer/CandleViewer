@@ -29,6 +29,7 @@ import type { BatchUniforms } from "../gl/submit.js";
 import { type BarBatch, BarStore } from "../model/BarStore.js";
 import { ModelRejection, type MutationRange, RangeSlot } from "../model/counters.js";
 import { FILL_ATTRIBUTES } from "../layers/drawings/fills.js";
+import { LABEL_ATTRIBUTES } from "../layers/drawings/labels.js";
 import { LINE_ATTRIBUTES } from "../layers/drawings/lines.js";
 import { DrawingsNode } from "../layers/drawings/project.js";
 import { plotWidthOf } from "../interaction/wheel.js";
@@ -666,20 +667,23 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   function addDrawings(graph: scene.SceneGraph, node = new DrawingsNode("main/drawings/set")) {
     graph.addNode("main", "drawings", node);
     graph.addNode("main", "drawings", node.fillNode); // after its owner: collected after it
-    node.dirty = node.fillNode.dirty = scene.DIRTY_ALL;
+    graph.addNode("main", "drawings", node.labelNode); // the third and last draw (PR 2)
+    node.dirty = node.fillNode.dirty = node.labelNode.dirty = scene.DIRTY_ALL;
     return node;
   }
 
-  /** Both rings on a backend, each with its program's int bindings. */
+  /** The three rings on a backend, each with its program's int bindings. */
   function attachDrawings(backend: RenderBackend, d: DrawingsNode): void {
     backend.attach(d.id, d.lines, LINE_ATTRIBUTES);
     backend.attach(d.fillNode.id, d.fills, FILL_ATTRIBUTES);
+    backend.attach(d.labelNode.id, d.labels, LABEL_ATTRIBUTES);
   }
 
   /** The node's ring on the open backend, and its changed instance ranges into the builder. */
   function wire(inst: Instance, node: DrawingsNode): DrawingsNode {
     node.onRange = (id, r) => inst.builder.patch(id, r);
     node.theme = inst.theme; // token colours resolve through it (BQ-4)
+    node.now = deps.now; // engine_drawing_layer_frame_ms
     if (inst.gpu.backend !== undefined) attachDrawings(inst.gpu.backend, node);
     return node;
   }
@@ -916,6 +920,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         lod: inst.lod,
         dpr: inst.dpr,
         backingStorePx: [width, height],
+        ...(inst.drawings !== null && { drawings: inst.drawings.metrics() }), // engine_drawing_*
       });
     }
   }

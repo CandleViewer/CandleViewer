@@ -10,6 +10,11 @@ export interface Ctx2DLike {
   setLineDash?(segments: readonly number[]): void;
   /** E14-T03 slice 3: `drawing-fill`'s ellipse; optional, as a fake may omit it (none drawn). */
   ellipse?(x: number, y: number, rx: number, ry: number, rot: number, a0: number, a1: number): void;
+  /** E14-T03 PR 2: drawing labels (26 §3.7's 2D fallback); optional, as a fake may omit them. */
+  font?: string;
+  textAlign?: string;
+  textBaseline?: string;
+  fillText?(text: string, x: number, y: number): void;
   clearRect(x: number, y: number, w: number, h: number): void;
   fillRect(x: number, y: number, w: number, h: number): void;
   beginPath(): void;

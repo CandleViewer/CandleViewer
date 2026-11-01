@@ -79,6 +79,10 @@ export interface GL2Like {
   clearColor(r: number, g: number, b: number, a: number): void;
   clear(mask: number): void;
   drawArraysInstanced(mode: number, first: number, count: number, instances: number): void;
+  // E14-T03 PR 2: premultiplied blending for the drawings programs (`PROGRAM_PREMULTIPLIED`).
+  enable(cap: number): void;
+  disable(cap: number): void;
+  blendFunc(src: number, dst: number): void;
 }
 
 /** The numeric GL enums the backend reads (values from the WebGL 1/2 specifications). */
@@ -107,4 +111,7 @@ export const GL = {
   INT: 0x1404,
   TRIANGLE_STRIP: 0x0005,
   COLOR_BUFFER_BIT: 0x4000,
+  BLEND: 0x0be2,
+  ONE: 1,
+  ONE_MINUS_SRC_ALPHA: 0x0303,
 } as const;

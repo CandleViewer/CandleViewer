@@ -4,12 +4,14 @@
 // GL fake or Canvas 2D) on the pane block, so the `drawing-line` and (slice 3) `drawing-fill`
 // batches' uploads and draws count.
 // `run` drags one segment for 180 frames (a `patch`, then a frame); `pan` is TRANSFORM only. The
-// unit tests count; slice T03-f adds the timed half (B8 ≤ 12 ms).
+// unit tests count; `drawings-drag.perf.test.ts` is the timed half (B8: frame ≤ 12 ms). PR 2:
+// every drawing carries a label, so the frame draws all three batches (lines, fills, labels).
 import { mulberry32 } from "../fixtures/rng.mjs";
 import type { RenderBackend } from "../../src/gl/backend.js";
 import { BarStore } from "../../src/model/BarStore.js";
 import type { DrawingInput, DrawingKind, SetDrawings } from "../../src/layers/drawings/model.js";
 import { FILL_ATTRIBUTES } from "../../src/layers/drawings/fills.js";
+import { LABEL_ATTRIBUTES } from "../../src/layers/drawings/labels.js";
 import { LINE_ATTRIBUTES } from "../../src/layers/drawings/lines.js";
 import { DrawingsNode } from "../../src/layers/drawings/project.js";
 import { BatchBuilder } from "../../src/scene/batch-builder.js";
@@ -34,6 +36,10 @@ export const DRAG_FRAMES = 180; // 3 s at 60 fps (Scenario 1)
 export const LINE_INSTANCES = 300;
 export const FILL_INSTANCES = 75;
 export const PLOT = { width: 1920, height: 1080 };
+/** Every drawing's label (Scenario 3): "level", a space (no glyph) and the index's digits. */
+export const label = (i: number): string => `level ${i}`;
+/** The label glyphs seeded: 250 × 5 for "level", then 10 one-, 90 two- and 150 three-digit ids. */
+export const LABEL_GLYPHS = 250 * 5 + 10 * 1 + 90 * 2 + 150 * 3;
 
 export class DrawingsDragBench {
   readonly graph = new SceneGraph();
@@ -66,11 +72,13 @@ export class DrawingsDragBench {
     this.graph.addNode("p0", "overlays", this.footprint);
     this.graph.addNode("p0", "drawings", this.drawings);
     this.graph.addNode("p0", "drawings", this.drawings.fillNode);
+    this.graph.addNode("p0", "drawings", this.drawings.labelNode);
     this.ctx = new FrameContext(this.viewport);
     this.builder = new BatchBuilder(this.graph, backend ?? { uploadSubRange: () => undefined });
     this.drawings.onRange = (id, r) => this.builder.patch(id, r);
     backend?.attach(this.drawings.id, this.drawings.lines, LINE_ATTRIBUTES);
     backend?.attach(this.drawings.fillNode.id, this.drawings.fills, FILL_ATTRIBUTES);
+    backend?.attach(this.drawings.labelNode.id, this.drawings.labels, LABEL_ATTRIBUTES);
     backend?.setPaneUniforms(() => this.uniforms);
     const rng = mulberry32(seed);
     const at = (): number[] => [(n - 200 + rng() * 200) * US, 1_000 + Math.round(rng() * 50)];
@@ -81,13 +89,15 @@ export class DrawingsDragBench {
       const points = Array.from({ length: k }, at).flat();
       const filled = kind === "rect" || kind === "band" || kind === "ellipse";
       const s = { ...style, dash: (i % 3) as 0 | 1 | 2, ...(filled && { fill: 0x2962ff33 }) };
-      drawings.push({ id: i < 200 ? `d${i}` : `o${i}`, kind, points, style: s });
+      const id = i < 200 ? `d${i}` : `o${i}`;
+      drawings.push({ id, kind, points, style: s, label: label(i) }); // Scenario 3: every one
     }
     this.drawings.apply({ op: "replace", drawings });
     for (let f = 0; f < DRAG_FRAMES; f += 1) {
       const t0 = (n - 150 + f / 10) * US; // the host's messages: built outside the frames
       const points = [t0, 1_010 + (f % 20), t0 + 5 * US, 1_030];
-      this.drags.push({ op: "patch", drawings: [{ id: "d8", kind: "segment", points, style }] });
+      const d8 = { id: "d8", kind: "segment", points, style, label: label(8) } as const;
+      this.drags.push({ op: "patch", drawings: [d8] });
     }
     this.frame();
   }
@@ -105,11 +115,14 @@ export class DrawingsDragBench {
     this.backend?.submit(this.builder.drawList, this.builder.drawCount, w, h);
   }
 
+  /** Drag frame `f` (0 ≤ f < DRAG_FRAMES): its prebuilt `patch`, then a frame (B8's unit). */
+  step(f: number): void {
+    this.drawings.apply(this.drags[f] as SetDrawings);
+    this.frame();
+  }
+
   run(): void {
-    for (const drag of this.drags) {
-      this.drawings.apply(drag);
-      this.frame();
-    }
+    for (let f = 0; f < this.drags.length; f += 1) this.step(f);
   }
 
   pan(dx: number): void {

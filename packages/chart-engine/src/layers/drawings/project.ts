@@ -11,9 +11,19 @@ import type { BatchSink } from "../../scene/pool.js";
 import { indexAt, indexToScreen, priceToScreen } from "../../viewport/transform.js";
 import type { IndexTimeMap, ViewportState } from "../../viewport/types.js";
 import { MAX_DRAWINGS, type SetDrawings } from "./model.js";
-import { resolveColours, toRecord, type DrawingRecord, type ThemeColours } from "./record.js";
+import {
+  MISSED,
+  resolveColours,
+  toRecord,
+  type DrawingRecord,
+  type ThemeColours,
+} from "./record.js";
 import { FillInstances } from "./fills.js";
+import { FakeAtlas, type GlyphSource, measure } from "./glyphs.js";
+import { fontOf, LabelInstances, labelOf, offsetOf } from "./labels.js";
 import { LineInstances } from "./lines.js";
+import { DrawingCounters, type DrawingMetrics } from "./metrics.js";
+import type { InstanceRing } from "./ring.js";
 import { DrawingSet } from "./set.js";
 
 export { toRecord, type DrawingRecord } from "./record.js";
@@ -85,24 +95,31 @@ function extend(ax: number, ay: number, dx: number, dy: number, both: boolean): 
 
 /**
  * A record's screen box on pane 0 (until E11-S09) in CSS px at `out[o..o+4]`, padded by half the
- * stroke; NaN when hidden. Every anchor of a visible drawing projects inside it.
+ * stroke; NaN when hidden. Every anchor of a visible drawing projects inside it, and so does its
+ * measured label's box (PR 2) under `glyphs`' ascent and descent.
  */
-export function screenBounds(vp: ViewportState, r: DrawingRecord, out: Float32Array, o: number) {
+export function screenBounds(
+  vp: ViewportState,
+  r: DrawingRecord,
+  out: Float32Array,
+  o: number,
+  glyphs: GlyphSource | null = null,
+) {
   const { kind, visible, style } = r.input;
   if (visible === false) return void out.fill(Number.NaN, o, o + 4);
   const { idx, tick, box } = r;
   PLOT[0] = vp.plotWidth;
   PLOT[1] = vp.panes[0]?.plotTop ?? 0;
   PLOT[2] = PLOT[1] + (vp.panes[0]?.plotHeight ?? 0);
-  const x0 = indexToScreen(vp, idx[0] as number);
+  const ix = indexToScreen(vp, idx[0] as number);
   if (kind === "hline") {
     const y = priceToScreen(vp, 0, tick[0] as number);
     seg(0, y, PLOT[0], y);
-  } else if (kind === "vline") seg(x0, PLOT[1], x0, PLOT[2]);
+  } else if (kind === "vline") seg(ix, PLOT[1], ix, PLOT[2]);
   else if (kind === "ray" || kind === "line") {
     const ay = priceToScreen(vp, 0, tick[0] as number);
     const dy = priceToScreen(vp, 0, tick[1] as number) - ay;
-    extend(x0, ay, indexToScreen(vp, idx[1] as number) - x0, dy, kind === "line");
+    extend(ix, ay, indexToScreen(vp, idx[1] as number) - ix, dy, kind === "line");
   } else {
     // Monotone on both axes in every scale mode, so the box's corners bound every anchor.
     const y0 = priceToScreen(vp, 0, box[1] as number);
@@ -110,21 +127,44 @@ export function screenBounds(vp: ViewportState, r: DrawingRecord, out: Float32Ar
     seg(indexToScreen(vp, box[0] as number), y0, indexToScreen(vp, box[2] as number), y1);
   }
   const pad = style.width / 2;
-  out[o] = px(Math.min(SEG[0] as number, SEG[2] as number) - pad);
-  out[o + 1] = px(Math.min(SEG[1] as number, SEG[3] as number) - pad);
-  out[o + 2] = px(Math.max(SEG[0] as number, SEG[2] as number) + pad);
-  out[o + 3] = px(Math.max(SEG[1] as number, SEG[3] as number) + pad);
+  let x0 = Math.min(SEG[0] as number, SEG[2] as number) - pad;
+  let y0 = Math.min(SEG[1] as number, SEG[3] as number) - pad;
+  let x1 = Math.max(SEG[0] as number, SEG[2] as number) + pad;
+  let y1 = Math.max(SEG[1] as number, SEG[3] as number) + pad;
+  if (glyphs !== null && r.labelEm > 0 && labelOf(r) !== "") {
+    // The label box from the first anchor: offset right and up (none for `text`), em × size.
+    const size = fontOf(r);
+    const off = offsetOf(r);
+    const ax = ix + off;
+    const ay = priceToScreen(vp, 0, tick[0] as number) - off;
+    x0 = Math.min(x0, ax);
+    x1 = Math.max(x1, ax + r.labelEm * size);
+    y0 = Math.min(y0, ay - glyphs.ascent * size);
+    y1 = Math.max(y1, ay + glyphs.descent * size);
+  }
+  out[o] = px(x0);
+  out[o + 1] = px(y0);
+  out[o + 2] = px(x1);
+  out[o + 3] = px(y1);
 }
 
+const M = new Float64Array(2);
+
 /**
- * The `drawing-fill` batch's node (slice 3): the batch builder keeps one batch per node, so the
- * fills ride a sibling attached right after its `DrawingsNode`, which encodes for both and marks
- * it DATA; its own update does nothing, its collect reads the owner's fill ring.
+ * The `drawing-fill` (slice 3) and `drawing-label` (PR 2) batches' nodes: the batch builder keeps
+ * one batch per node, so each ring rides a sibling attached right after its `DrawingsNode`, which
+ * encodes for all three and marks them DATA; their own update does nothing, their collect reads
+ * the owner's ring (the label batch binds the glyph source's atlas texture).
  */
-export class DrawingFillsNode extends ContentNode {
+export class DrawingBatchNode extends ContentNode {
+  texture = 0;
+  /** Batches collected with instances (the label node's is `engine_text_draw_calls`). */
+  drawn = 0;
+
   constructor(
     id: string,
-    readonly fills: FillInstances,
+    readonly program: number,
+    readonly ring: InstanceRing,
   ) {
     super(id);
   }
@@ -132,10 +172,11 @@ export class DrawingFillsNode extends ContentNode {
   collect(sink: BatchSink): boolean {
     const e = sink.append();
     e.nodeId = this.id;
-    e.program = PROGRAM.drawingFill;
-    e.texture = 0;
+    e.program = this.program;
+    e.texture = this.texture;
     e.first = 0;
-    e.count = this.fills.count;
+    e.count = this.ring.count;
+    this.drawn = this.ring.count > 0 ? 1 : 0;
     return true;
   }
 }
@@ -153,7 +194,15 @@ export class DrawingsNode extends ContentNode {
   readonly lines = new LineInstances();
   /** The `drawing-fill` ring and its batch's node (slice 3), attached after this one. */
   readonly fills = new FillInstances();
-  readonly fillNode: DrawingFillsNode;
+  readonly fillNode: DrawingBatchNode;
+  /** The `drawing-label` ring and its batch's node (PR 2), attached after the fill node. */
+  readonly labels = new LabelInstances();
+  readonly labelNode: DrawingBatchNode;
+  /** Label metrics (#358 BQ-1): the stand-in until E11-S11's atlas; `setGlyphs` swaps it. */
+  glyphs: GlyphSource = new FakeAtlas();
+  /** `engine_drawing_*` (PR 2); `now` times the layer's update (an injected clock). */
+  readonly counters = new DrawingCounters();
+  now: () => number = () => 0;
   /** The theme object token colours resolve through (BQ-4); a change marks STYLE. */
   theme: ThemeColours = {};
   /** The layer's flatten opacity in [0, 1]: every alpha × it (a re-encode, never per frame). */
@@ -170,7 +219,15 @@ export class DrawingsNode extends ContentNode {
 
   constructor(id: string) {
     super(id);
-    this.fillNode = new DrawingFillsNode(`${id}/fills`, this.fills);
+    this.fillNode = new DrawingBatchNode(`${id}/fills`, PROGRAM.drawingFill, this.fills);
+    this.labelNode = new DrawingBatchNode(`${id}/labels`, PROGRAM.drawingLabel, this.labels);
+  }
+
+  /** A new glyph source (E11-S11's atlas): every label re-measured and re-encoded. */
+  setGlyphs(glyphs: GlyphSource): void {
+    this.glyphs = glyphs;
+    for (const r of this.set.order) r.labelEm = -1;
+    this.dirty |= Dirty.STYLE;
   }
 
   /** A `setDrawings`: DATA on this node only; a refusal changes nothing (E14-X01 DR29). */
@@ -183,6 +240,19 @@ export class DrawingsNode extends ContentNode {
   }
 
   override update(ctx: FrameCtx): void {
+    const start = this.now();
+    this.pass(ctx);
+    this.counters.count = this.set.size;
+    this.counters.observe(this.now() - start);
+  }
+
+  /** The `frame` message's `drawings` block: the label draw as the last collect left it. */
+  metrics(): DrawingMetrics {
+    this.counters.textDrawCalls = this.labelNode.drawn;
+    return this.counters.snapshot();
+  }
+
+  private pass(ctx: FrameCtx): void {
     const vp = ctx.viewport;
     if (vp.map !== this.map || vp.map.length !== this.mapLength) {
       this.map = vp.map;
@@ -198,23 +268,41 @@ export class DrawingsNode extends ContentNode {
         this.reindexed += 1;
         encode = true;
       }
-      screenBounds(vp, r, this.bounds, 4 * i);
+      if (r.labelEm < 0) {
+        measure(this.glyphs, labelOf(r), M);
+        r.labelEm = M[0] as number;
+        r.labelGlyphs = M[1] as number;
+        encode = true;
+      }
+      screenBounds(vp, r, this.bounds, 4 * i, this.glyphs);
     }
     this.boundsPasses += 1;
     this.boundsDirty = true;
     if (!encode) return; // TRANSFORM alone: the shader re-projects from the pane block
     this.dpr = vp.dpr;
-    for (let i = 0; i < order.length; i += 1) resolveColours(order[i] as DrawingRecord, this.theme);
+    const c = this.counters;
+    for (let i = 0; i < order.length; i += 1) {
+      const missed = resolveColours(order[i] as DrawingRecord, this.theme);
+      if (missed === 0) continue;
+      c.tokenFallbacks += missed;
+      c.missingToken = MISSED.token; // the warn: the stats channel names the token
+    }
     this.lines.encode(order, vp.dpr, this.opacity);
     this.fills.encode(order, vp.dpr, this.opacity);
+    this.labels.encode(order, this.glyphs, vp.dpr, this.opacity);
     this.encodes += 1;
-    this.fillNode.dirty |= Dirty.DATA; // collected after this node: its count is this encode's
+    // Collected after this node: their counts are this encode's.
+    this.fillNode.dirty |= Dirty.DATA;
+    this.labelNode.dirty |= Dirty.DATA;
+    this.labelNode.texture = this.glyphs.texture;
     this.report(this.id, this.lines.lo, this.lines.hi);
     this.report(this.fillNode.id, this.fills.lo, this.fills.hi);
+    this.report(this.labelNode.id, this.labels.lo, this.labels.hi);
   }
 
   private report(nodeId: string, lo: number, hi: number): void {
     if (lo >= hi) return;
+    this.counters.instanceUploads += hi - lo;
     this.range.from = lo;
     this.range.to = hi;
     this.onRange?.(nodeId, this.range);

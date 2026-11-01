@@ -1,6 +1,7 @@
 // E14-T03: the per-frame path of the drawings layer allocates nothing (31-chart-engine: no
-// per-frame allocations). A pan or a drag runs `DrawingsNode.update`, which projects every record
-// through `screenBounds`, `extend`, `seg` and `px`; none may build an array, object, closure,
+// per-frame allocations). A pan or a drag runs `DrawingsNode.update` (PR 2: timing `pass`), which
+// projects every record through `screenBounds`, `extend`, `seg` and `px`; none may build an array,
+// object, closure,
 // typed array, spread or string, literally or through an allocating call (`.slice()`, `.map()`,
 // `.concat()`, `Float64Array.from()`, `.join()`, …) or a string `+`. `reindex` runs only when a
 // record or the bar map changed (DATA).
@@ -17,7 +18,7 @@ import { ChartViewport } from "../../src/viewport/index.js";
 import { minuteMap } from "../interaction/fixtures.js";
 
 const FILE = join(dirname(fileURLToPath(import.meta.url)), "../../src/layers/drawings/project.ts");
-const HOT = new Set(["update", "screenBounds", "extend", "seg", "px"]);
+const HOT = new Set(["update", "pass", "screenBounds", "extend", "seg", "px"]);
 const ALLOCATING = new Set([
   "NewExpression",
   "ArrayExpression",
@@ -52,7 +53,7 @@ function allocating(n: Node): string | null {
   }
   return null;
 }
-/** The hot functions the last `allocations` call found: all five, or the guard checks nothing. */
+/** The hot functions the last `allocations` call found: all six, or the guard checks nothing. */
 const seen = new Set<string>();
 
 function visit(n: unknown, cb: (node: Node) => void): void {
@@ -84,7 +85,7 @@ function allocations(code: string): string[] {
 }
 
 describe("the drawings layer's per-frame path allocates nothing", () => {
-  it("update, screenBounds, extend, seg and px build no array, object, closure or string", () => {
+  it("update (PR 2: and its pass), screenBounds, extend, seg, px allocate nothing", () => {
     expect(allocations(readFileSync(FILE, "utf8"))).toEqual([]);
     expect([...seen].sort()).toEqual([...HOT].sort());
   });

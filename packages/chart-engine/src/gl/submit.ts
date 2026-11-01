@@ -16,7 +16,22 @@ export const QUAD_VERTICES = 4;
  * Strip vertices per instance, indexed by `PROGRAM` (E12-S06, BQ-15): every program draws one
  * quad today; a batch block's `vertices` overrides it (the OHLC ticks' 10-vertex strip, PR 2).
  */
-export const PROGRAM_VERTICES: readonly number[] = [4, 4, 4, 4, 4, 4, 4]; // E14-T03: 5 and 6
+export const PROGRAM_VERTICES: readonly number[] = [4, 4, 4, 4, 4, 4, 4, 4]; // E14-T03: 5 to 7
+/**
+ * Programs whose colours leave the fragment premultiplied (E14-T03 PR 2: the drawings' flatten
+ * opacity, BQ-4): drawn with BLEND on, `blendFunc(ONE, ONE_MINUS_SRC_ALPHA)`. Every other program
+ * draws with BLEND off, exactly as before (their colours are straight; the candle's are opaque).
+ */
+export const PROGRAM_PREMULTIPLIED: readonly boolean[] = [
+  false,
+  false,
+  false,
+  false,
+  false,
+  true,
+  true,
+  true,
+];
 
 /** A batch's pane uniform block (E11-S03), written by `writePaneUniforms` once per frame. */
 export type PaneUniformSource = (batch: RetainedBatch) => PaneUniforms | null;
@@ -35,6 +50,8 @@ export function submitDrawList(
     trace: DrawTrace;
     paneUniforms?: PaneUniformSource | null;
     batchUniforms?: BatchUniformSource | null;
+    /** BLEND as last set on this context (1 on, 0 off: WebGL's default; -1 unknown). */
+    blend?: { on: number };
   },
 ): void {
   const { programs, textures, buffers, trace } = parts;
@@ -44,6 +61,7 @@ export function submitDrawList(
   let program = -1;
   let texture = -1;
   let block: PaneUniforms | null = null; // set on the current program: once per (pane, program)
+  const blend = parts.blend ?? { on: -1 }; // the backend keeps it across frames: no call per frame
   try {
     for (let i = 0; i < count; i += 1) {
       const b = list[i] as RetainedBatch; // i < count <= list.length
@@ -54,6 +72,14 @@ export function submitDrawList(
         program = b.program;
         trace.programSwitches += 1;
         block = null;
+        const pm = PROGRAM_PREMULTIPLIED[program] === true ? 1 : 0;
+        if (pm !== blend.on) {
+          if (pm === 1) {
+            gl.enable(GL.BLEND);
+            gl.blendFunc(GL.ONE, GL.ONE_MINUS_SRC_ALPHA);
+          } else gl.disable(GL.BLEND);
+          blend.on = pm;
+        }
       }
       const pane = panes === null ? null : panes(b);
       if (pane !== null && pane !== block) {

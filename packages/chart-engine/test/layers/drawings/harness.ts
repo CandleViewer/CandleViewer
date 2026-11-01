@@ -25,6 +25,19 @@ export class DashCtx extends FakeCtx2D {
   ellipse(x: number, y: number, rx: number, ry: number): void {
     this.ellipses.push([x, y, rx, ry]);
   }
+  /** PR 2: every `fillText` as [text, x, y, font, fillStyle], in order. */
+  font = "10px sans-serif";
+  readonly texts: [string, number, number, string, string][] = [];
+  override fillText(text?: string, x?: number, y?: number): void {
+    super.fillText();
+    this.texts.push([
+      text ?? "",
+      x ?? Number.NaN,
+      y ?? Number.NaN,
+      this.font,
+      String(this.fillStyle),
+    ]);
+  }
 }
 
 const fr = Math.fround;
@@ -69,12 +82,14 @@ export function harness(dpr: number, log: boolean, drawings: DrawingInput[], at:
   const node = new DrawingsNode("p0/drawings/set");
   graph.addNode("p0", "drawings", node);
   graph.addNode("p0", "drawings", node.fillNode);
+  graph.addNode("p0", "drawings", node.labelNode);
   const ctx2d = new DashCtx();
   const backend = new Canvas2DBackend(ctx2d);
   const builder = new BatchBuilder(graph, backend);
   const block = tf.createPaneUniforms();
   backend.attach(node.id, node.lines);
   backend.attach(node.fillNode.id, node.fills);
+  backend.attach(node.labelNode.id, node.labels);
   backend.setPaneUniforms(() => block);
   node.apply({ op: "replace", drawings });
   const fctx = new FrameContext(vp);
@@ -85,7 +100,7 @@ export function harness(dpr: number, log: boolean, drawings: DrawingInput[], at:
     graph.frame(fctx, sink);
     builder.build(sink);
     tf.writePaneUniforms(vp, 0, block);
-    ctx2d.paths.length = ctx2d.dashes.length = ctx2d.ellipses.length = 0;
+    ctx2d.paths.length = ctx2d.dashes.length = ctx2d.ellipses.length = ctx2d.texts.length = 0;
     backend.submit(builder.drawList, builder.drawCount, vp.plotWidth * dpr, vp.height * dpr);
   };
   frame();

@@ -6,6 +6,7 @@ import type { BatchUniforms } from "../gl/submit.js";
 import { candleRect, fullOutline, GEOM } from "../layers/candle/geometry.js";
 import { CANDLE_STRIDE } from "../layers/candle/ring.js";
 import { DASH_LUT } from "../gl/shaders/drawing-line.js";
+import { RUN } from "../layers/drawings/labels.js";
 import { attributeOffset, PROGRAM } from "../scene/instance-layout.js";
 import { projectRel, type PaneUniforms } from "../viewport/transform.js";
 import type { Ctx2DLike } from "./ctx2d.js";
@@ -176,6 +177,22 @@ export function paintDrawingLine(ctx: Ctx2DLike, a: PaintArgs): void {
   ctx.lineTo((x0 + ux * s1) * sx, (y0 + uy * s1) * sy);
 }
 
+/**
+ * `drawing-label`'s run (E14-T03 PR 2) at `a.at` in the label ring's run table: its anchor through
+ * the block as the shader's `project()`, plus the run's device-px offset, then `fillText` of the
+ * record's clamped label at that baseline (text as data: no markup, no CSS from the style).
+ */
+export function paintDrawingLabel(ctx: Ctx2DLike, a: PaintArgs, text: string): void {
+  const b = a.block;
+  if (b === null || ctx.fillText === undefined) return;
+  const o = a.at + RUN.anchor;
+  const rx = (a.ints[o] ?? 0) - (b.ints[0] ?? 0) + (a.data[o + 2] ?? 0);
+  const ry = (a.ints[o + 1] ?? 0) - (b.ints[1] ?? 0) + (a.data[o + 3] ?? 0);
+  const x = (rx + 0.5 - (b.floats[3] ?? 0)) * (b.floats[0] ?? 0) + (a.data[a.at + RUN.x] ?? 0);
+  const y = projectRel(b.floats, ry) + (a.data[a.at + RUN.y] ?? 0);
+  ctx.fillText(text, x * scaleX(a), y * scaleY(a));
+}
+
 const FA = attributeOffset(PROGRAM.drawingFill, "a_cornerA");
 const FSTYLE = attributeOffset(PROGRAM.drawingFill, "a_style");
 /** Projected corners A, B, D, C (the quad in edge order), then the inset ones: u_viewport px. */
@@ -298,4 +315,5 @@ export const PAINTERS: readonly (((ctx: Ctx2DLike, a: PaintArgs) => void) | null
   paintCandle,
   paintDrawingLine,
   paintDrawingFill,
+  null, // `drawing-label`: the backend paints its runs' strings (`paintDrawingLabel`), not glyphs
 ];

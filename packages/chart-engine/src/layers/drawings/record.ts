@@ -16,6 +16,9 @@ export interface DrawingRecord {
   /** The stroke and fill as 0xRRGGBBAA, resolved from a number or a theme token; fill -1: none. */
   colour: number;
   fill: number;
+  /** The label's advance in em and its drawn glyphs under the node's `GlyphSource`; -1: unmeasured. */
+  labelEm: number;
+  labelGlyphs: number;
 }
 
 /** The colour a token resolves to when the theme lacks it and `color.drawing.default` too. */
@@ -32,22 +35,33 @@ export function parseHex(css: string | undefined): number | null {
   return Number.parseInt(full.length === 6 ? `${full}ff` : full, 16);
 }
 
+/** Set by the last `resolveColour` that fell back: the token key the theme lacked (or null). */
+export const MISSED: { token: string | null } = { token: null };
+
 /**
  * BQ-4: a number is taken as is; a token key through the theme object, else the theme's
  * `color.drawing.default`, else `FALLBACK_COLOUR`. No CSS is ever built from it (SR-E14-04).
+ * A fallback sets `MISSED.token`: `engine_drawing_token_fallbacks_total` counts it (PR 2).
  */
 export function resolveColour(v: number | string, theme: ThemeColours): number {
   if (typeof v === "number") return v;
-  // A token the theme lacks falls back silently for now; PR 2's engine_drawing_* metrics add a
-  // count (and a warn) for it, so a misnamed token shows up in the stats channel.
-  return parseHex(theme[v]) ?? parseHex(theme["color.drawing.default"]) ?? FALLBACK_COLOUR;
+  const own = parseHex(theme[v]);
+  if (own !== null) return own;
+  MISSED.token = v;
+  return parseHex(theme["color.drawing.default"]) ?? FALLBACK_COLOUR;
 }
 
-/** Re-resolves a record's colours (on DATA or a theme change: STYLE). */
-export function resolveColours(r: DrawingRecord, theme: ThemeColours): void {
+/** Re-resolves a record's colours (on DATA or a theme change: STYLE); the fallbacks taken. */
+export function resolveColours(r: DrawingRecord, theme: ThemeColours): number {
   const { colour, fill } = r.input.style;
+  MISSED.token = null;
   r.colour = resolveColour(colour, theme);
+  const first = MISSED.token;
+  MISSED.token = null;
   r.fill = fill === undefined ? -1 : resolveColour(fill, theme);
+  const missed = (first === null ? 0 : 1) + (MISSED.token === null ? 0 : 1);
+  MISSED.token ??= first; // the last token missed, for the warn
+  return missed;
 }
 
 export function toRecord(d: DrawingInput): DrawingRecord {
@@ -62,6 +76,8 @@ export function toRecord(d: DrawingInput): DrawingRecord {
     stamp: -1,
     colour: 0,
     fill: -1,
+    labelEm: -1,
+    labelGlyphs: 0,
   };
   resolveColours(r, {});
   for (let i = 0; i < n; i += 1) {

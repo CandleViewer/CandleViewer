@@ -11,6 +11,7 @@ export const PROGRAM = {
   candle: 4,
   drawingLine: 5,
   drawingFill: 6,
+  drawingLabel: 7,
 } as const;
 
 /** [shader attribute, float offset in the slot, components, read as int32 bits]. */
@@ -92,6 +93,18 @@ export const INSTANCE_LAYOUTS: readonly InstanceLayout[] = [
       ["a_fill", 12, 4, true],
       ["a_stroke", 16, 4, true],
       ["a_style", 20, 4, true],
+    ],
+  },
+  // E14-T03 `drawing-label` (PR 2), ivec4s as `drawing-line`'s: the label's anchor; the glyph box
+  // float bits (x, y, width, height in device px from the projected anchor, y down); its atlas uv
+  // (u0, v0, u1, v1) float bits; colour float bits, premultiplied RGBA in 0..1.
+  {
+    stride: 16,
+    attributes: [
+      ["a_anchor", 0, 4, true],
+      ["a_glyph", 4, 4, true],
+      ["a_uv", 8, 4, true],
+      ["a_color", 12, 4, true],
     ],
   },
 ];

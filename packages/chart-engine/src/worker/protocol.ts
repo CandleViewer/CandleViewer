@@ -10,6 +10,7 @@ import type {
 } from "../gl/capability.js";
 import type { LossDetails } from "../gl/context-loss.js";
 import { setDrawingsReason, type SetDrawings } from "../layers/drawings/model.js";
+import type { DrawingMetrics } from "../layers/drawings/metrics.js";
 import { INT32_TICKS } from "../viewport/transform.js";
 
 export type { CapabilityReport, DegradeReason, ReducedCapability, RenderProfile };
@@ -215,6 +216,8 @@ export type FromWorker =
       /** The ratio drawn at and the backing store `[width, height]` in device px (BQ-153). */
       readonly dpr: number;
       readonly backingStorePx: readonly [number, number];
+      /** E14-T03 PR 2 (additive): `engine_drawing_*`, once the chart has drawings. */
+      readonly drawings?: DrawingMetrics;
     }
   | {
       readonly t: "pick";

@@ -146,6 +146,18 @@ export class FakeGl implements GL2Like {
   vertexAttribDivisor(i: number, d: number): void {
     if (this.call("vertexAttribDivisor")) this.attribs.push(`divisor ${i} ${d}`);
   }
+  /** E14-T03 PR 2: BLEND as the fake's state, and the blend function last set. */
+  blending = false;
+  blendFn = "";
+  enable(cap: number): void {
+    if (this.call("enable") && cap === GL.BLEND) this.blending = true;
+  }
+  disable(cap: number): void {
+    if (this.call("disable") && cap === GL.BLEND) this.blending = false;
+  }
+  blendFunc(src: number, dst: number): void {
+    if (this.call("blendFunc")) this.blendFn = `${src} ${dst}`;
+  }
   compileShader = (): void => void this.call("compileShader");
   attachShader = (): void => void this.call("attachShader");
   linkProgram = (): void => void this.call("linkProgram");
@@ -174,7 +186,7 @@ export class FakeGl implements GL2Like {
   trackDraws = false;
   drawArraysInstanced(_m: number, _f: number, count: number, instances: number): void {
     if (this.call("drawArraysInstanced") && this.trackDraws)
-      this.draws.push(`${count} ${instances}`);
+      this.draws.push(`${count} ${instances}${this.blending ? " blend" : ""}`);
   }
 }
 

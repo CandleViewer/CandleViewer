@@ -15,7 +15,8 @@ import type { RetainedBatch } from "../scene/batch-builder.js";
 import { attributeOffset, INSTANCE_LAYOUTS, PROGRAM } from "../scene/instance-layout.js";
 import type { PaneUniforms } from "../viewport/transform.js";
 import type { Ctx2DLike } from "./ctx2d.js";
-import { type PaintArgs, PAINTERS } from "./painters.js";
+import { LabelInstances, RUN, RUN_STRIDE } from "../layers/drawings/labels.js";
+import { type PaintArgs, PAINTERS, paintDrawingLabel } from "./painters.js";
 
 interface Slot {
   readonly source: VertexSource;
@@ -27,8 +28,10 @@ interface Slot {
 interface Bucket {
   readonly program: number;
   readonly css: string;
-  /** Line width in `u_viewport` px; 0 for a fill. */
+  /** Line width in `u_viewport` px; 0 for a fill; a label's font size in device px. */
   readonly width: number;
+  /** A `drawing-label` bucket's CSS font, made once with the bucket (never from a style). */
+  readonly font?: string;
   /** (draw-list index, float offset) pairs of this frame's run. */
   refs: Int32Array;
   n: number;
@@ -47,6 +50,8 @@ const FILL = attributeOffset(PROGRAM.drawingFill, "a_fill");
 const STROKE = attributeOffset(PROGRAM.drawingFill, "a_stroke");
 const FSTYLE = attributeOffset(PROGRAM.drawingFill, "a_style");
 const SOLID: readonly number[] = [];
+/** The 2D labels' family until E11-S11 ships the atlas fonts: a constant, never from input. */
+export const LABEL_FONT_FAMILY = "sans-serif";
 
 /** A `drawing-line` bucket's dash index and the [dash, gap] it strokes with (set per flush). */
 interface Dash {
@@ -157,6 +162,11 @@ export class Canvas2DBackend implements RenderBackend {
       if (slot === undefined) continue; // no attached ring (the layers attach, E12/E18): no draw
       const block = this.panes === null ? null : this.panes(b);
       this.frameBlocks[i] = block;
+      if (b.program === PROGRAM.drawingLabel) {
+        this.labelRefs(slot.source, block, i);
+        if (trace.enabled) trace.nodes.push(b.nodeId);
+        continue;
+      }
       const layout = INSTANCE_LAYOUTS[b.program];
       const painter = PAINTERS[b.program] ?? null;
       const { data, head, stride } = slot.source;
@@ -295,9 +305,11 @@ export class Canvas2DBackend implements RenderBackend {
       const al = data[c + 3] ?? 0;
       const un = (v: number | undefined): number => byte(al > 0 ? (v ?? 0) / al : 0);
       const css = `rgba(${un(data[c])}, ${un(data[c + 1])}, ${un(data[c + 2])}, ${byte(al) / 255})`;
-      bucket = { program, css, width: width / 16, refs: new Int32Array(64), n: 0, run: 0 };
+      const label = program === PROGRAM.drawingLabel;
+      const font = label ? { font: `${width / 16}px ${LABEL_FONT_FAMILY}` } : {};
+      bucket = { program, css, width: width / 16, refs: new Int32Array(64), n: 0, run: 0, ...font };
       this.buckets.set(key, bucket);
-      if (width > 0) this.dashes.set(bucket, { index, pattern: [0, 0] });
+      if (width > 0 && !label) this.dashes.set(bucket, { index, pattern: [0, 0] });
     }
     if (bucket.run !== this.run) {
       bucket.run = this.run;
@@ -305,6 +317,22 @@ export class Canvas2DBackend implements RenderBackend {
       this.order.push(bucket);
     }
     return bucket;
+  }
+
+  /**
+   * `drawing-label` (E14-T03 PR 2): one ref per run (a label), bucketed by colour and font size, so
+   * every label of one style is one `fillText` pass; its ref is the run's index.
+   */
+  private labelRefs(source: VertexSource, block: PaneUniforms | null, i: number): void {
+    if (block === null || !(source instanceof LabelInstances)) {
+      this.trace.skipped += 1;
+      return;
+    }
+    for (let k = 0; k < source.runCount; k += 1) {
+      const at = k * RUN_STRIDE;
+      const font = sixteenths(source.runs[at + RUN.font]);
+      this.push(this.styled(PROGRAM.drawingLabel, source.runs, at + RUN.rgba, font, 0, 23), i, k);
+    }
   }
 
   /** `drawing-fill`'s instance: its fill (ref sub 0) when visible, an ellipse's ring (sub 1). */
@@ -358,6 +386,14 @@ export class Canvas2DBackend implements RenderBackend {
     for (let k = 0; k < this.order.length; k += 1) {
       const bucket = this.order[k] as Bucket;
       const paint = PAINTERS[bucket.program];
+      if (bucket.program === PROGRAM.drawingLabel) {
+        if (bucket.n === 0) continue;
+        this.text(ctx, bucket); // E14-T03 PR 2: one font and fill style, then each run's string
+        trace.draws += 1;
+        if (bucket.program !== program) trace.programSwitches += 1;
+        program = bucket.program;
+        continue;
+      }
       if (paint === null || paint === undefined || bucket.n === 0) continue;
       ctx.beginPath();
       // A candle or drawing-fill ref carries its sub-part in the low bit (per bucket, not per ref).
@@ -400,5 +436,24 @@ export class Canvas2DBackend implements RenderBackend {
     }
     this.order.length = 0;
     this.run += 1;
+  }
+
+  /** A label bucket: one font and fill style, then each run's string at its baseline. */
+  private text(ctx: Ctx2DLike, bucket: Bucket): void {
+    const a = this.args;
+    ctx.font = bucket.font ?? "";
+    ctx.fillStyle = bucket.css;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    for (let r = 0; r < bucket.n; r += 2) {
+      const i = bucket.refs[r] ?? 0;
+      const source = (this.frameSlots[i] as Slot).source as LabelInstances; // checked when pushed
+      const k = bucket.refs[r + 1] ?? 0;
+      a.data = source.runs;
+      a.ints = source.runInts;
+      a.at = k * RUN_STRIDE;
+      a.block = this.frameBlocks[i] ?? null;
+      paintDrawingLabel(ctx, a, source.texts[k] ?? "");
+    }
   }
 }

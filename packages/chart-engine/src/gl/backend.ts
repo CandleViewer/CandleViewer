@@ -78,6 +78,8 @@ export class GLBackend implements RenderBackend, LossCapable {
   readonly loss: LossCapable = this;
   paneUniforms: PaneUniformSource | null = null;
   batchUniforms: BatchUniformSource | null = null;
+  /** BLEND as last set (E14-T03 PR 2): off on a new or restored context, WebGL's default. */
+  readonly blend = { on: 0 };
   private readonly rgb = [0, 0, 0];
   private background: string | undefined = "#000";
 
@@ -158,6 +160,7 @@ export class GLBackend implements RenderBackend, LossCapable {
    * stays unlinked, so the next frame reports it the usual way (BQ-52).
    */
   restore(): boolean {
+    this.blend.on = 0; // a restored context starts from the default state
     const ids = this.programs.forget();
     if (this.registry.recreateAll() > 0) return false;
     for (const id of ids) {
