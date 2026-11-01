@@ -16,14 +16,15 @@ import statistics
 import time
 from collections import Counter
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final
 
 import httpx
 import pytest
 
-from candleviewer.api import market, market_bars
+from candleviewer.api import market_bars
+from candleviewer.api.market_time import ts_us
 from candleviewer.bars.errors import BarParamOutOfRange
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.spec import check_param_bounds
@@ -316,11 +317,9 @@ _INSTANTS: Final = {
 def test_caps_non_rfc_3339_time_parses_to_its_instant_accepted_f6(field: str, value: str) -> None:
     """#452 F6, accepted by the coordinator; X01 note: the accepted forms are not only served but
     read as the instant they name (a date-only value is its UTC midnight), by the parser each route
-    calls for `from` and `to` alike (`market_bars._ts_us`, `market._parse_time`)."""
-    klines_at = market._parse_time(value, default=None)
-    assert klines_at is not None, field
+    calls for `from` and `to` alike (`api.market_time.ts_us`)."""
+    assert ts_us(value) == _INSTANTS[value]
     assert market_bars._ts_us(value) == _INSTANTS[value]
-    assert (klines_at - _EPOCH) // timedelta(microseconds=1) == _INSTANTS[value]  # exact
 
 
 @pytest.mark.xfail(strict=True, raises=BarParamOutOfRange, reason=F8)

@@ -37,7 +37,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Final, Protocol
 
@@ -59,6 +59,7 @@ from candleviewer.api.market_response import (
     serialize_bar,
     with_recording_started_at,
 )
+from candleviewer.api.market_time import ts_us
 from candleviewer.bars.errors import BarParamOutOfRange, BarSpecError
 from candleviewer.bars.estimate import estimate_non_time_bars
 from candleviewer.bars.limits import (
@@ -174,28 +175,8 @@ def parse_bar_request(bar_type: str, param: str, *, qty_step: Decimal | None = N
     return spec
 
 
-_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
-_ONE_US: Final = timedelta(microseconds=1)
-#: The instants a storage bind can hold (`bars.reader.ts_param` is `EPOCH + timedelta`): from
-#: 0001-01-01T00:00:00Z to 9999-12-31T23:59:59.999999Z, in whole microseconds. A `from`/`to`
-#: outside it is a refusal, never a 500 (#452 F7).
-_MIN_TS_US: Final = (datetime.min.replace(tzinfo=UTC) - _EPOCH) // _ONE_US
-_MAX_TS_US: Final = (datetime.max.replace(tzinfo=UTC) - _EPOCH) // _ONE_US
-
-
-def _ts_us(value: str | None) -> int | None:
-    """An RFC 3339 `from`/`to` as exact integer microseconds since the epoch. `ValueError` when it
-    does not parse or lies outside the range a bind can hold. Never float math: a float rounds
-    `9999-12-31T23:59:59.999999Z` up into year 10000 (#452 F7)."""
-    if value is None:
-        return None
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    micros = (parsed - _EPOCH) // _ONE_US
-    if not _MIN_TS_US <= micros <= _MAX_TS_US:
-        raise ValueError("timestamp outside the supported range")
-    return micros
+#: The exact RFC 3339 conversion both routes share (`api.market_time`); kept under its old name.
+_ts_us = ts_us
 
 
 def window_span_us(start_us: int, end_us: int, after_us: int | None) -> int:

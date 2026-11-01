@@ -196,8 +196,7 @@ def test_an_instant_past_the_range_is_a_counted_400_not_a_500() -> None:
     assert (REGISTRY.get_sample_value("api_request_rejected_total", _LABELS) or 0.0) == before + 1
 
 
-def test_klines_is_unaffected_at_the_last_microsecond() -> None:
-    # Klines floors its window at `now` before any read, so a far-future window reads nothing.
+def _klines_client() -> TestClient:
     app = FastAPI()
     app.include_router(
         make_market_router(
@@ -205,16 +204,44 @@ def test_klines_is_unaffected_at_the_last_microsecond() -> None:
             now_us=lambda: _NOW,
         )
     )  # fmt: skip
-    resp = TestClient(app, client=("127.0.0.1", 50000)).get(
+    return TestClient(app, client=("127.0.0.1", 50000))
+
+
+def _klines_requested_end(start: datetime, end_us: int) -> int:
+    """The `to` the klines route reports back, exactly: the end of its `meta.coverage_holes`
+    (the part of the window after now, which has no bars and is never read)."""
+    resp = _klines_client().get(
         "/market/klines",
         params={
-            "symbol": "BTCUSDT",
-            "interval": "1",
-            "from": "9999-12-30T00:00:00Z",
-            "to": _MAX_ISO,
+            "symbol": "BTCUSDT", "interval": "1", "from": start.isoformat(),
+            "to": (_EPOCH + timedelta(microseconds=end_us)).isoformat(),
         },
-    )
-    assert resp.status_code < 500
+    )  # fmt: skip
+    assert resp.status_code == 200, resp.text
+    return int(resp.json()["meta"]["coverage_holes"][-1]["end_us"])
+
+
+def test_klines_serves_the_last_microsecond_of_9999_exactly() -> None:
+    last = 253_402_300_799_999_999
+    assert _klines_requested_end(datetime(9999, 12, 30, tzinfo=UTC), last) == last
+
+
+@settings(max_examples=40, derandomize=True, deadline=None)
+@given(end=st.integers(min_value=_NOW + 3_600_000_000, max_value=253_402_300_799_999_999))
+def test_property_klines_window_end_round_trips_whole_microseconds(end: int) -> None:
+    start = _EPOCH + timedelta(microseconds=end - 3_600_000_000)
+    assert _klines_requested_end(start, end) == end
+
+
+def test_klines_refuses_an_instant_outside_the_bind_range() -> None:
+    resp = _klines_client().get(
+        "/market/klines",
+        params={
+            "symbol": "BTCUSDT", "interval": "1", "from": "9999-12-30T00:00:00Z",
+            "to": "9999-12-31T23:59:59.999999-01:00",
+        },
+    )  # fmt: skip
+    assert (resp.status_code, resp.json()["code"]) == (400, "validation_failed")
 
 
 class _Cache:

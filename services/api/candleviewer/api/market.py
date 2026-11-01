@@ -45,7 +45,6 @@ import inspect
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Protocol
 
 from fastapi import APIRouter, Query, Request
@@ -62,6 +61,7 @@ from candleviewer.api.market_response import (
     kline_response,
     problem,
 )
+from candleviewer.api.market_time import ts_us
 from candleviewer.bars.limits import DEFAULT_LIMIT, MAX_LIMIT, MAX_TIME_WINDOW_US, QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import record_page
 from candleviewer.ingestion.kline_coverage import CoverageIndex, Range
@@ -210,15 +210,6 @@ _CODE_BY_STATUS: dict[int, str] = {
     501: "internal_error",
     503: "store_unavailable",
 }
-
-
-def _parse_time(value: str | None, *, default: datetime | None) -> datetime | None:
-    if value is None:
-        return default
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
 
 
 def _wall_now_us() -> int:
@@ -389,8 +380,7 @@ def make_market_router(
             ), price_type=price_type)  # fmt: skip
         now = now_us()
         try:
-            end_dt = _parse_time(to, default=datetime.fromtimestamp(now / 1e6, tz=UTC))
-            start_dt = _parse_time(from_, default=None)
+            start_us_or_none, end_us_or_none = ts_us(from_), ts_us(to)
         except ValueError:
             return _refused(
                 "bad_window",
@@ -399,10 +389,12 @@ def make_market_router(
                 from_=from_,
                 to=to,
             )
-        if end_dt is None or start_dt is None:
+        if start_us_or_none is None:
             return _refused("bad_window", _problem(400, "Bad request", "'from' is required."),
                             symbol=symbol, to=to)  # fmt: skip
-        if start_dt > end_dt:
+        start_us = start_us_or_none
+        end_us = now if end_us_or_none is None else end_us_or_none
+        if start_us > end_us:
             return _refused(
                 "bad_window",
                 _problem(400, "Bad request", "'from' must not be after 'to'."),
@@ -410,8 +402,6 @@ def make_market_router(
                 from_=from_,
                 to=to,
             )
-        start_us = int(start_dt.timestamp() * 1_000_000)
-        end_us = int(end_dt.timestamp() * 1_000_000) if to is not None else now
         width = _INTERVAL_US[interval]
         grid = None if interval == "M" else width  # `M` is calendar-variable: no fixed grid
         if cursor is not None:
