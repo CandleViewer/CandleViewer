@@ -29,7 +29,7 @@ from candleviewer.storage.questdb.ilp_writer import IlpWriter
 from candleviewer.storage.questdb.runner import run_migrations
 from candleviewer.storage.questdb.schemas import ALL_SCHEMAS
 from tests.chaos.bars import _golden as golden
-from tests.chaos.bars._gate import questdb_ownership_skip, stack_skip_reason
+from tests.chaos.bars._gate import questdb_ownership_skip, refusal_outcome, stack_skip_reason
 from tests.chaos.bars._rig import VOLUME_1
 from tests.chaos.ingestion._clock import EPOCH_S
 from tests.chaos.storage import _stack as st
@@ -53,12 +53,14 @@ class _Exec:
 
 @pytest.fixture(autouse=True)
 async def _questdb_reachable() -> None:
-    if (reason := stack_skip_reason(os.environ)) is not None:
-        pytest.skip(reason)
-    if (reason := questdb_ownership_skip([st.QDB_PG_PORT, st.QDB_ILP_PORT])) is not None:
-        pytest.skip(reason)  # never talk to a port we cannot prove is our own container
-    if not await st.qdb_up():
-        pytest.skip("QuestDB compose stack not reachable: integration job only")
+    reason = stack_skip_reason(os.environ)
+    if reason is None:
+        reason = questdb_ownership_skip([st.QDB_PG_PORT, st.QDB_ILP_PORT])
+    if reason is None and not await st.qdb_up():
+        reason = "QuestDB compose stack not reachable: integration job only"
+    if reason is not None:
+        # CV_CHAOS_MUST_RUN=1 (the integration job): a refusal is a failure, never a silent skip.
+        (pytest.fail if refusal_outcome(os.environ) == "fail" else pytest.skip)(reason)
 
 
 async def _stored(symbol: str) -> list[tuple[int, float]]:

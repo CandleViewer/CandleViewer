@@ -260,6 +260,7 @@ jobs:
         working-directory: services/api
         env:
           COMPOSE_PROJECT_NAME: cv-chaos # the one name tests/chaos/bars/_gate.py trusts
+          CV_CHAOS_MUST_RUN: "1" # test_s05b fails, never skips, if its gate refuses here
           POSTGRES_PASSWORD: cv-chaos-ci
           GF_SECURITY_ADMIN_PASSWORD: unused-ci
           MINIO_ROOT_PASSWORD: unused-ci
