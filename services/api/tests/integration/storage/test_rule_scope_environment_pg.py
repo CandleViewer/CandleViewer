@@ -60,7 +60,7 @@ async def test_the_scope_source_reads_each_granted_accounts_environment(db: str)
     async def audit(event: str, data: dict[str, str]) -> None:
         return None
 
-    state = SnapshotScopeState(source, "demo")
+    state = SnapshotScopeState(source)
     await state.refresh(_USER)
     resolver, scope = ScopeResolver(state, audit), RuleScope.model_validate({"level": "account"})
     verdicts = {

@@ -72,7 +72,7 @@ async def _gate(user: uuid.UUID) -> tuple[ScopeResolver, list[str]]:
     async def audit(event: str, data: dict[str, str]) -> None:
         audits.append(event)
 
-    state = SnapshotScopeState(_SeededSource(), "live", live_gate_open=lambda: True)
+    state = SnapshotScopeState(_SeededSource(), live_gate_open=lambda: True)
     await state.refresh(user)
     return ScopeResolver(state, audit), audits
 

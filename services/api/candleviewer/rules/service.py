@@ -132,8 +132,9 @@ class RulesService:
         #: The SR-104 order budget, from its boot settings (`create_app`); unbound, the defaults
         #: with no rebuild, so every order action is refused as not confirmed.
         self._budget = OrderBudget()
-        #: Consecutive `scope` or `permission` refusals, by rule and account (BQ-10).
-        self._strikes: dict[tuple[str, UUID | None], int] = {}
+        #: Consecutive `scope` or `permission` refusals, by rule, then account (`None` for an
+        #: action that names none) (BQ-10): a rule's counts go in one pop, off the tick's cost.
+        self._strikes: dict[str, dict[UUID | None, int]] = {}
         self._executor: ActionExecutor | None = None  # while the evaluator runs
         self._dispatch: FireDispatch | None = None  # the fire queue, while the evaluator runs
         self._audits: AuditDispatch | None = None  # the record-only jobs' queue, beside it
@@ -228,7 +229,7 @@ class RulesService:
 
         self._scope_audit = audit
         self._scope_env = environment
-        self.scope_state = SnapshotScopeState(source, environment, live_gate_open)
+        self.scope_state = SnapshotScopeState(source, live_gate_open)
         self.scope_resolver = ScopeResolver(self.scope_state, audit)
 
     async def refresh_scope(self, owner: UUID) -> None:
@@ -356,26 +357,33 @@ class RulesService:
 
     def _rule_stopped(self, rule_id: str, reason: StopReason) -> None:
         """The manager's hook, once per rule it moved out of `armed` (E35-T10): a killed rule's
-        kill time is stamped and its waiting fires are dropped (24 §11.7, BQ-9)."""
+        kill time is stamped and its waiting fires are dropped (24 §11.7, BQ-9); a landed
+        auto-disarm is counted. Its strike counts went as its row left `armed`."""
         if reason == "kill_switch":
             self._halts.killed[rule_id] = self._clock()
             self._drop(rule_id, "kill_switch")
         else:  # `scope_denied`: the auto-disarm landed
             self._metrics.autodisarmed()
-            for key in [k for k in self._strikes if k[0] == rule_id]:
-                del self._strikes[key]
+
+    def _forget_strikes(self, rule_id: str) -> None:
+        """Drop every count of `rule_id`, all its accounts in one pop (24 §11.5): the manager's
+        `left_armed` hook, as the rule's row leaves `armed` by any move, so a re-arm starts at
+        none; and, as a second line, a tick that evaluates the rule in another mode."""
+        self._strikes.pop(rule_id, None)
 
     def _scope_outcome(self, rule_id: str, account_id: UUID | None, refused: bool) -> None:
         """The auto-disarm's count (24 §11.5; RE-E1, BQ-10), synchronous: each `scope` or
-        `permission` refusal at dispatch and each scope-skipped evaluation on the tick adds one
-        for the rule and account, a pass of check 5 on that account clears it, and from the
-        `SCOPE_DENIALS_BEFORE_DISARM`th on the manager disarms the rule beside the tick, never
-        awaited here."""
-        key = (rule_id, account_id)
+        `permission` refusal at dispatch and each scope-skipped evaluation of an armed rule on the
+        tick adds one for the rule and the account (`None` for an action that names none), a pass
+        of check 5 on that account clears it, and from the `SCOPE_DENIALS_BEFORE_DISARM`th on the
+        manager disarms the rule beside the tick, never awaited here."""
         if not refused:
-            self._strikes.pop(key, None)
+            counts = self._strikes.get(rule_id)
+            if counts is not None and counts.pop(account_id, None) is not None and not counts:
+                del self._strikes[rule_id]
             return
-        strikes = self._strikes[key] = self._strikes.get(key, 0) + 1
+        counts = self._strikes.setdefault(rule_id, {})
+        strikes = counts[account_id] = counts.get(account_id, 0) + 1
         if strikes >= SCOPE_DENIALS_BEFORE_DISARM and self._manager is not None:
             self._manager.auto_disarm(rule_id, "scope_denied")
 
@@ -404,7 +412,7 @@ class RulesService:
             self._manager.set_hooks(audit=self._audit)
         if self._broadcast is not None:
             self._manager.set_hooks(broadcast=self._broadcast)
-        self._manager.set_hooks(rule_stopped=self._rule_stopped)
+        self._manager.set_hooks(rule_stopped=self._rule_stopped, left_armed=self._forget_strikes)
         self._started = True
         # E35-X02 (i): out-of-band tampering with a protected sys.* rule is audited at boot.
         await self._manager.verify_system_rules()
@@ -453,6 +461,8 @@ class RulesService:
             is offered, written or shed (BQ-5)."""
             if emitter is None or audit_only is None or env is None:
                 return
+            if item.mode != "armed":  # only an armed rule's refusals count toward its disarm
+                self._forget_strikes(str(item.rule.rule_id))
             kind: JobKind
             if result.fired:
                 emit, queue, kind = emitter.emit_checked, dispatch, "fire"
@@ -482,7 +492,8 @@ class RulesService:
             if kind == "scope_denial":
                 for req in reqs:
                     self._metrics.refused(req.action_type, "scope")
-                self._scope_outcome(str(rule.rule_id), ref.account_id, True)  # one per evaluation
+                if item.mode == "armed":  # one per evaluation, of an armed rule only
+                    self._scope_outcome(str(rule.rule_id), ref.account_id, True)
             queue.offer(
                 Fire(
                     str(rule.rule_id), run_id, reqs, emit, kind=kind, version_id=item.version_id,

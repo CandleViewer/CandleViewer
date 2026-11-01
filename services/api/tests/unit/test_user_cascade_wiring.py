@@ -332,7 +332,7 @@ async def test_scope_refresh_failure_fails_closed(fail: str) -> None:
     cuts it) leaves the snapshot with no grant and no live-arming permission, never the old
     ones; the error still reaches the cascade, which counts and alerts the failed step."""
     source = _Source()
-    state = SnapshotScopeState(source, "demo")
+    state = SnapshotScopeState(source)
     await state.refresh(_A)
     assert state.granted_accounts(_A) == {_ACCOUNT} and state.can_arm_live(_A)  # a held entry
     source.fail = fail

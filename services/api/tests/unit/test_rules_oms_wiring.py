@@ -435,6 +435,34 @@ def test_a_budget_setting_above_the_hard_cap_refuses_start() -> None:
             create_app(settings)
 
 
+def test_the_budget_settings_default_to_the_limits_modules_values() -> None:
+    """R1C2-08: `settings` may not import `rules`, so its two defaults repeat
+    `ORDER_BUDGET_DEFAULTS`; they never drift apart."""
+    from candleviewer.rules.limits import ORDER_BUDGET_DEFAULTS
+    from candleviewer.settings import Settings
+
+    fields = Settings.model_fields
+    defaults = {
+        "per_minute": fields["rules_order_budget_per_minute"].default,
+        "per_day": fields["rules_order_budget_per_day"].default,
+    }
+    assert defaults == dict(ORDER_BUDGET_DEFAULTS)
+
+
+def test_the_budget_rebuild_counts_each_fire_key_once_by_its_first_start() -> None:
+    """24 §11.7 (R1S-01): the rebuild's read groups the `action_start` events by their fire key
+    (`dedupe_key`, else the event's own id), each age its first start's: a retried order, written
+    ahead again under its key, is one order. The statement is one literal, pinned whole."""
+    assert rules_sqlalchemy._ORDER_ACTION_AGES.text == (
+        "SELECT EXTRACT(EPOCH FROM now() - MIN(e.event_ts)) AS age FROM rule_events e "
+        "JOIN rule_runs r ON r.id = e.rule_run_id WHERE r.rule_id = CAST(:rule_id AS uuid) "
+        "AND r.mode = 'armed' AND r.started_at >= now() - make_interval(secs => :since) "
+        "AND e.kind = 'action_start' AND e.payload->>'action_type' = ANY(CAST(:types AS text[])) "
+        "GROUP BY COALESCE(e.payload->>'dedupe_key', CAST(e.id AS text)) "
+        "ORDER BY MIN(e.event_ts) DESC LIMIT :limit"
+    )
+
+
 class _Ages:
     """The rules repository's read for the budget's rebuild, as the adapter calls it."""
 

@@ -36,6 +36,10 @@ from candleviewer.rules.scope import ActionRequest
 #: A principal snapshot older than this, in seconds, is a failed read (24 §11.5 "The principal";
 #: the E35 threat model's §5): the executor holds the bound, so no binding widens it.
 PRINCIPAL_MAX_AGE_S: Final = 1.0
+#: How far ahead of the executor's clock a snapshot may be stamped: the clock is read before the
+#: port, so a read stamped as it is read lands a little ahead; one further ahead is a failed read,
+#: so a binding on another clock base never reads fresh for good.
+PRINCIPAL_AHEAD_S: Final = 0.1
 #: The scope re-check's reasons that keep a `blocked_by` of their own (C-2.11).
 _OWN_REASONS: Final[Mapping[str, BlockedBy]] = {
     "live_gate": "live_gate", "environment": "environment"
@@ -87,9 +91,9 @@ class Halts:
 
     def block(self, rule_id: str, offered_at: float) -> BlockedBy | None:
         trip, kill = self.tripped.get(rule_id), self.killed.get(rule_id)
-        if trip is not None and offered_at < trip:
+        if trip is not None and offered_at <= trip:
             return "circuit_breaker"
-        return "kill_switch" if kill is not None and offered_at < kill else None
+        return "kill_switch" if kill is not None and offered_at <= kill else None
 
 
 class Allowance:
@@ -195,16 +199,22 @@ class Gates:
         return tuple(sorted(owner.trade_accounts & armer.trade_accounts, key=str)), True
 
     def before_scope(
-        self, spec: HandlerSpec | None, account_id: UUID | None, *, stand_in: bool
+        self,
+        spec: HandlerSpec | None,
+        account_id: UUID | None,
+        *,
+        stand_in: bool,
+        dry_run: bool = False,
     ) -> BlockedBy | None:
         """Checks 2 and 3 for one action on one account (`None` for an action that names none,
         which asks B18's global verdict): the master switch (`rules_disabled`), then whether the
-        action can run (`unavailable`), then both kill switches (`kill_switch`). Maintenance mode
-        is never read here: it stays the OMS's `order_entry`."""
+        action can run (`unavailable`, never for a `dry_run` action, which no handler serves),
+        then both kill switches (`kill_switch`). Maintenance mode is never read here: it stays the
+        OMS's `order_entry`."""
         switches = self._switches
         if not switches.rules_enabled():
             return "rules_disabled"
-        if _unavailable(spec, stand_in=stand_in, rollout=switches.oms_actions):
+        if not dry_run and _unavailable(spec, stand_in=stand_in, rollout=switches.oms_actions):
             return "unavailable"
         if switches.order_entry_killed() or switches.kill_switch_engaged(account_id):
             return "kill_switch"
@@ -255,8 +265,13 @@ class Gates:
 
 
 def _fresh(view: PrincipalView | None, now: float) -> bool:
-    """A snapshot that may serve check 5: read, active, and at most `PRINCIPAL_MAX_AGE_S` old."""
-    return view is not None and view.active and now - view.read_at <= PRINCIPAL_MAX_AGE_S
+    """A snapshot that may serve check 5: read, active, at most `PRINCIPAL_MAX_AGE_S` old and at
+    most `PRINCIPAL_AHEAD_S` ahead of the executor's clock."""
+    return (
+        view is not None
+        and view.active
+        and -PRINCIPAL_AHEAD_S <= now - view.read_at <= PRINCIPAL_MAX_AGE_S
+    )
 
 
 def _unavailable(spec: HandlerSpec | None, *, stand_in: bool, rollout: Callable[[], bool]) -> bool:

@@ -75,7 +75,7 @@ def _check(r: ScopeResolver, owner: UUID, acct: UUID) -> Reason | None:
 async def _loaded(rows: dict[UUID, list[Row]], *order: UUID) -> tuple[SnapshotScopeState, Source]:
     src = Source()
     src.rows = rows
-    state = SnapshotScopeState(src, "demo")
+    state = SnapshotScopeState(src)
     for owner in order:
         await state.refresh(owner)
     return state, src
@@ -178,7 +178,7 @@ async def _answers(r: ScopeResolver, owner: UUID) -> tuple[object, ...]:
 async def _alone(owner: UUID, own: Own | None) -> ScopeResolver:
     """The same production state, loaded with `owner`'s own rows only."""
     src = Source()
-    state = SnapshotScopeState(src, "demo", live_gate_open=lambda: True)
+    state = SnapshotScopeState(src, live_gate_open=lambda: True)
     if own is not None:
         src.rows[owner], src.perms[owner] = own
         await state.refresh(owner)
@@ -206,7 +206,7 @@ async def test_every_owner_answers_from_its_own_rows_property(
     recomputation from its own rows, and those of the same state loaded with its rows alone; the
     account map holds exactly the accounts some loaded owner holds a live grant on."""
     src = Source()
-    state = SnapshotScopeState(src, "demo", live_gate_open=lambda: True)
+    state = SnapshotScopeState(src, live_gate_open=lambda: True)
     r = ScopeResolver(state, _noop)
     loaded: dict[UUID, Own] = {}
     for owner, rows, arm in steps:
@@ -231,7 +231,7 @@ async def test_refresh_in_flight_changes_no_answer_until_it_publishes() -> None:
     src = GatedSource()
     src.rows = {O1: [(A, True, True), (B, True, False)], O2: [(A, True, False), (B, True, False)]}
     src.perms = {O2: frozenset({ARM_LIVE})}
-    state = SnapshotScopeState(src, "demo", live_gate_open=lambda: True)
+    state = SnapshotScopeState(src, live_gate_open=lambda: True)
     r = ScopeResolver(state, _noop)
     for owner in (O1, O2):
         await state.refresh(owner)
@@ -251,3 +251,25 @@ async def test_refresh_in_flight_changes_no_answer_until_it_publishes() -> None:
     assert await _answers(r, O1) == before[0]
     assert [_check(r, O2, a) for a in ACCOUNTS] == ["manager_frozen", None, None]
     assert not state.can_arm_live(O2)
+
+
+async def test_a_refresh_an_invalidate_overtook_publishes_nothing() -> None:
+    """R1C1-11: O1's refresh waits in its permission load while O1 is invalidated (its grant
+    revoked); the refresh then ends and publishes nothing, so the revoked grant never comes back
+    with a read that started before the revocation. The next refresh reads again."""
+    src = GatedSource()
+    src.rows = {O1: [(A, True, False)]}
+    state = SnapshotScopeState(src)
+    src.entered.clear()
+    src.release.clear()
+    refresh = asyncio.create_task(state.refresh(O1))
+    try:
+        async with asyncio.timeout(5):
+            await src.entered.wait()
+        state.invalidate(O1)
+    finally:
+        src.release.set()
+        await refresh
+    assert state.granted_accounts(O1) == frozenset() and A not in state._accounts
+    await state.refresh(O1)
+    assert state.granted_accounts(O1) == {A}
