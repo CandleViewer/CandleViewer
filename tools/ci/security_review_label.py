@@ -54,6 +54,17 @@ MAX_FILES = 3000  # GET /pulls/{n}/files lists at most this many
 PAGE = 100
 MODULES = ("secrets", "auth", "audit", "exchange", "oms", "risk", "admin")
 WEB_AUTH_PATHS = (
+    "apps/web/src/features/admin/AdminRouteElement.tsx",  # loads the admin area's code only
+    # behind the route guard, and frames R-360 by the session's served role (E42-S01, #1022)
+    "apps/web/src/features/admin/shell/AdminArea.tsx",  # the admin area's frame: it holds the reads
+    # every admin route makes and shows the withdrawn page on a `403` (SCR-154 N-2)
+    "apps/web/src/features/admin/overview/adminReads.ts",  # each admin read's outcome: a `403` on
+    # any of them is the area denied (BQ-8), with the problem's Ref
+    "apps/web/src/features/admin/overview/strip.ts",  # `denial()`: the first refused read withdraws
+    # the whole area (SCR-154 N-2)
+    "apps/web/src/features/admin/overview/readStore.ts",  # the shared read store: `withdrawn()`
+    # stops every read after a `403`, its denied branch drops every answer, `cleared` keeps the
+    # denial (BQ-8, S-5330-03)
     "apps/web/src/features/app-shell/ConnectionRegionSlot.tsx",  # Sign in ends the session
     "apps/web/src/features/auth/",  # login, password change, the auth REST client
     "apps/web/src/features/app-shell/NavRail.tsx",  # filters the rail by the session claims
