@@ -49,7 +49,8 @@ describe("setDrawings validation (E14-X01 DR8, DR9, DR29)", () => {
     ["an unknown top-level key", { onclick: "x" }, "drawing key onclick"],
     ["a raw label over 480 units", { label: "x".repeat(481) }, "label"],
     ["a time past 2^53 µs", { points: [2 ** 53 + 2, 1, 0, 1] }, "point out of range"],
-    ["a tick past the int32 base", { points: [0, 2 ** 30 + 1, 0, 1] }, "point out of range"],
+    ["a tick at 2^30 (exclusive)", { points: [0, 2 ** 30, 0, 1] }, "point out of range"],
+    ["a tick at -2^30 (exclusive)", { points: [0, -(2 ** 30), 0, 1] }, "point out of range"],
   ])("refuses %s", (_, change, why) => {
     expect(check([{ ...seg("a"), ...change }])).toBe(why);
   });
@@ -137,8 +138,8 @@ describe("copyInput: the worker's and the host's own copy", () => {
     points[0] = 99; // the caller mutates its array after the command
     (style as { width: number }).width = 8;
     expect([c.points[0], c.style.width]).toEqual([0, 2]);
-    expect(m.drawingReason(seg("b", { points: [-(2 ** 53), -(2 ** 30), 2 ** 53, 2 ** 30] }))).toBe(
-      null,
-    );
+    expect(
+      m.drawingReason(seg("b", { points: [-(2 ** 53), 1 - 2 ** 30, 2 ** 53, 2 ** 30 - 1] })),
+    ).toBe(null);
   });
 });

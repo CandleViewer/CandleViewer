@@ -28,7 +28,7 @@ export const MAX_ANCHORS = 65_536;
 export const LABEL_MAX = 120;
 /** A raw label longer than this (UTF-16 units) is refused, not clamped: memory stays bounded. */
 export const LABEL_RAW_MAX = 4 * LABEL_MAX;
-/** |time| in µs within float64's exact integers; |tick| inside the int32 uniform base (BQ-75). */
+/** |time| <= 2^53 µs (float64's exact integers); |tick| < 2^30, setPriceRange's open window (BQ-75). */
 export const TIME_MAX = 2 ** 53;
 export const TICK_MAX = INT32_TICKS;
 export const FONT_MIN = 8;
@@ -110,7 +110,8 @@ export function drawingReason(d: unknown): string | null {
   for (let i = 0; i < pts.length; i += 1) {
     const v = pts[i];
     if (typeof v !== "number" || !Number.isFinite(v)) return "non-finite point";
-    if (Math.abs(v) > (i % 2 === 0 ? TIME_MAX : TICK_MAX)) return "point out of range";
+    const far = i % 2 === 0 ? Math.abs(v) > TIME_MAX : Math.abs(v) >= TICK_MAX;
+    if (far) return "point out of range";
   }
   const style = styleReason(d["style"]);
   if (style !== null) return style;
@@ -171,6 +172,9 @@ export const clampFont = (px: number): number => Math.min(FONT_MAX, Math.max(FON
 /**
  * A validated input's own copy (the worker's records, the host's replay set): known keys only,
  * the points copied, the label and font clamped. No reference to the caller's objects survives.
+ * It reads the input a second time after `drawingReason`: a worker's message is a structured
+ * clone (plain data), and an inline caller is the app on the same thread, trusted not to hand
+ * in getter-backed arrays that answer differently between the check and the copy.
  */
 export function copyInput(d: DrawingInput): DrawingInput {
   const { colour, fill, width, dash, fontSize } = d.style;

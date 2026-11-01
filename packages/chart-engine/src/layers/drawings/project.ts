@@ -73,7 +73,9 @@ const PLOT = new Float64Array(3);
 const EPS = 1e-9;
 /** Bounds are clamped to ±1e7 CSS px before the Float32 write: always finite. */
 const LIMIT = 1e7;
-const px = (v: number): number => (v > LIMIT ? LIMIT : v >= -LIMIT ? v : -LIMIT); // NaN: -LIMIT
+// NaN, which validated anchors cannot produce, would clamp to -LIMIT: a visible record's box is
+// always finite, and only a hidden one is NaN (the documented "not on screen").
+const px = (v: number): number => (v > LIMIT ? LIMIT : v >= -LIMIT ? v : -LIMIT);
 function seg(x0: number, y0: number, x1: number, y1: number): void {
   SEG[0] = x0;
   SEG[1] = y0;

@@ -671,6 +671,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     const n = node.set.size;
     const ids = node.set.rev === inst.boundsRev ? undefined : node.set.ids.slice();
     inst.boundsRev = node.set.rev;
+    // `RuntimeDeps.post` takes no transfer list, so the copy is cloned once more in worker mode;
+    // a transfer would need that seam widened for every message (the README's one exception).
     const bounds = node.bounds.slice(0, 4 * n);
     deps.post({ t: "drawingBounds", id: inst.id, ...(ids && { ids }), bounds });
   }

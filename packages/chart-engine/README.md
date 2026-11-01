@@ -586,7 +586,7 @@ pending. `model.ts` is the engine's minimal `DrawingInput` (BQ-3): ten primitive
 anchored at (µs time, tick), with a numeric style (0xRRGGBBAA colours, width 1..8, a dash index)
 and a label clamped as data (120 code points, controls and bidi stripped, font 8..48; SR-E14-03,
 SR-E14-04). The worker boundary refuses an unknown top-level or style key, an unknown kind, a
-wrong anchor count, a non-finite number, a time past 2^53 µs or a tick past 2^30, a raw label over
+wrong anchor count, a non-finite number, a time past 2^53 µs or a tick at or past ±2^30, a raw label over
 480 UTF-16 units, over 1 000 drawings or 65 536 anchors, and a refusal changes nothing (E14-X01
 DR29). Worker records and the host's replay set hold `copyInput`'s whitelisted copy, never the
 caller's objects. `set.ts` folds `setDrawings` (`replace`, or a `patch` that removes then upserts

@@ -1,7 +1,8 @@
 // E14-T03: the per-frame path of the drawings layer allocates nothing (31-chart-engine: no
 // per-frame allocations). A pan or a drag runs `DrawingsNode.update`, which projects every record
 // through `screenBounds`, `extend`, `seg` and `px`; none may build an array, object, closure,
-// typed array, spread or string. `reindex` runs only when a record or the bar map changed (DATA).
+// typed array, spread or string, literally or through an allocating call (`.slice()`, `.map()`,
+// `.concat()`, `Float64Array.from()`, `.join()`, …) or a string `+`. `reindex` runs only when a record or the bar map changed (DATA).
 // Checked on the AST, so the guard is deterministic; a fixture proves it fires. The live half
 // (no record or buffer replaced across 100 pans) runs the real node.
 import { readFileSync } from "node:fs";
@@ -26,7 +27,30 @@ const ALLOCATING = new Set([
   "TemplateLiteral",
   "ArrayPattern",
 ]);
+/** Calls that return a new array, typed array or string: `x.slice()`, `Float64Array.from(…)`. */
+const ALLOCATING_CALLS = new Set(["slice", "map", "filter", "concat", "flat", "flatMap", "from"]);
+const CALLS_TOO = new Set(["of", "join", "split", "toFixed", "toString", "padStart", "repeat"]);
 type Node = { type: string; [k: string]: unknown };
+const isString = (n: unknown): boolean =>
+  typeof (n as { value?: unknown } | null)?.value === "string" ||
+  (n as Node | null)?.type === "TemplateLiteral";
+
+/** An allocating node's label, or null: literals, closures, allocating calls, string `+`. */
+function allocating(n: Node): string | null {
+  if (ALLOCATING.has(n.type)) return n.type;
+  if (n.type === "CallExpression") {
+    const callee = n["callee"] as Node;
+    const prop =
+      callee.type === "MemberExpression" ? (callee["property"] as { name?: string }) : null;
+    const name = prop?.name ?? "";
+    if (ALLOCATING_CALLS.has(name) || CALLS_TOO.has(name)) return `.${name}()`;
+  }
+  const plus = n.type === "BinaryExpression" || n.type === "AssignmentExpression";
+  if (plus && (n["operator"] === "+" || n["operator"] === "+=")) {
+    if (isString(n["left"]) || isString(n["right"])) return "string +";
+  }
+  return null;
+}
 /** The hot functions the last `allocations` call found: all five, or the guard checks nothing. */
 const seen = new Set<string>();
 
@@ -51,7 +75,8 @@ function allocations(code: string): string[] {
     if (!HOT.has(name) || fn === null) return;
     seen.add(name);
     visit((fn as Node)["body"], (inner) => {
-      if (ALLOCATING.has(inner.type)) found.push(`${name}: ${inner.type}`);
+      const what = allocating(inner);
+      if (what !== null) found.push(`${name}: ${what}`);
     });
   });
   return found;
@@ -68,12 +93,21 @@ describe("the drawings layer's per-frame path allocates nothing", () => {
       "class N { update() { const a = [1]; this.f(() => 1); } }",
       "function extend() { return { x: 1 }; }",
       "const px = (v: number) => `${v}`;",
+      "function seg(a: Float32Array) { a.slice(0, 2); Float64Array.from(a); return 'x' + a; }",
+      "function screenBounds(a: number[]) { a.map(Number).concat([]); return a.join(); }",
     ].join("\n");
     expect(allocations(code)).toEqual([
       "update: ArrayExpression",
       "update: ArrowFunctionExpression",
       "extend: ObjectExpression",
       "px: TemplateLiteral",
+      "seg: .slice()",
+      "seg: .from()",
+      "seg: string +",
+      "screenBounds: .concat()",
+      "screenBounds: ArrayExpression",
+      "screenBounds: .map()",
+      "screenBounds: .join()",
     ]);
   });
 
