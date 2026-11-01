@@ -87,7 +87,8 @@ export function candleRect(
   const kx = k[0] ?? 0;
   const centre = (index - indexBase + 0.5 - (k[3] ?? 0)) * kx; // the shader's evaluation order
   if (part === CANDLE_PART.seam) {
-    // BQ-8: the slot's left edge, a hairline over the whole pane.
+    // BQ-8: the slot's left edge, a hairline over the whole pane: the full canvas height (`k[5]`),
+    // correct while the pane scissor clips it and only pane 0 exists (E11-S09).
     out[0] = Math.floor(centre - kx * 0.5 - hair * 0.5 + 0.5);
     out[1] = 0;
     out[2] = hair;

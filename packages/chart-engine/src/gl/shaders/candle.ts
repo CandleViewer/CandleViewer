@@ -68,7 +68,8 @@ void main() {
   float y1;
   v_outline = 0;
   if (part == 4) {
-    // BQ-8: the slot's left edge, a hairline over the whole pane.
+    // BQ-8: the slot's left edge, a hairline over the whole pane. y1 = u_viewport.y is the full
+    // canvas height: correct while the pane scissor clips it and only pane 0 exists (E11-S09).
     x0 = floor(centre - u_k.x * 0.5 - h * 0.5 + 0.5);
     w = h;
     y0 = 0.0;
