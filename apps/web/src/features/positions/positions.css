@@ -1,0 +1,88 @@
+/*
+ * SCR-063's panel on R-130 (E29-S01 #911): the bands of E29-D02 §2 (tab strip, toolbar, account slot,
+ * the grid), tokens only. The toolbar wraps to a second row rather than cut a control at 200 % zoom
+ * or the in-app text scale (D02 §11.5's text-resize line); the slot keeps one line at 100 % and grows
+ * to the lines its sentence needs (D-16). A read-only reason is `color.text.secondary`, never the
+ * disabled grey (D02 §10.4, `32-design-specs.md` G-T2.2).
+ */
+.cv-positions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-sm);
+  min-width: 0;
+}
+
+.cv-positions__title {
+  margin: 0;
+}
+
+.cv-positions__notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+}
+
+.cv-positions__reason {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-positions__tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+  min-width: 0;
+}
+
+.cv-positions-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-inset-sm);
+}
+
+.cv-positions-toolbar__start,
+.cv-positions-toolbar__end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-sm);
+  min-width: 0;
+}
+
+.cv-positions-toolbar__label {
+  color: var(--color-text-secondary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-positions__failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-stack-xs);
+}
+
+.cv-positions__loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-sm);
+}
+
+.cv-positions__loading p {
+  margin: 0 0 var(--space-stack-xs);
+  color: var(--color-text-secondary);
+}
+
+.cv-positions__grid {
+  min-width: 0;
+}
+
+/* A group header's state marker and read-only notice sit after its figures (D02 §5.5, §10.4). */
+.cv-positions__grid .cv-positions__reason {
+  display: inline;
+  margin-inline-start: var(--space-inset-xs);
+}
