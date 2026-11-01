@@ -29,6 +29,9 @@ import {
   type SymbolTarget,
 } from "../../../src/features/symbol-search/searchSession";
 import { visibleRows } from "../../../src/features/symbol-search/SymbolSearch";
+import type { Watchlist } from "../../../src/features/watchlist/listEdits";
+import { ROUTE_PANE, localPaneSettings } from "../../../src/features/watchlist/ports";
+import { appWatchlistSync, type ListChange } from "../../../src/features/watchlist/sync";
 import { KeymapHost } from "../../../src/keymap/KeymapHost";
 import { getBindings, resetBindings, setBindings } from "../../../src/keymap/profile";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
@@ -874,6 +877,7 @@ describe("SCR-102, the rest of E08-D05 §6 (E08-S09 PR C2)", () => {
       expect(items.map((item) => item.textContent)).toEqual([
         "Open in Chart 1",
         "Open in new chart",
+        "Add to watchlist…", // T2 for this session, with no workspaces:write (E08-S08)
         "Remove from recent",
       ]);
       expect(items[0]).toHaveFocus();
@@ -1298,5 +1302,228 @@ describe("SCR-102, the rest of E08-D05 §6 (E08-S09 PR C2)", () => {
     await settled();
     expect(urls()).toEqual(["/api/v1/instruments/refresh"]);
     expect([region()?.textContent, region()?.firstChild === node]).toEqual([REQUESTED, false]);
+  });
+});
+
+describe("SCR-102's 'Add to watchlist…' (E08-S08, #4702; E08-D05 §6.3, E08-D07 board 08)", () => {
+  const STAMP = "2026-10-30T10:00:00Z";
+  const watchlist = (name: string, symbols: readonly string[], id: string): Watchlist => ({
+    id,
+    name,
+    symbols: [...symbols],
+    columns: [],
+    version: 1,
+    created_at: STAMP,
+    updated_at: STAMP,
+  });
+  const MAJORS = watchlist("Majors", ["BTCUSDT"], "11111111-1111-4111-8111-111111111111");
+  const ALTS = watchlist("Alts", ["SOLUSDT", "ETHUSDT"], "22222222-2222-4222-8222-222222222222");
+  const json = (body: unknown, status = 200): Promise<Response> =>
+    Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  /** `/watchlists` holding `lists`, as E08-T07 keeps it (If-Match versions); `refuse` answers the next write. */
+  function server(lists: readonly Watchlist[]) {
+    const held = new Map(lists.map((l): [string, Watchlist] => [l.id, l]));
+    const writes: { method: string; url: string; ifMatch: string | null; body: unknown }[] = [];
+    let refuse: number | null = null;
+    apiFetch.mockImplementation((url: string, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (!url.startsWith("/api/v1/watchlists")) return Promise.reject(new TypeError("no network"));
+      if (method === "GET") return json({ items: [...held.values()] });
+      const body: unknown = JSON.parse(String(init?.body));
+      writes.push({ method, url, ifMatch: new Headers(init?.headers).get("If-Match"), body });
+      if (refuse !== null) {
+        const status = refuse;
+        refuse = null;
+        return json({ status }, status);
+      }
+      const input = body as { name: string; symbols: string[]; columns?: string[] };
+      if (method === "POST") {
+        const created = watchlist(
+          input.name,
+          input.symbols,
+          "33333333-3333-4333-8333-333333333333",
+        );
+        held.set(created.id, created);
+        return json(created, 201);
+      }
+      const id = url.slice("/api/v1/watchlists/".length);
+      const now = held.get(id);
+      if (now === undefined) return json({ status: 404 }, 404);
+      const saved = { ...now, symbols: input.symbols, version: now.version + 1 };
+      held.set(id, saved);
+      return json(saved);
+    });
+    return {
+      writes,
+      fail(status: number) {
+        refuse = status;
+      },
+    };
+  }
+  const writer = (): void =>
+    setMeClaims({ authenticated: true, role: "owner", permissions: ["workspaces:write"] });
+  /** SCR-102 open on ETHUSDT's row (Recent), its menu open from the input (`Shift+F10`). */
+  async function menuOn(symbol = "ETHUSDT"): Promise<HTMLElement> {
+    act(() => rememberSymbol(symbol));
+    press(trigger());
+    key("ArrowDown");
+    key("F10", { shiftKey: true });
+    return screen.getByRole("menu", { name: `Actions for ${symbol}` });
+  }
+  /** Opens the chooser (the submenu), once the lists have been read. */
+  async function chooser(menu: HTMLElement): Promise<HTMLElement> {
+    await act(() => new Promise<void>((done) => setTimeout(done, 0)));
+    press(within(menu).getByRole("menuitem", { name: "Add to watchlist…" }));
+    return screen.getByRole("menu", { name: "Add to watchlist…" });
+  }
+  const said = (): string | null | undefined =>
+    screen
+      .getByRole("dialog", { name: "Symbol search" })
+      .querySelector('[data-cmp="CMP-160"] > [role="status"]')?.textContent;
+
+  afterEach(() => localPaneSettings.write(ROUTE_PANE, { watchlist_id: "" }));
+
+  it("the menu holds 'Add to watchlist…' after the opens; its submenu lists the user's lists, SCR-100's last shown first", async () => {
+    await shell(CHART_1);
+    writer();
+    server([MAJORS, ALTS]);
+    localPaneSettings.write(ROUTE_PANE, { watchlist_id: ALTS.id });
+    const menu = await menuOn("BTCUSDT");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual(["Open in Chart 1", "Open in new chart", "Add to watchlist…", "Remove from recent"]);
+    const lists = await chooser(menu);
+    expect(
+      within(lists)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual(["Alts, 2 symbols", "Majors, 1 symbol · has BTCUSDT"]);
+  });
+
+  it("choosing a list adds the symbol with one PUT on its version, says so in SCR-102's region, focus back in the input", async () => {
+    await shell(CHART_1);
+    writer();
+    const { writes } = server([MAJORS, ALTS]);
+    const heard: ListChange[] = [];
+    const off = appWatchlistSync.subscribe((change) => heard.push(change));
+    onTestFinished(off);
+    const menu = await menuOn();
+    press(within(await chooser(menu)).getByRole("menuitem", { name: "Majors, 1 symbol" }));
+    await act(() => new Promise<void>((done) => setTimeout(done, 0)));
+    expect(writes).toEqual([
+      {
+        method: "PUT",
+        url: `/api/v1/watchlists/${MAJORS.id}`,
+        ifMatch: `W/"${MAJORS.id}:1"`,
+        body: { name: "Majors", symbols: ["BTCUSDT", "ETHUSDT"], columns: [] },
+      },
+    ]);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(input()).toHaveFocus();
+    expect(said()).toBe("Added ETHUSDT to Majors.");
+    // SCR-100 holds the version stored (C-2.12)
+    expect(heard).toEqual([
+      { kind: "stored", list: expect.objectContaining({ id: MAJORS.id, version: 2 }) },
+    ]);
+  });
+
+  it("a list that holds the symbol shows it, never T2: choosing it sends nothing and says it is already there", async () => {
+    await shell(CHART_1);
+    writer();
+    const { writes } = server([MAJORS, ALTS]);
+    const lists = await chooser(await menuOn());
+    const alts = within(lists).getByRole("menuitem", { name: "Alts, 2 symbols · has ETHUSDT" });
+    expect(alts).not.toHaveAttribute("aria-disabled");
+    press(alts);
+    await act(() => new Promise<void>((done) => setTimeout(done, 0)));
+    expect(writes).toEqual([]);
+    expect(said()).toBe("ETHUSDT is already on Alts.");
+    expect(input()).toHaveFocus();
+  });
+
+  it("at 200 a list is T2 with the cap's words: choosing it sends nothing", async () => {
+    await shell(CHART_1);
+    writer();
+    const big = watchlist(
+      "Big",
+      Array.from({ length: 200 }, (_, i) => `A${String(i).padStart(3, "0")}USDT`),
+      "44444444-4444-4444-8444-444444444444",
+    );
+    const { writes } = server([big]);
+    const lists = await chooser(await menuOn());
+    const item = within(lists).getByRole("menuitem", { name: "Big, 200 of 200 symbols" });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveAccessibleDescription("Watching 200 symbols — remove some to add more");
+    press(item);
+    await act(() => new Promise<void>((done) => setTimeout(done, 0)));
+    expect(writes).toEqual([]);
+  });
+
+  it("with no list, 'New watchlist with ETHUSDT' creates 'Watchlist' holding it (POST)", async () => {
+    await shell(CHART_1);
+    writer();
+    const { writes } = server([]);
+    const lists = await chooser(await menuOn());
+    press(within(lists).getByRole("menuitem", { name: "New watchlist with ETHUSDT" }));
+    await act(() => new Promise<void>((done) => setTimeout(done, 0)));
+    expect(writes).toMatchObject([
+      { method: "POST", body: { name: "Watchlist", symbols: ["ETHUSDT"] } },
+    ]);
+    expect(said()).toBe("Added ETHUSDT to Watchlist.");
+  });
+
+  it.each([
+    [412, "Majors changed in another window."],
+    [403, "Not sent — your access changed."],
+    [503, "Could not add ETHUSDT to Majors."],
+  ])("a %i on the add says its words once, and nothing else changes", async (status, words) => {
+    await shell(CHART_1);
+    writer();
+    const fake = server([MAJORS]);
+    const lists = await chooser(await menuOn());
+    fake.fail(status);
+    press(within(lists).getByRole("menuitem", { name: "Majors, 1 symbol" }));
+    await act(() => new Promise<void>((done) => setTimeout(done, 0)));
+    expect(fake.writes).toHaveLength(1);
+    expect(said()).toBe(words);
+  });
+
+  it("a name taken meanwhile (409) on the new list says so", async () => {
+    await shell(CHART_1);
+    writer();
+    const fake = server([]);
+    const lists = await chooser(await menuOn());
+    fake.fail(409);
+    press(within(lists).getByRole("menuitem", { name: "New watchlist with ETHUSDT" }));
+    await act(() => new Promise<void>((done) => setTimeout(done, 0)));
+    expect(said()).toBe("A watchlist named Watchlist already exists.");
+  });
+
+  it("without workspaces:write the item is T2 with its reason: no submenu opens and no list is read", async () => {
+    await shell(CHART_1);
+    const fake = server([MAJORS]);
+    const menu = await menuOn();
+    const item = within(menu).getByRole("menuitem", { name: "Add to watchlist…" });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveAccessibleDescription("Your role can't save workspaces.");
+    press(item);
+    expect(screen.queryByRole("menu", { name: "Add to watchlist…" })).toBeNull();
+    expect(fake.writes).toEqual([]);
+    expect(apiFetch.mock.calls.filter(([url]) => url.startsWith("/api/v1/watchlists"))).toEqual([]);
+  });
+
+  it("a delisted Recent's menu has no 'Add to watchlist…'", async () => {
+    await shell(CHART_1, { known: [entry("LUNAUSDT", "Closed")] });
+    writer();
+    server([MAJORS]);
+    const menu = await menuOn("LUNAUSDT");
+    expect(within(menu).queryByRole("menuitem", { name: /^Add to watchlist/ })).toBeNull();
   });
 });
