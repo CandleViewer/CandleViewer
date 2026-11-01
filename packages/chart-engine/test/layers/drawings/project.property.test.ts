@@ -98,7 +98,7 @@ describe("Scenario: anchors project inside their bounds and round-trip (20 000 c
     expect([...out].every(Number.isNaN)).toBe(true);
   });
 
-  it("extreme anchors (±2^53 µs, ±2^30 ticks, a near-zero direction): bounds clamped, finite", () => {
+  it("extreme anchors (±2^53 µs, ±2^30 ticks, a tiny direction): bounds clamped, finite", () => {
     const style = { colour: 0, width: 8, dash: 0 } as const;
     const [t, k] = [2 ** 53, 2 ** 30];
     for (const log of [false, true]) {

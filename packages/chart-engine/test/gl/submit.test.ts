@@ -37,12 +37,18 @@ describe("draw submission: steady state", () => {
     const bench = new DrawSubmitBench(gl);
     bench.step(); // warm-up: compiles, first full uploads
     const { registry, programs } = bench.backend;
-    // The scene draws line, sdf-text and bar-cell: quad's one and candle's (E12-S06) never resolve.
-    const unused =
-      (PROGRAMS[PROGRAM.quad]?.uniforms.length ?? 0) +
-      (PROGRAMS[PROGRAM.candle]?.uniforms.length ?? 0) +
-      (PROGRAMS[PROGRAM.drawingLine]?.uniforms.length ?? 0); // E14-T03's, unused here
-    const uniforms = PROGRAMS.reduce((n, p) => n + p.uniforms.length, 0) - unused;
+    // Only the programs the scene draws compile, so only theirs resolve: derived by name from its
+    // draw list, so a program added to the table (candle, drawing-line) never shifts the count.
+    const drawn = new Set(
+      bench.builder.drawList
+        .slice(0, bench.builder.drawCount)
+        .map((b) => PROGRAMS[b.program]?.name),
+    );
+    expect([...drawn].sort()).toEqual(["bar-cell", "line", "sdf-text"]);
+    const uniforms = PROGRAMS.filter((p) => drawn.has(p.name)).reduce(
+      (n, p) => n + p.uniforms.length,
+      0,
+    );
     const before = [registry.stats.created, programs.stats.compiles, bench.builder.pool.created];
     expect(calls(gl, "getUniformLocation")).toBe(uniforms);
     const list = bench.builder.drawList;

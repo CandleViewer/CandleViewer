@@ -66,16 +66,17 @@ export const INSTANCE_LAYOUTS: readonly InstanceLayout[] = [
       ["a_meta", 4, 1, true],
     ],
   },
-  // E14-T03: anchors as int (bar index, tick) bits plus fractions; style = (width in device px,
-  // dash index, extend: 0 none / 1 forward / 2 both, unused); colour RGBA in 0..1.
+  // E14-T03 `drawing-line`, every attribute an ivec4 at location = its row (the VAO binds ints
+  // only): each anchor (bar index, tick, then the float bits of their fractions); style float
+  // bits (width in device px, dash index, extend: 0 none / 1 forward / 2 both, direction 0..2);
+  // colour float bits, RGBA in 0..1. The shader unpacks floats with intBitsToFloat.
   {
     stride: 16,
     attributes: [
-      ["a_p0", 0, 2, true],
-      ["a_p1", 2, 2, true],
-      ["a_frac", 4, 4, false],
-      ["a_style", 8, 4, false],
-      ["a_color", 12, 4, false],
+      ["a_anchor0", 0, 4, true],
+      ["a_anchor1", 4, 4, true],
+      ["a_style", 8, 4, true],
+      ["a_color", 12, 4, true],
     ],
   },
 ];

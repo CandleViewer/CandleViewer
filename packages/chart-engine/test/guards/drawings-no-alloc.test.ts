@@ -2,7 +2,8 @@
 // per-frame allocations). A pan or a drag runs `DrawingsNode.update`, which projects every record
 // through `screenBounds`, `extend`, `seg` and `px`; none may build an array, object, closure,
 // typed array, spread or string, literally or through an allocating call (`.slice()`, `.map()`,
-// `.concat()`, `Float64Array.from()`, `.join()`, …) or a string `+`. `reindex` runs only when a record or the bar map changed (DATA).
+// `.concat()`, `Float64Array.from()`, `.join()`, …) or a string `+`. `reindex` runs only when a
+// record or the bar map changed (DATA).
 // Checked on the AST, so the guard is deterministic; a fixture proves it fires. The live half
 // (no record or buffer replaced across 100 pans) runs the real node.
 import { readFileSync } from "node:fs";

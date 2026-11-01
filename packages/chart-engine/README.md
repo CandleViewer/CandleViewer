@@ -600,21 +600,30 @@ re-indexed until E12 wires the store; text bounds are the anchor until labels dr
 
 ## Drawings layer: lines (E14-T03 slice 2)
 
-`drawing-line` (`src/gl/shaders/drawing-line.ts`, program 4; BQ-5: `line` is untouched) draws
-segment, ray, extended line, hline, vline and polyline as one instanced quad per drawn segment,
-one draw call per pane for all of them (26's drawings budget is 3: lines, fills, glyphs). It
-differs from §3.10's per-instance `p0`/`p1` in px: anchors are chart space, int (bar index, tick)
-plus a fraction, re-projected through the pane block like `bar-cell` (BQ-75, BQ-113), so a pan or
-zoom is a uniform write and the ring (`src/layers/drawings/lines.ts`) is rewritten only on DATA,
-a re-index or a DPR change (width is stored in device px), and then only the changed instances
-upload. Round caps and dashes are a fragment SDF (a capsule cut by the pattern) measured from the
-anchor p0, so an extended line's dashes stay put; polyline joins are round and dashes restart per
-segment. `DASH_LUT` is in stroke widths (solid; dashed, a 4-width dash and a 2-width gap; dotted,
-a 1-width dot every 2): engine values, as E14-D04 names the three styles only. The 2D painter
-strokes the same geometry with round caps and `setLineDash`, buckets keyed by dash too. Gaps:
-the engine sets no vertex attributes yet (shared GL infrastructure), so the GL fake proves the
-program, uniforms, draws and uploads, and a float32 stand-in proves the projection (BQ-78) until
-E11-T08's goldens; hover and selection outlines are E14-T04's.
+`drawing-line` (`src/gl/shaders/drawing-line.ts`, program 5 after E12-S06's `candle` 4; BQ-5:
+`line` is untouched) draws segment, ray, extended line, hline, vline and polyline as one instanced
+quad per drawn segment, one draw call per pane for all of them (26's drawings budget is 3: lines,
+fills, glyphs). Its four inputs are `ivec4`s at `layout(location)` 0..3, bound through
+`LINE_ATTRIBUTES` (an `AttributeLayout`, E12-S06) on every attach; floats ride as bits
+(`intBitsToFloat`) and the corner comes from `gl_VertexID`. It differs from §3.10's per-instance
+`p0`/`p1` in px: anchors are chart space, int (bar index, tick) plus a fraction, re-projected
+through the pane block like `bar-cell` (BQ-75, BQ-113), so a pan or zoom is a uniform write and
+the ring (`src/layers/drawings/lines.ts`) is rewritten only on DATA, a re-index or a DPR change
+(width is stored in device px), and then only the changed instances upload. hline and vline carry
+their direction outright (a one-tick difference cancels in float32 when |ky| < ~1.5e-5). Round
+caps and dashes are a fragment SDF (a capsule cut by the pattern) measured from the anchor p0, so
+an extended line's dashes stay put; dashes restart per polyline segment. `DASH_LUT` is in stroke
+widths (solid; dashed, a 4-width dash and a 2-width gap; dotted, a 1-width dot every 2): engine
+defaults pending an E14 design value (E14-D04 names the three styles only). The 2D painter
+strokes the same geometry with round caps and `setLineDash`. Known limits: the dash phase is
+float32 in `mod(along, period)`, so it drifts once |along| from p0 reaches ~1e5 device px (an
+extended line anchored far off screen); a polyline with alpha below 1 blends twice where two
+segments' caps overlap at a join on the GPU, and once in 2D (one path), until a stencil or
+min-alpha pass; an anchor past 2^30 bars clamps (its line's direction is approximate, off
+screen). Pixel-level parity of caps and dashes between the two backends defers to E11-T08's
+SwiftShader goldens: the tests prove the geometry (endpoints within 0.05 px through a float32
+stand-in of the shader, also at bar ~1e6 and ticks ~1e8, widths and patterns at dpr 1, 1.5, 2),
+the bindings and the uploads. Hover and selection outlines are E14-T04's.
 
 ## Scripts
 

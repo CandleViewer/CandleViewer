@@ -28,8 +28,11 @@ let rt: RenderRuntime;
 const frame = (): void => void vi.advanceTimersByTime(16);
 const cmd = (c: object): void => rt.handle({ t: "command", id: 1, cmd: c as Command });
 const bounds = (): Bounds[] => out.filter((m): m is Bounds => m.t === "drawingBounds");
+/** The last GL fake a canvas handed out (the runtime asks once, on the first frame). */
+let gl: FakeGl;
 const init = (extra: object = {}): void => {
-  const canvas = { width: 800, height: 600, getContext: () => new FakeGl({ params: ROOMY }) };
+  const getContext = (): FakeGl => (gl = new FakeGl({ params: ROOMY }));
+  const canvas = { width: 800, height: 600, getContext };
   const config = { bench: true, syncGroup: null };
   rt.handle({ t: "init", id: 1, canvas, dpr: 1, theme: {}, config, ...extra });
 };
@@ -104,13 +107,22 @@ describe("drawing-line through the runtime (slice 2)", () => {
   it("draws the lines in one call; a pan uploads 0 bytes; a drag uploads one instance", () => {
     cmd({ k: "setDrawings", op: "replace", drawings: many(5) });
     frame();
-    expect([last().drawCalls, last().triangles, last().uploadedBytes]).toEqual([1, 10, 64 * 64]); // the first upload is the whole 64-slot ring
+    // The first upload is the whole 64-slot ring.
+    expect([last().drawCalls, last().triangles, last().uploadedBytes]).toEqual([1, 10, 64 * 64]);
     cmd({ k: "setViewport", timeStart: T(3), timeEnd: T(90) });
     frame();
     expect([last().drawCalls, last().uploadedBytes]).toEqual([1, 0]);
     cmd({ k: "setDrawings", op: "patch", drawings: [seg("d2", 40)] });
     frame();
     expect(last().uploadedBytes).toBe(64);
+  });
+
+  it("binds the four ivec4 inputs on the runtime's backend (attach with LINE_ATTRIBUTES)", () => {
+    cmd({ k: "setDrawings", op: "replace", drawings: many(2) });
+    frame();
+    expect(gl.attribs.filter((a) => a.startsWith("attrib"))).toEqual(
+      [0, 1, 2, 3].map((at) => `attrib ${at} 4 64 ${at * 16}`),
+    );
   });
 
   it("re-wires the ring to the degraded-2d re-init's backend and builder", () => {

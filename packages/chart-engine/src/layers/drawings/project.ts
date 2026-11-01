@@ -10,39 +10,12 @@ import { PROGRAM } from "../../scene/instance-layout.js";
 import type { BatchSink } from "../../scene/pool.js";
 import { indexAt, indexToScreen, priceToScreen } from "../../viewport/transform.js";
 import type { IndexTimeMap, ViewportState } from "../../viewport/types.js";
-import { copyInput, MAX_DRAWINGS, type DrawingInput, type SetDrawings } from "./model.js";
+import { MAX_DRAWINGS, type SetDrawings } from "./model.js";
+import { toRecord, type DrawingRecord } from "./record.js";
 import { LineInstances } from "./lines.js";
 import { DrawingSet } from "./set.js";
 
-export interface DrawingRecord {
-  /** `copyInput`'s whitelisted copy: kind, style, z, visibility and the clamped label. */
-  readonly input: DrawingInput;
-  readonly t: Float64Array;
-  readonly tick: Float64Array;
-  /** Each anchor's fractional bar index under the map stamped in `stamp`. */
-  readonly idx: Float64Array;
-  /** [idxMin, tickMin, idxMax, tickMax], a band's implied fourth corner included. */
-  readonly box: Float64Array;
-  stamp: number;
-}
-
-export function toRecord(d: DrawingInput): DrawingRecord {
-  const input = copyInput(d);
-  const n = input.points.length / 2;
-  const r = {
-    input,
-    t: new Float64Array(n),
-    tick: new Float64Array(n),
-    idx: new Float64Array(n),
-    box: new Float64Array(4),
-    stamp: -1,
-  };
-  for (let i = 0; i < n; i += 1) {
-    r.t[i] = input.points[2 * i] as number;
-    r.tick[i] = input.points[2 * i + 1] as number;
-  }
-  return r;
-}
+export { toRecord, type DrawingRecord } from "./record.js";
 
 /** Widens a chart-space box [idxMin, tickMin, idxMax, tickMax] to (i, k). */
 function corner(box: Float64Array, i: number, k: number): void {

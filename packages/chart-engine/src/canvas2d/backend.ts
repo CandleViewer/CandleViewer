@@ -81,7 +81,7 @@ export class Canvas2DBackend implements RenderBackend {
   private readonly frameBlocks: (PaneUniforms | null)[] = [];
   private readonly frameBatches: (BatchUniforms | null)[] = [];
   private run = 1;
-  /** Per `drawing-line` bucket: kept apart so the other buckets' shape and path stay as they were. */
+  /** Per `drawing-line` bucket: kept apart, so the other buckets' shape and path are unchanged. */
   private readonly dashes = new WeakMap<Bucket, Dash>(); // dies with its bucket
   /** The last stroke set round caps or a dash (`drawing-line`). */
   private dashed = false;

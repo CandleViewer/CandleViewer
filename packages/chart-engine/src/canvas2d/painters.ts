@@ -28,8 +28,7 @@ const SEG = attributeOffset(PROGRAM.line, "a_segment");
 const RECT = attributeOffset(PROGRAM.quad, "a_rect");
 const CELL = attributeOffset(PROGRAM.barCell, "a_cell");
 const SIZE = attributeOffset(PROGRAM.barCell, "a_size");
-const P0 = attributeOffset(PROGRAM.drawingLine, "a_p0");
-const FRAC = attributeOffset(PROGRAM.drawingLine, "a_frac");
+const A0 = attributeOffset(PROGRAM.drawingLine, "a_anchor0");
 const STYLE = attributeOffset(PROGRAM.drawingLine, "a_style");
 
 /** `u_viewport` → backing store: the shaders' `p / u_viewport * 2 - 1` then the GL viewport. */
@@ -140,13 +139,14 @@ export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
 
 /** `drawing-line`'s anchor `k` (0 or 1) through the block, in `u_viewport` px: the shader's. */
 function lineX(a: PaintArgs, b: PaneUniforms, k: number): number {
-  const rel =
-    (a.ints[a.at + P0 + 2 * k] ?? 0) - (b.ints[0] ?? 0) + (a.data[a.at + FRAC + 2 * k] ?? 0);
+  const o = a.at + A0 + 4 * k; // the ivec4: int index, int tick, then their fractions' bits
+  const rel = (a.ints[o] ?? 0) - (b.ints[0] ?? 0) + (a.data[o + 2] ?? 0);
   return (rel + 0.5 - (b.floats[3] ?? 0)) * (b.floats[0] ?? 0);
 }
 function lineY(a: PaintArgs, b: PaneUniforms, k: number): number {
-  const rel = (a.ints[a.at + P0 + 2 * k + 1] ?? 0) - (b.ints[1] ?? 0);
-  return projectRel(b.floats, rel + (a.data[a.at + FRAC + 2 * k + 1] ?? 0));
+  const o = a.at + A0 + 4 * k;
+  const rel = (a.ints[o + 1] ?? 0) - (b.ints[1] ?? 0);
+  return projectRel(b.floats, rel + (a.data[o + 3] ?? 0));
 }
 
 /**
@@ -162,8 +162,9 @@ export function paintDrawingLine(ctx: Ctx2DLike, a: PaintArgs): void {
   const dx = lineX(a, b, 1) - x0;
   const dy = lineY(a, b, 1) - y0;
   const len = Math.hypot(dx, dy);
-  const ux = len > 1e-6 ? dx / len : 1;
-  const uy = len > 1e-6 ? dy / len : 0;
+  const dir = a.data[a.at + STYLE + 3] ?? 0; // 1 horizontal, 2 vertical (hline / vline)
+  const ux = dir > 1.5 ? 0 : dir > 0.5 ? 1 : len > 1e-6 ? dx / len : 1;
+  const uy = dir > 1.5 ? 1 : dir > 0.5 ? 0 : len > 1e-6 ? dy / len : 0;
   const ext = a.data[a.at + STYLE + 2] ?? 0;
   const far = 2 * (Math.abs(x0) + Math.abs(y0) + (b.floats[4] ?? 0) + (b.floats[5] ?? 0));
   const period = (DASH_LUT[a.data[a.at + STYLE + 1] ?? 0]?.[1] ?? 0) * (a.data[a.at + STYLE] ?? 0);

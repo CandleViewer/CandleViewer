@@ -28,7 +28,7 @@ export const MAX_ANCHORS = 65_536;
 export const LABEL_MAX = 120;
 /** A raw label longer than this (UTF-16 units) is refused, not clamped: memory stays bounded. */
 export const LABEL_RAW_MAX = 4 * LABEL_MAX;
-/** |time| <= 2^53 µs (float64's exact integers); |tick| < 2^30, setPriceRange's open window (BQ-75). */
+/** |time| <= 2^53 µs (float64's exact integers); |tick| < 2^30, setPriceRange's window (BQ-75). */
 export const TIME_MAX = 2 ** 53;
 export const TICK_MAX = INT32_TICKS;
 export const FONT_MIN = 8;

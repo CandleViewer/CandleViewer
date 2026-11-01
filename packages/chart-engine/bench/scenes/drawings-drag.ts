@@ -8,6 +8,7 @@ import { mulberry32 } from "../fixtures/rng.mjs";
 import type { RenderBackend } from "../../src/gl/backend.js";
 import { BarStore } from "../../src/model/BarStore.js";
 import type { DrawingInput, DrawingKind, SetDrawings } from "../../src/layers/drawings/model.js";
+import { LINE_ATTRIBUTES } from "../../src/layers/drawings/lines.js";
 import { DrawingsNode } from "../../src/layers/drawings/project.js";
 import { BatchBuilder } from "../../src/scene/batch-builder.js";
 import { FrameContext } from "../../src/scene/frame-context.js";
@@ -61,7 +62,7 @@ export class DrawingsDragBench {
     this.ctx = new FrameContext(this.viewport);
     this.builder = new BatchBuilder(this.graph, backend ?? { uploadSubRange: () => undefined });
     this.drawings.onRange = (r) => this.builder.patch(this.drawings.id, r);
-    backend?.attach(this.drawings.id, this.drawings.lines);
+    backend?.attach(this.drawings.id, this.drawings.lines, LINE_ATTRIBUTES);
     backend?.setPaneUniforms(() => this.uniforms);
     const rng = mulberry32(seed);
     const at = (): number[] => [(n - 200 + rng() * 200) * US, 1_000 + Math.round(rng() * 50)];
