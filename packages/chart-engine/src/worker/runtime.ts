@@ -213,6 +213,8 @@ interface Instance {
   readonly fonts: readonly ChartFont[] | "invalid" | undefined;
   /** E12-S06: the `addSeries` ids, their stores and rings; the main series' id, else -1. */
   readonly series: Map<number, SeriesEntry>;
+  /** The same entries as an array, in insertion order: the pick path iterates it (no iterator). */
+  readonly seriesList: SeriesEntry[];
   main: number;
   /** `engine.data.rejected{reason}`: a model `RejectReason`, or `decode` (F-01, the wire). */
   readonly dataRejected: Record<string, number>;
@@ -520,7 +522,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     const i0 = u.ints[0] ?? 0;
     const t0 = u.ints[1] ?? 0;
     let best = Infinity;
-    for (const s of inst.series.values()) {
+    const list = inst.seriesList;
+    for (let i = 0; i < list.length; i += 1) {
+      const s = list[i] as SeriesEntry;
       if (s.pane !== 0) continue;
       const c = s.candle;
       if (!c.hitTest(x, y, where.barIndex, u.floats, i0, t0, tol, barHit)) continue;
@@ -581,7 +585,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     const store = new BarStore();
     const ring = new CandleRing(inst.builder);
     const candle = kind === "candles" ? new CandleSeries(ring) : new BarSeries(ring);
-    inst.series.set(sid, { kind, pane, store, ring, candle, pickId: `series.${sid}` });
+    const entry: SeriesEntry = { kind, pane, store, ring, candle, pickId: `series.${sid}` };
+    inst.series.set(sid, entry);
+    inst.seriesList.push(entry);
     mountCandle(inst, sid, candle);
     themeCandle(inst, candle);
     if (pane === 0 && inst.main < 0) {
@@ -651,6 +657,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       fail(inst.id, `no series ${sid} on chart ${inst.id}`);
       return;
     }
+    if (gone !== undefined) inst.seriesList.splice(inst.seriesList.indexOf(gone), 1);
     const c = gone?.candle ?? null;
     if (c !== null) {
       // No node removal yet (BQ-46): the hosts stay hidden, their batches unpatched and undrawn.
@@ -854,6 +861,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         elements: old ? { ...old.elements } : { bars: 0, footprint: 0, heatmap: 0, profile: 0 },
         fonts: msg.fonts === undefined ? undefined : fontsOk(msg.fonts) ? msg.fonts : "invalid",
         series: old?.series ?? new Map(),
+        seriesList: old?.seriesList ?? [],
         main: old?.main ?? -1,
         dataRejected: old?.dataRejected ?? {},
         candles: [],

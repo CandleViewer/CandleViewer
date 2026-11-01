@@ -787,6 +787,16 @@ while it is empty (BQ-9); SCR-047's surface, copy, E2E and axe belong to `apps/w
 stand-in raster of the 2D output is pinned as text in `test/layers/candle-golden.test.ts`. The 48
 SwiftShader cases are `it.todo`s that become rows on E11-T08 #391 (BQ-5).
 
+Accepted pick limits (PR 2 lens): `hitTest` measures the parts the last frame drew (its pane block
+and `u_geom`), so a pick between a data change and the next frame answers against what is on
+screen. It tests only the bar in the slot under x, so a neighbour's wick within the tolerance is
+not hit.
+
+Consumer note for E12-S12 (`apps/web`, SCR-047; the BQ-9 comment at merge): `dataState` posts
+`empty` on the first frame, before any data arrives, and then `ready` once bars are in view. The
+app should debounce SCR-047 (show it only when `empty` lasts past the initial load), or the empty
+state flashes on every chart open.
+
 Deviations from the plan (#395 plan §2–§3), each for a stated reason:
 
 1. The seam uses the `candle` program and a per-series slot list, not the `line` program. A

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { mulberry32 } from "../../bench/fixtures/rng.mjs";
 import {
   CANDLE_DIR,
+  CANDLE_PART,
   candleGeometry,
   fullOutline,
   candlePalette,
@@ -109,6 +110,15 @@ describe("candleRect", () => {
     expect([z[2], z[3]]).toEqual([5, 2]);
     expect(rect(1, [4, 4, 4, 4], CANDLE_DIR.zeroRange, geom(6, 1))[3]).toBe(2);
     expect(rect(1, [4, 4, 4, 4], CANDLE_DIR.zeroRange, geom(48, 1))[2]).toBe(35); // body wins
+  });
+
+  // E12-D06 §9 (:295-296): only the doji drops to 1 px below s = 8; the zero-range mark is
+  // "2 px tall (`2 × floor(dpr)` device px)" at every spacing, for candles and OHLC alike.
+  it("D06 §9: a zero-range mark stays 2 hairlines tall below s = 8, candle body and OHLC stem", () => {
+    expect(rect(CANDLE_PART.body, [4, 4, 4, 4], CANDLE_DIR.zeroRange, geom(6, 1))[3]).toBe(2);
+    expect(rect(CANDLE_PART.stem, [4, 4, 4, 4], CANDLE_DIR.zeroRange, geom(6, 1))[3]).toBe(2);
+    expect(rect(CANDLE_PART.stem, [4, 4, 4, 4], CANDLE_DIR.zeroRange, geom(6, 2))[3]).toBe(4);
+    expect(rect(CANDLE_PART.body, [4, 9, 1, 4], CANDLE_DIR.doji, geom(6, 1))[3]).toBe(1);
   });
 });
 
