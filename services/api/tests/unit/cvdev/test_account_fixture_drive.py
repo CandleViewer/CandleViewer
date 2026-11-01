@@ -112,6 +112,7 @@ class FakeApi:
         self.elevated = False
         self.challenge = str(uuid.uuid4())
         self.fail: dict[str, Answer] = {}
+        self.raises: dict[str, Exception] = {}
         self.codes: list[str] = []
 
     def code_ok(self, code: object) -> bool:
@@ -127,6 +128,8 @@ class FakeApi:
         self, method: str, path: str, body: bytes | None, headers: Mapping[str, str]
     ) -> Answer:
         self.calls.append((method, path, body, dict(headers)))
+        if f"{method} {path}" in self.raises:
+            raise self.raises[f"{method} {path}"]
         if f"{method} {path}" in self.fail:
             return self.fail[f"{method} {path}"]
         sent = json.loads(body) if body else {}
@@ -389,6 +392,27 @@ def test_drive_steps_up_and_resends_the_held_request_unchanged(
     assert renewed and (again[3]["Authorization"] != held[3]["Authorization"]) is rotate
 
 
+def test_a_rotating_step_up_leaves_its_new_bearer_and_csrf_token_in_the_session_file(
+    run: Run, clock: Clock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A step-up answer that carries a new bearer and CSRF token replaces the saved pair: the
+    session file read after the call holds the rotated one, not the sign-in's."""
+    api = FakeApi(run, clock, rotate=True)
+    _go(capsys, run, api, clock, "signin", USER)
+    session_file = run.sessions / f"{USER}.json"
+    signed_in = json.loads(session_file.read_text(encoding="utf-8"))
+
+    code, _, err = _go(
+        capsys, run, api, clock, "call", USER, "POST", "/exchange-accounts", "--body-json", "{}"
+    )
+
+    session = json.loads(session_file.read_text(encoding="utf-8"))
+    pair = (session["bearer"], session["csrf"])
+    rotated = pair == (api.bearer, api.csrf)  # a boolean: no token is shown
+    replaced = pair != (signed_in["bearer"], signed_in["csrf"])
+    assert (code, err) == (0, "") and rotated and replaced
+
+
 def test_a_403_that_asks_for_no_step_up_starts_none(
     run: Run, api: FakeApi, clock: Clock, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -495,6 +519,29 @@ def test_a_refused_verify_spends_its_step_and_the_next_sign_in_waits(
     code, _, err = _go(capsys, run, api, clock, "signin", USER)
 
     assert (code, err) == (0, "") and int(clock() // 30) == spent + 1
+
+
+@pytest.mark.parametrize(
+    "route", ["POST /auth/mfa/verify", "POST /auth/step-up"], ids=["sign-in", "step-up"]
+)
+def test_a_send_that_raises_still_leaves_its_totp_step_kept(
+    route: str, run: Run, api: FakeApi, clock: Clock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The step is saved before its code is sent, so a send that raises (a reset, a timeout)
+    leaves it kept in the session file, as the api may have used it: one fixed line, no text of
+    the exception, and the step the code was made for."""
+    args: tuple[str, ...] = ("signin", USER)
+    if route == "POST /auth/step-up":
+        assert _go(capsys, run, api, clock, *args)[0] == 0
+        args = ("call", USER, "POST", "/exchange-accounts", "--body-json", "{}")
+    api.raises[route] = ConnectionResetError(f"reset: {run.password}")
+
+    code, out, err = _go(capsys, run, api, clock, *args)
+
+    assert (code, out) == (2, "")
+    assert err == f"account-fixture: refused: {drive.FAILED} (ConnectionResetError)\n"
+    session = json.loads((run.sessions / f"{USER}.json").read_text(encoding="utf-8"))
+    assert session["step"] == int(clock() // 30)  # the step the code was made for
 
 
 def test_a_root_one_shot_drives_a_run_dir_owned_by_the_uid_it_is_named(

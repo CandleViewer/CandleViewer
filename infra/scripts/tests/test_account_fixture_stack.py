@@ -3,9 +3,9 @@
 The script runs as a subprocess with a stub `docker` and nothing else on PATH, as
 `test_demo_host_owner_first_run.py` runs its script, so no docker of the host's can answer: the stub
 records each call's arguments, the names of the environment it got (and its `DOCKER_*` values) and
-the directory it ran in, answers the label listings from the test's scenario, and exits as the
-scenario says. No Docker, no network: the only socket is a loopback bind the script makes to find
-free ports.
+the directory it ran in, answers the label listings from the test's scenario (with nothing once a
+`down` is logged, when the scenario says `clear_after_down`), and exits as the scenario says. No
+Docker, no network: the only socket is a loopback bind the script makes to find free ports.
 """
 
 from __future__ import annotations
@@ -59,11 +59,15 @@ scenario = json.load(open(os.path.join(home, "scenario.json"), encoding="utf-8")
 record = {"args": args, "env": sorted(os.environ), "default": os.environ.get("CV_ACCOUNT_FIXTURE")}
 record["docker"] = {k: v for k, v in os.environ.items() if k.startswith("DOCKER_")}
 record |= {"cwd": os.getcwd(), "cwd_empty": not os.listdir(os.getcwd())}
-with open(os.path.join(home, "docker.jsonl"), "a", encoding="utf-8") as log:
+logged = os.path.join(home, "docker.jsonl")
+with open(logged, "a", encoding="utf-8") as log:
     log.write(json.dumps(record) + "\\n")
 kind = {"ps": "containers", "network": "networks", "volume": "volumes"}.get(args[0])
 if kind and "--filter" in args:
-    print("\\n".join(scenario.get(kind, [])))
+    with open(logged, encoding="utf-8") as log:
+        calls = [json.loads(line)["args"] for line in log]
+    gone = scenario.get("clear_after_down") and any("down" in call for call in calls)
+    print("\\n".join([] if gone else scenario.get(kind, [])))
 for word, status in scenario.get("exit", {}).items():
     if word in args:
         raise SystemExit(status)
@@ -276,6 +280,43 @@ def test_a_failed_teardown_keeps_the_run_dir_and_is_retried_by_running_down_agai
     host.scenario()  # the retry: compose answers, and nothing is listed after
     assert host.run("down", "--project", PROJECT).returncode == 0
     assert not os.path.lexists(host.runtime / PROJECT)
+
+
+def test_a_compose_exit_alone_keeps_the_run_dir_though_nothing_is_listed_after(
+    tmp_path: Path,
+) -> None:
+    """The compose half of `down`'s failure, apart from the listing's: the label lists a volume,
+    compose exits 4, and the listings after it are empty (`clear_after_down`). The exit status
+    alone ends `down` with exit 1, the run directory kept and the line that says to run it again;
+    the next `down` finds nothing left and removes the directory."""
+    host = Host(tmp_path)
+    assert host.run("up", "--project", PROJECT).returncode == 0
+    host.scenario(volumes=[f"{PROJECT}_cv-postgres-data"], exit={"down": 4}, clear_after_down=True)
+
+    failed = host.run("down", "--project", PROJECT)
+
+    assert host.compose_calls()[-1] == TEARDOWN  # compose ran, and exited 4
+    assert [call["args"] for call in host.calls()[-3:]] == LISTINGS  # and listed nothing after
+    kept = "0 containers, 0 networks, 0 volumes left; run directory kept: run down again"
+    assert failed.stdout == f"account-fixture-stack: down: {PROJECT}: {kept}\n"
+    assert failed.returncode == 1 and (host.runtime / PROJECT / "stack.env").exists()
+    assert host.run("down", "--project", PROJECT).returncode == 0  # the retry: nothing is left
+    assert not os.path.lexists(host.runtime / PROJECT)
+
+
+def test_down_takes_no_file_option(tmp_path: Path) -> None:
+    """`down` goes by the project name alone and reads no compose file, so it has no `-f`: a
+    command line that gives one is refused as an unknown option, with no docker call, and the
+    run directory stays as it was."""
+    host = Host(tmp_path)
+    assert host.run("up", "--project", PROJECT).returncode == 0
+    calls_before = len(host.calls())
+
+    done = host.run("down", "--project", PROJECT, "-f", "lane-net.yml")
+
+    assert (done.returncode, done.stdout) == (2, "")
+    assert "unrecognized arguments: -f lane-net.yml" in done.stderr
+    assert len(host.calls()) == calls_before and (host.runtime / PROJECT / "stack.env").exists()
 
 
 @pytest.mark.parametrize("kind", ["symlink", "subdirectory"])

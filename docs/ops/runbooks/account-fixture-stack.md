@@ -13,7 +13,11 @@ a module starts. Never run it against a database or a host that holds anything r
 daemon: under a rootless or user-namespace-remapped one the one-shots see the run directory as another uid's, and
 the seed's gate refuses it with one fixed line.
 
-Every command below runs from the checkout's root with `S=infra/scripts/account_fixture_stack.py`.
+Every command below runs from the checkout's root, with `S` set once:
+
+```bash
+S=infra/scripts/account_fixture_stack.py
+```
 
 ## What `up` does
 
@@ -65,7 +69,7 @@ services:
 ```
 
 ```bash
-python3 $S up -f /path/to/lane-net.yml        # and -f on restart-api and drive too; down needs none
+python3 $S up -f /path/to/lane-net.yml        # and -f on restart-api and drive too; down takes no -f
 ```
 
 **Expected log noise** on this stack: `secrets.kek_file_source` (a file KEK, a warning in demo),
@@ -145,6 +149,10 @@ Then the project's containers, networks and volumes are listed by their compose 
 nothing is the run directory unlinked: the line ends `0 containers, 0 networks, 0 volumes left; run directory
 removed`. A second `down` finds nothing and ends `; no run directory`. After a reboot (the tmpfs run directory
 gone, the volumes not) `down` works the same way.
+
+`down` removes no image: the api, the schema step and both one-shots are built here, and compose tags each by the
+project's name and the service's. After `down`, list those images by the project's name prefix and remove each by
+its id (`docker image ls`, then `docker image rm <id>`); a new project name builds them again.
 
 **A failed `down`** (compose exits non-zero, or the label still lists something) keeps the run directory and ends
 `run down again` with exit 1: run the same `down` again; it needs nothing but the project's name. A project a

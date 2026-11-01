@@ -6,7 +6,7 @@
 
 `signin` signs a roster user in on the stack's api, by its compose service name: the password
 from `pw-<user>`, then a TOTP code made from `totp-<user>` for a 30 s step this user has not used
-(the api refuses a replayed step, and a step sent is kept as used whatever the answer), then
+(the api refuses a replayed step, so a step is kept as used before its code is sent), then
 `GET /me`. The session (a bearer, the CSRF token of `__Host-cv_csrf` and the last step used) goes
 to `<session-dir>/<user>.json`, mode 0600, and never to a terminal. `call` sends one request for a
 roster user with that session: the bearer, the CSRF cookie and its `X-CSRF-Token` header and, on a
@@ -210,8 +210,9 @@ class Driver:
         if login.status != 200 or login.body.get("status") != "mfa_required":
             raise Refused(f"{SIGN_IN_FAILED}: login HTTP {login.status} {_code(login)}")
         mfa = {"mfa_token": login.body.get("mfa_token"), "method": "totp"}
-        verify = self.post("/auth/mfa/verify", {**mfa, "code": self.code(secret, session)}, {})
-        self.save(user, session)  # the step is spent whatever the answer: the next one waits
+        mfa["code"] = self.code(secret, session)
+        self.save(user, session)  # kept before the code is sent: spent whatever comes back
+        verify = self.post("/auth/mfa/verify", mfa, {})
         tokens = verify.body.get("tokens")
         bearer = tokens.get("access_token") if isinstance(tokens, dict) else None
         csrf = verify.cookies.get(CSRF_COOKIE)
@@ -238,8 +239,8 @@ class Driver:
             password, secret = self.credentials(user)
             challenge = {"password": password, "challenge_id": answer.body.get("challenge_id")}
             challenge["code"] = self.code(secret, session)
+            self.save(user, session)  # kept before the code is sent: spent whatever comes back
             up = self.post("/auth/step-up", challenge, _auth(session, write=True))
-            self.save(user, session)  # the step is spent whatever the answer
             if up.status != 200:
                 raise Refused(f"{STEP_UP_FAILED}: HTTP {up.status} {_code(up)}")
             tokens = up.body.get("tokens")

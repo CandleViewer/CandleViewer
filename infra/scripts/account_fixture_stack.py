@@ -20,9 +20,10 @@ directory), the api (the base file makes the schema step the api's dependency, s
 runs that step once more, which changes nothing on a migrated database).
 
 `down` goes by the project name alone (`docker compose -p <project> down -v --remove-orphans`, run
-from an empty directory): compose then reads no compose file and no env file, so `down` works with
-the run directory gone (a reboot), and running it again is how a failed `down` is retried. The run
-directory goes last, once the project's label lists nothing; until then `down` keeps it.
+from an empty directory) and takes no `-f`: compose then reads no compose file and no env file, so
+`down` works with the run directory gone (a reboot), and running it again is how a failed `down` is
+retried. The run directory goes last, once the project's label lists nothing; until then `down`
+keeps it.
 
 It prints the project name, the steps, exit statuses and counts, never a value. Docker runs with
 `PATH`, `HOME` and `DOCKER_*` alone from the caller's environment, so no stray variable of the
@@ -326,7 +327,8 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("up", "restart-api", "drive", "down"):
         sub = commands.add_parser(name)
         sub.add_argument("--project", required=name != "up", help="cv-acctfix-<6 hex digits>")
-        sub.add_argument("-f", "--file", action="append", default=[], help="a lane-local file")
+        if name != "down":  # `down` goes by the project name alone: it reads no compose file
+            sub.add_argument("-f", "--file", action="append", default=[], help="a lane-local file")
         if name in ("up", "restart-api"):
             fallback = DEFAULT_SCENARIO if name == "up" else None
             sub.add_argument("--default", default=fallback, help="the stack default scenario")
