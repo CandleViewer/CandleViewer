@@ -128,3 +128,37 @@ def test_ingest_reports_a_wal_residue_without_failing_on_it() -> None:
     assert c.note == "replayed after the run: BTCUSDT=7"
     assert v.passed == all(x.passed for x in v.checks if x.hard)
     assert check_wal_residue({}).passed and check_wal_residue({}).note == ""
+
+
+def test_rate_floor_is_relative_to_each_profiles_own_target() -> None:
+    """#5333: 20 000 msg/s passes the hosted profile and fails the 50 000 one."""
+    hosted = _clean(profile="hosted", target_msgs_per_s=20_000.0, produced_msgs=200_000)
+    full = _clean(profile="full", target_msgs_per_s=50_000.0, produced_msgs=200_000)
+    (h,) = [c for c in ingest_verdict(hosted).checks if c.name == "achieved_rate"]
+    (f,) = [c for c in ingest_verdict(full).checks if c.name == "achieved_rate"]
+    assert h.passed and h.limit == 19_000.0 and h.note == "runner class hosted"
+    assert not f.passed and f.limit == 47_500.0 and f.note == "runner class bench"
+    light = _clean(profile="hosted", target_msgs_per_s=20_000.0, produced_msgs=180_000)
+    assert not ingest_verdict(light).passed  # 18k of 20k: a hosted run cannot run lighter
+
+
+@pytest.mark.parametrize(
+    ("kw", "failed"),
+    [
+        ({"dropped_rows": {"all": 1}, "written_rows": {"all": 2_999}}, "dropped_rows"),
+        ({"written_rows": {"all": 2_999}}, "reconciliation"),
+        ({"flush_ms": [60.0] * 20}, "flush_p95"),
+        ({"rss_bytes": [600 * 2**20] * 5}, "rss_peak"),
+    ],
+)
+def test_hosted_class_keeps_the_hard_checks_and_product_thresholds(
+    kw: dict[str, object], failed: str
+) -> None:
+    base: dict[str, object] = {
+        "profile": "hosted", "target_msgs_per_s": 100.0, "produced_msgs": 1_000,
+    }  # fmt: skip
+    v = ingest_verdict(_clean(**(base | kw)))
+    bad = [c for c in v.checks if not c.passed]
+    assert [c.name for c in bad] == [failed] and bad[0].hard and not v.passed
+    (rss,) = [c for c in v.checks if c.name == "rss_peak"]
+    assert rss.limit == 512.0

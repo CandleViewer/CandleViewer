@@ -1,9 +1,16 @@
 name: perf-recorder-nightly
 # E16-Q04 (#481): the recorder perf pack, nightly and on dispatch, never on a PR and not a required
 # check (C-9.2). Three legs on one hosted runner, each judged by its own thresholds:
-# - ingest: `bench.recorder.ingest_load --profile full` (the mix at 50 000 msg/s for 10 minutes)
+# - ingest: `bench.recorder.ingest_load --profile $INGEST_PROFILE` (the mix for 10 minutes)
 #   through the real StreamWriter into a local QuestDB (compose, loopback ILP): p95 flush < 50 ms,
-#   RSS <= 512 MiB, the rate reached, zero drops, produced == written + gap-accounted rows;
+#   RSS <= 512 MiB, the rate reached, zero drops, produced == written + gap-accounted rows.
+#   Budgets per runner class (#5333 ruling; `bench/recorder/budgets.py`, `bench/baselines/e16/`):
+#   hosted (`ubuntu-latest`, the nightly default) = the scaled `hosted` profile at 20 000 msg/s, as a
+#   hosted 4-vCPU runner reached only 33 676 msg/s of 50 000; bench / quiet window = `full` at
+#   50 000 msg/s, the product budget, judged on the bench runner class. This job runs on
+#   `ubuntu-latest`, so dispatching ingest_profile=full here measures the hosted ceiling only.
+#   Every class keeps flush p95 and RSS at the product values, zero drops and reconciliation hard,
+#   and the rate floor at 95 % of the profile's own target;
 # - soak: `bench.recorder.soak --profile full` on a virtual clock, 2 symbols at depth 200 at the
 #   E16-K01 reference rates, `soak_hours` of scenario time (0.25 nightly): zero drops, backlog p95
 #   0, spill 0, reconciliation, GB/day within 20 % of the provisional E16-K01 figure. The 24 h soak
@@ -26,6 +33,11 @@ on:
         description: "Soak scenario hours (virtual clock); 24 is the ticket's soak"
         type: string
         default: "0.25"
+      ingest_profile:
+        description: "Ingest leg profile: hosted = 20k msg/s scaled; full = the 50k product budget"
+        type: choice
+        options: [hosted, full]
+        default: hosted
 permissions:
   contents: read
 env:
@@ -49,6 +61,7 @@ jobs:
       CV_ALERT_TICKET_WEBHOOK_URL: http://127.0.0.1:1/unused
       CV_ALERT_DEADMAN_URL: http://127.0.0.1:1/unused
       SOAK_HOURS: ${{ inputs.soak_hours || '0.25' }}
+      INGEST_PROFILE: ${{ inputs.ingest_profile || 'hosted' }}
     outputs:
       regressed: ${{ steps.sync.outcome == 'success' && (steps.smoke.outcome == 'failure' || steps.ingest.outcome == 'failure' || steps.soak.outcome == 'failure' || steps.api.outcome == 'failure') }}
     steps:
@@ -88,11 +101,11 @@ jobs:
           set -euo pipefail
           v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "POSTGRES_PASSWORD=$v" >> "$GITHUB_ENV"
           POSTGRES_PASSWORD="$v" docker compose -f infra/compose/docker-compose.yml --profile core up -d --wait questdb
-      - name: Ingest load (50k msg/s for 10 min into QuestDB; its budgets decide the step)
+      - name: Ingest load (10 min into QuestDB at the chosen profile; its budgets decide the step)
         id: ingest
         if: always() && steps.hours.outcome == 'success'
         working-directory: services/api
-        run: uv run python -m bench.recorder.ingest_load --profile full --ilp 127.0.0.1:9009 --out bench/reports/recorder_ingest.json
+        run: uv run python -m bench.recorder.ingest_load --profile "$INGEST_PROFILE" --ilp 127.0.0.1:9009 --out bench/reports/recorder_ingest.json
       - name: Soak (virtual clock, 2 symbols at depth 200; its budgets decide the step)
         id: soak
         if: always() && steps.hours.outcome == 'success'

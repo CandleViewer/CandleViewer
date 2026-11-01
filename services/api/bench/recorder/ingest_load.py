@@ -29,9 +29,15 @@ from bench.ingestion.config import machine_profile
 from bench.recorder.budgets import ingest_verdict
 from bench.recorder.harness import LoadConfig, finish, load_baseline, record_baseline, run
 
-#: (msgs/s, seconds, symbols). Full = the ticket's 50k msg/s for 10 minutes.
+#: (msgs/s, seconds, symbols). Full = the ticket's 50k msg/s for 10 minutes, the product budget,
+#: judged on the bench runner in a quiet window. Hosted = the scaled profile of the 4-vCPU
+#: `ubuntu-latest` runner class (#5333 ruling): the 2026-11-01 full run reached only 33 676 msg/s
+#: there (CPU-bound generator + writer + QuestDB on one box), so 20 000 msg/s (~60 % of that
+#: ceiling) leaves headroom for neighbour noise. Same symbols and duration; flush p95 and RSS keep
+#: the product thresholds (budgets.RUNNER_CLASSES).
 PROFILES: Final[dict[str, tuple[float, float, tuple[str, ...]]]] = {
     "smoke": (200.0, 3.0, ("BTCUSDT", "ETHUSDT")),
+    "hosted": (20_000.0, 600.0, ("BTCUSDT", "ETHUSDT", "SOLUSDT")),
     "full": (50_000.0, 600.0, ("BTCUSDT", "ETHUSDT", "SOLUSDT")),
 }
 BASELINE: Final = "recorder_ingest"
