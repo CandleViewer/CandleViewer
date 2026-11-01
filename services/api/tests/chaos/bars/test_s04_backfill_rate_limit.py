@@ -122,14 +122,19 @@ class _Wait:
 
 
 class _Run:
-    def __init__(self, venue: _Venue, *, max_limits: int = MAX_CONSECUTIVE) -> None:
+    async def _instant(self, seconds: float) -> None:
+        self.wait.delays.append(0.0)  # the naive collaborator: it waits for nothing
+
+    def __init__(
+        self, venue: _Venue, *, max_limits: int = MAX_CONSECUTIVE, naive_sleep: bool = False
+    ) -> None:
         self.venue, self.cache = venue, _Cache()
         self.wait = _Wait(self.cache)
         self.progress: list[tuple[float, str]] = []
         self.service = KlineBackfillService(
             fetch_klines=venue,
             cache=self.cache,
-            sleep=self.wait,
+            sleep=self._instant if naive_sleep else self.wait,
             random_fn=random.Random(SEED).random,  # noqa: S311  (seeded jitter)
             on_progress=lambda *, symbol, interval, fraction, status: self.progress.append(
                 (fraction, status)
@@ -237,3 +242,12 @@ async def test_s04_negative_control_the_bounds_helper_rejects_a_naive_retry() ->
         assert_backoff_within_bounds([61.0], [64.0])  # past the 60 s ceiling
     with pytest.raises(AssertionError, match="outside"):
         assert_backoff_within_bounds([1.5], [1.0])  # not the jittered range of the first limit
+
+
+async def test_s04_negative_control_a_zero_delay_sleep_fails_the_bounds_check() -> None:
+    """A service that retries without waiting (naive sleep) is caught by the real run's check."""
+    run = _Run(_Venue(script={n: _limit() for n in (2, 3)}), naive_sleep=True)
+    await run.service.backfill_range(SYM, IV, WINDOW)
+    assert len(run.wait.delays) == 2
+    with pytest.raises(AssertionError, match="outside"):
+        assert_backoff_within_bounds(run.wait.delays, [1.0, 2.0])
