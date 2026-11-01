@@ -3771,19 +3771,20 @@ CREATE INDEX ix_ip_fav ON indicator_presets (owner_user_id) WHERE is_favourite A
 
 One global hotkey layer spanning all views (cross-cutting requirement from digest 23). E10-T05
 (#5211): the profiles `22` `/settings/hotkeys*` persists, migrated by Alembic
-`0059_hotkey_profiles`. A profile belongs to one user and is read and written only by its owner: the
-API answers another user's profile id as an id that does not exist (`404`). A user holds at most 20
-profiles (the API checks it: `409 conflict` / `limit_reached`) and at most one active one
-(`ux_hk_active`): activating a profile deactivates the user's other one in the same transaction.
-`version` starts at 1 and goes up by one on each replace. A replace that carries `If-Match` is one
-statement guarded by the version it names (`UPDATE … WHERE id = :id AND owner_user_id = :owner AND
-version = :expected`), so of two writers holding the same version exactly one wins and the other is
-`412 version_conflict`; one without it is last-write-wins. Activation changes neither `version` nor
-`updated_at`. `ux_hk_name` makes a name unique per user case-insensitively, as `lower()` folds it
-(`409 conflict` / `name_taken`). A delete removes the row: there is no soft delete, and the history
-is the audit trail (`hotkey_profile.created`, `.updated`, `.deleted` and `.activated`,
-`24-internal-schemas.md` §15.5), which records the name, the binding count and the active flag,
-never the bindings. Rows also go with their owner's `users` row (`ON DELETE CASCADE`).
+`0062_hotkey_profiles`, which revises `0061_password_history` (§3.1.1a). A profile belongs to one
+user and is read and written only by its owner: the API answers another user's profile id as an id
+that does not exist (`404`). A user holds at most 20 profiles (the API checks it: `409 conflict` /
+`limit_reached`) and at most one active one (`ux_hk_active`): activating a profile deactivates the
+user's other one in the same transaction. `version` starts at 1 and goes up by one on each replace.
+A replace that carries `If-Match` is one statement guarded by the version it names (`UPDATE … WHERE
+id = :id AND owner_user_id = :owner AND version = :expected`), so of two writers holding the same
+version exactly one wins and the other is `412 version_conflict`; one without it is last-write-wins.
+Activation changes neither `version` nor `updated_at`. `ux_hk_name` makes a name unique per user
+case-insensitively, as `lower()` folds it (`409 conflict` / `name_taken`). A delete removes the row:
+there is no soft delete, and the history is the audit trail (`hotkey_profile.created`, `.updated`,
+`.deleted` and `.activated`, `24-internal-schemas.md` §15.5), which records the name, the binding
+count and the active flag, never the bindings. Rows also go with their owner's `users` row
+(`ON DELETE CASCADE`).
 
 ```sql
 CREATE TABLE hotkey_profiles (
@@ -5380,7 +5381,7 @@ One row per Alembic revision under `services/api/candleviewer/migrations/version
 | `0061_password_history`           | `0060_recording_write_owner_only` | `password_history` (§3.1.1a): the retired Argon2id hashes behind SR-028's reuse rule, 4 kept per user, `ph_pwd_argon` and the `SECRET:` comment of `password_hash` — **#2110 / #2330**; the downgrade refuses while any row exists                                                                                                                                                                                                                                |
 | `0063_rule_version_account_refs`  | `0061_password_history`           | `rule_versions.account_refs`, a nullable `text[]` with no default (§3.4.2): the accounts a version's IR names, written with each version, so the scoped reads of `GET /rules` take the account dimension inside the query; NULL until computed, and no non-Owner read scope admits NULL — **#2291** (SR-051); the downgrade drops the column (derived data)                                                                                                       |
 | `0064_orders_origin`              | `0063_rule_version_account_refs`  | `orders.origin` and `origin_ref`, two nullable `text` columns, and CHECKs `ord_origin` and `ord_origin_ref`, each added `NOT VALID` then validated (§3.3.4): where a rule's order came from, read for a resumed create's rate lane (24 §8.4) — **E35-T11 #5003**; the downgrade drops both                                                                                                                                                                        |
-| `0059_hotkey_profiles`            | `0061_password_history`           | `hotkey_profiles` (§3.8.5): a user's hotkey profiles, `bindings` a jsonb object of command id to binding, `version` the guard of a replace, unique indexes `ux_hk_name` on `(owner_user_id, lower(name))` and `ux_hk_active` on the active one — **E10-T05 #5211**; the downgrade refuses while any profile exists                                                                                                                                                |
+| `0062_hotkey_profiles`            | `0061_password_history`           | `hotkey_profiles` (§3.8.5): a user's hotkey profiles, `bindings` a jsonb object of command id to binding, `version` the guard of a replace, unique indexes `ux_hk_name` on `(owner_user_id, lower(name))` and `ux_hk_active` on the active one — **E10-T05 #5211**; the downgrade refuses while any profile exists                                                                                                                                                |
 
 #### Plan-era names with no revision file
 
@@ -5395,7 +5396,7 @@ The R0–R1 plan keyed these slots by names no file carries. Where a slot landed
 | `0008_rules`        | `rules`, `rule_versions`, `rule_runs`, `rule_events` — landed as `0013_rules` (E35-T02)                                                                                                                                                                                                                                                                         |
 | `0009_alerts`       | `alerts`, `alert_deliveries`, `outbox` — landed as `0014_alerts` (E40-T01)                                                                                                                                                                                                                                                                                      |
 | `0010_journal`      | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                                                                                                                                                 |
-| `0011_workspace`    | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; `indicator_presets` = `0040_indicator_presets`; `hotkey_profiles` = `0059_hotkey_profiles`; rest pending                                            |
+| `0011_workspace`    | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; `indicator_presets` = `0040_indicator_presets`; `hotkey_profiles` = `0062_hotkey_profiles`; rest pending                                            |
 | `0012_governance`   | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flags = `0027_feature_flags`; `backups` = `0028_incidents_backups`; `audit_log` + chain trigger and `audit_checkpoints` landed in `0003_audit_log`, `system_events` in `0008_system_events` |
 | `0013_partitioning` | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                                                                                                                                                   |
 
