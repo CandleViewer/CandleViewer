@@ -163,7 +163,9 @@ export class CandleSeries implements HostedPlugin {
   /**
    * Declares the calling host's part only (a host keeps nothing else): `ctx` is one of `hosts`,
    * so a TRANSFORM frame, which re-collects every host, costs one declaration per host. Any
-   * other context gets every part.
+   * other context gets every part: a host of an earlier mount (a degraded-2d re-init replaces
+   * `hosts`, and BQ-46 keeps the old nodes, hidden, in the graph) or a test calling `collect`
+   * directly. That stays correct, as `SeriesHost.instances` keeps only its own part.
    */
   collect(ctx: HostContext): void {
     const parts = SERIES_PARTS[this.mounted];

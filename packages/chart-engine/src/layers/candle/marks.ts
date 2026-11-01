@@ -123,7 +123,15 @@ export class MarkRing {
       if (!touched) return;
     }
     this.keep(before);
-    this.reserve(before + found);
+    // The list after this sync: the kept entries (outside the range, still in the store) and the
+    // range's. Reserving `before + found` would also count the range's old entries, so a full
+    // buffer re-marking one bar would reallocate for nothing.
+    let kept = 0;
+    for (let j = 0; !all && j < before; j += 1) {
+      const idx = this.prevIndex(j, head, mask);
+      if (idx < n && (idx < from || idx >= to)) kept += 1;
+    }
+    this.reserve(kept + found);
     // Kept entries keep their order (a head move shifts them all alike; an evicted bar's slot now
     // holds a bar of the rescanned range): those below `from`, then the range's, then the rest.
     let e = 0;
