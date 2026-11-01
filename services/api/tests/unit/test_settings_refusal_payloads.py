@@ -16,6 +16,7 @@ from pydantic import SecretStr, ValidationError
 
 from candleviewer import bootstrap_owner, breakglass
 from candleviewer.settings import (
+    UNKNOWN_HOME_REFUSAL,
     Settings,
     SettingsRefusedError,
     load_settings,
@@ -153,6 +154,12 @@ _REFUSALS = [
         id="recorder-wal-dir",
     ),
     pytest.param(
+        {"CV_RECORDER_WAL_DIR": "/srv/outside-the-data-dir"},
+        "recorder_wal_dir",
+        "CV_RECORDER_WAL_DIR must be inside the data dir (the parent of CV_PARQUET_ROOT)",
+        id="recorder-wal-dir-outside",
+    ),
+    pytest.param(
         {"CV_BARS_STATE_ROOT": "relative/bars"},
         "bars_state_root",
         "CV_BARS_STATE_ROOT must be an absolute path",
@@ -263,3 +270,71 @@ def test_cli_settings_refusal_reports_messages_only_and_exits_2(
     assert captured.err.startswith(f"{prog}: invalid settings (ValidationError); nothing ran\n")
     assert "  kek_source: Value error, kek_source_not_permitted" in captured.err
     assert _MARKER not in captured.err + captured.out
+
+
+_NO_USER = "~nosuchuser5303"
+
+
+def test_load_settings_unknown_user_home_is_a_message_only_refusal(
+    monkeypatch: pytest.MonkeyPatch, marked_env: dict[str, str]
+) -> None:
+    _set(monkeypatch, CV_PARQUET_ROOT=f"{_NO_USER}/{_MARKER}/parquet", CV_BACKUP_ROOT=None)
+    with pytest.raises(SettingsRefusedError) as refused:
+        load_settings()
+
+    error = refused.value
+    text = str(error) + repr(error) + repr(error.args)
+    assert str(error) == UNKNOWN_HOME_REFUSAL
+    assert "nosuchuser5303" not in text and _MARKER not in text
+    assert error.__context__ is None and error.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("main", "argv", "prog"),
+    [
+        pytest.param(breakglass.main, ["--owner", "alice"], "break-glass", id="breakglass"),
+        pytest.param(
+            bootstrap_owner.main, ["--owner", "owner@example.test"], "bootstrap-owner", id="owner"
+        ),
+    ],
+)
+def test_cli_unknown_user_home_reports_a_message_only_and_exits_2(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    marked_env: dict[str, str],
+    main: Callable[[Sequence[str] | None], int],
+    argv: list[str],
+    prog: str,
+) -> None:
+    _set(monkeypatch, CV_PARQUET_ROOT=f"{_NO_USER}/{_MARKER}/parquet", CV_BACKUP_ROOT=None)
+    assert main(argv) == breakglass.EXIT_INVALID
+
+    captured = capsys.readouterr()
+    assert captured.err == f"{prog}: {UNKNOWN_HOME_REFUSAL}; nothing ran\n"
+    assert "nosuchuser5303" not in captured.err + captured.out
+
+
+def test_migrate_command_refuses_a_setting_with_messages_only(
+    monkeypatch: pytest.MonkeyPatch, marked_env: dict[str, str]
+) -> None:
+    from candleviewer.storage import migrate
+
+    _set(monkeypatch, CV_ENVIRONMENT="live", CV_KEK_SOURCE="file")
+    with pytest.raises(SettingsRefusedError) as refused:
+        migrate.main([])
+    assert _MARKER not in str(refused.value) + repr(refused.value.args)
+
+
+def test_lane_release_command_refuses_a_setting_with_its_class_only(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    marked_env: dict[str, str],
+) -> None:
+    from candleviewer.admin import lane_release
+
+    _set(monkeypatch, CV_ENVIRONMENT="live", CV_KEK_SOURCE="file")
+    argv = ["--hold", "1:0", "--operator", "o", "--ticket", "t", "--operator-reason", "r"]
+    assert lane_release.main(argv) == lane_release.ReleaseExit.LANE_UNAVAILABLE
+    out = capsys.readouterr()
+    assert "unusable lane (SettingsRefusedError)" in out.out
+    assert _MARKER not in out.out + out.err

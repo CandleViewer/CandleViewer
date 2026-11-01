@@ -41,7 +41,7 @@ import candleviewer
 from candleviewer.migrations.boot import MigrationLockTimeout
 from candleviewer.migrations.dsn import to_asyncpg_dsn
 from candleviewer.observability.logging import configure_logging
-from candleviewer.settings import QUESTDB_PG_DEFAULT_PORT, Settings
+from candleviewer.settings import QUESTDB_PG_DEFAULT_PORT, Settings, load_settings
 from candleviewer.storage.errors import (
     StorageDdlNotFound,
     StorageError,
@@ -287,7 +287,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None, *, steps: Steps | None = None) -> int:
     """`python -m candleviewer.storage.migrate`; returns a `MigrateExit` status."""
     args = _parser().parse_args(argv)
-    settings = Settings()  # a refused setting raises here: exit 1 with its traceback (main.py)
+    settings = load_settings()  # a refusal raises `SettingsRefusedError`: messages only (main.py)
     configure_logging(
         env=settings.environment.value, level=settings.log_level, fmt=settings.log_format
     )

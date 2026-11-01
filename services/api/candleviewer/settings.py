@@ -1077,7 +1077,9 @@ class Settings(BaseSettings):
             raise RecorderWalDirError("CV_RECORDER_WAL_DIR must not be a symlink")
         resolved = raw.resolve()
         if resolved == root or not resolved.is_relative_to(root):
-            raise RecorderWalDirError(f"CV_RECORDER_WAL_DIR must be inside the data dir {root}")
+            raise RecorderWalDirError(
+                "CV_RECORDER_WAL_DIR must be inside the data dir (the parent of CV_PARQUET_ROOT)"
+            )
         return str(resolved)
 
     @model_validator(mode="after")
@@ -1613,6 +1615,10 @@ def refusal_messages(exc: ValidationError) -> list[str]:
     return lines
 
 
+#: #5303: the refusal for a path setting that begins with an unknown `~user`. Message only.
+UNKNOWN_HOME_REFUSAL = "invalid settings: a path setting has a ~ that names no home directory"
+
+
 class SettingsRefusedError(ValueError):
     """#5303: the settings refused to load; it carries the refusal messages only."""
 
@@ -1623,8 +1629,10 @@ def load_settings() -> Settings:
     try:
         return Settings()
     except ValidationError as exc:
-        messages = refusal_messages(exc)
-    raise SettingsRefusedError("invalid settings: " + "; ".join(messages))
+        message = "invalid settings: " + "; ".join(refusal_messages(exc))
+    except RuntimeError:  # an unknown `~user` met by `model_post_init`; its text names the path
+        message = UNKNOWN_HOME_REFUSAL
+    raise SettingsRefusedError(message)
 
 
 def get_settings() -> Settings:

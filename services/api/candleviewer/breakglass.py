@@ -29,7 +29,7 @@ from pydantic import ValidationError
 from candleviewer.admin.breakglass import BreakGlassExit, BreakGlassFlow, RunCancelled, Terminal
 from candleviewer.admin.breakglass_wiring import BreakGlassStores, build_break_glass_ports
 from candleviewer.observability.logging import configure_logging
-from candleviewer.settings import Settings, refusal_messages
+from candleviewer.settings import UNKNOWN_HOME_REFUSAL, Settings, refusal_messages
 from candleviewer.storage.repositories.break_glass_cli_sqlalchemy import (
     SqlAlchemyBootstrapOwnerDatabase,
     SqlAlchemyBreakGlassDatabase,
@@ -64,6 +64,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stderr.write(f"break-glass: invalid settings ({type(exc).__name__}); nothing ran\n")
         if isinstance(exc, ValidationError):  # #5303: the messages only, never an input
             sys.stderr.writelines(f"  {line}\n" for line in refusal_messages(exc))
+        return EXIT_INVALID
+    except RuntimeError:  # an unknown `~user` in a path setting; its text names the path
+        sys.stderr.write(f"break-glass: {UNKNOWN_HOME_REFUSAL}; nothing ran\n")
         return EXIT_INVALID
     key = recovery_code_key(settings)
     if key is None:
