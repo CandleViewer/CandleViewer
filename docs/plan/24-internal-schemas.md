@@ -6775,9 +6775,9 @@ The orchestrator assigned this number on #2701 under its numbering rule (issueco
 - `21-database-schema.md` §3.4.3: the mapping of the IR's trigger types onto `rr_trigger`'s values, the run row's account and snapshot, its close, and a refused fire's row closed `throttled` (BQ-3, BQ-4, BQ-9); no column or constraint changes, and no migration.
 - `20-architecture.md` §12.1: `rule_actions_blocked_total` also counts, once under `scope`, the actions of a scope-skipped evaluation (BQ-5), and `rule_records_shed_total{kind}` (`refused_fire`, `scope_denial`) is planned (BQ-4). No REST operation, WS frame, chart or `machine_hash` change.
 
-### 19.67 2026-10-31 — §8.5, §8.6, §8.13, §15.5, §16.1: the stuck-order detector's contract (E29-T08, #916)
+### 19.68 2026-10-31 — §8.5, §8.6, §8.13, §15.5, §16.1: the stuck-order detector's contract (E29-T08, #916)
 
-This number follows §19.66, the last entry of the base this change stacks on; an entry that lands first takes it, and this one moves to the next free number.
+This number is the orchestrator's assignment of 2026-10-31 23:44Z, and final: numbers are assigned by ruling, unique and increasing, with gaps allowed, and never renumbered at merge.
 
 - The orchestrator's ruling of record on #916 (BQ-1 to BQ-13), contract first (C-6.1), in the first commit of the ticket's first change; the runtime follows in the same change, and the alerting rules, dashboards and runbooks in its second (BQ-13).
 - §8.13 (new): the stuck-order detector: a plain host scan on the order lane every 5 s, jittered, skip-never-queue, with no chart change and no `machine_hash` move (BQ-5); its five kinds, thresholds and severities; an order's age from its latest `order_events.recv_ts`, read over the partial indexes with a limit and the stores' statement cap, and no migration (BQ-3); the naked position read-only and alert-only at `CV_NATIVE_SL_DEADLINE_MS`, once per episode, a live bound recorded-stop row protecting it (BQ-4); `account_stale` over the reconciliation standing with no second tracker (BQ-2); the dedupe and the 300 s cool-down; the frozen `OmsIncident`; and its sinks, the write-ahead `oms.incident` record, the log and the pager, the metrics, one `system_events` row and the bus topic `{env}.oms.incident`, with no WS topic (BQ-6).
