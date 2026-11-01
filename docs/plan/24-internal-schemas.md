@@ -361,14 +361,14 @@ Mapping — `kline.{interval}.{symbol}` and `GET /v5/market/kline`: `start`,`end
 class LiquidationEvent(MarketEvent):
     price: Px
     qty: Qty
-    side: Side                 # CLOSING order side: "sell" ⇒ a LONG was liquidated
+    side: Side                 # CLOSING order side, the opposite of the venue `S`: "sell" ⇒ a LONG was liquidated
     liquidated_side: Literal["long", "short"]   # derived, unambiguous
     notional: Notional
     batch_index: int           # position within the batched push
     ts_estimated: bool         # True when the record had no own timestamp
 ```
 
-Mapping — `allLiquidation.{symbol}` (the legacy singular `liquidation` topic is retired and 404s): `T→ts_event` (ms→µs), `s→symbol`, `S→side`, `v→qty`, `p→price`. `liquidated_side = "long" if side == "sell" else "short"`. Because the field is confusingly named at the exchange, **no code outside the adapter may read `side` on this event** — consumers use `liquidated_side` (lint-enforced).
+Mapping — `allLiquidation.{symbol}` (the legacy singular `liquidation` topic is retired and 404s): `T→ts_event` (ms→µs), `s→symbol`, `S→(side, liquidated_side)`, `v→qty`, `p→price`. `S` is the POSITION side at the venue (Bybit v5: "When you receive a `Buy` update, this means that a long position has been liquidated"; `bybit-exchange/docs@19518b90`, `websocket/public/all-liquidation.mdx`), so `S == "Buy"` ⇒ `liquidated_side = "long"`, `side = "sell"`, and `S == "Sell"` ⇒ `liquidated_side = "short"`, `side = "buy"`: the adapter derives `side`, the closing order's side, as the opposite of `S`, both in one function. Because the field is confusingly named at the exchange, **no code outside the adapter may read `side` on this event** — consumers use `liquidated_side` (lint-enforced).
 
 **Edge case:** the topic batches at most one push per symbol per 500 ms with a `data[]` array — the recorder must store every array element, not assume one record per push (research 08 §9).
 
@@ -6662,3 +6662,10 @@ The orchestrator assigned this number on 2026-10-31 (23:40Z, with #5267's unique
 - The orchestrator's ruling of record on #665 and #667 (BQ-3 to BQ-5, BQ-12), contract first (C-6.1), additive: 22 `getOpenInterestHistory` gains `interval=1s` (the ticker series) beside `5min`…`1d`, and every item an `interval` and a `source` (`ws_ticker` or `rest`) in the new `OpenInterestPoint`, whose `open_interest_value` is `null` on a `rest` point; `meta` becomes `OpenInterestPageMeta`, `PageMeta` plus `coverage` (`from`, `to`, `native_interval`, `source`, `gaps[]`), so a missing span is reported, never filled; and the operation gains `400` (`invalid_time_range` over 400 days or unordered, `validation_failed` for `limit` outside 1–500 or a malformed `symbol`, `invalid_cursor`) and `422` for a well-formed symbol that is not listed, as on `/market/data-coverage`.
 - 22 `getLiquidations` gains the same `400` and `422` answers, `LiquidationsPageMeta` (`coverage`: `first_available_ts`, `covered_from`, `covered_to`, `no_coverage`), the cluster rule and `cluster_window_ms` 0–60000 on REST (WS stays 0–5000, the 23 topic registry); the code is E24-T03's (#667).
 - §2.6 states the series as built (`1s` / `ws_ticker`, `5min`…`1d` / `rest`) beside the sketch, whose `tick` and `rest_history` names are on no wire. `21-database-schema.md` §4.6 and §4.7 note the liquidations dedup key and the two `open_interest` writers. No WS frame, table, column, chart or `machine_hash` change, and no migration.
+
+### 19.72 2026-11-01 — §2.5: `allLiquidation` `S` is the position side, the mapping corrected (E24-T03, #667)
+
+The orchestrator assigned this number on 2026-11-01 (01:06Z); it is never renumbered (#5267's rule).
+
+- The coordinator's ruling: the venue is right and §2.5 was wrong. Bybit v5 (`bybit-exchange/docs@19518b90`, `websocket/public/all-liquidation.mdx`): "`S` - Position side. `Buy`, `Sell`. When you receive a `Buy` update, this means that a long position has been liquidated." §2.5 read `S` as the closing order's side; it now states `S` is the position side and the adapter derives `side` as its opposite: `Buy` ⇒ `liquidated_side = "long"`, `side = "sell"`; `Sell` ⇒ `liquidated_side = "short"`, `side = "buy"`.
+- The field semantics are unchanged: `side` stays the closing order's side and `liquidated_side` the derived one, so 22, 23 §14.9 (`side` is the closing order's side, `sell`: a long was liquidated) and every consumer stand as written; no 22 or 23 text describes the venue's `S`, so neither changes. L6 (§17.4) is unchanged. No wire frame, table, column or `machine_hash` change, and no migration.
