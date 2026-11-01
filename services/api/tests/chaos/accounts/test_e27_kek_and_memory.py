@@ -23,6 +23,7 @@ binary in the PR lane); the generated promtool cases in `infra/prometheus/tests/
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -52,6 +53,13 @@ RULES = Path(__file__).resolve().parents[5] / "infra/prometheus/alerts/system_pa
 API_ROOT = Path(__file__).resolve().parents[3]  # services/api: the probe runs as a module from here
 PROBE = "tests.chaos.accounts._e27_memory_probe"
 PROBE_TIMEOUT_S = 60.0
+#: `-I` (isolated): no user site, no `PYTHON*` variables, no script directory on `sys.path`. The
+#: probe still imports: the venv's editable `.pth` entry puts `services/api` on `sys.path`.
+PROBE_FLAGS = ("-I",)
+#: The whole environment the probe gets (#5325 db-chaos-5): nothing of the lane's, so no coverage,
+#: pytest or CI variable reaches it. `LANG` pins the text encoding `-I` no longer reads from
+#: `PYTHONIOENCODING`.
+PROBE_ENV = {"PATH": os.defpath, "LANG": "C.UTF-8"}
 GAUGE = "cv_kek_degraded_state"
 #: The label the page groups by: M2's exporter adds it to every served series (secrets/metrics.py).
 BY = "env"
@@ -169,11 +177,13 @@ def _tail(out: str | bytes | None) -> str:
 def _probe(mode: str) -> list[str]:
     """The probe's verdict: the type names of objects holding its marker, from a fresh process.
     A child still alive at `PROBE_TIMEOUT_S` fails the test with what it wrote: the threads alive
-    when it returned and, from its `faulthandler` timer, every thread's stack."""
+    when it returned and, from its `faulthandler` timer, every thread's stack. The child starts
+    isolated, with `PROBE_ENV` only and no stdin: it inherits nothing of the lane but the venv."""
     try:
         done = subprocess.run(  # noqa: S603 - this interpreter and constant arguments only
-            [sys.executable, "-m", PROBE, mode],
-            cwd=API_ROOT, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S, check=False,
+            [sys.executable, *PROBE_FLAGS, "-m", PROBE, mode],
+            cwd=API_ROOT, env=PROBE_ENV, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            timeout=PROBE_TIMEOUT_S, check=False,
         )  # fmt: skip
     except subprocess.TimeoutExpired as exc:
         pytest.fail(

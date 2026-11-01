@@ -1,10 +1,11 @@
 """E27-Q03 (#892): the credential-memory walk, run in a fresh interpreter.
 
-`test_e27_kek_and_memory.py` starts this module as `python -m tests.chaos.accounts._e27_memory_probe
-<mode>`. A fresh process holds only what this module imports, so a walk over every object the
-collector tracks is bounded by that, never by what an earlier module of the same lane left alive
-(the db-chaos lane runs all of `tests/integration` first). It prints one JSON line: the type names
-of the live objects holding the marker's text.
+`test_e27_kek_and_memory.py` starts this module isolated, as
+`python -I -m tests.chaos.accounts._e27_memory_probe <mode>`. A fresh process holds only what
+this module imports, so a walk over every object the collector tracks is bounded by that, never by
+what an earlier module of the same lane left alive (the db-chaos lane runs all of
+`tests/integration` first). It prints one JSON line: the type names of the live objects holding
+the marker's text.
 
 Modes: `control`, the positive control (a marker held in a dict the collector does not track must
 be found); `signing`, the criterion (after a signing call returns, no live object holds the
