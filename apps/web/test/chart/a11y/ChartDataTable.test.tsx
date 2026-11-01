@@ -1,7 +1,11 @@
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { ChartDataTable, WINDOW_BUFFER } from "../../../src/chart/a11y/ChartDataTable";
+import {
+  ChartDataTable,
+  WINDOW_BUFFER,
+  defaultClipboard,
+} from "../../../src/chart/a11y/ChartDataTable";
 import type { ChartTableSeries } from "../../../src/chart/a11y/series";
 import { makeSeries } from "./fixture";
 
@@ -326,6 +330,19 @@ describe("keyboard (E11-D04 §17.1)", () => {
     expect(writeClipboard.mock.calls[0]?.[0]).toContain("2026-10-20T13:05:00Z");
     expect(say).toHaveBeenCalledTimes(1);
     expect(say).toHaveBeenCalledWith("Copy failed");
+  });
+});
+
+describe("the default clipboard writer (security look, Low)", () => {
+  it("rejects instead of throwing when the Clipboard API is absent", async () => {
+    const saved = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    try {
+      await expect(defaultClipboard("x")).rejects.toThrow("clipboard unavailable");
+    } finally {
+      if (saved) Object.defineProperty(navigator, "clipboard", saved);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
   });
 });
 

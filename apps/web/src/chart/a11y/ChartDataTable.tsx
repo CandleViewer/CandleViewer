@@ -78,7 +78,13 @@ export interface ChartDataTableProps {
   readonly onExit?: () => void;
 }
 
-const defaultClipboard = (text: string): Promise<void> => navigator.clipboard.writeText(text);
+/** No Clipboard API (a non-secure context, a renderer not yet granted it) rejects, so the user hears "Copy failed". */
+export const defaultClipboard = (text: string): Promise<void> => {
+  const clipboard = (navigator as Partial<Navigator>).clipboard;
+  return clipboard === undefined
+    ? Promise.reject(new Error("clipboard unavailable"))
+    : clipboard.writeText(text);
+};
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);
 /** The time column: `→` here expands, `←` collapses (E11-D04 §17.1). */
 const TIME_COL = 1;
