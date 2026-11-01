@@ -297,6 +297,15 @@ describe("panes and series", () => {
       candles.append(data);
       candles.prependHistory(data);
     }).not.toThrow();
+    // E12-S07: a hollow series is encoded for the bars store (a ragged batch throws there).
+    const hollow = pane.addSeries("hollow", {
+      upColorToken: "u",
+      downColorToken: "d",
+      heikinAshi: true,
+    }) as SeriesInternal<"hollow">;
+    expect(hollow.options.heikinAshi).toBe(true);
+    expect(() => hollow.setData({ ...data, open: new Int32Array(2) })).toThrow();
+    hollow.remove();
     fp.remove();
     expect(pane.seriesCount).toBe(1);
     expect(pane.priceScale.getVisibleRange()).toBeNull();

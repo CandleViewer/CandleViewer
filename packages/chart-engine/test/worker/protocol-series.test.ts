@@ -133,6 +133,11 @@ describe("series commands and the data series id (additive)", () => {
     expect(rejectReason(cmd({ k: "addSeries", series: 0, kind: "candles" }))).toBeNull();
     expect(rejectReason(cmd({ k: "addSeries", series: 3, kind: "bars", pane: 0 }))).toBeNull();
     expect(rejectReason(cmd({ k: "removeSeries", series: 3 }))).toBeNull();
+    // E12-S07 (additive): hollow candles, and the kind switch with Heikin-Ashi on or off.
+    expect(rejectReason(cmd({ k: "addSeries", series: 4, kind: "hollow" }))).toBeNull();
+    expect(rejectReason(cmd({ k: "setSeriesKind", series: 4, kind: "bars" }))).toBeNull();
+    const ha = { k: "setSeriesKind", series: 4, kind: "hollow", heikinAshi: true };
+    expect(rejectReason(cmd(ha))).toBeNull();
     expect(rejectReason(data({ series: 2 }))).toBeNull();
     expect(rejectReason(data({}))).toBeNull();
   });
@@ -144,6 +149,9 @@ describe("series commands and the data series id (additive)", () => {
     { k: "addSeries", series: 1, kind: "candles", pane: -2 },
     { k: "removeSeries" },
     { k: "removeSeries", series: "1" },
+    { k: "setSeriesKind", series: 1, kind: "line" },
+    { k: "setSeriesKind", series: -1, kind: "hollow" },
+    { k: "setSeriesKind", series: 1, kind: "candles", heikinAshi: 1 },
   ])("refuses a malformed series command %#", (c) => {
     expect(rejectReason(cmd(c))).toBe("malformed command");
   });

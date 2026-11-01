@@ -2,6 +2,7 @@
 // stand-in rasterises what the Canvas2D backend paints (the geometry twin's rects, the palette
 // rows as letters) and pins it as text; every real golden case is an `it.todo` that becomes a row
 // on #391 (the G-16 precedent): candles and OHLC × spacings × dark / light × doji / zero-range / gap.
+// E12-S07: hollow candles (the four marks of D06 §4.2) and Heikin-Ashi rows, the same way.
 import { describe, expect, it } from "vitest";
 import { Canvas2DBackend } from "../../src/canvas2d/backend.js";
 import { BarSeries, CandleRing, CandleSeries, PALETTE } from "../../src/layers/index.js";
@@ -22,25 +23,40 @@ const W = 40;
 const H = 22;
 
 /** Up, down, doji, zero-range (a gap before it): 4 bars, 10 CSS px apart, 1 px per tick. */
-function raster(shape: "candles" | "bars"): string[] {
+const MIXED = [
+  [6, 16, 4, 14],
+  [14, 18, 8, 9],
+  [10, 15, 5, 10],
+  [10, 10, 10, 10],
+];
+/** D06 §4.2's four marks: hollow up (the first bar), solid down, hollow down, solid up. */
+const FOUR = [
+  [6, 16, 4, 14],
+  [16, 18, 8, 12],
+  [5, 13, 3, 11],
+  [15, 17, 9, 11],
+];
+
+function raster(shape: "candles" | "bars" | "hollow", rows = MIXED, ha = false): string[] {
   const store = new BarStore({ initialCapacity: 8 });
   const ring = new CandleRing();
-  const c = shape === "bars" ? new BarSeries(ring) : new CandleSeries(ring);
-  const open = Int32Array.of(6, 14, 10, 10);
+  const c = shape === "bars" ? new BarSeries(ring) : new CandleSeries(ring, shape);
+  const col = (k: number): Int32Array => Int32Array.from(rows, (r) => r[k] ?? 0);
   ring.sync(
     store,
     store.append({
-      time: Float64Array.from(open, (_, i) => i * 60e6),
-      open,
-      high: Int32Array.of(16, 18, 15, 10),
-      low: Int32Array.of(4, 8, 5, 10),
-      close: Int32Array.of(14, 9, 10, 10),
+      time: Float64Array.from(rows, (_, i) => i * 60e6),
+      open: col(0),
+      high: col(1),
+      low: col(2),
+      close: col(3),
       volume: new Float32Array(4).fill(1),
-      flags: Uint8Array.of(0, 0, 0, 1),
+      flags: Uint8Array.of(0, 0, 0, rows === MIXED ? 1 : 0),
       priceOrigin: 0,
       tickSize: 1,
     }),
   );
+  if (ha) c.setKind(shape, true, store);
   const vp = new ChartViewport(store);
   vp.setSize(W, H, 1);
   vp.setPanePlot(0, 0, H);
@@ -152,7 +168,24 @@ describe("CPU stand-in raster (BQ-5): what the 2D backend paints, as text", () =
   });
 });
 
+describe("CPU stand-in raster, E12-S07: hollow candles and Heikin-Ashi", () => {
+  it("hollow: the four marks, outline-only hollow bodies, wick weight by colour", () => {
+    expect(raster("hollow", FOUR)).toEqual(HOLLOW);
+  });
+
+  it("Heikin-Ashi candles: the HA bars of the same data", () => {
+    expect(raster("candles", FOUR, true)).toEqual(HA);
+  });
+});
+
 describe("goldens on the SwiftShader harness (E11-T08 #391 rows; BQ-5)", () => {
+  for (const kind of ["hollow candles", "Heikin-Ashi candles", "Heikin-Ashi hollow"]) {
+    for (const spacing of [2, 3, 12, 48]) {
+      for (const theme of ["dark", "light"]) {
+        it.todo(`${kind} at ${spacing} px, ${theme} theme: the four marks (golden, ≤ 0.1 % diff)`);
+      }
+    }
+  }
   for (const shape of ["candles", "OHLC bars"]) {
     for (const spacing of [3, 5, 12, 48]) {
       for (const theme of ["dark", "light"]) {
@@ -163,3 +196,53 @@ describe("goldens on the SwiftShader harness (E11-T08 #391 rows; BQ-5)", () => {
     }
   }
 });
+
+// U / D the up / down colour, t the up tint, | neutral, . unpainted (a hollow body's interior).
+const HOLLOW = [
+  "........................................",
+  "........................................",
+  "........................................",
+  "........................................",
+  "...............||.......................",
+  "...............||..................|....",
+  ".....|......DDDDDDD................|....",
+  ".....|......DDDDDDD.............UUUUUUU.",
+  "..UUUUUUU...DDDDDDD.............UUUUUUU.",
+  "..U..|..U...DDDDDDD......||.....UUUUUUU.",
+  "..U..|..U......||........||.....UUUUUUU.",
+  "..U..|..U......||.....DDDDDDD......|....",
+  "..U..|..U......||.....D..||.D......|....",
+  "..U..|..U......||.....D..||.D...........",
+  "..U..|..U.............D..||.D...........",
+  "..UUUUUUU.............D..||.D...........",
+  ".....|................DDDDDDD...........",
+  ".....|...................||.............",
+  ".........................||.............",
+  "........................................",
+  "........................................",
+  "........................................",
+];
+const HA = [
+  "........................................",
+  "........................................",
+  "........................................",
+  "........................................",
+  "...............|........................",
+  "...............|...................|....",
+  ".....|.........|...................|....",
+  ".....|.........|...................|....",
+  ".....|......UUUUUUU................|....",
+  ".....|......UtttttU......||.....UUUUUUU.",
+  ".....|......UtttttU...DDDDDDD...UtttttU.",
+  "..|||||||...UUUUUUU...DDDDDDD...UUUUUUU.",
+  "..|||||||......|......DDDDDDD......|....",
+  ".....|.........|......DDDDDDD...........",
+  ".....|...................||.............",
+  ".....|...................||.............",
+  ".....|...................||.............",
+  ".....|...................||.............",
+  ".........................||.............",
+  "........................................",
+  "........................................",
+  "........................................",
+];
