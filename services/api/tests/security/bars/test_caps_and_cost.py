@@ -22,6 +22,10 @@ from typing import Final
 import httpx
 import pytest
 
+from candleviewer.api import market, market_bars
+from candleviewer.bars.errors import BarParamOutOfRange
+from candleviewer.bars.models import BarSpec
+from candleviewer.bars.spec import check_param_bounds
 from candleviewer.storage.repositories.rows import TradeTotals
 from tests.contract._market_world import (
     KLINES_NOW_US,
@@ -42,7 +46,10 @@ TIME_DAYS, NON_TIME_DAYS, MAX_BARS, MAX_LIMIT = 400, 31, 250_000, 5_000
 REJECTION_CPU_BUDGET_S: Final = 0.002
 F1: Final = "#452 findings row F1: a pre-epoch `from` is measured from the epoch, not from `from`"
 F3: Final = "#452 findings row F3: no per-user rate limit or single-flight on the REST bar reads"
-F8: Final = "#452 findings row F8: an integer floor of 1 hides volume/delta's 10 x qty_step floor"
+F8: Final = (
+    "#452 findings row F8: the applied floor is 1 for qty_step < 0.1; the documented 10 x qty_step"
+    " floor is unreachable over the integer wire grammar"
+)
 
 
 def bars(bar_type: str, param: str, from_us: int, to_us: int, **extra: object) -> dict[str, object]:
@@ -298,14 +305,36 @@ def test_caps_non_rfc_3339_time_is_served_accepted_f6(
     assert stores.get(op, {**query, field: value}).status_code == 200
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=F8)
-@pytest.mark.parametrize("bar_type", ["volume", "delta"])
-def test_caps_qty_floor_is_ten_qty_steps(stores: Stores, bar_type: str) -> None:
+#: `_LENIENT`'s values as the instant both routes' parsers give them (UTC µs).
+_INSTANTS: Final = {
+    "2023-11-14": 1_699_920_000_000_000, "20231114T220000Z": 1_699_999_200_000_000,
+    "2023-W46-2T22:00:00Z": 1_699_999_200_000_000, "2023-11-15": 1_700_006_400_000_000,
+    "20231115T060000Z": 1_700_028_000_000_000, "2023-W46-3T06:00:00Z": 1_700_028_000_000_000,
+}  # fmt: skip
+
+
+@pytest.mark.parametrize(("field", "value"), _LENIENT)
+def test_caps_non_rfc_3339_time_parses_to_its_instant_accepted_f6(field: str, value: str) -> None:
+    """#452 F6, accepted by the coordinator; X01 note: the accepted forms are not only served but
+    read as the instant they name (a date-only value is its UTC midnight), by the parser each route
+    calls for `from` and `to` alike (`market_bars._ts_us`, `market._parse_time`)."""
+    klines_at = market._parse_time(value, default=None)
+    assert klines_at is not None, field
+    assert market_bars._ts_us(value) == _INSTANTS[value]
+    assert int(klines_at.timestamp() * 1_000_000) == _INSTANTS[value]
+
+
+@pytest.mark.xfail(strict=True, raises=BarParamOutOfRange, reason=F8)
+@pytest.mark.parametrize(
+    ("kind", "field"), [("volume", "volume_threshold"), ("delta", "delta_threshold")]
+)
+def test_caps_qty_floor_is_ten_qty_steps(kind: str, field: str) -> None:
     """X01 §7 SR-E12-03: `volume`/`delta` floor at 10 x the symbol's `qty_step`, for BTCUSDT
-    0.01. `_PARAM_BOUNDS` also floors them at the integer 1 (`int(param)`), so 0.01 is refused 400
-    and the documented floor is never the one applied."""
-    resp = stores.get("getBars", bars(bar_type, "0.01", T0, NOW))
-    assert resp.status_code == 200, resp.text[:300]
+    0.01. The wire grammar takes whole numbers only (no dot), and `check_param_bounds` also floors
+    both kinds at the integer 1, so below a `qty_step` of 0.1 the documented floor is never the one
+    applied: a spec at exactly 10 qty steps is refused."""
+    spec = BarSpec.model_validate({"kind": kind, field: Decimal("0.01")})
+    check_param_bounds(spec, kind, qty_step=Decimal("0.001"))
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=F3)
