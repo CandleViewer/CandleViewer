@@ -1,25 +1,19 @@
 import type { JSX } from "react";
-import { MemoryRouter } from "react-router";
-import { SettingsNav } from "./SettingsNav";
+import { SettingsNavView } from "./SettingsNavView";
 
-// CMP-086 SettingsNav (E47-S08). It lives in apps/web because it is coupled to the router (`Link`,
-// `useLocation`); the story is picked up by the packages/ui Storybook glob. Plain CSF, no storybook types,
-// so apps/web takes no storybook dependency.
-export default { title: "Organisms/SettingsNav", component: SettingsNav };
+// CMP-086 SettingsNav (E47-S08). The router-coupled wrapper (`SettingsNav`) lives in apps/web; these stories render
+// the router-free view with plain anchors, so packages/ui needs no router. Plain CSF, no storybook types.
+export default { title: "Organisms/SettingsNav", component: SettingsNavView };
 
-function At({ entry }: { readonly entry: string }): JSX.Element {
-  return (
-    <MemoryRouter initialEntries={[entry]}>
-      <SettingsNav />
-    </MemoryRouter>
-  );
+function At({ current }: { readonly current: string | null }): JSX.Element {
+  return <SettingsNavView current={current} />;
 }
 
 /** Appearance open: aria-current on its link; sections not built yet disabled with their reason. */
-export const Default = { render: () => <At entry="/settings/appearance" /> };
+export const Default = { render: () => <At current="appearance" /> };
 
-/** Two sections on one route: the hash picks Security. */
-export const SecurityHash = { render: () => <At entry="/settings/profile#security" /> };
+/** Two sections on one route: Security open. */
+export const SecurityOpen = { render: () => <At current="security" /> };
 
 /** A route that is no section (R-205): no item is current. */
-export const NoCurrentSection = { render: () => <At entry="/settings/windows" /> };
+export const NoCurrentSection = { render: () => <At current={null} /> };

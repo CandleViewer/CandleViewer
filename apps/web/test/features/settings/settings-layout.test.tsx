@@ -15,6 +15,7 @@ import {
   resultsSentence,
   searchSettings,
 } from "../../../src/features/settings";
+import { SettingsNavView } from "../../../src/features/settings/SettingsNavView";
 import { SEARCH_SAY_MS } from "../../../src/features/settings/useSettingsSearch";
 
 /** Keys go to the focused element, as the browser does; no user-event dependency. */
@@ -99,6 +100,17 @@ describe("SettingsNav", () => {
     expect(links[links.length - 1]).toHaveFocus();
     user.keyboard("{Home}{ArrowUp}");
     expect(links[0]).toHaveFocus();
+  });
+});
+
+describe("SettingsNavView", () => {
+  it("renders with no router, plain anchors and aria-current", () => {
+    render(<SettingsNavView current="hotkeys" />);
+    expect(screen.getByRole("link", { name: "Hotkeys" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Hotkeys" })).toHaveAttribute(
+      "href",
+      "/settings/hotkeys",
+    );
   });
 });
 

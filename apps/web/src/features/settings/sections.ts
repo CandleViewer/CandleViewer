@@ -192,6 +192,12 @@ export const SETTINGS: readonly SettingEntry[] = [
   },
 ];
 
+/** The section the location is on; a hash section wins over its route's plain section. */
+export function currentSectionId(pathname: string, hash: string): string | null {
+  const here = SECTIONS.filter((s) => s.path === pathname);
+  return (here.find((s) => s.hash === hash) ?? here.find((s) => s.hash === undefined))?.id ?? null;
+}
+
 export interface SearchResult {
   readonly key: string;
   readonly section: SettingsSection;
@@ -224,7 +230,6 @@ export function searchSettings(query: string): readonly SearchResult[] {
   return out;
 }
 
-/** The sentence the announcer says: the count, then up to five section paths. */
 /** The entry for a setting id; a missing id is a programming error. */
 export function settingEntry(id: string): SettingEntry {
   const entry = SETTINGS.find((s) => s.id === id);
@@ -232,6 +237,7 @@ export function settingEntry(id: string): SettingEntry {
   return entry;
 }
 
+/** The sentence the announcer says: the count, then up to five section paths. */
 export function resultsSentence(results: readonly SearchResult[]): string {
   const n = results.length;
   const head = `${n} ${n === 1 ? "result" : "results"}`;
