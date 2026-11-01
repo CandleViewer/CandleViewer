@@ -11,8 +11,11 @@ Sections: A the resolved tokens every binding names (a name that does not resolv
 B the contrast matrix, every pair in dark / light / high-contrast compared unrounded against its
 bar, composited rows (the 0.85 stale dim, `opacity.muted`) by the E22-D03 `over()` method; C the
 E25 number-format sheet (BQ-04), every sample rendered by the formatter; D the greyscale /
-deuteranopia statement; E the board plan (<= 10 boards, light twins <= one third, ids PENDING in
-PR 1); F the spec's own tables and strings (the chip bindings equal their catalogue entries, no
+deuteranopia statement; E the board plan (<= 10 boards, light twins <= one third) in the mode
+§0's heading names: PENDING (every row PENDING, no id, no export committed) or drawn (every row
+its export path and board uuid, the page id, the exports table equal to the committed PNGs -
+their IHDR size and sha256 - with the greyscale / deuteranopia renders of 01-09; uuids only
+inside §0); F the spec's own tables and strings (the chip bindings equal their catalogue entries, no
 dashed line on SCR-055, no trend glyph on SCR-057, the motion pairs, the spoken announcement
 forms, the E25-D02 strings carried verbatim, the hygiene patterns, the rule ids).
 
@@ -22,16 +25,24 @@ Usage: python3 -I docs/design/_tools/e25_d03_panels_hifi_audit.py [--json]
 `--check` exits 1 on a gated FAIL, a lost reproduction, a failed table or string gate, or a number
 the tool prints that the spec's own text does not carry (section G, drift). `--self-test` applies
 MUTATIONS to the spec in memory (the file is never written): each must raise exactly one new FAIL,
-no two the same, and the clean spec must pass before and after. Stdout is UTF-8.
+no two the same, and the clean spec must pass before and after. The boards mutations run on the
+drawn view: the committed state once §0 is drawn, or, while §0 is PENDING, one synthesised in
+memory (made-up ids and PNG headers, never written), so the drawn gate is proven before the draw.
+Stdout is UTF-8.
 """
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import io
 import json
 import math
 import re
+import struct
 import sys
+import zlib
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -41,6 +52,8 @@ TOKENS = ROOT / "packages" / "ui" / "tokens"
 TOOLS = ROOT / "docs" / "design" / "_tools"
 SPEC = ROOT / "docs" / "design" / "E25" / "E25-D03.md"
 CONSTITUTION = ROOT / "CONSTITUTION.md"
+IMG_REL = "docs/design/E25/img"
+IMG = ROOT / IMG_REL
 THEMES = ("dark", "light", "high-contrast")
 BAR: dict[str, float | None] = {"text": 4.5, "non-text": 3.0}
 BAR.update({"decorative": None, "reported": None, "rejected-text": 4.5, "rejected-non-text": 3.0})
@@ -227,13 +240,15 @@ P53|rejected: D05's 2 px warning outline on the chip (the light value)|warn.defa
 
 # Reproductions (to the hundredth; 2.9992 to the ten-thousandth): E25-D05 §12.1, E22-D03 §8.1,
 # E25-D02 §16. A lost reproduction is a FAIL: the sibling specs and this one must print one value.
+# P6, P18, P30 and P51 are re-pinned at the refresh base (ca49e693a): the light tokens moved on
+# main (#5140, #5161, #5232) and the sibling specs keep the earlier light values (D03-C7).
 REPRO: dict[str, tuple[float, float, float]] = {
     "P1": (14.35, 15.62, 16.25),
     "P2": (8.81, 8.98, 14.35),
     "P3": (5.62, 5.92, 11.21),
     "P4": (7.50, 8.26, 12.22),
     "P5": (9.86, 15.62, 11.16),
-    "P6": (7.56, 4.11, 7.56),
+    "P6": (7.56, 4.90, 7.56),
     "P7": (7.98, 2.9992, 7.98),
     "P8": (8.45, 3.22, 8.45),
     "P9": (5.96, 6.36, 11.87),
@@ -244,20 +259,20 @@ REPRO: dict[str, tuple[float, float, float]] = {
     "P15": (7.45, 5.03, 9.96),
     "P16": (4.68, 4.85, 7.60),
     "P17": (10.69, 7.37, 17.42),
-    "P18": (13.36, 3.37, 13.36),
+    "P18": (13.36, 4.02, 13.36),
     "P19": (6.66, 5.86, 17.30),
     "P20": (7.05, 6.30, 18.32),
     "P24": (10.74, 15.44, 12.16),
     "P26": (4.64, 3.44, 4.64),
     "P27": (6.20, 3.48, 6.20),
     "P28": (6.57, 3.74, 6.57),
-    "P30": (12.22, 14.37, 13.83),
+    "P30": (12.22, 12.82, 13.83),
     "P31": (10.17, 12.82, 11.51),
     "P32": (5.18, 4.44, 7.05),
     "P35": (1.41, 1.22, 2.86),
     "P44": (5.69, 3.80, 7.44),
     "P45": (3.66, 3.89, 5.77),
-    "P51": (7.30, 4.34, 7.30),
+    "P51": (7.30, 5.30, 7.30),
 }
 
 
@@ -520,25 +535,123 @@ def section(spec: str, start: str, end: str) -> str:
     return spec[i:j] if i >= 0 and j > i else ""
 
 
-def boards(spec: str, problems: list[str]) -> dict[str, Any]:
+# §0's two modes: PENDING (the text PR and PR 2 before the draw) and drawn (PR 2 after it)
+PENDING_HEAD = "## 0. The boards (Penpot) — PENDING"
+DRAWN_HEAD = "## 0. The boards (Penpot) — drawn"
+UUID_RX = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+PAGE_RX = re.compile(r"page id `([0-9a-f-]{36})`")
+EXPORT_RX = re.compile(r"^\| `(docs/design/E25/img/E25-D03-\d\d-[a-z0-9-]+\.png)` +\|")
+CVD_SUFFIXES = ("-greyscale", "-deuteranopia")
+SWATCH_BOARD = "10"  # the swatch board: no greyscale / deuteranopia render (BQ-13)
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+Files = dict[str, bytes]
+
+
+def read_exports() -> Files:
+    """Every committed E25-D03 PNG, by its repo path."""
+    if not IMG.is_dir():
+        return {}
+    return {f"{IMG_REL}/{f.name}": f.read_bytes() for f in sorted(IMG.glob("E25-D03-*.png"))}
+
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    if data[:8] != PNG_SIG or data[12:16] != b"IHDR":
+        return None
+    w, h = struct.unpack(">II", data[16:24])
+    return int(w), int(h)
+
+
+def s0_of(spec: str) -> str:
+    return section(spec, "\n## 0.", "\n## 1.")
+
+
+def export_base(row: list[str]) -> str:
+    return f"{IMG_REL}/E25-D03-{row[0]}-{row[1].strip('`')}"
+
+
+def expected_exports(rows: list[list[str]]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for r in rows:
+        out[export_base(r) + ".png"] = r[0]
+        if r[0] != SWATCH_BOARD:
+            out.update({export_base(r) + sfx + ".png": r[0] for sfx in CVD_SUFFIXES})
+    return out
+
+
+def drawn_gate(rows: list[list[str]], s0: str, files: Files, problems: list[str]) -> int:
+    expected = expected_exports(rows)
+    ids: list[str] = []
+    for r in rows:
+        main = export_base(r) + ".png"
+        if len(r) < 6 or r[4] != f"`{main}`":
+            problems.append(f"board {r[0]}: the Export cell is not `{main}`")
+        m = re.fullmatch(r"`([0-9a-f-]{36})`", r[5] if len(r) > 5 else "")
+        if not m or not UUID_RX.fullmatch(m.group(1)):
+            problems.append(f"board {r[0]}: the Id cell is not a board uuid")
+        else:
+            ids.append(m.group(1))
+    if len(set(ids)) != len(ids):
+        problems.append("board plan: a board id repeats")
+    page = PAGE_RX.search(s0)
+    if not page or not UUID_RX.fullmatch(page.group(1)) or page.group(1) in ids:
+        problems.append("board plan: §0 does not pin the page id (one uuid, not a board's)")
+    table = {
+        m.group(1): cells(ln) for ln in s0.splitlines() if (m := EXPORT_RX.match(ln)) is not None
+    }
+    lacks = sorted(set(expected) - set(table))
+    extra = sorted(set(table) - set(expected))
+    if lacks or extra:
+        problems.append(f"exports table: lacks {lacks}, extra {extra}")
+    for path, row in table.items():
+        name = path.rsplit("/", 1)[1]
+        data = files.get(path)
+        size = png_size(data) if data is not None else None
+        if data is None:
+            problems.append(f"export {name}: no such file")
+        elif size is None:
+            problems.append(f"export {name}: not a PNG")
+        elif len(row) < 3 or row[1] != f"{size[0]} × {size[1]}":
+            problems.append(f"export {name}: the size cell is not the PNG's {size[0]} × {size[1]}")
+        elif row[2] != f"`{hashlib.sha256(data).hexdigest()}`":
+            problems.append(f"export {name}: the sha256 is not the file's")
+    stray = sorted(set(files) - set(table))
+    if stray:
+        problems.append(f"exports: committed but not in §0's table: {stray}")
+    return len(table)
+
+
+def boards(spec: str, problems: list[str], files: Files) -> dict[str, Any]:
     rows = [cells(ln) for ln in spec.splitlines() if BOARD_RX.match(ln)]
     slugs = [r[1] for r in rows]
     themes = [r[3].lower() for r in rows]
     twins = sum(1 for t in themes if t.startswith("light"))
-    if len(rows) > MAX_BOARDS:
+    s0 = s0_of(spec)
+    mode = "drawn" if s0.startswith("\n" + DRAWN_HEAD) else "pending"
+    out: dict[str, Any] = {"boards": len(rows), "light_twins": twins, "slugs": slugs, "mode": mode}
+    if len(rows) > MAX_BOARDS:  # the plan itself is wrong: the per-row gates would only echo it
         problems.append(f"board plan: {len(rows)} boards, over {MAX_BOARDS}")
+        return out
     if twins > len(rows) // 3:
         problems.append(f"board plan: {twins} light twins of {len(rows)}, over one third")
     if len(set(slugs)) != len(slugs):
         problems.append("board plan: a slug repeats")
-    pending = [r for r in rows if len(r) < 6 or r[5] != "PENDING"]
-    if pending:
-        problems.append("board plan: a board row is not PENDING in PR 1")
-    if len(rows) <= MAX_BOARDS and f"{len(rows)} boards" not in spec:
+    if f"{len(rows)} boards" not in spec:
         problems.append(f"board plan: the spec does not state {len(rows)} boards")
     if twins <= len(rows) // 3 and f"{twins} light twins" not in spec:
         problems.append(f"board plan: the spec does not state {twins} light twins")
-    return {"boards": len(rows), "light_twins": twins, "slugs": slugs}
+    out["exports"] = 0
+    if mode == "drawn":
+        out["exports"] = drawn_gate(rows, s0, files, problems)
+        return out
+    if not s0.startswith("\n" + PENDING_HEAD):
+        problems.append("board plan: §0's heading names neither PENDING nor drawn")
+    if any(len(r) < 6 or r[4] != "—" or r[5] != "PENDING" for r in rows):
+        problems.append("board plan: a board row is not PENDING while §0 is PENDING")
+    if UUID_RX.search(s0):
+        problems.append("board plan: a page id or uuid in a PENDING §0")
+    if files:
+        problems.append(f"board plan: {len(files)} E25-D03 export(s) committed while §0 is PENDING")
+    return out
 
 
 def counts(spec: str, problems: list[str]) -> dict[str, Any]:
@@ -547,7 +660,7 @@ def counts(spec: str, problems: list[str]) -> dict[str, Any]:
         out[k] = sum(1 for ln in spec.splitlines() if rx.match(ln))
         if out[k] != EXPECT_STATES[k]:
             problems.append(f"{k} rows: {out[k]} (E25-D02 carries {EXPECT_STATES[k]})")
-    for k, rx in (
+    for k, pat in (
         ("M", r"^\| M-\d+ "),
         ("A", r"^\| A-\d+ "),
         ("CR", r"^\| CR-\d+ "),
@@ -557,7 +670,7 @@ def counts(spec: str, problems: list[str]) -> dict[str, Any]:
         ("G", r"^\| D03-G\d+ "),
         ("H", r"^\| H-\d+ "),
     ):
-        out[k] = sum(1 for ln in spec.splitlines() if re.match(rx, ln))
+        out[k] = sum(1 for ln in spec.splitlines() if re.match(pat, ln))
     return out
 
 
@@ -679,8 +792,9 @@ def table_gates(spec: str, problems: list[str]) -> dict[str, Any]:
     problems += [f"E25-D02 string missing: {s!r}" for s in missing]
     out["must"] = len(MUST)
     # hygiene and rule ids
+    outside_s0 = spec.replace(s0_of(spec), "")  # §0 alone may pin the page id and board ids
     for name, rx in FORBIDDEN.items():
-        if rx.search(spec):
+        if rx.search(outside_s0 if name == "page id or uuid" else spec):
             problems.append(f"hygiene: {name}")
     constitution = CONSTITUTION.read_text(encoding="utf-8")
     ids = sorted(set(RULE_RX.findall(spec)))
@@ -709,7 +823,7 @@ def drift(
     return [n for n in need if n not in spec]
 
 
-def evaluate(spec: str) -> tuple[list[str], dict[str, Any]]:
+def evaluate(spec: str, files: Files) -> tuple[list[str], dict[str, Any]]:
     problems: list[str] = []
     out: dict[str, Any] = {}
     out["tokens"] = tokens(spec)
@@ -717,7 +831,7 @@ def evaluate(spec: str) -> tuple[list[str], dict[str, Any]]:
     out["matrix"] = matrix(problems)
     out["formats"] = formats(problems)
     out["cvd"] = cvd(problems)
-    out["boards"] = boards(spec, problems)
+    out["boards"] = boards(spec, problems, files)
     out["counts"] = counts(spec, problems)
     out["gates"] = table_gates(spec, problems)
     out["drift"] = drift(spec, out["matrix"], out["formats"], out["boards"], out["cvd"])
@@ -769,15 +883,113 @@ MUTATIONS: tuple[tuple[str, ...], ...] = (  # (name, old, new[, occurrences])
     ("a flash appears", "| 0 flashes (", "| 1 flash ("),
     ("a local path leaks", "## 20. Summary", "## 20. Summary (/ho" + "me/someone/notes)"),
     ("a state row is lost", "| S57-12 |", "| S57-12x |"),
-    (
-        "two more light twins (over one third)",
-        "| dark              | —      | PENDING |",
-        "| light             | —      | PENDING |",
-        "2",
-    ),
     ("a dangling rule cite", "Honesty (C-2.13)", "Honesty (C-9.99)"),
-    ("a board id is not PENDING", "| —      | PENDING |\n| 02  |", "| —      | DRAWN   |\n| 02  |"),
 )
+View = tuple[str, Files]
+Mutation = tuple[str, bool, Callable[[View], View | None]]  # (name, on the drawn view, apply)
+
+
+def literal(old: str, new: str, times: int = 1) -> Callable[[View], View | None]:
+    def apply(view: View) -> View | None:
+        spec, files = view
+        return None if spec.count(old) < times else (spec.replace(old, new, times), files)
+
+    return apply
+
+
+def two_more_twins(view: View) -> View | None:
+    spec, n = re.subn(
+        r"^(\| 0[34] +\|[^|]*\|[^|]*\| )dark( +\|)", r"\1light\2", view[0], flags=re.MULTILINE
+    )
+    return (spec, view[1]) if n == 2 else None
+
+
+def row_pending(view: View) -> View | None:
+    spec, n = re.subn(
+        r"^(\| 02 +\|.*\| )`[0-9a-f-]{36}`( +\|)$", r"\1PENDING\2", view[0], flags=re.MULTILINE
+    )
+    return (spec, view[1]) if n == 1 else None
+
+
+def first_export(spec: str) -> re.Match[str] | None:
+    rx = r"^(\| `[^`]+\.png` +\| )(\d+) × (\d+)( +\| `)([0-9a-f]{64})(` +\|)$"
+    return re.search(rx, spec, flags=re.MULTILINE)
+
+
+def sha_drifts(view: View) -> View | None:
+    m = first_export(view[0])
+    if not m:
+        return None
+    sha = m.group(5)[:-1] + ("0" if m.group(5)[-1] != "0" else "1")
+    return view[0][: m.start(5)] + sha + view[0][m.end(5) :], view[1]
+
+
+def size_drifts(view: View) -> View | None:
+    m = first_export(view[0])
+    if not m:
+        return None
+    return view[0][: m.start(3)] + str(int(m.group(3)) + 1) + view[0][m.end(3) :], view[1]
+
+
+def render_missing(view: View) -> View | None:
+    gone = next((k for k in sorted(view[1]) if k.endswith(CVD_SUFFIXES[1] + ".png")), None)
+    return None if gone is None else (view[0], {k: v for k, v in view[1].items() if k != gone})
+
+
+def uuid_outside(view: View) -> View | None:
+    old = "## 20. Summary"
+    tag = f" (`{synth_uuid(999)}`)"
+    return None if old not in view[0] else (view[0].replace(old, old + tag, 1), view[1])
+
+
+def plan() -> list[Mutation]:
+    lits: list[Mutation] = [
+        (m[0], False, literal(m[1], m[2], int(m[3]) if len(m) > 3 else 1)) for m in MUTATIONS
+    ]
+    return [
+        *lits[:13],
+        ("two more light twins (over one third)", False, two_more_twins),
+        lits[13],
+        ("a drawn board row is left PENDING (the drawn view)", True, row_pending),
+        ("an export's sha256 drifts (the drawn view)", True, sha_drifts),
+        ("an export's size cell drifts (the drawn view)", True, size_drifts),
+        ("a greyscale / deuteranopia render is missing (the drawn view)", True, render_missing),
+        ("a uuid outside §0 (the drawn view)", True, uuid_outside),
+    ]
+
+
+def synth_uuid(i: int) -> str:
+    return f"{i:08x}-0000-4000-8000-{i:012x}"
+
+
+def fake_png(w: int, h: int) -> bytes:
+    ihdr = b"IHDR" + struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    return PNG_SIG + struct.pack(">I", 13) + ihdr + struct.pack(">I", zlib.crc32(ihdr))
+
+
+def drawn_view(spec: str, files: Files) -> tuple[View, bool]:
+    """The drawn state: the committed one, or (§0 PENDING) one synthesised in memory."""
+    s0 = s0_of(spec)
+    if s0.startswith("\n" + DRAWN_HEAD):
+        return (spec, files), False
+    rows = [cells(ln) for ln in s0.splitlines() if BOARD_RX.match(ln)]
+    fake: Files = {}
+    table = ["", "| Export | Size | sha256 |", "| --- | --- | --- |"]
+    for k, path in enumerate(expected_exports(rows)):
+        fake[path] = fake_png(2032, 1000 + k)
+        sha = hashlib.sha256(fake[path]).hexdigest()
+        table.append(f"| `{path}` | 2032 × {1000 + k} | `{sha}` |")
+    lines = s0.split("\n")
+    last = 0
+    for k, ln in enumerate(lines):
+        if BOARD_RX.match(ln):
+            r = cells(ln)
+            lines[k] = f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} | `{export_base(r)}.png` | "
+            lines[k] += f"`{synth_uuid(int(r[0]))}` |"
+            last = k
+    lines[last + 1 : last + 1] = table
+    lines[1] = DRAWN_HEAD + f" (PR 2; page id `{synth_uuid(100)}`)"
+    return (spec.replace(s0, "\n".join(lines), 1), fake), True
 
 
 def read(path: Path) -> str:
@@ -787,20 +999,30 @@ def read(path: Path) -> str:
 def self_test(spec_path: Path) -> int:
     spec = read(spec_path)
     before = spec_path.read_bytes()
-    base, _ = evaluate(spec)
+    files = read_exports()
+    base, _ = evaluate(spec, files)
     ok = not base
     print(f"clean spec: rc {1 if base else 0} ({len(base)} problem(s))")
     for p in base:
         print(f"  {p}")
+    dview, synth = drawn_view(spec, files)
+    dbase, _ = evaluate(*dview)
+    ok = ok and not dbase
+    kind = "synthesised in memory (§0 PENDING)" if synth else "the committed state"
+    print(f"drawn view, {kind}: rc {1 if dbase else 0} ({len(dbase)} problem(s))")
+    for p in dbase:
+        print(f"  {p}")
     seen: dict[str, str] = {}
-    for no, (name, old, new, *rest) in enumerate(MUTATIONS, start=1):
-        times = int(rest[0]) if rest else 1
-        if spec.count(old) < times:
+    muts = plan()
+    for no, (name, on_drawn, apply) in enumerate(muts, start=1):
+        start, ref = (dview, dbase) if on_drawn else ((spec, files), base)
+        view = apply(start)
+        if view is None:
             ok = False
             print(f"mutation {no:02d} {name}: DOES NOT APPLY (the text to mutate is gone)")
             continue
-        got, _ = evaluate(spec.replace(old, new, times))
-        fresh = [p for p in got if p not in base]
+        got, _ = evaluate(*view)
+        fresh = [p for p in got if p not in ref]
         rc = 1 if got else 0
         dup = [p for p in fresh if p in seen]
         caught = rc == 1 and len(fresh) == 1 and not dup
@@ -810,20 +1032,20 @@ def self_test(spec_path: Path) -> int:
         for p in fresh:
             print(f"  {p}")
             seen.setdefault(p, name)
-    restored, _ = evaluate(spec)
+    restored, _ = evaluate(spec, read_exports())
     same = spec_path.read_bytes() == before
     ok = ok and not restored and same
     print(
         f"restore: rc {1 if restored else 0}; spec file byte-identical: {same}; "
-        f"--self-test: {'ok' if ok else 'FAIL'} - {len(MUTATIONS)} mutations in memory, "
+        f"--self-test: {'ok' if ok else 'FAIL'} - {len(muts)} mutations in memory, "
         f"{len(seen)} distinct FAILs"
     )
     return 0 if ok else 1
 
 
 def main(argv: list[str] | None = None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
     argv = sys.argv[1:] if argv is None else argv
     spec_path = SPEC
     for flag in ("--check", "--self-test"):
@@ -834,7 +1056,7 @@ def main(argv: list[str] | None = None) -> int:
     if "--self-test" in argv:
         return self_test(spec_path)
     spec = read(spec_path) if spec_path.exists() else ""
-    problems, out = evaluate(spec)
+    problems, out = evaluate(spec, read_exports())
     if "--json" in argv:
         print(json.dumps(out, ensure_ascii=False, indent=1, default=str))
     else:
@@ -865,7 +1087,11 @@ def main(argv: list[str] | None = None) -> int:
                 f"   {p['pair']}: {d['a']} -> {d['a_grey']} / {d['a_deut']}; {d['b']} -> "
                 f"{d['b_grey']} / {d['b_deut']}; separation {sep[0]:.2f} / {sep[1]:.2f} / {sep[2]:.2f}"
             )
-        print(f"E. boards {out['boards']['boards']}, light twins {out['boards']['light_twins']}")
+        bd = out["boards"]
+        print(
+            f"E. boards {bd['boards']}, light twins {bd['light_twins']}, §0 {bd['mode']}, "
+            f"exports {bd.get('exports', 0)}"
+        )
         print(f"F. counts {out['counts']}; gates {out['gates']}")
         print(f"G. drift {len(out['drift'])}")
         for p in problems:
