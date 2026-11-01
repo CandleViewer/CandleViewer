@@ -6,11 +6,9 @@
  * No React: it returns plain values, so the host decides what to paint.
  */
 import { SYSTEM_CLOCK, type Clock } from "../symbol-search/instrumentIndex";
-import { field, getAnswer } from "./http";
+import { SENDABLE, field, getAnswer } from "./http";
 import type { InstrumentDetail } from "./rules";
 
-/** `22`'s `Symbol`, within the shipped 4-20 rule (`api/instruments.py`): the only thing sent. */
-const SENDABLE = /^[A-Z0-9]{2,16}USDT$/;
 const LADDER_MAX_S = 30;
 /** 503s for this long is "failed". */
 export const LADDER_BUDGET_MS = 60_000;
@@ -20,6 +18,8 @@ export const NOT_LISTED_RETRY_MS = 60_000;
 /** D-12's causes: no answer, 503s for 60 s, or another status. */
 export type DetailFailure =
   | { readonly cause: "network" }
+  /** A 200 whose body is not an `InstrumentDetail` for the symbol asked: read as unreachable, never "answered 200". */
+  | { readonly cause: "malformed" }
   | { readonly cause: "unavailable"; readonly instance: string | null }
   | { readonly cause: "http"; readonly status: number; readonly instance: string | null };
 
@@ -62,7 +62,7 @@ export async function attemptDetail(
   if (answer.ok) {
     return isDetail(answer.body, symbol)
       ? { kind: "ok", detail: answer.body }
-      : { kind: "failed", failure: { cause: "http", status: answer.status, instance: null } };
+      : { kind: "failed", failure: { cause: "malformed" } };
   }
   if (answer.status === 403) return { kind: "forbidden" };
   if (answer.status === 404)

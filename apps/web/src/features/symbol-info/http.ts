@@ -36,7 +36,13 @@ function instanceOf(body: unknown): string | null {
   return typeof sent === "string" && /^urn:cv:req:\S+$/.test(sent) ? sent : null;
 }
 
-/** `null` when no answer came (a network error, the deadline, or an abort). */
+/** `22`'s `Symbol` within the shipped 4-20 rule (`api/instruments.py`): the only symbol text ever sent. */
+export const SENDABLE = /^[A-Z0-9]{2,16}USDT$/;
+
+/**
+ * `null` when no answer came: a network error, an unparseable 200 body, the deadline, or the caller's abort
+ * (the caller tells the abort apart by its own `signal`).
+ */
 export async function getAnswer(
   path: string,
   signal: AbortSignal,

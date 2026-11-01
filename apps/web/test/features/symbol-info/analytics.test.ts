@@ -48,6 +48,7 @@ describe("symbol info analytics", () => {
 
   it("maps failures to the outcome enum without any value", () => {
     expect(outcomeForFailure({ cause: "network" })).toBe("network");
+    expect(outcomeForFailure({ cause: "malformed" })).toBe("network");
     expect(outcomeForFailure({ cause: "unavailable", instance: "urn:cv:req:x" })).toBe(
       "http_503_60s",
     );
