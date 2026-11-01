@@ -52,11 +52,6 @@
   background: var(--color-surface-hover);
 }
 
-/* Light `surface.hover` equals the overlay (E08-D05 §13's CR): a hovered row takes the selected fill, no bar. */
-:root[data-theme="light"] .cv-fuzzylist__row:hover {
-  background: var(--color-surface-selected);
-}
-
 .cv-fuzzylist__row[data-active] {
   border-inline-start-color: var(--color-border-selected);
   background: var(--color-surface-selected);

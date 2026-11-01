@@ -29,7 +29,7 @@ describe("fuzzylist.css contract (CMP-213, E08-D05 §6.1)", () => {
     );
   });
 
-  it("active: the selected fill and a border.thick border.selected bar; hover tints, light's interim fill", () => {
+  it("active: the selected fill and a border.thick border.selected bar; hover tints with the shared hover token", () => {
     const active = find(list.normal, ".cv-fuzzylist__row[data-active]", "background");
     expect(active).toContain("background: var(--color-surface-selected)");
     expect(active).toContain("border-inline-start-color: var(--color-border-selected)");
@@ -39,9 +39,7 @@ describe("fuzzylist.css contract (CMP-213, E08-D05 §6.1)", () => {
     expect(find(list.normal, ".cv-fuzzylist__row:hover", "background")).toContain(
       "var(--color-surface-hover)",
     );
-    expect(
-      find(list.normal, ':root[data-theme="light"] .cv-fuzzylist__row:hover', "background"),
-    ).toContain("var(--color-surface-selected)");
+    expect(list.normal).not.toContain(':root[data-theme="light"] .cv-fuzzylist__row:hover');
   });
 
   it("delisted: struck in the delisted text, the chip's glyph the delisted indicator; skeleton static", () => {

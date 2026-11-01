@@ -95,8 +95,8 @@ export const Delisted: Story = {
 };
 
 /**
- * Hover (CR-ORCH-5028-1): the `color.surface.hover` fill (symbolpicker.css). In light it sits at 1.09:1 on the
- * TopBar's `color.surface.raised`: the pointer is the cue, and E08-D05 §13 asks for a light `surface.hover` value.
+ * Hover (CR-ORCH-5028-1): the `color.surface.hover` fill (symbolpicker.css). In light it sits at 1.22:1 on the
+ * TopBar's `color.surface.raised` (light `surface.hover` is neutral.200, E05-D05 D-02); the pointer is the cue.
  * A scripted pointer sets no `:hover`, so the fill is `symbolpicker-css.test.ts`'s pin; the play pins the state's
  * meaning: the pointer over the trigger opens nothing and changes neither its state nor its description.
  */
