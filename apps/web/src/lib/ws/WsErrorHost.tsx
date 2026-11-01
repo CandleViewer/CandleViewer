@@ -1,6 +1,7 @@
 // E17-T05: renders the 23-ws-protocol.md 10.3 treatments for err frames:
 // fatal -> blocking modal, transient -> staleness badge, client bug / capacity -> toast.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Button, Dialog } from "@candleviewer/ui";
 import { onWsError } from "./errorHandler";
 import type { ErrorTreatment } from "./errorMapping";
 
@@ -22,17 +23,28 @@ export function reduceSurface(s: Surface, code: string, t: ErrorTreatment): Surf
 
 export function WsErrorHost(): JSX.Element | null {
   const [s, setS] = useState<Surface>(EMPTY);
+  const dismiss = useRef<HTMLSpanElement>(null);
   useEffect(() => onWsError((code, t) => setS((prev) => reduceSurface(prev, code, t))), []);
   if (!s.modal && !s.badge && !s.toast) return null;
   return (
     <>
       {s.modal ? (
-        <div role="alertdialog" aria-modal="true" aria-label="Connection error">
-          <p>Session error ({s.modal}). Sign in again or contact an owner.</p>
-          <button type="button" onClick={() => setS((p) => ({ ...p, modal: null }))}>
-            Dismiss
-          </button>
-        </div>
+        <Dialog
+          open
+          role="alertdialog"
+          title="Connection error"
+          description={`Session error (${s.modal}). Live data may have stopped. If it persists, contact an owner.`}
+          initialFocusRef={dismiss}
+          // Esc is deliberately the same as Dismiss: this modal informs and is no control point (C-2.12)
+          onOpenChange={() => setS((p) => ({ ...p, modal: null }))}
+          footer={
+            <span ref={dismiss}>
+              <Button variant="primary" onClick={() => setS((p) => ({ ...p, modal: null }))}>
+                Dismiss
+              </Button>
+            </span>
+          }
+        />
       ) : null}
       {s.badge ? (
         <div role="status" aria-live="polite">
