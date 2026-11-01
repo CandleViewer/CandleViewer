@@ -23,9 +23,10 @@ next:
     and its `SubmitContext` is `protective`, which this code alone sets, so the pipeline passes
     them too; 13. the position against the body, then its size (E29-S03 #978): a flat position or
     a `qty` above its size, then, for a partial close, a size under the instrument's
-    `min_order_qty` or one that would leave a remainder under it (`resolve_close`, from the
-    admitted row and the instrument the runtime reads), is 422 `validation_failed` naming each
-    rule;
+    `min_order_qty` or one that would leave a remainder under it, or under SR-E22-03's
+    `MIN_SIZE_FLOOR` where that is larger until E29-K01 confirms the venue fact (BQ-5)
+    (`resolve_close`, from the admitted row and the instrument the runtime reads), is 422
+    `validation_failed` naming each rule;
 14. the close (`oms.position_writes.close_request`, sized by step 13's size as its `fixed_qty`)
     through the submission pipeline, as a task the runtime tracks, shielded from the client's
     disconnect: its `202` is 22 `OrderAcceptance`
@@ -376,10 +377,13 @@ def make_position_close_router(
     auth: SessionsLike | None = None, replays: IdempotencyCache | None = None,
     limiter: WriteLimiter | None = None, pager: Pager | None = None,
     protective: ProtectiveWrites | None = None,
+    min_size_floor: Callable[[str], Decimal | None] | None = None,
 ) -> APIRouter:  # fmt: skip
     """`closePosition` and `closeAllPositions` (module docstring). `audit` takes `rbac.denied`,
     `records` the refusals; `replays` is the 24 h record of first `2xx` answers; `protective`, the
-    view-as guard's registry, learns that these handlers decide a viewer's close themselves."""
+    view-as guard's registry, learns that these handlers decide a viewer's close themselves;
+    `min_size_floor` is SR-E22-03's `MIN_SIZE_FLOOR` of a symbol, step 13's dust floor until
+    E29-K01 (BQ-5): None, or a symbol it does not list, leaves `min_order_qty` alone."""
     if protective is not None:
         protective.register(_OPERATION)
         protective.register(_ALL_OPERATION)
@@ -541,7 +545,8 @@ def make_position_close_router(
             if errors:
                 raise OrderInvalid(errors[0].message, errors=errors)
             instrument = await oms.positions.instrument(Symbol(row.symbol))
-            size = resolve_close(row, terms, instrument)  # before any exchange call (BQ-2)
+            floor = None if min_size_floor is None else min_size_floor(row.symbol)
+            size = resolve_close(row, terms, instrument, floor=floor)  # no exchange call (BQ-2)
         except OmsError as exc:
             if step == "key":
                 return order_problem(exc)  # 400: no key to bind, unaudited as the body is

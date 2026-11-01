@@ -400,6 +400,8 @@ class World:
     cache: IdempotencyCache = field(default_factory=IdempotencyCache)
     #: The routes' registry, which a test reads its counters off.
     metrics: Metrics = field(default_factory=lambda: Metrics("demo"))
+    #: SR-E22-03's `MIN_SIZE_FLOOR` per symbol, as `create_app` hands it to the close route.
+    floor: Callable[[str], Decimal | None] | None = None
     records: Records = field(init=False)
 
     def __post_init__(self) -> None:
@@ -424,7 +426,7 @@ class World:
         }  # fmt: skip
         source = None if self.principals == "none" else Principals(fail=self.principals == "fail")
         app.include_router(make_position_close_router(
-            source, lambda: runtime, reads, **common
+            source, lambda: runtime, reads, min_size_floor=self.floor, **common
         ))  # fmt: skip
         app.include_router(make_position_reverse_router(
             source, lambda: runtime, reads, oms_enabled=lambda: self.oms_enabled, **common,

@@ -14,8 +14,10 @@ module holds what the pipeline does not:
   `uuid5(key, "open")` (21 Sec.3.3.10).
 * **The close's size** (E29-S03 #978, 22 `closePosition`): `resolve_close` is the route's step 13,
   pure, before any exchange call: a percent of the admitted row's size, or its `qty`, floored to
-  the lot step, the whole size at 100 %; `qty_below_minimum` and `dust_remainder` refuse it. The
-  instrument it reads is `PositionWrites.instrument`'s, the pipeline's own port.
+  the lot step, the whole size at 100 %; `qty_below_minimum` and `dust_remainder` refuse it, the
+  dust floor SR-E22-03's `MIN_SIZE_FLOOR` where that is larger, until E29-K01 confirms the
+  venue's minimum notional for a reduce-only order (BQ-5). The instrument it reads is
+  `PositionWrites.instrument`'s, the pipeline's own port.
 * **A rejected close's re-read** (`refresh`, E29-S03 BQ-7): one read of the account's positions
   on the trading port (its `poll` lane), whose row for the position's key is upserted through
   the position store, which keeps a newer row (21 Sec.3.3.7 "Writes"): the `positions` topic then
@@ -190,16 +192,20 @@ class CloseSize:
         return self.qty != self.requested
 
 
-def resolve_close(row: PositionRow, terms: CloseTerms, instrument: Instrument) -> CloseSize:
-    """22 `closePosition`'s size (E29-S03 BQ-2 to BQ-4), resolved at the route's step 13 before
+def resolve_close(
+    row: PositionRow, terms: CloseTerms, instrument: Instrument, *, floor: Qty | None = None
+) -> CloseSize:
+    """22 `closePosition`'s size (E29-S03 BQ-2 to BQ-5), resolved at the route's step 13 before
     any exchange call, from the admitted row's `size`, never a fresh read or a client's figure:
     `pct` of it or the `qty`, floored to `qty_step` (`InstrumentPolicy.round_qty`, the rule the
     client ports), and the whole size at 100 % or for a `qty` equal to it. A partial close is
     refused, `OrderInvalid` listing each rule it breaks in this order: `dust_remainder`, a
-    remainder above zero but under `min_order_qty`, first, as only the whole close answers it;
-    `qty_below_minimum`, the size under `min_order_qty`, zero included. A close of the whole size
-    is never refused here. The row is open and a `qty` within its size: the route's
-    `position_errors` judged both first."""
+    remainder above zero but under the smallest size that can itself be closed, first, as only
+    the whole close answers it: `min_order_qty`, or `floor` where that is larger (SR-E22-03's
+    `MIN_SIZE_FLOOR`, which holds until E29-K01 confirms the venue's minimum notional for a
+    reduce-only order, BQ-5); `qty_below_minimum`, the size under `min_order_qty`, zero included.
+    A close of the whole size is never refused here. The row is open and a `qty` within its
+    size: the route's `position_errors` judged both first."""
     with localcontext(_EXACT):
         if terms.pct is not None:
             full, requested = terms.pct == _HUNDRED, row.size * terms.pct / _HUNDRED
@@ -213,9 +219,10 @@ def resolve_close(row: PositionRow, terms: CloseTerms, instrument: Instrument) -
         return CloseSize(requested, qty, remaining, full)
     named, minimum = ("pct" if terms.pct is not None else "qty"), instrument.min_order_qty
     errors: list[FieldError] = []
-    if 0 < remaining < minimum:
+    least = minimum if floor is None else max(minimum, floor)
+    if 0 < remaining < least:
         errors.append(FieldError(named, RULE_DUST_REMAINDER, _DUST, symbol=row.symbol,
-                                 limit=minimum, resolved=qty, remaining=remaining))  # fmt: skip
+                                 limit=least, resolved=qty, remaining=remaining))  # fmt: skip
     if qty < minimum:
         errors.append(FieldError(named, RULE_QTY_BELOW_MINIMUM, _BELOW_MINIMUM, symbol=row.symbol,
                                  limit=minimum, resolved=qty))  # fmt: skip
