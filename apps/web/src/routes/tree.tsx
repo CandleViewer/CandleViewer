@@ -25,13 +25,22 @@ import { InviteAcceptScreen } from "../features/invites/InviteAcceptScreen";
 import { AppearanceScreen } from "../features/appearance/AppearanceScreen";
 import { SetupChecklistCard } from "../features/onboarding/SetupChecklistCard";
 import { HotkeyEditor } from "../keymap/HotkeyEditor";
+import { SettingsLayout } from "../features/settings";
 import { AccessibilitySettingsScreen } from "../features/a11y-preferences/AccessibilitySettingsScreen";
 import { SessionsSection } from "../features/session/SessionsSection";
 import { getMeClaims } from "../lib/auth/meCache";
 import { ShellLayout } from "../features/app-shell/ShellLayout";
 import { ScreenRoot } from "../features/app-shell/ScreenRoot";
 
+const SETTINGS_ROUTES = new Set(["R-201", "R-202", "R-203", "R-204", "R-205"]);
+
+/** Every built `/settings/*` screen sits in the SCR-110 layout: nav, search, reset (E47-S08). */
 function elementFor(routeId: string, owner: string | null): RouteObject["element"] {
+  const inner = innerElementFor(routeId, owner);
+  return SETTINGS_ROUTES.has(routeId) ? <SettingsLayout>{inner}</SettingsLayout> : inner;
+}
+
+function innerElementFor(routeId: string, owner: string | null): RouteObject["element"] {
   if (routeId === "R-900") return <ForbiddenState />;
   if (routeId === "R-901") return <NotFoundState />;
   if (routeId === "R-902") return <BackendUnreachable />; // SCR-159 at boot (#306)
