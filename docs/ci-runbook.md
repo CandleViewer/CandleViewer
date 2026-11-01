@@ -56,7 +56,7 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 │                                      beside it the `storybook` job: the Storybook build, play
 │                                      functions and axe per story, the fail-closed fixture and
 │                                      its 10 min budget (CI-A11Y-002..004); and the `vr` job: every
-│                                      story x theme x density against its baseline PNG, 10 shards
+│                                      story x theme x density against its baseline PNG, 14 shards
 │                                      of 6 min each, on pinned fonts (CI-A11Y-006..008)
 ├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
@@ -630,11 +630,15 @@ index alone, removing nothing.
   budget needs sharding (`vitest --shard`), not a higher number.
 - **CI-A11Y-005** (Playwright browser download failed, `tools/ci/playwright_browsers.sh`): the
   chromium download (`playwright install chromium`) failed 5 times, waits 10, 20,
-  40, 60 s, each try bound to 120 s (`PW_INSTALL_TIMEOUT`; 5 tries and the waits stay inside the job's 15 min); the CDN is slow or down, so re-run the
+  40, 60 s, each try bound to 120 s (`PW_INSTALL_TIMEOUT`; with `install-deps`, the kill grace and the waits the worst case is 910 s, which only the job's `timeout-minutes` bounds, failing closed); the CDN is slow or down, so re-run the
   job and never change a budget. Both a11y jobs cache `~/.cache/ms-playwright` under the key
   `pw-browsers-<runner OS>-<Playwright version from the lockfile>`, with no `restore-keys`, so a
   Playwright bump starts a cold cache. The step summary names the key and says hit or miss: both
-  run `install-deps` first, once and bound like a download, and a hit stops there; a miss then runs
+  run `install-deps` first, once and bound like a download (each bound kills the command's whole
+  process group, TERM then KILL 10 s later, `PW_KILL_GRACE`; exit 124; the root `apt-get` dies
+  only if `sudo` relays the TERM and `apt-get` honours it, since the runner user's KILL cannot
+  reach a root process, and the vr font step's lock wait backstops one that outlasts it), and a
+  hit stops there; a miss then runs
   the plain `install chromium` and saves the cache in its own step, so a cold run that later fails
   or runs long still seeds it. The system-deps step is optional on the hosted image (its libraries
   are already installed): when it fails the job logs a `::warning::` with the exit code and the
@@ -660,7 +664,10 @@ index alone, removing nothing.
   time, the job's and the compare step's own. A shard takes every n-th cell (`VR_SHARD=k/n`, n from
   `strategy.job-total`; `packages/ui/vr/matrix.ts`), so the shards cost about the same; a story count
   that has outgrown the budget needs another shard (one more entry in the job's matrix), not a higher
-  number. `workers: "50%"` assumes the 4-vCPU hosted runner of a public repository (2 workers a
+  number: 10 became 14 shards on 2026-11-01 (#5275) after #5146's cells pushed shards 4-8 to
+  361-400 s. Before adding one, read the summary's two numbers: a job time far above the compare
+  step's is setup, not cells (#5275's breach was a 126 s `install-deps` stall and a 69 s font wait,
+  CI-A11Y-005 and CI-A11Y-008). `workers: "50%"` assumes the 4-vCPU hosted runner of a public repository (2 workers a
   shard); a 2-vCPU runner would run 1 worker and miss the budget. The `vr_update` dispatch is
   unsharded and not budget-checked (`timeout-minutes: 40`; its update step took about 30 min in run
   41094472587, so the headroom shrinks as stories are added) and runs the `a11y` and `storybook`
@@ -668,7 +675,16 @@ index alone, removing nothing.
 - **CI-A11Y-008** (the VR fonts are not pinned): the `vr` job's font step could not install
   `fonts-inter` or `fonts-jetbrains-mono` at the versions it pins (noble's release pocket), or
   fontconfig has no `Inter` or `JetBrains Mono` family after the install, so the shard would draw
-  the token families in a substitute and fail every cell. Re-run once if the archive was unreachable;
+  the token families in a substitute and fail every cell. Before each `apt-get` the step waits up to
+  120 s for apt's lists lock, dpkg's locks and the archives lock (`sudo fuser`, a warning names
+  the seconds waited, and another says when `fuser` is missing and the wait is skipped;
+  `DPkg::Lock::Timeout` covers only dpkg's), then tries `update` and `install` three times each,
+  20 s apart, with a warning per failed try; a lock still held after 120 s fails with this code and
+  says so. The step's worst case, 2 × (3 × (120 + 60) + 40) s, is longer than the shard's
+  `timeout-minutes`, which alone bounds it and fails closed. A held lock is usually an `apt-get` an earlier step left: `playwright_browsers.sh` kills
+  its bounded commands as a whole process group (`setsid`) since #5275, because coreutils `timeout`
+  left `install-deps`' root `apt-get` running past the bound (`sudo` ignores a signal from its
+  parent's group). Re-run once if the archive was unreachable;
   if the pinned version is gone from the image's archive, the pin and the baselines move together in
   one PR (`packages/ui/README.md`, Visual regression). The spec's first test checks the same in
   Chromium and names the faces it drew.

@@ -147,8 +147,9 @@ Both will be captured as part of E05-T04's first green CI run and appended here.
   PNGs in `packages/ui/vr/baselines/`, written only by `vr:update` on the CI image through the
   workflow's `vr_update` dispatch.
 - Scale: 726 stories x 3 themes x 2 densities = 4,356 cells at E05-T04, about 12 times this ADR's
-  ~60-story estimate, so the job runs in 10 shards of one browser per two CPUs, each held to the 360 s
-  budget by its last step. A shard takes every 10th cell of the matrix, not a contiguous range, so the
+  ~60-story estimate, so the job runs in 10 shards of one browser per two CPUs (14 since #5275, as the
+  story count grew), each held to the 360 s budget by its last step. A shard takes every n-th cell
+  of the matrix (n the shard count), not a contiguous range, so the
   slow story families spread evenly across the shards.
 - Tolerance as decided (`maxDiffPixelRatio: 0.02`, `animations: 'disabled'`), with pixelmatch's
   `threshold: 0.2` written out, plus an absolute cap, `maxDiffPixels: 25`: Playwright fails a cell past

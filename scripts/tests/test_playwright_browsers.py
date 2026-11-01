@@ -1,15 +1,21 @@
 """Tests for tools/ci/playwright_browsers.sh (CI-A11Y-005) and its use in _job-a11y.yml.
 
-A fake `npx` on PATH, no network. The workflow tests pin that the a11y lane's three jobs (a11y,
+A fake `pnpm` and `sleep` on PATH, no network; the bound is real (`setsid` and a process-group
+kill, #5275) and is driven with a one-second PW_INSTALL_TIMEOUT where a test needs it to fire. The workflow tests pin that the a11y lane's three jobs (a11y,
 storybook, vr) restore the browser cache before the install and key it by the runner OS and the
 lockfile's Playwright version."""
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
+import shutil
+import signal
 import stat
 import subprocess
+import termios
+import time
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +33,13 @@ shift 2
 case "$1" in
   --version) echo "Version ${FAKE_VERSION:-1.64.1}" ;;
   install-deps)
+    if [ -n "${DEPS_STUCK:-}" ]; then
+      # Stands in for `sudo apt-get`: a child that ignores TERM (sudo ignores a signal from its
+      # parent's group; the runner user cannot signal root's apt-get) and outlives its parent.
+      bash -c 'trap "" TERM; while :; do "$REAL_SLEEP" 0.1; done' &
+      echo $! > "$FAKE/deps-child.pid"
+      wait
+    fi
     if [ -n "${DEPS_RC:-}" ]; then
       echo "E: Failed to fetch http://mirror/fonts-freefont-ttf (apt stub)" >&2
       exit "$DEPS_RC"
@@ -34,6 +47,7 @@ case "$1" in
     ;;
   install)
     n=$(cat "$FAKE/runs" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE/runs"
+    [ -z "${INSTALL_STUCK:-}" ] || "$REAL_SLEEP" 60
     [ "$((n + 1))" -gt "${INSTALL_FAILS:-0}" ] || { echo "download of chromium failed" >&2; exit 1; }
     ;;
   *) echo "unexpected playwright call: $*" >&2; exit 99 ;;
@@ -48,18 +62,17 @@ def env(tmp_path: Path) -> dict[str, str]:
     for name, body in {
         "pnpm": FAKE_PNPM,
         "sleep": '#!/bin/bash\necho "$*" >> "$FAKE/sleeps.log"\n',
-        "timeout": (
-            '#!/bin/bash\nwhile [[ "$1" == --* ]]; do echo "$1" >> "$FAKE/timeout-flags.log"; shift; done\n'
-            'echo "$1" >> "$FAKE/timeouts.log"\nshift\nexec "$@"\n'
-        ),
     }.items():
         tool = bindir / name
         tool.write_text(body, encoding="utf-8")
         tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
     state = tmp_path / "state"
     state.mkdir()
+    real_sleep = shutil.which("sleep")
+    assert real_sleep, "the stuck stand-ins need a real sleep"
     return {
         "PATH": f"{bindir}:{os.environ['PATH']}",
+        "REAL_SLEEP": real_sleep,
         "FAKE": str(state),
         "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
         "GITHUB_OUTPUT": str(tmp_path / "output.txt"),
@@ -89,7 +102,9 @@ def _installs(env: dict[str, str]) -> list[str]:
 
 
 def _downloads(env: dict[str, str]) -> list[str]:
-    return [c for c in _installs(env) if not c.startswith("exec playwright install-deps")]
+    return [
+        c for c in _installs(env) if not c.startswith("exec playwright install-deps")
+    ]
 
 
 def _summary(env: dict[str, str]) -> str:
@@ -180,24 +195,28 @@ def test_download_always_fails_ends_with_the_code_naming_the_download(
     assert len(_downloads(env)) == 5
 
 
-def test_each_attempt_is_bounded_and_the_bound_is_a_whole_number(
-    env: dict[str, str],
+@pytest.mark.parametrize(
+    ("var", "value"),
+    [
+        ("PW_INSTALL_TIMEOUT", "soon"),
+        ("PW_INSTALL_TIMEOUT", "0"),
+        ("PW_KILL_GRACE", "soon"),
+    ],
+)
+def test_the_bound_and_its_grace_are_whole_seconds(
+    env: dict[str, str], var: str, value: str
 ) -> None:
-    ok = _run(
-        env, "install", PW_CACHE_KEY=KEY, PW_CACHE_HIT="false", PW_VERSION=VERSION
-    )
-    assert ok.returncode == 0 and (
-        Path(env["FAKE"]) / "timeouts.log"
-    ).read_text().split() == ["120", "120"]
+    # A bound of 0 would fire at once (`read -t 0`), so it is refused like a non-number.
     bad = _run(
         env,
         "install",
         PW_CACHE_KEY=KEY,
         PW_CACHE_HIT="false",
         PW_VERSION=VERSION,
-        PW_INSTALL_TIMEOUT="soon",
+        **{var: value},
     )
-    assert bad.returncode == 1 and "CI-A11Y-005" in bad.stderr
+    assert bad.returncode == 1 and "CI-A11Y-005" in bad.stderr and var in bad.stderr
+    assert _installs(env) == []
 
 
 def test_the_lockfile_binary_is_run_never_fetched_from_a_registry() -> None:
@@ -206,11 +225,191 @@ def test_the_lockfile_binary_is_run_never_fetched_from_a_registry() -> None:
     assert "npx" not in code and "pnpm exec playwright" in code
 
 
-def test_a_stuck_download_is_killed_after_its_bound(env: dict[str, str]) -> None:
-    r = _run(env, "install", PW_CACHE_KEY=KEY, PW_CACHE_HIT="false", PW_VERSION=VERSION)
-    assert r.returncode == 0
-    flags = (Path(env["FAKE"]) / "timeout-flags.log").read_text().split()
-    assert flags == ["--kill-after=10", "--kill-after=10"]
+def _alive(pid: int) -> bool:
+    """A live process, not a zombie waiting for its reaper."""
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        return False
+    return state != "Z"
+
+
+def test_the_bound_kills_the_whole_group_of_a_stuck_install_deps(
+    env: dict[str, str],
+) -> None:
+    # #5275: the orphaned root apt-get. A child that ignores TERM outlives its parent's death; the
+    # bound kills it with the group, so nothing is left holding the apt lists lock.
+    if not shutil.which("setsid"):
+        pytest.fail("setsid (util-linux) runs the bounded commands")
+    started = time.monotonic()
+    r = _run(
+        env,
+        "install",
+        PW_CACHE_KEY=KEY,
+        PW_CACHE_HIT="true",
+        PW_VERSION=VERSION,
+        PW_INSTALL_TIMEOUT="1",
+        PW_KILL_GRACE="1",
+        DEPS_STUCK="1",
+    )
+    assert r.returncode == 0, r.stderr
+    (warn,) = [ln for ln in r.stderr.splitlines() if ln.startswith("::warning::")]
+    assert "install-deps failed (exit 124)" in warn
+    child = int((Path(env["FAKE"]) / "deps-child.pid").read_text())
+    assert not _alive(child), "the stuck install-deps child outlived the bound"
+    # The bound and its grace, not the stand-in's endless loop, decided when the step went on.
+    assert time.monotonic() - started < 20
+    # The retry waits' stand-in `sleep` never shortened the bound's clock.
+    assert not (Path(env["FAKE"]) / "sleeps.log").exists()
+
+
+def test_a_stuck_download_is_killed_after_its_bound_and_retried(
+    env: dict[str, str],
+) -> None:
+    r = _run(
+        env,
+        "install",
+        PW_CACHE_KEY=KEY,
+        PW_CACHE_HIT="false",
+        PW_VERSION=VERSION,
+        PW_INSTALL_TIMEOUT="1",
+        PW_KILL_GRACE="1",
+        INSTALL_STUCK="1",
+    )
+    assert r.returncode == 1 and "CI-A11Y-005" in r.stderr
+    assert len(_downloads(env)) == 5
+    assert "playwright install chromium (attempt 5) failed (exit 124)" in r.stderr
+
+
+def _ctty() -> None:
+    # In the child, before exec: a new session whose controlling terminal is the pty on fd 0, so
+    # `bash -m` gets job control and every background job leads its own process group.
+    os.setsid()
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+
+def _run_as(condition: str, env: dict[str, str], extra: dict[str, str]) -> int:
+    """Runs `install` as a group leader with job control on a pty ("leader"), or as a session
+    leader with no tty at all ("no-tty"); returns its exit status."""
+    full = {**env, **extra}
+    if condition == "no-tty":
+        r = subprocess.run(
+            ["bash", str(SCRIPT), "install"],
+            env=full,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            start_new_session=True,
+            timeout=60,
+            check=False,
+        )
+        return r.returncode
+    master, slave = os.openpty()
+    try:
+        r = subprocess.run(
+            ["bash", "-m", str(SCRIPT), "install"],
+            env=full,
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            preexec_fn=_ctty,
+            timeout=60,
+            check=False,
+        )
+        return r.returncode
+    finally:
+        os.close(slave)
+        os.close(master)
+
+
+def test_job_control_makes_setsid_fork_so_dollar_bang_is_not_the_command(
+    tmp_path: Path,
+) -> None:
+    # The condition the next test reproduces: a background job that leads its own group makes
+    # `setsid` fork, so `$!` is the wrapper and only the command's own `$$` names its group.
+    master, slave = os.openpty()
+    try:
+        probe = (
+            'setsid -w bash -c \'echo "$$" >"$1"\' _ "$F" & echo "$!" >"$F.bang"; wait'
+        )
+        out = tmp_path / "pgid"
+        subprocess.run(
+            ["bash", "-m", "-c", probe],
+            env={**os.environ, "F": str(out)},
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            preexec_fn=_ctty,
+            timeout=20,
+            check=True,
+        )
+        bang = Path(f"{out}.bang").read_text().strip()
+        own = out.read_text().strip()
+    finally:
+        os.close(slave)
+        os.close(master)
+    assert bang != own
+
+
+@pytest.mark.parametrize("condition", ["leader", "no-tty"])
+def test_the_bound_kills_a_stuck_install_deps_as_a_group_leader_or_without_a_tty(
+    env: dict[str, str], condition: str
+) -> None:
+    # #5275: under job control `setsid` forks, and a bound that signalled `-$!` killed only the
+    # wrapper, said 143 and left the stuck child running. As a group leader and with no tty, the
+    # bound kills the command's own group, says 124 and leaves nothing behind.
+    started = time.monotonic()
+    pidfile = Path(env["FAKE"]) / "deps-child.pid"
+    try:
+        rc = _run_as(
+            condition,
+            env,
+            {
+                "PW_CACHE_KEY": KEY,
+                "PW_CACHE_HIT": "true",
+                "PW_VERSION": VERSION,
+                "PW_INSTALL_TIMEOUT": "1",
+                "PW_KILL_GRACE": "1",
+                "DEPS_STUCK": "1",
+            },
+        )
+        assert rc == 0
+        assert "install-deps failed (exit 124" in _summary(env)
+        child = int(pidfile.read_text())
+        assert not _alive(child), "the stuck install-deps child outlived the bound"
+        assert time.monotonic() - started < 20
+    finally:
+        if pidfile.exists() and _alive(int(pidfile.read_text())):
+            os.kill(int(pidfile.read_text()), signal.SIGKILL)
+
+
+def test_a_bounded_command_runs_in_its_own_process_group() -> None:
+    text = SCRIPT.read_text()
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    # The command records its own group id; `-$!` is the wrapper when `setsid` forks (#5275).
+    assert (
+        """setsid -w bash -c 'echo "$$" >"$1"; shift; exec "$@"' _ "$st/pgid" "$@" &"""
+        in code
+    )
+    assert 'kill -TERM -- "-$pgid"' in code and 'kill -KILL -- "-$pgid"' in code
+    # Marker files made once, never a flag rewritten in place (a truncate read empty, #5275), and
+    # "firing" an atomic `mkdir` claim: the parent kills the watchdog only when it won the claim,
+    # so a watchdog that may have sent its TERM always finishes its KILL.
+    assert code.count('mkdir "$st/firing"') == 2 and ': >"$st/fired"' in code
+    assert not re.search(r"echo \w+ >", code)
+    # A parseable clock (Semgrep's bash parser refused `read -t` on a process substitution,
+    # CI-SEC-005) that a PATH `sleep` stand-in cannot shorten.
+    assert "<(" not in code and '/bin/sleep "$attempt_timeout"' in code
+    # coreutils timeout signals only its own group, which sudo ignores (#5275).
+    assert not re.search(r"\btimeout\b", code)
+
+
+def test_the_stderr_file_is_never_removed_by_an_exit_trap() -> None:
+    # #5275 review: the watchdog subshell, killed before it reset the inherited EXIT trap, ran it and
+    # unlinked the install's stderr, so the cause was intermittently "no stderr output".
+    text = SCRIPT.read_text()
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    assert not re.search(r"\btrap\b", code)
+    assert code.count("drop_errf") == 3  # the definition, fail() and the install's end
 
 
 def test_failed_deps_on_a_miss_warns_then_downloads_with_the_cause_in_the_summary(

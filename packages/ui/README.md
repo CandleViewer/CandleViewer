@@ -293,10 +293,10 @@ add its `registry.ts` entry in name order, then run `build:icons` and `test` in 
   installed. No font is fetched over the network: every request outside the local Storybook goes
   to a closed port and fails the cell, naming the URL. Storybook's iframe loads only its own
   Nunito Sans, for its chrome. Baselines come from the CI image only, never from a laptop.
-- CI: the `vr` job of `_job-a11y.yml`, in 10 shards beside `storybook`, fails the required `a11y`
+- CI: the `vr` job of `_job-a11y.yml`, in 14 shards beside `storybook`, fails the required `a11y`
   check (CI-A11Y-006, budget CI-A11Y-007; `docs/ci-runbook.md`). Each shard runs one browser per two
   CPUs (`workers: "50%"`): on a saturated runner a story's commit outruns React's time slice and a
-  play races its page far more often. A shard (`VR_SHARD=k/10`) takes every 10th cell of the matrix
+  play races its page far more often. A shard (`VR_SHARD=k/14`) takes every 14th cell of the matrix
   from its k-th (`shardCells`, `vr/matrix.ts`), so each samples every story family and a story's six
   cells run in six shards; Playwright's own `--shard` cut contiguous ranges, and one held the whole
   skeleton family, whose finite sweep Storybook waits out, over its budget.
