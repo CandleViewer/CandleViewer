@@ -173,10 +173,25 @@ test("inert press of a context-gated command (drawing selected) explains what it
   await signIn(page);
   await page.goto("/terminal/last");
   await expect(page.getByRole("main")).toBeVisible();
-  await page.keyboard.press("Delete");
-  await expect(page.getByRole("region", { name: "Notifications" })).toContainText(
-    "needs drawing selected",
-  );
+  // The window listener mounts after the route paints: press until it hears one (the toast region exists only then).
+  await expect(async () => {
+    await page.keyboard.press("Delete");
+    await expect(page.getByRole("region", { name: "Notifications" })).toContainText(
+      "needs drawing selected",
+      { timeout: 500 },
+    );
+  }).toPass({ timeout: 10_000 });
+});
+
+test("the key field keeps its name, 'Key for <command>', once a value is typed", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/settings/hotkeys");
+  await page.getByRole("textbox", { name: "Key for Price zoom in", exact: true }).fill("J");
+  await expect(
+    page.getByRole("textbox", { name: "Key for Price zoom in", exact: true }),
+  ).toHaveValue("J");
 });
 
 test("a rebind persists across reload", async ({ page }) => {
