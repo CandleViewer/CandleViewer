@@ -111,7 +111,7 @@ class _ActivityBuilder:
         self._next_index = 0
         self._last_seq: int | None = None
         self._gap_pending = False  # #529: in memory only, never snapshotted
-        self._max_ts = self._gap_floor = -(2**63)  # newest print; its value at `mark_gap`
+        self._gap_floor = -(2**63)  # `mark_gap`'s hole lower bound: only later prints take it
         self._built = bars_built_total.labels(symbol=symbol, kind=self._kind)
 
     def _check_symbol(self, t: TradeEvent) -> None:
@@ -126,9 +126,6 @@ class _ActivityBuilder:
         self._last_seq = t.seq
 
     def _draft(self, t: TradeEvent) -> _Draft:
-        ts = t.ts_event
-        if ts > self._max_ts:
-            self._max_ts = ts
         cur = self._cur
         if cur is None:
             cur = self._cur = _Draft(self._next_index, 0, 0, t.price)
@@ -136,13 +133,16 @@ class _ActivityBuilder:
             if cur.partial:
                 bars_partial_series_total.labels(kind=self._kind).inc()
             self._next_index += 1
-        if self._gap_pending and ts > self._gap_floor:  # first post-hole trade, not a straggler
+        if (
+            self._gap_pending and t.ts_event > self._gap_floor
+        ):  # first post-hole trade, not a straggler
             cur.gap_before, self._gap_pending = True, False
         return cur
 
-    def mark_gap(self) -> None:
-        """An unrecovered tape gap precedes the next trade (#529)."""
-        self._gap_floor, self._gap_pending = self._max_ts, True
+    def mark_gap(self, floor_us: int) -> None:
+        """An unrecovered tape gap (#529): the bar taking the first print with `ts_event >
+        floor_us` carries `gap_before`. See `TimeBarBuilder.mark_gap`."""
+        self._gap_floor, self._gap_pending = floor_us, True
 
     def _emit(self, d: _Draft, closed: bool, split: str | None = None) -> ActivityBarUpdate:
         d.open_time, d.close_time = d.first_ts, d.last_ts

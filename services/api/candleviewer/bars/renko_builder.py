@@ -93,7 +93,7 @@ class RenkoBarBuilder:
         self._next = 0
         self._last_seq: int | None = None
         self._gap_pending = False  # #529: in memory only, never snapshotted
-        self._max_ts = self._gap_floor = -(2**63)  # newest print; its value at `mark_gap`
+        self._gap_floor = -(2**63)  # `mark_gap`'s hole lower bound: only later prints take it
         self._built = bars_built_total.labels(symbol=symbol, kind="renko")
         self._multi = bar_renko_multi_brick_total.labels(symbol=symbol)
         self._revs = bar_renko_reversals_total.labels(symbol=symbol)
@@ -110,19 +110,18 @@ class RenkoBarBuilder:
         if d is None:
             d = self._cur = _Draft(self._next, 0, 0, t.price)
             d.partial = self._next == 0
-        ts = t.ts_event
-        if ts > self._max_ts:
-            self._max_ts = ts
-        if self._gap_pending and ts > self._gap_floor:  # the run taking the first post-hole print
+        if (
+            self._gap_pending and t.ts_event > self._gap_floor
+        ):  # the run taking the first post-hole print
             d.gap_before, self._gap_pending = True, False
         d.apply(t)
         out = self._bricks(d, self._anchor, t.price - self._anchor)
         self._lat.observe(time.perf_counter() - t0)
         return out
 
-    def mark_gap(self) -> None:
+    def mark_gap(self, floor_us: int) -> None:
         """An unrecovered tape gap precedes the next trade: its first brick carries `gap_before`."""
-        self._gap_floor, self._gap_pending = self._max_ts, True
+        self._gap_floor, self._gap_pending = floor_us, True
 
     def _bricks(self, d: _Draft, c: Decimal, diff: Decimal) -> Sequence[BarUpdate]:
         w, s = self._w, self._dir

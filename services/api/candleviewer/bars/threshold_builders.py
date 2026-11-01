@@ -137,8 +137,6 @@ class RangeBarBuilder(_ThresholdBuilder):
 
     def on_trade(self, t: TradeEvent) -> Sequence[BarUpdate]:
         self._guard(t)
-        if t.ts_event > self._max_ts:
-            self._max_ts = t.ts_event
         d = self._cur
         if d is None:
             d = self._draft(t)

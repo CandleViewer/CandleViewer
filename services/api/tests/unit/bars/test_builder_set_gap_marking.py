@@ -50,14 +50,14 @@ def _tape() -> list[TradeEvent]:
     ]
 
 
-def _gap(recovered: bool, symbol: str = SYM) -> GapEvent:
+def _gap(recovered: bool, symbol: str = SYM, start_us: int = T0 + 16_000_000) -> GapEvent:
     return GapEvent(
         event_id=EventId(uuid7(T0 // 1000)),
         ts_event=T0 + 20_000_000,
         ts_ingest=T0 + 20_000_000,
         source="live",
         symbol=symbol,
-        start_us=T0 + 16_000_000,
+        start_us=start_us,
         end_us=T0 + 20_000_000,
         recovered=recovered,
         reason="reconnect",
@@ -191,7 +191,8 @@ async def test_a_gap_queued_before_a_trade_flags_that_trade_even_if_the_gap_task
     await settle(bus, s)
     lane = s._lanes[SYM]
     lane.gap_task.cancel()  # type: ignore[union-attr]  # the lane has its gap task
-    await bus.publish(GAP_TOPIC, _gap(False))  # queued; only `_apply`'s drain can consume it
+    # queued; only `_apply`'s drain can consume it
+    await bus.publish(GAP_TOPIC, _gap(False, start_us=tape[0].ts_event))
     await bus.publish(TOPIC, tape[1])
     await settle(bus, s)
     assert [b.gap_before for _, _, b in sink.bars] == [False, True]
@@ -224,7 +225,9 @@ async def test_restart_and_restore_do_not_reflag(tmp_path: Path) -> None:
         await bus2.publish(TOPIC, t)
     await settle(bus2, s2)
     await s2.stop()
-    assert sink2.bars and not any(b.gap_before for _, _, b in sink2.bars)
+    # only the bar that was flagged before the stop (still open, restored with its flag) may be
+    flagged_before = {b.index for _, _, b in sink1.bars if b.gap_before}
+    assert sink2.bars and {b.index for _, _, b in sink2.bars if b.gap_before} <= flagged_before
 
 
 async def test_unsubscribing_a_lane_drops_both_of_its_subscriptions(
@@ -292,7 +295,7 @@ async def test_stop_counts_a_gap_still_queued(tmp_path: Path) -> None:
 
 async def test_a_gap_whose_recovered_is_not_a_bool_is_ignored(tmp_path: Path) -> None:
     class Odd:
-        symbol, recovered = SYM, "no"
+        symbol, recovered, start_us = SYM, "no", 0
 
     n = _count(False)
     s = _make(tmp_path, Bus(), RecordingSink())
@@ -332,8 +335,8 @@ async def test_a_pre_hole_straggler_does_not_take_the_flag_the_post_hole_bar_doe
     await settle(bus, s)
     clock.t = T0 + 61_000_000
     await s.tick()  # bar 0 closed by the clock
-    await bus.publish(GAP_TOPIC, _gap(False))
-    await bus.publish(TOPIC, trade(T0 + 10_000_000, seq=2))  # belongs before the hole: amends bar 0
+    await bus.publish(GAP_TOPIC, _gap(False, start_us=T0 + 40_000_000))
+    await bus.publish(TOPIC, trade(T0 + 10_000_000, seq=2))  # at or before start_us: amends bar 0
     await bus.publish(TOPIC, trade(T0 + 130_000_000, seq=3))  # the first post-hole print: bar 1
     await settle(bus, s)
     flags = [(b.index, k, b.gap_before) for _, k, b in sink.bars]
@@ -343,4 +346,16 @@ async def test_a_pre_hole_straggler_does_not_take_the_flag_the_post_hole_bar_doe
         (0, "close", False),  # the straggler's amendment: unflagged
         (1, "open", True),  # the post-hole bar, flagged once
     ]
+    await s.stop()
+
+
+async def test_a_gap_whose_start_us_is_not_an_int_is_ignored(tmp_path: Path) -> None:
+    class Odd:
+        symbol, recovered, start_us = SYM, False, "soon"
+
+    n = _count(False)
+    s = _make(tmp_path, Bus(), RecordingSink())
+    await s.register(V5, SYM, "a")
+    s._on_gap(s._lanes[SYM], Odd())
+    assert _count(False) == n
     await s.stop()

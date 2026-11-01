@@ -19,20 +19,22 @@ no catalogue lifecycle (B1-B20), so lease state is plain bookkeeping in `leases.
   ingestion before the window's merged prints; `bars` may not import `ingestion`, so the event
   is matched structurally by `TapeGap`). A *recovered* gap needs no flag: its backfill is merged
   in order before any later print, so the tape the builders see is complete. An *unrecovered*
-  gap calls `mark_gap()` on every builder: the bar that takes the next trade carries
-  `gap_before=True` in its open-bar state, so every later emission of it (trade, clock close,
-  snapshot) has the flag and the sink's last write keeps it. A bar already open across the hole
-  is that bar, and so is a clock-closed bar the first post-hole print then amends (time bars);
-  if `tick()` closes the pre-hole bar and no post-hole print falls in it, the next bar is the
-  flagged one. Only the value of the existing field changes. The pending flag is in memory
-  (the flagged open bar's own state is snapshotted), so a restart never re-flags a later bar;
+  gap calls `mark_gap(start_us)` on every builder, `start_us` being the last print published
+  before the hole. Every builder flags the bar taking the first print with `ts_event >
+  start_us`, a test on the print's own time: a pre-hole print still queued behind a backlogged
+  lane, or an out-of-order straggler, never takes it. The flag sits in the open-bar state, so
+  every later emission of that bar (trade, clock close, snapshot) has it and the sink's last
+  write keeps it. A bar already open across the hole is that bar, and so is a clock-closed bar
+  the first post-hole print then amends (time bars); if `tick()` closes the pre-hole bar and no
+  post-hole print falls in it, the next bar is the flagged one. Consumer: the chart's gap
+  marker for `gap_before` (E12-D06 §8.2, the renderer draws a visual gap before a flagged bar,
+  24 §3.2). Only the value of the existing field changes. The pending flag is in memory (the
+  flagged open bar's own state is snapshotted), so a restart never re-flags a later bar;
   replayed trades never carry it. Loss window: a gap drained at `stop()`, or with no post-hole
-  trade before a crash, is not carried across a restart. A print at or before the newest one
-  seen when the gap arrived (an out-of-order straggler) never takes the flag. The gap queue is
-  drained before every trade (the gap was queued first) and at `stop()`, so the order is exact,
-  and `bars_gap_detected_total{reason}` counts each event once. Per trade this adds an
-  empty-queue check and a flag test in the builder: no allocation, and
-  `bar_builder_fanout_latency_seconds` is unaffected.
+  trade before a crash, is not carried across a restart. The gap queue is drained before every
+  trade (the gap was queued first) and at `stop()`, and `bars_gap_detected_total{reason}`
+  counts each event once. Per trade this adds an empty-queue check and a flag test in the
+  builder: no allocation, and `bar_builder_fanout_latency_seconds` is unaffected.
 - **Restart.** A new series loads its blob (`state_store.py`). If the blob is usable it
   restores (keeping the generation the blob recorded), then replays from the tape only the
   trades after the watermark, then goes live. Live trades the watermark covers are skipped once,
@@ -211,7 +213,7 @@ class TapeSource(Protocol):
 class GapAware(Protocol):
     """A builder that can carry an unrecovered tape gap onto its next bar (#529)."""
 
-    def mark_gap(self) -> None: ...
+    def mark_gap(self, floor_us: int) -> None: ...
 
 
 @runtime_checkable
@@ -219,6 +221,7 @@ class TapeGap(Protocol):
     """The part of ingestion's `GapEvent` the bars read (`bars` must not import `ingestion`)."""
 
     symbol: str
+    start_us: int  # the last print published before the hole
     recovered: bool
 
 
@@ -678,13 +681,17 @@ class BarBuilderSet:
     def _on_gap(self, lane: _Lane, gap: object) -> None:
         """Count one gap window; an unrecovered one flags every builder's next bar (no await,
         so it never interleaves with a trade)."""
-        if not isinstance(gap, TapeGap) or not isinstance(gap.recovered, bool):
+        if (
+            not isinstance(gap, TapeGap)
+            or not isinstance(gap.recovered, bool)
+            or not isinstance(gap.start_us, int)
+        ):
             return
         bars_gap_detected_total.labels(reason="recovered" if gap.recovered else "unrecovered").inc()
         if not gap.recovered:
             for e in lane.entries:
                 if isinstance(e.builder, GapAware):
-                    e.builder.mark_gap()
+                    e.builder.mark_gap(gap.start_us)
 
     async def _apply(self, lane: _Lane, t: TradeEvent) -> None:
         gap_sub = lane.gap_sub

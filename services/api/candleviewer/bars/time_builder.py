@@ -242,7 +242,7 @@ class TimeBarBuilder:
         self._watermark = -(2**63)
         self._last_seq: int | None = None
         self._gap_pending = False  # #529: in memory only, never snapshotted
-        self._max_ts = self._gap_floor = -(2**63)  # newest print; its value at `mark_gap`
+        self._gap_floor = -(2**63)  # `mark_gap`'s hole lower bound: only later prints take it
         self._built = bars_built_total.labels(symbol=symbol, kind="time")
         self._amended = bars_amended_total.labels(symbol=symbol)
         self._drop_old = bars_late_trade_dropped_total.labels(symbol=symbol, reason="late_window")
@@ -275,8 +275,6 @@ class TimeBarBuilder:
         self._last_seq = t.seq
         if ts > self._watermark:
             self._watermark = ts
-        if ts > self._max_ts:
-            self._max_ts = ts
         cur = self._cur
         if cur is not None and cur.open_time <= ts < cur.close_time:
             if self._gap_pending and ts > self._gap_floor:
@@ -301,14 +299,15 @@ class TimeBarBuilder:
         out.append(self._emit("open", d, closed=False))
         return out
 
-    def mark_gap(self) -> None:
-        """An unrecovered tape gap: the bar that takes the next trade carries `gap_before` on
-        every later emission (trade, clock close, snapshot). A print at or before the newest one
-        seen now (a straggler from before the hole) never takes it.
+    def mark_gap(self, floor_us: int) -> None:
+        """An unrecovered tape gap (#529): the bar taking the first print with `ts_event >
+        floor_us` (the last print published before the hole, `GapEvent.start_us`) carries
+        `gap_before` on every later emission (trade, clock close, snapshot). The test is on the
+        print's own time, so a queued pre-hole print or an out-of-order straggler never takes it.
 
         The pending flag is not snapshotted: a gap drained at `stop()`, or with no post-hole
-        trade before a crash, is not carried across a restart (#529)."""
-        self._gap_floor, self._gap_pending = self._max_ts, True
+        trade before a crash, is not carried across a restart."""
+        self._gap_floor, self._gap_pending = floor_us, True
 
     def _late(self, t: TradeEvent) -> Sequence[BarUpdate]:
         ts = t.ts_event
