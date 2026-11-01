@@ -61,7 +61,7 @@ Old is a verbatim fragment of the cited line at `95a4f2765` (the tool checks it)
 
 | D       | Set            | Token                                        | Old                            | New                            | Why                                                                                                        |
 | ------- | -------------- | -------------------------------------------- | ------------------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| D03-D1  | primitives     | `palette.blue.200`                           | —                              | `#A8C7FA`                      | the high-contrast link (H-8; F-12)                                                                         |
+| D03-D1  | primitives     | `palette.blue.200`                           | —                              | `#A8C7FA`                      | the high-contrast link (H-8; F-12) and Blue's accent there (BQ-8)                                          |
 | D03-D2  | semantic-hc    | `color.text.link`                            | —                              | `{palette.blue.200}`           | 7:1 in high contrast on every surface (§3.4)                                                               |
 | D03-D3  | semantic-dark  | `color.border.strong`                        | `{palette.neutral.400}`        | `{palette.neutral.600}`        | control boundaries at 3:1 (R-6; F-9); high contrast inherits it, fixing the strong < default order         |
 | D03-D4  | semantic-light | `color.border.strong`                        | `{palette.light.neutral.300}`  | `{palette.light.neutral.500}`  | as D03-D3 in light                                                                                         |
@@ -140,4 +140,5 @@ Frames are named `SCR-116/<state> · <theme>` or `ink/<surface> · <theme or sim
 3. Every pair recomputed per theme; 18<!--=COUNT:exempt.stale--> stale exemptions to remove; H-8, the control borders and the high-contrast border order and DS-CR-1 closed by 18<!--=COUNT:diff--> token values.
 4. The light CVD heatmap ramp runs backwards; the diff reverses it on the same primitives.
 5. Every surface keeps a non-colour channel; greyscale proves no hue pair suffices alone.
-6. SCR-116: closed accent presets measured per theme on a selected row too, the verbatim warning, no T2.
+6. SCR-116: closed accent presets on existing `palette.*` primitives, measured per theme on a selected row too, the verbatim warning, no T2.
+7. Ruled (comment 6552808181): one PR, `Closes #1302`; carried rows reach their owners as comments.

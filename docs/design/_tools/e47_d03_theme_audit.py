@@ -24,8 +24,8 @@ values, the default-deny pins and the mutations).
 2. **Cites.** Every `NN`:line and KEY:line cite resolves to a non-blank line at the base (G-CITE);
    every "verbatim" copy string occurs on its cited line (G-QUOTE); every Old fragment of the
    hand-off's A-rows occurs verbatim on its cited line (G-AROW).
-3. **Gates.** One FAIL line per gate: G-PENDING (the BQ section is marked "defaults built; ruling
-   pending" and names the question list), G-BOARDS (at most ten boards, light twins at most a
+3. **Gates.** One FAIL line per gate: G-PENDING (the BQ section carries the RULED stamp and
+   names the ruling and the question list), G-BOARDS (at most ten boards, light twins at most a
    third, each PENDING or drawn with its committed PNG at the stated size), G-BAR (every measured
    row's verdict names exactly the themes below its bar), G-AAA (the 7:1 stretch rows name the
    themes that meet it), G-CVD (a pair under the JND floor names a non-colour cue; "none needed"
@@ -40,9 +40,9 @@ values, the default-deny pins and the mutations).
    path), G-UNTOUCHED (only this ticket's files, its boards and one `14` pointer line differ from
    the merge base with origin/main), G-BUDGET and G-MUTLIST (the spec's mutation table equals
    this tool's list).
-4. **Pins (G-RULED).** The BQ bullets are pinned verbatim in `e47_d03_ruled_pins.txt`;
-   `--repin-ruled` is the only writer (when the ruling lands, the section flips and is re-pinned)
-   and refuses while a placeholder is unfilled.
+4. **Pins (G-RULED).** Every non-blank line of the BQ section (the ruling quoted verbatim and the
+   BQ bullets) is pinned in `e47_d03_ruled_pins.txt`; `--repin-ruled` is the only writer and
+   refuses while a placeholder is unfilled.
 5. **--list-keys** prints every resolved key per theme (`theme+` with the token diff) with its
    source set: `own` when the theme's last set defines it, else the set it is inherited from.
 6. **--self-test** applies every mutation (M-n) in memory with the values frozen at the filled
@@ -165,8 +165,11 @@ RAMPS: dict[str, tuple[str, ...]] = {
     "cvd.heatmap.ask": tuple(f"color.cvd.heatmap.ask.{i}" for i in range(1, 6)),
 }
 CHANNELS = ("glyph", "sign", "text", "pattern", "position")  # encodings.json's vocabulary
-PENDING_MARK = "defaults built; ruling pending (the BQ comment on #1302)"
+RULED_MARK = "RULED (orchestrator, comment 6552808181, on the BQ list 6552540218)"
+RULING_ID = "6552808181"
 BQ_LIST_ID = "6552540218"
+# The ruling's one cite that opens on a blank base line, quoted verbatim (G-RULED pins it).
+RULED_AS_WRITTEN = "`16`:512–519"
 AGENT_RE = re.compile(r"worker|orchestrator|\bagent\b|anvil|claude|codex|lane\b", re.IGNORECASE)
 OWNER_OK_RE = re.compile(r"\bE\d\d-[A-Z]+\d\d\b|\bowner|\bepic E\d\d")
 URL_RE = re.compile(
@@ -686,12 +689,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-5",
-        "drop the pending mark from the BQ heading",
+        "drop the ruling's comment id from the BQ heading",
         "G-PENDING",
         "spec",
         "",
-        "defaults built; ruling pending",
-        "defaults built",
+        "— RULED (orchestrator, comment 6552808181,",
+        "— RULED (orchestrator,",
     ),
     Mutation(
         "M-6",
@@ -841,6 +844,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         "| light                |\n| Purple",
         "| none                 |\n| Purple",
     ),
+    Mutation(
+        "M-26",
+        "re-word the BQ-8 ruled sentence",
+        "G-RULED",
+        "spec",
+        "## The questions",
+        "Use existing `palette.*` primitives only",
+        "Prefer existing `palette.*` primitives",
+    ),
 )
 
 
@@ -926,6 +938,8 @@ def cite_targets(line: str) -> list[tuple[str, int]]:
 def g_cite(t: Texts) -> list[Finding]:
     out: list[Finding] = []
     for doc, _, line, region in per_line(t):
+        if doc == "spec" and "> The questions" in region:
+            line = line.replace(RULED_AS_WRITTEN, "")
         for rel, n in cite_targets(line):
             if rel.startswith("?"):
                 out.append(("G-CITE", f"unknown cite key {rel[1:]}", doc, region))
@@ -997,15 +1011,13 @@ def g_diff(t: Texts) -> list[Finding]:
 def g_pending(t: Texts) -> list[Finding]:
     heading = next((ln for ln in t.spec.split("\n") if ln.startswith("## The questions")), "")
     body = section_text(t.spec, "## The questions")
-    if PENDING_MARK not in heading or BQ_LIST_ID not in body:
-        return [("G-PENDING", "the BQ section lacks its pending mark or list id", "spec", heading)]
+    if RULED_MARK not in heading or RULING_ID not in body or BQ_LIST_ID not in body:
+        return [("G-PENDING", "the BQ section lacks its RULED stamp or ids", "spec", heading)]
     return []
 
 
 def bq_bullets(spec: str) -> list[str]:
-    return [
-        ln for ln in section_text(spec, "## The questions").split("\n") if ln.startswith("- **BQ-")
-    ]
+    return [ln for ln in section_text(spec, "## The questions").split("\n") if ln.strip()]
 
 
 def read_pins() -> list[str]:
@@ -1478,12 +1490,12 @@ def repin() -> int:
         return 1
     bullets = bq_bullets(t.spec)
     head = (
-        "# E47-D03 pins: the BQ bullets of the spec, verbatim, in order; "
+        "# E47-D03 pins: the BQ section of the spec (ruling and bullets), verbatim, in order; "
         f"{len(bullets)} lines.\n"
         "# Written by `--repin-ruled` only; `--check` reads it (never hand-edit; G-RULED).\n"
     )
     (ROOT / PIN_REL).write_text(head + "\n".join(bullets) + "\n", encoding="utf-8")
-    print(f"pinned {len(bullets)} BQ bullets")
+    print(f"pinned {len(bullets)} BQ section lines")
     return 0
 
 
