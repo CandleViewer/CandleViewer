@@ -50,6 +50,30 @@ export function lastWrittenAt(politeness: Politeness): number {
   return writtenAt[politeness];
 }
 
+/** However often others speak, a line waiting its turn gives way to them for this long in all (9a's cap). */
+export const REGION_TURN_CAP_MS = 15_000;
+
+/**
+ * 9a's turn in the assertive region (E17-D02 §11), for any writer: `speak` runs once the region has been quiet
+ * REGION_BUDGET_MS since its last message, whoever wrote it, so a later writer never cuts it; re-armed by a write
+ * meanwhile, each wait at most the budget and REGION_TURN_CAP_MS in all. Returns the cancel.
+ */
+export function afterAssertiveBudget(speak: () => void): () => void {
+  let id: ReturnType<typeof setTimeout> | undefined;
+  let waited = 0; // counted by the timers, so a wall-clock step cannot stretch the cap
+  const attempt = (armedAt?: number): void => {
+    const last = lastWrittenAt("assertive");
+    if (last === armedAt) return speak(); // nobody spoke during the wait: the budget is spent
+    const since = last + REGION_BUDGET_MS - Date.now();
+    const waitMs = Math.min(since, REGION_BUDGET_MS, REGION_TURN_CAP_MS - waited);
+    if (waitMs <= 0) return speak();
+    waited += waitMs;
+    id = setTimeout(() => attempt(last), waitMs);
+  };
+  attempt();
+  return () => clearTimeout(id);
+}
+
 /** Lets `key` be said again (e.g. row 14 once per entry). */
 export function forget(key: string): void {
   said.delete(key);
