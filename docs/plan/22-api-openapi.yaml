@@ -5277,7 +5277,14 @@ paths:
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "422":
+          description: >
+            A metric code this server does not compute yet is refused with `422
+            validation_failed`: its descriptor is registered (24 §7.2) but its engine is not
+            mounted here. Decided before any store read; mounting an engine is what serves it.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/open-interest:

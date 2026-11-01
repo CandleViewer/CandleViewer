@@ -1313,6 +1313,8 @@ Every order-flow feature named in the planning brief must resolve to at least on
 
 Heatmap-derived descriptors referenced above and specified in §6: `heatmap_cluster_z` = z-score of a heatmap cell's resting size against the visible-window distribution; `distance_to_liquidity_cluster` = ticks to the nearest cell with `heatmap_cluster_z ≥ z`. Both read the `HeatmapColumn` series. `heatmap_cluster_z` is `estimated` whenever any contributing column has `estimated=True`; `distance_to_liquidity_cluster` is `None` then (BQ-9, §2.11), never an estimated number. **Call-once rule:** `distance_to_liquidity_cluster` costs about 1.4 ms per computation, so a consumer reads the tracker's per-sample cache (`LiquidityTracker.distance_to_liquidity_cluster`, or `LiquidityEngine.distance_to_liquidity_cluster(symbol)` at the defaults). It is computed at most once per 100 ms sample and argument set (§2.11), and a rule evaluation never recomputes it per tick.
 
+A `/market/metrics` code whose descriptor is registered here but whose engine is not mounted on this server is refused with `422 validation_failed` (22 `getMetrics`), before any store read; mounting an engine is what serves it. The derivatives engine is mounted by E24-T04 (#723); the Deep-Stats mount (E20-T02, #645) inherits the rule for the codes it adds.
+
 ### 7.3 Evaluation guarantees
 
 - Every metric declares `warmup_bars`; before warmup it returns `None`, and a rule condition referencing a `None` metric evaluates to **false** and records `skipped_reason="warmup"` (never throws, never silently treats `None` as 0).
@@ -6669,3 +6671,10 @@ The orchestrator assigned this number on 2026-11-01 (01:06Z); it is never renumb
 
 - The coordinator's ruling: the venue is right and §2.5 was wrong. Bybit v5 (`bybit-exchange/docs@19518b90`, `websocket/public/all-liquidation.mdx`): "`S` - Position side. `Buy`, `Sell`. When you receive a `Buy` update, this means that a long position has been liquidated." §2.5 read `S` as the closing order's side; it now states `S` is the position side and the adapter derives `side` as its opposite: `Buy` ⇒ `liquidated_side = "long"`, `side = "sell"`; `Sell` ⇒ `liquidated_side = "short"`, `side = "buy"`.
 - The field semantics are unchanged: `side` stays the closing order's side and `liquidated_side` the derived one, so 22, 23 §14.9 (`side` is the closing order's side, `sell`: a long was liquidated) and every consumer stand as written; no 22 or 23 text describes the venue's `S`, so neither changes. L6 (§17.4) is unchanged. No wire frame, table, column or `machine_hash` change, and no migration.
+
+### 19.73 2026-11-01 — §7, 22 `getMetrics`: a registered code with no mounted engine is `422 validation_failed` (E24-T04, #723)
+
+This number follows §19.72; it is never renumbered (#5267's rule).
+
+- The orchestrator's ruling on #723 PR B, contract first (C-6.1), additive and no new error code: 22 `getMetrics` declares a `422` that names `validation_failed` for a metric code this server does not compute yet, decided before any store read, as its sibling operations declare theirs. 24 §7 states the rule the Deep-Stats mount (E20-T02, #645) inherits: a registered descriptor whose engine is not mounted is refused, and mounting an engine is what serves it.
+- The `deriv_engine.compute` span stays a follow-up row citing ADR-0014 §5. No wire frame, table, column or `machine_hash` change, and no migration.

@@ -18709,7 +18709,15 @@ export interface operations {
       };
       400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
-      422: components["responses"]["UnprocessableEntity"];
+      /** @description A metric code this server does not compute yet is refused with `422 validation_failed`: its descriptor is registered (24 §7.2) but its engine is not mounted here. Decided before any store read; mounting an engine is what serves it. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       503: components["responses"]["ServiceUnavailable"];
     };
   };
