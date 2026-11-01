@@ -58,6 +58,12 @@ SIGNAL_QUEUE_BOUND: Final = 256
 #: value at most this many bytes of canonical JSON; a set past either is refused, never an eviction.
 VARIABLES_PER_RULE: Final = 32
 VARIABLE_VALUE_MAX_BYTES: Final = 1024
+#: A `rule.notify` outbox row still unclaimed this long after it was written is dead-lettered, and
+#: kept (21 §3.10.4; E35-T13, BQ-8 of #5005): PROPOSED, interim, pending the owner's ratification
+#: (#2701). No consumer claims the topic until E40, and the table keeps no retention, so each
+#: write dead-letters at most `RULE_NOTIFY_SWEEP_LIMIT` of the topic's expired rows.
+RULE_NOTIFY_TTL_S: Final = 86_400.0
+RULE_NOTIFY_SWEEP_LIMIT: Final = 100
 
 
 def above_default(limits: RuleLimits) -> dict[str, int]:
@@ -93,6 +99,8 @@ __all__ = [
     "LIMIT_DEFAULTS",
     "ORDER_BUDGET_CAPS",
     "ORDER_BUDGET_DEFAULTS",
+    "RULE_NOTIFY_SWEEP_LIMIT",
+    "RULE_NOTIFY_TTL_S",
     "SCOPE_DENIALS_BEFORE_DISARM",
     "SIGNAL_MAX_DEPTH_CAP",
     "SIGNAL_MAX_DEPTH_DEFAULT",

@@ -517,3 +517,51 @@ async def test_the_breaker_alert_writes_one_system_event_and_pages() -> None:
         ("rules", "circuit_breaker", "critical", ids | {"moved": "false"}),
     ]
     assert len({r.message for r in events.rows}) == 1  # one fixed text
+
+
+class _Writer:
+    """`SqlAlchemyRuleNotifyOutbox.enqueue` in memory: each call, and how many rows it reports
+    dead-lettered."""
+
+    def __init__(self, dead: int) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.dead = dead
+
+    async def enqueue(self, dedup_key: str, payload: Any) -> int:
+        self.calls.append((dedup_key, dict(payload)))
+        return self.dead
+
+
+async def test_the_notification_adapter_writes_one_keyed_row_and_counts_the_dead_lettered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """24 §11.5, 21 §3.10.4 (E35-T13, BQ-8): one `rule.notify` row per action, keyed by its fire
+    key; the rows the write dead-lettered (unclaimed past the TTL, PROPOSED) are one log line with
+    their count, never a payload. The topic, the TTL and the sweep's bound come from `rules`."""
+    from candleviewer.rules.executor.control import RULE_NOTIFY_TOPIC, NotifyRow
+    from candleviewer.rules.limits import RULE_NOTIFY_SWEEP_LIMIT, RULE_NOTIFY_TTL_S
+    from candleviewer.storage.repositories.relational_sqlalchemy import (
+        SqlAlchemyRelationalRepository,
+    )
+
+    assert (RULE_NOTIFY_TOPIC, RULE_NOTIFY_TTL_S, RULE_NOTIFY_SWEEP_LIMIT) == (
+        "rule.notify", 86_400.0, 100,
+    )  # fmt: skip
+    row = NotifyRow(dedupe_key="k" * 64, payload={"rule_id": RULE, "text": "planted-text"})
+    for dead, lines in ((0, []), (3, [3])):
+        writer = _Writer(dead)
+        with capture_logs() as logs:
+            await rules_oms_wiring.RuleNotifyOutbox(writer).enqueue(row)
+        assert writer.calls == [("k" * 64, {"rule_id": RULE, "text": "planted-text"})]
+        swept = [e for e in logs if e["event"] == "rules.notify_rows_dead_lettered"]
+        assert [e["count"] for e in swept] == lines and "planted-text" not in str(logs)
+    built: list[dict[str, Any]] = []
+
+    def build_writer(relational: Any, **kw: Any) -> _Writer:
+        built.append(kw)
+        return _Writer(0)
+
+    monkeypatch.setattr(rules_oms_wiring, "SqlAlchemyRuleNotifyOutbox", build_writer)
+    relational = SqlAlchemyRelationalRepository("postgresql://u@localhost/x", "rule_notify")
+    rules_oms_wiring.rule_notification_handler(relational)
+    assert built == [{"topic": "rule.notify", "ttl_s": 86_400.0, "limit": 100}]

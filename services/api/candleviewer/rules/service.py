@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Final
@@ -23,10 +23,16 @@ from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.rules.evaluator import Evaluator, SnapshotBuilder
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.executor.budget import CircuitBreaker, OrderBudget
+from candleviewer.rules.executor.control import JournalTagHandler, RuleControlHandler
 from candleviewer.rules.executor.dispatch import AuditDispatch, Fire, FireDispatch, JobKind
 from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
 from candleviewer.rules.executor.gates import Gates, Halts
-from candleviewer.rules.executor.handlers import HANDLERS, BoundHandler, bind_handlers
+from candleviewer.rules.executor.handlers import (
+    HANDLERS,
+    BoundHandler,
+    HandlerTableError,
+    bind_handlers,
+)
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.metrics import RereadFailure as RereadFailure
 from candleviewer.rules.executor.ports import (
@@ -66,6 +72,11 @@ from candleviewer.rules.vocabulary import MetricRegistry, default_registry
 #: (`rule_dispatch_reread_failed_total{reason}`): `timeout`, no answer within it (or the store's
 #: own `TimeoutError`), or `store_error`, the read raised anything else.
 REREAD_TIMEOUT_S: Final = 2.0
+#: The types whose handlers the engine binds itself as the evaluator starts (24 §11.5; E35-T13):
+#: the composition root binds every other type through `bind(handlers=...)`, never one of these.
+OWN_TYPES: Final = frozenset(
+    {"emit_signal", "set_variable", "pause_rule", "enable_rule", "log_journal_tag"}
+)
 
 
 def _log() -> Any:
@@ -144,6 +155,8 @@ class RulesService:
         self._signal_depth = SIGNAL_MAX_DEPTH_DEFAULT
         self._signals: SignalBus | None = None
         self._variables = VariableStore(clock)
+        #: E35-T13 (BQ-2 of #5005): the handlers the composition root binds, by type.
+        self._handlers: dict[str, BoundHandler] = {}
         self._dispatch: FireDispatch | None = None  # the fire queue, while the evaluator runs
         self._audits: AuditDispatch | None = None  # the record-only jobs' queue, beside it
 
@@ -164,6 +177,7 @@ class RulesService:
         stop_check: StopCheck | None = None,
         budget: OrderBudget | None = None,
         signal_max_depth: int | None = None,
+        handlers: Mapping[str, BoundHandler] | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
         Each option is set only when given, so a later call (E35-S05's simulation sink, the
@@ -181,7 +195,9 @@ class RulesService:
         `notional` the day's allowance rebuild (E35-T11's) and `stop_check` check 8's comparison
         (E35-T12's), each refusing while unbound; `budget` the SR-104 order budget of check 7;
         `signal_max_depth` the signal chain's depth limit (E35-T13), held to its hard cap by the
-        composition root."""
+        composition root; `handlers` the handlers of the types that reach past the engine, each
+        checked here against its type's capability (`HandlerTableError`), never one of the
+        engine's own (`OWN_TYPES`), and each call adding to an earlier one's (BQ-2 of #5005)."""
         if action_sink is not None:
             self._action_sink = action_sink
         if simulation_sink is not None:
@@ -204,6 +220,11 @@ class RulesService:
             self._budget = budget
         if signal_max_depth is not None:
             self._signal_depth = signal_max_depth
+        if handlers is not None:
+            if own := sorted(OWN_TYPES & set(handlers)):
+                raise HandlerTableError(f"the engine binds {own} itself")
+            bind_handlers(HANDLERS, handlers)  # refused at the composition root, before start
+            self._handlers |= handlers
         if store is not None:
             self._store = store
         if audit is not None:
@@ -459,7 +480,8 @@ class RulesService:
                 self._halts, move=manager.trip_breaker, drop=self._drop, alerts=self._alerts,
                 metrics=self._metrics, clock=self._clock,
             ),
-            on_scope=self._scope_outcome, handlers=bind_handlers(HANDLERS, self._own(signals)),
+            on_scope=self._scope_outcome,
+            handlers=bind_handlers(HANDLERS, self._handlers | self._own(signals, manager)),
         )  # fmt: skip
         dispatch = self._dispatch = FireDispatch(self._refused, executor.execute)
         audits = self._audits = AuditDispatch(self._shed, executor.execute)
@@ -552,12 +574,16 @@ class RulesService:
         )  # fmt: skip
         self.runner.start()
 
-    def _own(self, signals: SignalBus) -> dict[str, BoundHandler]:
+    def _own(self, signals: SignalBus, manager: RulesManager) -> dict[str, BoundHandler]:
         """The handlers of the engine's own capabilities, bound as the evaluator starts (24
-        §11.5; E35-T13): `emit_signal` over the signal bus, `set_variable` over the store."""
+        §11.5; E35-T13): `emit_signal` over the signal bus, `set_variable` over the store, the two
+        rule-control actions over the manager's system path, and `log_journal_tag`."""
         return {
             "emit_signal": EmitSignalHandler(signals),
             "set_variable": SetVariableHandler(self._variables),
+            "pause_rule": RuleControlHandler("pause_rule", manager),
+            "enable_rule": RuleControlHandler("enable_rule", manager),
+            "log_journal_tag": JournalTagHandler(),
         }
 
     def submit_tick(self, trigger_type: str, symbol: str | None = None) -> bool:

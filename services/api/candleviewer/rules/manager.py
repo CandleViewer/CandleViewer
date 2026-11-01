@@ -26,6 +26,7 @@ from candleviewer.observability import spawn
 from candleviewer.rules.arming import ArmingFacts, check_arming
 from candleviewer.rules.compiler.common import ConditionNodeBoundError, check_bounds
 from candleviewer.rules.evaluator.engine import EvaluationResult
+from candleviewer.rules.executor.control import ControlRequest, ControlSkip
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.ir.accounts import (
     collect_account_ids,
@@ -65,6 +66,16 @@ STOP_TIMEOUT_S: Final = 2.0
 KillScope = Literal["global"] | frozenset[UUID]
 #: Why a rule left `armed` through this module, as the service's `rule_stopped` hook hears it.
 StopReason = Literal["kill_switch", "scope_denied"]
+#: A rule-control action's one B9 move (24 §11.5; RE-E7, E35-T13): its event, the B9 states that
+#: take it, the mode it moves the target to, and its record. `enable_rule` reaches `draft` alone,
+#: toward `simulate`, so no rule is ever moved to `armed` by another.
+_CONTROL_MOVES: Final[Mapping[str, tuple[str, frozenset[str], str, str]]] = {
+    "pause_rule": (
+        "DISARM", frozenset({"armed", "cooling_down", "paused_degraded"}), "disabled",
+        "rule.disarmed",
+    ),
+    "enable_rule": ("SAVE", frozenset({"draft"}), "simulate", "rule.simulated"),
+}  # fmt: skip
 _ORDER_ACTIONS = frozenset(
     {
         "place_order",
@@ -445,6 +456,24 @@ def _can_act_on(row: RuleRow, engaged: frozenset[UUID]) -> bool:
     return (
         not named or bool(named & engaged) or any(a.targets == "all_accounts" for a in rule.actions)
     )
+
+
+def _owned_by(row: RuleRow, owner: UUID) -> bool:
+    try:
+        return UUID(row.owner) == owner
+    except ValueError:
+        return False
+
+
+def _rule_actor(request: ControlRequest) -> dict[str, Any]:
+    """A rule-control record's actor (24 §11.5, §15.5; 04 SR-062): the acting rule, with no user
+    id, and its version, run and node and both users' ids for `after_state`."""
+    return {
+        "rule_actor": f"rule:{request.rule_id}@v{request.version}", "actor_type": "rule",
+        "source_rule_id": request.rule_id, "source_version": request.version,
+        "run_id": str(request.run_id), "node_id": request.node_id,
+        "owner_user_id": str(request.owner), "armed_by_user_id": request.armed_by,
+    }  # fmt: skip
 
 
 class RulesManager:
@@ -1190,6 +1219,45 @@ class RulesManager:
             _log().warning(
                 "rules.stop_broadcast_failed", rule_id=rule_id, error=type(lost).__name__
             )
+
+    async def control_rule(self, request: ControlRequest) -> ControlSkip | None:
+        """The system path of `pause_rule` and `enable_rule` (24 §11.5; E35-T13, BQ-7): no session
+        and no idempotency key. The target is a rule of the acting rule's owner, never a protected
+        system rule (§11.8), and in a B9 state that takes the move; else the reason it was not
+        moved. The move is recorded (`rule.disarmed` with the reason `pause_rule`, or
+        `rule.simulated` with `enable_rule`) under the acting rule as its actor, before the row is
+        written, then broadcast. Forced moves run one at a time, on the row read again; its caller
+        bounds it."""
+        event, takes, mode, action = _CONTROL_MOVES[request.move]
+        async with self._disarming:
+            row = await self._s.get(request.target)
+            if row is None or row.deleted or not _owned_by(row, request.owner):
+                return "control_not_found"  # missing, deleted or another owner's, alike
+            if row.name in PROTECTED_SYSTEM_RULES:
+                return "control_protected"
+            if request.move == "enable_rule":
+                active = next((v for v in row.versions if v.id == row.active_version_id), None)
+                if active is None or quarantine_path(active.ir):
+                    return "control_unreadable"
+            leaf = await self._leaf(row)
+            handled = await self.lifecycle.handled_event(
+                row.id, row.mode, row.disabled_reason, mode
+            )
+            if leaf not in takes or handled != event:
+                return "control_state"
+            moved = {"rule_id": row.id, "mode": mode, "from": row.mode, "b9_from": leaf}
+            moved |= {"b9_event": event, "reason": request.move}
+            if not await self._record_b9(
+                row, event, action, moved | _rule_actor(request), reason=request.move
+            ):
+                return "control_state"
+        try:  # the rule has moved: a broadcast that fails is no failed move
+            await self._bc({"topic": "rules", **moved})
+        except Exception as lost:  # the hook names no error type
+            _log().warning(
+                "rules.control_broadcast_failed", rule_id=row.id, error=type(lost).__name__
+            )
+        return None
 
     async def _disarm_on_tick(self, row: RuleRow) -> None:
         """One attempt, bounded by `TICK_DISARM_TIMEOUT_S`. A failed or timed-out one is logged,

@@ -71,6 +71,10 @@ _DENIED = frozenset(
 )  # fmt: skip
 
 
+#: The payload members that name the record's actor, never copied into `after_state`.
+_ACTOR_KEYS = frozenset({"actor", "rule_actor"})
+
+
 class UnknownRuleAuditEvent(LookupError):
     """A rules audit event `make_rules_audit` does not map: refused before anything is written,
     never filed under another verb (E35-T09)."""
@@ -129,17 +133,21 @@ def make_rules_audit(emitter: Any) -> Callable[[str, dict[str, Any]], Any]:
         verb = _ACTIONS.get(action)
         if verb is None:
             raise UnknownRuleAuditEvent(action)
-        named = payload.get("actor")
+        named, rule_actor = payload.get("actor"), payload.get("rule_actor")
         actor = None if named is None else acting_user(str(named))  # the viewer while viewing
+        # E35-T13 (24 Sec.11.5): a rule-control move names the rule that acted, `rule:<id>@v<n>`,
+        # and no user (04 SR-062); its users' ids ride `after_state`.
+        label = str(rule_actor) if rule_actor is not None else str(actor or "system")
         await emitter.emit(
             verb,
-            actor_label=str(actor or "system"),
-            actor_user_id=actor,
+            actor_label=label,
+            actor_user_id=None if rule_actor is not None else actor,
             outcome=AuditOutcome.DENIED if action in _DENIED else AuditOutcome.SUCCESS,
             object_kind="rule",
             object_id=str(payload.get("rule_id", "")),
             before_state=_before(payload),
-            after_state={k: v for k, v in payload.items() if k != "actor"} | {"event": action},
+            after_state={k: v for k, v in payload.items() if k not in _ACTOR_KEYS}
+            | {"event": action},
             request_id=current_request_uuid(),
         )
 
