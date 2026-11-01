@@ -54,7 +54,7 @@ export function ShellLayout(): JSX.Element {
         <ShellAnnouncer />
         <SymbolSearchHost mainRef={mainRef} />
         {/* SCR-012 (E10-S05): inside the shell only, so `Ctrl+K` stays inert on the public routes. */}
-        <CommandPaletteHost />
+        <CommandPaletteHost mainRef={mainRef} />
       </InShellProvider>
     </GatedAnnounceProvider>
   );

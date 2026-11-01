@@ -59,6 +59,9 @@ export const PERMISSION_VERBS: Readonly<Record<string, string>> = {
   "audit:export": "export the audit log",
 };
 
+/** The verb for a permission E09-D09 §3.2 does not list: never invented per code. */
+export const FALLBACK_VERB = "do this";
+
 export interface GateContext {
   readonly claims: MeClaims;
   /** `GET /auth/session/view-as`'s active context; `null` today: the shell has no view-as source (#304 gap 13). */
@@ -76,10 +79,9 @@ export function gateReason(gate: CommandGate | undefined, ctx: GateContext): str
   }
   const { permission } = gate;
   if (permission === undefined || ctx.claims.permissions.includes(permission)) return undefined;
-  const verb = gate.verb ?? PERMISSION_VERBS[permission];
-  if (verb === undefined) {
-    throw new Error(`gateReason: no E09-D09 verb for permission "${permission}"`);
-  }
+  // A permission with no §3.2 verb must not throw inside the host's render: say it generically (the table test
+  // `gates.test.ts` fails for any gate that relies on this).
+  const verb = gate.verb ?? PERMISSION_VERBS[permission] ?? FALLBACK_VERB;
   return gate.ownerOnly === true ? ownerOnlyReason(verb) : permissionReason(verb);
 }
 

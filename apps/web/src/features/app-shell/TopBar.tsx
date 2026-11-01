@@ -89,6 +89,7 @@ export function TopBar(props: TopBarProps): JSX.Element {
         size="sm"
         onClick={onSearch}
         aria-keyshortcuts={ariaKeys(props.searchHint)}
+        aria-haspopup="dialog"
         data-cmp="CMP-084"
       >
         Search commands <kbd style={KBD}>{props.searchHint}</kbd>
