@@ -33,7 +33,13 @@ const INCIDENT = {
   fromMs: Date.parse("2026-09-14T10:14:03Z"),
   toMs: Date.parse("2026-09-14T10:14:41Z"),
 };
-const PURGE = { symbol: "ADAUSDT", beforeMs: Date.parse("2026-10-01T00:00:00Z"), pct: 42 };
+const PURGE = {
+  phase: "running",
+  symbol: "ADAUSDT",
+  beforeMs: Date.parse("2026-10-01T00:00:00Z"),
+  pct: 42,
+  pollRefused: null,
+} as const;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], now: NOW });
@@ -100,32 +106,22 @@ describe("the banner slot (D02 §3: level 3, then an incident, then a purge)", (
     expect(open).toHaveBeenCalledTimes(1);
   });
 
-  it("a purge running: info, its bar, its line said once and its percentage never (SR-09, BG-02)", async () => {
-    const host = document.body.appendChild(document.createElement("div"));
-    const records: MutationRecord[] = [];
-    const watch = new MutationObserver((list) => records.push(...list));
-    watch.observe(host, { childList: true, subtree: true, characterData: true });
-    const { rerender, container } = render(slot({ purge: PURGE }), { container: host });
+  it("a purge running: info, its bar named for the purge, no region of its own (SR-09, BG-02; D-5309-11)", () => {
+    // The line is said once through the shell's announcer (`usePurge`, A-5347-04), never by a node that mounts
+    // with its words; the percentage is never spoken.
+    const { rerender, container } = render(slot({ purge: PURGE }));
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(container).toHaveTextContent("Purging ADAUSDT data recorded before 2026-10-01: 42 %.");
-    // D-5309-11: the bar is named for what it measures (PROPOSED).
     expect(screen.getByRole("progressbar", { name: "Purge of ADAUSDT" })).toHaveAttribute(
       "aria-valuenow",
       "42",
     );
-    // The line's node is in the DOM empty first, then filled once, so its arrival is said (05 §6.2, R-5): its text
-    // came in a later mutation of the node itself.
-    const line = screen.getByRole("status");
-    await flush();
-    watch.disconnect();
-    const filled = records.filter((r) => r.target === line && r.addedNodes.length > 0);
-    expect(filled).toHaveLength(1);
-    const said = line.textContent;
-    expect(said).toBe(
-      "Purging ADAUSDT data recorded before 2026-10-01. Recording continues. Deleted data cannot be restored.",
-    );
     rerender(slot({ purge: { ...PURGE, pct: 43 } }));
-    expect(screen.getByRole("status").textContent).toBe(said);
+    expect(screen.getByRole("progressbar", { name: "Purge of ADAUSDT" })).toHaveAttribute(
+      "aria-valuenow",
+      "43",
+    );
   });
 });
 
