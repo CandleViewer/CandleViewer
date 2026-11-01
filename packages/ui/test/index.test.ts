@@ -256,6 +256,7 @@ describe("@candleviewer/ui positions grid and CMP-049's treegrid (E29-S01)", () 
     ["LiqTierCell", Atoms.LiqTierCell],
     ["UpdatesPausedChip", Atoms.UpdatesPausedChip],
     ["liqSentence", Atoms.liqSentence],
+    ["pnlReading", Atoms.pnlReading],
   ])("exports %s from the package entry as a function", (_name, value) => {
     expect(typeof value).toBe("function");
   });

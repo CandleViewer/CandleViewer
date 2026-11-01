@@ -720,6 +720,8 @@ function PositionRow<R extends PositionsGridRow>({
       aria-describedby={sentence === undefined ? undefined : sentenceId}
       aria-selected={parts.selectable ? isSelected : undefined}
       data-liq={row.liq.tier}
+      // The row's key, so a host can tell which position holds focus (its RT-16 line, E29-D05 §8.1)
+      data-key={row.key}
       onKeyDown={(event) =>
         rowKeys(event, {
           selectable: parts.selectable,
