@@ -11,7 +11,7 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Context, Decimal, localcontext
 from typing import Any
 
 import pytest
@@ -40,6 +40,7 @@ from candleviewer.oms.errors import (
 from candleviewer.oms.ports import RequestRecord, SubmitActor
 from candleviewer.oms.position_writes import (
     CLOSE_ACTION,
+    REFRESH_WAIT_S,
     CloseTerms,
     PositionWrites,
     PositionWritesDeps,
@@ -69,6 +70,10 @@ ACCOUNT = cr.ACCOUNT
 ACTOR = SubmitActor(user_id=uuid.uuid4(), role="owner")
 ORDER = uuid.UUID("0a000000-0000-4000-8000-0000000000aa")
 T0 = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
+
+
+#: The resolver's exact context (`position_writes._EXACT`), for the property's own figures.
+_EXACT = Context(prec=100)
 
 
 def row(**over: Any) -> PositionRow:
@@ -760,6 +765,13 @@ def test_resolve_close_needs_a_percent_or_a_quantity() -> None:
 @example(lots=250, exponent=-3, minimum_lots=1, percent=Decimal(50), floor_lots=None)
 @example(lots=15, exponent=-2, minimum_lots=10, percent=Decimal(50), floor_lots=None)
 @example(lots=200, exponent=-3, minimum_lots=1, percent=Decimal(75), floor_lots=60)
+@example(  # a numeric(38,18) size, 38 digits: exact only in the resolver's own 100-digit context
+    lots=12345678901234567890123456789012345678,
+    exponent=-18,
+    minimum_lots=1,
+    percent=Decimal("33.33"),
+    floor_lots=None,
+)
 @settings(max_examples=200, deadline=None, derandomize=True)
 def test_property_resolve_close_on_the_grid_within_the_size_never_leaving_dust(
     lots: int, exponent: int, minimum_lots: int, percent: Decimal, floor_lots: int | None
@@ -767,10 +779,12 @@ def test_property_resolve_close_on_the_grid_within_the_size_never_leaving_dust(
     """For any size, lot step, minimum, percent and dust floor: a close `resolve_close` admits is
     on the lot grid, above zero, never above the size or what was asked, and leaves no remainder
     in (0, the larger of min_order_qty and the floor); one it refuses is a partial close, for
-    those two rules alone."""
-    step = Decimal(1).scaleb(exponent)
-    size, minimum = lots * step, minimum_lots * step
-    floor = None if floor_lots is None else floor_lots * step
+    those two rules alone. The test's own figures are exact; the resolver runs in the default
+    context, so its own exact context is what keeps a 38-digit size exact."""
+    with localcontext(_EXACT):
+        step = Decimal(1).scaleb(exponent)
+        size, minimum = lots * step, minimum_lots * step
+        floor = None if floor_lots is None else floor_lots * step
     listed = instrument(qty_step=step, min_order_qty=minimum)
     terms = CloseTerms("market", pct=percent)
     try:
@@ -780,10 +794,11 @@ def test_property_resolve_close_on_the_grid_within_the_size_never_leaving_dust(
         assert {e.rule for e in refused.errors} <= {"dust_remainder", "qty_below_minimum"}
         return
     least = minimum if floor is None else max(minimum, floor)
-    assert resolved.qty % step == 0 and 0 < resolved.qty <= size
-    assert resolved.qty <= size * percent / 100
-    assert not 0 < resolved.remaining < least
-    assert resolved.qty + resolved.remaining == size
+    with localcontext(_EXACT):
+        assert resolved.qty % step == 0 and 0 < resolved.qty <= size
+        assert resolved.qty <= size * percent / 100
+        assert not 0 < resolved.remaining < least
+        assert resolved.qty + resolved.remaining == size
     assert resolved.full is (percent == 100)
 
 
@@ -870,7 +885,9 @@ async def test_refresh_changes_nothing_on_a_key_unshown_or_a_failure(change: str
 
 
 @virtual
-async def test_refresh_is_bounded_and_a_hung_read_writes_nothing() -> None:
+async def test_refresh_is_bounded_at_5_s_and_a_hung_read_writes_nothing() -> None:
+    """The re-read's bound is the `poll` lane's own deadline, 5 s (24 Sec.8.4, Sec.8.7), on the
+    fake clock: the answer waits no longer than that for a read that never answers."""
     rig = Rig()
     hold = asyncio.Event()
 
@@ -879,7 +896,10 @@ async def test_refresh_is_bounded_and_a_hung_read_writes_nothing() -> None:
         return []
 
     rig.port.positions = hung  # type: ignore[method-assign]  # a read that never answers
+    loop = asyncio.get_running_loop()
+    started = loop.time()
     assert await rig.service().refresh(row()) is False
+    assert loop.time() - started == pytest.approx(5.0) and REFRESH_WAIT_S == 5.0
     assert rig.store.states == []
 
 
