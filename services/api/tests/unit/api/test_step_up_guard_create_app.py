@@ -75,6 +75,7 @@ async def test_invite_create_under_root_path_still_needs_step_up(
     body = {"code": w.code(owner), "password": _PW, "challenge_id": denied.json()["challenge_id"]}
     ok = w.client.post(f"{_ROOT}/auth/step-up", headers=_h(owner), json=body)
     assert ok.status_code == 200 and ok.json()["action_class"] == "users"
+    w.hold(owner, ok)  # SR-013 (#2101): the client continues with the rotated session
     assert w.client.post(f"{_ROOT}/users", headers=_h(owner), json=_BODY).status_code == 201
 
 

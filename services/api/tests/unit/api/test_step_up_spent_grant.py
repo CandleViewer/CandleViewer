@@ -108,8 +108,8 @@ async def test_spend_issues_a_challenge_bound_to_this_request_when_none_is_held(
 
 async def test_a_grant_bound_to_another_request_is_audited_ahead_and_stays_bound() -> None:
     w = await _world()
-    sid = str(w.sessions["tok"].id)
     held = await _granted(w, _HELD)
+    sid = str(w.sessions["tok"].id)  # the session the step-up rotated to (SR-013, #2101)
     before = len(w.audit.calls)
     refused = await spend_bound_grant(w.auth.step_up, w.audit, sid, "backups", _OTHER)
     assert isinstance(refused, StepUpChallenge) and refused.fingerprint == _OTHER
@@ -212,13 +212,15 @@ async def test_consume_bound_grant_still_returns_none_on_use() -> None:
     """`api.rules_actor`'s gate: None when the bound grant was used, else the challenge. The
     `SpentGrant` of the same class names that grant: its class and its challenge."""
     w = await _world()
-    sid, step_up = str(w.sessions["tok"].id), w.auth.step_up
+    step_up = w.auth.step_up
     held = await _granted(w, _HELD, "live_enablement")
+    sid = str(w.sessions["tok"].id)  # the session the step-up rotated to (SR-013, #2101)
     spent = await spend_bound_grant(step_up, w.audit, sid, "live_enablement", _HELD)
     assert isinstance(spent, SpentGrant)
     assert (spent.action_class, spent.challenge_id) == ("live_enablement", held.challenge_id)
     w.clock.now += timedelta(seconds=30)  # the next TOTP step: each code is accepted once
     second = await _granted(w, _HELD, "live_enablement")
+    sid = str(w.sessions["tok"].id)  # rotated again
     assert await consume_bound_grant(step_up, w.audit, sid, "live_enablement", _HELD) is None
     again = await consume_bound_grant(step_up, w.audit, sid, "live_enablement", _HELD)
     assert isinstance(again, StepUpChallenge) and again.fingerprint == _HELD
@@ -245,6 +247,7 @@ async def test_a_keys_grant_never_satisfies_an_accounts_demand() -> None:
     sid = str(w.sessions["tok"].id)
     issued = await w.auth.step_up.record_pending(sid, "keys")
     assert w.step_up(challenge_id=str(issued.challenge_id)).status_code == 200
+    sid = str(w.sessions["tok"].id)  # the grant moved with the rotated session (SR-013, #2101)
     assert await w.auth.step_up.remaining_grace(sid, "keys") is not None
     refused = _problem(await _gate_as(w, "accounts", _HELD), 403)
     assert refused["action_class"] == "accounts"

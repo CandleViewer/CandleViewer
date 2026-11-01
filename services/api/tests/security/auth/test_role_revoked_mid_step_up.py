@@ -20,8 +20,8 @@ committed first stands, the revoke ordered after its effect. The stores' fakes m
 Postgres re-read (`require_active_owner`); the real locks are
 `tests/integration/auth/test_owner_actor_recheck_pg.py`'s, in CI.
 
-Not asserted here: whether a role change also rotates the session id (SR-013, #2101). These tests
-pin authority and audit order, so they keep the session the step-up started on.
+Not asserted here: whether a role change also ends the target's sessions (SR-013, #2101). A
+granted step-up rotates the caller's session, so `World.step_up` hands the actor its new bearer.
 """
 
 from __future__ import annotations
@@ -214,8 +214,10 @@ class _AuditLog:
         ]
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Actor:
+    """One user and the bearer it holds now: a granted step-up moves it (#2101)."""
+
     user_id: uuid.UUID
     token: str
     session_id: uuid.UUID
@@ -321,7 +323,20 @@ class World:
             body["action_class"] = action_class
         if challenge_id is not None:
             body["challenge_id"] = challenge_id
-        return await self.call(actor, "POST", "/auth/step-up", json=body)
+        answered = await self.call(actor, "POST", "/auth/step-up", json=body)
+        if answered.status_code == 200:  # SR-013 (#2101): the client holds the rotated bundle
+            await self._hold_bearer(actor, answered.json()["tokens"]["access_token"])
+        return answered
+
+    async def _hold_bearer(self, actor: _Actor, token: str) -> None:
+        """*actor* moves, in place, to *token* and its SR-041 pair, as the client does."""
+        session = await self.auth.sessions.peek_access_token(token)
+        assert session is not None, "the bearer names no session"
+        self.resolver.by_token[token] = actor.user_id
+        actor.token, actor.session_id = token, session.id
+        actor.headers.update(
+            {"Authorization": f"Bearer {token}", **csrf_headers(self._codec, session.id)}
+        )
 
     async def elevate(self, actor: _Actor) -> None:
         """Hold a live `users` elevation, as after a completed step-up."""

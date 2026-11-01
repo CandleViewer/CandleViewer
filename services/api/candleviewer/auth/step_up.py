@@ -9,7 +9,9 @@ the statechart records and this synchronous code enforces: the check in
 migration 0009) - the brief's "stored on the session row keyed by action
 class with its own expiry". Never a token claim, so a client cannot forge or
 replay it on another session; it survives a process restart and dies with
-the session (revoked rows are never updated and carry no elevation).
+the session (revoked rows are never updated and carry no elevation), but for
+the step-up's own rotation (SR-013, #2101): the successor session carries the
+live grants (`carried_grants`), and the rotated-out row is revoked.
 
 After each enforcement decision is persisted, the matching B16 event is sent
 to the session's chart (`SessionChart`); the chart's audit actions write the
@@ -375,6 +377,18 @@ def carried_grants(elevations: dict[str, datetime], now: datetime) -> dict[str, 
     }
 
 
+def _end(key: str, until: datetime) -> StepUpChange:
+    """#2101 (C-7): drop the grant stored under `key` while it still holds `until`, the grant
+    this change ends; a newer grant under the key, and the rest of the row, are kept."""
+
+    def change(state: StepUpState) -> StepUpState:
+        elevations, failures, readonly_until = state
+        kept = {k: v for k, v in elevations.items() if not (k == key and v == until)}
+        return kept, failures, readonly_until
+
+    return change
+
+
 @dataclass(frozen=True)
 class ResetPreview:
     target_user_id: uuid.UUID
@@ -602,6 +616,20 @@ class StepUpService:
             # A cancellation during the wait propagates (nothing here catches it).
             await self._failure_hold.hold(started)
             raise
+
+    async def end_grant(self, session_id: str, grant: StepUpGrant) -> None:
+        """#2101 (C-7): end *grant*, which `step_up()` stored on *session_id*'s row, when the
+        session's rotation cannot be recorded, so the refused step-up leaves nothing elevated. One
+        change to the row under its lock (#2304); a row revoked meanwhile holds nothing to end.
+        The chart is not told: the caller drops it (`SessionChart.forget`), and it is rebuilt
+        from the row on its next use."""
+        challenge = None
+        if grant.challenge_id is not None:
+            challenge = StepUpChallenge(
+                grant.challenge_id, grant.action_class, grant.elevated_until, grant.fingerprint
+            )
+        key = _grant_key(grant.action_class, challenge)
+        await self._sessions.update_step_up_state(session_id, _end(key, grant.elevated_until))
 
     async def record_pending(
         self, session_id: str, action_class: str, *, fingerprint: str | None = None

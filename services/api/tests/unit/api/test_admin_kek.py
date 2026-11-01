@@ -27,7 +27,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.service import AuthService
 from candleviewer.secrets import SecretsService
 from candleviewer.secrets.store import InMemoryCredentialStore
-from tests.unit.api.test_invites_create_app_e2e import _h, _login, _World
+from tests.unit.api.test_invites_create_app_e2e import _h, _login, _World, held
 from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.credentials_m2._service_fakes import _boot, _counted, _Src, _store_one, _svc
@@ -246,7 +246,7 @@ async def test_a_refusal_names_the_callers_session(kek: _Kek, perms: frozenset[P
     token = await elevated(kek.w, "manager", perms)
     assert kek.post(token).status_code == 403
     [denial] = kek.w.audit.of("rbac.denied")
-    session = await kek.w.auth.sessions.peek_access_token(token)
+    session = await kek.w.auth.sessions.peek_access_token(held(token))
     assert session is not None and denial["session_id"] == session.id
 
 
@@ -257,7 +257,7 @@ async def test_the_deployed_key_routes_name_the_callers_session_on_a_refusal(kek
     path = f"/exchange-accounts/{uuid.uuid4()}/keys/{uuid.uuid4()}/test"
     assert kek.w.client.post(path, headers=_h(token)).status_code == 403
     [denial] = kek.w.audit.of("rbac.denied")
-    session = await kek.w.auth.sessions.peek_access_token(token)
+    session = await kek.w.auth.sessions.peek_access_token(held(token))
     assert session is not None and denial["session_id"] == session.id
 
 
@@ -382,7 +382,7 @@ async def test_a_manager_with_an_empty_body_is_forbidden_before_it_is_read(
     r = kek.w.client.post(PATH, headers=headers, **sent)
     assert (r.status_code, r.json()["code"], "errors" in r.json()) == (403, "forbidden", False)
     [denial] = kek.w.audit.of("rbac.denied")
-    session = await kek.w.auth.sessions.peek_access_token(token)
+    session = await kek.w.auth.sessions.peek_access_token(held(token))
     assert session is not None and denial["session_id"] == session.id
     assert kek.w.audit.of("auth.step_up_required") == [] and kek.runs() == []
 

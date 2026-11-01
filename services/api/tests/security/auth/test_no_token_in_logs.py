@@ -287,10 +287,15 @@ def test_login_mfa_refresh_stepup_never_log_a_credential(
             json={"code": totp3, "password": _PASSWORD, "action_class": "users"},
         )
         assert r.status_code == 200, r.text
+        # SR-013 (#2101): the step-up rotated the session; the next call uses its new bundle
+        access5 = r.json()["tokens"]["access_token"]
+        literals["access_token_5"] = access5
+        csrf5 = _csrf(r)
+        literals["csrf_token_5"] = csrf5
         # failing step-up (wrong password) must not echo the attempted secrets either
         r = client.post(
             "/auth/step-up",
-            headers={"Authorization": f"Bearer {access4}", "X-CSRF-Token": csrf4},
+            headers={"Authorization": f"Bearer {access5}", "X-CSRF-Token": csrf5},
             json={
                 "code": "000000",
                 "password": "pw-wrong-7",

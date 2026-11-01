@@ -107,14 +107,9 @@ def test_step_up_ok_body_without_tokens_no_longer_conforms(spec: dict[str, Any])
         _validator(spec).validate(pre_rotation)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ValidationError,
-    reason="#2101: the route does not rotate the session yet, so its 200 has no `tokens`; "
-    "remove this marker when the step-up rotation lands",
-)
 async def test_step_up_route_ok_body_validates_against_the_contract(spec: dict[str, Any]) -> None:
-    """Provider side (C-6.2): the step-up router's `200` against the contract schema."""
+    """Provider side (C-6.2): the step-up router's `200`, with the rotated session's `tokens`
+    (#2101), against the contract schema."""
     client, _emitter, seed, clock, _user = await _build()
     ok = client.post(
         "/auth/step-up",
@@ -122,12 +117,8 @@ async def test_step_up_route_ok_body_validates_against_the_contract(spec: dict[s
         json={"code": _code(seed, clock), "password": _PW, "action_class": "users"},
     )
     assert ok.status_code == 200
-    validator = _validator(spec)
-    # Any mismatch other than the missing `tokens` is a real failure, never the expected xfail.
-    assert {e.message for e in validator.iter_errors(ok.json())} <= {
-        "'tokens' is a required property"
-    }
-    validator.validate(ok.json())
+    _validator(spec).validate(ok.json())
+    assert ok.json()["tokens"]["refresh_token"] is None  # the refresh token is in the cookie
 
 
 @pytest.mark.parametrize(

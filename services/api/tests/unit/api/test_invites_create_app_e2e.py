@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer import app as app_module
 from candleviewer.app import create_app
-from candleviewer.auth.csrf import CsrfCodec
+from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import INVITE_TTL
@@ -51,14 +51,16 @@ class _Writer:
 
 
 class _Resolver:
-    """Bearer token -> principal (stands in for the identity provider)."""
+    """Bearer token -> principal (stands in for the identity provider), keyed by the first token
+    of a session: a token a step-up rotated to resolves as that first one does (#2101)."""
 
     def __init__(self) -> None:
         self.by_token: dict[str, PrincipalSnapshot] = {}
+        self.first: dict[str, str] = {}
 
     def resolve(self, request: Request) -> PrincipalSnapshot | None:
-        auth = request.headers.get("authorization", "")
-        return self.by_token.get(auth.removeprefix("Bearer "))
+        token = request.headers.get("authorization", "").removeprefix("Bearer ")
+        return self.by_token.get(self.first.get(token, token))
 
 
 _PW = "correct horse battery staple"
@@ -82,19 +84,40 @@ class _World:
         return generate_code(self.seeds[token], time_step_for(self.clock.now.timestamp()))
 
     def elevate(self, token: str, **kw: Any) -> Any:
-        return self.client.post(
+        """`POST /auth/step-up` for *token*'s session; a granted one rotates it (SR-013, #2101),
+        and from then on `_h(token)` sends the new bundle, as the client holds it."""
+        answered = self.client.post(
             "/auth/step-up",
             headers=_h(token),
             json={"code": self.code(token), "password": _PW, **kw},
         )
+        self.hold(token, answered)
+        return answered
+
+    def hold(self, token: str, answered: Any) -> None:
+        """A granted step-up for *token*'s session hands the client its new bundle (SR-013,
+        #2101): from then on `_h(token)` sends it and the resolver reads it as *token*."""
+        if answered.status_code == 200:
+            new = answered.json()["tokens"]["access_token"]
+            csrf = answered.cookies.get(CSRF_COOKIE)
+            _CSRF[new] = {CSRF_HEADER: csrf, "Cookie": f"{CSRF_COOKIE}={csrf}"}
+            self.resolver.first[new] = token
+            _HELD[token] = new
 
 
 #: access token -> SR-041 header/cookie pair bound to that token's session.
 _CSRF: dict[str, dict[str, str]] = {}
+#: A test's first access token -> the one its session rotated to (SR-013, #2101).
+_HELD: dict[str, str] = {}
+
+
+def held(token: str) -> str:
+    """The token *token*'s session holds now: the one its last granted step-up rotated it to."""
+    return _HELD.get(token, token)
 
 
 def _h(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}", **_CSRF.get(token, {})}
+    return {"Authorization": f"Bearer {held(token)}", **_CSRF.get(held(token), {})}
 
 
 async def _login(w: _World, role: str, perms: frozenset[Permission]) -> str:

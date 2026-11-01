@@ -427,12 +427,22 @@ def expect(op: Op, actor: str, state: str) -> Expected:
 ROUTE_STEP_UP = frozenset({"auth.step_up_required", "auth.step_up_grace_used"})
 
 
+def _rotation(r: dict[str, Any]) -> bool:
+    """A record of the exchange's rotation (SR-013, #2101): B16's `auth.session_revoked`, reason
+    `rotated`, and the `auth.session_created` that names the new session (`rotated_from`)."""
+    if r["action"] == "auth.session_revoked":
+        return r.get("reason") == "rotated"
+    return r["action"] == "auth.session_created" and "rotated_from" in (r.get("after_state") or {})
+
+
 def route_records(records: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
-    """The records of a cell's own request: all but the step-up exchange's (`ROUTE_STEP_UP`)."""
+    """The records of a cell's own request: all but the step-up exchange's (`ROUTE_STEP_UP`),
+    its rotation's included."""
     return [
         r
         for r in records
-        if not r["action"].startswith("auth.step_up") or r["action"] in ROUTE_STEP_UP
+        if (not r["action"].startswith("auth.step_up") or r["action"] in ROUTE_STEP_UP)
+        and not _rotation(r)
     ]
 
 

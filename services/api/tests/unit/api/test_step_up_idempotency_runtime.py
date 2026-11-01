@@ -73,7 +73,7 @@ from tests.unit.api.test_audit_signing_rotate import OWNER as KEYS_MANAGE
 from tests.unit.api.test_audit_signing_rotate import _deployed, _Rot
 from tests.unit.api.test_invites_create_app_e2e import _login
 from tests.unit.api.test_step_up_challenge_router import _IDEM, _World, _world
-from tests.unit.api.test_step_up_router import _PW, _T0, _code, _Sessions
+from tests.unit.api.test_step_up_router import _PW, _T0, _adopt, _code, _Sessions
 from tests.unit.api.test_step_up_rules_route import _Identity
 from tests.unit.credentials_m2._vectors import API_KEY, API_SECRET
 from tests.unit.oms import submit_rig as sr
@@ -161,7 +161,10 @@ def _case(
 ) -> _Case:  # fmt: skip
     async def step_up(**body: Any) -> httpx.Response:
         payload = {"code": _code(w.seed, w.clock), "password": _PW, **body}
-        return await client.post("/auth/step-up", headers=w.h("owner"), json=payload)
+        granted = await client.post("/auth/step-up", headers=w.h("owner"), json=payload)
+        if granted.status_code == 200:  # SR-013 (#2101): the re-send carries the new bundle
+            _adopt(w.rows, w.sessions, "owner", granted)
+        return granted
 
     async def lock(locked: bool) -> None:
         locks.locked = locked
