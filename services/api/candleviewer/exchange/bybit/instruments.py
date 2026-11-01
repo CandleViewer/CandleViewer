@@ -11,6 +11,8 @@ from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Protocol
 
+from pydantic import ValidationError
+
 from candleviewer.domain.events import Instrument
 from candleviewer.exchange.base.instruments import (
     InstrumentParseError,
@@ -69,6 +71,23 @@ def _optional_decimal(raw: Mapping[str, Any], key: str, default: Decimal) -> Dec
     return parsed
 
 
+def _filter(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    """A nested filter object; absent is empty, anything but an object is malformed (#1896)."""
+    value = raw.get(key)
+    if value is None or value == "":
+        return {}
+    if not isinstance(value, Mapping):
+        raise InstrumentParseError(f"field {key!r} is not an object: {value!r}")
+    return value
+
+
+def _str(raw: Mapping[str, Any], key: str, default: str) -> str:
+    value = raw.get(key, default)
+    if not isinstance(value, str):
+        raise InstrumentParseError(f"field {key!r} is not a string: {value!r}")
+    return value
+
+
 def parse_instrument(raw: Mapping[str, Any], *, fetched_at_us: int) -> Instrument:
     """Normalise one Bybit `instruments-info` (`category=linear`) list item
     into the neutral `Instrument` model. Raises `InstrumentParseError` on any
@@ -87,22 +106,43 @@ def parse_instrument(raw: Mapping[str, Any], *, fetched_at_us: int) -> Instrumen
             f"launchTime is not an integer: {raw.get('launchTime')!r}"
         ) from exc
 
-    status = _STATUS_MAP.get(status_raw)
+    if not isinstance(symbol, str) or not symbol:
+        raise InstrumentParseError(f"symbol is not a non-empty string: {symbol!r}")
+    # A list or object here is unhashable: check the type before the lookup (#1896).
+    status = _STATUS_MAP.get(status_raw) if isinstance(status_raw, str) else None
     if status is None:
         raise InstrumentParseError(f"unknown instrument status: {status_raw!r}")
 
-    price_filter = raw.get("priceFilter") or {}
-    lot_size_filter = raw.get("lotSizeFilter") or {}
-    leverage_filter = raw.get("leverageFilter") or {}
+    # No default (#1933): a wrong interval corrupts the countdown and annualisation, so a row
+    # without one is rejected like any other missing precision field.
     funding_cfg = raw.get("fundingInterval")
+    if funding_cfg is None or funding_cfg == "":
+        raise InstrumentParseError("missing required field 'fundingInterval'")
 
+    try:
+        return _build(raw, symbol, status, launch_time_ms, fetched_at_us)
+    except ValidationError as exc:  # a value the domain model refuses is a malformed row (#1896)
+        fields = ", ".join(sorted({str(e["loc"][0]) for e in exc.errors() if e["loc"]}))
+        raise InstrumentParseError(f"invalid instrument field(s): {fields}") from exc
+
+
+def _build(
+    raw: Mapping[str, Any],
+    symbol: str,
+    status: Literal["pre_launch", "trading", "delivering", "closed"],
+    launch_time_ms: int,
+    fetched_at_us: int,
+) -> Instrument:
+    price_filter = _filter(raw, "priceFilter")
+    lot_size_filter = _filter(raw, "lotSizeFilter")
+    leverage_filter = _filter(raw, "leverageFilter")
     return Instrument(
         exchange="bybit",
         category="linear",
         symbol=symbol,
-        base_coin=raw.get("baseCoin", ""),
-        quote_coin=raw.get("quoteCoin", "USDT"),
-        settle_coin=raw.get("settleCoin", "USDT"),
+        base_coin=_str(raw, "baseCoin", ""),
+        quote_coin=_str(raw, "quoteCoin", "USDT"),
+        settle_coin=_str(raw, "settleCoin", "USDT"),
         status=status,
         contract_type="linear_perpetual",
         launch_time=launch_time_ms * 1000,
@@ -120,9 +160,7 @@ def parse_instrument(raw: Mapping[str, Any], *, fetched_at_us: int) -> Instrumen
         max_leverage=_decimal(leverage_filter, "maxLeverage"),
         min_leverage=_optional_decimal(leverage_filter, "minLeverage", Decimal(1)),
         leverage_step=_optional_decimal(leverage_filter, "leverageStep", Decimal("0.01")),
-        funding_interval_min=(
-            _int(raw, "fundingInterval", funding_cfg) if funding_cfg is not None else 480
-        ),
+        funding_interval_min=_int(raw, "fundingInterval", raw["fundingInterval"]),
         upper_funding_rate=(
             _decimal(raw, "upperFundingRate")
             if raw.get("upperFundingRate") is not None
@@ -160,6 +198,9 @@ def parse_instruments(
     parsed: list[Instrument] = []
     rejected: list[RejectedInstrument] = []
     for raw in raw_items:
+        if not isinstance(raw, Mapping):
+            rejected.append(RejectedInstrument(symbol=None, reason="row is not an object"))
+            continue
         try:
             parsed.append(parse_instrument(raw, fetched_at_us=fetched_at_us))
         except InstrumentParseError as exc:

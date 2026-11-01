@@ -176,9 +176,44 @@ def test_absurd_min_notional_is_visible_as_change() -> None:
     assert "min_notional" in diff_changed_fields(base, bad)  # surfaced, never silent
 
 
-@pytest.mark.xfail(strict=True, reason="#1896 non-InstrumentParseError escapes per-row catch")
-@pytest.mark.parametrize("over", [{"priceFilter": ["x"]}, {"status": ["Trading"]}])
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"priceFilter": ["x"]},
+        {"lotSizeFilter": "x"},
+        {"leverageFilter": 1},
+        {"status": ["Trading"]},
+        {"status": {"a": 1}},
+        {"symbol": ["BTCUSDT"]},
+        {"symbol": ""},
+        {"baseCoin": ["BTC"]},
+        {"launchTime": ["1"]},
+        {"fundingInterval": None},
+        {"fundingInterval": ""},
+    ],
+)
 def test_malformed_instrument_row_cannot_fail_catalogue(over: dict[str, Any]) -> None:
+    """#1896 / #1933: a malformed row is one rejection; every other row still parses."""
     good = rest("rest/instruments_before.json")["result"]["list"]
     res = parse_instruments([{**good[0], **over}, good[1]], fetched_at_us=1)
     assert len(res.instruments) == 1 and len(res.rejected) == 1
+    assert res.instruments[0].symbol == good[1]["symbol"]
+
+
+def test_missing_funding_interval_is_rejected_not_defaulted() -> None:
+    """#1933: no silent 480; the row is rejected and names the field."""
+    good = rest("rest/instruments_before.json")["result"]["list"]
+    row = {k: v for k, v in good[0].items() if k != "fundingInterval"}
+    res = parse_instruments([row], fetched_at_us=1)
+    assert res.instruments == ()
+    assert res.rejected[0].symbol == good[0]["symbol"]
+    assert "fundingInterval" in res.rejected[0].reason
+
+
+@pytest.mark.parametrize("row", [["BTCUSDT"], "BTCUSDT", None, 7])
+def test_non_object_instrument_row_is_rejected(row: object) -> None:
+    """#1896: a list item that is not an object is a rejection, not an escape."""
+    good = rest("rest/instruments_before.json")["result"]["list"]
+    rows: list[Any] = [row, good[1]]  # hostile input: not every item is an object
+    res = parse_instruments(rows, fetched_at_us=1)
+    assert len(res.instruments) == 1 and res.rejected[0].symbol is None

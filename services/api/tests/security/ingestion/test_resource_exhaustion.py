@@ -157,8 +157,8 @@ async def test_subscribe_unsubscribe_thrash_has_no_unbounded_growth() -> None:
     assert after - plateau < 64 * 1024, f"grew {after - plateau} B after the plateau"
 
 
-@pytest.mark.xfail(strict=True, reason="#1893 frame pump never yields while frames are queued")
 async def test_never_idle_stream_does_not_starve_loop() -> None:
+    """#1893: under a 2 000-frame backlog another task runs before the queue drains."""
     svc, rig = IngestionService(), Rig()
     svc.attach_trades(rig.trades)
     for i in range(2_000):

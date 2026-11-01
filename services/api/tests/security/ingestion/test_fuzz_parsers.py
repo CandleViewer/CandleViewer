@@ -9,6 +9,7 @@ Crashers are minimised and checked in under `regressions/` (see INDEX.json).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -183,12 +184,9 @@ def test_recent_trades_page_fuzz(body: dict[str, Any]) -> None:
     )
 )
 def test_instrument_parser_fuzz(raw: dict[str, Any]) -> None:
-    try:
+    # #1896: every malformed row raises InstrumentParseError, the one type the per-row catch takes.
+    with contextlib.suppress(InstrumentParseError):
         parse_instrument(raw, fetched_at_us=1)
-    except (InstrumentParseError, ValueError):
-        pass
-    except (AttributeError, TypeError, OverflowError):
-        pass  # #1896: escapes parse_instruments' per-row catch (xfail in test_market_integrity)
 
 
 def test_instrument_regression_launchtime_inf() -> None:
