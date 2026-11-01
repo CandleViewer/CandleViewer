@@ -26,7 +26,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
-from candleviewer.bars.builder_set import BarBuilderSet, default_factory
+from candleviewer.bars.builder_set import BarBuilderSet, BuilderFactory, default_factory
 from candleviewer.bars.emit import BarSink, EmitRouter
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.state_store import StateStore
@@ -58,6 +58,7 @@ class BarsRig:
         clock: ClockSource = "corrected",
         symbol: str = SYMBOL,
         extra_sinks: Sequence[BarSink] = (),
+        factory: BuilderFactory = default_factory,
     ) -> None:
         self.rig = rig
         self.symbol = symbol
@@ -75,7 +76,7 @@ class BarsRig:
             EmitRouter([self.sink, *extra_sinks]),
             StateStore(Path(self._root.name)),
             now_us=self.now_us,
-            factory=default_factory,
+            factory=factory,
         )
         self._stopped = False
 

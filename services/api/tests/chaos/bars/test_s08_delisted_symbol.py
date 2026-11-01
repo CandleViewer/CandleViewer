@@ -81,7 +81,9 @@ async def test_s08_a_delisted_symbol_stops_its_bars_and_never_synthesises_empty_
     assert tape, "the dead symbol never printed"
     expected = await golden.golden_bars(tape, SPECS, DEAD)
     for label, spec in SPECS.items():
-        golden.assert_matches_golden(expected[label], bars.bars(label), label)
+        golden.assert_matches_golden(
+            expected[label], bars.bars(label), label, kind=SPECS[label].kind
+        )
         assert_no_empty_bars(bars.bars(label), tape[-1].ts_event, label)
         after = bars.sink.updates[spec.spec_hash][delisted.updates_at_delist[label] :]
         assert all(s.kind == "close" for s in after), f"{label}: a bar kept forming after delist"

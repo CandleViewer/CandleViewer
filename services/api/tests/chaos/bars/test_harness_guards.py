@@ -60,7 +60,9 @@ async def test_a_clean_run_equals_the_e12_q02_golden_of_the_venue_tape() -> None
         expected = await golden.golden_bars(tape, SPECS, SYMBOL)
         for label in SPECS:
             assert len(bars.bars(label)) > 3, f"{label}: too few bars"
-            golden.assert_matches_golden(expected[label], bars.bars(label), label)
+            golden.assert_matches_golden(
+                expected[label], bars.bars(label), label, kind=SPECS[label].kind
+            )
     finally:
         await rig.stop()
 
@@ -81,7 +83,7 @@ async def test_golden_helpers_fail_on_a_naive_result() -> None:
         expected = await golden.golden_bars(golden.venue_tape(rig, SYMBOL), SPECS, SYMBOL)
         vol = bars.bars("vol:1")
         with pytest.raises(AssertionError, match="differs from the golden"):
-            golden.assert_matches_golden(expected["vol:1"], vol[:-2], "dropped tail")
+            golden.assert_matches_golden(expected["vol:1"], vol[:-2], "dropped tail", kind="volume")
         with pytest.raises(AssertionError, match="volume not conserved"):
             golden.assert_conserved(expected["vol:1"], [*vol, vol[0]], "doubled bar")
         with pytest.raises(AssertionError, match="opens before"):

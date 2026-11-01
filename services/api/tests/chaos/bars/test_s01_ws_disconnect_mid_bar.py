@@ -87,7 +87,9 @@ async def test_s01_a_drop_mid_bar_is_healed_and_the_bars_equal_the_golden(
     assert _up() == 1.0  # 1 -> 0 -> 1: the socket is back
     expected = await golden.golden_bars(golden.venue_tape(rig, SYMBOL), SPECS, SYMBOL)
     for label in SPECS:
-        golden.assert_matches_golden(expected[label], bars.bars(label), label)
+        golden.assert_matches_golden(
+            expected[label], bars.bars(label), label, kind=SPECS[label].kind
+        )
         golden.assert_conserved(expected[label], bars.bars(label), label)
 
 
@@ -131,6 +133,8 @@ async def test_s01_negative_control_without_the_backfill_the_drop_loses_prints(
     assert [g.recovered for g in rig.observe().gaps] == [False]
     expected = await golden.golden_bars(golden.venue_tape(rig, SYMBOL), SPECS, SYMBOL)
     with pytest.raises(AssertionError, match="differs from the golden"):
-        golden.assert_matches_golden(expected["time:5s"], bars.bars("time:5s"), "time:5s")
+        golden.assert_matches_golden(
+            expected["time:5s"], bars.bars("time:5s"), "time:5s", kind="time"
+        )
     with pytest.raises(AssertionError, match="not conserved"):
         golden.assert_conserved(expected["vol:1"], bars.bars("vol:1"), "vol:1")
