@@ -81,7 +81,8 @@ export class AtlasService {
     occupancyPct: 0,
     rasterized: 0,
   };
-  private readonly cfg: AtlasConfig;
+  /** The table the image is built with: slot order and spread for its readers. */
+  readonly cfg: AtlasConfig;
   private readonly glyphs: GlyphEntry[];
   private invalidSent = false;
   private disposed = false;

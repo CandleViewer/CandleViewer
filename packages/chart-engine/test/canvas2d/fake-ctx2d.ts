@@ -1,6 +1,6 @@
 // A hand-written fake 2D context (E11-T05, the fake-gl precedent, README BQ-63): it logs every
-// call, records each painted path's geometry and style, and has a `fillText` so a test can prove
-// the 2D path never writes text (S4). No canvas dependency, no DOM.
+// call, records each painted path's geometry and style, and records `fillText` (E11-S11 PR B: the
+// axis and drawing labels; cell text never, S4). No canvas dependency, no DOM.
 import type { Ctx2DLike } from "../../src/canvas2d/ctx2d.js";
 
 const finite = (...v: number[]): boolean => v.every(Number.isFinite);
@@ -90,8 +90,13 @@ export class FakeCtx2D implements Ctx2DLike {
     this.log.push("restore");
   }
   readonly clips: string[] = [];
-  /** Not part of `Ctx2DLike`: present so a call would be caught (S4: no cell text in 2D). */
-  fillText(): void {
+  font = "";
+  textAlign = "";
+  textBaseline = "";
+  /** Every `fillText`: `text x y font align style`. */
+  readonly texts: string[] = [];
+  fillText(text: string, x: number, y: number): void {
     this.log.push("fillText");
+    this.texts.push(`${text} ${x} ${y} ${this.font} ${this.textAlign} ${String(this.fillStyle)}`);
   }
 }
