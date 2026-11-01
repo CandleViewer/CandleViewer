@@ -1,9 +1,11 @@
-import type { CSSProperties, JSX } from "react";
-import { Icon, type IconName } from "@candleviewer/ui";
+import { useLayoutEffect, useRef, useState, type CSSProperties, type JSX } from "react";
+import { Icon, useFocusRing, type IconName } from "@candleviewer/ui";
+import type { ChipStatus } from "../../lib/ws/state/connectionPresentation";
 import { formatAge } from "../../lib/ws/state/connectionRegion";
+import { useReducedMotion } from "./motion";
 
 /** The five chip values (E17-D02 §3, CMP-076). Read-only and Resyncing are never chip states. */
-export type ConnectionChipStatus = "live" | "delayed" | "stale" | "reconnecting" | "offline";
+export type ConnectionChipStatus = ChipStatus;
 
 export interface ConnectionStatusProps {
   readonly status: ConnectionChipStatus;
@@ -71,6 +73,38 @@ const PILL: CSSProperties = {
   fontVariantNumeric: "tabular-nums",
 };
 
+/** E04-D01 :205–210: a 200 ms opacity cross-fade, once per transition; instant under reduce. */
+const FADE_BOX: CSSProperties = { display: "inline-flex", alignItems: "center", gap: "inherit" };
+const FADE = "opacity var(--motion-duration-normal) cubic-bezier(var(--motion-easing-standard))";
+
+/**
+ * The chip's content fades in once per status change (#304 S10, BQ-10): the new state is drawn at
+ * opacity 0 with no transition, and the next frame fades it in. The first render and every render
+ * under reduced motion draw it at once, with `transition: none`.
+ */
+function useCrossFade(status: ConnectionChipStatus): CSSProperties {
+  const reduce = useReducedMotion();
+  const last = useRef(status);
+  const [hidden, setHidden] = useState(false);
+  useLayoutEffect(() => {
+    if (last.current === status) return undefined;
+    last.current = status;
+    if (reduce) return undefined;
+    setHidden(true);
+    const id = requestAnimationFrame(() => setHidden(false));
+    return () => {
+      cancelAnimationFrame(id);
+      setHidden(false);
+    };
+  }, [status, reduce]);
+  if (reduce) return { ...FADE_BOX, transition: "none" };
+  return {
+    ...FADE_BOX,
+    opacity: hidden ? 0 : 1,
+    transition: hidden ? "none" : FADE,
+  };
+}
+
 /**
  * CMP-076 ConnectionStatus (#304 S3; E17-D02 §5): props only; glyph + word + fill, never colour
  * alone; **owns no live region** (§11: the shell announcer does).
@@ -81,8 +115,11 @@ const PILL: CSSProperties = {
  * with no action yet: a Tab stop keeps the name and time reachable from the keyboard, and the
  * popover slice adds the action without changing the Tab order.
  *
- * PROPOSED / deferred visuals: `density` (one compact pill for now); hover and focus-ring styling
- * (inline styles have no pseudo-classes: the browser's focus ring shows); the `type.ui.caption` /
+ * Focus is the CMP-039 ring (`useFocusRing()`, #304 S10, BQ-05). The hairline border is decoration:
+ * the word and the glyph identify the control (SC 1.4.11 needs no 3:1 boundary; BQ-04, pending the
+ * E47-T01 re-audit). The content cross-fades on a status change (BQ-10).
+ *
+ * PROPOSED / deferred visuals: `density` (one compact pill for now); hover styling; the `type.ui.caption` /
  * `.label` token (inherited font); the 20 px pill inside a 24 px target (the pill is the target);
  * the `serverStale` and `upstreamDown` detail states (no source in the shell store).
  */
@@ -98,23 +135,28 @@ export function ConnectionStatus(props: ConnectionStatusProps): JSX.Element {
   const time = at === null ? null : age === null ? `last data ${at} UTC` : `${at} UTC`;
   const name = [`Connection: ${word}`, age, time];
   const [glyph, fill, ink] = LOOK[status === "stale" && props.strong === true ? "strong" : status];
+  const ring = useFocusRing();
+  const fade = useCrossFade(status);
   return (
     <button
       type="button"
+      className={ring.className}
       aria-label={name.filter(Boolean).join(", ")}
       title={at === null ? undefined : `last ${at} UTC`}
       data-status={status}
       style={{ ...PILL, background: `var(--color-${fill})` }}
     >
-      <span data-glyph="" style={{ color: `var(--color-${ink})`, display: "inline-flex" }}>
-        {"icon" in glyph ? (
-          <Icon name={glyph.icon} size="sm" />
-        ) : (
-          <span aria-hidden="true">{glyph.text}</span>
-        )}
+      <span data-fade="" style={fade}>
+        <span data-glyph="" style={{ color: `var(--color-${ink})`, display: "inline-flex" }}>
+          {"icon" in glyph ? (
+            <Icon name={glyph.icon} size="sm" />
+          ) : (
+            <span aria-hidden="true">{glyph.text}</span>
+          )}
+        </span>
+        <span>{word}</span>
+        {age === null ? null : <span>· {age}</span>}
       </span>
-      <span>{word}</span>
-      {age === null ? null : <span>· {age}</span>}
     </button>
   );
 }

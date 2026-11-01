@@ -1,5 +1,6 @@
 import { useLayoutEffect, type CSSProperties, type JSX, type ReactNode, type Ref } from "react";
 import { SKIP_LINK_COPY, SkipLink } from "@candleviewer/ui";
+import { REFLOW_QUERY } from "./reflow";
 
 /**
  * CMP-070 AppShell frame (E10-S01 S1, #304): props only, no router or store. It lives in apps/web
@@ -61,7 +62,7 @@ const SCROLL: CSSProperties = { height: "100%", overflow: "auto" };
 const OVERLAY: CSSProperties = { position: "absolute", inset: 0, pointerEvents: "none" };
 
 /** CMP-043's reflow breakpoint (`dialog.css`): 200 % zoom on the 1280 x 800 frame. */
-const SCRIM_REFLOW = "(max-width: 40rem), (max-height: 25rem)";
+const SCRIM_REFLOW = REFLOW_QUERY;
 
 /**
  * The scrim's band, the shell's for every modal layer (E05-D02 H23; `dialog.css` and `drawer.css`

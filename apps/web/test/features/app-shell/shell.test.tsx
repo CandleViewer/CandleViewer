@@ -5,6 +5,7 @@ import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "../../../src/features/app-shell/AppShell";
+import { ROUTE_FOCUS_KEEP } from "../../../src/features/app-shell/useRouteFocus";
 import { buildRoutes } from "../../../src/routes/tree";
 import { ROUTE_MANIFEST } from "../../../src/routes/manifest";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
@@ -129,6 +130,21 @@ describe("E10-S01 S1: skip link and route focus", () => {
     expect(within(screen.getByRole("main")).getByRole("heading", { name: /R-180/ })).toBe(heading);
     fireEvent.blur(heading);
     expect(heading).not.toHaveAttribute("tabindex");
+  });
+
+  it("keeps focus on a navigation marked ROUTE_FOCUS_KEEP; an unmarked one still moves it (#304 S10)", async () => {
+    signIn("owner");
+    const router = renderAt("/risk/a1");
+    await screen.findByRole("heading", { name: /R-151/ });
+    const tab = within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", {
+      name: "Rules",
+    });
+    act(() => tab.focus()); // stands in for SCR-100's tab: an in-page control that switches the :param
+    await act(() => router.navigate("/risk/a2", { state: { [ROUTE_FOCUS_KEEP]: true } }));
+    expect(document.activeElement).toBe(tab);
+    await act(() => router.navigate("/risk/a3"));
+    const heading = await screen.findByRole("heading", { name: /R-151/ });
+    expect(document.activeElement).toBe(heading);
   });
 
   it("has no serious or critical axe violations in the shell", async () => {

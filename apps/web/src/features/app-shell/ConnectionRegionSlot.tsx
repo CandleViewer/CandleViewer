@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useRef, type JSX } from "react";
 import { accessToken } from "../../lib/auth/accessToken";
+import { getActiveClient } from "../../lib/ws/client/activeClient";
 import { useWsState } from "../../lib/ws/client/useWsState";
 import {
   connectionRegion,
@@ -34,6 +35,8 @@ const ticks = (view: ConnectionRegionView | null): boolean =>
   view?.state === "reconnecting" || view?.state === "long-outage";
 
 const signIn = (): void => accessToken.endSession();
+/** CMP-077 `Retry now`: the client refuses it after a 4403 and while a handshake is under way. */
+const retryNow = (): void => void getActiveClient()?.retryNow();
 
 /**
  * CMP-077's container (#306 slice 4b), the banner slot's first content (`ShellBanner`):
@@ -75,5 +78,12 @@ export function ConnectionRegionSlot(): JSX.Element | null {
     return () => clearInterval(id);
   }, [clocked]);
 
-  return view === null ? null : <ConnectionRegion view={view} onSignIn={signIn} />;
+  return view === null ? null : (
+    <ConnectionRegion
+      view={view}
+      onSignIn={signIn}
+      onRetryNow={retryNow}
+      retrying={ws.link.kind === "connecting"}
+    />
+  );
 }

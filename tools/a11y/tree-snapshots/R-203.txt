@@ -132,7 +132,7 @@
 - complementary "Side panels":
   - button "Notifications"
 - contentinfo:
-  - text: "Connection: offline"
+  - text: "Connection: reconnecting"
   - status "System status": "WS latency: unavailable"
   - text: "12:00:00 UTC Trading environment: Demo v0.1.0"
 - status

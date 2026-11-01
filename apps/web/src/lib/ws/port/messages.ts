@@ -71,6 +71,10 @@ export interface TokenMessage {
   readonly req: number;
   readonly result: TokenResult;
 }
+/** CMP-077 `Retry now` (#304): one handshake now in place of the backoff wait; the worker refuses it while one is under way, too soon after the last, or after a 4403. */
+export interface RetryMessage {
+  readonly t: "retry";
+}
 /** This tab is done: its consumers and panes go, and the last tab to leave closes the socket. */
 export interface StopMessage {
   readonly t: "stop";
@@ -89,6 +93,7 @@ export type ClientMessage =
   | FocusMessage
   | VisibilityMessage
   | TokenMessage
+  | RetryMessage
   | StopMessage
   | FaultMessage;
 
@@ -298,6 +303,7 @@ export function parseClientMessage(data: unknown): ClientMessage | undefined {
       const checked = parseTokenResult(result);
       return isNat(req) && checked !== undefined ? { t, req, result: checked } : undefined;
     }
+    case "retry":
     case "stop":
       return { t };
     case "fault": {

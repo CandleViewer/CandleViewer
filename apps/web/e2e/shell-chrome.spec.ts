@@ -118,3 +118,35 @@ for (const [name, appearance] of THEMES)
         blocking.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`),
       ).toEqual([]);
     });
+
+// #304 S10 (A11Y-F-0016, SC 1.4.10): at 320 CSS px the rail is collapsed by default, and expanded it
+// is an overlay over `main` (the drawer pattern), never a column: `main` keeps its width either way.
+test("E10-S01 reflow at 320 CSS px: the rail collapses, and expands over main", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await stubSession(page, { role: "owner" });
+  await page.goto("/journal");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  const toggle = rail(page).getByRole("button", { name: /navigation rail$/u });
+  const mainWidth = () => page.getByRole("main").evaluate((m) => m.getBoundingClientRect().width);
+  const scrolls = () =>
+    page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  const collapsed = await mainWidth();
+  expect(collapsed).toBeGreaterThanOrEqual(200);
+  expect(await scrolls()).toBe(false);
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(await mainWidth()).toBe(collapsed); // drawn over main, not beside it
+  expect(await scrolls()).toBe(false);
+  await page.keyboard.press("Escape");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toBeFocused();
+  // the stored choice is untouched: the overlay is this page's only
+  expect(await page.evaluate(() => localStorage.getItem("cv.shell.layout.v1"))).toBeNull();
+});

@@ -13,12 +13,24 @@ import { StatusBar } from "../../../src/features/app-shell/StatusBar";
 import { CLIENT_VERSION } from "../../../src/lib/ws/protocol/frames";
 import { resetShellState, setShellState } from "../../../src/shell/bootstrap/store.js";
 import { toLatencyIndicator } from "../../../src/lib/telemetry/latencyIndicator.js";
+import { reduce } from "../../../src/lib/ws/state/reducer";
+import type { WsState } from "../../../src/lib/ws/state/types";
+import { OFF, authOk, connecting, stream } from "../../lib/ws/support/engineEvents";
+import { fakeActiveClient, runEvents } from "../../lib/ws/support/fakeActiveClient";
 
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
   "axe-core",
 ) as { run: (el: Element, o?: object) => Promise<{ violations: { impact?: string | null }[] }> };
 
 const T0 = Date.UTC(2026, 9, 27, 13, 42, 5);
+const UP = runEvents(connecting, authOk(OFF), stream("live"));
+const LOST = { sinceMs: T0, lastDataMs: T0 - 12_000 };
+const RETRYING: WsState = reduce(UP, {
+  type: "reconnecting",
+  attempt: 2,
+  nextAttemptAtMs: T0 + 4_000,
+  lost: LOST,
+});
 const polite = (): HTMLElement => {
   const el = document.querySelector<HTMLElement>('[aria-live="polite"]');
   if (el === null) throw new Error("no polite region");
@@ -85,11 +97,14 @@ describe("createClockStore", () => {
 });
 
 describe("StatusBar (CMP-208) and its health chips (CMP-210)", () => {
+  let ws: ReturnType<typeof fakeActiveClient>;
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(T0);
+    ws = fakeActiveClient();
   });
   afterEach(() => {
+    ws.detach();
     act(() => {
       resetShellState();
       clearAnnouncements();
@@ -125,20 +140,24 @@ describe("StatusBar (CMP-208) and its health chips (CMP-210)", () => {
     expect(chip("latency").dataset["tone"]).toBe("none");
     expect(chip("latency").querySelector("svg")).not.toBeNull(); // the neutral info glyph
     const cases = [
-      [{ kind: "live" }, "live", "ok"],
-      [{ kind: "reconnecting", attempt: 2, nextAttemptAtMs: T0 }, "reconnecting", "error"],
-      [{ kind: "offline", cause: "offline" }, "offline", "error"],
+      [UP, "live", "ok"],
+      [RETRYING, "reconnecting", "error"],
+      [
+        reduce(UP, { type: "offline", cause: "fatal", closeCode: 1002, lost: LOST }),
+        "offline",
+        "error",
+      ],
     ] as const;
-    for (const [connection, word, tone] of cases) {
-      act(() => setShellState({ connection }));
+    for (const [state, word, tone] of cases) {
+      ws.go(state);
       expect(screen.getByText(`Connection: ${word}`)).toBeInTheDocument();
       expect(chip("connection").dataset["tone"]).toBe(tone);
       expect(chip("connection").querySelector("svg")).not.toBeNull();
     }
     for (const [ms, name, tone] of [
       [38, "WS latency: ok, 38 ms", "ok"],
-      [140, "WS latency: degraded, 140 ms", "warn"],
-      [300, "WS latency: breach, 300 ms", "error"],
+      [140, "WS latency: slow, 140 ms", "warn"],
+      [300, "WS latency: over budget, 300 ms", "error"],
     ] as const) {
       act(() => setShellState({ latency: toLatencyIndicator(ms) }));
       // the verbatim D03 §10.2 name in browse mode, outside the live region
@@ -151,7 +170,8 @@ describe("StatusBar (CMP-208) and its health chips (CMP-210)", () => {
 
   it("keeps the System status region's text still on value-only updates, changed on a transition", () => {
     mount();
-    act(() => setShellState({ connection: { kind: "live" }, latency: toLatencyIndicator(38) }));
+    ws.go(UP);
+    act(() => setShellState({ latency: toLatencyIndicator(38) }));
     const region = screen.getByRole("status", { name: "System status" });
     const before = region.textContent;
     expect(before).toBe("WS latency: ok");
@@ -165,22 +185,47 @@ describe("StatusBar (CMP-208) and its health chips (CMP-210)", () => {
     expect(screen.getByText("WS latency: ok, 44 ms")).toBeInTheDocument();
     expect(region.contains(screen.getByText(/UTC$/))).toBe(false);
     act(() => setShellState({ latency: toLatencyIndicator(150) }));
-    expect(region.textContent).toBe("WS latency: degraded");
+    expect(region.textContent).toBe("WS latency: slow");
     expect(polite()).toBeEmptyDOMElement(); // the region speaks for itself, not the announcer
   });
 
   it("leaves the System status region's text unchanged on a connection transition (no double voice)", () => {
     mount();
-    act(() => setShellState({ connection: { kind: "live" }, latency: toLatencyIndicator(38) }));
+    ws.go(UP);
+    act(() => setShellState({ latency: toLatencyIndicator(38) }));
     const region = screen.getByRole("status", { name: "System status" });
     expect(chip("connection")).toHaveTextContent("Connection: live");
-    act(() =>
-      setShellState({ connection: { kind: "reconnecting", attempt: 1, nextAttemptAtMs: T0 } }),
-    );
+    ws.go(RETRYING);
     expect(chip("connection")).toHaveTextContent("Connection: reconnecting");
     expect(region.textContent).toBe("WS latency: ok");
     expect(region.contains(chip("connection"))).toBe(false);
     expect(chip("connection").closest("[aria-live], [role=status], [role=alert]")).toBeNull();
+  });
+
+  it("reads reconnecting during a shell-cause outage with a retry running (E04-D02-F09)", () => {
+    mount();
+    for (const cause of ["offline", "tailnet_unreachable", "backend_unreachable"] as const) {
+      ws.go(reduce(UP, { type: "offline", cause, lost: LOST }));
+      expect(chip("connection")).toHaveTextContent("Connection: reconnecting");
+    }
+    ws.go(reduce(UP, { type: "offline", cause: "fatal", closeCode: 4403, lost: LOST }));
+    expect(chip("connection")).toHaveTextContent("Connection: offline");
+  });
+
+  it('maps every latency state to its display word, never "degraded" (E04-D02-F25)', () => {
+    mount();
+    const region = screen.getByRole("status", { name: "System status" });
+    for (const [ms, word] of [
+      [null, "unavailable"],
+      [38, "ok"],
+      [100, "slow"],
+      [249, "slow"],
+      [250, "over budget"],
+    ] as const) {
+      act(() => setShellState({ latency: toLatencyIndicator(ms) }));
+      expect(region.textContent).toBe(`WS latency: ${word}`);
+    }
+    expect(document.body.textContent).not.toMatch(/degraded|breach/);
   });
 
   it("repeats the environment in words, never a defaulted Demo, and shows the build version", () => {
@@ -200,13 +245,8 @@ describe("StatusBar (CMP-208) and its health chips (CMP-210)", () => {
 
   it("has no serious or critical axe violations", async () => {
     mount();
-    act(() =>
-      setShellState({
-        connection: { kind: "live" },
-        latency: toLatencyIndicator(300),
-        environment: "demo",
-      }),
-    );
+    ws.go(UP);
+    act(() => setShellState({ latency: toLatencyIndicator(300), environment: "demo" }));
     vi.useRealTimers(); // axe schedules with real timers
     const { violations } = await axe.run(document.body);
     expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual([]);

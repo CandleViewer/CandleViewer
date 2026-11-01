@@ -12,12 +12,13 @@ import {
   ShellAnnouncer,
 } from "../../../src/features/app-shell/announcer";
 import { ShellConnectionSlot } from "../../../src/features/app-shell/slots";
-import {
-  resetShellState,
-  setShellState,
-  type ConnectionState,
-} from "../../../src/shell/bootstrap/store.js";
+import { resetShellState, setShellState } from "../../../src/shell/bootstrap/store.js";
 import { toLatencyIndicator } from "../../../src/lib/telemetry/latencyIndicator.js";
+import { reduce } from "../../../src/lib/ws/state/reducer";
+import type { EngineEvent, WsState } from "../../../src/lib/ws/state/types";
+import { appThemeStore } from "../../../src/shell/bootstrap/themeStore";
+import { OFF, authOk, connecting, stream } from "../../lib/ws/support/engineEvents";
+import { fakeActiveClient, runEvents } from "../../lib/ws/support/fakeActiveClient";
 
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
   "axe-core",
@@ -28,7 +29,6 @@ const seriousAxe = async (el: Element): Promise<unknown[]> =>
   (await axe.run(el, { rules: { "color-contrast": { enabled: false } } })).violations.filter(
     (v) => v.impact === "serious" || v.impact === "critical",
   );
-const go = (connection: ConnectionState): void => act(() => setShellState({ connection }));
 const region = (live: "assertive" | "polite"): HTMLElement => {
   const el = document.querySelector<HTMLElement>(`[aria-live="${live}"]`);
   if (el === null) throw new Error(`no ${live} region`);
@@ -110,48 +110,120 @@ describe("the shell announcer", () => {
 });
 
 describe("ShellConnectionSlot: the container", () => {
+  let ws: ReturnType<typeof fakeActiveClient>;
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(T0);
+    ws = fakeActiveClient();
   });
   afterEach(() => {
-    act(() => resetShellState());
+    ws.detach();
+    act(() => {
+      resetShellState();
+      appThemeStore().setMotionOverride("system");
+    });
     vi.useRealTimers();
   });
 
-  it("announces nothing itself: §11 rows 1 and 14 are CMP-077's (#306 slice 4b)", async () => {
+  const LOST = { sinceMs: T0, lastDataMs: T0 - 12_000 };
+  const UP = runEvents(connecting, authOk(OFF), stream("live"));
+  const drop = (event: EngineEvent): WsState => reduce(UP, event);
+  const mount = () =>
     render(
       <>
         <ShellConnectionSlot />
         <ShellAnnouncer />
       </>,
     );
+
+  it("announces nothing itself: §11 rows 1 and 14 are CMP-077's (#306 slice 4b)", async () => {
+    mount();
     expect(screen.getByRole("button", { name: /^Connection: Connecting…/ })).toBeInTheDocument();
-    act(() => setShellState({ connection: { kind: "live" }, latency: toLatencyIndicator(42) }));
+    ws.go(UP);
+    act(() => setShellState({ latency: toLatencyIndicator(42) }));
     expect(screen.getByRole("button", { name: "Connection: Live 42 ms" })).toBeInTheDocument();
-    go({ kind: "reconnecting", attempt: 1, nextAttemptAtMs: T0 + 1000 });
-    go({ kind: "connecting" });
-    go({ kind: "offline", cause: "backend_unreachable" });
-    go({ kind: "reconnecting", attempt: 2, nextAttemptAtMs: T0 + 3000 });
+    ws.go(drop({ type: "reconnecting", attempt: 1, nextAttemptAtMs: T0 + 1000, lost: LOST }));
+    ws.go(reduce(ws.current(), connecting));
+    ws.go(reduce(ws.current(), { type: "offline", cause: "backend_unreachable" }));
+    ws.go(reduce(ws.current(), { type: "reconnecting", attempt: 2, nextAttemptAtMs: T0 + 3000 }));
     for (let s = 0; s < 12; s += 1) {
       act(() => {
         setShellState({ latency: toLatencyIndicator(40 + s) });
         vi.advanceTimersByTime(1000);
       });
     }
+    // the age runs from the real last data (`outage.lastDataMs`), 12 s before the drop
     expect(
       screen.getByRole("button", {
-        name: "Connection: Reconnecting (2), last data 00:12 ago, 13:42:05 UTC",
+        name: "Connection: Reconnecting (2), last data 00:24 ago, 13:41:53 UTC",
       }),
-    ).toBeInTheDocument();
-    go({ kind: "live" });
-    go({ kind: "offline", cause: "tailnet_unreachable" });
-    expect(
-      screen.getByRole("button", { name: /^Connection: Reconnecting, last data 00:00 ago/ }),
     ).toBeInTheDocument();
     expect(region("assertive")).toBeEmptyDOMElement();
     expect(region("polite")).toBeEmptyDOMElement();
     vi.useRealTimers(); // axe schedules with real timers
     expect(await seriousAxe(document.body)).toEqual([]);
+  });
+
+  it("reads Reconnecting during a shell-cause outage (a retry is running)", () => {
+    mount();
+    ws.go(drop({ type: "offline", cause: "tailnet_unreachable", lost: LOST }));
+    expect(
+      screen.getByRole("button", { name: /^Connection: Reconnecting, last data 00:12 ago/ }),
+    ).toBeInTheDocument();
+  });
+
+  it.each([1002, 4403])(
+    "fatal %i reads Offline — retry stopped, never Reconnecting (E04-D02-F08)",
+    async (closeCode) => {
+      mount();
+      ws.go(drop({ type: "offline", cause: "fatal", closeCode, lost: LOST }));
+      const chip = screen.getByRole("button", {
+        name: "Connection: Offline — retry stopped, last data 00:12 ago, 13:41:53 UTC",
+      });
+      expect(chip).toHaveAttribute("data-status", "offline");
+      expect(screen.queryByRole("button", { name: /Reconnecting/ })).toBeNull();
+      vi.useRealTimers();
+      expect(await seriousAxe(document.body)).toEqual([]);
+    },
+  );
+
+  it("carries the CMP-039 focus ring on a native, focusable button (E04-D02-F12)", () => {
+    mount();
+    const chip = screen.getByRole("button", { name: /^Connection:/ });
+    expect(chip).toHaveClass("cv-focus-ring");
+    expect(chip.tagName).toBe("BUTTON");
+    act(() => chip.focus());
+    expect(chip).toHaveFocus();
+  });
+
+  it("cross-fades the content once per status change, and draws it at once under reduce (F37)", () => {
+    mount();
+    const fade = (): HTMLElement => {
+      const el = document.querySelector<HTMLElement>("[data-fade]");
+      if (el === null) throw new Error("no fade wrapper");
+      return el;
+    };
+    // a manual requestAnimationFrame: `frame()` runs what was asked for, as the display would
+    const asked: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      asked.push(cb);
+      return asked.length;
+    });
+    const frame = (): void => act(() => asked.splice(0).forEach((cb) => cb(0)));
+    try {
+      expect(fade().style.opacity).toBe("1"); // the first render does not fade
+      ws.go(UP);
+      expect(fade().style.opacity).toBe("0");
+      expect(fade().style.transition).toBe("none");
+      frame();
+      expect(fade().style.opacity).toBe("1");
+      expect(fade().style.transition).toMatch(/^opacity var\(--motion-duration-normal\)/);
+      act(() => appThemeStore().setMotionOverride("on"));
+      ws.go(drop({ type: "reconnecting", attempt: 1, nextAttemptAtMs: T0 + 1000, lost: LOST }));
+      expect(fade().style.transition).toBe("none");
+      expect(fade().style.opacity).toBe("");
+    } finally {
+      raf.mockRestore(); // before the fake timers are uninstalled
+    }
   });
 });
