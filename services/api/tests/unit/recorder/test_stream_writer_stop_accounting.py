@@ -17,9 +17,24 @@ from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from candleviewer.recorder.wal import WalRecord, read_frames
-from candleviewer.recorder.writer import StreamWriter, _join_thread
-from tests.unit.recorder._writer_helpers import T0, FakeSink, make_writer, trade
+from candleviewer.recorder.writer import (
+    RecorderWalAbandonedError,
+    StreamWriter,
+    WriterConfig,
+    _join_thread,
+)
+from candleviewer.settings import STOP_SLACK_S
+from tests.unit.recorder._writer_helpers import (
+    T0,
+    FakeEvents,
+    FakeSink,
+    FakeStore,
+    make_writer,
+    trade,
+)
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
@@ -134,38 +149,122 @@ async def test_stop_mid_replay_ends_the_lane_loop(tmp_path: Path) -> None:
     assert not sink.rows("trades")  # cancelled before its write: replayed next start
 
 
-async def test_stop_gives_up_on_a_hung_wal_append_and_covers_its_rows(tmp_path: Path) -> None:
-    """A cancelled append whose thread never returns (a hung fsync) holds stop() for at most
-    `wal_join_timeout_s`: its rows go under one gap, a critical event says so, stop() ends."""
-    w, sink, store, events, clock = await make_writer(tmp_path, wal_join_timeout_s=0.05)
-    lane = w._lanes["trades"]
-    entered, release = threading.Event(), threading.Event()
+class _HungAppend:
+    """A WAL append whose thread does not return while the test asserts (a hung fsync)."""
 
-    def hung_append(records: list[WalRecord]) -> int:
-        entered.set()
-        release.wait(30)  # never set while the test asserts: a thread that does not finish
+    def __init__(self) -> None:
+        self.calls = 0
+        self.entered, self.release = threading.Event(), threading.Event()
+
+    def __call__(self, records: list[WalRecord]) -> int:
+        self.calls += 1
+        self.entered.set()
+        self.release.wait(30)
         return len(records)
 
+
+async def _hang_an_append(
+    tmp_path: Path,
+) -> tuple[StreamWriter, FakeStore, FakeEvents, _HungAppend]:
+    """Three trades spilled by a failing flush, a lane step stuck in their WAL append."""
+    w, sink, store, events, clock = await make_writer(tmp_path, wal_join_timeout_s=0.05)
+    hung = _HungAppend()
     # mypy forbids assigning to a method; the test swaps the WAL's thread body for a hung one
-    lane.wal.append = hung_append  # type: ignore[method-assign]
+    w._lanes["trades"].wal.append = hung  # type: ignore[method-assign]
     sink.down.add("*")
     for i in range(3):
         await w.on_trade(trade(i))
     clock.advance(0.2)
     w._spawn(w.pump("trades"), "recorder-lane-trades")  # a lane step, owned as start() owns it
+    await asyncio.to_thread(hung.entered.wait, 5)
+    return w, store, events, hung
+
+
+def _covers(gap: dict[str, object], first: int, last: int) -> bool:
+    start, end = gap["start"], gap["end"]
+    assert isinstance(start, datetime) and isinstance(end, datetime)
+    return start <= _EPOCH + timedelta(microseconds=T0 + first) and end >= _EPOCH + timedelta(
+        microseconds=T0 + last
+    )
+
+
+async def test_stop_gives_up_on_a_hung_wal_append_and_covers_its_rows(tmp_path: Path) -> None:
+    """A cancelled append whose thread never returns holds stop() for at most
+    `wal_join_timeout_s`: its rows go under one gap, one critical event says so, stop() ends.
+    They are not counted as dropped: some may have reached the WAL and be replayed."""
+    w, store, events, hung = await _hang_an_append(tmp_path)
+    try:
+        async with asyncio.timeout(5):
+            await w.stop()
+        assert not w._tasks and w._lanes["trades"].wal_abandoned
+        kinds = [e.kind for e in events.events]
+        assert kinds.count("recorder_wal_append_unresolved") == 1  # one, however many symbols
+        (gap,) = store.gaps  # one window over rows 0..2, persisted by stop()
+        assert _covers(gap, 0, 2) and gap["cause"] == "backpressure_drop"
+        assert _dropped(store.counters) == 0
+    finally:
+        hung.release.set()  # let the thread go, so the loop's executor can shut down
+
+
+async def test_no_second_append_starts_beside_an_abandoned_one(tmp_path: Path) -> None:
+    """Rows spilled after the hang reach stop()'s drain while the abandoned thread may still be
+    in `wal.append` (the WAL file and budget are not thread-safe): no second append starts,
+    they are dropped with a count under the gap, and every later WAL step is refused."""
+    w, store, _, hung = await _hang_an_append(tmp_path)
+    try:
+        for i in range(3, 5):  # the lane is spilling: these wait in the spill buffer
+            await w.on_trade(trade(i))
+        async with asyncio.timeout(5):
+            await w.stop()
+        assert hung.calls == 1
+        assert _dropped(store.counters) == 2  # rows 3-4: surely not in the WAL
+        (gap,) = store.gaps
+        assert _covers(gap, 0, 4)
+        lane = w._lanes["trades"]
+        with pytest.raises(RecorderWalAbandonedError):
+            await w._wal_call(lane, lane.wal.has_data)
+    finally:
+        hung.release.set()
+
+
+async def test_stop_gives_up_on_a_stuck_replay_merge_without_closing_it(tmp_path: Path) -> None:
+    """The merge thread never leaves the iterator: stop() ends after `wal_join_timeout_s`, the
+    iterator is left unclosed (closing it under the thread would raise) and the lane is marked."""
+    w, _, _, _, clock = await make_writer(tmp_path, max_queue_rows=1, wal_join_timeout_s=0.05)
+    for i in range(3):
+        await w.on_trade(trade(i))
+    lane = w._lanes["trades"]
+    entered, release = threading.Event(), threading.Event()
+    merge = lane.wal.iter_replay
+
+    def stuck_merge() -> Generator[tuple[int, WalRecord]]:
+        for item in merge():
+            entered.set()
+            release.wait(30)
+            yield item
+
+    # mypy forbids assigning to a method; the test swaps the merge for one that never returns
+    lane.wal.iter_replay = stuck_merge  # type: ignore[method-assign]
+    clock.advance(5.0)
+    w._spawn(w._lane_loop("trades"), "recorder-lane-trades")
     try:
         await asyncio.to_thread(entered.wait, 5)
         async with asyncio.timeout(5):
             await w.stop()
-        assert not w._tasks
-        assert "recorder_wal_append_unresolved" in [e.kind for e in events.events]
-        (gap,) = store.gaps  # one window over all three rows, persisted by stop()
-        assert gap["start"] == _EPOCH + timedelta(microseconds=T0)  # rows 0..2 at T0+0..2
-        end = gap["end"]
-        assert isinstance(end, datetime) and end >= _EPOCH + timedelta(microseconds=T0 + 2)
-        assert gap["cause"] == "backpressure_drop"
+        assert not w._tasks and lane.wal_abandoned and lane.wal.has_data()
     finally:
-        release.set()  # let the thread go, so the loop's executor can shut down
+        release.set()
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf")])
+def test_wal_join_timeout_must_be_finite_and_positive(tmp_path: Path, bad: float) -> None:
+    with pytest.raises(ValueError, match="wal_join_timeout_s"):
+        WriterConfig(wal_dir=tmp_path, env="demo", wal_join_timeout_s=bad)
+
+
+def test_wal_join_timeout_default_fits_the_stop_slack(tmp_path: Path) -> None:
+    """Paid at most once past the runtime's cut of the writer step (runtime.py `stop`)."""
+    assert 0 < WriterConfig(wal_dir=tmp_path, env="demo").wal_join_timeout_s < STOP_SLACK_S
 
 
 async def test_join_thread_stops_waiting_on_a_second_cancellation() -> None:
