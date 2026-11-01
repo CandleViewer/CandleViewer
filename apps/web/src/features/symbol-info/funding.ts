@@ -132,7 +132,7 @@ export function fundingState(input: FundingInput): FundingState {
     text: (warn ? copy.settlesIn : copy.nextIn)(clockText(remaining), at),
     warn,
     mark,
-    spoken: `Next funding in ${spokenAbout(remaining)}, at ${at} UTC`,
+    spoken: copy.fundingSpokenName(spokenAbout(remaining), at),
   };
 }
 

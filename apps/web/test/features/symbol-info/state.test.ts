@@ -31,6 +31,12 @@ const detail = (patch: Partial<Detail> = {}): Detail => ({
 const ok = (patch: Partial<Detail> = {}): DetailOutcome => ({ kind: "ok", detail: detail(patch) });
 
 describe("contractPhase", () => {
+  it("words a malformed 200 as the can't-reach line, with no reference", () => {
+    expect(
+      contractPhase("BTCUSDT", { kind: "failed", failure: { cause: "malformed" } }),
+    ).toMatchObject({ cause: "CandleViewer can't reach its server.", reference: null });
+  });
+
   it("is 'Checking Bybit' before an answer and the ladder's sentence while it waits", () => {
     expect(contractPhase("BTCUSDT", null)).toEqual({
       kind: "loading",
@@ -177,6 +183,7 @@ const live = (patch: Partial<LiveInput> = {}): LiveInput => ({
   feedDown: false,
   hasItem: true,
   lastDataMs: NOW - 1_000,
+  awaitingSinceMs: null,
   nowMs: NOW,
   serverStale: null,
   itemStale: false,
@@ -265,14 +272,34 @@ describe("liveState", () => {
   });
 
   it("awaits the first tick, saying so only after 5 s", () => {
-    expect(liveState(live({ hasItem: false, lastDataMs: null }))).toEqual({
+    const waiting = { hasItem: false, lastDataMs: null };
+    expect(liveState(live({ ...waiting, awaitingSinceMs: null }))).toEqual({
       kind: "awaiting",
       text: null,
     });
-    expect(liveState(live({ hasItem: false, lastDataMs: NOW - 6_000 }))).toEqual({
+    expect(liveState(live({ ...waiting, awaitingSinceMs: NOW - 4_999 }))).toEqual({
+      kind: "awaiting",
+      text: null,
+    });
+    expect(liveState(live({ ...waiting, awaitingSinceMs: NOW - 5_000 }))).toEqual({
       kind: "awaiting",
       text: "No live values yet",
     });
+  });
+
+  it("shows an item flagged stale with no time of its own without an age, never 'Stale 5s'", () => {
+    expect(liveState(live({ itemStale: true, lastDataMs: null }))).toEqual({
+      kind: "stale_t1",
+      marker: "Live values stale.",
+      lastUpdate: null,
+      announce: "Live values stale.",
+    });
+  });
+
+  it("lets the exchange feed down outrank a bootstrap-only band's T1", () => {
+    expect(
+      liveState(live({ bootstrapOnly: true, feedDown: true, lastDataMs: NOW - 120_000 })),
+    ).toMatchObject({ kind: "feed_down", marker: "Stale — exchange feed down" });
   });
 
   it("words not trading and a disconnect with no data", () => {
@@ -298,5 +325,8 @@ describe("liveTransition", () => {
     expect(liveTransition("stale_t1", current)).toBe("Live values current.");
     expect(liveTransition("stale_t2", current)).toBe("Live values current.");
     expect(liveTransition(null, current)).toBeNull();
+    // A drawer whose first state is already stale announces it once (there was no earlier state).
+    expect(liveTransition(null, t1)).toBe("Live values stale.");
+    expect(liveTransition(null, t2)).toBeNull();
   });
 });
