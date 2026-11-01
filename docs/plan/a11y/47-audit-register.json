@@ -5,15 +5,9 @@
     "auditedSha": "a6ec967627b74737c6b462691cab8262a7176877",
     "inputs": {
       "docs/plan/14-screens-catalogue.md": "c3ad20c64a90a7b534e0f45f7a854ef64c5f08ce",
-      "docs/plan/a11y/findings.json": "55fb95f3a45dab6950924fcb0c47c5c20cad6081"
+      "docs/plan/a11y/findings.json": "df0f8c793cba786f9a54df82de25776f5b789677"
     },
-    "reviews": [
-      "E09-D10",
-      "E08-D12",
-      "E32-D07",
-      "E12-D11",
-      "E14-D10"
-    ],
+    "reviews": ["E09-D10", "E08-D12", "E32-D07", "E12-D11", "E14-D10"],
     "citedReviews": [
       {
         "key": "E15-D15",
@@ -124,18 +118,18 @@
       "no findings at sha": 10,
       "not auditable at sha": 109
     },
-    "findings": 121,
-    "fixed": 16,
-    "open": 105,
+    "findings": 125,
+    "fixed": 19,
+    "open": 106,
     "bySeverity": {
       "blocker": 4,
       "major": 26,
-      "minor": 63,
+      "minor": 64,
       "info": 12
     },
     "bySource": {
       "E47-D02 G-T2 pass": 2,
-      "E47-T01 register": 30,
+      "E47-T01 register": 34,
       "review E08-D12": 8,
       "review E09-D10": 50,
       "review E12-D11": 7,
@@ -144,7 +138,7 @@
     },
     "byOwner": {
       "E47-D03": 16,
-      "E47-D04": 15,
+      "E47-D04": 16,
       "E47-D05": 2,
       "E47-D06": 5,
       "E47-D07": 34,
@@ -405,7 +399,7 @@
       "coverage": "partial",
       "evidence": "axe pass in dark, light, high-contrast; keyboard pass",
       "verdict": "findings",
-      "verdictReason": "1 open finding(s); 1 T01 finding(s) fixed since the audit",
+      "verdictReason": "2 open finding(s); 2 T01 finding(s) fixed since the audit",
       "auditor": "agent-run (E47-D02 lane)",
       "date": "2026-10-31",
       "surface": "chrome",
@@ -415,10 +409,7 @@
         "checked": 0,
         "unchecked": 5
       },
-      "findings": [
-        "A11Y-F-0022",
-        "A11Y-F-0023"
-      ],
+      "findings": ["A11Y-F-0022", "A11Y-F-0023", "A11Y-F-0034", "A11Y-F-0035"],
       "t01Owner": "E10-S01 #304"
     },
     {
@@ -428,7 +419,7 @@
       "coverage": "covered",
       "evidence": "axe pass in dark, light, high-contrast; keyboard pass",
       "verdict": "no findings at sha",
-      "verdictReason": "covered; 1 T01 finding(s) fixed since the audit",
+      "verdictReason": "covered; 2 T01 finding(s) fixed since the audit",
       "auditor": "agent-run (E47-D02 lane)",
       "date": "2026-10-31",
       "surface": "chrome",
@@ -438,9 +429,7 @@
         "checked": 0,
         "unchecked": 4
       },
-      "findings": [
-        "A11Y-F-0031"
-      ],
+      "findings": ["A11Y-F-0031", "A11Y-F-0032"],
       "t01Owner": "E10-S01 #304"
     },
     {
@@ -470,7 +459,7 @@
       "coverage": "covered",
       "evidence": "axe pass in dark, light, high-contrast; keyboard pass",
       "verdict": "no findings at sha",
-      "verdictReason": "covered; 2 T01 finding(s) fixed since the audit",
+      "verdictReason": "covered; 3 T01 finding(s) fixed since the audit",
       "auditor": "agent-run (E47-D02 lane)",
       "date": "2026-10-31",
       "surface": "chrome",
@@ -480,10 +469,7 @@
         "checked": 0,
         "unchecked": 5
       },
-      "findings": [
-        "A11Y-F-0026",
-        "A11Y-F-0030"
-      ],
+      "findings": ["A11Y-F-0026", "A11Y-F-0030", "A11Y-F-0033"],
       "t01Owner": "E39-S05 #1012"
     },
     {
@@ -523,9 +509,7 @@
         "checked": 0,
         "unchecked": 5
       },
-      "findings": [
-        "A11Y-F-0028"
-      ],
+      "findings": ["A11Y-F-0028"],
       "t01Owner": "E10-S01 #304"
     },
     {
@@ -565,11 +549,7 @@
         "checked": 0,
         "unchecked": 5
       },
-      "findings": [
-        "A11Y-F-0005",
-        "A11Y-F-0025",
-        "A11Y-R-E09-D10-F-2"
-      ],
+      "findings": ["A11Y-F-0005", "A11Y-F-0025", "A11Y-R-E09-D10-F-2"],
       "t01Owner": "E09-S05 #232"
     },
     {
@@ -589,10 +569,7 @@
         "checked": 0,
         "unchecked": 5
       },
-      "findings": [
-        "A11Y-F-0016",
-        "A11Y-F-0027"
-      ],
+      "findings": ["A11Y-F-0016", "A11Y-F-0027"],
       "t01Owner": "E09-S06 #233"
     },
     {
@@ -612,10 +589,7 @@
         "checked": 0,
         "unchecked": 4
       },
-      "findings": [
-        "A11Y-F-0016",
-        "A11Y-F-0018"
-      ],
+      "findings": ["A11Y-F-0016", "A11Y-F-0018"],
       "t01Owner": "E09-S06 #233"
     },
     {
@@ -1089,10 +1063,7 @@
         "checked": 5,
         "unchecked": 0
       },
-      "findings": [
-        "A11Y-R-E08-D12-F-04",
-        "A11Y-R-E08-D12-F-07"
-      ],
+      "findings": ["A11Y-R-E08-D12-F-04", "A11Y-R-E08-D12-F-07"],
       "t01Owner": "E08-S09 #4703"
     },
     {
@@ -1172,9 +1143,7 @@
         "checked": 1,
         "unchecked": 4
       },
-      "findings": [
-        "A11Y-R-E12-D11-F-02"
-      ],
+      "findings": ["A11Y-R-E12-D11-F-02"],
       "t01Owner": "E11-S14 #521"
     },
     {
@@ -1234,9 +1203,7 @@
         "checked": 4,
         "unchecked": 1
       },
-      "findings": [
-        "A11Y-R-E12-D11-F-06"
-      ],
+      "findings": ["A11Y-R-E12-D11-F-06"],
       "t01Owner": "E11-S02 #334"
     },
     {
@@ -2313,9 +2280,7 @@
         "checked": 0,
         "unchecked": 9
       },
-      "findings": [
-        "A11Y-R-E08-D12-F-01"
-      ],
+      "findings": ["A11Y-R-E08-D12-F-01"],
       "t01Owner": "E08-S08 #4702"
     },
     {
@@ -2355,10 +2320,7 @@
         "checked": 6,
         "unchecked": 0
       },
-      "findings": [
-        "A11Y-R-E08-D12-F-04",
-        "A11Y-R-E08-D12-F-07"
-      ],
+      "findings": ["A11Y-R-E08-D12-F-04", "A11Y-R-E08-D12-F-07"],
       "t01Owner": "E08-S09 #4703"
     },
     {
@@ -2631,9 +2593,7 @@
         "checked": 0,
         "unchecked": 6
       },
-      "findings": [
-        "A11Y-F-0018"
-      ],
+      "findings": ["A11Y-F-0018"],
       "t01Owner": "E05-S04 #267"
     },
     {
@@ -2653,10 +2613,7 @@
         "checked": 0,
         "unchecked": 5
       },
-      "findings": [
-        "A11Y-F-0016",
-        "A11Y-F-0018"
-      ],
+      "findings": ["A11Y-F-0016", "A11Y-F-0018"],
       "t01Owner": "E11-S04 #385"
     },
     {
@@ -2776,11 +2733,7 @@
         "checked": 0,
         "unchecked": 6
       },
-      "findings": [
-        "A11Y-F-0016",
-        "A11Y-F-0025",
-        "A11Y-F-0029"
-      ],
+      "findings": ["A11Y-F-0016", "A11Y-F-0025", "A11Y-F-0029"],
       "t01Owner": "E42-S02 #1023"
     },
     {
@@ -3359,12 +3312,7 @@
         "checked": 0,
         "unchecked": 6
       },
-      "findings": [
-        "A11Y-F-0015",
-        "A11Y-F-0019",
-        "A11Y-F-0024",
-        "A11Y-R-E08-D12-F-08"
-      ],
+      "findings": ["A11Y-F-0015", "A11Y-F-0019", "A11Y-F-0024", "A11Y-R-E08-D12-F-08"],
       "t01Owner": "E29-S07 #1028"
     },
     {
@@ -3384,11 +3332,7 @@
         "checked": 0,
         "unchecked": 6
       },
-      "findings": [
-        "A11Y-F-0019",
-        "A11Y-F-0020",
-        "A11Y-F-0021"
-      ],
+      "findings": ["A11Y-F-0019", "A11Y-F-0020", "A11Y-F-0021"],
       "t01Owner": "E15-S08 #561"
     },
     {
@@ -3408,9 +3352,7 @@
         "checked": 0,
         "unchecked": 5
       },
-      "findings": [
-        "A11Y-R-E09-D10-F-23"
-      ],
+      "findings": ["A11Y-R-E09-D10-F-23"],
       "t01Owner": "E10-S04 #306"
     },
     {
@@ -3430,9 +3372,7 @@
         "checked": 0,
         "unchecked": 4
       },
-      "findings": [
-        "A11Y-F-0025"
-      ],
+      "findings": ["A11Y-F-0025"],
       "t01Owner": "E10-S04 #306"
     },
     {
@@ -3452,9 +3392,7 @@
         "checked": 0,
         "unchecked": 6
       },
-      "findings": [
-        "A11Y-F-0016"
-      ],
+      "findings": ["A11Y-F-0016"],
       "t01Owner": "E10-S04 #306"
     },
     {
@@ -3514,9 +3452,7 @@
         "checked": 0,
         "unchecked": 5
       },
-      "findings": [
-        "A11Y-F-0025"
-      ],
+      "findings": ["A11Y-F-0025"],
       "t01Owner": "E10-S04 #306"
     }
   ],
@@ -3526,12 +3462,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0001",
-      "screens": [
-        "SCR-001"
-      ],
-      "sc": [
-        "2.4.3"
-      ],
+      "screens": ["SCR-001"],
+      "sc": ["2.4.3"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "minor",
@@ -3553,12 +3485,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0002",
-      "screens": [
-        "SCR-001"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-001"],
+      "sc": ["4.1.3"],
       "level": "AA",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -3580,13 +3508,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0003",
-      "screens": [
-        "SCR-001",
-        "SCR-004"
-      ],
-      "sc": [
-        "4.1.2"
-      ],
+      "screens": ["SCR-001", "SCR-004"],
+      "sc": ["4.1.2"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "minor",
@@ -3608,12 +3531,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0004",
-      "screens": [
-        "SCR-002"
-      ],
-      "sc": [
-        "2.4.3"
-      ],
+      "screens": ["SCR-002"],
+      "sc": ["2.4.3"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "minor",
@@ -3635,13 +3554,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0005",
-      "screens": [
-        "SCR-003",
-        "SCR-017"
-      ],
-      "sc": [
-        "2.4.3"
-      ],
+      "screens": ["SCR-003", "SCR-017"],
+      "sc": ["2.4.3"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -3663,12 +3577,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0006",
-      "screens": [
-        "SCR-004"
-      ],
-      "sc": [
-        "4.1.2"
-      ],
+      "screens": ["SCR-004"],
+      "sc": ["4.1.2"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -3690,12 +3600,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0007",
-      "screens": [
-        "SCR-004"
-      ],
-      "sc": [
-        "2.4.3"
-      ],
+      "screens": ["SCR-004"],
+      "sc": ["2.4.3"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "minor",
@@ -3717,12 +3623,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0008",
-      "screens": [
-        "SCR-005"
-      ],
-      "sc": [
-        "1.4.10"
-      ],
+      "screens": ["SCR-005"],
+      "sc": ["1.4.10"],
       "level": "AA",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -3744,12 +3646,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0009",
-      "screens": [
-        "SCR-006"
-      ],
-      "sc": [
-        "1.4.10"
-      ],
+      "screens": ["SCR-006"],
+      "sc": ["1.4.10"],
       "level": "AA",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -3771,12 +3669,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0010",
-      "screens": [
-        "SCR-006"
-      ],
-      "sc": [
-        "2.2.1"
-      ],
+      "screens": ["SCR-006"],
+      "sc": ["2.2.1"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -3798,12 +3692,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0011",
-      "screens": [
-        "SCR-006"
-      ],
-      "sc": [
-        "3.3.1"
-      ],
+      "screens": ["SCR-006"],
+      "sc": ["3.3.1"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -3825,12 +3715,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0012",
-      "screens": [
-        "SCR-006"
-      ],
-      "sc": [
-        "3.3.1"
-      ],
+      "screens": ["SCR-006"],
+      "sc": ["3.3.1"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -3852,12 +3738,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0013",
-      "screens": [
-        "SCR-006"
-      ],
-      "sc": [
-        "2.4.3"
-      ],
+      "screens": ["SCR-006"],
+      "sc": ["2.4.3"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "minor",
@@ -3879,12 +3761,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0014",
-      "screens": [
-        "SCR-006"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-006"],
+      "sc": ["4.1.3"],
       "level": "AA",
       "severity": "minor",
       "sourceSeverity": "minor",
@@ -3906,12 +3784,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0015",
-      "screens": [
-        "SCR-152"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-152"],
+      "sc": ["4.1.3"],
       "level": "AA",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -3933,17 +3807,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0016",
-      "screens": [
-        "SCR-156",
-        "SCR-018",
-        "SCR-019",
-        "SCR-112",
-        "SCR-117",
-        "SCR-123"
-      ],
-      "sc": [
-        "1.4.10"
-      ],
+      "screens": ["SCR-156", "SCR-018", "SCR-019", "SCR-112", "SCR-117", "SCR-123"],
+      "sc": ["1.4.10"],
       "level": "AA",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -3965,14 +3830,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0018",
-      "screens": [
-        "SCR-116",
-        "SCR-117",
-        "SCR-019"
-      ],
-      "sc": [
-        "1.4.3"
-      ],
+      "screens": ["SCR-116", "SCR-117", "SCR-019"],
+      "sc": ["1.4.3"],
       "level": "AA",
       "severity": "major",
       "sourceSeverity": "serious",
@@ -3994,13 +3853,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0019",
-      "screens": [
-        "SCR-153",
-        "SCR-152"
-      ],
-      "sc": [
-        "1.4.3"
-      ],
+      "screens": ["SCR-153", "SCR-152"],
+      "sc": ["1.4.3"],
       "level": "AA",
       "severity": "major",
       "sourceSeverity": "serious",
@@ -4022,12 +3876,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0020",
-      "screens": [
-        "SCR-153"
-      ],
-      "sc": [
-        "1.4.3"
-      ],
+      "screens": ["SCR-153"],
+      "sc": ["1.4.3"],
       "level": "AA",
       "severity": "major",
       "sourceSeverity": "serious",
@@ -4049,12 +3899,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0021",
-      "screens": [
-        "SCR-153"
-      ],
-      "sc": [
-        "1.4.3"
-      ],
+      "screens": ["SCR-153"],
+      "sc": ["1.4.3"],
       "level": "AA",
       "severity": "major",
       "sourceSeverity": "serious",
@@ -4076,12 +3922,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0022",
-      "screens": [
-        "SCR-010"
-      ],
-      "sc": [
-        "1.4.11"
-      ],
+      "screens": ["SCR-010"],
+      "sc": ["1.4.11"],
       "level": "AA",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -4103,12 +3945,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0023",
-      "screens": [
-        "SCR-010"
-      ],
-      "sc": [
-        "1.4.11"
-      ],
+      "screens": ["SCR-010"],
+      "sc": ["1.4.11"],
       "level": "AA",
       "severity": "minor",
       "sourceSeverity": "minor",
@@ -4130,12 +3968,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0024",
-      "screens": [
-        "SCR-152"
-      ],
-      "sc": [
-        "1.4.1"
-      ],
+      "screens": ["SCR-152"],
+      "sc": ["1.4.1"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "minor",
@@ -4157,18 +3991,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0025",
-      "screens": [
-        "SCR-112",
-        "SCR-123",
-        "SCR-004",
-        "SCR-003",
-        "SCR-017",
-        "SCR-155",
-        "SCR-159"
-      ],
-      "sc": [
-        "2.4.2"
-      ],
+      "screens": ["SCR-112", "SCR-123", "SCR-004", "SCR-003", "SCR-017", "SCR-155", "SCR-159"],
+      "sc": ["2.4.2"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -4190,12 +4014,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0026",
-      "screens": [
-        "SCR-013"
-      ],
-      "sc": [
-        "2.4.3"
-      ],
+      "screens": ["SCR-013"],
+      "sc": ["2.4.3"],
       "level": "A",
       "severity": "major",
       "sourceSeverity": "serious",
@@ -4217,12 +4037,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0027",
-      "screens": [
-        "SCR-018"
-      ],
-      "sc": [
-        "2.4.3"
-      ],
+      "screens": ["SCR-018"],
+      "sc": ["2.4.3"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -4244,12 +4060,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0028",
-      "screens": [
-        "SCR-015"
-      ],
-      "sc": [
-        "2.2.1"
-      ],
+      "screens": ["SCR-015"],
+      "sc": ["2.2.1"],
       "level": "A",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -4271,13 +4083,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0029",
-      "screens": [
-        "SCR-112",
-        "SCR-123"
-      ],
-      "sc": [
-        "2.4.5"
-      ],
+      "screens": ["SCR-112", "SCR-123"],
+      "sc": ["2.4.5"],
       "level": "AA",
       "severity": "minor",
       "sourceSeverity": "minor",
@@ -4299,12 +4106,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0030",
-      "screens": [
-        "SCR-013"
-      ],
-      "sc": [
-        "1.4.3"
-      ],
+      "screens": ["SCR-013"],
+      "sc": ["1.4.3"],
       "level": "AA",
       "severity": "major",
       "sourceSeverity": "serious",
@@ -4326,12 +4129,8 @@
       "screenSource": "T01 register",
       "source": "E47-T01 register",
       "sourceId": "A11Y-F-0031",
-      "screens": [
-        "SCR-011"
-      ],
-      "sc": [
-        "1.4.13"
-      ],
+      "screens": ["SCR-011"],
+      "sc": ["1.4.13"],
       "level": "AA",
       "severity": "minor",
       "sourceSeverity": "moderate",
@@ -4349,17 +4148,104 @@
       "vehicle": ""
     },
     {
+      "id": "A11Y-F-0032",
+      "screenSource": "T01 register",
+      "source": "E47-T01 register",
+      "sourceId": "A11Y-F-0032",
+      "screens": ["SCR-011"],
+      "sc": ["2.4.7"],
+      "level": "AA",
+      "severity": "minor",
+      "sourceSeverity": "moderate",
+      "class": null,
+      "pattern": null,
+      "title": "Rail links showed the browser's default focus ring, not the CMP-039 token ring",
+      "remedy": "2.4.7 and the product's CMP-039 contract: every interactive element carries the 2 px solid color.focus.ring (at least 3:1 against the surface behind it); inset where the rail frame clips overflow.",
+      "remediation": "E10-Q03 #302",
+      "status": "fixed",
+      "designOwner": "E47-D04",
+      "ownerReason": "focus order and visibility criteria",
+      "surface": "chrome",
+      "scReason": "",
+      "remedyNote": "",
+      "vehicle": ""
+    },
+    {
+      "id": "A11Y-F-0033",
+      "screenSource": "T01 register",
+      "source": "E47-T01 register",
+      "sourceId": "A11Y-F-0033",
+      "screens": ["SCR-013"],
+      "sc": ["2.4.7"],
+      "level": "AA",
+      "severity": "minor",
+      "sourceSeverity": "moderate",
+      "class": null,
+      "pattern": null,
+      "title": "The cheatsheet's Close button showed the browser's default focus ring, not the CMP-039 token ring",
+      "remedy": "2.4.7 and the CMP-039 contract: the 2 px solid color.focus.ring on every focusable control of the overlay.",
+      "remediation": "E10-Q03 #302",
+      "status": "fixed",
+      "designOwner": "E47-D04",
+      "ownerReason": "focus order and visibility criteria",
+      "surface": "chrome",
+      "scReason": "",
+      "remedyNote": "",
+      "vehicle": ""
+    },
+    {
+      "id": "A11Y-F-0034",
+      "screenSource": "T01 register",
+      "source": "E47-T01 register",
+      "sourceId": "A11Y-F-0034",
+      "screens": ["SCR-010"],
+      "sc": ["1.4.10"],
+      "level": "AA",
+      "severity": "major",
+      "sourceSeverity": "serious",
+      "class": null,
+      "pattern": null,
+      "title": "At 320 x 256 the shell body had no height: rail, workspace and drawer were 0 px tall and unreachable",
+      "remedy": "1.4.10: at 320 CSS px wide the content is reachable without two-dimensional scrolling; the frame grows with its content at the reflow breakpoint and the page scrolls vertically.",
+      "remediation": "E10-Q03 #302",
+      "status": "fixed",
+      "designOwner": "E47-D04",
+      "ownerReason": "reflow at 320 CSS px belongs with the layout and landmark model",
+      "surface": "chrome",
+      "scReason": "",
+      "remedyNote": "",
+      "vehicle": ""
+    },
+    {
+      "id": "A11Y-F-0035",
+      "screenSource": "T01 register",
+      "source": "E47-T01 register",
+      "sourceId": "A11Y-F-0035",
+      "screens": ["SCR-010"],
+      "sc": ["1.4.10"],
+      "level": "AA",
+      "severity": "minor",
+      "sourceSeverity": "minor",
+      "class": null,
+      "pattern": null,
+      "title": "The 100vh shell frame sits inside the browser's default 8 px body margin: the main screen gets a page scrollbar",
+      "remedy": "The frame fills the viewport with no page-level scroll: `body { margin: 0 }` in the global theme CSS (packages/ui, outside E10-Q03; an app-wide 8 px shift may move VR baselines).",
+      "remediation": "E10-Q03 #302",
+      "status": "open",
+      "designOwner": "E47-D04",
+      "ownerReason": "reflow at 320 CSS px belongs with the layout and landmark model",
+      "surface": "chrome",
+      "scReason": "",
+      "remedyNote": "",
+      "vehicle": ""
+    },
+    {
       "id": "A11Y-R-E09-D10-F-1",
       "screenSource": "routing attribution: E09-D10 finding row L536 (cites D03:131, :157-158) within the §2 inventory L167 range for SCR-002 (D03:129-151)",
       "source": "review E09-D10",
       "sourceId": "F-1",
-      "screens": [
-        "SCR-002"
-      ],
-      "sc": [
-        "4.1.2",
-        "2.5.3"
-      ],
+      "screens": ["SCR-002"],
+      "sc": ["4.1.2", "2.5.3"],
       "clause": "6.5; 4.1.2; 2.5.3",
       "level": "A",
       "severity": "blocker",
@@ -4382,13 +4268,8 @@
       "screenSource": "routing attribution: E09-D10 §6.2 T-28 L341 (SCR-003 any step) and §8.1 TL-3 L418 (SCR-003, SCR-017 step 3)",
       "source": "review E09-D10",
       "sourceId": "F-2",
-      "screens": [
-        "SCR-003",
-        "SCR-017"
-      ],
-      "sc": [
-        "2.2.1"
-      ],
+      "screens": ["SCR-003", "SCR-017"],
+      "sc": ["2.2.1"],
       "clause": "2.2.1; AC6",
       "level": "A",
       "severity": "blocker",
@@ -4411,12 +4292,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-3",
-      "screens": [
-        "SCR-001"
-      ],
-      "sc": [
-        "2.4.3"
-      ],
+      "screens": ["SCR-001"],
+      "sc": ["2.4.3"],
       "clause": "3.4.3; 2.4.3",
       "level": "A",
       "severity": "major",
@@ -4439,12 +4316,8 @@
       "screenSource": "routing attribution: E09-D10 §6.2 T-4 L317 (SCR-001 submitting, rate-limited)",
       "source": "review E09-D10",
       "sourceId": "F-4",
-      "screens": [
-        "SCR-001"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-001"],
+      "sc": ["4.1.3"],
       "clause": "6.2a; 4.1.3",
       "level": "AA",
       "severity": "major",
@@ -4467,12 +4340,8 @@
       "screenSource": "routing attribution: E09-D10 §8.1 TL-6 L421 (the admin token, SCR-149)",
       "source": "review E09-D10",
       "sourceId": "F-5",
-      "screens": [
-        "SCR-149"
-      ],
-      "sc": [
-        "2.2.1"
-      ],
+      "screens": ["SCR-149"],
+      "sc": ["2.2.1"],
       "clause": "2.2.1",
       "level": "A",
       "severity": "major",
@@ -4495,12 +4364,8 @@
       "screenSource": "routing attribution: E09-D10 §6.2 T-7 L320 (SCR-001 unreachable, Retry)",
       "source": "review E09-D10",
       "sourceId": "F-6",
-      "screens": [
-        "SCR-001"
-      ],
-      "sc": [
-        "2.4.3"
-      ],
+      "screens": ["SCR-001"],
+      "sc": ["2.4.3"],
       "clause": "3.4.3; 2.4.3",
       "level": "A",
       "severity": "major",
@@ -4523,12 +4388,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-7",
-      "screens": [
-        "SCR-149"
-      ],
-      "sc": [
-        "2.4.3"
-      ],
+      "screens": ["SCR-149"],
+      "sc": ["2.4.3"],
       "clause": "3.4.3; 2.4.3",
       "level": "A",
       "severity": "major",
@@ -4551,12 +4412,8 @@
       "screenSource": "routing attribution: E09-D10 §6.2 T-15 L328 (recovery-code entry, a code accepted) with §2 L167 (recovery-code entry is on SCR-002)",
       "source": "review E09-D10",
       "sourceId": "F-8",
-      "screens": [
-        "SCR-002"
-      ],
-      "sc": [
-        "1.4.1"
-      ],
+      "screens": ["SCR-002"],
+      "sc": ["1.4.1"],
       "clause": "4.4; 1.4.1",
       "level": "A",
       "severity": "major",
@@ -4579,13 +4436,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-9",
-      "screens": [
-        "SCR-002",
-        "SCR-003"
-      ],
-      "sc": [
-        "1.4.11"
-      ],
+      "screens": ["SCR-002", "SCR-003"],
+      "sc": ["1.4.11"],
       "clause": "5.2; 1.4.11",
       "level": "AA",
       "severity": "major",
@@ -4608,12 +4460,8 @@
       "screenSource": "routing attribution: E09-D10 §9.2 P-8, P-9 L468-469 (D04's error line, the owner-reset banner) with §2 L168 (D04 is SCR-003)",
       "source": "review E09-D10",
       "sourceId": "F-10",
-      "screens": [
-        "SCR-003"
-      ],
-      "sc": [
-        "1.4.3"
-      ],
+      "screens": ["SCR-003"],
+      "sc": ["1.4.3"],
       "clause": "5.1; 1.4.3",
       "level": "AA",
       "severity": "major",
@@ -4636,12 +4484,8 @@
       "screenSource": "routing attribution: E09-D10 §9.2 P-10, P-11 L470-471 (the codes banner, the remaining count) with §2 L168 (D04 is SCR-003)",
       "source": "review E09-D10",
       "sourceId": "F-11",
-      "screens": [
-        "SCR-003"
-      ],
-      "sc": [
-        "1.4.3"
-      ],
+      "screens": ["SCR-003"],
+      "sc": ["1.4.3"],
       "clause": "5.1; 1.4.3",
       "level": "AA",
       "severity": "major",
@@ -4664,9 +4508,7 @@
       "screenSource": "routing attribution: E09-D10 §9.2 P-14 L474 (the recovery and back links) with §6.2 T-13, T-14 L326-327 (those links are on SCR-002)",
       "source": "review E09-D10",
       "sourceId": "F-12",
-      "screens": [
-        "SCR-002"
-      ],
+      "screens": ["SCR-002"],
       "sc": [],
       "clause": "5.6",
       "level": null,
@@ -4690,12 +4532,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-13",
-      "screens": [
-        "SCR-006"
-      ],
-      "sc": [
-        "3.3.1"
-      ],
+      "screens": ["SCR-006"],
+      "sc": ["3.3.1"],
       "clause": "3.3.1",
       "level": "A",
       "severity": "minor",
@@ -4718,12 +4556,8 @@
       "screenSource": "routing attribution: E09-D10 §11.1 L521 (\"or code\" on SCR-005's password-only card) and §6.2 T-45 L358",
       "source": "review E09-D10",
       "sourceId": "F-14",
-      "screens": [
-        "SCR-005"
-      ],
-      "sc": [
-        "3.3.1"
-      ],
+      "screens": ["SCR-005"],
+      "sc": ["3.3.1"],
       "clause": "3.3.1",
       "level": "A",
       "severity": "minor",
@@ -4746,12 +4580,8 @@
       "screenSource": "routing attribution: E09-D10 §2 L168 (D04:69-171 is SCR-003; the cited D04:83-85 lies inside it)",
       "source": "review E09-D10",
       "sourceId": "F-15",
-      "screens": [
-        "SCR-003"
-      ],
-      "sc": [
-        "4.1.2"
-      ],
+      "screens": ["SCR-003"],
+      "sc": ["4.1.2"],
       "clause": "4.1.2",
       "level": "A",
       "severity": "minor",
@@ -4774,12 +4604,8 @@
       "screenSource": "routing attribution: E09-D10 §6.2 T-81 L394 (SCR-001 idle, the reveal toggled)",
       "source": "review E09-D10",
       "sourceId": "F-16",
-      "screens": [
-        "SCR-001"
-      ],
-      "sc": [
-        "4.1.2"
-      ],
+      "screens": ["SCR-001"],
+      "sc": ["4.1.2"],
       "clause": "4.1.2",
       "level": "A",
       "severity": "minor",
@@ -4802,9 +4628,7 @@
       "screenSource": "routing attribution: E09-D10 §1.2 P2-27 L85 and F-51 L586 (SCR-112's two-factor section, D04:166-168) with §2 L142",
       "source": "review E09-D10",
       "sourceId": "F-17",
-      "screens": [
-        "SCR-112"
-      ],
+      "screens": ["SCR-112"],
       "sc": [],
       "clause": "14:0.5.5",
       "level": null,
@@ -4828,12 +4652,8 @@
       "screenSource": "routing attribution: E09-D10 §6.2 T-5 L318 (SCR-001 rate-limited, the countdown reaches zero)",
       "source": "review E09-D10",
       "sourceId": "F-18",
-      "screens": [
-        "SCR-001"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-001"],
+      "sc": ["4.1.3"],
       "clause": "6.2a; 4.1.3",
       "level": "AA",
       "severity": "major",
@@ -4856,10 +4676,7 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-19",
-      "screens": [
-        "SCR-001",
-        "SCR-002"
-      ],
+      "screens": ["SCR-001", "SCR-002"],
       "sc": [],
       "clause": "6.2b",
       "level": null,
@@ -4883,9 +4700,7 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-20",
-      "screens": [
-        "SCR-003"
-      ],
+      "screens": ["SCR-003"],
       "sc": [],
       "clause": "6.2b",
       "level": null,
@@ -4909,9 +4724,7 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-21",
-      "screens": [
-        "SCR-004"
-      ],
+      "screens": ["SCR-004"],
       "sc": [],
       "clause": "6.2b",
       "level": null,
@@ -4935,9 +4748,7 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-22",
-      "screens": [
-        "SCR-149"
-      ],
+      "screens": ["SCR-149"],
       "sc": [],
       "clause": "6.2b",
       "level": null,
@@ -4961,9 +4772,7 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-23",
-      "screens": [
-        "SCR-154"
-      ],
+      "screens": ["SCR-154"],
       "sc": [],
       "clause": "6.2b",
       "level": null,
@@ -4987,9 +4796,7 @@
       "screenSource": "routing attribution: E09-D10 §6.2 T-61 L374 (SCR-006 grace, expiry)",
       "source": "review E09-D10",
       "sourceId": "F-24",
-      "screens": [
-        "SCR-006"
-      ],
+      "screens": ["SCR-006"],
       "sc": [],
       "clause": "6.2b",
       "level": null,
@@ -5013,12 +4820,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-25",
-      "screens": [
-        "SCR-003"
-      ],
-      "sc": [
-        "1.1.1"
-      ],
+      "screens": ["SCR-003"],
+      "sc": ["1.1.1"],
       "clause": "1.1.1; AC6",
       "level": "A",
       "severity": "blocker",
@@ -5041,13 +4844,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-26",
-      "screens": [
-        "SCR-006"
-      ],
-      "sc": [
-        "4.1.2",
-        "2.5.3"
-      ],
+      "screens": ["SCR-006"],
+      "sc": ["4.1.2", "2.5.3"],
       "clause": "6.5; 4.1.2; 2.5.3",
       "level": "A",
       "severity": "blocker",
@@ -5070,13 +4868,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-27",
-      "screens": [
-        "SCR-001",
-        "SCR-002"
-      ],
-      "sc": [
-        "1.4.3"
-      ],
+      "screens": ["SCR-001", "SCR-002"],
+      "sc": ["1.4.3"],
       "clause": "5.1; 1.4.3",
       "level": "AA",
       "severity": "major",
@@ -5099,12 +4892,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-28",
-      "screens": [
-        "SCR-006"
-      ],
-      "sc": [
-        "1.4.3"
-      ],
+      "screens": ["SCR-006"],
+      "sc": ["1.4.3"],
       "clause": "5.1; 1.4.3",
       "level": "AA",
       "severity": "major",
@@ -5127,13 +4916,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-29",
-      "screens": [
-        "SCR-002"
-      ],
-      "sc": [
-        "3.3.2",
-        "1.3.1"
-      ],
+      "screens": ["SCR-002"],
+      "sc": ["3.3.2", "1.3.1"],
       "clause": "3.3.2; 1.3.1",
       "level": "A",
       "severity": "major",
@@ -5156,12 +4940,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-30",
-      "screens": [
-        "SCR-002"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-002"],
+      "sc": ["4.1.3"],
       "clause": "6.2a; 4.1.3",
       "level": "AA",
       "severity": "major",
@@ -5184,13 +4964,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-31",
-      "screens": [
-        "SCR-006",
-        "SCR-149"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-006", "SCR-149"],
+      "sc": ["4.1.3"],
       "clause": "6.2a; 4.1.3",
       "level": "AA",
       "severity": "major",
@@ -5213,12 +4988,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-32",
-      "screens": [
-        "SCR-006"
-      ],
-      "sc": [
-        "4.1.2"
-      ],
+      "screens": ["SCR-006"],
+      "sc": ["4.1.2"],
       "clause": "14:0.5.5; 4.1.2",
       "level": "A",
       "severity": "major",
@@ -5241,12 +5012,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-33",
-      "screens": [
-        "SCR-003"
-      ],
-      "sc": [
-        "2.4.3"
-      ],
+      "screens": ["SCR-003"],
+      "sc": ["2.4.3"],
       "clause": "2.4.3",
       "level": "A",
       "severity": "minor",
@@ -5269,13 +5036,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-34",
-      "screens": [
-        "SCR-001",
-        "SCR-002"
-      ],
-      "sc": [
-        "1.4.1"
-      ],
+      "screens": ["SCR-001", "SCR-002"],
+      "sc": ["1.4.1"],
       "clause": "4.4; 1.4.1",
       "level": "A",
       "severity": "major",
@@ -5298,12 +5060,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-35",
-      "screens": [
-        "SCR-001"
-      ],
-      "sc": [
-        "3.3.1"
-      ],
+      "screens": ["SCR-001"],
+      "sc": ["3.3.1"],
       "clause": "3.3.1",
       "level": "A",
       "severity": "minor",
@@ -5326,15 +5084,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-36",
-      "screens": [
-        "SCR-002",
-        "SCR-003",
-        "SCR-006",
-        "SCR-149"
-      ],
-      "sc": [
-        "3.2.4"
-      ],
+      "screens": ["SCR-002", "SCR-003", "SCR-006", "SCR-149"],
+      "sc": ["3.2.4"],
       "clause": "3.2.4",
       "level": "AA",
       "severity": "minor",
@@ -5357,12 +5108,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-37",
-      "screens": [
-        "SCR-002"
-      ],
-      "sc": [
-        "3.2.4"
-      ],
+      "screens": ["SCR-002"],
+      "sc": ["3.2.4"],
       "clause": "3.2.4; AC5",
       "level": "AA",
       "severity": "minor",
@@ -5385,13 +5132,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-38",
-      "screens": [
-        "SCR-001",
-        "SCR-002"
-      ],
-      "sc": [
-        "3.3.2"
-      ],
+      "screens": ["SCR-001", "SCR-002"],
+      "sc": ["3.3.2"],
       "clause": "3.3.2",
       "level": "A",
       "severity": "minor",
@@ -5414,13 +5156,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-39",
-      "screens": [
-        "SCR-005"
-      ],
-      "sc": [
-        "3.2.3",
-        "3.3.2"
-      ],
+      "screens": ["SCR-005"],
+      "sc": ["3.2.3", "3.3.2"],
       "clause": "3.2.3; 3.3.2",
       "level": "AA / A",
       "severity": "minor",
@@ -5443,12 +5180,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-40",
-      "screens": [
-        "SCR-005"
-      ],
-      "sc": [
-        "2.1.1"
-      ],
+      "screens": ["SCR-005"],
+      "sc": ["2.1.1"],
       "clause": "2.1.1",
       "level": "A",
       "severity": "minor",
@@ -5471,13 +5204,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-41",
-      "screens": [
-        "SCR-006"
-      ],
-      "sc": [
-        "3.3.2",
-        "3.3.8"
-      ],
+      "screens": ["SCR-006"],
+      "sc": ["3.3.2", "3.3.8"],
       "clause": "3.3.2; 3.3.8",
       "level": "A / AA",
       "severity": "minor",
@@ -5500,13 +5228,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-42",
-      "screens": [
-        "SCR-003"
-      ],
-      "sc": [
-        "2.4.6",
-        "1.3.1"
-      ],
+      "screens": ["SCR-003"],
+      "sc": ["2.4.6", "1.3.1"],
       "clause": "2.4.6; 1.3.1",
       "level": "AA / A",
       "severity": "minor",
@@ -5529,13 +5252,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-43",
-      "screens": [
-        "SCR-003"
-      ],
-      "sc": [
-        "1.3.1",
-        "1.4.1"
-      ],
+      "screens": ["SCR-003"],
+      "sc": ["1.3.1", "1.4.1"],
       "clause": "1.3.1; 1.4.1",
       "level": "A",
       "severity": "minor",
@@ -5558,12 +5276,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-44",
-      "screens": [
-        "SCR-002"
-      ],
-      "sc": [
-        "2.5.8"
-      ],
+      "screens": ["SCR-002"],
+      "sc": ["2.5.8"],
       "clause": "2.5.8",
       "level": "AA",
       "severity": "minor",
@@ -5586,12 +5300,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-45",
-      "screens": [
-        "SCR-003"
-      ],
-      "sc": [
-        "3.2.2"
-      ],
+      "screens": ["SCR-003"],
+      "sc": ["3.2.2"],
       "clause": "3.2.2",
       "level": "A",
       "severity": "minor",
@@ -5614,12 +5324,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-46",
-      "screens": [
-        "SCR-001"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-001"],
+      "sc": ["4.1.3"],
       "clause": "4.1.3",
       "level": "AA",
       "severity": "minor",
@@ -5642,9 +5348,7 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-47",
-      "screens": [
-        "SCR-003"
-      ],
+      "screens": ["SCR-003"],
       "sc": [],
       "clause": "AC5",
       "level": null,
@@ -5668,10 +5372,7 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-49",
-      "screens": [
-        "SCR-003",
-        "SCR-112"
-      ],
+      "screens": ["SCR-003", "SCR-112"],
       "sc": [],
       "clause": "3.1",
       "level": null,
@@ -5695,10 +5396,7 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-50",
-      "screens": [
-        "SCR-005",
-        "SCR-149"
-      ],
+      "screens": ["SCR-005", "SCR-149"],
       "sc": [],
       "clause": "3.1",
       "level": null,
@@ -5722,12 +5420,8 @@
       "screenSource": "row text",
       "source": "review E09-D10",
       "sourceId": "F-51",
-      "screens": [
-        "SCR-112"
-      ],
-      "sc": [
-        "1.4.10"
-      ],
+      "screens": ["SCR-112"],
+      "sc": ["1.4.10"],
       "clause": "1.4.10",
       "level": "AA",
       "severity": "info",
@@ -5750,9 +5444,7 @@
       "screenSource": "routing attribution: E08-D12 §2 inventory L133 and L153 (SCR-100 Watchlist panel, CMP-161 WatchlistRow; D07 is the watchlist) and §11 L522's own remediation rows E08-S08 (#4702)",
       "source": "review E08-D12",
       "sourceId": "F-01",
-      "screens": [
-        "SCR-100"
-      ],
+      "screens": ["SCR-100"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -5776,12 +5468,8 @@
       "screenSource": "row text",
       "source": "review E08-D12",
       "sourceId": "F-02",
-      "screens": [
-        "SCR-104"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-104"],
+      "sc": ["4.1.3"],
       "clause": "",
       "level": "AA",
       "severity": "minor",
@@ -5804,9 +5492,7 @@
       "screenSource": "row text",
       "source": "review E08-D12",
       "sourceId": "F-03",
-      "screens": [
-        "SCR-104"
-      ],
+      "screens": ["SCR-104"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -5830,10 +5516,7 @@
       "screenSource": "row text",
       "source": "review E08-D12",
       "sourceId": "F-04",
-      "screens": [
-        "SCR-041",
-        "SCR-102"
-      ],
+      "screens": ["SCR-041", "SCR-102"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -5857,9 +5540,7 @@
       "screenSource": "row text",
       "source": "review E08-D12",
       "sourceId": "F-05",
-      "screens": [
-        "SCR-104"
-      ],
+      "screens": ["SCR-104"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -5883,12 +5564,8 @@
       "screenSource": "row text",
       "source": "review E08-D12",
       "sourceId": "F-06",
-      "screens": [
-        "SCR-104"
-      ],
-      "sc": [
-        "1.3.1"
-      ],
+      "screens": ["SCR-104"],
+      "sc": ["1.3.1"],
       "clause": "",
       "level": "A",
       "severity": "minor",
@@ -5911,10 +5588,7 @@
       "screenSource": "row text",
       "source": "review E08-D12",
       "sourceId": "F-07",
-      "screens": [
-        "SCR-041",
-        "SCR-102"
-      ],
+      "screens": ["SCR-041", "SCR-102"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -5938,9 +5612,7 @@
       "screenSource": "routing attribution: E08-D12 §2 inventory L129 (SCR-152 Disconnected / reconnecting state) and §11 L529 (E17-D02:253, the Disconnected episode's alert)",
       "source": "review E08-D12",
       "sourceId": "F-08",
-      "screens": [
-        "SCR-152"
-      ],
+      "screens": ["SCR-152"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -5964,13 +5636,8 @@
       "screenSource": "row text",
       "source": "review E32-D07",
       "sourceId": "F-01",
-      "screens": [
-        "SCR-065"
-      ],
-      "sc": [
-        "1.3.1",
-        "4.1.2"
-      ],
+      "screens": ["SCR-065"],
+      "sc": ["1.3.1", "4.1.2"],
       "clause": "",
       "level": "A",
       "severity": "minor",
@@ -5993,13 +5660,8 @@
       "screenSource": "row text",
       "source": "review E32-D07",
       "sourceId": "F-02",
-      "screens": [
-        "SCR-065",
-        "SCR-069"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-065", "SCR-069"],
+      "sc": ["4.1.3"],
       "clause": "",
       "level": "AA",
       "severity": "minor",
@@ -6022,13 +5684,8 @@
       "screenSource": "row text",
       "source": "review E32-D07",
       "sourceId": "F-03",
-      "screens": [
-        "SCR-065",
-        "SCR-069"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-065", "SCR-069"],
+      "sc": ["4.1.3"],
       "clause": "",
       "level": "AA",
       "severity": "minor",
@@ -6051,14 +5708,8 @@
       "screenSource": "routing attribution: E32-D07 section 11 F-04 Screen cell 'all three' (the three screens of the review's title: SCR-064, SCR-065, SCR-069)",
       "source": "review E32-D07",
       "sourceId": "F-04",
-      "screens": [
-        "SCR-064",
-        "SCR-065",
-        "SCR-069"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-064", "SCR-065", "SCR-069"],
+      "sc": ["4.1.3"],
       "clause": "",
       "level": "AA",
       "severity": "minor",
@@ -6081,12 +5732,8 @@
       "screenSource": "row text",
       "source": "review E32-D07",
       "sourceId": "F-05",
-      "screens": [
-        "SCR-065"
-      ],
-      "sc": [
-        "1.3.1"
-      ],
+      "screens": ["SCR-065"],
+      "sc": ["1.3.1"],
       "clause": "",
       "level": "A",
       "severity": "minor",
@@ -6109,13 +5756,8 @@
       "screenSource": "row text",
       "source": "review E32-D07",
       "sourceId": "F-06",
-      "screens": [
-        "SCR-065"
-      ],
-      "sc": [
-        "1.4.4",
-        "1.4.10"
-      ],
+      "screens": ["SCR-065"],
+      "sc": ["1.4.4", "1.4.10"],
       "clause": "",
       "level": "AA",
       "severity": "minor",
@@ -6138,14 +5780,8 @@
       "screenSource": "routing attribution: E32-D07 section 11 F-07 Screen cell 'all three' (SCR-064, SCR-065, SCR-069)",
       "source": "review E32-D07",
       "sourceId": "F-07",
-      "screens": [
-        "SCR-064",
-        "SCR-065",
-        "SCR-069"
-      ],
-      "sc": [
-        "2.1.1"
-      ],
+      "screens": ["SCR-064", "SCR-065", "SCR-069"],
+      "sc": ["2.1.1"],
       "clause": "",
       "level": "A",
       "severity": "info",
@@ -6168,12 +5804,8 @@
       "screenSource": "row text",
       "source": "review E32-D07",
       "sourceId": "F-08",
-      "screens": [
-        "SCR-064"
-      ],
-      "sc": [
-        "2.5.7"
-      ],
+      "screens": ["SCR-064"],
+      "sc": ["2.5.7"],
       "clause": "",
       "level": "AA",
       "severity": "info",
@@ -6196,12 +5828,8 @@
       "screenSource": "row text",
       "source": "review E32-D07",
       "sourceId": "F-09",
-      "screens": [
-        "SCR-065"
-      ],
-      "sc": [
-        "1.4.11"
-      ],
+      "screens": ["SCR-065"],
+      "sc": ["1.4.11"],
       "clause": "",
       "level": "AA",
       "severity": "info",
@@ -6224,12 +5852,8 @@
       "screenSource": "row text",
       "source": "review E32-D07",
       "sourceId": "F-10",
-      "screens": [
-        "SCR-069"
-      ],
-      "sc": [
-        "4.1.3"
-      ],
+      "screens": ["SCR-069"],
+      "sc": ["4.1.3"],
       "clause": "",
       "level": "AA",
       "severity": "info",
@@ -6252,14 +5876,8 @@
       "screenSource": "routing attribution: E32-D07 section 11 F-11 Screen cell 'all three' (SCR-064, SCR-065, SCR-069)",
       "source": "review E32-D07",
       "sourceId": "F-11",
-      "screens": [
-        "SCR-064",
-        "SCR-065",
-        "SCR-069"
-      ],
-      "sc": [
-        "1.4.1"
-      ],
+      "screens": ["SCR-064", "SCR-065", "SCR-069"],
+      "sc": ["1.4.1"],
       "clause": "",
       "level": "A",
       "severity": "info",
@@ -6282,9 +5900,7 @@
       "screenSource": "routing attribution: E12-D11 §2 inventory L138 (SCR-030's sources include D02:282–296, the F-01 row's own cite D02:282–285) and the F-01 row L724",
       "source": "review E12-D11",
       "sourceId": "F-01",
-      "screens": [
-        "SCR-030"
-      ],
+      "screens": ["SCR-030"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6308,9 +5924,7 @@
       "screenSource": "row text",
       "source": "review E12-D11",
       "sourceId": "F-02",
-      "screens": [
-        "SCR-045"
-      ],
+      "screens": ["SCR-045"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6334,9 +5948,7 @@
       "screenSource": "routing attribution: E12-D11 §2 inventory L138 (D02:282–296 holds the cited D02:289) and the F-03 row L726",
       "source": "review E12-D11",
       "sourceId": "F-03",
-      "screens": [
-        "SCR-030"
-      ],
+      "screens": ["SCR-030"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6360,9 +5972,7 @@
       "screenSource": "routing attribution: E12-D11 §5 PP-05 L207 (the off-view edge tag, SCR-030, D08:301) and the F-04 row L727",
       "source": "review E12-D11",
       "sourceId": "F-04",
-      "screens": [
-        "SCR-030"
-      ],
+      "screens": ["SCR-030"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6386,9 +5996,7 @@
       "screenSource": "routing attribution: E12-D11 §2 inventory L138 (SCR-030: D06:344–360, D08:288–313, D02:282–296, 14:750–761; the F-05 row L728 cites D02:283, D08:294, D06:254, 14:755)",
       "source": "review E12-D11",
       "sourceId": "F-05",
-      "screens": [
-        "SCR-030"
-      ],
+      "screens": ["SCR-030"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6412,9 +6020,7 @@
       "screenSource": "row text",
       "source": "review E12-D11",
       "sourceId": "F-06",
-      "screens": [
-        "SCR-048"
-      ],
+      "screens": ["SCR-048"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6438,9 +6044,7 @@
       "screenSource": "routing attribution: E12-D11 §2 inventory L138 (SCR-030's accessible text and cursor region) and the F-09 row L732 (the bar's close under follow, E06-D03:105)",
       "source": "review E12-D11",
       "sourceId": "F-09",
-      "screens": [
-        "SCR-030"
-      ],
+      "screens": ["SCR-030"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6464,9 +6068,7 @@
       "screenSource": "routing attribution: E14-D10 §5 DR-01 L231 (SCR-037 canvas) and the F-01 row L851 (the drawing announcements, D02:388)",
       "source": "review E14-D10",
       "sourceId": "F-01",
-      "screens": [
-        "SCR-037"
-      ],
+      "screens": ["SCR-037"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6490,9 +6092,7 @@
       "screenSource": "routing attribution: E14-D10 §2 inventory L144 (SCR-036 drawings branch, D07:313–388) and DR-08 L238; the F-02 row L852 cites D07:299",
       "source": "review E14-D10",
       "sourceId": "F-02",
-      "screens": [
-        "SCR-036"
-      ],
+      "screens": ["SCR-036"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6516,9 +6116,7 @@
       "screenSource": "routing attribution: E14-D10 §2 inventory L140 (SCR-037 properties popover, D02:338–362) and DR-02 L232, DR-06 L236 (the anchor fields)",
       "source": "review E14-D10",
       "sourceId": "F-03",
-      "screens": [
-        "SCR-037"
-      ],
+      "screens": ["SCR-037"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6542,9 +6140,7 @@
       "screenSource": "routing attribution: E14-D10 DR-02 L232 and DR-03 L233 (the anchor surrogates, D02:314; SCR-037 canvas) with the F-04 row L854 (D02:325)",
       "source": "review E14-D10",
       "sourceId": "F-04",
-      "screens": [
-        "SCR-037"
-      ],
+      "screens": ["SCR-037"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6568,10 +6164,7 @@
       "screenSource": "routing attribution: E14-D10 §2 inventory L140 and L144: the F-05 row L855 cites the commit (D02:526, SCR-037) and the delete and its undo (D07:384, :317, SCR-036)",
       "source": "review E14-D10",
       "sourceId": "F-05",
-      "screens": [
-        "SCR-036",
-        "SCR-037"
-      ],
+      "screens": ["SCR-036", "SCR-037"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6595,10 +6188,7 @@
       "screenSource": "routing attribution: E14-D10 F-06 row L856: the canvas refusal (D02:533, SCR-037, DR-01 L231) against the tree's wording (D07:384, SCR-036, §2 L144)",
       "source": "review E14-D10",
       "sourceId": "F-06",
-      "screens": [
-        "SCR-036",
-        "SCR-037"
-      ],
+      "screens": ["SCR-036", "SCR-037"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6622,9 +6212,7 @@
       "screenSource": "routing attribution: E14-D10 DR-01 L231 (SCR-037 canvas) with the F-07 row L857 (T38 re-arm, D02:256, :420)",
       "source": "review E14-D10",
       "sourceId": "F-07",
-      "screens": [
-        "SCR-037"
-      ],
+      "screens": ["SCR-037"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6648,9 +6236,7 @@
       "screenSource": "routing attribution: E14-D10 §2 inventory L144 (SCR-036 drawings branch, D07:313–388) with the F-08 row L858 (D07:299, :317)",
       "source": "review E14-D10",
       "sourceId": "F-08",
-      "screens": [
-        "SCR-036"
-      ],
+      "screens": ["SCR-036"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6674,10 +6260,7 @@
       "screenSource": "routing attribution: E14-D10 DR-10 L240 (the measure ribbon, SCR-037 canvas) and §2 L144 (the tree, SCR-036): the F-09 row L859 compares the two",
       "source": "review E14-D10",
       "sourceId": "F-09",
-      "screens": [
-        "SCR-036",
-        "SCR-037"
-      ],
+      "screens": ["SCR-036", "SCR-037"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6701,9 +6284,7 @@
       "screenSource": "routing attribution: E14-D10 DR-05 L235 and DR-10 L240 (D05's drag alternatives, SCR-037 canvas, text only)",
       "source": "review E14-D10",
       "sourceId": "F-10",
-      "screens": [
-        "SCR-037"
-      ],
+      "screens": ["SCR-037"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6727,9 +6308,7 @@
       "screenSource": "routing attribution: E14-D10 DR-05 L235 and DR-10 L240 (D05's fib, VWAP and measure handles and ribbon, SCR-037 canvas)",
       "source": "review E14-D10",
       "sourceId": "F-11",
-      "screens": [
-        "SCR-037"
-      ],
+      "screens": ["SCR-037"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6753,9 +6332,7 @@
       "screenSource": "routing attribution: E14-D10 §2 inventory L139 (SCR-037 the rail, its overflow and the Draw menu) with the F-13 row L863 (fifteen rail tools, §3.1)",
       "source": "review E14-D10",
       "sourceId": "F-13",
-      "screens": [
-        "SCR-037"
-      ],
+      "screens": ["SCR-037"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6779,9 +6356,7 @@
       "screenSource": "routing attribution: E14-D10 §2 inventory L139 and DR-03 L233 (the handle targets on the SCR-037 canvas; D08:170 is the cited line)",
       "source": "review E14-D10",
       "sourceId": "F-17",
-      "screens": [
-        "SCR-037"
-      ],
+      "screens": ["SCR-037"],
       "sc": [],
       "clause": "",
       "level": null,
@@ -6805,9 +6380,7 @@
       "screenSource": "this audit's G-T2 pass",
       "source": "E47-D02 G-T2 pass",
       "sourceId": "A11Y-D02-T2-SCR-001",
-      "screens": [
-        "SCR-001"
-      ],
+      "screens": ["SCR-001"],
       "sc": [],
       "clause": "14:141; E09-D09 2.2 (T2) and 3.1",
       "level": null,
@@ -6831,9 +6404,7 @@
       "screenSource": "this audit's G-T2 pass",
       "source": "E47-D02 G-T2 pass",
       "sourceId": "A11Y-D02-T2-SCR-112",
-      "screens": [
-        "SCR-112"
-      ],
+      "screens": ["SCR-112"],
       "sc": [],
       "clause": "14:2389; E09-D09 2.2 (T2), 3.1 and 4",
       "level": null,
@@ -6860,9 +6431,7 @@
       "source": "review E09-D10",
       "sourceId": "F-48",
       "screens": [],
-      "sc": [
-        "4.1.3"
-      ],
+      "sc": ["4.1.3"],
       "clause": "AC5; 4.1.3",
       "level": "AA",
       "severity": "minor",
