@@ -160,17 +160,17 @@ IMG_PREFIX = IMG_DIR + "/E15-D12-"
 AS_BUILT = "### 11.1 As built (PR 3)"
 PAGE_NAME = "E15-D12 responsive and degraded"
 PAGE_ID = "b96edf38-8e58-8006-8008-e18400657fc2"
-BOARD_IDS = (
-    "b96edf38-8e58-8006-8008-e1874e027897",
-    "b96edf38-8e58-8006-8008-e1878a75b133",
-    "b96edf38-8e58-8006-8008-e1880fe5b572",
-    "b96edf38-8e58-8006-8008-e1883009165f",
-    "b96edf38-8e58-8006-8008-e18852911b81",
-    "b96edf38-8e58-8006-8008-e1887ed2a9ae",
-    "b96edf38-8e58-8006-8008-e188986b48a9",
-    "b96edf38-8e58-8006-8008-e188b02262a4",
-    "b96edf38-8e58-8006-8008-e188c949c9ad",
-    "b96edf38-8e58-8006-8008-e188ec1b59c0",
+BOARD_IDS = (  # r4
+    "b96edf38-8e58-8006-8008-e18e25e3c000",
+    "b96edf38-8e58-8006-8008-e18e517de620",
+    "b96edf38-8e58-8006-8008-e18eb8952a5b",
+    "b96edf38-8e58-8006-8008-e18ee0e3946a",
+    "b96edf38-8e58-8006-8008-e18f09c1947e",
+    "b96edf38-8e58-8006-8008-e18f374e673f",
+    "b96edf38-8e58-8006-8008-e18f546369a3",
+    "b96edf38-8e58-8006-8008-e18f73ded10b",
+    "b96edf38-8e58-8006-8008-e18f9325881b",
+    "b96edf38-8e58-8006-8008-e18fbdd67488",
 )
 BOARD_THEMES = {"dark": 8, "light": 2}  # BQ-19: eight dark, two light twins
 PUBLIC_IDS = frozenset((PAGE_ID, *BOARD_IDS))
