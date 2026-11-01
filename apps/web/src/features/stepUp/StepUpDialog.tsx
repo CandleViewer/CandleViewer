@@ -91,6 +91,9 @@ const FOCUSABLE = "input:not([disabled]), button:not([disabled])";
 const scrim: CSSProperties = {
   position: "fixed",
   inset: 0,
+  // A stacking level of its own: rendered inline inside a host dialog (a recorder confirm's notes), the scrim and the
+  // gate otherwise paint, and take the pointer, under the host's later footer (A-5347-01).
+  zIndex: 1,
   display: "grid",
   placeItems: "center",
   background: "var(--color-surface-overlay)",
