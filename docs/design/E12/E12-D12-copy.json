@@ -1,0 +1,1210 @@
+{
+  "pack": "E12-D12",
+  "version": "v1",
+  "base": "8bae585409",
+  "note": "The copy deck of the E12-D12 hand-off pack: every row of the five parents' decks (E12-D03 §5, E12-D04 §15, E12-D05 §12, E12-D07 §13, E12-D08 §11) under the id `<parent>:<row id>` (`#2` on an id the parent repeats), the String cell verbatim, the source row, the parent's own Where, Source, Status or Tag cell where it has one, and the owner: the parent ticket, which owns every PROPOSED string it wrote. Checked by docs/design/_tools/e12_d12_handoff_audit.py (G-DECK).",
+  "entries": {
+    "d03:C-1": {
+      "text": "One bar per clock interval.",
+      "source": "D03:186",
+      "owner": "E12-D03 (#201)",
+      "where": "Time header, after \"Time · \"",
+      "source_cell": "this spec"
+    },
+    "d03:C-2": {
+      "text": "Bars close on trade count, so busy periods make more bars.",
+      "source": "D03:187",
+      "owner": "E12-D03 (#201)",
+      "where": "Tick, line 2",
+      "source_cell": "`bars/activity_builders.py`"
+    },
+    "d03:C-3": {
+      "text": "Bars close on traded volume; one big trade can close several.",
+      "source": "D03:188",
+      "owner": "E12-D03 (#201)",
+      "where": "Volume, line 2",
+      "source_cell": "`bars/activity_builders.py`"
+    },
+    "d03:C-4": {
+      "text": "Bars close on a fixed high-low range; quiet markets add few.",
+      "source": "D03:189",
+      "owner": "E12-D03 (#201)",
+      "where": "Range, line 2",
+      "source_cell": "`bars/threshold_builders.py`"
+    },
+    "d03:C-5": {
+      "text": "Bars close once net buying or selling reaches the size.",
+      "source": "D03:190",
+      "owner": "E12-D03 (#201)",
+      "where": "Delta, line 2",
+      "source_cell": "`bars/threshold_builders.py`"
+    },
+    "d03:C-6": {
+      "text": "Equal bricks; reversals need two bricks, hiding small swings.",
+      "source": "D03:191",
+      "owner": "E12-D03 (#201)",
+      "where": "Renko, line 2",
+      "source_cell": "`bars/renko_builder.py`"
+    },
+    "d03:C-7": {
+      "text": "Enter 100 to 1,000,000 trades.",
+      "source": "D03:192",
+      "owner": "E12-D03 (#201)",
+      "where": "Tick message",
+      "source_cell": "D02 §4, commas (Q13)"
+    },
+    "d03:C-8": {
+      "text": "Whole {BTC} only in this release; at least {1} {BTC} per bar.",
+      "source": "D03:193",
+      "owner": "E12-D03 (#201)",
+      "where": "Volume message (floor or a fraction)",
+      "source_cell": "D02 §4"
+    },
+    "d03:C-9": {
+      "text": "Whole {BTC} only in this release; at least {1} {BTC} of delta per bar.",
+      "source": "D03:194",
+      "owner": "E12-D03 (#201)",
+      "where": "Delta message (floor or a fraction)",
+      "source_cell": "D02 §4"
+    },
+    "d03:C-10": {
+      "text": "Enter at most 1,000,000,000,000 {BTC}.",
+      "source": "D03:195",
+      "owner": "E12-D03 (#201)",
+      "where": "Volume and delta, over the ceiling",
+      "source_cell": "`bars/limits.py:70`"
+    },
+    "d03:C-11": {
+      "text": "Enter 2 to 100,000 ticks.",
+      "source": "D03:196",
+      "owner": "E12-D03 (#201)",
+      "where": "Range and Renko message",
+      "source_cell": "D02 §4"
+    },
+    "d03:C-12": {
+      "text": "ATR bricks are not available yet. Enter a brick size in ticks.",
+      "source": "D03:197",
+      "owner": "E12-D03 (#201)",
+      "where": "Renko, `atr:` typed",
+      "source_cell": "`bars/spec.py:60`, verbatim"
+    },
+    "d03:C-13": {
+      "text": "Use whole minutes or hours from 1m to 24h, for example 7m or 2h.",
+      "source": "D03:198",
+      "owner": "E12-D03 (#201)",
+      "where": "Custom, format or range",
+      "source_cell": "Q9"
+    },
+    "d03:C-14": {
+      "text": "Seconds and weekly intervals are not available yet.",
+      "source": "D03:199",
+      "owner": "E12-D03 (#201)",
+      "where": "Custom, seconds or weeks",
+      "source_cell": "Q9"
+    },
+    "d03:C-15": {
+      "text": "Estimating…",
+      "source": "D03:200",
+      "owner": "E12-D03 (#201)",
+      "where": "Estimate line",
+      "source_cell": "D02 §4"
+    },
+    "d03:C-16": {
+      "text": "Builds the last {3 days}: about {3.1 M} prints, about {30 s}. · Builds from {2026-10-19 08:00 UTC} (recording start): about {…}.",
+      "source": "D03:201",
+      "owner": "E12-D03 (#201)",
+      "where": "Estimate line",
+      "source_cell": "D02 §4, D-13"
+    },
+    "d03:C-17": {
+      "text": "Ready for the loaded window; no build needed.",
+      "source": "D03:202",
+      "owner": "E12-D03 (#201)",
+      "where": "Estimate line, already built",
+      "source_cell": "this spec (G-2 built status)"
+    },
+    "d03:C-18": {
+      "text": "Size not known yet",
+      "source": "D03:203",
+      "owner": "E12-D03 (#201)",
+      "where": "Estimate line, estimate failed",
+      "source_cell": "D02 D-2"
+    },
+    "d03:C-19": {
+      "text": "Too many bars for this setting; choose a larger size or a shorter window",
+      "source": "D03:204",
+      "owner": "E12-D03 (#201)",
+      "where": "Estimate line, tick or volume over 250,000 bars",
+      "source_cell": "D02 §4; ADR-0033 `:136` words it shorter, so E12-S12 ships one string"
+    },
+    "d03:C-20": {
+      "text": "May pass the 250,000-bar build limit",
+      "source": "D03:205",
+      "owner": "E12-D03 (#201)",
+      "where": "Estimate line, delta",
+      "source_cell": "D02 §4"
+    },
+    "d03:C-21": {
+      "text": "the strip's cause, verbatim (D02 `SCR-030/rebuild-refused`)",
+      "source": "D03:206",
+      "owner": "E12-D03 (#201)",
+      "where": "Estimate line, from `Change size…`",
+      "source_cell": "D02 §7"
+    },
+    "d03:C-22": {
+      "text": "Build of {75 BTC} cancelled at {40 %}; showing {50 BTC}.",
+      "source": "D03:207",
+      "owner": "E12-D03 (#201)",
+      "where": "Message line after a cancel (ⓘ)",
+      "source_cell": "D02 D-6"
+    },
+    "d03:C-23": {
+      "text": "A size this small can stop updating after one very large trade.",
+      "source": "D03:208",
+      "owner": "E12-D03 (#201)",
+      "where": "Message line, small size (⚠, PROPOSED)",
+      "source_cell": "CR-7; E12-D08 words it"
+    },
+    "d03:C-24": {
+      "text": "Needs recorded prints: none yet",
+      "source": "D03:209",
+      "owner": "E12-D03 (#201)",
+      "where": "Mode row reason",
+      "source_cell": "D02 §4; Q2; PROPOSED key `barmode.no_prints`"
+    },
+    "d03:C-25": {
+      "text": "Lot size not known yet",
+      "source": "D03:210",
+      "owner": "E12-D03 (#201)",
+      "where": "Volume and Delta reason",
+      "source_cell": "`bars/spec.py:184-190`; PROPOSED key `barmode.lot_unknown`"
+    },
+    "d03:C-26": {
+      "text": "Not available yet",
+      "source": "D03:211",
+      "owner": "E12-D03 (#201)",
+      "where": "Favourite slot reason",
+      "source_cell": "`bars/builder_set.py:149`"
+    },
+    "d03:C-27": {
+      "text": "Recorded prints since {2026-10-19 08:00 UTC} · {3 days} (minutes, hours or days, the largest whole unit)",
+      "source": "D03:212",
+      "owner": "E12-D03 (#201)",
+      "where": "Depth line",
+      "source_cell": "Q1"
+    },
+    "d03:C-28": {
+      "text": "No recorded prints for {ETHFIUSDT} yet",
+      "source": "D03:213",
+      "owner": "E12-D03 (#201)",
+      "where": "Depth line, none",
+      "source_cell": "Q1"
+    },
+    "d03:C-29": {
+      "text": "Checking recorded prints…",
+      "source": "D03:214",
+      "owner": "E12-D03 (#201)",
+      "where": "Depth line, not known yet",
+      "source_cell": "this spec"
+    },
+    "d03:C-30": {
+      "text": "Needs a build · \"Needs a build: about {3.1 M} prints, about {30 s}\"",
+      "source": "D03:215",
+      "owner": "E12-D03 (#201)",
+      "where": "Row tag; its description",
+      "source_cell": "D02 D-2"
+    },
+    "d03:C-31": {
+      "text": "About · \"About bar modes\"",
+      "source": "D03:216",
+      "owner": "E12-D03 (#201)",
+      "where": "Disclosure item and heading",
+      "source_cell": "D02 §4 \"(i)\""
+    },
+    "d03:C-32": {
+      "text": "These modes build bars from the trades CandleViewer records for this symbol. A bar closes on activity, not on the clock, so the x-axis shows bar order, not time.",
+      "source": "D03:217",
+      "owner": "E12-D03 (#201)",
+      "where": "Disclosure body",
+      "source_cell": "D01 §3; D02 D-8"
+    },
+    "d03:C-33": {
+      "text": "Bars start where recording started, {2026-10-19 08:00 UTC}. A new mode or size may need a build; its size and time show before you commit.",
+      "source": "D03:218",
+      "owner": "E12-D03 (#201)",
+      "where": "Disclosure, with prints",
+      "source_cell": "D02 D-13"
+    },
+    "d03:C-34": {
+      "text": "{ETHFIUSDT} has no recorded prints yet, so these modes are off for it. Then the recorder line of SCR-047, verbatim: \"Recording starts automatically in {0:42}\" / \"Recording has not started: the {20}-symbol limit is reached\" / \"Recording has not started: the disk is nearly full\"; with auto-record off, E08-D05 §6.5's \"Not recorded — opening a chart does not record it.\"",
+      "source": "D03:219",
+      "owner": "E12-D03 (#201)",
+      "where": "Disclosure, no prints",
+      "source_cell": "D02 §8; E08-D05 §6.5"
+    },
+    "d03:C-35": {
+      "text": "Recording settings for {ETHFIUSDT}…",
+      "source": "D03:220",
+      "owner": "E12-D03 (#201)",
+      "where": "Route (holders of `recording:write`)",
+      "source_cell": "Q11"
+    },
+    "d03:C-36": {
+      "text": "Your role can't start recording. (the chooser gives \"Only the owner can start recording.\" if no non-owner role holds `recording:write`)",
+      "source": "D03:221",
+      "owner": "E12-D03 (#201)",
+      "where": "Other sessions",
+      "source_cell": "E09-D09 §3.1, §3.2"
+    },
+    "d03:C-37": {
+      "text": "Interval and bar mode · Favourites · Time · Recent · Bar modes: the x-axis is not time · Custom interval… · Edit favourites…",
+      "source": "D03:222",
+      "owner": "E12-D03 (#201)",
+      "where": "Chrome",
+      "source_cell": "D02 §4"
+    },
+    "d03:C-38": {
+      "text": "15m · Tick 1,000 · Vol 50 BTC · Range 40 · Delta 25 BTC · Renko 30; pending adds \" …\"",
+      "source": "D03:223",
+      "owner": "E12-D03 (#201)",
+      "where": "Trigger text",
+      "source_cell": "D02 §2"
+    },
+    "d03:C-39": {
+      "text": "Interval: 15 minutes · Bar mode: Volume, 50 BTC per bar · Interval: switching to 5 minutes, showing 1 minute",
+      "source": "D03:224",
+      "owner": "E12-D03 (#201)",
+      "where": "Trigger name",
+      "source_cell": "D02 §4, D-1"
+    },
+    "d03:C-40": {
+      "text": "Trades per bar · Volume per bar · Range per bar · Delta per bar (±) · Brick size; units trades, {BTC}, ticks; Recent; Apply; \"Custom interval\", helper \"Minutes or hours, for example 7m or 2h.\"",
+      "source": "D03:225",
+      "owner": "E12-D03 (#201)",
+      "where": "Editor and custom labels",
+      "source_cell": "D02 §4"
+    },
+    "d03:C-41": {
+      "text": "Edit favourites · Keys 1 to 9 on a focused chart choose these. · Empty · Change… · Move up · Move down · Clear · Add current · Cancel · Save · Choose an entry for slot {4} · Your role can't change settings. · Couldn't save favourites. Your changes are still here.",
+      "source": "D03:226",
+      "owner": "E12-D03 (#201)",
+      "where": "Favourites editor",
+      "source_cell": "D02 §4; E09-D09 §3.1"
+    },
+    "d03:C-42": {
+      "text": "Favourites saved · Moved {15m} from slot {4} to slot {6} · No favourite on {3} · Recording started; bar modes available (once, when the rows enable); an invalid `Enter` speaks its message once",
+      "source": "D03:227",
+      "owner": "E12-D03 (#201)",
+      "where": "Announcements (polite)",
+      "source_cell": "§8.4"
+    },
+    "d04:S-1": {
+      "text": "Change symbol and interval, Chart 1",
+      "source": "D04:296",
+      "owner": "E12-D04 (#240)",
+      "where": "popover name (verbatim)",
+      "source_cell": "E08-D05:312"
+    },
+    "d04:S-2": {
+      "text": "Favourites · Keys 1 to 9 on the chart",
+      "source": "D04:297",
+      "owner": "E12-D04 (#240)",
+      "where": "strip group (verbatim)",
+      "source_cell": "D03:332"
+    },
+    "d04:S-3": {
+      "text": "Volume, 50 ETH per bar",
+      "source": "D04:298",
+      "owner": "E12-D04 (#240)",
+      "where": "slot name",
+      "source_cell": "D03:333's form, §3.2"
+    },
+    "d04:S-4": {
+      "text": "Chart 1 · BTCUSDT 1m",
+      "source": "D04:299",
+      "owner": "E12-D04 (#240)",
+      "where": "header",
+      "source_cell": "E08-D05:238"
+    },
+    "d04:S-5": {
+      "text": "Volume 50 BTC → Volume 1,000 ETH per bar",
+      "source": "D04:300",
+      "owner": "E12-D04 (#240)",
+      "where": "carried mode line",
+      "source_cell": "T Scope"
+    },
+    "d04:S-6": {
+      "text": "ETHFIUSDT has no recorded prints, so Volume bars can't be built for it. It opens on 1m time bars.",
+      "source": "D04:301",
+      "owner": "E12-D04 (#240)",
+      "where": "mode unavailable, before commit",
+      "source_cell": "T AC2"
+    },
+    "d04:S-7": {
+      "text": "Volume bars need recorded prints · showing 1m · Dismiss",
+      "source": "D04:302",
+      "owner": "E12-D04 (#240)",
+      "where": "strip notice, after commit",
+      "source_cell": "D02:31"
+    },
+    "d04:S-8": {
+      "text": "Chart 1 now shows ETHFIUSDT, 1 minute. Volume bars need recorded prints.",
+      "source": "D04:303",
+      "owner": "E12-D04 (#240)",
+      "where": "shell sentence, fallback",
+      "source_cell": "E08-D05:187's form"
+    },
+    "d04:S-9": {
+      "text": "· sync A: 2 more panels follow",
+      "source": "D04:304",
+      "owner": "E12-D04 (#240)",
+      "where": "sync header",
+      "source_cell": "E08-D05:35's form"
+    },
+    "d04:S-10": {
+      "text": "Not recorded — a chart kept open for 60 s starts recording it.",
+      "source": "D04:305",
+      "owner": "E12-D04 (#240)",
+      "where": "not recorded (verbatim)",
+      "source_cell": "E08-D05:224"
+    },
+    "d04:S-11": {
+      "text": "No USDT perpetual matches 'xyzzy'. · v1 supports Bybit USDT linear perpetuals only. · Clear search",
+      "source": "D04:306",
+      "owner": "E12-D04 (#240)",
+      "where": "no match (verbatim)",
+      "source_cell": "E08-D05:176"
+    },
+    "d04:S-12": {
+      "text": "Record this symbol…",
+      "source": "D04:307",
+      "owner": "E12-D04 (#240)",
+      "where": "Record (verbatim)",
+      "source_cell": "E08-D05:199"
+    },
+    "d04:S-13": {
+      "text": "Only the owner can start recording.",
+      "source": "D04:308",
+      "owner": "E12-D04 (#240)",
+      "where": "Record, others (verbatim)",
+      "source_cell": "E09-D09:73"
+    },
+    "d04:S-14": {
+      "text": "Read-only while viewing as {user}.",
+      "source": "D04:309",
+      "owner": "E12-D04 (#240)",
+      "where": "viewing as (verbatim)",
+      "source_cell": "E09-D09:95"
+    },
+    "d04:S-15": {
+      "text": "Chart 1 now shows ETHUSDT, 1 minute.",
+      "source": "D04:310",
+      "owner": "E12-D04 (#240)",
+      "where": "shell sentence (verbatim)",
+      "source_cell": "E08-D05:187"
+    },
+    "d04:S-16": {
+      "text": "Loading {ETHFIUSDT 1m}, showing {BTCUSDT Volume 50 BTC} until it arrives",
+      "source": "D04:311",
+      "owner": "E12-D04 (#240)",
+      "where": "strip, after the wait",
+      "source_cell": "D02:265's form"
+    },
+    "d04:S-17": {
+      "text": "Heikin-Ashi is drawn on time bars only. · Switch to time bars · Keep {mode}",
+      "source": "D04:312",
+      "owner": "E12-D04 (#240)",
+      "where": "Heikin-Ashi callout",
+      "source_cell": "D05:319 (PROPOSED there); D06:565"
+    },
+    "d04:S-18": {
+      "text": "More…",
+      "source": "D04:313",
+      "owner": "E12-D04 (#240)",
+      "where": "\"More…\" (verbatim)",
+      "source_cell": "E08-D05:242"
+    },
+    "d04:S-19": {
+      "text": "BTCUSDT is not trading on Bybit — choose another symbol.",
+      "source": "D04:314",
+      "owner": "E12-D04 (#240)",
+      "where": "delisted current value (verbatim)",
+      "source_cell": "E08-D05:260"
+    },
+    "d04:S-20": {
+      "text": "2 results",
+      "source": "D04:315",
+      "owner": "E12-D04 (#240)",
+      "where": "count (verbatim)",
+      "source_cell": "E08-D05:168"
+    },
+    "d04:S-21": {
+      "text": "Loading the instrument list…",
+      "source": "D04:316",
+      "owner": "E12-D04 (#240)",
+      "where": "loading (verbatim)",
+      "source_cell": "E08-D05:169"
+    },
+    "d04:S-22": {
+      "text": "Couldn't load the instrument list.",
+      "source": "D04:317",
+      "owner": "E12-D04 (#240)",
+      "where": "failed (verbatim)",
+      "source_cell": "E08-D05:170"
+    },
+    "d04:S-23": {
+      "text": "LUNAUSDT is not trading on Bybit.",
+      "source": "D04:318",
+      "owner": "E12-D04 (#240)",
+      "where": "status rule (verbatim)",
+      "source_cell": "E08-D05:177"
+    },
+    "d04:S-24": {
+      "text": "Couldn't load ETHUSDT 1m. Still showing BTCUSDT 1m. · Retry ETHUSDT 1m · Dismiss · Details",
+      "source": "D04:319",
+      "owner": "E12-D04 (#240)",
+      "where": "failed switch",
+      "source_cell": "D02:280's form"
+    },
+    "d04:S-25": {
+      "text": "ETHFIUSDT's lot size isn't known yet, so Volume bars can't be built for it. It opens on 1m time bars.",
+      "source": "D04:320",
+      "owner": "E12-D04 (#240)",
+      "where": "lot unknown, before commit",
+      "source_cell": "C-25's case; S-6's form"
+    },
+    "d04:S-26": {
+      "text": "Volume bars need the lot size · showing 1m · Dismiss",
+      "source": "D04:321",
+      "owner": "E12-D04 (#240)",
+      "where": "strip notice, lot unknown",
+      "source_cell": "C-25's case; S-7's form"
+    },
+    "d04:S-27": {
+      "text": "Chart 1 now shows ETHFIUSDT, 1 minute. Volume bars need the lot size.",
+      "source": "D04:322",
+      "owner": "E12-D04 (#240)",
+      "where": "shell sentence, lot fallback",
+      "source_cell": "C-25's case; S-8's form"
+    },
+    "d05:W-1": {
+      "text": "Chart type · Bar mode · Crosshair · Session",
+      "source": "D05:314",
+      "owner": "E12-D05 (#241)",
+      "where": "section headings",
+      "source_cell": "`14`:770–775, :788"
+    },
+    "d05:W-2": {
+      "text": "Candles · Bars (OHLC) · Hollow candles · Line · Area · Baseline · Heikin-Ashi · Equi-volume · Delta-volume",
+      "source": "D05:315",
+      "owner": "E12-D05 (#241)",
+      "where": "type names",
+      "source_cell": "RULED BQ-5"
+    },
+    "d05:W-3": {
+      "text": "§3.1's Description column",
+      "source": "D05:316",
+      "owner": "E12-D05 (#241)",
+      "where": "type lines",
+      "source_cell": "D06:150–167"
+    },
+    "d05:W-4": {
+      "text": "Base price · First visible close · Price · rounded to the {0.1} tick",
+      "source": "D05:317",
+      "owner": "E12-D05 (#241)",
+      "where": "Baseline base",
+      "source_cell": "D06:163; E30-D02:201"
+    },
+    "d05:W-5": {
+      "text": "D02:279 verbatim; Keep {current type} · Use Heikin-Ashi, turn footprint off",
+      "source": "D05:318",
+      "owner": "E12-D05 (#241)",
+      "where": "HA + footprint",
+      "source_cell": "D02:279"
+    },
+    "d05:W-6": {
+      "text": "Heikin-Ashi is drawn on time bars only. · Switch to time bars · Keep {mode}",
+      "source": "D05:319",
+      "owner": "E12-D05 (#241)",
+      "where": "HA on a non-time mode",
+      "source_cell": "D06:565"
+    },
+    "d05:W-7": {
+      "text": "Rebuilds the chart on Save",
+      "source": "D05:320",
+      "owner": "E12-D05 (#241)",
+      "where": "bar-mode caption",
+      "source_cell": "T Tech"
+    },
+    "d05:W-8": {
+      "text": "Precision and the bar-close countdown are on the Scales tab. · Precision: Auto (tick {0.1}) · Go to Scales",
+      "source": "D05:321",
+      "owner": "E12-D05 (#241)",
+      "where": "pointer",
+      "source_cell": "E11-D03:845"
+    },
+    "d05:W-9": {
+      "text": "Trades 24/7. Day boundary: UTC 00:00. · Maintenance windows: Scales tab",
+      "source": "D05:322",
+      "owner": "E12-D05 (#241)",
+      "where": "session",
+      "source_cell": "`11`:1045; E11-D03:263"
+    },
+    "d05:W-10": {
+      "text": "The drawing magnet is set in the drawing rail.",
+      "source": "D05:323",
+      "owner": "E12-D05 (#241)",
+      "where": "crosshair helper",
+      "source_cell": "E14-D02:332"
+    },
+    "d05:W-11": {
+      "text": "Applies to {3} of {4} chart panels · {BTCUSDT} · {Time 1m} → {Volume 50 BTC} · {ETHFIUSDT} · stays {Time 1m} · {reason}",
+      "source": "D05:324",
+      "owner": "E12-D05 (#241)",
+      "where": "partial apply, before Save",
+      "source_cell": "T AC3"
+    },
+    "d05:W-12": {
+      "text": "Bar mode saved for {3} of {4} chart panels; {1} unchanged",
+      "source": "D05:325",
+      "owner": "E12-D05 (#241)",
+      "where": "partial apply, after Save",
+      "source_cell": "T AC3"
+    },
+    "d05:W-13": {
+      "text": "Saved as your default for new chart panels. · Undo · Dismiss",
+      "source": "D05:326",
+      "owner": "E12-D05 (#241)",
+      "where": "as new default notice",
+      "source_cell": "T Sec"
+    },
+    "d05:W-14": {
+      "text": "Saves as your default: bar mode and its size.",
+      "source": "D05:327",
+      "owner": "E12-D05 (#241)",
+      "where": "as new default helper",
+      "source_cell": "E11-D03:858"
+    },
+    "d05:W-15": {
+      "text": "Reset General to defaults? · Rebuilds the chart on Save. · Reset · Keep settings",
+      "source": "D05:328",
+      "owner": "E12-D05 (#241)",
+      "where": "Reset General",
+      "source_cell": "E11-D03:273"
+    },
+    "d05:W-16": {
+      "text": "Reset all chart settings to defaults? · Rebuilds the chart on Save. · Reset · Keep settings",
+      "source": "D05:329",
+      "owner": "E12-D05 (#241)",
+      "where": "Reset all",
+      "source_cell": "E11-D03:273"
+    },
+    "d05:W-17": {
+      "text": "Discard your changes to these settings? · Discard changes · Keep editing (verbatim)",
+      "source": "D05:330",
+      "owner": "E12-D05 (#241)",
+      "where": "dirty guard",
+      "source_cell": "E15-D02:507"
+    },
+    "d05:W-18": {
+      "text": "Couldn't save these settings. Your changes are still here. · Retry",
+      "source": "D05:331",
+      "owner": "E12-D05 (#241)",
+      "where": "save failed",
+      "source_cell": "D03:226"
+    },
+    "d05:W-19": {
+      "text": "Sample bars: not this chart",
+      "source": "D05:332",
+      "owner": "E12-D05 (#241)",
+      "where": "preview label",
+      "source_cell": "T Scope"
+    },
+    "d05:W-20": {
+      "text": "Changes: {Bar mode Time 1m → Renko 30 ticks per brick (rebuilds on Save)}. {Chart type unchanged.}",
+      "source": "D05:333",
+      "owner": "E12-D05 (#241)",
+      "where": "preview caption",
+      "source_cell": "T a11y"
+    },
+    "d05:W-21": {
+      "text": "Chart settings saved for this panel · … for all panels · … as the new default",
+      "source": "D05:334",
+      "owner": "E12-D05 (#241)",
+      "where": "Save announcement",
+      "source_cell": "E11-D03:272"
+    },
+    "d05:W-22": {
+      "text": "{General}, changed",
+      "source": "D05:335",
+      "owner": "E12-D05 (#241)",
+      "where": "changed tab",
+      "source_cell": "T a11y"
+    },
+    "d05:W-23": {
+      "text": "Your role can't save workspaces. Change the bar mode for this view from the interval menu.",
+      "source": "D05:336",
+      "owner": "E12-D05 (#241)",
+      "where": "Viewer notice",
+      "source_cell": "E09-D09:114; D02:343"
+    },
+    "d05:W-24": {
+      "text": "Bar mode unchanged · {reason} · Dismiss",
+      "source": "D05:337",
+      "owner": "E12-D05 (#241)",
+      "where": "unchanged panel, strip",
+      "source_cell": "T AC3; D02:31"
+    },
+    "d05:W-25": {
+      "text": "General reset to defaults for this panel · All chart settings reset to defaults for this panel",
+      "source": "D05:338",
+      "owner": "E12-D05 (#241)",
+      "where": "Reset announcement",
+      "source_cell": "E11-D03:273"
+    },
+    "d05:W-26": {
+      "text": "Read-only while viewing as {user}.",
+      "source": "D05:339",
+      "owner": "E12-D05 (#241)",
+      "where": "viewing as (verbatim)",
+      "source_cell": "E09-D09:95"
+    },
+    "d05:W-27": {
+      "text": "General settings for {this panel} return to their defaults: · All chart settings for {this panel} return to their defaults: · {Chart type}: {Hollow candles} → {Candles}",
+      "source": "D05:340",
+      "owner": "E12-D05 (#241)",
+      "where": "Reset confirm bodies",
+      "source_cell": "E11-D03:273 (boards PR)"
+    },
+    "d07:W-1": {
+      "text": "\"Series restarted 09:15 UTC\"",
+      "source": "D07:345",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "`14`:738",
+      "status": "verbatim"
+    },
+    "d07:W-2": {
+      "text": "\"Recording gap 17:02–09:14 UTC\"",
+      "source": "D07:346",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "D02:276",
+      "status": "verbatim"
+    },
+    "d07:W-3": {
+      "text": "\"Not recorded 17:02–09:14 UTC: no order flow\"",
+      "source": "D07:347",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "`14`:738",
+      "status": "verbatim"
+    },
+    "d07:W-4": {
+      "text": "\"No bars for 17:02–09:14 UTC\"",
+      "source": "D07:348",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "D02:276",
+      "status": "verbatim"
+    },
+    "d07:W-5": {
+      "text": "\"Order flow from <ts>; earlier bars from exchange klines\"",
+      "source": "D07:349",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "`14`:737",
+      "status": "verbatim"
+    },
+    "d07:W-6": {
+      "text": "\"Bars for Volume 75 BTC start at <ts>\"",
+      "source": "D07:350",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "`14`:737",
+      "status": "verbatim"
+    },
+    "d07:W-7": {
+      "text": "\"Loaded: the last 30 days (lookback) · Load more\"",
+      "source": "D07:351",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "`14`:737",
+      "status": "verbatim"
+    },
+    "d07:W-8": {
+      "text": "\"Showing Volume 50 until ready\"",
+      "source": "D07:352",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "`14`:736",
+      "status": "verbatim, the rebuild copy's last sentence"
+    },
+    "d07:W-9": {
+      "text": "\"Loading 5m, showing 1m until it arrives\"",
+      "source": "D07:353",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "`14`:731",
+      "status": "verbatim"
+    },
+    "d07:W-10": {
+      "text": "\"Bar order · not time\"",
+      "source": "D07:354",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "D02:32",
+      "status": "verbatim"
+    },
+    "d07:W-11": {
+      "text": "\"each bar closes at 1,000 trades\"",
+      "source": "D07:355",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "D09:151",
+      "status": "PROPOSED, the registry's unit"
+    },
+    "d07:W-12": {
+      "text": "\"each bar closes at 50 BTC of volume\"",
+      "source": "D07:356",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "D09:152",
+      "status": "PROPOSED, the registry's unit"
+    },
+    "d07:W-13": {
+      "text": "\"each bar closes at a 40-tick range\"",
+      "source": "D07:357",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "D09:153",
+      "status": "PROPOSED, the registry's unit"
+    },
+    "d07:W-14": {
+      "text": "\"each bar closes at 25 BTC of delta either way\"",
+      "source": "D07:358",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "D09:154",
+      "status": "PROPOSED, the registry's unit"
+    },
+    "d07:W-15": {
+      "text": "\"Renko bricks of 30 ticks\"",
+      "source": "D07:359",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "D09:155",
+      "status": "PROPOSED, the registry's unit"
+    },
+    "d07:W-16": {
+      "text": "\"First loaded bar; Loading older bars\"",
+      "source": "D07:360",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "D04E11:325",
+      "status": "PROPOSED; the band's words after the semicolon"
+    },
+    "d07:W-17": {
+      "text": "\"separators hidden while sorted\"",
+      "source": "D07:361",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "—",
+      "status": "PROPOSED"
+    },
+    "d07:W-18": {
+      "text": "\"no delta: bar from exchange klines\"",
+      "source": "D07:362",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "—",
+      "status": "PROPOSED"
+    },
+    "d07:W-19": {
+      "text": "\"trade count not sent\"",
+      "source": "D07:363",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "—",
+      "status": "PROPOSED"
+    },
+    "d07:W-20": {
+      "text": "\"close time not sent\"",
+      "source": "D07:364",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "—",
+      "status": "PROPOSED"
+    },
+    "d07:W-21": {
+      "text": "\"delta not sent\"",
+      "source": "D07:365",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "`23`:769",
+      "status": "PROPOSED; `include_delta` off"
+    },
+    "d07:W-22": {
+      "text": "\"Data is for bar 10:22:11.412 bar 3 of 5, no longer in view\"",
+      "source": "D07:366",
+      "owner": "E12-D07 (#242)",
+      "source_cell": "D04E11:272",
+      "status": "PROPOSED; E11-D04's banner, the row header in place of its time"
+    },
+    "d08:W-1": {
+      "text": "\"History starts when you record BTCUSDT — recording has not begun yet.\"",
+      "source": "D08:321",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-047 never recorded, heading",
+      "source_cell": "E16-D05:214 verbatim",
+      "tag": "heading"
+    },
+    "d08:W-2": {
+      "text": "\"Nothing is missing or broken: CandleViewer keeps only what it records.\"",
+      "source": "D08:322",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-047 never recorded, cause",
+      "source_cell": "E16-D05:171 verbatim",
+      "tag": "cause"
+    },
+    "d08:W-3": {
+      "text": "\"History starts 2026-09-01 00:00 UTC — recording began then.\"",
+      "source": "D08:323",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-047 before start, heading",
+      "source_cell": "E16-D05:215 verbatim",
+      "tag": "heading"
+    },
+    "d08:W-4": {
+      "text": "\"No bars for BTCUSDT 1s in this window.\"",
+      "source": "D08:324",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-047 interval too fine, heading",
+      "source_cell": "E16-D05:218 form",
+      "tag": "heading"
+    },
+    "d08:W-5": {
+      "text": "\"No 1s bars fit this window — pick a coarser interval.\"",
+      "source": "D08:325",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-047 interval too fine, cause",
+      "source_cell": "E16-D05:181 form",
+      "tag": "cause"
+    },
+    "d08:W-6": {
+      "text": "\"No bars for BTCUSDT 1h between 2020-03-18 00:00 and 2020-03-25 00:00 UTC.\"",
+      "source": "D08:326",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-047 exchange no bars, heading",
+      "source_cell": "E11-D04:344 form",
+      "tag": "heading"
+    },
+    "d08:W-7": {
+      "text": "\"Bybit has no 1h bars before 2020-03-25 00:00 UTC.\"",
+      "source": "D08:327",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-047 exchange no bars, cause",
+      "source_cell": "new, PROPOSED (D08-A9)",
+      "tag": "cause"
+    },
+    "d08:W-8": {
+      "text": "\"BTCUSDT is not trading on Bybit.\"",
+      "source": "D08:328",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-047 not trading, heading",
+      "source_cell": "E16-D05:219 verbatim",
+      "tag": "heading"
+    },
+    "d08:W-9": {
+      "text": "\"Status: Closed.\" · \"No live data will arrive.\"",
+      "source": "D08:329",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-047 not trading, cause",
+      "source_cell": "E16-D05:219 verbatim",
+      "tag": "cause"
+    },
+    "d08:W-10": {
+      "text": "\"Only the owner can change recording.\"",
+      "source": "D08:330",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-047 Manager or Viewer, sentence form",
+      "source_cell": "E16-D05:221 verbatim",
+      "tag": "t2"
+    },
+    "d08:W-11": {
+      "text": "\"Read-only while viewing as alex.\"",
+      "source": "D08:331",
+      "owner": "E12-D08 (#243)",
+      "where": "the view-as reason",
+      "source_cell": "E16-D05:220 verbatim",
+      "tag": "t2"
+    },
+    "d08:W-12": {
+      "text": "\"Live data is streaming now.\" · \"Live data is streaming at a reduced rate.\" · \"Live data will resume when the connection returns.\"",
+      "source": "D08:332",
+      "owner": "E12-D08 (#243)",
+      "where": "the live-data sentence",
+      "source_cell": "E11-D04:351 verbatim",
+      "tag": "status"
+    },
+    "d08:W-13": {
+      "text": "\"Couldn't load BTCUSDT 1m from the exchange feed.\"",
+      "source": "D08:333",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-048 data feed, heading",
+      "source_cell": "E11-D04:367 verbatim",
+      "tag": "heading"
+    },
+    "d08:W-14": {
+      "text": "\"Retrying in 4 s — attempt 2\"",
+      "source": "D08:334",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-048 data feed and backend, retry line",
+      "source_cell": "E11-D04:367 verbatim",
+      "tag": "retry"
+    },
+    "d08:W-15": {
+      "text": "\"Automatic retries stopped\"",
+      "source": "D08:335",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-048 stop sentence",
+      "source_cell": "E11-D04:360 verbatim",
+      "tag": "retry"
+    },
+    "d08:W-16": {
+      "text": "\"Can't load BTCUSDT 1m while disconnected — it will load when the connection returns.\"",
+      "source": "D08:336",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-048 data feed while disconnected",
+      "source_cell": "E11-D04:367 verbatim",
+      "tag": "wait"
+    },
+    "d08:W-17": {
+      "text": "\"The server couldn't build this chart.\"",
+      "source": "D08:337",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-048 backend, heading",
+      "source_cell": "E11-D04:368 verbatim",
+      "tag": "heading"
+    },
+    "d08:W-18": {
+      "text": "\"Other panels are unaffected.\"",
+      "source": "D08:338",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-048 body, every class",
+      "source_cell": "E11-D04:367 verbatim",
+      "tag": "body"
+    },
+    "d08:W-19": {
+      "text": "\"Couldn't build BTCUSDT Renko 40 ticks.\"",
+      "source": "D08:339",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-048 recompute, heading",
+      "source_cell": "new, PROPOSED",
+      "tag": "heading"
+    },
+    "d08:W-20": {
+      "text": "\"Graphics context lost — restoring… attempt 1 of 3 · next try in 1 s\"",
+      "source": "D08:340",
+      "owner": "E12-D08 (#243)",
+      "where": "context-loss strip",
+      "source_cell": "E11-D04:374 verbatim",
+      "tag": "retry"
+    },
+    "d08:W-21": {
+      "text": "\"This chart stopped rendering.\"",
+      "source": "D08:341",
+      "owner": "E12-D08 (#243)",
+      "where": "context-loss card, heading",
+      "source_cell": "E11-D04:366 verbatim",
+      "tag": "heading"
+    },
+    "d08:W-22": {
+      "text": "\"The graphics context could not be restored after three attempts. Your data is intact — open the data table or retry. Other panels are unaffected.\"",
+      "source": "D08:342",
+      "owner": "E12-D08 (#243)",
+      "where": "context-loss card, body",
+      "source_cell": "E11-D04:366 verbatim",
+      "tag": "body"
+    },
+    "d08:W-23": {
+      "text": "\"Retry failed — try again or change the renderer\"",
+      "source": "D08:343",
+      "owner": "E12-D08 (#243)",
+      "where": "context-loss card, manual retry failed",
+      "source_cell": "E11-D04:379 verbatim",
+      "tag": "notice"
+    },
+    "d08:W-24": {
+      "text": "\"Chart restored\"",
+      "source": "D08:344",
+      "owner": "E12-D08 (#243)",
+      "where": "context restored",
+      "source_cell": "E11-D04:378 verbatim",
+      "tag": "status"
+    },
+    "d08:W-25": {
+      "text": "\"Order flow from 2026-10-18 08:00 UTC; earlier bars come from exchange klines\"",
+      "source": "D08:345",
+      "owner": "E12-D08 (#243)",
+      "where": "the marker's tag, time bars",
+      "source_cell": "D02:272 verbatim",
+      "tag": "marker"
+    },
+    "d08:W-26": {
+      "text": "\"History starts 2026-10-18 08:00 UTC — recording began then\"",
+      "source": "D08:346",
+      "owner": "E12-D08 (#243)",
+      "where": "the band left of the marker, non-time bars",
+      "source_cell": "D02:273 verbatim",
+      "tag": "marker"
+    },
+    "d08:W-27": {
+      "text": "\"History begins off-view at {ts} ←\"",
+      "source": "D08:347",
+      "owner": "E12-D08 (#243)",
+      "where": "the off-view edge tag",
+      "source_cell": "new, PROPOSED (D08-A10)",
+      "tag": "marker"
+    },
+    "d08:W-28": {
+      "text": "\"first bar with recorded prints\"",
+      "source": "D08:348",
+      "owner": "E12-D08 (#243)",
+      "where": "the data cursor at the first recorded bar",
+      "source_cell": "`14`:737 verbatim",
+      "tag": "marker"
+    },
+    "d08:W-29": {
+      "text": "\"Building Volume 75 BTC...\"",
+      "source": "D08:349",
+      "owner": "E12-D08 (#243)",
+      "where": "the strip, text phase",
+      "source_cell": "D02:269 verbatim",
+      "tag": "progress"
+    },
+    "d08:W-30": {
+      "text": "\"Building Volume 75 BTC: 40 % · 1.24 M of 3.1 M prints · about 19 s left\"",
+      "source": "D08:350",
+      "owner": "E12-D08 (#243)",
+      "where": "the strip, total known (needs D08-G1)",
+      "source_cell": "D02:269 verbatim",
+      "tag": "progress"
+    },
+    "d08:W-31": {
+      "text": "\"Building Volume 75 BTC · 0:14 elapsed · total not known yet\"",
+      "source": "D08:351",
+      "owner": "E12-D08 (#243)",
+      "where": "the strip, total unknown",
+      "source_cell": "new, PROPOSED",
+      "tag": "progress"
+    },
+    "d08:W-32": {
+      "text": "\"Building Volume 75 BTC: 40 % · 1.24 M of 3.1 M prints · taking longer than estimated · 0:41 elapsed\"",
+      "source": "D08:352",
+      "owner": "E12-D08 (#243)",
+      "where": "the strip, over budget",
+      "source_cell": "new, PROPOSED",
+      "tag": "progress"
+    },
+    "d08:W-33": {
+      "text": "\"40 percent, 1.24 million of 3.1 million prints\"",
+      "source": "D08:353",
+      "owner": "E12-D08 (#243)",
+      "where": "the progress bar's `aria-valuetext`",
+      "source_cell": "D02:286 verbatim",
+      "tag": "progress"
+    },
+    "d08:W-34": {
+      "text": "\"Building the chart as Volume 75 BTC bars. Escape cancels.\"",
+      "source": "D08:354",
+      "owner": "E12-D08 (#243)",
+      "where": "the start announcement",
+      "source_cell": "D02:284 verbatim",
+      "tag": "status"
+    },
+    "d08:W-35": {
+      "text": "\"Build cancelled at 40 %. Still showing Volume 50 BTC.\"",
+      "source": "D08:355",
+      "owner": "E12-D08 (#243)",
+      "where": "the cancel outcome notice",
+      "source_cell": "D02:270 verbatim",
+      "tag": "notice"
+    },
+    "d08:W-36": {
+      "text": "\"Build of {75 BTC} cancelled at {40 %}; showing {50 BTC}.\"",
+      "source": "D08:356",
+      "owner": "E12-D08 (#243)",
+      "where": "the editor's message line after a cancel",
+      "source_cell": "D03:207 verbatim",
+      "tag": "notice"
+    },
+    "d08:W-37": {
+      "text": "\"Building Volume 75 BTC, started elsewhere\"",
+      "source": "D08:357",
+      "owner": "E12-D08 (#243)",
+      "where": "the strip, a build started elsewhere",
+      "source_cell": "new, PROPOSED",
+      "tag": "progress"
+    },
+    "d08:W-38": {
+      "text": "\"Volume 75 BTC was rebuilt from 08:00 UTC; bars redrawn\"",
+      "source": "D08:358",
+      "owner": "E12-D08 (#243)",
+      "where": "the notice after a build elsewhere",
+      "source_cell": "D02:274 verbatim",
+      "tag": "notice"
+    },
+    "d08:W-39": {
+      "text": "\"A size this small can stop updating after one very large trade.\"",
+      "source": "D08:359",
+      "owner": "E12-D08 (#243)",
+      "where": "the editor, small size (C-23)",
+      "source_cell": "D03:208 verbatim",
+      "tag": "notice"
+    },
+    "d08:W-40": {
+      "text": "\"Couldn't load 5m. Still showing 1m.\"",
+      "source": "D08:360",
+      "owner": "E12-D08 (#243)",
+      "where": "a failed switch with a previous series",
+      "source_cell": "D02:280 verbatim",
+      "tag": "notice"
+    },
+    "d08:W-41": {
+      "text": "\"Copy reference\"",
+      "source": "D08:361",
+      "owner": "E12-D08 (#243)",
+      "where": "the reference's copy button",
+      "source_cell": "E11-D04:385 verbatim",
+      "tag": "action"
+    },
+    "d08:W-42": {
+      "text": "\"Stale 7s · last 13:42:05\"",
+      "source": "D08:362",
+      "owner": "E12-D08 (#243)",
+      "where": "the stale chip",
+      "source_cell": "`14`:733 verbatim",
+      "tag": "status"
+    },
+    "d08:W-43": {
+      "text": "\"Only the owner can inspect the chart engine.\"",
+      "source": "D08:363",
+      "owner": "E12-D08 (#243)",
+      "where": "`Open diagnostics`, the T2 reason",
+      "source_cell": "new, PROPOSED (D08-A12)",
+      "tag": "t2"
+    },
+    "d08:W-44": {
+      "text": "\"This window lies wholly before the first recorded trade.\"",
+      "source": "D08:364",
+      "owner": "E12-D08 (#243)",
+      "where": "SCR-047 before start, cause",
+      "source_cell": "new, PROPOSED (D08-A9)",
+      "tag": "cause"
+    },
+    "d08:W-45": {
+      "text": "\"Building Volume 75 BTC — 2 min 10 s elapsed · total unknown · taking longer than estimated\"",
+      "source": "D08:365",
+      "owner": "E12-D08 (#243)",
+      "where": "the strip, over budget, total unknown",
+      "source_cell": "new, PROPOSED → RULED default (round 1)",
+      "tag": "progress"
+    },
+    "d08:W-46": {
+      "text": "\"Build cancelled after 2 min 10 s elapsed. Still showing Volume 50 BTC.\"",
+      "source": "D08:366",
+      "owner": "E12-D08 (#243)",
+      "where": "the cancel outcome notice, total unknown",
+      "source_cell": "new, PROPOSED → RULED default (round 1)",
+      "tag": "notice"
+    },
+    "d08:W-47": {
+      "text": "\"Build of {75 BTC} cancelled after {2 min 10 s}; showing {50 BTC}.\"",
+      "source": "D08:367",
+      "owner": "E12-D08 (#243)",
+      "where": "the editor's line after a cancel, total unknown",
+      "source_cell": "new, PROPOSED → RULED default (round 1)",
+      "tag": "notice"
+    }
+  }
+}
