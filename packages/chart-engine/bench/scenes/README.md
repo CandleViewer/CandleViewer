@@ -9,6 +9,7 @@ Except `hit-pick.ts`: E11-S08 production bench code over `src/hit`, driven by Vi
 Except `atlas-build.ts`: E11-S11 production bench code over `src/text`, driven by Vitest (BQ-275).
 Except `candle-ring.ts` and `candle-series.ts`: E12-S06 production bench code over `src/layers`, `src/model` and `src/gl`, driven by Vitest.
 Except `lut-gen.ts`: E11-T04 production bench code over `src/theme`, driven by Vitest (BQ-T04-09).
+Except `ribbon-series.ts`: E12-S07 production bench code over `src/layers`, `src/model` and `src/gl`, driven by Vitest.
 
 This directory is **throwaway prototype code** for the M0 spike ticket E06-K02
 ("Prototype scene A: 100k-bar model, visible-window draw and LOD ladder"). It
