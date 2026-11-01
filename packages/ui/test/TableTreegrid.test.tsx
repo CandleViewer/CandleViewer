@@ -204,11 +204,13 @@ const cellAt = (r: number, c: number): HTMLElement => {
 const focusedRowIndex = (): string | null | undefined =>
   document.activeElement?.closest("tr")?.getAttribute("aria-rowindex");
 
-describe("Table (CMP-049) treegrid: roles, levels and indices", { timeout: 60_000 }, () => {
+describe("Table (CMP-049) treegrid: roles, levels and indices", () => {
   // The fixture is drawn whole, so the rows are read from the DOM directly: a role query per row would cost seconds.
+  // Measured 3.4 s at a load of 23 on 8 cores; the 30 s ceiling covers a loaded runner, where the code lens saw the
+  // grid's slowest tests near 18 s.
   it(
     "is a treegrid named by its caption, its rows' levels and set positions from the model on a 500-row fixture",
-    { timeout: 60_000 },
+    { timeout: 30_000 },
     async () => {
       // 20 groups of 24 items: 500 rows, every one drawn (D02:142's fixture), one column so the DOM stays small.
       await mount(
@@ -297,7 +299,7 @@ describe("Table (CMP-049) treegrid: roles, levels and indices", { timeout: 60_00
   });
 });
 
-describe("Table (CMP-049) treegrid: keys (APG Treegrid)", { timeout: 60_000 }, () => {
+describe("Table (CMP-049) treegrid: keys (APG Treegrid)", () => {
   it("→ on a collapsed row's first cell expands it, focus kept; → again moves to its first child", async () => {
     const onToggle = vi.fn();
     await mount(<TreeHost onToggle={onToggle} />);
@@ -442,309 +444,321 @@ describe("Table (CMP-049) treegrid: keys (APG Treegrid)", { timeout: 60_000 }, (
   });
 });
 
-describe(
-  "Table (CMP-049) treegrid: focus identity and the kept row (E29-D05 §5.3, §5.4)",
-  { timeout: 60_000 },
-  () => {
-    it("a re-sort keeps focus on the same row and cell; its aria-rowindex follows the row", async () => {
-      const control: Partial<Control> = {};
-      await mount(<TreeHost open="all" control={control} />);
-      act(() => cellAt(3, 1).focus());
-      const cell = document.activeElement;
-      expect(cell?.closest("tr")).toHaveAttribute("aria-rowindex", "4");
-      act(() => control.reverse?.());
-      expect(document.activeElement).toBe(cell);
-      // 12 rows reversed: the third row is now the tenth.
-      expect(cell?.closest("tr")).toHaveAttribute("aria-rowindex", "11");
-      expect(tree().querySelectorAll('[tabindex="0"]')).toHaveLength(1);
-      expect(cell).toHaveAttribute("tabindex", "0");
-    });
+describe("Table (CMP-049) treegrid: focus identity and the kept row (E29-D05 §5.3, §5.4)", () => {
+  it("a re-sort keeps focus on the same row and cell; its aria-rowindex follows the row", async () => {
+    const control: Partial<Control> = {};
+    await mount(<TreeHost open="all" control={control} />);
+    act(() => cellAt(3, 1).focus());
+    const cell = document.activeElement;
+    expect(cell?.closest("tr")).toHaveAttribute("aria-rowindex", "4");
+    act(() => control.reverse?.());
+    expect(document.activeElement).toBe(cell);
+    // 12 rows reversed: the third row is now the tenth.
+    expect(cell?.closest("tr")).toHaveAttribute("aria-rowindex", "11");
+    expect(tree().querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+    expect(cell).toHaveAttribute("tabindex", "0");
+  });
 
-    it("the focused row stays mounted when the window scrolls away: the one row outside it, focus kept (G-01)", async () => {
-      const control: Partial<Control> = {};
-      await mount(<TreeHost groups={4} per={24} open="all" size={20} keep control={control} />);
-      act(() => cellAt(3, 1).focus());
-      const cell = document.activeElement;
-      act(() => control.scrollTo?.(60));
-      expect(document.activeElement).toBe(cell);
-      expect(cell?.isConnected).toBe(true);
-      expect(cell?.closest("tr")).toHaveAttribute("aria-rowindex", "4");
-      const rows = within(tree()).getAllByRole("row").slice(1);
-      // The window's 20 rows and the kept one, first in the body: nothing else off-screen is drawn.
-      expect(rows).toHaveLength(21);
-      expect(rows[0]).toHaveAttribute("aria-rowindex", "4");
-      expect(rows[1]).toHaveAttribute("aria-rowindex", "62");
-      // The spacers still hold every undrawn row's height around it.
-      const heights = [...tree().querySelectorAll<HTMLElement>(".cv-table__spacer td")].map(
-        (td) => td.style.blockSize,
+  it("the focused row stays mounted when the window scrolls away: the one row outside it, focus kept (G-01)", async () => {
+    const control: Partial<Control> = {};
+    await mount(<TreeHost groups={4} per={24} open="all" size={20} keep control={control} />);
+    act(() => cellAt(3, 1).focus());
+    const cell = document.activeElement;
+    act(() => control.scrollTo?.(60));
+    expect(document.activeElement).toBe(cell);
+    expect(cell?.isConnected).toBe(true);
+    expect(cell?.closest("tr")).toHaveAttribute("aria-rowindex", "4");
+    const rows = within(tree()).getAllByRole("row").slice(1);
+    // The window's 20 rows and the kept one, first in the body: nothing else off-screen is drawn.
+    expect(rows).toHaveLength(21);
+    expect(rows[0]).toHaveAttribute("aria-rowindex", "4");
+    expect(rows[1]).toHaveAttribute("aria-rowindex", "62");
+    // The spacers still hold every undrawn row's height around it.
+    const heights = [...tree().querySelectorAll<HTMLElement>(".cv-table__spacer td")].map(
+      (td) => td.style.blockSize,
+    );
+    expect(heights).toEqual([
+      "calc(2 * var(--size-row-height))",
+      "calc(57 * var(--size-row-height))",
+      "calc(20 * var(--size-row-height))",
+    ]);
+  });
+
+  it("the kept row stays the one Tab stop: Tab out and back lands on it", async () => {
+    const control: Partial<Control> = {};
+    await mount(<TreeHost groups={4} per={24} open="all" size={20} keep control={control} />);
+    act(() => cellAt(3, 1).focus());
+    const cell = document.activeElement;
+    await userEvent.tab();
+    expect(page.getByRole("button", { name: "After" })).toHaveFocus();
+    act(() => control.scrollTo?.(60));
+    expect(tree().querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+    await userEvent.tab({ shift: true });
+    expect(document.activeElement).toBe(cell);
+  });
+
+  it("the kept row goes once focus moves into the window", async () => {
+    const control: Partial<Control> = {};
+    await mount(<TreeHost groups={4} per={24} open="all" size={20} keep control={control} />);
+    act(() => cellAt(3, 1).focus());
+    act(() => control.scrollTo?.(60));
+    expect(within(tree()).getAllByRole("row")).toHaveLength(22);
+    act(() => cellAt(70, 1).focus());
+    expect(tree().querySelector('tr[aria-rowindex="4"]')).toBeNull();
+    expect(within(tree()).getAllByRole("row")).toHaveLength(21);
+  });
+
+  it("a re-sort that moves the focused row out of the window keeps it mounted and focused", async () => {
+    const control: Partial<Control> = {};
+    await mount(<TreeHost groups={4} per={24} open="all" size={20} keep control={control} />);
+    act(() => cellAt(3, 1).focus());
+    const cell = document.activeElement;
+    act(() => control.reverse?.());
+    expect(document.activeElement).toBe(cell);
+    // 100 rows reversed: the third is the 98th, past the window of the first 20.
+    expect(cell?.closest("tr")).toHaveAttribute("aria-rowindex", "99");
+  });
+
+  it("a kept row the host no longer finds is dropped; the Tab stop falls back to a drawn row", async () => {
+    const control: Partial<Control> = {};
+    let drop: () => void = () => undefined;
+    const Dropping = (): JSX.Element => {
+      const [gone, setGone] = useState(false);
+      drop = () => setGone(true);
+      return (
+        <TreeHost
+          groups={4}
+          per={24}
+          open="all"
+          size={20}
+          keep
+          control={control}
+          {...(gone ? { rowByKey: () => undefined } : {})}
+        />
       );
-      expect(heights).toEqual([
-        "calc(2 * var(--size-row-height))",
-        "calc(57 * var(--size-row-height))",
-        "calc(20 * var(--size-row-height))",
-      ]);
-    });
+    };
+    await mount(<Dropping />);
+    act(() => cellAt(3, 1).focus());
+    act(() => control.scrollTo?.(60));
+    expect(tree().querySelector('tr[aria-rowindex="4"]')).not.toBeNull();
+    act(() => drop());
+    expect(tree().querySelector('tr[aria-rowindex="4"]')).toBeNull();
+    expect(tree().querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+  });
+});
 
-    it("the kept row stays the one Tab stop: Tab out and back lands on it", async () => {
-      const control: Partial<Control> = {};
-      await mount(<TreeHost groups={4} per={24} open="all" size={20} keep control={control} />);
-      act(() => cellAt(3, 1).focus());
-      const cell = document.activeElement;
-      await userEvent.tab();
-      expect(page.getByRole("button", { name: "After" })).toHaveFocus();
-      act(() => control.scrollTo?.(60));
-      expect(tree().querySelectorAll('[tabindex="0"]')).toHaveLength(1);
-      await userEvent.tab({ shift: true });
-      expect(document.activeElement).toBe(cell);
-    });
+describe("Table (CMP-049) treegrid: the totals rowgroup (D04H A-6.4, A-6.5)", () => {
+  it("is a trailing rowgroup after the body, its row led by a rowheader, at the row index after the body", async () => {
+    await mount(<TreeHost open="all" totals />);
+    const groups = within(tree()).getAllByRole("rowgroup");
+    expect(groups).toHaveLength(3);
+    const totals = groups[2];
+    expect(totals).toHaveClass("cv-table__totals");
+    const header = within(totals ?? tree()).getByRole("rowheader", { name: "Total" });
+    expect(header.tagName).toBe("TH");
+    expect(header).toHaveAttribute("scope", "row");
+    expect(header.closest("tr")).toHaveAttribute("aria-rowindex", "14");
+    expect(header.closest("tr")).not.toHaveAttribute("aria-level");
+    expect(header.closest("tr")?.style.getPropertyValue("--cv-table-after")).toBe("0");
+  });
 
-    it("the kept row goes once focus moves into the window", async () => {
-      const control: Partial<Control> = {};
-      await mount(<TreeHost groups={4} per={24} open="all" size={20} keep control={control} />);
-      act(() => cellAt(3, 1).focus());
-      act(() => control.scrollTo?.(60));
-      expect(within(tree()).getAllByRole("row")).toHaveLength(22);
-      act(() => cellAt(70, 1).focus());
-      expect(tree().querySelector('tr[aria-rowindex="4"]')).toBeNull();
-      expect(within(tree()).getAllByRole("row")).toHaveLength(21);
-    });
+  it("a totals row has no select box, no selection and no row menu", async () => {
+    const onRowSelect = vi.fn();
+    const rowActions = vi.fn(() => [{ id: "a", label: "Act", onSelect: () => undefined }]);
+    await mount(<TreeHost open="all" totals onRowSelect={onRowSelect} rowActions={rowActions} />);
+    const totals = tree().querySelector(".cv-table__totals tr");
+    expect(totals).not.toHaveAttribute("aria-selected");
+    expect(totals?.querySelector("input")).toBeNull();
+    expect(totals?.querySelector("button")).toBeNull();
+    const cell = totals?.querySelector<HTMLElement>("[data-cv-c]");
+    act(() => cell?.focus());
+    await userEvent.keyboard(" ");
+    expect(onRowSelect).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    expect(page.queryByRole("menu")).toBeNull();
+  });
 
-    it("a re-sort that moves the focused row out of the window keeps it mounted and focused", async () => {
-      const control: Partial<Control> = {};
-      await mount(<TreeHost groups={4} per={24} open="all" size={20} keep control={control} />);
-      act(() => cellAt(3, 1).focus());
-      const cell = document.activeElement;
-      act(() => control.reverse?.());
-      expect(document.activeElement).toBe(cell);
-      // 100 rows reversed: the third is the 98th, past the window of the first 20.
-      expect(cell?.closest("tr")).toHaveAttribute("aria-rowindex", "99");
-    });
+  it("pins its rows to the region's bottom, and focused body cells scroll clear of them", async () => {
+    const host = await mount(<TreeHost open="all" totals />);
+    const shell = host.querySelector<HTMLElement>('[data-cmp="CMP-049"]');
+    expect(shell?.style.getPropertyValue("--cv-table-totals")).toBe("1");
+    const without = await mount(
+      <Table<Node>
+        grid
+        caption="No totals"
+        columns={COLUMNS}
+        rows={[TOTAL]}
+        rowKey={(n) => n.id}
+      />,
+    );
+    expect(
+      without
+        .querySelector<HTMLElement>('[data-cmp="CMP-049"]')
+        ?.style.getPropertyValue("--cv-table-totals"),
+    ).toBe("");
+  });
 
-    it("a kept row the host no longer finds is dropped; the Tab stop falls back to a drawn row", async () => {
-      const control: Partial<Control> = {};
-      let drop: () => void = () => undefined;
-      const Dropping = (): JSX.Element => {
-        const [gone, setGone] = useState(false);
-        drop = () => setGone(true);
-        return (
-          <TreeHost
-            groups={4}
-            per={24}
-            open="all"
-            size={20}
-            keep
-            control={control}
-            {...(gone ? { rowByKey: () => undefined } : {})}
-          />
-        );
-      };
-      await mount(<Dropping />);
-      act(() => cellAt(3, 1).focus());
-      act(() => control.scrollTo?.(60));
-      expect(tree().querySelector('tr[aria-rowindex="4"]')).not.toBeNull();
-      act(() => drop());
-      expect(tree().querySelector('tr[aria-rowindex="4"]')).toBeNull();
-      expect(tree().querySelectorAll('[tabindex="0"]')).toHaveLength(1);
-    });
-  },
-);
+  it("a custom totals row takes the row contract: its rowheader, cells and the pin offset", async () => {
+    const renderRow = (n: Node, grid: TableRowContext): JSX.Element => (
+      <tr {...grid.rowProps}>
+        <th {...grid.cellProps(0, { header: true, span: 2 })}>{n.label}</th>
+        <td {...grid.cellProps(2)}>{n.kind}</td>
+      </tr>
+    );
+    await mount(<TreeHost open="all" totals renderRow={renderRow} />);
+    const row = tree().querySelector<HTMLElement>(".cv-table__totals tr");
+    expect(row).toHaveClass("cv-table__total-row");
+    expect(row).toHaveAttribute("aria-rowindex", "14");
+    expect(row?.style.getPropertyValue("--cv-table-after")).toBe("0");
+    expect(within(row ?? tree()).getByRole("rowheader", { name: "Total" })).toHaveAttribute(
+      "colspan",
+      "2",
+    );
+  });
+});
 
-describe(
-  "Table (CMP-049) treegrid: the totals rowgroup (D04H A-6.4, A-6.5)",
-  { timeout: 60_000 },
-  () => {
-    it("is a trailing rowgroup after the body, its row led by a rowheader, at the row index after the body", async () => {
-      await mount(<TreeHost open="all" totals />);
-      const groups = within(tree()).getAllByRole("rowgroup");
-      expect(groups).toHaveLength(3);
-      const totals = groups[2];
-      expect(totals).toHaveClass("cv-table__totals");
-      const header = within(totals ?? tree()).getByRole("rowheader", { name: "Total" });
-      expect(header.tagName).toBe("TH");
-      expect(header).toHaveAttribute("scope", "row");
-      expect(header.closest("tr")).toHaveAttribute("aria-rowindex", "14");
-      expect(header.closest("tr")).not.toHaveAttribute("aria-level");
-      expect(header.closest("tr")?.style.getPropertyValue("--cv-table-after")).toBe("0");
-    });
+describe("Table (CMP-049) pinned columns (E29-D04 §2.7; E29-D05 §6.2 F-01)", () => {
+  const pins = (r: HTMLElement): (string | null)[] =>
+    [...r.children].map((cell) =>
+      cell.hasAttribute("data-pin-end") ? "end" : cell.getAttribute("data-pin-start"),
+    );
 
-    it("a totals row has no select box, no selection and no row menu", async () => {
-      const onRowSelect = vi.fn();
-      const rowActions = vi.fn(() => [{ id: "a", label: "Act", onSelect: () => undefined }]);
-      await mount(<TreeHost open="all" totals onRowSelect={onRowSelect} rowActions={rowActions} />);
-      const totals = tree().querySelector(".cv-table__totals tr");
-      expect(totals).not.toHaveAttribute("aria-selected");
-      expect(totals?.querySelector("input")).toBeNull();
-      expect(totals?.querySelector("button")).toBeNull();
-      const cell = totals?.querySelector<HTMLElement>("[data-cv-c]");
-      act(() => cell?.focus());
-      await userEvent.keyboard(" ");
-      expect(onRowSelect).not.toHaveBeenCalled();
-      await userEvent.keyboard("{Shift>}{F10}{/Shift}");
-      expect(page.queryByRole("menu")).toBeNull();
-    });
+  it("pins the leading columns, the select column counted, and the last one", async () => {
+    await mount(
+      <TreeHost
+        open="all"
+        onRowSelect={() => undefined}
+        rowActions={() => []}
+        stickyFirstColumn={2}
+        stickyLastColumn
+      />,
+    );
+    const [header, first] = within(tree()).getAllByRole("row");
+    expect(pins(header ?? tree())).toEqual(["0", "1", null, null, "end"]);
+    expect(pins(first ?? tree())).toEqual(["0", "1", null, null, "end"]);
+  });
 
-    it("pins its rows to the region's bottom, and focused body cells scroll clear of them", async () => {
-      const host = await mount(<TreeHost open="all" totals />);
-      const shell = host.querySelector<HTMLElement>('[data-cmp="CMP-049"]');
-      expect(shell?.style.getPropertyValue("--cv-table-totals")).toBe("1");
-      const without = await mount(
-        <Table<Node>
-          grid
-          caption="No totals"
-          columns={COLUMNS}
-          rows={[TOTAL]}
-          rowKey={(n) => n.id}
-        />,
-      );
-      expect(
-        without
-          .querySelector<HTMLElement>('[data-cmp="CMP-049"]')
-          ?.style.getPropertyValue("--cv-table-totals"),
-      ).toBe("");
-    });
+  it("true pins the first column alone; none pins nothing", async () => {
+    const pinned = await mount(<TreeHost open="all" stickyFirstColumn />);
+    const row = pinned.querySelectorAll<HTMLElement>("tbody tr[aria-rowindex]")[0];
+    expect(pins(row ?? pinned)).toEqual(["0", null, null]);
+    const plain = await mount(<TreeHost open="all" />);
+    expect(plain.querySelector("[data-pin-start], [data-pin-end]")).toBeNull();
+  });
 
-    it("a custom totals row takes the row contract: its rowheader, cells and the pin offset", async () => {
-      const renderRow = (n: Node, grid: TableRowContext): JSX.Element => (
+  it("a merged cell is pinned only within the pinned columns", async () => {
+    const renderRow = (n: Node, grid: TableRowContext): JSX.Element =>
+      n.kind === "group" ? (
         <tr {...grid.rowProps}>
-          <th {...grid.cellProps(0, { header: true, span: 2 })}>{n.label}</th>
-          <td {...grid.cellProps(2)}>{n.kind}</td>
+          <th {...grid.cellProps(0, { header: true, span: 3 })}>{n.label}</th>
+        </tr>
+      ) : (
+        <tr {...grid.rowProps}>
+          <th {...grid.cellProps(0, { header: true })}>{n.label}</th>
+          <td {...grid.cellProps(1, { span: 2 })}>{n.value}</td>
         </tr>
       );
-      await mount(<TreeHost open="all" totals renderRow={renderRow} />);
-      const row = tree().querySelector<HTMLElement>(".cv-table__totals tr");
-      expect(row).toHaveClass("cv-table__total-row");
-      expect(row).toHaveAttribute("aria-rowindex", "14");
-      expect(row?.style.getPropertyValue("--cv-table-after")).toBe("0");
-      expect(within(row ?? tree()).getByRole("rowheader", { name: "Total" })).toHaveAttribute(
-        "colspan",
-        "2",
+    await mount(<TreeHost open="all" renderRow={renderRow} stickyFirstColumn={2} />);
+    const [, group, item] = within(tree()).getAllByRole("row");
+    expect(pins(group ?? tree())).toEqual([null]);
+    expect(pins(item ?? tree())).toEqual(["0", null]);
+  });
+
+  it("measures the pinned columns from the header row into the shell's offsets; a pin change or an unmount disconnects", async () => {
+    let measure: () => void = () => undefined;
+    const observed: Element[] = [];
+    // Every observer CMP-049 makes, with its targets: the pinned columns' one watches the header cells.
+    const observers: { readonly targets: Element[]; readonly disconnect: () => void }[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        readonly targets: Element[] = [];
+        readonly disconnect = vi.fn();
+        constructor(cb: () => void) {
+          measure = cb;
+          observers.push(this);
+        }
+        observe(target: Element): void {
+          this.targets.push(target);
+          observed.push(target);
+        }
+      },
+    );
+    /** How many times the pinned columns' observers let go of the header cells. */
+    const pinDisconnects = (): number =>
+      observers
+        .filter((o) => o.targets.some((target) => target.tagName === "TH"))
+        .reduce((sum, o) => sum + vi.mocked(o.disconnect).mock.calls.length, 0);
+    const widths = new Map([
+      ["Name", 96],
+      ["Value", 80.5],
+      ["Note", 64],
+    ]);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const width = widths.get(this.textContent?.trim() ?? "") ?? 0;
+      return { width, height: 24, top: 0, left: 0, right: width, bottom: 24 } as DOMRect;
+    });
+    const Toggle = (): JSX.Element => {
+      const [shown, setShown] = useState(true);
+      const [pins, setPins] = useState(2);
+      return (
+        <>
+          <button type="button" onClick={() => setPins(1)}>
+            Fewer pins
+          </button>
+          <button type="button" onClick={() => setShown(false)}>
+            Hide
+          </button>
+          {shown ? <TreeHost open="all" stickyFirstColumn={pins} stickyLastColumn /> : null}
+        </>
       );
+    };
+    const host = await mount(<Toggle />);
+    const shell = host.querySelector<HTMLElement>('[data-cmp="CMP-049"]');
+    await act(async () => measure());
+    expect(shell?.style.getPropertyValue("--cv-table-pin-1")).toBe("96px");
+    expect(shell?.style.getPropertyValue("--cv-table-pin-start")).toBe("176.5px");
+    expect(shell?.style.getPropertyValue("--cv-table-pin-end")).toBe("64px");
+    expect(observed.some((cell) => cell.tagName === "TH")).toBe(true);
+    expect(pinDisconnects()).toBe(0);
+    // Fewer pins: the old observer lets its cells go before a new one measures the one pinned column.
+    await act(async () => {
+      fireEvent.click(page.getByRole("button", { name: "Fewer pins" }));
     });
-  },
-);
-
-describe(
-  "Table (CMP-049) pinned columns (E29-D04 §2.7; E29-D05 §6.2 F-01)",
-  { timeout: 60_000 },
-  () => {
-    const pins = (r: HTMLElement): (string | null)[] =>
-      [...r.children].map((cell) =>
-        cell.hasAttribute("data-pin-end") ? "end" : cell.getAttribute("data-pin-start"),
-      );
-
-    it("pins the leading columns, the select column counted, and the last one", async () => {
-      await mount(
-        <TreeHost
-          open="all"
-          onRowSelect={() => undefined}
-          rowActions={() => []}
-          stickyFirstColumn={2}
-          stickyLastColumn
-        />,
-      );
-      const [header, first] = within(tree()).getAllByRole("row");
-      expect(pins(header ?? tree())).toEqual(["0", "1", null, null, "end"]);
-      expect(pins(first ?? tree())).toEqual(["0", "1", null, null, "end"]);
+    expect(pinDisconnects()).toBe(1);
+    await act(async () => measure());
+    expect(shell?.style.getPropertyValue("--cv-table-pin-start")).toBe("96px");
+    expect(shell?.style.getPropertyValue("--cv-table-pin-1")).toBe("");
+    await act(async () => {
+      fireEvent.click(page.getByRole("button", { name: "Hide" }));
     });
+    expect(pinDisconnects()).toBe(2);
+    expect(shell?.style.getPropertyValue("--cv-table-pin-start")).toBe("");
+  });
 
-    it("true pins the first column alone; none pins nothing", async () => {
-      const pinned = await mount(<TreeHost open="all" stickyFirstColumn />);
-      const row = pinned.querySelectorAll<HTMLElement>("tbody tr[aria-rowindex]")[0];
-      expect(pins(row ?? pinned)).toEqual(["0", null, null]);
-      const plain = await mount(<TreeHost open="all" />);
-      expect(plain.querySelector("[data-pin-start], [data-pin-end]")).toBeNull();
-    });
+  it("a stacked table pins nothing", async () => {
+    const observers = stubObservers();
+    const host = await mount(
+      <Table<Node>
+        grid
+        caption="Stacking"
+        columns={COLUMNS}
+        rows={[TOTAL]}
+        rowKey={(n) => n.id}
+        stickyFirstColumn
+      />,
+    );
+    const shell = host.querySelector<HTMLElement>('[data-cmp="CMP-049"]');
+    expect(host.querySelector("[data-pin-start]")).not.toBeNull();
+    await act(async () => observers.fire(shell, 10));
+    expect(shell).toHaveAttribute("data-layout", "stacked");
+    expect(host.querySelector("[data-pin-start]")).toBeNull();
+  });
+});
 
-    it("a merged cell is pinned only within the pinned columns", async () => {
-      const renderRow = (n: Node, grid: TableRowContext): JSX.Element =>
-        n.kind === "group" ? (
-          <tr {...grid.rowProps}>
-            <th {...grid.cellProps(0, { header: true, span: 3 })}>{n.label}</th>
-          </tr>
-        ) : (
-          <tr {...grid.rowProps}>
-            <th {...grid.cellProps(0, { header: true })}>{n.label}</th>
-            <td {...grid.cellProps(1, { span: 2 })}>{n.value}</td>
-          </tr>
-        );
-      await mount(<TreeHost open="all" renderRow={renderRow} stickyFirstColumn={2} />);
-      const [, group, item] = within(tree()).getAllByRole("row");
-      expect(pins(group ?? tree())).toEqual([null]);
-      expect(pins(item ?? tree())).toEqual(["0", null]);
-    });
-
-    it("measures the pinned columns from the header row into the shell's offsets, and clears them on unmount", async () => {
-      let measure: () => void = () => undefined;
-      const observed: Element[] = [];
-      vi.stubGlobal(
-        "ResizeObserver",
-        class {
-          constructor(cb: () => void) {
-            measure = cb;
-          }
-          observe(target: Element): void {
-            observed.push(target);
-          }
-          disconnect(): void {}
-        },
-      );
-      const widths = new Map([
-        ["Name", 96],
-        ["Value", 80.5],
-        ["Note", 64],
-      ]);
-      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
-        this: HTMLElement,
-      ) {
-        const width = widths.get(this.textContent?.trim() ?? "") ?? 0;
-        return { width, height: 24, top: 0, left: 0, right: width, bottom: 24 } as DOMRect;
-      });
-      const Toggle = (): JSX.Element => {
-        const [shown, setShown] = useState(true);
-        return (
-          <>
-            <button type="button" onClick={() => setShown(false)}>
-              Hide
-            </button>
-            {shown ? <TreeHost open="all" stickyFirstColumn={2} stickyLastColumn /> : null}
-          </>
-        );
-      };
-      const host = await mount(<Toggle />);
-      const shell = host.querySelector<HTMLElement>('[data-cmp="CMP-049"]');
-      await act(async () => measure());
-      expect(shell?.style.getPropertyValue("--cv-table-pin-1")).toBe("96px");
-      expect(shell?.style.getPropertyValue("--cv-table-pin-start")).toBe("176.5px");
-      expect(shell?.style.getPropertyValue("--cv-table-pin-end")).toBe("64px");
-      expect(observed.some((cell) => cell.tagName === "TH")).toBe(true);
-      await act(async () => {
-        fireEvent.click(page.getByRole("button", { name: "Hide" }));
-      });
-      expect(shell?.style.getPropertyValue("--cv-table-pin-start")).toBe("");
-    });
-
-    it("a stacked table pins nothing", async () => {
-      const observers = stubObservers();
-      const host = await mount(
-        <Table<Node>
-          grid
-          caption="Stacking"
-          columns={COLUMNS}
-          rows={[TOTAL]}
-          rowKey={(n) => n.id}
-          stickyFirstColumn
-        />,
-      );
-      const shell = host.querySelector<HTMLElement>('[data-cmp="CMP-049"]');
-      expect(host.querySelector("[data-pin-start]")).not.toBeNull();
-      await act(async () => observers.fire(shell, 10));
-      expect(shell).toHaveAttribute("data-layout", "stacked");
-      expect(host.querySelector("[data-pin-start]")).toBeNull();
-    });
-  },
-);
-
-describe("Table (CMP-049) custom cells: widget and interactive", { timeout: 60_000 }, () => {
+describe("Table (CMP-049) custom cells: widget and interactive", () => {
   const renderRow = (n: Node, grid: TableRowContext): JSX.Element => (
     <tr {...grid.rowProps}>
       <td {...grid.cellProps(0, { widget: true })}>
@@ -786,7 +800,7 @@ describe("Table (CMP-049) custom cells: widget and interactive", { timeout: 60_0
   });
 });
 
-describe("Table treegrid stories", { timeout: 60_000 }, () => {
+describe("Table treegrid stories", () => {
   const all = composeStories(stories);
   const tree = [
     "Treegrid",
@@ -800,14 +814,20 @@ describe("Table treegrid stories", { timeout: 60_000 }, () => {
   // The theme stories' plays wait for the preview's theme runtime, which a unit test does not load: mounted only.
   const themed = new Set<string>(["ContrastLight", "ContrastHighContrast"]);
 
-  it.each(tree)("%s runs its play and has no serious or critical axe violation", async (name) => {
-    const Story = all[name];
-    const canvasElement = await mount(<Story />);
-    const play = stories[name].play as
-      ((context: { canvasElement: HTMLElement }) => Promise<void>) | undefined;
-    if (!themed.has(name)) await play?.({ canvasElement });
-    const root = canvasElement.querySelector('[data-cmp="CMP-049"]');
-    expect(root).not.toBeNull();
-    expect(await seriousViolations(root ?? canvasElement)).toEqual([]);
-  });
+  // Each story mounts, plays and runs axe: at most 3.0 s apiece at a load of 23 on 8 cores, near 18 s at 35 to 45 (the
+  // code lens' run), so a measured 30 s ceiling, as the Table story test's own.
+  it.each(tree)(
+    "%s runs its play and has no serious or critical axe violation",
+    { timeout: 30_000 },
+    async (name) => {
+      const Story = all[name];
+      const canvasElement = await mount(<Story />);
+      const play = stories[name].play as
+        ((context: { canvasElement: HTMLElement }) => Promise<void>) | undefined;
+      if (!themed.has(name)) await play?.({ canvasElement });
+      const root = canvasElement.querySelector('[data-cmp="CMP-049"]');
+      expect(root).not.toBeNull();
+      expect(await seriousViolations(root ?? canvasElement)).toEqual([]);
+    },
+  );
 });
