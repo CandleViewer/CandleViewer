@@ -245,8 +245,8 @@ export const Default: Story = {
 };
 
 /**
- * Group by account (D02 §5.5): Sub-1 closed (▸, `aria-expanded="false"`); → on its header opens it, focus kept, and
- * → again moves to its first position.
+ * Group by account (D02 §5.5), every group open: ← on Sub-1's header closes it (▸, `aria-expanded="false"`), focus
+ * kept; → opens it again, and → once more moves to its first position.
  */
 export const GroupedByAccount: Story = {
   play: async ({ canvasElement }) => {

@@ -85,6 +85,11 @@ export interface PositionsGridGroup<R extends PositionsGridRow = PositionsGridRo
   readonly realisedToday: string | null;
   /** The signed net size, only for a group on one symbol (#911 BQ-12); else `null`. */
   readonly netSize: string | null;
+  /**
+   * An account's state marker when one applies (D02 §5.5 and §10.2: "checking", "Verifying", "Stale — locked"; D04H
+   * C.1 `AccountGroup.state`; #911 BQ-14): the host's tag, after the header's figures. Absent, none.
+   */
+  readonly marker?: ReactNode;
 }
 
 /** The totals row: the apps/web model's `TotalsModel` with its rowheader's words ("LIVE total", D02:142). */
@@ -268,6 +273,14 @@ const TIER = {
   near: { glyph: "!", word: "Near", label: "Near liquidation" },
   critical: { glyph: "!!", word: "Critical", label: "Critical — near liquidation" },
 } as const;
+
+/** "—" for a null, with its spoken reason (D02 D-7). */
+const dash = (reading: string): JSX.Element => (
+  <>
+    <span aria-hidden="true">—</span>
+    <span className="cv-visually-hidden">{reading}</span>
+  </>
+);
 
 /** "1 position", "3 positions" (D02:238). */
 const positionsWord = (n: number): string => (n === 1 ? "1 position" : `${String(n)} positions`);
@@ -523,13 +536,18 @@ interface RowParts<R extends PositionsGridRow> {
 }
 
 /**
- * The keys a row takes over CMP-049's: `Space` on a cell toggles the row's selection (a box's own Space is native),
- * `Ctrl+A` selects every position, drawn or not (D-3), and on the Actions cell's halves `←` / `→` move between them,
+ * The keys a row takes over CMP-049's: in a selectable grid `Space` on a cell toggles a position's selection and does
+ * nothing on a group header or the totals, a handled key that never scrolls the region (a box's own Space is native);
+ * `Ctrl+A` selects every position, drawn or not (D-3); and on the Actions cell's halves `←` / `→` move between them,
  * the roving model's two cells (D02 §11.1).
  */
 function rowKeys(
   event: KeyboardEvent<HTMLTableRowElement>,
-  parts: { readonly selectAll: () => void; readonly toggle?: () => void },
+  parts: {
+    readonly selectable: boolean;
+    readonly selectAll: () => void;
+    readonly toggle?: () => void;
+  },
 ): void {
   if (event.defaultPrevented || !(event.target instanceof HTMLElement)) return;
   const target = event.target;
@@ -540,9 +558,9 @@ function rowKeys(
   }
   if (event.ctrlKey || event.altKey || event.metaKey) return;
   const cell = target.closest<HTMLElement>("[data-cv-c]");
-  if (event.key === " " && cell === target && parts.toggle !== undefined) {
+  if (event.key === " " && cell === target && parts.selectable) {
     event.preventDefault();
-    parts.toggle();
+    parts.toggle?.();
     return;
   }
   const split = target.closest(".cv-split-button");
@@ -568,6 +586,9 @@ function PositionRow<R extends PositionsGridRow>({
 }): JSX.Element {
   const sentenceId = useId();
   const sentence = liqSentence(row.liq);
+  // One node carries the row's description, the tier's sentence: the first tier column's, else a hidden one of the
+  // row's own, so a dropped column's value stays in it (D01 D1) and no id is ever drawn twice.
+  const describer = parts.columns.find((id) => id === "liq_dist" || id === "status");
   const isSelected = parts.selected.has(row.key);
   const lead = parts.selectable ? 1 : 0;
   const size = shown(row.size) ?? row.size;
@@ -590,6 +611,11 @@ function PositionRow<R extends PositionsGridRow>({
         return (
           <th key={id} {...grid.cellProps(c, { header: true })}>
             {row.symbol}
+            {describer !== undefined || sentence === undefined ? null : (
+              <span id={sentenceId} hidden>
+                {sentence}
+              </span>
+            )}
           </th>
         );
       case "side":
@@ -619,12 +645,7 @@ function PositionRow<R extends PositionsGridRow>({
         const text = shown(value);
         return (
           <td key={id} {...grid.cellProps(c, figure)}>
-            {text ?? (
-              <>
-                <span aria-hidden="true">—</span>
-                <span className="cv-visually-hidden">{id === "liq_price" ? NO_LIQ : NO_VALUE}</span>
-              </>
-            )}
+            {text ?? dash(id === "liq_price" ? NO_LIQ : NO_VALUE)}
           </td>
         );
       }
@@ -656,27 +677,34 @@ function PositionRow<R extends PositionsGridRow>({
       case "liq_dist":
         return (
           <td key={id} {...grid.cellProps(c, { ...figure, echo: sentence })}>
-            <LiqTierCell liq={row.liq} sentenceId={sentenceId} />
+            <LiqTierCell
+              liq={row.liq}
+              sentenceId={describer === "liq_dist" ? sentenceId : undefined}
+            />
           </td>
         );
       case "leverage": {
         const lev = shown(row.leverage);
         return (
           <td key={id} {...grid.cellProps(c, figure)}>
-            {lev === null ? "—" : `${lev}×`}
+            {lev === null ? dash(NO_VALUE) : `${lev}×`}
           </td>
         );
       }
       case "margin":
         return (
           <td key={id} {...grid.cellProps(c)}>
-            {row.marginMode.value === null ? "—" : MARGIN_WORDS[row.marginMode.value]}
+            {row.marginMode.value === null ? dash(NO_VALUE) : MARGIN_WORDS[row.marginMode.value]}
           </td>
         );
       case "status":
         return (
           <td key={id} {...grid.cellProps(c, { echo: sentence })}>
-            <LiqTierCell liq={row.liq} form="status" sentenceId={sentenceId} />
+            <LiqTierCell
+              liq={row.liq}
+              form="status"
+              sentenceId={describer === "status" ? sentenceId : undefined}
+            />
           </td>
         );
     }
@@ -693,8 +721,9 @@ function PositionRow<R extends PositionsGridRow>({
       data-liq={row.liq.tier}
       onKeyDown={(event) =>
         rowKeys(event, {
+          selectable: parts.selectable,
           selectAll: parts.selectAll,
-          ...(parts.selectable ? { toggle: () => parts.toggle(row.key) } : {}),
+          toggle: () => parts.toggle(row.key),
         })
       }
     >
@@ -726,10 +755,10 @@ function PositionRow<R extends PositionsGridRow>({
 
 /**
  * CMP-114's `GroupHeaderRow` (E29-D04 §2.1 frame `group-header`; D02 §5.5, D-15): a level-1 row whose one cell, its
- * rowheader and its tree cell, reads "▾ Main · LIVE · One-way · 1 position · uPnL +8.00 · rPnL today +37.40"; → and ←
- * (or a click) open and close it (CMP-049's treegrid), the ▸ / ▾ and `aria-expanded` carrying the state (Mo-10). The
- * net size shows only for a group on one symbol (#911 BQ-12). The Actions cell stays empty: Flatten account… mounts
- * with the ticket that wires it (BQ-3).
+ * rowheader and its tree cell, reads "▾ Main · LIVE · One-way · 1 position · uPnL +8.00 · rPnL today +37.40", then the
+ * host's state marker when one applies (`marker`); → and ← (or a click) open and close it (CMP-049's treegrid), the ▸ /
+ * ▾ and `aria-expanded` carrying the state (Mo-10). The net size shows only for a group on one symbol (#911 BQ-12). The
+ * Actions cell stays empty: Flatten account… mounts with the ticket that wires it (BQ-3).
  */
 function GroupHeaderRow<R extends PositionsGridRow>({
   entry,
@@ -748,7 +777,9 @@ function GroupHeaderRow<R extends PositionsGridRow>({
       {...grid.rowProps}
       className={cx(grid.rowProps.className, "cv-positions-grid__group")}
       data-part="GroupHeaderRow"
-      onKeyDown={(event) => rowKeys(event, { selectAll: parts.selectAll })}
+      onKeyDown={(event) =>
+        rowKeys(event, { selectable: parts.selectable, selectAll: parts.selectAll })
+      }
     >
       <th
         {...grid.cellProps(0, { header: true, span, className: "cv-positions-grid__group-cell" })}
@@ -769,6 +800,12 @@ function GroupHeaderRow<R extends PositionsGridRow>({
         <PnLBadge value={group.unrealisedPnl} format="abs" currency={parts.currency} />
         {" · rPnL today "}
         <PnLBadge value={group.realisedToday} format="abs" currency={parts.currency} />
+        {group.marker == null ? null : (
+          <>
+            {" · "}
+            {group.marker}
+          </>
+        )}
       </th>
       {parts.actions ? <td {...grid.cellProps(span)} /> : null}
     </tr>
@@ -848,7 +885,9 @@ function TotalsRow<R extends PositionsGridRow>({
       className={cx(grid.rowProps.className, "cv-positions-grid__totals")}
       data-part="TotalsRow"
       aria-describedby={aside.length === 0 ? undefined : descriptionId}
-      onKeyDown={(event) => rowKeys(event, { selectAll: parts.selectAll })}
+      onKeyDown={(event) =>
+        rowKeys(event, { selectable: parts.selectable, selectAll: parts.selectAll })
+      }
     >
       <th
         {...grid.cellProps(0, {
@@ -923,9 +962,7 @@ export function PositionsGrid<R extends PositionsGridRow = PositionsGridRow>({
   // the reported view stays clear of its edges (`keepsDrawn`).
   const [view, setView] = useState<RowSpan>({ first: 0, last: FIRST_WINDOW - 1 });
   const windowed = entries.length > WINDOW_FROM;
-  const drawn = windowed
-    ? drawnFor(view, entries.length)
-    : { first: 0, last: entries.length - 1 };
+  const drawn = windowed ? drawnFor(view, entries.length) : { first: 0, last: entries.length - 1 };
   const selection = selected ?? new Set<string>();
   const allKeys = (): string[] => groups.flatMap((group) => group.rows.map((row) => row.key));
   const parts: RowParts<R> = {
