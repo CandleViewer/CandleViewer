@@ -8832,6 +8832,7 @@ export interface components {
        *     | `Rules`               | `rules`     |
        *     | `Admin`               | `admin`     |
        *     | `Settings`            | `settings`  |
+       *     | `Tape`                | `tape`      |
        *
        *     Seven contexts had no scope among the original six, so each has its own (`auth`,
        *     `workspace`, `ticket`, `replay`, `rules`, `admin`, `settings`) rather than a fold into
@@ -8840,8 +8841,8 @@ export interface components {
        *     `global.auth.submit`, `positions.open_sltp` and `rules.inspect_node`), and one shared
        *     scope would make each such pair a `conflict` under `createHotkeyProfile`'s rule. The
        *     order ticket is `ticket`, not `orders`: `05-accessibility-standard.md` §3.4 makes the
-       *     Order Ticket and Positions & Orders separate regions. `tape` and `orders` have no
-       *     client context yet. **Open-ended for readers:** clients must tolerate values they do
+       *     Order Ticket and Positions & Orders separate regions. `Tape` is SCR-053's (E22-S01,
+       *     #714); `orders` has no client context yet. **Open-ended for readers:** clients must tolerate values they do
        *     not know, so adding a scope is an additive change (C-6.3). Writers must send a listed
        *     value, the one this table gives the action.
        * @enum {string}

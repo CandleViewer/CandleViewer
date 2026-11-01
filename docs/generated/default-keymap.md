@@ -88,3 +88,12 @@
 | Rules | Select all | `Ctrl+A` | no | valid when: always |
 | Rules | Validate | `Ctrl+Enter` | no | valid when: always |
 | Auth | Submit sign-in | `Enter` | no | valid when: login form focused |
+| Tape | Resume the tape or release the selection | `Esc` | no | valid when: a tape row focused |
+| Tape | First cell of the print | `Home` | no | valid when: a tape row focused |
+| Tape | Last cell of the print | `End` | no | valid when: a tape row focused |
+| Tape | Jump to live (newest print) | `Ctrl+Home` | no | valid when: tape panel focused |
+| Tape | Oldest print | `Ctrl+End` | no | valid when: tape panel focused |
+| Tape | Locate the print on synced charts | `Enter` | no | valid when: a tape row focused |
+| Tape | Pause / resume the tape | `P` | no | valid when: tape panel focused, outside a text field or an open menu |
+| Tape | Next print | `↓` | no | valid when: tape grid focused |
+| Tape | Previous print | `↑` | no | valid when: tape grid focused |

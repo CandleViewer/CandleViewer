@@ -60,6 +60,19 @@ const isCount = (v: unknown): v is number => typeof v === "number" && Number.isI
 const isDecimal = (v: unknown): v is string =>
   typeof v === "string" && v.length > 0 && v.length <= 40 && Number.isFinite(Number(v));
 
+/** A seam the ingest placed (C-78): the first print after a reset, and the times either side. */
+export interface SeamEvent {
+  /** The `seq` of the first print appended after the reset; the gap divider sits under it. */
+  readonly seq: number;
+  /** `ts_ms` of the newest print before the reset. */
+  readonly fromTsMs: number;
+  /** `ts_ms` of that first print. */
+  readonly toTsMs: number;
+}
+
+/** The seams kept for the panel to read (it drains them each frame; older ones are dropped). */
+const SEAM_LOG_MAX = 16;
+
 export class TapeIngest {
   readonly counters: IngestCounters = emptyCounters();
   /** The engine's current threshold, from the latest batch (`23` §14.2); never compared here. */
@@ -69,6 +82,8 @@ export class TapeIngest {
   seams = 0;
   /** `ts_ms` of the newest print appended. */
   lastPrintTsMs: number | undefined;
+  /** The latest seams, oldest first (PR-B's gap dividers, S15). */
+  readonly seamLog: SeamEvent[] = [];
   private seamPending = false;
 
   constructor(
@@ -160,6 +175,8 @@ export class TapeIngest {
       this.ring.markSeam(seq);
       this.seams += 1;
       this.seamPending = false;
+      this.seamLog.push({ seq, fromTsMs: this.lastPrintTsMs ?? item.ts_ms, toTsMs: item.ts_ms });
+      if (this.seamLog.length > SEAM_LOG_MAX) this.seamLog.shift();
     }
     this.counters.appended += 1;
     this.lastPrintTsMs = item.ts_ms;

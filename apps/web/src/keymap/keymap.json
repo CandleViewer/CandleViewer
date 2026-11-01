@@ -11,7 +11,8 @@
     "Ticket",
     "Positions",
     "Replay",
-    "Rules"
+    "Rules",
+    "Tape"
   ],
   "commands": [
     {
@@ -32,6 +33,10 @@
         {
           "command": "rules.inspect_node",
           "rationale": "Enter/save is scoped to the focused form or editor; contexts are never co-active"
+        },
+        {
+          "command": "tape.locate",
+          "rationale": "Enter scoped to the focused panel; contexts are never co-active"
         }
       ]
     },
@@ -293,6 +298,10 @@
         {
           "command": "ticket.clear",
           "rationale": "Escape scoped to the focused panel; contexts are never co-active"
+        },
+        {
+          "command": "tape.cancel",
+          "rationale": "Escape scoped to the focused panel; contexts are never co-active"
         }
       ]
     },
@@ -512,6 +521,10 @@
         {
           "command": "chart.cancel_drawing",
           "rationale": "Escape scoped to the focused panel; contexts are never co-active"
+        },
+        {
+          "command": "tape.cancel",
+          "rationale": "Escape scoped to the focused panel; contexts are never co-active"
         }
       ]
     },
@@ -594,6 +607,10 @@
         {
           "command": "global.auth.submit",
           "rationale": "Enter/save is scoped to the focused form or editor; contexts are never co-active"
+        },
+        {
+          "command": "tape.locate",
+          "rationale": "Enter scoped to the focused panel; contexts are never co-active"
         }
       ]
     },
@@ -801,6 +818,10 @@
         {
           "command": "global.auth.submit",
           "rationale": "Enter/save is scoped to the focused form or editor; contexts are never co-active"
+        },
+        {
+          "command": "tape.locate",
+          "rationale": "Enter scoped to the focused panel; contexts are never co-active"
         }
       ]
     },
@@ -1054,6 +1075,116 @@
       "ignoreRepeat": false,
       "validWhen": "always",
       "visibleControl": true
+    },
+    {
+      "id": "tape.pause_toggle",
+      "label": "Pause / resume the tape",
+      "context": "Tape",
+      "defaultBinding": "P",
+      "destructive": false,
+      "validWhen": "tape panel focused, outside a text field or an open menu",
+      "visibleControl": "Pause tape (P) button",
+      "screens": ["SCR-053"]
+    },
+    {
+      "id": "tape.row_prev",
+      "label": "Previous print",
+      "context": "Tape",
+      "defaultBinding": "↑",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "validWhen": "tape grid focused",
+      "visibleControl": true
+    },
+    {
+      "id": "tape.row_next",
+      "label": "Next print",
+      "context": "Tape",
+      "defaultBinding": "↓",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "validWhen": "tape grid focused",
+      "visibleControl": true
+    },
+    {
+      "id": "tape.cell_first",
+      "label": "First cell of the print",
+      "context": "Tape",
+      "defaultBinding": "Home",
+      "destructive": false,
+      "validWhen": "a tape row focused",
+      "visibleControl": true
+    },
+    {
+      "id": "tape.cell_last",
+      "label": "Last cell of the print",
+      "context": "Tape",
+      "defaultBinding": "End",
+      "destructive": false,
+      "validWhen": "a tape row focused",
+      "visibleControl": true
+    },
+    {
+      "id": "tape.jump_live",
+      "label": "Jump to live (newest print)",
+      "context": "Tape",
+      "defaultBinding": "Ctrl+Home",
+      "destructive": false,
+      "validWhen": "tape panel focused",
+      "visibleControl": "Jump to live button"
+    },
+    {
+      "id": "tape.jump_oldest",
+      "label": "Oldest print",
+      "context": "Tape",
+      "defaultBinding": "Ctrl+End",
+      "destructive": false,
+      "validWhen": "tape panel focused",
+      "visibleControl": true
+    },
+    {
+      "id": "tape.locate",
+      "label": "Locate the print on synced charts",
+      "context": "Tape",
+      "defaultBinding": "Enter",
+      "destructive": false,
+      "validWhen": "a tape row focused",
+      "visibleControl": "a row click",
+      "shadows": [
+        {
+          "command": "positions.open_sltp",
+          "rationale": "Enter scoped to the focused panel; contexts are never co-active"
+        },
+        {
+          "command": "rules.inspect_node",
+          "rationale": "Enter scoped to the focused panel; contexts are never co-active"
+        },
+        {
+          "command": "global.auth.submit",
+          "rationale": "Enter scoped to the focused panel; contexts are never co-active"
+        }
+      ]
+    },
+    {
+      "id": "tape.cancel",
+      "label": "Resume the tape or release the selection",
+      "context": "Tape",
+      "defaultBinding": "Esc",
+      "destructive": false,
+      "validWhen": "a tape row focused",
+      "visibleControl": true,
+      "editable": false,
+      "editableException": "05 §3.3 rule 3: Esc is the universal cancel, never remapped; in the tape grid it resumes a focus pause or releases the selection (E22-D04 KR-2)",
+      "shadows": [
+        {
+          "command": "chart.cancel_drawing",
+          "rationale": "Escape scoped to the focused panel; contexts are never co-active"
+        },
+        {
+          "command": "ticket.clear",
+          "rationale": "Escape scoped to the focused panel; contexts are never co-active"
+        }
+      ]
     }
   ]
 }
