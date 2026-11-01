@@ -26,7 +26,13 @@ from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
 from candleviewer.rules.executor.gates import Gates
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.metrics import RereadFailure as RereadFailure
-from candleviewer.rules.executor.ports import ActionAudit, AlertPort, RuleSwitches, RunRecords
+from candleviewer.rules.executor.ports import (
+    ActionAudit,
+    AlertPort,
+    PrincipalReads,
+    RuleSwitches,
+    RunRecords,
+)
 from candleviewer.rules.ir.models import Rule
 from candleviewer.rules.manager import (
     Audit,
@@ -110,6 +116,7 @@ class RulesService:
         self._metrics = ExecutorMetrics()
         # E35-T10: the checks' ports (unbound: each refuses, so no armed action is handed over).
         self._switches: RuleSwitches | None = None
+        self._principal: PrincipalReads | None = None  # E35-T11 binds the reads
         self._executor: ActionExecutor | None = None  # while the evaluator runs
         self._dispatch: FireDispatch | None = None  # the fire queue, while the evaluator runs
         self._audits: AuditDispatch | None = None  # the record-only jobs' queue, beside it
@@ -126,6 +133,7 @@ class RulesService:
         alerts: AlertPort | None = None,
         metrics: ExecutorMetrics | None = None,
         switches: RuleSwitches | None = None,
+        principal: PrincipalReads | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
         Each option is set only when given, so a later call (E35-S05's simulation sink, the
@@ -138,7 +146,8 @@ class RulesService:
         action that would reach the OMS (`ActionExecutor`). `records` are the executor's two
         write-ahead ports, `alerts` its partial-fire and write-ahead alerts and `metrics` its
         series (E35-T09, `rules_oms_wiring`); `switches` the master switch, both kill switches and
-        the rollout port its checks 2 and 3 read (E35-T10)."""
+        the rollout port its checks 2 and 3 read, and `principal` the owner's and the armer's
+        snapshots check 5 reads (E35-T10; E35-T11 binds them, and unbound, check 5 refuses)."""
         if action_sink is not None:
             self._action_sink = action_sink
         if simulation_sink is not None:
@@ -151,6 +160,8 @@ class RulesService:
             self._metrics = metrics
         if switches is not None:
             self._switches = switches
+        if principal is not None:
+            self._principal = principal
         if store is not None:
             self._store = store
         if audit is not None:
@@ -348,7 +359,8 @@ class RulesService:
         stand_in = None if self._action_sink is _discard_actions else self._action_sink
         executor = self._executor = ActionExecutor(
             check_one=self._check_one, scope_check=self._scope_check,
-            gates=Gates(switches=self._switches), records=run_records, audit=action_audit,
+            gates=Gates(switches=self._switches, principal=self._principal),
+            records=run_records, audit=action_audit,
             alerts=self._alerts, metrics=self._metrics, stand_in=stand_in,
         )  # fmt: skip
         dispatch = self._dispatch = FireDispatch(self._refused, executor.execute)
@@ -368,9 +380,9 @@ class RulesService:
                 return
             kind: JobKind
             if result.fired:
-                emit, queue, kind = emitter.emit, dispatch, "fire"
+                emit, queue, kind = emitter.emit_checked, dispatch, "fire"
             elif result.skipped_reason == "scope":
-                emit, queue, kind = audit_only.emit, audits, "scope_denial"
+                emit, queue, kind = audit_only.emit_checked, audits, "scope_denial"
             else:
                 return
             rule = item.rule

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -311,6 +312,12 @@ class _Source:
     async def load_permissions(self, owner: uuid.UUID) -> frozenset[str]:
         await self._maybe_fail("permissions")
         return frozenset() if self.disabled else frozenset({ARM_LIVE})
+
+    async def load_account_environments(
+        self, account_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """E35-T10 (BQ-3): every account read in this world's environment, `demo`."""
+        return dict.fromkeys(account_ids, "demo")
 
     async def _maybe_fail(self, read: str) -> None:
         if self.fail == f"hang-{read}":

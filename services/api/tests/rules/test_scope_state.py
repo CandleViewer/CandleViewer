@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Sequence
 from uuid import UUID
 
 import pytest
@@ -36,6 +37,10 @@ class Source:
 
     async def load_permissions(self, owner: UUID) -> frozenset[str]:
         return self.perms.get(owner, frozenset())
+
+    async def load_account_environments(self, account_ids: Sequence[UUID]) -> dict[UUID, str]:
+        """E35-T10 (BQ-3): every account read in this world's environment, `demo`."""
+        return dict.fromkeys(account_ids, "demo")
 
 
 class GatedSource(Source):

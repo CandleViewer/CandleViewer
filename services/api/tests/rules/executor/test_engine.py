@@ -1,8 +1,9 @@
 """E35-T09 (#5000) slice 2d: the action executor (24 §11.5, §11.9; BQ-5 to BQ-9).
 
 `Engine` drives one `ActionExecutor` with scripted doubles: check 1's verdicts, the switches of
-checks 2 and 3 (open, E35-T10), the routing emitter (a scope denial, or the hand-over back to the
-executor; a dry run to the simulation list) and the scope re-check before a retry, one bound
+checks 2 and 3 (open, E35-T10) and the principal of check 5 (both users active), the routing
+emitter (a scope denial's reason, or the hand-over back to the executor; a dry run to the
+simulation list) and the scope re-check before a retry, one bound
 `send_notification` handler whose answers a test scripts per node, the records in memory and the
 alerts. Every action is `send_notification`, so the bound handler serves them all.
 No sleeps: a hang is an event nobody sets, under a bound the test sets to 0.
@@ -36,7 +37,13 @@ from candleviewer.rules.executor.keys import client_ref, dedupe_key
 from candleviewer.rules.executor.ports import ActionAuditFields, EventRow, RunRow
 from candleviewer.rules.ir.models import Action, RuleScope
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
-from tests.rules.executor.request_builders import Counted, Records, Switches, action_request
+from tests.rules.executor.request_builders import (
+    Counted,
+    Principals,
+    Records,
+    Switches,
+    action_request,
+)
 
 GUARD_S = 5.0
 RULE, RUN, OWNER = str(uuid.UUID(int=7)), uuid.UUID(int=8), uuid.UUID(int=0xA1)
@@ -135,7 +142,8 @@ class Engine:
         table: dict[str, HandlerSpec] = {**HANDLERS, "send_notification": spec}
         self.executor = ActionExecutor(
             check_one=self.check_one, scope_check=self.scope_check,
-            gates=Gates(switches=self.switches), records=self.records, audit=self.records,
+            gates=Gates(switches=self.switches, principal=Principals()), records=self.records,
+            audit=self.records,
             alerts=self.alerts, metrics=self.counted.metrics, handlers=table,
         )  # fmt: skip
 
@@ -150,17 +158,18 @@ class Engine:
         queue = self.rechecks.get(req.payload.node_id)
         return queue.pop(0) if queue else None
 
-    async def emit(self, req: ActionRequest) -> bool:
-        """The routing emitter: the scope re-check, then the sink by mode (`_route`)."""
+    async def emit(self, req: ActionRequest) -> str | None:
+        """The routing emitter (`emit_checked`): the scope re-check's reason, else the sink by mode
+        (`_route`)."""
         node = req.payload.node_id
         self.order.append(("scope", node))
         if node in self.denied:
-            return False
+            return "grant_revoked"
         if req.mode != "armed" or req.payload.dry_run_only:
             self.simulated.append(node)
         else:
             await self.executor.hand_over(req)
-        return True
+        return None
 
     async def run(self, *nodes: str, on_error: str = "abort_remaining", **kw: Any) -> None:
         await self.executor.execute(fire(self.emit, *nodes, on_error=on_error, **kw))
@@ -184,9 +193,11 @@ def fire(emit: Any, *nodes: str, on_error: str = "abort_remaining", **over: Any)
 
 
 def key(node: str) -> str:
+    """The fire key of a `send_notification` action, which names no account (24 §11.5 `targets`,
+    E35-T10): its key carries none."""
     return dedupe_key(
         rule_id=RULE, version=1, scope_instance=f"BTCUSDT@{ACCOUNT}", node_id=node, run_id=RUN,
-        account_id=ACCOUNT,
+        account_id=None,
     )  # fmt: skip
 
 
@@ -435,10 +446,11 @@ async def test_a_bound_stand_in_never_serves_an_action_that_would_reach_the_oms(
 
     engine = Engine(Handler({}))
     records = engine.records
+    # Check 5 admits the instance's account, so `widen_stop` reaches check 8 (E35-T10).
     engine.executor = ActionExecutor(
         check_one=engine.check_one, scope_check=engine.scope_check,
-        gates=Gates(switches=Switches(rollout=True)), records=records, audit=records,
-        stand_in=sink,
+        gates=Gates(switches=Switches(rollout=True), principal=Principals(frozenset({ACCOUNT}))),
+        records=records, audit=records, stand_in=sink,
     )  # fmt: skip
     types = (
         "place_order", "scale_out", "cancel_order", "modify_stop_loss", "move_to_breakeven",
@@ -482,7 +494,7 @@ async def test_an_executor_with_no_records_bound_hands_nothing_over() -> None:
     engine = Engine(Handler({"a1": [OK]}))
     engine.executor = ActionExecutor(
         check_one=engine.check_one, scope_check=engine.scope_check,
-        gates=Gates(switches=engine.switches), alerts=engine.alerts,
+        gates=Gates(switches=engine.switches, principal=Principals()), alerts=engine.alerts,
         metrics=engine.counted.metrics, handlers=engine.executor._handlers,
     )  # fmt: skip
     with capture_logs() as logs:
@@ -546,7 +558,7 @@ async def test_an_armed_fires_close_carries_its_duration() -> None:
     engine = Engine(Slow({"a1": [OK]}))
     engine.executor = ActionExecutor(
         check_one=engine.check_one, scope_check=engine.scope_check,
-        gates=Gates(switches=engine.switches), records=engine.records,
+        gates=Gates(switches=engine.switches, principal=Principals()), records=engine.records,
         audit=engine.records, handlers=engine.executor._handlers, clock=lambda: now[0],
     )  # fmt: skip
     await engine.run("a1")
@@ -616,8 +628,8 @@ async def test_the_defensive_refusals_send_nothing() -> None:
     absent from the table is `unavailable`; `hand_over` outside a fire refuses."""
     engine = Engine(Handler({"a1": [OK]}))
 
-    async def passes_only(req: ActionRequest) -> bool:
-        return True
+    async def passes_only(req: ActionRequest) -> None:
+        return None  # `emit_checked`: it went on, yet nothing was handed over
 
     await engine.executor.execute(fire(passes_only, "a1"))
     ((node, outcome, _),) = engine.records.results()
@@ -626,7 +638,7 @@ async def test_the_defensive_refusals_send_nothing() -> None:
     missing = Engine(Handler({"a1": [OK]}))
     missing.executor = ActionExecutor(
         check_one=missing.check_one, scope_check=missing.scope_check,
-        gates=Gates(switches=missing.switches), records=missing.records,
+        gates=Gates(switches=missing.switches, principal=Principals()), records=missing.records,
         audit=missing.records, handlers=table,
     )  # fmt: skip
     await missing.run("a1")

@@ -5,7 +5,8 @@ in-memory store, the evaluator on and the clocks frozen: `executor` is the sink 
 behind (E35-T09 to E35-T12), `simulated` the simulation sink. The evaluator stays off by default:
 `test_evaluator_wiring.py::test_evaluator_not_constructed_when_flag_off` pins it. Since E35-T09 the
 executor records each armed action's result (`records`, in memory) and counts it (`counted`), and
-since E35-T10 its checks read the switches bound here, open (`Switches`).
+since E35-T10 its checks read the switches and the principal bound here, open (`Switches`,
+`Principals`).
 """
 
 from __future__ import annotations
@@ -42,7 +43,13 @@ from candleviewer.rules.manager import (
 from candleviewer.rules.runner import EvalTick, RuleEvaluationRunner
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
 from candleviewer.rules.service import RereadFailure, RulesService
-from tests.rules.executor.request_builders import Counted, Records, Switches, action_request
+from tests.rules.executor.request_builders import (
+    Counted,
+    Principals,
+    Records,
+    Switches,
+    action_request,
+)
 from tests.rules.test_evaluator import Clock
 from tests.rules.test_scope_wiring import OWNER, Source
 from tests.rules.test_scope_wiring import A as ACCOUNT
@@ -138,6 +145,7 @@ async def rig(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Rig]:
     svc = RulesService()
     svc.bind(store=store, action_sink=to_executor, simulation_sink=to_simulation)
     svc.bind(records=(records, records), metrics=counted.metrics, switches=Switches())
+    svc.bind(principal=Principals(frozenset({ACCOUNT})))
     svc.wire_scope(Source(), "demo", audit)
     await svc.refresh_scope(OWNER)
     ctx: Any = SimpleNamespace(settings=SimpleNamespace(rules_evaluator_enabled=True))

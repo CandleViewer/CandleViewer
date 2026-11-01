@@ -1,11 +1,13 @@
 """SQL grant/permission reads for rule scope (E35-S04). Static, parameterised SQL only.
 
 Returns plain tuples (account_id, can_view, frozen): storage may not import `rules` (M10).
-`load_trade_grants` (E29-T04, #913) adds `can_trade`, for the order route's principal.
+`load_trade_grants` (E29-T04, #913) adds `can_trade`, for the order route's principal;
+`load_account_environments` (E35-T10, BQ-3) each live account's `exchange_accounts.env`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -25,6 +27,12 @@ _TRADE_GRANTS = sa.text(
 # O5 (E42-T04, #965, C-2.21): a user who is not `active`, or is deleted, has no permission, so a
 # disabled user's armed rules lose `rules:arm_live` on the next read, before the asynchronous
 # disarm has run. The same predicate guards `identity_sqlalchemy._PERMS_SQL`.
+# E35-T10 (BQ-3): each account's own environment, for the rule action's re-check (24 Sec.11.5
+# check 4); a deleted account is not read, so the re-check refuses it.
+_ENVIRONMENTS = sa.text(
+    "SELECT id, env::text FROM exchange_accounts WHERE id = ANY(CAST(:ids AS uuid[])) "
+    "AND deleted_at IS NULL"
+)
 _PERMS = sa.text(
     "SELECT DISTINCT p.code FROM users u "
     "JOIN user_roles ur ON ur.user_id = u.id "
@@ -50,6 +58,14 @@ class SqlAlchemyScopeSource:
         async with self._relational.unit_of_work() as uow:
             rows = (await uow.session.execute(_TRADE_GRANTS, {"id": str(user_id)})).all()
         return [(UUID(str(r[0])), bool(r[1]), bool(r[2]), bool(r[3])) for r in rows]
+
+    async def load_account_environments(self, account_ids: Sequence[UUID]) -> dict[UUID, str]:
+        """`{account_id: env}` for each live account of `account_ids`; one deleted or missing is
+        left out, so its environment reads as not read."""
+        ids = sorted(str(a) for a in account_ids)
+        async with self._relational.unit_of_work() as uow:
+            rows = (await uow.session.execute(_ENVIRONMENTS, {"ids": ids})).all()
+        return {UUID(str(r[0])): str(r[1]) for r in rows}
 
     async def load_permissions(self, owner: UUID) -> frozenset[str]:
         async with self._relational.unit_of_work() as uow:
