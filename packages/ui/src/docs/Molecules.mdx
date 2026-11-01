@@ -578,7 +578,7 @@ the DOM, so a windowed set reads true (E29-D05 §5.3 F-03). Every grid key above
 | Element      | Role                        | Name                         | ARIA                                                                                                                                           |
 | ------------ | --------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | table        | treegrid                    | the caption                  | `aria-rowcount` (the header, every body row and the totals), `aria-colcount`; `aria-multiselectable` with a select column or `multiselectable` |
-| row          | row                         | its rowheader, or the host's | `aria-rowindex` (absolute), `aria-level`, `aria-posinset`, `aria-setsize`; `aria-expanded` on a row that holds others                          |
+| row          | row                         | its cells, or the host's own | `aria-rowindex` (absolute), `aria-level`, `aria-posinset`, `aria-setsize`; `aria-expanded` on a row that holds others                          |
 | totals       | rowgroup (a second `tbody`) | —                            | after the body, pinned to the region's bottom; each row led by a rowheader (`th scope="row"`), no level, no selection, no row menu             |
 | pinned cells | gridcell / columnheader     | as unpinned                  | `data-pin-start` / `data-pin-end`: sticky at the measured offsets; focused cells scroll clear of them (`scroll-margin`, F-01)                  |
 
@@ -587,15 +587,22 @@ scrolled away, it is the one drawn row outside the window, at its absolute `aria
 page and Tab back into the grid lands on it; a re-sort that moves it out of the window keeps it, and focus. Focus moved
 into the window drops it. `stickyFirstColumn` pins the leading columns (`true` one, a number that many, at most four,
 the select column counted) and `stickyLastColumn` the last; the offsets are the header cells' measured widths, set on
-the shell by a ResizeObserver, so a resize re-renders nothing. A merged cell is pinned only within the pinned columns.
-A treegrid never stacks: its rows nest, so at 200 % and in a narrow panel the region scrolls sideways under its pinned
-columns instead (E29-D02 §11.5, board 19). A custom row's cell may be a `widget` (its one control takes focus in its
-place, spreading `grid.tabIndexOf(i)`, as CMP-114's row checkbox does) or `interactive` (its controls tamed; Enter or F2
-in, Esc back, as CMP-114's Actions cell). `headerHint` adds visually hidden words to a header's name (the narrow dock's
-"uPnL" "(USDT)"). Not built: the `detail` line (SCR-078's, D04H A-6.2) and `aria-colindex`.
+the shell by a ResizeObserver, so a resize re-renders nothing. A merged cell is pinned only within the pinned columns. A
+treegrid does not stack, the reading taken pending OQ-19 (E29-D03 C-19, E29-D05 C-13: `16` §3 rule 4's stacked reflow is
+a required state of every CMP-049-based table, `at risk` here): at 200 % and in a narrow panel its region scrolls
+sideways under its pinned columns instead (E29-D02 §11.5, board 19). A custom row's cell may be a `widget` (its one
+control takes focus in its place, spreading `grid.tabIndexOf(i)`, as CMP-114's row checkbox does) or `interactive` (its
+controls tamed; Enter or F2 in, Esc back, as CMP-114's Actions cell). `headerHint` adds visually hidden words to a
+header's name, which its echo shows with the label (the narrow dock's "uPnL" "(USDT)"). A row whose `rowActions` are
+empty opens no context menu. Not built: the `detail` line (SCR-078's, D04H A-6.2); `aria-colindex`; a row named by its
+rowheader (A-6.5: a row drawn from the columns takes its name from its cells, a custom row names itself); and an exact
+parent move past the window beyond two levels (`←` asks for the row `posinset` rows up, exact while the earlier siblings
+show no children).
 
-Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): rows grow with the text scale and the columns with
-the table's `em`; the region scrolls both ways, the header and the pinned columns and totals staying in view.
+Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): at 200 % zoom the rows, their type and the columns
+grow with the page; the in-app text scale widens the columns (the table's `em`) but not yet the 13 px type tokens or the
+row height, an E05 token matter. Either way the region scrolls both ways, the header, the pinned columns and the totals
+staying in view.
 
 ### WatchlistRow (CMP-161, a row of the APG Grid through CMP-049's row contract)
 

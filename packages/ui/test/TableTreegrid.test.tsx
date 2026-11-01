@@ -279,7 +279,7 @@ describe("Table (CMP-049) treegrid: roles, levels and indices", () => {
       expect(row).not.toHaveAttribute(name);
   });
 
-  it("a treegrid never stacks, however narrow its shell", async () => {
+  it("a treegrid does not stack, however narrow its shell (the reading taken pending OQ-19)", async () => {
     const observers = stubObservers();
     const host = await mount(<TreeHost open="all" />);
     const shell = host.querySelector<HTMLElement>('[data-cmp="CMP-049"]');

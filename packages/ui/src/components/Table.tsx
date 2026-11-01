@@ -322,8 +322,9 @@ export interface TableProps<T> {
    * The WAI-ARIA APG Treegrid pattern (E29-D04 §2.7, D04H A-6.2 to A-6.5), which implies grid mode: rows nest by
    * `treeRow`'s `level`, outermost first; `→` on a collapsed row's first cell expands it and on an expanded one
    * moves to its first child, `←` collapses an expanded row and otherwise moves from a row's first cell to its
-   * parent (`onExpandedChange` asks; the host shows or hides the children). A treegrid never stacks: its rows nest,
-   * so the region scrolls sideways under its pinned columns instead (E29-D02 §11.5, board 19).
+   * parent (`onExpandedChange` asks; the host shows or hides the children). A treegrid does not stack, the reading
+   * taken pending OQ-19 (E29-D03 C-19, E29-D05 C-13: `16` §3 rule 4's stacked reflow, at risk here): its region
+   * scrolls sideways under its pinned columns instead (E29-D02 §11.5, board 19).
    */
   readonly treegrid?: boolean;
   /** Each body row's place in its tree, from the host's model (with `treegrid`; F-03: never counted in the DOM). */
@@ -1101,7 +1102,8 @@ export function Table<T>({
     rowActions !== undefined ||
     columns.some((column) => column.interactive === true);
   const scrolls = useScrolls(region, `${state}:${rows.length}:${gridColumns.length}`);
-  // A treegrid never stacks (its rows nest): a zero threshold keeps it a grid at every width.
+  // A treegrid does not stack, the reading taken pending OQ-19 (E29-D05 C-13): a zero threshold keeps it a grid at
+  // every width.
   const stacked = useStacked(
     shell,
     probe,
