@@ -642,13 +642,15 @@ index alone, removing nothing.
   time, the job's and the compare step's own. A shard takes every n-th cell (`VR_SHARD=k/n`, n from
   `strategy.job-total`; `packages/ui/vr/matrix.ts`), so the shards cost about the same; a story count
   that has outgrown the budget needs another shard (one more entry in the job's matrix), not a higher
-  number. `workers: "50%"` assumes the 4-vCPU hosted runner of a public repository (2 workers a
+  number — 10 → 14 shards on 2026-11-01, after #5146's 396 new cells pushed shards 4–8 past 360 s. `workers: "50%"` assumes the 4-vCPU hosted runner of a public repository (2 workers a
   shard); a 2-vCPU runner would run 1 worker and miss the budget. The `vr_update` dispatch is
   unsharded and not budget-checked (`timeout-minutes: 40`; its update step took about 30 min in run
   41094472587, so the headroom shrinks as stories are added) and runs the `a11y` and `storybook`
   jobs of the same workflow too.
 - **CI-A11Y-008** (the VR fonts are not pinned): the `vr` job's font step could not install
-  `fonts-inter` or `fonts-jetbrains-mono` at the versions it pins (noble's release pocket), or
+  `fonts-inter` or `fonts-jetbrains-mono` at the versions it pins (noble's release pocket) after three
+  attempts that each wait up to 180 s for the apt/dpkg lock (the hosted runner's unattended-upgrades
+  holds it after boot; a warning per failed attempt is in the log), or
   fontconfig has no `Inter` or `JetBrains Mono` family after the install, so the shard would draw
   the token families in a substitute and fail every cell. Re-run once if the archive was unreachable;
   if the pinned version is gone from the image's archive, the pin and the baselines move together in

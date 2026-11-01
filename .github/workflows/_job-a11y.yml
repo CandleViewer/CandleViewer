@@ -11,7 +11,7 @@ name: _job-a11y
 # storybook-nightly.yml sets `storybook_only` to run that job alone on `main` every night; pr.yml
 # keeps the default and runs both.
 # E05-T04 (#270): the `vr` job runs beside them and fails the same check: every story x 3 themes x
-# 2 densities against its committed baseline PNG (ADR-0019), in 10 shards of one browser per two CPUs
+# 2 densities against its committed baseline PNG (ADR-0019), in 14 shards of one browser per two CPUs
 # that each keep a 6 min budget (CI-A11Y-006, CI-A11Y-007). A `workflow_dispatch` with `vr_update`
 # runs it once, unsharded, as `vr:update` and uploads the baselines for a person to commit
 # (packages/ui/README.md).
@@ -316,7 +316,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.vr_update && '[0]' || '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]') }}
+        shard: ${{ fromJSON(inputs.vr_update && '[0]' || '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]') }}
     steps:
       - name: Start the budget clock
         run: date +%s > "$RUNNER_TEMP/vr-start"
@@ -380,8 +380,19 @@ jobs:
             echo "::error::CI-A11Y-008 $1 (docs/ci-runbook.md)"
             exit 1
           }
-          sudo apt-get update -qq || fail "apt-get update failed before the pinned fonts"
-          sudo apt-get install -y -qq --no-install-recommends \
+          # The hosted runner's unattended-upgrades can hold the apt/dpkg lock for minutes after boot and
+          # the archive mirror answers late under load: wait for the lock and try three times before failing.
+          apt_try() {
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              echo "::warning::CI-A11Y-008 apt attempt $attempt failed ($*); retrying in 20 s"
+              sleep 20
+            done
+            return 1
+          }
+          apt_try sudo apt-get -o DPkg::Lock::Timeout=180 update -qq \
+            || fail "apt-get update failed before the pinned fonts"
+          apt_try sudo apt-get -o DPkg::Lock::Timeout=180 install -y -qq --no-install-recommends \
             "fonts-inter=$INTER" "fonts-jetbrains-mono=$JETBRAINS_MONO" \
             || fail "fonts-inter=$INTER and fonts-jetbrains-mono=$JETBRAINS_MONO did not install"
           for family in Inter "JetBrains Mono"; do
