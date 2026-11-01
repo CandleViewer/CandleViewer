@@ -2,8 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   frameSpanMs,
   MIN_WINDOW_FRAMES,
-  WARMUP_FRAMES,
-  WARMUP_MAX_MS,
+  WARMUP_MS,
   WINDOW_FRAMES,
   WINDOW_MAX_MS,
 } from "../../../src/lib/capability/frameProbe";
@@ -23,9 +22,16 @@ function memoryStorage(init: Record<string, string> = {}) {
   };
 }
 
-function harness(msFor: (panes: number) => number, storage = memoryStorage()) {
+// The clock advances by each frame's span (60 Hz or slower) unless `intervalMs` sets a display rate.
+function harness(
+  msFor: (panes: number) => number,
+  storage: ProbeDeps["storage"] = memoryStorage(),
+  intervalMs?: number,
+) {
   let listener: ((ms: number) => void) | null = null;
   let panes = 0;
+  let clock = 0;
+  let drawnAt = 0;
   const unsubscribe = vi.fn(() => {
     listener = null;
   });
@@ -36,17 +42,25 @@ function harness(msFor: (panes: number) => number, storage = memoryStorage()) {
     },
     drawPanes: vi.fn((n: number) => {
       panes = n;
+      drawnAt = clock;
     }),
+    now: () => clock,
     storage,
     report: vi.fn(),
   };
   const tick = (frames: number) => {
-    for (let i = 0; i < frames; i += 1) listener?.(msFor(panes));
+    for (let i = 0; i < frames; i += 1) {
+      const ms = msFor(panes);
+      clock += intervalMs ?? frameSpanMs(ms);
+      listener?.(ms);
+    }
   };
-  return { deps, tick, unsubscribe, storage, lastPanes: () => panes };
+  const sinceDraw = () => clock - drawnAt;
+  return { deps, tick, unsubscribe, storage, lastPanes: () => panes, sinceDraw };
 }
 
-const PER_WINDOW = WARMUP_FRAMES + WINDOW_FRAMES;
+// one calibration step at 60 Hz: the 7 s warm-up (420 frames) and the 120-frame window
+const PER_WINDOW = Math.ceil(WARMUP_MS / frameSpanMs(0)) + WINDOW_FRAMES;
 
 describe("startProbe", () => {
   it("startProbe_calibrates_at_one_then_four_panes_stores_and_reports_once", async () => {
@@ -70,11 +84,46 @@ describe("startProbe", () => {
 
   it("startProbe_warm_up_frames_are_never_classified", async () => {
     // a 500 ms cold frame at the start of each window would make any device reduced if it were kept
-    let i = 0;
-    const h = harness((n) => (i++ % PER_WINDOW < 3 ? 500 : 1 + n));
+    const h = harness((n) => (h.sinceDraw() < 1_500 ? 500 : 1 + n));
     const p = startProbe(h.deps);
     h.tick(PER_WINDOW * 2);
     expect((await p.result).recommendedProfile).toBe("full");
+  });
+
+  it("startProbe_warm_up_is_time_not_frames_at_144_hz", async () => {
+    // 25 ms frames for the first 5 s of each step: 420 frames at 144 Hz end at 2.9 s and would classify them
+    const h = harness(
+      (n) => (h.sinceDraw() < 5_000 ? 25 : 1 + n * 0.5),
+      memoryStorage(),
+      1000 / 144,
+    );
+    const p = startProbe(h.deps);
+    h.tick(2 * (Math.ceil((WARMUP_MS / 1000) * 144) + WINDOW_FRAMES) + 10);
+    const r = await p.result;
+    expect(r.recommendedProfile).toBe("full");
+    expect(r.p95FrameMs).toBeLessThan(4);
+  });
+
+  it("startProbe_a_store_that_throws_still_reports_and_resolves", async () => {
+    // a blocked store throws on read and a full one on write (quota): the probe measures, reports and
+    // resolves anyway; only the memory is lost
+    const blocked = {
+      getItem: () => {
+        throw new Error("SecurityError");
+      },
+      setItem: vi.fn(() => {
+        throw new Error("QuotaExceededError");
+      }),
+    };
+    const h = harness((n) => 2 + n * 0.5, blocked);
+    const p = startProbe(h.deps);
+    h.tick(PER_WINDOW * 2 + 50);
+    const r = await p.result;
+    expect(r.recommendedProfile).toBe("full");
+    expect(blocked.setItem).toHaveBeenCalledTimes(1);
+    expect(h.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(h.deps.report).toHaveBeenCalledTimes(1);
+    expect(readCachedResult(blocked)).toBeNull();
   });
 
   it("startProbe_slow_device_finishes_inside_the_stated_time_cap", async () => {
@@ -89,7 +138,7 @@ describe("startProbe", () => {
       h.tick(1);
     }
     const r = await p.result;
-    expect(WARMUP_MAX_MS + WINDOW_MAX_MS).toBe(20_000); // the stated cap per step
+    expect(WARMUP_MS + WINDOW_MAX_MS).toBe(20_000); // the stated cap per step
     expect(elapsed).toBeLessThanOrEqual(2 * 20_000 + 4 * 330);
     expect(r.recommendedMaxPanes).toBe(0);
     expect(r.recommendedProfile).toBe("reduced");

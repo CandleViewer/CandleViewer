@@ -48,14 +48,13 @@ export const HARD_CAP_PANES = 16;
 /** US-LAY-001: four panes is the layout the full profile must hold. */
 export const FULL_MIN_PANES = 4;
 /**
- * Frames dropped before sampling: a cold frame misclassifies every device (#371 Technical notes). E15-K01
- * §9's rule: max(30, the measured settle at 60 Hz). The settle search was bounded at 7 s and five cells reached
- * that bound, so 7 s is a lower bound on the slowest settle, not a measurement (E15-K01 §9 T4; re-checked on
- * the owner leg OL-1): 420 frames, or `WARMUP_MAX_MS` of frames on a slower device, whichever comes first.
+ * The warm-up dropped before each calibration window, in clock time from the moment the pane count was set:
+ * a cold frame misclassifies every device (#371 Technical notes). E15-K01 §9's rule: the measured settle.
+ * The settle search was bounded at 7 s and five cells reached that bound, so 7 s is a lower bound on the
+ * slowest settle, not a measurement (E15-K01 §9 T4; re-checked on the owner leg OL-1). A time, not a frame
+ * count: the run's 420 frames are 7 s at 60 Hz but 2.9 s at 144 Hz.
  */
-export const WARMUP_FRAMES = 420;
-/** The warm-up's time cap: 420 frames at 60 Hz (each frame counted as at least `FRAME_INTERVAL_MS`). */
-export const WARMUP_MAX_MS = 7_000;
+export const WARMUP_MS = 7_000;
 /** Minimum window: at 60 frames or more, one outlier moves the nearest-rank p95 by one rank at most. */
 export const MIN_WINDOW_FRAMES = 60;
 /** The window the sampler collects after the warm-up. */
@@ -63,8 +62,8 @@ export const WINDOW_FRAMES = 120;
 /**
  * The window's time cap: it closes at `WINDOW_FRAMES` frames or at this much frame time, whichever comes
  * first. A window that closes on time with fewer than `MIN_WINDOW_FRAMES` frames (slower than about 217 ms
- * per frame) is starved: see `classifyStarved`. So one calibration step takes at most
- * `WARMUP_MAX_MS + WINDOW_MAX_MS` (20 s) plus two frames, and the probe at most twice that.
+ * per frame) is starved: see `classifyStarved`. So one calibration step takes at most `WARMUP_MS` of clock
+ * time plus `WINDOW_MAX_MS` of frame time (20 s) plus two frames, and the probe at most twice that.
  */
 export const WINDOW_MAX_MS = 13_000;
 /** A frame counts as at least one 60 Hz interval when frame time is summed into elapsed time. */
@@ -90,7 +89,7 @@ function check(w: FrameWindow): void {
 }
 
 /**
- * Classifies one or more warm windows (the warm-up already dropped; see `classifySeries`). With windows at
+ * Classifies one or more warm windows (the warm-up already dropped; see `warmWindow`). With windows at
  * two or more pane counts the cost is fitted as p95(N) = fixed + perPane * N (least squares over each
  * window's p95); with one pane count, or a fitted slope <= 0, the fixed cost is charged to the top window's
  * panes (fixed = 0, perPane = its p95 / its pane count), which errs low.
@@ -155,9 +154,13 @@ export function classifyStarved(
   };
 }
 
-/** Drops the warm-up from each raw series and keeps at most `WINDOW_FRAMES`. */
-export function warmWindow(paneCount: number, series: readonly number[]): FrameWindow {
-  return { paneCount, frameMs: series.slice(WARMUP_FRAMES, WARMUP_FRAMES + WINDOW_FRAMES) };
+/**
+ * Drops the warm-up (`atMs` before `WARMUP_MS`, counted from when the pane count was set) and keeps at most
+ * `WINDOW_FRAMES` of what follows.
+ */
+export function warmWindow(paneCount: number, frames: readonly TimedFrame[]): FrameWindow {
+  const warm = frames.filter((f) => f.atMs >= WARMUP_MS).slice(0, WINDOW_FRAMES);
+  return { paneCount, frameMs: warm.map((f) => f.frameMs) };
 }
 
 /** The plain-text form SCR-153 and US-LAY-008 show: "measured 24 ms per frame with 6 panes". */
@@ -211,7 +214,10 @@ const slow = (f: TimedFrame | undefined): boolean =>
  * `TRIGGER_WINDOW_MS` is above `TRIGGER_THRESHOLD_MS`. Nothing fires until a full window is held: the kept
  * frames span it and cover `TRIGGER_MIN_COVERAGE` of it. The newest frame, when slow after a fast one, is
  * undecided (its right neighbour has not arrived) and is left out until the next call. The caller feeds only
- * frames sampled while visible and focused, in time order.
+ * frames sampled while visible and focused, in time order. Cadence and trim (E15-K01 §11.3, for E15-S08): call
+ * it about once a second, not per frame (it sorts the window); trim the series to the frames at or after the
+ * second-newest frame's `atMs` minus `TRIGGER_WINDOW_MS`, plus the two frames before them, which gives the
+ * result of the full series (the newest may be an undecided slow frame; the oldest need their neighbours).
  */
 export function reducedTrigger(frames: readonly TimedFrame[]): TriggerResult {
   const warm = frames.filter((f) => f.atMs >= TRIGGER_WARMUP_MS);

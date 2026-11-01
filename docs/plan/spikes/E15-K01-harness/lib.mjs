@@ -139,6 +139,17 @@ export function classify(
 }
 
 /**
+ * Mirror of `frameProbe.ts` `warmWindow`: the probe's warm-up in clock time (`warmupMs`, the 7 s settle bound
+ * of §9 T4; the run recorded it as 420 frames at 60 Hz, `decision.trigger.probeWarmupFrames`), then at most
+ * `windowFrames` frames. Over (time from the pane-count change, frameMs) samples. Added with the app's change
+ * from a frame count to a time (r2 read of record); the run applied neither, so no stored outcome changes.
+ */
+export function warmWindow(paneCount, samples, { warmupMs = 7_000, windowFrames = 120 } = {}) {
+  const warm = samples.filter((s) => s.t >= warmupMs).slice(0, windowFrames);
+  return { paneCount, frameMs: warm.map((s) => s.ms) };
+}
+
+/**
  * Mirror of `frameProbe.ts` `reducedTrigger`: the E15-D12 BQ-10 runtime trigger. Over (time, frameMs) samples
  * taken while visible and focused: drop everything before `warmupMs`, drop frames over `outlierMs`, then fire
  * when the p95 of the trailing `windowMs` is above `thresholdMs` (evaluated once the window is full).

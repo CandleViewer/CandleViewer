@@ -15,7 +15,7 @@ import {
   TRIGGER_WARMUP_MS,
   TRIGGER_WINDOW_MS,
   warmWindow,
-  WARMUP_FRAMES,
+  WARMUP_MS,
   WINDOW_FRAMES,
   type FrameWindow,
 } from "../../../src/lib/capability/frameProbe";
@@ -164,10 +164,16 @@ describe("helpers", () => {
     expect(percentile([], 95)).toBe(0);
   });
 
-  it("warmWindow_drops_the_warm_up_and_bounds_the_window", () => {
-    const raw = Array.from({ length: WARMUP_FRAMES + WINDOW_FRAMES + 10 }, (_, i) => i);
+  it("warmWindow_drops_the_warm_up_by_time_and_bounds_the_window", () => {
+    // 144 Hz: the run's 420 frames would be 2.9 s; the warm-up is 7 s on any refresh rate
+    const hz = 144;
+    const raw = Array.from({ length: (WARMUP_MS / 1000) * hz + WINDOW_FRAMES + 10 }, (_, i) => ({
+      atMs: (i * 1000) / hz,
+      frameMs: i,
+    }));
     const w = warmWindow(4, raw);
-    expect(w.frameMs[0]).toBe(WARMUP_FRAMES);
+    expect(WARMUP_MS).toBe(7_000);
+    expect(w.frameMs[0]).toBe((WARMUP_MS / 1000) * hz);
     expect(w.frameMs).toHaveLength(WINDOW_FRAMES);
     expect(w.paneCount).toBe(4);
   });
@@ -262,6 +268,20 @@ describe("reducedTrigger (E15-D12 BQ-10, calibrated by E15-K01 §9)", () => {
     // its slow neighbour arrives: a run, both kept, as two fast frames would be
     const two = reducedTrigger([...base, at(1, 250), at(2, 250)]);
     expect(two.frameCount).toBe(reducedTrigger([...base, at(1, 9), at(2, 9)]).frameCount);
+  });
+
+  it("reducedTrigger_trimmed_series_gives_the_full_series_result", () => {
+    // the E15-S08 trim rule (frameProbe.ts, E15-K01 §11.3): from the second-newest frame's atMs minus the
+    // window, plus the two frames before; seeded slow frames, isolated and in runs, around the boundary
+    let s = 371;
+    const rnd = () => (s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+    const frames = timed(80, () => (rnd() < 0.08 ? 250 : 15 + rnd() * 6));
+    for (let end = 72 * 60; end <= frames.length; end += 37) {
+      const full = frames.slice(0, end);
+      const cut = (full[full.length - 2]?.atMs ?? 0) - TRIGGER_WINDOW_MS;
+      const from = Math.max(0, full.findIndex((f) => f.atMs >= cut) - 2);
+      expect(reducedTrigger(full.slice(from))).toEqual(reducedTrigger(full));
+    }
   });
 
   it("reducedTrigger_borderline_is_strictly_above", () => {

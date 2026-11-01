@@ -11,6 +11,8 @@ import {
   classify,
   frameSpanMs,
   reducedTrigger,
+  warmWindow,
+  WARMUP_MS,
   type FrameWindow,
   type TimedFrame,
 } from "../../../src/lib/capability/frameProbe";
@@ -49,6 +51,10 @@ interface Mirror {
     samples: readonly { readonly t: number; readonly ms: number }[],
     options?: { readonly outliers?: "all" | "isolated" },
   ) => MirrorTrigger;
+  readonly warmWindow: (
+    paneCount: number,
+    samples: readonly { readonly t: number; readonly ms: number }[],
+  ) => { readonly paneCount: number; readonly frameMs: readonly number[] };
 }
 const LIB = resolve(import.meta.dirname, "../../../../../docs/plan/spikes/E15-K01-harness/lib.mjs");
 const mirror = (await import(pathToFileURL(LIB).href)) as Mirror;
@@ -116,6 +122,42 @@ describe("classify on the E15-K01 measured windows", () => {
     expect(weak.recommendedProfile).toBe("reduced");
     expect(weak.recommendedMaxPanes).toBeLessThan(best.recommendedMaxPanes);
   });
+});
+
+describe("the probe's warm-up against the run and the mirror", () => {
+  const RESULTS = resolve(
+    import.meta.dirname,
+    "../../../../../docs/plan/spikes/E15-K01-results.json",
+  );
+  const trigger = (
+    JSON.parse(readFileSync(RESULTS, "utf8")) as {
+      readonly decision: {
+        readonly trigger: {
+          readonly T4_warmup: { readonly settleSMax: number };
+          readonly probeWarmupFrames: number;
+        };
+      };
+    }
+  ).decision.trigger;
+
+  it("e15k01_warm_up_is_the_measured_settle_bound_in_time", () => {
+    // §9 T4: the settle bound (7 s), which the run wrote as 420 frames at 60 Hz
+    expect(WARMUP_MS).toBe(trigger.T4_warmup.settleSMax * 1000);
+    expect(WARMUP_MS).toBe((trigger.probeWarmupFrames * 1000) / 60);
+  });
+
+  it.each(fixture.runs.map((r) => [r.leg, r] as const))(
+    "e15k01_%s_warm_window_matches_the_mirror",
+    (_, r) => {
+      for (const w of r.windows) {
+        const frames = timeline(w.frameMs, 12);
+        const app = warmWindow(w.paneCount, frames);
+        const mir = mirror.warmWindow(w.paneCount, asSamples(frames));
+        expect(app.frameMs.length).toBeGreaterThan(0);
+        expect(app).toEqual({ paneCount: mir.paneCount, frameMs: mir.frameMs });
+      }
+    },
+  );
 });
 
 describe("reducedTrigger on the E15-K01 measured windows, against the mirror's isolated reading", () => {

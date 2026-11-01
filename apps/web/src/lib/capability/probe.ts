@@ -12,8 +12,7 @@ import {
   FULL_MIN_PANES,
   HARD_CAP_PANES,
   MIN_WINDOW_FRAMES,
-  WARMUP_FRAMES,
-  WARMUP_MAX_MS,
+  WARMUP_MS,
   WINDOW_FRAMES,
   WINDOW_MAX_MS,
   type CapabilityProfile,
@@ -42,6 +41,8 @@ export interface ProbeDeps {
   readonly onFrame: (listener: (frameTimeMs: number) => void) => () => void;
   /** Sets the number of panes the calibration scene draws. */
   readonly drawPanes: (paneCount: number) => void;
+  /** The caller's monotonic clock in ms; the warm-up is measured on it (`WARMUP_MS`). */
+  readonly now: () => number;
   readonly storage: Pick<Storage, "getItem" | "setItem">;
   readonly report: (event: ProfileMeasuredEvent) => void;
 }
@@ -64,11 +65,14 @@ function isResult(v: unknown): v is CapabilityResult {
   );
 }
 
-/** The remembered result for this device, or `null` when there is none or it does not parse. */
+/**
+ * The remembered result for this device, or `null` when there is none, it does not parse, or the store
+ * cannot be read (a blocked store throws on `getItem`: the probe then measures again).
+ */
 export function readCachedResult(storage: Pick<Storage, "getItem">): CapabilityResult | null {
-  const raw = storage.getItem(PROBE_STORAGE_KEY);
-  if (raw === null) return null;
   try {
+    const raw = storage.getItem(PROBE_STORAGE_KEY);
+    if (raw === null) return null;
     const v: unknown = JSON.parse(raw);
     return isResult(v) ? v : null;
   } catch {
@@ -78,10 +82,11 @@ export function readCachedResult(storage: Pick<Storage, "getItem">): CapabilityR
 
 /**
  * Starts the probe. Resolves with the cached result at once when one exists; otherwise, for each count in
- * `CALIBRATION_PANES`, draws that many panes, drops the warm-up (`WARMUP_FRAMES` or `WARMUP_MAX_MS`) and
- * collects a window (`WINDOW_FRAMES` or `WINDOW_MAX_MS`), then classifies, stores and reports. Time is the
- * sum of `frameSpanMs`, so a step takes at most 20 s plus two frames and the probe at most 40 s plus four frames
- * (a 160 ms-per-frame device: about 40 s, not 540 frames per step). A window that starves (fewer than
+ * `CALIBRATION_PANES`, draws that many panes, drops the warm-up (`WARMUP_MS` on `now`) and collects a window
+ * (`WINDOW_FRAMES` or `WINDOW_MAX_MS`, the sum of `frameSpanMs`), then classifies, stores and reports, so a
+ * step takes at most 20 s plus two frames and the probe at most 40 s plus four frames (a 160 ms-per-frame
+ * device: about 40 s, not 540 frames per step). A store that is full or blocked only loses the memory: the
+ * result is still reported and resolved. A window that starves (fewer than
  * `MIN_WINDOW_FRAMES` frames in `WINDOW_MAX_MS`) ends the probe with `classifyStarved`. `cancel()` stops
  * sampling; the promise then never settles.
  */
@@ -92,8 +97,7 @@ export function startProbe(deps: ProbeDeps): {
   const cached = readCachedResult(deps.storage);
   if (cached !== null) return { result: Promise.resolve(cached), cancel: () => undefined };
   const windows: FrameWindow[] = [];
-  let warmFrames = 0;
-  let warmMs = 0;
+  let stepStartMs = 0;
   let series: number[] = [];
   let seriesMs = 0;
   let step = 0;
@@ -103,7 +107,11 @@ export function startProbe(deps: ProbeDeps): {
     const finish = (r: CapabilityResult): void => {
       done = true;
       stop();
-      deps.storage.setItem(PROBE_STORAGE_KEY, JSON.stringify(r));
+      try {
+        deps.storage.setItem(PROBE_STORAGE_KEY, JSON.stringify(r));
+      } catch {
+        // a full or blocked store (quota, privacy mode): not remembered, measured again next session
+      }
       deps.report({
         name: "capability.profile_measured",
         p95FrameMs: r.p95FrameMs,
@@ -112,14 +120,14 @@ export function startProbe(deps: ProbeDeps): {
       });
       resolve(r);
     };
-    deps.drawPanes(CALIBRATION_PANES[0] ?? 1);
+    const draw = (paneCount: number): void => {
+      deps.drawPanes(paneCount);
+      stepStartMs = deps.now();
+    };
+    draw(CALIBRATION_PANES[0] ?? 1);
     stop = deps.onFrame((ms) => {
       if (done) return;
-      if (warmFrames < WARMUP_FRAMES && warmMs < WARMUP_MAX_MS) {
-        warmFrames += 1;
-        warmMs += frameSpanMs(ms);
-        return;
-      }
+      if (deps.now() - stepStartMs < WARMUP_MS) return;
       series.push(ms);
       seriesMs += frameSpanMs(ms);
       if (series.length < WINDOW_FRAMES && seriesMs < WINDOW_MAX_MS) return;
@@ -131,12 +139,10 @@ export function startProbe(deps: ProbeDeps): {
       windows.push(w);
       series = [];
       seriesMs = 0;
-      warmFrames = 0;
-      warmMs = 0;
       step += 1;
       const next = CALIBRATION_PANES[step];
       if (next !== undefined) {
-        deps.drawPanes(next);
+        draw(next);
         return;
       }
       finish(classify(windows));
