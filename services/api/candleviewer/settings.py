@@ -850,7 +850,9 @@ class Settings(BaseSettings):
     replay_loop_share: float = Field(default=0.25, ge=0.01, le=0.5)
     replay_loop_burst_ms: int = Field(default=50, ge=5, le=250)
     order_rate_per_uid: int = 8
-    native_sl_deadline_ms: int = 3000
+    # The naked-position threshold (24 Sec.8.13, #916 BQ-4): above 0, as the detector's
+    # `Thresholds` refuses 0, so a zero refuses startup here rather than the OMS's composition.
+    native_sl_deadline_ms: int = Field(default=3000, gt=0)
     killswitch_on_disconnect_s: int = 30
     # #913 slice 3 (20 Sec.6.2, Sec.7.2): the OMS runtime's bounds, read once at its start
     # (`oms_wiring.OmsBounds` checks them together). The submit timeout bounds one create's whole

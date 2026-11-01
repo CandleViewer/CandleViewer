@@ -93,6 +93,13 @@ def test_the_floor_is_b1s_command_timeout() -> None:
     assert floor == CV_COMMAND_TIMEOUT == 10.0
 
 
+def test_a_naked_deadline_of_zero_refuses_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The detector's `Thresholds` refuses a threshold of 0, so the setting refuses it first."""
+    monkeypatch.setenv("CV_NATIVE_SL_DEADLINE_MS", "0")
+    with pytest.raises(ValidationError, match="native_sl_deadline_ms"):
+        Settings()
+
+
 # --- The sinks' adapters ------------------------------------------------------------------------
 
 
