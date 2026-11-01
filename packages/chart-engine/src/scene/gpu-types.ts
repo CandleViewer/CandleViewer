@@ -31,4 +31,8 @@ export interface BatchUniforms {
   readonly palette: Float32Array;
   /** Strip vertices per instance; 0 takes `PROGRAM_VERTICES`. */
   vertices: number;
+  /** The draw-trace label (`series.candle.wick`, `series.ohlc.ticks`, …); the node id if absent. */
+  readonly label?: string;
+  /** Instances to draw this frame; below 0 (or absent) the batch's count. 0 skips the draw. */
+  instances?: number;
 }

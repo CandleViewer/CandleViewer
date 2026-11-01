@@ -29,6 +29,11 @@ export const candleDir = (o: number, h: number, l: number, c: number): number =>
       ? CANDLE_DIR.up
       : CANDLE_DIR.down;
 
+/** A source that follows the ring's syncs (the gap seams): `rewrite` when the ring re-linearised. */
+export interface RingFollower {
+  sync(store: BarStore, r: MutationRange, rewrite: boolean): void;
+}
+
 export class CandleRing implements VertexSource {
   readonly stride = CANDLE_STRIDE;
   /** The instance words as floats (the `VertexSource` the GPU uploads) and as int32 (written). */
@@ -45,6 +50,8 @@ export class CandleRing implements VertexSource {
   lastTo = 0;
   /** Nodes that draw this ring: each sync patches their batches. */
   readonly nodes: string[] = [];
+  /** The series' gap seams (BQ-8), kept in step with every sync; null draws none. */
+  seams: RingFollower | null = null;
   private of: object | null = null;
   private cap = 0;
   /** A rewrite's range, [0, length): its upload is due now, whatever range `r` carried. */
@@ -68,7 +75,9 @@ export class CandleRing implements VertexSource {
     this.head = store.ringHead;
     this.length = store.length;
     let range = r;
-    if (cols !== this.of || store.capacity !== this.cap) {
+    const rewrite = cols !== this.of || store.capacity !== this.cap;
+    this.seams?.sync(store, r, rewrite);
+    if (rewrite) {
       this.cap = store.capacity;
       this.ints = new Int32Array(this.cap * CANDLE_STRIDE);
       this.data = new Float32Array(this.ints.buffer);

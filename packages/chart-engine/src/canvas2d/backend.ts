@@ -7,6 +7,7 @@
 import type { BackendFailure, RenderBackend } from "../gl/backend.js";
 import type { VertexSource } from "../gl/buffers.js";
 import type { BatchUniforms, BatchUniformSource, PaneUniformSource } from "../gl/submit.js";
+import { CANDLE_PART, partColor } from "../layers/candle/geometry.js";
 import { CANDLE_DIR, CANDLE_STRIDE } from "../layers/candle/ring.js";
 import { PALETTE } from "../layers/candle/palette.js";
 import { DrawTrace } from "../gl/trace.js";
@@ -163,9 +164,13 @@ export class Canvas2DBackend implements RenderBackend {
       if (b.program === PROGRAM.candle) {
         const blk = this.own === null ? null : this.own(b);
         this.frameBatches[i] = blk;
+        if (blk !== null && blk.instances === 0) continue; // the seam, no gap in view (BQ-8)
         if (blk === null || block === null) trace.skipped += 1;
         else this.candles(blk, slot.ints, i);
-        if (trace.enabled) trace.nodes.push(b.nodeId);
+        if (trace.enabled) {
+          trace.nodes.push(b.nodeId);
+          trace.labels.push(blk?.label ?? b.nodeId);
+        }
         continue;
       }
       const capacity = Math.floor(data.length / stride);
@@ -174,7 +179,10 @@ export class Canvas2DBackend implements RenderBackend {
         const at = ((head + b.first + j) % capacity) * stride;
         this.push(this.bucketOf(b.program, data, at), i, at);
       }
-      if (trace.enabled) trace.nodes.push(b.nodeId);
+      if (trace.enabled) {
+        trace.nodes.push(b.nodeId);
+        trace.labels.push(b.nodeId);
+      }
     }
     this.flush(ctx);
     return null;
@@ -182,24 +190,26 @@ export class Canvas2DBackend implements RenderBackend {
 
   /**
    * E12-S06: a candle part's live bars, slot for slot through the batch's (head, mask, n), into
-   * the palette rows' buckets: the wick, or the body by direction; an up body's tint is a second
-   * ref (`sub` 1) in the tint bucket, after its outline's.
+   * the palette rows' buckets (`partColor`, the shader's choice). A ref is `at * 2 + sub`: an up
+   * body's tint is `sub` 1 in the tint bucket, after its outline's; the OHLC ticks are the open
+   * (0) and close (1) quads. The seam reads its own `[0, instances)` entries.
    */
   private candles(blk: BatchUniforms, ints: Int32Array, i: number): void {
     const part = blk.ints[0] ?? 0; // scalar locals: no per-frame array
     const head = blk.ints[1] ?? 0;
     const mask = blk.ints[2] ?? 0;
-    const n = blk.ints[3] ?? 0;
+    const seam = part === CANDLE_PART.seam;
+    const n = seam ? (blk.instances ?? 0) : (blk.ints[3] ?? 0);
     const pal = blk.palette;
     for (let j = 0; j < n; j += 1) {
-      const at = ((head + j) & mask) * CANDLE_STRIDE;
+      const at = (seam ? j : (head + j) & mask) * CANDLE_STRIDE;
       if (at < 0 || at + CANDLE_STRIDE > ints.length) break; // a ring shorter than its block
       const dir = ((ints[at + 4] ?? 0) >> 4) & 3;
-      let row: number = PALETTE.wick;
-      if (part === 1 && dir === CANDLE_DIR.up) row = PALETTE.up;
-      else if (part === 1 && dir === CANDLE_DIR.down) row = PALETTE.down;
-      this.push(this.bucketOf(PROGRAM.candle, pal, row * 4, 0), i, at * 2);
-      if (part === 1 && dir === CANDLE_DIR.up) {
+      const row = partColor(part, dir);
+      const bucket = this.bucketOf(PROGRAM.candle, pal, row * 4, 0);
+      this.push(bucket, i, at * 2);
+      if (part === CANDLE_PART.ticks) this.push(bucket, i, at * 2 + 1);
+      else if (part === CANDLE_PART.body && dir === CANDLE_DIR.up) {
         this.push(this.bucketOf(PROGRAM.candle, pal, PALETTE.upTint * 4, 0), i, at * 2 + 1);
       }
     }

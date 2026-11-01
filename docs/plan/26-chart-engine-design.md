@@ -290,6 +290,8 @@ Picking budget ≤ 1 ms for 200 drawings + 50 lines. Results are posted to the m
 
 _Shipped (E11-S08, package README BQ-127 to BQ-141, `src/hit/`): the object grid is kept in world space (fractional bar index × ticks, ~64 px cells at build), so a pan or an autoscale moves nothing and only the candidates a query finds are projected; a rebuild runs only on a cell-size drift outside [¼, 4] (deferred past a gesture) or a y-mapping switch. Under log a segment, straight on screen, is placed along its bent tick path (G-27). Mouse and pen take 10 px, touch 16 px, shared by bodies and handles. The runtime picks once per `input` message at its last move, never during a drag or glide, and posts `pick` only when (object, part, handle) changes; `pickAt` always replies._
 
+_Shipped (E12-S06 PR 2, package README "OHLC bars, gap seams, bar picks and `dataState`"): a plot pick that misses every object asks each pane-0 series for the bar under the point. The structural index gives the bar (the slot under x); the series measures that bar's drawn parts through the geometry twin (`src/layers/candle/geometry.ts`, the shader's arithmetic) with the frame's pane block, so what is hit is what was drawn. A part within the object tolerance (10 px, touch 16 px) hits: `pick { kind: "bar", objectId: "series.<id>" }`._
+
 ### 3.10 Drawings
 
 - **Tools in v1**: trendline, ray, extended line, horizontal line/ray, vertical line, rectangle, ellipse, Fibonacci retracement, Fibonacci extension, measurement tool (price/%/bars/time), text note, arrow, price range, position tool (entry/SL/TP with R:R readout), and a brush/freehand for annotations.
@@ -351,6 +353,8 @@ Third-party-shaped but first-party-used: every built-in series is written agains
 
 Target steady-state: **≤ 18 draw calls per pane**, ≤ 40 for a 3-pane chart.
 
+_Shipped (E12-S06): candles and OHLC bars share the `candle` program and one instance ring per series: an instance is `[open, high, low, close]` i32 ticks plus a meta word (flags | direction), and `u_batch` picks the part per batch. Candles draw the wick and the body, OHLC bars the stem and the open / close ticks (a 10-vertex strip, two quads joined by degenerate bridges): two draws each. Below 5 CSS px an OHLC series draws the candle mark (E12-D06 §3.2). A `gap_before` bar adds a seam hairline at its slot's left edge in `color.candle.wick`, drawn by the same program from a small per-series list of slots: one more draw, only while such a bar is in view and the series is time-aligned (E12-D06 §8)._
+
 ---
 
 ## 5. Visual and theming rules
@@ -400,6 +404,8 @@ Shipped by E11-S08 PR 2 (package README BQ-134 to BQ-136), additive: `command { 
 Shipped by E11-S10 PR 1 (package README BQ-147, BQ-148 and BQ-153), additive: `resize` sizes are CSS px equal to `backing / dpr` and may be 0 (finite, ≥ 0; dpr > 0), which suspends the chart until a non-zero size; `ExportRejectReason` gains `suspended`; `frame` gains `dpr` and `backingStorePx` (`[width, height]` in device px).
 
 Shipped by E12-S06 PR 1 (`24` §19.75; package README "Candle series"), additive: `command { k: "addSeries", series, kind: "candles" | "bars", pane? }` and `command { k: "removeSeries", series }`; `data` gains `series?` (a `bars` batch for that series' `BarStore`) and `ack` echoes it, so the host's two-in-flight rule and conflation are per series; the `bars` buffer is `time` f64, `open` / `high` / `low` / `close` i32 ticks and `volume` f32, then an optional seventh 1-byte `flags` column (bits `gap_before`, forming, partial, amended; bits 4–7 refused), with the params `[priceOrigin, tickSize]` re-checked against the int32 tick window (F-01). A refused batch (F-01 decode, F-02 bar relations) posts a recoverable `ENGINE_DECODE_ERROR` and is still acked.
+
+Shipped by E12-S06 PR 2 (package README "OHLC bars, gap seams, bar picks and `dataState`"), additive: `dataState { state: "empty" | "ready" }` is posted when the main series' visible range empties or fills (edge-triggered; the first frame always posts) and becomes §8's `ChartEvents.dataState`; while empty the engine hides the background layer (no grid) and the app draws SCR-047. `command { k: "setSeriesOptions" }` reads `isTimeAligned` (§8 `CandleOptions.isTimeAligned?`, default true): false never draws the gap seam. `pick` may answer `kind: "bar"` with `objectId: "series.<id>"` (§3.9).
 
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
@@ -581,6 +587,7 @@ export interface ChartEvents {
   viewportChanged: { timeStart: number; timeEnd: number; barSpacing: number };
   visibleRangeNeedsData: { fromTime: number; toTime: number }; // triggers paging
   frameStats: FrameStats;
+  dataState: { state: "empty" | "ready" }; // E12-S06 (BQ-9): no bar in view; no grid drawn
   error: {
     code: string;
     message: string;

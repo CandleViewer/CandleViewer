@@ -1,12 +1,14 @@
-// `candle` (E12-S06, plan §3): one program for both parts of a candle series, two batches sharing
-// one CandleRing (BQ-1). Static source only. Corners come from gl_VertexID (a 4-vertex strip),
-// so no corner buffer is bound. The instance is the ring's physical slot: its logical bar index
-// is (gl_InstanceID - head) & mask, and slots at or past n collapse to a degenerate quad, so a
-// prepend, an eviction and a pan are uniform writes (BQ-14). Ints are subtracted before any
-// float (BQ-75); y is bar-cell's log1p / series mix (BQ-113). `u_batch` = (part, head, mask, n):
-// part 0 the wick, 1 the body. `u_geom[0]` = (body, hairline, tick) device px and spacing CSS px;
-// `u_geom[1].x` the DPR. Mirrors `src/layers/candle/geometry.ts` line for line.
-// `u_palette` = up, down, wick, up tint, down tint, neutral (E12-D06 §2-§4).
+// `candle` (E12-S06, plan §3): one program for every part of a candle or OHLC series, batches
+// sharing one CandleRing (BQ-1). Static source only. Corners come from gl_VertexID, so no corner
+// buffer is bound: a 4-vertex strip, or for the OHLC ticks a 10-vertex strip, two quads joined by
+// degenerate bridges (BQ-15). The instance is the ring's physical slot (the seam's: the slot in
+// `a_ohlc.x`): its logical bar index is (slot - head) & mask, and slots at or past n collapse to
+// a degenerate quad, so a prepend, an eviction and a pan are uniform writes (BQ-14). Ints are
+// subtracted before any float (BQ-75); y is bar-cell's log1p / series mix (BQ-113). `u_batch` =
+// (part, head, mask, n), part as `CANDLE_PART`: 0 wick, 1 body, 2 OHLC ticks, 3 OHLC stem, 4 the
+// gap seam. `u_geom[0]` = (body, hairline, tick) device px and spacing CSS px; `u_geom[1].x` the
+// DPR. Mirrors `src/layers/candle/geometry.ts` line for line.
+// `u_palette` = up, down, wick, up tint, down tint, neutral (E12-D06 §2-§4, §9).
 export const CANDLE = {
   name: "candle",
   uniforms: [
@@ -43,8 +45,15 @@ float yOf(int tick) {
   return mix(t, l, u_log.y) * u_k.y + u_k.z;
 }
 void main() {
-  int i = (gl_InstanceID - u_batch.y) & u_batch.z;
-  vec2 corner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
+  int part = u_batch.x;
+  int i = ((part == 4 ? a_ohlc.x : gl_InstanceID) - u_batch.y) & u_batch.z;
+  int vid = gl_VertexID;
+  int sub = 0;
+  if (part == 2) {
+    sub = vid >= 5 ? 1 : 0;
+    vid = sub == 0 ? min(vid, 3) : max(vid - 6, 0);
+  }
+  vec2 corner = vec2(float(vid & 1), float(vid >> 1));
   if (i >= u_batch.w) {
     gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
     return;
@@ -52,44 +61,63 @@ void main() {
   int dir = (a_meta >> 4) & 3;
   float h = u_geom[0].y;
   float body = u_geom[0].x;
-  float left = floor((float(i - u_indexBase) + 0.5 - u_k.w) * u_k.x - body * 0.5 + 0.5);
+  float centre = (float(i - u_indexBase) + 0.5 - u_k.w) * u_k.x;
+  float x0;
   float w;
   float y0;
   float y1;
   v_outline = 0;
-  if (u_batch.x == 0) {
-    w = dir == 1 ? 2.0 * h : h;
-    y0 = yOf(a_ohlc.z);
-    y1 = yOf(a_ohlc.y);
-    v_color = u_palette[2];
-    v_fill = v_color;
+  if (part == 4) {
+    // BQ-8: the slot's left edge, a hairline over the whole pane.
+    x0 = floor(centre - u_k.x * 0.5 - h * 0.5 + 0.5);
+    w = h;
+    y0 = 0.0;
+    y1 = u_viewport.y;
   } else {
-    w = body;
-    y0 = yOf(a_ohlc.x);
-    y1 = yOf(a_ohlc.w);
-    if (dir >= 2) {
-      // D06 §9: a doji is 2 hairlines tall (1 below 8 px); a zero-range bar 2 hairlines always,
-      // max(body, roundHalfUp(3 dpr)) wide.
-      float tall = dir == 3 || u_geom[0].w >= 8.0 ? 2.0 * h : h;
-      if (dir == 3) w = max(w, floor(3.0 * u_geom[1].x + 0.5));
-      y0 = floor(y0 - tall * 0.5 + 0.5);
-      y1 = y0 + tall;
-      v_color = u_palette[2];
-      v_fill = v_color;
-    } else if (dir == 0) {
-      v_color = u_palette[0];
-      v_fill = u_palette[3];
-      v_outline = w >= 3.0 * u_geom[1].x ? 2 : 1; // D06 §3.2: from 3 CSS px
+    float left = floor(centre - body * 0.5 + 0.5);
+    float weight = dir == 1 ? 2.0 * h : h;
+    float stem = left + floor((body - h) * 0.5);
+    x0 = stem;
+    w = weight;
+    if (part == 2) {
+      float tick = u_geom[0].z;
+      if (dir == 3) {
+        w = 0.0; // the stem draws the zero-range mark
+      } else {
+        x0 = sub == 0 ? stem - tick : stem + weight;
+        w = tick;
+      }
+      y0 = floor(yOf(sub == 0 ? a_ohlc.x : a_ohlc.w) - weight * 0.5 + 0.5);
+      y1 = y0 + weight;
+    } else if (part == 1 || (part == 3 && dir == 3)) {
+      w = body;
+      y0 = yOf(a_ohlc.x);
+      y1 = yOf(a_ohlc.w);
+      if (dir >= 2) {
+        // D06 §9: a doji is 2 hairlines tall (1 below 8 px); a zero-range bar 2 hairlines always,
+        // max(body, roundHalfUp(3 dpr)) wide.
+        float tall = dir == 3 || u_geom[0].w >= 8.0 ? 2.0 * h : h;
+        if (dir == 3) w = max(w, floor(3.0 * u_geom[1].x + 0.5));
+        y0 = floor(y0 - tall * 0.5 + 0.5);
+        y1 = y0 + tall;
+      }
+      x0 = left + floor((body - w) * 0.5);
     } else {
-      v_color = u_palette[1];
-      v_fill = v_color;
+      // The wick (candles) or the stem (OHLC): high to low on the centre column.
+      y0 = yOf(a_ohlc.z);
+      y1 = yOf(a_ohlc.y);
     }
+  }
+  // partColor: the wick, the seam, doji and zero-range neutral; else up or down.
+  v_color = u_palette[part == 0 || part == 4 || dir >= 2 ? 2 : dir];
+  v_fill = v_color;
+  if (part == 1 && dir == 0) {
+    v_fill = u_palette[3];
+    v_outline = w >= 3.0 * u_geom[1].x ? 2 : 1; // D06 §3.2: from 3 CSS px
   }
   float top = min(y0, y1);
   float bottom = max(max(y0, y1), top + h);
   vec2 size = vec2(w, bottom - top);
-  // D06 §3.1: the wick on the centre column, a down wick widened to the column on its right.
-  float x0 = left + floor((body - (u_batch.x == 0 ? h : w)) * 0.5);
   vec2 p = vec2(x0, top) + corner * size;
   v_local = corner * size;
   v_size = size;

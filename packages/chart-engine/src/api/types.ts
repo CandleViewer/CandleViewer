@@ -158,6 +158,8 @@ export interface ChartEvents {
   viewportChanged: { timeStart: number; timeEnd: number; barSpacing: number };
   visibleRangeNeedsData: { fromTime: number; toTime: number }; // triggers paging
   frameStats: FrameStats;
+  /** E12-S06 (BQ-9, additive): the visible range holds no bar (`empty`, no grid drawn) or some. */
+  dataState: { state: "empty" | "ready" };
   error: {
     code: string;
     message: string;
@@ -203,7 +205,7 @@ export interface RenderContext {
   quadBatch(instances: Float32Array, stride: number, program: "cell" | "disc" | "bar"): void;
   texture(id: TextureId, rect: Rect, uv: Rect, lut: LutId): void;
   // E12-S06 (BQ-2, additive; reported to E11-T09): retained rings and the pane's projection.
-  /** Draws the ring's instances with `program`'s `part` (0 wick / stem, 1 body, 2 OHLC ticks). */
+  /** Draws the ring's instances with `program`'s `part` (0 wick, 1 body, 2 OHLC ticks, 3 stem, 4 seam). */
   instances(ring: InstanceRing, program: "candle", part: number): void;
   /** The one projection (G-2): bar index and tick to CSS px on this series' pane. */
   readonly projection: SeriesProjection;
@@ -336,6 +338,8 @@ export interface IndicatorHandle {
 export interface CandleOptions {
   upColorToken: string;
   downColorToken: string;
+  /** E12-S06 (BQ-12, additive): false suppresses the gap seam (and E11-S06's time labels). */
+  isTimeAligned?: boolean;
 }
 
 export interface LineOptions {

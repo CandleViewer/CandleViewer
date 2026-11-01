@@ -11,9 +11,16 @@ export class DrawTrace {
   skipped = 0;
   /** The node id of each draw this frame, in submission order (only while `enabled`). */
   readonly nodes: string[] = [];
+  /**
+   * E12-S06: each draw's label, in the same order (only while `enabled`): a series part's stable
+   * name (`series.candle.wick` / `.body` / `.seam`, `series.ohlc.stem` / `.ticks` / `.seam`), for
+   * FrameStats attribution (SCR-046); any other batch's node id.
+   */
+  readonly labels: string[] = [];
 
   begin(): void {
     this.draws = this.triangles = this.programSwitches = this.textureSwitches = this.skipped = 0;
     this.nodes.length = 0;
+    this.labels.length = 0;
   }
 }
