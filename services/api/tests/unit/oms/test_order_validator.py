@@ -650,10 +650,24 @@ def test_bq5_the_exemption_rests_on_a_reducing_order_being_reduce_only() -> None
         _order(**(_REDUCE | _SMALL | {"reduce_only": False}))
 
 
-def test_bq5_an_exit_is_held_to_every_other_filter() -> None:
+@pytest.mark.parametrize(
+    ("qty", "rule"),
+    [("0.0105", "qty_step"), ("0.005", "min_order_qty"), ("150", "max_order_qty")],
+    ids=["off_the_step", "under_the_minimum_not_whole", "above_the_limit_ceiling"],
+)
+def test_bq5_an_exit_is_held_to_every_other_filter(qty: str, rule: str) -> None:
+    """The exemption drops `min_notional` alone: a reduce-only limit order that is not a close of
+    the whole position (the read shows 160 open) keeps the lot step, `min_order_qty`'s 400 (the
+    whole-close ruling's partial case) and `max_order_qty`, which the filters judge within the
+    market's higher ceiling (a quantity above both is the bound step's, before any exemption)."""
+    validator = Validator(read_only_gate=_Gate())
+    exit_ = _order(**(_REDUCE | _SMALL | {"qty": Decimal(qty)}))
+    higher = _instrument(max_mkt_order_qty=Decimal("200"))
     with pytest.raises(LotSizeViolation) as refused:
-        _check(_order(**(_REDUCE | _SMALL | {"qty": Decimal("0.0105")})))
-    assert _rules(refused.value) == [("qty", "qty_step")]
+        validator.check_order(
+            exit_, instrument=higher, profile=_profile(), position_qty=Decimal("160")
+        )
+    assert _rules(refused.value) == [("qty", rule)]
 
 
 def test_bq5_an_amends_terms_stay_held_to_the_minimum_notional() -> None:
