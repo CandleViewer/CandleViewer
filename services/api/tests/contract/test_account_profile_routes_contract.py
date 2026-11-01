@@ -169,7 +169,9 @@ def test_precondition_required_is_a_non_retryable_rest_428() -> None:
 def test_profile_refusals_name_the_member_the_symbol_and_the_limit() -> None:
     items = _COMPONENTS["schemas"]["Problem"]["properties"]["errors"]["items"]["properties"]
     assert (_ref(items["symbol"]), _ref(items["limit"])) == ("Symbol", "Decimal")
-    assert {"field", "rule", "message", "symbol", "limit"} == set(api.Error.model_fields)
+    # `remaining` and `resolved` are the partial close's size refusals' (22 `Problem.errors[]`)
+    pinned = {"field", "rule", "message", "symbol", "limit", "remaining", "resolved"}
+    assert pinned == set(api.Error.model_fields)
     examples = _REJECTED["content"]["application/problem+json"]["examples"]
     leverage = {"field": "leverage", "rule": "max_leverage", "symbol": "SOLUSDT", "limit": "20"}
     leverage["message"] = "SOLUSDT allows at most 20x — your 25x would be rejected."
