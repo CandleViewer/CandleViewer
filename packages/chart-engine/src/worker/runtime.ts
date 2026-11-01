@@ -7,6 +7,9 @@
 // OffscreenCanvas and an HTMLCanvasElement both fit. The runtime holds only the `RenderBackend`
 // seam (E11-T05, README BQ-85): `openBackend` picks WebGL2 or Canvas 2D, and the loss wiring asks
 // for the optional `LossCapable` hooks, so no line here branches on which backend draws (S3).
+// E12-S06: the runtime owns one `BarStore` and its `CandleRing` per `addSeries` id; the main
+// series (the first on pane 0) is the viewport's time map (G-8) and rebases the ObjectIndex
+// (G-23). A refused batch (F-01 decode, F-02 store) leaves the store byte-identical.
 import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
@@ -19,6 +22,9 @@ import {
   type StructuralHit,
 } from "../hit/index.js";
 import { Gestures } from "../interaction/gestures.js";
+import { CandleRing } from "../layers/candle/ring.js";
+import { type BarBatch, BarStore } from "../model/BarStore.js";
+import { ModelRejection, type MutationRange, RangeSlot } from "../model/counters.js";
 import { plotWidthOf } from "../interaction/wheel.js";
 import * as scene from "../scene/index.js";
 import { AtlasService, type AtlasCounters, type AtlasDetails } from "../text/atlas.js";
@@ -30,12 +36,15 @@ import {
   type PriceExtentSource,
   type IndexTimeMap,
   type PaneUniforms,
+  EMPTY_TIME_MAP,
   backingPx,
   screenToTime,
   writePaneUniforms,
 } from "../viewport/index.js";
 import {
   BACKGROUND_TOKEN,
+  DecodeError,
+  decodeBars,
   ENGINE_DECODE_ERROR,
   ENGINE_NO_WEBGL2,
   ENGINE_ATLAS_GENERATION_FAILED,
@@ -45,10 +54,13 @@ import {
   rejectReason,
   RESTART_BACKOFF_MS,
   STORE_IDS,
+  type BarSeriesKind,
+  type BufferLayout,
   type ChartConfig,
   type CapabilityReport,
   type ChartId,
   type Command,
+  type DataOp,
   type DegradeDetails,
   type ExportRejectReason,
   type FromWorker,
@@ -108,6 +120,18 @@ export interface RenderRuntime {
   resizeCounters(id: ChartId): Readonly<ResizeCounters> | undefined;
   /** Internal (E11-S11, BQ-272): `engine.atlas.*`; null until a WebGL2 chart with fonts opens. */
   atlasCounters(): Readonly<AtlasCounters> | null;
+  /** Internal (E12-S06): one `addSeries` id's store and instance ring. */
+  series(id: ChartId, series: number): BarSeries | undefined;
+  /** Internal (E12-S06): `engine.data.rejected{reason}`, per chart. */
+  dataRejected(id: ChartId): Readonly<Record<string, number>> | undefined;
+}
+
+/** One runtime-owned series (E12-S06): its store is the CPU truth, the ring its GPU mirror. */
+export interface BarSeries {
+  readonly kind: BarSeriesKind;
+  readonly pane: number;
+  readonly store: BarStore;
+  readonly ring: CandleRing;
 }
 
 /** `engine.resize.*` (BQ-153): backing-store reallocations and DPR changes, per chart. */
@@ -168,7 +192,15 @@ interface Instance {
   readonly elements: Record<StoreId, number>;
   /** `init.fonts`, checked on their own (a bad option never rejects the init, BQ-258). */
   readonly fonts: readonly ChartFont[] | "invalid" | undefined;
+  /** E12-S06: the `addSeries` ids, their stores and rings; the main series' id, else -1. */
+  readonly series: Map<number, BarSeries>;
+  main: number;
+  /** `engine.data.rejected{reason}`: a model `RejectReason`, or `decode` (F-01, the wire). */
+  readonly dataRejected: Record<string, number>;
 }
+
+/** The ObjectIndex's rebuild after the main series is removed (a `replace` of nothing). */
+const CLEARED: MutationRange = new RangeSlot().set("replace", 0, 0, 0);
 
 const summarise = (timeUs: number): string => {
   const d = new Date(Math.floor(timeUs / 1000));
@@ -469,6 +501,80 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     postPick(inst);
   }
 
+  /** E12-S06: a store and ring for `sid`; the first series on pane 0 becomes the main one. */
+  function addSeries(inst: Instance, sid: number, kind: BarSeriesKind, pane: number): void {
+    if (inst.series.has(sid)) {
+      fail(inst.id, `series ${sid} already exists on chart ${inst.id}`);
+      return;
+    }
+    const store = new BarStore();
+    inst.series.set(sid, { kind, pane, store, ring: new CandleRing(inst.builder) });
+    if (pane === 0 && inst.main < 0) {
+      inst.main = sid;
+      inst.viewport.setMap(store); // G-8: the store is the runtime's IndexTimeMap
+      moved(inst, true);
+    }
+  }
+
+  function removeSeries(inst: Instance, sid: number): void {
+    if (!inst.series.delete(sid)) {
+      fail(inst.id, `no series ${sid} on chart ${inst.id}`);
+      return;
+    }
+    if (sid !== inst.main) return;
+    inst.main = -1;
+    inst.viewport.setMap(deps.timeMap ?? EMPTY_TIME_MAP);
+    inst.objects.onMutation(CLEARED);
+    moved(inst, true);
+  }
+
+  /** `patch` by time: the batch's first bar must be a bar the store holds (the live bar's fix). */
+  function patchAt(store: BarStore, b: BarBatch): MutationRange {
+    const k = b.time.length;
+    const t = k > 0 ? (b.time[0] as number) : Number.NaN;
+    const at = k > 0 ? store.timeToIndex(t) : store.length;
+    if (k > 0 && (at < 0 || store.indexToTime(at) !== t)) {
+      store.counters.reject("range", "patch names a bar time the series does not hold");
+    }
+    return store.patch(at, b);
+  }
+
+  /**
+   * A `bars` batch for series `sid` (E12-S06): decoded and F-01-checked, applied to its store
+   * (F-02, append-merge), mirrored into its ring; the main series rebases the ObjectIndex (G-23)
+   * and sets the pane's price frame. A refusal counts `engine.data.rejected{reason}` and posts a
+   * recoverable `ENGINE_DECODE_ERROR`; the store is left byte-identical.
+   */
+  function storeBars(
+    inst: Instance,
+    sid: number,
+    op: DataOp,
+    l: BufferLayout,
+    buf: ArrayBuffer,
+  ): void {
+    try {
+      const s = inst.series.get(sid);
+      if (s === undefined) throw new DecodeError(`no series ${sid} on chart ${inst.id}`);
+      const b = decodeBars(l, buf);
+      const { store } = s;
+      let r: MutationRange;
+      if (op === "replace") r = store.replace(b);
+      else if (op === "append") r = store.append(b, true);
+      else if (op === "prepend") r = store.prepend(b);
+      else r = patchAt(store, b);
+      s.ring.sync(store, r);
+      if (sid !== inst.main) return;
+      inst.objects.onMutation(r);
+      inst.viewportDirty = true; // the map's length moved: the time range may have too
+      moved(inst, inst.viewport.setPriceInfo(0, store.priceOrigin, store.tickSize));
+    } catch (e) {
+      if (!(e instanceof DecodeError) && !(e instanceof ModelRejection)) throw e;
+      const reason = e instanceof ModelRejection ? e.reason : "decode";
+      inst.dataRejected[reason] = (inst.dataRejected[reason] ?? 0) + 1;
+      fail(inst.id, e.message);
+    }
+  }
+
   function command(inst: Instance, cmd: Command): void {
     switch (cmd.k) {
       case "setViewport":
@@ -498,6 +604,12 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         return;
       case "export":
         exportPng(inst, cmd.reqId);
+        return;
+      case "addSeries":
+        addSeries(inst, cmd.series, cmd.kind, cmd.pane ?? 0);
+        return;
+      case "removeSeries":
+        removeSeries(inst, cmd.series);
         return;
       case "release":
         retire(inst);
@@ -586,7 +698,14 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         detach: null,
         elements: old ? { ...old.elements } : { bars: 0, footprint: 0, heatmap: 0, profile: 0 },
         fonts: msg.fonts === undefined ? undefined : fontsOk(msg.fonts) ? msg.fonts : "invalid",
+        series: old?.series ?? new Map(),
+        main: old?.main ?? -1,
+        dataRejected: old?.dataRejected ?? {},
       };
+      // BQ-53: the DataModel is kept; its rings now patch the fresh scene's batches.
+      for (const s of inst.series.values()) s.ring.sink = inst.builder;
+      const main = inst.series.get(inst.main);
+      if (main !== undefined) viewport.setMap(main.store);
       inst.gestures.reduce = msg.reducedMotion === true;
       charts.set(msg.id, inst);
       touch(inst);
@@ -608,7 +727,13 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         }
         return;
       case "data": {
-        // The stores are E11-T03's; until then a batch only moves the element count.
+        if (msg.series !== undefined) {
+          storeBars(inst, msg.series, msg.op, msg.layout, msg.buffer);
+          deps.post({ t: "ack", id: inst.id, store: msg.store });
+          touch(inst);
+          return;
+        }
+        // Without a series id a batch only moves the element count (pre-E12-S06 callers).
         const n = msg.layout.count;
         if (msg.op === "replace") inst.elements[msg.store] = n;
         else if (msg.op !== "patch") inst.elements[msg.store] += n;
@@ -766,5 +891,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     },
     resizeCounters: (id) => charts.get(id)?.resizes,
     atlasCounters: () => atlas?.counters ?? null,
+    series: (id, sid) => charts.get(id)?.series.get(sid),
+    dataRejected: (id) => charts.get(id)?.dataRejected,
   };
 }
