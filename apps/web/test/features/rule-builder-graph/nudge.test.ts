@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   moveTo,
   nudge,
+  settledNudge,
   NUDGE_LARGE_STEP,
   NUDGE_STEP,
   type Bounds,
@@ -37,6 +38,12 @@ describe("nudge: Gherkin 2, a discrete step per press, announced", () => {
   it("brings an off-canvas, fractional or non-finite start back on the grid first", () => {
     expect(nudge("n", { x: -50, y: 3.6 }, "right", false, B).position).toEqual({ x: 8, y: 4 });
     expect(nudge("n", { x: Number.NaN, y: 0 }, "down", false, B).position).toEqual({ x: 0, y: 8 });
+  });
+
+  it("never yields a negative zero (code lens L2)", () => {
+    const below = { minX: -10, minY: -10, maxX: 10, maxY: 10 };
+    const { position } = moveTo("n", { x: -0.4, y: -0.2 }, below);
+    expect(Object.is(position.x, 0) && Object.is(position.y, 0)).toBe(true);
   });
 
   it("tolerates inverted bounds", () => {
@@ -76,5 +83,38 @@ describe("moveTo: the Move node... menu path", () => {
       clamped: true,
       text: "AND is at the edge of the canvas, x 1000, y 10.",
     });
+  });
+});
+
+describe("settledNudge: one announcement per settled burst (a11y lens A-5)", () => {
+  const burst = (
+    dirs: readonly ("left" | "right" | "up" | "down")[],
+    from = { x: 240, y: 120 },
+  ) => {
+    let at = from;
+    let last = nudge("AND", at, dirs[0] ?? "right", false, B);
+    for (const dir of dirs) {
+      last = nudge("AND", at, dir, false, B);
+      at = last.position;
+    }
+    return settledNudge("AND", from, last, B);
+  };
+
+  it("sums a held key's repeats into one sentence", () => {
+    expect(burst(["right", "right", "right", "right", "right"])).toBe(
+      "Moved AND 40 right, now x 280, y 120.",
+    );
+  });
+
+  it("names both axes, and where it stopped at the edge", () => {
+    expect(burst(["right", "down"])).toBe("Moved AND 8 right and 8 down, now x 248, y 128.");
+    expect(burst(["left", "left"], { x: 10, y: 50 })).toBe(
+      "Moved AND 10 left, now x 0, y 50. Stopped at the edge of the canvas.",
+    );
+  });
+
+  it("says where the node is when the burst cancels out or never moved", () => {
+    expect(burst(["right", "left"])).toBe("Moved AND to x 240, y 120.");
+    expect(burst(["left"], { x: 0, y: 50 })).toBe("AND is at the edge of the canvas, x 0, y 50.");
   });
 });

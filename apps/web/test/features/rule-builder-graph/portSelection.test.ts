@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { REFUSAL } from "../../../src/features/rule-builder-graph/a11y/copy.js";
 import type { A11yGraph } from "../../../src/features/rule-builder-graph/a11y/graph.js";
 import {
+  deletedText,
   disconnect,
   IDLE,
   stepPortSelection,
@@ -19,6 +20,19 @@ const run = (graph: A11yGraph, events: PortEvent[], from: PortSelection = IDLE) 
     return step.effect;
   });
   return { state, effects };
+};
+
+/** Three inputs that can take S's output (X, G1, G2) and three that cannot. */
+const MIXED: A11yGraph = {
+  nodes: [
+    node("s", "logicGate", { name: "S" }),
+    node("g1", "logicGate", { name: "G1" }),
+    node("x", "logicGate", { name: "X" }),
+    node("act", "action", { name: "Act" }),
+    node("cmp", "condition", { kind: "comparison", name: "Cmp" }),
+    node("g2", "logicGate", { name: "G2" }),
+  ],
+  edges: [edge("e1", "x", "act", "when")],
 };
 
 const AUTHORED: A11yGraph = {
@@ -39,9 +53,11 @@ describe("port selection: Gherkin 1, an edge connected without a pointer", () =>
     ]);
     expect(effects[0]).toEqual({
       kind: "announce",
-      text: "Connecting from Price above output. Choose an input, then press Enter. Escape cancels.",
+      text:
+        "Connecting from Price above output. 1 input available. " +
+        "Choose an input, then press Space. Escape cancels.",
     });
-    expect(effects[1]).toEqual({ kind: "announce", text: "Alert run when, 1 of 1." });
+    expect(effects[1]).toEqual({ kind: "announce", text: "Alert run when, action, 1 of 1." });
     expect(effects[2]).toEqual({
       kind: "connect",
       edge: { source: "cmp", sourcePort: "out", target: "act", targetPort: "when" },
@@ -75,12 +91,73 @@ describe("port selection: refusals keep the connection pending", () => {
     expect(state.kind).toBe("pending");
   });
 
-  it("cycles backwards and wraps", () => {
-    const { state } = run(RULE, [
-      { type: "start", node: "cmp1" },
+  it("says how many inputs can and cannot take it, once, at the start (a11y lens A-4)", () => {
+    expect(run(MIXED, [{ type: "start", node: "s" }]).effects[0]).toEqual({
+      kind: "announce",
+      text:
+        "Connecting from S output. 3 inputs available, 3 not available. " +
+        "Choose an input, then press Space. Escape cancels.",
+    });
+  });
+
+  it("cycles only the available inputs and counts k of n over them (a11y lens A-4)", () => {
+    const { effects } = run(MIXED, [
+      { type: "start", node: "s" },
+      { type: "cycle", step: 1 },
+      { type: "cycle", step: 1 },
+      { type: "cycle", step: 1 },
+      { type: "cycle", step: 1 },
+    ]);
+    expect(effects.slice(1).map((e) => (e.kind === "announce" ? e.text : e.kind))).toEqual([
+      "X input, boolean, 1 of 3.",
+      "G1 input, boolean, 2 of 3.",
+      "G2 input, boolean, 3 of 3.",
+      "X input, boolean, 1 of 3.",
+    ]);
+  });
+
+  it("cycles backwards and wraps, and moves on from a picked unavailable input", () => {
+    const back = run(MIXED, [
+      { type: "start", node: "s" },
       { type: "cycle", step: -1 },
     ]);
-    expect(state).toMatchObject({ kind: "pending", index: 4 }); // 5 inputs: and, act1/2, cmp2 x2
+    expect(back.effects[1]).toEqual({ kind: "announce", text: "G2 input, boolean, 3 of 3." });
+    const picked = (step: 1 | -1) =>
+      run(MIXED, [
+        { type: "start", node: "s" },
+        { type: "pick", node: "act", port: "when" },
+        { type: "cycle", step },
+      ]).effects[2];
+    expect(picked(1)).toEqual({ kind: "announce", text: "G1 input, boolean, 2 of 3." });
+    expect(picked(-1)).toEqual({ kind: "announce", text: "X input, boolean, 1 of 3." });
+  });
+
+  it("says so once when no input can take it", () => {
+    const { effects } = run(RULE, [
+      { type: "start", node: "cmp1" },
+      { type: "cycle", step: 1 },
+    ]);
+    expect(effects[0]).toMatchObject({
+      text: expect.stringContaining("0 inputs available, 5 not available.") as unknown,
+    });
+    expect(effects[1]).toEqual({ kind: "announce", text: "No input can take this connection." });
+  });
+
+  it("builds the adjacency once per event, not once per candidate (code lens L4)", () => {
+    const reads = (size: number): number => {
+      let count = 0;
+      const nodes = Array.from({ length: size }, (_, i) => node(`g${i}`, "logicGate"));
+      const graph: A11yGraph = {
+        nodes,
+        get edges() {
+          count += 1;
+          return [];
+        },
+      };
+      stepPortSelection(IDLE, { type: "start", node: "g0" }, graph, oracle);
+      return count;
+    };
+    expect(reads(60)).toBe(reads(3));
   });
 
   it("refuses confirm before a target, and every event before a source", () => {
@@ -190,7 +267,10 @@ describe("port selection: property, never an invalid edge", () => {
         expect(verdictFor(graph, oracle, e.source, e.target, e.targetPort)).toEqual({ ok: true });
         graph = { ...graph, edges: [...graph.edges, { id: `k${press}`, ...e }] };
       }
-      const feeds = graph.edges.filter((e) => e.targetPort !== "in").map((e) => e.target);
+      // Each single input (left, right, when: not the list port `in`) takes at most one edge.
+      const feeds = graph.edges
+        .filter((e) => e.targetPort !== "in")
+        .map((e) => `${e.target}:${e.targetPort}`);
       expect(new Set(feeds).size).toBe(feeds.length);
     }
   });
@@ -207,5 +287,24 @@ describe("disconnect", () => {
     expect(disconnect(RULE, "nope")).toBeUndefined();
     const graph = { nodes: [], edges: [edge("x", "a", "b", "left")] };
     expect(disconnect(graph, "x")?.text).toBe("Disconnected a from b input A.");
+  });
+
+  it("tells two nodes with one name apart (a11y lens A-9)", () => {
+    const graph = {
+      nodes: [node("x", "logicGate", { name: "Check" }), node("y", "logicGate", { name: "Check" })],
+      edges: [edge("e1", "x", "y", "in")],
+    };
+    expect(disconnect(graph, "e1")?.text).toBe(
+      "Disconnected Check (node 2) from Check (node 1) input.",
+    );
+  });
+});
+
+describe("deletedText (a11y lens A-8)", () => {
+  it("says how many connections went with the node", () => {
+    expect(deletedText(RULE, "and")).toBe("Deleted AND and 4 connections.");
+    expect(deletedText(RULE, "act1")).toBe("Deleted Alert and 1 connection.");
+    expect(deletedText(RULE, "note")).toBe("Deleted why. It had no connections.");
+    expect(deletedText(RULE, "gone")).toBeUndefined();
   });
 });

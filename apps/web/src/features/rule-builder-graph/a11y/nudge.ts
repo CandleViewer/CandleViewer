@@ -4,6 +4,22 @@
  * position is announced. The second non-drag path is the node's "Move node..." menu entry with
  * numeric X / Y fields (`moveTo`). Positions are canvas units, clamped to the canvas bounds and
  * rounded to whole units, so no key press can carry a node off the canvas or onto a fraction.
+ * Bounds come from the canvas and are trusted to be finite; a NaN bound would yield NaN.
+ *
+ * Announcements, one per settled move (05 §6.2, E37-D02 §14: never per keystroke): the nudge keys
+ * keep `ignoreRepeat: false` so a held key keeps moving the node, and `settledNudge` builds the one
+ * sentence for a burst ("Moved AND 40 right, now x 280, y 120."). `nudge(...).text` is for a single
+ * press only. Carried rows, hard gates for the wiring PR (E37-S05 #1071, with the window constant
+ * from E37-D04 #949):
+ * - N-1: while a nudge key repeats, nothing is announced; on keyup (or after the settle window)
+ *   the wiring announces `settledNudge` once, politely. Landing without this is a 05 §6.2 failure.
+ * - N-2: macOS takes Ctrl+arrows for Mission Control and Spaces before the browser sees them, so
+ *   on a Mac the "Move node..." dialog (`moveTo`) is the stated keyboard path until E37-D04 picks a
+ *   Mac chord (Option+arrows is the candidate); the cheat sheet says so.
+ * - N-3: `rules.add_node` Ctrl+Shift+N is taken by Chrome and Edge (new private window) before the
+ *   page sees it, so it works in the desktop app only; in the browser the keyboard path is the
+ *   palette (search, Enter to add) and the header's visible Add node control, and the cheat sheet
+ *   marks the key "desktop app only" (E47-S08 #1322).
  */
 import { copy, type Direction } from "./copy.js";
 
@@ -42,7 +58,8 @@ const finite = (v: number, fallback: number): number => (Number.isFinite(v) ? v 
 function clamp(value: number, min: number, max: number): number {
   const lo = Math.min(min, max);
   const hi = Math.max(min, max);
-  return Math.min(hi, Math.max(lo, Math.round(finite(value, lo))));
+  // `+ 0` turns a -0 (Math.round(-0.4)) into 0, so a position is never negative zero.
+  return Math.min(hi, Math.max(lo, Math.round(finite(value, lo)))) + 0;
 }
 
 const clampPoint = (p: Point, b: Bounds): Point => ({
@@ -78,4 +95,21 @@ export function moveTo(name: string, to: Point, bounds: Bounds): Moved {
     ? copy.atEdge(name, position.x, position.y)
     : copy.movedTo(name, position.x, position.y);
   return { position, clamped, text };
+}
+
+/**
+ * The one announcement for a burst of nudges of the node named `name` that started at `from` and
+ * ended at `last` (the final `nudge` result): the net move per axis, then where it stopped.
+ */
+export function settledNudge(name: string, from: Point, last: Moved, bounds: Bounds): string {
+  const start = clampPoint(from, bounds);
+  const { x, y } = last.position;
+  const dx = x - start.x;
+  const dy = y - start.y;
+  const parts = [
+    ...(dx === 0 ? [] : [copy.distance(Math.abs(dx), dx > 0 ? "right" : "left")]),
+    ...(dy === 0 ? [] : [copy.distance(Math.abs(dy), dy > 0 ? "down" : "up")]),
+  ];
+  if (parts.length === 0) return last.clamped ? copy.atEdge(name, x, y) : copy.movedTo(name, x, y);
+  return copy.movedBy(name, parts, x, y) + (last.clamped ? copy.stoppedAtEdge() : "");
 }

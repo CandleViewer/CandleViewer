@@ -52,37 +52,71 @@ const DIRECTION_WORD: Readonly<Record<Direction, string>> = {
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
+/** "A", "A and B", "A, B and C": user names joined as plain text. */
+export const listOf = (items: readonly string[]): string =>
+  items.length <= 1
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1] as string}`;
+
+const capitalised = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
 export const copy = {
-  connectStarted: (source: string): string =>
-    `Connecting from ${source} output. Choose an input, then press Enter. Escape cancels.`,
-  candidate: (target: string, port: string, index: number, size: number): string =>
-    `${target} ${portLabel(port)}, ${index} of ${size}.`,
+  connectStarted: (source: string, available: number, unavailable: number): string =>
+    `Connecting from ${source} output. ${plural(available, "input", "inputs")} available` +
+    (unavailable === 0 ? "" : `, ${unavailable} not available`) +
+    ". Choose an input, then press Space. Escape cancels.",
+  candidate: (target: string, port: string, type: string, index: number, size: number): string =>
+    `${target} ${portLabel(port)}, ${type}, ${index} of ${size}.`,
   candidateRefused: (target: string, port: string, reason: string): string =>
     `${target} ${portLabel(port)} not available. ${reason}`,
+  noneAvailable: (): string => "No input can take this connection.",
   connected: (source: string, target: string, port: string): string =>
     `Connected ${source} output to ${target} ${portLabel(port)}.`,
   disconnected: (source: string, target: string, port: string): string =>
     `Disconnected ${source} from ${target} ${portLabel(port)}.`,
   refused: (reason: string): string => `Can't connect. ${reason}`,
   cancelled: (): string => "Connection cancelled.",
-  nodeAdded: (name: string): string => `Added ${name}.`,
-  nodeDeleted: (name: string): string => `Deleted ${name}.`,
+  nodeAdded: (name: string): string => `Added ${name}, not connected.`,
+  nodeDeleted: (name: string, connections: number): string =>
+    connections === 0
+      ? `Deleted ${name}. It had no connections.`
+      : `Deleted ${name} and ${plural(connections, "connection", "connections")}.`,
   moved: (name: string, dir: Direction, step: number, x: number, y: number): string =>
     `Moved ${name} ${step} ${DIRECTION_WORD[dir]}, now x ${x}, y ${y}.`,
+  /** One sentence for a settled burst of nudges: "Moved AND 40 right and 8 down, now x 280, y 128." */
+  movedBy: (name: string, parts: readonly string[], x: number, y: number): string =>
+    `Moved ${name} ${listOf(parts)}, now x ${x}, y ${y}.`,
+  distance: (step: number, dir: Direction): string => `${step} ${DIRECTION_WORD[dir]}`,
   atEdge: (name: string, x: number, y: number): string =>
     `${name} is at the edge of the canvas, x ${x}, y ${y}.`,
+  stoppedAtEdge: (): string => " Stopped at the edge of the canvas.",
   movedTo: (name: string, x: number, y: number): string => `Moved ${name} to x ${x}, y ${y}.`,
   validationClean: (): string => "No problems found.",
   validationFailed: (count: number, first: string): string =>
-    `${plural(count, "problem", "problems")}. First: ${first}`,
+    `${plural(count, "problem", "problems")}. First: ${first}` +
+    (count > 1
+      ? ` ${plural(count - 1, "more problem", "more problems")} in the problems list.`
+      : ""),
   validationItem: (message: string, where?: string): string =>
     where === undefined ? message : `${where}: ${message}`,
   noParameters: (): string => "no parameters",
+  /** Only settings that are not plain values (nested lists, records): not read out one by one. */
+  parametersSet: (): string => "parameters set",
+  moreSettings: (n: number): string => `plus ${plural(n, "more setting", "more settings")}`,
+  /** Two nodes with one name: each is told apart by its position in the order. */
+  disambiguated: (name: string, index: number): string => `${name} (node ${index})`,
   noConnections: (): string => "none",
   inboundFrom: (source: string, port: string): string => `${source} into ${portLabel(port)}`,
   outboundTo: (target: string, port: string): string => `${target} ${portLabel(port)}`,
-  /** A node's accessible description: type, name, parameters, then its connections. */
-  node: (type: string, name: string, params: string, inbound: string, outbound: string): string =>
-    `${type} ${name}, ${params}. Inputs: ${inbound}. Output connects to: ${outbound}.`,
+  unknownType: (): string => "type unknown",
+  /** E37-D02 §14: "{Input | Output} port, {type}, {connected to {node} | not connected}". */
+  port: (output: boolean, port: string, type: string, names: readonly string[]): string =>
+    `${output ? "Output" : capitalised(portLabel(port))} port, ${type}, ` +
+    `${names.length === 0 ? "not connected" : `connected to ${listOf(names)}`}.`,
+  noOutput: (): string => "No output.",
+  noPorts: (): string => "No ports.",
+  /** A node's accessible description: type, name, parameters, then each port. */
+  node: (type: string, name: string, params: string, ports: string): string =>
+    `${type} ${name}, ${params}. ${ports}`,
   position: (index: number, size: number): string => `Node ${index} of ${size}.`,
 } as const;
