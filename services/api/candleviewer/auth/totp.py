@@ -51,7 +51,7 @@ def time_step_for(unix_time: float, *, step_seconds: int = TOTP_STEP_SECONDS) ->
     return int(unix_time // step_seconds)
 
 
-def generate_code(secret: bytes, time_step: int, *, digits: int = TOTP_DIGITS) -> str:
+def generate_code(secret: bytes | bytearray, time_step: int, *, digits: int = TOTP_DIGITS) -> str:
     """RFC 4226 HOTP over `time_step` as the 8-byte big-endian counter,
     truncated per RFC 4226 section 5.3."""
     counter = struct.pack(">Q", time_step)
@@ -62,7 +62,7 @@ def generate_code(secret: bytes, time_step: int, *, digits: int = TOTP_DIGITS) -
 
 
 def verify_code(
-    secret: bytes,
+    secret: bytes | bytearray,
     code: str,
     *,
     unix_time: float,
@@ -95,7 +95,7 @@ def verify_code(
 
 
 def detect_skew(
-    secret: bytes, code: str, *, unix_time: float, floor: int | None = None
+    secret: bytes | bytearray, code: str, *, unix_time: float, floor: int | None = None
 ) -> int | None:
     """Diagnostics for a code `verify_code` refused: the signed step offset (matched step minus
     `unix_time`'s own step) at which `code` is the right code for `secret`, when that step lies

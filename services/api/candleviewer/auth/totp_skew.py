@@ -73,7 +73,7 @@ class TotpSkewReporter:
 
     def report_rejection(
         self,
-        methods: Iterable[tuple[bytes, int | None]],
+        methods: Iterable[tuple[bytes | bytearray, int | None]],
         code: str,
         *,
         unix_time: float,
