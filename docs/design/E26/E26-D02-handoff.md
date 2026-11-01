@@ -3,7 +3,7 @@
 Ticket E26-D02 (#509); spec `docs/design/E26/E26-D02.md`. SCR-097 uses three components whose contracts E26-D05 owns
 (CMP-170 ReplayScrubber, CMP-171 ReplaySpeedPicker, CMP-172 ReplayRangePicker); each block records what SCR-097 needs of
 one **in context**, and E26-D05's own blocks supersede them. **Status:** text pass; the Penpot and PNG lines are PENDING
-(boards: defaults built; ruling pending, comment 6554973018): no board is drawn yet, and the ten composite boards and
+(boards: RULED, comment 6555545802): no board is drawn yet, and the ten composite boards and
 their PNGs come in the boards PR, which closes #509 (file `E26-D02 boards`, page `E26-D02 SCR-097 Replay page`, spec
 §16); E26-S02 writes the stories against E26-D05's entries. Penpot token sets = `packages/ui/tokens` at
 `2ea55a8c6dba55edca0181fc9672ac9d701d8de1`, re-seeded with `docs/design/_tools/penpot_token_sets.py` (`--check` first)
@@ -14,7 +14,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-170 ReplayScrubber (E26-D02 in context, #509)
 
-- [ ] **Final Penpot link** — PENDING, in the boards PR: file `E26-D02 boards`, page `E26-D02 SCR-097 Replay page`; frames 01 (B1), 07 and 16 (B6), 22 and 23 (B10); 17 not drawn — the text is binding; exports `E26-D02-01-anatomy-focus-order-dark.png`, `E26-D02-06-scrubber-and-seeking-dark.png` and `E26-D02-10-panels-and-conditions-dark.png` (spec §16)
+- [ ] **Final Penpot link** — PENDING, in the boards PR: file `E26-D02 boards`, page `E26-D02 SCR-097 Replay page`; frames 01 (B1), 07 and 16 (B6), 22 and 23 (B10); 17 not drawn — the text is binding, its looks drawn in B5, B7, B9 and B10, the exit glyph on B1 and B2; exports `E26-D02-01-anatomy-focus-order-dark.png`, `E26-D02-06-scrubber-and-seeking-dark.png` and `E26-D02-10-panels-and-conditions-dark.png` (spec §16)
 - [x] **Variants × States matrix** — table 1: the catalogued stories plus the states SCR-097 adds (Seeking, GapAhead, EndOfRange, SessionExpired, the E26-D05 ticket's own list, and Error, CoverageClasses, ThumbStates, ViewingAs, OnHold; ReadOnlyRole only if Viewers are granted sessions, spec D-26)
 - [x] **Keyboard table** — table 2; checked against `05` §3.2 and §3.3 and the keymap's Replay rows (`apps/web/src/keymap/keymap.json:730-839`): the thumb's keys mean what the page's keys mean, nothing overrides a global binding, no trading action sits on a bare key, `Esc` is only ever a cancel, a focused form control keeps `Space` (spec D-21), `Ctrl+K` untouched; a key on a T2 control changes nothing and re-shows its reason once (spec §5.3)
 - [x] **Accessible name / role table** — table 3
@@ -85,7 +85,7 @@ the native activation wins.
 
 ## Handoff checklist — CMP-171 ReplaySpeedPicker (E26-D02 in context, #509)
 
-- [ ] **Final Penpot link** — PENDING, in the boards PR: file `E26-D02 boards`, page `E26-D02 SCR-097 Replay page`; frames 04 (B2, light twin B3), 09 and 10 (B9), 22 and 23 (B10); 17 not drawn — the text is binding, its looks drawn in B5, B7, B9 and B10; exports `E26-D02-02-playing-paper-dark.png`, `E26-D02-03-playing-paper-light.png`, `E26-D02-09-paper-fills-and-speed-dark.png` and `E26-D02-10-panels-and-conditions-dark.png` (spec §16)
+- [ ] **Final Penpot link** — PENDING, in the boards PR: file `E26-D02 boards`, page `E26-D02 SCR-097 Replay page`; frames 04 (B2, light twin B3), 09 and 10 (B9), 22 and 23 (B10); 17 not drawn — the text is binding, its looks drawn in B5, B7, B9 and B10, the exit glyph on B1 and B2; exports `E26-D02-02-playing-paper-dark.png`, `E26-D02-03-playing-paper-light.png`, `E26-D02-09-paper-fills-and-speed-dark.png` and `E26-D02-10-panels-and-conditions-dark.png` (spec §16)
 - [x] **Variants × States matrix** — table 1
 - [x] **Keyboard table** — table 2; the arrows move only inside the picker (a radio group, spec D-21); `.` and `,` work page-wide and are proposed (spec §10); a T2 preset is reached, never skipped, and re-shows its reason once (spec §5.3); Space is play/pause only when focus is on the page body, a panel region, the thumb or a non-interactive element; on any focused form control (button, checkbox, switch, radio, menu item, option, text field) the native activation wins.
 - [x] **Accessible name / role table** — table 3
