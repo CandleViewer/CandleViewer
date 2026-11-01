@@ -69,7 +69,7 @@ async def _gather(stores: Stores, queries: list[dict[str, str]]) -> list[httpx.R
 async def test_exhaustion_identical_concurrent_reads_are_coalesced(stores: Stores) -> None:
     """BR-36: 50 identical maximal requests in flight at once should share one bar read. Today
     each makes its own (measured: 50 of 50), so a caller multiplies the store's work by the
-    requests it keeps in flight; on QuestDB they queue on the one `bars` pgwire lock."""
+    requests it keeps in flight. The cross-session effect on a real store is carried to #528."""
     arrived, gate = Counter[str](), asyncio.Event()
 
     async def held() -> list[dict[str, object]]:
