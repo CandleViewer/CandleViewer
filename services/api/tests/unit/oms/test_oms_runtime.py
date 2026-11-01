@@ -36,6 +36,7 @@ from candleviewer.app import _oms_state
 from candleviewer.audit.machine_events import MachineEventUnavailable
 from candleviewer.audit.wal import AuditWal, lock_wal_file
 from candleviewer.audit.writer import AuditUnavailable, keyed_record_id
+from candleviewer.bus.bus import Bus
 from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.fakes import FakeTradingPort
@@ -1912,7 +1913,10 @@ def test_the_real_backends_runtime_holds_the_lanes_binder_and_transport_it_was_h
     see, as the fake backend it composes builds no runtime. The construction does no I/O: it calls
     neither, the start does, on the lane."""
     binder, factory = object(), object()  # neither callable: a call here would raise
-    ctx = SimpleNamespace(exchange_bybit=Venue(), ingestion=None, oms_read_only_gate=None)
+    ctx = SimpleNamespace(
+        exchange_bybit=Venue(), ingestion=None, oms_read_only_gate=None,
+        bus=SimpleNamespace(bus=Bus()),  # the app's in-process bus (E29-T08's detector)
+    )  # fmt: skip
     names = ("metrics", "gate", "standings", "oms_enabled", "live_enabled", "profiles")
     unused = dict.fromkeys((*names, "persistence", "feed"))
     health, hub = Tracked(), Hub()  # E29-T05 S8b: the consumer's, handed over as given
@@ -1923,6 +1927,7 @@ def test_the_real_backends_runtime_holds_the_lanes_binder_and_transport_it_was_h
     assert isinstance(runtime, OmsRuntime)
     assert runtime._lane_signing is binder and runtime._lane_transport is factory
     assert runtime._health is health and runtime._hub is hub
+    assert runtime._bus is ctx.bus.bus
 
 
 async def test_the_state_is_starting_while_the_startup_runs_and_degraded_once_failed_closed() -> (

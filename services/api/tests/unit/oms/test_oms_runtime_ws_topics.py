@@ -25,6 +25,7 @@ from uuid import UUID
 import pytest
 
 from candleviewer import app as appmod
+from candleviewer.bus.bus import Bus
 from candleviewer.domain.primitives import AccountId
 from candleviewer.domain.primitives import Environment as VenueEnvironment
 from candleviewer.exchange.base.models import OrderAck, PlaceOrderRequest
@@ -88,7 +89,10 @@ def test_the_families_are_the_causal_orders_private_prefix() -> None:
 
 
 def test_the_real_backends_runtime_holds_the_topics_it_was_handed() -> None:
-    ctx = SimpleNamespace(exchange_bybit=Venue(), ingestion=None, oms_read_only_gate=None)
+    ctx = SimpleNamespace(
+        exchange_bybit=Venue(), ingestion=None, oms_read_only_gate=None,
+        bus=SimpleNamespace(bus=Bus()),  # the app's in-process bus (E29-T08's detector)
+    )  # fmt: skip
     names = ("metrics", "gate", "standings", "oms_enabled", "live_enabled", "profiles")
     unused = dict.fromkeys((*names, "persistence", "feed", "lane_signing"))
     topics = Topics()
