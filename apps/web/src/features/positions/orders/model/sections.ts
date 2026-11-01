@@ -8,7 +8,7 @@
  */
 import { bindDeck } from "../../copy";
 import type { Environment } from "../../model/rowMapping";
-import { bindProposed } from "../copy";
+import { bindProposed, ORDER_TEXT } from "../copy";
 import type { OrderRowModel } from "./orderRow";
 
 export type SectionId = "working" | "conditional";
@@ -91,22 +91,29 @@ export function sectionsOf(rows: readonly OrderRowModel[]): readonly OrdersSecti
   return out;
 }
 
-const ENV_WORDS: Readonly<Record<Environment, string>> = {
-  live: "LIVE",
-  demo: "DEMO",
-  testnet: "TESTNET",
+/** The environment's word in a group row: D02's LIVE and DEMO, and the PROPOSED TESTNET. */
+const ENV_WORDS: Readonly<Record<Environment, () => string>> = {
+  live: () => ORDER_TEXT.live.string,
+  demo: () => ORDER_TEXT.demo.string,
+  testnet: () => bindProposed("blotter.ui.env.testnet"),
 };
 
 /**
  * The account group row, "Main · LIVE · 3 orders" (PROPOSED, BQ-9: board 06 draws it; §6 gives no
- * string). An account the directory does not name shows its id, as the positions grid does.
+ * string). An account the directory does not name shows its id, as the positions grid does; one
+ * whose environment is not known yet drops that segment ("Main · 3 orders"), never leaving it empty.
  */
 export function groupLabel(group: AccountGroup): string {
-  const values = {
-    Main: group.label ?? group.accountId,
-    LIVE: group.environment === null ? "" : ENV_WORDS[group.environment],
-  };
-  return group.rows.length === 1
+  const account = group.label ?? group.accountId;
+  const count = String(group.rows.length);
+  const one = group.rows.length === 1;
+  if (group.environment === null) {
+    return one
+      ? bindProposed("blotter.ui.orders_group.no_env.one", { Main: account })
+      : bindProposed("blotter.ui.orders_group.no_env", { Main: account, "3": count });
+  }
+  const values = { Main: account, LIVE: ENV_WORDS[group.environment]() };
+  return one
     ? bindProposed("blotter.ui.orders_group.one", values)
-    : bindProposed("blotter.ui.orders_group", { ...values, "3": String(group.rows.length) });
+    : bindProposed("blotter.ui.orders_group", { ...values, "3": count });
 }

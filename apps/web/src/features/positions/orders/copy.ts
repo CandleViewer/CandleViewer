@@ -2,9 +2,10 @@
  * The Working-orders tab's words that the E29-D06 deck does not key (E29-S02 #912). Two kinds:
  *
  * - **Merged design words**, each cited to its line (a test finds it there): E29-D01 D2's state
- *   words (D01:177–191), E29-D02 §6.1's column words (D02:263–274) and D01 D1's purposes for the
- *   five intents D02 does not draw (D01:153). Like `../copy.ts`'s `D02_TEXT`, a string changes
- *   only through its owner (D06 §6: no string invented).
+ *   words (D01:177–191), E29-D02 §6.1's column words (D02:263–274), the group rows' environment
+ *   words (D02:238, :441), D01 D1's purposes for the five intents D02 does not draw (D01:153) and
+ *   E30-D02's trigger-by label "Index" (E30-D02:243). Like `../copy.ts`'s `D02_TEXT`, a string
+ *   changes only through its owner (D06 §6: no string invented).
  * - **PROPOSED keys** (BQ-9): words no merged design draws, routed to E29-D03's copy owner (G-W3)
  *   as #911's BQ-15 routed its own, and listed in the PR body for the ledger row. A test holds each
  *   one out of the deck, so the deck adopting a key fails it until the entry moves to `DECK`.
@@ -44,14 +45,19 @@ export const STATE_WORDS = {
 export const ORDER_TEXT = {
   /** A null or unmapped state reads as live (`23` §15.1). */
   notReported: { string: "Working — state not reported", source: "D02:274" },
-  buy: { string: "▲ Buy", source: "D02:263" },
-  sell: { string: "▼ Sell", source: "D02:263" },
+  /** The side's word and its glyph, apart (D02:263 draws "▲ Buy"): the glyph is drawn, never read. */
+  buy: { string: "Buy", source: "D02:263" },
+  sell: { string: "Sell", source: "D02:263" },
+  buyGlyph: { string: "▲", source: "D02:263" },
+  sellGlyph: { string: "▼", source: "D02:263" },
   limit: { string: "Limit", source: "D02:264" },
   market: { string: "Market", source: "D02:264" },
   /** The Price column of a market order (D02:268: "a market order reads "Market""). */
   marketPrice: { string: "Market", source: "D02:268" },
   lastPrice: { string: "Last", source: "D02:269" },
   markPrice: { string: "Mark", source: "D02:269" },
+  /** E30-D06 `ticket.order.label.trigger_by.index` (by reference, owner E30-D02): the drawn label. */
+  indexPrice: { string: "Index", source: "E30-D02:243" },
   rises: { string: "rises to", source: "D02:269" },
   falls: { string: "falls to", source: "D02:269" },
   postOnly: { string: "Post-only", source: "D02:270" },
@@ -62,6 +68,9 @@ export const ORDER_TEXT = {
   bracket: { string: "Bracket", source: "D02:273" },
   twap: { string: "TWAP", source: "D02:273" },
   groupLeg: { string: "Group leg", source: "D02:273" },
+  /** The account group row's environment (D02:238 "Main · LIVE", D02:441 "Main · DEMO"). */
+  live: { string: "LIVE", source: "D02:238" },
+  demo: { string: "DEMO", source: "D02:441" },
 } as const satisfies Readonly<Record<string, CitedText>>;
 
 /** The Age column's units, as D02:272 writes "38 s", "4 m" and "1 h 12 m". */
@@ -123,9 +132,10 @@ export const PROPOSED = {
     "A trigger with no `trigger_by`: D02:269 draws Mark and Last only.",
     { "falls to": "direction", "63,950.0": "figure" },
   ),
-  "blotter.ui.trigger.index": proposed(
-    "Index",
-    "`IndexPrice`'s source word: D02:269 draws Mark and Last only.",
+  "blotter.ui.trigger.bare": proposed(
+    "Price reaches 63,950.0",
+    "A trigger with neither a direction nor a `trigger_by`: D02:269 draws neither.",
+    { "63,950.0": "figure" },
   ),
   "blotter.ui.orders_group": proposed(
     "Main · LIVE · 3 orders",
@@ -137,12 +147,26 @@ export const PROPOSED = {
     "The account group row with one order (board 06).",
     { Main: "account label", LIVE: "environment" },
   ),
+  "blotter.ui.orders_group.no_env": proposed(
+    "Main · 3 orders",
+    "The account group row while its environment is not known: no empty segment.",
+    { Main: "account label", "3": "count" },
+  ),
+  "blotter.ui.orders_group.no_env.one": proposed(
+    "Main · 1 order",
+    "The account group row with one order while its environment is not known.",
+    { Main: "account label" },
+  ),
+  "blotter.ui.env.testnet": proposed(
+    "TESTNET",
+    "The testnet environment's word: D02 draws LIVE and DEMO only, and CMP-075's TESTNET look is PROPOSED too (`15`:848).",
+  ),
   "blotter.ui.cancel.toast": proposed(
-    "Cancel sent: BTCUSDT ▼ Sell 0.250 at 64,800.0 on Main.",
-    "A single cancel's toast, without Undo, naming the order (D01 D7).",
+    "Cancel sent: BTCUSDT Sell 0.250 at 64,800.0 on Main.",
+    "A single cancel's toast, without Undo, naming the order (D01 D7); the side's word, never its glyph.",
     {
       BTCUSDT: "symbol",
-      "▼ Sell": "side",
+      Sell: "side",
       "0.250": "quantity",
       "64,800.0": "figure",
       Main: "account label",
