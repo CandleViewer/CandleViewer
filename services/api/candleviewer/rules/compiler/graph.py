@@ -20,6 +20,7 @@ from collections import defaultdict
 from typing import Any
 
 from candleviewer.rules.compiler.common import (
+    MAX_CONDITION_NODES,
     MAX_DEPTH,
     MAX_GRAPH_EDGES,
     MAX_GRAPH_NODES,
@@ -27,6 +28,7 @@ from candleviewer.rules.compiler.common import (
     bounds_error,
     build_rule,
     check_bounds,
+    condition_node_error,
     count_values,
 )
 from candleviewer.rules.ir import (
@@ -40,6 +42,7 @@ from candleviewer.rules.ir import (
 from candleviewer.rules.issues import Issue, RuleCompileError
 
 _TYPES = ("comparison", "boolean", "temporal", "arithmetic", "operand", "action")
+_CONDITIONS = ("comparison", "boolean", "temporal")  # the nodes `MAX_CONDITION_NODES` counts
 _PORTS = ("left", "right", "right2", "in", "child", "when")
 _OPERAND_PORTS = ("left", "right", "right2")
 _UNARY = ("is_true", "is_false", "changed", "in_set", "not_in_set")
@@ -223,15 +226,17 @@ def _copy_values(n: dict[str, Any], port: dict[str, list[str]]) -> int:
 def compile_graph(model: dict[str, Any], rule_id: Any = None) -> Rule:
     """Compile a graph-editor model to the canonical IR; structural faults raise (no IR). The
     graph compiler charges shared-node copies against the document bounds: every copy is charged
-    before it is built, so an expansion past `MAX_ITEMS` values is refused, never materialised."""
+    before it is built, so an expansion past `MAX_ITEMS` values or `MAX_CONDITION_NODES` condition
+    nodes is refused, never materialised."""
     check_bounds(model, "graph model")
     by_id, edges = _index(model)
     root, ins = _wellformed(by_id, edges)
     budget = MAX_ITEMS  # the values the expanded conditions may still add
+    nodes = MAX_CONDITION_NODES  # the condition nodes they may still hold
     costs: dict[str, int] = {}  # one copy's own values, per node
 
     def build(nid: str, depth: int) -> dict[str, Any]:
-        nonlocal budget
+        nonlocal budget, nodes
         if depth > MAX_DEPTH:
             raise _fail(
                 _err("schema_error", f"nodes.{nid}", "The graph is nested too deeply.", nid)
@@ -242,6 +247,10 @@ def compile_graph(model: dict[str, Any], rule_id: Any = None) -> Rule:
         budget -= costs[nid]
         if budget < 0:
             raise bounds_error("graph model")
+        if n["type"] in _CONDITIONS:
+            nodes -= 1
+            if nodes < 0:
+                raise condition_node_error()
         if n["type"] == "operand":  # metric ref / {const}: a leaf with no node_id of its own
             return dict(n.get("data", {}))
         out: dict[str, Any] = {**n.get("data", {}), "node_id": nid}

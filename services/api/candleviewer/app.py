@@ -181,6 +181,7 @@ from candleviewer.api.recording_status import make_recording_status_router
 from candleviewer.api.recording_symbols import make_recording_symbols_router
 from candleviewer.api.recording_writes import make_recording_writes_router
 from candleviewer.api.response_headers import NoSniff
+from candleviewer.api.rules import CHECK_BURST_FACTOR, CHECK_ROUTES
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
 from candleviewer.api.scanner import make_scanner_router
@@ -341,7 +342,7 @@ from candleviewer.observability.http_duration import (
 from candleviewer.observability.http_duration import HttpDurationMiddleware
 from candleviewer.observability.latency import StageRecorder
 from candleviewer.observability.log_level import LogLevelOverrides
-from candleviewer.observability.metrics import CollectorRegistry, Metrics
+from candleviewer.observability.metrics import NOOP_CHILD, CollectorRegistry, Metrics
 from candleviewer.observability.metrics_catalogue import register_r0
 from candleviewer.observability.service import ObservabilityService
 from candleviewer.observability.support_bundle import filter_config
@@ -402,7 +403,7 @@ from candleviewer.retention_wiring import (
 )
 from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
-from candleviewer.rules.manager import Actor
+from candleviewer.rules.manager import REFUSED_CAPS, Actor
 from candleviewer.rules.service import RulesService
 from candleviewer.rules_store_pg import PostgresRuleStore
 from candleviewer.settings import (
@@ -1457,7 +1458,9 @@ def _build_onboarding_router(
 
 
 class _RuleCompileTelemetry:
-    """E35-T04: compile counters + a high-severity telemetry event on form/graph divergence."""
+    """E35-T04: compile counters + a high-severity telemetry event on form/graph divergence.
+    E35 (#4834): the authoring limits' counters, each closed set bound once, so a value outside
+    its set is dropped and nothing on an answer's path can raise."""
 
     def __init__(self, metrics: Metrics) -> None:
         self._compiles = metrics.counter(
@@ -1467,6 +1470,16 @@ class _RuleCompileTelemetry:
             "rule_roundtrip_divergence_total", "E35-T04 form/graph divergences (high severity)",
             ("kind",),
         )  # fmt: skip
+        capped = metrics.get("rule_authoring_cap_refused_total")
+        limited = metrics.get("rule_authoring_rate_limited_total")
+        self._capped = {cap: capped.labels(cap) for cap in REFUSED_CAPS}
+        self._limited = {route: limited.labels(route) for route in CHECK_ROUTES}
+
+    def on_cap_refused(self, cap: str) -> None:
+        self._capped.get(cap, NOOP_CHILD).inc()
+
+    def on_rate_limited(self, route: str) -> None:
+        self._limited.get(route, NOOP_CHILD).inc()
 
     def on_compile(self, editor: str, result: str) -> None:
         self._compiles.labels(editor, result).inc()
@@ -3322,6 +3335,13 @@ def create_app(
             on_divergence=rule_telemetry.on_divergence,
             scope_resolver=ctx.rules.scope_resolver,
             scope_refresh=ctx.rules.refresh_scope,
+            check_limiter=PreviewLimiter(
+                resolved.rules_check_rate_per_user_per_second,
+                burst=resolved.rules_check_rate_per_user_per_second * CHECK_BURST_FACTOR,
+                clock=time.monotonic,
+            ),
+            on_rate_limited=rule_telemetry.on_rate_limited,
+            on_cap_refused=rule_telemetry.on_cap_refused,
         )
     )
     # E35-S01: rule store / versions / active-version / mode routes (fail-closed 501
@@ -3356,6 +3376,7 @@ def create_app(
             rules_actor.resolve if rules_actor else None,
             scope_resolver=lambda: ctx.rules.scope_resolver,
             scope_refresh=ctx.rules.refresh_scope,
+            on_cap_refused=rule_telemetry.on_cap_refused,
         )
     )
     # E40-T02: notify-only alert CRUD. Same session->Actor resolver as /rules (fail-closed 501

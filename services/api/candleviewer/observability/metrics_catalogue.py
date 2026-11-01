@@ -3890,6 +3890,33 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _P,
         "E35",
     ),
+    # E35 authoring limits (#4834): refusals by closed sets (`rules/manager.REFUSED_CAPS`,
+    # `api/rules.CHECK_ROUTES`), each series bound at 0 when the app is built; never a user, a rule
+    # or an account.
+    _s(
+        "rule_authoring_cap_refused_total",
+        "counter",
+        "refusals",
+        ("cap",),
+        "Rule authoring requests refused at a bound, by the bound: condition_nodes, note, reason "
+        "or stored_rules.",
+        "dashboard only",
+        _L,
+        "E35",
+        max_series=4,
+    ),
+    _s(
+        "rule_authoring_rate_limited_total",
+        "counter",
+        "refusals",
+        ("route",),
+        "Rule validate and compile calls answered 429 past the per-user limit, by route: validate "
+        "or compile.",
+        "ticket on sustained growth",
+        _L,
+        "E35",
+        max_series=2,
+    ),
     # E35-S03 (#863; 24 Sec.11.5, Sec.11.9): the action executor's series. Closed label sets: the
     # 25 action types, the 6 ActionResult outcomes and the 16 blocked_by values; never an account,
     # a rule, a user or a value.

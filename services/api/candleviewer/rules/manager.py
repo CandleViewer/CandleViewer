@@ -16,7 +16,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final, Protocol
+from typing import Any, Final, Literal, Protocol, get_args
 from uuid import UUID
 
 import structlog
@@ -24,7 +24,7 @@ from pydantic import ValidationError
 
 from candleviewer.observability import spawn
 from candleviewer.rules.arming import ArmingFacts, check_arming
-from candleviewer.rules.compiler.common import check_bounds
+from candleviewer.rules.compiler.common import ConditionNodeBoundError, check_bounds
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.ir.accounts import (
@@ -111,12 +111,37 @@ class RuleRefusalUnrecorded(Exception):
     wrapped."""
 
 
+#: The bounds the authoring routes count when they refuse one (`rule_authoring_cap_refused_total`):
+#: a closed set, so the counter's series stay bounded.
+RefusedCap = Literal["condition_nodes", "note", "reason", "stored_rules"]
+REFUSED_CAPS: Final = get_args(RefusedCap)
+
+
+class RuleCapRefused(RuleError):
+    """A refusal of one of the `REFUSED_CAPS`, answered as any `RuleError` is. `cap` is an attribute
+    and never a member of the answer: the routes count it, nothing sends it."""
+
+    def __init__(self, cap: RefusedCap, status: int, code: str, message: str, **extra: Any) -> None:
+        super().__init__(status, code, message, **extra)
+        self.cap = cap
+
+
 def _ir_invalid(issues: list[Issue]) -> RuleError:
     """422 `rule_ir_invalid` naming every issue, the first one's message as the detail: how a save
     answers the document bounds and the validator alike."""
     return RuleError(
         422, "rule_ir_invalid", issues[0].message, issues=[i.to_dict() for i in issues]
     )
+
+
+def _node_cap_refused(exc: ConditionNodeBoundError) -> RuleCapRefused:
+    """422 `rule_ir_invalid` for a document over the condition-node bound, as `22`'s
+    `conditionNodes` example answers it: one `errors[]` item (`field`, `rule`, `message`) for each
+    issue and a `detail` counting them, where `_ir_invalid` names `issues[]`."""
+    n = len(exc.issues)
+    errors = [{"field": i.path, "rule": i.code, "message": i.message} for i in exc.issues]
+    detail = f"{n} error{'s' if n != 1 else ''} in the rule IR."
+    return RuleCapRefused(exc.cap, 422, "rule_ir_invalid", detail, errors=errors)
 
 
 @dataclass
@@ -705,9 +730,13 @@ class RulesManager:
     @staticmethod
     def check_document(doc: Any) -> None:
         """The bounds compile and validate apply (`check_bounds`), first on every save and for any
-        caller about to walk the document itself: the same 422 `rule_ir_invalid` as `_validated`."""
+        caller about to walk the document itself: the same 422 `rule_ir_invalid` as `_validated`.
+        A document over the condition-node bound is a `RuleCapRefused`, which the routes count; it
+        answers as `22`'s example shows (`errors[]`), every other refusal naming its `issues[]`."""
         try:
             check_bounds(doc, "rule")
+        except ConditionNodeBoundError as exc:
+            raise _node_cap_refused(exc) from exc
         except RuleCompileError as exc:
             raise _ir_invalid(exc.issues) from exc
 

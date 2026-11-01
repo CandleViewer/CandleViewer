@@ -169,6 +169,10 @@ AUTH_LOGIN_VERIFY_CONCURRENCY_MAX: Final = 32
 #: preview's per-user token bucket, its rate and its burst alike (22 `previewTradeGroup`).
 TRADEGROUPS_PREVIEW_RATE_PER_USER_PER_SECOND: Final = 20
 
+#: E35 (#4834, G-2): `CV_RULES_CHECK_RATE_PER_USER_PER_SECOND`, the rate of the per-user token
+#: bucket `validateRule` and `compileRule` share; its burst is twice the rate (22 `validateRule`).
+RULES_CHECK_RATE_PER_USER_PER_SECOND: Final = 10
+
 
 class Environment(StrEnum):
     """The three structural exchange environments (P9, `20-architecture.md` Sec.7.1).
@@ -905,6 +909,11 @@ class Settings(BaseSettings):
     # A field check, so a value outside 1-100 refuses startup; no value switches the limit off.
     tradegroups_preview_rate_per_user_per_second: int = Field(
         default=TRADEGROUPS_PREVIEW_RATE_PER_USER_PER_SECOND, ge=1, le=100
+    )
+    # E35 (#4834, G-2): checks (validate and compile) a user may make a second (`api/rules`). A
+    # field check, so a value outside 1-100 refuses startup; no value switches the limit off.
+    rules_check_rate_per_user_per_second: int = Field(
+        default=RULES_CHECK_RATE_PER_USER_PER_SECOND, ge=1, le=100
     )
     # #913 S4-S: the band (22 `placeOrder`, 24 Sec.8.4 step 3a); no off value (C-4.14).
     oms_price_band_pct: Decimal = Field(

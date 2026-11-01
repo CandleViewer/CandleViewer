@@ -27,7 +27,13 @@ from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.ir.models import RuleScope
-from candleviewer.rules.manager import Actor, RuleError, RuleRefusalUnrecorded, RulesManager
+from candleviewer.rules.manager import (
+    Actor,
+    RuleCapRefused,
+    RuleError,
+    RuleRefusalUnrecorded,
+    RulesManager,
+)
 from candleviewer.rules.scope import ScopeResolver
 
 _READ = "rules:read"
@@ -94,6 +100,7 @@ def make_rules_crud_router(
     actor_resolver: Callable[[Request], Any] | None,
     scope_resolver: Callable[[], ScopeResolver | None] | None = None,
     scope_refresh: Callable[[UUID], Awaitable[None]] | None = None,
+    on_cap_refused: Callable[[str], None] = lambda cap: None,
 ) -> APIRouter:
     router = APIRouter(tags=["rules"])
 
@@ -161,6 +168,13 @@ def make_rules_crud_router(
     def _bad(detail: str) -> JSONResponse:
         return _problem(400, "validation_failed", "Bad request", detail)
 
+    def _answer(exc: RuleError) -> JSONResponse:
+        """The problem `exc` names; a refusal at a counted bound (`RuleCapRefused`) is counted
+        first."""
+        if isinstance(exc, RuleCapRefused):
+            on_cap_refused(exc.cap)
+        return _from_error(exc)
+
     @router.get("/rules")
     async def list_rules(
         request: Request,
@@ -209,7 +223,7 @@ def make_rules_crud_router(
                 return denied
             return JSONResponse(await mgr.create(doc, actor, str(body.get("note", ""))), 201)
         except RuleError as exc:
-            return _from_error(exc)
+            return _answer(exc)
         except RuleRefusalUnrecorded as lost:
             return _unrecorded(lost)
 
@@ -256,7 +270,7 @@ def make_rules_crud_router(
                 return denied
             out = await mgr.update(str(ruleId), doc, int(raw), actor, str(body.get("note", "")))
         except RuleError as exc:
-            return _from_error(exc)
+            return _answer(exc)
         except RuleRefusalUnrecorded as lost:
             return _unrecorded(lost)
         return JSONResponse(out)
