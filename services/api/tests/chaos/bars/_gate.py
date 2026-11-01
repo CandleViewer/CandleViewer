@@ -12,7 +12,10 @@ import json
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 
-#: The compose project of the chaos stack; a local run pins it with `COMPOSE_PROJECT_NAME`.
+#: The compose project of the chaos stack. Nothing in the repo names one (no `name:` in the compose
+#: file, no `-p`, no `COMPOSE_PROJECT_NAME` in `_job-integration.yml` or `_stack.py`: CI gets the
+#: directory default, `compose`), so this is our own constant: a local run pins it with
+#: `COMPOSE_PROJECT_NAME` and starts its stack under it.
 CHAOS_PROJECT = "cv-chaos"
 
 
