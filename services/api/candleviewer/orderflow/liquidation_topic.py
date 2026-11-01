@@ -377,7 +377,9 @@ class LiquidationsTopic[B]:
 
     def open(self) -> None:
         if self._sub is None:
-            pattern = TopicPattern(env=self._env, domain="md", symbol=WILDCARD, detail=DETAIL)
+            pattern = TopicPattern(
+                env=self._env, domain="md", symbol=WILDCARD, detail="liquidation"
+            )
             self._sub = self._bus.subscribe(
                 "ws-liquidations-topic", pattern, QueuePolicy.INVALIDATE_ON_FULL,
                 maxsize=BUS_QUEUE_MAX,

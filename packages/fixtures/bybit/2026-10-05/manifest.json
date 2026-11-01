@@ -483,10 +483,10 @@
       "notable_event": "cascade: 8 pushes @500 ms, twin prints in push 2, push 2 replayed last",
       "http_status": 200,
       "size_cap_bytes": 8000,
-      "retrieved": "2026-10-31",
       "source_url": "https://bybit-exchange.github.io/docs/v5/websocket/public/all-liquidation",
       "source_ref": "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921:docs/v5/websocket/public/all-liquidation.mdx",
-      "note": "frame shape transcribed from the docs page (ws/docs-all-liquidation.jsonl); values generated (seeded)"
+      "note": "frame shape transcribed from the docs page (ws/docs-all-liquidation.jsonl); values generated (seeded)",
+      "retrieved": "2026-10-31"
     },
     {
       "path": "ws/burst_tickers_BTCUSDT.jsonl",
