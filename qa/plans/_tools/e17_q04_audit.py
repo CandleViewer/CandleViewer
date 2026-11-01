@@ -20,7 +20,8 @@ Gates (one mutation each in `--self-test`, each caught by its own gate only):
   G-LEDGER    section B: rows 1 to 24 in order, each State cell the D02 row's name at the base, the status
               vocabulary, and the cases of a row equal to the A1 cases citing it, both ways (BQ-01).
   G-PARKED    every probe of a partial or parked row, and of section B2, is absent from its path at `origin/main`
-              (a needle probe needs its path to exist there); a probe found means the row must be updated (BQ-03).
+              (a needle probe needs its path to exist there); a probe found means the row must be updated (BQ-03). A
+              component probe is a line-anchored regex at its definition (`^export [a-z ]+ Name\b`), never a bare word.
   G-UNIT      every `unit` or `e2e` cell names a file that exists and contains its quoted needle.
   G-MUTATION  one mutation line per non-named case; for the named rows, one line per marked assertion, and every
               assertion line of the named-row bodies carries its `// M-Nnn-k` mark (BQ-08).
@@ -156,8 +157,26 @@ def write_text(rel: str, text: str) -> None:
         f.write(text)
 
 
+def is_anchored(needle: str) -> bool:
+    """A needle starting with `^` is a line-anchored regex (a definition line); any other is a fixed string."""
+    return needle.startswith("^")
+
+
+def bare_component(needle: str) -> bool:
+    """A bare identifier (`WatchlistRow`): a mention in a comment would count, so a probe may not be one."""
+    return re.fullmatch(r"[A-Z][A-Za-z0-9]*", needle) is not None
+
+
+def line_hits(needle: str, text: str) -> bool:
+    """The probe's match rule over a text, as `git grep` applies it (the self-test's proof)."""
+    if is_anchored(needle):
+        return re.search(needle, text, re.MULTILINE) is not None
+    return needle in text
+
+
 def grep_main(needle: str, path: str) -> bool:
-    out = git_raw("grep", "-l", "-F", "-e", needle, HEAD_REF, "--", path)
+    mode = "-E" if is_anchored(needle) else "-F"
+    out = git_raw("grep", "-l", mode, "-e", needle, HEAD_REF, "--", path)
     return bool(out and out.strip())
 
 
@@ -659,6 +678,11 @@ def g_parked(t: Texts) -> list[Finding]:
     for needle, path in all_probes(t):
         if needle == "?":
             bad.append(f"a probe cell part {path!r} is neither `needle` in `path` nor path `path`")
+        elif bare_component(needle):
+            bad.append(
+                f"the probe `{needle}` in `{path}` is a bare word: anchor it at a definition line "
+                "(`^export [a-z ]+ Name\\b`), so a mention in a comment cannot un-park the row"
+            )
         elif probe_key(needle, path) in t.present:
             what = f"`{needle}` is in `{path}`" if needle else f"`{path}` exists"
             bad.append(
@@ -1112,6 +1136,8 @@ MUTATIONS = (
              subst("| covered | Q04-T11 |", "| covered | Q04-T11, Q04-T02 |")),
     Mutation("G-PARKED", "main gains row 19's surface",
              lambda t: replace(t, present=t.present | {probe_key("Connection unstable", "apps/web/src")})),
+    Mutation("G-PARKED", "row 3's component probe is a bare word again",
+             subst("`^export [a-z ]+ WatchlistRow\\b` in `apps/web/src`", "`WatchlistRow` in `apps/web/src`")),
     Mutation("G-UNIT", "row 7's unit needle is not in its file", subst('"OFFLINE_COPY"', '"OFFLINE_COPY_X"')),
     Mutation("G-MUTATION", "a case loses its mutation line",
              lambda t: subst(row_of(t, "M-T11") + "\n", "")(t)),
@@ -1151,6 +1177,19 @@ def selftest() -> tuple[bool, list[str]]:
             hit.add(m.gate)
         out.append(
             f"{'ok  ' if good else 'FAIL'} M-{i} {m.gate}: {m.what} -> {', '.join(got) or 'none'}"
+        )
+    probe = r"^export [a-z ]+ WatchlistRow\b"
+    proof = (
+        ("a comment mentioning the word", "// WatchlistRow lands with E08-S08", False),
+        ("a use of the word", "const row = WatchlistRow;", False),
+        ("a definition (function)", "export function WatchlistRow(props: P) {", True),
+        ("a definition (const)", "export const WatchlistRow = memo(Row);", True),
+    )
+    for what, line, want in proof:
+        good = line_hits(probe, line) is want
+        ok &= good
+        out.append(
+            f"{'ok  ' if good else 'FAIL'} P-probe: {what} {'counts' if want else 'does not count'}"
         )
     every = {gate_name(g) for g in GATES} | {"G-RULED-PIN"}
     missed = sorted(every - hit)

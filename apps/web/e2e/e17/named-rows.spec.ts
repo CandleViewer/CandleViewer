@@ -69,6 +69,7 @@ test(`Q04-N04 C12 after a reconnect: the kill switch is what auth_ok says, never
   harness.kill();
   // Disconnected outranks the switch, which is unknown, not "not killed", while the link is down.
   await patient(region(page)).toHaveAttribute("data-reason", "disconnected"); // M-N04-2
+  harness.setKillSwitch({ engaged: false, scope: "global" }); // released during the outage
   harness.restore();
   await patient.poll(() => harness.authenticated()).toBe(2);
   // This gateway's `auth_ok` says disengaged (released during the outage): the region goes, R2 is not kept.

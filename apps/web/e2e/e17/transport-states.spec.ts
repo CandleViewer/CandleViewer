@@ -310,7 +310,7 @@ test(`Q04-T13 a slow-consumer close is Disconnected, then Live again on its own 
 
 // SCR-153's CMP-092 rows that the `system` stream drives (`degradedIssues.ts`): what a trader sees when the server or
 // the exchange is impaired while the transport itself stays Live (E17-D02 section 6, routing rows 6, 8 and 9).
-/** CMP-092's own polite region (`DegradedBanner.tsx`), pre-rendered empty, beside the shell announcer's. */
+/** CMP-092's own polite region (`DegradedBanner.tsx`), pre-rendered empty, beside the shell announcer's. An attribute selector: the region has no role to query. */
 const politeSays = (page: Parameters<typeof region>[0], text: string) =>
   page.locator('[aria-live="polite"]', { hasText: text });
 

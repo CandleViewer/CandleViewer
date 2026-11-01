@@ -27,8 +27,8 @@ export function covers(...ids: string[]): void {
 }
 
 // --- locators ---------------------------------------------------------------------------------------------------
-/** CMP-076, the top bar's chip: one native button whose `data-status` is the five-value union (E17-D02 section 3). */
-export const chip = (page: Page): Locator => page.locator("button[data-status]");
+/** CMP-076, the top bar's chip: one native button named "Connection: <word>…"; its `data-status` is the five-value union (E17-D02 section 3). */
+export const chip = (page: Page): Locator => page.getByRole("button", { name: /^Connection: / });
 /** CMP-077, the SCR-152 connection region: a non-modal `region` named "Connection" in the banner slot. */
 export const region = (page: Page): Locator =>
   page.getByRole("region", { name: "Connection", exact: true });
@@ -36,7 +36,7 @@ export const retryNow = (page: Page): Locator =>
   region(page).getByRole("button", { name: "Retry now" });
 export const signIn = (page: Page): Locator =>
   region(page).getByRole("button", { name: "Sign in" });
-/** The shell announcer's assertive node: its one message, or none (`announcer.tsx`). */
+/** The shell announcer's assertive node: its one message, or none (`announcer.tsx`). An attribute selector: the node has no role to query. */
 export const assertive = (page: Page): Locator => page.locator('[aria-live="assertive"] > p');
 /** The status bar's connection word (`StatusBar.tsx`). */
 export const statusWord = (page: Page): Locator =>
@@ -139,7 +139,7 @@ export const stillTheSameAnnouncement = (page: Page): Promise<void> =>
 
 /** The chip's content fades in once per change (`useCrossFade`): a scan before it ends reads half-faded text. */
 export async function chipSettled(page: Page): Promise<void> {
-  const fade = chip(page).locator("[data-fade]");
+  const fade = chip(page).locator("[data-fade]"); // the cross-fade wrapper has no role or label to query
   await patient.poll(() => fade.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
 }
 

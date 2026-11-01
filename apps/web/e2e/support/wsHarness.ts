@@ -61,6 +61,8 @@ export interface WsHarness {
    */
   hold(t: Held): void;
   release(t: Held): void;
+  /** E17-Q04: what the gateway holds from now on, with no frame sent (a release during an outage); the next `auth_ok` and snapshots carry it. */
+  setKillSwitch(value: Readonly<Record<string, unknown>>): void;
   /** E17-Q04: any `system` payload as the next `d` on `system` (15.9: kill_switch, shutdown_notice, connection_quality). */
   sendSystem(body: Readonly<Record<string, unknown>>): void;
   /** E17-Q04: an `err` frame (10.3), which the app shows as a modal, a badge or a toast by its code. */
@@ -202,6 +204,10 @@ export async function startWsHarness(
   let stalled: Conn | undefined;
   let current: Conn | undefined;
   let ageMs = gateway.ageMs ?? 0;
+  // The kill switch the gateway last held: the `auth_ok` and every `system` snapshot carry it, and `sendSystem`
+  // moves it when its body carries one (15.9), so a resync never answers a state the gateway did not hold.
+  let killSwitch: Readonly<Record<string, unknown>> = { engaged: false, scope: "global" };
+  const currentKillSwitch = () => killSwitch;
   const held = new Set<Held>();
   const parked: [Conn, Frame][] = [];
   const now = (): number => EPOCH_MS + (tick += 1);
@@ -250,7 +256,7 @@ export async function startWsHarness(
         c.authed = true;
         if (first) authed += 1;
         else reauthed += 1;
-        const killSwitch = { engaged: false, scope: "global" };
+        const killSwitch = currentKillSwitch();
         send(c, {
           t: "auth_ok",
           id,
@@ -289,7 +295,7 @@ export async function startWsHarness(
         const last = c.seq.get(ch) ?? 0;
         // Only `system` has a body to re-send here; a ticker resync waits for the next `sendTicker`. Its snapshot is
         // the first one's (12.1), the kill switch included: without it the client keeps the switch unknown (WS-E06).
-        const body = { ...HEALTH, kill_switch: { engaged: false, scope: "global" } };
+        const body = { ...HEALTH, kill_switch: currentKillSwitch() };
         if (ch === "system")
           data(c, "snap", ch, body, last + 1, { reason: "client_resync", previous_seq: last });
         return;
@@ -374,8 +380,14 @@ export async function startWsHarness(
       parked.splice(0, parked.length, ...parked.filter(([, f]) => f.t !== t));
       for (const [c, f] of due) answer(c, f);
     },
+    setKillSwitch(value) {
+      killSwitch = value;
+    },
     sendSystem(body) {
       if (!current) throw new Error("sendSystem: no live connection");
+      const ks = body["kill_switch"];
+      if (typeof ks === "object" && ks !== null && !Array.isArray(ks))
+        killSwitch = ks as Record<string, unknown>;
       data(current, "d", "system", body, (current.seq.get("system") ?? 0) + 1);
     },
     sendErr(code, message = code) {

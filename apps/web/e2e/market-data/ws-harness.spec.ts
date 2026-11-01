@@ -87,6 +87,29 @@ test("desync: a sequence gap makes the client resync", async ({ page }) => {
   expect(harness.sent.flatMap(schemaErrors)).toEqual([]);
 });
 
+// E17-Q04 (#569): a resync snapshot carries the kill switch the gateway last held, one engaged through `sendSystem` too.
+test("resync: the system snapshot carries the kill switch last set", async ({ page }) => {
+  const harness = await signedIn(page);
+  harness.sendSystem({ kind: "kill_switch", kill_switch: { engaged: true, scope: "global" } });
+  harness.desync();
+  await expect
+    .poll(() => harness.sent.at(-1))
+    .toMatchObject({
+      t: "snap",
+      ch: "system",
+      meta: { reason: "client_resync" },
+      p: { kill_switch: { engaged: true, scope: "global" } },
+    });
+  expect(harness.sent.flatMap(schemaErrors)).toEqual([]);
+  // a release with no frame sent: the next resync says disengaged
+  harness.setKillSwitch({ engaged: false, scope: "global" });
+  harness.desync();
+  await expect
+    .poll(() => harness.sent.at(-1))
+    .toMatchObject({ t: "snap", ch: "system", p: { kill_switch: { engaged: false } } });
+  expect(harness.sent.flatMap(schemaErrors)).toEqual([]);
+});
+
 // #304 S10 (E04-D02-F11): the test-only frame-age knob. The C-d e2e (hold 150 ms for 60 ticker frames and see one
 // "System status" change) needs a mounted surface that consumes a topic; none does at this base, so only the knob is
 // checked here and C-d stays a row for E10-Q03 (#302).

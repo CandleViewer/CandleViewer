@@ -158,7 +158,7 @@ test(`Q04-X03 reduced motion: the chip changes state with no cross-fade ${PACK}`
   const harness = await openWorkspace(page);
   harness.kill();
   await patient(chip(page)).toHaveAttribute("data-status", "reconnecting");
-  const fade = chip(page).locator("[data-fade]");
+  const fade = chip(page).locator("[data-fade]"); // the cross-fade wrapper has no role or label to query
   await expect(fade).toHaveCSS("transition-property", "none");
   await expect(fade).toHaveCSS("opacity", "1");
 });
@@ -169,6 +169,7 @@ test(`Q04-X04 full motion, the control: the same change does fade ${PACK}`, asyn
   harness.kill();
   await patient(chip(page)).toHaveAttribute("data-status", "reconnecting");
   await chipSettled(page);
+  // the cross-fade wrapper has no role or label to query
   await expect(chip(page).locator("[data-fade]")).toHaveCSS("transition-property", "opacity");
 });
 

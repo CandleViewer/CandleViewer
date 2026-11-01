@@ -1,4 +1,4 @@
-# E17-Q04 pins: 258 units of the pack (region|first cell#n, sha12 of the normalised line, its first 80 characters); values cut out, the generated block collapsed.
+# E17-Q04 pins: 260 units of the pack (region|first cell#n, sha12 of the normalised line, its first 80 characters); values cut out, the generated block collapsed.
 # Written by `--repin-ruled` only; `--check` reads it (G-RULED-PIN). Never hand-edit the units.
 # Ruled axe waivers (BQ-06): `axe-waiver<TAB>rule-id<TAB>ruling`, kept by a repin; none is ruled.
 pack:E17 regression pack: the web client's transport states, end to end|p#1	eba5eb4a8618	# E17 regression pack: the web client's transport states, end to end
@@ -146,16 +146,16 @@ pack:B. The E17-D02 state matrix: one ledger row per matrix row|p#8	f1b5766c8e8d
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|Row#1	2e267a08d72b	| Row | State | Status | Cases | Elsewhere | Parked half: probe | Owner of the p
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|1#1	0777253f8601	| 1 | `connecting` before the session's first `auth_ok` | covered | Q04-T01, Q04
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|2#1	f21d24d055fe	| 2 | `connected` | covered | Q04-T02, Q04-N01, Q04-X01 | | | |
-pack:B. The E17-D02 state matrix: one ledger row per matrix row|3#1	0d8e406423ac	| 3 | `reconnecting` | partial | Q04-T03, Q04-T13, Q04-X01, Q04-X03, Q04-X04 | u
+pack:B. The E17-D02 state matrix: one ledger row per matrix row|3#1	e31775d5faba	| 3 | `reconnecting` | partial | Q04-T03, Q04-T13, Q04-X01, Q04-X03, Q04-X04 | u
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|4#1	3e4da222d568	| 4 | `degraded:lagging` | covered | Q04-T11 | | | |
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|5#1	14ae56767eec	| 5 | `degraded:saturated` | partial | Q04-F04, Q04-X01 | | `status: "delayed"` 
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|6#1	ccc35d9607e8	| 6 | `offline` — retry stopped — in a mounted workspace: `OfflineCause fatal` o
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|7#1	3a2c97d2a360	| 7 | `offline` — a shell cause on the login screen | unit | | unit `apps/web/te
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|8#1	dc69b4a1e355	| 8 | `shutdown_pending` | partial | Q04-N03, Q04-F05, Q04-X01 | | `Back in ~${`
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|9#1	08c1e6ae8ad5	| 9 | `topic_resyncing` | partial | Q04-T09, Q04-F02, Q04-X01 | | `Resyncing boo
-pack:B. The E17-D02 state matrix: one ledger row per matrix row|10#1	464c0eccd6db	| 10 | `topic_stale`, T1 ≤ age < T2 | parked | | | `WatchlistRow` in `apps/web/s
-pack:B. The E17-D02 state matrix: one ledger row per matrix row|11#1	7975ce19044c	| 11 | `topic_stale` ≥ T2 | parked | | | `WatchlistRow` in `apps/web/src`; `Stal
-pack:B. The E17-D02 state matrix: one ledger row per matrix row|12#1	dca0d0f29e36	| 12 | stale (server) | partial | Q04-F08 | | `WatchlistRow` in `apps/web/src` |
+pack:B. The E17-D02 state matrix: one ledger row per matrix row|10#1	4083f0a51743	| 10 | `topic_stale`, T1 ≤ age < T2 | parked | | | `^export [a-z ]+ WatchlistRow
+pack:B. The E17-D02 state matrix: one ledger row per matrix row|11#1	7c57309167fa	| 11 | `topic_stale` ≥ T2 | parked | | | `^export [a-z ]+ WatchlistRow\b` in `ap
+pack:B. The E17-D02 state matrix: one ledger row per matrix row|12#1	5c484cc18b4c	| 12 | stale (server) | partial | Q04-F08 | | `^export [a-z ]+ WatchlistRow\b` i
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|13#1	3365a51d580f	| 13 | stale — upstream feed down | partial | Q04-T14 | | `Stale — exchange feed
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|14#1	dad88e3e8832	| 14 | book rebuilt | parked | | | `Book rebuilt` in `apps/web/src` | E21-S01 (S
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|15#1	4a52c7400084	| 15 | `topic_revoked` / permission change | partial | Q04-F07 | | `No longer sh
@@ -170,8 +170,8 @@ pack:B. The E17-D02 state matrix: one ledger row per matrix row|23#1	8b8fe004ea4
 pack:B. The E17-D02 state matrix: one ledger row per matrix row|24#1	7b2a91dbc561	| 24 | upstream private reconnect | partial | Q04-T16 | | `Positions as of` in `
 pack:B2. Parked halves of the named rows and of the parity claim|p#1	262f544a3d4f	### B2. Parked halves of the named rows and of the parity claim
 pack:B2. Parked halves of the named rows and of the parity claim|Id#1	6a0477b757fc	| Id | The parked half | Probe | Owner |
-pack:B2. Parked halves of the named rows and of the parity claim|C8-a#1	a2743a5fbe3a	| C8-a | C8's throttle half: a `ctl` of 1 000 ms or more while hidden, an `unsub
-pack:B2. Parked halves of the named rows and of the parity claim|C12-a#1	eff919aa3450	| C12-a | "The order ticket is disabled"; the wire half is Q04-N02 | `OrderTicke
+pack:B2. Parked halves of the named rows and of the parity claim|C8-a#1	e5c7b34fad26	| C8-a | C8's throttle half: a `ctl` of 1 000 ms or more while hidden, an `unsub
+pack:B2. Parked halves of the named rows and of the parity claim|C12-a#1	336329b20a90	| C12-a | "The order ticket is disabled"; the wire half is Q04-N02 | `^export [a
 pack:B2. Parked halves of the named rows and of the parity claim|E-1#1	5631a393cb8b	| E-1 | The Electron pair (BQ-04): N01 to N03 on a hidden `BrowserWindow`, throu
 pack:B2. Parked halves of the named rows and of the parity claim|p#2	e89b4d8e592b	E-1, why parked: `apps/desktop` may not import `apps/web` (`.dependency-cruiser.
 pack:B2. Parked halves of the named rows and of the parity claim|p#3	e5391b128587	the Electron spec cannot reuse the harness or the session stubs from `apps/web/e
@@ -245,16 +245,18 @@ pack:G. Gaps and carries|G6#1	06e7a636c1cf	| G6 | The `err` toasts' words (`WsEr
 pack:G. Gaps and carries|G7#1	3983be610051	| G7 | A 4429 close shows the Disconnected treatment only: `23` section 8.4 send
 pack:G. Gaps and carries|G8#1	1cad13c6352d	| G8 | The ticket's Repo paths name `services/api/<module>/`; this ticket writes
 pack:G. Gaps and carries|G9#1	420a37b3e328	| G9 | The ticket says "the chaos proxy"; E17-Q02 shipped an in-process virtual-
-pack:G. Gaps and carries|G10#1	d2766e962554	| G10 | The harness gained `hold`, `release`, `sendSystem`, `sendErr`, `closeWit
+pack:G. Gaps and carries|G10#1	096bc44f9d21	| G10 | The harness gained `hold`, `release`, `setKillSwitch`, `sendSystem`, `se
 pack:H. Run record|p#1	bc4cb3cf7225	## H. Run record
 pack:H. Run record|p#2	77148be087dd	Where a part ran, and what it gave; "not run" says why (BQ-11). Laptop runs: Pla
 pack:H. Run record|p#3	d442835ff252	headless Chromium shell, on WSL2, the shipped bundle built from the base, `--ret
 pack:H. Run record|p#4	fec0ac40fa77	server, through the heavy-job wrapper, 2026-11-01.
+pack:H. Run record|p#5	1f9dee80934f	Commit of each run: H1 to H5 ran on `907c5d656e` (part 1's head, on the base abo
+pack:H. Run record|p#6	0d25c9da0bc7	applied in the working tree, the same tree as the commit that follows it; H6 to 
 pack:H. Run record|Run#1	0901a43a3c78	| Run | What | Where it ran | Result |
-pack:H. Run record|H1#1	4f502b24a860	| H1 | Stub lane, `--grep @e17-regression` (all of A0 and A1 but the F cases) | 
-pack:H. Run record|H2#1	19c8c8478757	| H2 | The specs that call the changed harness: `ws-harness.spec.ts`, `break-gla
+pack:H. Run record|H1#1	f555cc6eec9a	| H1 | Stub lane, `--grep @e17-regression` (all of A0 and A1 but the F cases) | 
+pack:H. Run record|H2#1	f4377fa3ff5f	| H2 | The specs that call the changed harness: `ws-harness.spec.ts`, `break-gla
 pack:H. Run record|H3#1	ee94fb2f4540	| H3 | Flagged lane, Q04-F01 to F08 | laptop headless shell | 8 passed, 0 failed
-pack:H. Run record|H4#1	f6b67ecbb608	| H4 | Real-time lane, Q04-R01 | laptop headless shell | 1 passed, 0 failed; tre
+pack:H. Run record|H4#1	47793df42681	| H4 | Real-time lane, Q04-R01 | laptop headless shell | 1 passed, 0 failed; tre
 pack:H. Run record|H5#1	36be6ea2d3e3	| H5 | `test/e2e-axe-tags.test.ts`, which pins the new tagged scan's site | lapt
 pack:H. Run record|H6#1	cfe5d64c07bd	| H6 | The mutation record (section A2) | not run (written in part 1; run with t
 pack:H. Run record|H7#1	359567391d76	| H7 | The Electron pair | not run (parked row E-1) | not run |
