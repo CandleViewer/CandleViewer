@@ -69,12 +69,15 @@ class _Env:
         self.clock = _Clock()
         self.repo = FakeSessionRepository()
         # The gateway checks the token's real expiry (#2259) on its wall clock: give it the
-        # injected clock, so both sides of that comparison share one time base.
+        # injected clock, so both sides of that comparison share one time base. Its monotonic
+        # clock too, which times the RTT probe's `ping` (#5328, `test_disable_user_e2e.deployed`).
         monkeypatch.setattr(
             app_module,
             "make_ws_router",
             functools.partial(
-                make_ws_router, wall_ms=lambda: int(self.clock.now.timestamp() * 1000)
+                make_ws_router,
+                wall_ms=lambda: int(self.clock.now.timestamp() * 1000),
+                clock=lambda: self.clock.now.timestamp(),
             ),
         )
         self.app = create_app(snapshot_loader=_snapshot, auth_clock=self.clock)

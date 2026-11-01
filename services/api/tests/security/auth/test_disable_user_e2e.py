@@ -421,8 +421,16 @@ def deployed(
 ) -> Iterator[tuple[Any, TestClient]]:
     """`create_app()` with nothing injected but the test clock, its auth module started over
     `w.repo` as `AuthService.start()` starts it, and the audit writer's stand-in. Shared."""
-    wall = functools.partial(make_ws_router, wall_ms=lambda: int(w.clock.now.timestamp() * 1e3))
-    mp.setattr(appmod, "make_ws_router", wall)  # the gateway's expiry check on the test clock
+    # The gateway on the test clock: its expiry check (`wall_ms`), and its monotonic `clock`, which
+    # times the §8.3 classification. On real time a socket's first classification, an interval
+    # after its `auth_ok`, queues an RTT `ping` and the next a `connection_quality` notice for that
+    # probe left unanswered: on a loaded runner, frames among the ones a test reads (#5328).
+    wall = functools.partial(
+        make_ws_router,
+        wall_ms=lambda: int(w.clock.now.timestamp() * 1e3),
+        clock=lambda: w.clock.now.timestamp(),
+    )
+    mp.setattr(appmod, "make_ws_router", wall)
     # The registry's clock too: it stamps a disable, compared with the tokens' issue (#3413).
     mp.setattr(appmod, "_now_ms", lambda: int(w.clock.now.timestamp() * 1e3))
     app = appmod.create_app(settings, auth_clock=w.clock)

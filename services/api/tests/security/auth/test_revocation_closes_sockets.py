@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from fastapi import Request
+from fastapi import Request, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from candleviewer import app as app_module
@@ -115,12 +115,18 @@ class _Env:
             owner_reset=InMemoryOwnerReset(users, mfa, self.repo),  # #2593
         )
         monkeypatch.setattr(app_module, "build_auth_service", lambda *_a, **_k: self.auth)
-        # The gateway checks token expiry on its wall clock (#2259): share the injected one.
+        # The gateway on the injected clock: its token-expiry check (`wall_ms`, #2259), and its
+        # monotonic `clock`, which times the §8.3 classification. On real time a socket's first
+        # classification, an interval after its `auth_ok`, queues an RTT `ping` and the next a
+        # `connection_quality` notice: on a loaded runner, frames ahead of the ones a test reads
+        # (#5328).
         monkeypatch.setattr(
             app_module,
             "make_ws_router",
             functools.partial(
-                make_ws_router, wall_ms=lambda: int(self.clock.now.timestamp() * 1000)
+                make_ws_router,
+                wall_ms=lambda: int(self.clock.now.timestamp() * 1000),
+                clock=lambda: self.clock.now.timestamp(),
             ),
         )
         self.principals = _Principals()
@@ -188,6 +194,22 @@ def _recv(ws: Any, *, deadline: float | None = None) -> dict[str, Any]:
     return frame
 
 
+#: More frames than this before the close fail `_to_close`, with the frames.
+_TO_CLOSE_MAX = 8
+
+
+def _to_close(ws: Any, *, deadline: float) -> tuple[list[dict[str, Any]], int]:
+    """Every frame `ws` gets until it closes, in order, and the close code. Each read waits at most
+    until the monotonic *deadline*, so a socket left open fails there."""
+    frames: list[dict[str, Any]] = []
+    try:
+        while len(frames) <= _TO_CLOSE_MAX:
+            frames.append(_recv(ws, deadline=deadline))
+    except WebSocketDisconnect as close:
+        return frames, close.code
+    pytest.fail(f"still open after {len(frames)} frames: {frames}")
+
+
 def _authenticate(ws: Any, token: str) -> dict[str, Any]:
     ws.send_json({"t": "hello", "id": "h"})
     assert _recv(ws)["t"] == "welcome"
@@ -224,12 +246,14 @@ def test_owner_totp_reset_closes_every_socket_of_the_target_within_the_bound(env
 
         assert response.status_code == 200, response.text
         assert response.json()["sessions_revoked"] == 2
+        # each of the target's sockets gets one `bye session_revoked` and then its close 4401
+        # (§9.5: nothing after a bye), read to the close so that a stray frame fails here
         for ws in (ws_phone, ws_desktop):
-            bye = _recv(ws, deadline=deadline)
-            assert bye["t"] == "bye"
-            assert bye["p"]["code"] == CLOSE_TOKEN_EXPIRED
-            assert bye["p"]["reason"] == "session_revoked"
-            assert bye["p"]["reconnect"] is False
+            frames, code = _to_close(ws, deadline=deadline)
+            sent = [(f.get("t"), f.get("p", {}).get("reason")) for f in frames]
+            assert (sent, code) == ([("bye", "session_revoked")], CLOSE_TOKEN_EXPIRED), frames
+            assert frames[0]["p"]["code"] == CLOSE_TOKEN_EXPIRED
+            assert frames[0]["p"]["reconnect"] is False
         assert _still_open(ws_owner), "the reset must not close another user's socket"
     assert env.clock.now == action_at, "no injected time passed, so no token deadline fired"
     for minted in (phone, desktop):

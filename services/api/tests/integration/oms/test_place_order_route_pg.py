@@ -39,6 +39,7 @@ from candleviewer.api.order_cancel_all import make_cancel_all_router
 from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.orders import make_orders_router
+from candleviewer.audit.machine_events import MachineEventWalSink
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.domain.primitives import AccountId
@@ -47,7 +48,14 @@ from candleviewer.exchange.base.models import FeeRate, PlaceOrderRequest, RiskLi
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.fakes import FakeClockHealth
 from candleviewer.oms.ports import Profiles
-from candleviewer.oms_wiring import LaneHeartbeat, OmsAudit, OmsRuntime, pg_stores
+from candleviewer.oms_wiring import (
+    LaneHeartbeat,
+    OmsAudit,
+    OmsRuntime,
+    OmsStores,
+    OwnedSink,
+    pg_stores,
+)
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
     SqlAlchemyAccountProfileStore,
@@ -145,6 +153,7 @@ class World:
     port: Port = field(init=False)
     body: dict[str, Any] = field(init=False)
     runtime: OmsRuntime | None = field(default=None, init=False)  # the last process's (`_serving`)
+    sink: MachineEventWalSink | None = field(default=None, init=False)  # its lane sink (`kept`)
 
     def __post_init__(self) -> None:
         self.port = Port(environment="demo", now_us=self.clock.us)
@@ -176,6 +185,18 @@ class World:
         tick asks the lock, and no other follows, so a cut the test makes once the runtime is
         ready never meets the watchdog's ask, which would fence the runtime first."""
         return LaneHeartbeat(lock, pager, clock=self.beats.clock, wait=self.beats.wait)
+
+    def kept(self, stores: OmsStores) -> OmsStores:
+        """`stores`, each lane sink they build kept as `sink` too, whose flush `_serving` waits
+        for before the stop (#5328)."""
+
+        def build(wal: str) -> OwnedSink:
+            sink = stores.sink(wal)
+            assert isinstance(sink, MachineEventWalSink)  # `pg_stores`' own
+            self.sink = sink
+            return sink
+
+        return replace(stores, sink=build)
 
     def creates(self, since: int = 0) -> list[PlaceOrderRequest]:
         sent = [call.request for call in self.port.calls[since:] if call.method == "place_order"]
@@ -254,10 +275,10 @@ def _runtime(
         feed=SimpleNamespace(bind=lambda _b: SimpleNamespace(publish=lambda *_a, **_k: None)),
         lane_signing=cast(Any, Binder()),
         health=cast(Any, _NO_STREAMS), hub=cast(Any, _NO_FRAMES),  # E29-T05 S8b: none streamed
-        stores=lambda: replace(  # the lane's own writer is the world's (#913 L2)
+        stores=lambda: world.kept(replace(  # the lane's own writer is the world's (#913 L2)
             pg_stores(settings, metrics), accounts=InMemoryTradingAccountReads(row),
             audit=lambda _alarm: world.writer,
-        ),
+        )),
         pager=world.pager, now=world.clock, sleep=world.backoff, registry=sr.REGISTRY,
         fencing=world.unfenced, heartbeat=world.heartbeat,
     )  # fmt: skip
@@ -268,13 +289,14 @@ async def _serving(
     world: World, *, dsn: str = "", profiles: Profiles | None = None, ready: bool = True,
     settle: bool = True, drain_s: float | None = None,
 ) -> AsyncIterator[httpx.AsyncClient]:  # fmt: skip
-    """One API process until the block ends, when its facade, once composed, settles (unless
-    `settle` is False: a venue call left held would never let it) and it goes down, draining for
-    `drain_s` when given: `POST /orders`, `POST /orders/cancel-all` and the exit routes, mounted in
-    `create_app()`'s order over its OMS runtime (`world.runtime`), which is ready unless `ready`
-    is False, and then composed nothing to settle (CR-S3L2X-01). Its own pools, both on `dsn` (the
-    OMS stores', and the profile cache's unless `profiles` stands in), metrics and 24 h record; the
-    venue, the audit log and the pager are the world's."""
+    """One API process until the block ends, when its facade, once composed, settles and its lane
+    sink flushes into Postgres (unless `settle` is False: a venue call left held would never let
+    it) and it goes down, draining for `drain_s` when given: `POST /orders`,
+    `POST /orders/cancel-all` and the exit routes, mounted in `create_app()`'s order over its OMS
+    runtime (`world.runtime`), which is ready unless `ready` is False, and then composed nothing to
+    settle (CR-S3L2X-01). Its own pools, both on `dsn` (the OMS stores', and the profile cache's
+    unless `profiles` stands in), metrics and 24 h record; the venue, the audit log and the pager
+    are the world's."""
     metrics = Metrics("demo")
     process_dsn = dsn or c6._login(world.dsn, "cv_app")
     pool = SqlAlchemyRelationalRepository(process_dsn, "place-order-route-it")
@@ -312,6 +334,12 @@ async def _serving(
                         for _ in range(32):
                             await asyncio.sleep(0)
                         await parts.lane.call(parts.machines.idle())
+                    # then its sink's flush (#5328): the stop gives the sink's drain only its share
+                    # of the reserve (`oms_wiring._closed`, about 0.4 s), which a loaded runner's
+                    # round trip outlasts, and a sink stop cut there keeps the WAL's lock, so the
+                    # next process's sink fails closed (`sink_start`) and is never ready
+                    assert world.sink is not None
+                    await parts.lane.call(world.sink._idle.wait())
     finally:
         await pool.dispose()
 
@@ -425,9 +453,6 @@ async def test_transport_failure_lands_in_unknown_never_in_a_retry(world: World)
     assert create.order_link_id == row.order_link_id
 
 
-# The fixed timeout is sized for an idle runner (C-9.3).
-# ticket: GH-5328 quarantined: 2026-11-01
-@pytest.mark.flaky
 async def test_idempotent_replay(world: World) -> None:
     """Gherkin "Idempotent replay": the same Idempotency-Key and body again get the original answer
     with `Idempotency-Replayed: true` (the 24 h record). After a restart, a new process over the
