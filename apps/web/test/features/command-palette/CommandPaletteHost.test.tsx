@@ -16,15 +16,17 @@ import { closePalette } from "../../../src/features/command-palette/CommandPalet
 import { missingGates } from "../../../src/features/command-palette/gates";
 import { ADMIN_READ, registerPaletteSource } from "../../../src/features/command-palette/sources";
 import { closeSymbolSearch } from "../../../src/features/symbol-search/searchSession";
+import type * as SearchSessionModule from "../../../src/features/symbol-search/searchSession";
+import type * as SourcesModule from "../../../src/features/command-palette/sources";
 
 // Spies that delegate: SCR-102's close (the palette closes it on opening) and the source subscription (teardown).
 const live = vi.hoisted(() => ({ subscriptions: 0 }));
-vi.mock("../../../src/features/symbol-search/searchSession", async (original) => {
-  const real = await original<typeof import("../../../src/features/symbol-search/searchSession")>();
+vi.mock("../../../src/features/symbol-search/searchSession", async (importOriginal) => {
+  const real = await importOriginal<typeof SearchSessionModule>();
   return { ...real, closeSymbolSearch: vi.fn(real.closeSymbolSearch) };
 });
-vi.mock("../../../src/features/command-palette/sources", async (original) => {
-  const real = await original<typeof import("../../../src/features/command-palette/sources")>();
+vi.mock("../../../src/features/command-palette/sources", async (importOriginal) => {
+  const real = await importOriginal<typeof SourcesModule>();
   return {
     ...real,
     subscribePaletteSources: (listener: () => void) => {
