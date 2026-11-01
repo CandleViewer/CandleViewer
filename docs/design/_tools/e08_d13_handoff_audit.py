@@ -17,13 +17,15 @@ token file and the committed PNGs; then the pack and its copy deck from the work
    the never-rendered list, G-FROZEN), the token names per screen (G-REDLINE). The deck file is
    built the same way (G-DECK). `--check` rebuilds each block and compares it cell by cell.
 3. **Cites.** Every `DOC:line` or `` `NN`:line `` cite outside the copied blocks is read at the
-   base (G-CITE); G-VERSION is content based (each cited range stands at `origin/main`) and
-   reads the version line. G-QUOTE: every quoted string of QUOTE_MIN+ characters is verbatim in
+   base (G-CITE); G-VERSION is content based (in PR-1 mode each cited range stands at
+   `origin/main`; post-merge, every cite is judged at its frozen base `BASE`, the base the merged
+   pack records, so a moved main does not FAIL it) and reads the version line. G-QUOTE: every quoted string of QUOTE_MIN+ characters is verbatim in
    a source the line cites, the deck, a core source or the ruling's own words.
 4. **Gates.** Row-id indexes (G-INDEX), components in `15` (G-CMP), the `14` checklists item by
    item (G-CHECKLIST), budgets (G-BUDGET), the per-story table and the story-text deltas
    (G-STORY), the design-ahead rows (G-AHEAD), the open-rows log (G-OPENROWS), `14` = the nine
-   pointer lines and nothing else in PR-1 mode, nothing in post-merge mode (G-UNTOUCHED), the
+   pointer lines and nothing else in PR-1 mode, nothing in post-merge mode, where a sibling
+   design tool may change in the same bundle (G-UNTOUCHED), the
    dry-run table (G-WALK), PNGs (G-PNG), §0's status cells (G-STATUS), the ruling (G-RULED),
    hygiene (G-HEX, G-PENPOT, G-NAMES, G-CLOSE, G-WORDS, G-SESSION, G-MARKER).
 5. **Pins (G-RULED-PIN).** A default-deny pin set over every unit of the pack and every deck
@@ -497,6 +499,7 @@ HEAD_OVERRIDE: list[tuple[str, str]] = []  # self-test lever: (rel, text) preten
 IMG_OVERRIDE: list[frozenset[str]] = []  # self-test lever: the PNG folders' names
 STRICT_WALK: list[bool] = []  # --strict-walk: a pending dry-run row FAILs
 POST_MERGE_OVERRIDE: list[bool] = []  # self-test lever: force one mode (True = post-merge)
+VERSION_AT_HEAD: list[bool] = []  # self-test lever: judge G-VERSION at origin/main post-merge
 
 
 def banned_words() -> tuple[str, ...]:
@@ -2054,7 +2057,9 @@ def spec_cite_lines(spec: str) -> list[tuple[int, str]]:
 def cite_findings(t: Texts) -> tuple[list[Finding], int]:
     fails: list[Finding] = []
     done: set[tuple[str, int, int]] = set()
-    if not head_ok():
+    # post-merge, every cite is judged at its frozen base, not at the moving main
+    at_head = not post_merge() or bool(VERSION_AT_HEAD)
+    if at_head and not head_ok():
         fails.append(F("G-VERSION", f"{HEAD} does not resolve: no range compared", None, None))
     deck_lines = [str(e.get("source", "")) for e in deck_entries(t.deck).values()]
     sources = [
@@ -2078,7 +2083,7 @@ def cite_findings(t: Texts) -> tuple[list[Finding], int]:
                 if not lines[a - 1].strip() or not lines[b - 1].strip():
                     msg = f"{cid}:{a}-{b} starts or ends on a blank line"
                     fails.append(F("G-CITE", msg, doc, sec))
-                if head_ok():
+                if at_head and head_ok():
                     block = unique_block(lines, a, b)
                     if ("\n" + "\n".join(block) + "\n") not in head_joined(CITE_FILES[cid]):
                         msg = f"{cid}:{a}-{b} was edited at {HEAD}"
@@ -2494,7 +2499,16 @@ def stray_paths_at(ref: str) -> tuple[str, ...] | None:
     if not (ok_diff and ok_new):
         return None
     names = [*diff.split("\n"), *new.split("\n")]
-    return tuple(sorted({n for n in names if n and n not in own_paths()}))
+    post = post_merge()  # post-merge, a fix to this tool may ship with its sibling design tools
+    return tuple(
+        sorted(
+            {
+                n
+                for n in names
+                if n and n not in own_paths() and not (post and n.startswith("docs/design/_tools/"))
+            }
+        )
+    )
 
 
 def g_untouched(t: Texts) -> list[Finding]:
@@ -2993,7 +3007,39 @@ def lever_head_edit() -> Callable[[], None]:
     n = line_of("D07", "### 4.6 Live window")
     text[n] = text[n] + " (edited)"
     HEAD_OVERRIDE.append((rel, "\n".join(text)))
-    return popper(HEAD_OVERRIDE)
+    VERSION_AT_HEAD.append(True)  # PR-1 judgement in either mode
+    undo_head, undo_judge = popper(HEAD_OVERRIDE), popper(VERSION_AT_HEAD)
+
+    def undo() -> None:
+        undo_head()
+        undo_judge()
+
+    return undo
+
+
+def frozen_base_problems(t: Texts) -> list[str]:
+    """Post-merge cites freeze at the recorded base: a moved main must not move them."""
+    out: list[str] = []
+    undo = lever_head_edit()
+    VERSION_AT_HEAD.pop()  # a main that moved on since the pack merged, judged as the mode says
+    try:
+        for post, want in ((True, False), (False, True)):
+            POST_MERGE_OVERRIDE.append(post)
+            try:
+                got = any(f[0] == "G-VERSION" for f in cite_findings(t)[0])
+            finally:
+                POST_MERGE_OVERRIDE.pop()
+            if got != want:
+                mode = "post-merge" if post else "PR-1"
+                out.append(f"{mode}: a moved main {'FAILs' if got else 'passes'} G-VERSION")
+    finally:
+        VERSION_AT_HEAD.append(True)
+        undo()
+    if f"**v1 at base `{BASE}`.**" not in t.spec:
+        out.append(f"the pack does not record the base {BASE} the tool reads at")
+    if git_show("0" * 40, CITE_FILES["D07"]) is not None:
+        out.append("an unresolvable base was read (G-CITE must find no text)")
+    return out
 
 
 def lever_png_missing() -> Callable[[], None]:
@@ -3280,6 +3326,10 @@ def selftest(spec: str, deck: str, paths: tuple[Path, ...]) -> tuple[bool, list[
         lines.append(f"  {mu.mid} [{mu.gate}] {state} ({len(new)} new) - {first}")
         if not hit:
             lines += [f"      new: {x}" for x in new]
+    frozen = frozen_base_problems(Texts(spec_f, deck, plans, vt))
+    ok = ok and not frozen
+    lines += [f"  frozen base FAIL: {x}" for x in frozen]
+    lines.append(f"  frozen base: {'ok' if not frozen else 'MISSED'} (a moved main, both modes)")
     gates = {mu.gate for mu in MUTATIONS}
     missing = [g for g in GATE_NAMES if g not in gates]
     if missing:

@@ -18,7 +18,9 @@ Gates (one mutation each in `--self-test`; each is caught by a content gate):
   G-LIFT       every HASH anchor equals the sha256 (12 hex) of its lifted spans, whitespace-normalised.
   G-COPY       every COPY block equals its source block (a section body or one line) at the base.
   G-CITE       every `KEY`:line cite is in range at the base and its ends are non-blank.
-  G-VERSION    every cited line stands at `origin/main` (moved = WARN, gone = FAIL).
+  G-VERSION    PR-1 mode: every cited line stands at `origin/main` (moved = WARN, gone = FAIL).
+               Post-merge mode: every cite is judged at its frozen base `BASE` (the base the merged
+               spec records), so a moved main neither WARNs nor FAILs.
   G-MODES      the per-mode table against the registry cell by cell, and its rows against `22`'s
                `BarType` enum (its own definition line); the recorded-prints column from the ruled
                vocabulary.
@@ -50,7 +52,7 @@ Gates (one mutation each in `--self-test`; each is caught by a content gate):
                names is a row of §16.2 with a ruled grade and a non-agent owner.
   G-UNTOUCHED  PR-1 mode: the tree differs from the merge-base only in this pack's files and `14`,
                and `14` equals the merge-base with the pointer lines and the ticks applied by
-               content. Post-merge mode: `14` is untouched.
+               content. Post-merge mode: `14` is untouched; a sibling design tool may change in the same bundle.
   G-TICKS      every tick's evidence resolves at its source (a section heading, a board, a deck row)
                and the pack's evidence table lists exactly the ticks applied.
   G-FROZEN     post-merge mode: every merged version row stands; a new row is v1.N above the last.
@@ -1540,8 +1542,13 @@ def cite_text(ls: list[str], a: int) -> str:
     return pin_norm(ls[a - 1])[:60]
 
 
+VERSION_LEVER = "lever:version-at-head"  # self-test only: judge G-VERSION at origin/main post-merge
+
+
 def g_version(t: Texts) -> list[Finding]:
     out: list[Finding] = []
+    if post_merge(t) and VERSION_LEVER not in t.env.memo:
+        return out  # post-merge, every cite is judged at its frozen base, not at the moving main
     seen: set[tuple[str, int]] = set()
     for key, a, b, n in cites_in(t.spec):
         base = t.env.lines(t.env.base, PATHS[key])
@@ -2112,7 +2119,8 @@ def g_untouched(t: Texts) -> list[Finding]:
     if t.changed is None:
         return one("G-UNTOUCHED", ["git did not list the changed paths"])
     for p in t.changed:
-        if p not in OWN_PATHS:
+        sibling = post_merge(t) and p.startswith("docs/design/_tools/")  # a bundled tool fix
+        if p not in OWN_PATHS and not sibling:
             bad.append(f"{p} differs from the merge-base (not this pack's)")
     base14 = t.env.show(t.env.mb, PLAN14_REL) or ""
     if post_merge(t):
@@ -2280,9 +2288,14 @@ def audit(t: Texts, timings: dict[str, float] | None = None) -> list[Finding]:
     return found + pins
 
 
+def resolve_base(base: str) -> str:
+    """The full sha of the recorded base; empty when it does not resolve (`load` then exits)."""
+    return (git_raw("rev-parse", "--verify", f"{base}^{{commit}}") or "").strip()
+
+
 def load() -> Texts:
     mb = merge_base()
-    full = (git_raw("rev-parse", "--verify", f"{BASE}^{{commit}}") or "").strip()
+    full = resolve_base(BASE)
     if mb is None or not full:
         raise SystemExit(f"`git merge-base HEAD {HEAD_REF}` or the base {BASE} does not resolve")
     env = Env(full, mb, {})
@@ -2348,7 +2361,30 @@ def head_gone(t: Texts) -> Texts:
     rel = PATHS["D06"]
     ls = t.env.lines(t.env.base, rel)
     ls[263] = ls[263] + " (edited)"
-    return with_text(t, HEAD_REF, rel, "\n".join(ls))
+    out = with_text(t, HEAD_REF, rel, "\n".join(ls))
+    out.env.memo[VERSION_LEVER] = True  # PR-1 judgement in either mode
+    return out
+
+
+def frozen_base_problems(t: Texts) -> list[str]:
+    """Post-merge cites freeze at the recorded base: a moved merge-base must not move them."""
+    out: list[str] = []
+    sim = "f" * 40  # stands for a main that has moved on since the pack merged
+    memo = {k: v for k, v in t.env.memo.items() if k != VERSION_LEVER}
+    memo[f"show:{sim}:{SPEC_REL}"] = t.spec
+    memo[f"show:{sim}:{PLAN14_REL}"] = t.plan14
+    moved = head_gone(replace(t, env=Env(t.env.base, sim, memo)))
+    moved.env.memo.pop(VERSION_LEVER, None)
+    if g_version(moved):
+        out.append("post-merge G-VERSION follows the moving main, not the recorded base")
+    if compute(moved)["SHA:base"] != t.env.base[:10] or not t.env.base.startswith(BASE):
+        out.append("the cite base followed the merge-base, not the recorded base")
+    recorded = set(re.findall(r"(\S+)<!--=SHA:base-->", t.spec))
+    if recorded != {BASE}:
+        out.append(f"the spec records the base {sorted(recorded)}, the tool reads at {BASE}")
+    if resolve_base("0" * 40):
+        out.append("an unresolvable recorded base was accepted (load must exit)")
+    return out
 
 
 def deck_edit(t: Texts) -> Texts:
@@ -2368,6 +2404,9 @@ def tick_moved(t: Texts) -> Texts:
     ticks = {k: tuple((i, e.replace(old, new)) for i, e in v) for k, v in t.ticks.items()}
     if f"({old})" not in t.plan14 or f"| {old} " not in t.spec:
         raise SystemExit("self-test: the SCR-048 tick evidence is not found")
+    if post_merge(t):  # the merged `14` carries the same ticks, so G-UNTOUCHED stays quiet
+        merged14 = t.env.show(t.env.mb, PLAN14_REL) or ""
+        t = with_text(t, t.env.mb, PLAN14_REL, merged14.replace(f"({old})", f"({new})"))
     return replace(t, ticks=ticks, plan14=t.plan14.replace(f"({old})", f"({new})"),
                    spec=t.spec.replace(f"| {old} ", f"| {new} "))  # fmt: skip
 
@@ -2478,6 +2517,11 @@ def selftest() -> tuple[bool, list[str]]:
     every = {gate_name(g) for g in GATES} | {"G-RULED-PIN"}
     missed = sorted(every - gates_hit)
     ok &= not missed
+    frozen = frozen_base_problems(base)
+    ok &= not frozen
+    out += [ascii_line(f"FAIL frozen base: {p}") for p in frozen]
+    out.append(f"self-test: frozen base {'ok' if not frozen else 'FAIL'} (moved merge-base, "
+               "a moved main and an unresolvable base)")  # fmt: skip
     restored = digest(base) == before and disk == [
         hashlib.sha256(read_raw(r).encode()).hexdigest() for r in OWN_PATHS if (ROOT / r).exists()
     ]
