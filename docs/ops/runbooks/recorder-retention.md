@@ -93,9 +93,11 @@ Retention is irreversible once a pass runs. Act before the next pass:
 ## Owner purge (`POST /admin/recorder/purge`)
 
 **Owner-only** (capability 9a, `04-security-program.md` §7.2 row 9a): a manager is refused 403
-(`purge_owner_only`, audited) even though managers hold `recording:write`, and the refusal
-comes before any step-up prompt. The owner also needs a `recorder` step-up, `reason` (3–280
-chars), `confirm_symbol == symbol`, and `include_pinned: true` for a pinned symbol.
+by RBAC (`missing_permission:recording:write`, audited as a denied `retention.purge`), because
+`recording:write` is the owner's alone (G-04, #484), and the refusal comes before any step-up
+prompt. The owner also needs a fresh `recorder_purge` step-up (no grace: each purge spends a
+new code, bound to the request), `reason` (3–280 chars), `confirm_symbol == symbol`, and
+`include_pinned: true` for a pinned symbol.
 `retention.purge` (exact window, partition count, rows, bytes, `plan_id`) is audited before the
 job exists; an audit outage answers 503 and starts nothing. QuestDB days shared with other
 symbols are skipped (`shared_partition`); the nightly roll-off/retention handles them. Right

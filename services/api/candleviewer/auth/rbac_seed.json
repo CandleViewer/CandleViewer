@@ -214,7 +214,6 @@
       "marketdata:read",
       "instruments:read",
       "recording:read",
-      "recording:write",
       "replay:read",
       "replay:write",
       "orders:read",

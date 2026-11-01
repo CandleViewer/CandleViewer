@@ -95,7 +95,7 @@ _AUDIT_READ = OwnGuard(
     False,
     "the budgeted audit-read guard (`audit/access.py`, SR-067); joins the admin guard by #2836",
 )
-_RECORDER = "E16's recorder administration; `recording:write`, Managers included (04 row 51)"
+_RECORDER = "E16's recorder administration; `recording:write`, the Owner's alone (04 row 51, G-04)"
 
 #: Every served admin or users route that is not on `admin_router`. Reviewed data: SR-E42-09 wants
 #: it to shrink to the users routers. The `not_executable` matrix rows are classified too.
@@ -614,14 +614,15 @@ _NO_CODE = f"{_SR_E42_09}: its own guard refuses without the registry `code` (C-
 #: (route, actor or "*") whose denial carries no `code`, found by the suite's own red run. Each
 #: own-guard `_problem` adds a `code` only when given one: the `create` and `status` handlers of
 #: `make_support_bundle_router`, the `import_archive` and `compact` handlers of
-#: `make_recorder_admin_router`, and the RBAC refusal of `make_recorder_purge_router`'s `denied`
-#: (its owner-only refusal has `forbidden`).
+#: `make_recorder_admin_router`, and the RBAC refusal of `make_recorder_purge_router`'s `denied`,
+#: which every non-Owner meets first since `recording:write` is the Owner's alone (G-04, #484):
+#: its owner-only refusal, which has `forbidden`, is reached by no matrix actor now.
 CODE_GAPS: dict[tuple[str, str], str] = {
     ("POST /admin/support-bundle", "*"): _NO_CODE,
     ("GET /admin/support-bundle/{job_id}", "*"): _NO_CODE,
     ("POST /admin/recorder/import", "*"): _NO_CODE,
     ("POST /admin/recorder/compact", "*"): _NO_CODE,
-    ("POST /admin/recorder/purge", "viewer"): _NO_CODE,
+    ("POST /admin/recorder/purge", "*"): _NO_CODE,
 }
 _AD_F24 = "AD-F24 (e42-admin.md §13.1, note 6): the 401 `code` is not the registry's"
 #: Routes whose 401 `code` is not the registry's `unauthenticated`, and why.

@@ -104,11 +104,12 @@ def _planned(role: str) -> dict[str, dict[str, Any]]:
 
 def test_the_manager_plan_holds_what_the_matrix_refuses_a_manager_and_nothing_it_allows() -> None:
     planned = _planned("manager")
-    allowed = {"GET /admin/audit", "POST /admin/recorder/compact", "POST /admin/recorder/import"}
-    assert allowed.isdisjoint(planned)
+    assert "GET /admin/audit" not in planned  # its own events, redacted (SR-067)
     assert "GET /admin/backups/{backupId}/download/{token}" not in planned  # public: the link
     assert planned["GET /admin/overview"]["expected"] == 403
     assert planned["POST /users/{userId}/mfa/reset"]["expected"] == 403
+    for key in ("POST /admin/recorder/compact", "POST /admin/recorder/import"):  # G-04 (#484)
+        assert planned[key]["expected"] == 403 and planned[key]["recorded"] is True
     for key in planned:
         row = MATRIX["operations"][key]
         assert row["outcomes"]["manager_without_grant"] == "403"

@@ -1134,7 +1134,6 @@ x-permissions:
     - instruments:read
     - marketdata:read
     - recording:read
-    - recording:write
     - replay:read
     - replay:write
     - orders:read

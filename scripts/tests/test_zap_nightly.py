@@ -6,6 +6,7 @@ contract and templates, and on files in `tmp_path`."""
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import os
@@ -377,10 +378,10 @@ def test_no_plan_names_a_rule_the_pinned_image_lacks() -> None:
 
 
 def test_the_recording_plan_sends_the_refusals_after_the_first_me_and_before_the_scan() -> None:
-    """E16-X02 (#494): as the Viewer (no `recording:write`) and the Manager (purge is owner-only,
-    a pin needs `recorder` step-up) each purge and pin is refused 403, never 202: the purge with a
-    matching and a mismatched confirmation (RBAC and owner-only before the body is read), the pin
-    on the matrix's filler id. Each request has its own Idempotency-Key."""
+    """E16-X02 (#494): neither the Viewer nor the Manager holds `recording:write` (the Owner's
+    alone since G-04, #484), so each purge and the pin is refused 403 by RBAC, never 202, for both
+    roles alike: the purge with a matching and a mismatched confirmation (RBAC comes before the
+    body is read), the pin on the matrix's filler id. Each request has its own Idempotency-Key."""
     jobs = TEMPLATES["recording"]["jobs"]
     kinds = [job["type"] for job in jobs]
     (refusals,) = [job for job in jobs if job.get("name") == "purge-and-pin-refused-for-this-role"]
@@ -391,22 +392,23 @@ def test_the_recording_plan_sends_the_refusals_after_the_first_me_and_before_the
         ("POST", "${ZAP_TARGET}/admin/recorder/purge", 403),
         ("PUT", "${ZAP_TARGET}/recording/symbols/00000000-0000-4000-8000-0000000000ff/pin", 403),
     ]
-    assert [r.get(plans.ROLE_CODES) for r in requests] == [None, None, {"manager": 503}]
+    assert [r.get(plans.ROLE_CODES) for r in requests] == [None, None, None]
     bodies = [json.loads(r["data"]) for r in requests]
     assert bodies[0]["confirm_symbol"] == bodies[0]["symbol"] == "BTCUSDT"
     assert bodies[1]["confirm_symbol"] != bodies[1]["symbol"]
     assert bodies[2] == {"pinned": True}
     keys = [h.split(": ", 1)[1] for r in requests for h in r["headers"] if h.startswith("Idem")]
     assert len(set(keys)) == 3 and all(uuid.UUID(key).version == 4 for key in keys)
-    for role in ("viewer", "manager_without_grant"):  # the matrix refuses both roles the purge
-        assert MATRIX["operations"]["POST /admin/recorder/purge"]["outcomes"][role] == "403"
+    for key in ("POST /admin/recorder/purge", "PUT /recording/symbols/{recordedSymbolId}/pin"):
+        for role in ("viewer", "manager_without_grant"):  # the matrix refuses both roles both
+            assert MATRIX["operations"][key]["outcomes"][role] == "403"
 
 
-@pytest.mark.parametrize(("role", "pin"), [("viewer", 403), ("manager", 503)])
+@pytest.mark.parametrize(("role", "pin"), [("viewer", 403), ("manager", 403)])
 def test_the_recording_plan_expects_the_pin_status_of_its_scan_role(role: str, pin: int) -> None:
-    """#4868: one template, two roles. The Viewer is refused by RBAC (403); the Manager reaches the
-    write, which the CI stack answers 503 with no recorder runtime (#2188 S4b). ZAP never sees the
-    role map, and the purges stay 403 for both."""
+    """#4868, G-04 (#484): one template, two roles, one answer. Neither role holds
+    `recording:write`, so RBAC refuses the pin 403 before the CI stack's 503 for a write with no
+    recorder runtime (#2188 S4b), and the purges stay 403 for both."""
     plan = plans.scan_plan(TEMPLATES["recording"], "/zap/wrk/w/recording-openapi.yaml", role)
     name = "purge-and-pin-refused-for-this-role"
     (refusals,) = [job for job in plan["jobs"] if job.get("name") == name]
@@ -417,11 +419,36 @@ def test_the_recording_plan_expects_the_pin_status_of_its_scan_role(role: str, p
 def test_main_refuses_a_role_dependent_plan_without_a_role_and_writes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.chdir(tmp_path)
+    """#4868: a template whose requestors answer the roles differently needs `--role`. No shipped
+    template has one since G-04 (#484) refused the Manager's pin as well, so the probe is the
+    recording template with a role map put back on its pin."""
+    name, probe = "purge-and-pin-refused-for-this-role", copy.deepcopy(TEMPLATES["recording"])
+    (refusals,) = [job for job in probe["jobs"] if job.get("name") == name]
+    refusals["requests"][2][plans.ROLE_CODES] = {"manager": 503}
+    template = tmp_path / "template" / "recording.yaml"
+    template.parent.mkdir()
+    template.write_text(yaml.safe_dump(probe, sort_keys=False), encoding="utf-8")
+    monkeypatch.setitem(plans.PROFILES, "recording", (template, plans.PROFILES["recording"][1]))
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
     assert plans.main(["--profile", "recording", "--out", "w"]) == 2
-    assert list(tmp_path.iterdir()) == []
+    assert list(work.iterdir()) == []
     assert plans.main(["--profile", "recording", "--out", "w", "--role", "manager"]) == 0
     assert plans.main(["--profile", "rules", "--out", "w"]) == 0  # no role map: no role needed
+
+
+def test_the_recording_plan_needs_no_role_and_the_workflows_role_changes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G-04 (#484): no recording requestor answers the roles differently any more, so the plan
+    needs no `--role`, and the `--role` the workflow passes writes the same plan."""
+    monkeypatch.chdir(tmp_path)
+    assert not plans.role_dependent(TEMPLATES["recording"])
+    assert plans.main(["--profile", "recording", "--out", "w"]) == 0
+    plain = (tmp_path / "w" / "recording-scan.yaml").read_text(encoding="utf-8")
+    assert plans.main(["--profile", "recording", "--out", "w", "--role", "manager"]) == 0
+    assert (tmp_path / "w" / "recording-scan.yaml").read_text(encoding="utf-8") == plain
 
 
 def test_the_recording_scan_uses_the_admin_profiles_injection_policy() -> None:

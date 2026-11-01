@@ -197,8 +197,10 @@ def make_recorder_purge_router(
         if not principal.has(RECORDING_WRITE):  # RBAC before anything else (C-12.4)
             await denied(f"missing_permission:{RECORDING_WRITE}")
             return _problem(403, "Forbidden", f"requires {RECORDING_WRITE}")
-        # Capability 9a (04-security-program §7.2 row 9a) is owner-only even though managers hold
-        # `recording:write`; `is_owner` is resolved via `PrincipalSnapshot.is_owner` (SR-017).
+        # Capability 9a (04-security-program §7.2 row 9a) is owner-only. Since G-04 (#484) no
+        # seeded non-Owner role holds `recording:write`, so RBAC above refuses them first and this
+        # arm is defence in depth, unreachable by any seeded role; it stays for a future grant of
+        # the permission. `is_owner` is resolved via `PrincipalSnapshot.is_owner` (SR-017).
         if not principal.is_owner:
             await denied("purge_owner_only")
             return _problem(403, "Forbidden", "purging recorded data is owner-only", "forbidden")

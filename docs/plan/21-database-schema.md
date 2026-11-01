@@ -5199,7 +5199,7 @@ role_permissions:
   owner: ["*"]
   manager:
     ["marketdata:read", "instruments:read",
-     "recording:read", "recording:write", "replay:read", "replay:write",
+     "recording:read", "replay:read", "replay:write",
      "orders:read", "orders:write", "positions:read", "positions:write", "executions:read",
      "rules:read", "rules:write", "alerts:read", "alerts:write",
      "journal:read", "journal:write",
@@ -5220,7 +5220,7 @@ Three things in this seed are deliberate and should not be "tidied":
 
 - **`manager` excludes `keys:read` and `keys:manage` entirely.** A manager never sees credential metadata, not even a key prefix — that is what makes the "manager cannot enumerate the owner's infrastructure" property hold.
 - **`viewer` holds no write permission.** `alerts:write`, `replay:write`, `settings:write`, `workspaces:write` and `journal:write` are denied to viewer, matching `x-permissions` and `rbac_seed.json` (owner decision #1778 Z, 2026-10-09). A viewer is strictly read-only.
-- **`manager` holds `killswitch:write` and `recording:write`.** Kill-switch engage is limited to the manager's granted scope; release is owner-only. `recording:write` purge/retention actions still need step-up.
+- **`manager` holds `killswitch:write`, not `recording:write`.** Kill-switch engage is limited to the manager's granted scope; release is owner-only. `recording:write` is the Owner's alone (owner decision 4 on #323; G-04, #484): adding, stopping and pinning a recorded symbol, its retention, compaction, import and the purge (`04-security-program.md` §7.2.2 rows 8, 9, 9a and 51), the pin and retention behind the `recorder` step-up and the purge behind `recorder_purge`. `0001` seeded the grant to `manager` and the seed loader (`candleviewer.db.seed`) only ever adds, so revision `0060_recording_write_owner_only` revokes it.
 - **`audit:read` is `manager`, not `viewer`** (`04-security-program.md` §7.2.1, SR-067; revision `0016`). The manager's slice is its own events with payloads redacted, applied at request time; the owner reads raw; a viewer has no audit access.
 - **Live rule arming is `rules:arm_live`, which is owner-only** (seeded via `owner: ["*"]`; manager and viewer hold neither it nor `admin:write`). `manager` holds `rules:write` for demo/granted-account rules only.
 
