@@ -1,11 +1,14 @@
-// `candle-series` scene (E12-S06): one candle series of `n` bars (5k, 100k) through the scheduler,
-// the batch builder and `GLBackend` (on the fake GL in tests): a store, its CandleRing, a
-// CandleSeries' two hosts sharing one buffer. Each step is a pan frame (TRANSFORM: uniforms
-// only) or a feed frame (a merged live-bar patch and one new bar, then the frame). The unit test
-// counts draws, uploads and allocations; candle-series.perf.test.ts times the frames.
+// `candle-series` scene (E12-S06): one candle or OHLC series of `n` bars (5k, 100k) through the
+// scheduler, the batch builder and `GLBackend` (on the fake GL in tests): a store, its CandleRing,
+// the series' two mark hosts sharing one buffer and its seam host. Each step is a pan frame
+// (TRANSFORM: uniforms only) or a feed frame (a merged live-bar patch and one new bar, then the
+// frame). Candles show every bar at the spacing floor (BQ-13); OHLC rows show `window` bars
+// (≈ 13 px: the stem and the 10-vertex ticks) or, without one, the floor's candle mark. The unit
+// test counts draws, uploads and allocations; candle-series.perf.test.ts times the frames.
 import { GLBackend } from "../../src/gl/backend.js";
 import type { GL2Like } from "../../src/gl/gl-types.js";
 import { CandleRing } from "../../src/layers/candle/ring.js";
+import { BarSeries } from "../../src/layers/candle/bars.js";
 import { CANDLE_ATTRIBUTES, CandleSeries } from "../../src/layers/candle/series.js";
 import { type BarBatch, BarStore } from "../../src/model/BarStore.js";
 import { BatchBuilder } from "../../src/scene/batch-builder.js";
@@ -64,6 +67,8 @@ export class CandleSeriesBench {
     n: number,
     gl: GL2Like,
     private readonly now: () => number = () => 0,
+    shape: "candles" | "bars" = "candles",
+    window = 0,
   ) {
     this.graph.addPane("main");
     this.viewport = new ChartViewport(this.store);
@@ -73,12 +78,12 @@ export class CandleSeriesBench {
     this.backend.setPaneUniforms(() => this.uniforms);
     this.builder = new BatchBuilder(this.graph, this.backend);
     this.ring = new CandleRing(this.builder);
-    this.series = new CandleSeries(this.ring);
+    this.series = shape === "bars" ? new BarSeries(this.ring) : new CandleSeries(this.ring);
     const deps = { viewport: this.viewport, pane: 0, theme: () => this.theme };
     const blocks = new Map<string, (typeof this.series.blocks)[number]>();
     this.series.mount(this.graph, "main", "series.candle.0.0", deps).forEach((h, p) => {
       blocks.set(h.id, this.series.blocks[p] as (typeof this.series.blocks)[number]);
-      this.backend.attach(h.id, this.ring, CANDLE_ATTRIBUTES);
+      this.backend.attach(h.id, this.series.sources[p] ?? this.ring, CANDLE_ATTRIBUTES);
     });
     this.backend.setBatchUniforms((b) => blocks.get(b.nodeId) ?? null);
     this.series.setTheme(THEME);
@@ -90,7 +95,10 @@ export class CandleSeriesBench {
     this.scheduler = new FrameScheduler(this.graph, clock, {
       build: (sink) => this.builder.build(sink),
       submit: () => {
-        this.series.frame(this.viewport.barSpacing, this.viewport.dpr);
+        const vp = this.viewport;
+        const first = Math.floor(vp.leftIndex);
+        const last = Math.floor(vp.leftIndex + vp.plotWidth / vp.barSpacing);
+        this.series.frame(vp.barSpacing, vp.dpr, first, last);
         writePaneUniforms(this.viewport, 0, this.uniforms);
         this.uniforms.floats[4] = W;
         this.uniforms.floats[5] = H;
@@ -101,7 +109,8 @@ export class CandleSeriesBench {
     const all = candleBars(n);
     this.ring.sync(this.store, this.store.replace(all));
     this.viewport.setPriceInfo(0, 0, 1);
-    this.viewport.setTimeRange(0, (n - 1) * 60e6); // all bars at the spacing floor (BQ-13)
+    const from = window > 0 ? n - window : 0; // all bars at the spacing floor (BQ-13)
+    this.viewport.setTimeRange(from * 60e6, (n - 1) * 60e6);
     this.next = (n - 1) * 60e6;
     this.frame(0);
     this.feed(16); // warm-up: the first eviction-free append and its sub-upload
