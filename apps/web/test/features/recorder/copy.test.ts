@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DECK, TEXT, fill, type DeckKey } from "../../../src/features/recorder/copy";
 import { formatDuration } from "../../../src/features/recorder/model";
+import { PAGE_TEXT } from "../../../src/features/recorder/pageCopy";
 
 type DeckRow = { readonly parent: string; readonly string: string; readonly status: string };
 const DECK_JSON = resolve(import.meta.dirname, "../../../../../docs/design/E16/E16-D06-copy.json");
@@ -50,6 +51,13 @@ describe("recorder copy", () => {
 
   it("test_copy_disk_unavailable_is_the_decks_storage_unavailable_a12", () => {
     expect(TEXT.diskUnavailable).toBe(deck["storage.unavailable"]?.string);
+  });
+
+  it("test_copy_filtered_empty_is_the_decks_filter_class_d5309_02", () => {
+    // E16-D05 section 14's filter class (PROPOSED exemplars in the deck); a control label is backticked there.
+    expect([PAGE_TEXT.noMatch, PAGE_TEXT.noMatchCause, `\`${PAGE_TEXT.clearFilters}\``]).toEqual(
+      ["heading", "cause", "cta"].map((part) => deck[`classes.filter.${part}`]?.string),
+    );
   });
 
   it("test_copy_fill_replaces_every_literal_token", () => {
