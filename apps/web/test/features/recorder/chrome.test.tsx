@@ -12,6 +12,7 @@ const { apiFetch } = vi.hoisted(() => ({
 }));
 vi.mock("../../../src/lib/http/csrfFetch", () => ({ apiFetch }));
 
+import { ShellAnnouncer, clearAnnouncements } from "../../../src/features/app-shell/announcer";
 import { CompactNow } from "../../../src/features/recorder/CompactNow";
 import {
   registerRecorderExtensions,
@@ -45,6 +46,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], now: NOW });
 });
 afterEach(() => {
+  act(() => clearAnnouncements());
   apiFetch.mockReset();
   vi.useRealTimers();
 });
@@ -205,6 +207,11 @@ describe("the gap table (D02 §1, §2, §10.2; RG-08)", () => {
 });
 
 describe("Compact now's terminal lines (D02 §3.2; SR-13)", () => {
+  /** The line drawn under the button: its description (the shell's region says it, C-5347-d07). */
+  const lineOf = (): HTMLElement => {
+    const button = screen.getByRole("button", { name: /^(Compact now|Compacting)/ });
+    return document.getElementById(button.getAttribute("aria-describedby") ?? "") as HTMLElement;
+  };
   const run = async (answer: () => Response) => {
     apiFetch.mockImplementation(async (url) =>
       url.endsWith("/admin/recorder/compact") ? json(202, { job_id: JOB }) : answer(),
@@ -213,7 +220,7 @@ describe("Compact now's terminal lines (D02 §3.2; SR-13)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Compact now" }));
     await flush();
     await act(async () => void (await vi.advanceTimersByTimeAsync(JOB_POLL_MS)));
-    return screen.getByRole("status");
+    return lineOf();
   };
 
   it("a failed job names its code; nothing was deleted", async () => {
@@ -281,7 +288,7 @@ describe("Compact now's terminal lines (D02 §3.2; SR-13)", () => {
     answer = () =>
       json(503, { code: "audit_unavailable", status: 503, title: "x", type: "about:blank" });
     await act(async () => void (await vi.advanceTimersByTimeAsync(JOB_POLL_MS)));
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(lineOf()).toHaveTextContent(
       "Status not updated: the server refused it. (audit_unavailable)",
     );
     expect(busy).toHaveAccessibleName(/Compacting · 42 %/); // the last line kept, still busy
@@ -290,8 +297,48 @@ describe("Compact now's terminal lines (D02 §3.2; SR-13)", () => {
     expect(apiFetch.mock.calls.length).toBe(calls + 1); // it polls on
     answer = () => json(200, { id: JOB, status: "running", progress_pct: 50 });
     await act(async () => void (await vi.advanceTimersByTimeAsync(JOB_POLL_MS)));
-    expect(screen.getByRole("status")).toHaveTextContent(/^$/); // an answer clears it
+    expect(lineOf()).toHaveTextContent(/^$/); // an answer clears it
     expect(busy).toHaveAccessibleName(/Compacting · 50 %/);
+  });
+
+  it("each line is said once through the shell's polite region, never a live region of its own (C-5347-d07)", async () => {
+    let refuse = false;
+    apiFetch.mockImplementation(async (url) => {
+      if (!url.endsWith("/admin/recorder/compact"))
+        return json(200, { id: JOB, status: "cancelled" });
+      return refuse
+        ? json(409, { code: "job_running", status: 409, title: "x", type: "about:blank" })
+        : json(202, { job_id: JOB });
+    });
+    render(
+      <>
+        <CompactNow />
+        <ShellAnnouncer />
+      </>,
+    );
+    const region = document.querySelector(
+      '[data-cv-inert-exempt][aria-live="polite"]',
+    ) as HTMLElement;
+    const said: string[] = [];
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) said.push(node.textContent ?? "");
+      }
+    }).observe(region, { childList: true });
+    fireEvent.click(screen.getByRole("button", { name: "Compact now" }));
+    await flush();
+    await act(async () => void (await vi.advanceTimersByTimeAsync(JOB_POLL_MS * 3)));
+    const CANCELLED = "Compaction cancelled; nothing was deleted.";
+    expect(lineOf()).toHaveTextContent(CANCELLED);
+    // Under the row detail's modal a region in the page is inert: the line has none (the A-5347-04 class).
+    expect(lineOf().closest('[role="status"], [aria-live]')).toBeNull();
+    expect(said).toEqual([CANCELLED]);
+    refuse = true;
+    fireEvent.click(screen.getByRole("button", { name: "Compact now" }));
+    await flush();
+    const REFUSED = "A compaction is already running. (job_running)";
+    expect(lineOf()).toHaveTextContent(REFUSED);
+    expect(said).toEqual([CANCELLED, REFUSED]);
   });
 
   it("an unmount mid-job stops the poll: no request after it (C-5309-09)", async () => {

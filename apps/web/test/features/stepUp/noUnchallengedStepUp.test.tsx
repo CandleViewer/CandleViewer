@@ -7,7 +7,7 @@
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { RouterProvider, createMemoryRouter } from "react-router";
 import { PreferencesProvider } from "../../../src/features/a11y-preferences/PreferencesContext";
@@ -22,6 +22,15 @@ const SRC = resolve(import.meta.dirname, "../../../src");
  * that waits so long takes a budget above the default 5 s, which would end it first.
  */
 const ROUTE_WAIT = { timeout: 5_000 } as const;
+/** Every admin route, R-340's SCR-140 among them since #484 PR 3: slow on a busy host, never a flake (C-9.3). */
+const SLOW = { timeout: 30_000 } as const;
+
+// The admin area's lazy chunk carries SCR-140 since #484 PR 3: its first import transforms that whole module graph,
+// which on a busy host outlasts a test's 5 s. Imported once here, every admin route below finds it in the module
+// cache, so no test's first mount pays for it.
+beforeAll(async () => {
+  await import("../../../src/features/admin/shell/AdminArea");
+}, 120_000);
 
 interface Wire {
   readonly issued: string[];
@@ -120,7 +129,7 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("test_client_never_posts_step_up_without_a_server_challenge", () => {
+describe("test_client_never_posts_step_up_without_a_server_challenge", SLOW, () => {
   it("admin routes: no route-level step-up dialog and no step-up post", async () => {
     const admin = ROUTE_MANIFEST.filter((e) => e.path === "/admin" || e.path.startsWith("/admin/"));
     expect(admin.length).toBeGreaterThan(10);

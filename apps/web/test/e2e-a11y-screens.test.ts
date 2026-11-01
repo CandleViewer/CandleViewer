@@ -59,6 +59,14 @@ describe("the a11y gate's screen set (#3470)", () => {
     });
   });
 
+  it("audits the recorder (R-340, SCR-140) as a signed-in owner screen (E16-S01)", () => {
+    expect(SIGNED_IN_SCREENS).toContainEqual({
+      id: "R-340",
+      path: "/admin/recorder",
+      signedIn: { role: "owner", heading: "Recorder" },
+    });
+  });
+
   it("audits the hotkey editor (R-202) as a signed-in owner screen (#305, A11Y-305B-04)", () => {
     expect(SIGNED_IN_SCREENS).toContainEqual({
       id: "R-202",
