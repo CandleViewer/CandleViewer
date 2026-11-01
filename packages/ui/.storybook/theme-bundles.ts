@@ -19,6 +19,7 @@ import "../src/components/badge.css";
 import "../src/components/button.css";
 import "../src/components/callout.css";
 import "../src/components/card.css";
+import "../src/components/celleditor.css";
 import "../src/components/checkbox.css";
 import "../src/components/choice.css";
 import "../src/components/colorswatch.css";
