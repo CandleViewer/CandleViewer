@@ -60,10 +60,11 @@ export function IconButton<N extends IconName>({
   const reason = useDisabledReason(disabled, disabledReason, disabledReasonId);
   const announceGated = useGatedAnnounce();
   const ring = useFocusRing();
-  // `reason.reason` is set exactly when gated: the name, then the reason, joined by " · ".
+  // `reason.reason` is set exactly when gated: the name, then the reason, joined by " · "; under a gate notice the
+  // notice carries the reason, so the echo is the name alone.
   const echo = reason.disabled
     ? undefined
-    : reason.reason === undefined
+    : reason.reason === undefined || reason.fromNotice
       ? label
       : `${label} · ${reason.reason}`;
   const handleClick = (event: MouseEvent<HTMLButtonElement>): void => {
@@ -104,7 +105,8 @@ export function IconButton<N extends IconName>({
           <Icon name={icon} size={size} />
           {reason.gated ? (
             <span className="cv-icon-button__badge">
-              <Icon name="lock" size="sm" />
+              {/* E05-D02 CMP-079 a11y: the badge is CMP-019 `decorative=false`, an img named "Not available". */}
+              <Icon name="lock" size="sm" decorative={false} label="Not available" />
             </span>
           ) : null}
         </button>

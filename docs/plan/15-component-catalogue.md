@@ -713,6 +713,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: n/a (meta-control).
 - **Storybook**: Default, MatchSystem, Light, HighContrast (J13).
 - **Tests**: unit, visual, axe.
+- **As built (E05-S04)**: props-only, with `copy` props and English defaults; `ThemeSwitcherConnected` binds the E05-T02 theme store and is what `apps/web` mounts, while the store stays the only emitter of `appearance.theme_changed` and the component emits nothing. J15 (a) is built: a change applies on this device for every role with no T2 and no CMP-079; (b), T2 through CMP-079 with the lock, is the gated alternative pending the owner on #2701. Readings reconciled: pressing match system speaks once (it is a committed toggle) while an OS-driven flip is silent; `Ctrl+Shift+H` is announced by the runtime as "High-contrast theme on / off" (`packages/ui/src/theme/a11y.ts`), not by the component; the announcement says "High Contrast" and the segment label is "High contrast" (E05-D02 table).
 
 ### CMP-063 DensityToggle
 
@@ -723,6 +724,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: n/a (meta-control).
 - **Storybook**: Global, PanelOverride, ChartPanelDense, MenuForm (J14).
 - **Tests**: unit, visual, axe.
+- **As built (E05-S04)**: offers exactly the runtime's `DENSITIES`, `compact | comfortable` (BQ-19); J14's `Dense` is a chart-panel override, not a runtime density, so it is a reconcile row. `segmented` and `menu` forms, `panelName` / `chartPanel` / `copy` props, and `DensityToggleConnected` (the store emits `appearance.density_changed`, the component nothing). J15 (a) as for CMP-062; (b) is the gated alternative pending #2701.
 
 ### CMP-064 KeyboardShortcutRow ("Shortcuts" settings list item)
 
@@ -893,6 +895,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: n/a (behavioural wrapper; the wrapped control's T2 look binds `color.text.tertiary`, `color.text.secondary`, `color.surface.raised` and `color.border.default`).
 - **Storybook**: Allowed, Denied(Permission), Denied(OwnerOnly), Denied(Account), Denied(AccountReadOnly), Denied(Env), Denied(ReadOnly), Denied(ViewAs), Denied(EnvMismatch), FormInline, FormTooltip, FormNotice.
 - **Tests**: unit, visual, axe, RBAC-matrix interaction test (per role × action fixture).
+- **As built (E05-S04)**: `reason` is a typed vocabulary key with `fills`, not a free `requiredRole`; three forms, `inline` (the control's own `aria-disabled` and description), `tooltip` (icon-only controls) and `notice` (a Callout `id`). The T2 affordance is the component's contract (E09-D09 §2.2): the gated control keeps its role and full label, takes `aria-disabled="true"` (never `disabled`), carries the reason node linked by `aria-describedby` (rendered at mount), and the CMP-019 `lock` glyph named "Not available" leads the label or badges the icon; it is a UI affordance, not an authorisation control (the server enforces, C-12.4). The lock badge is a CMP-019 `img` named "Not available". No `Denied(EnvMismatch)` story shipped (BQ-23): `guard.mismatch` is E30-D02's registered state key (E09-D09 §8), not in E09-D09 §3.1's vocabulary, so CMP-139 composes it with CMP-079 and no string is invented here.
 
 ### CMP-080 DockPanel (dockable container)
 
@@ -960,6 +963,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Storybook**: Focused, Unfocused, Several (J19).
 - **Tests**: unit, visual, axe, keyboard-first-tab test.
 - **As built (E10-S01, #304)**: the shell first shipped a temporary single-target stand-in in `apps/web` ("Skip to main content" → the shell's `main`), the first Tab stop on every shell page, until the `packages/ui` component (E05-S04, #267) replaces it.
+- **As built (E05-S04)**: takes `targets[]`, the first "Skip to main content" and then one per region the route mounts (J19, J20); activating one moves focus to its target.
 
 ### CMP-086 SettingsNav / SettingsLayout
 
@@ -996,6 +1000,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: inherits CMP-026, plus `type.ui.heading-lg` (the `h1`), `type.num.base` (the account echo) and `type.num.sm` (the Ref).
 - **Storybook**: Default, Withdrawn, AccountVariant, NoRef.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S04)**: `variant` `never-had | withdrawn` and `scope` `permission | account`, links through the shared `linkSlot` render prop, and names only the capability the role lacks, never data or a route.
 
 ### CMP-090 NotFoundState (404)
 
@@ -1005,6 +1010,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: inherits CMP-026, plus `type.ui.heading-lg` and `type.num.sm` (the route).
 - **Storybook**: Default, Deleted.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S04)**: `variant` `unknown | deleted` with a noun for the deleted object, and a `tryRoutes` list through the shared `linkSlot` render prop.
 
 ### CMP-091 GlobalErrorBoundaryFallback
 
@@ -1014,6 +1020,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: inherits CMP-027, plus `type.ui.heading-sm` (panel), `type.ui.heading-lg` (route and app), `type.num.xs` + `color.text.tertiary` (the error id) and `color.surface.raised` (the details); the panel on `color.surface.canvas`, the route and app scopes on `color.surface.app`.
 - **Storybook**: PanelLevel, RouteLevel, AppLevel, Details, RepeatedCrash.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S04)**: a props-only view with `scope` `panel | route | app`, a `repeated` state (reload withdrawn, reason said), copy-diagnostics and a host-redacted "Technical detail" string; `apps/web` maps its boundaries onto it.
 
 ### CMP-092 DegradedModeBanner
 
@@ -2936,6 +2943,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Design (usage spec):** [E32-D04.md](../design/E32/E32-D04.md) §8 (E32-D04; owner approval pending; the ladder builder's five glance tiles — total qty, average entry, total notional, projected risk vs cap, projected requests vs minute budget — as `role="img"` with one name, never the only disclosure: the pinned totals row repeats every figure; the `ladder` kind, `value` and `caption` props are a PROPOSED amendment routed to this catalogue's owner).
 - **Motion (E32-D06)**: none — a recomputing tile keeps its last frame (J21); a provisional or refused tile changes in one frame in both modes (E32-D06 §8).
 - **Usage (E32-D06)**: the ladder kind is a glance summary beside the native-SL pattern's stop line — [E32-D06.md](../design/E32/E32-D06.md) §14 (SCR-065's row); the stop itself is never read from a tile.
+- **As built (E05-S04)**: kinds `candles`, `chart`, `footprint`, `heatmap`, `ladder`, `scales` and `theme` (J21; the ladder states per E32-D04 D04-A2). Named deviation: `settings` is carried as `label` (the configuration in words, the accessible name) and `sampleData` as `children`; the tile owns no settings behaviour. A `tokenOverrides` map is scoped to the tile only, and the BQ-18 warning checks two text / surface pairs at 4.5:1 with text and icon, never colour alone (ratio ported into `packages/ui`, BQ-17). `LadderRefused` is text-only, where E32-D04 tints the tile and no D04-A2 prop carries the tint: a row for the CMP-228 owner. The empty state is the CMP-029 silhouette at `opacity.muted`, static; the warning re-measures on `candleviewer:themechange`.
 
 ### CMP-229 ArmToggle
 

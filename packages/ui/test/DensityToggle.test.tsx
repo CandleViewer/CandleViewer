@@ -143,6 +143,88 @@ describe("DensityToggle (CMP-063)", () => {
     expect(await politeText()).toBe("Density: Comfortable");
   });
 
+  describe("menu form", () => {
+    const MenuHost = ({ onChange }: { onChange: (v: DensityName) => void }): JSX.Element => {
+      const [value, setValue] = useState<DensityName>("compact");
+      return (
+        <DensityToggle
+          form="menu"
+          value={value}
+          onChange={(v) => {
+            setValue(v);
+            onChange(v);
+          }}
+        />
+      );
+    };
+    const trigger = (host: HTMLElement, name = "Density: Compact"): HTMLElement =>
+      within(host).getByRole("button", { name });
+
+    it.each([["{Enter}"], [" "], ["{ArrowDown}"]])("opens with %j on the trigger", async (key) => {
+      const host = await mount(<MenuHost onChange={fn()} />);
+      trigger(host).focus();
+      await userEvent.keyboard(key);
+      const items = within(document.body).getAllByRole("menuitemradio");
+      expect(items.map((i) => i.textContent)).toEqual(["Compact", "Comfortable"]);
+      expect(items[0]).toHaveAttribute("aria-checked", "true");
+      expect(items[1]).toHaveAttribute("aria-checked", "false");
+    });
+
+    it.each([["{Enter}"], [" "]])(
+      "a pick with %j commits and speaks once, closes, refocuses",
+      async (key) => {
+        const onChange = fn();
+        const host = await mount(<MenuHost onChange={onChange} />);
+        await clearPolite();
+        trigger(host).focus();
+        await userEvent.keyboard("{Enter}{ArrowDown}");
+        expect(
+          within(document.body).getByRole("menuitemradio", { name: "Comfortable" }),
+        ).toHaveFocus();
+        await userEvent.keyboard(key);
+        expect(onChange).toHaveBeenCalledTimes(1);
+        expect(onChange).toHaveBeenCalledWith("comfortable");
+        expect(await politeText()).toBe("Density: Comfortable");
+        expect(within(document.body).queryByRole("menu")).toBeNull();
+        expect(trigger(host, "Density: Comfortable")).toHaveFocus();
+      },
+    );
+
+    it("re-picking the checked item is no change: no onChange, no sentence, closes, refocuses", async () => {
+      const onChange = fn();
+      const host = await mount(<MenuHost onChange={onChange} />);
+      await clearPolite();
+      trigger(host).focus();
+      await userEvent.keyboard("{Enter}");
+      const checked = within(document.body).getByRole("menuitemradio", { name: "Compact" });
+      expect(checked).toHaveFocus();
+      await userEvent.keyboard("{Enter}");
+      expect(onChange).not.toHaveBeenCalled();
+      expect(await politeText()).toBe("");
+      expect(within(document.body).queryByRole("menu")).toBeNull();
+      expect(trigger(host)).toHaveFocus();
+    });
+
+    it("Esc closes the open menu and returns focus to the trigger", async () => {
+      const host = await mount(<MenuHost onChange={fn()} />);
+      trigger(host).focus();
+      await userEvent.keyboard("{Enter}");
+      expect(within(document.body).getByRole("menu")).toBeInTheDocument();
+      await userEvent.keyboard("{Escape}");
+      expect(within(document.body).queryByRole("menu")).toBeNull();
+      expect(trigger(host)).toHaveFocus();
+    });
+
+    it("has no serious or critical axe violations with the menu open", async () => {
+      const host = await mount(<MenuHost onChange={fn()} />);
+      await userEvent.click(trigger(host));
+      const found = (
+        await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })
+      ).violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+      expect(found).toEqual([]);
+    });
+  });
+
   it("has no serious or critical axe violations in any story", async () => {
     for (const Story of Object.values(composeStories(stories))) {
       const store = createThemeStore({

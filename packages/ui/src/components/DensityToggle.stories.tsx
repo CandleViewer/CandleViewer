@@ -7,6 +7,14 @@ import { DENSITY_TOGGLE_COPY, DensityToggle, DensityToggleConnected } from "./De
 /** Theme and density come from the toolbars; every story renders at each of the 3 x 2 combinations. */
 const meta: Meta<typeof DensityToggle> = {
   title: "Molecules/DensityToggle",
+  parameters: {
+    docs: {
+      description: {
+        component:
+          "No disabled-with-reason form: J15 (a) is built (every role changes the appearance on this device, no T2); (b), T2 through CMP-079, is the gated alternative pending the owner on #2701.",
+      },
+    },
+  },
   component: DensityToggle,
 };
 export default meta;
@@ -19,13 +27,16 @@ const LONG_PANEL = "Order book and recent trades for BTCUSDT perpetual";
 function GlobalHost({
   initial = "compact",
   onChange,
+  form,
 }: {
+  form?: "segmented" | "menu";
   initial?: DensityName;
   onChange?: (v: DensityName) => void;
 }): JSX.Element {
   const [value, setValue] = useState<DensityName>(initial);
   return (
     <DensityToggle
+      {...(form === undefined ? {} : { form })}
       value={value}
       onChange={(next) => {
         setValue(next);
@@ -114,6 +125,22 @@ export const KeyboardCommits: Story = {
     await userEvent.keyboard("{ArrowRight}");
     await expect(canvas.getByRole("radio", { name: "Comfortable" })).toHaveFocus();
     await waitFor(() => expect(live()).toBe("Chart panel density: comfortable"));
+  },
+};
+
+/** Form=menu: the trigger names the group; picking Comfortable commits, speaks once and closes. */
+export const MenuForm: Story = {
+  render: () => <GlobalHost form="menu" />,
+  play: async ({ canvasElement }) => {
+    const trigger = within(canvasElement).getByRole("button", { name: "Density: Compact" });
+    await userEvent.click(trigger);
+    const body = within(document.body);
+    await expect(body.getByRole("menuitemradio", { name: "Compact" })).toBeChecked();
+    await userEvent.click(body.getByRole("menuitemradio", { name: "Comfortable" }));
+    await waitFor(() => expect(live()).toBe("Density: Comfortable"));
+    await expect(
+      within(canvasElement).getByRole("button", { name: "Density: Comfortable" }),
+    ).toHaveFocus();
   },
 };
 

@@ -1,7 +1,9 @@
-import type { JSX } from "react";
+import { useState, type JSX } from "react";
 import { announcePolite } from "../theme/a11y.js";
 import { useDensity } from "../theme/ThemeProvider.js";
 import { DENSITIES, type DensityName } from "../theme/store.js";
+import { Button } from "./Button.js";
+import { Menu, type MenuItem } from "./Menu.js";
 import {
   SegmentedControl,
   type SegmentedControlBaseProps,
@@ -42,6 +44,8 @@ interface DensityToggleCommon {
   readonly disabled?: boolean;
   /** Renders the control itself at this density (`data-density`); absent = inherit. */
   readonly density?: DensityName;
+  /** `segmented` (CMP-003, default) or `menu` (CMP-041 `menuitemradio` items behind a button). */
+  readonly form?: "segmented" | "menu";
 }
 
 export interface DensityToggleGlobalProps extends DensityToggleCommon {
@@ -66,8 +70,13 @@ const option = (copy: DensityToggleCopy, value: DensityName): SegmentedOption =>
 });
 
 /**
- * CMP-063: the density switch, CMP-003's segmented form. The `menuitemradio` menu form (`form`
- * prop, the MenuForm story) is slice H's.
+ * CMP-063: the density switch: CMP-003's segmented form, or with `form="menu"` CMP-041's
+ * `menuitemradio` items behind a button that names the group and shows the current value.
+ * A menu pick closes the menu through Menu's controlled `open` (Space keeps a radio item open in
+ * Menu itself; the spec closes on Enter and Space), and focus returns to the trigger.
+ * Re-picking the checked item only closes the menu (no change, no sentence), as the segmented
+ * form does. The trigger's name ("Density: Comfortable") equals the polite sentence, so a screen
+ * reader may say it twice after a pick; this is the APG menu-button-with-value pattern, accepted.
  * Props only: it emits no analytics (the store is the one emitter, BQ-16). A committed user change
  * speaks one polite sentence (J16); a new `value` from the host (initial load, a server-fed apply)
  * speaks nothing, because only the change handler announces. Global offers exactly the runtime's
@@ -75,6 +84,7 @@ const option = (copy: DensityToggleCopy, value: DensityName): SegmentedOption =>
  * carries it, and its naming reconcile is slice H's row.
  */
 export function DensityToggle(props: DensityToggleProps): JSX.Element {
+  const [menuOpen, setMenuOpen] = useState(false);
   const copy: DensityToggleCopy = { ...DENSITY_TOGGLE_COPY, ...props.copy };
   const [compact, comfortable] = DENSITIES;
   const panel = props.scope === "panel" ? props : undefined;
@@ -98,6 +108,43 @@ export function DensityToggle(props: DensityToggleProps): JSX.Element {
     ...(props.disabled === undefined ? {} : { disabled: props.disabled }),
     ...(props.density === undefined ? {} : { density: props.density }),
   };
+  const groupLabel = panel === undefined ? copy.groupLabel : copy.panelGroupLabel(panel.panelName);
+  if (props.form === "menu") {
+    const items: MenuItem[] = values.map((v) => ({
+      id: v,
+      label: copy.options[v],
+      kind: "radio",
+      checked: v === props.value,
+      group: { id: "density", label: groupLabel },
+      onSelect: () => {
+        if (v !== props.value) onChange(v);
+        setMenuOpen(false);
+      },
+    }));
+    return (
+      <div
+        className="cv-density-toggle"
+        data-cmp="CMP-063"
+        data-scope={panel === undefined ? "global" : "panel"}
+        data-form="menu"
+      >
+        <Menu
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+          items={items}
+          trigger={
+            <Button
+              size={props.size === "sm" ? "sm" : "md"}
+              disabled={props.disabled === true}
+              {...(props.density === undefined ? {} : { "data-density": props.density })}
+            >
+              {`${groupLabel}: ${copy.options[props.value]}`}
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
   return (
     <div
       className="cv-density-toggle"
@@ -107,7 +154,7 @@ export function DensityToggle(props: DensityToggleProps): JSX.Element {
     >
       <SegmentedControl
         {...pass}
-        aria-label={panel === undefined ? copy.groupLabel : copy.panelGroupLabel(panel.panelName)}
+        aria-label={groupLabel}
         options={options}
         value={props.value}
         onChange={onChange}

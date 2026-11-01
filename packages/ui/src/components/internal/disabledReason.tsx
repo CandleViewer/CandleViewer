@@ -15,6 +15,41 @@ export interface DisabledReasonAttrs {
    * a read-only panel's one notice): the control points at it and renders no reason node of its own.
    */
   readonly external: boolean;
+  /** True when the reason is a gate notice's sentence: the notice node is the description, so no echo or node. */
+  readonly fromNotice: boolean;
+}
+
+/** The CMP-079 notice form: one notice node, by id, that carries `reason`; every gated control points at it. */
+export interface GateNotice {
+  readonly noticeId: string;
+  readonly reason: string;
+}
+
+/**
+ * Set by `RbacGate form="notice"` (E09-D09 §2.2 "one notice, many pointers"; E42-D03). Only a control whose own
+ * reason is the notice's sentence follows it, so a descendant with another reason (a portalled menu item, say) keeps
+ * its own node; context crosses portals, the sentence match does not. By design the match is by sentence, not by
+ * gate: a descendant (portalled or under an inner inline gate) whose reason is the same sentence follows the notice
+ * too, since the notice already says it once.
+ */
+const GateNoticeContext = createContext<GateNotice | null>(null);
+
+export function GateNoticeProvider({
+  notice,
+  children,
+}: {
+  readonly notice: GateNotice | null;
+  readonly children: ReactNode;
+}): JSX.Element {
+  return <GateNoticeContext.Provider value={notice}>{children}</GateNoticeContext.Provider>;
+}
+
+/** The notice id when `reason` is the enclosing gate notice's sentence, else undefined. */
+export function useGateNoticeFor(reason: string | undefined): string | undefined {
+  const notice = useContext(GateNoticeContext);
+  return notice !== null && reason !== undefined && reason === notice.reason.trim()
+    ? notice.noticeId
+    : undefined;
 }
 
 /**
@@ -32,7 +67,10 @@ export function useDisabledReason(
   const gated = trimmed !== undefined && trimmed !== "";
   const host = hostReasonId?.trim() || undefined;
   const external = gated && host !== undefined;
-  const reasonId = external && host !== undefined ? host : ownId;
+  // Under a gate notice the reason node is the notice: every id that pointed at the own node points there instead.
+  // An explicit host id wins over the notice; the notice wins over the control's own node.
+  const noticeId = useGateNoticeFor(gated && !external ? trimmed : undefined);
+  const reasonId = external && host !== undefined ? host : (noticeId ?? ownId);
   return {
     gated,
     disabled: disabled === true && !gated,
@@ -41,6 +79,7 @@ export function useDisabledReason(
     ariaDisabled: gated ? true : undefined,
     ariaDescribedBy: gated ? reasonId : undefined,
     external,
+    fromNotice: noticeId !== undefined,
   };
 }
 
@@ -93,7 +132,9 @@ export function ReasonText({
   readonly id: string;
   readonly children: string | undefined;
 }): JSX.Element | null {
-  if (children === undefined) return null;
+  // Under a gate notice carrying this sentence, the notice is the node: rendering it here would read it twice.
+  const noticeId = useGateNoticeFor(children);
+  if (children === undefined || noticeId !== undefined) return null;
   return (
     <span id={id} className="cv-visually-hidden">
       {children}

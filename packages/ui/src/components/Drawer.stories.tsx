@@ -50,6 +50,14 @@ function Demo({ title = "Instrument rules", children, ...props }: DemoProps): JS
 /** Theme and density come from the toolbars; the light and high-contrast stories pin the theme for axe. */
 const meta: Meta = {
   title: "Molecules/Drawer",
+  parameters: {
+    docs: {
+      description: {
+        component:
+          "The scrim binds the primitive `palette.black` with `opacity.scrim`, an accepted deviation (E05-D02-feedback-overlays convention 31, section 6 H1).",
+      },
+    },
+  },
   component: Drawer,
   render: () => <Demo />,
 };

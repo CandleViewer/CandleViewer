@@ -106,7 +106,7 @@ describe("IconButton (CMP-002)", () => {
     expect(b).toHaveAttribute("aria-disabled", "true");
     expect(b).toHaveAccessibleDescription(REASON);
     expect(b).toHaveAccessibleName("Settings");
-    expect(b.querySelector(".cv-icon-button__badge svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(within(b).getByRole("img", { name: "Not available" })).toBeInTheDocument();
     await userEvent.tab();
     expect(b).toHaveFocus();
     await userEvent.keyboard("{Enter} ");

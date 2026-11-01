@@ -39,6 +39,14 @@ const list = {
 
 const meta: Meta<typeof Sample> = {
   title: "Atoms/FocusRing",
+  parameters: {
+    docs: {
+      description: {
+        component:
+          "The 2 px ring offset has no token, an accepted deviation (E05-D02.md line 209, line 680 and line 825).",
+      },
+    },
+  },
   component: Sample,
   args: { children: "Sample control" },
 };
