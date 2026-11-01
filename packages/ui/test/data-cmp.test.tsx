@@ -37,6 +37,7 @@ import {
   ColumnPicker,
   FileDrop,
   FreshnessMarker,
+  PositionsGrid,
   WatchlistGroupTabs,
   WatchlistRow,
   watchlistColumns,
@@ -309,5 +310,13 @@ describe("organisms carry their catalogue id", () => {
   it.each(organisms)("%s marks exactly one root with data-cmp", async (id, render) => {
     const host = await mount(render());
     expect(host.querySelectorAll(`[data-cmp="${id}"]`)).toHaveLength(1);
+  });
+});
+
+describe("E29-S01's positions grid carries its catalogue id", () => {
+  it("CMP-114 marks exactly one root with data-cmp, over one CMP-049 treegrid", async () => {
+    const host = await mount(<PositionsGrid caption="Positions" groups={[]} />);
+    expect(host.querySelectorAll('[data-cmp="CMP-114"]')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-cmp="CMP-049"]')).toHaveLength(1);
   });
 });
