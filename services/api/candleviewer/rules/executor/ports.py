@@ -137,3 +137,16 @@ class ActionAudit(Protocol):
     async def fired(self, fields: ActionAuditFields) -> None: ...
 
     async def blocked(self, fields: ActionAuditFields) -> None: ...
+
+
+class AlertPort(Protocol):
+    """The executor's two `critical` alerts (24 §11.5, AC-14; BQ-7), each naming the rule, the fire
+    (`run_id`) and the action that did not succeed (`node_id`), never a figure or an account;
+    `rules_oms_wiring` binds them to the page line and to `system_events`."""
+
+    async def partial_fire(self, rule_id: str, run_id: UUID, node_id: str) -> None: ...
+
+    async def write_ahead_failed(self, rule_id: str, run_id: UUID, node_id: str) -> None: ...
+
+    def settled(self, rule_id: str) -> None:
+        """The rule's fire ended with no partial outcome: its alert episode is over."""

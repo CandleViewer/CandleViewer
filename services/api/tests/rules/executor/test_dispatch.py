@@ -3,7 +3,8 @@
 K1a's rig (`test_mode_split.Rig`), its executor sink a `Sink` that logs each action as it goes in
 and comes out and holds a gated rule's actions until the test releases them. Fire n's run id is
 `UUID(int=n)`, minted in tick order. No sleeps: every wait is on an event, under a guard bound, so
-a regression fails rather than hangs.
+a regression fails rather than hangs. Since E35-T09 a worker hands each fire to the executor, which
+records each action's result (`records`) and counts it (`counted`).
 """
 
 from __future__ import annotations
@@ -12,21 +13,23 @@ import asyncio
 import functools
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from structlog.testing import capture_logs
+from structlog.typing import EventDict
 
 from candleviewer.rules import service as rules_service
 from candleviewer.rules.executor import dispatch
+from candleviewer.rules.executor.engine import ActionExecutor
 from candleviewer.rules.ir.models import Action, RuleScope
 from candleviewer.rules.manager import InMemoryRuleStore
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
 from candleviewer.rules.service import RulesService
 from candleviewer.settings import Settings
-from tests.rules.executor.request_builders import action_request
+from tests.rules.executor.request_builders import Counted, Records, action_request
 from tests.rules.executor.test_mode_split import NOTE, Rig
 from tests.rules.test_evaluator import Clock
 from tests.rules.test_scope_wiring import OWNER, A, B, Source
@@ -116,8 +119,9 @@ async def start(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Start]:
         async def to_simulation(req: ActionRequest) -> None:
             simulated.append(req)
 
-        store, svc = InMemoryRuleStore(), RulesService()
+        store, svc, records, counted = InMemoryRuleStore(), RulesService(), Records(), Counted()
         svc.bind(store=store, action_sink=sink, simulation_sink=to_simulation)
+        svc.bind(records=(records, records), metrics=counted.metrics)
         svc.wire_scope(source, "demo", audit)
         await svc.refresh_scope(OWNER)
         ctx: Any = SimpleNamespace(settings=SimpleNamespace(rules_evaluator_enabled=True))
@@ -126,8 +130,9 @@ async def start(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Start]:
         mgr, runner = svc.manager(), svc.runner
         assert mgr is not None and runner is not None
         return DispatchRig(
-            svc, mgr, store, runner, clock, sink.entered, simulated, sink, source, audits
-        )
+            svc, mgr, store, runner, clock, sink.entered, simulated, records, counted, sink,
+            source, audits,
+        )  # fmt: skip
 
     yield build
     for svc in services:
@@ -186,7 +191,7 @@ async def test_a_full_dispatch_queue_refuses_the_newest_fire_and_records_it(
     with capture_logs() as logs:
         for _ in range(3):
             await rig.fire()  # fires 2 and 3 wait; fire 4 finds the queue full
-    assert dict(rig.svc.actions_blocked_total) == {"backpressure": 2}  # each of its actions
+    assert rig.counted.blocked() == {"backpressure": 2}  # each of its actions
     refused = {"event": "rules.blocked", "log_level": "warning", "rule_id": rid}
     assert [e for e in logs if e["event"] == "rules.blocked"] == [
         refused | {"run_id": str(uuid.UUID(int=4)), "reason": "backpressure", "actions": 2}
@@ -194,6 +199,11 @@ async def test_a_full_dispatch_queue_refuses_the_newest_fire_and_records_it(
     rig.sink.release(rid, 6)
     await rig.settle()
     assert sorted({run for _, run, _ in rig.sink.log}) == [1, 2, 3]  # never the newest
+    run = uuid.UUID(int=4)  # its records, off the tick (BQ-4): the run row closed `throttled`
+    assert rig.records.closed[run] == ("throttled", 0)
+    backpressure = [(p["node_id"], p["outcome"], p["blocked_by"], p["account_id"])
+                    for r, e in rig.records.events if r == run for p in [e.payload]]  # fmt: skip
+    assert backpressure == [(n, "blocked", "backpressure", None) for n in ("a1", "a2")]
 
 
 async def test_the_evaluation_tick_never_awaits_dispatch(rig: DispatchRig) -> None:
@@ -304,7 +314,7 @@ async def test_overflow_pages_once_per_episode(
         assert _pages(logs) == 2
     rig.sink.release(rid, 2)
     await rig.settle()
-    assert dict(rig.svc.actions_blocked_total) == {"backpressure": 3}
+    assert rig.counted.blocked() == {"backpressure": 3}
     assert [e["run_id"] for e in logs if e["event"] == "rules.blocked"] == [
         str(uuid.UUID(int=n)) for n in (3, 6)
     ]  # the rule's first refusal of each episode; the rest are counted only
@@ -317,7 +327,9 @@ async def test_a_refusal_is_flagged_first_once_per_rule_and_episode(
     tick), so every other rule's first is logged too, and the rest only counted."""
     monkeypatch.setattr(dispatch, "FIRE_QUEUE_BOUND", 1)
     flags: list[tuple[str, bool]] = []
-    fires = dispatch.FireDispatch(lambda fire, first: flags.append((fire.rule_id, first)))
+    fires = dispatch.FireDispatch(
+        lambda fire, first: flags.append((fire.rule_id, first)), _never_executed
+    )
     other = str(uuid.UUID(int=8))
     for rule in (RULE, RULE, RULE, other, RULE):  # the first waits: no worker is started
         fires.offer(_fire(1, "a1", emit=_never_run, rule=rule))
@@ -355,7 +367,8 @@ async def test_scope_skipped_audits_do_not_take_fire_slots(
         await rig.sink.reached(n)  # and a fire of `healthy`, accepted
         await rig.sink.until(lambda: len(rig.audits) == 1)
     assert [r.rule_id for r in rig.sink.left] == [healthy] * 3 and rig.audit_queue.queued == 1
-    assert dict(rig.svc.actions_blocked_total) == {"scope": 1}
+    assert rig.counted.blocked() == {"scope": 3}  # each counted as it is offered (BQ-5)
+    assert rig.counted.shed() == {"scope_denial": 1}
     rig.sink.release(AUDIT, 2)
     await rig.settle()
 
@@ -363,9 +376,9 @@ async def test_scope_skipped_audits_do_not_take_fire_slots(
 async def test_a_shed_scope_audit_is_counted_under_scope(
     start: Start, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A full audit queue sheds the newest job: each of its actions counted `scope`, its first
-    refusal, and as shed, never `backpressure`; its rule's first shed of the episode is logged,
-    and nothing pages."""
+    """A full audit queue sheds the newest job: its actions were counted `scope` as it was
+    offered, never `backpressure`, and the job is counted shed under its kind; its rule's first
+    shed of the episode is logged, and nothing pages."""
     monkeypatch.setattr(dispatch, "AUDIT_QUEUE_BOUND", 1)
     rig = await start()
     rid = await rig.add("armed", actions=_actions("a1", "a2"))
@@ -376,10 +389,10 @@ async def test_a_shed_scope_audit_is_counted_under_scope(
     with capture_logs() as logs:
         for _ in range(3):
             await rig.fire()  # job 2 waits; jobs 3 and 4 are shed
-    assert dict(rig.svc.actions_blocked_total) == {"scope": 4} and rig.svc.audits_shed_total == 4
-    shed = {"event": "rules.blocked", "log_level": "warning", "rule_id": rid, "reason": "scope"}
-    assert [e for e in logs if e["event"] == "rules.blocked"] == [
-        shed | {"run_id": str(uuid.UUID(int=3)), "actions": 2, "audit": "shed"}
+    assert rig.counted.blocked() == {"scope": 8} and rig.counted.shed() == {"scope_denial": 2}
+    shed = {"event": "rules.records_shed", "log_level": "warning", "rule_id": rid}
+    assert [e for e in logs if e["event"] == "rules.records_shed"] == [
+        shed | {"run_id": str(uuid.UUID(int=3)), "actions": 2, "kind": "scope_denial"}
     ]
     assert _pages(logs) == 0
     rig.sink.release(AUDIT, 4)
@@ -497,6 +510,7 @@ def _fire(
     reqs = tuple(
         action_request(
             scope, OWNER, ScopeInstanceRef("*@*", None, None), run_id=uuid.UUID(int=run),
+            action_type="send_notification",
             payload=Action(node_id=n, type="send_notification", params=NOTE),
         )
         for n in nodes
@@ -508,29 +522,45 @@ def _never_refused(fire: dispatch.Fire, first: bool) -> None:
     raise AssertionError("no fire is refused here")
 
 
+async def _never_executed(fire: dispatch.Fire) -> None:
+    raise AssertionError("no fire is executed here")
+
+
 async def _never_run(_req: ActionRequest) -> bool:
     raise AssertionError("no worker runs here")
 
 
 @pytest.mark.parametrize("failure", ["timeout", "error"])
 async def test_a_failed_action_stops_its_fire_and_the_worker_goes_on(
-    monkeypatch: pytest.MonkeyPatch, failure: dispatch.DispatchFailure
+    monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    """Every sink await is bounded: an action that outlasts `ACTION_TIMEOUT_S` (0 s here) or
-    raises stops the rest of its fire, is counted and logged by its class alone, and the next fire
-    still runs."""
+    """Every action is bounded: one that outlasts `ACTION_TIMEOUT_S` (0 s here) or raises is
+    recorded `failed`, the rest of its fire `skipped` (`abort_remaining`), logged by its class
+    alone, and the next fire still runs (the K1b carry: `failed_total` became results)."""
     monkeypatch.setattr(dispatch, "ACTION_TIMEOUT_S", 0.0)
     seen: list[tuple[int, str]] = []
+    records = Records()
+
+    async def armed(_req: ActionRequest) -> Any:
+        return "armed"
+
+    async def passes(_req: ActionRequest) -> None:
+        return None
+
+    executor = ActionExecutor(
+        check_one=armed, recheck=passes, records=records, audit=records, stand_in=passes
+    )
 
     async def emit(req: ActionRequest) -> bool:
         seen.append((req.run_id.int, req.payload.node_id))
         if seen == [(1, "a1")]:
             if failure == "timeout":
                 await asyncio.Event().wait()  # never answers: only the bound ends it
-            raise RuntimeError("the sink failed")
+            raise RuntimeError("the emitter failed")
+        await executor.hand_over(req)
         return True
 
-    fires = dispatch.FireDispatch(_never_refused)
+    fires = dispatch.FireDispatch(_never_refused, executor.execute)
     fires.start()
     with capture_logs() as logs:
         assert fires.offer(_fire(1, "a1", "a2", emit=emit))
@@ -539,12 +569,17 @@ async def test_a_failed_action_stops_its_fire_and_the_worker_goes_on(
             await fires.idle()
     await fires.stop(0.0)
     assert seen == [(1, "a1"), (2, "a1")]  # fire 1's a2 never ran; fire 2 did
-    assert dict(fires.failed_total) == {failure: 1}
+    assert records.results() == [
+        ("a1", "failed", None),
+        ("a2", "skipped", None),
+        ("a1", "ok", None),
+    ]
+    assert records.events[0][1].payload["error_code"] == failure
     kind = "TimeoutError" if failure == "timeout" else "RuntimeError"
-    failed = {"event": "rules.action_failed", "log_level": "error", "rule_id": RULE}
+    failed = {"event": "rules.action_failed", "log_level": "error", "queue": "rule-dispatch"}
     assert [e for e in logs if e["event"] == "rules.action_failed"] == [
-        failed | {"run_id": str(uuid.UUID(int=1)), "node_id": "a1", "reason": failure,
-                  "kind": kind, "not_run": 1}
+        failed | {"rule_id": RULE, "run_id": str(uuid.UUID(int=1)), "node_id": "a1",
+                  "reason": failure, "kind": kind}
     ]  # fmt: skip
 
 
@@ -555,7 +590,7 @@ async def test_workers_that_end_without_stop_page_at_once() -> None:
     async def emit(_req: ActionRequest) -> bool:
         return True
 
-    fires = dispatch.FireDispatch(_never_refused)
+    fires = dispatch.FireDispatch(_never_refused, _never_executed)
     fires.offer(_fire(1, "a1", emit=emit))
     fires._lanes.clear()  # a broken invariant: the worker that takes the rule finds no lane
     with capture_logs() as logs:
@@ -568,3 +603,132 @@ async def test_workers_that_end_without_stop_page_at_once() -> None:
     ]
     assert not [e for e in logs if e["event"] == "rules.dispatch_worker_lost"]  # group's cancels
     await fires.stop(0.0)
+
+
+async def test_past_its_grace_stop_starts_no_waiting_fire(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fires still waiting leave their lanes and the turn before the stop line: a fire that
+    ends in the pass after it, before its worker's cancel lands, starts none of them, its own
+    rule's or another's, and `dropped` counts the fires that never start (#5231's carry RC-01)."""
+    monkeypatch.setattr(dispatch, "DISPATCH_WORKERS", 1)
+    entered, ended, started = asyncio.Event(), asyncio.Event(), list[int]()
+    other = str(uuid.UUID(int=8))
+
+    async def execute(fire: dispatch.Fire) -> None:
+        started.append(fire.run_id.int)
+        entered.set()
+        await ended.wait()
+
+    def end_on_the_stop_line(_logger: Any, _method: str, event: EventDict) -> EventDict:
+        if event["event"] == "rules.dispatch_stopped":
+            ended.set()  # fire 1 ends in the next pass, before the cancel reaches its worker
+        return event
+
+    fires = dispatch.FireDispatch(_never_refused, execute)
+    fires.start()
+    assert fires.offer(_fire(1, "a1", emit=_never_run))
+    assert fires.offer(_fire(2, "a1", emit=_never_run))  # waits in the lane, behind fire 1
+    assert fires.offer(_fire(3, "a1", emit=_never_run, rule=other))  # its lane waits its turn
+    async with asyncio.timeout(GUARD_S):
+        await entered.wait()
+    (worker,) = [t for t in _dispatch_tasks() if "-worker-" in t.get_name()]
+    with capture_logs(processors=[end_on_the_stop_line]) as logs:
+        await fires.stop(0.0)
+    assert started == [1] and fires.queued == 0
+    stopped = [e for e in logs if e["event"] == "rules.dispatch_stopped"]
+    assert [(e["dropped"], e["inflight"], e["waiting"]) for e in stopped] == [
+        (2, 1, {RULE: 1, other: 1})
+    ]
+    assert worker.cancelled() and _dispatch_tasks() == []
+
+
+async def test_a_stop_cancelled_mid_drain_ends_the_audit_queue_too(
+    rig: DispatchRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cancel during the fire queue's drain goes on to the caller, and the audit queue's
+    workers end with it, at once, its held job cut: no `rule-dispatch*` task outlives the module
+    (#5231's carry RC-02)."""
+    held = await rig.add("armed")
+    await rig.add("armed", accounts=(B,))  # skipped `scope` once the grant on B is withdrawn
+    rig.source.grants = [(A, True, False)]
+    rig.sink.gate(held)  # its fire's action waits in the sink, so the drain waits for it
+    rig.sink.gate(AUDIT)  # the other rule's audit write never returns
+    await rig.fire()
+    await rig.sink.reached(1)
+    await rig.sink.until(lambda: len(rig.audits) == 1)
+    draining, stop = asyncio.Event(), rig.dispatch.stop
+
+    async def drain(grace_s: float) -> None:
+        draining.set()
+        await stop(grace_s)
+
+    monkeypatch.setattr(rig.dispatch, "stop", drain)
+    with capture_logs() as logs:
+        stopping = asyncio.create_task(rig.svc.stop(GUARD_S))
+        async with asyncio.timeout(GUARD_S):
+            await draining.wait()
+        stopping.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            async with asyncio.timeout(GUARD_S / 2):  # well inside the grace left: at once
+                await stopping
+    assert _dispatch_tasks() == [] and rig.svc._audits is None
+    stopped = [e["queue"] for e in logs if e["event"] == "rules.dispatch_stopped"]
+    assert stopped == ["rule-dispatch-audit"]  # its held job cut; the fire queue's drain cancelled
+
+
+async def test_the_audit_queue_drains_in_what_the_fire_queue_left_of_the_grace(
+    rig: DispatchRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One grace for the module: the audit queue drains in what the fire queue's drain left of
+    it, after it, never in a grace of its own (#5231's carry RC-02)."""
+    now, graces = [1_000.0], list[tuple[str, float]]()
+    monkeypatch.setattr(rules_service, "monotonic", lambda: now[0])
+    fires_stop, audits_stop = rig.dispatch.stop, rig.audit_queue.stop
+
+    async def fires(grace_s: float) -> None:
+        graces.append(("fires", grace_s))
+        now[0] += 3.0  # the fire queue's drain takes 3 s of the 10
+        await fires_stop(grace_s)
+
+    async def audits(grace_s: float) -> None:
+        graces.append(("audits", grace_s))
+        await audits_stop(grace_s)
+
+    monkeypatch.setattr(rig.dispatch, "stop", fires)
+    monkeypatch.setattr(rig.audit_queue, "stop", audits)
+    await rig.svc.stop(10.0)
+    assert graces == [("fires", 10.0), ("audits", 7.0)]
+
+
+async def test_a_raise_execute_lets_through_is_logged_by_its_class_and_queue() -> None:
+    """A raise `execute` lets through is a defect: logged by its class and its queue, never its
+    text (C-12.6; #5231's carry RC-03), and the worker goes on with the next job."""
+
+    async def broken(fire: dispatch.Fire) -> None:
+        raise RuntimeError("the executor failed 64123.5")
+
+    audits = dispatch.AuditDispatch(_never_refused, broken)
+    audits.start()
+    with capture_logs() as logs:
+        for run in (1, 2):
+            assert audits.offer(replace(_fire(run, "a1", emit=_never_run), kind="scope_denial"))
+        async with asyncio.timeout(GUARD_S):
+            await audits.idle()
+    await audits.stop(0.0)
+    failed = {"event": "rules.fire_failed", "log_level": "error", "queue": "rule-dispatch-audit"}
+    assert [e for e in logs if e["event"] == "rules.fire_failed"] == [
+        failed | {"rule_id": RULE, "run_id": str(uuid.UUID(int=run)), "kind": "RuntimeError"}
+        for run in (1, 2)
+    ]
+    assert "64123.5" not in repr(logs)
+
+
+async def test_every_worker_ends_cancelled_at_stop_idle_ones_too(rig: DispatchRig) -> None:
+    """`stop()` cancels each worker of both queues and each re-raises it, an idle one too: none
+    ends as if it had finished (#5231's carry RC-05)."""
+    await rig.add("armed")
+    await rig.fire()
+    await rig.settle()  # every worker idle again
+    workers = [t for t in _dispatch_tasks() if "-worker-" in t.get_name()]
+    assert len(workers) == dispatch.DISPATCH_WORKERS + dispatch.AUDIT_WORKERS
+    await rig.svc.stop(GUARD_S)
+    assert [t.get_name() for t in workers if not t.cancelled()] == []

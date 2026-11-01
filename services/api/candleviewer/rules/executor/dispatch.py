@@ -1,21 +1,24 @@
 """Bounded, ordered dispatch of rule fires, off the evaluation tick (E35-S03; 24 §11.5).
 
 The tick only offers (C-2.20): one fire per evaluation, synchronously and never awaited. A fixed
-set of workers runs the fires; what each action does is the fire's `emit`, which the caller picks.
+set of workers hands each fire, whole, to the executor (`rules/executor/engine.py`), which runs its
+actions one after another in IR order; what each action passes through is the fire's `emit`, the
+emitter the caller picks.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections import Counter, deque
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections import deque
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 from uuid import UUID
 
 import structlog
 
 from candleviewer.observability import spawn, spawn_child
+from candleviewer.rules.evaluator.snapshot import Value
 from candleviewer.rules.scope import ActionRequest
 
 #: The fires that may wait, all rules together, before the newest is refused (C-2.18).
@@ -25,12 +28,12 @@ DISPATCH_WORKERS: Final = 4
 #: The audit-only jobs that may wait on `AuditDispatch`'s own queue, and its workers.
 AUDIT_QUEUE_BOUND: Final = 256
 AUDIT_WORKERS: Final = 1
-#: One action's whole hand-over (the scope re-check's audit, the re-read, the sink), above the
-#: re-read's own 2 s bound.
+#: One action's whole step (its re-read, its scope re-check and audit, its records written ahead
+#: and its hand-over), above the re-read's and each write's own 2 s bound.
 ACTION_TIMEOUT_S: Final = 10.0
-#: Why an action stopped its fire: `timeout`, no return within `ACTION_TIMEOUT_S`; `error`, it
-#: raised.
-DispatchFailure = Literal["timeout", "error"]
+#: A job's kind (BQ-4): a fire; a fire the full fire queue refused, whose records go on the audit
+#: queue; or a scope-skipped evaluation's audits. A shed job is counted under its kind.
+JobKind = Literal["fire", "refused_fire", "scope_denial"]
 
 
 def _log() -> Any:
@@ -42,16 +45,35 @@ def _log() -> Any:
 class Fire:
     """One evaluation's actions on their way to dispatch, in IR order, and the emit each goes
     through. The caller picks it (`RulesService._on_fire`: the routing emitter for a fired result,
-    the audit-only one for a scope-skipped one); a worker never chooses where an action goes."""
+    the audit-only one for a scope-skipped one); a worker never chooses where an action goes. A
+    fire carries its run row's facts (24 §11.5, 21 §3.4.3): the active version it was evaluated
+    under, its trigger type and the metric values its conditions saw, never logged."""
 
     rule_id: str
     run_id: UUID
     requests: tuple[ActionRequest, ...]
     emit: Callable[[ActionRequest], Awaitable[object]]
+    kind: JobKind = "fire"
+    version_id: str | None = None
+    trigger_type: str = ""
+    metric_values: Mapping[str, Value] = field(default_factory=dict, repr=False)
+
+    @property
+    def armed(self) -> bool:
+        """Its actions carry the stored row's mode, one for the whole fire."""
+        return bool(self.requests) and self.requests[0].mode == "armed"
+
+    @property
+    def queue(self) -> str:
+        """The queue the job rides, which a line about it names (#5231's carry RC-03): a fire
+        the fire queue, a record-only job the audit queue."""
+        return FireDispatch._name if self.kind == "fire" else AuditDispatch._name
 
 
 #: Records a refused fire on the tick; `first` for its rule's first refusal of the episode.
 Refused = Callable[[Fire, bool], None]
+#: Runs one job whole, in a worker (`ActionExecutor.execute`).
+Execute = Callable[[Fire], Awaitable[None]]
 
 
 class FireDispatch:
@@ -65,8 +87,9 @@ class FireDispatch:
 
     **Order.** Striped by rule id: a rule's fires wait in its own lane, in the order offered, and
     one worker at a time holds a lane, so they run in fire order. The workers take the lanes in
-    turn, so a rule whose sink is slow holds one worker and never another rule's lane. A fire's
-    actions run one after another, in IR order (E5), each bounded by `ACTION_TIMEOUT_S`.
+    turn, so a rule whose sink is slow holds one worker and never another rule's lane. A worker
+    hands each fire, whole, to `execute`, which runs its actions one after another, in IR order
+    (E5), each bounded by `ACTION_TIMEOUT_S`.
 
     **Tasks.** The workers belong to one `TaskGroup` under a supervisor task this owns; `stop()`
     drains them within its grace, then cancels them. A cancel is never swallowed: a worker logs
@@ -75,8 +98,8 @@ class FireDispatch:
     _name = "rule-dispatch"  # the supervisor task's; worker n's is `<name>-worker-<n>`
     _pages = True  # the episode's first refusal pages
 
-    def __init__(self, refused: Refused) -> None:
-        self._refused = refused
+    def __init__(self, refused: Refused, execute: Execute) -> None:
+        self._refused, self._execute = refused, execute
         self._bound, self._workers = self._sizes()
         self._lanes: dict[str, deque[Fire]] = {}  # per rule with a fire waiting or running
         #: The lanes with a fire waiting and no worker: one per waiting fire at most, never full.
@@ -87,9 +110,6 @@ class FireDispatch:
         self._blocked: set[str] = set()  # the rules refused this episode, one entry each
         self._running: dict[str, Fire] = {}  # by worker name, the fire it runs
         self._supervisor: asyncio.Task[None] | None = None
-        #: The actions that stopped their fire, by `DispatchFailure`, until E35-T09 records each
-        #: as an `ActionResult` (`unknown` after a timeout, `failed` otherwise).
-        self.failed_total: Counter[DispatchFailure] = Counter()
 
     @staticmethod
     def _sizes() -> tuple[int, int]:
@@ -132,8 +152,9 @@ class FireDispatch:
     async def stop(self, grace_s: float) -> None:
         """Drain within `grace_s` seconds, then end the workers. Past the grace they are cancelled,
         mid-action too, and the fires still waiting are dropped (a restart loses queued fires by
-        design): one line counts them, by rule too, beside the fires in flight, and each worker
-        logs the fire it held as it is cancelled. Call it once the tick has stopped offering."""
+        design), taken out before the line that counts them, by rule too, beside the fires in
+        flight, so none starts after it; each worker logs the fire it held as it is cancelled.
+        Call it once the tick has stopped offering."""
         supervisor, self._supervisor = self._supervisor, None
         if supervisor is None:
             return
@@ -142,13 +163,25 @@ class FireDispatch:
                 await self._idle.wait()
         except TimeoutError:
             waiting = {rule_id: len(lane) for rule_id, lane in self._lanes.items() if lane}
+            dropped = self._drop_waiting()  # before the line: none it counts starts after it
             _log().warning(
-                "rules.dispatch_stopped", queue=self._name, dropped=self._queued,
+                "rules.dispatch_stopped", queue=self._name, dropped=dropped,
                 inflight=len(self._running), waiting=waiting,
             )  # fmt: skip
         finally:
             supervisor.cancel()
             await asyncio.wait({supervisor})
+
+    def _drop_waiting(self) -> int:
+        """Every waiting fire out of its lane, and the turn emptied, so a worker whose fire ends
+        before its cancel lands starts no other (#5231's carry RC-01); the worker lets its own
+        lane go. How many fires it dropped."""
+        while not self._ready.empty():
+            self._ready.get_nowait()
+        for lane in self._lanes.values():
+            lane.clear()
+        dropped, self._queued = self._queued, 0
+        return dropped
 
     def _ended(self, task: asyncio.Task[None]) -> None:
         """Only `stop()` ends the workers, and it lets go of the supervisor first: any other end
@@ -202,35 +235,27 @@ class FireDispatch:
             del self._running[name]
 
     async def _run(self, fire: Fire) -> None:
-        """The fire's actions strictly one after another, in IR order (E5): the next starts once
-        the one before has returned. One that raises or outlasts `ACTION_TIMEOUT_S` stops the fire,
-        as `abort_remaining` (24 §11.5's default) does until E35-T09's `on_error`; it is counted and
-        logged by its class alone (C-12.6), and the worker goes on with the next fire."""
-        for done, req in enumerate(fire.requests):
-            try:
-                async with asyncio.timeout(ACTION_TIMEOUT_S):
-                    await fire.emit(req)
-            except Exception as exc:  # never `CancelledError`, which is no `Exception`
-                failure: DispatchFailure = "timeout" if isinstance(exc, TimeoutError) else "error"
-                self.failed_total[failure] += 1
-                _log().error(
-                    "rules.action_failed", rule_id=fire.rule_id, run_id=str(fire.run_id),
-                    node_id=req.payload.node_id, reason=failure, kind=type(exc).__name__,
-                    not_run=len(fire.requests) - done - 1,
-                )  # fmt: skip
-                return
+        """The fire, whole, through `execute`, which records each action's result and bounds each
+        action. A raise it lets through is a defect: logged by its class alone (C-12.6) and its
+        queue, and the worker goes on with the next fire."""
+        try:
+            await self._execute(fire)
+        except Exception as exc:  # never `CancelledError`, which is no `Exception`
+            _log().error(
+                "rules.fire_failed", queue=self._name, rule_id=fire.rule_id,
+                run_id=str(fire.run_id), kind=type(exc).__name__,
+            )  # fmt: skip
 
 
 class AuditDispatch(FireDispatch):
-    """A scope-skipped evaluation's audit-only jobs (`RulesService._on_fire`) on a queue, lanes
-    and a worker of their own, so none takes a fire's slot, lane or worker: the tick's scope gate
-    refused their actions, so none is a fire, and each action's denial is audited off the tick.
+    """The record-only jobs, on a queue, lanes and a worker of their own, so none takes a fire's
+    slot, lane or worker (BQ-4): a scope-skipped evaluation's audits (the tick's scope gate refused
+    its actions, so none is a fire), and a refused fire's run row and per-action records.
 
     **Bound and overflow (C-2.18).** At most `AUDIT_QUEUE_BOUND` jobs wait, all rules together,
-    for `AUDIT_WORKERS` worker. Past the bound the newest is shed, never one already waiting:
-    `refused` counts each of its actions under `scope`, its first refusal (24 §11.5), never
-    `backpressure`, and its audit as shed, and logs its rule's first of the episode. It pages
-    nothing: no fire is refused."""
+    for `AUDIT_WORKERS` worker. Past the bound the newest is shed, never awaited and never one
+    already waiting: `refused` counts it under its kind (`rule_records_shed_total{kind}`) and logs
+    its rule's first of the episode. It pages nothing: no fire is refused."""
 
     _name = "rule-dispatch-audit"
     _pages = False

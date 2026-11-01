@@ -10,6 +10,7 @@ is never logged, nor carried by an error.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import uuid
@@ -21,7 +22,9 @@ from typing import Any, cast
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer import rules_oms_wiring
 from candleviewer.audit.redact import redact
+from candleviewer.observability.health_probes import SystemEvent
 from candleviewer.rules.executor.ports import (
     ActionAuditFields,
     EventRow,
@@ -31,7 +34,12 @@ from candleviewer.rules.executor.ports import (
 )
 from candleviewer.rules.ir.models import Action, RuleScope
 from candleviewer.rules.scope import ScopeInstanceRef
-from candleviewer.rules_oms_wiring import RuleActionAudit, RuleRunRecords, rule_action_records
+from candleviewer.rules_oms_wiring import (
+    RuleActionAudit,
+    RuleAlerts,
+    RuleRunRecords,
+    rule_action_records,
+)
 from candleviewer.storage.repositories.rules_sqlalchemy import SqlAlchemyRulesRepository
 from tests.rules.executor.request_builders import action_request
 
@@ -225,3 +233,82 @@ def _unpersisted() -> RunRow:
         trigger_reason=run.trigger_reason, account_id=None, symbol=None, matched=False,
         input_snapshot=run.input_snapshot,
     )  # fmt: skip
+
+
+class _Events:
+    """`SystemEventWriter`: logs each row; `fail` raises, `hang` never answers."""
+
+    def __init__(self, *, fail: bool = False, hang: bool = False) -> None:
+        self.fail, self.hang, self.rows = fail, hang, list[SystemEvent]()
+
+    async def write(self, event: SystemEvent) -> None:
+        self.rows.append(event)
+        if self.hang:
+            await asyncio.Event().wait()
+        if self.fail:
+            raise ConnectionError(f"the event store refused {PLANTED[0]}")
+
+
+# fmt: off
+async def test_partial_fire_pages_once_per_rule_per_episode_and_writes_a_system_event_each_time() -> None:  # noqa: E501 -- the plan's test name (#5000)
+    """BQ-7: the CRITICAL `cv_page` line once per rule and kind per episode (the episode ends when
+    the rule's next fire ends with no partial outcome), one `critical` `system_events` row per
+    occurrence (component `rules`, a fixed message, the ids in `details`)."""
+    events, other = _Events(), str(uuid.UUID(int=9))
+    alerts = RuleAlerts(events)
+    occurrences = [
+        ("partial_fire", RULE, uuid.UUID(int=21), "a2"),
+        ("partial_fire", RULE, uuid.UUID(int=22), "a3"),
+        ("partial_fire", other, uuid.UUID(int=23), "a1"), ("settled", RULE, None, ""),
+        ("partial_fire", RULE, uuid.UUID(int=24), "a1"),
+        ("write_ahead_failed", RULE, uuid.UUID(int=25), "a4"),
+    ]  # fmt: skip
+    with capture_logs() as logs:
+        for kind, rule, run, node in occurrences:
+            if run is None:
+                alerts.settled(rule)
+            else:
+                await getattr(alerts, kind)(rule, run, node)
+    pages = [(e["event"], e["rule_id"], e["run_id"]) for e in logs if e.get("cv_page")]
+    assert pages == [
+        ("rules.partial_fire", RULE, str(uuid.UUID(int=21))),
+        ("rules.partial_fire", other, str(uuid.UUID(int=23))),
+        ("rules.partial_fire", RULE, str(uuid.UUID(int=24))),
+        ("rules.write_ahead_failed", RULE, str(uuid.UUID(int=25))),
+    ]
+    assert {e["log_level"] for e in logs if e.get("cv_page")} == {"critical"}
+    assert [(r.component, r.kind, r.severity) for r in events.rows] == [
+        ("rules", kind, "critical") for kind, _, run, _ in occurrences if run is not None
+    ]
+    assert len({r.message for r in events.rows if r.kind == "partial_fire"}) == 1  # fixed text
+    assert events.rows[0].details == {
+        "rule_id": RULE,
+        "run_id": str(uuid.UUID(int=21)),
+        "node_id": "a2",
+    }
+# fmt: on
+
+
+async def test_a_failed_system_event_write_is_counted_and_never_holds_the_next_fire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row that fails, or does not land within its bound (0 s here), is counted and logged by
+    its class alone, and the call returns: the dispatch worker goes on with the next fire."""
+    monkeypatch.setattr(rules_oms_wiring, "ALERT_EVENT_TIMEOUT_S", 0.0)
+    for broken, cause in (
+        (_Events(fail=True), "ConnectionError"),
+        (_Events(hang=True), "TimeoutError"),
+    ):
+        alerts = RuleAlerts(broken)
+        with capture_logs() as logs:
+            async with asyncio.timeout(5.0):  # a guard: only a regression reaches it
+                await alerts.partial_fire(RULE, RUN, "a2")
+                await alerts.write_ahead_failed(RULE, RUN, "a3")
+        assert alerts.events_failed_total == 2
+        failed = [(e["kind"], e["cause"]) for e in logs if e["event"] == "rules.alert_event_failed"]
+        assert failed == [("partial_fire", cause), ("write_ahead_failed", cause)]
+        assert PLANTED[0] not in repr(logs)
+    unbound = RuleAlerts(None)
+    with capture_logs() as logs:
+        await unbound.partial_fire(RULE, RUN, "a2")
+    assert [e["event"] for e in logs] == ["rules.partial_fire"] and unbound.events_failed_total == 0
