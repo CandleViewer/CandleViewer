@@ -25,6 +25,7 @@ export interface TooltipTriggerProps {
   onPointerEnter?: (event: PointerEvent<HTMLElement>) => void;
   onPointerLeave?: (event: PointerEvent<HTMLElement>) => void;
   onPointerCancel?: (event: PointerEvent<HTMLElement>) => void;
+  onPointerDown?: (event: PointerEvent<HTMLElement>) => void;
   onFocus?: (event: FocusEvent<HTMLElement>) => void;
   onBlur?: (event: FocusEvent<HTMLElement>) => void;
 }
@@ -221,6 +222,13 @@ export function Tooltip({
       own.onPointerLeave?.(event);
       dismissed.current = false;
       leave();
+    },
+    // Pressing the trigger activates it: the echo goes (APG Tooltip) so the next `Esc` belongs to what the press
+    // opened (a Popover), not to a tooltip left over from the hover; it stays away until the pointer leaves or focus moves.
+    onPointerDown: (event) => {
+      own.onPointerDown?.(event);
+      dismissed.current = true;
+      hide();
     },
     // A cancelled pointer (a touch turned into a scroll, a lost capture) is no longer on the trigger.
     onPointerCancel: (event) => {
