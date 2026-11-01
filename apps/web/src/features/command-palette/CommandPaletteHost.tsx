@@ -19,8 +19,8 @@ import { useShellSelector } from "../../shell/useShellSelector.js";
 import { announce, forget } from "../app-shell/announcer";
 import { countText, GROUPS, noResultsText, PALETTE_COPY, refusedText } from "./copy";
 import { reportPalette, type PaletteVia } from "./paletteEvents";
+import { buildIndex } from "./rank";
 import {
-  GROUP_ORDER,
   PALETTE_COMMAND,
   getPaletteSources,
   subscribePaletteSources,
@@ -64,12 +64,6 @@ const queryLength = (): number =>
   document.querySelector<HTMLInputElement>('[data-cmp="CMP-059"] [role="combobox"]')?.value.trim()
     .length ?? 0;
 
-/** Rows in E10-D02 f11's fixed group order, stable within a group (source order). */
-function ordered(rows: readonly PaletteRow[]): PaletteRow[] {
-  const at = (row: PaletteRow): number => GROUP_ORDER.indexOf(row.group);
-  return [...rows].sort((a, b) => at(a) - at(b));
-}
-
 export function CommandPaletteHost(): JSX.Element {
   const { open: shown, epoch } = useSyncExternalStore(subscribeOpen, getOpenState, getOpenState);
   const sources = useSyncExternalStore(subscribePaletteSources, getPaletteSources);
@@ -95,8 +89,9 @@ export function CommandPaletteHost(): JSX.Element {
       claims: getMeClaims(),
       bindings: getBindings(),
       isValid: isCommandValid,
+      viewAs: null, // no client view-as source yet (#304 gap 13)
     };
-    return ordered(sources.flatMap((s) => s.rows(ctx)));
+    return buildIndex(sources, ctx);
   }, [epoch, me, sources]);
 
   const symbolsSearched = sources.some((s) => s.group === GROUPS.symbol);
