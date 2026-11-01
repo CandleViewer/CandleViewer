@@ -152,6 +152,20 @@ describe("a REST read never brings back what was taken (SR-E29-11)", () => {
     expect(store.getSnapshot().source).toBe("rest");
   });
 
+  it("a fallback read after the narrowed snap brings the kept accounts back, not the candidate", () => {
+    const store = live();
+    // `23` §9.5: the reset, then the snap built under the new scope: it serves MAIN and SUB1 only
+    store.applyFrames([reset("narrowed"), snap({ positions: kept })]);
+    // the link drops before the directory has settled the narrowing; REST is the fallback
+    store.setLink(false);
+    store.applyFrames([reset("reconnect")]);
+    store.applyRest(restItems, 9_000);
+    store.commit();
+    expect(store.getSnapshot().source).toBe("rest");
+    // the snap released the accounts it served; SUB2 is still a candidate, so its rows stay out
+    expect(store.getSnapshot().rows.map((r) => r.accountId)).toEqual([MAIN, SUB1, SUB1]);
+  });
+
   it("an over-cap account's rows leave when the cap is known, and no read brings them back", () => {
     const store = started();
     store.applyRest(restItems, 1_000);
