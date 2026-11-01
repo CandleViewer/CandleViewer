@@ -56,6 +56,7 @@ from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.invite_repository import InviteAudit
 from candleviewer.auth.invite_service import InviteService, InviteTamperReason
 from candleviewer.auth.models import CreatedInvite, InviteCreateRequest, InviteRecord
+from candleviewer.auth.password_policy import BreachedListUnavailable
 from candleviewer.auth.scopes import DenyReason, ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.storage.errors import ACTOR_ROLE_REVOKED, ActorNotAuthorised, WriteAheadTimeout
@@ -482,6 +483,8 @@ def make_invites_router(
             return _uniform_not_found()
         except PasswordPolicyViolation as exc:
             return _problem(422, "Unprocessable entity", exc.reason, code="password_policy")
+        except BreachedListUnavailable:  # #5269: fail closed, nothing consumed (logged at start)
+            return _problem(503, "Service unavailable", "service temporarily unavailable")
         return JSONResponse(
             status_code=200,
             content={

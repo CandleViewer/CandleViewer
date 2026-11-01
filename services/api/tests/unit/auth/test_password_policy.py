@@ -10,14 +10,20 @@ from pathlib import Path
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 from candleviewer.auth import password_policy as pp
 from candleviewer.auth.errors import PasswordPolicyViolation
 from candleviewer.auth.invite_service import check_password_policy
+from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES, auth_breached_list_rows
 
 _USER, _EMAIL = "annie", "ann@example.com"
 GOOD = "correct horse battery staple"
-_LISTED = "passwordpassword"  # on the committed seed list
+_LISTED = "passwordpassword"  # on the committed SecLists list (and the former seed)
+#: A common password of 14 code points or more on the SecLists list (#5269), not on the seed.
+_COMMON = "qwertyuiopasdfghjkl"
+#: The SecLists commit the committed list was generated from (#5269, `04` SR-028).
+_SECLISTS = "00f80ec9cc39bed63ee40cf6805a6b1b77e87644"
 
 
 def _check(pw: str, breached: frozenset[str] | None = None) -> pp.PolicyVerdict | None:
@@ -98,6 +104,91 @@ def test_the_committed_list_parses_and_names_its_generator() -> None:
     text = pp.BREACHED_LIST_PATH.read_text(encoding="utf-8")
     assert "build_breached_passwords.py" in text
     assert pp.digest(_LISTED) in pp.breached_list()
+
+
+def test_the_committed_list_is_the_seclists_list_above_the_floor() -> None:
+    """#5269: not the 8-entry seed; its header names the commit and both source files."""
+    text = pp.BREACHED_LIST_PATH.read_text(encoding="utf-8")
+    header = [line for line in text.splitlines() if line.startswith("#")]
+    assert f"# SecLists commit: {_SECLISTS}" in header and "SEED ONLY" not in text
+    for name in ("xato-net-10-million-passwords-1000000.txt", "Pwdb_top-1000000.txt"):
+        assert any(name in line and " sha256 " in line for line in header), name
+    assert len(pp.breached_list()) >= pp.BREACHED_LIST_MIN == 50_000
+
+
+def test_a_common_password_of_14_or_more_code_points_is_breached() -> None:
+    assert len(_COMMON) >= pp.MIN_LENGTH
+    assert _check(_COMMON) == pp.PolicyVerdict(pp.PolicyCode.BREACHED, pp.PolicyRule.BREACHED)
+
+
+def _unusable(directory: Path, kind: str) -> Path:
+    """A list file of *kind*: absent, empty, the seed's size (8), malformed, not UTF-8, a dir."""
+    path = directory / f"{kind}.sha1"
+    if kind == "empty":
+        path.write_text("")
+    elif kind == "seed-sized":
+        path.write_text("# seed\n" + "".join(f"{pp.digest(f'seed-{i}')}\n" for i in range(8)))
+    elif kind == "malformed":
+        path.write_text("xyz\n")
+    elif kind == "not-utf8":
+        path.write_bytes(b"\xff\xfe")
+    elif kind == "a-directory":
+        path.mkdir()
+    return path
+
+
+@pytest.mark.parametrize(
+    ("kind", "reason"),
+    [
+        ("missing", "missing"),
+        ("empty", "too_small"),
+        ("seed-sized", "too_small"),
+        ("malformed", "malformed"),
+        ("not-utf8", "unreadable"),
+        ("a-directory", "unreadable"),
+    ],
+)
+def test_an_unusable_list_fails_closed_and_is_logged_and_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, reason: str
+) -> None:
+    """#5269: never silently allow. Every `check` without a list raises, whatever the password."""
+    path = _unusable(tmp_path, kind)
+    monkeypatch.setattr(pp, "BREACHED_LIST_PATH", path)
+    auth_breached_list_rows.set(72_540)
+    with capture_logs() as logs:
+        with pytest.raises(pp.BreachedListUnavailable) as refused:
+            pp.breached_list()
+        with pytest.raises(pp.BreachedListUnavailable):
+            _check(GOOD)  # a password that passes every rule is still refused
+        with pytest.raises(pp.BreachedListUnavailable):
+            check_password_policy(GOOD, username=_USER, email=_EMAIL)
+    assert refused.value.reason == reason
+    assert auth_breached_list_rows._value.get() == 0
+    unavailable = [e for e in logs if e["event"] == "auth.breached_list_unavailable"]
+    assert unavailable == [  # once, at the first read; never a path or a digest
+        {
+            "event": "auth.breached_list_unavailable",
+            "log_level": "error",
+            "reason": reason,
+            "minimum": pp.BREACHED_LIST_MIN,
+        }
+    ]
+
+
+def test_a_list_at_the_floor_loads_and_one_below_it_does_not(tmp_path: Path) -> None:
+    path = tmp_path / "floor.sha1"
+    path.write_text("".join(f"{pp.digest(f'x{i}')}\n" for i in range(pp.BREACHED_LIST_MIN)))
+    assert len(pp.load_breached_list(path)) == pp.BREACHED_LIST_MIN
+    with pytest.raises(pp.BreachedListUnavailable, match="too_small"):
+        pp.load_breached_list(path, minimum=pp.BREACHED_LIST_MIN + 1)
+
+
+def test_a_usable_list_sets_the_gauge_to_its_size(tmp_path: Path) -> None:
+    path = tmp_path / "ok.sha1"
+    path.write_text("".join(f"{pp.digest(f'y{i}')}\n" for i in range(pp.BREACHED_LIST_MIN)))
+    assert len(pp.breached_list(path)) == pp.BREACHED_LIST_MIN
+    assert auth_breached_list_rows._value.get() == pp.BREACHED_LIST_MIN
+    assert "auth_breached_list_rows" in AUTH_EXPORTED_NAMES  # scraped
 
 
 @pytest.mark.parametrize("line", ["xyz", "A" * 40, "0" * 39])

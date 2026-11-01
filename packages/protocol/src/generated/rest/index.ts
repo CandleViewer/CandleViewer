@@ -15449,7 +15449,7 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
-      /** @description `audit_unavailable` when the records written ahead cannot be written (nothing changed); `store_unavailable` when the backend is not wired, or when the rotation failed after the new password was committed (the new password stands: sign in again with it). */
+      /** @description `audit_unavailable` when the records written ahead cannot be written (nothing changed); `store_unavailable` when the backend is not wired, when the local breached-password list is unusable (missing, malformed or below its minimum size, #5269: the policy fails closed, no password is checked and nothing changes), or when the rotation failed after the new password was committed (the new password stands: sign in again with it). */
       503: {
         headers: {
           [name: string]: unknown;

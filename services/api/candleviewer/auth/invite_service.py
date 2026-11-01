@@ -117,7 +117,8 @@ def hash_token(token: str) -> str:
 
 def check_password_policy(password: str, *, username: str, email: str) -> None:
     """SR-028 through the one policy module (`auth.password_policy`, #2330 BQ-234): >= 14 code
-    points, not breached or trivially patterned, not derived from identity."""
+    points, not breached or trivially patterned, not derived from identity. Raises
+    `PasswordPolicyViolation`, or `BreachedListUnavailable` when the list is unusable (#5269)."""
     verdict = password_policy.check(password, username=username, email=email)
     if verdict is not None:
         raise PasswordPolicyViolation(_INVITE_MESSAGES[verdict.rule])
@@ -148,6 +149,10 @@ class InviteService:
         self._mfa = mfa
         self._clock = clock
         self._throttle = throttle or PerIpLoginThrottle(max_attempts=10, window_s=60.0)
+        try:  # read at start (#5269): an unusable list is logged and counted here, once
+            password_policy.breached_list()
+        except password_policy.BreachedListUnavailable:
+            pass  # every redemption then refuses: `check_password_policy` raises it (fail closed)
 
     # -- owner side --------------------------------------------------------
 
