@@ -5,6 +5,7 @@ import { useShellSelector } from "../../shell/useShellSelector.js";
 import { bindingFor } from "../../keymap/keymap";
 import { SymbolSearchTrigger } from "../symbol-search/SymbolSearch";
 import { useSymbolSearch } from "../symbol-search/searchSession";
+import { togglePalette } from "../command-palette/CommandPaletteHost";
 import { sessionApi, SIGN_OUT_FAILED, type SessionApi } from "../session/sessionApi";
 import { announce, forget } from "./announcer";
 import { envBadgeName } from "./TopBarEnvBadge";
@@ -15,8 +16,8 @@ const ENV_ROUTE_KEY = "env:route"; // one message per navigation
 /**
  * CMP-072's container (#304 S2) on `useShellSelector`: the environment (`unknown` is ENV UNKNOWN,
  * never a default), `/me`'s name and role, and Sign out by SCR-005's path, `POST /auth/logout` then
- * `endSession()`; a logout that revoked nothing keeps the session and says so. No `global.palette`
- * handler exists before E10-S03, so search stays T2. A route change announces the badge politely
+ * `endSession()`; a logout that revoked nothing keeps the session and says so. Search opens SCR-012
+ * (E10-S05, #5236), the same toggle as `Ctrl+K`. A route change announces the badge politely
  * through the shell announcer (`14` SCR-010 A11y; E10-D03 §3.5).
  */
 export function TopBarSlot({
@@ -61,6 +62,7 @@ export function TopBarSlot({
       connection={connection}
       {...(target === null ? {} : { symbol: <SymbolSearchTrigger target={target} /> })}
       searchHint={bindingFor("global.palette")}
+      onSearch={() => togglePalette("trigger")}
       onSignOut={onSignOut}
       signingOut={signOut.busy}
       signOutFailed={signOut.failed}

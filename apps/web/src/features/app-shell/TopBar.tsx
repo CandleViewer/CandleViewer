@@ -14,8 +14,8 @@ export interface TopBarProps {
   /** SCR-102's CMP-219 (E08-S09) once a workspace binds a pane; absent, nothing is drawn in its place. */
   readonly symbol?: ReactNode;
   readonly searchHint: string; // "Ctrl+K"
-  /** Opens the command palette; absent while no palette is registered (E10-S03). */
-  readonly onSearch?: () => void;
+  /** Opens SCR-012, the command palette (E10-S05, #5236): the same toggle as `Ctrl+K`. */
+  readonly onSearch: () => void;
   readonly onSignOut: () => void;
   readonly signingOut: boolean;
   readonly signOutFailed: boolean;
@@ -24,7 +24,6 @@ export interface TopBarProps {
 /** PROPOSED copy: no merged text names these placeholders' reasons. */
 export const PICKER_REASON = "Not available in this build.";
 export const PICKER_NOTE = "Pickers: not available in this build.";
-export const SEARCH_REASON = "The command palette is not available in this build.";
 
 /** CMP-084's id: focus lands here after SCR-157's Later (E10-D04 T-19) and its dialog (§9.1). */
 export const SEARCH_TRIGGER_ID = "cv-search-trigger";
@@ -88,16 +87,13 @@ export function TopBar(props: TopBarProps): JSX.Element {
         id={SEARCH_TRIGGER_ID}
         variant="ghost"
         size="sm"
-        {...(onSearch === undefined
-          ? { disabledReason: SEARCH_REASON }
-          : { onClick: onSearch, "aria-keyshortcuts": ariaKeys(props.searchHint) })}
+        onClick={onSearch}
+        aria-keyshortcuts={ariaKeys(props.searchHint)}
+        aria-haspopup="dialog"
         data-cmp="CMP-084"
       >
         Search commands <kbd style={KBD}>{props.searchHint}</kbd>
       </Button>
-      <span aria-hidden style={NOTE}>
-        {onSearch === undefined ? SEARCH_REASON : null}
-      </span>
       {props.connection}
       <span style={{ marginLeft: "auto" }}>
         {user === null ? null : `${user.name} · ${roleWord(user.role)}`}

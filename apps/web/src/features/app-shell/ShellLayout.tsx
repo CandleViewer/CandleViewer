@@ -6,6 +6,7 @@ import { AppShell } from "./AppShell";
 import { NavRailFrame } from "./NavRailFrame";
 import { RIGHT_RAIL_LABEL, RightRail } from "./RightRail";
 import { SymbolSearchHost } from "../symbol-search/SymbolSearch";
+import { CommandPaletteHost } from "../command-palette/CommandPaletteHost";
 import { InShellProvider } from "./ScreenRoot";
 import {
   ShellBannerSlot,
@@ -52,6 +53,8 @@ export function ShellLayout(): JSX.Element {
         </AppShell>
         <ShellAnnouncer />
         <SymbolSearchHost mainRef={mainRef} />
+        {/* SCR-012 (E10-S05): inside the shell only, so `Ctrl+K` stays inert on the public routes. */}
+        <CommandPaletteHost mainRef={mainRef} />
       </InShellProvider>
     </GatedAnnounceProvider>
   );

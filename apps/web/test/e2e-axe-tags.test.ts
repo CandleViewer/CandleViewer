@@ -58,6 +58,7 @@ describe("the a11y gate's axe tags (#3700)", () => {
     // selects them (target-size, aria-roledescription, audio-caption). Add any new tagged scan here.
     expect(calls.map((c) => c.file).sort()).toEqual([
       "a11y/axe.collect.ts",
+      "command-palette.spec.ts", // SCR-012 open (#5236)
       "e09-auth-a11y.spec.ts",
       "e09-auth-a11y.spec.ts",
       "shell-chrome.spec.ts", // the shell chrome per theme and role (#304)
