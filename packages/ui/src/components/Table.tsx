@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type FocusEvent,
   type JSX,
   type KeyboardEvent,
@@ -29,7 +30,7 @@ import { LEAVE_GRACE_MS } from "./Tooltip.js";
 import { cx } from "./internal/cx.js";
 import { useGatedAnnounce } from "./internal/disabledReason.js";
 import { useLayerPortal } from "./internal/layers.js";
-import { leadingSpacers, rowsInView } from "./internal/tableWindow.js";
+import { bodyParts, rowsInView } from "./internal/tableWindow.js";
 import { useAnchoredPosition } from "./internal/useAnchoredPosition.js";
 
 export type TableSortDirection = "ascending" | "descending";
@@ -73,6 +74,8 @@ interface TableColumnBase {
   readonly sortDisabledReason?: string;
   /** A glyph and a word after the label (E08-D07 §4.2: a stale column's "⚠", named "stale"). */
   readonly headerStatus?: TableHeaderStatus;
+  /** Words visually hidden after the label, in the header's name: a narrow column's unit ("uPnL" "(USDT)"). */
+  readonly headerHint?: string;
 }
 
 /** A text column: the cell truncates with an ellipsis and keeps its full text in the DOM. */
@@ -115,6 +118,27 @@ export interface TableRowWindow {
   readonly total: number;
 }
 
+/**
+ * A treegrid row's place in its tree (E29-D04 §2.7, D04H A-6.2 and A-6.5; E29-D05 §5.1, §5.3 F-03), read from the
+ * host's model, never from the DOM: a windowed set counts the rows it does not draw.
+ */
+export interface TableTreeRow {
+  /** Its depth, outermost first, from 1 (`aria-level`). */
+  readonly level: number;
+  /** A row that holds others: whether they are shown (`aria-expanded`). Absent on a leaf. */
+  readonly expanded?: boolean | undefined;
+  /** Its place among its siblings, from 1 (`aria-posinset`). */
+  readonly posinset: number;
+  /** Its siblings' count, itself included (`aria-setsize`). */
+  readonly setsize: number;
+}
+
+/** A row of the host's whole list, found by its key: its data and its absolute index, from 0 (`rowByKey`). */
+export interface TableKeptRow<T> {
+  readonly row: T;
+  readonly index: number;
+}
+
 /** How a custom row's cell takes part in the grid (`TableRowContext.cellProps`). */
 export interface TableCellOptions {
   /** The row's header: a `th scope="row"` (`rowheader`), as CMP-161's symbol. */
@@ -123,6 +147,16 @@ export interface TableCellOptions {
   readonly span?: number;
   /** A number: end-aligned, never wrapped. */
   readonly numeric?: boolean;
+  /**
+   * The cell's one control takes focus in its place, as the select box does (CMP-114's row checkbox): the cell takes
+   * no `tabindex`, and the control spreads `grid.tabIndexOf(column)`. Its own keys (Space on a box) act natively.
+   */
+  readonly widget?: boolean;
+  /**
+   * The cell holds controls, as an `interactive` column's do (CMP-114's CMP-057): they leave the Tab order while
+   * the grid roves; `Enter` or `F2` moves focus to the first of them and `Esc` brings it back to the cell.
+   */
+  readonly interactive?: boolean;
   /**
    * Words the table's one CMP-016 echo shows on hover and, in grid mode, on keyboard focus (`aria-hidden`: the cell
    * already carries them for assistive technology, E09-D09 2b), such as a stale row's "Last update 10:31:02 UTC".
@@ -154,6 +188,12 @@ export interface TableCellProps {
   readonly "data-heading"?: "" | undefined;
   readonly "data-cv-echo"?: string | undefined;
   readonly "data-cv-cut"?: string | undefined;
+  readonly "data-cv-widget"?: "" | undefined;
+  readonly "data-cv-interactive"?: "" | undefined;
+  /** A pinned leading column's place among the pinned ones, from 0 (`stickyFirstColumn`). */
+  readonly "data-pin-start"?: number | undefined;
+  /** The pinned trailing column (`stickyLastColumn`). */
+  readonly "data-pin-end"?: "" | undefined;
 }
 
 /** Spread on a custom row's `<tr>`. */
@@ -161,6 +201,13 @@ export interface TableRowProps {
   readonly className: string;
   readonly role?: string | undefined;
   readonly "aria-rowindex": number;
+  /** With `treegrid`, the row's place in its tree (`treeRow`); none on a totals row. */
+  readonly "aria-level"?: number | undefined;
+  readonly "aria-expanded"?: boolean | undefined;
+  readonly "aria-posinset"?: number | undefined;
+  readonly "aria-setsize"?: number | undefined;
+  /** A totals row's pin below the body (`--cv-table-after`, the totals rows after it). */
+  readonly style?: CSSProperties | undefined;
 }
 
 /** CMP-049's row contract for a row the host draws (`renderRow`; CMP-161 WatchlistRow). */
@@ -180,6 +227,8 @@ export interface TableRowContext {
    * on the focused cell and is said once, politely, through the gated announcement (`GatedAnnounceProvider`).
    */
   readonly refuse: (reason: string) => void;
+  /** The roving `tabindex` of a `widget` cell's control (`cellProps(i, { widget: true })`). */
+  readonly tabIndexOf: (column: number) => 0 | -1 | undefined;
 }
 
 export interface TableProps<T> {
@@ -265,7 +314,48 @@ export interface TableProps<T> {
    * one card per row that keeps the grid's roles, its one Tab stop and its keys (SCR-100 at 200 %, E08-D07 D30).
    */
   readonly reflow?: "table" | "grid";
+  /**
+   * The WAI-ARIA APG Treegrid pattern (E29-D04 §2.7, D04H A-6.2 to A-6.5), which implies grid mode: rows nest by
+   * `treeRow`'s `level`, outermost first; `→` on a collapsed row's first cell expands it and on an expanded one
+   * moves to its first child, `←` collapses an expanded row and otherwise moves from a row's first cell to its
+   * parent (`onExpandedChange` asks; the host shows or hides the children). A treegrid never stacks: its rows nest,
+   * so the region scrolls sideways under its pinned columns instead (E29-D02 §11.5, board 19).
+   */
+  readonly treegrid?: boolean;
+  /** Each body row's place in its tree, from the host's model (with `treegrid`; F-03: never counted in the DOM). */
+  readonly treeRow?: ((row: T) => TableTreeRow) | undefined;
+  /** `→` or `←` on a row that holds others asks to show or hide them; the host passes the next `rows`. */
+  readonly onExpandedChange?: ((row: T, expanded: boolean) => void) | undefined;
+  /**
+   * The host's custom rows carry their own `aria-selected` (CMP-114 owns its selection, which reaches rows outside
+   * the window): the grid is `aria-multiselectable`.
+   */
+  readonly multiselectable?: boolean;
+  /**
+   * Finds any row of the host's whole list by key (E29-D05 §5.3 G-01): with `rowWindow`, the remembered cell's row
+   * stays mounted when it leaves the window, at its absolute `aria-rowindex`, the one drawn row outside it, so focus
+   * and the one Tab stop stay on it (a re-sort that moves it away included). `undefined` when the row has gone.
+   */
+  readonly rowByKey?: ((key: string) => TableKeptRow<T> | undefined) | undefined;
+  /**
+   * Pins leading columns while the region scrolls sideways (E29-D04 §2.7): `true` the first, a number that many, at
+   * most four (SCR-063's select, Env, Account and Symbol), the select column counted. A focused cell scrolls clear
+   * of them (`scroll-margin-inline-start`, E29-D05 §6.2 F-01). A merged cell is pinned only within them.
+   */
+  readonly stickyFirstColumn?: boolean | number;
+  /** Pins the last column (an actions column) to the region's end; focused cells scroll clear of it too. */
+  readonly stickyLastColumn?: boolean;
+  /**
+   * Totals rows (D04H A-6.4, A-6.5): a trailing rowgroup after every body row, pinned to the region's bottom, each
+   * led by its rowheader ("LIVE total"), drawn by `renderRow` or else by the columns. They take the rows after the
+   * body's in `aria-rowindex` and `aria-rowcount`; `↓` reaches them from the last row, and focused body cells scroll
+   * clear of them. Never selectable, and no row menu.
+   */
+  readonly totalRows?: readonly T[] | undefined;
 }
+
+/** The pinned leading columns a table supports (SCR-063's select, Env, Account and Symbol). */
+const MAX_PINNED = 4;
 
 /** The v0 bound of a table drawn whole (#266); a longer list takes the host's window (`rowWindow`). */
 const MAX_ROWS = 200;
@@ -694,6 +784,54 @@ interface RowsInViewHandle {
   readonly want: (index: number) => void;
 }
 
+/** The custom properties `usePinOffsets` writes on the shell; the stylesheet reads them (`table.css`). */
+const PIN_PROPERTIES = [
+  ...Array.from({ length: MAX_PINNED - 1 }, (_, i) => `--cv-table-pin-${String(i + 1)}`),
+  "--cv-table-pin-start",
+  "--cv-table-pin-end",
+];
+
+/**
+ * The pinned columns' offsets (`stickyFirstColumn`, `stickyLastColumn`; E29-D05 §6.2 F-01), measured from the header
+ * row's cells, which carry their columns' widths: `--cv-table-pin-<n>` is where the n-th pinned column starts (the
+ * widths before it), `--cv-table-pin-start` the pinned leading columns' width and `--cv-table-pin-end` the pinned last
+ * column's, set on the shell from a ResizeObserver's callbacks, after the browser's own layout: a mount forces no
+ * synchronous reflow and a resize re-renders nothing. One row is measured, never one per body row. Without
+ * ResizeObserver nothing is measured, and the first pinned column still sticks at 0.
+ */
+function usePinOffsets(
+  shell: RefObject<HTMLDivElement | null>,
+  table: RefObject<HTMLTableElement | null>,
+  pinStart: number,
+  pinEnd: boolean,
+  layout: string,
+): void {
+  useEffect(() => {
+    const host = shell.current;
+    const header = table.current?.querySelector("thead tr");
+    if (host == null || header == null || (pinStart === 0 && !pinEnd)) return undefined;
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const cells = [...header.children];
+    const widthOf = (cell: Element | undefined): number => cell?.getBoundingClientRect().width ?? 0;
+    const measure = (): void => {
+      let start = 0;
+      for (let c = 0; c < pinStart; c += 1) {
+        if (c > 0) host.style.setProperty(`--cv-table-pin-${String(c)}`, `${String(start)}px`);
+        start += widthOf(cells[c]);
+      }
+      host.style.setProperty("--cv-table-pin-start", `${String(start)}px`);
+      const end = pinEnd ? widthOf(cells[cells.length - 1]) : 0;
+      host.style.setProperty("--cv-table-pin-end", `${String(end)}px`);
+    };
+    const observer = new ResizeObserver(measure);
+    for (const cell of cells) observer.observe(cell);
+    return () => {
+      observer.disconnect();
+      for (const name of PIN_PROPERTIES) host.style.removeProperty(name);
+    };
+  }, [shell, table, pinStart, pinEnd, layout]);
+}
+
 /**
  * The rows the region shows, reported once per change: on scroll (the region's `onScroll`), as the region resizes
  * and after a mount. Measured from layout (`rowsInView`): the body's top, the sticky header's and one drawn row's
@@ -878,7 +1016,11 @@ function RowMenu({ items, label, tabIndex, announceReason, onKeyDown }: RowMenuP
  * header label's or `cut` text's whole words, in table mode too (on hover, and on a sort button's keyboard focus); a
  * held Enter on a T2 sort header says its reason once; focus kept through a commit: a reorder leaves it on the moved
  * row, and a removed row hands it to the next row, else the previous (E08-D07 §6.3); `announce` for a host that owns
- * the live region.
+ * the live region. E29-D04 §2.7's treegrid (D04H A-6.2 to A-6.5): `treegrid` with each row's `treeRow` (`aria-level`,
+ * `aria-expanded`, `aria-posinset` and `aria-setsize` from the host's model), `→` / `←` on a row's first cell to
+ * expand, collapse, or move to the first child or the parent; the remembered row kept mounted outside the window
+ * (`rowByKey`, E29-D05 §5.3 G-01); pinned leading and last columns that focused cells scroll clear of (F-01); and a
+ * trailing, pinned totals rowgroup (`totalRows`), each row led by its rowheader.
  */
 export function Table<T>({
   columns,
@@ -905,6 +1047,14 @@ export function Table<T>({
   announce,
   sortReasonId,
   reflow = "table",
+  treegrid = false,
+  treeRow,
+  onExpandedChange,
+  multiselectable = false,
+  rowByKey,
+  stickyFirstColumn = false,
+  stickyLastColumn = false,
+  totalRows,
 }: TableProps<T>): JSX.Element {
   const captionId = useId();
   const reasonBase = useId();
@@ -942,25 +1092,29 @@ export function Table<T>({
   ];
   const gridMode =
     grid ||
+    treegrid ||
     selectable ||
     rowActions !== undefined ||
     columns.some((column) => column.interactive === true);
   const scrolls = useScrolls(region, `${state}:${rows.length}:${gridColumns.length}`);
+  // A treegrid never stacks (its rows nest): a zero threshold keeps it a grid at every width.
   const stacked = useStacked(
     shell,
     probe,
-    columns.reduce((sum, column) => sum + (column.minWidthEm ?? DEFAULT_MIN_WIDTH_EM), 0) +
-      (gridColumns.length - columns.length) * CONTROL_COLUMN_EM,
+    treegrid
+      ? 0
+      : columns.reduce((sum, column) => sum + (column.minWidthEm ?? DEFAULT_MIN_WIDTH_EM), 0) +
+          (gridColumns.length - columns.length) * CONTROL_COLUMN_EM,
   );
   /** Arrow navigation and one Tab stop: grid mode laid out as rows and columns, or stacked as cards (`reflow`). */
   const roving = gridMode && (!stacked || reflow === "grid");
-  // Explicit roles: `grid` / `gridcell` while roving; while stacked, the table roles, because `display: block`
-  // strips native table semantics in some engines.
+  // Explicit roles: `grid` (or `treegrid`) / `gridcell` while roving; while stacked, the table roles, because
+  // `display: block` strips native table semantics in some engines.
   const role = (
     name: "table" | "rowgroup" | "row" | "columnheader" | "rowheader" | "cell",
   ): { role?: string } =>
     roving && name === "table"
-      ? { role: "grid" }
+      ? { role: treegrid ? "treegrid" : "grid" }
       : roving && name === "cell"
         ? { role: "gridcell" }
         : stacked
@@ -993,22 +1147,55 @@ export function Table<T>({
   // The remembered cell (the Tab stop), clamped to the grid as rows come and go; at first the first body cell.
   // Body rows are numbered in the whole list: `r` 1 is its first row, whether drawn or not. A drawn body row is
   // remembered by its key too, so a reorder carries the Tab stop with its row (E08-D07 §6.3: a re-rank keeps focus
-  // on the same symbol); a row gone leaves its place, clamped: the next row, else the previous.
+  // on the same symbol); a row gone leaves its place, clamped: the next row, else the previous. Totals rows follow
+  // the body (`totalRows`), always drawn.
   const [active, setActive] = useState<Remembered | undefined>(undefined);
   const bodyRows = state === "populated" ? total : 0;
+  const footer = state === "populated" ? (totalRows ?? []) : [];
+  const footerKeys = footer.map(rowKey);
+  const lastR = bodyRows + footer.length;
   const firstDrawn = offset + 1;
   const lastDrawn = offset + drawnCount;
-  const drawn = (r: number): boolean => r === 0 || (r >= firstDrawn && r <= lastDrawn);
+  const inWindow = (r: number): boolean => r >= firstDrawn && r <= lastDrawn;
+  // G-01 (E29-D05 §5.3): the remembered row, outside the window, stays drawn through the host's lookup.
+  const remembered = active?.key;
+  const kept =
+    rowByKey === undefined ||
+    remembered === undefined ||
+    keys.includes(remembered) ||
+    footerKeys.includes(remembered)
+      ? undefined
+      : rowByKey(remembered);
+  const keptR =
+    kept !== undefined && kept.index >= 0 && kept.index < bodyRows && !inWindow(kept.index + 1)
+      ? kept.index + 1
+      : undefined;
+  const isFooter = (r: number): boolean => r > bodyRows && r <= lastR;
+  const drawn = (r: number): boolean => r === 0 || inWindow(r) || r === keptR || isFooter(r);
   const lastC = gridColumns.length - 1;
   const keyAt = (r: number): string | undefined =>
-    r >= firstDrawn && r <= lastDrawn ? keys[r - firstDrawn] : undefined;
-  const moved = active?.key === undefined ? -1 : keys.indexOf(active.key);
+    inWindow(r)
+      ? keys[r - firstDrawn]
+      : r === keptR
+        ? remembered
+        : isFooter(r)
+          ? footerKeys[r - bodyRows - 1]
+          : undefined;
+  /** The body row drawn at `r` (in the window, or the kept row); never a totals row. */
+  const bodyRowAt = (r: number): T | undefined =>
+    inWindow(r) ? rows[r - firstDrawn] : r === keptR ? kept?.row : undefined;
+  const moved = remembered === undefined ? -1 : keys.indexOf(remembered);
+  const movedFooter = remembered === undefined ? -1 : footerKeys.indexOf(remembered);
   const wanted: CellAt =
     active === undefined
       ? { r: bodyRows > 0 ? firstDrawn : 0, c: 0 }
       : moved >= 0 && moved < drawnCount
         ? { r: firstDrawn + moved, c: active.c }
-        : active;
+        : keptR !== undefined
+          ? { r: keptR, c: active.c }
+          : movedFooter >= 0
+            ? { r: bodyRows + 1 + movedFooter, c: active.c }
+            : active;
   /** Remembers the cell at `place`, with its row's key while that row is drawn. */
   const remember = (place: CellAt): void => {
     const key = keyAt(place.r);
@@ -1016,7 +1203,7 @@ export function Table<T>({
     setActive({ r: place.r, c: place.c, key });
   };
   const stop: CellAt = {
-    r: Math.min(Math.max(wanted.r, 0), bodyRows),
+    r: Math.min(Math.max(wanted.r, 0), lastR),
     c: Math.min(Math.max(wanted.c, 0), lastC),
   };
   // The Tab stop is always drawn: a remembered row outside the window lends it to the nearest drawn row.
@@ -1026,8 +1213,24 @@ export function Table<T>({
       ? { r: Math.min(Math.max(stop.r, firstDrawn), lastDrawn), c: stop.c }
       : { r: 0, c: stop.c };
   // The context menu's row: the remembered body row (the header row keeps the last; the keys open it from the body).
-  const menuR = stop.r >= firstDrawn && stop.r <= lastDrawn ? stop.r : firstDrawn;
-  const activeRow = state === "populated" && drawnCount > 0 ? rows[menuR - firstDrawn] : undefined;
+  // A totals row has none.
+  const menuR = inWindow(stop.r) || stop.r === keptR || isFooter(stop.r) ? stop.r : firstDrawn;
+  const activeRow = state === "populated" && drawnCount > 0 ? bodyRowAt(menuR) : undefined;
+  // Pinned columns (`stickyFirstColumn`, `stickyLastColumn`): none while stacked, whose cells are blocks.
+  const pinStart = stacked
+    ? 0
+    : Math.min(
+        MAX_PINNED,
+        gridColumns.length,
+        stickyFirstColumn === true ? 1 : Math.max(0, Math.trunc(Number(stickyFirstColumn) || 0)),
+      );
+  const pinEnd = !stacked && stickyLastColumn && gridColumns.length > pinStart;
+  /** A cell's pin: a leading cell pinned only within the pinned columns, the end only as the last column alone. */
+  const pinOf = (c: number, span = 1): { "data-pin-start"?: number; "data-pin-end"?: "" } => ({
+    ...(c + span <= pinStart ? { "data-pin-start": c } : {}),
+    ...(pinEnd && c === lastC && span === 1 ? { "data-pin-end": "" as const } : {}),
+  });
+  usePinOffsets(shell, tableRef, pinStart, pinEnd, `${columns.map((c) => c.id).join()}:${lastC}`);
   // The context menu is controlled so its items are asked for only while it is open.
   const [contextOpen, setContextOpen] = useState(false);
   // A cell a key moves focus to outside the window: focused once the host draws it.
@@ -1257,6 +1460,21 @@ export function Table<T>({
   };
 
   /**
+   * A click on a treegrid row's first cell, outside any control in it, opens or closes a row that holds others: the
+   * pointer twin of → and ← (a group header row's one wide cell, E29-D04 §2.1).
+   */
+  const onTreeClick = (event: MouseEvent<HTMLTableElement>): void => {
+    const cell = cellOf(tableRef.current, event.target);
+    if (cell === null || placeOf(cell).c !== 0) return;
+    const control = event.target instanceof Element ? event.target.closest(TABBABLE) : null;
+    if (control !== null && control !== cell) return;
+    const row = bodyRowAt(placeOf(cell).r);
+    const tree = row === undefined ? undefined : treeRow?.(row);
+    if (row === undefined || tree?.expanded === undefined) return;
+    onExpandedChange?.(row, !tree.expanded);
+  };
+
+  /**
    * Focus to the cell covering (r, c). A row outside the window is asked of the host (`onRowsInView`); focus lands
    * once it is drawn, and meanwhile the Tab stop stays on a drawn row.
    */
@@ -1270,6 +1488,25 @@ export function Table<T>({
     pending.current = next;
     setActive(next);
     view.want(next.r - 1);
+  };
+
+  /** An expanded row's next row is its first child, unless a drawn next row sits at its own level or above. */
+  const hasChildAfter = (r: number, tree: TableTreeRow): boolean => {
+    if (r + 1 > bodyRows) return false;
+    const below = bodyRowAt(r + 1);
+    return below === undefined || (treeRow?.(below).level ?? 1) > tree.level;
+  };
+
+  /**
+   * A row's parent: the nearest drawn row above it at a lower level; past the drawn rows, `posinset` rows up, which
+   * is exact when its earlier siblings show no children (SCR-063's two levels).
+   */
+  const parentOf = (r: number, tree: TableTreeRow): number => {
+    for (let p = r - 1; p >= 1 && (inWindow(p) || p === keptR); p -= 1) {
+      const above = bodyRowAt(p);
+      if (above !== undefined && (treeRow?.(above).level ?? 1) < tree.level) return p;
+    }
+    return Math.max(1, r - Math.max(1, tree.posinset));
   };
 
   const onGridKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
@@ -1286,13 +1523,31 @@ export function Table<T>({
       return;
     }
     const { r, c } = placeOf(cell);
+    // A treegrid row's first cell takes → and ← for its tree (APG Treegrid; E29-D04 §2.7); other cells move by cell.
+    const treeAt = treegrid && c === 0 ? bodyRowAt(r) : undefined;
+    const tree = treeAt === undefined ? undefined : treeRow?.(treeAt);
     let next: CellAt;
     if (event.ctrlKey) {
       if (event.key === "Home") next = { r: 0, c: 0 };
-      else if (event.key === "End") next = { r: bodyRows, c: lastC };
+      else if (event.key === "End") next = { r: lastR, c: lastC };
       else return;
-    } else if (event.key === "ArrowUp") next = { r: Math.max(r - 1, 0), c };
-    else if (event.key === "ArrowDown") next = { r: Math.min(r + 1, bodyRows), c };
+    } else if (
+      treeAt !== undefined &&
+      tree?.expanded !== undefined &&
+      (event.key === "ArrowRight" || event.key === "ArrowLeft") &&
+      (event.key === "ArrowRight") !== tree.expanded
+    ) {
+      // → on a collapsed row expands it, ← on an expanded row collapses it: focus stays; the host redraws.
+      event.preventDefault();
+      hideEcho();
+      onExpandedChange?.(treeAt, !tree.expanded);
+      return;
+    } else if (event.key === "ArrowRight" && tree?.expanded === true && hasChildAfter(r, tree))
+      next = { r: r + 1, c: 0 };
+    else if (event.key === "ArrowLeft" && tree !== undefined && tree.level > 1)
+      next = { r: parentOf(r, tree), c: 0 };
+    else if (event.key === "ArrowUp") next = { r: Math.max(r - 1, 0), c };
+    else if (event.key === "ArrowDown") next = { r: Math.min(r + 1, lastR), c };
     else if (event.key === "ArrowLeft") next = { r, c: Math.max(c - 1, 0) };
     // A merged cell is one cell: → leaves it past its span.
     else if (event.key === "ArrowRight") next = { r, c: Math.min(c + spanOf(cell), lastC) };
@@ -1301,7 +1556,7 @@ export function Table<T>({
     else if (event.key === "PageUp")
       next = { r: Math.max(r - pageRows(region.current, cell), 0), c };
     else if (event.key === "PageDown")
-      next = { r: Math.min(r + pageRows(region.current, cell), bodyRows), c };
+      next = { r: Math.min(r + pageRows(region.current, cell), lastR), c };
     else {
       if (
         (event.key === "Enter" || event.key === "F2") &&
@@ -1316,11 +1571,12 @@ export function Table<T>({
         event.key === " " &&
         selectable &&
         r >= 1 &&
+        r <= bodyRows &&
         !cell.hasAttribute("data-cv-widget")
       ) {
         // A widget cell's own Space (the box, a button) acts natively.
         event.preventDefault();
-        const row = rows[r - firstDrawn];
+        const row = bodyRowAt(r);
         if (row !== undefined) setRow(rowKey(row), !selection.has(rowKey(row)));
       }
       return;
@@ -1347,6 +1603,7 @@ export function Table<T>({
           className="cv-table__cell cv-table__select"
           {...role("cell")}
           {...at(r, c, "widget")}
+          {...pinOf(c)}
         >
           <Checkbox
             label={`Select ${labelOf(row)}`}
@@ -1364,6 +1621,7 @@ export function Table<T>({
           className="cv-table__cell cv-table__actions"
           {...role("cell")}
           {...at(r, c, "widget")}
+          {...pinOf(c)}
         >
           <RowMenu
             items={() => rowActions?.(row) ?? []}
@@ -1385,6 +1643,7 @@ export function Table<T>({
         data-heading={index === 0 ? "" : undefined}
         {...role("cell")}
         {...at(r, c, interactive ? "interactive" : "cell")}
+        {...pinOf(c)}
       >
         {/* Stacked: a visible header label on every data cell but the heading line; hidden from AT, which
             already reads the cell's columnheader in table navigation (browse mode reads values alone). */}
@@ -1402,15 +1661,75 @@ export function Table<T>({
     );
   };
 
+  /**
+   * A totals row's cell drawn from the columns (`totalRows` without `renderRow`): its first data cell is the row's
+   * header (a `th scope="row"`), the select and actions cells are empty and plain.
+   */
+  const totalCell = (row: T, r: number, gc: GridColumn<T>, c: number): JSX.Element => {
+    if (gc.kind !== "data") {
+      return (
+        <td
+          key={`cv-${gc.kind}`}
+          className={`cv-table__cell${ring}`}
+          {...role("cell")}
+          {...at(r, c, "cell")}
+          {...pinOf(c)}
+        />
+      );
+    }
+    const { column, index } = gc;
+    const Cell = index === 0 ? "th" : "td";
+    return (
+      <Cell
+        key={column.id}
+        className={`cv-table__cell${ring}`}
+        data-numeric={endAligned(column) ? "" : undefined}
+        {...(index === 0 ? { scope: "row" as const, ...role("rowheader") } : role("cell"))}
+        {...at(r, c, "cell")}
+        {...pinOf(c)}
+      >
+        {column.numeric === undefined ? (
+          <span className="cv-table__text">{column.cell(row)}</span>
+        ) : (
+          <NumericCell column={column} row={row} />
+        )}
+      </Cell>
+    );
+  };
+
+  /** A treegrid body row's `aria-level`, `aria-expanded`, `aria-posinset` and `aria-setsize`, from `treeRow`. */
+  const treeAttrsOf = (row: T, r: number): Partial<TableRowProps> => {
+    const tree = treegrid && r <= bodyRows ? treeRow?.(row) : undefined;
+    return tree === undefined
+      ? {}
+      : {
+          "aria-level": tree.level,
+          "aria-expanded": tree.expanded,
+          "aria-posinset": tree.posinset,
+          "aria-setsize": tree.setsize,
+        };
+  };
+
+  /** A totals row's pin: the region's bottom, above the totals rows after it (`--cv-table-after` of them). */
+  const pinnedBelow = (r: number): CSSProperties =>
+    ({ "--cv-table-after": lastR - r }) as CSSProperties;
+
   /** The row contract a custom row spreads (`renderRow`): its place, its cells' roles and the roving tabindex. */
-  const contextOf = (r: number): TableRowContext => ({
+  const contextOf = (row: T, r: number): TableRowContext => ({
     index: r - 1,
-    rowProps: { className: "cv-table__row", "aria-rowindex": r + 1, ...role("row") },
+    rowProps: {
+      className: isFooter(r) ? "cv-table__row cv-table__total-row" : "cv-table__row",
+      "aria-rowindex": r + 1,
+      ...role("row"),
+      ...treeAttrsOf(row, r),
+      ...(isFooter(r) ? { style: pinnedBelow(r) } : {}),
+    },
     cellProps: (column, options = {}) => {
       const index = Math.min(Math.max(Math.trunc(column), 0), columns.length - 1);
       const span = Math.max(1, Math.min(Math.trunc(options.span ?? 1), columns.length - index));
       const words = options.echo?.trim();
       const cut = options.cut?.trim();
+      const widget = options.widget === true;
       return {
         className: cx(
           "cv-table__cell",
@@ -1426,12 +1745,15 @@ export function Table<T>({
         "data-heading": index === 0 ? "" : undefined,
         "data-cv-echo": words === undefined || words === "" ? undefined : words,
         "data-cv-cut": cut === undefined || cut === "" ? undefined : cut,
+        ...pinOf(index, span),
         ...(gridMode
           ? {
               "data-cv-r": r,
               "data-cv-c": index,
               "data-cv-span": span > 1 ? span : undefined,
-              tabIndex: tabFor(r, index, span),
+              "data-cv-widget": widget ? "" : undefined,
+              "data-cv-interactive": options.interactive === true ? "" : undefined,
+              tabIndex: widget ? undefined : tabFor(r, index, span),
             }
           : {}),
       };
@@ -1444,6 +1766,8 @@ export function Table<T>({
       ) : null,
     stacked,
     refuse: (reason) => refuse(reason),
+    tabIndexOf: (column) =>
+      tabFor(r, Math.min(Math.max(Math.trunc(column), 0), columns.length - 1)),
   });
 
   let body: ReactNode;
@@ -1483,34 +1807,57 @@ export function Table<T>({
         <td colSpan={gridColumns.length} style={{ blockSize: rowsTall(count) }} />
       </tr>
     );
-    const leading = leadingSpacers(offset);
-    const after = total - offset - drawnCount;
-    body = [
-      // An empty row first when the offset is even, so each drawn row keeps its absolute row's zebra.
-      ...(leading === 2
-        ? [<tr key="cv-pad" className="cv-table__spacer" aria-hidden="true" />]
-        : []),
-      ...(leading > 0 ? [spacer("cv-before", offset)] : []),
-      ...rows.slice(0, drawnCount).map((row, i) => {
-        const key = rowKey(row);
-        const r = offset + i + 1;
-        if (renderRow !== undefined)
-          return <Fragment key={key}>{renderRow(row, contextOf(r))}</Fragment>;
-        return (
-          <tr
-            key={key}
-            className="cv-table__row"
-            aria-rowindex={r + 1}
-            aria-selected={selectable ? selection.has(key) : undefined}
-            {...role("row")}
-          >
-            {gridColumns.map((gc, c) => bodyCell(row, key, r, gc, c))}
-          </tr>
-        );
-      }),
-      ...(after > 0 ? [spacer("cv-after", after)] : []),
-    ];
+    const bodyRow = (row: T, r: number): JSX.Element => {
+      const key = rowKey(row);
+      if (renderRow !== undefined)
+        return <Fragment key={key}>{renderRow(row, contextOf(row, r))}</Fragment>;
+      return (
+        <tr
+          key={key}
+          className="cv-table__row"
+          aria-rowindex={r + 1}
+          aria-selected={selectable ? selection.has(key) : undefined}
+          {...role("row")}
+          {...treeAttrsOf(row, r)}
+        >
+          {gridColumns.map((gc, c) => bodyCell(row, key, r, gc, c))}
+        </tr>
+      );
+    };
+    // The window's rows and, outside it, the kept row (G-01), at their absolute places: spacers hold the rest and
+    // an empty pad keeps each drawn row on its absolute row's zebra (`bodyParts`).
+    const drawnRs = Array.from({ length: drawnCount }, (_, i) => offset + i + 1);
+    if (keptR !== undefined) drawnRs.push(keptR);
+    drawnRs.sort((a, b) => a - b);
+    body = bodyParts(drawnRs, total).map((part) => {
+      if (part.kind === "pad")
+        return <tr key={part.key} className="cv-table__spacer" aria-hidden="true" />;
+      if (part.kind === "spacer") return spacer(part.key, part.rows);
+      const row = bodyRowAt(part.r);
+      return row === undefined ? null : bodyRow(row, part.r);
+    });
   }
+  // The trailing totals rowgroup (D04H A-6.4): after the body in the grid's order, each row led by its rowheader.
+  const totals =
+    footer.length === 0
+      ? null
+      : footer.map((row, i) => {
+          const r = bodyRows + 1 + i;
+          const key = footerKeys[i] ?? String(i);
+          if (renderRow !== undefined)
+            return <Fragment key={key}>{renderRow(row, contextOf(row, r))}</Fragment>;
+          return (
+            <tr
+              key={key}
+              className="cv-table__row cv-table__total-row"
+              aria-rowindex={r + 1}
+              style={pinnedBelow(r)}
+              {...role("row")}
+            >
+              {gridColumns.map((gc, c) => totalCell(row, r, gc, c))}
+            </tr>
+          );
+        });
 
   const headerCell = (gc: GridColumn<T>, c: number): JSX.Element => {
     if (gc.kind === "select") {
@@ -1522,6 +1869,7 @@ export function Table<T>({
           className={`cv-table__header cv-table__select${empty ? ring : ""}`}
           {...role("columnheader")}
           {...at(0, c, empty ? "cell" : "widget")}
+          {...pinOf(c)}
         >
           <Checkbox
             label="Select all rows"
@@ -1542,6 +1890,7 @@ export function Table<T>({
           className={`cv-table__header cv-table__actions${ring}`}
           {...role("columnheader")}
           {...at(0, c, "cell")}
+          {...pinOf(c)}
         >
           <span className="cv-visually-hidden">Actions</span>
         </th>
@@ -1553,9 +1902,13 @@ export function Table<T>({
     const pending = sortable && sortPending === column.id;
     const gated = sortable ? reasonOf(column) : undefined;
     // A block that ellipsises when the column is narrower than its words; in a grid the echo shows them whole.
+    const hint = column.headerHint?.trim();
     const label = (
       <span className="cv-table__label" data-cv-cut={column.header}>
         {column.header}
+        {hint === undefined || hint === "" ? null : (
+          <span className="cv-visually-hidden"> {hint}</span>
+        )}
       </span>
     );
     const status =
@@ -1574,6 +1927,7 @@ export function Table<T>({
         aria-sort={sortable ? (direction ?? "none") : undefined}
         {...role("columnheader")}
         {...at(0, c, sortable ? "widget" : "cell")}
+        {...pinOf(c)}
       >
         {sortable ? (
           <button
@@ -1611,7 +1965,7 @@ export function Table<T>({
     );
   };
 
-  const rowCount = state === "loading" ? -1 : state === "populated" ? total + 1 : 2;
+  const rowCount = state === "loading" ? -1 : state === "populated" ? lastR + 1 : 2;
   // A grid and a table with a T2 sort header keep the echo's node; any other table mounts it while it shows a cut
   // header label's or a cell's words, and has none otherwise.
   const echoes = gridMode || gatedReasons.length > 0 || echo !== null;
@@ -1625,6 +1979,12 @@ export function Table<T>({
       data-state={state}
       data-mode={gridMode ? "grid" : undefined}
       data-layout={stacked ? "stacked" : undefined}
+      // Focused body cells scroll clear of the pinned totals rows (E29-D05 §6.2 F-01: `scroll-margin-bottom`).
+      style={
+        footer.length === 0 || stacked
+          ? undefined
+          : ({ "--cv-table-totals": footer.length } as CSSProperties)
+      }
     >
       <span ref={probe} className="cv-table__em-probe" aria-hidden="true" />
       <div
@@ -1642,7 +2002,7 @@ export function Table<T>({
           aria-rowcount={rowCount}
           aria-colcount={gridMode ? gridColumns.length : undefined}
           aria-busy={loading ? true : undefined}
-          aria-multiselectable={roving && selectable ? true : undefined}
+          aria-multiselectable={roving && (selectable || multiselectable) ? true : undefined}
           {...role("table")}
           // Grid mode: the grid's keys while it roves (role="grid"), and the remembered cell (which the stacked
           // layout's context menu reads too), the cells' echo on focus and hover, focus leaving it (the echo goes;
@@ -1655,6 +2015,7 @@ export function Table<T>({
                 onMouseDown: onGridMouseDown,
                 onPointerOver: onGridPointerOver,
                 onPointerLeave: onGridPointerLeave,
+                ...(treegrid ? { onClick: onTreeClick } : {}),
               }
             : {
                 onFocus: onTableFocus,
@@ -1692,6 +2053,11 @@ export function Table<T>({
           <tbody ref={tbody} {...role("rowgroup")}>
             {body}
           </tbody>
+          {totals === null ? null : (
+            <tbody className="cv-table__totals" {...role("rowgroup")}>
+              {totals}
+            </tbody>
+          )}
         </table>
       </div>
       {rowActions !== undefined && activeRow !== undefined ? (

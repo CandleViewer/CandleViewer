@@ -54,11 +54,12 @@
 }
 
 /*
- * The echo (CMP-016, fixed) is drawn inside the table's scroll box, where the sticky header row stacks at 1: it stacks
- * above it, so an echo anchored in the first body row is never painted under the header (A11Y-4702A5-02).
+ * The echo (CMP-016, fixed) is drawn inside the table's scroll box, where the sticky header row stacks at 1 and its
+ * pinned corner cells at 2: it stacks above them, so an echo anchored in the first body row is never painted under
+ * the header (A11Y-4702A5-02).
  */
 .cv-table__echo {
-  z-index: 2;
+  z-index: 3;
 }
 
 /* The header row: sticky, on surface.hover, a 1 px border.subtle rule under it (the real edge forced colours keep). */
@@ -224,6 +225,90 @@
  */
 .cv-table__cell {
   scroll-margin-block-start: var(--size-row-height);
+}
+
+/*
+ * Not obscured (E29-D05 §6.2 F-01, WCAG 2.4.11): a focused cell also scrolls clear of the pinned leading columns, the
+ * pinned last column and the pinned totals rows. The widths are measured onto the shell (`--cv-table-pin-start`,
+ * `--cv-table-pin-end`, Table.tsx); the totals are their row count, each `size.row.height`, and the first one's
+ * `border.thick` rule. A pinned cell is always in view on its own axis, so it keeps no margin there.
+ */
+.cv-table__cell {
+  scroll-margin-inline-start: var(--cv-table-pin-start, 0);
+  scroll-margin-inline-end: var(--cv-table-pin-end, 0);
+  scroll-margin-block-end: calc(
+    var(--size-row-height) * var(--cv-table-totals, 0) + var(--border-thick) * 1px *
+      min(var(--cv-table-totals, 0), 1)
+  );
+}
+
+.cv-table__cell[data-pin-start] {
+  scroll-margin-inline-start: 0;
+}
+
+.cv-table__cell[data-pin-end] {
+  scroll-margin-inline-end: 0;
+}
+
+/*
+ * Pinned columns (E29-D04 §2.7: `stickyFirstColumn`, `stickyLastColumn`; E29-D02 §5.1's select, Env, Account and
+ * Symbol, and Actions on the right): each sticks where the columns before it end, as measured (`--cv-table-pin-n`).
+ * A pinned body cell takes its row's fill, so nothing shows through it, and stacks over the scrolled cells (0) but
+ * under the header and the totals (1); a pinned header or totals cell stacks over its own row's other cells (2).
+ */
+.cv-table [data-pin-start],
+.cv-table [data-pin-end] {
+  position: sticky;
+}
+
+.cv-table [data-pin-start="0"] {
+  inset-inline-start: 0;
+}
+
+.cv-table [data-pin-start="1"] {
+  inset-inline-start: var(--cv-table-pin-1, 0);
+}
+
+.cv-table [data-pin-start="2"] {
+  inset-inline-start: var(--cv-table-pin-2, 0);
+}
+
+.cv-table [data-pin-start="3"] {
+  inset-inline-start: var(--cv-table-pin-3, 0);
+}
+
+.cv-table [data-pin-end] {
+  inset-inline-end: 0;
+}
+
+.cv-table__cell[data-pin-start],
+.cv-table__cell[data-pin-end] {
+  z-index: 0;
+  background-color: inherit;
+}
+
+.cv-table__header[data-pin-start],
+.cv-table__header[data-pin-end],
+.cv-table__totals .cv-table__cell[data-pin-start],
+.cv-table__totals .cv-table__cell[data-pin-end] {
+  z-index: 2;
+}
+
+/*
+ * The trailing totals rowgroup (D04H A-6.4; E29-D02 §12): pinned to the region's bottom, each row above the totals
+ * rows after it (`--cv-table-after`), on `color.surface.overlay`, the first one under a `border.thick`
+ * `color.border.strong` rule; its cells stack over the body (1), as the header does, and keep no scroll margin.
+ */
+.cv-table__totals .cv-table__cell {
+  position: sticky;
+  inset-block-end: calc(var(--size-row-height) * var(--cv-table-after, 0));
+  z-index: 1;
+  background: var(--color-surface-overlay);
+  scroll-margin: 0;
+}
+
+.cv-table__totals .cv-table__total-row:first-child > .cv-table__cell {
+  border-block-start: calc(var(--border-thick) * 1px) solid var(--color-border-strong);
 }
 
 .cv-table__row[aria-selected="true"],
@@ -395,6 +480,11 @@
   /* The active row's bar becomes a Highlight edge: forced colours drop the fill and the box-shadow. */
   .cv-table__row[aria-current="true"] > :first-child {
     border-inline-start: 2px solid Highlight;
+  }
+
+  /* The totals rule stays a real edge. */
+  .cv-table__totals .cv-table__total-row:first-child > .cv-table__cell {
+    border-block-start-color: CanvasText;
   }
 
   /* Stacked: one separator per row block, not per cell. */

@@ -560,6 +560,43 @@ values end; start-aligned headers and the stacked reflow keep both paddings. Tha
 answer, shorter headers or a wider reference, is E08-D07's. A hover echo goes CMP-016's 100 ms grace after the
 pointer leaves its cell and the echo.
 
+#### The treegrid (CMP-049, the WAI-ARIA APG Treegrid pattern; E29-D04 §2.7)
+
+`treegrid` (which implies grid mode) nests the rows by each row's `treeRow` place: `aria-level`, outermost first,
+`aria-expanded` on a row that holds others, and `aria-posinset` / `aria-setsize` counted in the host's model, never
+the DOM, so a windowed set reads true (E29-D05 §5.3 F-03). Every grid key above holds; these are the treegrid's own.
+
+| Keys                                     | Action                                                                                                                 |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| → on a row's first cell                  | A collapsed row opens (focus stays); an open one moves focus to its first child; a leaf moves right, as any cell does. |
+| ← on a row's first cell                  | An open row closes (focus stays); a closed or leaf row moves focus to its parent (asked of the host if undrawn).       |
+| ← / → on any other cell                  | Previous / next cell, as in the grid.                                                                                  |
+| A click on a row's first cell            | Opens or closes a row that holds others; a control inside the cell keeps its own click.                                |
+| ↓ past the last row, Ctrl+End, Page Down | Into the totals rowgroup (`totalRows`): its rows follow the body's in the grid's order.                                |
+| Home / End, Page Up / Down, Ctrl+Home    | As in the grid; Page Down and Page Up stop at the totals and the header.                                               |
+
+| Element      | Role                        | Name                         | ARIA                                                                                                                                           |
+| ------------ | --------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| table        | treegrid                    | the caption                  | `aria-rowcount` (the header, every body row and the totals), `aria-colcount`; `aria-multiselectable` with a select column or `multiselectable` |
+| row          | row                         | its rowheader, or the host's | `aria-rowindex` (absolute), `aria-level`, `aria-posinset`, `aria-setsize`; `aria-expanded` on a row that holds others                          |
+| totals       | rowgroup (a second `tbody`) | —                            | after the body, pinned to the region's bottom; each row led by a rowheader (`th scope="row"`), no level, no selection, no row menu             |
+| pinned cells | gridcell / columnheader     | as unpinned                  | `data-pin-start` / `data-pin-end`: sticky at the measured offsets; focused cells scroll clear of them (`scroll-margin`, F-01)                  |
+
+The remembered row stays mounted outside the window when the host can find it by key (`rowByKey`, E29-D05 §5.3 G-01):
+scrolled away, it is the one drawn row outside the window, at its absolute `aria-rowindex`, so focus never falls to the
+page and Tab back into the grid lands on it; a re-sort that moves it out of the window keeps it, and focus. Focus moved
+into the window drops it. `stickyFirstColumn` pins the leading columns (`true` one, a number that many, at most four,
+the select column counted) and `stickyLastColumn` the last; the offsets are the header cells' measured widths, set on
+the shell by a ResizeObserver, so a resize re-renders nothing. A merged cell is pinned only within the pinned columns.
+A treegrid never stacks: its rows nest, so at 200 % and in a narrow panel the region scrolls sideways under its pinned
+columns instead (E29-D02 §11.5, board 19). A custom row's cell may be a `widget` (its one control takes focus in its
+place, spreading `grid.tabIndexOf(i)`, as CMP-114's row checkbox does) or `interactive` (its controls tamed; Enter or F2
+in, Esc back, as CMP-114's Actions cell). `headerHint` adds visually hidden words to a header's name (the narrow dock's
+"uPnL" "(USDT)"). Not built: the `detail` line (SCR-078's, D04H A-6.2) and `aria-colindex`.
+
+Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): rows grow with the text scale and the columns with
+the table's `em`; the region scrolls both ways, the header and the pinned columns and totals staying in view.
+
 ### WatchlistRow (CMP-161, a row of the APG Grid through CMP-049's row contract)
 
 | Keys                     | Action                                                                                                   |

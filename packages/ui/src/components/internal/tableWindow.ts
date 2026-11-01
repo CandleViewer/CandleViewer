@@ -52,3 +52,40 @@ export function rowsInView({
  */
 export const leadingSpacers = (offset: number): 0 | 1 | 2 =>
   offset <= 0 ? 0 : offset % 2 === 1 ? 1 : 2;
+
+/** One child of a windowed body, in order: a drawn row, a spacer holding undrawn rows' height, or an empty pad. */
+export type BodyPart =
+  | { readonly kind: "row"; readonly r: number }
+  | { readonly kind: "spacer"; readonly key: string; readonly rows: number }
+  | { readonly kind: "pad"; readonly key: string };
+
+/** The keys of the spacers before the first drawn run, between two runs and after the last one. */
+const GAP_KEYS = [
+  ["cv-pad", "cv-before"],
+  ["cv-gap-pad", "cv-gap"],
+] as const;
+
+/**
+ * A windowed body's children (E29-D05 §5.3 G-01: the window plus, at most, the one focused row outside it): each
+ * drawn row at its absolute index `r` (1 is the list's first row), the undrawn rows between them held by one spacer
+ * per gap, and an empty pad before a spacer where the next row would otherwise sit on a child of the wrong parity,
+ * so the zebra follows the list (`leadingSpacers`' rule, for every gap). `drawn` is ascending and within 1..total.
+ */
+export function bodyParts(drawn: readonly number[], total: number): readonly BodyPart[] {
+  const parts: BodyPart[] = [];
+  let previous = 0;
+  let gap = 0;
+  for (const r of drawn) {
+    if (r - previous > 1) {
+      const [pad, spacer] = GAP_KEYS[Math.min(gap, GAP_KEYS.length - 1)] ?? GAP_KEYS[0];
+      // The row lands at child `parts.length + 2` after one spacer: that child's parity must be the row's.
+      if (parts.length % 2 !== r % 2) parts.push({ kind: "pad", key: pad });
+      parts.push({ kind: "spacer", key: spacer, rows: r - previous - 1 });
+      gap += 1;
+    }
+    parts.push({ kind: "row", r });
+    previous = r;
+  }
+  if (total > previous) parts.push({ kind: "spacer", key: "cv-after", rows: total - previous });
+  return parts;
+}
