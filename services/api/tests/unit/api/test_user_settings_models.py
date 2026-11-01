@@ -227,6 +227,18 @@ _HOOK = "notifications.webhook_url"
         ("https://u@:8443/x", "…"),
         ("https://[::1/x", "…"),  # unclosed bracket: `urlsplit` refuses it
         ("https://[hooks]/x", "…"),  # a bracketed host that is no IP address
+        ("https://192.0.2.1:8443/x", "https://192.0.2.1/…"),  # an IPv4 address
+        ("https://hooks-1.example.test/x", "https://hooks-1.example.test/…"),
+        ("https://bücher.example.test/x", "…"),  # a label of letters other than a to z
+        # A malformed authority: its host is no DNS name and no IP address free of a zone.
+        ("https://hooks.example.test\\services\\T000\\TOKEN", "…"),  # WHATWG: `\` starts a path
+        ("https://hooks.example.test TOKEN/x", "…"),
+        ("https://hooks.example.test;TOKEN/x", "…"),
+        ("https://hooks.example.test%2FTOKEN/x", "…"),
+        ("https://[fe80::1%25TOKEN]/x", "…"),  # a zone
+        ("https://[v1.TOKEN]/x", "…"),  # IPvFuture: its host would read as `v1.token`
+        ("https://hooks.example.test\tTOKEN/x", "…"),  # `urlsplit` deletes the tab
+        ("https://hooks.example.test\r\nTOKEN/x", "…"),
         (42, "…"),  # not a string
         (["https://hooks.example.test/x"], "…"),
         (None, None),  # no override

@@ -29,6 +29,7 @@ before and after, and for a view-as read, whose reader is not the owner.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import math
 import re
@@ -60,6 +61,12 @@ READ_ONLY: Final = frozenset({"trading.one_click_armed"})
 MASKED_LEAVES: Final = frozenset({"notifications.webhook_url"})
 #: A masked value's elided part, and the whole of a value with no scheme and host to keep.
 ELIDED: Final = "…"
+#: An unbracketed host `masked()` keeps: labels of letters, digits and hyphens joined by dots (an
+#: IPv4 address reads as one). `urlsplit` ends a host only at `/`, `?` or `#`, so any other host is
+#: a malformed authority's text, which may hold the token.
+_DNS_NAME: Final = re.compile(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*")
+#: What `urlsplit` deletes wherever it stands, joining the text either side of it into one host.
+_DELETED: Final = ("\t", "\r", "\n")
 _NAME: Final = re.compile(r"[a-z0-9_]{1,64}")
 
 
@@ -195,15 +202,30 @@ def judge_patch(raw: bytes) -> dict[str, object]:
     return out
 
 
+def _kept_host(netloc: str, host: str) -> str | None:
+    """The host `masked()` shows, or `None` for none: a DNS name or an IPv4 address as it is, and an
+    IPv6 address with no `%` zone in its brackets. `host` is `urlsplit`'s reading of `netloc`, whose
+    part after the userinfo holds a `[` only for a bracketed literal, IPv6 or IPvFuture."""
+    if "[" not in netloc.rpartition("@")[2]:
+        return host if _DNS_NAME.fullmatch(host) else None
+    try:
+        ipaddress.IPv6Address(host)
+    except ValueError:  # IPvFuture, `[v1.…]`
+        return None
+    return None if "%" in host else f"[{host}]"
+
+
 def masked(key: str, value: object) -> object:
     """`value` of leaf `key` as it may leave its owner. A leaf outside `MASKED_LEAVES`, `None` (no
     override) and `""` are as they are. Any other value of a credential-class leaf keeps only its
     scheme and host, as `scheme://host/…` (the host as `urlsplit` reads it, lower case, an IPv6
     host in its brackets), so its userinfo, port, path, query and fragment, where a token sits,
-    never leave; a value with no scheme or no host, or not a string, is `…`."""
+    never leave. A value with no scheme or no host, or not a string, is `…`; so is one whose host is
+    no DNS name and no IP address free of a zone (`_kept_host`), or that holds a tab or a line
+    break (`_DELETED`), since its host may then be text a token sits in."""
     if key not in MASKED_LEAVES or value is None or value == "":
         return value
-    if not isinstance(value, str):
+    if not isinstance(value, str) or any(char in value for char in _DELETED):
         return ELIDED
     try:
         parts = urlsplit(value)
@@ -212,7 +234,8 @@ def masked(key: str, value: object) -> object:
         return ELIDED
     if not parts.scheme or not host:
         return ELIDED
-    return f"{parts.scheme}://{f'[{host}]' if ':' in host else host}/{ELIDED}"
+    shown = _kept_host(parts.netloc, host)
+    return ELIDED if shown is None else f"{parts.scheme}://{shown}/{ELIDED}"
 
 
 def effective(rows: Iterable[UserSetting], *, viewing: bool) -> dict[str, Any]:
