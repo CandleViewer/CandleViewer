@@ -84,9 +84,15 @@ describe("attemptDetail", () => {
       failure: { cause: "network" },
     });
     apiFetch.mockResolvedValueOnce(json(200, { ...BODY, symbol: "ETHUSDT" }));
-    expect(await attemptDetail("BTCUSDT", signal())).toMatchObject({
+    // A 200 that is not the symbol's detail is "malformed", never "answered 200".
+    expect(await attemptDetail("BTCUSDT", signal())).toEqual({
       kind: "failed",
-      failure: { status: 200 },
+      failure: { cause: "malformed" },
+    });
+    apiFetch.mockResolvedValueOnce(json(200, { symbol: "BTCUSDT" }));
+    expect(await attemptDetail("BTCUSDT", signal())).toEqual({
+      kind: "failed",
+      failure: { cause: "malformed" },
     });
     apiFetch.mockResolvedValueOnce(new Response("<html>", { status: 200 }));
     expect(await attemptDetail("BTCUSDT", signal())).toEqual({

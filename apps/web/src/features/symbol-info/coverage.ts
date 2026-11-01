@@ -8,13 +8,12 @@
 import type { generated } from "@candleviewer/protocol";
 import { SYSTEM_CLOCK, type Clock } from "../symbol-search/instrumentIndex";
 import * as copy from "./copy";
-import { getAnswer } from "./http";
+import { SENDABLE, getAnswer } from "./http";
 
 export type DataCoverage = generated.rest.components["schemas"]["DataCoverage"];
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MINUTE = 60_000;
-const SENDABLE = /^[A-Z0-9]{2,16}USDT$/;
 
 export interface CoverageView {
   /** "Coverage as of 10:31:02 UTC · trades can include imported days"; `null` without `generated_at`. */

@@ -35,7 +35,7 @@ export function outcomeForStatus(status: number): LoadOutcome {
 
 /** A contract failure's `outcome` (D-12): 503s for 60 s is its own value. */
 export function outcomeForFailure(failure: DetailFailure): LoadOutcome {
-  if (failure.cause === "network") return "network";
+  if (failure.cause === "network" || failure.cause === "malformed") return "network";
   if (failure.cause === "unavailable") return "http_503_60s";
   return outcomeForStatus(failure.status);
 }
