@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 // E29-S02 (#912) BQ-11: the cell use of CMP-100 / CMP-101 (E29-D02 §7, E29-D01 D12, E29-D04 handoff §C.2): a decimal
 // string stepped by its tick or lot, `Enter`, `F2` or a double-click to edit, `Enter` alone to commit, `Esc`, `Tab` or
-// a click elsewhere to restore, no rounding, T2 with a visible reason, and no serious axe violation in any state.
+// a click elsewhere to restore, no rounding, T2 with a visible reason (E29-D04 §4.1: the value's own look, the reason
+// re-shown 2a, a host's notice pointed at, a gated commit), a focused value never remounted by a gate, and no serious
+// axe violation in any state.
 import { composeStories } from "@storybook/react-vite";
 import { act, useState, type JSX } from "react";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it, vi } from "vitest";
 import {
   CELL_NUMBER_EDITOR_COPY,
+  CELL_TRIGGER_OFF_TICK,
   CellNumberEditor,
   type CellNumberEditorProps,
 } from "../src/components/index.js";
@@ -301,9 +304,11 @@ describe("committing and restoring", () => {
 
 describe("refusals: never rounded, never sent", () => {
   it.each([
-    ["2495.003", "Enter a multiple of 0.01."],
+    ["2495.003", "Price must be a multiple of 0.01."],
     ["abc", "Enter a number."],
     ["0", "Enter a number above zero."],
+    ["-5", "Enter a number above zero."],
+    ["2,5", "Enter a number."],
     ["   ", "Enter a number."],
   ])("%s is refused with “%s”, the text kept as typed", async (typed, message) => {
     const { onCommit } = await render();
@@ -315,6 +320,28 @@ describe("refusals: never rounded, never sent", () => {
     expect(cell()).toHaveAttribute("aria-invalid", "true");
     expect(cell()).toHaveValue(typed);
     expect(cell()).toHaveAccessibleDescription(expect.stringContaining(message));
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("well-formed grouping, as the grid shows a value, is dropped: 2,495.00 commits 2495.00", async () => {
+    const { onCommit } = await render();
+    const editor = await open();
+    await retype(editor, "2,495.00{Enter}");
+    expect(onCommit).toHaveBeenCalledWith("2495.00");
+  });
+
+  it("a lot's refusals are E30's words: off the lot, zero and below the lowest (E30-D06 v.qty.lot)", async () => {
+    const { onCommit } = await render({ label: "Qty", value: "0.15", step: "0.001", unit: "lot" });
+    cell("Qty").focus();
+    await userEvent.keyboard("{F2}");
+    for (const typed of ["0.0015", "0", "-1"]) {
+      await retype(cell("Qty"), `${typed}{Enter}`);
+      expect(cell("Qty")).toHaveAccessibleDescription(
+        expect.stringContaining("Minimum 0.001, step 0.001."),
+      );
+    }
+    expect(CELL_NUMBER_EDITOR_COPY.offLot("0.001", "0.001")).toBe("Minimum 0.001, step 0.001.");
+    expect(CELL_NUMBER_EDITOR_COPY.offTick("0.1")).toBe("Price must be a multiple of 0.1.");
     expect(onCommit).not.toHaveBeenCalled();
   });
 
@@ -334,7 +361,7 @@ describe("refusals: never rounded, never sent", () => {
     await userEvent.keyboard("{F2}");
     await retype(cell("Qty"), "0.001{Enter}");
     expect(cell("Qty")).toHaveAccessibleDescription(
-      expect.stringContaining("Enter 0.002 or more."),
+      expect.stringContaining("Minimum 0.002, step 0.001."),
     );
     await retype(cell("Qty"), "0.002{Enter}");
     expect(validate).toHaveBeenCalledWith("0.002");
@@ -351,48 +378,134 @@ describe("refusals: never rounded, never sent", () => {
     const editor = await open();
     await retype(editor, "2495.003{Enter}");
     await userEvent.type(cell(), "9");
-    expect(host.querySelector(".cv-field__message")).toHaveTextContent("Enter a multiple of 0.01.");
+    expect(host.querySelector(".cv-field__message")).toHaveTextContent(
+      "Price must be a multiple of 0.01.",
+    );
     await retype(cell(), "2495.00");
     expect(cell()).not.toHaveAttribute("aria-invalid");
     expect(host.querySelector(".cv-field__message")).toHaveTextContent("");
   });
 
-  it("the host's copy replaces the editor's words", async () => {
-    await render({ copy: { offStep: (step) => `Not on the ${step} tick.` } });
-    const editor = await open();
-    await retype(editor, "1.001{Enter}");
-    expect(cell()).toHaveAccessibleDescription(expect.stringContaining("Not on the 0.01 tick."));
+  it("the host's copy replaces the editor's words: a Trigger cell's PROPOSED off-tick sentence", async () => {
+    await render({ label: "Trigger", copy: { offTick: CELL_TRIGGER_OFF_TICK } });
+    cell("Trigger").focus();
+    await userEvent.keyboard("{Enter}");
+    await retype(cell("Trigger"), "1.001{Enter}");
+    expect(cell("Trigger")).toHaveAccessibleDescription(
+      expect.stringContaining("Trigger must be a multiple of 0.01."),
+    );
   });
 });
 
-describe("T2: disabled with a visible reason (E09-D09 §2.2, rendering 2b)", () => {
-  it("keeps its role, name and Tab stop with aria-disabled, the lock and the reason node at mount", async () => {
-    await render({ disabledReason: IN_FLIGHT });
+describe("T2: disabled with a visible reason (E09-D09 §2.2; E29-D04 §4.1, D02:429)", () => {
+  it("keeps its value's look, role, name and Tab stop with aria-disabled: no glyph, no echo, the reason at mount", async () => {
+    const { host } = await render({ disabledReason: IN_FLIGHT });
     const value = cell();
+    expect(value).toHaveValue("2,500.00");
     expect(value).toHaveAttribute("aria-disabled", "true");
     expect(value).not.toBeDisabled();
     expect(value).toHaveAccessibleDescription(IN_FLIGHT);
     const id = value.getAttribute("aria-describedby") ?? "";
     expect(document.getElementById(id)).toHaveTextContent(IN_FLIGHT);
-    expect(page.getByRole("img", { name: "Not available" })).toBeInTheDocument();
+    expect(document.getElementById(id)?.closest(".cv-visually-hidden")).not.toBeNull();
+    expect(page.queryByRole("img", { name: "Not available" })).toBeNull(); // nothing among the numerals
+    expect(page.queryByRole("tooltip")).toBeNull();
+    expect(host.querySelector(".cv-cell-editor__well")?.children).toHaveLength(1);
     await userEvent.tab();
     expect(value).toHaveFocus();
+    expect(page.queryByRole("tooltip")).toBeNull(); // no echo on focus either
   });
 
-  it("Enter, F2 and a double-click open nothing and say the reason once more, politely, each time", async () => {
-    const { onEditingChange } = await render({ disabledReason: IN_FLIGHT });
+  it("Enter, F2 and a double-click open nothing, re-show the reason 2a under the cell and say it each time", async () => {
+    const { onEditingChange, host } = await render({ disabledReason: IN_FLIGHT });
     clearPolite();
-    cell().focus();
+    const value = cell();
+    const reasonNode = document.getElementById(value.getAttribute("aria-describedby") ?? "");
+    value.focus();
     for (const press of ["{Enter}", "{F2}"]) {
       await userEvent.keyboard(press);
       expect(await politeText()).toBe(IN_FLIGHT);
       clearPolite();
     }
-    await userEvent.dblClick(cell());
+    await userEvent.dblClick(value);
     expect(await politeText()).toBe(IN_FLIGHT);
+    const note = host.querySelector(".cv-cell-editor__note");
+    expect(note).toHaveTextContent(IN_FLIGHT);
+    expect(within(note as HTMLElement).getByRole("img", { name: "Not available" })).toBeTruthy();
+    expect(note?.firstElementChild?.firstElementChild).toHaveClass("cv-cell-editor__lock"); // the lock leads
+    expect(document.getElementById(value.getAttribute("aria-describedby") ?? "")).toBe(reasonNode);
+    expect(value).toHaveAccessibleDescription(IN_FLIGHT); // the reason alone, never the lock's name
+    expect(cell()).toBe(value);
     expect(cell()).toHaveAttribute("readonly");
     expect(onEditingChange).not.toHaveBeenCalled();
+    await userEvent.tab(); // focus leaves the cell: the re-shown reason goes, the node stays
+    expect(host.querySelector(".cv-cell-editor__note")).toBeNull();
+    expect(reasonNode?.isConnected).toBe(true);
   });
+
+  it("points at the host's notice (disabledReasonId): no reason node of its own, one notice for many cells", async () => {
+    const notice = document.body.appendChild(document.createElement("p"));
+    notice.id = "orders-notice";
+    notice.textContent = "Read-only while viewing as alex.";
+    const { host } = await render({
+      disabledReason: "Read-only while viewing as alex.",
+      disabledReasonId: "orders-notice",
+    });
+    await render({
+      label: "Qty",
+      value: "0.15",
+      step: "0.001",
+      unit: "lot",
+      disabledReason: "Read-only while viewing as alex.",
+      disabledReasonId: "orders-notice",
+    });
+    for (const value of [cell(), cell("Qty")]) {
+      expect(value).toHaveAttribute("aria-describedby", "orders-notice");
+      expect(value).toHaveAccessibleDescription("Read-only while viewing as alex.");
+    }
+    expect(page.getAllByText("Read-only while viewing as alex.")).toHaveLength(1);
+    clearPolite();
+    cell().focus();
+    await userEvent.keyboard("{Enter}");
+    expect(await politeText()).toBe("Read-only while viewing as alex.");
+    const note = host.querySelector(".cv-cell-editor__note");
+    expect(note).toHaveTextContent("Read-only while viewing as alex.");
+    expect(note).toHaveAttribute("aria-hidden", "true"); // a re-show: the notice stays the description
+  });
+
+  it.each([
+    ["arrives", undefined, IN_FLIGHT],
+    ["lifts", IN_FLIGHT, undefined],
+  ])(
+    "a gate that %s on the focused cell at rest keeps the same element focused",
+    async (_, from, to) => {
+      let gate: (reason: string | undefined) => void = () => undefined;
+      function Host(): JSX.Element {
+        const [reason, setReason] = useState<string | undefined>(from);
+        gate = setReason;
+        return (
+          <CellNumberEditor
+            label={PRICE}
+            value="2500"
+            step="0.01"
+            unit="tick"
+            onCommit={fn()}
+            {...(reason === undefined ? {} : { disabledReason: reason })}
+          />
+        );
+      }
+      await mount(<Host />);
+      const value = cell();
+      value.focus();
+      await act(async () => gate(to));
+      expect(cell()).toBe(value); // never remounted
+      expect(document.activeElement).toBe(value);
+      expect(value.hasAttribute("aria-disabled")).toBe(to !== undefined);
+      await act(async () => gate(from));
+      expect(cell()).toBe(value);
+      expect(document.activeElement).toBe(value);
+    },
+  );
 
   it("an edit under way when the gate arrives is discarded, never committed, and the host is told", async () => {
     const onCommit = fn();
@@ -434,6 +547,129 @@ describe("T2: disabled with a visible reason (E09-D09 §2.2, rendering 2b)", () 
   });
 });
 
+/** Board 16's gate: a quantity up is new exposure under the kill switch; a cut passes it (C-2.6). */
+const FROZEN =
+  "Trading frozen by the owner at 14:02 UTC — new orders off. Cancel and close still work.";
+const lots = (qty: string): bigint => {
+  const [whole = "0", fraction = ""] = qty.split(".");
+  return BigInt(`${whole}${fraction.padEnd(3, "0")}`);
+};
+const qtyUp = (qty: string): string | undefined => (lots(qty) > lots("0.1") ? FROZEN : undefined);
+
+describe("T2 on the commit (commitGate; E29-D02 §7, board 16)", () => {
+  async function openQty(): Promise<{ onCommit: ReturnType<typeof fn>; host: HTMLElement }> {
+    const gate = fn(qtyUp);
+    const out = await render({
+      label: "Qty",
+      value: "0.1",
+      step: "0.001",
+      unit: "lot",
+      commitGate: gate,
+    });
+    cell("Qty").focus();
+    await userEvent.keyboard("{F2}");
+    return out;
+  }
+
+  it("Enter on a gated value sends nothing: the reason 2a under the editor, said once, never aria-invalid", async () => {
+    const { onCommit, host } = await openQty();
+    clearPolite();
+    await retype(cell("Qty"), "0.150{Enter}");
+    expect(onCommit).not.toHaveBeenCalled();
+    const editor = cell("Qty");
+    expect(editor).not.toHaveAttribute("readonly"); // still open
+    expect(editor).toHaveFocus();
+    expect(editor).not.toHaveAttribute("aria-invalid");
+    expect(editor).toHaveAccessibleDescription(expect.stringContaining(FROZEN));
+    expect(editor.getAttribute("aria-describedby")).toMatch(/\S+ \S+ \S+/);
+    expect(await politeText()).toBe(FROZEN);
+    const reason = host.querySelector(".cv-cell-editor__note .cv-cell-editor__reason");
+    expect(reason).toHaveAttribute("data-shown");
+    expect(reason?.firstElementChild).toHaveClass("cv-cell-editor__lock");
+    expect(host.querySelector(".cv-field__message")).toHaveTextContent("");
+    expect(host.querySelector("[data-invalid]")).toBeNull();
+    clearPolite();
+    await key(editor, { key: "Enter" }); // a second press says it once more
+    expect(await politeText()).toBe(FROZEN);
+  });
+
+  it("Esc restores the live value and sends nothing; a quantity cut passes the gate and commits", async () => {
+    const { onCommit } = await openQty();
+    await retype(cell("Qty"), "0.150{Enter}");
+    expect(await key(cell("Qty"), { key: "Escape" })).toBe(false);
+    expect(cell("Qty")).toHaveAttribute("readonly");
+    expect(cell("Qty")).toHaveValue("0.100");
+    expect(cell("Qty")).toHaveFocus();
+    expect(onCommit).not.toHaveBeenCalled();
+    cell("Qty").focus();
+    await userEvent.keyboard("{F2}");
+    await retype(cell("Qty"), "0.050{Enter}");
+    expect(onCommit).toHaveBeenCalledWith("0.050");
+  });
+
+  it("a change of text takes the gate's reason away until the next press", async () => {
+    const { host } = await openQty();
+    await retype(cell("Qty"), "0.150{Enter}");
+    await userEvent.type(cell("Qty"), "0");
+    expect(host.querySelector(".cv-cell-editor__reason")).not.toHaveAttribute("data-shown");
+    expect(cell("Qty")).toHaveAccessibleDescription(expect.not.stringContaining(FROZEN));
+    await key(cell("Qty"), { key: "ArrowUp" });
+    await key(cell("Qty"), { key: "Enter" });
+    expect(host.querySelector(".cv-cell-editor__reason")).toHaveAttribute("data-shown");
+    await key(cell("Qty"), { key: "ArrowDown" });
+    expect(host.querySelector(".cv-cell-editor__reason")).not.toHaveAttribute("data-shown");
+  });
+
+  it("the gate is asked only about a value that would be sent: never junk, never the live value", async () => {
+    const gate = fn(qtyUp);
+    const { onCommit } = await render({
+      label: "Qty",
+      value: "0.1",
+      step: "0.001",
+      unit: "lot",
+      commitGate: gate,
+    });
+    cell("Qty").focus();
+    await userEvent.keyboard("{F2}");
+    await retype(cell("Qty"), "abc{Enter}");
+    await retype(cell("Qty"), "0.100{Enter}");
+    expect(gate).not.toHaveBeenCalled();
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+});
+
+describe("the open editor's keys and note (E29-D01 D12; D01 D13 b)", () => {
+  it("keeps ←, →, Home and End for its caret: they move it and never reach the grid", async () => {
+    const onGridKey = fn();
+    await mount(
+      // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- a stand-in for the grid's key handler
+      <div onKeyDown={(event) => onGridKey(event.key)}>
+        <CellNumberEditor label={PRICE} value="2500" step="0.01" unit="tick" onCommit={fn()} />
+      </div>,
+    );
+    await open();
+    for (const caret of ["ArrowLeft", "ArrowRight", "Home", "End"]) {
+      expect(await key(cell(), { key: caret })).toBe(true); // not prevented: the caret moves
+      expect(await key(cell(), { key: caret, shiftKey: true })).toBe(true);
+    }
+    expect(onGridKey).not.toHaveBeenCalled();
+    await key(cell(), { key: "PageDown" }); // a key the editor does not use is the host's to suspend
+    await key(cell(), { key: "ArrowLeft", ctrlKey: true });
+    expect(onGridKey.mock.calls.map(([k]) => k)).toEqual(["PageDown", "ArrowLeft"]);
+    expect(cell()).not.toHaveAttribute("readonly");
+  });
+
+  it("hangs the live value, the step hint and a refusal in one note under the well, out of the cell's flow", async () => {
+    const { host } = await render();
+    await open();
+    const note = host.querySelector(".cv-cell-editor__note");
+    expect(note?.previousElementSibling).toHaveClass("cv-cell-editor__well");
+    for (const part of [".cv-cell-editor__live", ".cv-cell-editor__hint", ".cv-field__message"])
+      expect(note?.querySelector(part)).not.toBeNull();
+    expect(host.querySelector(".cv-cell-editor__well")?.children).toHaveLength(1);
+  });
+});
+
 describe("accessibility", () => {
   it("has no serious or critical axe violation at rest, open, refused, gated and disabled", async () => {
     await render();
@@ -456,6 +692,37 @@ describe("accessibility", () => {
     expect(await seriousViolations(document.body)).toEqual([]);
     await retype(editor, "1.001{Enter}");
     expect(cell()).toHaveAttribute("aria-invalid", "true");
+    expect(await seriousViolations(document.body)).toEqual([]);
+  });
+
+  it("has none with its own reason re-shown 2a under the cell", async () => {
+    await render({ disabledReason: IN_FLIGHT });
+    cell().focus();
+    await userEvent.keyboard("{Enter}");
+    expect(document.querySelectorAll(".cv-cell-editor__note")).toHaveLength(1);
+    expect(await seriousViolations(document.body)).toEqual([]);
+  });
+
+  it("has none pointing at the host's notice, its reason re-shown", async () => {
+    const notice = document.body.appendChild(document.createElement("p"));
+    notice.id = "orders-notice";
+    notice.textContent = "Read-only while viewing as alex.";
+    await render({
+      disabledReason: "Read-only while viewing as alex.",
+      disabledReasonId: "orders-notice",
+    });
+    cell().focus();
+    await userEvent.keyboard("{Enter}");
+    expect(document.querySelectorAll(".cv-cell-editor__note")).toHaveLength(1);
+    expect(await seriousViolations(document.body)).toEqual([]);
+  });
+
+  it("has none with a commit gated under the editor", async () => {
+    await render({ label: "Qty", value: "0.1", step: "0.001", unit: "lot", commitGate: qtyUp });
+    cell("Qty").focus();
+    await userEvent.keyboard("{F2}");
+    await retype(cell("Qty"), "0.150{Enter}");
+    expect(cell("Qty")).toHaveAccessibleDescription(expect.stringContaining(FROZEN));
     expect(await seriousViolations(document.body)).toEqual([]);
   });
 });

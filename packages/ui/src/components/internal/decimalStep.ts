@@ -2,6 +2,8 @@
 // the wire's decimal string (`cv://ws/v1/common.schema.json#/$defs/decimal`), stepped by the instrument's tick or
 // lot on a scaled BigInt and never through a binary double. Nothing here rounds: a typed value off the step stays
 // off it and is reported so ("without its blur auto-round", D02 §7), and a step lands on a multiple of the step.
+// Typed text may carry the grid's own thousands grouping ("2,495.00", `15` CMP-008): well-formed groups of three
+// are dropped, and anything else with a comma is no number ("2,5" is never 25: in a price that is a 10x error).
 
 /** A non-negative decimal as an exact scaled integer: its value is `units / 10^scale`. */
 export interface StepDecimal {
@@ -19,6 +21,8 @@ export const MAX_TEXT = 66;
 const WIRE = /^[0-9]+(?:\.[0-9]+)?$/;
 /** What a person may type once trimmed: the wire's form, or a bare leading or trailing point (".5", "5."). */
 const TYPED = /^([0-9]*)(?:\.([0-9]*))?$/;
+/** The same with well-formed thousands grouping: one to three digits, then groups of exactly three ("2,495.00"). */
+const GROUPED = /^([0-9]{1,3}(?:,[0-9]{3})+)(?:\.([0-9]*))?$/;
 
 const pow10 = (n: number): bigint => 10n ** BigInt(n);
 
@@ -33,15 +37,18 @@ export function parseWire(text: string): StepDecimal | null {
   return fromParts(whole, fraction);
 }
 
-/** Typed text, trimmed: the wire's form or ".5" / "5."; null for "", ".", a sign, grouping or anything else. */
+/**
+ * Typed text, trimmed: the wire's form, ".5" / "5.", or either with well-formed grouping, which is dropped
+ * ("2,495.00" is 2495.00); null for "", ".", a sign, malformed grouping ("2,5", "12,34") or anything else.
+ */
 export function parseTyped(text: string): StepDecimal | null {
   const trimmed = text.trim();
   if (trimmed.length > MAX_TEXT) return null;
-  const match = TYPED.exec(trimmed);
+  const match = GROUPED.exec(trimmed) ?? TYPED.exec(trimmed);
   if (match === null) return null;
   const [, whole = "", fraction = ""] = match;
   if (whole === "" && fraction === "") return null;
-  return fromParts(whole, fraction);
+  return fromParts(whole.replaceAll(",", ""), fraction);
 }
 
 /** Plain text at the value's own scale: "0.050" stays "0.050"; never a grouping comma, never an exponent. */
@@ -84,13 +91,18 @@ export type StepCheck =
   | { readonly kind: "empty" | "not_a_number" | "not_positive" | "off_step" | "below_min" };
 
 /**
- * Judges typed text against the step and the lowest valid value, in that order of reasons: no number, zero or less,
- * off the step, below `min`. It never rounds: "2495.03" on a 0.1 tick is `off_step`, never 2495.0.
+ * Judges typed text against the step and the lowest valid value, in that order of reasons: no number, zero or less
+ * (a minus sign before a number included: "-5" is below zero, not "no number"), off the step, below `min`. It never
+ * rounds: "2495.03" on a 0.1 tick is `off_step`, never 2495.0.
  */
 export function checkTyped(text: string, step: StepDecimal, min?: StepDecimal): StepCheck {
-  if (text.trim() === "") return { kind: "empty" };
-  const value = parseTyped(text);
-  if (value === null) return { kind: "not_a_number" };
+  const trimmed = text.trim();
+  if (trimmed === "") return { kind: "empty" };
+  const value = parseTyped(trimmed);
+  if (value === null) {
+    const negative = trimmed.startsWith("-") && parseTyped(trimmed.slice(1)) !== null;
+    return { kind: negative ? "not_positive" : "not_a_number" };
+  }
   if (value.units <= 0n) return { kind: "not_positive" };
   if (!isOnStep(value, step)) return { kind: "off_step" };
   if (min !== undefined && compareDecimal(value, min) < 0) return { kind: "below_min" };

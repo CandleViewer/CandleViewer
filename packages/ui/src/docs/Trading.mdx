@@ -56,28 +56,49 @@ the list scrolls under the pinned "Select all" footer, and a long account label 
 
 ### CellNumberEditor (the cell use of CMP-100 and CMP-101: an APG Spin Button in a grid cell)
 
-| Keys                      | Action                                                                                                        |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Enter / F2 / double-click | At rest: opens the editor, a fresh field holding the live value, selected. `Space` is left to the grid.       |
-| ↑ / ↓                     | One tick (a price, a trigger) or one lot (a quantity); `Shift` ten. An off-step value lands on the next step. |
-| Enter                     | Commits a valid value that differs from the live one; focus returns to the cell's value.                      |
-| Esc                       | Restores the live value at once and returns focus; the grid's own `Esc` waits for the next press.             |
-| Tab / a click elsewhere   | Restores the live value; focus stays where it went.                                                           |
+| Keys                      | Action                                                                                                         |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Enter / F2 / double-click | At rest: opens the editor, a fresh field holding the live value, selected. `Space` is left to the grid.        |
+| ↑ / ↓                     | One tick (a price, a trigger) or one lot (a quantity); `Shift` ten. An off-step value lands on the next step.  |
+| ← / → / Home / End        | Open: move the caret, and never reach the grid.                                                                |
+| Enter                     | Commits a valid value that differs from the live one; focus returns to the cell's value. Gated: sends nothing. |
+| Esc                       | Restores the live value at once and returns focus; the grid's own `Esc` waits for the next press.              |
+| Tab / a click elsewhere   | Restores the live value; focus stays where it went.                                                            |
 
-| Element | Role       | Name                                              | ARIA                                                                                                      |
-| ------- | ---------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| at rest | spinbutton | the host's `label`: "Price, ETHUSDT Buy on Sub-2" | `readonly`, `aria-valuetext` the shown value; T2: `aria-disabled`, the reason its description, echoed.    |
-| editing | spinbutton | the same label                                    | `aria-valuetext` the typed text; described by the host's sentence, the step hint, then a refusal's words. |
-| lock    | img        | "Not available"                                   | Leads the value while T2 (E09-D09 §2.2, rendering 2b).                                                    |
+| Element | Role       | Name                                              | ARIA                                                                                                           |
+| ------- | ---------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| at rest | spinbutton | the host's `label`: "Price, ETHUSDT Buy on Sub-2" | `readonly`, `aria-valuetext` the shown value; T2: `aria-disabled`, described by the reason or the host's node. |
+| editing | spinbutton | the same label                                    | `aria-valuetext` the typed text; described by the host's sentence, the step hint, a refusal or a gated commit. |
+| lock    | img        | "Not available"                                   | Leads a T2 reason re-shown 2a under the cell or the editor; never among the numerals (E29-D02 D-8).            |
 
 The value is the wire's decimal string and never becomes a JavaScript number: a step moves a scaled BigInt by the
-tick or the lot, and a typed value off the step is refused with its reason ("Enter a multiple of 0.01."), never rounded
-(E29-D02 §7: "without its blur auto-round"). `Enter` alone commits; the host keeps the live value on the row until the
-exchange confirms (D02 D-10). The step hint is a caption under the editor, not a CMP-016 tooltip, because an open
-tooltip takes the first `Esc` as its layer. Gated (T2), the value keeps its name and its Tab stop; `Enter`, `F2` or a
-double-click opens nothing and says the reason once more, politely. The refusal words for an off-step value, zero and a
-value below the lowest are PROPOSED to E29-D03 with E30-D04's owner.
+tick or the lot, and a typed value off the step is refused with its reason, never rounded (E29-D02 §7: "without its
+blur auto-round"). Well-formed thousands grouping is accepted and dropped ("2,495.00"); "2,5" is no number. `Enter`
+alone commits; the host keeps the live value on the row until the exchange confirms (D02 D-10). The refusals are
+E30's merged words where E30 has them (E30-D06 `ticket.order.v.price.tick`, "Price must be a multiple of 0.01.", and
+`ticket.order.v.qty.lot`, "Minimum 0.001, step 0.001."); a price at zero or below and a trigger off its tick
+(`CELL_TRIGGER_OFF_TICK`) are PROPOSED to E30-D02 §14's owner with E29-D03 informed.
+
+While the editor is open the host suspends its grid keys and its trading hotkeys, from `onEditingChange(true)` until
+`onEditingChange(false)` (E29-D01 D12): the editor stops only the keys it uses (`Enter`, `Esc`, `↑`, `↓`) and the
+caret's (`←`, `→`, `Home`, `End`), so a chord or `PageDown` still reaches the host, which must send nothing for it.
+
+T2 (E09-D09 §2.2; E29-D04 §4.1): a gated cell keeps its value's own look, with no glyph among the numerals and no
+echo, and its Tab stop; `aria-disabled` and its description carry the state. The description is the editor's own
+hidden reason node, or the host's notice through `disabledReasonId` (one notice, many pointers: a Viewer's or a
+view-as panel-header line). `Enter`, `F2` or a double-click opens nothing: the reason is re-shown 2a under the cell,
+the lock in `color.text.tertiary` leading it in `color.text.secondary`, and said once, politely; it goes when focus
+leaves the cell. `commitGate` gates an open editor's commit the same way, under the editor, without `aria-invalid`,
+and `Esc` restores. A gate that comes or goes never remounts the focused value. Plain `disabled` has no use on
+SCR-063 (#912 BQ-9 makes a state that cannot be amended T2): it dims the value and takes the cell out of the grid's
+focus order.
+
+The step hint is not a CMP-016 tooltip, because an open tooltip takes the first `Esc` as its layer. It shares a note
+with the live value, a refusal and a re-shown reason: CMP-016's surface, anchored under the cell, out of the flow and
+with no pointer events, so the row keeps CMP-049's one row height (D01 D13 b holds the rows still while an editor is
+open). The live value keeps `type.num.sm`'s tabular figures, so its digits line up with the cell's. A host whose rows
+are separate stacking contexts raises the edited row above the rows its note covers.
 
 Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): the field grows with its text (`size` follows the
-value), so the cell widens rather than truncate a digit (E29-D02 D-8); while open, the live value, the hint and a
-refusal stack under it and the row grows to hold them.
+value), so the cell widens rather than truncate a digit (E29-D02 D-8), and the well keeps at least the density's
+control height. The note's words wrap inside its 20rem cap and grow over the rows below; the row itself never grows.
