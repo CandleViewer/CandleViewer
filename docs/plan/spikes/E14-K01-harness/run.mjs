@@ -54,25 +54,29 @@ const pwVersion = createRequire(join(process.cwd(), "package.json"))(
   "@playwright/test/package.json",
 ).version;
 
-const files = {
-  "/page.html": "text/html",
-  "/harness.mjs": "text/javascript",
-  "/fixture.mjs": "text/javascript",
-};
+// the served files are read once here, from fixed names; a request only selects one of them
+const files = Object.fromEntries(
+  [
+    ["page.html", "text/html"],
+    ["harness.mjs", "text/javascript"],
+    ["fixture.mjs", "text/javascript"],
+  ].map(([name, type]) => [`/${name}`, { type, body: readFileSync(join(here, name)) }]),
+);
 const server = createServer((req, res) => {
   const p = (req.url || "/").split("?")[0];
-  if (!files[p]) {
+  const file = files[p];
+  if (!file) {
     res.writeHead(404).end();
     return;
   }
   // cross-origin isolation gives performance.now() 5 microsecond resolution instead of 100
   res
     .writeHead(200, {
-      "content-type": files[p],
+      "content-type": file.type,
       "cross-origin-opener-policy": "same-origin",
       "cross-origin-embedder-policy": "require-corp",
     })
-    .end(readFileSync(join(here, p)));
+    .end(file.body);
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const origin = `http://127.0.0.1:${server.address().port}`;
