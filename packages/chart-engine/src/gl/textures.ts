@@ -9,6 +9,8 @@ import type { GlRegistry, Handle } from "./registry.js";
 export type TextureFormat = "rgba8" | "r8";
 /** The SDF atlas's texture number in every chart (one R8 texture, BQ-277). */
 export const ATLAS_TEXTURE = 1;
+/** The colour LUTs' texture number (E11-T04: one 256 × N RGBA8 texture, a row per ramp). */
+export const LUT_TEXTURE = 2;
 
 interface Texture {
   readonly handle: Handle<"texture">;
@@ -16,6 +18,8 @@ interface Texture {
   readonly width: number;
   readonly height: number;
   readonly format: TextureFormat;
+  /** Clamp both axes (the atlas and the LUTs): an edge texel never samples the opposite edge. */
+  readonly clamp: boolean;
   /** The CPU copy a restore re-uploads (BQ-49); a `patch` owner re-streams on RESTORED. */
   readonly pixels: Uint8Array | null;
   /** Rows written from the top by `patchRows`, re-uploaded after `pixels` on a restore. */
@@ -38,12 +42,13 @@ export class GlTextures {
     height: number,
     pixels: Uint8Array | null,
     format: TextureFormat = "rgba8",
+    clamp: boolean = format === "r8",
   ): void {
     const old = this.slots[id];
     if (old !== undefined) this.bytes -= old.bytes;
     const handle = old?.handle ?? this.registry.create("texture");
     const bytes = width * height * (format === "r8" ? 1 : 4);
-    const t = { handle, bytes, width, height, format, pixels, rows: null };
+    const t = { handle, bytes, width, height, format, clamp, pixels, rows: null };
     this.slots[id] = t;
     this.bytes += t.bytes;
     if (!this.gl.isContextLost()) this.upload(id, t);
@@ -57,7 +62,7 @@ export class GlTextures {
     if (!this.gl.isContextLost()) this.writeRows(id, t);
   }
 
-  /** After a context restore: every texture again, in id order (LUTs, then the atlas). */
+  /** After a context restore: every texture again, in id order (the atlas, the LUTs, then the rest). */
   restore(): void {
     this.slots.forEach((t, id) => {
       if (t !== undefined) this.upload(id, t);
@@ -70,10 +75,13 @@ export class GlTextures {
     const T = GL.TEXTURE_2D;
     this.gl.texParameteri(T, GL.TEXTURE_MIN_FILTER, GL.LINEAR);
     this.gl.texParameteri(T, GL.TEXTURE_MAG_FILTER, GL.LINEAR);
-    if (format === "r8") {
-      // The atlas never wraps: a UV at an edge clamps instead of sampling the opposite edge.
+    if (t.clamp) {
+      // The atlas and the LUTs never wrap: a UV at an edge clamps instead of sampling the
+      // opposite edge (t = −1 must not read the +1 end of the delta row).
       this.gl.texParameteri(T, GL.TEXTURE_WRAP_S, GL.CLAMP_TO_EDGE);
       this.gl.texParameteri(T, GL.TEXTURE_WRAP_T, GL.CLAMP_TO_EDGE);
+    }
+    if (format === "r8") {
       this.gl.pixelStorei(GL.UNPACK_ALIGNMENT, 1); // R8 rows are not 4-byte aligned
       this.gl.texImage2D(T, 0, GL.R8, width, height, 0, GL.RED, GL.UNSIGNED_BYTE, pixels);
       if (t.rows !== null) this.writeRows(id, t);
@@ -92,7 +100,7 @@ export class GlTextures {
 
   /** Writes a sub-rectangle of texture `id` (the `texSubImage2D` seam). */
   patch(id: number, x: number, y: number, w: number, h: number, pixels: Uint8Array): void {
-    if (this.slots[id] === undefined) return;
+    if (this.slots[id] === undefined || this.gl.isContextLost()) return;
     this.bind(id);
     this.gl.texSubImage2D(GL.TEXTURE_2D, 0, x, y, w, h, GL.RGBA, GL.UNSIGNED_BYTE, pixels);
   }

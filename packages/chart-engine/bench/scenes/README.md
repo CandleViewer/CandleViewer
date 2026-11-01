@@ -7,6 +7,7 @@ Except `input-router.ts`: E11-S04 production bench code over `src/interaction`, 
 Except `scale-mode-switch.ts` and `autoscale-fit.ts`: E11-S05 production bench code over `src/viewport`, driven by Vitest (BQ-126).
 Except `hit-pick.ts`: E11-S08 production bench code over `src/hit`, driven by Vitest (BQ-141).
 Except `atlas-build.ts`: E11-S11 production bench code over `src/text`, driven by Vitest (BQ-275).
+Except `lut-gen.ts`: E11-T04 production bench code over `src/theme`, driven by Vitest (BQ-T04-09).
 
 This directory is **throwaway prototype code** for the M0 spike ticket E06-K02
 ("Prototype scene A: 100k-bar model, visible-window draw and LOD ladder"). It
