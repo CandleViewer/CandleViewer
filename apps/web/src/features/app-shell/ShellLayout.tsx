@@ -16,6 +16,7 @@ import {
 } from "./slots";
 import { TopBarSlot } from "./TopBarSlot";
 import { useRouteFocus } from "./useRouteFocus";
+import { probeCommits, probeRender } from "./perfProbe";
 import { SHELL_PERF_MARKS, markShellStage } from "../../shell/perfMarks.js";
 
 /** id of the shell's one `main` landmark. */
@@ -30,6 +31,7 @@ const ignoreGatedAnnouncement = (): void => undefined;
  */
 export function ShellLayout(): JSX.Element {
   const mainRef = useRef<HTMLElement>(null);
+  probeRender("shell"); // E10-Q04 render counter: a probe build only (perfProbe)
   useRouteFocus(mainRef);
   // Budget #10 (E10-Q04): a child's effects run first, so the chrome and its first route element
   // are both committed here; marked once per page load (perfMarks).
@@ -50,9 +52,9 @@ export function ShellLayout(): JSX.Element {
           canvasOverlay={<ShellCanvasOverlaySlot />}
           rightRail={<RightRail />}
           rightRailLabel={RIGHT_RAIL_LABEL}
-          status={<ShellStatusSlot />}
+          status={probeCommits("status", <ShellStatusSlot />)}
         >
-          <Outlet />
+          {probeCommits("outlet", <Outlet />)}
         </AppShell>
         <ShellAnnouncer />
         <SymbolSearchHost mainRef={mainRef} />
