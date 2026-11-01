@@ -156,7 +156,7 @@ DESTRUCTIVE_RE = re.compile(
     r"\b(?:Confirm|Flatten|Cancel all|Delete|Disable|Revoke|Freeze|Submit|Save|Send|Next|Finish)\b"
 )
 BODY_RE = re.compile(r"\bbody\b", re.IGNORECASE)
-AGENT_RE = re.compile(r"worker|orchestrator|\bagent\b|anvil|claude|codex|lane\b", re.IGNORECASE)
+AGENT_RE = re.compile(r"worker|orchestrator|\bagent\b|lane\b", re.IGNORECASE)
 OWNER_OK_RE = re.compile(r"\bE\d\d-[A-Z]+\d\d\b|\bowner")
 URL_RE = re.compile(
     r"https?://|www\.|/home/|localhost|\.local\b|\b[a-z0-9-]+\.(?:com|io|org|net)\b"

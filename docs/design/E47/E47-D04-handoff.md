@@ -74,7 +74,7 @@ Old is a verbatim fragment of the cited line at `95a4f2765` (the tool checks it)
 
 | Consumer         | Builds from                | Waits on                       |
 | ---------------- | -------------------------- | ------------------------------ |
-| E47-S05 (#1319)  | spec §2–§10, §C, §G        | D04-G2 … D04-G5                |
+| E47-S05 (#1319)  | spec §2–§10, §C, §G        | D04-G2 … D04-G6                |
 | E47-D06 (#1305)  | spec §6.2, §12, R-3        | D04-Q1                         |
 | E47-D07 (#1306)  | spec §15 (labels), R-8     | —                              |
 | E47-D09 (#1308)  | spec §3 keys, §6.1         | D04-C1                         |
@@ -83,12 +83,12 @@ Old is a verbatim fragment of the cited line at `95a4f2765` (the tool checks it)
 
 ## §G QA draft assertions (deterministic; for E47-Q03's keyboard-only Playwright suite, `05`:258)
 
-| QA   | Given / when                                                                                           | Then (assert)                                                                                                                                        | Q01            |
-| ---- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| QA-1 | focus on a ladder row (200 levels); press `Tab`; then re-enter, press `Esc` with nothing open          | after one `Tab`, `document.activeElement` is outside the grid and is the panel's next stop; after `Esc`, it is in the panel header's toolbar         | TC-108         |
-| QA-2 | open the flatten-all confirm from FLATTEN ALL; press `Tab` 20 times; press `Esc`; reopen; confirm      | every focused element during the 20 presses is inside the dialog; the first focused is Cancel; after `Esc` and after completion focus is FLATTEN ALL | TC-105         |
-| QA-3 | focus a ladder level; replay a recorded re-seed without that level                                     | focus is on the nearest level by price (ties toward the touch); the polite region received exactly one W-4; `activeElement` is never the body        | TC-108         |
-| QA-4 | from the TopBar press `Ctrl+\` once per region, then once more; repeat under `data-focus-ring="thick"` | the regions arrive in §3's order and wrap to the TopBar; one W-1 per arrival; the ring's computed outline matches §7.1 in both geometries            | TC-105, TC-117 |
+| QA   | Given / when                                                                                           | Then (assert)                                                                                                                                        | Q01                      |
+| ---- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| QA-1 | focus on a ladder row (200 levels); press `Tab`; then re-enter, press `Esc` with nothing open          | after one `Tab`, `document.activeElement` is outside the grid and is the panel's next stop; after `Esc`, it is in the panel header's toolbar         | TC-108                   |
+| QA-2 | open the flatten-all confirm from FLATTEN ALL; press `Tab` 20 times; press `Esc`; reopen; confirm      | every focused element during the 20 presses is inside the dialog; the first focused is Cancel; after `Esc` and after completion focus is FLATTEN ALL | no Q01 case; new for Q03 |
+| QA-3 | focus a ladder level; replay a recorded re-seed without that level                                     | focus is on the nearest level by price (ties toward the touch); the polite region received exactly one W-4; `activeElement` is never the body        | no Q01 case; new for Q03 |
+| QA-4 | from the TopBar press `Ctrl+\` once per region, then once more; repeat under `data-focus-ring="thick"` | the regions arrive in §3's order and wrap to the TopBar; one W-1 per arrival; the ring's computed outline matches §7.1 in both geometries            | TC-105, TC-117           |
 
 ## §H The board plan (drawn later in this PR; a Penpot lane)
 
@@ -116,3 +116,4 @@ The boards of spec §0, on page `E47-D04 — Focus model`; frames named `<archet
 5. The ring is two-tone and enclosed by its halo; measured over 12 backgrounds in three themes; a thick variant on the shipped preference.
 6. Data never moves focus; a vanished level or row hands focus to a named successor with one label; never the body.
 7. Dialogs trap, open on a safe target and restore to the invoker; the BQ defaults are built, the ruling pending.
+8. The audit's G-CITE checks that each cited line exists and is non-blank, not that it says what is claimed; cite content is a reviewer's check.
