@@ -40,6 +40,7 @@ unauthenticated", and only the resolver can tell those apart (mirrors
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import time
 from collections.abc import Awaitable, Callable, Sequence
@@ -61,7 +62,7 @@ from candleviewer.api.market_response import (
     kline_response,
     problem,
 )
-from candleviewer.bars.limits import DEFAULT_LIMIT, MAX_LIMIT, MAX_TIME_WINDOW_US
+from candleviewer.bars.limits import DEFAULT_LIMIT, MAX_LIMIT, MAX_TIME_WINDOW_US, QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import record_page
 from candleviewer.ingestion.kline_coverage import CoverageIndex, Range
 from candleviewer.ingestion.kline_read import SOURCE_HOT, KlineReadService
@@ -222,6 +223,22 @@ def _parse_time(value: str | None, *, default: datetime | None) -> datetime | No
 
 def _wall_now_us() -> int:
     return time.time_ns() // 1000
+
+
+#: What a klines store read can raise that the route answers as 503: the bars route's set plus the
+#: typed tier error.
+_STORE_FAILURES = (TimeoutError, OSError, ConnectionError, StorageTierUnavailable)
+
+
+def _is_store_failure(exc: Exception) -> bool:
+    """`_STORE_FAILURES`, or asyncpg's `InterfaceError` (a closed or broken connection). `api` may
+    not import a storage driver (ADR-0003), so it is recognised by class identity."""
+    if isinstance(exc, _STORE_FAILURES):
+        return True
+    return any(
+        c.__module__.startswith("asyncpg") and c.__qualname__ == "InterfaceError"
+        for c in type(exc).__mro__
+    )
 
 
 def _refused(reason: str, response: JSONResponse, **values: object) -> JSONResponse:
@@ -449,16 +466,25 @@ def make_market_router(
         while slice_start < end_us and len(bars) <= limit and slices < _MAX_SLICES:
             slice_end = min(end_us, slice_start + (limit + 1) * width)
             rng = Range(slice_start, slice_end)
+            # SR-E12-01 (#452 F2): every store read of a slice is bounded by `QUERY_TIMEOUT_S`, and
+            # a timeout or a raw driver error is the 503, never a hang or a 500. The service's
+            # cold tier keeps its own typed `StorageTierUnavailable`.
+            try:
+                async with asyncio.timeout(QUERY_TIMEOUT_S):
+                    if service is not None:
+                        read = await service.read_page(symbol, interval, rng, limit=limit + 1)
+                    else:
+                        tr = TimeRange(start_us=slice_start, end_us=slice_end)
+                        rows = await cache.read_klines(symbol, interval, tr, limit=limit + 1)
+            except Exception as exc:
+                if not _is_store_failure(exc):
+                    raise
+                return _refused(
+                    "unavailable",
+                    _problem(503, "Service unavailable", "A kline storage tier is unavailable."),
+                    symbol=symbol, interval=interval,
+                )  # fmt: skip
             if service is not None:
-                try:
-                    read = await service.read_page(symbol, interval, rng, limit=limit + 1)
-                except StorageTierUnavailable:  # e.g. cold-tier DuckDB timeout: typed 503
-                    return _refused(
-                        "unavailable",
-                        _problem(
-                            503, "Service unavailable", "A kline storage tier is unavailable."
-                        ),
-                    )
                 if read.cold_page is not None:  # emitted-JSON cold bars, oldest first
                     page = read.cold_page
                     bars.add_page(page if include_open else page.confirmed_only())
@@ -466,8 +492,7 @@ def make_market_router(
                 sources += [t for t in read.sources if t not in sources]
                 recording_started = read.recording_started_at_us
             else:
-                tr = TimeRange(start_us=slice_start, end_us=slice_end)
-                got = list(await cache.read_klines(symbol, interval, tr, limit=limit + 1))
+                got = list(rows)
                 if got and SOURCE_HOT not in sources:
                     sources.append(SOURCE_HOT)
             bars.add_rows([r for r in got if include_open or r.confirmed])

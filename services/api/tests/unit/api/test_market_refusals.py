@@ -8,6 +8,7 @@ from collections.abc import MutableMapping
 from typing import Any
 
 import pytest
+from asyncpg import InterfaceError
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
@@ -251,3 +252,32 @@ def test_escape_value_short_values_are_repr_escaped_and_not_marked() -> None:
 def test_escape_value_long_values_are_cut_and_marked() -> None:
     out = escape_value("A" * 100)
     assert out == "'" + "A" * MAX_VALUE_CHARS + "'..."
+
+
+class _Failing:
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    async def read_klines(self, *a: object, **k: object) -> Any:
+        raise self._exc
+
+
+@pytest.mark.parametrize(
+    "exc", [TimeoutError(), OSError("x"), ConnectionError("x"), InterfaceError("closed")]
+)
+def test_klines_store_failure_is_a_counted_503_not_a_500(exc: BaseException) -> None:
+    """#452 F2: a store error on the klines read is the documented 503, counted and logged once."""
+    app = FastAPI()
+    app.include_router(
+        make_market_router(
+            lambda: _Failing(exc), principal_resolver=_Resolver(_OK),
+            symbol_listed=lambda s: True, now_us=lambda: _NOW,
+        )
+    )  # fmt: skip
+    before = _route_count("klines", "unavailable")
+    with capture_logs() as logs:
+        resp = TestClient(app, client=("127.0.0.1", 50000)).get("/market/klines", params=_KLINES_Q)
+    assert (resp.status_code, resp.json()["code"]) == (503, "store_unavailable")
+    assert "closed" not in resp.text
+    assert _route_count("klines", "unavailable") == before + 1
+    assert len(_refusals(logs)) == 1
