@@ -9,7 +9,8 @@ base32 secret (`totp-<user>`, a new 0600 file). Then `roster.json` (usernames an
 and, last, the marker `.seeded` (0444). Each file of this module's own is new, made
 `O_CREAT|O_EXCL|O_NOFOLLOW` with its exact mode in the run directory: nothing is replaced, followed
 or written elsewhere. `secrets` and `init` are named so the command line stays stable, and refuse
-until the stack overlay that needs them lands.
+until the stack overlay that needs them lands. `ACCOUNTS` (six registered accounts, each with its
+own UID and pack key id; E27-Q03, #892) is fixture data only: no command writes it yet.
 
 The gate, in this order, each refusal one fixed line (`account-fixture: refused: ...`), exit 2,
 never a value or a traceback:
@@ -110,6 +111,34 @@ ROSTER: Final = (
     Member("qa-manager-grants", "manager"),
     Member("qa-manager-nogrants", "manager"),
     Member("qa-viewer-granted", "viewer"),
+)
+
+
+class Account(NamedTuple):
+    """One registered exchange account of the fixture data: the plan's alias and label, its
+    exchange UID, the UID of the main account it belongs to (`None` for a main account) and the
+    pack key id stored on it (`fixture-<scenario>-NNNN`, so the stub admits it)."""
+
+    alias: str
+    label: str
+    uid: str
+    parent_uid: str | None
+    key_id: str
+
+
+#: E27-Q03 (#892) AC1: six registered demo accounts, a main account and five sub-accounts, each with
+#: its own UID and its own pack key id (BQ-04, ruled 2026-11-01). The first three are the plan's
+#: (`qa/plans/e27-accounts-test-plan.md` 9.2); `90000013`..`90000015` extend its fabricated range.
+#: Fixture data only: no command seeds them yet (`secrets` and `init` refuse until the stack overlay
+#: lands), so `users` and every file it writes are unchanged. A load run switches each key to
+#: `compliant` before it starts (`python -m cvdev.account_fixture.cli switch <key> --to compliant`).
+ACCOUNTS: Final = (
+    Account("acct-demo-main", "QA Main", "90000001", None, "fixture-compliant-0001"),
+    Account("acct-demo-sub1", "QA Sub 1", "90000011", "90000001", "fixture-key_delete_5xx-0029"),
+    Account("acct-demo-sub2", "QA Sub 2", "90000012", "90000001", "fixture-compliant_alt-0002"),
+    Account("acct-demo-sub3", "QA Sub 3", "90000013", "90000001", "fixture-leverage_ok-0031"),
+    Account("acct-demo-sub4", "QA Sub 4", "90000014", "90000001", "fixture-expiring_15d-0017"),
+    Account("acct-demo-sub5", "QA Sub 5", "90000015", "90000001", "fixture-close_rejected-0030"),
 )
 #: Every name `users` creates in the run directory, and no other.
 USER_FILES: Final = (
