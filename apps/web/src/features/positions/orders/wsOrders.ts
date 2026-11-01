@@ -14,10 +14,14 @@
  *   frame that applied a frame (in milliseconds, as every measure is; G-W2's transport makes it
  *   seconds, as the positions feed's).
  * - **REST** (BQ-6): one `listOrders?open_only=true` at first paint and one after each `snap`, a
- *   reconnect's included, never on a timer. Only the newest read applies.
+ *   reconnect's included, never on a timer. Only the newest read applies; a complete one (not
+ *   truncated) also settles the held and untracked rows the snapshot carried (`ordersStore.ts`).
  * - **S-02:** no first `snap` within 5 s, or a refused subscription, is "Could not load";
  *   `retry()` re-subscribes. A narrowing (`23` §9.5) re-reads the directory, as the positions feed
- *   does, and the subscription is made again only when the directory changed.
+ *   does, and the subscription is made again only when the directory changed. Not covered, as in
+ *   the positions feed: an account that leaves the subscription but stays listed
+ *   (`account_disabled`, `key_revoked`) is not named, because the directory still lists it; its
+ *   rows leave with the narrowing and no "No longer shown" line follows (fail-safe: none stays).
  */
 import { useEffect } from "react";
 import type { ConsumerSpec, TopicHandle, WsClient } from "../../../lib/ws/api";
@@ -137,8 +141,9 @@ export function startOrdersFeed(options: OrdersFeedOptions): OrdersFeed {
         ? { accountIds: accountIds.slice(0, MAX_ACCOUNT_IDS) }
         : {};
     void api.listOrders({ ...named, openOnly: true }, abort.signal).then((outcome) => {
-      if (!stopped && seq === restSeq && outcome.kind === "ok")
-        store.applyRest(outcome.items, wall());
+      if (stopped || seq !== restSeq || outcome.kind !== "ok") return;
+      // a truncated read cannot say an order closed: it settles nothing
+      store.applyRest(outcome.items, wall(), outcome.truncated ? undefined : now());
     });
   }
 
@@ -160,23 +165,30 @@ export function startOrdersFeed(options: OrdersFeedOptions): OrdersFeed {
     });
   }
 
+  /**
+   * One animation frame's work. The next frame is asked for in `finally`: a throw here (a store
+   * listener's, say) is reported by the frame that raised it, and the feed keeps draining.
+   */
   function drain(): void {
-    applied = 0;
-    if (orders !== null) {
-      const frames = orders.read();
-      applied = frames.length;
-      store.applyFrames(frames, now());
-      if (frames.some((f) => f.kind === "snap")) {
-        clearBudget();
-        readRest(); // BQ-6: after each snapshot, a reconnect's included
+    try {
+      applied = 0;
+      if (orders !== null) {
+        const frames = orders.read();
+        applied = frames.length;
+        store.applyFrames(frames, now());
+        if (frames.some((f) => f.kind === "snap")) {
+          clearBudget();
+          readRest(); // BQ-6: after each snapshot, a reconnect's included
+        }
+        store.setEffective(orders.effective);
       }
-      store.setEffective(orders.effective);
+      store.expire(now());
+      if (store.takeNarrowed()) loadAccounts(true); // 23 §9.5: the directory says who left
+      store.setLink(!isDown(client.getState()));
+      store.commit();
+    } finally {
+      if (!stopped) scheduler?.post("frame", true); // the next animation frame drains again
     }
-    store.expire(now());
-    if (store.takeNarrowed()) loadAccounts(true); // 23 §9.5: the directory says who left
-    store.setLink(!isDown(client.getState()));
-    store.commit();
-    if (!stopped) scheduler?.post("frame", true); // the next animation frame drains again
   }
 
   /** The marks and the measure for a frame that applied frames (an idle frame writes nothing). */

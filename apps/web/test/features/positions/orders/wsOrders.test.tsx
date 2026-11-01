@@ -32,6 +32,7 @@ import {
   type OrdersFeed,
 } from "../../../../src/features/positions/orders/wsOrders";
 import {
+  COND,
   delta,
   deltaBody,
   ETH,
@@ -245,6 +246,46 @@ describe("drained every animation frame (BQ-14: no 10 Hz tick)", () => {
     await settle(FRAME);
     expect(store.getSnapshot().status).toBe("live");
   });
+
+  it("a throw inside a frame never ends the feed: the next frame is asked for all the same", async () => {
+    const thrown: unknown[] = [];
+    // the platform reports a frame callback's throw; this one records it, as the console would
+    const raf = (callback: (frameTimeMs: number) => void): number =>
+      setTimeout(() => {
+        try {
+          callback(Date.now());
+        } catch (error) {
+          thrown.push(error);
+        }
+      }, FRAME) as unknown as number;
+    let throwOnce = true;
+    const throwing: OrdersStore = {
+      ...store,
+      applyFrames(frames, nowMs) {
+        if (throwOnce && frames.length > 0) {
+          throwOnce = false;
+          throw new Error("a listener threw");
+        }
+        store.applyFrames(frames, nowMs);
+      },
+    };
+    feed = startOrdersFeed({
+      client: ws.client,
+      store: throwing,
+      api: fakeApi(),
+      raf,
+      caf: fakeRaf.caf,
+      now: () => Date.now(),
+      performance: perf,
+    });
+    await settle(FRAME);
+    ordersHandle()?.push(snap(snapshotBody())); // this frame throws
+    await settle(FRAME);
+    expect(thrown).toHaveLength(1);
+    ordersHandle()?.push(snap(snapshotBody())); // a later snapshot still applies
+    await settle(FRAME);
+    expect(store.getSnapshot().status).toBe("live");
+  });
 });
 
 describe("REST after each snapshot (BQ-6): never on a timer, the newest read alone", () => {
@@ -287,6 +328,28 @@ describe("REST after each snapshot (BQ-6): never on a timer, the newest read alo
     start(fakeApi({ listOrders: async () => ({ kind: "unavailable" }) }));
     await settle(FRAME);
     expect(store.getSnapshot()).toMatchObject({ source: "none", rows: [] });
+  });
+
+  it("the snapshot's read settles the held rows it carried, unless the read was truncated", async () => {
+    let items = restOpen();
+    let truncated = false;
+    start(fakeApi({ listOrders: async () => ({ kind: "ok", items, truncated }) }));
+    await settle(FRAME);
+    ordersHandle()?.push(snap(snapshotBody()), d("held"));
+    await settle(FRAME * 2);
+    const shown = () => store.getSnapshot().rows.some((r) => r.id === COND);
+    expect(shown()).toBe(true);
+    // the order closed while the link was down: the reconnect's snapshot never lists a held one
+    items = restOpen().filter((o) => o.id !== COND);
+    truncated = true;
+    const without = { orders: snapshotBody().orders.filter((o) => o.id !== COND) };
+    ordersHandle()?.push(reset("reconnect"), snap(without));
+    await settle(FRAME * 3);
+    expect(shown()).toBe(true); // a truncated read cannot say it closed
+    truncated = false;
+    ordersHandle()?.push(reset("reconnect"), snap(without));
+    await settle(FRAME * 3);
+    expect(shown()).toBe(false);
   });
 });
 
