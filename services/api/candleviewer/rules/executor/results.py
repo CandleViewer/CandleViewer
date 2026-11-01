@@ -27,6 +27,9 @@ OUTCOMES: Final[tuple[Outcome, ...]] = get_args(Outcome)
 #: The detail of a `mode_changed` skip whose check-1 read failed or answered late (24 §11.5, BQ-6):
 #: the row was not confirmed armed, which is not the same as found disarmed.
 ROW_UNREAD: Final = "row_unread"
+#: The rule's own limits a `cap` refusal names (24 §11.9; check 6, E35-T10): each its own detail.
+RuleLimit = Literal["max_actions_per_fire", "max_notional_per_fire", "max_daily_notional"]
+RULE_LIMITS: Final[tuple[RuleLimit, ...]] = get_args(RuleLimit)
 
 #: PROPOSED for the owner (`docs/design/E35/E35-D03.md` §6's register, "Not done — {why}"):
 #: interim copy until E35-D03's approved table replaces it; no screen shows it before E35-S06
@@ -50,6 +53,12 @@ BLOCKED_DETAIL: Final[Mapping[str, str]] = MappingProxyType(
         "confirmation_unavailable": "Not done — confirming before acting is not available yet.",
         "mode_changed": "Not done — the rule was changed or disarmed before it acted.",
         ROW_UNREAD: "Not done — the rule's state was not confirmed, so nothing was sent.",
+        # E35-T10: `cap`, by the rule limit it names.
+        "max_actions_per_fire": "Not done — the rule took as many actions as one firing may.",
+        "max_notional_per_fire": "Not done — this firing used up the rule's notional limit.",
+        "max_daily_notional": (
+            "Not done — the rule's daily notional limit is used up or unconfirmed."
+        ),
     }
 )
 
@@ -116,12 +125,16 @@ def blocked_result(
     dedupe_key: str,
     reason: BlockedBy,
     duration_us: int = 0,
+    limit: str | None = None,
 ) -> ActionResult:
-    """A check's refusal: nothing was sent (24 §11.9 `blocked`)."""
+    """A check's refusal: nothing was sent (24 §11.9 `blocked`). `limit`, when given, keys the
+    detail in place of the reason: a `BLOCKED_DETAIL` key of its own, such as the rule limit a
+    `cap` names (`RULE_LIMITS`)."""
     return ActionResult(
         node_id=node_id, action_type=action_type, account_id=account_id,
         resolved_accounts=resolved_accounts, outcome="blocked", blocked_by=reason,
-        blocked_detail=BLOCKED_DETAIL[reason], dedupe_key=dedupe_key, duration_us=duration_us,
+        blocked_detail=BLOCKED_DETAIL[limit or reason], dedupe_key=dedupe_key,
+        duration_us=duration_us,
     )  # fmt: skip
 
 

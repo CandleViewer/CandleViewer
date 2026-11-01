@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, get_args
 from uuid import UUID
@@ -38,6 +39,17 @@ Capability = Literal[
 ENGINE_INTERNAL: Final[frozenset[Capability]] = frozenset(
     {"notifications", "journal", "variables", "signals", "rule_control"}
 )
+#: The entries, which meet the notional allowance (24 §11.7, check 6; BQ-11): never a reduce-only
+#: order (C-2.6).
+MEETS_ALLOWANCE: Final = frozenset(
+    {"place_order", "scale_in", "reverse_position", "arm_chase_limit", "start_iceberg_slice",
+     "start_twap"}
+)  # fmt: skip
+#: The actions that set, move or cancel a stop, which check 8 asks the stop in force about (24
+#: §11.5; BQ-12): a cancel may select a native stop-loss.
+TOUCHES_STOP: Final = frozenset(
+    {"modify_stop_loss", "tighten_stop", "move_to_breakeven", "cancel_order", "cancel_all_orders"}
+)
 #: How a handler's call ended, which `on_error` reads (24 §11.9): `accepted` and `done` took
 #: effect; `refused` is a definite refusal, never retried (`blocked_by` when a check of the set
 #: maps it); `pre_anchor` a refusal before the OMS anchor existed and `no_answer` a timeout or a
@@ -55,6 +67,9 @@ class HandlerAnswer:
     blocked_by: BlockedBy | None = None
     order_id: UUID | None = None
     group_id: UUID | None = None
+    #: An accepted entry's notional in USD (quantity times reference price), which feeds the
+    #: rule's allowance ledger (E35-T10, BQ-11); E35-T11's handlers fill it.
+    notional_usd: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +101,12 @@ class Handler(Protocol):
     """What runs an action: `prepare` is pure and builds the request once; `send` hands it over
     under the action's `client_ref`, once, or twice for `retry_once`, never rebuilt."""
 
-    def prepare(self, req: ActionRequest, account_id: UUID | None) -> Prepared: ...
+    def prepare(
+        self, req: ActionRequest, account_id: UUID | None, *, max_notional_usd: Decimal | None
+    ) -> Prepared:
+        """The request, built once; `max_notional_usd` is the allowance an entry may not exceed
+        (check 6, `None` when the rule sets no notional limit), which the OMS refuses, never
+        caps (24 §11.7)."""
 
     async def send(self, prepared: Prepared, *, client_ref: str) -> HandlerAnswer: ...
 
@@ -108,6 +128,8 @@ class HandlerSpec:
     bound_by: str | None
     handler: Handler | None = None
     refused_as: BlockedBy | None = None  # a type refused for good, bound or not
+    meets_allowance: bool = False  # an entry (`MEETS_ALLOWANCE`)
+    touches_stop: bool = False  # a stop action (`TOUCHES_STOP`)
 
     def __post_init__(self) -> None:
         if not self.idempotent and not (self.guarded and self.guard):
@@ -190,6 +212,8 @@ def build_handlers(
         table[action_type] = HandlerSpec(
             action_type, *flags, guard=bound.guard, capability=bound.capability,
             bound_by=bound.bound_by, refused_as=bound.refused_as,
+            meets_allowance=action_type in MEETS_ALLOWANCE,
+            touches_stop=action_type in TOUCHES_STOP,
         )  # fmt: skip
     return MappingProxyType(table)
 

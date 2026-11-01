@@ -35,7 +35,7 @@ from candleviewer.rules.executor.handlers import (
 )
 from candleviewer.rules.executor.keys import client_ref, dedupe_key
 from candleviewer.rules.executor.ports import ActionAuditFields, EventRow, RunRow
-from candleviewer.rules.ir.models import Action, RuleScope
+from candleviewer.rules.ir.models import MAX_ACTIONS, Action, RuleScope
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
 from tests.rules.executor.request_builders import (
     Counted,
@@ -65,7 +65,9 @@ class Handler:
         self.prepared: list[str] = []
         self.sent: list[tuple[str, str, str]] = []  # (node, client_ref, request_sha256)
 
-    def prepare(self, req: ActionRequest, account_id: uuid.UUID | None) -> Prepared:
+    def prepare(
+        self, req: ActionRequest, account_id: uuid.UUID | None, *, max_notional_usd: Any
+    ) -> Prepared:
         self.prepared.append(req.payload.node_id)
         return prepared({"node": req.payload.node_id, "account": str(account_id)})
 
@@ -457,11 +459,15 @@ async def test_a_bound_stand_in_never_serves_an_action_that_would_reach_the_oms(
         "halt_new_orders", "reduce_leverage", "start_twap", "widen_stop", "send_notification",
         "set_variable",
     )  # fmt: skip
+    runs = (RUN, uuid.UUID(int=9))  # E35-T10: a rule holds at most `MAX_ACTIONS`, so two fires
     reqs = tuple(
-        request(f"a{n}", on_error="continue", action_type=t, action={"type": t, "params": {}})
+        request(f"a{n}", on_error="continue", action_type=t, action={"type": t, "params": {}},
+                run_id=runs[n // MAX_ACTIONS])
         for n, t in enumerate(types)
-    )
-    await engine.executor.execute(Fire(RULE, RUN, reqs, engine.emit, version_id="v"))
+    )  # fmt: skip
+    for k, run in enumerate(runs):
+        part = reqs[k * MAX_ACTIONS : (k + 1) * MAX_ACTIONS]
+        await engine.executor.execute(Fire(RULE, run, part, engine.emit, version_id="v"))
     assert reached == ["send_notification", "set_variable"]
     refused = {node: reason for node, outcome, reason in records.results() if outcome == "blocked"}
     assert refused == {f"a{n}": "native_sl" if t == "widen_stop" else "unavailable"

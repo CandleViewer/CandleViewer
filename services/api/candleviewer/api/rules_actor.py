@@ -51,6 +51,9 @@ _UNBINDABLE = "The request body is not I-JSON, so a step-up cannot be bound to i
 _ACTIONS: dict[str, str] = {
     "rule.armed": "rules.arm",
     "rule.disarmed": "rules.disarm",
+    # E35-T10 (24 Sec.15.5): the kill-switch hook's B9 `KILL` and the circuit breaker's
+    # `KILL_SWITCH`, with their reason (`kill_switch`, `order_budget`) and no actor (`system`).
+    "rule.kill_switched": "rules.disarm",
     "rule.created": "rules.version_create",
     "rule.updated": "rules.version_create",
     "rule.deleted": "rules.delete",

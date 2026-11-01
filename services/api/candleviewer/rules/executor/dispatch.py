@@ -19,6 +19,8 @@ import structlog
 
 from candleviewer.observability import spawn, spawn_child
 from candleviewer.rules.evaluator.snapshot import Value
+from candleviewer.rules.executor.results import BlockedBy
+from candleviewer.rules.ir.models import RuleLimits
 from candleviewer.rules.scope import ActionRequest
 
 #: The fires that may wait, all rules together, before the newest is refused (C-2.18).
@@ -47,7 +49,10 @@ class Fire:
     through. The caller picks it (`RulesService._on_fire`: the routing emitter for a fired result,
     the audit-only one for a scope-skipped one); a worker never chooses where an action goes. A
     fire carries its run row's facts (24 §11.5, 21 §3.4.3): the active version it was evaluated
-    under, its trigger type and the metric values its conditions saw, never logged."""
+    under, its trigger type and the metric values its conditions saw, never logged; and (E35-T10)
+    when it was offered, on the service's monotonic clock, which a trip time or a kill time is
+    compared with at dispatch (one with none counts as offered before either), the rule's limits
+    and, for a record-only job of a fire refused whole, the `blocked_by` its records name."""
 
     rule_id: str
     run_id: UUID
@@ -57,6 +62,9 @@ class Fire:
     version_id: str | None = None
     trigger_type: str = ""
     metric_values: Mapping[str, Value] = field(default_factory=dict, repr=False)
+    offered_at: float = float("-inf")
+    limits: RuleLimits = field(default_factory=RuleLimits)
+    refused_by: BlockedBy = "backpressure"
 
     @property
     def armed(self) -> bool:
@@ -149,6 +157,21 @@ class FireDispatch:
         """Until no fire waits or runs."""
         await self._idle.wait()
 
+    def drop(self, rule_id: str) -> tuple[Fire, ...]:
+        """Take `rule_id`'s waiting fires out of its lane and return them, oldest first; never the
+        fire a worker runs, nor another rule's lane (E35-T10: the circuit breaker and the
+        kill-switch hook). Synchronous, so nothing is offered to the lane meanwhile; an emptied
+        lane keeps its turn, and the worker that meets it skips it."""
+        lane = self._lanes.get(rule_id)
+        if not lane:
+            return ()
+        dropped = tuple(lane)
+        lane.clear()
+        self._queued -= len(dropped)
+        if self._queued == 0:
+            self._blocked.clear()  # the queue ran empty: the next refusal starts an episode
+        return dropped
+
     async def stop(self, grace_s: float) -> None:
         """Drain within `grace_s` seconds, then end the workers. Past the grace they are cancelled,
         mid-action too, and the fires still waiting are dropped (a restart loses queued fires by
@@ -219,6 +242,11 @@ class FireDispatch:
         while True:
             rule_id = await self._ready.get()
             lane = self._lanes[rule_id]
+            if not lane:  # `drop` emptied it while it waited its turn: no worker holds it
+                del self._lanes[rule_id]
+                if not self._lanes:
+                    self._idle.set()
+                continue
             fire = self._running[name] = lane.popleft()
             self._queued -= 1
             if self._queued == 0:
