@@ -746,6 +746,9 @@ class StreamWriter:
             try:
                 await self._write(lane, batch)
             except asyncio.CancelledError:
+                if lane.spilling:  # it began to spill meanwhile: the batch goes first (#5333)
+                    lane.spill_buf = [*batch, *lane.spill_buf]
+                    raise
                 lane.queue.extendleft(reversed(batch))
                 if lane.oldest_at is None:
                     lane.oldest_at = self._clock()
@@ -770,12 +773,17 @@ class StreamWriter:
     async def _drain_spill_buf(self, lane: _Lane) -> None:
         """Append the whole spill buffer to the WAL: one write + one fsync. Refused frames
         (budget) or an `OSError` (disk full, chaos 13) become recorded drops."""
+        cancelled: asyncio.CancelledError | None = None
         async with lane.wal_lock:
             records, lane.spill_buf = lane.spill_buf, []
             if not records:
                 return
+            append = asyncio.ensure_future(asyncio.to_thread(lane.wal.append, records))
+            # A cancelled caller (stop()) still accounts for every record: the thread appends
+            # regardless, so its count decides what was written and what is dropped (#5333).
+            cancelled = await _join_thread(append)
             try:
-                written = await asyncio.to_thread(lane.wal.append, records)
+                written = append.result()
             except OSError as exc:
                 logger().error("recorder_wal_write_failed", stream=lane.stream, error=str(exc))
                 written = 0
@@ -784,6 +792,8 @@ class StreamWriter:
         if written < len(records):
             await self._drop(lane, records[written:])
         self._publish_gauges()
+        if cancelled is not None:
+            raise cancelled
 
     def _widen(self, symbol: str, stream: Stream, lo: int, hi: int) -> None:
         window = self._gaps.get((symbol, stream))
@@ -914,7 +924,12 @@ class StreamWriter:
         it = lane.wal.iter_replay()
         try:
             while True:
-                batch = await asyncio.to_thread(_take, it, self._cfg.flush_rows)
+                take = asyncio.ensure_future(asyncio.to_thread(_take, it, self._cfg.flush_rows))
+                # Never close `it` below while the thread is inside it: that raises ValueError,
+                # which the lane loop would catch, so a stop() would wait for it forever.
+                if (cancelled := await _join_thread(take)) is not None:
+                    raise cancelled
+                batch = take.result()
                 for msg in lane.wal.warnings:
                     logger().warning(
                         "recorder_replay_checkpoint_reset", stream=lane.stream, detail=msg
@@ -1181,6 +1196,19 @@ def _unpersisted(window: Sequence[int], first: int, last: int) -> tuple[int, int
     if first <= lo and hi <= last:
         return None
     return (lo, hi) if lo < first else (max(lo, last), hi)
+
+
+async def _join_thread[T](fut: asyncio.Future[T]) -> asyncio.CancelledError | None:
+    """Wait until a `to_thread` call is done, past any cancellation of the caller: its thread
+    cannot be stopped, so its outcome stays the caller's to account for. Returns the first
+    cancellation, for the caller to re-raise once it has (#5333)."""
+    cancelled: asyncio.CancelledError | None = None
+    while not fut.done():
+        try:
+            await asyncio.wait({fut})
+        except asyncio.CancelledError as exc:
+            cancelled = cancelled or exc
+    return cancelled
 
 
 def _take(it: Iterator[tuple[int, WalRecord]], n: int) -> list[tuple[int, WalRecord]]:
