@@ -162,6 +162,7 @@ async def test_rule_action_records_never_carry_a_parameter_value_a_figure_or_a_c
     assert {f.name for f in fields(ActionAuditFields)} == {
         "rule_id", "version", "ir_hash", "run_id", "node_id", "action_type", "scope_instance",
         "account_id", "owner", "armed_by", "dedupe_key", "blocked_by",
+        "owner_role", "armed_by_role",  # E35-T10: the roles' names, from the principal snapshot
     }  # fmt: skip
 
 

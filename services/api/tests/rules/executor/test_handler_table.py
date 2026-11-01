@@ -69,7 +69,7 @@ def refusal(spec: HandlerSpec) -> BlockedBy | None:
     """What the checks that read the table refuse (E35-T10): check 2 (`unavailable` while no
     handler is bound, the rollout port on, no stand-in), then check 8 (a type refused for good)."""
     gates = Gates(switches=Switches(rollout=True))
-    return gates.before_scope(spec, None, stand_in=False) or gates.after_scope(spec)
+    return gates.before_scope(spec, None, stand_in=False) or gates.stop_check(spec)
 
 
 class _Bound:
@@ -168,7 +168,7 @@ def test_widen_stop_is_refused_as_native_sl_never_unavailable() -> None:
     spec = HANDLERS["widen_stop"]
     gates = Gates(switches=Switches(rollout=False))  # the rollout port off: still never unavailable
     assert gates.before_scope(spec, None, stand_in=False) is None
-    assert gates.after_scope(spec) == "native_sl"
+    assert gates.stop_check(spec) == "native_sl"
     assert refusal(spec) == "native_sl"
     assert refusal(replace(spec, handler=_Bound())) == "native_sl"  # a binding changes nothing
     assert (spec.places_orders, spec.capability, spec.bound_by) == (False, "none", None)
