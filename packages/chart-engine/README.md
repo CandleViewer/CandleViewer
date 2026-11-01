@@ -919,3 +919,57 @@ the first source a node is attached to, so a second ring would mean remounting t
 switch, and the scene graph cannot remove the old ones. `HaRing` therefore holds only the float64
 state and writes into the series' existing ring; switching back rewrites the real bars from the
 store.
+
+## Forming and corrected bars, `barState` and `barStateChanged` (E12-S10, engine slice)
+
+E12-D06 §7.1 and §7.3, in the engine. The ring's `meta` word already carried the bar's flags (bits
+0..3) under the direction (bits 4..5). A fourth host per series, the marks (part 7 of the `candle`
+program, after E12-S07's hollow parts 5 and 6), draws two kinds of mark. A forming bar (`confirm: false`, flag bit 1) gets a static
+`dash.2-2` ring in `color.candle.wick`: 1 hairline wide, 1 hairline outside the union of the wick
+and body, dashed 2 on / 2 off clockwise from its snapped top-left corner, so a pan never moves
+the dash phase. A corrected bar (`amended`, bit 3) gets a 3 × 3-hairline square, 2 hairlines above
+the high, centred on the hairline column. The numbers are `MARK_GEOM` in the geometry twin
+(`markRect`, `ringOn`), and the shader spells them; a test pins both. Marks draw at L0 only
+(s ≥ 3 CSS px, `MARKS_FROM`), and only while a marked bar is in view (BQ-1 default: a
+conditional extra batch). At L1 / L2 the words alone carry the state (D06 §7.1).
+
+`MarkRing` (`src/layers/candle/marks.ts`) follows the SeamRing pattern. It holds one entry per
+drawn bit, `[slot, high, low, open, kind | dir << 4 | heavy]`, sorted by logical index, and it
+rescans only the range the ring wrote. Only the entries that changed are patched. A live tick that moves only the
+close leaves the entry as it was, so the tick uploads one 20-byte ring slot and nothing else. A
+new high or low, or a change of direction, adds one 20-byte marks entry. While no bar is marked,
+the batch spans no slots and costs nothing per frame. The confirm is the existing equal-time merge
+with the bit cleared: one ring slot, and the mark is dropped in the same sync. An evicted or
+replaced-away bar drops its mark silently.
+
+The ring now has one `follower` (`CandleSeries` installs one object over seams and marks), so a
+sync still makes one follower call. `CandleSeries.dirtyHosts()` tells a data sync which hosts to
+re-collect: the bar parts always, the seam and marks only after their list changed.
+`CandleSeries.collect` declares only the calling host's part. Together these keep pan and feed
+frames at the S06 cost with the fourth host (interleaved bench vs 5a8b08da in the PR).
+
+`CandleSeries.barState(index, out)` reads `forming`, `amended` and `stale` per bar without
+allocating. The readout, cursor and DOM mirror (E11-S07, SCR-045) say the words. The engine never
+announces. `stale` is a flag only (BQ-4: `CandleSeries.stale`, no canvas change); the runtime has
+no command for it yet. **Additive API (for the E11-T09 #1404 freeze report):**
+`ChartEvents.barStateChanged { time, forming, amended }`, and the worker message of that name, for
+the main series, once per change of a bar's bits, never per tick. The host clears `amended` at the
+next close (BQ-3). The line-family ring on the last-point disc waits for S07 (BQ-5). The countdown,
+the WS `bars` topic, the stale chip and the amendment announcement belong to `apps/web` (BQ-2).
+Goldens: the CPU stand-in pins a forming doji's ring and a corrected bar's square. The SwiftShader
+rows `forming ring` and `corrected square` are `it.todo`s for #391. Bench scene: `forming-tick`
+(5k / 100k bars, 120 in view).
+
+**With E12-S07's hollow and Heikin-Ashi.** D06 §7.1 puts the ring "1 px outside the mark" and
+§7.3 the square "2 px above the high", with the bar keeping its normal encoding: the marks follow
+the bar as drawn. The ring writes first and then calls its follower with the range it wrote (a
+Heikin-Ashi write runs to the end, a hollow one a bar further), and `setMode` re-syncs the
+follower over every bar. `MarkRing` copies high, low, open and dir from the ring's words, so under
+Heikin-Ashi the ring circles and the square tops the HA candle, never the real bar (prices in the
+readout stay real, R-4). `heavy` (`MARK_HEAVY`, bit 6 of the entry word) marks a 2-hairline drawn
+wick: a down bar's, or under hollow a colour-down bar's (close < previous close, D06 §4.2), so the
+ring clears the wick that is drawn. A kind or HA switch changes no bar's bits, so it queues no
+`barStateChanged`. The hollow encoding never means "forming" (D06 §7.1, `14`:732): the forming
+bar keeps its hollow or solid body and gains the ring. Under HA or hollow a close-only tick can
+move the drawn words, so it may patch one marks entry. The CPU stand-in pins one Heikin-Ashi
+hollow raster with a forming ring and a corrected square.
