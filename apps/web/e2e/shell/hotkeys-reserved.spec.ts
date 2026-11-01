@@ -2,12 +2,12 @@ import { stubSession } from "../support/api";
 import { expect, test } from "./fixtures";
 
 // E10-Q02 hotkeys (plan step HK-1; BQ-04, re-read at #5214's merge): what this build ships. Ctrl+K
-// is reserved for the command palette, which is not in this build: the dispatcher takes the key
-// (default prevented) and opens nothing. Ctrl+/ opens the cheatsheet, now a modal dialog (D-03).
-// Opening and running the palette is the "SCR-012 command palette, #5236" row of the plan's §3.
+// is the shell's (default prevented) and opens SCR-012, the command palette (E10-S05 #5236); Esc
+// closes it. Ctrl+/ opens the cheatsheet, a modal dialog (D-03). Running palette rows is
+// command-palette.spec.ts (E10-S05).
 // Rebind -> conflict -> swap -> reload is hotkeys.spec.ts (E49-S07).
 
-test("@plan-HK-1 Ctrl+K is taken by the shell and opens nothing; Ctrl+/ opens the cheatsheet", async ({
+test("@plan-HK-1 Ctrl+K is taken by the shell and opens the palette; Ctrl+/ opens the cheatsheet", async ({
   page,
 }) => {
   await stubSession(page, { role: "viewer" });
@@ -26,6 +26,8 @@ test("@plan-HK-1 Ctrl+K is taken by the shell and opens nothing; Ctrl+/ opens th
   const keys = () => page.evaluate(() => (globalThis as unknown as { cvKeys: string[] }).cvKeys);
   await page.keyboard.press("Control+k");
   await expect.poll(keys).toEqual(["k:true"]);
+  await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.keyboard.press("Control+/");
   await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible();
