@@ -6,7 +6,8 @@ database per test, cloned from a template; the Owner then signs in through the r
 from the seeded secret file, session, `GET /me`. The S8 boot guard, which the stack's api runs
 before any module starts, then passes on the seeded database. Fabricated throwaway values only.
 Every password and secret is read back from the run directory and never put in an assertion
-message.
+message. It starts its own Postgres container (testcontainers) and runs in CI's integration job; on
+any other host it is skipped unless `CV_CHAOS_STACK=1`.
 """
 
 from __future__ import annotations
@@ -37,7 +38,13 @@ from candleviewer.settings import Environment, FeedMode, Settings
 from cvdev.account_fixture import boot, seed
 from tests._account_fixtures import PACK
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not (os.environ.get("GITHUB_ACTIONS") or os.environ.get("CV_CHAOS_STACK") == "1"),
+        reason="starts its own Postgres container: CI's integration job, or CV_CHAOS_STACK=1",
+    ),
+]
 
 _ROOT = Path(__file__).resolve().parents[3]
 # Track real time: rows carry DB-stamped `created_at` (now()), so a frozen date is a time bomb.

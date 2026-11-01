@@ -13,11 +13,18 @@ a module starts. Never run it against a database or a host that holds anything r
 daemon: under a rootless or user-namespace-remapped one the one-shots see the run directory as another uid's, and
 the seed's gate refuses it with one fixed line.
 
-Every command below runs from the checkout's root, with `S` set once:
+Every command below runs from the checkout's root, with `S` and this lane's name set once:
 
 ```bash
 S=infra/scripts/account_fixture_stack.py
+export CV_ACCTFIX_LANE=<this lane's name>
 ```
+
+`CV_ACCTFIX_LANE` is 1 to 63 of `a-z`, `0-9` and `-`, the first not `-`. Every command takes the lane from it and
+refuses, with exit 2 and one fixed line that never shows the value, when it is unset or malformed. The overlay puts it
+on every container, network and volume of the project as the label `cv.lane` (`up` writes it into `stack.env` for
+that), so two lanes' projects tell apart on one host, and `up` and `down` act only on a project that is wholly this
+lane's.
 
 ## What `up` does
 
@@ -26,15 +33,16 @@ python3 $S up            # prints the project name, cv-acctfix-<6 hex>
 ```
 
 1. **Host checks.** The project is `cv-acctfix-<6 hex digits>` (a new one each run, or `--project`; never
-   `cv-demo` or any other name), nothing of it is left over (container, network or volume), and the five
+   `cv-demo` or any other name), nothing of it is left over (container, network or volume; one that carries another
+   lane's `cv.lane` label, or none, is refused with a line of its own, before anything is made), and the five
    loopback ports it publishes are free and distinct: drawn per run, or pinned with `--port NAME=N` (NAME one of
    `POSTGRES_PORT`, `QUESTDB_PG_PORT`, `QUESTDB_ILP_PORT`, `QUESTDB_HTTP_PORT`, `CV_BIND_PORT`).
-2. **The run directory**, `$XDG_RUNTIME_DIR/<project>` (else under `/dev/shm`): mode 0700, flat, on tmpfs, gone at
-   `down` or at reboot. It holds `stack.env` (0600, the user's: the Postgres password and DSNs, the pepper and the
-   three auth keys, each new per run, the paths compose needs, free ports, inert values for the stores that never
-   start), then what the one-shot writes as root: `kek` and `lane.key` (0400), `pw-<user>` (0400),
-   `totp-<user>` (0600), `roster.json` and `.seeded` (0444). The invoking user can unlink root's files there but
-   cannot read them; the stack's containers read them as root.
+2. **The run directory**, `$XDG_RUNTIME_DIR/<project>` (else under the system's shared-memory tmpfs): mode 0700,
+   flat, on tmpfs, gone at `down` or at reboot. It holds `stack.env` (0600, the user's: the Postgres password and
+   DSNs, the pepper and the three auth keys, each new per run, the paths compose needs, the lane, free ports, inert
+   values for the stores that never start), then what the one-shot writes as root: `kek` and `lane.key` (0400),
+   `pw-<user>` (0400), `totp-<user>` (0600), `roster.json` and `.seeded` (0444). The invoking user can unlink root's
+   files there but cannot read them; the stack's containers read them as root.
 3. **Postgres and QuestDB** (`up --wait`), then **the schema step** (`run --rm migrate`, with the `core` and
    `migrate` profiles: on the dev stack `cv` owns the schema, so the owner DSN is the app DSN), then
    **`fixture-init`** (`python -m cvdev.account_fixture.seed init`: the gate, the run's KEK and audit lane key, the
@@ -47,7 +55,7 @@ python3 $S up            # prints the project name, cv-acctfix-<6 hex>
 again. The seed's refusals are one fixed line each (`account-fixture: refused: ...`): the gate's legs are listed in
 the seed module's docstring.
 
-**On a host that runs another stack** whose network holds the base file's `172.28.0.0/24` (the demo host's
+**On a host that runs another stack** whose network holds the base file's own subnet (the demo host's
 `cv-demo`), give `up` and every later command a lane-local file with a private /24 of its own, outside the checkout
 (the compose lint reads every `docker-compose*.yml` in `infra/compose/`, and `!override` is not plain YAML):
 
@@ -143,12 +151,18 @@ account's exposure unreadable, so its revoke answers `409 exposure_unknown`: swi
 python3 $S down --project <project>
 ```
 
-`down` goes by the project name alone: `docker compose -p <project> down -v --remove-orphans`, run from an empty
-directory, so compose reads no compose file and no env file and needs no `-f`, no run directory and no value.
-Then the project's containers, networks and volumes are listed by their compose label, and only when that lists
-nothing is the run directory unlinked: the line ends `0 containers, 0 networks, 0 volumes left; run directory
-removed`. A second `down` finds nothing and ends `; no run directory`. After a reboot (the tmpfs run directory
-gone, the volumes not) `down` works the same way.
+`down` first lists the project's containers, networks and volumes by their compose label and reads each one's
+`cv.lane` label. If any carries another lane's label, or none, `down` refuses: exit 2 and the one fixed line
+`account-fixture-stack: refused: the project has an object that carries another lane's label, or none: it is not this
+lane's`, with no compose call and the run directory kept; running it again changes nothing. A lane's `down` never takes
+another lane's project down, and `up` refuses such a project the same way.
+
+When every listed object carries this lane's label, `down` goes by the project name alone: `docker compose -p
+<project> down -v --remove-orphans`, run from an empty directory, so compose reads no compose file and no env file and
+needs no `-f`, no run directory and no value. Then the project's containers, networks and volumes are listed by their
+compose label, and only when that lists nothing is the run directory unlinked: the line ends `0 containers, 0 networks,
+0 volumes left; run directory removed`. A second `down` finds nothing and ends `; no run directory`. After a reboot
+(the tmpfs run directory gone, the volumes not) `down` works the same way.
 
 `down` removes no image: the api, the schema step and both one-shots are built here, and compose tags each by the
 project's name and the service's. After `down`, list those images by the project's name prefix and remove each by
@@ -156,10 +170,10 @@ its id (`docker image ls`, then `docker image rm <id>`); a new project name buil
 
 **A failed `down`** (compose exits non-zero, or the label still lists something) keeps the run directory and ends
 `run down again` with exit 1: run the same `down` again; it needs nothing but the project's name. A project a
-reboot or an interrupted `up` left behind is found by its label:
+reboot or an interrupted `up` left behind is found by its lane label, which only this lane's projects carry:
 
 ```bash
-docker volume ls --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}' | sort -u
+docker volume ls --filter "label=cv.lane=$CV_ACCTFIX_LANE" --format '{{.Label "com.docker.compose.project"}}' | sort -u
 ```
 
 (`docker ps -a` and `docker network ls` take the same filter and format); take down only the `cv-acctfix-*`
@@ -172,6 +186,7 @@ projects you started.
   the run directory's path, a host port or an address in a record. The script prints names, steps, statuses and
   counts only.
 - **Touch only your project.** Stop, remove or prune nothing that is not `cv-acctfix-*` and yours; never
-  `docker system prune`.
+  `docker system prune`. `down` refuses a project that holds another lane's object or an unlabelled one: leave it, and
+  never remove such an object by hand.
 - **No real key, ever.** The pack's keys are fabricated public constants (`fixture-<scenario>-NNNN`, secret
   `fixture-<scenario>-secret-not-real`); the transport answers nothing else.

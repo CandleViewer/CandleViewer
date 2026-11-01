@@ -87,8 +87,9 @@ Rule 8 applies to the fixture stack's real-backend overlay,
 ``docker-compose.account-fixture-real.yml`` (#2893's closure), which
 ``infra/scripts/account_fixture_stack.py`` layers after rule 7's overlay:
 
-8. It touches only ``api``, ``fixture-init`` and ``fixture-drive`` and the top-level ``secrets``
-   and ``volumes``. The api keeps the app's entrypoint and command, so the S8 boot guard runs
+8. It touches only ``api``, ``fixture-init`` and ``fixture-drive``, the base file's ``postgres``,
+   ``questdb`` and ``migrate`` (a label alone) and the top-level ``secrets``, ``volumes`` and
+   ``networks``. The api keeps the app's entrypoint and command, so the S8 boot guard runs
    first; it builds nothing, names no image, publishes no port and takes no env file. Its
    environment is exactly the committed ``CV_STORAGE_BACKEND=real``, ``CV_EGRESS_IP`` (the pack's
    RFC 5737 egress), ``CV_KEK_SOURCE=file``, ``CV_KEK_HANDLE=/run/secrets/cv_kek``,
@@ -96,10 +97,15 @@ Rule 8 applies to the fixture stack's real-backend overlay,
    run's own ``${NAME:?...}``. It mounts ``cv_kek`` alone (the lane key is the base file's), the
    cold tier's root as ``cv-api-data`` and nothing else, with no core dumps. The top-level
    secrets are ``cv_kek`` and ``cv_audit_lane_key``, ``file: ${CV_KEK_FILE:?...}`` and
-   ``file: ${CV_AUDIT_LANE_MAC_SOURCE:?...}``; the volumes ``cv-api-data`` and
-   ``cv-acctfix-session``, with no option. The two one-shots build the builder stage, each under
-   a profile of its own name alone, from ``/build``, with the seed's ``init`` and the driver as
-   their commands; no port, no env file, no secret, a read-only root, no core dumps; their
+   ``file: ${CV_AUDIT_LANE_MAC_SOURCE:?...}``. Every service of the stack, and every named
+   volume and network compose creates for it (this file's ``cv-api-data`` and
+   ``cv-acctfix-session``, the base file's ``cv-postgres-data``, ``cv-questdb-data`` and
+   ``cv-audit-data``, rule 7's ``cv-account-fixture`` and the base file's network ``cv-internal``),
+   carries one label, ``cv.lane: ${CV_ACCTFIX_LANE:?...}``, the lane the stack script runs under,
+   and each volume and the network sets no option besides it: ``down`` takes a project down only
+   when every object of it carries its own lane. The two one-shots build the builder stage, each
+   under a profile of its own name alone, from ``/build``, with the seed's ``init`` and the
+   driver as their commands; no port, no env file, no secret, a read-only root, no core dumps; their
    environment is demo, the synthetic feed, rule 7's scenario and directory and the run's uid,
    plus, for ``fixture-init``, the run's DSN, pepper and TOTP key: no ``CV_BYBIT_API_*``, no
    ``CV_TEST_CLOCK``. ``fixture-init`` mounts ``cvdev`` and ``services/api/scripts`` read-only
@@ -240,8 +246,18 @@ FIXTURE_EGRESS_IP = "203.0.113.10"  # the pack's egress (`cvdev/account_fixture/
 PARQUET_ROOT = f"{DATA_DIR}/parquet"  # the cold tier's root, which the real backend never makes
 SESSION_VOLUME = "cv-acctfix-session"
 RUN_DIR = "/run-dir"
-_REAL_SERVICES = ("api", "fixture-init", "fixture-drive")
-_REAL_API_KEYS = frozenset({"environment", "secrets", "volumes", "ulimits"})
+#: The lane label every object of the stack carries, and the run's variable that names the lane.
+LANE_LABEL = "cv.lane"
+LANE_VARIABLE = "CV_ACCTFIX_LANE"
+#: The base file's services this overlay labels and sets nothing else on, and every named volume
+#: and network the stack creates (this file's two volumes, the base file's three, rule 7's one).
+_REAL_LABELLED = ("postgres", "questdb", "migrate")
+_REAL_SERVICES = ("api", "fixture-init", "fixture-drive", *_REAL_LABELLED)
+_REAL_VOLUMES = (
+    DATA_VOLUME, SESSION_VOLUME, "cv-postgres-data", "cv-questdb-data", AUDIT_VOLUME, FIXTURE_VOLUME
+)  # fmt: skip
+_REAL_NETWORKS = ("cv-internal",)
+_REAL_API_KEYS = frozenset({"environment", "secrets", "volumes", "ulimits", "labels"})
 _REAL_API_FIXED = {
     "CV_STORAGE_BACKEND": "real",
     "CV_EGRESS_IP": FIXTURE_EGRESS_IP,
@@ -269,7 +285,7 @@ _ONE_SHOT_SAME: dict[str, object] = {
     "networks": ["cv-internal"],
 }
 _ONE_SHOT_KEYS = frozenset({*_ONE_SHOT_SAME, "profiles", "entrypoint", "command", "environment",
-                            "volumes"})  # fmt: skip
+                            "volumes", "labels"})  # fmt: skip
 #: Each one-shot's own: its command, its mounts (patterns) and the run's variables it takes.
 _ONE_SHOTS: dict[str, dict[str, object]] = {
     "fixture-init": {
@@ -807,13 +823,15 @@ def check_account_fixture_real_overlay(compose: dict[str, Any]) -> list[str]:
     compose = compose or {}
     services = _services(compose)
     where = "the real-backend fixture overlay sets only"
-    errors = [f"top-level '{k}': {where} services, secrets and volumes" for k in compose
-              if k not in ("services", "secrets", "volumes")]  # fmt: skip
+    errors = [f"top-level '{k}': {where} services, secrets, volumes and networks" for k in compose
+              if k not in ("services", "secrets", "volumes", "networks")]  # fmt: skip
     errors += [f"service '{name}': {where} {', '.join(_REAL_SERVICES)}" for name in services
                if name not in _REAL_SERVICES]  # fmt: skip
     errors += _real_api_problems(services.get("api") or {})
     for name in _ONE_SHOTS:
         errors += _one_shot_problems(name, services.get(name) or {})
+    for name in _REAL_LABELLED:
+        errors += _labelled_only_problems(name, services.get(name) or {})
     declared = _section(compose, "secret") or {}
     if set(declared) != set(_DEMO_FILES):
         errors.append("top-level secrets: only cv_kek and cv_audit_lane_key, each a file secret")
@@ -822,8 +840,39 @@ def check_account_fixture_real_overlay(compose: dict[str, Any]) -> list[str]:
         source = str(entry["file"]) if _from_a_file(entry) else ""
         if not _run_variable(variable, source):
             errors.append(f"secret '{name}' is not file: ${{{variable}:?...}}, with no default")
-    if compose.get("volumes") != {DATA_VOLUME: {}, SESSION_VOLUME: {}}:
-        errors.append(f"top-level volumes: only {DATA_VOLUME} and {SESSION_VOLUME}, with no option")
+    errors += _lane_section_problems("volumes", _REAL_VOLUMES, compose.get("volumes"))
+    return errors + _lane_section_problems("networks", _REAL_NETWORKS, compose.get("networks"))
+
+
+def _lane_label_problems(where: str, node: dict[str, Any]) -> list[str]:
+    """The lane label alone, `cv.lane: ${CV_ACCTFIX_LANE:?...}`: the run's own lane variable."""
+    labels = _pairs(node.get("labels"))
+    if set(labels) == {LANE_LABEL} and _run_variable(LANE_VARIABLE, labels[LANE_LABEL]):
+        return []
+    return [
+        f"{where}: labels is not exactly {LANE_LABEL}: ${{{LANE_VARIABLE}:?...}}, the run's lane"
+    ]
+
+
+def _labelled_only_problems(name: str, service: dict[str, Any]) -> list[str]:
+    """A base file's service this overlay labels: the lane label, and nothing else set on it."""
+    where = f"service '{name}'"
+    errors = [f"{where}: the real-backend fixture overlay sets only labels on it, not {key}"
+              for key in sorted(set(service) - {"labels"})]  # fmt: skip
+    return errors + _lane_label_problems(where, service)
+
+
+def _lane_section_problems(kind: str, names: tuple[str, ...], declared: Any) -> list[str]:
+    """A top-level `volumes:` or `networks:`: the stack's objects exactly, each the lane label
+    alone (a driver, an option, a name or `external` would make it another object)."""
+    declared = declared if isinstance(declared, dict) else {}
+    errors: list[str] = []
+    if set(declared) != set(names):
+        errors.append(f"top-level {kind}: only {', '.join(names)}, each with the lane label alone")
+    for name, entry in declared.items():
+        node = entry if isinstance(entry, dict) else {}
+        if set(node) != {"labels"} or _lane_label_problems("", node):
+            errors.append(f"top-level {kind}: {name} is not the lane label alone")
     return errors
 
 
@@ -850,7 +899,7 @@ def _real_api_problems(api: dict[str, Any]) -> list[str]:
         errors.append(f"service 'api': volumes are not {DATA_VOLUME} alone at {PARQUET_ROOT}")
     if api.get("ulimits") != {"core": 0}:
         errors.append("service 'api': ulimits is not core: 0 alone (SR-009: it loads the KEK)")
-    return errors
+    return errors + _lane_label_problems("service 'api'", api)
 
 
 def _one_shot_problems(name: str, service: dict[str, Any]) -> list[str]:
@@ -883,7 +932,7 @@ def _one_shot_problems(name: str, service: dict[str, Any]) -> list[str]:
     ):
         errors.append(f"{where}: volumes are not exactly its mounts (the run directory "
                       f"{'read-write' if name == 'fixture-init' else 'read-only'})")  # fmt: skip
-    return errors
+    return errors + _lane_label_problems(where, service)
 
 
 def _strings(value: object) -> tuple[str, ...]:

@@ -19,6 +19,14 @@ for the stores that never start. Then, in order: Postgres and QuestDB, the schem
 directory), the api (the base file makes the schema step the api's dependency, so the api's start
 runs that step once more, which changes nothing on a migrated database).
 
+Every command takes the lane from one environment variable, `CV_ACCTFIX_LANE` (1 to 63 of a-z, 0-9
+and `-`, the first not a `-`), and refuses it unset or malformed with exit 2 and one fixed line that
+never shows the value. The overlay labels each service of the project, and each network and volume
+compose creates for it, `cv.lane=<lane>`, and `up` writes the lane into `stack.env` for it. `up` and
+`down` read that label on every object the project's compose label lists, and refuse, before any
+compose call, a project holding an object that carries another lane's label or none: `down` takes
+down a project only when every object of it is this lane's.
+
 `down` goes by the project name alone (`docker compose -p <project> down -v --remove-orphans`, run
 from an empty directory) and takes no `-f`: compose then reads no compose file and no env file, so
 `down` works with the run directory gone (a reboot), and running it again is how a failed `down` is
@@ -58,6 +66,10 @@ COMPOSE_FILES: Final = tuple(
     )
 )
 PROJECT: Final = re.compile(r"cv-acctfix-[0-9a-f]{6}")
+LANE_VARIABLE: Final = "CV_ACCTFIX_LANE"
+LANE: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")  # `fullmatch`: a trailing newline is no lane
+#: The label the overlay puts on every container, network and volume of the project.
+LANE_LABEL: Final = "cv.lane"
 SCENARIO: Final = re.compile(r"[a-z0-9_]{1,64}")
 PORT_NAMES: Final = (
     "POSTGRES_PORT",
@@ -87,10 +99,11 @@ TEARDOWN: Final = ("down", "-v", "--remove-orphans")
 #: The caller's environment docker keeps: nothing else, so the env file alone sets the stack.
 _DOCKER_ENV: Final = re.compile(r"PATH|HOME|DOCKER_[A-Z_]+")
 _LABEL: Final = "label=com.docker.compose.project={}"
+#: What `leftovers` lists: the kind, docker's command and the name's field in its `--format`.
 _LISTS: Final = (
-    ("containers", ("ps", "-a")),
-    ("networks", ("network", "ls")),
-    ("volumes", ("volume", "ls")),
+    ("containers", ("ps", "-a"), "Names"),
+    ("networks", ("network", "ls"), "Name"),
+    ("volumes", ("volume", "ls"), "Name"),
 )
 
 
@@ -110,6 +123,24 @@ def checked_project(name: str) -> str:
     if PROJECT.fullmatch(name) is None:
         raise Refused("the project must be named cv-acctfix-<6 hex digits>, never another stack's")
     return name
+
+
+def checked_lane(environ: Mapping[str, str]) -> str:
+    """This lane's name from `CV_ACCTFIX_LANE`; unset or malformed is one fixed line, no value."""
+    lane = environ.get(LANE_VARIABLE, "")
+    if LANE.fullmatch(lane) is None:
+        raise Refused(
+            f"{LANE_VARIABLE} must be set to this lane's name: 1 to 63 of a-z, 0-9 and -, "
+            "the first not -"
+        )
+    return lane
+
+
+def lane_only(found: Mapping[str, Sequence[tuple[str, str]]], lane: str) -> None:
+    """Refuse a project with a listed object whose lane label is another lane's, or missing."""
+    if any(owner != lane for objects in found.values() for _, owner in objects):
+        raise Refused("the project has an object that carries another lane's label, or none: "
+                      "it is not this lane's")  # fmt: skip
 
 
 def free_port() -> int:
@@ -149,7 +180,7 @@ def ports(given: Sequence[str]) -> dict[str, str]:
 
 
 def stack_values(
-    project: str, run_dir: Path, uid: int, scenario: str, host_ports: Mapping[str, str]
+    project: str, run_dir: Path, uid: int, scenario: str, lane: str, host_ports: Mapping[str, str]
 ) -> dict[str, str]:
     """The run's env file: generated values, new per run, and the paths and names compose needs."""
     password = secrets.token_urlsafe(24)
@@ -168,6 +199,7 @@ def stack_values(
         "CV_AUDIT_LANE_MAC_SOURCE": str(run_dir / "lane.key"),
         "CV_ACCTFIX_RUN_DIR": str(run_dir),
         "CV_ACCTFIX_RUN_UID": str(uid),
+        LANE_VARIABLE: lane,
         "CV_ACCOUNT_FIXTURE": scenario,
         **INERT,
         **host_ports,
@@ -201,19 +233,20 @@ def call(argv: Sequence[str], env: Mapping[str, str], cwd: str | None = None) ->
     return done.returncode
 
 
-def leftovers(project: str, env: Mapping[str, str]) -> dict[str, list[str]]:
-    """The project's containers, networks and volumes, by its compose label: names only."""
-    found: dict[str, list[str]] = {}
-    for kind, command in _LISTS:
-        argv = ["docker", *command, "--filter", _LABEL.format(project), "--format", "{{.Name}}"]
-        if kind == "containers":
-            argv[-1] = "{{.Names}}"
+def leftovers(project: str, env: Mapping[str, str]) -> dict[str, list[tuple[str, str]]]:
+    """The project's containers, networks and volumes, by its compose label: each one's name and
+    its `cv.lane` label (empty when it has none), never any other value."""
+    found: dict[str, list[tuple[str, str]]] = {}
+    for kind, command, field in _LISTS:
+        shown = "{{." + field + '}}\t{{.Label "' + LANE_LABEL + '"}}'
+        argv = ["docker", *command, "--filter", _LABEL.format(project), "--format", shown]
         done = subprocess.run(  # noqa: S603 - docker, an argument list built here
             argv, env=dict(env), capture_output=True, text=True, check=False
         )
         if done.returncode != 0:
             raise Refused(f"docker did not list the project's {kind}")
-        found[kind] = [line for line in done.stdout.splitlines() if line.strip()]
+        lines = [line for line in done.stdout.splitlines() if line.strip()]
+        found[kind] = [(name, owner) for name, _, owner in (line.partition("\t") for line in lines)]
     return found
 
 
@@ -228,12 +261,15 @@ def up(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
         raise Refused("the run directory already exists: take that run down first")
     host_ports = ports(args.port)
     env = docker_env(environ)
-    if any(leftovers(project, env).values()):
+    found = leftovers(project, env)
+    lane_only(found, args.lane)
+    if any(found.values()):
         raise Refused("the project has containers, networks or volumes left: take it down first")
     os.mkdir(run_dir, 0o700)
     os.chmod(run_dir, 0o700)  # the umask never loosens or tightens it
     env_file = run_dir / ENV_FILE
-    write_env(env_file, stack_values(project, run_dir, os.getuid(), scenario, host_ports))
+    values = stack_values(project, run_dir, os.getuid(), scenario, args.lane, host_ports)
+    write_env(env_file, values)
     base = compose(project, env_file, args.file)
     steps = (
         (
@@ -277,12 +313,15 @@ def drive(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
 
 
 def down(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
-    """Everything of the project, by its name alone, then the run directory; idempotent."""
+    """Everything of the project, by its name alone, then the run directory; idempotent. Only a
+    project whose every object carries this lane's label: any other is refused, as it stands."""
     project = checked_project(args.project)
     run_dir = run_root(environ) / project
     env = docker_env(environ)
     status = 0
-    if any(leftovers(project, env).values()):
+    found = leftovers(project, env)
+    lane_only(found, args.lane)
+    if any(found.values()):
         with tempfile.TemporaryDirectory() as empty:  # with `-p` alone compose reads no file
             status = call(["docker", "compose", "-p", project, *TEARDOWN], env, cwd=empty)
     left = leftovers(project, env)
@@ -348,6 +387,7 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
         args.rest = args.rest[1:]
     handlers = {"up": up, "restart-api": restart_api, "drive": drive, "down": down}
     try:
+        args.lane = checked_lane(environ)
         return handlers[args.command](args, environ)
     except Refused as refused:
         print(f"account-fixture-stack: refused: {refused}", file=sys.stderr)

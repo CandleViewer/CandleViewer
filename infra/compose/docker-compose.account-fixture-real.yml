@@ -15,7 +15,12 @@
 # - the KEK and the audit lane key are file secrets from the run directory, with no default;
 # - the two one-shots build the builder stage, publish no port, run on a read-only root, and are
 #   demo and synthetic with no CV_BYBIT_API_* or CV_TEST_CLOCK; `fixture-init` alone writes the
-#   run directory, and `fixture-drive` reads it.
+#   run directory, and `fixture-drive` reads it;
+# - every service of the stack, and every named volume and network compose creates for it, carries
+#   one label, `cv.lane: ${CV_ACCTFIX_LANE:?...}`, the lane the script runs under (its env file
+#   holds the name): the script's `down` takes a project down only when each object of it carries
+#   its own lane. The base file's postgres, questdb and migrate and the volumes and network the
+#   base and fixture files declare get that label here and nothing more.
 
 secrets:
   cv_kek:
@@ -24,11 +29,48 @@ secrets:
     file: ${CV_AUDIT_LANE_MAC_SOURCE:?set by infra/scripts/account_fixture_stack.py}
 
 volumes:
-  cv-api-data: {}
-  cv-acctfix-session: {}
+  cv-api-data:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+  cv-acctfix-session:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+  # The next four are declared by the base and fixture files; this file only labels them.
+  cv-postgres-data:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+  cv-questdb-data:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+  cv-audit-data:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+  cv-account-fixture:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+
+networks:
+  cv-internal:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
 
 services:
+  # The base file's stores and schema step: labelled here and set nowhere else in this file.
+  postgres:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+
+  questdb:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+
+  migrate:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+
   api:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
     environment:
       CV_STORAGE_BACKEND: real
       CV_EGRESS_IP: 203.0.113.10
@@ -53,6 +95,8 @@ services:
       dockerfile: infra/images/Dockerfile.api
       target: builder
     profiles: ["fixture-init"]
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
     working_dir: /build
     entrypoint: ["python", "-m", "cvdev.account_fixture.seed"]
     command: ["init", "--run-dir", "/run-dir"]
@@ -82,6 +126,8 @@ services:
       dockerfile: infra/images/Dockerfile.api
       target: builder
     profiles: ["fixture-drive"]
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
     working_dir: /build
     entrypoint:
       [

@@ -6,8 +6,10 @@ stack's api and adds the run's two one-shots, `fixture-init` (the seed's `init`)
 network: it is opt-in, the api keeps the app's own entrypoint so the S8 boot guard runs first, every
 generated value is the run's own variable, the KEK and the audit lane key are file secrets from the
 run directory, the one-shots build the builder stage and publish no port, and `fixture-init`'s one
-writable mount is the run directory (T2 at the compose level). `lint_compose.py` rule 8 is the CI
-form of the same shape.
+writable mount is the run directory (T2 at the compose level). Every service of the stack, and
+every named volume and network compose creates for it, carries the run's lane label (`cv.lane`),
+which the stack script's `down` reads before it takes a project down. `lint_compose.py` rule 8 is
+the CI form of the same shape.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import yaml
 REPO: Final = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "infra" / "scripts"))
 
+import account_fixture_stack as stack_script  # noqa: E402  (the script whose files these are)
 import lint_compose  # noqa: E402  (after the path insert, as test_compose_fixture_override.py does)
 
 COMPOSE: Final = REPO / "infra" / "compose"
@@ -47,6 +50,10 @@ COMMITTED: Final = {
     "synthetic", "/var/lib/candleviewer/account-fixture",
 }  # fmt: skip
 RUN_VARIABLE: Final = re.compile(r"\$\{(?P<name>[A-Z_]+):\?[^}]*\}")
+#: The profiles the stack script activates (the `--profile` flags of its steps): the stack is the
+#: services under them, and those with no profile at all.
+STACK_PROFILES: Final = frozenset({"core", "migrate", "fixture-init", "fixture-drive"})
+LANE: Final = {"cv.lane": "${CV_ACCTFIX_LANE:?x}"}
 
 
 def _environment(service: dict[str, Any]) -> dict[str, str]:
@@ -157,6 +164,72 @@ def test_fixture_init_writes_only_the_run_dir() -> None:
     assert SERVICES["fixture-init"]["command"] == ["init", "--run-dir", "/run-dir"]
 
 
+def _named_volume(entry: Any) -> str | None:
+    """The named volume a service's `volumes:` entry mounts, short or long form, else None."""
+    if isinstance(entry, dict):
+        return str(entry["source"]) if entry.get("type", "volume") == "volume" else None
+    source, colon, _ = str(entry).partition(":")
+    return source if colon and not source.startswith(("/", ".", "~", "$")) else None
+
+
+def _stack_objects() -> tuple[set[str], set[str], set[str]]:
+    """The services the script starts, the named volumes they mount and the networks they join:
+    read from the compose files the script runs (the merged services of those under its profiles,
+    or under none), with no Docker. A service with no network joins compose's `default`."""
+    docs = [yaml.safe_load(p.read_text(encoding="utf-8")) for p in stack_script.COMPOSE_FILES]
+    listed = [doc.get("services") or {} for doc in docs]
+    profiles = {
+        name: {p for services in listed for p in (services.get(name) or {}).get("profiles") or []}
+        for name in {name for services in listed for name in services}
+    }
+    stack = {name for name, found in profiles.items() if not found or found & STACK_PROFILES}
+    volumes: set[str] = set()
+    networks: set[str] = set()
+    for name in stack:
+        joined: set[str] = set()
+        for services in listed:
+            service = services.get(name) or {}
+            volumes |= {v for v in map(_named_volume, service.get("volumes") or []) if v}
+            joined |= set(service.get("networks") or [])  # a list's names or a mapping's keys
+        networks |= joined or {"default"}
+    return stack, volumes, networks
+
+
+def test_every_object_the_stack_creates_carries_the_lane_label() -> None:
+    """`down` takes a project down only when each of its containers, networks and volumes carries
+    this lane's `cv.lane`: the overlay labels every service of the stack, and every named volume
+    and network compose creates for it, as the run's own `${CV_ACCTFIX_LANE:?...}` (the script
+    writes the variable into the env file), and nothing besides."""
+    services, volumes, networks = _stack_objects()
+
+    assert services == {"postgres", "questdb", "migrate", "api", "fixture-init", "fixture-drive"}
+    assert volumes == {
+        "cv-postgres-data", "cv-questdb-data", "cv-audit-data", "cv-account-fixture",
+        "cv-api-data", "cv-acctfix-session",
+    }  # fmt: skip
+    assert networks == {"cv-internal"}
+    for kind, created in (("services", services), ("volumes", volumes), ("networks", networks)):
+        labelled = OVERLAY.get(kind) or {}
+        assert set(labelled) == created, kind
+        for name, node in labelled.items():
+            labels = node["labels"]
+            assert set(labels) == {"cv.lane"}, (kind, name)
+            variable = RUN_VARIABLE.fullmatch(labels["cv.lane"])
+            assert variable and variable["name"] == "CV_ACCTFIX_LANE", (kind, name)
+
+
+def test_the_overlay_sets_nothing_but_labels_on_the_base_files_objects() -> None:
+    """The stores and the schema step, and the volumes and the network the base and fixture files
+    declare, are the base files': this file labels them and sets no other key."""
+    for name in ("postgres", "questdb", "migrate"):
+        assert set(SERVICES[name]) == {"labels"}, name
+    for kind, names in (
+        ("volumes", ("cv-postgres-data", "cv-questdb-data", "cv-audit-data", "cv-account-fixture")),
+        ("networks", ("cv-internal",)),
+    ):
+        assert all(set(OVERLAY[kind][name]) == {"labels"} for name in names), kind
+
+
 def _mutated(path: tuple[str, ...], value: object) -> dict[str, Any]:
     overlay = copy.deepcopy(OVERLAY)
     node = overlay
@@ -174,6 +247,7 @@ _API, _INIT, _DRIVE = (
     ("services", "fixture-init"),
     ("services", "fixture-drive"),
 )
+_POSTGRES, _QUESTDB, _MIGRATE = (("services", name) for name in ("postgres", "questdb", "migrate"))
 _ENV = "environment"
 _RUN = "${CV_ACCTFIX_RUN_DIR:?x}"
 #: The one-shots' own mounts: a case that swaps the run directory's access keeps their count, so
@@ -242,9 +316,29 @@ _DRIVE_MOUNTS: Final[list[str]] = SERVICES["fixture-drive"]["volumes"]
         ((*_DRIVE, _ENV, "CV_ENVIRONMENT"), "live", "'fixture-drive': CV_ENVIRONMENT is off"),
         ((*_DRIVE, "build"), {"context": "../..", "target": "runtime"}, "'fixture-drive': build"),
         ((*_DRIVE, "profiles"), None, "'fixture-drive': profiles is not [fixture-drive]"),
-        (("services", "migrate"), {}, "service 'migrate'"),
+        (("services", "prometheus"), {"labels": LANE}, "service 'prometheus'"),
+        ((*_API, "labels"), None, "service 'api': labels is not exactly cv.lane"),
+        ((*_API, "labels"), {"cv.lane": "lane-x"}, "service 'api': labels is not exactly"),
+        ((*_API, "labels"), {"cv.lane": "${CV_OTHER:?x}"}, "service 'api': labels is not exactly"),
+        ((*_API, "labels"), {**LANE, "com.example": "x"}, "service 'api': labels is not exactly"),
+        ((*_INIT, "labels"), None, "service 'fixture-init': labels is not exactly"),
+        ((*_DRIVE, "labels"), {"cv.lan": "${CV_ACCTFIX_LANE:?x}"}, "-drive': labels is not"),
+        ((*_POSTGRES, "labels"), None, "service 'postgres': labels is not exactly"),
+        ((*_QUESTDB, "labels"), {"cv.lane": "lane-x"}, "service 'questdb': labels is not exactly"),
+        ((*_MIGRATE, "labels"), None, "service 'migrate': labels is not exactly"),
+        ((*_MIGRATE, _ENV), {"CV_ENVIRONMENT": "live"}, "'migrate': the real-backend fixture"),
+        ((*_POSTGRES, "ports"), ["127.0.0.1:9:9"], "sets only labels on it, not ports"),
+        (("volumes", "cv-postgres-data"), {}, "top-level volumes: cv-postgres-data is not"),
+        (("volumes", "cv-audit-data", "driver_opts"), {"o": "bind"}, "volumes: cv-audit-data is"),
+        (("volumes", "cv-api-data"), {"labels": LANE, "driver": "local"}, "volumes: cv-api-data"),
+        (("volumes", "cv-acctfix-session"), {"labels": {"cv.lane": "lane-x"}}, "-session is not"),
+        (("volumes", "cv-account-fixture"), None, "top-level volumes: only"),
+        (("volumes", "cv-extra"), {"labels": LANE}, "top-level volumes: only"),
         (("volumes",), {"cv-api-data": {"driver_opts": {"o": "bind"}}}, "top-level volumes"),
-        (("networks",), {}, "top-level 'networks'"),
+        (("networks", "cv-internal"), {}, "top-level networks: cv-internal is not"),
+        (("networks", "cv-internal", "driver"), "bridge", "networks: cv-internal is not"),
+        (("networks", "cv-other"), {"labels": LANE}, "top-level networks: only"),
+        (("networks",), None, "top-level networks: only"),
     ],
     ids=lambda p: p if isinstance(p, str) else None,
 )
@@ -252,7 +346,8 @@ def test_rule_8_refuses(path: tuple[str, ...], value: object, why: str) -> None:
     errors = lint_compose.check_account_fixture_real_overlay(_mutated(path, value))
     assert any(why in error for error in errors), errors
     shown = "\n".join(errors)  # a value is never repeated
-    assert all(v not in shown for v in ("inline-pepper", "198.51.100.7", "CV_BYBIT_API_KEY:-"))
+    values = ("inline-pepper", "198.51.100.7", "CV_BYBIT_API_KEY:-", "lane-x")
+    assert all(v not in shown for v in values)
 
 
 def test_main_lints_the_real_overlay_by_rule_8(
