@@ -175,6 +175,11 @@ class FundingService:
         self._tickers = tickers
         self._clock_s = clock_s
 
+    @property
+    def store(self) -> FundingStore:
+        """The guarded store, read by the derivatives engine's `/market/metrics` path."""
+        return self._store
+
     def interval_minutes(self, symbol: str) -> int:
         """THE accessor. Raises `FundingIntervalUnknown`; also publishes the gauge."""
         instrument = self._instruments(symbol)
