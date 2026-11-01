@@ -5,9 +5,11 @@ In-memory store and a fake hasher; no I/O, no clock reads but the injected one."
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
+from candleviewer.auth import password_policy
 from candleviewer.auth.errors import CurrentPasswordInvalid, PasswordRefused, SignInBusy
 from candleviewer.auth.failure_hold import FailureHold
 from candleviewer.auth.hashing import Hasher
@@ -143,6 +145,41 @@ async def test_a_listed_password_is_breached() -> None:
         await listed.prepare(uid, current=OLD, new="passwordpassword")
     assert refused.value.code == "password_breached"
     assert service is not listed
+
+
+@pytest.mark.parametrize("content", [None, "", "# seed\n" + "0" * 40 + "\n"])
+async def test_an_unusable_list_refuses_every_change_before_any_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str | None
+) -> None:
+    """#5269 (fail closed): a missing, empty or seed-sized list is read at start; `prepare` then
+    refuses before the admission, the current password or any rule."""
+    path = tmp_path / "list.sha1"
+    if content is not None:
+        path.write_text(content)
+    monkeypatch.setattr(password_policy, "BREACHED_LIST_PATH", path)
+    _, store, uid, calls, hasher, verifier = _world()
+    admission = VerifyAdmission(1)
+    closed = PasswordChangeService(store, verifier, hasher, admission=admission, clock=lambda: T0)
+    with pytest.raises(password_policy.BreachedListUnavailable):
+        await closed.prepare(uid, current=OLD, new=NEW)
+    assert calls == [] and hasher.hashed == 0
+    assert admission.try_enter()  # the place was never taken
+
+
+async def test_an_unusable_list_is_never_consulted_as_empty_past_the_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#5269 (defence in depth): with the up-front refusal bypassed, the policy itself still
+    raises; the unusable list is never treated as an empty one that passes every password."""
+    monkeypatch.setattr(password_policy, "BREACHED_LIST_PATH", tmp_path / "missing.sha1")
+    _, store, uid, _, hasher, verifier = _world()
+    closed = PasswordChangeService(
+        store, verifier, hasher, admission=VerifyAdmission(1), clock=lambda: T0
+    )
+    closed._unavailable = None  # bypass the guard at the top of `prepare`
+    with pytest.raises(password_policy.BreachedListUnavailable):
+        await closed.prepare(uid, current=OLD, new=NEW)
+    assert hasher.hashed == 0
 
 
 async def test_the_current_password_again_is_reused_without_a_second_hash() -> None:

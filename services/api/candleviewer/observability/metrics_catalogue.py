@@ -4813,6 +4813,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_breached_list_rows",
+        "gauge",
+        "rows",
+        (),
+        "Digests in the loaded breached-password list; 0 when it is unusable "
+        "(SR-028, fail closed).",
+        "none yet; 0 means every password change and invite redemption answers 503 (#5269)",
+        _L,
+        "E09",
+        exported=True,
+    ),
+    _s(
         "auth_owner_bootstrap_events",
         "gauge",
         "events",

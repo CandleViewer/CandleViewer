@@ -91,8 +91,17 @@ class PasswordChangeService:
         self._hasher = hasher
         self._admission = admission
         self._clock = clock
-        #: Read once here, at start, so a damaged list fails the start, never a request.
-        self._breached = password_policy.breached_list() if breached is None else breached
+        #: Read once here, at start (#5269): an unusable list (missing, malformed, or below
+        #: `BREACHED_LIST_MIN`) is logged and counted there, and every `prepare` refuses. The
+        #: list is then kept as `None`, never as an empty set, so `password_policy.check` raises
+        #: again should anything reach it past that refusal (defence in depth, C-4.14).
+        self._unavailable: password_policy.BreachedListUnavailable | None = None
+        self._breached: frozenset[str] | None = breached
+        if breached is None:
+            try:
+                self._breached = password_policy.breached_list()
+            except password_policy.BreachedListUnavailable as exc:
+                self._unavailable = exc
 
     @property
     def failure_hold(self) -> FailureHold:
@@ -102,7 +111,10 @@ class PasswordChangeService:
 
     async def prepare(self, user_id: str, *, current: str, new: str) -> PreparedChange:
         """Steps 5 to 8 of `authChangePassword`. Raises `SignInBusy`, `CurrentPasswordInvalid`
-        (not held: the caller holds it with `failure_hold`) or `PasswordRefused`."""
+        (not held: the caller holds it with `failure_hold`) or `PasswordRefused`; first,
+        `BreachedListUnavailable` when the list is unusable (fail closed, nothing checked)."""
+        if self._unavailable is not None:
+            raise password_policy.BreachedListUnavailable(self._unavailable.reason)
         if not self._admission.try_enter():
             raise SignInBusy(LOGIN_BUSY_RETRY_AFTER_S)
         try:

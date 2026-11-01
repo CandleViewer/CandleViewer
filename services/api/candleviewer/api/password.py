@@ -10,7 +10,9 @@ the rest, in the contract's order, each step answered before the next runs:
 1. The bearer (`401 unauthenticated`, or `session_idle_locked`), then an undeclared query key.
 2. The body (`422 validation_failed`, `errors[{field, rule}]`): no password is checked.
 3. The audit sink: none active is `503 audit_unavailable`, before any password is checked.
-4. `PasswordChangeService.prepare`: the verification bound (`429`), the current password (`403
+4. `PasswordChangeService.prepare`: first, an unusable breached-password list (`503
+   store_unavailable`, #5269: fail closed, no password checked, no row), then the
+   verification bound (`429`), the current password (`403
    current_password_invalid`, held to the minimum failure time once its rows are written), the
    policy (`422 password_breached` / `password_policy`) and the history (`422 password_reused`).
    Each refusal is one `auth.password_change` outcome row (lane first, the writer its fallback);
@@ -67,6 +69,7 @@ from candleviewer.auth.errors import (
 )
 from candleviewer.auth.metrics import auth_audit_outcome_lost_total, normalise_outcome_action
 from candleviewer.auth.models import MintedSession, SessionRecord
+from candleviewer.auth.password_policy import BreachedListUnavailable
 from candleviewer.auth.password_service import PasswordChangeService
 from candleviewer.observability.context import current_request_uuid
 
@@ -97,6 +100,8 @@ _AUDIT_DOWN = (
     "Write-ahead audit record could not be written (or no audit backend is wired); refused, "
     "fail closed (C-2.9)"
 )
+#: The `detail` while the breached-password list is unusable (#5269, SR-028: fail closed).
+BREACHED_LIST_DOWN = "the password policy is unavailable; nothing was changed"
 #: The `detail` of a change whose commit stood but whose rotation failed (BQ-232).
 UNROTATED = "password changed; sign in again"
 #: pydantic's error types, as the contract's `errors[].rule` names them.
@@ -260,6 +265,8 @@ def make_password_router(
                 current=body.current_password.get_secret_value(),
                 new=body.new_password.get_secret_value(),
             )
+        except BreachedListUnavailable:  # #5269: fail closed, no password checked (logged at start)
+            return _store_unavailable(BREACHED_LIST_DOWN)
         except SignInBusy as exc:
             await _outcome(outcome=AuditOutcome.DENIED, reason="verify_busy", **mine)
             detail = "Too many sign-in attempts are being checked; retry shortly."

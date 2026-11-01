@@ -318,6 +318,15 @@ auth_view_as_pending_end_rows = Gauge(
     "Session rows whose view-as end is not yet recorded, as the sweeper last read them.",
 )
 
+# SR-028 (#5269): the digests of the breached-password list this process loaded, set on its first
+# read; 0 when the list is missing, unreadable, malformed or below `BREACHED_LIST_MIN`, and every
+# password change and invite redemption then answers 503 (fail closed). No label: the
+# `auth.breached_list_unavailable` log line names the reason.
+auth_breached_list_rows = Gauge(
+    "auth_breached_list_rows",
+    "Digests in the loaded breached-password list; 0 when it is unusable (SR-028, fail closed).",
+)
+
 _KNOWN_REASONS = frozenset(
     {
         "logout",
@@ -442,6 +451,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_owner_bootstrap_events",  # #4479
         "auth_owner_bootstraps",  # #4479 C2
         "auth_view_as_pending_end_rows",  # #3085
+        "auth_breached_list_rows",  # #5269 SR-028
         # SR-029 revoke-to-close latency, observed by the WS hub and the per-user close (#3415)
         "auth_revocation_latency_seconds",
         # SR-029 failed closes of those two paths, declared in `ws/revocation.py` (`ws` may import
