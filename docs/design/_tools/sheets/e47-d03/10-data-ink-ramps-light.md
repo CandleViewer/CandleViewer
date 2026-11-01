@@ -39,7 +39,7 @@ Board 10 of 10 (§0 L75: light twin of 09, after D03-D7 … D03-D14). Grid (2400
 
 ## Sources (1)
 
-- spec E47-D03.md md5 dcf7a14b and hand-off E47-D03-handoff.md md5 9115b708 (§0 L75; hand-off §G L134)
+- spec E47-D03.md md5 b42ea2be and hand-off E47-D03-handoff.md md5 9115b708 (§0 L75; hand-off §G L134)
 
 ## Tokens (53)
 

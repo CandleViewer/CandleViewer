@@ -63,7 +63,7 @@ Board 04 of 10 (§0 L69: light twin of 01). Grid (18000, 0); 1920 x 1000 px; "pa
 
 ## Sources (1)
 
-- spec E47-D03.md md5 dcf7a14b and hand-off E47-D03-handoff.md md5 9115b708 (§0 L69; hand-off §G L128)
+- spec E47-D03.md md5 b42ea2be and hand-off E47-D03-handoff.md md5 9115b708 (§0 L69; hand-off §G L128)
 
 ## Tokens (46)
 

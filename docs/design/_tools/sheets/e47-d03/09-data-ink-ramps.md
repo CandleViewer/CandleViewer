@@ -36,7 +36,7 @@ Board 09 of 10 (§0 L74: §3.2, §7.3: heatmap, profile, candle and delta ink wi
 
 ## Sources (1)
 
-- spec E47-D03.md md5 dcf7a14b and hand-off E47-D03-handoff.md md5 9115b708 (§0 L74; hand-off §G L133)
+- spec E47-D03.md md5 b42ea2be and hand-off E47-D03-handoff.md md5 9115b708 (§0 L74; hand-off §G L133)
 
 ## Tokens (53)
 
