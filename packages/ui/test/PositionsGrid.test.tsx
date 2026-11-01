@@ -652,6 +652,68 @@ describe(
       const header = within(grid()).getByRole("rowheader", { name: /^Main · LIVE/ });
       expect(header.closest("tr")?.querySelectorAll("button")).toHaveLength(0);
     });
+
+    it("the row menu's Close is busy with the primary: its busy label, aria-busy, and it sends nothing; a gate wins", async () => {
+      const onClose = vi.fn();
+      await mount(
+        <Host
+          rowActions={(r): SplitButtonProps => ({
+            primary: { label: "Close", busyLabel: "Closing…", onClick: onClose },
+            items: closeItems(),
+            menuLabel: `More close actions, ${r.symbol}`,
+            busy: r.symbol !== "BTCUSDT",
+            ...(r.symbol === "ETHUSDT" ? { disabledReason: "Your role can't change positions." } : {}),
+          })}
+        />,
+      );
+      const menuOf = async (row: HTMLElement, name: string): Promise<HTMLElement> => {
+        act(() => within(row).getAllByRole("gridcell")[1]?.focus());
+        await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+        return page.findByRole("menu", { name });
+      };
+      const sol = await menuOf(rowNamed(/^SOLUSDT/), "Actions for SOLUSDT Long on Sub-2");
+      const busy = within(sol).getAllByRole("menuitem")[0];
+      expect(busy).toHaveAccessibleName("Closing…");
+      expect(busy).toHaveAttribute("aria-busy", "true");
+      expect(busy).not.toHaveAttribute("aria-disabled");
+      expect(busy).toHaveFocus();
+      await userEvent.keyboard("{Enter}");
+      await userEvent.click(busy as HTMLElement);
+      expect(onClose).not.toHaveBeenCalled();
+      await userEvent.keyboard("{Escape}");
+      // Busy and gated: the reason wins, as on the button (CMP-057, CMP-041).
+      const eth = await menuOf(rowNamed(/^ETHUSDT · Short/), "Actions for ETHUSDT Short on Sub-1");
+      const gated = within(eth).getAllByRole("menuitem")[0];
+      expect(gated).toHaveAccessibleName("Close");
+      expect(gated).toHaveAttribute("aria-disabled", "true");
+      expect(gated).not.toHaveAttribute("aria-busy");
+    });
+
+    it("a group header offers no row menu: Shift+F10 and a right-click there open nothing", async () => {
+      await mount(
+        <Host
+          rowActions={(r): SplitButtonProps => ({
+            primary: { label: "Close", onClick: vi.fn() },
+            items: closeItems(),
+            menuLabel: `More close actions, ${r.symbol}`,
+          })}
+        />,
+      );
+      const header = within(grid()).getByRole("rowheader", { name: /^Main · LIVE/ });
+      act(() => header.focus());
+      await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+      expect(page.queryByRole("menu")).toBeNull();
+      await userEvent.pointer({ keys: "[MouseRight]", target: header });
+      expect(page.queryByRole("menu")).toBeNull();
+      // A position's row still opens its own.
+      await userEvent.pointer({
+        keys: "[MouseRight]",
+        target: within(rowNamed(/^BTCUSDT · Long · 0\.250/)).getAllByRole("gridcell")[1] as HTMLElement,
+      });
+      expect(
+        await page.findByRole("menu", { name: "Actions for BTCUSDT Long on Main" }),
+      ).toBeInTheDocument();
+    });
   },
 );
 
@@ -671,6 +733,34 @@ describe("PositionsGrid (CMP-114): the narrow dock (D02 §11.5)", { timeout: 60_
     );
     expect(eth.querySelector('[data-part="LiqTierCell"]')?.textContent).toContain("! Near");
     expect(host.querySelector(".cv-positions-grid__actions")).toBeNull();
+  });
+
+  it("keeps the row menu: Shift+F10 on a row opens its actions, Close first (D-12, §11.5)", async () => {
+    const onClose = vi.fn();
+    const host = await mount(
+      <Host
+        variant="narrow"
+        rowActions={(r): SplitButtonProps => ({
+          primary: { label: "Close", onClick: onClose },
+          items: closeItems(),
+          menuLabel: `More close actions, ${r.symbol}`,
+        })}
+      />,
+    );
+    expect(host.querySelector(".cv-positions-grid__actions")).toBeNull();
+    expect(within(grid()).queryByRole("button", { name: "Close" })).toBeNull();
+    act(() => within(rowNamed(/^BTCUSDT · Long · 0\.250/)).getAllByRole("gridcell")[1]?.focus());
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = await page.findByRole("menu", { name: "Actions for BTCUSDT Long on Main" });
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "Close",
+      "Close 25 %",
+      "Reverse…",
+      "SL/TP…",
+      "Chart",
+    ]);
+    await userEvent.keyboard("{Enter}");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -123,7 +123,7 @@ out. Account groups (or symbols, or trade groups) at level 1 hold their position
 | Space                                  | On a position's cell, toggles its selection (on its box, natively); on a header or the totals, nothing.                         |
 | Ctrl+A                                 | Selects every position, drawn or not, closed groups' too (E29-D02 D-3).                                                         |
 | Enter / F2 on the Actions cell         | Into its CMP-057: ← / → move between Close and the ▾, Esc back to the cell.                                                     |
-| Shift+F10, the Menu key                | The row menu: Close first, then the ▾'s items, gated ones arrow-reachable.                                                      |
+| Shift+F10, the Menu key                | The row menu, the dock's too: Close first (busy while it is), then the ▾'s items, gated ones arrow-reachable; none on a header. |
 
 | Element      | Role                         | Name                                                                                        | ARIA                                                                                                   |
 | ------------ | ---------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -145,8 +145,9 @@ are the interim text glyphs (△, !, !!) until CMP-019 registers `triangle`, `al
 when the host passes `rowActions` (CMP-057's props per row, each gate the host's from its own operation; a scope's
 reason points at the host's one notice), which mounts with the ticket that wires the row actions (#911 BQ-3); the group
 header's ⋯ (Flatten account…) mounts with it. In the 360 px dock (`variant="narrow"`): Symbol · Side · Size · uPnL ·
-Status, the base coin and the uPnL unit in the names only, no Actions column. No motion of its own: every state swap is
-a cut (Mo-8, Mo-10).
+Status, the base coin and the uPnL unit in the names only, and no Actions column: every row action stays in the row
+menu (`Shift+F10`, the Menu key, a right-click; E29-D02 §11.5, D-12). No motion of its own: every state swap is a cut
+(Mo-8, Mo-10).
 
 Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): rows follow the text scale and the columns widen
 with it, numerals never truncating; the grid scrolls sideways under its pinned select, Account and Symbol columns and
