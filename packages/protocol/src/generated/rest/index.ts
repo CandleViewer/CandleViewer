@@ -11511,7 +11511,7 @@ export interface components {
         quiet_hours?: {
           [key: string]: unknown;
         } | null;
-        /** @description A credential-bearing URL, which may embed a token. `GET` answers it in full to its owner only; a view-as read answers its masked form. It is never logged. A `settings.change` record carries its masked form, its scheme and host only: `scheme://host/…`, or `…` when it lacks either. */
+        /** @description A credential-bearing URL, which may embed a token. `GET` answers it in full to its owner only; a view-as read answers its masked form. It is never logged. A `settings.change` record carries its masked form, its scheme and host only: `scheme://host/…`, or `…` when it lacks either, when its host is neither a DNS name of letter, digit and hyphen labels nor an IP address free of a zone, or when it holds a tab or a line break. An empty value stays empty. */
         webhook_url?: string | null;
       };
       orderflow?: {
