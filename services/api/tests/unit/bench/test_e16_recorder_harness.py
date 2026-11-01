@@ -7,6 +7,7 @@ messages); the wall-time ingest smoke is `harness`-marked (nightly), as the E08 
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -98,7 +99,8 @@ async def test_soak_smoke_two_symbols_reconciles(tmp_path: Path) -> None:
     r = await soak.soak("smoke", 0.0, 7, tmp_path / "wal")
     assert r.symbols == SYMBOLS and r.duration_s == pytest.approx(soak.SMOKE_S)
     assert r.produced_msgs == int(soak.SMOKE_MSGS_PER_S * soak.SMOKE_S)
-    assert r.produced_rows == {"all": r.written_rows["all"]} and r.dropped_rows == {"all": 0}
+    assert r.produced_rows == r.written_rows and set(r.produced_rows) == set(SYMBOLS)
+    assert r.dropped_rows == {} and r.recovered_rows == {}
     assert set(r.backlog_rows) == {0} and set(r.spill_bytes) == {0}  # sampled at flush bounds
     assert r.flush_ms and r.hot_bytes > 0 and r.critical_events == 0
 
@@ -110,9 +112,57 @@ async def test_reconciliation_counts_gated_drops_in_rows_and_balances(tmp_path: 
     cfg = LoadConfig("smoke", 200, 1, SYMBOLS, tmp_path / "wal", clock="virtual", rss=_rss,
                      disk_gate=gate)  # fmt: skip
     r = await harness.run(cfg)
-    assert 0 < r.dropped_rows["all"] < r.produced_rows["all"]
-    assert r.produced_rows["all"] == r.written_rows["all"] + r.dropped_rows["all"]
+    assert set(r.dropped_rows) == {"ETHUSDT"} and "ETHUSDT" not in r.written_rows
+    assert r.produced_rows["ETHUSDT"] == r.dropped_rows["ETHUSDT"]
+    assert r.produced_rows["BTCUSDT"] == r.written_rows["BTCUSDT"]
     assert check_reconciliation(r.produced_rows, r.written_rows, r.dropped_rows).passed
+
+
+async def test_reconciliation_counts_rows_a_spilling_run_left_in_its_wal(tmp_path: Path) -> None:
+    """#5333: a forced overflow (a small queue and WAL) drops rows into gaps and ends with rows
+    durable in the WAL (3.4 s ends between two 1 s replays). A restart's replay writes those, so
+    the oracle balances to the row per symbol; before, the WAL residue read as undetected loss."""
+    cfg = LoadConfig("custom", 5_000, 3.4, ("BTCUSDT", "ETHUSDT", "SOLUSDT"), tmp_path / "wal",
+                     clock="virtual", rss=_rss, max_queue_rows=2_000,
+                     wal_max_bytes=1_000_000)  # fmt: skip
+    r = await harness.run(cfg)
+    assert set(r.dropped_rows) == set(r.recovered_rows) == set(cfg.symbols)
+    assert all(r.recovered_rows[s] < r.written_rows[s] for s in cfg.symbols)
+    for s in cfg.symbols:
+        assert r.produced_rows[s] == r.written_rows[s] + r.dropped_rows[s]
+    assert check_reconciliation(r.produced_rows, r.written_rows, r.dropped_rows).passed
+    run_only = {s: r.written_rows[s] - r.recovered_rows[s] for s in cfg.symbols}
+    residue = check_reconciliation(r.produced_rows, run_only, r.dropped_rows)
+    assert not residue.passed and residue.measured == sum(r.recovered_rows.values())
+
+
+async def test_reconciliation_fails_per_symbol_when_the_wal_residue_is_lost(
+    tmp_path: Path,
+) -> None:
+    """The oracle's own negative: the same overflow run, with its WAL deleted between the run's
+    stop and the restart (`before_recover`), loses the residue, and the reconciliation names
+    each symbol's missing rows with a positive sign."""
+    cfg = LoadConfig("custom", 5_000, 3.4, ("BTCUSDT", "ETHUSDT", "SOLUSDT"), tmp_path / "wal",
+                     clock="virtual", rss=_rss, max_queue_rows=2_000,
+                     wal_max_bytes=1_000_000)  # fmt: skip
+    seen: list[Path] = []
+
+    def lose_wal(wal_dir: Path) -> None:
+        seen.append(wal_dir)
+        shutil.rmtree(wal_dir)
+
+    r = await harness.run(cfg, before_recover=lose_wal)
+    assert seen == [cfg.wal_dir] and r.recovered_rows == {}
+    off = {s: r.produced_rows[s] - r.written_rows[s] - r.dropped_rows[s] for s in cfg.symbols}
+    assert set(off) == set(cfg.symbols) and all(n > 0 for n in off.values())
+    c = check_reconciliation(r.produced_rows, r.written_rows, r.dropped_rows)
+    assert not c.passed and c.measured == sum(off.values())
+    assert c.note == "undetected: " + ", ".join(f"{s}=+{off[s]}" for s in sorted(off))
+
+
+def test_reconciliation_names_each_symbol_off_with_its_sign() -> None:
+    c = check_reconciliation({"A": 10, "B": 5, "C": 4}, {"A": 7, "B": 6, "C": 4}, {"A": 1})
+    assert not c.passed and c.measured == 3.0 and c.note == "undetected: A=+2, B=-1"
 
 
 def _verdict(passed: bool) -> Verdict:
@@ -216,4 +266,5 @@ def test_ingest_load_smoke_passes_at_tiny_scale(tmp_path: Path) -> None:
     out = tmp_path / "ingest.json"
     assert ingest_load.main(["--profile", "smoke", "--out", str(out)]) == 0
     run = json.loads(out.read_text())["run"]
-    assert run["produced_rows"] == run["written_rows"] and run["dropped_rows"] == {"all": 0}
+    assert run["produced_rows"] == run["written_rows"] and run["dropped_rows"] == {}
+    assert run["recovered_rows"] == {}
