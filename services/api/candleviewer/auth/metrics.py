@@ -344,6 +344,7 @@ _KNOWN_REASONS = frozenset(
         "mfa_enrolled",  # a confirmed enrolment ends every session of the user (#2295)
         "mfa_recovery",  # so does a recovery sign-in, before it mints its own (#2344)
         "password_change",  # and a password change, before it mints the caller's (#2110)
+        "role_changed",  # and a change to the user's role set (SR-013, #2101)
     }
 )
 

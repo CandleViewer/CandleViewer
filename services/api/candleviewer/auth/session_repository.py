@@ -41,7 +41,8 @@ class SessionRepository(Protocol):
         """Insert a new `sessions` row. Callers always pass a fully-formed
         `SessionRecord` (id/hash/timestamps already computed) — this method
         never generates an id or a token hash itself. It writes the lock by
-        request the record carries (`locked_at`, a refresh's carry, #4743).
+        request the record carries (`locked_at`, a refresh's carry, #4743) and
+        its step-up grants (`step_up_elevations`, a step-up rotation's carry, #2101).
         #2911: inserts nothing and returns `None` when the user is `disabled`
         or gone (absent or soft-deleted), read under a lock on the user's row
         that a disable's own lock on it waits for (and vice versa), in the
