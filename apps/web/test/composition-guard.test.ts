@@ -22,6 +22,8 @@ const ENTRY = join(SRC, "main.tsx");
 /** slice -> reason + ticket. Stale entries (slice now reachable) fail. */
 const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   alerts: "E40-S01 (#1129): PR 1 ships the data layer; PR 2 mounts SCR-090 at /alerts",
+  "chart-announce":
+    "E11-S07 (#388): the engine announce route is a <Chart> child; no screen mounts one until SCR-030",
   "chart-errors": "E11-S02 (#334): SCR-048 wraps <Chart>, which no screen mounts until SCR-030",
   "chart-price-scale":
     "E11-S05 (#386): SCR-043 is a <Chart> child; no screen mounts one until SCR-030",
