@@ -15,6 +15,7 @@ import {
   Table,
   Text,
   useFocusRing,
+  type TableColumn,
 } from "@candleviewer/ui";
 import { TEXT, fill } from "./copy";
 import { formatClock, formatDate, formatDuration, updatedLine, type DiskCard } from "./model";
@@ -31,11 +32,12 @@ function split(sentence: string): readonly [string, string] {
 const RING = ["cv-focus-ring", "cv-focus-ring--inset"] as const;
 
 /**
- * Moves focus to an element that is no Tab stop, as the shell's route focus does (`tabindex="-1"`, kept until blur),
- * with CMP-039's inset ring while it holds focus (D-5309-10: the UA's own ring is all but invisible in dark).
+ * Readies an element that is no Tab stop to take focus, as the shell's route focus does (`tabindex="-1"`, kept until
+ * blur), with CMP-039's inset ring while it holds focus (D-5309-10: the UA's own ring is all but invisible in dark);
+ * a dialog's fallback focus target too (A-5347-03).
  */
-export function focusLanding(element: HTMLElement | null | undefined): void {
-  if (element == null) return;
+export function asLanding(element: HTMLElement | null | undefined): HTMLElement | null {
+  if (element == null) return null;
   if (!element.hasAttribute("tabindex")) {
     element.setAttribute("tabindex", "-1");
     element.addEventListener("blur", () => element.removeAttribute("tabindex"), { once: true });
@@ -45,7 +47,21 @@ export function focusLanding(element: HTMLElement | null | undefined): void {
     element.classList.add(...added);
     element.addEventListener("blur", () => element.classList.remove(...added), { once: true });
   }
-  element.focus();
+  return element;
+}
+
+/** Moves focus to an element that is no Tab stop (`asLanding`). */
+export function focusLanding(element: HTMLElement | null | undefined): void {
+  asLanding(element)?.focus();
+}
+
+/** The row detail's panel id (CMP-046 `id`): one row detail on the page. */
+export const DETAIL_ID = "cv-recorder-detail";
+
+/** The open row detail's heading (CMP-046's title, a focus target), or null while it is closed (A-5347-03). */
+export function detailHeading(): HTMLElement | null {
+  const title = document.getElementById(DETAIL_ID)?.getAttribute("aria-labelledby") ?? null;
+  return title === null ? null : document.getElementById(title);
 }
 
 export interface IncidentBanner {
@@ -347,6 +363,7 @@ export function SummaryLine({
   );
 }
 
+/** The gap table's columns (D02 §10.2). */
 const GAP_COLUMNS = [
   {
     id: "start",
@@ -385,19 +402,23 @@ export interface GapTableProps {
 const dayTime = (ms: number, nowMs: number): string =>
   formatDate(ms) === formatDate(nowMs) ? formatClock(ms) : `${formatDate(ms)} ${formatClock(ms)}`;
 
-/** The gaps of the last 24 h (D02 §1, §10.2; RG-08): a static CMP-049 table under the list, with no Tab stop. */
-export function GapTable({ gaps, nowMs, hostRef }: GapTableProps): JSX.Element | null {
-  if (gaps.length === 0) return null;
-  const columns = [
+/** The gap table's columns on the page's clock: the page's table and the row detail's (D02 §6.7) alike. */
+export function gapColumns(nowMs: number): readonly TableColumn<Gap>[] {
+  return [
     { ...GAP_COLUMNS[0], cell: (g: Gap) => dayTime(g.fromMs, nowMs) },
     { ...GAP_COLUMNS[1], cell: (g: Gap) => dayTime(g.toMs, nowMs) },
     GAP_COLUMNS[2],
     GAP_COLUMNS[3],
   ];
+}
+
+/** The gaps of the last 24 h (D02 §1, §10.2; RG-08): a static CMP-049 table under the list, with no Tab stop. */
+export function GapTable({ gaps, nowMs, hostRef }: GapTableProps): JSX.Element | null {
+  if (gaps.length === 0) return null;
   return (
     <div ref={hostRef}>
       <Table
-        columns={columns}
+        columns={gapColumns(nowMs)}
         rows={gaps}
         rowKey={(g) => `${g.symbol}|${g.fromMs}|${g.toMs}|${g.reason ?? ""}`}
         caption={TEXT.gapsCaption}
