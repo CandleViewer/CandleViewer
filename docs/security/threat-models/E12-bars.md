@@ -513,7 +513,8 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
       unauthenticated refusal, to sample if F3's limiter slips; the E08-X02 long parser fuzz is not selected by
       `fuzz-nightly.yml`. Owner: post-freeze filing.
     - NOT COVERED: a `limit` outside 1..5000 is answered 422 but neither counted nor logged. Owned row on #452:
-      owner vw1, trigger: the next E12 bars fix PR, which counts and logs it and flips the xfails.
+      owner vw1, P2, trigger: the next E12 bars fix PR or an app-level validation handler, whichever lands
+      first; it counts and logs it and flips the xfails.
   - SR-E12-07's subscribe rate limit is built per connection (SR-193; #2293, built by #3301) and per user across a
     user's connections (#3476, K = 4), in each gateway process: a second one would keep its own (E17 model §10).
 - A High residual with no mitigation and no Owner acceptance blocks the E12 epic DoD (ticket acceptance
