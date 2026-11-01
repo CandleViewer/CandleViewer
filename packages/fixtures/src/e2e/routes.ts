@@ -28,7 +28,8 @@ const ADMIN = { owner: "render", manager: "not-found", viewer: "not-found" } as 
 // One row per sitemap group: the table reads as the sitemap does.
 // prettier-ignore
 export const ROUTE_EXPECTATIONS: Readonly<Record<string, Expectation>> = {
-  "R-001": R, "R-002": R, "R-003": R, "R-004": R,
+  "R-001": R, "R-003": R, "R-004": R,
+  "R-002": every("redirect:/login"), // SCR-002 is a step inside R-001: a direct load has no challenge
   "R-005": every("redirect:/terminal/last"), // an unlocked session leaves the lock screen
   "R-006": R, "R-007": R, "R-008": R, "R-009": R,
   "R-100": every("redirect:/terminal/last"), // R-100 opens the last-used layout
