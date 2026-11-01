@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import dataclasses
 import uuid
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
@@ -155,6 +156,8 @@ class AdminWorld:
     #: guard answers (view-as, CSRF, read-only) leaves nothing here, and a handler runs only
     #: after the router, as `_Gate.seen` shows in `test_view_as_gate.py`.
     reached: list[tuple[str, str]] = field(default_factory=list)
+    #: The users routers' resolver: a granted step-up's new token names the same actor (#2101).
+    resolver: TokenResolver | None = None
 
     def headers(self, actor: str) -> dict[str, str]:
         if actor == UNAUTHENTICATED:  # a well-formed pair bound to no session (#2090)
@@ -209,7 +212,27 @@ class AdminWorld:
         answer: httpx.Response = self.client.post(
             "/auth/step-up", headers=self.headers(actor), json=body
         )
+        if answer.status_code == 200:
+            self._adopt(actor, answer.json()["tokens"]["access_token"])
         return answer
+
+    def _adopt(self, actor: str, token: str) -> None:
+        """A granted step-up rotates the actor's session (SR-013, #2101): the actor moves to the
+        new access token and its SR-041 pair, in place, as the client does."""
+        held = self.actors[actor]
+        assert self.resolver is not None
+        self.resolver.by_token[token] = actor
+        portal = self.client.portal
+        assert portal is not None
+        session = portal.call(self.auth.sessions.peek_access_token, token)
+        assert session is not None, "the step-up's new token names no session"
+        held.headers.update(
+            {
+                "Authorization": f"Bearer {token}",
+                **csrf_headers(self.app.state.csrf_codec, session.id),
+            }
+        )
+        self.actors[actor] = dataclasses.replace(held, session_id=session.id)
 
     def tick(self, by: timedelta = TOTP_STEP) -> None:
         self.clock.now += by
@@ -317,7 +340,9 @@ def open_admin_world(mp: pytest.MonkeyPatch) -> Iterator[AdminWorld]:
         portal = client.portal
         assert portal is not None
         portal.call(auth.start, ctx)
-        world = AdminWorld(app, client, auth, clock, audit, spec, roles, access, reached=reached)
+        world = AdminWorld(
+            app, client, auth, clock, audit, spec, roles, access, reached=reached, resolver=resolver
+        )
         pw_hash = portal.call(Hasher(pepper=_PEPPER).hash, PW)
         for actor in SIGNED_IN:
             world.actors[actor] = portal.call(_enrol, world, users, resolver, actor, pw_hash)

@@ -24,7 +24,7 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability import logging as logging_mod
 from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.storage.errors import ActorNotAuthorised, WriteAheadTimeout
-from tests.unit.api.test_step_up_router import _H, _build, _code, _Emitter
+from tests.unit.api.test_step_up_router import _H, _build, _code, _Emitter, _hold
 from tests.unit.auth.test_invite_service import (
     GOOD_PW,
     FakeHasher,
@@ -108,7 +108,7 @@ def _elevate(c: TestClient, seed: bytes, clock: Any, refused: Any = None) -> Non
         answer["action_class"] = "users"
     else:
         answer["challenge_id"] = refused.json()["challenge_id"]
-    c.post("/auth/step-up", headers=_H, json=answer)
+    _hold(c, c.post("/auth/step-up", headers=_H, json=answer))  # SR-013: `_H` follows it
 
 
 async def test_create_user_requires_step_up_then_returns_link_once() -> None:

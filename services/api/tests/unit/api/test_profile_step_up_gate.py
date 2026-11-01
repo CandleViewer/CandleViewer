@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from candleviewer.api.step_up import demand_elevation, request_elevation
 from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.audit.models import AuditOutcome
-from tests.unit.api.test_step_up_router import _H, _build, _code, _modal_body
+from tests.unit.api.test_step_up_router import _H, _build, _code, _hold, _modal_body
 
 _WRITES = [
     ("POST", "/exchange-accounts/a1/profiles"),
@@ -98,6 +98,7 @@ async def test_one_risk_caps_step_up_admits_every_profile_write_inside_its_windo
         assert denied.status_code == 403, path
     ok = c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock), denied))
     assert ok.status_code == 200 and ok.json()["action_class"] == "risk_caps"
+    _hold(c, ok)  # SR-013 (#2101): `_H` names the rotated session from now on
     clock.now += timedelta(minutes=3)
     for method, path in _WRITES:
         assert c.request(method, path, headers=_H).status_code == 200, path

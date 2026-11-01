@@ -10,7 +10,7 @@ import pytest
 
 from candleviewer.storage.errors import WriteAheadTimeout
 from tests.unit.api.test_invites_router import _BODY, _elevate, _invite, _setup
-from tests.unit.api.test_step_up_router import _H, _PW, _build, _code
+from tests.unit.api.test_step_up_router import _H, _PW, _build, _code, _hold
 
 _REFUSED = "audit unavailable; nothing was changed"
 
@@ -19,7 +19,9 @@ async def test_owner_totp_reset_refused_by_its_audit_append_changes_nothing() ->
     target = uuid.uuid4()
     c, em, seed, clock, _ = await _build(target=target)
     body = {"code": _code(seed, clock), "password": _PW, "action_class": "users"}
-    assert c.post("/auth/step-up", headers=_H, json=body).status_code == 200
+    granted = c.post("/auth/step-up", headers=_H, json=body)
+    assert granted.status_code == 200
+    _hold(c, granted)  # SR-013 (#2101): `_H` names the rotated session from now on
     em.fail_on = frozenset({"auth.mfa_reset_by_owner"})
     r = c.post(f"/users/{target}/mfa/reset", headers=_H)
     assert r.status_code == 503 and r.json()["detail"] == "audit unavailable"
@@ -38,7 +40,9 @@ async def test_owner_totp_reset_hook_bug_is_not_masked_as_audit_unavailable(
     target = uuid.uuid4()
     c, em, seed, clock, _ = await _build(target=target)
     body = {"code": _code(seed, clock), "password": _PW, "action_class": "users"}
-    assert c.post("/auth/step-up", headers=_H, json=body).status_code == 200
+    granted = c.post("/auth/step-up", headers=_H, json=body)
+    assert granted.status_code == 200
+    _hold(c, granted)  # SR-013 (#2101): `_H` names the rotated session from now on
     emit = em.emit
 
     async def bug(action: str, **kw: Any) -> None:

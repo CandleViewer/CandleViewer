@@ -2,9 +2,10 @@
 
 Each operation that issues the SR-041 token gives it in the header only to a request whose one
 `Origin` is listed while `desktop.backend_connection` is on; every response that issues the token
-is `Cache-Control: no-store` whatever the flag. An expiry (logout) and step-up, which issues no
-token yet (F5, #2101), never carry the header. The operations are the contract's own set
-(`components.headers.CsrfTokenIssued`), so this is the C-6.2 provider check of that header.
+is `Cache-Control: no-store` whatever the flag. An expiry (logout) never carries the header;
+step-up, which rotates the session and issues the token since #2101 (F5), carries it as a
+sign-in does. The operations are the contract's own set (`components.headers.CsrfTokenIssued`),
+so this is the C-6.2 provider check of that header.
 """
 
 from __future__ import annotations
@@ -27,9 +28,6 @@ from ._stack import PW, Stack, open_stack
 _DESKTOP = "app://candleviewer"
 Sent = list[tuple[str, str]]
 Op = tuple[str, str, str]
-#: #2101 states the contract before its route: until the step-up route rotates the session and
-#: issues the token, the provider checks below leave step-up out of the contract's set.
-_PROVIDED = _ISSUING - {("post", "/auth/step-up", "200")}
 
 
 def _desktop(monkeypatch: pytest.MonkeyPatch, on: bool) -> AbstractContextManager[Stack]:
@@ -97,6 +95,14 @@ def _refresh(stack: Stack, sent: Sent) -> Any:
     return stack.client.post("/auth/refresh", headers=[*sent, *pair])
 
 
+def _step_up(stack: Stack, sent: Sent) -> Any:
+    """A granted step-up: it rotates the session and issues the new one's token (#2101, F5)."""
+    name, _, seed = _user(stack)
+    auth = _bearer(stack, stack.sign_in(name, seed))
+    body = {"code": stack.code(seed), "password": PW, "action_class": "users"}
+    return stack.client.post("/auth/step-up", headers=[*sent, *auth.items()], json=body)
+
+
 def _session(stack: Stack, sent: Sent) -> Any:
     """`GET /auth/session` without the cookie, so it re-issues one."""
     name, _, seed = _user(stack)
@@ -120,12 +126,13 @@ _DRIVE: dict[Op, Callable[[Stack, Sent], Any]] = {
     ("post", "/auth/mfa/enroll/confirm", "200"): _confirm,
     ("post", "/auth/refresh", "200"): _refresh,
     ("put", "/auth/password", "200"): _change_password,
+    ("post", "/auth/step-up", "200"): _step_up,
     ("get", "/auth/session", "200"): _session,
 }
 
 
 # The C-6.2 provider check: one case per operation the contract declares the header on.
-@pytest.mark.parametrize("op", sorted(_PROVIDED), ids=lambda op: f"{op[0]}{op[1]}")
+@pytest.mark.parametrize("op", sorted(_ISSUING), ids=lambda op: f"{op[0]}{op[1]}")
 def test_issuing_operation_listed_origin_flag_on_gets_its_new_token_in_the_header(
     monkeypatch: pytest.MonkeyPatch, op: Op
 ) -> None:
@@ -150,10 +157,10 @@ _MISSED: dict[str, tuple[list[str], bool]] = {
 #: Which operations still issue the cookie: all the contract's (so the drivers are exactly those),
 #: less the ones SR-042 refuses first: an unlisted `Origin`'s writes, a cookie refresh without one.
 _ISSUED: dict[str, set[Op]] = {
-    "flag_off": _PROVIDED,
+    "flag_off": _ISSUING,
     "unlisted": {("get", "/auth/session", "200")},
-    "absent": _PROVIDED - {("post", "/auth/refresh", "200")},
-    "repeated": _PROVIDED,
+    "absent": _ISSUING - {("post", "/auth/refresh", "200")},
+    "repeated": _ISSUING,
 }
 
 
@@ -210,20 +217,23 @@ def test_session_with_a_valid_cookie_but_no_listed_origin_and_flag_gets_todays_a
     assert not {CSRF_HEADER.lower(), "set-cookie", "cache-control"} & set(answer.headers)
 
 
-def test_step_up_and_logout_never_carry_the_header_that_the_sign_in_before_them_does(
+def test_step_up_carries_the_rotated_sessions_header_and_logout_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """ADR-0038 F5, closed by #2101: a step-up rotates the session and issues its token, so it
+    carries the header as a sign-in does; a logout expires the cookie and carries none."""
     listed = {"Origin": _DESKTOP}
     with _desktop(monkeypatch, on=True) as stack:
         headers, seed = stack.principal("stepper", "owner")
         signed_in = stack.sign_in("stepper", seed, carried=listed)
         stack.client.cookies.clear()  # what follows is the principal's session, not this one
         step = {"code": stack.code(seed), "password": PW, "action_class": "users"}
-        # F5: step-up issues no token yet (#2101)
         stepped = stack.client.post("/auth/step-up", headers={**listed, **headers}, json=step)
+        stack.adopt(headers, stepped.json()["tokens"]["access_token"])  # the rotated session
         out = stack.client.post("/auth/logout", headers={**listed, **headers})
 
     assert CSRF_HEADER in signed_in.headers
     assert (stepped.status_code, out.status_code) == (200, 204), stepped.text
-    assert CSRF_HEADER not in stepped.headers and CSRF_HEADER not in out.headers
+    assert stepped.headers[CSRF_HEADER] == stepped.cookies.get(CSRF_COOKIE)
+    assert CSRF_HEADER not in out.headers
     assert [c for c in out.headers.get_list("set-cookie") if c.startswith(f"{CSRF_COOKIE}=")]

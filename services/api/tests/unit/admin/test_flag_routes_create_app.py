@@ -25,6 +25,7 @@ from tests.contract.test_step_up_challenge_contract import (
     _validator,
 )
 from tests.unit.api.test_invites_create_app_e2e import _h, _login, _World
+from tests.unit.api.test_invites_create_app_e2e import held as bearer_now
 from tests.unit.api.test_step_up_guard_create_app import _world
 
 _KEY = "rules.graph_editor"
@@ -129,7 +130,6 @@ async def test_a_no_grace_flag_write_waits_for_the_step_up_bound_to_its_own_requ
     audit emitter, and the real `StepUpService`. A write with another body is refused and audited,
     the grant stays, and the held request, re-sent unchanged, commits once."""
     w, owner, uid = await _owner(monkeypatch)
-    session = await w.auth.sessions.authenticate_access_token(owner)  # the one the grant is on
 
     def shown() -> dict[str, Any]:
         items = w.client.get("/admin/feature-flags", headers=_h(owner)).json()["items"]
@@ -157,6 +157,8 @@ async def test_a_no_grace_flag_write_waits_for_the_step_up_bound_to_its_own_requ
     assert required["object_id"] == challenge_id
     granted = w.elevate(owner, challenge_id=challenge_id)
     assert (granted.status_code, granted.json()["single_use"]) == (200, True)
+    # The grant is on the session the step-up rotated to (SR-013, #2101).
+    session = await w.auth.sessions.authenticate_access_token(bearer_now(owner))
     [grant] = w.audit.of("auth.step_up_granted")
     assert grant["after_state"]["bound_request_sha256"] == held_hash
 

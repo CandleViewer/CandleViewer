@@ -398,8 +398,8 @@ def test_view_as_lock_locks_only_the_viewers_own_session(admin: AdminWorld) -> N
     """#4743 (BQ-3): lock is one of the viewer's own operations, so a viewing Owner's lock passes
     the view-as guard and locks the Owner's own session, as the viewer; the Manager's session is
     untouched, and the record names the viewer and the viewer's session."""
+    admin.elevate(["users"])  # the start's step-up class, which rotates the session (#2101)
     owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]
-    admin.elevate(["users"])  # the start's step-up class
     start = {"json": {"target_user_id": str(manager.user_id), "reason": "AC-LOCK view-as"}}
     assert admin.send("owner", "POST", "/admin/view-as", start).status_code == 201
     mark = len(admin.audit.records)
@@ -489,8 +489,8 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     one is mounted it is refused as any write until its handler registers. The day one registers,
     this case must say what it admits. The guard's own check of a registered one's target,
     through this same wiring, is the case after it."""
-    owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]
     admin.elevate(["users", "flags"])  # the start's step-up class, and the control write's
+    owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]  # rotated (#2101)
     stamp = _flag_updated_at(admin, _UI_FLAG)
     start = {"json": {"target_user_id": str(manager.user_id), "reason": "AC-ADM-22"}}
     started = admin.send("owner", "POST", "/admin/view-as", start)

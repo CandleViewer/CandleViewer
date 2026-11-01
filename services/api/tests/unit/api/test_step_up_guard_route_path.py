@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.step_up import make_read_only_guard
 from candleviewer.auth.step_up import StepUpService
-from tests.unit.api.test_step_up_router import _H, _PW, _build, _code, _record, _Sessions
+from tests.unit.api.test_step_up_router import _H, _PW, _build, _code, _hold, _record, _Sessions
 
 _ROOT = "/api/v1"
 
@@ -60,6 +60,7 @@ async def test_guard_under_root_path_admits_the_session_once_elevated() -> None:
     }
     ok = rc.post(f"{_ROOT}/auth/step-up", headers=_H, json=body)
     assert ok.status_code == 200 and ok.json()["action_class"] == "keys"
+    _hold(c, ok)  # SR-013 (#2101): `_H` names the rotated session from now on
     assert rc.post(path, headers=_H).status_code == 200
     assert rc.post(f"{_ROOT}/orders", headers=_H).status_code == 200  # ordinary write
 

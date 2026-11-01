@@ -35,7 +35,7 @@ from candleviewer.secrets.store import (
     InMemoryExportKeyStore,
 )
 from tests.unit.api.test_admin_kek import deploy
-from tests.unit.api.test_invites_create_app_e2e import _h, _login, _World
+from tests.unit.api.test_invites_create_app_e2e import _h, _login, _World, held
 from tests.unit.credentials_m2._service_fakes import _Src, _svc
 from tests.unit.credentials_m2._vectors import KEK_V1, AuditLog
 
@@ -216,7 +216,7 @@ async def test_anyone_but_the_owner_is_forbidden_and_nothing_rotates(
     assert (r.status_code, r.json()["code"], len(rot.keys.rows)) == (403, "forbidden", 1)
     [denial] = rot.w.audit.of("rbac.denied")  # written ahead of the 403 (C-2.9)
     assert not perms or denial["reason"] == "owner_only"
-    session = await rot.w.auth.sessions.peek_access_token(token)
+    session = await rot.w.auth.sessions.peek_access_token(held(token))
     assert session is not None and denial["session_id"] == session.id and _unstored(r)
 
 
@@ -434,7 +434,7 @@ async def test_a_manager_with_an_empty_body_is_forbidden_before_it_is_read(
     r = rot.w.client.post(PATH, headers=headers, **sent)
     assert (r.status_code, r.json()["code"], "errors" in r.json()) == (403, "forbidden", False)
     [denial] = rot.w.audit.of("rbac.denied")
-    session = await rot.w.auth.sessions.peek_access_token(token)
+    session = await rot.w.auth.sessions.peek_access_token(held(token))
     assert session is not None and denial["session_id"] == session.id
     assert rot.w.audit.of("auth.step_up_required") == [] and len(rot.keys.rows) == 1
     assert _unstored(r)

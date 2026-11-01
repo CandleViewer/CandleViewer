@@ -37,21 +37,21 @@ class _Purge:
         self.w, self.tiers = w, World()
         self.tiers.add_cold("BTCUSDT", T, 2)
         self.backend = _Gated(manager(self.tiers))
-        session = w.sessions["tok"]
-        principal = AuditPrincipal(
-            session.user_id, "o", frozenset(OWNER), session.id, request_id=uuid.uuid4(),
-            is_owner=True,
-        )  # fmt: skip
+        request_id = uuid.uuid4()
 
         class _Resolver:
             async def resolve(self, request: Any) -> AuditPrincipal:
-                return principal
+                session = w.sessions["tok"]  # what `tok` names now: a step-up rotates it (#2101)
+                return AuditPrincipal(
+                    session.user_id, "o", frozenset(OWNER), session.id, request_id=request_id,
+                    is_owner=True,
+                )  # fmt: skip
 
         async def elevation(
             request: Request, action_class: str, fingerprint: str
         ) -> JSONResponse | SpentGrant:
             return await require_bound_elevation(
-                w.auth, session.id, action_class, fingerprint=fingerprint, emitter=w.audit
+                w.auth, w.sessions["tok"].id, action_class, fingerprint=fingerprint, emitter=w.audit
             )
 
         router = make_recorder_purge_router(

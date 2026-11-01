@@ -16,11 +16,19 @@ class passes only with the one-shot grant bound to that request (#2304).
 per-session budget; no factor is checked or counted. That record, the reset's and
 `auth.step_up_mismatch` are written ahead of their answer, within `AUDIT_TIMEOUT_S`:
 a writer that is down or slow makes the answer `503 audit_unavailable`, never the 400, 403 or 200.
+
+SR-013 (#2101): a granted step-up rotates its session (`SessionService.rotate`), carrying the
+live grants, and answers with the new session's tokens and rotated cookies, `X-CSRF-Token`
+included (ADR-0038 F5). The audit writer's readiness is checked before any factor; the rotation's
+`auth.session_revoked` (B16 `REVOKE`, reason `rotated`) and `auth.session_created` are written
+ahead of the claim and the mint, and a refused one ends the grant (`503`). A claim lost to a
+refresh or a revoke, or a mint that fails after the claim, voids the announced session (`401`).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import re
 import uuid
@@ -44,6 +52,7 @@ from candleviewer.api.csrf import (
     ANON_REFUSAL_WINDOW_S,
     AUDIT_TIMEOUT_S,
     SESSION_REFUSALS_PER_WINDOW,
+    set_csrf_cookie,
     source_ip,
 )
 from candleviewer.api.step_up_challenge import ChallengeText, challenge_reason, mfa_reset_text
@@ -53,6 +62,7 @@ from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
     AuthError,
     AuthServiceUnavailable,
@@ -66,16 +76,20 @@ from candleviewer.auth.errors import (
     StepUpMismatch,
     StepUpRequired,
     UnknownActionClass,
+    UserDisabled,
 )
 from candleviewer.auth.generated_permissions import Permission, Scope
-from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.models import MintedSession, SessionRecord
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
+from candleviewer.auth.session_chart import SessionChartError
 from candleviewer.auth.step_up import (
     ACTION_CLASSES,
     NO_GRACE_ACTION_CLASSES,
     PositionStateProvider,
     StepUpChallenge,
+    StepUpGrant,
     StepUpService,
+    carried_grants,
 )
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.observability.context import current_request_uuid
@@ -108,6 +122,9 @@ MFA_INVALID_CODE = ErrorCode.MFA_INVALID.value
 MFA_INVALID_TITLE = ERROR_META[ErrorCode.MFA_INVALID].title
 #: What `AuditService.writer` raises before `start()`; any other `RuntimeError` is a defect.
 _AUDIT_NOT_STARTED = "AuditService.start() has not wired"
+#: SR-013 (#2101): the reason a step-up's rotation revokes the old session under, the one a
+#: refresh's claim writes (`SessionService.rotate`); B16 `REVOKE` records it too.
+ROTATED_REASON = "rotated"
 #: `400 validation_failed` details for a step-up that cannot answer its challenge (#2304).
 _CHALLENGE_REFUSED = {
     "challenge_required": "This step-up must send the challenge_id it answers.",
@@ -836,10 +853,13 @@ def make_step_up_router(
     positions: PositionStateProvider | None = None,
     users: _UserLookup | None = None,
     audit_ready: Callable[[], bool],
+    csrf: CsrfCodec,
     refusal_budget: PerIpLoginThrottle | None = None,
 ) -> APIRouter:
     """`audit_ready()` false -> the owner TOTP reset answers 503 before changing
-    anything: it cannot be undone, so its audit record must be writable (C-2.9)."""
+    anything: it cannot be undone, so its audit record must be writable (C-2.9). A step-up
+    answers 503 too, before any factor is checked (#2101, C-7). *csrf* issues the SR-041 token
+    of the session a step-up rotates to (C-4)."""
     if emitter is None:
         raise TypeError("make_step_up_router: audit emitter is required")
     router = APIRouter(tags=["auth"])
@@ -906,6 +926,8 @@ def make_step_up_router(
             body = _StepUpBody.model_validate(raw if isinstance(raw, dict) else {})
         except ValidationError as exc:
             return _invalid_body(exc)
+        if not audit_ready():  # #2101 (C-7): before any factor is checked, counted or spent
+            return _audit_unavailable()
         # The server decides the class: the one its live challenge names. A
         # client-supplied value is only a cross-check (mismatch -> 400, #2304).
         try:
@@ -953,10 +975,112 @@ def make_step_up_router(
             )
         except SessionReadOnly as exc:
             return readonly_problem(exc)
+        return await _rotated(request, record, grant)
+
+    async def _rotated(request: Request, record: SessionRecord, grant: StepUpGrant) -> JSONResponse:
+        """SR-013 (#2101): rotate the session the step-up just elevated. Its records come after
+        `auth.step_up_granted` (B16), each ahead of what it records (C-7): B16 `REVOKE` writes
+        `auth.session_revoked` (reason `rotated`) ahead of the claim, then `auth.session_created`
+        names the new session, under an id drawn here, ahead of the mint. Either refused: the
+        grant is ended and the answer is `503`, nothing elevated or rotated. The claim is
+        conditional (C-8): one lost to a refresh, a logout or a revoke, or a mint that fails
+        after it, voids the announced session and answers `401`; the user signs in again."""
+        sessions, chart, sid = auth.sessions, auth.step_up.chart, str(record.id)
+        successor = uuid.uuid4()  # named by its write-ahead record, as at sign-in (#2914)
+        try:
+            await chart.revoke(record, sessions.now(), ROTATED_REASON)
+            await _ahead(
+                emitter.emit(
+                    "auth.session_created",
+                    actor_label=str(record.user_id),
+                    actor_user_id=record.user_id,
+                    actor_ip=source_ip(request.scope),
+                    session_id=successor,
+                    after_state={"rotated_from": sid},
+                    request_id=current_request_uuid(),
+                )
+            )
+        except (SessionChartError, AuditRefused) as exc:
+            await chart.forget(sid)  # rebuilt from the row, which stays live
+            failed = type(exc).__name__
+            _log().error("auth.step_up.rotation_unrecorded", session_id=sid, error=failed)
+            await _end_grant(sid, grant)
+            return _audit_unavailable()
+        try:
+            outcome = await sessions.rotate(
+                sid,
+                successor_id=successor,
+                carry_grants=carried_grants,
+                ip=source_ip(request.scope),
+                user_agent=request.headers.get("user-agent"),
+            )
+        except (SessionRevoked, UserDisabled) as exc:  # the claim lost, or the mint refused
+            await _unrotated(record, successor, type(exc).__name__)
+            return _unauthenticated()  # either way the old row is revoked, its grant with it
+        except Exception as exc:  # the claim or the mint failed: whether it claimed is unknown
+            await _unrotated(record, successor, type(exc).__name__)
+            await _end_grant(sid, grant)  # a claim that failed left the grant on a live row
+            if not is_storage_outage(exc):
+                raise  # a defect is no outage: the 500 stands, the void is recorded
+            return _unauthenticated()
+        return _issued(request, record, grant, outcome.minted)
+
+    async def _end_grant(sid: str, grant: StepUpGrant) -> None:
+        """End the grant of a step-up whose rotation did not happen, so it elevates nothing
+        (C-7). A store that refuses this too is logged, never the answer: the grant was recorded
+        (`auth.step_up_granted`) and its window bounds it."""
+        try:
+            await auth.step_up.end_grant(sid, grant)
+        except Exception as exc:
+            failed = type(exc).__name__
+            _log().error("auth.step_up.grant_not_ended", session_id=sid, error=failed)
+
+    async def _unrotated(record: SessionRecord, successor: uuid.UUID, error: str) -> None:
+        """No session stands under *successor*, which `auth.session_created` announced (C-2.9):
+        an `auth.step_up_failed` row voids it. The answer is decided, so a row the writer refuses
+        is logged and never changes it; the error log names both sessions and the error class
+        only (C-12.6), in case the row is lost too."""
+        _log().error(
+            "auth.step_up.unrotated",
+            user_id=str(record.user_id),
+            session_id=str(record.id),
+            new_session_id=str(successor),
+            error=error,
+        )
+        with contextlib.suppress(AuditRefused):  # logged by `_ahead`, and above
+            await _ahead(
+                emitter.emit(
+                    "auth.step_up_failed",
+                    actor_label=str(record.user_id),
+                    actor_user_id=record.user_id,
+                    session_id=successor,
+                    outcome=AuditOutcome.FAILURE,
+                    severity=Severity.WARNING,
+                    reason="unrotated",
+                    after_state={
+                        "voids_session_created": str(successor),
+                        "rotated_from": str(record.id),
+                    },
+                    request_id=current_request_uuid(),
+                )
+            )
+
+    def _issued(
+        request: Request, record: SessionRecord, grant: StepUpGrant, minted: MintedSession
+    ) -> JSONResponse:
+        """The `200` (C-3, C-4): the grant, `tokens` with the successor's access token (its
+        refresh token travels in the cookie only), and the rotated `cv_refresh` and
+        `__Host-cv_csrf` cookies, the latter `no-store` with `X-CSRF-Token` under the desktop flag
+        (`set_csrf_cookie`)."""
+        # `api.sessions` imports this module (through `api.enrolment_guard`), so the token and
+        # cookie writers refresh shares are read here, when a request runs, never at import.
+        from candleviewer.api import sessions as issuing
+
+        lifetime = issuing.refresh_lifetime_s(minted, password_only=record.mfa_satisfied_at is None)
         # The challenge the grant consumed (#2304, defence in depth); `grant.challenge_id` is
         # set only from the live challenge the step-up answered, so none means none consumed.
         consumed = {} if grant.challenge_id is None else {"challenge_id": str(grant.challenge_id)}
-        return JSONResponse(
+        response = JSONResponse(
             status_code=200,
             content={
                 "elevated_until": grant.elevated_until.isoformat(),
@@ -966,8 +1090,14 @@ def make_step_up_router(
                     None if grant.single_use else grant.elevated_until.isoformat()
                 ),
                 **consumed,
+                "tokens": issuing._tokens(
+                    minted, include_refresh=False, refresh_expires_in=lifetime
+                ),
             },
         )
+        issuing._set_refresh_cookie(response, minted.refresh_token, max_age=lifetime)
+        set_csrf_cookie(request, response, csrf.issue(str(minted.session_id)), max_age=lifetime)
+        return response
 
     async def _unknown_user(user_id: uuid.UUID) -> JSONResponse | None:
         """404 for a target that does not exist (never a 200 no-op reset)."""

@@ -44,6 +44,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, SessionRecord
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.auth.totp import generate_code, time_step_for
@@ -61,11 +62,14 @@ from tests.unit.api.test_step_up_router import (
     _MISSING,
     _PW,
     _T0,
+    CSRF,
+    _adopt,
     _Auth,
     _build,
     _Clock,
     _code,
     _Emitter,
+    _hold,
     _Positions,
     _record,
     _Sessions,
@@ -133,8 +137,11 @@ class _World:
         return sent
 
     def step_up(self, who: str = "tok", **body: Any) -> Response:
+        """`POST /auth/step-up` as *who*, who holds the new bearer once it is granted (SR-013)."""
         payload = {"code": _code(self.seed, self.clock), "password": _PW, **body}
         answered: Response = self.client.post("/auth/step-up", headers=self.h(who), json=payload)
+        if answered.status_code == 200:
+            _adopt(self.rows, self.sessions, who, answered)
         return answered
 
     def of(self, action: str) -> list[dict[str, Any]]:
@@ -163,12 +170,12 @@ async def _world() -> _World:
         StepUpService(
             repo, rows, enc, users, hasher, clock=clock, sleep=no_wait, owner_reset=reset
         ),
-        _Sessions(sessions),
+        _Sessions(sessions, SessionService(rows, hasher, clock=clock), rows),  # #2101: rotates
     )
     audit = _Emitter()
     b16_session.set_audit_sink(audit)
     app = FastAPI()
-    app.include_router(make_step_up_router(auth, audit, audit_ready=lambda: True))
+    app.include_router(make_step_up_router(auth, audit, audit_ready=lambda: True, csrf=CSRF))
     app.middleware("http")(make_read_only_guard(auth, audit))
     executed: list[dict[str, Any]] = []
 
@@ -344,7 +351,9 @@ async def test_challenge_refusals_are_audited_within_a_per_session_budget() -> N
     budget = PerIpLoginThrottle(max_attempts=2, window_s=60.0, clock=lambda: 0.0)
     app = FastAPI()
     app.include_router(
-        make_step_up_router(w.auth, w.audit, audit_ready=lambda: True, refusal_budget=budget)
+        make_step_up_router(
+            w.auth, w.audit, audit_ready=lambda: True, csrf=CSRF, refusal_budget=budget
+        )
     )
     probe = {"code": "000000", "password": _PW, "action_class": "keys"}
     for _ in range(3):  # each presents an id the session never issued
@@ -595,7 +604,9 @@ async def test_elevated_owner_self_reset_is_403_forbidden_not_another_challenge(
     client holding it would loop)."""
     c, em, seed, clock, owner = await _build()
     body = {"code": _code(seed, clock), "password": _PW, "action_class": "users"}
-    assert c.post("/auth/step-up", headers=_H, json=body).status_code == 200
+    granted = c.post("/auth/step-up", headers=_H, json=body)
+    assert granted.status_code == 200
+    _hold(c, granted)  # SR-013 (#2101): `_H` names the rotated session from now on
     r = c.post(f"/users/{owner}/mfa/reset", headers=_H)
     assert r.status_code == 403 and r.json()["code"] == "forbidden"
     assert "challenge_id" not in r.json() and "auth.step_up_required" not in em.actions()
@@ -618,6 +629,7 @@ async def _reset_client(w: _World, positions: Any = None) -> TestClient:
             positions=positions or _Positions(),
             users=_Store({"viewer"}, 1),
             audit_ready=lambda: True,
+            csrf=CSRF,
         )
     )
     return TestClient(app)
