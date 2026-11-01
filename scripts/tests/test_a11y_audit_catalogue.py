@@ -663,7 +663,7 @@ def test_real_nine_level_a_rows_are_fixed_by_the_override() -> None:
         # "fixed (#52…, sha)" while the override carries it; plain "fixed" once the register does
         assert by[i]["status"] == "fixed" or by[i]["status"].startswith("fixed (#52"), i
     counts = reg["counts"]
-    assert counts["fixed"] >= 13 and counts["fixed"] + counts["open"] == 119
+    assert counts["fixed"] >= 13 and counts["fixed"] + counts["open"] == 121
 
 
 def test_real_md_carries_the_sweep_carry_and_the_ci_correction() -> None:
