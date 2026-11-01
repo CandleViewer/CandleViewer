@@ -113,6 +113,8 @@ class LiquidationStream:
         self._room = asyncio.Condition()
         self._stop_drain_s = stop_drain_s
         self._tasks: list[asyncio.Task[None]] = []
+        self._write_task: asyncio.Task[None] | None = None
+        self._inflight = 0  # prints of a batch taken off the queue and not yet stored
         self._health = bus.subscribe(
             "liquidation-stream-health",
             TopicPattern(env=env, domain="health", detail="feed"),
@@ -195,7 +197,11 @@ class LiquidationStream:
                 )
             )
             self._queued_prints += len(events)
-        await self._writes.put(events)
+        try:
+            await self._writes.put(events)
+        except asyncio.CancelledError:
+            await asyncio.shield(self._taken(len(events)))  # give the reserved prints back
+            raise
 
     async def _taken(self, n: int) -> None:
         async with self._room:
@@ -240,7 +246,10 @@ class LiquidationStream:
         """Wait for a push, then write every queued one; a failed write is retried until the
         store takes it (no print is dropped), one attempt per `WRITE_RETRY_S`."""
         first = await self._writes.get()
-        batch = first + self.take_batch()
+        return await self._flush(first + self.take_batch())
+
+    async def _flush(self, batch: list[LiquidationEvent]) -> int:
+        self._inflight = len(batch)
         await self._taken(len(batch))
         while self._writer is not None:
             try:
@@ -252,6 +261,7 @@ class LiquidationStream:
                 await self._sleep(WRITE_RETRY_S)
                 continue
             break
+        self._inflight = 0
         return len(batch)
 
     async def _write_loop(self) -> None:
@@ -265,28 +275,36 @@ class LiquidationStream:
     # ---- lifecycle -------------------------------------------------------
     async def start(self) -> None:
         self.sync()
+        self._write_task = spawn(self._write_loop(), name="liquidation-write-behind")
         self._tasks = [
             spawn(self._health_loop(), name="liquidation-health"),
             spawn(self._sync_loop(), name="liquidation-sync"),
-            spawn(self._write_loop(), name="liquidation-write-behind"),
+            self._write_task,
         ]
 
     async def drain(self) -> None:
         """Store every queued push now (the write loop's work, without waiting for a new one)."""
-        while not self._writes.empty():
-            await self.write_once()
+        while not self._writes.empty():  # never a blocking get: a racing taker may empty it
+            await self._flush(self.take_batch())
 
     async def stop(self) -> None:
-        """Drain the write-behind for up to `stop_drain_s`, then cancel the loops: what is still
-        queued then is lost (logged), as a socket gap is."""
+        """Cancel the write loop first (so it cannot race the drain for a push), then store what
+        is still queued for up to `stop_drain_s`; what is left then is lost (logged), as a socket
+        gap is."""
+        log = get_logger(__name__)
+        write_task, self._write_task = self._write_task, None
+        if write_task is not None:
+            write_task.cancel()
+            await asyncio.gather(write_task, return_exceptions=True)
+            if self._inflight:
+                log.warning("liquidation_write_batch_interrupted", prints=self._inflight)
+                self._inflight = 0
         if self._writer is not None and not self._writes.empty():
             try:
                 async with asyncio.timeout(self._stop_drain_s):
                     await self.drain()
             except TimeoutError:
-                get_logger(__name__).warning(
-                    "liquidation_write_behind_unflushed", pushes=self._writes.qsize()
-                )
+                log.warning("liquidation_write_behind_unflushed", pushes=self._writes.qsize())
         tasks, self._tasks = self._tasks, []
         for t in tasks:
             t.cancel()

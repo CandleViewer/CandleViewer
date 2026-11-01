@@ -106,6 +106,7 @@ class Rig:
 
     async def _sleep(self, s: float) -> None:
         self.sleeps.append(s)
+        await asyncio.sleep(0)  # a real sleep yields: the sync loop must not starve the others
 
 
 async def test_stream_demand_from_consumers_and_recorded_symbols() -> None:
@@ -286,3 +287,42 @@ async def test_stream_stop_drain_is_bounded_when_the_store_hangs() -> None:
     with capture_logs() as logs:
         await rig.stream.stop()
     assert [e["event"] for e in logs] == ["liquidation_write_behind_unflushed"]
+
+
+async def test_stream_stop_does_not_wait_out_the_timeout_when_the_loop_took_the_last_push() -> None:
+    rig = Rig(stop_drain_s=30.0)
+    rig.stream.acquire("c", "BTCUSDT")
+    await rig.stream.start()
+    for frame in BURST[:3]:
+        await rig.stream.handle_frame(frame)
+    await asyncio.wait_for(rig.stream.stop(), 1.0)  # a blocking get in drain would sit 30 s
+    assert rig.stream.queued == 0 and len(rig.store.rows) == 6
+
+
+async def test_stream_stop_logs_the_prints_of_a_batch_the_cancel_interrupted() -> None:
+    rig = Rig(stop_drain_s=30.0)
+
+    class Hanging:
+        async def write_liquidations(self, events: Sequence[LiquidationEvent]) -> None:
+            await asyncio.Event().wait()
+
+    rig.stream._writer = Hanging()
+    rig.stream.acquire("c", "BTCUSDT")
+    await rig.stream.start()
+    await rig.stream.handle_frame(BURST[1])  # 3 prints
+    await asyncio.sleep(0.01)  # the loop takes the push and hangs in the write
+    with capture_logs() as logs:
+        await asyncio.wait_for(rig.stream.stop(), 1.0)
+    assert [(e["event"], e["prints"]) for e in logs] == [("liquidation_write_batch_interrupted", 3)]
+
+
+async def test_stream_enqueue_cancelled_inside_put_gives_its_prints_back() -> None:
+    rig = Rig(queue_max=1)
+    rig.stream.acquire("c", "BTCUSDT")
+    await rig.stream.handle_frame(BURST[1])  # 3 prints fill the one-push queue
+    blocked = asyncio.ensure_future(rig.stream.handle_frame(BURST[2]))  # reserves 2, waits in put
+    await asyncio.sleep(0.01)
+    assert not blocked.done() and rig.stream._queued_prints == 5
+    blocked.cancel()
+    await asyncio.gather(blocked, return_exceptions=True)
+    assert rig.stream._queued_prints == 3
