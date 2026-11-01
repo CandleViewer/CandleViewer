@@ -1030,13 +1030,30 @@ def g_pointers(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(("G14-POINTERS", f"{e} has no pointer line"))
 
 
+# v1.1 (#5245): the rows the orchestrator's approval of record 6549312022 carried as Minors.
+V11_ROWS = frozenset({"T2-02", "T2-03", "T2-04", "T2-05", "T2-07", "C-p"})
+
+
+def _row_id(ln: str) -> str:
+    return ln.split("|")[1].strip() if ln.count("|") > 2 else ""
+
+
+def _cells(ln: str) -> str:
+    return re.sub(r" +", " ", ln.strip())
+
+
 def g_freeze(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     if ctx.merged_spec is None:
         return
-    now = set(ctx.spec.split("\n"))
+    lines = ctx.spec.split("\n")
+    now = {_cells(ln) for ln in lines}
+    ids = {_row_id(ln) for ln in lines}
     for ln in ctx.merged_spec.split("\n"):
-        if ln.startswith("|") and not ln.startswith("| ---") and ln not in now:
-            f.append(("G15-FREEZE", f"a merged row changed: {ln[:48]!r}"))
+        if not ln.startswith("|") or ln.startswith("| ---") or _cells(ln) in now:
+            continue
+        if _row_id(ln) in V11_ROWS and _row_id(ln) in ids:
+            continue
+        f.append(("G15-FREEZE", f"a merged row changed: {ln[:48]!r}"))
 
 
 def g_contrast(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:

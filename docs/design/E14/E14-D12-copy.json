@@ -1,0 +1,1101 @@
+{
+  "pack": "E14-D12",
+  "version": "v1.1",
+  "base": "8bae585409",
+  "note": "The copy deck of the E14-D12 hand-off pack: every row of the five parents' copy tables (E14-D02 §12, E14-D04 §9.5, E14-D05 §9.4, E14-D06 §10, E14-D07 §12.2) under the id `<parent>:<row number>`, with the row's keys, the String cell verbatim, the source row, the status (proposed: the parent's own proposal, owner the parent, finalised by E14-D10 at v1.1; ruled; cited: the owner its Source cell names) and the owner; a row whose key or string carries a word of the public-text list keeps its source and owner and is cited only. Checked by docs/design/_tools/e14_d12_handoff_audit.py (G-DECK).",
+  "entries": {
+    "d02:01": {
+      "names": "armed, first time in session",
+      "text": "\"Horizontal line tool on. Enter places it at the cursor. Escape cancels.\"",
+      "source": "D02:521",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:02": {
+      "names": "armed, after",
+      "text": "\"Horizontal line tool on.\"",
+      "source": "D02:522",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:03": {
+      "names": "disarmed (T13 / T18)",
+      "text": "\"Horizontal line tool off.\"",
+      "source": "D02:523",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:04": {
+      "names": "anchor placed",
+      "text": "\"Anchor 1 of 2 at 13:40, 64,012.5.\"",
+      "source": "D02:524",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:05": {
+      "names": "snap candidate / snap-cycle",
+      "text": "\"High 65,400.\" / \"High 65,400 so far.\"",
+      "source": "D02:525",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:06": {
+      "names": "commit",
+      "text": "\"Horizontal line at 64,210.5 created on all BTCUSDT panes. Selected.\"",
+      "source": "D02:526",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:07": {
+      "names": "commit, pane-local",
+      "text": "\"… created on this pane only. Selected.\"",
+      "source": "D02:527",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:08": {
+      "names": "commit, keep active",
+      "text": "\"… Selected. Horizontal line tool still on.\"",
+      "source": "D02:528",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:09": {
+      "names": "cancel, level 1 (T29)",
+      "text": "\"Placement cancelled. Trendline tool still on.\"",
+      "source": "D02:529",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:10": {
+      "names": "cancel, level 3 (T05)",
+      "text": "\"Selection cleared.\"",
+      "source": "D02:530",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:11": {
+      "names": "interrupt (T20 / T32–T34)",
+      "text": "\"Trendline tool off — symbol changed.\" / \"Trendline tool on — placement cancelled.\" / \"Placement cancelled — interval changed. Trendline tool still on.\"",
+      "source": "D02:531",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:12": {
+      "names": "move / nudge",
+      "text": "\"Moved 64,000 to 64,120. Undo available.\"",
+      "source": "D02:532",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:13": {
+      "names": "locked refusal",
+      "text": "\"Locked.\"",
+      "source": "D02:533",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:14": {
+      "names": "delete",
+      "text": "\"Trendline removed. Undo available.\"",
+      "source": "D02:534",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:15": {
+      "names": "undo / redo",
+      "text": "\"Undone: moved trendline.\" / \"Redone: moved trendline.\"",
+      "source": "D02:535",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:16": {
+      "names": "hide-all / lock-all",
+      "text": "\"200 drawings hidden.\" / \"All drawings locked.\"",
+      "source": "D02:536",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:17": {
+      "names": "delete-all confirmed",
+      "text": "\"497 drawings deleted. 3 locked drawings kept. Undo available.\"",
+      "source": "D02:537",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:18": {
+      "names": "unsaved / conflict",
+      "text": "\"Changes not saved.\" / \"Trendline changed elsewhere.\"",
+      "source": "D02:538",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:19": {
+      "names": "magnet / keep active toggled",
+      "text": "\"Magnet: weak.\" / \"Keep tool active on.\"",
+      "source": "D02:539",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:20": {
+      "names": "T2 press",
+      "text": "\"Your role can't save workspaces.\" / \"Your role can't change settings.\" / \"Read-only while viewing as {user}.\"",
+      "source": "D02:540",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d02:21": {
+      "names": "access changed (T41 / T43)",
+      "text": "\"Your access changed. Trendline is now off: {reason}\"",
+      "source": "D02:541",
+      "status": "proposed",
+      "owner": "E14-D02 (#247)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:01": {
+      "names": "status.saving · status.saved",
+      "text": "\"Saving…\" / \"Saved\"",
+      "source": "D04:391",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:02": {
+      "names": "status.failed",
+      "text": "\"Couldn't save — Retry\" · announced \"Couldn't save. Retry available.\"",
+      "source": "D04:392",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:03": {
+      "names": "status.offline",
+      "text": "\"Not saved — offline. Retrying when connected.\"",
+      "source": "D04:393",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:04": {
+      "names": "status.batch_failed",
+      "text": "\"Nothing changed — 7 drawings kept their style. Retry\" · \"2 of 7 drawings changed elsewhere.\" · \"2 of 7 drawings were deleted elsewhere — nothing changed. Apply to the rest\" · \"Applied to 200 of 350 drawings. Retry the rest\" (the one partial case, C14)",
+      "source": "D04:394",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:05": {
+      "names": "status.deleted_elsewhere",
+      "text": "\"This drawing was deleted elsewhere.\" · \"Dismiss\"",
+      "source": "D04:395",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:06": {
+      "names": "status.conflict.actions",
+      "text": "\"Re-apply\" / \"Keep theirs\"",
+      "source": "D04:396",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:07": {
+      "names": "drawing.locked",
+      "text": "\"This drawing is locked.\"",
+      "source": "D04:397",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:08": {
+      "names": "alert.quota_reached",
+      "text": "\"You've reached your alert limit.\"",
+      "source": "D04:398",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:09": {
+      "names": "template.*",
+      "text": "\"Default · Trendline\" · \"Save as default\" · \"Save as template…\" · \"Manage templates…\" · \"Set as default\" · \"Rename\" · \"Delete\" · \"Template saved.\" · \"Template applied to 7 drawings.\" · \"Template removed. Undo\" · \"Already the default.\" · \"Change a value to save it.\" · \"Enter a template name.\" · \"A template with this name exists.\" · \"Carries: colour, width, style, extend. No geometry, no anchors, no symbol.\" · \"No templates yet. Save as template… from any drawing's properties.\" · \"Custom\"",
+      "source": "D04:399",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:10": {
+      "names": "levels.*",
+      "text": "\"Level already in the list.\" · \"Level must be between −1,000 and 1,000.\" · \"Up to 24 levels.\" · \"Keep at least one level.\" · \"Add level\"",
+      "source": "D04:400",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:11": {
+      "names": "note.*",
+      "text": "\"A note needs text.\"",
+      "source": "D04:401",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:12": {
+      "names": "fill.*",
+      "text": "\"Same as stroke\" · \"Flatten overlapping fills\" · \"applies to every filled drawing on this pane\"",
+      "source": "D04:402",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d04:13": {
+      "names": "popover.*",
+      "text": "\"7 drawings · properties\" · \"Trendline defaults\" · \"Mixed\" · \"Custom colour\" · \"Show in object tree\" · \"Unlock\" · \"Price\" / \"%\" / \"Bars\" / \"Time\" · \"Pin\"",
+      "source": "D04:403",
+      "status": "proposed",
+      "owner": "E14-D04 (#318)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d05:01": {
+      "names": "",
+      "text": "\"Fib retracement placed, 8 levels.\"",
+      "source": "D05:329",
+      "status": "proposed",
+      "owner": "E14-D05 (#349)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d05:02": {
+      "names": "",
+      "text": "\"Anchored VWAP placed at 12:00.\"",
+      "source": "D05:330",
+      "status": "proposed",
+      "owner": "E14-D05 (#349)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d05:03": {
+      "names": "",
+      "text": "\"Anchored VWAP placed at 12:00, estimated.\"",
+      "source": "D05:331",
+      "status": "proposed",
+      "owner": "E14-D05 (#349)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d05:04": {
+      "names": "",
+      "text": "\"Measure: 26 bars, plus 520.0.\"",
+      "source": "D05:332",
+      "status": "proposed",
+      "owner": "E14-D05 (#349)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d05:05": {
+      "names": "",
+      "text": "\"Measure pinned.\"",
+      "source": "D05:333",
+      "status": "proposed",
+      "owner": "E14-D05 (#349)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d05:06": {
+      "names": "",
+      "text": "\"Read-only while viewing as {user}.\"",
+      "source": "D05:334",
+      "status": "proposed",
+      "owner": "E14-D05 (#349)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d05:07": {
+      "names": "",
+      "text": "\"Your role can't save workspaces.\"",
+      "source": "D05:335",
+      "status": "proposed",
+      "owner": "E14-D05 (#349)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:01": {
+      "names": "pos.chip.long · pos.chip.short",
+      "text": "\"▲ Long\" / \"▼ Short\"",
+      "source": "D06:406",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:02": {
+      "names": "pos.chip.not_saved",
+      "text": "\"· not saved\"",
+      "source": "D06:407",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:03": {
+      "names": "pos.chip.sent",
+      "text": "\"· sent to ticket {n} s ago\"",
+      "source": "D06:408",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:04": {
+      "names": "pos.account.line",
+      "text": "\"Sized for {account} · {ENV}\" → \"Sized for Main · DEMO\"",
+      "source": "D06:409",
+      "status": "cited",
+      "owner": "D02 §11 :488 (the phrase, verbatim)"
+    },
+    "d06:05": {
+      "names": "pos.zone.stop",
+      "text": "\"Stop · −{risk} USDT · {ticks} ticks\" → \"Stop · −27.50 USDT · 1,100 ticks\"",
+      "source": "D06:410",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:06": {
+      "names": "pos.zone.target",
+      "text": "\"Target · +{reward} USDT · {rr} R\" → \"Target · +72.50 USDT · 2.64 R\"",
+      "source": "D06:411",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:07": {
+      "names": "pos.row.risk",
+      "text": "\"Risk\" · \"{risk} USDT ({pct} % of equity)\"",
+      "source": "D06:412",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:08": {
+      "names": "pos.row.size",
+      "text": "\"Size\" · \"{qty} BTC · {notional} USDT\"",
+      "source": "D06:413",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:09": {
+      "names": "pos.row.rr · pos.row.reward",
+      "text": "\"R:R\" · \"{rr} R\" / \"Reward\" · \"{reward} USDT\"",
+      "source": "D06:414",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:10": {
+      "names": "pos.row.unset",
+      "text": "\"— set a target\"",
+      "source": "D06:415",
+      "status": "cited",
+      "owner": "D02 §7.2 :325 (verbatim)"
+    },
+    "d06:11": {
+      "names": "pos.row.entry_only",
+      "text": "\"Entry {price} · set a stop\" → \"Entry 64,010.0 · set a stop\"",
+      "source": "D06:416",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:12": {
+      "names": "pos.row.stop",
+      "text": "\"Stop\" · \"{stop} · {ticks} ticks · will be placed with the order · held by Bybit (exchange)\"",
+      "source": "D06:417",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:13": {
+      "names": "pos.row.fees",
+      "text": "\"Fees\" · \"est. {fee} USDT round trip (taker)\"",
+      "source": "D06:418",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:14": {
+      "names": "pos.row.breakeven",
+      "text": "\"Break-even\" · \"{price} · {ticks} ticks\"",
+      "source": "D06:419",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:15": {
+      "names": "pos.row.account",
+      "text": "\"Account\" · \"{account} · {ENV} · risk {pct} % of equity · {lev}x\" → \"Main · DEMO · risk 0.5 % of equity · 10x\"",
+      "source": "D06:420",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:16": {
+      "names": "pos.row.cap",
+      "text": "\"Daily loss\" · \"{used} of {cap} USDT used\" → \"120.00 of 500.00 USDT used\" · \"{headroom} USDT left\"",
+      "source": "D06:421",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:17": {
+      "names": "pos.row.rounded",
+      "text": "\"rounded down to the {step} step\" → \"rounded down to the 0.001 step\"",
+      "source": "D06:422",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:18": {
+      "names": "readout.provisional · readout.estimated",
+      "text": "\"(provisional)\" / \"(estimated)\"",
+      "source": "D06:423",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:19": {
+      "names": "readout.clamp",
+      "text": "\"reduced from {from} to {to} by {cap}\" → \"reduced from 0.346 to 0.273 by max_position_notional\"",
+      "source": "D06:424",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:20": {
+      "names": "readout.server_size",
+      "text": "\"Size set by server: {qty} {coin}\" → \"Size set by server: 0.273 BTC\"",
+      "source": "D06:425",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:21": {
+      "names": "pos.send.label",
+      "text": "\"Send to ticket — {SIDE} {symbol} · {account} · {ENV}\" → \"Send to ticket — BUY BTCUSDT · Main · DEMO\"",
+      "source": "D06:426",
+      "status": "ruled",
+      "owner": "E14-D06 (#350)"
+    },
+    "d06:22": {
+      "names": "pos.send.desc",
+      "text": "\"Hands to the ticket: {SIDE} · {symbol} · limit {entry} · stop {stop} · target {target} · {qty} BTC · {account} ({ENV}) — opens the order ticket pre-filled; nothing is sent.\"",
+      "source": "D06:427",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:23": {
+      "names": "v.sl.required",
+      "text": "\"This account requires a stop-loss on every order.\"",
+      "source": "D06:428",
+      "status": "cited",
+      "owner": "E30-D02 §14 (A-5 proposes \"Every order requires a stop-loss.\")"
+    },
+    "d06:24": {
+      "names": "v.sl.side.long · .short",
+      "text": "\"Stop-loss must be below entry for a long.\" / \"Stop-loss must be above entry for a short.\"",
+      "source": "D06:429",
+      "status": "cited",
+      "owner": "E30-D02 §14 (`14` SCR-060 Validation :1343)"
+    },
+    "d06:25": {
+      "names": "refusal.invalid_stop_distance",
+      "text": "\"Stop distance must be greater than zero — move the stop away from the entry\"",
+      "source": "D06:430",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:26": {
+      "names": "v.tp.side.long · .short",
+      "text": "\"Take-profit must be above entry for a long.\" / \"Take-profit must be below entry for a short.\"",
+      "source": "D06:431",
+      "status": "cited",
+      "owner": "E30-D02 §14 :378"
+    },
+    "d06:27": {
+      "names": "pos.geometry.remedy",
+      "text": "\"{Anchor} {price} is {above/below} entry {entry} — move it {below/above}, or switch this plan to {side}.\" → \"Stop 64,050.0 is above entry 64,010.0 — move it below, or switch this plan to short.\"",
+      "source": "D06:432",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:28": {
+      "names": "pos.switch.label · pos.switch.done",
+      "text": "\"Switch to short\" / \"Switch to long\" · \"Switched to short. Undo available.\"",
+      "source": "D06:433",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:29": {
+      "names": "pos.switch.menu",
+      "text": "\"Switch side\"",
+      "source": "D06:434",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:30": {
+      "names": "drawing.locked",
+      "text": "\"This drawing is locked.\"",
+      "source": "D06:435",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:31": {
+      "names": "v.qty.lot",
+      "text": "\"Minimum 0.001, step 0.001.\"",
+      "source": "D06:436",
+      "status": "cited",
+      "owner": "E30-D02 §14 (`14` :1343)"
+    },
+    "d06:32": {
+      "names": "pos.size.zero",
+      "text": "\"Size {qty} BTC — below the {min} minimum. The profile's size or risk amount sets it (owner setting).\" → \"Size 0.000 BTC — below the 0.001 minimum. The profile's size or risk amount sets it (owner setting).\"",
+      "source": "D06:437",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:33": {
+      "names": "v.risk.cap",
+      "text": "\"Risk exceeds your profile cap.\"",
+      "source": "D06:438",
+      "status": "cited",
+      "owner": "D02 §17.6 :719 (PROPOSED there, to E30-D02 §14's owner)"
+    },
+    "d06:34": {
+      "names": "pos.risk.exceeds",
+      "text": "\"Risk {risk} USDT exceeds the {headroom} USDT left under today's loss cap ({cap} − {used} used).\" → \"Risk 402.50 USDT exceeds the 380.00 USDT left under today's loss cap (500.00 − 120.00 used).\"",
+      "source": "D06:439",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:35": {
+      "names": "pos.risk.fixed_note",
+      "text": "\"Under a risk-based profile the size would shrink with the stop distance; this fixed-size plan keeps {qty} BTC.\"",
+      "source": "D06:440",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:36": {
+      "names": "pos.profile.none",
+      "text": "\"No active sizing profile.\"",
+      "source": "D06:441",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:37": {
+      "names": "pos.size.no_profile",
+      "text": "\"Size not available — the sizing profile for {account} is not active (owner setting).\" → \"Size not available — the sizing profile for Main is not active (owner setting).\"",
+      "source": "D06:442",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:38": {
+      "names": "pos.symbol.status",
+      "text": "\"This symbol is not trading.\"",
+      "source": "D06:443",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:39": {
+      "names": "refusal.symbol_not_allowed",
+      "text": "\"{symbol} is not allowed on {account} (owner setting)\"",
+      "source": "D06:444",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:40": {
+      "names": "pos.symbol.not_allowed",
+      "text": "\"Your profile does not allow this symbol.\"",
+      "source": "D06:445",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:41": {
+      "names": "size.unit.stale",
+      "text": "\"Equity not available — wallet data is {n} s old\"",
+      "source": "D06:446",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:42": {
+      "names": "pos.wallet.stale",
+      "text": "\"Sizing is unavailable while wallet data is stale.\"",
+      "source": "D06:447",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:43": {
+      "names": "refusal.account_locked",
+      "text": "\"Trading locked on {account} until {time}\"",
+      "source": "D06:448",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:44": {
+      "names": "lockout",
+      "text": "\"Locked out — reduce through Close position\" (the reason of E30-D02 §14 :421; its owner's punctuation)",
+      "source": "D06:449",
+      "status": "cited",
+      "owner": "E30-D02 §14 :421"
+    },
+    "d06:45": {
+      "names": "refusal.kill_switch_engaged",
+      "text": "\"Trading frozen by the owner\"",
+      "source": "D06:450",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:46": {
+      "names": "rbac.permission",
+      "text": "\"Your role can't {verb}.\" → \"Your role can't place orders.\" (`orders:write`) · \"Your role can't save workspaces.\" (`workspaces:write`, the drawing writes; D02 Q12)",
+      "source": "D06:451",
+      "status": "cited",
+      "owner": "E09-D09 §10 (the verbs §3.2 :110, :114)"
+    },
+    "d06:47": {
+      "names": "notice.panel_read_only",
+      "text": "\"Read-only — {rbac sentence, first letter lower-cased}\" → \"Read-only — your role can't save workspaces.\" (D02 §7.3 :341: the `workspaces:write` verb — the panel's T2 controls are drawing writes)",
+      "source": "D06:452",
+      "status": "cited",
+      "owner": "E09-D09 §10"
+    },
+    "d06:48": {
+      "names": "rbac.view_as",
+      "text": "\"Read-only while viewing as {user}.\"",
+      "source": "D06:453",
+      "status": "cited",
+      "owner": "E09-D09 §10"
+    },
+    "d06:49": {
+      "names": "guard.mismatch",
+      "text": "\"Order is for a LIVE account while the workspace is DEMO\" (the environments as fills: \"… a DEMO account while the workspace is LIVE\")",
+      "source": "D06:454",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:50": {
+      "names": "arm.locked · arm.armed",
+      "text": "\"LOCKED · {account} · {size} {coin}\" / \"ARMED {mm:ss} · {account} · {size} {coin}\"",
+      "source": "D06:455",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:51": {
+      "names": "submit.name",
+      "text": "\"Submit buy 0.250 BTCUSDT limit 64,010.0 with stop 63,900.0, LIVE, Main\" (the frame's fills: 0.273, DEMO)",
+      "source": "D06:456",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:52": {
+      "names": "sl.holder · sl.note",
+      "text": "\"held by Bybit (exchange)\" / \"Every entry carries a native exchange stop: typed here, else your profile's {n} ticks, else the 2 % fallback. It is placed with the order, not after it.\"",
+      "source": "D06:457",
+      "status": "cited",
+      "owner": "E30-D02 §14"
+    },
+    "d06:53": {
+      "names": "sl.label",
+      "text": "\"Stop-loss (required)\"",
+      "source": "D06:458",
+      "status": "cited",
+      "owner": "E32-D01 §5.3 (E30-D02 D10's field label)"
+    },
+    "d06:54": {
+      "names": "pos.prefill.provenance",
+      "text": "\"Pre-filled from the chart · {n} s ago · size re-checked by your profile\"",
+      "source": "D06:459",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:55": {
+      "names": "pos.prefill.tag · pos.prefill.confirm",
+      "text": "\"from chart\" · \"What you still confirm: account · order type and time in force · the submit\"",
+      "source": "D06:460",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:56": {
+      "names": "pos.prefill.note",
+      "text": "\"A pre-fill is never an order — press Submit to send\"",
+      "source": "D06:461",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:57": {
+      "names": "pos.group.line",
+      "text": "\"Group {group} · sized for {account} only — the ticket shows every account\" → \"Group Core3 · sized for Main only — the ticket shows every account\"",
+      "source": "D06:462",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:58": {
+      "names": "pos.ann.handle",
+      "text": "\"{Handle} {price} · risk {risk} USDT.\" → \"Stop 63,850.0 · risk 40.00 USDT.\"",
+      "source": "D06:463",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:59": {
+      "names": "pos.ann.created",
+      "text": "\"Long position created. Risk {risk} USDT, {rr} R. Selected.\"",
+      "source": "D06:464",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:60": {
+      "names": "pos.ann.sent",
+      "text": "\"Sent to the order ticket. Nothing is sent to the exchange.\"",
+      "source": "D06:465",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:61": {
+      "names": "pos.ann.armed",
+      "text": "\"Long position tool on. Enter places the entry at the cursor. Escape cancels.\" / \"Long position tool on.\"",
+      "source": "D06:466",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:62": {
+      "names": "pos.name.region",
+      "text": "\"Position plan, {side}, {symbol}\" → \"Position plan, long, BTCUSDT\"",
+      "source": "D06:467",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d06:63": {
+      "names": "pos.name.entry · pos.name.stop · pos.name.target",
+      "text": "\"Entry handle, {price}\" / \"Stop handle, {price}, {ticks} ticks {below/above} entry, risk {risk} USDT\" / \"Target handle, {price}, {rr} R\"",
+      "source": "D06:468",
+      "status": "proposed",
+      "owner": "E14-D06 (#350)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:01": {
+      "names": "tree.sync.shared",
+      "text": "\"Shared with every BTCUSDT pane in this layout\"",
+      "source": "D07:524",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:02": {
+      "names": "tree.sync.off",
+      "text": "\"This pane only — sync off\"",
+      "source": "D07:525",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:03": {
+      "names": "tree.sync.action",
+      "text": "\"Sync group ▸\"",
+      "source": "D07:526",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:04": {
+      "names": "tree.sync.rule",
+      "text": "\"Sync never crosses symbols — US-DRAW-009 NFR\"",
+      "source": "D07:527",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:05": {
+      "names": "tree.tag.pane_local",
+      "text": "\"this pane only\"",
+      "source": "D07:528",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:06": {
+      "names": "tree.tag.offscreen",
+      "text": "\"off-screen\"",
+      "source": "D07:529",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:07": {
+      "names": "tree.tag.offscreen.name",
+      "text": null,
+      "source": "D07:530",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1",
+      "where": "D07 §12.2: the tag button's accessible name",
+      "copy": "cited only: read the row at its source"
+    },
+    "d07:08": {
+      "names": "tree.tag.restored",
+      "text": "\"restored\"",
+      "source": "D07:531",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:09": {
+      "names": "tree.tag.unsaved · .conflict",
+      "text": "\"not saved\" · \"changed elsewhere\"",
+      "source": "D07:532",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:10": {
+      "names": "tree.tag.approximate",
+      "text": "\"approximate\"",
+      "source": "D07:533",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:11": {
+      "names": "tree.ordinal",
+      "text": "\"(2)\"",
+      "source": "D07:534",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:12": {
+      "names": "tree.subgroup.label",
+      "text": "\"Lines (7)\" · \"Shapes (3)\" · \"Fibonacci (2)\" · \"Analysis (4)\" · \"Annotations (4)\"",
+      "source": "D07:535",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:13": {
+      "names": "tree.filter.count",
+      "text": "\"12 drawings match '64,1'\"",
+      "source": "D07:536",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:14": {
+      "names": "tree.filter.empty",
+      "text": "\"No drawings match '64,9'\"",
+      "source": "D07:537",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:15": {
+      "names": "tree.empty.line",
+      "text": "\"No drawings on BTCUSDT — pick a tool on the rail or press Ctrl+K\"",
+      "source": "D07:538",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:16": {
+      "names": "tree.empty.sentence",
+      "text": "\"No drawings on BTCUSDT.\"",
+      "source": "D07:539",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:17": {
+      "names": "tree.menu.items",
+      "text": null,
+      "source": "D07:540",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1",
+      "where": "D07 §12.2: the row menu (E13-D02 §12 + D02 §8.2 — cited; C-11)",
+      "copy": "cited only: read the row at its source"
+    },
+    "d07:18": {
+      "names": "tree.header.delete_all",
+      "text": "\"Delete all drawings…\"",
+      "source": "D07:541",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:19": {
+      "names": "bulk.bar",
+      "text": "\"{n} selected · Hide · Show · Lock · Unlock · Delete · Clear selection\" — \"9 selected · …\"",
+      "source": "D07:542",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:20": {
+      "names": "bulk.delete.name",
+      "text": "\"Delete {n} drawings…\" — \"Delete 7 drawings…\" ({n} = the rows the action removes)",
+      "source": "D07:543",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:21": {
+      "names": "confirm.delete_selected.title",
+      "text": "\"Delete {n} drawings on {symbol}?\" — \"Delete 7 drawings on BTCUSDT?\"",
+      "source": "D07:544",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:22": {
+      "names": "confirm.delete_selected.body",
+      "text": "\"They go from every {symbol} pane. {locked} locked drawings stay. One undo.\" — \"… 2 locked drawings stay. …\"",
+      "source": "D07:545",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:23": {
+      "names": "confirm.delete_selected.confirm",
+      "text": "\"Delete {n}\" — \"Delete 7\"",
+      "source": "D07:546",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:24": {
+      "names": "confirm.delete_all",
+      "text": "\"Delete 497 drawings on BTCUSDT? 3 locked drawings stay. One undo.\" · \"Delete 497\"",
+      "source": "D07:547",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:25": {
+      "names": "toast.removed.synced",
+      "text": "\"{label} removed from {panes} {symbol} panes.\" + \"Undo\" — \"… removed from 2 BTCUSDT panes.\"",
+      "source": "D07:548",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:26": {
+      "names": "toast.removed.local",
+      "text": "\"{label} removed from this pane.\" + \"Undo\"",
+      "source": "D07:549",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:27": {
+      "names": "toast.bulk.{action}",
+      "text": "\"{n} drawings hidden.\" / \"shown.\" / \"locked.\" / \"unlocked.\" + \"Undo\" — \"9 drawings hidden.\"",
+      "source": "D07:550",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:28": {
+      "names": "toast.bulk.deleted",
+      "text": "\"{n} drawings deleted. {locked} locked drawings kept.\" + \"Undo\" — \"7 drawings deleted. 2 locked drawings kept.\"",
+      "source": "D07:551",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:29": {
+      "names": "announce.removed.synced",
+      "text": "\"Trendline removed from 2 BTCUSDT panes. Undo available.\"",
+      "source": "D07:552",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:30": {
+      "names": "announce.undone.restored",
+      "text": "\"Undone: trendline removed. Restored on {panes} panes.\" — \"… Restored on 2 panes.\"; \"… Restored on this pane.\" (pane-local)",
+      "source": "D07:553",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:31": {
+      "names": "announce.cloned",
+      "text": "\"Cloned. Selected.\"",
+      "source": "D07:554",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:32": {
+      "names": "",
+      "text": null,
+      "source": "D07:555",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1",
+      "where": "D07 §12.2: §9.5",
+      "copy": "cited only: read the row at its source"
+    },
+    "d07:33": {
+      "names": "announce.bulk.deleted",
+      "text": "\"7 drawings deleted. 2 locked drawings kept. Undo available.\"",
+      "source": "D07:556",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:34": {
+      "names": "rbac.view_as · rbac.permission · notice.panel_read_only · glyph.name",
+      "text": "\"Read-only while viewing as {user}.\" · \"Your role can't save workspaces.\" · \"Read-only — your role can't save workspaces.\" · \"Not available\"",
+      "source": "D07:557",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    },
+    "d07:35": {
+      "names": "drawing.locked",
+      "text": "\"This drawing is locked.\"",
+      "source": "D07:558",
+      "status": "proposed",
+      "owner": "E14-D07 (#351)",
+      "finalised_by": "E14-D10 (#354) §7, lifted at v1.1"
+    }
+  }
+}
