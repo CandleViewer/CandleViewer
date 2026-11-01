@@ -5,6 +5,8 @@ with a gap. Two lane steps used to break that when `stop()` cancelled them: a WA
 thread outlived the cancelled await (its refused suffix was never dropped), and a flush whose
 batch went back to the queue of a lane that had started to spill meanwhile (stranded there).
 A third made `stop()` itself hang: a replay cancelled while its thread was inside the WAL merge.
+The wait for such a thread is bounded (`wal_join_timeout_s`, or a second cancellation): a hung
+thread then leaves its rows under a gap and the cancellation goes on.
 """
 
 from __future__ import annotations
@@ -12,11 +14,14 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from candleviewer.recorder.wal import WalRecord, read_frames
-from candleviewer.recorder.writer import StreamWriter
-from tests.unit.recorder._writer_helpers import FakeSink, make_writer, trade
+from candleviewer.recorder.writer import StreamWriter, _join_thread
+from tests.unit.recorder._writer_helpers import T0, FakeSink, make_writer, trade
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def _wal_rows(w: StreamWriter) -> int:
@@ -44,6 +49,7 @@ async def test_stop_mid_wal_append_drops_the_refused_suffix_with_a_count(tmp_pat
         appended.extend(records[:1])
         return 1
 
+    # mypy forbids assigning to a method; the test swaps the WAL's thread body for a slow one
     lane.wal.append = slow_append  # type: ignore[method-assign]
     sink.down.add("*")  # the flush fails: the lane spills its batch from inside the step
     for i in range(3):
@@ -114,6 +120,7 @@ async def test_stop_mid_replay_ends_the_lane_loop(tmp_path: Path) -> None:
             release.wait(5)
             yield item
 
+    # mypy forbids assigning to a method; the test swaps the merge for one that blocks inside
     lane.wal.iter_replay = slow_merge  # type: ignore[method-assign]
     clock.advance(5.0)  # the replay is due
     w._spawn(w._lane_loop("trades"), "recorder-lane-trades")
@@ -125,3 +132,109 @@ async def test_stop_mid_replay_ends_the_lane_loop(tmp_path: Path) -> None:
         await stopping
     assert not w._tasks and lane.wal.has_data()  # the rows stay durable for the next start
     assert not sink.rows("trades")  # cancelled before its write: replayed next start
+
+
+async def test_stop_gives_up_on_a_hung_wal_append_and_covers_its_rows(tmp_path: Path) -> None:
+    """A cancelled append whose thread never returns (a hung fsync) holds stop() for at most
+    `wal_join_timeout_s`: its rows go under one gap, a critical event says so, stop() ends."""
+    w, sink, store, events, clock = await make_writer(tmp_path, wal_join_timeout_s=0.05)
+    lane = w._lanes["trades"]
+    entered, release = threading.Event(), threading.Event()
+
+    def hung_append(records: list[WalRecord]) -> int:
+        entered.set()
+        release.wait(30)  # never set while the test asserts: a thread that does not finish
+        return len(records)
+
+    # mypy forbids assigning to a method; the test swaps the WAL's thread body for a hung one
+    lane.wal.append = hung_append  # type: ignore[method-assign]
+    sink.down.add("*")
+    for i in range(3):
+        await w.on_trade(trade(i))
+    clock.advance(0.2)
+    w._spawn(w.pump("trades"), "recorder-lane-trades")  # a lane step, owned as start() owns it
+    try:
+        await asyncio.to_thread(entered.wait, 5)
+        async with asyncio.timeout(5):
+            await w.stop()
+        assert not w._tasks
+        assert "recorder_wal_append_unresolved" in [e.kind for e in events.events]
+        (gap,) = store.gaps  # one window over all three rows, persisted by stop()
+        assert gap["start"] == _EPOCH + timedelta(microseconds=T0)  # rows 0..2 at T0+0..2
+        end = gap["end"]
+        assert isinstance(end, datetime) and end >= _EPOCH + timedelta(microseconds=T0 + 2)
+        assert gap["cause"] == "backpressure_drop"
+    finally:
+        release.set()  # let the thread go, so the loop's executor can shut down
+
+
+async def test_join_thread_stops_waiting_on_a_second_cancellation() -> None:
+    never: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+    join = asyncio.create_task(_join_thread(never, 60.0))
+    await asyncio.sleep(0)
+    join.cancel()
+    await asyncio.sleep(0)
+    join.cancel()
+    joined = await join
+    assert joined.cancelled is not None and joined.unresolved is joined.cancelled
+    assert not never.done()
+    never.cancel()
+
+
+async def test_cancelled_append_that_fails_drops_every_row_with_a_gap(tmp_path: Path) -> None:
+    """Any failure of a cancelled append (not only OSError) drops its rows with a count and a
+    gap, and the cancellation goes on with the failure as its cause."""
+    w, sink, store, _, clock = await make_writer(tmp_path)
+    lane = w._lanes["trades"]
+    entered, release = threading.Event(), threading.Event()
+
+    def failing_append(records: list[WalRecord]) -> int:
+        entered.set()
+        release.wait(5)
+        raise RuntimeError("wal broke")
+
+    # mypy forbids assigning to a method; the test swaps the WAL's thread body for a failing one
+    lane.wal.append = failing_append  # type: ignore[method-assign]
+    sink.down.add("*")
+    for i in range(3):
+        await w.on_trade(trade(i))
+    clock.advance(0.2)
+    step = asyncio.create_task(w.pump("trades"))
+    await asyncio.to_thread(entered.wait, 5)
+    step.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    try:
+        await step
+    except asyncio.CancelledError as exc:
+        assert isinstance(exc.__cause__, RuntimeError)
+    else:
+        raise AssertionError("the cancellation was swallowed")
+    await w.stop()
+    assert _dropped(store.counters) == 3 and store.gaps
+
+
+async def test_wal_step_cancelled_mid_thread_waits_for_it_then_cancels(tmp_path: Path) -> None:
+    """m2: a WAL step (commit, begin_replay, ...) cancelled mid-thread is waited out, so the
+    WAL and its budget never change behind the writer's back, and the cancellation goes on."""
+    w, *_ = await make_writer(tmp_path)
+    lane = w._lanes["trades"]
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def step_body() -> None:
+        entered.set()
+        release.wait(5)
+        finished.set()
+
+    call = asyncio.create_task(w._wal_call(lane, step_body))
+    await asyncio.to_thread(entered.wait, 5)
+    call.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    try:
+        await call
+    except asyncio.CancelledError:
+        pass
+    else:
+        raise AssertionError("the cancellation was swallowed")
+    assert finished.is_set()  # the caller ended only after its thread did

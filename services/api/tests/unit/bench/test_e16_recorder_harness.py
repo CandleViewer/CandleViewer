@@ -7,6 +7,7 @@ messages); the wall-time ingest smoke is `harness`-marked (nightly), as the E08 
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -133,6 +134,30 @@ async def test_reconciliation_counts_rows_a_spilling_run_left_in_its_wal(tmp_pat
     run_only = {s: r.written_rows[s] - r.recovered_rows[s] for s in cfg.symbols}
     residue = check_reconciliation(r.produced_rows, run_only, r.dropped_rows)
     assert not residue.passed and residue.measured == sum(r.recovered_rows.values())
+
+
+async def test_reconciliation_fails_per_symbol_when_the_wal_residue_is_lost(
+    tmp_path: Path,
+) -> None:
+    """The oracle's own negative: the same overflow run, with its WAL deleted between the run's
+    stop and the restart (`before_recover`), loses the residue, and the reconciliation names
+    each symbol's missing rows with a positive sign."""
+    cfg = LoadConfig("custom", 5_000, 3.4, ("BTCUSDT", "ETHUSDT", "SOLUSDT"), tmp_path / "wal",
+                     clock="virtual", rss=_rss, max_queue_rows=2_000,
+                     wal_max_bytes=1_000_000)  # fmt: skip
+    seen: list[Path] = []
+
+    def lose_wal(wal_dir: Path) -> None:
+        seen.append(wal_dir)
+        shutil.rmtree(wal_dir)
+
+    r = await harness.run(cfg, before_recover=lose_wal)
+    assert seen == [cfg.wal_dir] and r.recovered_rows == {}
+    off = {s: r.produced_rows[s] - r.written_rows[s] - r.dropped_rows[s] for s in cfg.symbols}
+    assert set(off) == set(cfg.symbols) and all(n > 0 for n in off.values())
+    c = check_reconciliation(r.produced_rows, r.written_rows, r.dropped_rows)
+    assert not c.passed and c.measured == sum(off.values())
+    assert c.note == "undetected: " + ", ".join(f"{s}=+{off[s]}" for s in sorted(off))
 
 
 def test_reconciliation_names_each_symbol_off_with_its_sign() -> None:

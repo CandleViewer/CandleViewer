@@ -198,9 +198,16 @@ async def dispatch(w: StreamWriter, kind: str, ev: Trade | Delta | Liquidation) 
         await w.on_liquidation(ev)
 
 
-async def run(cfg: LoadConfig, *, mix: Mix | None = None) -> RunResult:
+async def run(
+    cfg: LoadConfig,
+    *,
+    mix: Mix | None = None,
+    before_recover: Callable[[Path], None] | None = None,
+) -> RunResult:
     """One run; returns what it measured (the verdict is `budgets`' to give). `mix` replaces the
-    default phase mix (the soak's reference rates); it must name `cfg.symbols`."""
+    default phase mix (the soak's reference rates); it must name `cfg.symbols`.
+    `before_recover(wal_dir)` runs between the run's stop and the restart's replay (the oracle's
+    own test damages the WAL there, to prove a lost residue fails the reconciliation)."""
     if cfg.clock not in ("real", "virtual"):
         raise ValueError(f"clock {cfg.clock!r}: real or virtual")
     ilp = await _ilp_sinks(cfg.ilp) if cfg.ilp else None
@@ -235,6 +242,8 @@ async def run(cfg: LoadConfig, *, mix: Mix | None = None) -> RunResult:
         result.duration_s = await drive(cfg, writer, mix, vclock, result)
         stopped = True
         await writer.stop()
+        if before_recover is not None:
+            before_recover(cfg.wal_dir)
         before = _by_symbol(sinks)
         await _recover(new_writer())
         result.recovered_rows = _minus(_by_symbol(sinks), before)

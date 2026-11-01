@@ -113,6 +113,19 @@ def check_reconciliation(
     )  # fmt: skip
 
 
+def check_wal_residue(recovered_rows: Mapping[str, int]) -> Check:
+    """Rows the run left durable in its WAL, written only by the restart's replay (#5333).
+    Reported, not judged: they are not lost (the reconciliation counts them as written), but a
+    run that ends spilling did not keep up, which the ingest leg's drop check alone would miss
+    when nothing was dropped."""
+    n = float(sum(recovered_rows.values()))
+    note = ", ".join(f"{s}={v}" for s, v in sorted(recovered_rows.items()) if v)
+    return Check(
+        "wal_residue", "E16-Q04 no loss", n, 0.0, "rows", n == 0.0, hard=False,
+        note=f"replayed after the run: {note}" if note else "",
+    )  # fmt: skip
+
+
 def check_gb_per_day(
     measured: float, baseline: float, *, tolerance: float = GB_PER_DAY_TOLERANCE, hard: bool = True
 ) -> Check:
@@ -131,7 +144,8 @@ def check_rate(achieved: float, target: float, floor: float = RATE_FLOOR) -> Che
 
 
 def ingest_verdict(r: RunResult) -> Verdict:
-    """The 50k msg/s ingest load: flush p95, the memory ceiling, the rate it reached, no loss."""
+    """The 50k msg/s ingest load: flush p95, the memory ceiling, the rate it reached, no loss,
+    and (reported) the rows it left in its WAL."""
     v = Verdict("recorder_ingest")
     for c in (
         check_rate(r.achieved_msgs_per_s, r.target_msgs_per_s),
@@ -139,6 +153,7 @@ def ingest_verdict(r: RunResult) -> Verdict:
         check_memory(r.rss_bytes),
         check_drops(r.dropped_rows),
         check_reconciliation(r.produced_rows, r.written_rows, r.dropped_rows),
+        check_wal_residue(r.recovered_rows),
     ):
         v.add(c)
     v.metrics = _metrics(r)

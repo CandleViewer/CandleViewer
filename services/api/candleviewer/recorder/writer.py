@@ -401,6 +401,9 @@ class WriterConfig:
     #: Rows per WAL run while sorting a replay (the replay memory bound).
     replay_chunk_rows: int = 50_000
     write_timeout_s: float = 5.0
+    #: After a cancellation, how long a WAL thread may still run before the writer gives up on
+    #: its outcome (a hung fsync): its rows are then gap-covered and the cancellation goes on.
+    wal_join_timeout_s: float = 5.0
     store_timeout_s: float = 5.0
     replay_retry_s: float = 1.0
     counters_interval_s: float = 10.0
@@ -772,8 +775,8 @@ class StreamWriter:
 
     async def _drain_spill_buf(self, lane: _Lane) -> None:
         """Append the whole spill buffer to the WAL: one write + one fsync. Refused frames
-        (budget) or an `OSError` (disk full, chaos 13) become recorded drops."""
-        cancelled: asyncio.CancelledError | None = None
+        (budget) or a failed append (an `OSError`: disk full, chaos 13) become recorded drops."""
+        failure: Exception | None = None
         async with lane.wal_lock:
             records, lane.spill_buf = lane.spill_buf, []
             if not records:
@@ -781,19 +784,59 @@ class StreamWriter:
             append = asyncio.ensure_future(asyncio.to_thread(lane.wal.append, records))
             # A cancelled caller (stop()) still accounts for every record: the thread appends
             # regardless, so its count decides what was written and what is dropped (#5333).
-            cancelled = await _join_thread(append)
-            try:
-                written = append.result()
-            except OSError as exc:
-                logger().error("recorder_wal_write_failed", stream=lane.stream, error=str(exc))
-                written = 0
-            # Sealed before the refused suffix is dropped, so the suffix opens a new window.
-            self._seal_written(lane.stream, records[:written])
+            joined = await _join_thread(append, self._cfg.wal_join_timeout_s)
+            if joined.unresolved is not None:
+                written = -1  # the outcome is unknown: handled below, outside the lock
+            else:
+                try:
+                    written = append.result()
+                except Exception as exc:  # OSError (disk full, chaos 13) or any other failure
+                    logger().error("recorder_wal_write_failed", stream=lane.stream, error=str(exc))
+                    failure, written = exc, 0
+                # Sealed before the refused suffix is dropped, so it opens a new window.
+                self._seal_written(lane.stream, records[:written])
+        if joined.unresolved is not None:
+            await self._append_unresolved(lane, records, joined.unresolved)
         if written < len(records):
             await self._drop(lane, records[written:])
         self._publish_gauges()
-        if cancelled is not None:
-            raise cancelled
+        if joined.cancelled is not None:
+            raise joined.cancelled from failure
+
+    async def _append_unresolved(
+        self, lane: _Lane, records: list[WalRecord], cancelled: asyncio.CancelledError
+    ) -> None:
+        """A cancelled append whose thread outlived `wal_join_timeout_s` (a hung fsync): which
+        of `records` reached the WAL is unknown, so one gap covers all of them (over-covering is
+        allowed, see `_unpersisted`), a critical event says so, and the cancellation goes on.
+        Not counted as dropped: some may still be replayed."""
+        for rec in records:
+            self._widen(rec.symbol, lane.stream, rec.exch_ts, rec.exch_ts)
+        logger().critical("recorder_wal_append_unresolved", stream=lane.stream, rows=len(records))
+        for symbol in sorted({rec.symbol for rec in records}):
+            await self._critical(
+                "recorder_wal_append_unresolved",
+                symbol,
+                lane.stream,
+                f"recorder WAL append for {lane.stream}/{symbol} did not finish: gap covers it",
+            )
+        raise cancelled
+
+    async def _wal_call[**P, T](
+        self, lane: _Lane, fn: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+    ) -> T:
+        """Run one WAL step in a thread. A cancelled caller waits for it (bounded by
+        `wal_join_timeout_s`), so the WAL and its budget never change behind the writer's back,
+        then the cancellation goes on (#5333)."""
+        fut = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+        joined = await _join_thread(fut, self._cfg.wal_join_timeout_s)
+        if joined.unresolved is not None:
+            name = getattr(fn, "__name__", "wal_step")
+            logger().critical("recorder_wal_step_unresolved", stream=lane.stream, step=name)
+            raise joined.unresolved
+        if joined.cancelled is not None:
+            raise joined.cancelled from fut.exception()
+        return fut.result()
 
     def _widen(self, symbol: str, stream: Stream, lo: int, hi: int) -> None:
         window = self._gaps.get((symbol, stream))
@@ -876,7 +919,7 @@ class StreamWriter:
             while True:
                 async with lane.wal_lock:
                     try:
-                        prep = await asyncio.to_thread(lane.wal.begin_replay)
+                        prep = await self._wal_call(lane, lane.wal.begin_replay)
                     except OSError as exc:
                         lane.next_replay_at = self._clock() + self._cfg.replay_retry_s
                         logger().error(
@@ -897,7 +940,7 @@ class StreamWriter:
                 if not await self._replay_runs(lane):
                     return False
                 async with lane.wal_lock:
-                    await asyncio.to_thread(lane.wal.finish_replay)
+                    await self._wal_call(lane, lane.wal.finish_replay)
                 await self._drain_spill_buf(lane)
                 self._publish_gauges()
 
@@ -906,7 +949,7 @@ class StreamWriter:
         True only once every frame of every run was read and committed."""
         async with lane.wal_lock:
             try:
-                verified = await asyncio.to_thread(lane.wal.verify_runs)
+                verified = await self._wal_call(lane, lane.wal.verify_runs)
             except OSError as exc:
                 lane.next_replay_at = self._clock() + self._cfg.replay_retry_s
                 logger().error("recorder_replay_io_failed", stream=lane.stream, error=str(exc))
@@ -920,15 +963,23 @@ class StreamWriter:
             if not keys & self._unpersisted_keys():
                 # Every window is a persisted row: only now may the durable marker go.
                 async with lane.wal_lock:
-                    await asyncio.to_thread(lane.wal.ack_damaged)
+                    await self._wal_call(lane, lane.wal.ack_damaged)
         it = lane.wal.iter_replay()
+        inside = False  # a merge thread still runs inside `it`: never close it under that thread
         try:
             while True:
                 take = asyncio.ensure_future(asyncio.to_thread(_take, it, self._cfg.flush_rows))
-                # Never close `it` below while the thread is inside it: that raises ValueError,
-                # which the lane loop would catch, so a stop() would wait for it forever.
-                if (cancelled := await _join_thread(take)) is not None:
-                    raise cancelled
+                # Closing `it` while the thread is inside it raises ValueError, which the lane
+                # loop would catch and run on, so a stop() would wait for it forever.
+                joined = await _join_thread(take, self._cfg.wal_join_timeout_s)
+                if joined.unresolved is not None:
+                    inside = True
+                    logger().critical(
+                        "recorder_wal_step_unresolved", stream=lane.stream, step="replay_merge"
+                    )
+                    raise joined.unresolved
+                if joined.cancelled is not None:
+                    raise joined.cancelled from take.exception()
                 batch = take.result()
                 for msg in lane.wal.warnings:
                     logger().warning(
@@ -946,7 +997,7 @@ class StreamWriter:
                         read=lane.wal.consumed,
                         expected=lane.wal.total(),
                     )
-                    await asyncio.to_thread(lane.wal.commit, 0)
+                    await self._wal_call(lane, lane.wal.commit, 0)
                     lane.next_replay_at = self._clock() + self._cfg.replay_retry_s
                     return False
                 try:
@@ -955,9 +1006,10 @@ class StreamWriter:
                     lane.next_replay_at = self._clock() + self._cfg.replay_retry_s
                     logger().warning("recorder_replay_failed", stream=lane.stream, error=str(exc))
                     return False
-                await asyncio.to_thread(lane.wal.commit, batch[-1][0] + 1)
+                await self._wal_call(lane, lane.wal.commit, batch[-1][0] + 1)
         finally:
-            it.close()
+            if not inside:
+                it.close()
 
     async def _corrupt(
         self, lane: _Lane, corrupt_bytes: int, windows: dict[str, tuple[int, int]]
@@ -1198,17 +1250,36 @@ def _unpersisted(window: Sequence[int], first: int, last: int) -> tuple[int, int
     return (lo, hi) if lo < first else (max(lo, last), hi)
 
 
-async def _join_thread[T](fut: asyncio.Future[T]) -> asyncio.CancelledError | None:
-    """Wait until a `to_thread` call is done, past any cancellation of the caller: its thread
-    cannot be stopped, so its outcome stays the caller's to account for. Returns the first
-    cancellation, for the caller to re-raise once it has (#5333)."""
+@dataclass(frozen=True, slots=True)
+class _Joined:
+    """A `to_thread` call awaited past cancellation: `cancelled` is the first cancellation of
+    the caller (to re-raise once it has accounted for the outcome); `unresolved` is set, to that
+    same cancellation, when the writer stopped waiting before the thread finished."""
+
     cancelled: asyncio.CancelledError | None = None
+    unresolved: asyncio.CancelledError | None = None
+
+
+async def _join_thread[T](fut: asyncio.Future[T], grace_s: float) -> _Joined:
+    """Wait until a `to_thread` call is done, past a cancellation of the caller: its thread
+    cannot be stopped, so its outcome stays the caller's to account for (#5333). Bounded: after
+    the first cancellation it waits at most `grace_s` more, and a second one ends the wait."""
+    loop = asyncio.get_running_loop()
+    cancelled: asyncio.CancelledError | None = None
+    deadline = 0.0
     while not fut.done():
         try:
-            await asyncio.wait({fut})
+            if cancelled is None:
+                await asyncio.wait({fut})
+            elif (left := deadline - loop.time()) <= 0:
+                return _Joined(cancelled, cancelled)
+            else:
+                await asyncio.wait({fut}, timeout=left)
         except asyncio.CancelledError as exc:
-            cancelled = cancelled or exc
-    return cancelled
+            if cancelled is not None:  # cancelled again: whoever cancels has stopped waiting
+                return _Joined(cancelled, cancelled)
+            cancelled, deadline = exc, loop.time() + grace_s
+    return _Joined(cancelled)
 
 
 def _take(it: Iterator[tuple[int, WalRecord]], n: int) -> list[tuple[int, WalRecord]]:
