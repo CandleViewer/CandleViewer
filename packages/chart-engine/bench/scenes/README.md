@@ -10,6 +10,7 @@ Except `atlas-build.ts`: E11-S11 production bench code over `src/text`, driven b
 Except `resize-drag.ts`: E11-S10 production bench code over `src/worker`, driven by Vitest (BQ-154).
 Except `axis-ticks.ts`: E11-S06 production bench code over `src/axes`, driven by Vitest (BQ-204).
 Except `crosshair-sweep.ts`: E11-S07 production bench code over `src/overlays`, driven by Vitest (BQ-6).
+Except `b6-sync4.ts`: E11-S09 production bench code over `src/worker` and `src/sync` (four synced charts, structure and counters only), driven by Vitest (#446).
 
 This directory is **throwaway prototype code** for the M0 spike ticket E06-K02
 ("Prototype scene A: 100k-bar model, visible-window draw and LOD ladder"). It
