@@ -37,15 +37,15 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
 Old is a verbatim fragment of the cited line at `fef3148c5` (the tool checks it); New replaces it, or follows it where the row says "insert after". 7<!--=COUNT:arows--> rows.
 
-| A      | Target        | Field (`file`:line)             | Old                                                 | New                                                                                                                     |
-| ------ | ------------- | ------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| D10-A1 | `15` CMP-026  | E08-D04 example (`15`:314)      | (e.g. "Loading history — page 3 of ~9")             | (e.g. "Loaded 3 200 of about 5 000 bars"; bars, never pages or a countdown — E08-D10 §3)                                |
-| D10-A2 | `15` CMP-023  | `valueText` example (`15`:282)  | e.g. "page 3 of ~9"                                 | e.g. "Loaded 3 200 of about 5 000 bars"                                                                                 |
-| D10-A3 | E08-D13       | SCR-151 row (D13:172)           | `backfill-throttled` has no merged source (D13-G-3) | `backfill-throttled` is E08-D10 §4 (#178); D13-G-3 answered                                                             |
-| D10-A4 | E16-D05 §5    | the cited backfill (E16D5:242)  | (`aria-valuetext` "page 3 of 9")                    | (`aria-valuetext` "Loaded 3 200 of about 5 000 bars", E08-D10 §3)                                                       |
-| D10-A5 | E11-D04 §10   | loading older bars (D04E11:325) | a band row "Loading older bars…"                    | insert after: ; while the exchange holds the paging back, the band reads E08-D10 W-6 and the header carries W-7         |
-| D10-A6 | `14` SCR-151  | analytics (`14`:3060)           | `empty_state_shown` `{surface, reason}`             | insert after: with `reason` ∈ {`nothing_created`, `no_filter_matches`, `not_recorded`, `role_restricted`} (E08-D10 §12) |
-| D10-A7 | E08-D12 §12.2 | G-02 (D12:568)                  | have no hi-fi text                                  | have hi-fi text in E08-D10 (#178) §10, which answers this column                                                        |
+| A      | Target        | Field (`file`:line)             | Old                                                 | New                                                                                                              |
+| ------ | ------------- | ------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| D10-A1 | `15` CMP-026  | E08-D04 example (`15`:314)      | (e.g. "Loading history — page 3 of ~9")             | (e.g. "Loaded 3 200 of about 5 000 bars"; bars, never pages or a countdown — E08-D10 §3)                         |
+| D10-A2 | `15` CMP-023  | `valueText` example (`15`:282)  | e.g. "page 3 of ~9"                                 | e.g. "Loaded 3 200 of about 5 000 bars"                                                                          |
+| D10-A3 | E08-D13       | SCR-151 row (D13:172)           | `backfill-throttled` has no merged source (D13-G-3) | `backfill-throttled` is E08-D10 §4 (#178); D13-G-3 answered                                                      |
+| D10-A4 | E16-D05 §5    | the cited backfill (E16D5:242)  | (`aria-valuetext` "page 3 of 9")                    | (`aria-valuetext` "Loaded 3 200 of about 5 000 bars", E08-D10 §3)                                                |
+| D10-A5 | E11-D04 §10   | loading older bars (D04E11:325) | a band row "Loading older bars…"                    | insert after: ; while the exchange holds the paging back, the band reads E08-D10 W-6 and the header carries W-7  |
+| D10-A6 | `14` SCR-151  | analytics (`14`:3060)           | `empty_state_shown` `{surface, reason}`             | insert after: with `reason` ∈ {`nothing_created`, `no_matches`, `not_recorded`, `role_restricted`} (E08-D10 §12) |
+| D10-A7 | E08-D12 §12.2 | G-02 (D12:568)                  | have no hi-fi text                                  | have hi-fi text in E08-D10 (#178) §10, which answers this column                                                 |
 
 ## §D Storybook story lists (each story per theme and density, `15`:41)
 
@@ -112,4 +112,4 @@ The boards of spec §0; frames named `SCR-151/<variant>/<state> · <theme>`. Dat
 4. A gap is marked in context: `gapped` when reconstructed, a separator row with its cause when missing; never merged, never emptying the panel.
 5. The recorder variant and the three classes stay E16-D05's; D02's wireframe strings are superseded.
 6. Cache hits show data at once; nothing appears before 600 ms; empty only on a definitive answer.
-7. The BQ defaults are built; the ruling is pending (comment 6552539904); owner approval pending.
+7. BQ-0 … BQ-15 RULED (comment 6552807966): twelve defaults stand; BQ-2 records the text-only exception for the light variants beyond board 08 (spec D10-C11 … D10-C15, to the next boards touch); BQ-10 reuses `no_matches`; BQ-11 keeps the merged cut, no minimum display. Owner approval pending.

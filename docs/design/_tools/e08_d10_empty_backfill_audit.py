@@ -15,9 +15,9 @@ follows the E12-D07 tool (the same modes, the anchored values, the default-deny 
 2. **Cites.** Every `NN`:line and KEY:line cite of both documents resolves to a non-blank line at
    the base (G-CITE); every "verbatim" copy string occurs on its cited line (G-QUOTE); every Old
    fragment of the hand-off's A-rows occurs verbatim on its cited line (G-AROW).
-3. **Gates.** One FAIL line per gate: G-PENDING (the BQ section is marked "defaults built; ruling
-   pending" with the list's comment id, every row says so, and nothing claims RULED before a
-   ruling), G-BQ (the BQ ids are BQ-0 … BQ-15 and every "Built in" section exists), G-BOARDS (at
+3. **Gates.** One FAIL line per gate: G-RULED (the BQ heading names the ruling's comment id, the
+   ruled sentences stand verbatim, and every row reads RULED, "with a change" exactly for BQ-2,
+   BQ-10 and BQ-11), G-BQ (the BQ ids are BQ-0 … BQ-15 and every "Built in" section exists), G-BOARDS (at
    most ten boards, twins at most a third, each PENDING or drawn with its id and PNG, none drawing
    the chart canvas or E16-D05's role legs), G-VARIANT (each variant table has the nine rows in
    order; its W-n exist; its `color.*` tokens resolve in every theme; its announcement row carries
@@ -119,12 +119,31 @@ THEMES: dict[str, tuple[str, ...]] = {
 }
 
 BQ_LIST_ID = "6552539904"
-PENDING_HEAD = (
-    f"## The questions BQ-0 … BQ-15 — defaults built; ruling pending (comment {BQ_LIST_ID})"
+RULING_ID = "6552807966"
+PENDING_HEAD = f"## The questions BQ-0 … BQ-15 — RULED (orchestrator, comment {RULING_ID})"
+PENDING_STATUS = "RULED as the default"
+CHANGED_STATUS = "RULED with a change"
+CHANGED_BQ = ("BQ-2", "BQ-10", "BQ-11")
+# The ruled sentences of comment 6552807966, bold marks dropped (G-RULED checks them verbatim).
+RULED: tuple[str, ...] = (
+    (
+        "Twelve as the defaults (incl. BQ-0: the standing rules, one PR, the branch deviation noted). Three change, each checked against the cited merged text by an independent pre-screen:"
+    ),
+    (
+        "BQ-2 — themes: E16-D05 board 10 (`E16-D05.md:67`) light-twins only `SCR-151/sentence-form`, so it does not meet the DoD's \"all variants in both themes\" for the other SCR-151 frames. Do not claim it does: record the text-only exception for the remaining light variants explicitly in the status block + the PR body (the ruled-exception form), cite E16-D05's drawn states and never redraw them (your default), and list the light variants not drawn as C rows to the next boards touch."
+    ),
+    (
+        "BQ-10 — reason key: `no_filter_matches` duplicates the merged `empty_state_shown` reason `no_matches` (`E08-D05.md:441`) — reuse `no_matches`; no new key."
+    ),
+    (
+        "BQ-11 — the backfill note's hold: a ≥ 1 s hold after fetch-complete contradicts merged D11 M22 (`E08-D11.md:140`: \"the content replaces it as a cut\", `instant`; `14`:753). Keep only the 600 ms constant as merged; if you believe the hold is needed, route it as a C row to D11's owner — do not state it in this pack."
+    ),
+    (
+        "Cite fix: `22`:4232 is Bybit `confirm` text — the DataMeta block is `22`:18053–18081. Build on these."
+    ),
 )
-PENDING_STATUS = "default built; ruling pending"
 BQ_IDS = tuple(f"BQ-{n}" for n in range(16))
-PROP: dict[str, str] = {"PROP:t.hold": "1000"}  # T-3, the PROPOSED minimum display (D10-Q1)
+PROP: dict[str, str] = {}  # none since BQ-11's ruling: the merged cut, no minimum display
 
 TICKET_VARIANTS = (
     "`backfill-in-progress`",
@@ -135,7 +154,7 @@ TICKET_VARIANTS = (
     "`no-filter-matches`",
     "(role-restricted)",
 )
-REASONS = ("nothing_created", "no_filter_matches", "not_recorded", "role_restricted")
+REASONS = ("nothing_created", "no_matches", "not_recorded", "role_restricted")
 EVENTS = ("history.backfill_started", "history.backfill_throttled", "history.backfill_finished")
 VARIANT_SECTIONS = ("## 3.", "## 4.", "### 5.1", "## 6.")
 VARIANT_ROWS = (
@@ -599,12 +618,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-12",
-        "mark one BQ RULED before any ruling",
-        "G-PENDING",
+        "mark a changed BQ pending after the ruling",
+        "G-RULED",
         "spec",
         "## The questions",
-        PENDING_STATUS,
-        "RULED",
+        CHANGED_STATUS,
+        "default built; ruling pending",
     ),
     Mutation(
         "M-13",
@@ -729,6 +748,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         "1<!--=CITE:t.hz-->",
         "2",
     ),
+    Mutation(
+        "M-28",
+        "drop 'no new key' from the BQ-10 ruled sentence",
+        "G-RULED",
+        "spec",
+        "## The questions",
+        "`no_matches`; no new key.",
+        "`no_matches`.",
+    ),
 )
 PROBES: tuple[Mutation, ...] = (
     Mutation(
@@ -842,6 +870,8 @@ def g_cite(t: Texts) -> list[Finding]:
         text = t.doc(doc)
         regions = line_regions(text)
         for i, line in enumerate(text.split("\n")):
+            if line in RULED:  # the ruling's own cites, read at the list's base (spec, BQ section)
+                continue
             for rel, n in cite_targets(line):
                 if rel.startswith("?"):
                     out.append(("G-CITE", f"unknown cite key {rel[1:]}", doc, regions[i]))
@@ -891,19 +921,20 @@ def bq_rows(spec: str) -> list[list[str]]:
     return first_table(spec, "## The questions")[1:]
 
 
-def g_pending(t: Texts) -> list[Finding]:
+def g_ruled(t: Texts) -> list[Finding]:
     s, _, region = section(t.spec, "## The questions")
     out: list[Finding] = []
     head = t.spec.split("\n")[s - 1] if s else ""
     if head != PENDING_HEAD:
-        out.append(("G-PENDING", "the BQ heading is not the pending marker", "spec", region))
+        out.append(("G-RULED", "the BQ heading does not name the ruling", "spec", region))
+    body = body_text(t.spec, "## The questions").split("\n")
+    for k, para in enumerate(RULED, 1):
+        if para not in body:
+            out.append(("G-RULED", f"ruled sentence {k} is not verbatim", "spec", region))
     for r in bq_rows(t.spec):
-        if len(r) < 4 or r[3] != PENDING_STATUS:
-            out.append(("G-PENDING", f"{r[0]} does not read '{PENDING_STATUS}'", "spec", region))
-    for prefix in ("## Acceptance", "### 17.3"):
-        if "RULED" in body_text(t.spec, prefix):
-            reg = section(t.spec, prefix)[2]
-            out.append(("G-PENDING", f"RULED claimed in {prefix} before a ruling", "spec", reg))
+        want = CHANGED_STATUS if r[0] in CHANGED_BQ else PENDING_STATUS
+        if len(r) < 4 or r[3] != want:
+            out.append(("G-RULED", f"{r[0]} does not read '{want}'", "spec", region))
     return out
 
 
@@ -1255,7 +1286,7 @@ def repin(t: Texts) -> int:
 def findings(t: Texts, values: Values) -> list[Finding]:
     out: list[Finding] = []
     out += g_anchor(t, values) + g_marker(t) + g_cite(t) + g_quote(t) + g_arow(t)
-    out += g_pending(t) + g_bq(t) + g_boards(t) + g_variant(t) + g_map(t) + g_reason(t)
+    out += g_ruled(t) + g_bq(t) + g_boards(t) + g_variant(t) + g_map(t) + g_reason(t)
     out += g_copy(t) + g_timing(t) + g_contrast(t) + g_heur(t) + g_walk(t) + g_owner(t)
     out += g_dryrun(t)
     out += g_lines(t, "G-UNMERGED", lambda ln: any(p in ln for p in UNMERGED_PATHS), "a path")
