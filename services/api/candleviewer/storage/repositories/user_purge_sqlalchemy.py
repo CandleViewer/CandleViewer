@@ -15,7 +15,8 @@ then fails or is cancelled may have landed, so its record is closed by a `failur
 user whose `purge_after` has passed and who is not anonymised yet (UL-F5), so a re-enable or a
 cancelled purge that commits in between keeps the user as they are. Its transaction also revokes
 every credential (orchestrator ruling, 2026-10-20): the password hash becomes the "no usable
-password" value, every MFA method and recovery code is deleted, and every live session is revoked
+password" value, every MFA method, recovery code and retired password hash (`password_history`) is
+deleted, and every live session is revoked
 as a disable revokes it (the lifecycle store's statement; B16 `REVOKE` follows the commit, the
 reaper's). It never reads a PII column or a secret and never touches `audit_log` (C-5.7, C-12.8).
 `anonymised` and `cancel_pending_purge` serve E42-T09's enable path inside its own transaction: an
@@ -106,6 +107,10 @@ _SCRUB_SESSIONS = sa.text(
 _DROP_MFA = sa.text("DELETE FROM mfa_methods WHERE user_id = CAST(:id AS uuid) RETURNING id")
 _DROP_RECOVERY = sa.text(
     "DELETE FROM recovery_codes WHERE user_id = CAST(:id AS uuid) RETURNING id"
+)
+# Class S retired hashes (21 §3.1.1a): an anonymised user keeps no credential history.
+_DROP_PASSWORD_HISTORY = sa.text(
+    "DELETE FROM password_history WHERE user_id = CAST(:id AS uuid) RETURNING retired_at"
 )
 _PENDING = sa.text(
     "SELECT purge_after FROM users WHERE id = CAST(:id AS uuid) "
@@ -289,6 +294,7 @@ class SqlAlchemyUserPurgeStore:
                 scrubbed = len((await s.execute(_SCRUB_SESSIONS, ids)).all())
                 mfa = len((await s.execute(_DROP_MFA, ids)).all())
                 codes = len((await s.execute(_DROP_RECOVERY, ids)).all())
+                history = len((await s.execute(_DROP_PASSWORD_HISTORY, ids)).all())
                 await s.execute(CONSTRAINTS_NOW)
                 before = {"status": status, "purge_after": _iso(purge_after), "anonymised_at": None}
                 after = before | {
@@ -298,6 +304,7 @@ class SqlAlchemyUserPurgeStore:
                     "sessions_revoked": len(revoked),
                     "mfa_methods_deleted": mfa,
                     "recovery_rows_deleted": codes,  # `recovery_code*` keys are redacted
+                    "history_rows_deleted": history,  # a count, never a hash
                 }
                 await self._write_ahead(_ANONYMISE_ACTION, uid, (before, after), who)
                 written = (before, after)

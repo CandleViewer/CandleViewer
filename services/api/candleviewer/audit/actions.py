@@ -461,6 +461,8 @@ LANE_ACTIONS: Mapping[str, tuple[LaneClass, frozenset[str]]] = MappingProxyType(
         "auth.mfa_failed": ("shared", _ANY),
         "auth.recovery_codes_exhausted": ("shared", _ANY),
         "auth.recovery_code_used": ("shared", _ANY),
+        # #5270: `PUT /auth/password` outcome and refusal rows; its intent stays on the writer.
+        "auth.password_change": ("shared", _ANY),
         "audit.lane_started": ("reserved", frozenset({AuditOutcome.SUCCESS})),
         "audit.lane_resumed": ("reserved", frozenset({AuditOutcome.SUCCESS})),
     }

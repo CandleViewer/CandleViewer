@@ -146,13 +146,18 @@ _RECOVERY = sa.text(
     "INSERT INTO recovery_codes (id, user_id, code_hash) "
     "VALUES (CAST(:id AS uuid), CAST(:user AS uuid), CAST(:digest AS text))"
 )
+_PASSWORD_HISTORY = sa.text(
+    "INSERT INTO password_history (user_id, password_hash, retired_at) "
+    "VALUES (CAST(:user AS uuid), :hash, now() - make_interval(secs => :age))"
+)
 #: What a sign-in could use: the password hash, the MFA methods, the recovery codes, the live
 #: sessions.
 _CREDENTIALS = sa.text(
     "SELECT (SELECT password_hash FROM users WHERE id = CAST(:id AS uuid)), "
     "(SELECT count(*) FROM mfa_methods WHERE user_id = CAST(:id AS uuid)), "
     "(SELECT count(*) FROM recovery_codes WHERE user_id = CAST(:id AS uuid)), "
-    "(SELECT count(*) FROM sessions WHERE user_id = CAST(:id AS uuid) AND revoked_at IS NULL)"
+    "(SELECT count(*) FROM sessions WHERE user_id = CAST(:id AS uuid) AND revoked_at IS NULL), "
+    "(SELECT count(*) FROM password_history WHERE user_id = CAST(:id AS uuid))"
 )
 
 
@@ -468,15 +473,17 @@ async def test_credentials_revoked(db: Any) -> None:
         for _ in range(3):
             digest = secrets.token_hex(32)
             await _exec(engine, _RECOVERY, id=str(uuid.uuid4()), user=str(user), digest=digest)
+        for age in (10, 20):
+            await _exec(engine, _PASSWORD_HISTORY, user=str(user), hash=old_hash, age=age)
     live, ended = await _session(engine, m), await _session(engine, m, ended=True)
     await _session(engine, other)
     theirs = await _read(engine, _CREDENTIALS, other)
     assert await hasher.verify(old_hash, _PHRASE)  # the phrase signed in before the purge
     audit, sessions = _CredentialsAhead(engine), _Sessions(engine)
     await UsersPurgeTask(_purge(rel, audit, _Clock()), sessions=sessions).run_once()
-    assert audit.credentials == [(old_hash, 1, 3, 1)]  # written ahead: all of them still stood
-    ((unusable, mfa, codes, still_live),) = await _read(engine, _CREDENTIALS, m)
-    assert (mfa, codes, still_live) == (0, 0, 0)
+    assert audit.credentials == [(old_hash, 1, 3, 1, 2)]  # written ahead: all of them still stood
+    ((unusable, mfa, codes, still_live, history),) = await _read(engine, _CREDENTIALS, m)
+    assert (mfa, codes, still_live, history) == (0, 0, 0, 0)
     assert unusable.startswith("$argon2id$") and unusable != old_hash
     assert not await hasher.verify(unusable, _PHRASE)
     ends = {s[0]: s[5:7] for s in await _read(engine, _SESSIONS, m)}
@@ -492,7 +499,8 @@ async def test_credentials_revoked(db: Any) -> None:
     assert (
         record["after_state"]["mfa_methods_deleted"],
         record["after_state"]["recovery_rows_deleted"],
-    ) == (1, 3)
+        record["after_state"]["history_rows_deleted"],
+    ) == (1, 3, 2)
     assert old_hash not in text and unusable not in text  # no secret value in the record
     assert await _read(engine, _CREDENTIALS, other) == theirs
 
