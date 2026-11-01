@@ -442,6 +442,13 @@ _SELF_SERVICE_QUERY_CELLS = [
 ]
 
 
+def test_self_service_query_cells_number_43_so_none_drops_out_silently() -> None:
+    """The cells come from the matrix outcomes, so a role a matrix change denies would leave the
+    registry unnoticed: nine routes for all four roles (36), `GET /settings` for all four and
+    `PATCH /settings` for all but the Viewer."""
+    assert len(_SELF_SERVICE_QUERY_CELLS) == 43
+
+
 @pytest.mark.parametrize(("actor", "method", "path"), _SELF_SERVICE_QUERY_CELLS)
 def test_self_service_routes_reject_a_target_user_query_parameter(
     world: World, method: str, path: str, actor: str
