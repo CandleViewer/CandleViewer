@@ -237,3 +237,86 @@ async def test_unsubscribing_a_lane_drops_both_of_its_subscriptions(
     s._unsubscribe(lane)
     assert lane.sub not in bus._subscriptions and lane.gap_sub not in bus._subscriptions
     await s.stop()
+
+
+async def test_the_clock_close_of_the_flagged_time_bar_keeps_the_flag(tmp_path: Path) -> None:
+    clock, bus, sink = Clock(T0), Bus(), RecordingSink()
+    s = _make(tmp_path, bus, sink, clock=clock)
+    spec = SPECS["time"]
+    await s.register(spec, SYM, "a")
+    await bus.publish(TOPIC, trade(T0 + 1_000_000, seq=1))
+    await settle(bus, s)
+    await bus.publish(GAP_TOPIC, _gap(False))
+    await bus.publish(TOPIC, trade(T0 + 20_000_000, seq=2))  # first print after the hole
+    await settle(bus, s)
+    clock.t = T0 + 61_000_000
+    await s.tick()  # the sparse tape: the clock closes the bar
+    closes = [b for _, k, b in sink.bars if k == "close"]
+    assert [(b.index, b.gap_before) for b in closes] == [(0, True)]
+    await s.stop()
+
+
+async def test_a_clock_close_before_any_post_hole_trade_leaves_the_next_bar_flagged(
+    tmp_path: Path,
+) -> None:
+    clock, bus, sink = Clock(T0), Bus(), RecordingSink()
+    s = _make(tmp_path, bus, sink, clock=clock)
+    await s.register(SPECS["time"], SYM, "a")
+    await bus.publish(TOPIC, trade(T0 + 1_000_000, seq=1))
+    await settle(bus, s)
+    await bus.publish(GAP_TOPIC, _gap(False))
+    await settle(bus, s)
+    clock.t = T0 + 61_000_000
+    await s.tick()  # closes the pre-hole bar: it holds no post-hole trade
+    await bus.publish(TOPIC, trade(T0 + 62_000_000, seq=2))
+    await settle(bus, s)
+    assert [(b.index, k, b.gap_before) for _, k, b in sink.bars] == [
+        (0, "open", False),
+        (0, "close", False),
+        (1, "open", True),
+    ]
+    await s.stop()
+
+
+async def test_stop_counts_a_gap_still_queued(tmp_path: Path) -> None:
+    n = _count(False)
+    bus = Bus()
+    s = _make(tmp_path, bus, RecordingSink())
+    await s.register(V5, SYM, "a")
+    lane = s._lanes[SYM]
+    lane.gap_task.cancel()  # type: ignore[union-attr]  # the lane has its gap task
+    await bus.publish(GAP_TOPIC, _gap(False))
+    await s.stop()
+    assert _count(False) == n + 1
+
+
+async def test_a_gap_whose_recovered_is_not_a_bool_is_ignored(tmp_path: Path) -> None:
+    class Odd:
+        symbol, recovered = SYM, "no"
+
+    n = _count(False)
+    s = _make(tmp_path, Bus(), RecordingSink())
+    await s.register(V5, SYM, "a")
+    s._on_gap(s._lanes[SYM], Odd())
+    assert _count(False) == n
+    await s.stop()
+
+
+async def test_a_post_hole_print_amending_a_clock_closed_bar_flags_that_bar(tmp_path: Path) -> None:
+    """The backfill outlasts the bar: the clock closes it, then the first live print amends it."""
+    clock, bus, sink = Clock(T0), Bus(), RecordingSink()
+    s = _make(tmp_path, bus, sink, clock=clock)
+    await s.register(SPECS["time"], SYM, "a")
+    await bus.publish(TOPIC, trade(T0 + 1_000_000, seq=1))
+    await settle(bus, s)
+    clock.t = T0 + 61_000_000
+    await s.tick()  # closes bar 0 while the hole is still being backfilled
+    await bus.publish(GAP_TOPIC, _gap(False))
+    await bus.publish(TOPIC, trade(T0 + 50_000_000, seq=2))  # in bar 0, arrives late
+    await settle(bus, s)
+    assert [(b.index, k, b.gap_before) for _, k, b in sink.bars] == [
+        (0, "open", False),
+        (0, "close", False),
+        (0, "close", True),  # the amended close
+    ]
+    await s.stop()

@@ -241,6 +241,7 @@ class TimeBarBuilder:
         self._last_close: int | None = None  # close_time of the newest closed bar
         self._watermark = -(2**63)
         self._last_seq: int | None = None
+        self._gap_pending = False  # #529: in memory only, never snapshotted
         self._built = bars_built_total.labels(symbol=symbol, kind="time")
         self._amended = bars_amended_total.labels(symbol=symbol)
         self._drop_old = bars_late_trade_dropped_total.labels(symbol=symbol, reason="late_window")
@@ -275,6 +276,8 @@ class TimeBarBuilder:
             self._watermark = ts
         cur = self._cur
         if cur is not None and cur.open_time <= ts < cur.close_time:
+            if self._gap_pending:
+                cur.gap_before, self._gap_pending = True, False
             cur.apply(t)
             return (self._emit("update", cur, closed=False),)
         floor = cur.open_time if cur is not None else self._last_close
@@ -285,18 +288,28 @@ class TimeBarBuilder:
         start, end = bucket_bounds(self.spec, ts)
         d = _Draft(self._next_index, start, end, t.price)
         d.partial = self._next_index == 0
-        d.gap_before = self._last_close is not None and self._last_close != start
+        d.gap_before = self._gap_pending or (
+            self._last_close is not None and self._last_close != start
+        )
+        self._gap_pending = False
         self._next_index += 1
         d.apply(t)
         self._cur = d
         out.append(self._emit("open", d, closed=False))
         return out
 
+    def mark_gap(self) -> None:
+        """An unrecovered tape gap: the bar that takes the next trade carries `gap_before` on
+        every later emission (trade, clock close, snapshot). Not persisted (#529)."""
+        self._gap_pending = True
+
     def _late(self, t: TradeEvent) -> Sequence[BarUpdate]:
         ts = t.ts_event
         for d in self._closed:
             if d.open_time <= ts < d.close_time:
                 if self._watermark - d.close_time <= LATE_WINDOW_US:
+                    if self._gap_pending:  # the clock closed it before the post-hole print landed
+                        d.gap_before, self._gap_pending = True, False
                     d.apply(t)
                     self._amended.inc()
                     return (self._emit("close", d, closed=True, amended=True),)
