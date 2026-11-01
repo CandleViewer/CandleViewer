@@ -2051,7 +2051,12 @@ class HeatmapResponse(BaseModel):
 
 class MetricPoint(BaseModel):
     t: AwareDatetime
-    v: Decimal | None
+    v: Annotated[
+        Decimal | Literal["long_buildup", "short_covering", "short_buildup", "long_unwind"] | None,
+        Field(
+            description="A decimal, `null`, or for an enum metric (`oi_price_quadrant`) its value."
+        ),
+    ]
     meta: Annotated[
         dict[str, Any] | None,
         Field(
@@ -2084,6 +2089,15 @@ class MetricSeries(BaseModel):
         "liquidation_intensity",
         "big_trade_notional",
         "big_trade_zscore",
+        "open_interest",
+        "open_interest_value",
+        "oi_price_quadrant",
+        "funding_rate",
+        "funding_annualized",
+        "time_to_funding_ms",
+        "basis",
+        "premium_pct",
+        "liquidation_notional",
     ]
     estimated: Annotated[
         StrictBool | None, Field(description="True for heuristic metrics (arch P10).")

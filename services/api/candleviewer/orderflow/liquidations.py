@@ -287,6 +287,11 @@ class LiquidationService:
         self._store, self._listed, self._clock_s = store, listed, clock_s
         self._scan = scan_prints
 
+    @property
+    def store(self) -> LiquidationStore:
+        """The guarded store, read by the derivatives engine's `/market/metrics` path."""
+        return self._store
+
     async def write(self, events: Sequence[LiquidationEvent]) -> None:
         """The ingestion stream's write-behind: one row per print, the dedup key absorbs a replay.
         `StorageTierUnavailable` until the hot tier is up: the stream retries, dropping nothing."""
