@@ -98,6 +98,8 @@ Node contract: every node has `id`, `visible`, `zIndex`, `dirty` flags (`DATA | 
 
 **Dirty-flag propagation.** A data update marks only the affected series `DATA`-dirty; a viewport change marks all series `TRANSFORM`-dirty but not `DATA`-dirty (so GPU buffers are reused and only uniforms change — the single most important optimisation for pan/zoom). A theme change marks `STYLE`. Layout changes (pane resize) mark `LAYOUT`.
 
+_Shipped (E11-S06 PR 1, package README BQ-186 to BQ-204, C-60 to C-66): the axes are built in `src/axes/` once per frame before collect, only when the view, layout or theme changed: E11-D02's `{1, 2, 5} × 10^n` tick ladder and 23-step time ladder at the density gap G, a greedy priority-ordered decimation (1.5 label heights, the last-price pin first, candidates past each end as hidden blockers), and the price gutter measured from the widest label class. The background layer's grid is one `line` batch written on the CPU and snapped to whole device pixels; it is the one exception to "a pan uploads nothing": its own small ring is rewritten when the axes change (C-66). Labels reach the main thread as retained text (DOM mirror lists, the axis stops' names); E11-S11 draws them._
+
 ### 3.2 Render loop
 
 ```mermaid
@@ -402,6 +404,8 @@ Shipped by E11-S08 PR 2 (package README BQ-134 to BQ-136), additive: `command { 
 Shipped by E11-S10 PR 1 (package README BQ-147, BQ-148 and BQ-153), additive: `resize` sizes are CSS px equal to `backing / dpr` and may be 0 (finite, ≥ 0; dpr > 0), which suspends the chart until a non-zero size; `ExportRejectReason` gains `suspended`; `frame` gains `dpr` and `backingStorePx` (`[width, height]` in device px).
 
 Shipped by E11-S10 PR 2 (package README BQ-149), additive: `resize` gains optional `backingWidth` and `backingHeight`, the padded backing store in device px (safe integers, at least `round(size * dpr)`); the chart draws into its exact top-left sub-rect, and `frame.backingStorePx` reports the padded store.
+
+Shipped by E11-S06 PR 1 (package README BQ-194, BQ-199, BQ-203), additive: `KEY` codes `up` 9, `down` 10, `pageUp` 11 and `pageDown` 12, and a `key` row's `y` slot names its target (0 the plot, 1 the time axis, 2 the price axis; anything else is rejected); `init.config.timeZone?` (a string, UTC by default); worker → main `axes { id, price, time, priceName, timeName, priceGutter, timeZone, say? }`, the retained axis labels in value order, the axis stops' names, the measured price gutter and an axis key's announcement, posted when one of them changes, never on a still frame.
 
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 

@@ -74,6 +74,8 @@ export interface ChartConfig {
   /** Bench mode posts `frame` every frame instead of sampling it at 1 Hz (§6). */
   readonly bench: boolean;
   readonly syncGroup: string | null;
+  /** §8's `ChartOptions.timeZone` for the axis labels (E11-S06, BQ-203, additive); UTC when absent. */
+  readonly timeZone?: string;
 }
 
 /** One column of a columnar buffer: `count` elements of `bytes` each from `offset`. */
@@ -250,6 +252,23 @@ export type FromWorker =
       readonly anchorTick: number | null;
     }
   | { readonly t: "a11y"; readonly id: ChartId; readonly cursorSummary: string }
+  /**
+   * E11-S06 (BQ-199, additive): the frame's retained axis labels in value order (what the DOM
+   * mirror lists and E11-S11 draws), the axis stops' names, the price gutter in CSS px and the
+   * chart's time zone; posted when any of them changes, never per frame. `say` is an axis key's
+   * announcement (BQ-198), when one is due.
+   */
+  | {
+      readonly t: "axes";
+      readonly id: ChartId;
+      readonly price: readonly string[];
+      readonly time: readonly string[];
+      readonly priceName: string;
+      readonly timeName: string;
+      readonly priceGutter: number;
+      readonly timeZone: string;
+      readonly say?: string;
+    }
   | {
       readonly t: "error";
       readonly id: ChartId | null;
@@ -297,7 +316,9 @@ export const INPUT = {
 } as const;
 /**
  * Key codes a `key` row carries in its `x` slot, Shift and Ctrl in its modifiers (E11-S04 PR 2,
- * BQ-106 to BQ-109: additive; `zoomIn` and `zoomOut` are E11-T02's).
+ * BQ-106 to BQ-109: additive; `zoomIn` and `zoomOut` are E11-T02's). E11-S06 (BQ-194, additive):
+ * `up` to `pageDown` for the axis stops, and the row's `y` slot names its target: 0 the plot,
+ * 1 the time axis, 2 the price axis (`KEY_TARGETS`).
  */
 export const KEY = {
   zoomIn: 1,
@@ -308,7 +329,13 @@ export const KEY = {
   end: 6,
   spaceDown: 7,
   spaceUp: 8,
+  up: 9,
+  down: 10,
+  pageUp: 11,
+  pageDown: 12,
 } as const;
+/** A key row's `y` slot: the plot, the time axis or the price axis (E11-S06, BQ-194). */
+export const KEY_TARGETS = 3;
 
 // ---- validation ------------------------------------------------------------------------------
 
@@ -458,6 +485,7 @@ export function rejectReason(msg: unknown): string | null {
         canvasLike(msg["canvas"]) &&
         isObj(msg["theme"]) &&
         isObj(msg["config"]) &&
+        optional(msg["config"]["timeZone"], (v) => typeof v === "string") &&
         (msg["profile"] === undefined || msg["profile"] === "degraded-2d") &&
         (msg["reducedMotion"] === undefined || typeof msg["reducedMotion"] === "boolean")
         ? null
@@ -487,6 +515,9 @@ export function rejectReason(msg: unknown): string | null {
       if (msg["kind"] === "pointer") return null;
       for (let i = 0; i < ev.length; i += INPUT_STRIDE) {
         if (ev[i] === INPUT.leave) return "a leave row outside pointer input";
+        const y = ev[i + 2] as number;
+        const target = Number.isInteger(y) && y >= 0 && y < KEY_TARGETS;
+        if (ev[i] === INPUT.key && !target) return "a key row with an unknown target";
       }
       return null;
     }

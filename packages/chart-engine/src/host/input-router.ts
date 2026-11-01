@@ -11,6 +11,7 @@
 // program (tsconfig.dom.json); O(1) per event, and no allocation but `getCoalescedEvents()`'s array.
 import { isSpace, keyCode } from "../interaction/navigator.js";
 import { MOD, plotHeightOf, REGION, regionAt, wheelPx } from "../interaction/wheel.js";
+import { PRICE_GUTTER_PX } from "../scene/layout-engine.js";
 import { INPUT, KEY, type InputKind } from "../worker/protocol.js";
 
 /** The `ChartHost` members the router uses (structural: no import cycle with worker/host.ts). */
@@ -40,8 +41,15 @@ export const PRICE_SCALE_MENU_EVENT = "candleviewer:pricescalemenu";
 
 const DOWN = { pointerdown: INPUT.down, pointerup: INPUT.up, pointermove: INPUT.move } as const;
 
-/** Routes `target`'s input into `host`; returns the detach function (size: host/resize.ts). */
-export function routeInput(target: HTMLElement, host: InputSink): () => void {
+/**
+ * Routes `target`'s input into `host`; returns the detach function (size: host/resize.ts).
+ * `gutter.price` is the layout's price gutter, which the worker's `axes` message updates (E11-S06).
+ */
+export function routeInput(
+  target: HTMLElement,
+  host: InputSink,
+  gutter: { readonly price: number } = { price: PRICE_GUTTER_PX },
+): () => void {
   // `dt` per kind (BQ-99): a wheel between two moves must not shorten the velocity's window.
   const last: Record<InputKind, number> = { pointer: 0, wheel: 0, key: 0, touch: 0 };
   const dt = (kind: InputKind, t: number): number => {
@@ -111,13 +119,14 @@ export function routeInput(target: HTMLElement, host: InputSink): () => void {
     const pan = e.shiftKey || horizontal;
     const delta = horizontal ? dx : dy;
     const mods = modifiers(e) | (pan ? MOD.pan : 0);
-    const fold = (pan ? 3 : 0) + regionAt(e.offsetX, e.offsetY, w, h);
+    const fold = (pan ? 3 : 0) + regionAt(e.offsetX, e.offsetY, w, h, gutter.price);
     const t = dt("wheel", e.timeStamp);
     host.input("wheel", put(INPUT.wheel, e.offsetX, e.offsetY, delta, mods, t), fold);
   };
 
   const onContextMenu = (e: MouseEvent): void => {
-    if (regionAt(e.offsetX, e.offsetY, target.clientWidth, target.clientHeight) !== REGION.price) {
+    const { clientWidth: w, clientHeight: h } = target;
+    if (regionAt(e.offsetX, e.offsetY, w, h, gutter.price) !== REGION.price) {
       return; // the plot's menu is the app's
     }
     e.preventDefault();
@@ -128,8 +137,10 @@ export function routeInput(target: HTMLElement, host: InputSink): () => void {
   };
 
   let space = false; // BQ-109: the pan-drag modifier, held
+  // A key row's x is the KEY code and its y the target (BQ-194): the chart root always sends 0,
+  // the plot; only the axis stops (host/axis-stop.ts) send 1 (time) or 2 (price).
   const key = (code: number, mods: number, t: number): void => {
-    host.input("key", put(INPUT.key, code, 0, 0, mods, dt("key", t))); // x is the KEY code
+    host.input("key", put(INPUT.key, code, 0, 0, mods, dt("key", t)));
   };
   const onKeyDown = (e: KeyboardEvent): void => {
     if (isSpace(e.key, e.code)) {

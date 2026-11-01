@@ -3,9 +3,11 @@
 // shared render runtime, in a worker or inline (`ChartOptions.runMode`, src/worker/host.ts); the
 // scene graph and GL backend land in E11-S01 / E11-S02 behind this same surface.
 import { mountSurface, probeRenderProfile } from "../host/mount.js";
+import { type AxisStops, createAxisStops } from "../host/axis-stop.js";
 import { createScaleBadge } from "../host/scale-badge.js";
 import { readReducedMotion, watchMotion } from "../host/motion.js";
 import { watchSize } from "../host/resize.js";
+import { PRICE_GUTTER_PX } from "../scene/layout-engine.js";
 import {
   captureInput,
   createChartHost,
@@ -98,6 +100,7 @@ export function createChart(opts: ChartOptions): Chart {
   let renderProfile: FrameStats["renderProfile"] | null = null;
   let lastStats: FrameStats | null = null;
   let lastRange = { from: 0, to: 1 };
+  let stops: AxisStops | null = null; // the axis stops (E11-S06), from the first `axes` message
 
   function emit<E extends keyof ChartEvents>(e: E, payload: ChartEvents[E]): void {
     const set = listeners.get(e);
@@ -177,13 +180,25 @@ export function createChart(opts: ChartOptions): Chart {
           ...(msg.details && { details: copyDetails(msg.details) }),
         });
         return;
+      case "axes":
+        gutter.price = msg.priceGutter; // the router's regions follow the measured gutter
+        // E11-S06: made with the first axes; stop names, the mirror's lists, the announcement.
+        stops ??= createAxisStops(opts.container, surface.mirrorRoot, host, theme.colors, {
+          now: () => env.now(),
+          setTimer: (cb, ms) => env.setTimer(cb, ms),
+        });
+        stops.update(msg);
+        return;
       default:
       // pick and a11y are the hit-test and live-region layers' (E11-S08 / E11-S13).
     }
   }
 
-  const badge = createScaleBadge(opts.container, opts.theme.colors, () =>
-    host.command({ k: "setPriceScale", pane: 0, auto: true }),
+  const badge = createScaleBadge(
+    opts.container,
+    opts.theme.colors,
+    () => host.command({ k: "setPriceScale", pane: 0, auto: true }),
+    () => stops?.price ?? opts.container,
   );
   const env = (envOverride ?? defaultHostEnv)(doc);
   const reducedMotion = readReducedMotion(doc); // the app's resolved mode (E11-S04 BQ-104)
@@ -196,6 +211,7 @@ export function createChart(opts: ChartOptions): Chart {
     dpr: doc.defaultView?.devicePixelRatio ?? 1,
     theme: opts.theme.colors,
     syncGroup: opts.syncGroup ?? null,
+    timeZone: opts.timeZone ?? CHART_DEFAULTS.timeZone,
     reducedMotion,
     ...(opts.fonts !== undefined && { fonts: opts.fonts }),
     // Bench mode (every-frame `frame`, the C-Q02-1 LOD trace) has no §8 option: README BQ-18.
@@ -222,7 +238,8 @@ export function createChart(opts: ChartOptions): Chart {
       },
     },
   });
-  const detachInput = captureInput(opts.container, host);
+  const gutter = { price: PRICE_GUTTER_PX };
+  const detachInput = captureInput(opts.container, host, gutter);
   const detachSize = watchSize(opts.container, host); // BQ-146
   const detachMotion = watchMotion(doc, surface.mirrorRoot, reducedMotion, (reduce) =>
     host.command({ k: "setMotion", reduce }),
@@ -281,6 +298,7 @@ export function createChart(opts: ChartOptions): Chart {
       theme = next;
       host.command({ k: "setTheme", theme: next.colors });
       badge.setTheme(next.colors);
+      stops?.setTheme(next.colors);
     },
     setDensity(d: Density): void {
       if (disposed) return;
@@ -321,6 +339,7 @@ export function createChart(opts: ChartOptions): Chart {
       detachSize();
       detachMotion();
       badge.dispose();
+      stops?.dispose();
       host.dispose();
       surface.unmount();
     },

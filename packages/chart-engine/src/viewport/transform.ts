@@ -39,7 +39,8 @@ const NO_PANE = createPaneTransform();
 const paneOf = (vp: ViewportState, pane: number): Readonly<PaneTransform> =>
   vp.panes[pane] ?? NO_PANE;
 
-function barUs(map: IndexTimeMap): number {
+/** A bar's duration in µs: the map's own, else its last two bars' delta, else 60 s. */
+export function barUs(map: IndexTimeMap): number {
   const n = map.length;
   const d = map.barDurationUs ?? (n >= 2 ? map.indexToTime(n - 1) - map.indexToTime(n - 2) : 0);
   return d > 0 ? d : DEFAULT_BAR_US;
