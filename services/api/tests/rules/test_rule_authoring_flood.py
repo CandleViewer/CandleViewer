@@ -4,8 +4,8 @@ The validate / compile limit throttles the checks, and the records the admitted 
 held to the refusal-record budget: past `rules_refusal_budget_per_hour` a refusal keeps its own
 answer and is counted and carried, never recorded (22 "Rule authoring refusal records"); a due
 record that cannot be written is `503 audit_unavailable` and nothing changes. The first test is the
-server leg of E36-X02's AC-RA-17 (a validate flood) for its suite to import. One fake clock drives
-the limiter and the budget; nothing sleeps.
+server leg of E36-X02's AC-RA-17 (a validate flood) for its suite to import. A write refused at the
+permission gate writes no record. One fake clock drives the limiter and the budget; nothing sleeps.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from candleviewer.api.rules import make_rules_router
 from candleviewer.api.rules_actor import make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
 from candleviewer.api.rules_refusals import ARM, SCOPE_DENIED, RuleRefusalBudgets
-from candleviewer.rules.manager import Actor, InMemoryRuleStore, RulesManager
+from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleRow, RulesManager
 from candleviewer.rules.service import RulesService
 from candleviewer.rules.vocabulary import default_registry
 from candleviewer.settings import RULES_REFUSAL_BUDGET_PER_HOUR
@@ -44,7 +44,8 @@ FOREIGN = {"level": "account", "account_ids": [str(UNGRANTED)]}
 class _Stack:
     """The checks behind the limiter and the write routes over one manager, both writers of the
     refusal records on one budget, one fake clock for the limiter and the budget. Who calls is
-    in the headers: `x-user` (a UUID) and `x-owner` (`1` for the Owner)."""
+    in the headers: `x-user` (a UUID), `x-owner` (`1` for the Owner) and `x-viewer` (`1` for a role
+    that may read and not write)."""
 
     def __init__(self, per_hour: int = CAP, **budget: Any) -> None:
         self.clock = _Clock()
@@ -72,8 +73,9 @@ class _Stack:
 
         def actor(request: Request) -> Actor:
             user, owner = request.headers["x-user"], request.headers.get("x-owner") == "1"
+            perms = frozenset({"rules:read"} if request.headers.get("x-viewer") == "1" else BASE)
             granted = frozenset({str(GRANTED)})  # what the resolver's source grants too
-            return Actor(user, "s", frozenset(BASE), granted, is_owner=owner, step_up_fresh=True)
+            return Actor(user, "s", perms, granted, is_owner=owner, step_up_fresh=True)
 
         writes = make_rules_crud_router(
             lambda: self.mgr,
@@ -93,8 +95,15 @@ class _Stack:
         sent = {"x-user": str(user)}
         return self.c.post("/rules/validate", json={"ir": _ir(scope=FOREIGN)}, headers=sent)
 
-    def as_user(self, user: UUID, owner: bool = False) -> dict[str, str]:
-        return {"x-user": str(user), "x-owner": "1" if owner else "0"}
+    def as_user(self, user: UUID, owner: bool = False, viewer: bool = False) -> dict[str, str]:
+        who = {"x-user": str(user), "x-owner": "1" if owner else "0"}
+        return who | {"x-viewer": "1" if viewer else "0"}
+
+    def _row(self, rid: str) -> RuleRow:
+        """The stored row of `rid`. `RuleStore`, the manager's port, names no `_rows`: this is the
+        one reach into the in-memory store's map."""
+        rows: dict[str, RuleRow] = self.mgr._s._rows  # type: ignore[attr-defined]  # see docstring
+        return rows[rid]
 
     def records(self, action: str, user: UUID = MANAGER_ID) -> list[dict[str, Any]]:
         return [
@@ -137,7 +146,7 @@ def test_the_refusal_is_still_answered_403_or_404_over_the_cap() -> None:
         made = s.c.post("/rules", json={"ir": _ir(name="x", scope=FOREIGN)}, headers=manager)
         assert (made.status_code, made.json()["code"]) == (403, "forbidden")
     assert len(s.records(SCOPE_DENIED)) == 2 and s.suppressed == 4
-    assert [v.version for v in s.mgr._s._rows[rid].versions] == [1]  # type: ignore[attr-defined]
+    assert [v.version for v in s._row(rid).versions] == [1]
 
 
 def test_the_owner_and_a_manager_share_the_same_cap() -> None:
@@ -152,6 +161,47 @@ def test_the_owner_and_a_manager_share_the_same_cap() -> None:
             assert r.status_code == 422, r.text
         assert len(s.records(ARM, user)) == 2
     assert s.suppressed == 2
+
+
+def test_a_reserved_name_create_is_refused_403_and_its_record_rides_the_budget() -> None:
+    """The reserved-name refusal on create is recorded and counted, as on a rename: the `403` each
+    time, one `rules.scope_denied` record per refusal up to the cap and then a count, nothing
+    stored; a record the writer does not take is `503 audit_unavailable`."""
+    s = _Stack(per_hour=2)
+    for _ in range(3):
+        made = s.c.post("/rules", json={"ir": _ir(name="sys.mine")}, headers=s.as_user(MANAGER_ID))
+        assert (made.status_code, made.json()["code"]) == (403, "system_rule_reserved")
+    recorded = s.records(SCOPE_DENIED)
+    assert len(recorded) == 2 and s.suppressed == 1
+    state = recorded[0]["after_state"]
+    assert (state["event"], state["op"]) == ("rule.system_rule_refused", "create")
+    assert state["name"] == "sys.mine"
+    s.writer.mode = "fail"  # the Owner's budget is untouched: its record is due, and unwritable
+    owner = s.as_user(OWNER_ID, owner=True)
+    lost = s.c.post("/rules", json={"ir": _ir(name="sys.mine")}, headers=owner)
+    assert (lost.status_code, lost.json()["code"]) == (503, "audit_unavailable")
+    assert s.c.get("/rules", headers=owner).json()["items"] == []  # the Owner reaches every rule
+
+
+def test_a_role_refused_at_the_gate_writes_no_record_and_is_not_counted() -> None:
+    """The permission gate answers each write before the scope check, the manager and the budget:
+    a role without `rules:write` gets the `403`, the audit writer stays empty and nothing is
+    counted, whatever the request would be refused for past the gate."""
+    s = _Stack(per_hour=2)
+    viewer, rid = s.as_user(MANAGER_ID, viewer=True), "00000000-0000-4000-8000-000000000001"
+    answers = [
+        s.c.post("/rules", json={"ir": _ir(name="sys.mine", scope=FOREIGN)}, headers=viewer),
+        s.c.put(f"/rules/{rid}", json={"ir": _ir("2")}, headers=viewer | {"If-Match": "1"}),
+        s.c.delete(f"/rules/{rid}", headers=viewer),
+        s.c.put(f"/rules/{rid}/active-version", json={"version_id": "v1"}, headers=viewer),
+        s.c.put(
+            f"/rules/{rid}/mode",
+            json={"mode": "armed"},
+            headers=viewer | {"Idempotency-Key": "k"},
+        ),
+    ]
+    assert [(r.status_code, r.json()["code"]) for r in answers] == [(403, "forbidden")] * 5
+    assert s.writer.records == [] and s.suppressed == 0
 
 
 @pytest.mark.parametrize("cause", ["writer", "untracked"])
@@ -181,7 +231,7 @@ def test_a_due_record_that_cannot_be_written_is_503_audit_unavailable_and_stores
         ),
     ]
     assert [(r.status_code, r.json()["code"]) for r in answers] == [(503, "audit_unavailable")] * 5
-    row = s.mgr._s._rows[rid]  # type: ignore[attr-defined]
+    row = s._row(rid)
     assert (len(row.versions), row.mode, row.deleted) == (1, "disabled", False)
     assert [kw for _, kw, _ in s.writer.records if kw["actor_user_id"] == str(MANAGER_ID)] == []
 
@@ -196,7 +246,7 @@ def test_a_refused_arm_whose_record_cannot_be_written_is_503_and_stays_disarmed(
         f"/rules/{rid}/mode", json={"mode": "armed"}, headers=owner | {"Idempotency-Key": "k"}
     )
     assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
-    assert s.mgr._s._rows[rid].mode == "disabled"  # type: ignore[attr-defined]
+    assert s._row(rid).mode == "disabled"
 
 
 @pytest.mark.parametrize("cause", ["writer", "untracked"])
@@ -208,7 +258,7 @@ def test_a_protected_rules_refusal_whose_record_cannot_be_written_is_503_and_sta
     s = _Stack(per_hour=5, tracked_users=1)
     owner = s.as_user(OWNER_ID, owner=True)
     rid = s.c.post("/rules", json={"ir": _ir(name="seed")}, headers=owner).json()["id"]
-    row = s.mgr._s._rows[rid]  # type: ignore[attr-defined]
+    row = s._row(rid)
     row.name, row.mode = "sys.native_sl_watchdog", "armed"  # as the provisioner would
     if cause == "writer":
         s.writer.mode = "fail"

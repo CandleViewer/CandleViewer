@@ -33,6 +33,7 @@ from candleviewer.rules.manager import (
     InMemoryRuleStore,
     RuleCapRefused,
     RuleError,
+    RuleRow,
     RulesManager,
 )
 from candleviewer.rules.vocabulary import default_registry
@@ -129,6 +130,12 @@ class _Env:
         names = [r["name"] for r in self.c.get("/rules").json()["items"]]
         return notes, names, self.c.get(f"/rules/{rid}").json()["mode"]
 
+    def _row(self, rid: str) -> RuleRow:
+        """The stored row of `rid`. `RuleStore`, the manager's port, names no `_rows`: this is the
+        one reach into the in-memory store's map."""
+        rows: dict[str, RuleRow] = self.mgr._s._rows  # type: ignore[attr-defined]  # see docstring
+        return rows[rid]
+
 
 WRITES = pytest.mark.parametrize("route", ["create", "update", "activate"])
 
@@ -178,7 +185,7 @@ def test_a_live_arms_over_long_reason_spends_no_grant_and_raises_no_challenge() 
     rid = e.create(scope=LIVE)
     assert e.write("mode", rid, "ok").status_code == 200  # simulate
     h = e.c.get(f"/rules/{rid}/versions").json()["items"][0]["ir_hash"]
-    row = e.mgr._s._rows[rid]  # type: ignore[attr-defined]
+    row = e._row(rid)
     row.simulated_hashes.add(h)
     row.simulation_fires = 5
     audits = list(e.audits)
@@ -200,8 +207,8 @@ def test_a_280_character_note_is_stored_verbatim(route: str) -> None:
         (record,) = [p for a, p in e.audits if a == "rule.updated" and p.get("activated")]
         assert record["note"] == FULL
     else:
-        rows = e.mgr._s._rows.values()  # type: ignore[attr-defined]
-        assert FULL in [v.notes for row in rows for v in row.versions]
+        stored = e._row(r.json()["id"] if route == "create" else rid)
+        assert FULL in [v.notes for v in stored.versions]
     assert e.capped == []
 
 
@@ -210,8 +217,8 @@ def test_a_280_character_reason_is_recorded_verbatim() -> None:
     rid = e.create(scope=LIVE)
     assert e.write("mode", rid, "ok").status_code == 200
     h = e.c.get(f"/rules/{rid}/versions").json()["items"][0]["ir_hash"]
-    e.mgr._s._rows[rid].simulated_hashes.add(h)  # type: ignore[attr-defined]
-    e.mgr._s._rows[rid].simulation_fires = 5  # type: ignore[attr-defined]
+    e._row(rid).simulated_hashes.add(h)
+    e._row(rid).simulation_fires = 5
     arm = {"mode": "armed", "reason": FULL}
     r = e.c.put(f"/rules/{rid}/mode", json=arm, headers={"Idempotency-Key": "arm"})
     assert r.status_code == 200, r.text
@@ -269,8 +276,7 @@ def test_any_text_up_to_280_round_trips_and_any_longer_is_refused(text: str) -> 
         assert e.c.get("/rules").json()["items"] == []
     else:
         assert r.status_code == 201, r.text
-        (row,) = e.mgr._s._rows.values()  # type: ignore[attr-defined]
-        assert row.versions[0].notes == text
+        assert e._row(r.json()["id"]).versions[0].notes == text
 
 
 @pytest.mark.parametrize("bad", ["a\x00b", "\ud800", 7])
