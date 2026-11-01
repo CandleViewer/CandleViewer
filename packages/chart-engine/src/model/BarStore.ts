@@ -85,6 +85,9 @@ export class BarStore {
   private n = 0;
   private origin = 0;
   private tick = 0;
+  /** Set by the first batch carrying `flags` (sticky): until then the column stays all zeros and
+   * `put` skips it, so a series without flags pays no write for them. */
+  private hasFlags = false;
   private readonly range = new RangeSlot();
   private readonly bars = new BarView();
   private viewOf: Columns | null = null;
@@ -138,11 +141,13 @@ export class BarStore {
    */
   append(b: BarBatch, merge = false): MutationRange {
     const k = this.check(b);
-    const last = this.n > 0 ? this.timeAt(this.n - 1) : -Infinity;
-    const first = k > 0 ? (b.time[0] as number) : Infinity;
-    const merged = merge && first === last ? 1 : 0;
-    if (first <= last && merged === 0) {
-      this.counters.reject("order", "append is not newer than the last bar held");
+    let merged = 0;
+    // One comparison on the hot path: only a first time at or before the last bar's is looked at.
+    if (k > 0 && this.n > 0 && (b.time[0] as number) <= this.timeAt(this.n - 1)) {
+      if (!merge || (b.time[0] as number) !== this.timeAt(this.n - 1)) {
+        this.counters.reject("order", "append is not newer than the last bar held");
+      }
+      merged = 1;
     }
     this.adopt(b);
     const add = k - merged;
@@ -172,6 +177,7 @@ export class BarStore {
     const after =
       index + k < this.n && k > 0 && (b.time[k - 1] as number) >= this.timeAt(index + k);
     if (before || after) this.counters.reject("order", "patch breaks the time order");
+    if (b.flags !== undefined) this.hasFlags = true;
     for (let j = 0; j < k; j += 1) this.put(index + j, b, j);
     return this.range.set("patch", index, index + k, 0);
   }
@@ -208,6 +214,7 @@ export class BarStore {
     this.n = k;
     this.origin = b.priceOrigin;
     this.tick = b.tickSize;
+    if (b.flags !== undefined) this.hasFlags = true;
     this.counters.reallocations += 1;
     return this.range.set("replace", 0, k, 0);
   }
@@ -307,7 +314,8 @@ export class BarStore {
       if (t <= prev) cs.reject("order", `bar ${j}: time does not increase`);
       prev = t;
       // F-02 (CE-T04): low ≤ open, close ≤ high (so low ≤ high), volume ≥ 0, no reserved flag
-      // bit. One branch on the hot path; the reason is worked out only for a refusal.
+      // bit, as one boolean expression and one branch per bar (measured cheaper than a
+      // Math.min of the margins); the reason is worked out only for a refusal.
       const lo = low[j] as number;
       const hi = high[j] as number;
       const o = open[j] as number;
@@ -319,6 +327,7 @@ export class BarStore {
   }
 
   private adopt(b: BarBatch): void {
+    if (b.flags !== undefined) this.hasFlags = true;
     if (this.n > 0) return;
     this.origin = b.priceOrigin;
     this.tick = b.tickSize;
@@ -335,7 +344,7 @@ export class BarStore {
     c.close[p] = b.close[j] as number;
     c.volume[p] = b.volume[j] as number;
     c.delta[p] = b.delta === undefined ? 0 : (b.delta[j] as number);
-    c.flags[p] = b.flags === undefined ? 0 : (b.flags[j] as number);
+    if (this.hasFlags) c.flags[p] = b.flags === undefined ? 0 : (b.flags[j] as number);
   }
 
   /** Re-linearises the n bars held into `cap` slots, centred in the room left by `pre` bars about
