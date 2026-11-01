@@ -345,6 +345,20 @@ export const PAIRS = [
     threshold: THRESHOLD.TEXT,
   },
 
+  // --- Positions grid (E29-D02 §12-§13, E29-D04 §2.1; CMP-049 treegrid, CMP-114) ---------------------
+  // The pairs above already cover the row fills' text, the side glyphs, the Near glyph, the group header and the
+  // totals. Held in packages/ui/test/contrast/blotter-pairs.test.ts: CMP-116's bars and CMP-105's list.
+  { fg: "color.status.danger.strong", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.danger.strong", bg: "color.surface.hover", threshold: THRESHOLD.NON_TEXT },
+  {
+    fg: "color.status.danger.strong",
+    bg: "color.surface.selected",
+    threshold: THRESHOLD.NON_TEXT,
+  },
+  { fg: "color.text.primary", bg: "color.neutral.subtle", threshold: THRESHOLD.TEXT },
+  { fg: "color.focus.ring", bg: "color.surface.selected", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.focus.ring", bg: "color.surface.hover", threshold: THRESHOLD.NON_TEXT },
+
   // --- Dock sync-group edges (E15-D13 §6 P-1 … P-6) --------------------
   // The tile edge sits on the panel header (`raised`) or a grid cell's header (`canvas`);
   // the group letter always carries the group, the hue only repeats it.
