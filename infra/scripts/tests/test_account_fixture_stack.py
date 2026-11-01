@@ -1,15 +1,18 @@
 """#2893's closure: `infra/scripts/account_fixture_stack.py`, run against a stub `docker`.
 
-The script runs as a subprocess with a stub first on PATH, as `test_demo_host_owner_first_run.py`
-runs its script: the stub records each call's arguments and the names of the environment it got,
-answers the label listings from the test's scenario, and exits as the scenario says. No Docker, no
-network: the only socket is a loopback bind the script makes to find free ports.
+The script runs as a subprocess with a stub `docker` and nothing else on PATH, as
+`test_demo_host_owner_first_run.py` runs its script, so no docker of the host's can answer: the stub
+records each call's arguments, the names of the environment it got (and its `DOCKER_*` values) and
+the directory it ran in, answers the label listings from the test's scenario, and exits as the
+scenario says. No Docker, no network: the only socket is a loopback bind the script makes to find
+free ports.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import stat
 import subprocess
@@ -31,6 +34,22 @@ FILES: Final = [
     )
 ]
 PROJECT: Final = "cv-acctfix-0a1b2c"
+LABEL: Final = f"label=com.docker.compose.project={PROJECT}"
+#: The three listings that keep `up` and `down` to the project's own objects, whole.
+LISTINGS: Final = [
+    ["ps", "-a", "--filter", LABEL, "--format", "{{.Names}}"],
+    ["network", "ls", "--filter", LABEL, "--format", "{{.Name}}"],
+    ["volume", "ls", "--filter", LABEL, "--format", "{{.Name}}"],
+]
+#: `down`'s one compose call: the project name alone, no compose file, env file or profile.
+TEARDOWN: Final = ["compose", "-p", PROJECT, "down", "-v", "--remove-orphans"]
+PORT_NAMES: Final = (
+    "POSTGRES_PORT",
+    "QUESTDB_PG_PORT",
+    "QUESTDB_ILP_PORT",
+    "QUESTDB_HTTP_PORT",
+    "CV_BIND_PORT",
+)
 #: The stub: logs its call to $HOME/docker.jsonl (HOME is one of the names the script keeps).
 STUB: Final = """
 import json, os, sys
@@ -38,6 +57,8 @@ home = os.environ["HOME"]
 args = sys.argv[1:]
 scenario = json.load(open(os.path.join(home, "scenario.json"), encoding="utf-8"))
 record = {"args": args, "env": sorted(os.environ), "default": os.environ.get("CV_ACCOUNT_FIXTURE")}
+record["docker"] = {k: v for k, v in os.environ.items() if k.startswith("DOCKER_")}
+record |= {"cwd": os.getcwd(), "cwd_empty": not os.listdir(os.getcwd())}
 with open(os.path.join(home, "docker.jsonl"), "a", encoding="utf-8") as log:
     log.write(json.dumps(record) + "\\n")
 kind = {"ps": "containers", "network": "networks", "volume": "volumes"}.get(args[0])
@@ -75,10 +96,11 @@ class Host:
         (self.home / "scenario.json").write_text(json.dumps(scenario), encoding="utf-8")
 
     def run(self, *args: str, **extra_env: str) -> subprocess.CompletedProcess[str]:
-        env = {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.home)}
+        env = {"PATH": str(self.bin), "HOME": str(self.home)}  # the stub alone answers `docker`
         env |= {"XDG_RUNTIME_DIR": str(self.runtime), "TMPDIR": str(self.tmp), **extra_env}
         return subprocess.run(  # noqa: S603 - this interpreter and the script under test
             [sys.executable, "-I", str(SCRIPT), *args],
+            cwd=self.home,
             env=env,
             capture_output=True,
             text=True,
@@ -93,7 +115,10 @@ class Host:
         return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
 
     def compose_calls(self) -> list[list[str]]:
-        return [call["args"] for call in self.calls() if call["args"][:1] == ["compose"]]
+        return [call["args"] for call in self.compose_records()]
+
+    def compose_records(self) -> list[dict[str, Any]]:
+        return [call for call in self.calls() if call["args"][:1] == ["compose"]]
 
     def env_values(self, project: str = PROJECT) -> dict[str, str]:
         text = (self.runtime / project / "stack.env").read_text(encoding="ascii")
@@ -121,8 +146,7 @@ def test_up_runs_the_steps_in_order(tmp_path: Path) -> None:
         [*base, "--profile", "core", "up", "-d", "--wait", "api"],
     ]
     assert done.stdout.splitlines()[-1] == f"account-fixture-stack: up: {PROJECT}"
-    listings = [call["args"][0] for call in host.calls()[:3]]
-    assert listings == ["ps", "network", "volume"]  # nothing of the project is left, first
+    assert [call["args"] for call in host.calls()[:3]] == LISTINGS  # nothing left, first
 
 
 @pytest.mark.parametrize(
@@ -161,6 +185,14 @@ def test_up_writes_stack_env_0600_and_prints_no_value(tmp_path: Path) -> None:
     )
     assert values["CV_PG_DSN"].endswith("@postgres:5432/acctfix_test")  # the seed's *_test
     assert values["CV_ACCOUNT_FIXTURE"] == "compliant"
+    published = [values[name] for name in PORT_NAMES]
+    assert all(port.isascii() and port.isdecimal() for port in published)
+    assert len(set(published)) == len(PORT_NAMES)  # five distinct ports
+    lines = [line for f in FILES for line in Path(f).read_text("utf-8").splitlines()]
+    text = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
+    required = set(re.findall(r"\$\{([A-Z0-9_]+):\?", text))  # each file's `${NAME:?...}`
+    required |= set(re.findall(r"^ +environment: ([A-Z0-9_]+)$", text, re.MULTILINE))  # secrets
+    assert len(required) >= 15 and required <= set(values)
     generated = [values[name] for name in SECRET_NAMES]
     shown = [done.stdout, done.stderr, *(json.dumps(call["args"]) for call in host.calls())]
     echoed = any(value in text for value in generated for text in shown)  # a boolean
@@ -180,45 +212,93 @@ def test_values_are_fresh_per_run(tmp_path: Path) -> None:
     assert distinct
 
 
-def test_down_removes_volumes_and_the_run_dir_and_is_idempotent(tmp_path: Path) -> None:
-    """`down -v --remove-orphans` with every profile active (with none, compose removes nothing,
-    as every service here has a profile), then the run directory, root's files in it included;
-    a second `down` finds nothing and still says so."""
+def test_down_goes_by_the_project_name_and_keeps_the_run_dir_until_nothing_is_left(
+    tmp_path: Path,
+) -> None:
+    """`docker compose -p <project> down -v --remove-orphans` and nothing else (no compose file,
+    env file or profile), from an empty directory. While the project's label still lists
+    something, the run directory stays and `down` says to run it again; once nothing is listed it
+    goes, root's files in it included; a third `down` finds neither and says so."""
     host = Host(tmp_path)
     assert host.run("up", "--project", PROJECT).returncode == 0
     run_dir = host.runtime / PROJECT
     (run_dir / "kek").write_bytes(b"x")  # what the one-shot leaves, here the test user's own
-    host.scenario(volumes=[f"{PROJECT}_cv-postgres-data"])  # still there when down starts
+    host.scenario(volumes=[f"{PROJECT}_cv-postgres-data"])  # listed before and after down
 
     first = host.run("down", "--project", PROJECT)
 
-    assert not os.path.lexists(run_dir)
-    base = _compose(PROJECT, str(run_dir / "stack.env"))
-    assert host.compose_calls()[-1] == [*base, "--profile", "*", "down", "-v", "--remove-orphans"]
-    assert first.returncode == 1  # the stub's volume is still listed after: reported, not hidden
-    assert "1 volumes left" in first.stdout
+    teardown = host.compose_records()[-1]
+    assert teardown["args"] == TEARDOWN
+    assert teardown["cwd_empty"] and Path(teardown["cwd"]).is_relative_to(host.tmp)
+    assert [call["args"] for call in host.calls()[-3:]] == LISTINGS  # what is left, after
+    assert first.returncode == 1 and (run_dir / "kek").exists()  # reported, not hidden
+    kept = "0 containers, 0 networks, 1 volumes left; run directory kept: run down again"
+    assert first.stdout == f"account-fixture-stack: down: {PROJECT}: {kept}\n"
     host.scenario()  # docker removed it
     calls_before = len(host.compose_calls())
 
     second = host.run("down", "--project", PROJECT)
+    third = host.run("down", "--project", PROJECT)
 
-    assert second.returncode == 0, second.stderr
+    assert (second.returncode, third.returncode) == (0, 0) and not os.path.lexists(run_dir)
     assert len(host.compose_calls()) == calls_before  # nothing left to take down
-    expected = "0 containers, 0 networks, 0 volumes left; run directory removed"
-    assert second.stdout.strip().endswith(expected)
+    gone = "0 containers, 0 networks, 0 volumes left"
+    assert (
+        second.stdout == f"account-fixture-stack: down: {PROJECT}: {gone}; run directory removed\n"
+    )
+    assert third.stdout == f"account-fixture-stack: down: {PROJECT}: {gone}; no run directory\n"
 
 
-def test_down_without_the_env_file_uses_inert_values_and_keeps_none(tmp_path: Path) -> None:
-    """After a reboot the tmpfs run directory is gone but the volumes are not: compose still
-    needs every required variable, so `down` hands it inert ones in a file it then removes."""
+def test_down_after_a_reboot_needs_no_run_dir_env_file_or_compose_file(tmp_path: Path) -> None:
+    """After a reboot the tmpfs run directory is gone but the project's volumes are not: `down`
+    still runs, by the project name alone, from an empty directory it then removes."""
     host = Host(tmp_path, volumes=[f"{PROJECT}_cv-postgres-data"])
 
-    host.run("down", "--project", PROJECT)
+    done = host.run("down", "--project", PROJECT)
 
-    [down] = host.compose_calls()
-    env_file = Path(down[down.index("--env-file") + 1])
-    assert env_file.is_relative_to(host.tmp) and not env_file.exists()  # removed after
-    assert down[-5:] == ["--profile", "*", "down", "-v", "--remove-orphans"]
+    [teardown] = host.compose_records()
+    assert teardown["args"] == TEARDOWN  # no -f, no --env-file: nothing to load or fill in
+    assert teardown["cwd_empty"] and not Path(teardown["cwd"]).exists()
+    assert done.stdout.endswith("1 volumes left; no run directory: run down again\n")
+
+
+def test_a_failed_teardown_keeps_the_run_dir_and_is_retried_by_running_down_again(
+    tmp_path: Path,
+) -> None:
+    host = Host(tmp_path)
+    assert host.run("up", "--project", PROJECT).returncode == 0
+    host.scenario(volumes=[f"{PROJECT}_cv-postgres-data"], exit={"down": 4})
+
+    failed = host.run("down", "--project", PROJECT)
+
+    assert failed.returncode == 1 and (host.runtime / PROJECT / "stack.env").exists()
+    assert failed.stdout.endswith("run directory kept: run down again\n")
+    host.scenario()  # the retry: compose answers, and nothing is listed after
+    assert host.run("down", "--project", PROJECT).returncode == 0
+    assert not os.path.lexists(host.runtime / PROJECT)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "subdirectory"])
+def test_down_leaves_a_run_dir_up_never_made_and_says_so(tmp_path: Path, kind: str) -> None:
+    """The run directory is flat and real: a link in its place, or a directory in it, is
+    refused with one fixed line and left as it is, never followed or half removed."""
+    host = Host(tmp_path)
+    run_dir, elsewhere = host.runtime / PROJECT, tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "kept").write_text("kept", encoding="utf-8")
+    if kind == "symlink":
+        run_dir.symlink_to(elsewhere)
+        line = "the run directory is not the directory up made: check it by hand"
+    else:
+        assert host.run("up", "--project", PROJECT).returncode == 0
+        (run_dir / "sub").mkdir()
+        line = "the run directory holds a directory, which up never makes: check it by hand"
+
+    done = host.run("down", "--project", PROJECT)
+
+    assert (done.returncode, done.stderr) == (2, f"account-fixture-stack: refused: {line}\n")
+    assert (elsewhere / "kept").exists() and os.path.lexists(run_dir)
+    assert kind == "symlink" or (run_dir / "stack.env").exists()
 
 
 def test_up_refuses_volumes_whose_run_dir_is_gone(tmp_path: Path) -> None:
@@ -238,6 +318,80 @@ def test_a_failed_step_stops_up_and_names_it(tmp_path: Path) -> None:
     assert done.returncode == 2
     assert done.stderr.strip().endswith("the schema step exited 4: take the project down")
     assert [call[-1] for call in host.compose_calls()] == ["questdb", "migrate"]
+
+
+@pytest.mark.parametrize(
+    ("word", "kind"), [("ps", "containers"), ("network", "networks"), ("volume", "volumes")]
+)
+def test_a_listing_docker_does_not_answer_stops_up_and_down(
+    tmp_path: Path, word: str, kind: str
+) -> None:
+    """The label listings keep `up` and `down` to the project's own objects: one that fails is a
+    refusal, never read as nothing left."""
+    host = Host(tmp_path, exit={word: 1})
+
+    for command in ("up", "down"):
+        done = host.run(command, "--project", PROJECT)
+        refused = f"account-fixture-stack: refused: docker did not list the project's {kind}\n"
+        assert (done.returncode, done.stdout, done.stderr) == (2, "", refused), command
+
+    assert host.compose_calls() == [] and list(host.runtime.iterdir()) == []
+
+
+#: `up`'s refusals before any docker call: the arguments after `up --project P`, the case's
+#: environment, and the start of its one line (`{port}` is a free port).
+UP_REFUSALS: Final[dict[str, tuple[tuple[str, ...], str]]] = {
+    "a-second-up-of-one-project": ((), "the run directory already exists"),
+    "a-default-with-a-newline": (("--default", "compliant\nCV_PG_DSN=x"), "the default scenario"),
+    "a-default-with-a-path": (("--default", "../compliant"), "the default scenario must be"),
+    "no-docker-on-path": ((), "docker is not on PATH"),
+    "a-port-of-an-unknown-name": (("--port", "REDIS_PORT=6379"), "--port takes NAME=N"),
+    "a-port-not-a-number": (("--port", "POSTGRES_PORT=x"), "--port takes NAME=N"),
+    "a-port-of-a-superscript-digit": (("--port", "POSTGRES_PORT=5\u00b2"), "--port takes NAME=N"),
+    "two-ports-alike": (
+        ("--port", "POSTGRES_PORT={port}", "--port", "CV_BIND_PORT={port}"),
+        "each --port must name a port of its own",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", UP_REFUSALS)
+def test_up_refuses_before_any_docker_call(tmp_path: Path, case: str) -> None:
+    """Each refusal is exit 2 and one fixed line, with no docker call; a scenario name never
+    carries a newline into the env file, and a port is ASCII digits."""
+    host = Host(tmp_path)
+    args, line = UP_REFUSALS[case]
+    if case == "a-second-up-of-one-project":
+        assert host.run("up", "--project", PROJECT).returncode == 0
+    env = {"PATH": str(host.tmp)} if case == "no-docker-on-path" else {}
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = str(probe.getsockname()[1])
+    calls_before = len(host.calls())
+
+    done = host.run("up", "--project", PROJECT, *(a.format(port=port) for a in args), **env)
+
+    assert (done.returncode, done.stdout) == (2, "")
+    assert done.stderr.startswith(f"account-fixture-stack: refused: {line}")
+    assert done.stderr.count("\n") == 1 and len(host.calls()) == calls_before
+
+
+def test_a_file_error_is_one_fixed_line_naming_its_class(tmp_path: Path) -> None:
+    """A file, socket or process call that fails ends as one line naming the exception's class,
+    never its text (which names a path): here a run root `up` cannot write."""
+    if os.geteuid() == 0:
+        pytest.skip("root writes a directory of any mode")
+    host = Host(tmp_path)
+    host.runtime.chmod(0o500)
+    try:
+        done = host.run("up", "--project", PROJECT)
+    finally:
+        host.runtime.chmod(0o700)
+
+    failed = "a file, socket or process call failed (PermissionError)"
+    assert (done.returncode, done.stdout) == (2, "")
+    assert done.stderr == f"account-fixture-stack: refused: {failed}\n"
+    assert host.compose_calls() == [] and list(host.runtime.iterdir()) == []
 
 
 def test_no_config_or_inspect_is_ever_invoked(tmp_path: Path) -> None:
@@ -281,13 +435,19 @@ def test_extra_compose_files_and_ports_are_taken_from_the_lane(tmp_path: Path) -
 
 def test_docker_runs_with_the_env_file_alone_never_the_shells_variables(tmp_path: Path) -> None:
     """Compose lets the shell override the env file: a stray `CV_PG_DSN` or `COMPOSE_FILE` in the
-    caller's shell would steer the stack, so docker gets PATH, HOME and DOCKER_* alone."""
+    caller's shell would steer the stack, so docker gets PATH, HOME and DOCKER_* alone; the
+    caller's daemon (`DOCKER_HOST`, `DOCKER_CONTEXT`) reaches every call."""
     host = Host(tmp_path)
+    daemon = {"DOCKER_HOST": "unix:///run/lane/docker.sock", "DOCKER_CONTEXT": "lane"}
 
-    host.run("up", "--project", PROJECT, CV_PG_DSN="postgresql://x", COMPOSE_FILE="x.yml")
+    done = host.run(
+        "up", "--project", PROJECT, CV_PG_DSN="postgresql://x", COMPOSE_FILE="x.yml", **daemon
+    )
 
+    assert done.returncode == 0, done.stderr
     names = {name for call in host.calls() for name in call["env"]}
-    assert names <= {"PATH", "HOME", "LC_CTYPE"}  # the stub's own python may set LC_CTYPE
+    assert names <= {"PATH", "HOME", "LC_CTYPE", *daemon}  # the stub's python may set LC_CTYPE
+    assert all(call["docker"] == daemon for call in host.calls())
 
 
 def test_restart_api_recreates_the_api_alone_with_the_new_default(tmp_path: Path) -> None:
@@ -318,12 +478,31 @@ def test_drive_runs_the_driver_in_its_one_shot_and_returns_its_status(tmp_path: 
     assert done.returncode == 3
 
 
-def test_the_run_dir_is_the_users_tmpfs_else_dev_shm(tmp_path: Path) -> None:
+def _stack() -> Any:
+    """The script as a module, for its pure parts."""
     sys.path.insert(0, str(SCRIPT.parent))
     try:
         import account_fixture_stack as stack
     finally:
         sys.path.remove(str(SCRIPT.parent))
+    return stack
+
+
+def test_the_free_ports_are_drawn_again_until_the_five_differ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stack = _stack()
+    draws = iter([5001, 5001, 5002, 5003, 5004, 6001, 6002, 6003, 6004, 6005])
+    monkeypatch.setattr(stack, "free_port", lambda: next(draws))
+
+    assert list(stack.ports([]).values()) == ["6001", "6002", "6003", "6004", "6005"]
+    monkeypatch.setattr(stack, "free_port", lambda: 5001)
+    with pytest.raises(stack.Refused, match="no five distinct free ports"):
+        stack.ports([])
+
+
+def test_the_run_dir_is_the_users_tmpfs_else_dev_shm(tmp_path: Path) -> None:
+    stack = _stack()
 
     assert stack.run_root({"XDG_RUNTIME_DIR": str(tmp_path)}) == tmp_path
     shm = Path("/dev/shm")  # noqa: S108 - the fallback the script names, never written here

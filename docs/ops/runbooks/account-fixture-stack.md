@@ -3,23 +3,28 @@
 Owner: infra-devops (with accounts-admin for the seed and the driver). Code:
 `infra/scripts/account_fixture_stack.py`, `infra/compose/docker-compose.account-fixture-real.yml`,
 `services/api/cvdev/account_fixture/seed.py` and `services/api/cvdev/account_fixture/drive.py`. ADR-0036
-decision 9 (S16a); threat rows FX-S03, FX-I02, FX-I03, FX-T02 and FX-E02 in `E27-accounts.md` §12.
+decision 9 (S16a); threat rows FX-S03, FX-I02, FX-I03, FX-T02, FX-E02 and FX-I04 in `E27-accounts.md` §12.
 
 A dev and test stack only. It runs the real backend (Postgres storage, sign-in with TOTP, the key vault) on the
 dev-only account fixture transport, so the E27 pack's scenarios (`packages/fixtures/accounts/`) can be loaded
 through the shipped key pipeline and recorded. It holds no real key and talks to no exchange: the transport answers
 the pack's fabricated keys alone, on the demo hosts alone, and the S8 boot guard refuses any other stored key before
-a module starts. Never run it against a database or a host that holds anything real.
+a module starts. Never run it against a database or a host that holds anything real. It assumes a rootful Docker
+daemon: under a rootless or user-namespace-remapped one the one-shots see the run directory as another uid's, and
+the seed's gate refuses it with one fixed line.
+
+Every command below runs from the checkout's root with `S=infra/scripts/account_fixture_stack.py`.
 
 ## What `up` does
 
 ```bash
-python3 infra/scripts/account_fixture_stack.py up            # prints the project name, cv-acctfix-<6 hex>
+python3 $S up            # prints the project name, cv-acctfix-<6 hex>
 ```
 
 1. **Host checks.** The project is `cv-acctfix-<6 hex digits>` (a new one each run, or `--project`; never
-   `cv-demo` or any other name), nothing of it is left over (container, network or volume), and the host's
-   loopback ports it publishes are free.
+   `cv-demo` or any other name), nothing of it is left over (container, network or volume), and the five
+   loopback ports it publishes are free and distinct: drawn per run, or pinned with `--port NAME=N` (NAME one of
+   `POSTGRES_PORT`, `QUESTDB_PG_PORT`, `QUESTDB_ILP_PORT`, `QUESTDB_HTTP_PORT`, `CV_BIND_PORT`).
 2. **The run directory**, `$XDG_RUNTIME_DIR/<project>` (else under `/dev/shm`): mode 0700, flat, on tmpfs, gone at
    `down` or at reboot. It holds `stack.env` (0600, the user's: the Postgres password and DSNs, the pepper and the
    three auth keys, each new per run, the paths compose needs, free ports, inert values for the stores that never
@@ -30,7 +35,8 @@ python3 infra/scripts/account_fixture_stack.py up            # prints the projec
    `migrate` profiles: on the dev stack `cv` owns the schema, so the owner DSN is the app DSN), then
    **`fixture-init`** (`python -m cvdev.account_fixture.seed init`: the gate, the run's KEK and audit lane key, the
    six users and their TOTP enrolment, the marker), then **the api** (`up --wait`: healthy behind the S8 boot
-   guard, which passes on the seeded database).
+   guard, which passes on the seeded database; the base file makes the schema step a dependency of the api, so
+   this start runs that step once more, which changes nothing on a migrated database).
 
 `up` prints the step names and, last, `account-fixture-stack: up: <project>`. A step that fails ends `up` with
 `account-fixture-stack: refused: the <step> step exited <n>: take the project down`; take it down and run `up`
@@ -59,8 +65,7 @@ services:
 ```
 
 ```bash
-S=infra/scripts/account_fixture_stack.py
-python3 $S up -f /path/to/lane-net.yml        # then -f /path/to/lane-net.yml on every command below
+python3 $S up -f /path/to/lane-net.yml        # and -f on restart-api and drive too; down needs none
 ```
 
 **Expected log noise** on this stack: `secrets.kek_file_source` (a file KEK, a warning in demo),
@@ -102,8 +107,9 @@ $D call qa-owner-1 POST /exchange-accounts --body-json \
   challenge's id), and the held request is sent again unchanged, its key included. It prints
   `HTTP <status> <problem code or ->` and the answer's body, every credential and token in it masked.
 - **`scan <PATH>...`** counts, per path, how often any value this run generated appears in it (the run
-  directory's files, the env file's secrets, the sessions' tokens): counts only, exit 1 on any hit. Copy a record
-  or a saved log into the run directory first (the invoking user owns it) and scan it at `/run-dir/<name>`.
+  directory's files, the env file's secrets, the sessions' tokens): counts only, exit 1 on any hit; a path over
+  64 MiB is refused, never counted in part. Copy a record or a saved log into the run directory first (the
+  invoking user owns it) and scan it at `/run-dir/<name>`.
 
 **Loading a scenario** (the E27 test plan's section 11 load check): store the scenario's pack key on the account
 its manifest's `tester_inputs` names (`QA Main`, UID `90000001`, or `QA Sub 1`, UID `90000011`), with the derived
@@ -133,11 +139,23 @@ account's exposure unreadable, so its revoke answers `409 exposure_unknown`: swi
 python3 $S down --project <project>
 ```
 
-`down -v --remove-orphans` with every profile active (every service here has a profile, so with none active
-compose removes nothing), then the run directory is unlinked, then the project's containers, networks and volumes
-are listed by their compose label: the line ends `0 containers, 0 networks, 0 volumes left; run directory
-removed`. A second `down` finds nothing and says the same. After a reboot (the tmpfs run directory gone, the
-volumes not) `down` hands compose inert values for the variables it requires, in a temporary file it removes.
+`down` goes by the project name alone: `docker compose -p <project> down -v --remove-orphans`, run from an empty
+directory, so compose reads no compose file and no env file and needs no `-f`, no run directory and no value.
+Then the project's containers, networks and volumes are listed by their compose label, and only when that lists
+nothing is the run directory unlinked: the line ends `0 containers, 0 networks, 0 volumes left; run directory
+removed`. A second `down` finds nothing and ends `; no run directory`. After a reboot (the tmpfs run directory
+gone, the volumes not) `down` works the same way.
+
+**A failed `down`** (compose exits non-zero, or the label still lists something) keeps the run directory and ends
+`run down again` with exit 1: run the same `down` again; it needs nothing but the project's name. A project a
+reboot or an interrupted `up` left behind is found by its label:
+
+```bash
+docker volume ls --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}' | sort -u
+```
+
+(`docker ps -a` and `docker network ls` take the same filter and format); take down only the `cv-acctfix-*`
+projects you started.
 
 ## Rules
 

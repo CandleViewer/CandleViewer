@@ -31,7 +31,9 @@ import structlog
 from pydantic import SecretStr
 from sqlalchemy.exc import ProgrammingError
 
+from candleviewer.audit_lane_wiring import read_key_file
 from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
+from candleviewer.secrets._kek import LoadedKek, PathKekSource
 from candleviewer.settings import Environment, FeedMode, Settings
 from cvdev.account_fixture import cli, seed
 from cvdev.account_fixture.pack import PACK_ROOT, Pack, fixture_key_ids
@@ -199,8 +201,9 @@ def _run_arg(kind: str, tmp: Path, run: Path, patch: pytest.MonkeyPatch) -> tupl
         case "other-owner":  # the directory is the current user's; the effective uid is not
             other = os.geteuid() + 1
             patch.setattr(os, "geteuid", lambda: other)
-        case "root":  # R1C-01 (a): root with no uid named gets no pass of its own
-            assert run.stat().st_uid != 0, "this case needs a run directory root does not own"
+        case "root":  # root with no uid named gets no pass of its own
+            if run.stat().st_uid == 0:
+                pytest.skip("the suite runs as root: no run directory here is another user's")
             patch.setattr(os, "geteuid", lambda: 0)
         case "named-other":  # the caller names a uid that does not own the directory
             owner = str(run.stat().st_uid + 1)
@@ -368,9 +371,9 @@ def test_a_root_one_shot_seeds_a_run_dir_owned_by_the_uid_it_is_named(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """R1C-01 (a): the stack's one-shot runs as root and compose names the invoking user's uid, so a
-    root caller passes the gate for a directory that uid owns, and only then (the matrix above
-    refuses root with no uid named, and a named uid that does not own the directory)."""
+    """The stack's one-shot runs as root and compose names the invoking user's uid, so a root
+    caller passes the gate for a directory that uid owns, and only then (the matrix above refuses
+    root with no uid named, and a named uid that does not own the directory)."""
     owner = str(run_dir.stat().st_uid)
     monkeypatch.setattr(os, "geteuid", lambda: 0)
 
@@ -390,8 +393,9 @@ def test_secrets_writes_the_kek_and_the_lane_key_once_and_shows_neither(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """T2 and T3 for `secrets`: `kek` is exactly 32 bytes and `lane.key` exactly 64 hex digits, each
-    a new 0400 file made O_EXCL|O_NOFOLLOW in the run directory and nowhere else; neither value, in
-    any form, reaches an output or a log; a second run is refused and changes nothing."""
+    a new 0400 file made O_EXCL|O_NOFOLLOW in the run directory and nowhere else, two independent
+    draws that the api's own loaders accept; neither value, in any form, reaches an output or a
+    log; a second run is refused and changes nothing."""
     caplog.set_level(logging.DEBUG)
     created, real_open = [], os.open
 
@@ -419,6 +423,13 @@ def test_secrets_writes_the_kek_and_the_lane_key_once_and_shows_neither(
     kek, lane = kept["kek"], kept["lane.key"]
     shaped = len(kek) == 32 and re.fullmatch(rb"[0-9a-f]{64}", lane) is not None  # a boolean
     assert shaped
+    independent = bytes.fromhex(lane.decode()) != kek  # a boolean: one key never serves both
+    assert independent
+    loaded = PathKekSource(run_dir / "kek", 1, allow_fifo=False, env_name="demo").load()
+    read = read_key_file("CV_AUDIT_LANE_KEY_FILE", str(run_dir / "lane.key"))
+    same_kek = LoadedKek(bytearray(kek), 1, env_name="demo").kcv() == loaded.kcv()
+    accepted = same_kek and read == bytes.fromhex(lane.decode())  # a boolean: no key shown
+    assert accepted
     unchanged = {p.name: p.read_bytes() for p in run_dir.iterdir()} == kept  # a boolean
     assert unchanged
     for name in SECRET_FILES:

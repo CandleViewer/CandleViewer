@@ -6,13 +6,13 @@
 `scripts.seed_fixture_user.seed`, called once per user and never changed. Each password is made here
 (`pw-<user>`, mode 0400); the seeder stores its hash, enrols a confirmed TOTP method and writes the
 base32 secret (`totp-<user>`, a new 0600 file). Then `roster.json` (usernames and roles only, 0444)
-and, last, the marker `.seeded` (0444). `ACCOUNTS` (six registered accounts, each with its own UID
-and pack key id; E27-Q03, #892) is fixture data only: no command writes it yet. `secrets` makes the
-run's KEK (`kek`, 32 random bytes) and audit lane key (`lane.key`, 64 hex digits), each 0400, which
-the stack's api mounts as file secrets. `init`, the stack's one-shot (`fixture-init`), is `secrets`
-then `users`, both after the database check. Each file of this module's own is new, made
+and, last, the marker `.seeded` (0444). Each file of this module's own is new, made
 `O_CREAT|O_EXCL|O_NOFOLLOW` with its exact mode in the run directory: nothing is replaced, followed
-or written elsewhere.
+or written elsewhere. `ACCOUNTS` (six registered accounts, each with its own UID and pack key id;
+E27-Q03, #892) is fixture data only: no command writes it yet. `secrets` writes the run's KEK
+(`kek`, 32 random bytes) and audit lane key (`lane.key`, 64 hex digits), each 0400, which the
+stack's api mounts as file secrets; `init`, the stack's one-shot (`fixture-init`), is `secrets` then
+`users`, both after the database check.
 
 The gate, in this order, each refusal one fixed line (`account-fixture: refused: ...`), exit 2,
 never a value or a traceback:
@@ -61,8 +61,8 @@ from scripts.seed_fixture_user import seed
 
 COMMANDS: Final = ("users", "secrets", "init")
 EXIT_REFUSED: Final = 2
-#: The uid a caller names as the run directory's owner (R1C-01 (a)): the stack's one-shot runs as
-#: root, and compose passes the invoking user's uid here.
+#: The uid a caller names as the run directory's owner: the stack's one-shot runs as root, and
+#: compose passes the invoking user's uid here.
 RUN_UID_VARIABLE: Final = "CV_ACCTFIX_RUN_UID"
 
 INVALID_SETTINGS: Final = "invalid settings; nothing changed"
@@ -198,7 +198,7 @@ RunDir = NewType("RunDir", Path)
 
 def _owner_uid(named: str | None) -> int:
     """The uid the run directory must belong to: the one the caller names, else the effective
-    uid (R1C-01 (a)). There is no other way through: root gets no pass of its own."""
+    uid. There is no other way through: root gets no pass of its own."""
     if named is None:
         return os.geteuid()
     if _UID.fullmatch(named) is None:

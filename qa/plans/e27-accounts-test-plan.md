@@ -714,10 +714,11 @@ before E27-Q02 automates the affected cases.
 
 ## 11. Dry-run execution record
 
-**Status: pending, not executed.** The ticket asks for a dry run in which each scenario is loaded once
+**Status: partly executed:** the scenario load check ran on #2893's stack (the last row; its record
+is on #833); the cases are pending. The ticket asks for a dry run in which each scenario is loaded once
 against the running demo stack and confirmed to produce the state it claims, with the log committed
-beside this plan. It cannot start yet. E27-T03's verification pipeline has merged (#2854), but #836
-stays open, and the routes arrive with E27-T03 (#836), E27-T04 (#837) and E27-S01..S05
+beside this plan. The cases cannot start yet. E27-T03's verification pipeline has merged (#2854), but
+#836 stays open, and the routes arrive with E27-T03 (#836), E27-T04 (#837) and E27-S01..S05
 (#895–#899), which wait on the contract alignment (#2417); the capacity read model is E42-T01
 (#963). The scenarios arrive as data with the fixture-pack PR, and a running stack can load them
 only through #2893's stub transport. No result below is fabricated. Rows are appended as each

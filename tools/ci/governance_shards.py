@@ -64,6 +64,9 @@ WEIGHTS: dict[str, float] = {
     "scripts/tests/test_backlog_validate_check.py": 13.08,
     "scripts/tests/test_event_coverage.py": 6.67,
     "scripts/tests/test_pr_yml_path_filters.py": 6.42,
+    # #2893, 2026-11-01: 50.05 s by this recipe on a loaded host (1-minute load about 30; the lower
+    # of two runs), scaled by test_relayroom_scripts.py's 35.08 s against its 3.92 in the same run.
+    "infra/scripts/tests/test_account_fixture_stack.py": 5.59,
     "scripts/tests/test_pr_gate.py": 5.32,
     "scripts/tests/test_error_registry.py": 5.23,
     "scripts/tests/test_pr_yml_gates.py": 4.69,

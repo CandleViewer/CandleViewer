@@ -4,20 +4,25 @@
     python3 infra/scripts/account_fixture_stack.py up [--project P] [-f EXTRA]... [--port NAME=N]...
     python3 infra/scripts/account_fixture_stack.py restart-api --project P --default S [-f ...]
     python3 infra/scripts/account_fixture_stack.py drive --project P [-f ...] -- signin qa-owner-1
-    python3 infra/scripts/account_fixture_stack.py down --project P [-f ...]
+    python3 infra/scripts/account_fixture_stack.py down --project P
 
 One compose project, `cv-acctfix-<6 hex>` (never `cv-demo`, never another name), over the base, dev,
 account-fixture and real-backend files, then any lane-local file (`-f`, such as a private subnet for
 `cv-internal` on a host that runs another stack), with the run's env file. `up` checks the host
-first (the project name, the run root, free loopback ports, no container, network or volume of the
-project left over), then makes the run directory (`$XDG_RUNTIME_DIR/<project>`, else under
-`/dev/shm`; mode 0700, flat, on tmpfs) and its `stack.env` (0600, a new file): the Postgres password
-and DSNs, the pepper and three auth keys (each new per run), the two secret files' paths, the run
-directory, the invoking user's uid, the default scenario, free host ports and inert values for the
-stores that never start. Then, in order: Postgres and QuestDB, the schema step, `fixture-init` (the
-seed's `init`: the run's KEK, audit lane key and users, as root, into the run directory), the api.
-`down` removes the project's containers, network and volumes (`down -v --remove-orphans`, every
-profile active), unlinks the run directory, and reports what of the project is left (nothing).
+first (the project name, the run root, five distinct free loopback ports, no container, network or
+volume of the project left over), then makes the run directory (`$XDG_RUNTIME_DIR/<project>`, else
+under `/dev/shm`; mode 0700, flat, on tmpfs) and its `stack.env` (0600, a new file): the Postgres
+password and DSNs, the pepper and three auth keys (each new per run), the two secret files' paths,
+the run directory, the invoking user's uid, the default scenario, the host ports and inert values
+for the stores that never start. Then, in order: Postgres and QuestDB, the schema step,
+`fixture-init` (the seed's `init`: the run's KEK, audit lane key and users, as root, into the run
+directory), the api (the base file makes the schema step the api's dependency, so the api's start
+runs that step once more, which changes nothing on a migrated database).
+
+`down` goes by the project name alone (`docker compose -p <project> down -v --remove-orphans`, run
+from an empty directory): compose then reads no compose file and no env file, so `down` works with
+the run directory gone (a reboot), and running it again is how a failed `down` is retried. The run
+directory goes last, once the project's label lists nothing; until then `down` keeps it.
 
 It prints the project name, the steps, exit statuses and counts, never a value. Docker runs with
 `PATH`, `HOME` and `DOCKER_*` alone from the caller's environment, so no stray variable of the
@@ -65,6 +70,9 @@ DATABASE: Final = "acctfix_test"
 ENV_FILE: Final = "stack.env"
 DEFAULT_SCENARIO: Final = "compliant"
 EXIT_REFUSED: Final = 2
+FAILED: Final = "a file, socket or process call failed"
+#: How often `up` draws the free ports again while two of them coincide.
+PORT_DRAWS: Final = 8
 #: What compose demands on every command for the stores and alerts this stack never starts.
 INERT: Final = {
     "GF_SECURITY_ADMIN_PASSWORD": "unused",
@@ -73,19 +81,8 @@ INERT: Final = {
     "CV_ALERT_TICKET_WEBHOOK_URL": "http://127.0.0.1:1/unused",
     "CV_ALERT_DEADMAN_URL": "http://127.0.0.1:1/unused",
 }
-#: Every variable the four files require (`:?`), for a teardown whose env file is gone.
-REQUIRED: Final = (
-    "POSTGRES_PASSWORD",
-    "CV_PG_DSN",
-    "CV_AUTH_PEPPER",
-    "CV_AUTH_TOTP_KEY_HEX",
-    "CV_AUTH_RECOVERY_HMAC_KEY_HEX",
-    "CV_AUTH_CSRF_KEY_HEX",
-    "CV_KEK_FILE",
-    "CV_AUDIT_LANE_MAC_SOURCE",
-    "CV_ACCTFIX_RUN_DIR",
-    "CV_ACCTFIX_RUN_UID",
-)
+#: `down`'s compose command after `-p <project>`: no file and no env file, the name is enough.
+TEARDOWN: Final = ("down", "-v", "--remove-orphans")
 #: The caller's environment docker keeps: nothing else, so the env file alone sets the stack.
 _DOCKER_ENV: Final = re.compile(r"PATH|HOME|DOCKER_[A-Z_]+")
 _LABEL: Final = "label=com.docker.compose.project={}"
@@ -130,16 +127,24 @@ def is_free(port: int) -> bool:
 
 
 def ports(given: Sequence[str]) -> dict[str, str]:
-    """A free loopback port for each published service, or the lane's `NAME=N` for it."""
+    """A free loopback port for each published service, or the lane's `NAME=N` for it: five
+    distinct ports, the free ones drawn again while two coincide."""
     chosen: dict[str, str] = {}
     for item in given:
         name, _, number = item.partition("=")
-        if name not in PORT_NAMES or not number.isdigit() or not 0 < int(number) < 65536:
+        decimal = number.isascii() and number.isdecimal()  # `isdigit` also takes a superscript
+        if name not in PORT_NAMES or not decimal or not 0 < int(number) < 65536:
             raise Refused(f"--port takes NAME=N, NAME one of {', '.join(PORT_NAMES)}")
         if not is_free(int(number)):
             raise Refused(f"the port given for {name} is in use on 127.0.0.1")
-        chosen[name] = number
-    return {name: chosen.get(name) or str(free_port()) for name in PORT_NAMES}
+        chosen[name] = str(int(number))
+    if len(set(chosen.values())) != len(chosen):
+        raise Refused("each --port must name a port of its own")
+    for _ in range(PORT_DRAWS):
+        drawn = {name: chosen.get(name) or str(free_port()) for name in PORT_NAMES}
+        if len(set(drawn.values())) == len(PORT_NAMES):
+            return drawn
+    raise Refused("no five distinct free ports were found on 127.0.0.1: name them with --port")
 
 
 def stack_values(
@@ -188,8 +193,10 @@ def compose(project: str, env_file: Path, extra: Sequence[str]) -> list[str]:
     return [*argv, "--env-file", str(env_file)]
 
 
-def call(argv: Sequence[str], env: Mapping[str, str]) -> int:
-    done = subprocess.run(list(argv), env=dict(env), check=False)  # noqa: S603 - docker, argv built here
+def call(argv: Sequence[str], env: Mapping[str, str], cwd: str | None = None) -> int:
+    done = subprocess.run(  # noqa: S603 - docker, an argument list built here
+        list(argv), env=dict(env), cwd=cwd, check=False
+    )
     return done.returncode
 
 
@@ -218,10 +225,10 @@ def up(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
     run_dir = root / project
     if os.path.lexists(run_dir):
         raise Refused("the run directory already exists: take that run down first")
+    host_ports = ports(args.port)
     env = docker_env(environ)
     if any(leftovers(project, env).values()):
         raise Refused("the project has containers, networks or volumes left: take it down first")
-    host_ports = ports(args.port)
     os.mkdir(run_dir, 0o700)
     os.chmod(run_dir, 0o700)  # the umask never loosens or tightens it
     env_file = run_dir / ENV_FILE
@@ -269,27 +276,38 @@ def drive(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
 
 
 def down(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
-    """Everything of the project, by name, then the run directory; idempotent."""
+    """Everything of the project, by its name alone, then the run directory; idempotent."""
     project = checked_project(args.project)
     run_dir = run_root(environ) / project
     env = docker_env(environ)
     status = 0
-    if any(leftovers(project, env).values()) or os.path.lexists(run_dir / ENV_FILE):
-        with tempfile.TemporaryDirectory() as spare:
-            env_file = run_dir / ENV_FILE
-            if not os.path.lexists(env_file):  # gone (a reboot): inert values serve a teardown
-                env_file = Path(spare) / ENV_FILE
-                write_env(env_file, dict.fromkeys(REQUIRED, "unused") | INERT)
-            base = compose(project, env_file, args.file)
-            status = call([*base, "--profile", "*", "down", "-v", "--remove-orphans"], env)
-    if os.path.isdir(run_dir) and not os.path.islink(run_dir):
-        for entry in os.scandir(run_dir):  # flat: the owner unlinks root's files in it
-            os.unlink(entry.path)
-        os.rmdir(run_dir)
+    if any(leftovers(project, env).values()):
+        with tempfile.TemporaryDirectory() as empty:  # with `-p` alone compose reads no file
+            status = call(["docker", "compose", "-p", project, *TEARDOWN], env, cwd=empty)
     left = leftovers(project, env)
     counts = ", ".join(f"{len(names)} {kind}" for kind, names in left.items())
-    print(f"account-fixture-stack: down: {project}: {counts} left; run directory removed")
-    return 0 if status == 0 and not any(left.values()) else 1
+    if status != 0 or any(left.values()):
+        kept = "run directory kept" if os.path.lexists(run_dir) else "no run directory"
+        print(f"account-fixture-stack: down: {project}: {counts} left; {kept}: run down again")
+        return 1
+    print(f"account-fixture-stack: down: {project}: {counts} left; {remove_run_dir(run_dir)}")
+    return 0
+
+
+def remove_run_dir(run_dir: Path) -> str:
+    """Unlink the flat run directory `up` made (its owner unlinks root's files in it), and say
+    what happened; anything `up` never makes there is refused and left as it is."""
+    if not os.path.lexists(run_dir):
+        return "no run directory"
+    if os.path.islink(run_dir) or not os.path.isdir(run_dir):
+        raise Refused("the run directory is not the directory up made: check it by hand")
+    names = sorted(os.listdir(run_dir))  # listed whole first: nothing is unlinked mid-listing
+    if any(os.path.isdir(run_dir / name) and not os.path.islink(run_dir / name) for name in names):
+        raise Refused("the run directory holds a directory, which up never makes: check it by hand")
+    for name in names:
+        os.unlink(run_dir / name)
+    os.rmdir(run_dir)
+    return "run directory removed"
 
 
 def _env_file(project: str, environ: Mapping[str, str]) -> Path:
@@ -331,6 +349,11 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
         return handlers[args.command](args, environ)
     except Refused as refused:
         print(f"account-fixture-stack: refused: {refused}", file=sys.stderr)
+        return EXIT_REFUSED
+    except OSError as failure:  # its text may name a path: the class alone is shown
+        print(
+            f"account-fixture-stack: refused: {FAILED} ({type(failure).__name__})", file=sys.stderr
+        )
         return EXIT_REFUSED
 
 

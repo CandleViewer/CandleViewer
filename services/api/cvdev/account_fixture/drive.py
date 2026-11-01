@@ -4,18 +4,21 @@
     python -m cvdev.account_fixture.drive ... call USER METHOD PATH [--body-json JSON]
     python -m cvdev.account_fixture.drive ... scan PATH...
 
-`signin` signs a roster user in on the stack's api (`http://api:8000`, the compose service): the
-password from `pw-<user>`, then a TOTP code made from `totp-<user>` for a 30 s step this user has
-not used (the api refuses a replayed step), then `GET /me`. The session (a bearer, the CSRF token of
-`__Host-cv_csrf` and the last step used) goes to `<session-dir>/<user>.json`, mode 0600, and never
-to a terminal. `call` sends one request with that session: the bearer, the CSRF cookie and its
-`X-CSRF-Token` header and, on a write, a new `Idempotency-Key`. A `403 step_up_required` is answered
-transparently: the password and a code for an unused step go to `POST /auth/step-up` with the
-challenge's id, and the held request is sent again unchanged, its body and key included. It prints
-`HTTP <status> <problem code or ->` and the answer's body with every credential, token and code it
-knows masked, and any field named for one too. `scan` counts, per path, how often any value this
-run generated (the run directory's files, the env file's secrets, the sessions' tokens) appears in
-it, and prints counts, never a value.
+`signin` signs a roster user in on the stack's api, by its compose service name: the password
+from `pw-<user>`, then a TOTP code made from `totp-<user>` for a 30 s step this user has not used
+(the api refuses a replayed step, and a step sent is kept as used whatever the answer), then
+`GET /me`. The session (a bearer, the CSRF token of `__Host-cv_csrf` and the last step used) goes
+to `<session-dir>/<user>.json`, mode 0600, and never to a terminal. `call` sends one request for a
+roster user with that session: the bearer, the CSRF cookie and its `X-CSRF-Token` header and, on a
+write, a new `Idempotency-Key`. A `403 step_up_required` is answered transparently: the password
+and a code for an unused step go to `POST /auth/step-up` with the challenge's id, and the held
+request is sent again unchanged, its body and key included. It prints `HTTP <status> <problem code
+or ->` and the answer's body with every credential, token and code it knows masked, and any field
+named for one too (a part of its name, split at `_`, `-` and camelCase boundaries, is a
+credential's word: `access_token`, `recovery_codes`, `otpauth_uri`, `apiSecret`). `scan` counts,
+per path, how often any value this run generated (the run directory's files, the env file's
+secrets, the sessions' tokens) appears in it, and prints counts, never a value; it refuses a path
+longer than it reads.
 
 The gate comes first, as the seed's does, each refusal one fixed line (`account-fixture: refused:
 ...`) and exit 2: ADR-0036's structural gate (`cli.armed`), then the run directory (absolute, its
@@ -85,14 +88,17 @@ BAD_REQUEST: Final = "a request is a method (GET, POST, PUT, PATCH or DELETE) an
 BAD_BODY: Final = "--body-json must be one JSON object"
 SIGN_IN_FAILED: Final = "the sign-in did not complete"
 STEP_UP_FAILED: Final = "the step-up did not complete: the held request was not sent"
+SCAN_TOO_LONG: Final = f"a path to scan is over {MAX_SCAN_BYTES >> 20} MiB: scan it in parts"
 FAILED: Final = "the driver did not complete"
 INVALID_SETTINGS: Final = "invalid settings; nothing changed"
 
 _UID: Final = re.compile(r"[0-9]{1,10}")
 _PATH: Final = re.compile(r"/[A-Za-z0-9\-._~/%?=&:+,]{0,2047}")
-_SECRET_FIELD: Final = re.compile(
-    r"(?i)(?:.*_)?(?:totp|otp|token|secret|password|passcode|csrf)(?:_.*)?"
-)  # a name part, so `access_token` and `api_secret` match and `footprint` does not
+#: The words a field named for a credential holds as one part of its name (a plural too).
+_SECRET_WORDS: Final = frozenset(
+    {"totp", "otp", "otpauth", "token", "secret", "password", "passcode", "csrf", "recovery"}
+)
+_NAME_PART: Final = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])")  # `_`, `-`, camelCase
 _JWT: Final = re.compile(r"[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")
 MASK: Final = "***"
 
@@ -205,6 +211,7 @@ class Driver:
             raise Refused(f"{SIGN_IN_FAILED}: login HTTP {login.status} {_code(login)}")
         mfa = {"mfa_token": login.body.get("mfa_token"), "method": "totp"}
         verify = self.post("/auth/mfa/verify", {**mfa, "code": self.code(secret, session)}, {})
+        self.save(user, session)  # the step is spent whatever the answer: the next one waits
         tokens = verify.body.get("tokens")
         bearer = tokens.get("access_token") if isinstance(tokens, dict) else None
         csrf = verify.cookies.get(CSRF_COOKIE)
@@ -219,6 +226,8 @@ class Driver:
         return f"{user} signed in: HTTP {me.status} ({me.body.get('role', '-')})"
 
     def call(self, user: str, method: str, path: str, body: bytes | None) -> list[str]:
+        if user not in self.roster():  # before the user names a session file
+            raise Refused(NOT_A_USER)
         session = self.load(user)
         if not session.get("bearer"):
             raise Refused(NO_SESSION)
@@ -230,6 +239,7 @@ class Driver:
             challenge = {"password": password, "challenge_id": answer.body.get("challenge_id")}
             challenge["code"] = self.code(secret, session)
             up = self.post("/auth/step-up", challenge, _auth(session, write=True))
+            self.save(user, session)  # the step is spent whatever the answer
             if up.status != 200:
                 raise Refused(f"{STEP_UP_FAILED}: HTTP {up.status} {_code(up)}")
             tokens = up.body.get("tokens")
@@ -253,7 +263,7 @@ class Driver:
             if isinstance(node, list):
                 return [walk(item, name) for item in node]
             if isinstance(node, str) and (
-                _SECRET_FIELD.fullmatch(name) or node in self.known or _JWT.search(node)
+                _secret_named(name) or node in self.known or _JWT.search(node)
             ):
                 return MASK
             return node
@@ -269,7 +279,9 @@ class Driver:
         for path in paths:
             descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
             with os.fdopen(descriptor, "rb") as source:
-                content = source.read(MAX_SCAN_BYTES)
+                content = source.read(MAX_SCAN_BYTES + 1)
+            if len(content) > MAX_SCAN_BYTES:  # never a count for a part not read
+                raise Refused(SCAN_TOO_LONG)
             hits = sum(content.count(value) for value in values)
             total += hits
             lines.append(f"scan: {path}: {hits} hits")
@@ -297,6 +309,13 @@ class Driver:
                 session = self.load(entry.removesuffix(".json"))
                 values |= {str(session.get(k, "")).encode() for k in ("bearer", "csrf")}
         return {value for value in values if len(value) >= 8}
+
+
+def _secret_named(name: str) -> bool:
+    """A field named for a credential: a part of its name, plural or not, is a credential's word
+    (so `footprint`, `status` and `code` are not)."""
+    parts = _NAME_PART.findall(name)
+    return any(part.lower().removesuffix("s") in _SECRET_WORDS for part in parts)
 
 
 def _json(headers: Mapping[str, str]) -> dict[str, str]:

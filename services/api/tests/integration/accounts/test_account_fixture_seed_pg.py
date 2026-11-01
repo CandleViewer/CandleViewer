@@ -116,10 +116,10 @@ def _settings(tmp_path: Path, dsn: str, lane_key: str) -> Settings:
     )
 
 
-async def _seed(settings: Settings, run_dir: Path) -> int:
+async def _seed(settings: Settings, run_dir: Path, command: str = "users") -> int:
     """`main` with the real seeder and probe; its own event loop runs in a worker thread."""
     return await asyncio.to_thread(
-        seed.main, ["users", "--run-dir", str(run_dir)], settings=settings
+        seed.main, [command, "--run-dir", str(run_dir)], settings=settings
     )
 
 
@@ -205,7 +205,23 @@ async def test_the_probe_runs_in_a_read_only_transaction_on_postgres(
         await seed.probe_database(database("probe_test"))
 
 
+async def test_init_writes_the_keys_and_seeds_the_roster_on_postgres(
+    database: Callable[[str], str], tmp_path: Path, lane_key: str
+) -> None:
+    """The stack's one-shot command on the real database: the KEK (32 bytes) and the lane key
+    (64 hex digits), then the roster, then the marker."""
+    run_dir = _run_dir(tmp_path, "run")
+
+    assert await _seed(_settings(tmp_path, database("init_test"), lane_key), run_dir, "init") == 0
+
+    kek, lane = (run_dir / "kek").read_bytes(), (run_dir / "lane.key").read_bytes()
+    shaped = len(kek) == 32 and re.fullmatch(rb"[0-9a-f]{64}", lane) is not None  # a boolean
+    assert shaped and (run_dir / ".seeded").exists() and (run_dir / "pw-qa-owner-1").exists()
+
+
+@pytest.mark.parametrize("command", ["users", "init"])
 async def test_seed_refuses_a_populated_database_on_postgres(
+    command: str,
     database: Callable[[str], str],
     tmp_path: Path,
     lane_key: str,
@@ -216,13 +232,15 @@ async def test_seed_refuses_a_populated_database_on_postgres(
     capsys.readouterr()
     second = _run_dir(tmp_path, "second")
 
-    assert await _seed(settings, second) == 2
+    assert await _seed(settings, second, command) == 2
 
     assert capsys.readouterr().err == f"account-fixture: refused: {seed.NOT_EMPTY}\n"
-    assert not list(second.iterdir())
+    assert not list(second.iterdir())  # `init` writes no key before the database is read
 
 
+@pytest.mark.parametrize("command", ["users", "init"])
 async def test_seed_refuses_a_database_that_is_not_a_throwaway_and_writes_nothing(
+    command: str,
     database: Callable[[str], str],
     tmp_path: Path,
     lane_key: str,
@@ -231,7 +249,7 @@ async def test_seed_refuses_a_database_that_is_not_a_throwaway_and_writes_nothin
     dsn = database("kept")
     run_dir = _run_dir(tmp_path, "run")
 
-    assert await _seed(_settings(tmp_path, dsn, lane_key), run_dir) == 2
+    assert await _seed(_settings(tmp_path, dsn, lane_key), run_dir, command) == 2
 
     assert capsys.readouterr().err == f"account-fixture: refused: {seed.NOT_THROWAWAY}\n"
     assert not list(run_dir.iterdir())
@@ -239,7 +257,7 @@ async def test_seed_refuses_a_database_that_is_not_a_throwaway_and_writes_nothin
         assert check.execute("SELECT count(*) FROM users").fetchone() == (0,)
 
 
-#: R1S-06: the credential a failing run's DSN carries, which no output may show.
+#: The credential a failing run's DSN carries, which no output may show.
 _CREDENTIAL = "it-dsn-credential-6d2"
 #: The line the seed's catch-all prints for an exception the gate does not name: its class alone.
 _NAMED_CLASS = re.compile(rf"account-fixture: refused: {re.escape(seed.FAILED)} \(([A-Za-z]+)\)\n")
@@ -267,7 +285,7 @@ async def test_a_real_failing_run_shows_no_credential_or_sql_parameter(
     capsys: pytest.CaptureFixture[str],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """R1S-06, one real failing run each way, its stdout, stderr and logs captured: a database
+    """One real failing run each way, its stdout, stderr and logs captured: a database
     nothing answers at, a database not named `*_test`, and a seeder statement that the server
     refuses, whose exception text holds the statement and its parameters. Each run is exit 2 and
     one fixed line, naming the exception's class where one is raised; the DSN's credential, the
