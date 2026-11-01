@@ -46,6 +46,7 @@ from typing import Final, Literal, Protocol
 import structlog
 
 from candleviewer.observability import spawn
+from candleviewer.observability.context import thread_future
 from candleviewer.observability.health_probes import SystemEvent, SystemEventWriter
 from candleviewer.recorder.metrics import (
     recorder_anchor_skipped_total,
@@ -814,7 +815,7 @@ class StreamWriter:
     ) -> tuple[_Joined, Exception | None, int]:
         """One WAL append, under the lane's `wal_lock`: the join, the append's failure, and the
         rows it wrote (-1 when its thread was abandoned: the outcome is unknown)."""
-        append = asyncio.ensure_future(asyncio.to_thread(lane.wal.append, records))
+        append = thread_future(lane.wal.append, records)
         # A cancelled caller (stop()) still accounts for every record: the thread appends
         # regardless, so its count decides what was written and what is dropped (#5333).
         joined = await _join_thread(append, self._cfg.wal_join_timeout_s)
@@ -850,9 +851,7 @@ class StreamWriter:
         )
         raise cancelled
 
-    async def _wal_call[**P, T](
-        self, lane: _Lane, fn: Callable[P, T], *args: P.args, **kwargs: P.kwargs
-    ) -> T:
+    async def _wal_call[*Ts, T](self, lane: _Lane, fn: Callable[[*Ts], T], *args: *Ts) -> T:
         """Run one WAL step in a thread. A cancelled caller waits for it, so the WAL and its
         budget do not change behind the writer's back, then the cancellation goes on (#5333).
         The wait is bounded by `wal_join_timeout_s`: past it the step's thread is abandoned and
@@ -860,7 +859,7 @@ class StreamWriter:
         beside it; each raises `RecorderWalAbandonedError` instead."""
         if lane.wal_abandoned:
             raise RecorderWalAbandonedError(f"a {lane.stream} WAL thread was abandoned")
-        fut = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+        fut = thread_future(fn, *args)
         joined = await _join_thread(fut, self._cfg.wal_join_timeout_s)
         if joined.unresolved is not None:
             lane.wal_abandoned = True
@@ -1001,7 +1000,7 @@ class StreamWriter:
         inside = False  # a merge thread still runs inside `it`: never close it under that thread
         try:
             while True:
-                take = asyncio.ensure_future(asyncio.to_thread(_take, it, self._cfg.flush_rows))
+                take = thread_future(_take, it, self._cfg.flush_rows)
                 # Closing `it` while the thread is inside it raises ValueError, which the lane
                 # loop would catch and run on, so a stop() would wait for it forever.
                 joined = await _join_thread(take, self._cfg.wal_join_timeout_s)
