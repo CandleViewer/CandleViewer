@@ -159,6 +159,8 @@ export interface RowContext {
   readonly stoppedAtMs: ReadonlyMap<string, number>;
   /** Gaps in the last 24 h by symbol, from `getDataCoverage`. */
   readonly gaps: ReadonlyMap<string, number>;
+  /** `accelerate_retention` holds: unpinned rows read their halved retention (D02 §2, §3 `paused`). */
+  readonly accelerated?: boolean;
 }
 
 /** The ISO text of `ms`, or null: none given, or past `Date`'s range, where `toISOString` throws (C-5309-13). */
@@ -216,6 +218,11 @@ export function rowData(row: RecorderRow, ctx: RowContext): RecorderStatusRowDat
     budgetShare: cap === null || cap <= 0 || row.diskBytes === null ? null : row.diskBytes / cap,
     diskLevel: ctx.diskLevel,
     retentionDays: row.retentionDays,
+    // The reaper halves an unpinned row's retention while accelerated (`21-database-schema.md`).
+    retentionAcceleratedDays:
+      ctx.accelerated === true && !row.pinned && row.retentionDays !== null
+        ? row.retentionDays / 2
+        : null,
     pinned: row.pinned,
     stale: ctx.stale,
     lastEventAt: iso(row.lastEventAtMs),

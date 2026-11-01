@@ -219,6 +219,7 @@ export function RecorderScreen({
     estimated: new Set([...estimates.keys()].filter((symbol) => !measured.has(symbol))),
     stoppedAtMs: data.stoppedAtMs,
     gaps: gapCounts,
+    accelerated: facts.accelerateRetention,
   };
   const listed = new Map((data.list.data ?? []).map((row) => [row.symbol, row]));
 
@@ -464,6 +465,7 @@ export function RecorderScreen({
             frame={frame}
             status={data.status.data}
             gaps={data.gaps}
+            onCustomRetention={openRetention}
           />
         )}
         <GapTable gaps={data.gaps} nowMs={nowMs} hostRef={gapsLanding.hostRef} />

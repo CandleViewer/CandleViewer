@@ -5,10 +5,18 @@
  * refused by a fresh challenge opens one more cycle, and a further one is the call's ordinary refusal.
  * Esc, the expiry or the third failure drop it ("Not sent"); a renewal re-runs the user's action as a
  * new request. No elevation is kept here: the server holds it (C-12.4).
+ *
+ * The guard every dialog that hosts it gets (#485/#486 BQ-7; S-5353-01): while its write is on the wire,
+ * `cancel` keeps the dialog's view (H22), so the answer is the open dialog's. Whatever closes the dialog, and
+ * each opening, calls `clear()`, which ends the host's opening: a challenge that answers a write started before
+ * it is dropped, never parked for a later dialog nor re-sent, and "Not sent" is said once at the point of action
+ * (the page's polite voice).
  */
 import { useCallback, useRef, useState, type JSX } from "react";
 import type { generated } from "@candleviewer/protocol";
 import { StepUpChallengeGate } from "../stepUp/StepUpChallengeGate";
+import { STEP_UP_NOT_SENT } from "../stepUp/StepUpDialog";
+import { sayPolitely } from "./pageAnnouncer";
 import { readResult, type ApiResult, type StepUpHold } from "./recorderApi";
 
 type Op = keyof generated.rest.operations;
@@ -32,8 +40,15 @@ export interface StepUpHost {
   readonly start: (action: () => Promise<void>) => Promise<void>;
   /** SCR-006 while a challenge is open, then its notice ("Not sent"); null otherwise. */
   readonly gate: JSX.Element | null;
-  /** Drops the notice (a new action, or the host closing). */
+  /**
+   * Drops the challenge and its notice, and ends the host's opening: a new action, the host's dialog closing (by
+   * any path) or opening again. A challenge answering a write started before it is dropped and said "Not sent".
+   */
   readonly clear: () => void;
+  /** A write is on the wire (its first send, or a renewal's): the host's dialog keeps its view (H22). */
+  readonly inFlight: boolean;
+  /** The dialog's Cancel, ✕, scrim or Esc: nothing while a write is on the wire; else `clear()`, then `close`. */
+  readonly cancel: (close: () => void) => void;
 }
 
 /** A further challenge after the one re-send: the refusal the screen shows, never a third cycle. */
@@ -43,18 +58,38 @@ const refusedAgain = (res: ApiResult<unknown>): ApiResult<unknown> => ({
   route: { kind: "t4", code: res.code, field: null, status: res.status },
 });
 
-export function useStepUpHost(readBack: () => unknown, outcomeWhere: string): StepUpHost {
+export function useStepUpHost(
+  readBack: () => unknown,
+  outcomeWhere: string,
+  say: (text: string) => void = sayPolitely,
+): StepUpHost {
   const [pending, setPending] = useState<Pending | null>(null);
   const [priorFailures, setPriorFailures] = useState(0);
+  const [inFlight, setInFlight] = useState(false);
   const last = useRef<(() => Promise<void>) | null>(null);
+  /** The host's opening, ended by `clear()`; a write belongs to the opening its action started in. */
+  const opening = useRef(0);
+  const startedIn = useRef(0);
+  /** Writes on the wire (the grid's host may send several rows' at once). */
+  const flights = useRef(0);
+  const voice = useRef(say);
+  voice.current = say;
+
+  /** Its opening ended while it was on the wire: the challenge is dropped, said once, never parked or re-sent. */
+  const orphaned = useCallback((res: ApiResult<unknown>): boolean => {
+    if (res.stepUp === null || startedIn.current === opening.current) return false;
+    voice.current(STEP_UP_NOT_SENT);
+    return true;
+  }, []);
 
   const open = useCallback(
     (op: Op, res: ApiResult<unknown>, onAnswer: Answer, retried: boolean) => {
       if (res.stepUp === null) onAnswer(res);
+      else if (orphaned(res)) return;
       else if (retried) onAnswer(refusedAgain(res));
       else setPending({ op, hold: res.stepUp, onAnswer, retried: false });
     },
-    [],
+    [orphaned],
   );
 
   const route = useCallback(
@@ -63,16 +98,32 @@ export function useStepUpHost(readBack: () => unknown, outcomeWhere: string): St
     [open],
   );
 
-  const start = useCallback(async (action: () => Promise<void>): Promise<void> => {
-    last.current = action;
-    setPending(null);
-    setPriorFailures(0);
-    await action();
+  const run = useCallback(async (action: () => Promise<void>): Promise<void> => {
+    flights.current += 1;
+    setInFlight(true);
+    try {
+      await action();
+    } finally {
+      flights.current -= 1;
+      if (flights.current === 0) setInFlight(false);
+    }
   }, []);
+
+  const start = useCallback(
+    async (action: () => Promise<void>): Promise<void> => {
+      last.current = action;
+      startedIn.current = opening.current;
+      setPending(null);
+      setPriorFailures(0);
+      await run(action);
+    },
+    [run],
+  );
 
   async function resent(at: Pending, response: Response): Promise<void> {
     setPending(null);
     const res = await readResult<unknown>(at.op, response, at.hold.held);
+    if (orphaned(res)) return;
     if (res.stepUp !== null && !at.retried) setPending({ ...at, hold: res.stepUp, retried: true });
     else at.onAnswer(res.stepUp === null ? res : refusedAgain(res));
   }
@@ -80,10 +131,24 @@ export function useStepUpHost(readBack: () => unknown, outcomeWhere: string): St
   function renew(failures: number): void {
     setPending(null);
     setPriorFailures(failures);
-    void last.current?.();
+    const action = last.current;
+    if (action !== null) void run(action);
   }
 
-  const clear = useCallback((): void => setPending(null), []);
+  const clear = useCallback((): void => {
+    opening.current += 1;
+    setPending(null);
+  }, []);
+
+  const cancel = useCallback(
+    (close: () => void): void => {
+      if (flights.current > 0) return; // H22: the answer is the open dialog's
+      clear();
+      close();
+    },
+    [clear],
+  );
+
   const gate =
     pending === null ? null : (
       <StepUpChallengeGate
@@ -97,5 +162,5 @@ export function useStepUpHost(readBack: () => unknown, outcomeWhere: string): St
         priorFailures={priorFailures}
       />
     );
-  return { route, start, gate, clear };
+  return { route, start, gate, clear, inFlight, cancel };
 }

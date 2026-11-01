@@ -26,8 +26,7 @@ import {
   type TableRowContext,
 } from "@candleviewer/ui";
 import { reportRecorder } from "./analytics";
-import { rowHealth, type RowActionKind } from "./detail";
-import { DETAIL_REFUSED } from "./detailCopy";
+import { CUSTOM, changeRefusal, rowHealth, type RowActionKind } from "./detail";
 import {
   DEFAULT_DEPTH,
   DEFAULT_RETENTION_DAYS,
@@ -52,6 +51,8 @@ import {
   type ApiResult,
 } from "./recorderApi";
 import { refusalText } from "./refusal";
+import { detailHeading } from "./RecorderChrome";
+import { RetentionConfirmDialog, type RetentionChange } from "./RetentionConfirmDialog";
 import { RowDetailDrawer } from "./RowDetailDrawer";
 import { StopDialog } from "./StopDialog";
 import { useStepUpHost } from "./stepUpHost";
@@ -164,6 +165,8 @@ export interface RecorderGridProps {
   readonly status?: RecordingStatus | null;
   /** The gaps of the last 24 h: the detail lists its symbol's. */
   readonly gaps?: readonly Gap[];
+  /** SCR-141, once registered: the detail's retention select offers "Custom…" (BQ-11). */
+  readonly onCustomRetention?: (() => void) | undefined;
 }
 
 /** A re-add keeps the row's own settings, so it changes no kept data's retention (`22`: no step-up). */
@@ -175,14 +178,6 @@ function againBody(row: RecorderRow, listed: RecordedSymbol | undefined): AddRec
     pinned: row.pinned,
     retention_days: row.pinned ? null : (row.retentionDays ?? DEFAULT_RETENTION_DAYS),
   };
-}
-
-/** A refused change (pin, retention, depth): the generic T4 with its code, or the app's words unanswered. */
-function changeRefusal(route: NonNullable<ApiResult<unknown>["route"]>): string {
-  if (route.kind === "t4" && route.status === 0) return PAGE_TEXT.unreachable;
-  const code =
-    route.kind === "t4" ? route.code : route.kind === "deck" ? route.code : "step_up_required";
-  return code === null ? DETAIL_REFUSED.change : `${DETAIL_REFUSED.change} (${code})`;
 }
 
 const notListed = (status: number): ApiResult<null> => ({
@@ -216,6 +211,7 @@ export function RecorderGrid({
   frame = null,
   status = null,
   gaps = [],
+  onCustomRetention,
 }: RecorderGridProps): JSX.Element {
   const order = useRef<GridOrder | null>(null);
   order.current = nextOrder(order.current, rows, sort);
@@ -290,6 +286,8 @@ export function RecorderGrid({
       ? null
       : (bySymbol.get(detail) ?? (detailRow.current?.symbol === detail ? detailRow.current : null));
   const [detailRefusal, setDetailRefusal] = useState<string | null>(null);
+  /** Keep forever or a retention change awaiting its confirmation (D02 §6.4). */
+  const [retentionFor, setRetentionFor] = useState<RetentionChange | null>(null);
   const [depth, setDepth] = useState<{ readonly symbol: string; readonly depth: Depth } | null>(
     null,
   );
@@ -318,6 +316,14 @@ export function RecorderGrid({
       },
     }),
     [],
+  );
+  const confirmFallback = useMemo(
+    () => ({
+      get current(): HTMLElement | null {
+        return detailHeading() ?? gridFallback.current;
+      },
+    }),
+    [gridFallback],
   );
   // A detail with no row to show (an `openRowDetail` for a symbol not listed) closes: it never opens later by itself
   // when that symbol arrives (C-5347-08). A row that leaves while its detail is open stays shown (its controls still
@@ -390,6 +396,26 @@ export function RecorderGrid({
     });
   }
 
+  /** Keep forever asked for its other value: its confirmation (on, or off back to the default retention). */
+  function togglePin(symbol: string, pinned: boolean): void {
+    const row = bySymbol.get(symbol) ?? detailRow.current;
+    if (row === undefined || row === null) return;
+    setRetentionFor(
+      pinned ? { kind: "pin", row } : { kind: "unpin", row, days: DEFAULT_RETENTION_DAYS },
+    );
+  }
+
+  /** The detail's Retention: "Custom…" opens SCR-141; a pinned row's choice unpins to it; else the change. */
+  function chooseRetention(row: RecorderRow, value: string): void {
+    if (value === CUSTOM) {
+      onCustomRetention?.();
+      return;
+    }
+    const days = Number(value);
+    if (!Number.isInteger(days) || days <= 0) return;
+    setRetentionFor(row.pinned ? { kind: "unpin", row, days } : { kind: "retention", row, days });
+  }
+
   /** The detail's action: Stop opens its confirmation over the drawer; Keep recording and Record again add. */
   function detailAction(row: RecorderRow, kind: RowActionKind): void {
     setDetailRefusal(null);
@@ -404,6 +430,7 @@ export function RecorderGrid({
     },
     onKeepRecording: () => void addAgain(symbol, grid.refuse),
     onRecordAgain: () => void addAgain(symbol, grid.refuse),
+    onTogglePin: (pinned: boolean) => togglePin(symbol, pinned),
     // D02 §12: a Why? opening is a review of what auto-record added.
     onWhyOpen: () => reportRecorder({ name: "recorder.auto_review_opened", source: "why" }),
     ...(onOpenDetail === undefined ? {} : { onOpenDetail: () => onOpenDetail(symbol) }),
@@ -486,6 +513,13 @@ export function RecorderGrid({
           if (detailRow.current !== null) detailAction(detailRow.current, kind);
         }}
         actionRefusal={detailRefusal}
+        onTogglePin={(pinned) => {
+          if (detail !== null) togglePin(detail, pinned);
+        }}
+        onRetention={(value) => {
+          if (detailRow.current !== null) chooseRetention(detailRow.current, value);
+        }}
+        customRetention={onCustomRetention !== undefined}
         onDepth={(next) => {
           if (detailRow.current !== null) void changeDepth(detailRow.current, next);
         }}
@@ -493,6 +527,14 @@ export function RecorderGrid({
         depthRefusal={
           depthRefusal !== null && depthRefusal.symbol === detail ? depthRefusal.text : null
         }
+      />
+      <RetentionConfirmDialog
+        change={retentionFor}
+        idOf={idOf}
+        onChanged={(row) => onWritten?.({ kind: "updated", row })}
+        onClose={() => setRetentionFor(null)}
+        readBack={readBack}
+        fallbackFocusRef={confirmFallback}
       />
       <StopDialog
         row={stopRow}
