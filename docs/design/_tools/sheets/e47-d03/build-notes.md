@@ -42,6 +42,15 @@ live rebind steps (the validator refuses primitive colour binds), done live as t
 by them. Against the sheets that were rendered, the rebuilt raw sheets differ only in the folded values and in their
 notes (the sources line's md5 pins and the live-check lines that quote the root size).
 
+## Boards-lens fold
+
+Boards 05, 09 and 10 were redrawn from the kit after the boards lens: `swatch()` and `accent_picker()` take the frame's
+`Scale`, so board 05's 150 % frame draws the four accent names at 150 % like every other label (V-5); board 05's
+200 % viewport outline is a `dashed · …` rectangle (the post-step dashes it), so its bottom edge no longer strikes
+through the heading under the fold; board 09 drops the ratio under default heatmap ask 2, §4.2's stale pair that
+D03-A11 removes (`gen_09.STALE`, checked against the spec row); board 10's CVD stops 2 and 4 print "no anchored ratio
+(§3.3 anchors stops 1 and 5)" where a Python `None` leaked before. The live check needed no further fix.
+
 ## Layout
 
 | File               | What                                                                                    |

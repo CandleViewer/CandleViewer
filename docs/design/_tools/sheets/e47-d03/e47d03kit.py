@@ -55,7 +55,7 @@ SPEC = REPO / "docs/design/E47/E47-D03.md"
 HANDOFF = REPO / "docs/design/E47/E47-D03-handoff.md"
 # re-pinned at the boards commit: §0's Status cells and As built, the DoD and the version line, the hand-off's §A row,
 # §G heading and §H line were extended in place, so every L<n> / §G cite on the ten boards reads the same text
-SPEC_MD5 = {SPEC.name: "a79ee8972d1636d41c19d3287d9e80a7", HANDOFF.name: "9115b70824595e8c72db3d3111ad43f5"}
+SPEC_MD5 = {SPEC.name: "dcf7a14b10681e0a2208665bc2ce4098", HANDOFF.name: "9115b70824595e8c72db3d3111ad43f5"}
 
 REV = "r1"
 PITCH_X, PITCH_Y = 6000, 3200  # grid: x = ((NN-1) mod 5) * 6000, y = floor((NN-1)/5) * 3200
@@ -895,10 +895,10 @@ def theme_values() -> list[str]:
     return vals
 
 
-def swatch(preset: str, theme: str, *, chosen: bool, focused: bool = False) -> Node:
+def swatch(preset: str, theme: str, *, chosen: bool, focused: bool = False, sc: Scale = S1) -> Node:
     """One preset: a 24 x 24 swatch (2.5.8) filled with the preset's colour, its boundary at border.control; the chosen
     one carries the check glyph in color.text.inverse (§3.6) and a 2 px color.border.selected ring (never a ring
-    alone); then its visible name."""
+    alone); then its visible name, at the frame's type scale (V-5: every role)."""
     tok, exact = swatch_token(theme, preset)
     if not exact:
         fallback("swatch")
@@ -913,15 +913,15 @@ def swatch(preset: str, theme: str, *, chosen: bool, focused: bool = False) -> N
                                      "strokeWidth": THICK, "strokeAlign": "inner"}, w=32, h=32)
     if focused:
         sw = ring(sw)
-    return hbox(f"preset · {preset}", [sw, text("name", preset, BODY, TEXT_1)], {"gap": INSET_SM},
+    return hbox(f"preset · {preset}", [sw, text("name", preset, sc(BODY), TEXT_1)], {"gap": INSET_SM},
                 note=f'role="radio" aria-checked="{str(chosen).lower()}" named "{preset}"')
 
 
-def accent_picker(theme: str, chosen: str, *, focused: str | None = None) -> Node:
+def accent_picker(theme: str, chosen: str, *, focused: str | None = None, sc: Scale = S1) -> Node:
     opts = w_options("W-9")
     if tuple(opts) != PRESETS:
         raise SystemExit(f"e47d03kit: W-9 {opts} != §8.2 presets {PRESETS}")
-    return hbox("CMP-031 accent picker", [swatch(p, theme, chosen=p == chosen, focused=p == focused) for p in opts],
+    return hbox("CMP-031 accent picker", [swatch(p, theme, chosen=p == chosen, focused=p == focused, sc=sc) for p in opts],
                 {"gap": INSET_LG}, note=f'radiogroup "{w_label("W-9")}"; closed preset set, no free colour entry')
 
 
@@ -1049,7 +1049,7 @@ def scr116_controls(ch: Choice, sc: Scale = S1, w_: int = CONTROLS_W) -> list[No
         form_section("Theme", [segmented("CMP-062 theme", theme_values(), THEME_WORD[th], th, focused=ch.focus == "Theme",
                                          typo=sc(BODY_STRONG), seg_h=20 if sc.f == 1.0 else 28),
                                toggle(w("W-22"), ch.match_system, th, sc(BODY))], sc, w_),
-        form_section(w_label("W-9"), [accent_picker(th, ch.preset, focused=ch.preset if ch.focus == "Accent" else None),
+        form_section(w_label("W-9"), [accent_picker(th, ch.preset, focused=ch.preset if ch.focus == "Accent" else None, sc=sc),
                                       accent_warning(ch.preset, sc) if ch.warning else None], sc, w_),
         form_section("Chart palette", [radio(pal_opts[0], ch.palette == "default", th, sc(BODY)),
                                        radio(pal_opts[1], ch.palette == "cvd-safe", th, sc(BODY))], sc, w_),

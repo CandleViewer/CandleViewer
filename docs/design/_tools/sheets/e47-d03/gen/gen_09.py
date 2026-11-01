@@ -12,7 +12,16 @@ from inkboards import k  # noqa: E402
 NN = 9
 
 
+# §4.2's stale pairs (D03-A11 removes them): a true measurement, but not a §3.2 row, so not drawn
+STALE = {("dark", "color.heatmap.ask.2")}
+NO_ANCHOR = "no anchored ratio (§3.3 anchors stops 1 and 5)"
+
+
 def ratio(theme: str, tok: str) -> str | None:
+    if (theme, tok) in STALE:
+        if "remove (D03-A11)" not in k.SPEC_LINES[k.L(f"{theme}:{tok} on color.surface.canvas") - 1]:
+            raise SystemExit(f"board 09: {theme}:{tok} is no longer §4.2's stale pair")
+        return None
     try:
         return f"{k.cr(theme, tok, k.CANVAS)}:1"
     except KeyError:
@@ -33,8 +42,9 @@ def hm_group(theme: str, palette: str, side: str) -> tuple[dict, list[str]]:
             if bound != tok:
                 d = next(n for n, x in k.DIFF.items() if x["token"] == tok and x["set"] == "semantic-light")
                 sub = d
-                lines.append(f"{side} stop {i}: binds {bound} (today's holder of {k.DIFF[d]['new']}, {d}); "
-                             f"{r} on the canvas" + (" (§3.4)" if ratio("light+", tok) else f" (= §3.3 light {bound})"))
+                on = (f"{r} on the canvas" + (" (§3.4)" if ratio("light+", tok) else f" (= §3.3 light {bound})")
+                      if r else NO_ANCHOR)
+                lines.append(f"{side} stop {i}: binds {bound} (today's holder of {k.DIFF[d]['new']}, {d}); {on}")
         chips.append(k.ink_chip(f"{side} {i}", bound, r, sub=sub))
     name = "CVD heatmap " + side if palette == "cvd-safe" else "heatmap " + side
     key = (name + (", retuned" if plus else ""), "light+" if plus else theme)

@@ -60,7 +60,7 @@ Board 07 of 10 (§0 L72: §7.4: the CVD-safe palette on the same surfaces under 
 
 ## Sources (1)
 
-- spec E47-D03.md md5 a79ee897 and hand-off E47-D03-handoff.md md5 9115b708 (§0 L72; hand-off §G L131)
+- spec E47-D03.md md5 dcf7a14b and hand-off E47-D03-handoff.md md5 9115b708 (§0 L72; hand-off §G L131)
 
 ## Tokens (42)
 

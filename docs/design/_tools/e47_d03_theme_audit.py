@@ -328,7 +328,7 @@ def col(header: list[str], name: str) -> int:
 
 # ---------------------------------------------------------------------------- anchors
 
-ANCHOR_RE = re.compile(r"(?<![0-9A-Za-z.,#])([#0-9A-Za-z.,]+)<!--=([A-Z]+):([a-z0-9.\-/+]+)-->")
+ANCHOR_RE = re.compile(r"(?<![0-9A-Za-z.,#])([#0-9A-Za-z.,]+)<!--=([A-Z]+):([a-z0-9.\-/+]+)-->", re.DOTALL)
 PLACEHOLDER_RE = re.compile(r"\{\{([A-Z]+):([a-z0-9.\-/+]+)\}\}")
 
 

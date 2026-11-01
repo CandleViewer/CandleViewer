@@ -64,7 +64,7 @@ Board 01 of 10 (§0 L66: V-1: every control of §8.1, the accent presets with na
 
 ## Sources (1)
 
-- spec E47-D03.md md5 a79ee897 and hand-off E47-D03-handoff.md md5 9115b708 (§0 L66; hand-off §G L125)
+- spec E47-D03.md md5 dcf7a14b and hand-off E47-D03-handoff.md md5 9115b708 (§0 L66; hand-off §G L125)
 
 ## Tokens (47)
 

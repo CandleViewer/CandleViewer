@@ -29,8 +29,10 @@ def zoom200(fid: str) -> tuple[dict, float]:
     for i, top in enumerate((0, 800), 1):
         kids = [dict(page, x=0, y=-top)]
         if top == 0:
-            kids.append(k.rect("viewport 640 x 400 CSS", 640, 400, None,
+            kids.append(k.rect("dashed · viewport 640 x 400 CSS", 640, 400, None,
                                {"stroke": k.RING, "strokeWidth": k.FOCUS_W, "strokeAlign": "inner"}, x=0, y=0))
+            k.live("zoom-200 strip 1: set the 'dashed · viewport 640 x 400 CSS' outline to dashed style (post-step), "
+                   "so its bottom edge does not strike through the heading under the 400 px fold")
         strips.append(k.box(f"strip {i} · CSS y {top}-{top + 800}", kids, {"fill": k.APP, "clip": True}, w=640, h=800,
                             x=640 * (i - 1), y=0))
     fr = k.box(k.frame_name(fid), strips, {"fill": k.APP, "clip": True}, w=k.FRAME_W, h=k.FRAME_H,

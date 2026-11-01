@@ -10,8 +10,8 @@ Board 09 of 10 (§0 L74: §3.2, §7.3: heatmap, profile, candle and delta ink wi
 
 ## Validator and size
 
-- `09-data-ink-ramps.json: 0 errors, 0 warnings, 8 sections, 33501 bytes` (exit 0)
-- 8 sections, 33501 bytes
+- `09-data-ink-ramps.json: 0 errors, 0 warnings, 8 sections, 33387 bytes` (exit 0)
+- 8 sections, 33387 bytes
 
 ## Live checks (4)
 
@@ -36,7 +36,7 @@ Board 09 of 10 (§0 L74: §3.2, §7.3: heatmap, profile, candle and delta ink wi
 
 ## Sources (1)
 
-- spec E47-D03.md md5 a79ee897 and hand-off E47-D03-handoff.md md5 9115b708 (§0 L74; hand-off §G L133)
+- spec E47-D03.md md5 dcf7a14b and hand-off E47-D03-handoff.md md5 9115b708 (§0 L74; hand-off §G L133)
 
 ## Tokens (53)
 
