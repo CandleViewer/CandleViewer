@@ -8782,6 +8782,7 @@ export interface components {
        *     | `Rules`               | `rules`     |
        *     | `Admin`               | `admin`     |
        *     | `Settings`            | `settings`  |
+       *     | `Watchlist`           | `watchlist` |
        *
        *     Seven contexts had no scope among the original six, so each has its own (`auth`,
        *     `workspace`, `ticket`, `replay`, `rules`, `admin`, `settings`) rather than a fold into
@@ -8791,7 +8792,9 @@ export interface components {
        *     scope would make each such pair a `conflict` under `createHotkeyProfile`'s rule. The
        *     order ticket is `ticket`, not `orders`: `05-accessibility-standard.md` §3.4 makes the
        *     Order Ticket and Positions & Orders separate regions. `tape` and `orders` have no
-       *     client context yet. **Open-ended for readers:** clients must tolerate values they do
+       *     client context yet. The `Watchlist` context (SCR-100's panel, E08-D07 §6.2; E08-S08)
+       *     has its own scope as well: its `Del` and `Alt+↑/↓` are the chart's and the rules
+       *     editor's keys too. **Open-ended for readers:** clients must tolerate values they do
        *     not know, so adding a scope is an additive change (C-6.3). Writers must send a listed
        *     value, the one this table gives the action.
        * @enum {string}
@@ -8809,7 +8812,8 @@ export interface components {
         | "replay"
         | "rules"
         | "admin"
-        | "settings";
+        | "settings"
+        | "watchlist";
     };
     HotkeyBindingAuditInput: {
       acknowledged_unsafe: boolean;
