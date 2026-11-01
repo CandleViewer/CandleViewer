@@ -23,7 +23,10 @@ import {
   parsePolicy,
 } from "../src/features/confirm-policy/store";
 import { resetShellState, setShellState } from "../src/shell/bootstrap/store";
-import type { Me } from "../src/shell/bootstrap/store";
+import type { Me, Settings } from "../src/shell/bootstrap/store";
+
+const prefs = (confirmFlatten: boolean): Settings =>
+  ({ trading: { confirm_flatten: confirmFlatten } }) as Settings;
 
 const HOLDS: readonly (number | undefined)[] = [
   undefined,
@@ -283,11 +286,7 @@ describe("policy store and useConfirmPolicy", () => {
         off();
       };
     });
-    const { result, rerender, unmount } = renderHook(
-      ({ floor }: { floor: boolean }) =>
-        useConfirmPolicy("flatten", "u1", { store, serverFloor: { confirmFlatten: floor } }),
-      { initialProps: { floor: false } },
-    );
+    const { result, unmount } = renderHook(() => useConfirmPolicy("flatten", "u1", { store }));
     expect(live).toBe(1);
     // "unknown" (before /me) fails closed to the Live rules.
     expect(result.current).toEqual(R("dialog", 0, true));
@@ -297,14 +296,52 @@ describe("policy store and useConfirmPolicy", () => {
     expect(result.current).toEqual(R("hold", 500, false));
     act(() => setShellState({ environment: "live" }));
     expect(result.current).toEqual(R("hold", 800, true));
-    act(() => setShellState({ environment: "demo" }));
-    rerender({ floor: true });
+    act(() => setShellState({ environment: "demo", preferences: prefs(true) }));
     expect(result.current.mode).toBe("dialog");
     expect(live).toBe(1);
     unmount();
     expect(subscribe).toHaveBeenCalled();
     expect(live).toBe(0);
     resetShellState();
+  });
+
+  describe("the server's confirm_flatten comes from the shell store (C-2.12)", () => {
+    afterEach(() => resetShellState());
+    const heldStore = () => {
+      const store = createConfirmPolicyStore(undefined, "u1");
+      store.set("flatten", { mode: "hold", holdMs: 500 });
+      return store;
+    };
+
+    it("raises flatten to a dialog when the caller passes nothing", () => {
+      resetShellState();
+      setShellState({ environment: "demo", preferences: prefs(true) });
+      const { result } = renderHook(() =>
+        useConfirmPolicy("flatten", "u1", { store: heldStore() }),
+      );
+      expect(result.current).toEqual(R("dialog", 0, false));
+    });
+
+    it("no caller option can lower it", () => {
+      resetShellState();
+      setShellState({ environment: "demo", preferences: prefs(true) });
+      const lowering = { store: heldStore(), serverFloor: { confirmFlatten: false } };
+      const { result } = renderHook(() => useConfirmPolicy("flatten", "u1", lowering));
+      expect(result.current.mode).toBe("dialog");
+    });
+
+    it("an absent preference adds no floor and fails closed per resolve.ts", () => {
+      resetShellState();
+      setShellState({ environment: "demo", preferences: null });
+      const { result, unmount } = renderHook(() =>
+        useConfirmPolicy("flatten", "u1", { store: createConfirmPolicyStore(undefined, "u1") }),
+      );
+      expect(result.current).toEqual(resolveConfirm("flatten", "demo", {}));
+      expect(result.current.mode).toBe("dialog");
+      act(() => setShellState({ preferences: {} as Settings }));
+      expect(result.current.mode).toBe("dialog");
+      unmount();
+    });
   });
 
   it("clamps holdMs at persistence", () => {
