@@ -160,13 +160,28 @@ def test_the_page_rule_evaluator_fires_only_on_the_degraded_value() -> None:
         _fires({**rule, "expr": f"max by (foo) ({GAUGE}) == 1"}, (1.0, {BY: "demo"}))
 
 
+def _tail(out: str | bytes | None) -> str:
+    """The last 4000 characters of a child's output; a timeout hands it back as raw bytes."""
+    text = out.decode(errors="replace") if isinstance(out, bytes) else (out or "")
+    return text[-4000:]
+
+
 def _probe(mode: str) -> list[str]:
-    """The probe's verdict: the type names of objects holding its marker, from a fresh process."""
-    done = subprocess.run(  # noqa: S603 - this interpreter and constant arguments only
-        [sys.executable, "-m", PROBE, mode],
-        cwd=API_ROOT, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S, check=False,
-    )  # fmt: skip
-    assert done.returncode == 0, f"the memory probe exited {done.returncode}: {done.stderr[-2000:]}"
+    """The probe's verdict: the type names of objects holding its marker, from a fresh process.
+    A child still alive at `PROBE_TIMEOUT_S` fails the test with what it wrote: the threads alive
+    when it returned and, from its `faulthandler` timer, every thread's stack."""
+    try:
+        done = subprocess.run(  # noqa: S603 - this interpreter and constant arguments only
+            [sys.executable, "-m", PROBE, mode],
+            cwd=API_ROOT, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S, check=False,
+        )  # fmt: skip
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"the memory probe `{mode}` did not exit within {PROBE_TIMEOUT_S} s\n"
+            f"stdout: {_tail(exc.stdout)}\nstderr: {_tail(exc.stderr)}",
+            pytrace=False,
+        )
+    assert done.returncode == 0, f"the memory probe exited {done.returncode}: {_tail(done.stderr)}"
     return list(json.loads(done.stdout.splitlines()[-1]))
 
 

@@ -174,7 +174,8 @@ fails loudly (a stack-less run is an error, never a pass). The in-process module
    clock, and `bybit_5xx` answers 503 at every scenario time. Moving the stub's exchange time ahead
    is also the `clock_skew` fault itself (C4), so advancing it inside another case would add a
    second fault. The harness therefore carries no clock helper; every wait is bounded and polls an
-   observable. Recorded per the security read of record 6556583904, item 5.
+   observable. Recorded per the security read of record 6556583904, item 5. **RULED (orchestrator,
+   2026-11-01, #5325 delta look 6557442583): deviation accepted.**
 
 ## 5. Not asserted (and why)
 

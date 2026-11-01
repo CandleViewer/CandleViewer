@@ -10,15 +10,22 @@ Modes: `control`, the positive control (a marker held in a dict the collector do
 be found); `signing`, the criterion (after a signing call returns, no live object holds the
 marker). The marker is a fixed prefix and random hex made here at run time, never a real key, and
 it never leaves this process: only type names are printed.
+
+Exit hygiene (#5325 delta look 6557442583): the probe shuts its loop's default executor down
+within `EXECUTOR_GRACE_S`, writes the names of the threads still alive to stderr before it returns,
+and arms `faulthandler` to write every thread's stack to stderr at `STACK_DUMP_S`, before the
+parent's `PROBE_TIMEOUT_S` kill, so a child that does not exit says where it waits.
 """
 
 from __future__ import annotations
 
 import asyncio
+import faulthandler
 import gc
 import json
 import os
 import sys
+import threading
 from typing import Any
 
 from candleviewer.secrets import KEY_ID_SLOT
@@ -29,6 +36,11 @@ from tests.unit.credentials_m2._vectors import ACCOUNT, KEK_V1, SNAPSHOT
 
 #: Fixture-only marker: a fixed prefix and random hex made per run, so no copy sits in the source.
 MARK_PREFIX = "e27q03-marker-"
+#: Seconds the default executor gets to join its workers once the service has stopped.
+EXECUTOR_GRACE_S = 10.0
+#: Seconds after start when `faulthandler` writes every thread's stack to stderr (no exit): well
+#: inside the parent's 60 s `PROBE_TIMEOUT_S`, so the parent reads the stacks before it kills.
+STACK_DUMP_S = 45.0
 
 
 def _marked() -> tuple[str, Secret[str]]:
@@ -97,9 +109,19 @@ async def signing() -> list[str]:
         return holders(needle)
     finally:
         await svc.stop(0)
+        # `asyncio.run` would also join these workers, with no bound of ours: here a stuck one fails
+        # the probe with a reason instead of keeping the process alive.
+        async with asyncio.timeout(EXECUTOR_GRACE_S):
+            await asyncio.get_running_loop().shutdown_default_executor()
+
+
+def threads_alive() -> list[str]:
+    """Name and daemon flag of every thread the `threading` module still knows of."""
+    return [f"{t.name} daemon={t.daemon}" for t in threading.enumerate()]
 
 
 def main(argv: list[str]) -> int:
+    faulthandler.dump_traceback_later(STACK_DUMP_S, exit=False)
     if argv == ["control"]:
         found = control()
     elif argv == ["signing"]:
@@ -107,7 +129,8 @@ def main(argv: list[str]) -> int:
     else:
         print("usage: _e27_memory_probe control|signing", file=sys.stderr)
         return 2
-    print(json.dumps(found))
+    print("threads alive at return: " + json.dumps(threads_alive()), file=sys.stderr, flush=True)
+    print(json.dumps(found), flush=True)
     return 0
 
 
