@@ -8125,9 +8125,12 @@ paths:
         - `qty_below_minimum`: the resolved size of a partial close is below the instrument's
           `min_order_qty`, zero included (`errors[].limit` the minimum);
         - `dust_remainder`: a partial close would leave a remainder above zero but below the
-          instrument's `min_order_qty` (`errors[].remaining` the remainder, `errors[].limit` the
-          minimum). A client offers the full close in its place: `pct: "100"` under a new
-          `Idempotency-Key`.
+          smallest size that can itself be closed (`errors[].remaining` the remainder,
+          `errors[].limit` that size): the instrument's `min_order_qty`, or SR-E22-03's
+          `MIN_SIZE_FLOOR` where that is larger (the size worth `min_notional` at the symbol's
+          reference price, ceiled to `qty_step`), which holds until E29-K01 (#843) confirms
+          whether the exchange exempts a reduce-only order from its minimum notional. A client
+          offers the full close in its place: `pct: "100"` under a new `Idempotency-Key`.
         The last two also carry `errors[].symbol` and `errors[].resolved`, the size the close
         resolved to. A close of the whole size meets neither. Each refusal is recorded
         (`position.closed`, `denied`) before it is answered. A close, as every order the server

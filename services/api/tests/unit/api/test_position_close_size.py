@@ -8,14 +8,17 @@ RBAC and IDOR cases are `test_position_close_route.py`'s, re-run with these. No 
 
 from __future__ import annotations
 
+import ast
 import re
 import uuid
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
 from prometheus_client import generate_latest
 
+import candleviewer
 from candleviewer.api.position_close import CLOSE_PATH, partial_result, size_detail
 from candleviewer.oms.errors import (
     FieldError,
@@ -125,6 +128,43 @@ async def test_scenario_rounding_leaves_dust_422_with_the_remainder_nothing_sent
     }]  # fmt: skip
     assert closes(world) == [("denied", "validation_failed")] and world.submitted() == []
     assert counted(world) == {"dust_remainder": 1.0}
+
+
+async def test_close_position_bq5_a_remainder_under_the_floor_is_dust_until_e29_k01() -> None:
+    """BQ-5 as ruled: SR-E22-03's `MIN_SIZE_FLOOR`, read per symbol, holds the dust check until
+    E29-K01 confirms the venue fact: 75 % of 0.200 leaves 0.050, above the minimum of 0.001 but
+    under a floor of 0.060, so it is refused with that floor as its limit, nothing sent."""
+    world = World(floor=lambda symbol: Decimal("0.060") if symbol == "BTCUSDT" else None)
+    answer = await close(world, {"order_type": "market", "pct": "75"})
+    assert (answer.status_code, answer.json()["code"]) == (422, "validation_failed")
+    [error] = answer.json()["errors"]
+    assert (error["rule"], error["limit"], error["resolved"], error["remaining"]) == (
+        "dust_remainder",
+        "0.060",
+        "0.150",
+        "0.050",
+    )
+    assert world.submitted() == [] and counted(world) == {"dust_remainder": 1.0}
+
+
+async def test_close_position_a_symbol_the_floor_does_not_list_keeps_the_minimum_alone() -> None:
+    world = World(floor=lambda symbol: None)
+    assert (await close(world, {"order_type": "market", "pct": "75"})).status_code == 202
+    assert world.submitted()[0].sizing.qty == Decimal("0.150")
+
+
+def test_create_app_hands_the_close_route_the_apps_own_sr_e22_03_floor() -> None:
+    """BQ-5: the close route's dust floor is the app's SR-E22-03 helper, the one the trades
+    topic and `/market/trades` read, never a second copy of the rule."""
+    source = (Path(candleviewer.__file__).parent / "app.py").read_text(encoding="utf-8")
+    calls = [
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None)
+        == "make_position_close_router"
+    ]  # fmt: skip
+    [call] = calls
+    [floor] = [kw.value for kw in call.keywords if kw.arg == "min_size_floor"]
+    assert ast.unparse(floor) == "functools.partial(_catalogue_min_size_floor, ctx)"
 
 
 async def test_close_position_a_size_under_the_minimum_is_422_qty_below_minimum() -> None:

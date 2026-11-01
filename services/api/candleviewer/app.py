@@ -2816,6 +2816,8 @@ def create_app(
             metrics=metrics_facade,
             auth=ctx.auth,
             protective=protective_writes,
+            # E29-S03 BQ-5: step 13's dust floor, SR-E22-03's own, until E29-K01's venue fact
+            min_size_floor=functools.partial(_catalogue_min_size_floor, ctx),
         )
     )
     app.include_router(

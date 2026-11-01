@@ -722,6 +722,29 @@ def test_resolve_close_refuses_a_partial_close_leaving_dust_or_under_the_minimum
     assert refused.value.detail == detail
 
 
+def test_resolve_close_bq5_a_remainder_under_the_floor_is_dust_above_the_minimum() -> None:
+    """BQ-5 as ruled: until E29-K01 confirms the venue fact, a remainder under SR-E22-03's
+    `MIN_SIZE_FLOOR` is dust even above `min_order_qty`, named with that floor as its limit; at the
+    floor it passes, a floor under the minimum changes nothing, and the whole size still goes."""
+    whole, three_quarters = row(size=Decimal("0.200")), pct("75")
+    with pytest.raises(OrderInvalid) as refused:
+        resolve_close(whole, three_quarters, lot("0.001"), floor=Decimal("0.060"))
+    [dust] = refused.value.errors
+    assert (dust.rule, dust.limit, dust.resolved, dust.remaining) == (
+        "dust_remainder",
+        Decimal("0.060"),
+        Decimal("0.150"),
+        Decimal("0.050"),
+    )
+    assert resolve_close(whole, three_quarters, lot("0.001"), floor=Decimal("0.050")).qty == (
+        Decimal("0.150")
+    )
+    assert resolve_close(
+        whole, three_quarters, lot("0.001"), floor=Decimal("0.0005")
+    ).remaining == (Decimal("0.050"))
+    assert resolve_close(whole, pct("100"), lot("0.001"), floor=Decimal("1")).full is True
+
+
 def test_resolve_close_needs_a_percent_or_a_quantity() -> None:
     with pytest.raises(ValueError, match="percent or a quantity"):
         resolve_close(row(), CloseTerms("market"), lot("0.001"))
@@ -732,28 +755,34 @@ def test_resolve_close_needs_a_percent_or_a_quantity() -> None:
     exponent=st.integers(min_value=-6, max_value=0),
     minimum_lots=st.integers(min_value=1, max_value=100),
     percent=st.decimals(min_value=Decimal("0.01"), max_value=Decimal(100), places=2),
+    floor_lots=st.one_of(st.none(), st.integers(min_value=0, max_value=200)),
 )
-@example(lots=250, exponent=-3, minimum_lots=1, percent=Decimal(50))
-@example(lots=15, exponent=-2, minimum_lots=10, percent=Decimal(50))
+@example(lots=250, exponent=-3, minimum_lots=1, percent=Decimal(50), floor_lots=None)
+@example(lots=15, exponent=-2, minimum_lots=10, percent=Decimal(50), floor_lots=None)
+@example(lots=200, exponent=-3, minimum_lots=1, percent=Decimal(75), floor_lots=60)
 @settings(max_examples=200, deadline=None, derandomize=True)
 def test_property_resolve_close_on_the_grid_within_the_size_never_leaving_dust(
-    lots: int, exponent: int, minimum_lots: int, percent: Decimal
+    lots: int, exponent: int, minimum_lots: int, percent: Decimal, floor_lots: int | None
 ) -> None:
-    """For any size, lot step, minimum and percent: a close `resolve_close` admits is on the lot
-    grid, above zero, never above the size or what was asked, and leaves no remainder in
-    (0, min_order_qty); one it refuses is a partial close, for those two rules alone."""
+    """For any size, lot step, minimum, percent and dust floor: a close `resolve_close` admits is
+    on the lot grid, above zero, never above the size or what was asked, and leaves no remainder
+    in (0, the larger of min_order_qty and the floor); one it refuses is a partial close, for
+    those two rules alone."""
     step = Decimal(1).scaleb(exponent)
     size, minimum = lots * step, minimum_lots * step
+    floor = None if floor_lots is None else floor_lots * step
     listed = instrument(qty_step=step, min_order_qty=minimum)
+    terms = CloseTerms("market", pct=percent)
     try:
-        resolved = resolve_close(row(size=size), CloseTerms("market", pct=percent), listed)
+        resolved = resolve_close(row(size=size), terms, listed, floor=floor)
     except OrderInvalid as refused:
         assert percent != 100
         assert {e.rule for e in refused.errors} <= {"dust_remainder", "qty_below_minimum"}
         return
+    least = minimum if floor is None else max(minimum, floor)
     assert resolved.qty % step == 0 and 0 < resolved.qty <= size
     assert resolved.qty <= size * percent / 100
-    assert not 0 < resolved.remaining < minimum
+    assert not 0 < resolved.remaining < least
     assert resolved.qty + resolved.remaining == size
     assert resolved.full is (percent == 100)
 
