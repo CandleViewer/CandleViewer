@@ -1,0 +1,5 @@
+/* A11Y-F-0001: the submit stays focusable while busy or locked out, so it must look unavailable. */
+.cv-login button[aria-disabled="true"] {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}

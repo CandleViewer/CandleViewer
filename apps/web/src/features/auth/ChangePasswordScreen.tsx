@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
+import { useFocusOnView } from "../app-shell/useFocusOnView";
 import { changePassword } from "./authApi";
 
 const MIN = 12;
@@ -30,6 +31,7 @@ export function ChangePasswordScreen(): JSX.Element {
   const confRef = useRef<HTMLInputElement>(null);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
+  const heading = useFocusOnView(done ? "done" : "form");
 
   const longEnough = next.length >= MIN;
   const matches = next !== "" && next === confirm;
@@ -86,7 +88,7 @@ export function ChangePasswordScreen(): JSX.Element {
   if (done) {
     return (
       <main>
-        <h1>Password changed</h1>
+        <h1 ref={heading}>Password changed</h1>
         <a href="/login">Continue to sign in</a>
       </main>
     );
@@ -94,7 +96,7 @@ export function ChangePasswordScreen(): JSX.Element {
   const type = reveal ? "text" : "password";
   return (
     <main>
-      <h1>Choose a new password</h1>
+      <h1 ref={heading}>Choose a new password</h1>
       <p>You must change your password before continuing.</p>
       <form onSubmit={(e) => void onSubmit(e)} noValidate>
         <div ref={summary} tabIndex={-1} role="alert" id="cp-error">

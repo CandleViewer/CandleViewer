@@ -12578,13 +12578,16 @@
         "heuristic": false
       },
       "owningTicket": "E47-S05 #1319",
-      "status": "open",
+      "status": "in-progress",
       "title": "DP-001: Sign-in disables the focused fields and button while busy; focus drops to body, and stays there on 429 and mfa_required",
       "observed": "Both fields and the submit button are disabled while focused (fields_disabled=2, aria-busy=true), so focus drops to <body>. On 401/503 the error summary takes focus; on 429 (rate-limited) and on mfa_required focus stays on <body>.",
       "expected": "Focus stays on (or returns to) a meaningful element: keep the submit control focusable (aria-disabled instead of disabled, with the submit handler ignoring activation while a request is pending or the 429 lockout is active, so no duplicate POSTs) or move focus to the status/summary on every outcome.",
       "priority": "P1",
       "pattern": "A11Y-P-02",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
+        "pending merge: E47-S05 #1319 slice 1"
+      ]
     },
     {
       "id": "A11Y-F-0002",
@@ -12624,14 +12627,17 @@
         "heuristic": true
       },
       "owningTicket": "#5196",
-      "status": "open",
+      "status": "fixed",
       "title": "DP-003 (advisory, D-10: not a 4.1.2 failure): Show-password toggle flips its name and aria-pressed together ('Hide password, pressed')",
       "observed": "Before: name 'Show password', aria-pressed=false. After: name 'Hide password', aria-pressed=true. Announced as 'Hide password, toggle button, pressed', which reads as a contradiction (is the password hidden or shown?).",
       "expected": "A toggle keeps one name and flips aria-pressed (CMP-201 states: reveal 'aria-pressed=\"true\", the name unchanged'), e.g. 'Show password' pressed/not pressed. Adjudication: D-10: name, role and value are programmatically determinable, so 4.1.2 holds; kept as a Minor (advisory) finding against 4.1.2 (the double announcement contradicts itself), routed to the component's owner as a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-03",
       "alsoOn": ["SCR-004"],
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
+        "fixed-in: 9684b740138f8ec163884fb2b6644834e12782a8 (PR #5214, closes #5196)"
+      ]
     },
     {
       "id": "A11Y-F-0004",
@@ -12671,14 +12677,17 @@
         "heuristic": false
       },
       "owningTicket": "E47-S05 #1319",
-      "status": "open",
+      "status": "fixed",
       "title": "DP-005: Each invite-wizard step change leaves focus on body; step 4 (codes shown once) is entered silently",
       "observed": "Every step change (1->2, 2->3, 3->4) replaces the main content and leaves focus on <body>; no live region announces the new step. Step 4 ('You are set up', recovery codes shown once) is entered silently.",
-      "expected": "Focus moves to the new step's h1 (tabindex=-1) on each step change, so 'Step 3 of 4' and the one-time recovery-codes warning are read.",
+      "expected": "On each step change focus moves to the new step's first control, or to the heading when the invite turns invalid, so 'Step 3 of 4' and the one-time recovery-codes warning are read.",
       "priority": "P1",
       "pattern": "A11Y-P-02",
       "alsoOn": ["SCR-017"],
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
+        "fixed-in: 1406c273bf25f3a11476a3b704f82c9847284c72 (PR #5260, DF-35 phase-change focus); regression test \"(A11Y-F-0005)\" in apps/web/test/features/invites.test.tsx (E47-S05 #1319)"
+      ]
     },
     {
       "id": "A11Y-F-0006",
@@ -12695,13 +12704,16 @@
         "heuristic": false
       },
       "owningTicket": "#5196",
-      "status": "open",
+      "status": "fixed",
       "title": "DP-006 (4.1.2, with 1.3.1; re-classed from 3.3.1 by D-09): Password-change error messages are not programmatically tied to their field (no aria-invalid / aria-describedby)",
       "observed": "Errors appear in one role=alert div above the form. No field ever gets aria-invalid or an aria-describedby to the error, and focus stays in the last field typed. A server refusal of the current password shows 'That password was not accepted.', which does not say which of the three fields is wrong.",
       "expected": "4.1.2 / 1.3.1: the field in error carries aria-invalid=true and an aria-describedby to its message, so the association the visual layout implies is programmatic; focus moves to the first invalid field. Advisory: the server refusal names the current password ('Current password is incorrect'). Adjudication: D-09: 3.3.1 passes (the error is identified and described in text in an alert region); the finding is re-classed under 4.1.2 / 1.3.1 (no programmatic association), still Level A, kept; a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-04",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
+        "fixed-in: 9684b740138f8ec163884fb2b6644834e12782a8 (PR #5214, closes #5196)"
+      ]
     },
     {
       "id": "A11Y-F-0007",
@@ -12718,13 +12730,16 @@
         "heuristic": false
       },
       "owningTicket": "E47-S05 #1319",
-      "status": "open",
+      "status": "in-progress",
       "title": "DP-007 (2.4.3, with 4.1.3 secondary; D-08): 'Password changed' replaces the form with focus on body and nothing announced",
       "observed": "The form is replaced by h1 'Password changed' and a link; focus is on <body> and nothing is announced. The second rater reproduced it (R2-F04): a live-region MutationObserver saw no write announcing the outcome (4.1.3).",
       "expected": "Focus moves to the 'Password changed' heading (or a status announces it). Adjudication: D-08: one finding, primary SC 2.4.3 with 4.1.3 as the secondary SC (one defect, one row). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-02",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
+        "pending merge: E47-S05 #1319 slice 1"
+      ]
     },
     {
       "id": "A11Y-F-0008",
@@ -12787,12 +12802,15 @@
         "heuristic": false
       },
       "owningTicket": "#5196",
-      "status": "open",
+      "status": "fixed",
       "title": "DP-010: Step-up dialog closes at the challenge expiry with no warning and no way to continue",
       "observed": "At challenge_expires_at the dialog closes with no prior warning and no way to extend or renew; typed input is discarded, focus jumps to 'Create invitation' and only a polite 'Not sent' status is inserted. The production window is the server's (5 min in the e2e stub).",
       "expected": "2.2.1: warn at least 20 s before the time limit and offer a simple way to continue. A remedy may only re-issue a fresh challenge on request; it never extends the old one or softens the factor (BQ-10): (a) a re-issue is a new server-issued challenge_id with the same factors; the step-up failure count (the session's failures_remaining), the read-only downgrade after the third failure and the auth.step_up_required audit continue across a re-issue, which never resets the count; (b) at expiry the typed password and code are discarded, never retained or replayed into the new challenge; only the held, non-secret action state survives; the pre-expiry warning renders only the remaining time of the server's challenge_expires_at. The TTL and the failure count never change. Note: Whether the 'essential' exception covers a security challenge window is for the second rater / security lens; no exception is claimed here (Level A cannot carry a nomination). Adjudication: filed in #5196 (filing go, decision 2a; owner the auth surfaces, E09). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
+        "fixed-in: 9684b740138f8ec163884fb2b6644834e12782a8 (PR #5214, closes #5196)"
+      ]
     },
     {
       "id": "A11Y-F-0011",
@@ -12809,13 +12827,16 @@
         "heuristic": false
       },
       "owningTicket": "#5196",
-      "status": "open",
+      "status": "fixed",
       "title": "DP-011: Step-up Confirm stays disabled with no text saying why; no format hint on the code field",
       "observed": "Enter does nothing; 'Confirm' stays disabled with no text saying why. The code field's label is 'Authenticator code' with no format instruction (six digits) and no description; no alert or status is written.",
       "expected": "The required format is stated ('6-digit code from your authenticator app') and an invalid entry is described in text when the user tries to submit. Note: The typed-confirmation mismatch (case-sensitive target) behaves the same way (silent disabled Confirm). Per BQ-10 that is a note for S08 #1322, not a finding, and no remedy may relax it. Also touches SC 3.3.2. Adjudication: filed in #5196 (filing go, decision 2a; owner the auth surfaces, E09). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-04",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
+        "fixed-in: 9684b740138f8ec163884fb2b6644834e12782a8 (PR #5214, closes #5196)"
+      ]
     },
     {
       "id": "A11Y-F-0012",
@@ -12832,13 +12853,16 @@
         "heuristic": false
       },
       "owningTicket": "#5196",
-      "status": "open",
+      "status": "fixed",
       "title": "DP-012: Third failed step-up closes the dialog with only 'Not sent'; the error and its consequence are not described",
       "observed": "Failures 1 and 2: 'Incorrect code.' alert, code field aria-invalid, focus to Password (good). Failure 3: the dialog closes at once, focus moves to 'Create invitation', and the only text is a polite 'Not sent' status. The input error and its consequence (challenge dropped; per the catalogue a 5-minute read-only downgrade) are not described.",
       "expected": "The third error is described in text before or as the dialog closes ('Incorrect code. Too many attempts: the invitation was not sent. ...'), announced assertively. Adjudication: filed in #5196 (filing go, decision 2a; owner the auth surfaces, E09). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-04",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
+        "fixed-in: 9684b740138f8ec163884fb2b6644834e12782a8 (PR #5214, closes #5196)"
+      ]
     },
     {
       "id": "A11Y-F-0013",
@@ -12855,13 +12879,16 @@
         "heuristic": false
       },
       "owningTicket": "E47-S05 #1319",
-      "status": "open",
+      "status": "in-progress",
       "title": "DP-013: A scrim click moves focus out of the step-up modal to the page behind it",
       "observed": "The click moves focus to <main> behind the aria-modal dialog (outside it). Tab brings focus back into the dialog. SessionLockDialog has a focusin guard for this; StepUpDialog does not.",
       "expected": "Focus stays inside the modal dialog (focusin guard or inert background), as SCR-005 does.",
       "priority": "P1",
       "pattern": "A11Y-P-01",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#4-deep-passes"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#4-deep-passes",
+        "pending merge: E47-S05 #1319 slice 1"
+      ]
     },
     {
       "id": "A11Y-F-0014",
@@ -13106,14 +13133,17 @@
         "heuristic": false
       },
       "owningTicket": "#5196",
-      "status": "open",
+      "status": "fixed",
       "title": "D-01 / R2-F09: document.title is the product name on every route; no route sets a descriptive title",
       "observed": "document.title is 'CandleViewer' on every sampled route; the title never describes the page's topic or purpose. No code in apps/web/src writes document.title, so every route is affected; this row lists the routed page screens the second rater observed (component and overlay screens were coded n/a, their title being the host route's).",
       "expected": "2.4.2: each route sets a unique, descriptive title (page, then product). Adjudication: D-01: upheld as one Level A pattern finding (A11Y-P-07, page titles), owner the shell / routing (E10-S01 #304 as the open build ticket); a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-07",
       "alsoOn": ["SCR-123", "SCR-004", "SCR-003", "SCR-017", "SCR-155", "SCR-159"],
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication",
+        "fixed-in: aec583dcc862b25de149d52ef2191b86ef613971 (PR #5213, closes #5196)"
+      ]
     },
     {
       "id": "A11Y-F-0026",
@@ -13130,12 +13160,15 @@
         "heuristic": false
       },
       "owningTicket": "#5196",
-      "status": "open",
+      "status": "fixed",
       "title": "D-03 / R2-F01: the shortcuts dialog renders below the fold, focus stays on body and Escape does not close it",
       "observed": "The role=dialog 'Keyboard shortcuts' (aria-modal=false) renders position:static after the whole shell at y=828 on a 1280x800 viewport, below the fold and not scrolled into view; document.activeElement stays BODY; Tab walks 15 shell stops before 'Customise' / 'Close'; Escape does not close it (Ctrl+/ toggles). The overlay is also unstyled and off-screen for sighted users.",
       "expected": "2.4.3: on open, focus moves into the dialog (CMP-094); Escape closes it and focus returns to the trigger. Adjudication: D-03: new Level A finding; owner the keymap cheatsheet (E10-S02's lane); a row in #5196 (filing go, decision 2a). #5160 changed SCR-013 after the audited sha: this row describes the audited sha and is re-checked first. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication",
+        "fixed-in: 9684b740138f8ec163884fb2b6644834e12782a8 (PR #5214, closes #5196)"
+      ]
     },
     {
       "id": "A11Y-F-0027",
@@ -13152,13 +13185,16 @@
         "heuristic": false
       },
       "owningTicket": "#5196",
-      "status": "open",
+      "status": "fixed",
       "title": "D-04 / R2-F02: after Finish or Escape the guided tour removes its dialog and focus falls to body",
       "observed": "The dialog is removed and document.activeElement is BODY; focus is not returned to 'Take the tour' or the checklist.",
       "expected": "2.4.3: on Finish or Escape focus returns to the element that opened the tour (or the host's named fallback, the checklist). Adjudication: D-04: new Level A finding, a member of pattern A11Y-P-01 (focus return); a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
       "pattern": "A11Y-P-01",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication",
+        "fixed-in: 9684b740138f8ec163884fb2b6644834e12782a8 (PR #5214, closes #5196)"
+      ]
     },
     {
       "id": "A11Y-F-0028",
@@ -13175,12 +13211,15 @@
         "heuristic": false
       },
       "owningTicket": "#5197",
-      "status": "open",
+      "status": "fixed",
       "title": "D-05 / R2-F05: the toast auto-dismisses after about 5 s; hover does not pause it and it cannot be re-read in place (2.2.1, with 4.1.3)",
       "observed": "The toast text is written into the polite status host (announced), but the host renders position:static below the shell (y=824 on an 800 px viewport) and is removed after about 4.6 s; hovering it does not pause the timer (removed after about 5.0 s while hovered). There is no way to extend it or re-read it in place.",
       "expected": "2.2.1 (and 4.1.3): the DS toast pauses on hover and focus and offers a re-readable log or the shell's announcer history (CMP-045 A11y: 'pauses on hover/focus, and provides a persistent-log fallback'); none of 2.2.1's exceptions (real-time, essential, 20 hours) applies. Adjudication: D-05: an auto-dismissing toast is a content-set time limit; fail 2.2.1 (and 4.1.3); filed as #5197 for the design-system lane (filing go, decision 2b). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P1",
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication",
+        "fixed-in: d721407c71d7ddda11d2ec781d9ce8010746c94e (PR #5215, closes #5197)"
+      ]
     },
     {
       "id": "A11Y-F-0029",

@@ -41,20 +41,30 @@ test("invalid: uniform message, focus on alert, axe clean", async ({ page }) => 
   expect(await serious(page)).toEqual([]);
 });
 
-test("submitting: fields locked while the request is pending", async ({ page }) => {
+test("submitting: fields read-only and submit inert while the request is pending", async ({
+  page,
+}) => {
   let release: () => void = () => undefined;
+  let posts = 0;
   const gate = new Promise<void>((r) => (release = r));
   await page.route("**/api/v1/auth/login", async (r) => {
+    posts += 1;
     await gate;
     await r.fulfill(json({}, 401));
   });
   await page.goto("/login");
   await fill(page);
-  await expect(page.getByLabel("Password", { exact: true })).toBeDisabled();
+  const password = page.getByLabel("Password", { exact: true });
+  await expect(password).toHaveAttribute("readonly", "");
+  await expect(password).toBeEnabled();
+  const submit = page.getByRole("button", { name: "Signing in..." });
+  await expect(submit).toHaveAttribute("aria-disabled", "true");
+  await submit.click({ force: true });
   release();
   await expect(page.getByRole("alert")).toHaveText(
     "Couldn't sign you in. Check your details and try again.",
   );
+  expect(posts).toBe(1);
 });
 
 test("disabled or locked account: the one failure string (SR-014)", async ({ page }) => {
@@ -68,14 +78,18 @@ test("disabled or locked account: the one failure string (SR-014)", async ({ pag
   );
 });
 
-test("rate-limited: remaining time shown, submit disabled", async ({ page }) => {
+test("rate-limited: remaining time shown, submit aria-disabled", async ({ page }) => {
   await page.route("**/api/v1/auth/login", (r) =>
     r.fulfill(json({}, 429, { "Retry-After": "900" })),
   );
   await page.goto("/login");
   await fill(page);
   await expect(page.getByText(/Try again in 1[45]:\d\d/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign in" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Sign in" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(await serious(page)).toEqual([]);
 });
 
 test("server unreachable", async ({ page }) => {

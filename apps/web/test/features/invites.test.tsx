@@ -68,6 +68,23 @@ describe("InviteAcceptScreen (SCR-017)", () => {
       screen.getByText("This invitation is no longer valid. Ask the owner for a new one."),
     ).toBeInTheDocument();
   });
+
+  it("moves focus to the not-valid heading when a step turns the invite invalid (A11Y-F-0005)", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(reply(200, { display_name: "Ann", role: "viewer", expires_at: "x" }))
+      .mockResolvedValueOnce(reply(410, { detail: "x" }));
+    vi.stubGlobal("fetch", f);
+    mount();
+    await screen.findByText(/Welcome, Ann/);
+    fireEvent.click(screen.getByRole("button", { name: "Accept invitation" }));
+    fireEvent.change(screen.getByLabelText("New password"), {
+      target: { value: "correct horse battery" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByText("Invitation not valid");
+    expect(screen.getByRole("heading", { name: "Invitation not valid" })).toHaveFocus();
+  });
 });
 
 describe("AdminInviteScreen (SCR-123)", () => {
