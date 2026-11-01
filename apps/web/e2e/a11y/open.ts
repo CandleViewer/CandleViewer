@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubAdminReads } from "../support/admin";
 import { stubSession, stubSessionsList } from "../support/api";
+import { stubRecorder } from "../support/recorder";
 import { REFRESH_INVALID } from "../support/contexts";
 import type { A11yScreen } from "./screens";
 
@@ -20,6 +21,10 @@ const PACE_SAMPLE = 5;
 const SCREEN_STUBS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
   "R-201": stubSessionsList, // SCR-112 sessions: the table with the current session marked
   "R-300": async (page) => void (await stubAdminReads(page)), // SCR-120: every tile answered
+  "R-340": async (page) => {
+    await stubAdminReads(page); // the strip's reads, registered first so the recorder stub answers its own
+    await stubRecorder(page); // SCR-140: a fresh install's empty state
+  },
 };
 
 /**
