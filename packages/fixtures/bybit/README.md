@@ -208,7 +208,8 @@ Response Example (`websocket/public/all-liquidation`, at `bybit-exchange/docs` c
 keys and values unchanged (whitespace compacted). `ws/allLiquidation_BTCUSDT_burst.jsonl` takes that
 frame shape with generated (seeded) BTCUSDT values, built by `build_corpus.py`: eight pushes 500 ms
 apart, two identical prints in push 2, five prints inside one second in push 4, and push 2 replayed
-as the last frame (a reconnect). A recording made with `capture_fixture.py` replaces both.
+as the last frame (a reconnect). A recording made with `capture_fixture.py` replaces both. In the first recorded `allLiquidation` capture, a long's bankruptcy `p` is below the
+mark at `T` and a short's is above it; check this before the recording replaces the fixtures.
 
 - `docs-all-liquidation.jsonl`: source: venue docs example @19518b90, `websocket/public/all-liquidation`; 2026-10-31; symbol ROSEUSDT; env none; redaction none.
 
