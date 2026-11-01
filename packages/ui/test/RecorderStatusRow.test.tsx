@@ -2,10 +2,12 @@
 import { composeStories } from "@storybook/react-vite";
 import { act, useState, type JSX } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
-import { describe, it } from "vitest";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
   GatedAnnounceProvider,
+  RECORDER_REASONS,
   RecorderStatusRow,
+  Table,
   recorderStatusColumns,
   type RecorderStatusRowData,
 } from "../src/components/index.js";
@@ -88,17 +90,36 @@ describe("RecorderStatusRow (CMP-177), table variant: a row of the host's grid",
 
   it("gives the host's grid its columns in the row's cell order, each with its words", () => {
     const columns = recorderStatusColumns();
-    expect(columns.map((c) => [c.header, c.sortable, c.interactive])).toEqual([
-      ["Symbol", true, true],
-      ["Reason", false, true],
-      ["State", false, false],
-      ["Since", true, false],
-      ["Depth", false, false],
-      ["Size", true, false],
-      ["Retention", false, false],
-      ["Keep forever", false, true],
-      ["Action", false, true],
+    // D02 §1 at 1440 × 900: px ÷ the root's 16 px, each its own minimum, so the grid stacks before it squeezes;
+    // Action holds CMP-001's "Record again" with its lock (138 px, a measured deviation), State gives the room.
+    expect(columns.map((c) => [c.header, c.widthEm, c.sortable, c.interactive])).toEqual([
+      ["Symbol", 7.5, true, false],
+      ["Reason", 9.375, false, true],
+      ["State", 13.5, false, false],
+      ["Since", 6.5, true, false],
+      ["Depth", 4, false, false],
+      ["Size", 9.375, true, false],
+      ["Retention", 7.5, false, false],
+      ["Keep forever", 5.625, false, true],
+      ["Action", 8.625, false, true],
     ]);
+    expect(columns.every((c) => c.minWidthEm === c.widthEm)).toBe(true);
+    expect(columns.reduce((em, c) => em + (c.widthEm ?? 0), 0)).toBe(72); // 1152 px
+    const ends = columns.filter((c) => c.numeric === undefined && c.align === "end");
+    expect(ends.map((c) => c.header)).toEqual(["Since", "Depth", "Size"]);
+    // D02 §1 at 1280 × 800: Since and Depth go to the row detail; 992 px in all.
+    const narrow = recorderStatusColumns({ narrow: true });
+    expect(narrow.map((c) => c.header)).toEqual([
+      "Symbol",
+      "Reason",
+      "State",
+      "Size",
+      "Retention",
+      "Keep forever",
+      "Action",
+    ]);
+    expect(narrow.map((c) => c.widthEm)).toEqual([7.5, 9.375, 14, 9.375, 7.5, 5.625, 8.625]);
+    expect(narrow.reduce((em, c) => em + (c.widthEm ?? 0), 0)).toBe(62);
     expect(columns.map((c) => c.cell(BTC))).toEqual([
       "BTCUSDT",
       "Manual",
@@ -122,6 +143,9 @@ describe("RecorderStatusRow (CMP-177), table variant: a row of the host's grid",
     expect(stop).toHaveAccessibleDescription(CHART);
     const lock = within(stop).getByRole("img", { name: "Not available" });
     expect(stop.firstElementChild).toContainElement(lock);
+    // Composed on CMP-001 as CMP-055's controls are: the atom's T2, pointed at the row's reason node (2b here).
+    expect(stop).toHaveAttribute("data-cmp", "CMP-001");
+    expect(stop).toHaveAttribute("data-gated");
     await userEvent.click(stop);
     expect(onStop).not.toHaveBeenCalled();
     expect(announce.mock.calls).toEqual([[CHART]]);
@@ -247,6 +271,7 @@ describe("RecorderStatusRow (CMP-177), standalone (SCR-103)", () => {
       name: "Not available Keep SOLUSDT data forever",
     });
     const stop = button("Not available Stop recording SOLUSDT");
+    expect(stop).toHaveAttribute("data-cmp", "CMP-001");
     for (const control of [keep, stop]) {
       expect(control).toHaveAttribute("aria-describedby", notice.id);
       expect(control).toHaveAccessibleDescription(NOTICE);
@@ -287,8 +312,249 @@ describe("RecorderStatusRow (CMP-177), standalone (SCR-103)", () => {
   );
 });
 
+/** The row in the real CMP-049 grid: D02 §1's nine columns, or the narrow seven. */
+const inGrid = (row: RecorderStatusRowData, narrow = false): JSX.Element => (
+  <Table
+    columns={recorderStatusColumns({ narrow })}
+    rows={[row]}
+    rowKey={(r) => r.symbol}
+    caption="Recorded symbols"
+    renderRow={(data, grid) => (
+      <RecorderStatusRow {...data} variant="table" grid={grid} narrow={narrow} />
+    )}
+  />
+);
+
+describe("RecorderStatusRow (CMP-177) in CMP-049: the column plan, Enter, names and figures (#5309)", () => {
+  it("narrow, the row draws no Since and no Depth (D02 §1 at 1280 × 800; D-5309-03)", async () => {
+    const host = await mount(inGrid(BTC, true));
+    const headers = within(host)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(headers).toEqual([
+      "Symbol",
+      "Reason",
+      "State",
+      "Size",
+      "Retention",
+      "Keep forever",
+      "Action",
+    ]);
+    const row = within(host).getByRole("row", { name: /^BTCUSDT, manual/ });
+    expect(within(row).getAllByRole("gridcell")).toHaveLength(6); // and the symbol's rowheader
+    expect(row).not.toHaveTextContent("2026-09-01");
+  });
+
+  it("Enter on a cell with no control opens the row's detail, once per press (B-5309-03)", async () => {
+    const onOpenDetail = fn();
+    const host = await mount(inGrid({ ...BTC, onOpenDetail }));
+    const row = within(host).getByRole("row", { name: /^BTCUSDT, manual/ });
+    const [, state] = within(row).getAllByRole("gridcell");
+    act(() => state?.focus());
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("{Enter>3/}"); // a held key: its repeats open nothing more
+    expect(onOpenDetail).toHaveBeenCalledTimes(2);
+    // The symbol's cell is no control cell: Enter there opens it too, and its button is no Tab stop of its own.
+    const symbol = within(row).getByRole("rowheader");
+    expect(within(symbol).getByRole("button", { name: "BTCUSDT" })).toHaveAttribute(
+      "tabindex",
+      "-1",
+    );
+    act(() => symbol.focus());
+    await userEvent.keyboard("{Enter}");
+    expect(onOpenDetail).toHaveBeenCalledTimes(3);
+    // A control cell: Enter is CMP-049's way into its control, and opens nothing.
+    const stop = button("Stop recording BTCUSDT");
+    act(() => (stop.closest("td") as HTMLElement).focus());
+    await userEvent.keyboard("{Enter}");
+    expect(stop).toHaveFocus();
+    expect(onOpenDetail).toHaveBeenCalledTimes(3);
+    // A press on the symbol's button opens it too, and hands the host's `() => void` no event (B-5309-10).
+    await userEvent.click(within(symbol).getByRole("button", { name: "BTCUSDT" }));
+    expect(onOpenDetail).toHaveBeenCalledTimes(4);
+    expect(onOpenDetail).toHaveBeenLastCalledWith();
+  });
+
+  it.each<[string, Partial<RecorderStatusRowData>, string]>([
+    [
+      "silent",
+      { pinned: false, state: "silent", lastEventAt: "2026-10-20T10:29:40Z" },
+      "BTCUSDT, manual, no writes since 10:29:40, 34.8 GB, keep forever off",
+    ],
+    [
+      "lingering",
+      { ...SOL, state: "lingering", lingerUntil: iso(NOW + 23.5 * 60e3) },
+      "SOLUSDT, auto: chart, recording since 20 Oct 2026, stops in 24 min, 1.3 MB, keep forever off",
+    ],
+    [
+      "degraded",
+      { state: "degraded", gapCount: 2 },
+      "BTCUSDT, manual, degraded, stream unhealthy, 2 gaps in 24 h, 34.8 GB, keep forever on",
+    ],
+    [
+      "recording by a position",
+      { ...SOL, reason: "position_open", stopBlockedReason: "position_open" },
+      "SOLUSDT, auto: position, recording since 20 Oct 2026, position, 1.3 MB, keep forever off",
+    ],
+  ])(
+    "names a %s row with its start only on recording (B-5309-04, D-5309-12)",
+    async (_, patch, name) => {
+      const host = await mount(inGrid({ ...BTC, ...patch }));
+      expect(within(host).getByRole("row", { name })).toBeInTheDocument();
+    },
+  );
+
+  it("Size: '—' with nothing written, grouped figures, 1.0 GB from 999.95 MB (B-5309-12, A-5309-10)", () => {
+    const size = recorderStatusColumns().find((c) => c.id === "size");
+    const bare = { ...BTC, dailyGrowthBytes: null };
+    expect(size?.cell({ ...bare, diskUsageBytes: null })).toBe("—");
+    expect(size?.cell({ ...bare, diskUsageBytes: 999_960_000 })).toBe("1.0 GB");
+    expect(size?.cell({ ...bare, diskUsageBytes: 999_940_000 })).toBe("999.9 MB");
+    expect(size?.cell({ ...bare, diskUsageBytes: 1_188e9 })).toBe("1,188.0 GB");
+  });
+
+  it("the share of the budget takes its own line, end-aligned; no `numeric` cell (board 05, D-5309-03)", async () => {
+    const host = await mount(inGrid({ ...BTC, diskLevel: 1, budgetShare: 0.17 }));
+    const size = within(host).getByText("34.8 GB · 0.71/d · 17 % of budget");
+    expect(size).toHaveClass("cv-rsr__num");
+    expect(size.querySelector("br")).not.toBeNull();
+    expect(size.closest("td")).not.toHaveAttribute("data-numeric");
+    expect(within(host).getByRole("columnheader", { name: "Size" })).toHaveAttribute(
+      "data-numeric",
+    );
+  });
+
+  it("the State's words carry their whole text for CMP-049's echo while cut (D02 §9.1, B-5309-01)", async () => {
+    const words = "Degraded · stream unhealthy · 2 gaps in 24 h";
+    const host = await mount(inGrid({ ...BTC, state: "degraded", gapCount: 2 }));
+    expect(within(host).getByText(words)).toHaveAttribute("data-cv-cut", words);
+  });
+
+  it("the Action cell's T2 reason is the grid's one echo on the cell (2b, D-5309-09)", async () => {
+    await mount(inGrid({ ...SOL, stopBlockedReason: "chart_open" }));
+    const stop = button("Not available Stop recording SOLUSDT");
+    expect(stop.closest("td")).toHaveAttribute("data-cv-echo", CHART);
+    expect(stop).toHaveAccessibleDescription(CHART);
+  });
+
+  it("the five §8.5 reasons verbatim, `{grace}` the policy's (B-5309-11)", async () => {
+    expect(RECORDER_REASONS).toEqual({
+      "recorder.stop_blocked.chart_auto": "Recording stops {grace} after the last chart closes.",
+      "recorder.stop_blocked.chart_manual": "Stop is available once the last chart closes.",
+      "recorder.stop_blocked.position_auto": "Recording continues while a position is open.",
+      "recorder.stop_blocked.position_manual": "Stop is unavailable while a position is open.",
+      "recorder.symbol_cap": "The symbol limit is reached.",
+    });
+    await mount(inGrid({ ...SOL, stopBlockedReason: "chart_open", graceSeconds: 5400 }));
+    expect(button("Not available Stop recording SOLUSDT")).toHaveAccessibleDescription(
+      "Recording stops 1 h 30 min after the last chart closes.",
+    );
+  });
+
+  it("a write in flight: the action is busy and a press sends nothing (C-5309-13)", async () => {
+    const onKeepRecording = fn();
+    const lingering = { state: "lingering", lingerUntil: iso(NOW + 30e3) } as const;
+    await mount(inGrid({ ...SOL, ...lingering, actionBusy: true, onKeepRecording }));
+    const keep = button("Keep recording SOLUSDT");
+    expect(keep).toHaveAttribute("aria-busy", "true");
+    await userEvent.click(keep);
+    expect(onKeepRecording).not.toHaveBeenCalled();
+  });
+
+  it("a T2 Keep forever: CMP-004's centred lock leads the label, named first (B-5309-09)", async () => {
+    const host = await mount(<RecorderStatusRow {...SOL} writeReason="rbac.owner_only" />);
+    const keep = within(host).getByRole("switch", {
+      name: "Not available Keep SOLUSDT data forever",
+    });
+    const label = document.getElementById(keep.getAttribute("aria-labelledby") ?? "");
+    expect(label?.firstElementChild).toHaveClass("cv-choice__lock");
+  });
+});
+
+describe("RecorderStatusRow (CMP-177) stacked into cards (CMP-049's reflow; D-5309-07, D-5309-08)", () => {
+  /** A ResizeObserver the test fires: CMP-049 measures its shell with one. */
+  const observers: { readonly callback: ResizeObserverCallback; readonly targets: Element[] }[] =
+    [];
+  class FakeObserver {
+    readonly targets: Element[] = [];
+    constructor(readonly callback: ResizeObserverCallback) {
+      observers.push(this);
+    }
+    observe(target: Element): void {
+      this.targets.push(target);
+    }
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  beforeEach(() => {
+    observers.length = 0;
+    vi.stubGlobal("ResizeObserver", FakeObserver);
+    const real = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) =>
+      el instanceof HTMLElement && el.dataset["cmp"] === "CMP-049"
+        ? ({ fontSize: "16px" } as CSSStyleDeclaration)
+        : real(el, pseudo),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+  /** CMP-049 measures a 300 px shell, under the columns' 72 em: it stacks. */
+  const stack = async (): Promise<void> => {
+    await act(async () => {
+      for (const observer of observers) {
+        const shell = observer.targets.find((t) => t.matches('[data-cmp="CMP-049"]'));
+        if (shell === undefined) continue;
+        const entry = {
+          target: shell,
+          contentRect: { width: 300 },
+        } as unknown as ResizeObserverEntry;
+        observer.callback([entry], observer as unknown as ResizeObserver);
+      }
+    });
+  };
+
+  it("a T2 reason shows inline under the action (2a), never echoed (D-5309-08)", async () => {
+    const host = await mount(inGrid({ ...SOL, stopBlockedReason: "chart_open" }));
+    await stack();
+    expect(host.querySelector('[data-cmp="CMP-049"]')).toHaveAttribute("data-layout", "stacked");
+    const stop = button("Not available Stop recording SOLUSDT");
+    const reason = document.getElementById(stop.getAttribute("aria-describedby") ?? "");
+    expect(reason).toHaveClass("cv-rsr__reason");
+    expect(reason).toHaveTextContent(CHART);
+    expect(stop.closest("td")).not.toHaveAttribute("data-cv-echo");
+  });
+
+  it("a control a frame removes hands focus to the row's next stop, else its previous (D-5309-07)", async () => {
+    let set: (patch: Partial<RecorderStatusRowData>) => void = () => undefined;
+    function Live(): JSX.Element {
+      const [patch, setPatch] = useState<Partial<RecorderStatusRowData>>({});
+      set = setPatch;
+      return inGrid({ ...SOL, ...patch });
+    }
+    await mount(<Live />);
+    await stack();
+    const keep = (): HTMLElement =>
+      within(document.body).getByRole("switch", { name: "Keep SOLUSDT data forever" });
+    act(() => button("Why is SOLUSDT recorded?").focus());
+    await act(async () => set({ reason: "manual" })); // Why? goes with the auto reason
+    expect(keep()).toHaveFocus();
+    act(() => button("Stop recording SOLUSDT").focus());
+    await act(async () => set({ reason: "manual", state: "stopping" })); // no action while stopping
+    expect(keep()).toHaveFocus();
+  });
+});
+
 it("runs each RecorderStatusRow story's play function", { timeout: 20_000 }, async () => {
   for (const [name, Story] of Object.entries(composeStories(stories))) {
+    if (name.startsWith("Contrast")) {
+      // A theme story's theme is the preview's runtime: here it renders its grids and its card.
+      const host = await mount(<Story />);
+      expect(within(host).getAllByRole("grid", { name: "Recorded symbols" })).toHaveLength(2);
+      host.remove(); // its grids' Tab stops are not the next story's
+      continue;
+    }
     const canvasElement = document.body.appendChild(document.createElement("div"));
     await expect(Story.run({ canvasElement }), name).resolves.toBeUndefined();
     canvasElement.remove();
