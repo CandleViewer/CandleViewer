@@ -16,6 +16,12 @@ Exit hygiene (#5325 delta look 6557442583): the probe shuts its loop's default e
 within `EXECUTOR_GRACE_S`, writes the names of the threads still alive to stderr before it returns,
 and arms `faulthandler` to write every thread's stack to stderr at `STACK_DUMP_S`, before the
 parent's `PROBE_TIMEOUT_S` kill, so a child that does not exit says where it waits.
+
+Exit (#5325, the orchestrator's ruling at 17:58Z on 2026-11-01): once the verdict and the threads
+line are written and flushed, the probe ends with `os._exit`, skipping interpreter finalization.
+The criterion is proven before that point; a finalization wait seen only on CI's CPython 3.12.3
+build is not part of it (`qa/plans/e27/chaos.md` section 7, F10). A hang before the verdict still
+fails the parent, with the `faulthandler` dump.
 """
 
 from __future__ import annotations
@@ -136,4 +142,7 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    code = main(sys.argv[1:])
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)  # the verdict is written: skip interpreter finalization (F10)
