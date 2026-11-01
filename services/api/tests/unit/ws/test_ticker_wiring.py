@@ -20,6 +20,7 @@ from candleviewer.domain.events import InstrumentUpdatedEvent, uuid7
 from candleviewer.domain.primitives import EventId
 from candleviewer.ingestion.ticker_topic import TickerTopic
 from candleviewer.orderflow.heatmap import HeatmapTopic
+from candleviewer.orderflow.liquidation_topic import LiquidationsTopic
 from candleviewer.orderflow.liquidity_engine import LiquidityEngine
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.trades_publish import TradesTopic
@@ -44,10 +45,12 @@ def test_create_app_serves_ticker_from_the_ingestion_adapter_and_gives_the_runti
     sources = app.state.ws_registry.services.snapshots._sources
     feeds = app.state.ws_runtime.feeds
     assert "ticker" not in PENDING_ADAPTERS and isinstance(sources["ticker"], TickerTopic)
+    # E24-T03 (#667): the `liquidations` topic is a runtime feed, built between trades and book.
     assert [type(f) for f in feeds] == [
-        TickerTopic, InstrumentRevisions, TradesTopic, BookTopic, HeatmapTopic, LiquidityEngine,
+        TickerTopic, InstrumentRevisions, TradesTopic, LiquidationsTopic, BookTopic, HeatmapTopic,
+        LiquidityEngine,
     ]  # fmt: skip
-    assert feeds[0] is sources["ticker"] and feeds[3] is sources["book"]  # E21-T01 (#604)
+    assert feeds[0] is sources["ticker"] and feeds[4] is sources["book"]  # E21-T01 (#604)
 
 
 def test_create_app_serves_trades_from_one_topic_that_leases_snaps_and_runs() -> None:
