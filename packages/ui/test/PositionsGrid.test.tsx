@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
 import { act, useState, type JSX } from "react";
-import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
+import { expect, fireEvent, fn, userEvent, waitFor, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
   GatedAnnounceProvider,
@@ -349,17 +349,23 @@ describe("PositionsGrid (CMP-114): the treegrid", () => {
     ),
   );
 
-  it("windows past 50 rows; a key past the window asks for its row and lands there", async () => {
-    await mount(<Host groups={MANY} totals={undefined} />);
-    expect(grid()).toHaveAttribute("aria-rowcount", "101");
-    // The first window: 30 rows before the region reports, and 10 past them.
-    expect(within(grid()).getAllByRole("row")).toHaveLength(41);
-    act(() =>
-      within(rowNamed("P0USDT · Long · 0.250 P0 · A0")).getAllByRole("gridcell")[1]?.focus(),
-    );
-    await userEvent.keyboard("{Control>}{End}{/Control}");
-    expect(document.activeElement?.closest("tr")).toHaveAttribute("aria-rowindex", "101");
-  });
+  // Measured 1.8 to 6.2 s at a load of 21 to 31 on 8 cores (four runs here), 4.3 s at most in the delta lens' runs
+  // at 23 to 38: past the 5 s default on a loaded host, so a measured 30 s ceiling, as the story loop's below.
+  it(
+    "windows past 50 rows; a key past the window asks for its row and lands there",
+    { timeout: 30_000 },
+    async () => {
+      await mount(<Host groups={MANY} totals={undefined} />);
+      expect(grid()).toHaveAttribute("aria-rowcount", "101");
+      // The first window: 30 rows before the region reports, and 10 past them.
+      expect(within(grid()).getAllByRole("row")).toHaveLength(41);
+      act(() =>
+        within(rowNamed("P0USDT · Long · 0.250 P0 · A0")).getAllByRole("gridcell")[1]?.focus(),
+      );
+      await userEvent.keyboard("{Control>}{End}{/Control}");
+      expect(document.activeElement?.closest("tr")).toHaveAttribute("aria-rowindex", "101");
+    },
+  );
 
   /**
    * A laid-out region of 240 px under a 24 px header, rows 24 px tall: nine rows in view. `scrollTo` scrolls it by
@@ -395,41 +401,67 @@ describe("PositionsGrid (CMP-114): the treegrid", () => {
     };
   };
 
-  it("keeps the focused row mounted when the region scrolls the window away from it (G-01)", async () => {
-    const region = layOut();
-    await mount(<Host groups={MANY} totals={undefined} />);
-    // The mount's measured view (rows 0 to 8) sits inside the first window: nothing is drawn again.
-    expect(within(grid()).getAllByRole("row")).toHaveLength(41);
-    const first = rowNamed("P0USDT · Long · 0.250 P0 · A0");
-    const cell = within(first).getAllByRole("gridcell")[1];
-    act(() => cell?.focus());
-    region.scrollTo(50);
-    // Rows 50 to 58 are past the drawn rows: the window draws 40 to 68, and the focused row stays outside it.
-    expect(document.activeElement).toBe(cell);
-    expect(first.isConnected).toBe(true);
-    expect(first).toHaveAttribute("aria-rowindex", "3");
-    const drawn = within(grid()).getAllByRole("row").slice(1);
-    expect(drawn).toHaveLength(30);
-    expect(drawn[0]).toBe(first);
-    expect(drawn[1]).toHaveAttribute("aria-rowindex", "42");
-  });
+  // Measured 2.3 to 10.7 s at a load of 21 to 31 on 8 cores (four runs here), 10.6 s in the delta lens' runs at
+  // 23 to 38: twice the 5 s default on a loaded host, so a measured 30 s ceiling, as the story loop's below.
+  it(
+    "keeps the focused row mounted when the region scrolls the window away from it (G-01)",
+    { timeout: 30_000 },
+    async () => {
+      const region = layOut();
+      await mount(<Host groups={MANY} totals={undefined} />);
+      // The mount's measured view (rows 0 to 8) sits inside the first window: nothing is drawn again.
+      expect(within(grid()).getAllByRole("row")).toHaveLength(41);
+      const first = rowNamed("P0USDT · Long · 0.250 P0 · A0");
+      const cell = within(first).getAllByRole("gridcell")[1];
+      act(() => cell?.focus());
+      region.scrollTo(50);
+      // Rows 50 to 58 are past the drawn rows: the window draws 40 to 68, and the focused row stays outside it.
+      expect(document.activeElement).toBe(cell);
+      expect(first.isConnected).toBe(true);
+      expect(first).toHaveAttribute("aria-rowindex", "3");
+      const drawn = within(grid()).getAllByRole("row").slice(1);
+      expect(drawn).toHaveLength(30);
+      expect(drawn[0]).toBe(first);
+      expect(drawn[1]).toHaveAttribute("aria-rowindex", "42");
+    },
+  );
 
-  it("re-windows while half the overscan is still drawn past the view, before any undrawn row shows", async () => {
-    const region = layOut();
-    await mount(<Host groups={MANY} totals={undefined} />);
-    // Rows 26 to 34 in view: five drawn rows (35 to 39) still lie past them, so the window holds.
-    region.scrollTo(26);
-    expect(within(grid()).getAllByRole("row")).toHaveLength(41);
-    // Rows 27 to 35: within five of the drawn end, the window re-centres on them (17 to 45) while 39 is drawn.
-    region.scrollTo(27);
-    const drawn = within(grid()).getAllByRole("row").slice(1);
-    expect(drawn).toHaveLength(29);
-    expect(drawn[0]).toHaveAttribute("aria-rowindex", "19");
-    expect(drawn.at(-1)).toHaveAttribute("aria-rowindex", "47");
-    // Back at the top, the list's own first row is no edge to keep clear of.
-    region.scrollTo(0);
-    expect(within(grid()).getAllByRole("row").slice(1)[0]).toHaveAttribute("aria-rowindex", "2");
-  });
+  // Measured 2.7 s before its top-edge steps and 3.2 to 4.3 s with them (three runs), at a load of 21 to 31 on 8 cores;
+  // 10.4 s in the delta lens' runs at 23 to 38: twice the 5 s default on a loaded host, so a measured 30 s ceiling, as
+  // the story loop's below.
+  it(
+    "re-windows while half the overscan is still drawn past the view, before any undrawn row shows",
+    { timeout: 30_000 },
+    async () => {
+      const region = layOut();
+      await mount(<Host groups={MANY} totals={undefined} />);
+      // Rows 26 to 34 in view: five drawn rows (35 to 39) still lie past them, so the window holds.
+      region.scrollTo(26);
+      expect(within(grid()).getAllByRole("row")).toHaveLength(41);
+      // Rows 27 to 35: within five of the drawn end, the window re-centres on them (17 to 45) while 39 is drawn.
+      region.scrollTo(27);
+      const drawn = (): HTMLElement[] => within(grid()).getAllByRole("row").slice(1);
+      let rows = drawn();
+      expect(rows).toHaveLength(29);
+      expect(rows[0]).toHaveAttribute("aria-rowindex", "19");
+      expect(rows.at(-1)).toHaveAttribute("aria-rowindex", "47");
+      // The top edge keeps the same margin: rows 22 to 30 leave five drawn rows (17 to 21) above, so the window holds.
+      region.scrollTo(22);
+      rows = drawn();
+      expect(rows).toHaveLength(29);
+      expect(rows[0]).toHaveAttribute("aria-rowindex", "19");
+      expect(rows.at(-1)).toHaveAttribute("aria-rowindex", "47");
+      // Rows 21 to 29: within five of the drawn start, the window re-centres on them (11 to 39) while 17 to 20 show.
+      region.scrollTo(21);
+      rows = drawn();
+      expect(rows).toHaveLength(29);
+      expect(rows[0]).toHaveAttribute("aria-rowindex", "13");
+      expect(rows.at(-1)).toHaveAttribute("aria-rowindex", "41");
+      // Back at the top, the list's own first row is no edge to keep clear of.
+      region.scrollTo(0);
+      expect(drawn()[0]).toHaveAttribute("aria-rowindex", "2");
+    },
+  );
 });
 
 describe("PositionsGrid (CMP-114): LiqTierCell (D02 §5.3)", () => {
@@ -834,7 +866,8 @@ describe("PositionsGrid (CMP-114): the Actions column (CMP-057) and T2", () => {
     expect(busy).toHaveAccessibleName("Closing…");
     expect(busy).toHaveAttribute("aria-busy", "true");
     expect(busy).not.toHaveAttribute("aria-disabled");
-    expect(busy).toHaveFocus();
+    // CMP-041 moves focus in from a passive effect, which can run after the menu is found.
+    await waitFor(() => expect(busy).toHaveFocus());
     await userEvent.keyboard("{Enter}");
     await userEvent.click(busy as HTMLElement);
     expect(onClose).not.toHaveBeenCalled();
@@ -845,6 +878,10 @@ describe("PositionsGrid (CMP-114): the Actions column (CMP-057) and T2", () => {
     expect(gated).toHaveAccessibleName("Close");
     expect(gated).toHaveAttribute("aria-disabled", "true");
     expect(gated).not.toHaveAttribute("aria-busy");
+    // Gated, Enter sends nothing either.
+    await waitFor(() => expect(gated).toHaveFocus());
+    await userEvent.keyboard("{Enter}");
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("a group header offers no row menu: Shift+F10 and a right-click there open nothing", async () => {
@@ -956,6 +993,8 @@ describe("PositionsGrid (CMP-114): the narrow dock (D02 §11.5)", () => {
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
     ).toEqual(["Close", "Close 25 %", "Reverse…", "SL/TP…", "Chart"]);
+    // CMP-041 moves focus in from a passive effect, which can run after the menu is found.
+    await waitFor(() => expect(within(menu).getAllByRole("menuitem")[0]).toHaveFocus());
     await userEvent.keyboard("{Enter}");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -997,23 +1036,30 @@ describe("PositionsGrid (CMP-114): states", () => {
     expect(grid().querySelector(".cv-table__totals")).toBeNull();
   });
 
-  it("has no serious or critical axe violation, with selection, tiers, totals and gated actions", async () => {
-    const host = await mount(
-      <>
-        <p id="n">Your role can&apos;t change positions.</p>
-        <Host
-          rowActions={(r): SplitButtonProps => ({
-            primary: { label: "Close", onClick: vi.fn() },
-            items: closeItems(),
-            menuLabel: `More close actions, ${r.symbol}`,
-            disabledReason: "Your role can't change positions.",
-            disabledReasonId: "n",
-          })}
-        />
-      </>,
-    );
-    expect(await seriousViolations(host)).toEqual([]);
-  });
+  // Measured 1.9 to 4.1 s at a load of 21 to 31 on 8 cores (four runs here), 9.6 s in the delta lens' runs at 23 to
+  // 38: axe walks the whole grid, twice the 5 s default on a loaded host, so a measured 30 s ceiling, as the story
+  // loop's below.
+  it(
+    "has no serious or critical axe violation, with selection, tiers, totals and gated actions",
+    { timeout: 30_000 },
+    async () => {
+      const host = await mount(
+        <>
+          <p id="n">Your role can&apos;t change positions.</p>
+          <Host
+            rowActions={(r): SplitButtonProps => ({
+              primary: { label: "Close", onClick: vi.fn() },
+              items: closeItems(),
+              menuLabel: `More close actions, ${r.symbol}`,
+              disabledReason: "Your role can't change positions.",
+              disabledReasonId: "n",
+            })}
+          />
+        </>,
+      );
+      expect(await seriousViolations(host)).toEqual([]);
+    },
+  );
 });
 
 describe("PositionsGrid stories", () => {
