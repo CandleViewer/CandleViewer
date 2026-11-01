@@ -69,10 +69,13 @@ from tests.rules.test_validator_endpoints import (
 
 CAP = MAX_CONDITION_NODES
 LIMIT_TEXT = f"A rule holds at most {CAP} condition nodes."
-#: The one issue every answer carries, as a save and validate show it.
+#: The one issue the bound raises, as `check_bounds` and validate show it.
 ISSUE = Issue("conditions", "schema_error", LIMIT_TEXT, klass="syntax").to_dict()
-#: A save's problem names these members and no other: the bound adds none to the bounds' own.
-SAVE_MEMBERS = {"type", "title", "status", "code", "detail", "issues"}
+#: A save answers as `22`'s `conditionNodes` example does: the count of errors as its `detail`, the
+#: one `errors[]` item and no `issues`; the cap is an attribute of the error, never a member.
+SAVE_DETAIL = "1 error in the rule IR."
+SAVE_ERROR = {"field": "conditions", "rule": "schema_error", "message": LIMIT_TEXT}
+SAVE_MEMBERS = {"type", "title", "status", "code", "detail", "errors"}
 REG = default_registry()
 
 
@@ -313,12 +316,12 @@ def test_post_rules_over_the_node_cap_is_422_and_stores_nothing(shape: str) -> N
     r = saves.c.post("/rules", json={"ir": _over(shape)})
     assert r.status_code == 422, r.text[:300]
     body = r.json()
-    assert (body["code"], body["detail"], body["issues"]) == (
+    assert (body["code"], body["detail"], body["errors"]) == (
         "rule_ir_invalid",
-        LIMIT_TEXT,
-        [ISSUE],
+        SAVE_DETAIL,
+        [SAVE_ERROR],
     )
-    assert set(body) == SAVE_MEMBERS  # the cap is an attribute of the error, never a member
+    assert set(body) == SAVE_MEMBERS  # `22`'s example members: no `issues`, and no `cap`
     assert saves.c.get("/rules").json()["items"] == [] and saves.audits == []
     assert saves.capped == ["condition_nodes"]
 
@@ -327,7 +330,8 @@ def test_put_rule_over_the_node_cap_writes_no_version() -> None:
     saves = _Saves()
     rid = saves.c.post("/rules", json={"ir": _ir()}).json()["id"]
     r = saves.c.put(f"/rules/{rid}", json={"ir": _over()}, headers={"If-Match": "1"})
-    assert r.status_code == 422 and r.json()["issues"] == [ISSUE]
+    assert r.status_code == 422 and r.json()["errors"] == [SAVE_ERROR]
+    assert (r.json()["detail"], set(r.json())) == (SAVE_DETAIL, SAVE_MEMBERS)
     assert saves.c.get(f"/rules/{rid}/versions").json()["meta"]["count"] == 1
     assert [a for a, _ in saves.audits] == ["rule.created"]
     assert saves.capped == ["condition_nodes"]
@@ -361,8 +365,8 @@ def test_check_document_over_the_node_cap_raises_the_counted_refusal() -> None:
         RulesManager.check_document(_over())
     capped = refused.value
     assert capped.cap == "condition_nodes"
-    assert (capped.status, capped.code, capped.message) == (422, "rule_ir_invalid", LIMIT_TEXT)
-    assert capped.extra == {"issues": [ISSUE]} and isinstance(capped, RuleError)
+    assert (capped.status, capped.code, capped.message) == (422, "rule_ir_invalid", SAVE_DETAIL)
+    assert capped.extra == {"errors": [SAVE_ERROR]} and isinstance(capped, RuleError)
     assert isinstance(capped.__cause__, ConditionNodeBoundError)
 
 

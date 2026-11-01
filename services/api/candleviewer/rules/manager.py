@@ -134,6 +134,16 @@ def _ir_invalid(issues: list[Issue]) -> RuleError:
     )
 
 
+def _node_cap_refused(exc: ConditionNodeBoundError) -> RuleCapRefused:
+    """422 `rule_ir_invalid` for a document over the condition-node bound, as `22`'s
+    `conditionNodes` example answers it: one `errors[]` item (`field`, `rule`, `message`) for each
+    issue and a `detail` counting them, where `_ir_invalid` names `issues[]`."""
+    n = len(exc.issues)
+    errors = [{"field": i.path, "rule": i.code, "message": i.message} for i in exc.issues]
+    detail = f"{n} error{'s' if n != 1 else ''} in the rule IR."
+    return RuleCapRefused(exc.cap, 422, "rule_ir_invalid", detail, errors=errors)
+
+
 @dataclass
 class VersionRow:
     id: str
@@ -721,14 +731,12 @@ class RulesManager:
     def check_document(doc: Any) -> None:
         """The bounds compile and validate apply (`check_bounds`), first on every save and for any
         caller about to walk the document itself: the same 422 `rule_ir_invalid` as `_validated`.
-        A document over the condition-node bound is a `RuleCapRefused`, which the routes count."""
+        A document over the condition-node bound is a `RuleCapRefused`, which the routes count; it
+        answers as `22`'s example shows (`errors[]`), every other refusal naming its `issues[]`."""
         try:
             check_bounds(doc, "rule")
         except ConditionNodeBoundError as exc:
-            refused = _ir_invalid(exc.issues)
-            raise RuleCapRefused(
-                exc.cap, refused.status, refused.code, refused.message, **refused.extra
-            ) from exc
+            raise _node_cap_refused(exc) from exc
         except RuleCompileError as exc:
             raise _ir_invalid(exc.issues) from exc
 

@@ -15,6 +15,8 @@ from candleviewer.rules.compiler.common import MAX_CONDITION_NODES, condition_no
 from candleviewer.settings import RULES_CHECK_RATE_PER_USER_PER_SECOND, Settings
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from tests.contract._admin_support import SPEC, text
+from tests.rules.test_rule_condition_node_cap import _over, _Saves
+from tests.rules.test_rules_routes import _ir
 
 _SCHEMAS: dict[str, Any] = SPEC["components"]["schemas"]
 _OPS: dict[str, dict[str, Any]] = {
@@ -27,6 +29,15 @@ _OPS: dict[str, dict[str, Any]] = {
 
 def _prose(operation_id: str) -> str:
     return text(_OPS[operation_id]["description"])
+
+
+def _node_example() -> dict[str, Any]:
+    """The `conditionNodes` example of the shared `RuleIrInvalid` response."""
+    invalid = SPEC["components"]["responses"]["RuleIrInvalid"]["content"][
+        "application/problem+json"
+    ]
+    example: dict[str, Any] = invalid["examples"]["conditionNodes"]["value"]
+    return example
 
 
 def _number(pattern: str, prose: str) -> int:
@@ -42,16 +53,29 @@ def test_max_condition_nodes_is_the_bound_22_states() -> None:
     assert MAX_CONDITION_NODES == _number(r"`conditions` holds at most ([\d,]+) nodes", bound)
     for operation_id in ("validateRule", "compileRule"):
         assert f"{MAX_CONDITION_NODES:,} condition nodes" in _prose(operation_id)
-    invalid = SPEC["components"]["responses"]["RuleIrInvalid"]["content"][
-        "application/problem+json"
-    ]
-    (error,) = invalid["examples"]["conditionNodes"]["value"]["errors"]
+    (error,) = _node_example()["errors"]
     (issue,) = condition_node_error().issues  # the place and the message the code answers with
     assert (error["field"], error["rule"], error["message"]) == (
         issue.path,
         issue.code,
         issue.message,
     )
+
+
+def test_a_save_over_the_node_bound_answers_as_the_example_22_shows() -> None:
+    """`createRule` and `updateRule` share the example: a save over the bound answers its status,
+    code, `detail` and `errors[]`, and carries no `issues` (C-6.1)."""
+    example = _node_example()
+    members = ("status", "code", "detail", "errors")
+    saves = _Saves()
+    rid = saves.c.post("/rules", json={"ir": _ir()}).json()["id"]
+    created = saves.c.post("/rules", json={"ir": _over()})
+    updated = saves.c.put(f"/rules/{rid}", json={"ir": _over()}, headers={"If-Match": "1"})
+    for answer in (created, updated):
+        body = answer.json()
+        assert answer.status_code == example["status"]
+        assert {m: body[m] for m in members} == {m: example[m] for m in members}
+        assert "issues" not in body
 
 
 def test_the_check_limit_default_and_burst_are_the_ones_22_states() -> None:
