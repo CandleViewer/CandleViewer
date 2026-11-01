@@ -11,7 +11,14 @@
  */
 import type { generated } from "@candleviewer/protocol";
 import { apiFetch } from "../../../lib/http/csrfFetch";
-import { MAX_ACCOUNT_IDS, positionsApi, type AccountsOutcome, type ReadFailure } from "../api";
+import {
+  failure,
+  isObjectArray,
+  MAX_ACCOUNT_IDS,
+  positionsApi,
+  type AccountsOutcome,
+  type ReadFailure,
+} from "../api";
 
 export type Order = generated.rest.components["schemas"]["Order"];
 type ListOrdersQuery = NonNullable<generated.rest.operations["listOrders"]["parameters"]["query"]>;
@@ -41,20 +48,6 @@ export interface OrdersApi {
 /** `22` `Limit.maximum`, and a cap so a bad cursor never loops. */
 export const PAGE = 500;
 export const MAX_PAGES = 10;
-
-async function failure(res: Response): Promise<ReadFailure> {
-  if (res.status === 400) return "invalid";
-  if (res.status !== 403) return "unavailable"; // 503, 401 after the renewal, anything unexpected
-  try {
-    const body = (await res.json()) as { code?: unknown };
-    return body.code === "account_scope_denied" ? "account_scope_denied" : "forbidden";
-  } catch {
-    return "forbidden";
-  }
-}
-
-const isObjectArray = (value: unknown): value is object[] =>
-  Array.isArray(value) && value.every((v) => typeof v === "object" && v !== null);
 
 /** The query string: `exchange_account_ids` repeated (`explode: true`), a page, a cursor. */
 export function ordersSearch(query: OrdersQuery = {}, cursor: string | null = null): string {
