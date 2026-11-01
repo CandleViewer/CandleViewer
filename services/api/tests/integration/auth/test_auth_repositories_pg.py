@@ -119,6 +119,8 @@ async def test_mfa_challenge_replay_and_single_use_recovery_code(pg_dsn: str) ->
         await mfa.replace_recovery_codes(uid, code_hashes=(h,))
         cid = await mfa.find_unused_recovery_code(uid, code_hashes=(h,))
         assert cid is not None
+        # #2152 BQ-3: one lookup of every candidate digest; only the second matches here.
+        assert await mfa.find_unused_recovery_code(uid, code_hashes=("b" * 64, h)) == cid
         fresh = await _login_challenge(mfa, uid)
         assert await mfa.complete_recovery(uid, challenge_id=fresh, code_id=cid, now=_NOW) is True
         assert await mfa.complete_recovery(uid, challenge_id=fresh, code_id=cid, now=_NOW) is False

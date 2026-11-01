@@ -78,10 +78,18 @@ def _all_zero(keyring: FakeMfaKeyring) -> bool:
 
 @pytest.mark.parametrize("right", [True, False], ids=["right_code", "wrong_code"])
 async def test_the_login_verifier_zeroes_every_seed_it_opened(right: bool) -> None:
+    """Two confirmed methods, and the right code is the second's, so the call opens both seeds:
+    each is zeroed once the code is checked, not only the first."""
     keyring, repo = FakeMfaKeyring(), FakeMfaRepository()
-    svc, user, seed, _ = await _enrolled(keyring, repo)
+    svc, user, _, _ = await _enrolled(keyring, repo)
     assert _all_zero(keyring)  # the enrolment's check zeroed its seed too
-    code = generate_code(seed, time_step_for(_NOW.timestamp())) if right else "000000"
+    second = bytes(range(100, 120))  # a second factor's seed, integer-built (C-13.5)
+    method = await repo.create_pending_method(
+        user, secret_enc=keyring.encrypt(second), secret_key_ref=keyring.key_ref, label="b"
+    )
+    await repo.seed_confirmed(str(method.id), now=_NOW)
+    keyring.opened.clear()
+    code = generate_code(second, time_step_for(_NOW.timestamp())) if right else "000000"
     request = MfaVerifyRequest(
         mfa_token=await _login_token(repo, user), method=MfaMethodKind.TOTP, code=code
     )
