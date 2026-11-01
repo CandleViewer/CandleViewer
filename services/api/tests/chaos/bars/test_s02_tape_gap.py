@@ -125,7 +125,7 @@ async def test_s02_gap_marker_helper_demands_a_flag_on_the_first_bar_after_the_h
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="bars never consume GapEvent: #529 follow-up row (gap marking, AC1)",
+    reason="bars never consume GapEvent: #529 follow-up row, fixed by the gap-marking PR-3 (AC1)",
 )
 async def test_s02_first_bar_after_an_unrecovered_hole_is_flagged(rig: Rig, bars: BarsRig) -> None:
     rig.ex.inject(Fault(FaultKind.HTTP_STATUS, status=503, count=50, path=BACKFILL_PATH))

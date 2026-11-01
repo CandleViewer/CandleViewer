@@ -62,3 +62,7 @@ not a colour), `trade_duplicates_suppressed_total`, `bars_amended_total`,
 - No QuestDB writer, WS publisher or indicator engine on the emit path (PR-2 adds the store seam).
 - Not covered here: SR-040 malformed payloads (ingestion `test_s06`), the UX live-region
   assertions (#419) and the performance targets (needs the load harness).
+
+Note: `_rig.py` composes the corrected clock itself (`corrected_now_us(offset, host_now)`), so this
+suite does not exercise `app.exchange_corrected_clock`. The wiring is pinned by
+`tests/unit/test_bars_clock_wiring.py` (`create_app` hands the corrected clock to the bars).

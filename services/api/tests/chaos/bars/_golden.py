@@ -96,6 +96,8 @@ def assert_monotonic(bars: Sequence[Bar], what: str) -> None:
 def assert_gap_marked(bars: Sequence[Bar], gap: GapEvent, what: str) -> None:
     """AC1: the first bar to close after an unrecovered hole is not presented as complete."""
     after = [b for b in bars if b.close_time >= gap.end_us]
-    assert after, f"{what}: no bar closes after the gap"
+    if not after:
+        # A distinct type, so the strict xfail (raises=AssertionError) cannot pass for this reason.
+        raise LookupError(f"{what}: no bar closes after the gap")
     first = after[0]
     assert first.gap_before or first.partial, f"{what}: bar {first.index} hides the gap"
