@@ -84,7 +84,7 @@ body:
     id: out-of-scope
     attributes:
       label: Out-of-scope note
-      description: "State deliberate narrowing, e.g. \"single symbol only\"."
+      description: 'State deliberate narrowing, e.g. "single symbol only".'
     validations:
       required: false
   - type: dropdown
@@ -93,10 +93,10 @@ body:
       label: Estimate
       description: Agreed via planning poker at Refinement — this is your proposal, confirmed later.
       options:
-        - "1"
-        - "2"
-        - "3"
-        - "5"
-        - "8"
+        - "1 point"
+        - "2 points"
+        - "3 points"
+        - "5 points"
+        - "8 points"
     validations:
       required: true

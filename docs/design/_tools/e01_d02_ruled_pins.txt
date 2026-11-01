@@ -1,0 +1,167 @@
+# E01-D02 pins: one cited endpoint per line, `KEY:line sha1-16` of its words at the base,
+# then the `REC` lines: label, team and issue states as the hosting site gave them on the
+# check date (a 404 is recorded as absent). Written only by
+# `e01_d02_designqa_audit.py --repin-ruled`.
+03:320 de059ea1121b41c6
+03:331 3c060cc31a3ffa48
+05:227 916b1fc64a923546
+30:274 33d006f04657c464
+31:436 d2c9db177b4baadc
+CHOOSER:1 83cf734bd85035a2
+CHOOSER:3 50ba17d5087b1165
+CHOOSER:5 d632e660bbe53b0e
+CHOOSER:6 279784c7c7b66cbf
+CHOOSER:8 cbb0b2c58e62c92e
+D01:6 8ec5d6fb6a553369
+D01:9 5bd992bf247b7692
+D01:85 d1f73a0eeb0a3255
+D01:145 e949a24dd9ce6aee
+D01:147 408daed0e0e5a713
+D01:159 ba438bc898abf124
+D01:203 1f7f7a3dc8e97822
+D01:220 5dc447d36b33d3c8
+D01:230 18021615d9fd1694
+D01:232 fe857598c90c7be6
+D01:253 f9cc77070da19065
+D01:267 d5205b5495c6bc8a
+D01:273 b6d7ee494a9792f4
+D01:300 38db4da053aaee37
+D01:301 723e2eebeddeb4a2
+D01:303 a8769d83e6506308
+D01:309 dac8d496ca146ce5
+D01:331 a32fd89daffdb58f
+D01:336 366e7d79b3ca5ad0
+D01:369 bda34a1ecece888b
+GA:36 3d1622daeee9d3dd
+GA:58 469eadc7b6d591c4
+GA:69 e7064f0b80f61dbc
+GH:291 1c2a3c99dfdcb383
+GH:375 716d9804acfc081b
+GH:381 e7064f0b80f61dbc
+GQ:88 469eadc7b6d591c4
+GQ:95 e7064f0b80f61dbc
+GQ:129 469eadc7b6d591c4
+GQ:136 e7064f0b80f61dbc
+GQ:138 469eadc7b6d591c4
+GQ:150 e7064f0b80f61dbc
+GS:108 469eadc7b6d591c4
+GS:115 e7064f0b80f61dbc
+GS:133 469eadc7b6d591c4
+GS:140 e7064f0b80f61dbc
+GS:142 469eadc7b6d591c4
+GS:150 e7064f0b80f61dbc
+PRT:4 a6e046925f2e47ee
+PRT:7 6dedebb16aaea2cb
+PRT:12 f1774530a5e578f3
+PRT:51 4723147693f5ef6a
+PRT:63 30c3f75bed97c22b
+PRT:66 56634d7b85add491
+PRT:68 3a2cfe1d70ce0dd6
+PRT:74 abf389602deb9b03
+PRT:154 212adbc234e23c8f
+PRT:158 22774332d0daa239
+PRT:177 4337074e64db552b
+PRT:179 7aee57fcb40ed42b
+PRT:185 858a7b46072a0b6f
+PRT:186 298519a4e960d740
+PRT:187 a092a92d9149648f
+PRT:188 e35c053f4752515a
+RG:95 1a748ae7c87c1fe7
+RG:98 28d5e8f908995130
+bug:14 9e045ce5dfe8b507
+bug:21 e267e6afc166dd86
+bug:24 7edd6a8a4d5f89d2
+bug:34 30de8c07bf62f788
+bug:41 c31204e0a8e5d792
+bug:48 88aa7226e7808afc
+bug:55 ebeb6209a7178bb5
+bug:59 41fec5ba83145949
+bug:65 9d36bd5f996d780a
+bug:74 1d5a3408f6988040
+bug:81 8b32f92b34e05150
+bug:88 ef5b3ef68bfaa776
+bug:95 aff896e045838b9c
+bug:108 baf91fd884583f80
+bug:115 ae0bac147e24e669
+chore:14 5ae2aa2134bfd6c9
+chore:22 0a54a30c454af191
+chore:34 dbba3e0f23a5e31b
+chore:36 ebeb6209a7178bb5
+chore:39 be0488fc2185156d
+epic:14 fcffd43c621b9a99
+epic:21 728a97a7e6349293
+epic:28 d0ba1d0f33a5d1e0
+epic:36 439d5519de3904e8
+epic:45 c92df04f68675c8a
+epic:58 00ed90b4b67c0170
+epic:70 ec1aa863799d0419
+epic:72 ebeb6209a7178bb5
+epic:77 f843e60ba74bab30
+epic:83 d9988d6bef287575
+epic:90 a3d62e70b853b31d
+quarterly:4 d2306f85007b4833
+quarterly:9 e2668733c77e553c
+quarterly:11 61a0592f924a6d28
+release:9 6508ca280fb6c3a0
+release:13 c2358579c4118076
+spike:14 fef1b86cb687b386
+spike:22 bbec1aebdacd3cdd
+spike:24 ebeb6209a7178bb5
+spike:28 c39591b4be497272
+spike:34 461997eeeaee3156
+spike:41 5345aafd002a4a5e
+spike:48 68e07d8309957647
+story:1 6f638ce345fc8784
+story:3 da059547d91fb237
+story:4 9b13a38f0606d993
+story:6 ec9a8dfd8544b7fc
+story:13 54a1a196d6e86ed4
+story:14 12a40b8c3703a9a9
+story:17 f35d8968d90fca7a
+story:23 52376aa5efb4ab0c
+story:24 12a40b8c3703a9a9
+story:27 254f3eb5aab28aa2
+story:36 52376aa5efb4ab0c
+story:37 1c27a4e526b54a6a
+story:40 5ecb811aa99d76be
+story:48 52376aa5efb4ab0c
+story:52 2be615c0313ffeef
+story:62 8564caa3e2b09f67
+story:68 701c775d381856fe
+story:71 2b132f2ea71bd2a1
+story:75 e5be46e030739aaf
+story:79 d9988d6bef287575
+story:86 6d521a373ffa98b4
+story:93 dbba3e0f23a5e31b
+story:95 ebeb6209a7178bb5
+story:100 129d2a3d41955a6f
+task:17 de2796ad685203ea
+task:24 254f3eb5aab28aa2
+task:31 bc4b683d218ccfdd
+task:43 5c63c1598d87dace
+task:68 ea992c5a87120c51
+task:70 ebeb6209a7178bb5
+task:71 67ca25feb53b8e3c
+task:72 508522ec9191c84f
+task:74 41fec5ba83145949
+task:80 d9988d6bef287575
+REC date checked 2026-11-01
+REC label type/epic present
+REC label type/story present
+REC label qa present
+REC label type/task present
+REC label type/spike present
+REC label type/bug present
+REC label type/chore present
+REC label area/infra-devops present
+REC label quarterly-ci-review absent
+REC label type/release present
+REC label priority/p1-high present
+REC team CandleViewer/design absent
+REC team CandleViewer/security absent
+REC issue 76 closed 2026-09-25T15:05:03Z
+REC issue 83 closed 2026-09-25T17:57:04Z
+REC issue 85 closed 2026-09-26T09:10:18Z
+REC issue 78 closed 2026-09-26T20:43:13Z
+REC issue 140 closed 2026-09-29T04:23:29Z
+REC issue 139 open -

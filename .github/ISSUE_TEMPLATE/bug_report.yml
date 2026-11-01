@@ -54,9 +54,9 @@ body:
         P3: cosmetic or wording (1 sprint). No bug closes without a regression test.
       options:
         - "priority/p0-critical — drop everything"
-        - "priority/p1-high"
-        - "priority/p2-normal"
-        - "priority/p3-low"
+        - "priority/p1-high — major breakage, a workaround exists"
+        - "priority/p2-normal — partly broken, not blocking"
+        - "priority/p3-low — cosmetic or wording"
     validations:
       required: true
   - type: textarea
@@ -72,7 +72,18 @@ body:
     id: test-layer
     attributes:
       label: Test layer that should have caught it
-      options: [unit, property, integration, contract, e2e, a11y, chaos, performance, none - needs new layer]
+      options:
+        [
+          unit,
+          property,
+          integration,
+          contract,
+          e2e,
+          a11y,
+          chaos,
+          performance,
+          none - needs new layer,
+        ]
     validations:
       required: true
   - type: input

@@ -34,8 +34,8 @@ body:
       label: Estimate
       description: "≤3 points."
       options:
-        - "1"
-        - "2"
-        - "3"
+        - "1 point"
+        - "2 points"
+        - "3 points"
     validations:
       required: true

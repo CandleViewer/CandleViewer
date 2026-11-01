@@ -70,11 +70,11 @@ body:
       label: Rough sizing
       description: T-shirt size for roadmap placement.
       options:
-        - "XS"
-        - "S"
-        - "M"
-        - "L"
-        - "XL"
+        - "XS — extra small"
+        - "S — small"
+        - "M — medium"
+        - "L — large"
+        - "XL — extra large"
     validations:
       required: true
   - type: input

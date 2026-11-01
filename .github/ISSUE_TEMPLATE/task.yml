@@ -69,9 +69,9 @@ body:
       description: Drives triage order.
       options:
         - "priority/p0-critical — drop everything"
-        - "priority/p1-high"
-        - "priority/p2-normal"
-        - "priority/p3-low"
+        - "priority/p1-high — do next, after any p0"
+        - "priority/p2-normal — planned work, normal order"
+        - "priority/p3-low — when there is spare capacity"
     validations:
       required: true
   - type: input
