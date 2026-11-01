@@ -984,10 +984,15 @@ def test_property_check_order_answers_any_finite_figures_with_a_typed_refusal_on
 _TINY: dict[str, Any] = {"qty": Decimal("0.005")}
 
 
-def _check_closing(order: SizedOrder, position_qty: Decimal | None) -> None:
+def _check_closing(
+    order: SizedOrder, position_qty: Decimal | None, *, instrument: Instrument | None = None
+) -> None:
     validator = Validator(read_only_gate=_Gate())
     validator.check_order(
-        order, instrument=_instrument(), profile=_profile(), position_qty=position_qty
+        order,
+        instrument=instrument or _instrument(),
+        profile=_profile(),
+        position_qty=position_qty,
     )
 
 
@@ -1014,11 +1019,26 @@ def test_whole_close_with_no_position_read_keeps_the_minimum() -> None:
         _check_closing(_order(**(_REDUCE | _TINY)), None)
 
 
-def test_whole_close_is_held_to_every_other_filter() -> None:
-    off_step = {"qty": Decimal("0.0055")}
-    with pytest.raises(LotSizeViolation) as refused:
-        _check_closing(_order(**(_REDUCE | off_step)), Decimal("0.0055"))
-    assert _rules(refused.value) == [("qty", "qty_step")]
+@pytest.mark.parametrize(
+    ("figures", "overrides", "violated"),
+    [
+        ({"qty": Decimal("0.0055")}, {}, ("qty", "qty_step")),
+        ({"qty": Decimal("0.005"), "price": Decimal("63100.05")}, {}, ("price", "tick_size")),
+        ({"qty": Decimal("150")}, {"max_mkt_order_qty": Decimal("200")}, ("qty", "max_order_qty")),
+    ],
+    ids=["off_the_step", "off_the_tick", "above_the_limit_ceiling"],
+)
+def test_whole_close_is_held_to_every_other_filter(
+    figures: dict[str, Any], overrides: dict[str, Any], violated: tuple[str, str]
+) -> None:
+    """The exemption drops `min_order_qty` alone: a reduce-only close of the whole position (the
+    read shows its own size) keeps the lot step, the tick and `max_order_qty`, which the filters
+    judge within the market's higher ceiling (a quantity above both is the bound step's, before
+    any exemption)."""
+    order = _order(**(_REDUCE | figures))
+    with pytest.raises(OrderRefused) as refused:
+        _check_closing(order, order.qty, instrument=_instrument(**overrides))
+    assert _rules(refused.value) == [violated]
 
 
 def test_closes_whole_needs_reduce_only_and_the_whole_size_the_read_showed() -> None:
