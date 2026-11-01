@@ -7,7 +7,7 @@ offline DuckDB reference. Harness: `services/api/tests/golden/e24/` (reference S
 Files: `cases.json` (the case manifest), `expected_<case>.json.gz` (the engine's canonical JSON per
 default-lane case: sorted keys, Decimal as string), `summary.json` (bars and sha256 per case).
 `CV_REGEN_GOLDEN=1 pytest .../test_derivatives_parity.py -k golden_matches` rewrites them; review
-the diff, there is no version guard because the engine carries no `ALGO_VERSION`.
+the diff; it is refused when `CI` or `GITHUB_ACTIONS` is set; there is no version guard because the engine carries no `ALGO_VERSION`.
 
 ## Provenance and the corpus deviation (C-13.5)
 
@@ -50,7 +50,7 @@ harness already writes the counts when `CV_PARITY_SUMMARY=<path>` is set.
 
 Numbers load as `DECIMAL(38,18)`, never `DOUBLE`. Exact equality for every series and None-ness
 everywhere, except two declared divisions: `funding_annualized` and `premium_pct` (last, mark),
-`abs diff <= 1e-12` (`TOLERANCE` in `_parity.py`, asserted by a test). DuckDB decimal division is
+`abs diff <= 5e-19` for annualised (half the reference's 1e-18 step) and `<= 1e-12` for premium (`TOLERANCE` in `_parity.py`, asserted by a test). DuckDB decimal division is
 `DOUBLE`, so the reference divides in exact `HUGEINT` arithmetic rounded half away from zero (1e-18
 for annualised, 1e-12 for premium); the engine divides at 28 digits, half-even. Every series is read
 through `metric_value`. `time_to_funding_ms` is the per-bar value (last snapshot, `next - ts`,

@@ -18,7 +18,7 @@ from tests.golden.e24.conftest import RefOf
 
 def _assert_names(exc: P.ParityDivergence, label: str) -> None:
     text = str(exc)
-    assert text.startswith(label) or label in text
+    assert label in text
     assert re.search(r"at bar \d{13} \(\d{4}-\d\d-\d\dT", text), text
     assert "engine=" in text
     assert "reference=" in text

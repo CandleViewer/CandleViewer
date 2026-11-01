@@ -47,9 +47,9 @@ SERIES: tuple[tuple[str, str, Mapping[str, str], str], ...] = (
 #: Descriptors the follow-up PR adds (they need the liquidation fixtures of #5273).
 FOLLOW_UP_DESCRIPTORS = frozenset({"liquidation_notional"})
 #: Exact equality everywhere except the two divisions: the reference rounds half away from zero
-#: at 1e-18 (annualised) / 1e-12 (premium); the engine divides at 28 digits, half-even.
+#: at 1e-18 (annualised, so 5e-19) / 1e-12 (premium); the engine divides at 28 digits, half-even.
 TOLERANCE: Mapping[str, Decimal] = {
-    "funding_annualized": Decimal("1e-12"),
+    "funding_annualized": Decimal("5e-19"),
     "premium_pct[last]": Decimal("1e-12"),
     "premium_pct[mark]": Decimal("1e-12"),
 }
@@ -186,6 +186,15 @@ def write_summary(reports: Mapping[str, Report]) -> None:
     if dest:
         body = {k: r.summary() for k, r in sorted(reports.items())}
         Path(dest).write_text(json.dumps(body, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def regen_requested() -> bool:
+    """`CV_REGEN_GOLDEN=1` asks to rewrite the goldens; refused if `CI`/`GITHUB_ACTIONS` is set."""
+    if os.environ.get("CV_REGEN_GOLDEN") != "1":
+        return False
+    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+        raise RuntimeError("CV_REGEN_GOLDEN=1 is refused in CI: goldens are regenerated locally")
+    return True
 
 
 def descriptor_names() -> set[str]:

@@ -12,7 +12,7 @@ from typing import Any
 
 import duckdb
 
-from tests.golden.e24._loader import Rows, write_parquet
+from tests.golden.e24._loader import Rows, check_price_scale, write_parquet
 
 _SQL = Path(__file__).parent / "reference"
 #: Spec-by-ruling: the OI staleness bound (#723 BQ-5). Restated here, not read from the engine.
@@ -28,6 +28,7 @@ def _e(v: int | None, exp: int) -> Decimal | None:
 
 def run(rows: Rows, root: Path) -> Ref:
     """Write `rows` as Parquet under `root`, run both SQL files, one dict of values per bar."""
+    check_price_scale(rows)
     write_parquet(rows, root)
     con = duckdb.connect(":memory:")
     for name, pattern in (
@@ -45,9 +46,8 @@ def run(rows: Rows, root: Path) -> Ref:
             "open_interest_delta": delta, "oi_price_quadrant": quad,
         }  # fmt: skip
     params = {"interval_ms": rows.interval_min * _MS_PER_MIN, "interval_min": rows.interval_min}
-    macro, query = (_SQL / "funding_basis.sql").read_text().split(";\n", 1)
-    con.execute(macro)  # the half-away-from-zero integer division macro
-    fb = con.execute(query, params)
+    con.execute((_SQL / "div_ha.sql").read_text())  # the half-away-from-zero division macro
+    fb = con.execute((_SQL / "funding_basis.sql").read_text(), params)
     for start, rate, ann, ttf, bl, bm, pl, pm in fb.fetchall():
         out[start] |= {
             "funding_rate": rate, "funding_annualized": _e(ann, 18), "time_to_funding_ms": ttf,

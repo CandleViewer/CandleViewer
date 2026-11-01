@@ -8,7 +8,6 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
-import os
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -22,7 +21,6 @@ from tests.golden.e24 import _reference as R
 from tests.golden.e24.conftest import RefOf
 
 PR_CASES = [c.id for c in L.cases("pr")]
-REGEN = os.environ.get("CV_REGEN_GOLDEN") == "1"
 SUMMARY = L.GOLDEN_DIR / "summary.json"
 SETTLEMENT_MS = 1_700_006_400_000  # 2023-11-15T00:00Z, a UTC day boundary and an 8 h settlement
 
@@ -78,7 +76,7 @@ def test_full_recompute_is_byte_identical_across_runs(case_id: str) -> None:
 @pytest.mark.parametrize("case_id", PR_CASES)
 def test_golden_matches_engine_output(case_id: str) -> None:
     got = _series(case_id)
-    if REGEN:
+    if P.regen_requested():
         _regenerate(case_id, got)
     want = gzip.decompress(golden_path(case_id).read_bytes()).decode()
     assert got == want, f"{case_id}: engine output drifted from the committed golden"
@@ -166,7 +164,32 @@ def test_paired_four_hour_case_uses_the_eth_settled_rows() -> None:
 
 def test_tolerance_table_names_only_the_two_divisions() -> None:
     assert set(P.TOLERANCE) == {"funding_annualized", "premium_pct[last]", "premium_pct[mark]"}
-    assert all(t == Decimal("1e-12") for t in P.TOLERANCE.values())
+    assert P.TOLERANCE["funding_annualized"] == Decimal("5e-19")  # the reference rounds at 1e-18
+    assert P.TOLERANCE["premium_pct[last]"] == P.TOLERANCE["premium_pct[mark]"] == Decimal("1e-12")
+
+
+def test_ticker_price_with_ten_decimals_is_refused(ref_of: RefOf, tmp_path: Path) -> None:
+    rows, _ = ref_of("btc_8h_slice")
+    ts, _last, mark, idx, rate, nxt = rows.tickers[0]
+    ticker = (ts, "1.0000000001", mark, idx, rate, nxt)
+    bad = L.Rows(rows.interval_min, rows.bars, rows.oi, [ticker], rows.funding)
+    with pytest.raises(ValueError, match="more than 9 decimals"):
+        R.run(bad, tmp_path)
+    L.check_price_scale(rows)  # the recorded corpus is within 9
+
+
+@pytest.mark.parametrize("var", ["CI", "GITHUB_ACTIONS"])
+def test_golden_regeneration_is_refused_in_ci(var: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CV_REGEN_GOLDEN", "1")
+    monkeypatch.setenv(var, "true")
+    with pytest.raises(RuntimeError, match="refused in CI"):
+        P.regen_requested()
+    monkeypatch.delenv(var)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    assert P.regen_requested()
+    monkeypatch.delenv("CV_REGEN_GOLDEN")
+    assert not P.regen_requested()
 
 
 def test_series_cover_every_descriptor_but_the_follow_up_one() -> None:

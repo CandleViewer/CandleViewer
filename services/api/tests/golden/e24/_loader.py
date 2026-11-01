@@ -104,7 +104,36 @@ def _tickers(frames: list[dict[str, Any]]) -> list[Any]:
     return out
 
 
+#: `funding_basis.sql` casts prices at 1e9 into HUGEINT, which rounds silently past 9 decimals.
+MAX_PRICE_DECIMALS = 9
+
+
+def check_price_scale(rows: Rows) -> None:
+    """Refuse loudly a ticker price with more than 9 decimals (the reference cannot hold it)."""
+    for ts, *prices, _rate, _next in rows.tickers:
+        for price in prices:
+            if price is None:
+                continue
+            exp = Decimal(price).normalize().as_tuple().exponent
+            if isinstance(exp, int) and exp < -MAX_PRICE_DECIMALS:
+                raise ValueError(
+                    f"ticker price {price!r} at {ts} has more than {MAX_PRICE_DECIMALS} decimals; "
+                    "funding_basis.sql would round it silently"
+                )
+
+
+_ROWS: dict[str, Rows] = {}
+
+
 def build_rows(case: Case) -> Rows:
+    """The case's rows, built once per case id; every caller gets its own copy of the lists."""
+    if case.id not in _ROWS:
+        _ROWS[case.id] = _build_rows(case)
+    r = _ROWS[case.id]
+    return Rows(r.interval_min, list(r.bars), list(r.oi), list(r.tickers), list(r.funding))
+
+
+def _build_rows(case: Case) -> Rows:
     man = load_manifest()
     inp = man["inputs"]
     klines = sorted(
@@ -135,13 +164,15 @@ def build_rows(case: Case) -> Rows:
         (int(r["fundingRateTimestamp"]), r["fundingRate"])
         for r in _fixture(man, inp["funding"][case.funding])["result"]["list"]
     )
-    return Rows(
+    rows = Rows(
         interval_min=case.interval_min,
         bars=bars,
         oi=[r for r in oi if not _dropped(case.drops, "oi", r[0])],
         tickers=[t for t in tickers if not _dropped(case.drops, "tickers", t[0])],
         funding=funding,
     )
+    check_price_scale(rows)
+    return rows
 
 
 def write_parquet(rows: Rows, root: Path) -> None:

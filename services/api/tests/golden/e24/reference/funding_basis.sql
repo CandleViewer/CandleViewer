@@ -9,8 +9,6 @@
 -- back to the settled row whose period [T - interval, T) contains the bar's last ms.
 -- Inputs: bars(start_ms, end_ms, o, c), tickers(ts, last, mark, idx, rate, next_ms),
 -- funding(ts, rate). Params: $interval_ms, $interval_min.
-CREATE OR REPLACE MACRO div_ha(a, b) AS
-  sign(a) * sign(b) * ((2 * abs(a) + abs(b)) // (2 * abs(b)));
 WITH snap AS (
   SELECT b.start_ms, max(t.ts) AS ts, max_by(t.last, t.ts) AS last, max_by(t.mark, t.ts) AS mark,
          max_by(t.idx, t.ts) AS idx, max_by(t.rate, t.ts) AS rate, max_by(t.next_ms, t.ts) AS next_ms
