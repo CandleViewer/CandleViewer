@@ -1,9 +1,12 @@
 /**
- * Every string the graph editor's keyboard core announces or shows (E47-S03 BQ-11). All PROPOSED:
- * E37-D04 (keyboard authoring map) and E37-D05 (copy) have not landed, so rewording is an edit to
- * this file alone, and each entry is a deviation row for E47-D06 #1305 / E37-D04 to confirm.
+ * Every string the graph editor's keyboard core announces or shows (E47-S03 BQ-11, as ruled).
+ * Strings marked D02 are E37-D02's (`docs/design/E37/E37-D02.md` at origin/main; the line is
+ * cited beside each) and are used VERBATIM: same words, same case, no full stop added. Strings
+ * marked PROPOSED are this core's own (the nudge / move wording, plus the few the a11y lens asked
+ * for that D02 has no string for); each is a deviation row for E37-D04 #949 / E37-D05 #950 /
+ * E47-D06 #1305 to confirm, and rewording is an edit to this file alone.
  * User content (node names, parameter values) is interpolated as plain text and must be rendered
- * as a text node, never as markup. Sentences end with a full stop; a refusal names the reason.
+ * as a text node, never as markup.
  */
 import type { A11yNodeType } from "./graph.js";
 
@@ -15,7 +18,10 @@ export const TYPE_LABEL: Readonly<Record<A11yNodeType, string>> = {
   comment: "Comment",
 };
 
-/** Input port names as read aloud (rule-graph's `targetPort` values); others read as is. */
+/**
+ * Input port names in the outline's connection text, "output connects to Multiply input A"
+ * (D02 §8 :282, quoting `14`:1867); others read as is.
+ */
 export const PORT_LABEL: Readonly<Record<string, string>> = {
   left: "input A",
   right: "input B",
@@ -28,12 +34,13 @@ export const PORT_LABEL: Readonly<Record<string, string>> = {
 export const portLabel = (port: string): string =>
   Object.hasOwn(PORT_LABEL, port) ? (PORT_LABEL[port] as string) : port;
 
-/** The local refusals; type mismatches use the oracle's (rule-graph PORT_COMPAT) sentence. */
+/** The local refusals; a type mismatch speaks the oracle's (rule-graph PORT_COMPAT) sentence. */
 export const REFUSAL = {
+  /** D02 §15 :414 (PROPOSED there, a D02-A for `ports.ts`), verbatim. */
+  occupied: "This input already has a connection.",
+  /** PROPOSED: the core's own guards, no D02 string. */
   selfLoop: "A node can't connect to itself.",
-  occupied: "That input already has a connection.",
   duplicate: "Those ports are already connected.",
-  loop: "That connection would make a loop.",
   noOutput: "This node has no output.",
   noInput: "That port is not an input of this node.",
   noSource: "Choose an output port first.",
@@ -58,29 +65,49 @@ export const listOf = (items: readonly string[]): string =>
     ? (items[0] ?? "")
     : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1] as string}`;
 
-const capitalised = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
-
 export const copy = {
-  connectStarted: (source: string, available: number, unavailable: number): string =>
-    `Connecting from ${source} output. ${plural(available, "input", "inputs")} available` +
-    (unavailable === 0 ? "" : `, ${unavailable} not available`) +
-    ". Choose an input, then press Space. Escape cancels.",
-  candidate: (target: string, port: string, type: string, index: number, size: number): string =>
-    `${target} ${portLabel(port)}, ${type}, ${index} of ${size}.`,
-  candidateRefused: (target: string, port: string, reason: string): string =>
-    `${target} ${portLabel(port)} not available. ${reason}`,
-  noneAvailable: (): string => "No input can take this connection.",
-  connected: (source: string, target: string, port: string): string =>
-    `Connected ${source} output to ${target} ${portLabel(port)}.`,
-  disconnected: (source: string, target: string, port: string): string =>
-    `Disconnected ${source} from ${target} ${portLabel(port)}.`,
-  refused: (reason: string): string => `Can't connect. ${reason}`,
-  cancelled: (): string => "Connection cancelled.",
-  nodeAdded: (name: string): string => `Added ${name}, not connected.`,
+  // ---- D02, verbatim ----
+  /** D02 §6 P12 :220: the source output port once a connect starts. */
+  connectStarted: (type: string): string =>
+    `Connecting from output port, ${type} — choose an input`,
+  /** D02 §6 :231, O2 :289, §13 :367, §15 :418: a completed connect. */
+  connected: (source: string, target: string, input: number): string =>
+    `connected ${source} output to ${target} input ${input}`,
+  /** D02 O3 :290, §13 :369, §15 :418: Delete on a focused connection. */
+  disconnected: (source: string, target: string): string => `Disconnected ${source} from ${target}`,
+  /** D02 §13 :368: Esc aborts the connect. */
+  cancelled: (): string => "Cancelled",
+  /** D02 O1 :288, §15 :418: added connected to the selection. */
+  nodeAddedAfter: (name: string, selection: string): string => `Added ${name} after ${selection}`,
+  /** D02 §7 :278, §15 :418: added with no compatible port on the selection. */
+  nodeAdded: (name: string): string => `Added ${name} — not connected`,
+  /** D02 O4 :291, §13 :370, §15 :418 (for every n: plural forms are E37-D05's to add). */
   nodeDeleted: (name: string, connections: number): string =>
-    connections === 0
-      ? `Deleted ${name}. It had no connections.`
-      : `Deleted ${name} and ${plural(connections, "connection", "connections")}.`,
+    `Deleted ${name} and ${connections} connections`,
+  /** D02 §15 :414 (PROPOSED there): a connect that would close a cycle. */
+  loop: (source: string, target: string): string =>
+    `This would make a loop — ${source} already depends on ${target}.`,
+  /** D02 §6 :205, §14 :392: "{Input | Output} port, {type}, {connected to {node} | not connected}". */
+  port: (output: boolean, type: string, names: readonly string[]): string =>
+    `${output ? "Output" : "Input"} port, ${type}, ` +
+    (names.length === 0 ? "not connected" : `connected to ${listOf(names)}`),
+  /** D02 §6 P2 / P10 :210, :218: a compatible target during a connect, after its port name. */
+  canConnect: (): string => " — can connect",
+
+  // ---- PROPOSED: no D02 string ----
+  /** The a11y lens's count at start (A-4), after `connectStarted`. */
+  availability: (available: number, unavailable: number): string =>
+    `. ${plural(available, "input", "inputs")} available` +
+    (unavailable === 0 ? "." : `, ${unavailable} not available.`),
+  /** The target node's name before its D02 port name, and the position among available ones. */
+  candidate: (target: string, portName: string, index: number, size: number): string =>
+    `${target}, ${portName}${copy.canConnect()}, ${index} of ${size}`,
+  /** An unavailable target: its port name, then its refusal sentence (D02 §14 :404 picker rule). */
+  candidateRefused: (target: string, portName: string, reason: string): string =>
+    `${target}, ${portName}. ${reason}`,
+  noneAvailable: (): string => "No input can take this connection.",
+  /** A refusal at the target is the refusal sentence itself (D02 §6 :231, §13 :367). */
+  refused: (reason: string): string => reason,
   moved: (name: string, dir: Direction, step: number, x: number, y: number): string =>
     `Moved ${name} ${step} ${DIRECTION_WORD[dir]}, now x ${x}, y ${y}.`,
   /** One sentence for a settled burst of nudges: "Moved AND 40 right and 8 down, now x 280, y 128." */
@@ -109,10 +136,6 @@ export const copy = {
   inboundFrom: (source: string, port: string): string => `${source} into ${portLabel(port)}`,
   outboundTo: (target: string, port: string): string => `${target} ${portLabel(port)}`,
   unknownType: (): string => "type unknown",
-  /** E37-D02 §14: "{Input | Output} port, {type}, {connected to {node} | not connected}". */
-  port: (output: boolean, port: string, type: string, names: readonly string[]): string =>
-    `${output ? "Output" : capitalised(portLabel(port))} port, ${type}, ` +
-    `${names.length === 0 ? "not connected" : `connected to ${listOf(names)}`}.`,
   noOutput: (): string => "No output.",
   noPorts: (): string => "No ports.",
   /** A node's accessible description: type, name, parameters, then each port. */

@@ -244,3 +244,28 @@ describe("the metadata the editor and the cheatsheet read", () => {
     ]);
   });
 });
+
+describe("E47-S03's Rules rows, as ruled (BQ-04, BQ-12)", () => {
+  const rules = KEYMAP.filter((c) => c.context === "Rules");
+
+  it("adds no node-list chord: E37-S05 registers it (E37-D02 §13, no new chord)", () => {
+    expect(rules.map((c) => c.id)).not.toContain("rules.node_list");
+    expect(rules.map((c) => c.defaultBinding)).not.toContain("Alt+L");
+  });
+
+  it("adds no connect row: Enter on a port shares rules.inspect_node's Enter (D02 §13)", () => {
+    expect(rules.map((c) => c.id)).not.toContain("rules.connect");
+    expect(rules.filter((c) => c.defaultBinding === "Space").map((c) => c.id)).toEqual([]);
+  });
+
+  it("gives Ctrl+Shift+N a reviewed reserved-key rationale, in rules.auto_layout's form", () => {
+    const add = rules.find((c) => c.id === "rules.add_node");
+    expect(add?.defaultBinding).toBe("Ctrl+Shift+N");
+    expect(add?.reservedOverride?.rationale).toBe(
+      "Deliberate override of browser incognito window; Electron has no incognito window",
+    );
+    expect(rules.find((c) => c.id === "rules.auto_layout")?.reservedOverride?.rationale).toBe(
+      "Deliberate override of browser address-bar focus; Electron has no address bar",
+    );
+  });
+});

@@ -1,6 +1,6 @@
 /**
- * The model behind the structural text view (E47-S03 Scope, BQ-06): the Alt+L node list of
- * E37-S05 #1071 IS this view, one linear list of every node in the documented order with its
+ * The model behind the structural text view (E47-S03 Scope, BQ-06): the node list E37-S05 #1071
+ * builds and binds (D02 §8; its chord is E37-S05's to register, BQ-12) IS this view, one linear list of every node in the documented order with its
  * type, parameters and every port: its type and what it connects to, an empty input included
  * (E37-D02 §14). It is a presentation of the same graph the canvas draws, never a second source of
  * truth: edits made from the list go through the same graph commands. Virtualisation beyond a few
@@ -98,7 +98,7 @@ export interface OutlinePort {
   readonly type: string;
   /** Its edges, in the order of the node at the other end; empty when not connected. */
   readonly links: readonly OutlineLink[];
-  /** "{Input | Output} port, {type}, {connected to … | not connected}." (E37-D02 §14) */
+  /** "{Input | Output} port, {type}, {connected to … | not connected}" (E37-D02 §14 :392) */
   readonly text: string;
 }
 
@@ -143,7 +143,6 @@ export function buildOutline(graph: A11yGraph, oracle: PortOracle): readonly Out
     links,
     text: copy.port(
       output,
-      port,
       type,
       links.map((l) => nameFor(l.nodeId)),
     ),
@@ -175,9 +174,10 @@ export function buildOutline(graph: A11yGraph, oracle: PortOracle): readonly Out
     const portText =
       ports.length === 0
         ? copy.noPorts()
-        : [...ports.map((p) => p.text), ...(outputType === null ? [copy.noOutput()] : [])].join(
-            " ",
-          );
+        : [
+            ...ports.map((p) => `${p.text}.`),
+            ...(outputType === null ? [copy.noOutput()] : []),
+          ].join(" ");
     const type = TYPE_LABEL[node.type];
     const name = nameFor(node.id);
     const parameters = parameterSummary(node);

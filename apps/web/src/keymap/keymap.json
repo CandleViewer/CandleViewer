@@ -416,10 +416,6 @@
         {
           "command": "replay.play_pause",
           "rationale": "Space scoped to the focused panel; contexts are never co-active"
-        },
-        {
-          "command": "rules.connect",
-          "rationale": "Space scoped to the focused panel; contexts are never co-active"
         }
       ]
     },
@@ -823,39 +819,11 @@
       "context": "Rules",
       "defaultBinding": "Ctrl+Shift+N",
       "destructive": false,
+      "validWhen": "graph editor focused",
+      "visibleControl": true,
       "reservedOverride": {
-        "rationale": "Deliberate override of browser incognito window (05 §3.2 add node); works in the Electron shell only, the browser keeps the key (E47-S08 hotkey layer to rule)"
-      },
-      "validWhen": "graph editor focused",
-      "visibleControl": true
-    },
-    {
-      "id": "rules.connect",
-      "label": "Connect selected ports",
-      "context": "Rules",
-      "defaultBinding": "Space",
-      "destructive": false,
-      "shadows": [
-        {
-          "command": "dom.recentre",
-          "rationale": "Space scoped to the focused panel; contexts are never co-active"
-        },
-        {
-          "command": "replay.play_pause",
-          "rationale": "Space scoped to the focused panel; contexts are never co-active"
-        }
-      ],
-      "validWhen": "a node output port is focused or a connection is pending",
-      "visibleControl": true
-    },
-    {
-      "id": "rules.node_list",
-      "label": "Open node list (structural view)",
-      "context": "Rules",
-      "defaultBinding": "Alt+L",
-      "destructive": false,
-      "validWhen": "graph editor focused",
-      "visibleControl": true
+        "rationale": "Deliberate override of browser incognito window; Electron has no incognito window"
+      }
     },
     {
       "id": "rules.nudge_left",
@@ -961,10 +929,6 @@
       "shadows": [
         {
           "command": "dom.recentre",
-          "rationale": "Space scoped to the focused panel; contexts are never co-active"
-        },
-        {
-          "command": "rules.connect",
           "rationale": "Space scoped to the focused panel; contexts are never co-active"
         }
       ]

@@ -54,14 +54,17 @@ describe("port selection: Gherkin 1, an edge connected without a pointer", () =>
     expect(effects[0]).toEqual({
       kind: "announce",
       text:
-        "Connecting from Price above output. 1 input available. " +
-        "Choose an input, then press Space. Escape cancels.",
+        // D02 §6 P12 :220 verbatim, then the PROPOSED count (a11y lens A-4).
+        "Connecting from output port, boolean — choose an input. 1 input available.",
     });
-    expect(effects[1]).toEqual({ kind: "announce", text: "Alert run when, action, 1 of 1." });
+    expect(effects[1]).toEqual({
+      kind: "announce",
+      text: "Alert, Input port, action, not connected — can connect, 1 of 1",
+    });
     expect(effects[2]).toEqual({
       kind: "connect",
       edge: { source: "cmp", sourcePort: "out", target: "act", targetPort: "when" },
-      text: "Connected Price above output to Alert run when.",
+      text: "connected Price above output to Alert input 1", // D02 §6 :231 verbatim
     });
     expect(state).toBe(IDLE);
   });
@@ -85,7 +88,7 @@ describe("port selection: refusals keep the connection pending", () => {
     ]);
     expect(effects[1]).toEqual({
       kind: "announce",
-      text: "Alert run when not available. That input already has a connection.",
+      text: "Alert, Input port, action, connected to AND. This input already has a connection.",
     });
     expect(effects[2]).toMatchObject({ kind: "refuse", reason: REFUSAL.occupied });
     expect(state.kind).toBe("pending");
@@ -94,9 +97,7 @@ describe("port selection: refusals keep the connection pending", () => {
   it("says how many inputs can and cannot take it, once, at the start (a11y lens A-4)", () => {
     expect(run(MIXED, [{ type: "start", node: "s" }]).effects[0]).toEqual({
       kind: "announce",
-      text:
-        "Connecting from S output. 3 inputs available, 3 not available. " +
-        "Choose an input, then press Space. Escape cancels.",
+      text: "Connecting from output port, boolean — choose an input. 3 inputs available, 3 not available.",
     });
   });
 
@@ -109,10 +110,10 @@ describe("port selection: refusals keep the connection pending", () => {
       { type: "cycle", step: 1 },
     ]);
     expect(effects.slice(1).map((e) => (e.kind === "announce" ? e.text : e.kind))).toEqual([
-      "X input, boolean, 1 of 3.",
-      "G1 input, boolean, 2 of 3.",
-      "G2 input, boolean, 3 of 3.",
-      "X input, boolean, 1 of 3.",
+      "X, Input port, boolean, not connected — can connect, 1 of 3",
+      "G1, Input port, boolean, not connected — can connect, 2 of 3",
+      "G2, Input port, boolean, not connected — can connect, 3 of 3",
+      "X, Input port, boolean, not connected — can connect, 1 of 3",
     ]);
   });
 
@@ -121,15 +122,18 @@ describe("port selection: refusals keep the connection pending", () => {
       { type: "start", node: "s" },
       { type: "cycle", step: -1 },
     ]);
-    expect(back.effects[1]).toEqual({ kind: "announce", text: "G2 input, boolean, 3 of 3." });
+    expect(back.effects[1]).toEqual({
+      kind: "announce",
+      text: "G2, Input port, boolean, not connected — can connect, 3 of 3",
+    });
     const picked = (step: 1 | -1) =>
       run(MIXED, [
         { type: "start", node: "s" },
         { type: "pick", node: "act", port: "when" },
         { type: "cycle", step },
       ]).effects[2];
-    expect(picked(1)).toEqual({ kind: "announce", text: "G1 input, boolean, 2 of 3." });
-    expect(picked(-1)).toEqual({ kind: "announce", text: "X input, boolean, 1 of 3." });
+    expect(picked(1)).toMatchObject({ text: expect.stringMatching(/^G1, .*, 2 of 3$/) as unknown });
+    expect(picked(-1)).toMatchObject({ text: expect.stringMatching(/^X, .*, 1 of 3$/) as unknown });
   });
 
   it("says so once when no input can take it", () => {
@@ -188,7 +192,7 @@ describe("port selection: refusals keep the connection pending", () => {
 
   it("Esc cancels and returns to idle", () => {
     const { state, effects } = run(RULE, [{ type: "start", node: "cmp1" }, { type: "cancel" }]);
-    expect(effects[1]).toEqual({ kind: "cancelled", text: "Connection cancelled." });
+    expect(effects[1]).toEqual({ kind: "cancelled", text: "Cancelled" }); // D02 §13 :368
     expect(state).toBe(IDLE);
   });
 
@@ -201,6 +205,42 @@ describe("port selection: refusals keep the connection pending", () => {
     expect(stepPortSelection(pending, { type: "confirm" }, taken, oracle).effect).toMatchObject({
       kind: "refuse",
       reason: REFUSAL.occupied,
+    });
+  });
+});
+
+describe("port selection: D02's input {n} (§6 :231)", () => {
+  const confirmText = (graph: A11yGraph, source: string, target: string, port: string) =>
+    run(graph, [
+      { type: "start", node: source },
+      { type: "pick", node: target, port },
+      { type: "confirm" },
+    ]).effects[2];
+
+  it("counts the slot a list input's new edge takes", () => {
+    const graph: A11yGraph = {
+      nodes: ["g", "c1", "c2", "c3"].map((id) => node(id, "logicGate", { name: id.toUpperCase() })),
+      edges: [edge("e1", "c1", "g", "in"), edge("e2", "c2", "g", "in")],
+    };
+    expect(confirmText(graph, "c3", "g", "in")).toMatchObject({
+      kind: "connect",
+      text: "connected C3 output to G input 3",
+    });
+  });
+
+  it("numbers a single input by its place among the node's inputs", () => {
+    const graph: A11yGraph = {
+      nodes: [
+        node("m", "condition", { kind: "arithmetic", name: "ATR" }),
+        node("cmp", "condition", { kind: "comparison", name: "Above" }),
+      ],
+      edges: [],
+    };
+    expect(confirmText(graph, "m", "cmp", "right")).toMatchObject({
+      text: "connected ATR output to Above input 2",
+    });
+    expect(confirmText(graph, "m", "cmp", "left")).toMatchObject({
+      text: "connected ATR output to Above input 1",
     });
   });
 });
@@ -236,7 +276,11 @@ describe("verdictFor", () => {
       nodes: [node("g1", "logicGate"), node("g2", "logicGate"), node("g3", "logicGate")],
       edges: [edge("e1", "g1", "g2", "in"), edge("e2", "g2", "g3", "in")],
     };
-    expect(verdictFor(graph, oracle, "g3", "g1", "in")).toMatchObject({ reason: REFUSAL.loop });
+    // D02 §15 :414 verbatim: g3 already depends on g1.
+    expect(verdictFor(graph, oracle, "g3", "g1", "in")).toEqual({
+      ok: false,
+      reason: "This would make a loop — Logic gate g3 already depends on Logic gate g1.",
+    });
     expect(verdictFor(graph, oracle, "g1", "g3", "in")).toEqual({ ok: true });
   });
 });
@@ -280,13 +324,14 @@ describe("disconnect", () => {
   it("removes the focused edge and announces it", () => {
     const out = disconnect(RULE, "e3");
     expect(out?.edges.map((e) => e.id)).toEqual(["e1", "e2", "e4"]);
-    expect(out?.text).toBe("Disconnected AND from Alert run when.");
+    expect(out?.text).toBe("Disconnected AND from Alert"); // D02 §13 :369 verbatim
+    expect(out?.focusNodeId).toBe("and"); // focus after: the source node
   });
 
   it("is undefined for an edge that is gone, and names a dangling end by its id", () => {
     expect(disconnect(RULE, "nope")).toBeUndefined();
     const graph = { nodes: [], edges: [edge("x", "a", "b", "left")] };
-    expect(disconnect(graph, "x")?.text).toBe("Disconnected a from b input A.");
+    expect(disconnect(graph, "x")?.text).toBe("Disconnected a from b");
   });
 
   it("tells two nodes with one name apart (a11y lens A-9)", () => {
@@ -294,17 +339,16 @@ describe("disconnect", () => {
       nodes: [node("x", "logicGate", { name: "Check" }), node("y", "logicGate", { name: "Check" })],
       edges: [edge("e1", "x", "y", "in")],
     };
-    expect(disconnect(graph, "e1")?.text).toBe(
-      "Disconnected Check (node 2) from Check (node 1) input.",
-    );
+    expect(disconnect(graph, "e1")?.text).toBe("Disconnected Check (node 1) from Check (node 2)");
   });
 });
 
 describe("deletedText (a11y lens A-8)", () => {
   it("says how many connections went with the node", () => {
-    expect(deletedText(RULE, "and")).toBe("Deleted AND and 4 connections.");
-    expect(deletedText(RULE, "act1")).toBe("Deleted Alert and 1 connection.");
-    expect(deletedText(RULE, "note")).toBe("Deleted why. It had no connections.");
+    // D02 O4 :291 verbatim for every n (plural forms are E37-D05's to add).
+    expect(deletedText(RULE, "and")).toBe("Deleted AND and 4 connections");
+    expect(deletedText(RULE, "act1")).toBe("Deleted Alert and 1 connections");
+    expect(deletedText(RULE, "note")).toBe("Deleted why and 0 connections");
     expect(deletedText(RULE, "gone")).toBeUndefined();
   });
 });

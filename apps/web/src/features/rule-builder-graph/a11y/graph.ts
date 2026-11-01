@@ -1,10 +1,12 @@
 /**
  * The keyboard and screen-reader core of the node-graph rule editor (SCR-082, E47-S03): pure, no
- * React, no DOM. The shapes below are the structural subset of `@candleviewer/rule-graph`'s
- * `GraphNode` / `GraphEdge` / `GraphModel` (packages/rule-graph/src/model.ts) that this core reads,
- * so a rule-graph model is accepted as is. apps/web does not depend on that package yet; the
- * screen (E37-S01) adds the dependency and builds the `PortOracle` from its `portsOf` and
- * `canConnect`, so no DTO or port table is written twice here.
+ * React, no DOM. Dependency (E47-S03 BQ-12 (d), as ruled): this core imports nothing from
+ * `@candleviewer/rule-graph`, apps/web declares no dependency on it and `pnpm-lock.yaml` is
+ * untouched. The interfaces below are this core's own input contract, the few fields it reads; a
+ * rule-graph `GraphModel` (packages/rule-graph/src/model.ts) satisfies them structurally, so the
+ * screen passes one as is. No wire DTO and no port table is written here: the port rules come in
+ * through the `PortOracle` the screen (E37-S01) builds from rule-graph's `portsOf` / `canConnect`
+ * when it adds the dependency (with its CODEOWNER, per the ruling).
  */
 export type A11yNodeType = "trigger" | "condition" | "action" | "logicGate" | "comment";
 

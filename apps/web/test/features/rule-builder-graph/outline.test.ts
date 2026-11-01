@@ -15,9 +15,9 @@ describe("outline: Gherkin 3, the structure without the canvas", () => {
   it("lists every node in the documented order with its position", () => {
     expect(rows.map((r) => [r.id, r.index, r.size, r.depth])).toEqual([
       ["trigger", 1, 7, 0],
-      ["and", 2, 7, 0],
-      ["cmp1", 3, 7, 1],
-      ["cmp2", 4, 7, 1],
+      ["cmp1", 2, 7, 1],
+      ["cmp2", 3, 7, 1],
+      ["and", 4, 7, 0],
       ["act1", 5, 7, 0],
       ["act2", 6, 7, 0],
       ["note", 7, 7, 0],
@@ -50,14 +50,15 @@ describe("outline: Gherkin 3, the structure without the canvas", () => {
       ["output", "out", "boolean", 1],
     ]);
     expect(cmp1?.description).toBe(
-      "Condition ATR above, op gt, value 14. Input A port, number, not connected. " +
-        "Input B port, number, not connected. Output port, boolean, connected to AND.",
+      // E37-D02 §14 :392's port name verbatim: the outline's port order tells the inputs apart.
+      "Condition ATR above, op gt, value 14. Input port, number, not connected. " +
+        "Input port, number, not connected. Output port, boolean, connected to AND.",
     );
   });
 
   it("says a node with inputs has no output", () => {
     expect(rows.find((r) => r.id === "act1")?.description).toBe(
-      "Action Alert, channel toast. Run when port, action, connected to AND. No output.",
+      "Action Alert, channel toast. Input port, action, connected to AND. No output.",
     );
   });
 
@@ -81,14 +82,14 @@ describe("outline: Gherkin 3, the structure without the canvas", () => {
     };
     expect(nodeNames(graph)).toEqual(
       new Map([
-        ["y", "Check (node 1)"],
-        ["x", "Check (node 2)"],
+        ["x", "Check (node 1)"],
+        ["y", "Check (node 2)"],
       ]),
     );
-    const [y] = buildOutline(graph, oracle);
-    expect(y?.description).toBe(
-      "Logic gate Check (node 1), no parameters. Input port, boolean, connected to " +
-        "Check (node 2). Output port, boolean, not connected.",
+    const [x] = buildOutline(graph, oracle);
+    expect(x?.description).toBe(
+      "Logic gate Check (node 1), no parameters. Input port, boolean, not connected. " +
+        "Output port, boolean, connected to Check (node 2).",
     );
   });
 
@@ -117,7 +118,7 @@ describe("outline: Gherkin 3, the structure without the canvas", () => {
     const [row] = buildOutline(graph, oracle);
     expect(row?.inbound[0]?.text).toBe("ghost into run when");
     expect(row?.description).toBe(
-      "Action Action a, no parameters. Run when port, action, connected to ghost. " +
+      "Action Action a, no parameters. Input port, action, connected to ghost. " +
         "Input port, type unknown, connected to ghost. No output.",
     );
   });

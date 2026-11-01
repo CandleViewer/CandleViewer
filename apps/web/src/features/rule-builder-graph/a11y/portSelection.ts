@@ -1,31 +1,31 @@
 /**
  * Connecting and disconnecting ports without a pointer (WCAG 2.5.7; 05 §3.2, §3.4 item 8; E37-D02
- * §13; E47-S03 BQ-05). A pure reducer: Space (`rules.connect`) on a node's output port starts a
- * pending connection, which announces how many inputs can take it and how many cannot, once; the
- * arrows cycle only the inputs that can take it ("k of n" counts those), and Tab picks any input
- * directly, an unavailable one announced with its reason; Space confirms; Esc cancels. A confirm
- * is re-checked against the graph it is given, so a connection the graph cannot take is refused
- * with a reason and never produced: no self-loop, no duplicate, no second edge into a single
- * input, no type mismatch (the oracle, i.e. rule-graph's PORT_COMPAT), no loop.
+ * §6 :231 and §13 :367–369; E47-S03 BQ-05 as ruled under BQ-04). A pure reducer on D02's keys:
+ * Enter on a focused output port starts a pending connection (`start`), which announces D02's
+ * "Connecting from output port, {type} — choose an input" plus how many inputs can and cannot take
+ * it, once; the arrows cycle only the inputs that can take it ("k of n" counts those), and a
+ * direct pick takes any input, an unavailable one announced with its refusal sentence; Enter on the
+ * target confirms (`confirm`); Esc cancels ("Cancelled"); Delete on a focused connection
+ * disconnects (`disconnect`, "Disconnected {A} from {B}", focus to the source node). A confirm is
+ * re-checked against the graph it is given, so a connection the graph cannot take is refused with
+ * its sentence and never produced: no self-loop, no duplicate, no second edge into a single input,
+ * no type mismatch (the oracle, i.e. rule-graph's PORT_COMPAT), no loop.
  *
- * Why Space, not D02's Enter: Enter is `rules.inspect_node` in the same Rules context and the
- * keymap lint refuses a same-context collision; 05 §3.3 item 6 lists "Enter/Space to connect", so
- * the registry binds Space and every string says Space. `rules.pan` is Space+drag, not Space: the
- * two never meet because pan arms only while Space is held with a pointer drag and no port focused
- * or connection pending, and connect acts on the keydown with a port focused or pending.
+ * Keys: D02 binds no new chord. Enter on a port shares the Enter key with `rules.inspect_node`
+ * (Enter on a node); which one acts depends on what has focus (a port or a node), so the keymap
+ * carries no `rules.connect` row and the focus-target dispatch is wired in E37-S05 #1071.
  *
  * Carried rows, hard gates for the wiring PR (E37-S05 #1071; E47-S08 #1322 for the hotkey layer):
- * - C-1: the connect handler calls `preventDefault()` on the Space keydown, so the focused port
- *   button's native click does not fire as well (one press = one `start` or one `confirm`).
+ * - C-1: Enter on a focused port dispatches `start` / `confirm` and calls `preventDefault()`, so
+ *   the port button's native click does not fire as well and `rules.inspect_node` does not run.
  * - C-2: a click or native activation on a target port while pending dispatches `pick` then
  *   `confirm`; on an output port while idle it dispatches `start`.
  * - C-3: the graph region is a composite widget (a roving group; `role="application"` only if
- *   E37-D04 rules it), so NVDA and JAWS switch to focus mode and pass Space and Ctrl+arrows to the
- *   page instead of using them for browse-mode reading.
- * - C-4: the Rules context is active only while focus is inside the editor, so Replay's and the
- *   DOM ladder's Space are untouched elsewhere (the mutual shadows in keymap.json rely on this).
- * - C-5: edge focus: `GraphNavigator.edgesOf` is the model entry (the D02 adjacency sub-list); the
- *   key that focuses it, and Delete on a focused edge calling `disconnect`, are wired there.
+ *   E37-D04 rules it), so NVDA and JAWS switch to focus mode and pass the arrows and Ctrl+arrows to
+ *   the page instead of using them for browse-mode reading.
+ * - C-4: the Rules context is active only while focus is inside the editor.
+ * - C-5: edge focus is `GraphNavigator.next` (a port's connections, `traversal.ts`); Delete on a
+ *   focused edge calls `disconnect` and moves focus to its `focusNodeId`.
  */
 import { copy, REFUSAL } from "./copy.js";
 import {
@@ -90,12 +90,23 @@ const refused = (reason: string): ConnectVerdict => ({ ok: false, reason });
 interface Context {
   readonly nodes: ReadonlyMap<string, A11yNode>;
   readonly adj: ReadonlyMap<string, Adjacency>;
+  /** Announced names, built on first use (only a loop refusal or an announcement needs them). */
+  readonly name: (id: string) => string;
 }
 
-const contextOf = (graph: A11yGraph): Context => ({
-  nodes: new Map(graph.nodes.map((n) => [n.id, n])),
-  adj: adjacencyOf(graph),
-});
+const lazy = <T>(make: () => T): (() => T) => {
+  let value: { readonly v: T } | undefined;
+  return () => (value ??= { v: make() }).v;
+};
+
+const contextOf = (graph: A11yGraph): Context => {
+  const names = lazy(() => nodeNames(graph));
+  return {
+    nodes: new Map(graph.nodes.map((n) => [n.id, n])),
+    adj: adjacencyOf(graph),
+    name: (id) => names().get(id) ?? id,
+  };
+};
 
 /** `source` and every node upstream of it: an edge source -> target closes a loop iff target is here. */
 function upstreamOf(ctx: Context, source: string): ReadonlySet<string> {
@@ -132,13 +143,24 @@ function verdictIn(
   if (into.length > 0 && !oracle.acceptsMany(port)) return refused(REFUSAL.occupied);
   const types = oracle.canConnect(output, input[1]);
   if (!types.ok) return types;
-  return upstream().has(target) ? refused(REFUSAL.loop) : { ok: true };
+  // `source` already depends on `target` when `target` is upstream of it (D02 §15 :414).
+  return upstream().has(target)
+    ? refused(copy.loop(ctx.name(source), ctx.name(target)))
+    : { ok: true };
 }
 
-const lazy = <T>(make: () => T): (() => T) => {
-  let value: { readonly v: T } | undefined;
-  return () => (value ??= { v: make() }).v;
-};
+/**
+ * D02's "input {n}" (§6 :231): a single input's 1-based place among the node's inputs; a list
+ * input (rule-graph's `in`, one port taking many edges) counts the slot the new edge takes, so a
+ * gate's third condition reads "input 3".
+ */
+function inputNumber(ctx: Context, oracle: PortOracle, target: string, port: string): number {
+  if (oracle.acceptsMany(port)) {
+    return adjacencyFor(ctx.adj, target).inbound.filter((e) => e.targetPort === port).length + 1;
+  }
+  const node = ctx.nodes.get(target) as A11yNode; // confirm re-checked the verdict first
+  return oracle.inputsOf(node).findIndex(([name]) => name === port) + 1;
+}
 
 /** Whether `source`'s output may feed `target`'s input `port` in `graph`, else why not. */
 export function verdictFor(
@@ -191,8 +213,7 @@ export function stepPortSelection(
   oracle: PortOracle,
 ): PortStep {
   const ctx = contextOf(graph);
-  const names = nodeNames(graph);
-  const name = (id: string): string => names.get(id) ?? id;
+  const name = ctx.name;
   const refuse = (reason: string): PortStep => ({
     state,
     effect: { kind: "refuse", reason, text: copy.refused(reason) },
@@ -200,23 +221,30 @@ export function stepPortSelection(
   const focus = (s: Extract<PortSelection, { kind: "pending" }>, index: number): PortStep => {
     const c = s.candidates[index] as Candidate; // index is in range by construction
     const available = availableOf(s.candidates);
+    const feeds = adjacencyFor(ctx.adj, c.node)
+      .inbound.filter((e) => e.targetPort === c.port)
+      .map((e) => name(e.source));
+    const portName = copy.port(false, c.type, feeds);
     const text = c.verdict.ok
-      ? copy.candidate(name(c.node), c.port, c.type, available.indexOf(index) + 1, available.length)
-      : copy.candidateRefused(name(c.node), c.port, c.verdict.reason);
+      ? copy.candidate(name(c.node), portName, available.indexOf(index) + 1, available.length)
+      : copy.candidateRefused(name(c.node), portName, c.verdict.reason);
     return { state: { ...s, index }, effect: { kind: "announce", text } };
   };
   switch (event.type) {
     case "start": {
       const node = ctx.nodes.get(event.node);
       if (node === undefined) return refuse(REFUSAL.unknownNode);
-      if (oracle.outputOf(node) === null) return refuse(REFUSAL.noOutput);
+      const output = oracle.outputOf(node);
+      if (output === null) return refuse(REFUSAL.noOutput);
       const candidates = candidatesFor(graph, oracle, ctx, node.id);
       const available = availableOf(candidates).length;
       return {
         state: { kind: "pending", source: node.id, candidates, index: null },
         effect: {
           kind: "announce",
-          text: copy.connectStarted(name(node.id), available, candidates.length - available),
+          text:
+            copy.connectStarted(output) +
+            copy.availability(available, candidates.length - available),
         },
       };
     }
@@ -255,28 +283,38 @@ export function stepPortSelection(
         target: picked.node,
         targetPort: picked.port,
       };
-      const text = copy.connected(name(edge.source), name(edge.target), edge.targetPort);
+      const text = copy.connected(
+        name(edge.source),
+        name(edge.target),
+        inputNumber(ctx, oracle, edge.target, edge.targetPort),
+      );
       return { state: IDLE, effect: { kind: "connect", edge, text } };
     }
   }
 }
 
-/** Removes the focused edge (Delete, or the "..." menu); undefined when it is not in the graph. */
+/**
+ * Removes the focused edge (Delete, or the row menu's Disconnect…); undefined when it is not in the
+ * graph. Focus goes to the edge's source node (D02 §13 :369).
+ */
 export function disconnect(
   graph: A11yGraph,
   edgeId: string,
-): { readonly edges: readonly A11yEdge[]; readonly text: string } | undefined {
+):
+  | { readonly edges: readonly A11yEdge[]; readonly text: string; readonly focusNodeId: string }
+  | undefined {
   const edge = graph.edges.find((e) => e.id === edgeId);
   if (edge === undefined) return undefined;
   const names = nodeNames(graph);
   const name = (id: string): string => names.get(id) ?? id;
   return {
     edges: graph.edges.filter((e) => e.id !== edgeId),
-    text: copy.disconnected(name(edge.source), name(edge.target), edge.targetPort),
+    text: copy.disconnected(name(edge.source), name(edge.target)),
+    focusNodeId: edge.source,
   };
 }
 
-/** The Delete-node announcement: how many connections went with it (E37-D02 §13; A-8). */
+/** The Delete-node announcement: how many connections went with it (E37-D02 §13 :370; A-8). */
 export function deletedText(graph: A11yGraph, nodeId: string): string | undefined {
   if (!graph.nodes.some((n) => n.id === nodeId)) return undefined;
   const names = nodeNames(graph);
