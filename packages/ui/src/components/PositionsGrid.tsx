@@ -141,7 +141,10 @@ export interface PositionsGridProps<R extends PositionsGridRow = PositionsGridRo
   readonly totals?: PositionsGridTotals | undefined;
   /** The visible data columns in order (per tab, the host's); Account and Symbol always shown, Symbol in narrow. */
   readonly columns?: readonly PositionsGridColumnId[];
-  /** `narrow`: the 360 px dock (D02 §11.5): its columns, `space.inset.xs` cells, no Actions column. */
+  /**
+   * `narrow`: the 360 px dock (D02 §11.5): its columns, `space.inset.xs` cells, and no Actions column, every row action
+   * staying in the row menu (D-12).
+   */
   readonly variant?: "default" | "narrow";
   readonly density?: "compact" | "comfortable";
   /** The unit of the money columns (the headers' "(USDT)", the PnL readings'). */
@@ -157,8 +160,9 @@ export interface PositionsGridProps<R extends PositionsGridRow = PositionsGridRo
   readonly onSortChange?: ((sort: TableSort) => void) | undefined;
   /**
    * A row's actions, CMP-057's props, each gate the host's (CMP-079's pair from each operation; never a role prop):
-   * the Actions column (D02 §8.1), repeated as the row menu (`Shift+F10`). Mounted by the ticket that wires them
-   * (#911 BQ-3); `undefined`, no column.
+   * the Actions column (D02 §8.1), repeated as the row menu (`Shift+F10`, the Menu key, a right-click), which alone
+   * carries them in the narrow dock (D-12, §11.5). Mounted by the ticket that wires them (#911 BQ-3); `undefined`, no
+   * column and no row menu.
    */
   readonly rowActions?: ((row: R) => SplitButtonProps | undefined) | undefined;
   readonly loading?: boolean;
@@ -233,6 +237,12 @@ const shown = (value: string | null, places?: number): string | null =>
   value === null
     ? null
     : (formatDecimal(value, places === undefined ? {} : { places })?.text ?? null);
+
+/** A gate's reason as CMP-057 reads it: trimmed, and none when blank. */
+const reasonText = (text: string | undefined): string | undefined => {
+  const trimmed = text?.trim();
+  return trimmed === "" ? undefined : trimmed;
+};
 
 /**
  * The D5 label with the share or the rate and the distance, which the cell's name and echo spell (D02:222): "Critical
@@ -782,7 +792,8 @@ function TotalsRow<R extends PositionsGridRow>({
  * row kept mounted outside the window (G-01). A row's name is "BTCUSDT · Long · 0.250 BTC · Main" (N-02), its
  * description its tier's sentence. Row updates are never announced here: the host's regions speak (D02 §11.4). The
  * Actions column (CMP-057 per row, its T2 gates the host's, a scope's reason pointing at the host's one notice) shows
- * only with `rowActions`. No motion of its own: every state swap is a cut (Mo-8, Mo-10).
+ * only with `rowActions`, which the row menu repeats; the dock keeps the row menu alone (D-12). No motion of its own:
+ * every state swap is a cut (Mo-8, Mo-10).
  */
 export function PositionsGrid<R extends PositionsGridRow = PositionsGridRow>({
   caption,
@@ -881,16 +892,22 @@ export function PositionsGrid<R extends PositionsGridRow = PositionsGridRow>({
       : []),
   ];
   const pinned = (selectable ? 1 : 0) + (narrow ? 1 : 2);
+  // The row menu repeats CMP-057 (E29-D05 §6.3): its primary first, then the ▾'s items. As on the button, the gate
+  // wins over busy, and a busy primary is a busy item: its busy label, `aria-busy`, never activated (D02 §8.1).
   const menuOf = (row: R): readonly MenuItem[] => {
     const split = rowActions?.(row);
     if (split === undefined) return [];
-    const gate = split.disabledReason ?? (split.allowed === false ? split.reason : undefined);
+    const gate =
+      reasonText(split.disabledReason) ??
+      (split.allowed === false ? reasonText(split.reason) : undefined);
+    const busy = split.busy === true && gate === undefined;
     return [
       {
         id: "primary",
-        label: split.primary.label,
+        label: busy ? (split.primary.busyLabel ?? split.primary.label) : split.primary.label,
         onSelect: split.primary.onClick,
         ...(gate === undefined ? {} : { disabledReason: gate }),
+        ...(busy ? { busy: true } : {}),
       },
       ...split.items,
     ];
@@ -939,11 +956,12 @@ export function PositionsGrid<R extends PositionsGridRow = PositionsGridRow>({
               ? entry.group.label
               : entry.totals.label
         }
-        {...(actions
-          ? {
+        {...(rowActions === undefined
+          ? {}
+          : {
+              // Every position's row menu, the dock's too; a group header or the totals offers none (yet).
               rowActions: (entry: Entry<R>) => (entry.kind === "position" ? menuOf(entry.row) : []),
-            }
-          : {})}
+            })}
         {...(windowed
           ? {
               rowWindow: { offset, total: entries.length },
