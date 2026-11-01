@@ -195,3 +195,81 @@ async def test_fresh_socket_drops_pending_acks() -> None:
     await m.subscribe()
     await m.open_socket()
     assert m._pending == {}
+
+
+async def test_reordered_ack_with_req_id_first_is_rejected_not_timeout() -> None:
+    clk, sock = _Clock(), _Sock()
+    seen: list[str] = []
+    m, _ = _mgr(clk, sock, seen)
+    m.set_desired({TOPIC})
+    await m.subscribe()
+    rid = sock.sent[0]["req_id"]
+    sock._frames = [f'{{"req_id":"{rid}","success":false,"ret_msg":"x","op":"subscribe"}}']
+    rej, tmo = _count("rejected"), _count("timeout")
+    try:
+        await m._read(sock)
+    except ConnectionError:
+        pass
+    assert _count("rejected") == rej + 1 and m._pending == {}
+    clk.t = conn_mod.ACK_TIMEOUT_S + 1
+    m._expire_acks()
+    assert _count("timeout") == tmo
+
+
+async def test_refused_only_topic_set_does_not_recycle_the_socket() -> None:
+    clk, sock = _Clock(), _Sock()
+    m, wd = _mgr(clk, sock)
+    m.set_desired({TOPIC})
+    await m.subscribe()
+    m._on_ack(_ack(sock.sent[0]["req_id"], success=False))
+    assert wd.check() == [TOPIC]
+    assert not wd.all_stale()  # refused is not silence
+    wd.touch(TOPIC)  # a frame arrives: the episode is over
+    clk.t = 100.0
+    assert wd.check() == [TOPIC] and wd.all_stale()  # genuine silence still recycles
+
+
+async def test_stale_resubscribe_is_one_per_episode() -> None:
+    clk, sock = _Clock(), _Sock()
+    m, wd = _mgr(clk, sock)
+    m.set_desired({TOPIC})
+    await m.subscribe()
+    m._on_ack(_ack(sock.sent[0]["req_id"], success=False))
+    for _ in range(3):  # refused again each time: still one episode, one resubscribe
+        for t in wd.check():
+            await m._resubscribe_stale(t)
+        if m._pending:
+            m._on_ack(_ack(sock.sent[-1]["req_id"], success=False))
+    assert m.topic_resubscribes == 1
+    assert [f["op"] for f in sock.sent].count("subscribe") == 2
+
+
+async def test_failed_send_leaves_no_pending_entry() -> None:
+    class _Broken(_Sock):
+        async def send(self, frame: str) -> None:
+            raise ConnectionError("boom")
+
+    sock = _Broken()
+    m, _ = _mgr(_Clock(), sock)
+    try:
+        await m._send_tracked(sock, "subscribe", [TOPIC])
+    except ConnectionError:
+        pass
+    else:
+        raise AssertionError("send error swallowed")
+    assert m._pending == {}
+
+
+async def test_overflow_drops_oldest_unsubscribe_before_any_subscribe() -> None:
+    sock = _Sock()
+    m, _ = _mgr(_Clock(), sock)
+    await m._send_tracked(sock, "subscribe", ["publicTrade.AUSDT"])  # cv-1, oldest overall
+    await m._send_tracked(sock, "unsubscribe", ["publicTrade.BUSDT"])  # cv-2
+    for i in range(conn_mod.MAX_PENDING_ACKS - 2):
+        await m._send_tracked(sock, "subscribe", [f"publicTrade.S{i}USDT"])
+    assert len(m._pending) == conn_mod.MAX_PENDING_ACKS
+    await m._send_tracked(sock, "subscribe", ["publicTrade.NEWUSDT"])
+    assert "cv-2" not in m._pending and "cv-1" in m._pending
+    # no unsubscribe left: the oldest subscribe goes
+    await m._send_tracked(sock, "subscribe", ["publicTrade.NEW2USDT"])
+    assert "cv-1" not in m._pending

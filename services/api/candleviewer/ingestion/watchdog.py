@@ -68,6 +68,8 @@ class StalenessWatchdog:
         self._limits = limits or STALENESS_S
         self._last: dict[str, float] = {}
         self._stale: set[str] = set()
+        #: stale because a subscribe was refused (#1955), not because of silence
+        self._forced: set[str] = set()
 
     def watch(self, topic: str) -> None:
         self._last[topic] = self._clock()
@@ -75,11 +77,13 @@ class StalenessWatchdog:
     def unwatch(self, topic: str) -> None:
         self._last.pop(topic, None)
         self._stale.discard(topic)
+        self._forced.discard(topic)
 
     def touch(self, topic: str) -> None:
         if topic in self._last:
             self._last[topic] = self._clock()
             self._stale.discard(topic)
+            self._forced.discard(topic)
 
     def force_stale(self, topic: str) -> None:
         """#1955: age a watched topic past its limit (its subscribe was refused or went
@@ -87,6 +91,8 @@ class StalenessWatchdog:
         resubscribe retries it. No-op for unwatched or limitless topics."""
         limit = self._limits.get(self._kind(topic))
         if topic in self._last and limit is not None:
+            if topic not in self._stale:  # genuine silence already counted stays genuine
+                self._forced.add(topic)
             self._last[topic] = min(self._last[topic], self._clock() - limit)
 
     def reset(self) -> None:
@@ -95,12 +101,13 @@ class StalenessWatchdog:
         for topic in self._last:
             self._last[topic] = now
         self._stale.clear()
+        self._forced.clear()
 
     def all_stale(self) -> bool:
         """True when every watched topic that has a limit is stale (#1913): only
         then is the shared socket suspect; one silent topic is per-topic."""
         limited = {t for t in self._last if self._kind(t) in self._limits}
-        return bool(limited) and limited <= self._stale
+        return bool(limited) and limited <= (self._stale - self._forced)
 
     def check(self) -> list[str]:
         """Emit stale events; returns newly stale topics."""

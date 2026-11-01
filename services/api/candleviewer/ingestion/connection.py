@@ -55,7 +55,10 @@ MAX_FRAME_BYTES = 1_048_576  # explicit cap on a single WS frame (E08-X01)
 #: how long one may stay unanswered before it is counted `timeout`.
 MAX_PENDING_ACKS = 256
 ACK_TIMEOUT_S = 10.0
-_ACK_PREFIX = '{"success"'  # Bybit op replies lead with it; data frames lead with `topic`
+#: Bybit does not fix the key order of an op reply (the recorded pong leads with `req_id`), so a
+#: frame is a candidate ack when `"req_id"` appears in its head; `_on_ack` parses strictly.
+_ACK_MARK = '"req_id"'
+_ACK_HEAD = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,14 +257,24 @@ class ConnectionManager:
     async def _send_tracked(self, sock: Socket, op: str, topics: list[str]) -> None:
         """Send one topic-level op carrying a `req_id`, and await its ack (#1955)."""
         req_id = f"cv-{next(self._req_ids)}"
-        if len(self._pending) >= MAX_PENDING_ACKS:  # never block: drop the oldest, count it
-            del self._pending[next(iter(self._pending))]
+        if len(self._pending) >= MAX_PENDING_ACKS:  # never block: drop one entry, count it
+            # The oldest unsubscribe goes first (its loss only costs a stale subscription
+            # that the next demand diff re-sends); then the oldest subscribe.
+            victim = next(
+                (r for r, p in self._pending.items() if p.op == "unsubscribe"),
+                next(iter(self._pending)),
+            )
+            del self._pending[victim]
             ingest_subscribe_rejected_total.labels(reason="overflow").inc()
         self._pending[req_id] = _PendingAck(op, tuple(topics), self._clock() + ACK_TIMEOUT_S)
-        await sock.send(json.dumps({"op": op, "args": topics, "req_id": req_id}))
+        try:
+            await sock.send(json.dumps({"op": op, "args": topics, "req_id": req_id}))
+        except BaseException:  # nothing was sent: no ack will ever settle this entry
+            self._pending.pop(req_id, None)
+            raise
 
     def _on_ack(self, frame: str) -> None:
-        """A `{"success": ...}` reply: settle the pending op it answers (others, e.g. the
+        """An op reply (`req_id` in its head): settle the pending op it answers (others, e.g. the
         pong, carry no tracked `req_id`). A refused subscribe counts and marks its topics stale,
         so the existing per-topic stale resubscribe retries it."""
         try:
@@ -394,7 +407,7 @@ class ConnectionManager:
             frame = await sock.recv(MAX_FRAME_BYTES)
             if len(frame) > MAX_FRAME_BYTES:
                 raise ValueError("ws frame exceeds MAX_FRAME_BYTES")
-            if frame.startswith(_ACK_PREFIX):
+            if _ACK_MARK in frame[:_ACK_HEAD]:
                 self._on_ack(frame)  # still forwarded below: the parsers ignore op replies
             rec = self._latency
             if rec is None or not rec.sample():
@@ -440,9 +453,11 @@ class ConnectionManager:
                     await self._resubscribe_stale(topic)
 
     async def _resubscribe_stale(self, topic: str) -> None:
-        """One unsubscribe+subscribe for a newly stale topic. It stays marked
-        stale until a frame arrives, so a silent (e.g. delisted) topic is
-        resubscribed once per staleness episode, never in a loop."""
+        """One unsubscribe+subscribe for a newly stale topic. These are subscription ops, not
+        dials, so they are not paced by the SR-039 connection budget (unlike
+        `resubscribe_topic`). It stays marked stale until a frame arrives, so a silent (e.g.
+        delisted) topic, or one whose resubscribe is refused again (#1955), is resubscribed
+        once per staleness episode, never in a loop: there is no second retry."""
         sock = self._sock
         if sock is None or topic not in self._desired:
             return

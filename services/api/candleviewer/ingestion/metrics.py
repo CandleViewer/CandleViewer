@@ -164,8 +164,8 @@ SPECS: Final[tuple[MetricSpec, ...]] = (
     _g("ingest_ws_up", "1 while the public socket is open, else 0.", "socket"),
     _c(
         "ingest_subscribe_rejected_total",
-        "Topic-level WS subscribe/unsubscribe ops refused, unanswered or dropped from the "
-        "pending-ack map (#1955), by reason: rejected | timeout | overflow.",
+        "Topic-level WS subscribe/unsubscribe ops refused (rejected) or unanswered (timeout) "
+        "(#1955); overflow is a dropped tracking entry (pending-ack map full), not a refusal.",
         "reason",
     ),
     _g("ingest_enabled", "1 when the ingestion pipeline is wired in this process."),

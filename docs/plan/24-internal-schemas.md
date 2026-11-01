@@ -516,7 +516,8 @@ declared in `ingestion/metrics.py`, exported with `env`, `exchange`): trades/tic
 `ingest_events_total{stream,symbol}`, `ingest_lag_seconds{stream}`; trade gaps →
 `trade_gaps_total{symbol,recovered}`; books → `ingest_book_live{symbol}`,
 `ingest_book_resyncs_total{symbol,reason}`; feed health → `ws_topic_staleness_seconds{topic}`,
-`ingest_ws_up{socket}`; clock → `exchange_clock_drift_ms`, `clock_offset_age_seconds`.
+`ingest_ws_up{socket}`, `ingest_subscribe_rejected_total{reason}` (`rejected` | `timeout`: a
+topic-level subscribe/unsubscribe refused or unanswered; `overflow`: a dropped ack-tracking entry); clock → `exchange_clock_drift_ms`, `clock_offset_age_seconds`.
 
 ### 2.10 Big-trade events (E22-T01, contract-first)
 
@@ -4105,14 +4106,14 @@ class RecordingState(BaseModel):
 
 **Recorder status closed sets** (E16-D02, #323). The server decides `refusal` and the storage `write_gate_reason` that the recorder status contract carries (`23-ws-protocol.md` §15.8); clients never derive them, and readers tolerate a value they do not know (C-6.3). `refusal` holds one value: with both stop refusals it is `position_open`. The two start refusals are `RecorderCapRefused.cause`; E16-T08 serves the stop refusals from the policy's trigger refs.
 
-| Value            | Field               | Raised by                   | Meaning                                                                           |
-| ---------------- | ------------------- | --------------------------- | --------------------------------------------------------------------------------- |
+| Value            | Field               | Raised by                   | Meaning                                                                                                                                            |
+| ---------------- | ------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `symbol_cap`     | `refusal`           | `RecordingPolicy` (E16-T02) | an auto-start is refused at `CV_RECORDER_MAX_SYMBOLS`, or a chart-open start at `CV_RECORDER_MAX_AUTO_SYMBOLS` (E16-FR-01), and retried every tick |
-| `disk_pressure`  | `refusal`           | `RecordingPolicy` (E16-T07) | a chart-open start is refused from disk level 2, or on a refused volume           |
-| `chart_open`     | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a chart of the symbol is open                             |
-| `position_open`  | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a position is open (INV-B11-a)                            |
-| `disk_halt`      | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed at level 3                                               |
-| `volume_refused` | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed because the volume was refused at boot (SR-096, §13.4.1) |
+| `disk_pressure`  | `refusal`           | `RecordingPolicy` (E16-T07) | a chart-open start is refused from disk level 2, or on a refused volume                                                                            |
+| `chart_open`     | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a chart of the symbol is open                                                                                              |
+| `position_open`  | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a position is open (INV-B11-a)                                                                                             |
+| `disk_halt`      | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed at level 3                                                                                                                |
+| `volume_refused` | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed because the volume was refused at boot (SR-096, §13.4.1)                                                                  |
 
 **Auto-record lifecycle.** Opening a chart adds `chart_open` to `reasons` and starts recording within 2 s. Closing the last chart for that symbol removes the reason; if `reasons` becomes empty, recording continues for a `linger_minutes` grace period (default 15) before stopping, so a quick chart close/reopen does not punch a hole in the data. A symbol with an open position **cannot** stop recording while the position is open, regardless of chart state.
 
