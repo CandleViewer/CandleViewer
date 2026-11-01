@@ -4629,7 +4629,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "lockouts",
         (),
-        "Account lockouts applied by repeated wrong passwords (SR-016), from login or step-up.",
+        "Account lockouts applied by repeated wrong passwords or second-factor codes (SR-016).",
         "AuthLockouts (any in 10m, ticket)",
         _L,
         "E09",

@@ -2,7 +2,9 @@
 
 `MfaService` over the real `SqlAlchemyMfaRepository` and `SqlAlchemyUserRepository`: refusals
 spread over two login challenges set `users.locked_until`, and refusals running at once on
-separate challenges count without a lost update and apply the lock once. Fixed auth clock that
+separate challenges count without a lost update and apply the lock once; a right code racing
+`LOCKOUT_THRESHOLD` refusals never clears the lock they set (the conditional reset, the read of
+record on PR #5380). Fixed auth clock that
 tracks the wall clock (rows carry DB-stamped `created_at`), no wait. Needs Docker
 (testcontainers); the CI `integration` job runs it.
 """
@@ -16,6 +18,7 @@ import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from prometheus_client import REGISTRY
@@ -161,5 +164,69 @@ async def test_mfa_concurrent_refusals_count_exactly_and_lock_once_pg(pg_dsn: st
         assert row.failed_login_count == LOCKOUT_THRESHOLD  # no lost update
         assert row.locked_until == _NOW + LOCKOUT_DURATION
         assert _lockouts() == before + 1
+    finally:
+        await rig.rel.dispose()
+
+
+async def test_mfa_right_code_racing_threshold_refusals_keeps_lock_pg(
+    pg_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`LOCKOUT_THRESHOLD + 1` attempts at once: the right code passes its lock read, then waits
+    at the challenge's satisfaction until `LOCKOUT_THRESHOLD` wrong codes have locked the account;
+    its conditional reset then matches no row, so it is refused and the lock stands."""
+    rig = _Rig(pg_dsn)
+    try:
+        user_id = await rig.enrolled_user(pg_dsn, "mfa-lock-c")
+        right = await rig.challenge(user_id, "mfa-lock-c-right")
+        others = [await rig.challenge(user_id, f"mfa-lock-c-{i}") for i in range(LOCKOUT_THRESHOLD)]
+        arrived, gate, satisfy = asyncio.Event(), asyncio.Event(), rig.mfa.satisfy_challenge
+
+        async def held(*args: Any, **kwargs: Any) -> bool:
+            arrived.set()
+            await gate.wait()
+            return await satisfy(*args, **kwargs)
+
+        monkeypatch.setattr(rig.mfa, "satisfy_challenge", held)
+
+        async def refusals() -> None:
+            await arrived.wait()
+            wrong = zip(others, _wrong_codes()[: len(others)], strict=True)
+            await asyncio.gather(*(rig.refuse(token, code) for token, code in wrong))
+            gate.set()
+
+        code = generate_code(_SEED, time_step_for(_NOW.timestamp()))
+        request = MfaVerifyRequest(mfa_token=right, method=MfaMethodKind.TOTP, code=code)
+        outcome, _ = await asyncio.gather(
+            rig.svc.verify(request), refusals(), return_exceptions=True
+        )
+
+        assert isinstance(outcome, MfaChallengeLocked)
+        row = await rig.users.find_by_id(user_id)
+        assert row is not None
+        assert row.failed_login_count == LOCKOUT_THRESHOLD  # the refused right code: uncounted
+        assert row.locked_until == _NOW + LOCKOUT_DURATION
+    finally:
+        await rig.rel.dispose()
+
+
+async def test_record_sign_in_unless_locked_keeps_a_lock_pg(pg_dsn: str) -> None:
+    rig = _Rig(pg_dsn)
+    try:
+        user_id = await rig.enrolled_user(pg_dsn, "mfa-lock-d")
+        for _ in range(LOCKOUT_THRESHOLD):
+            await rig.users.record_login_failure(
+                user_id,
+                lockout_threshold=LOCKOUT_THRESHOLD,
+                lock_duration=LOCKOUT_DURATION,
+                now=_NOW,
+            )
+
+        kept = await rig.users.record_sign_in_unless_locked(user_id, now=_NOW)
+        expired = await rig.users.record_sign_in_unless_locked(user_id, now=_NOW + LOCKOUT_DURATION)
+
+        assert (kept, expired) == (False, True)
+        row = await rig.users.find_by_id(user_id)
+        assert row is not None
+        assert (row.failed_login_count, row.locked_until) == (0, None)
     finally:
         await rig.rel.dispose()

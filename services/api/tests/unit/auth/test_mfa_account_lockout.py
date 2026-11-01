@@ -10,6 +10,7 @@ same `401` as a wrong code. The per-address budget (#4664) is unchanged. Fixed c
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
@@ -21,6 +22,7 @@ from fastapi import FastAPI
 from prometheus_client import REGISTRY
 
 from candleviewer.api.auth import make_auth_router
+from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
     AccountLocked,
@@ -44,7 +46,7 @@ from candleviewer.auth.models import (
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.auth.totp import generate_code, time_step_for
-from tests.unit.api._fakes import AuditService, Identity, sessions
+from tests.unit.api._fakes import AuditService, Identity, RecordingWriter, sessions
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 
@@ -254,3 +256,150 @@ async def test_mfa_locked_account_answer_matches_wrong_code_and_spends_one_place
     assert locked.json() == wrong.json()
     assert over.status_code == 429  # two refusals spend the budget of two, as before
     assert mfa.checks == 2
+
+
+# -- the read of record on PR #5380 (red before its fold) --------------------------------------
+#
+# The reset races the lock: an accepted code that passed its lock read before a concurrent
+# refusal set the lock must not clear it (SR-016), and the second factor's lock and each attempt
+# refused while locked are audited as `auth.account_locked` with the account (C-2.9).
+
+
+async def test_mfa_verify_right_code_racing_threshold_refusals_keeps_lock(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`LOCKOUT_THRESHOLD + 1` attempts at once: the right code passes its lock read and waits at
+    the challenge's satisfaction while `LOCKOUT_THRESHOLD` wrong codes on other challenges lock
+    the account; its reset then finds the lock, so it is refused and the lock stands."""
+    right = await world.sign_in()
+    others = [await world.sign_in() for _ in range(LOCKOUT_THRESHOLD)]
+    repo, arrived, gate = world.auth.mfa._repository, asyncio.Event(), asyncio.Event()
+    satisfy = repo.satisfy_challenge
+
+    async def held(*args: Any, **kwargs: Any) -> bool:
+        arrived.set()
+        await gate.wait()
+        return await satisfy(*args, **kwargs)
+
+    monkeypatch.setattr(repo, "satisfy_challenge", held)
+
+    async def refusals() -> None:
+        await arrived.wait()
+        await asyncio.gather(*(world.refuse_codes(token, 1) for token in others))
+        gate.set()
+
+    attempts = world.verify(right, world.code()), refusals()
+    outcome, _ = await asyncio.gather(*attempts, return_exceptions=True)
+
+    assert isinstance(outcome, MfaChallengeLocked)
+    assert world.row.failed_login_count == LOCKOUT_THRESHOLD  # the refused right code: uncounted
+    assert world.row.locked_until == world.clock.now + LOCKOUT_DURATION
+
+
+async def test_mfa_recovery_completion_after_concurrent_lock_refused_unspent(
+    world: _World,
+) -> None:
+    token = await world.sign_in()
+    codes = (await world.auth.mfa.regenerate_recovery_codes(world.uid)).recovery_codes
+    check = await world.auth.mfa.check_recovery(token, codes[0])
+    await world.refuse_codes(await world.sign_in(), LOCKOUT_THRESHOLD)  # locks meanwhile
+
+    with pytest.raises(MfaChallengeLocked):
+        await world.auth.mfa.complete_recovery(check)
+
+    assert world.row.locked_until == world.clock.now + LOCKOUT_DURATION
+    world.clock.now += LOCKOUT_DURATION + timedelta(seconds=1)
+    again = await world.auth.mfa.check_recovery(await world.sign_in(), codes[0])
+    assert again.code_id == check.code_id  # nothing was spent
+
+
+class _RouterOver:
+    """The routes over the world's real services; only refusals are exercised."""
+
+    is_active = mfa_is_active = sessions_is_active = True
+
+    def __init__(self, world: _World) -> None:
+        self.mfa, self.login, self.sessions = world.auth.mfa, world.auth.login, sessions()
+        self._users = world.users
+
+    async def find_user(self, user_id: str) -> UserRecord | None:
+        return await self._users.find_by_id(user_id)
+
+
+def _client(world: _World, audit: AuditService) -> httpx.AsyncClient:
+    router = make_auth_router(
+        cast(Any, _RouterOver(world)),
+        audit,
+        identity=Identity(),
+        csrf=CsrfCodec(b"\x05" * 32),
+        mfa_refusal_budget=PerIpLoginThrottle(max_attempts=100, window_s=60.0, clock=lambda: 0.0),
+    )
+    app = FastAPI()
+    app.include_router(router)
+    transport = httpx.ASGITransport(app=app, client=("10.0.0.1", 50000))
+    return httpx.AsyncClient(transport=transport, base_url="http://t")
+
+
+def _locked_rows(writer: RecordingWriter) -> list[tuple[str, uuid.UUID, AuditOutcome]]:
+    rows = writer.of("auth.account_locked")
+    return [(r["reason"], r["actor_user_id"], r["outcome"]) for r in rows]
+
+
+def _failures(method: str) -> float:
+    sample = REGISTRY.get_sample_value("auth_login_failures_total", {"method": method})
+    return float(sample or 0.0)
+
+
+async def test_mfa_verify_route_audits_second_factor_lock_and_locked_refusal(
+    world: _World,
+) -> None:
+    audit, uid = AuditService(), uuid.UUID(world.uid)
+    held_open, first, second = [await world.sign_in() for _ in range(3)]
+    codes = world.wrong_codes(LOCKOUT_THRESHOLD)
+    spread = [first] * (CHALLENGE_ATTEMPT_CAP - 1)
+    spread += [second] * (LOCKOUT_THRESHOLD - CHALLENGE_ATTEMPT_CAP + 1)
+
+    async def post(token: str, code: str) -> httpx.Response:
+        body = {"mfa_token": token, "method": "totp", "code": code}
+        return await client.post("/auth/mfa/verify", json=body)
+
+    async with _client(world, audit) as client:
+        wrong = [await post(token, next(codes)) for token in spread]
+        assert _locked_rows(audit.writer) == [("second_factor", uid, AuditOutcome.DENIED)]
+        failed, totp = len(audit.writer.of("auth.mfa_failed")), _failures("totp")
+        locked = await post(held_open, world.code())  # the right code, while locked
+
+    assert failed == LOCKOUT_THRESHOLD
+    assert (locked.status_code, locked.json()) == (401, wrong[0].json())
+    assert _locked_rows(audit.writer)[1:] == [
+        ("second_factor_while_locked", uid, AuditOutcome.DENIED)
+    ]
+    assert len(audit.writer.of("auth.mfa_failed")) == failed  # its only row
+    assert _failures("totp") == totp  # uncounted, as at the password step
+
+
+async def test_mfa_recovery_route_audits_second_factor_lock_and_locked_refusal(
+    world: _World,
+) -> None:
+    audit, uid = AuditService(), uuid.UUID(world.uid)
+    held_open, first, second = [await world.sign_in() for _ in range(3)]
+    spread = [first] * (CHALLENGE_ATTEMPT_CAP - 1)
+    spread += [second] * (LOCKOUT_THRESHOLD - CHALLENGE_ATTEMPT_CAP + 1)
+
+    async def post(token: str, code: str) -> httpx.Response:
+        body = {"mfa_token": token, "recovery_code": code}
+        return await client.post("/auth/mfa/recovery", json=body)
+
+    async with _client(world, audit) as client:
+        wrong = [await post(t, f"zzzz-zzzz-{i:04d}") for i, t in enumerate(spread)]
+        assert _locked_rows(audit.writer) == [("second_factor", uid, AuditOutcome.DENIED)]
+        failed, used = len(audit.writer.of("auth.mfa_failed")), _failures("recovery_code")
+        locked = await post(held_open, "zzzz-zzzz-9999")
+
+    assert failed == LOCKOUT_THRESHOLD
+    assert (locked.status_code, locked.json()) == (401, wrong[0].json())
+    assert _locked_rows(audit.writer)[1:] == [
+        ("second_factor_while_locked", uid, AuditOutcome.DENIED)
+    ]
+    assert len(audit.writer.of("auth.mfa_failed")) == failed
+    assert _failures("recovery_code") == used

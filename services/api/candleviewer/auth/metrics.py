@@ -136,7 +136,7 @@ auth_audit_outcome_lost_total = Counter(
 # that makes it true; none carries a user, account, IP or free-form label.
 auth_lockouts_total = Counter(
     "auth_lockouts_total",
-    "Account lockouts applied by repeated wrong passwords (SR-016), from login or step-up.",
+    "Account lockouts applied by repeated wrong passwords or second-factor codes (SR-016).",
 )
 #: #4648: one per refused authentication step that took longer than the minimum time before its
 #: response was due, so it was returned without the wait (`FailureHold.hold`): a failed sign-in,
@@ -164,7 +164,7 @@ auth_stepup_failures_total = Counter(
 # `POST /auth/login`, the requested MFA method per `auth.mfa_failed` row and per the
 # `auth.login_failed` row of a user disabled since the password step (`POST /auth/mfa/verify`,
 # #3054), `recovery_code` per `auth.recovery_codes_exhausted`. An attempt refused while the
-# account is locked (`auth.account_locked`) and a success never count.
+# account is locked (`auth.account_locked`, either step, #2695) and a success never count.
 auth_login_failures_total = Counter(
     "auth_login_failures_total",
     "Failed logins by the factor that failed (password, totp, webauthn, recovery_code).",

@@ -816,7 +816,9 @@ def test_wrong_codes_are_throttled_and_past_the_cap_even_the_right_one_is_refuse
 
     answers = {(r.status_code, r.json()["detail"]) for r in (*wrong, locked)}
     assert answers == {_RECOVERY_REFUSED}
-    assert [r["action"] for r in stack.audit.records[mark:]] == ["auth.mfa_failed"] * 6
+    rows = [(r["action"], r.get("reason")) for r in stack.audit.records[mark:]]
+    failed, lock = ("auth.mfa_failed", None), ("auth.account_locked", "second_factor")
+    assert rows == [failed] * 5 + [lock, ("auth.account_locked", "second_factor_while_locked")]
     assert (_unused(stack, uid), _live(stack, uid)) == (len(codes), set())
     assert _sign_in(stack, "alice").status_code == 401  # the right password, while locked
     stack.clock.now += LOCKOUT_DURATION
