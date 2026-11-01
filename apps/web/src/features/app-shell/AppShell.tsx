@@ -1,6 +1,6 @@
 import { useLayoutEffect, type CSSProperties, type JSX, type ReactNode, type Ref } from "react";
 import { SKIP_LINK_COPY, SkipLink } from "@candleviewer/ui";
-import { REFLOW_QUERY } from "./reflow";
+import { REFLOW_QUERY, useReflow } from "./reflow";
 
 /**
  * CMP-070 AppShell frame (E10-S01 S1, #304): props only, no router or store. It lives in apps/web
@@ -55,6 +55,20 @@ const FRAME: CSSProperties = {
 
 const CHROME: CSSProperties = { background: "var(--color-surface-raised)" };
 
+/**
+ * At the reflow breakpoint the frame is no longer one viewport tall (E10-Q03 F-6, SC 1.4.10): at 320 x 256 CSS
+ * px (400 % on a 1280 x 1024 window) the wrapped TopBar and the StatusBar left `minmax(0, 1fr)` no height, so
+ * the rail, the workspace and the drawer were all 0 px tall and unreachable. The frame grows with its content
+ * (the page scrolls), `main` keeps at least `REFLOW_MAIN_MIN`, and the canvas stops scrolling on its own.
+ */
+const REFLOW_MAIN_MIN = "16rem";
+const FRAME_REFLOW: CSSProperties = {
+  height: "auto",
+  minHeight: "100vh",
+  gridTemplateRows: `auto auto minmax(${REFLOW_MAIN_MIN}, auto) auto`,
+};
+const SCROLL_REFLOW: CSSProperties = { height: "auto", overflow: "visible" };
+
 const MAIN: CSSProperties = { gridArea: "main", position: "relative", minHeight: 0 };
 
 const SCROLL: CSSProperties = { height: "100%", overflow: "auto" };
@@ -107,8 +121,9 @@ export function AppShell(props: AppShellProps): JSX.Element {
     props;
   const { rightRail, rightRailLabel } = props;
   useScrimInsets(mainId);
+  const narrow = useReflow();
   return (
-    <div style={FRAME}>
+    <div style={narrow ? { ...FRAME, ...FRAME_REFLOW } : FRAME}>
       <SkipLink targets={[{ id: mainId, label: SKIP_LINK_COPY.main }]} />
       <header data-cv-inert-exempt="" style={{ ...CHROME, gridArea: "header" }}>
         {(props.topBar ?? ((slot) => slot))(<div data-shell-slot="connection">{connection}</div>)}
@@ -121,7 +136,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
         {banner}
       </div>
       <main id={mainId} ref={mainRef} tabIndex={-1} style={MAIN}>
-        <div data-shell-canvas="" style={SCROLL}>
+        <div data-shell-canvas="" style={narrow ? { ...SCROLL, ...SCROLL_REFLOW } : SCROLL}>
           {children}
         </div>
         <div data-shell-slot="canvas-overlay" style={OVERLAY}>
