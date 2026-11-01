@@ -80,7 +80,8 @@ describe("DS-305B-02: a reviewed override reads 'reserved by the browser or OS' 
     const { Cheatsheet, KEYMAP } = m;
     render(<Cheatsheet />);
     const reviewed = KEYMAP.filter((c) => c.reservedOverride?.rationale.trim());
-    expect(reviewed).toHaveLength(11); // E10-D04 §15: the keymap carries 11 reviewed overrides
+    // E10-D04 §15 counted 11 reviewed overrides; E47-S03 adds rules.add_node (Ctrl+Shift+N).
+    expect(reviewed).toHaveLength(12);
     expect(screen.getAllByText(MARK)).toHaveLength(reviewed.length);
     for (const c of reviewed) {
       expect(rowIn(c.context, c.label), c.id).toHaveTextContent(`${c.defaultBinding} ${MARK}`);
@@ -92,7 +93,7 @@ describe("DS-305B-02: a reviewed override reads 'reserved by the browser or OS' 
     act(() => setBindings(new Map(getBindings()).set("rules.duplicate", "Ctrl+Alt+D")));
     render(<Cheatsheet />);
     expect(rowIn("Rules", "Duplicate row")).not.toHaveTextContent(MARK);
-    expect(screen.getAllByText(MARK)).toHaveLength(10);
+    expect(screen.getAllByText(MARK)).toHaveLength(11);
   });
 });
 

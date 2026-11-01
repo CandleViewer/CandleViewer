@@ -416,6 +416,10 @@
         {
           "command": "replay.play_pause",
           "rationale": "Space scoped to the focused panel; contexts are never co-active"
+        },
+        {
+          "command": "rules.connect",
+          "rationale": "Space scoped to the focused panel; contexts are never co-active"
         }
       ]
     },
@@ -814,6 +818,138 @@
       "visibleControl": true
     },
     {
+      "id": "rules.add_node",
+      "label": "Add node",
+      "context": "Rules",
+      "defaultBinding": "Ctrl+Shift+N",
+      "destructive": false,
+      "reservedOverride": {
+        "rationale": "Deliberate override of browser incognito window (05 §3.2 add node); works in the Electron shell only, the browser keeps the key (E47-S08 hotkey layer to rule)"
+      },
+      "validWhen": "graph editor focused",
+      "visibleControl": true
+    },
+    {
+      "id": "rules.connect",
+      "label": "Connect selected ports",
+      "context": "Rules",
+      "defaultBinding": "Space",
+      "destructive": false,
+      "shadows": [
+        {
+          "command": "dom.recentre",
+          "rationale": "Space scoped to the focused panel; contexts are never co-active"
+        },
+        {
+          "command": "replay.play_pause",
+          "rationale": "Space scoped to the focused panel; contexts are never co-active"
+        }
+      ],
+      "validWhen": "a node output port is focused or a connection is pending",
+      "visibleControl": true
+    },
+    {
+      "id": "rules.node_list",
+      "label": "Open node list (structural view)",
+      "context": "Rules",
+      "defaultBinding": "Alt+L",
+      "destructive": false,
+      "validWhen": "graph editor focused",
+      "visibleControl": true
+    },
+    {
+      "id": "rules.nudge_left",
+      "label": "Nudge node left",
+      "context": "Rules",
+      "defaultBinding": "Ctrl+←",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "shadows": [
+        {
+          "command": "replay.jump_back",
+          "rationale": "Ctrl+arrows scoped to the focused panel; contexts are never co-active"
+        }
+      ],
+      "validWhen": "a graph node is focused",
+      "visibleControl": true
+    },
+    {
+      "id": "rules.nudge_right",
+      "label": "Nudge node right",
+      "context": "Rules",
+      "defaultBinding": "Ctrl+→",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "shadows": [
+        {
+          "command": "replay.jump_fwd",
+          "rationale": "Ctrl+arrows scoped to the focused panel; contexts are never co-active"
+        }
+      ],
+      "validWhen": "a graph node is focused",
+      "visibleControl": true
+    },
+    {
+      "id": "rules.nudge_up",
+      "label": "Nudge node up",
+      "context": "Rules",
+      "defaultBinding": "Ctrl+↑",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "validWhen": "a graph node is focused",
+      "visibleControl": true
+    },
+    {
+      "id": "rules.nudge_down",
+      "label": "Nudge node down",
+      "context": "Rules",
+      "defaultBinding": "Ctrl+↓",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "validWhen": "a graph node is focused",
+      "visibleControl": true
+    },
+    {
+      "id": "rules.nudge_left_large",
+      "label": "Nudge node left (large step)",
+      "context": "Rules",
+      "defaultBinding": "Ctrl+Shift+←",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "validWhen": "a graph node is focused",
+      "visibleControl": true
+    },
+    {
+      "id": "rules.nudge_right_large",
+      "label": "Nudge node right (large step)",
+      "context": "Rules",
+      "defaultBinding": "Ctrl+Shift+→",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "validWhen": "a graph node is focused",
+      "visibleControl": true
+    },
+    {
+      "id": "rules.nudge_up_large",
+      "label": "Nudge node up (large step)",
+      "context": "Rules",
+      "defaultBinding": "Ctrl+Shift+↑",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "validWhen": "a graph node is focused",
+      "visibleControl": true
+    },
+    {
+      "id": "rules.nudge_down_large",
+      "label": "Nudge node down (large step)",
+      "context": "Rules",
+      "defaultBinding": "Ctrl+Shift+↓",
+      "destructive": false,
+      "ignoreRepeat": false,
+      "validWhen": "a graph node is focused",
+      "visibleControl": true
+    },
+    {
       "id": "replay.play_pause",
       "label": "Play / pause",
       "context": "Replay",
@@ -825,6 +961,10 @@
       "shadows": [
         {
           "command": "dom.recentre",
+          "rationale": "Space scoped to the focused panel; contexts are never co-active"
+        },
+        {
+          "command": "rules.connect",
           "rationale": "Space scoped to the focused panel; contexts are never co-active"
         }
       ]
@@ -877,7 +1017,13 @@
       "destructive": false,
       "ignoreRepeat": false,
       "validWhen": "always",
-      "visibleControl": true
+      "visibleControl": true,
+      "shadows": [
+        {
+          "command": "rules.nudge_left",
+          "rationale": "Ctrl+arrows scoped to the focused panel; contexts are never co-active"
+        }
+      ]
     },
     {
       "id": "replay.jump_fwd",
@@ -887,7 +1033,13 @@
       "destructive": false,
       "ignoreRepeat": false,
       "validWhen": "always",
-      "visibleControl": true
+      "visibleControl": true,
+      "shadows": [
+        {
+          "command": "rules.nudge_right",
+          "rationale": "Ctrl+arrows scoped to the focused panel; contexts are never co-active"
+        }
+      ]
     },
     {
       "id": "replay.jump_live",
