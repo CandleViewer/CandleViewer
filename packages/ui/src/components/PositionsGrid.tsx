@@ -190,6 +190,27 @@ const WINDOW_FROM = 50;
 const OVERSCAN = 10;
 /** Before the region reports what it shows: the first rows. */
 const FIRST_WINDOW = 30;
+
+/** Rows of the flattened tree, first and last inclusive, from 0. */
+interface RowSpan {
+  readonly first: number;
+  readonly last: number;
+}
+
+/** The rows drawn for a view: OVERSCAN either side of it, within the list. */
+const drawnFor = (view: RowSpan, total: number): RowSpan => ({
+  first: Math.max(0, Math.min(view.first - OVERSCAN, total - 1)),
+  last: Math.min(total, view.last + OVERSCAN + 1) - 1,
+});
+
+/**
+ * Whether a reported view keeps the drawn rows: while it stays OVERSCAN / 2 rows inside each drawn edge that is not the
+ * list's own end, so a mount or a short scroll draws nothing again. A view nearer an edge re-centres the window while
+ * half the overscan is still drawn past it: a scroll's commit lands after that frame's paint, and no blank row shows.
+ */
+const keepsDrawn = (drawn: RowSpan, view: RowSpan, total: number): boolean =>
+  (drawn.first === 0 || view.first >= drawn.first + OVERSCAN / 2) &&
+  (drawn.last === total - 1 || view.last <= drawn.last - OVERSCAN / 2);
 /** D02 §5.1's minimum widths in px, compact and comfortable, as `em` of a 16 px table (the `<col>` widths). */
 const WIDTH_PX: Readonly<
   Record<PositionsGridColumnId | "select" | "actions", readonly [number, number]>
@@ -898,12 +919,13 @@ export function PositionsGrid<R extends PositionsGridRow = PositionsGridRow>({
   const closed = collapsed ?? ownClosed;
   const entries = useMemo(() => flatten(groups, closed), [groups, closed]);
   const indexOf = useMemo(() => new Map(entries.map((entry, i) => [entry.id, i])), [entries]);
-  // The window (CMP-049's host side): the rows in view and OVERSCAN either side, from WINDOW_FROM rows. A view
-  // reported inside the drawn rows keeps the window as it is, so a mount or a short scroll draws nothing again.
-  const [view, setView] = useState({ first: 0, last: FIRST_WINDOW - 1 });
+  // The window (CMP-049's host side): the rows in view and OVERSCAN either side, from WINDOW_FROM rows, kept while
+  // the reported view stays clear of its edges (`keepsDrawn`).
+  const [view, setView] = useState<RowSpan>({ first: 0, last: FIRST_WINDOW - 1 });
   const windowed = entries.length > WINDOW_FROM;
-  const offset = windowed ? Math.max(0, Math.min(view.first - OVERSCAN, entries.length - 1)) : 0;
-  const end = windowed ? Math.min(entries.length, view.last + OVERSCAN + 1) : entries.length;
+  const drawn = windowed
+    ? drawnFor(view, entries.length)
+    : { first: 0, last: entries.length - 1 };
   const selection = selected ?? new Set<string>();
   const allKeys = (): string[] => groups.flatMap((group) => group.rows.map((row) => row.key));
   const parts: RowParts<R> = {
@@ -996,7 +1018,7 @@ export function PositionsGrid<R extends PositionsGridRow = PositionsGridRow>({
         caption={caption}
         captionHidden={captionHidden}
         columns={tableColumns}
-        rows={entries.slice(offset, end)}
+        rows={entries.slice(drawn.first, drawn.last + 1)}
         rowKey={(entry) => entry.id}
         treeRow={(entry) =>
           entry.kind === "totals" ? { level: 1, posinset: 1, setsize: 1 } : entry.tree
@@ -1034,10 +1056,10 @@ export function PositionsGrid<R extends PositionsGridRow = PositionsGridRow>({
             })}
         {...(windowed
           ? {
-              rowWindow: { offset, total: entries.length },
+              rowWindow: { offset: drawn.first, total: entries.length },
               onRowsInView: (first: number, last: number) =>
                 setView((was) =>
-                  first >= was.first - OVERSCAN && last <= was.last + OVERSCAN
+                  keepsDrawn(drawnFor(was, entries.length), { first, last }, entries.length)
                     ? was
                     : { first, last },
                 ),
