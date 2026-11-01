@@ -48,6 +48,9 @@ _CALLERS = {
     Path("storage/repositories/credentials_sqlalchemy.py"): ["record_kcv", "rewrap"],
     # #889 S4b-2; reviewed again in S6a and S6b, whose re-wrap and destroy run it through `_record`
     Path("storage/repositories/export_keys_sqlalchemy.py"): ["_record"],
+    # #2152 S4 (BQ-5): the auth keyring's insert and re-wrap commit their record through `_record`
+    # in the write's own transaction; reviewed in PR 1's part-A security look
+    Path("storage/repositories/auth_keys_sqlalchemy.py"): ["_record"],
 }
 
 
