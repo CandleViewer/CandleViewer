@@ -6,21 +6,21 @@ Components: **CMP-039 FocusRing** (the enclosed two-tone ring, the thick geometr
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                     | CMP-039 FocusRing                    | CMP-043 / CMP-044 Dialog, ConfirmDialog | CMP-049 Table (`grid`)                    | CMP-070 AppShell + CMP-085 SkipLink |
-| ------------------------ | ------------------------------------ | --------------------------------------- | ----------------------------------------- | ----------------------------------- |
-| Final Penpot link        | [ ] boards 08–10 pending (spec §0)   | [ ] boards 05, 06 pending               | [ ] boards 03, 04 pending                 | [ ] boards 01, 02, 07 pending       |
-| Variants × states        | [x] spec §7.1 normal / inset / thick | [x] spec §9.1 per dialog type           | [x] spec §6                               | [x] spec §2, §3                     |
-| Keyboard table           | [x] n/a (a utility)                  | [x] spec §9.2                           | [x] spec §6.1, §6.3                       | [x] spec §3 (the ring keys)         |
-| Accessible name and role | [x] n/a                              | [x] CMP-043's, unchanged                | [x] spec §6.2 (the entry label)           | [x] spec §2 (landmarks, headings)   |
-| Live data                | [x] none                             | [x] the outcome in the assertive region | [x] spec §8                               | [x] W-1 per arrival, ≤ 1 Hz         |
-| Motion pair              | [x] none: the ring appears at once   | [x] CMP-043's, unchanged                | [x] none                                  | [x] none                            |
-| Density notes            | [x] one geometry for every density   | [x] R-12 (reflow)                       | [x] spec §12 (the ceiling)                | [x] none                            |
-| Essential exceptions     | [x] none                             | [x] none                                | [x] none                                  | [x] none                            |
-| Tokens used              | [x] spec §7.1; D04-G5                | [x] CMP-043's                           | [x] CMP-039 `inset`                       | [x] CMP-039; `border.panel.focus`   |
-| Data contract            | [x] none                             | [x] none                                | [ ] NO: R-3's logical ids per grid (§6.2) | [ ] NO: D04-G3, D04-G4              |
-| Contrast                 | [x] spec §7.6 (computed); D04-G1     | [x] CMP-039's                           | [x] CMP-039's                             | [x] CMP-039's                       |
-| Storybook                | [x] §D                               | [x] §D                                  | [x] §D                                    | [x] §D                              |
-| Sign-off                 | [ ] owner approval pending           | [ ] owner approval pending              | [ ] owner approval pending                | [ ] owner approval pending          |
+| Item                     | CMP-039 FocusRing                                                                                               | CMP-043 / CMP-044 Dialog, ConfirmDialog | CMP-049 Table (`grid`)                    | CMP-070 AppShell + CMP-085 SkipLink        |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ----------------------------------------- | ------------------------------------------ |
+| Final Penpot link        | [x] page `E47-D04 — Focus model` (page id `cb0c3916-2579-81a4-8008-e0bd553f9c60`); boards 08–10 drawn (spec §0) | [x] the same page: boards 05, 06 drawn  | [x] the same page: boards 03, 04 drawn    | [x] the same page: boards 01, 02, 07 drawn |
+| Variants × states        | [x] spec §7.1 normal / inset / thick                                                                            | [x] spec §9.1 per dialog type           | [x] spec §6                               | [x] spec §2, §3                            |
+| Keyboard table           | [x] n/a (a utility)                                                                                             | [x] spec §9.2                           | [x] spec §6.1, §6.3                       | [x] spec §3 (the ring keys)                |
+| Accessible name and role | [x] n/a                                                                                                         | [x] CMP-043's, unchanged                | [x] spec §6.2 (the entry label)           | [x] spec §2 (landmarks, headings)          |
+| Live data                | [x] none                                                                                                        | [x] the outcome in the assertive region | [x] spec §8                               | [x] W-1 per arrival, ≤ 1 Hz                |
+| Motion pair              | [x] none: the ring appears at once                                                                              | [x] CMP-043's, unchanged                | [x] none                                  | [x] none                                   |
+| Density notes            | [x] one geometry for every density                                                                              | [x] R-12 (reflow)                       | [x] spec §12 (the ceiling)                | [x] none                                   |
+| Essential exceptions     | [x] none                                                                                                        | [x] none                                | [x] none                                  | [x] none                                   |
+| Tokens used              | [x] spec §7.1; D04-G5                                                                                           | [x] CMP-043's                           | [x] CMP-039 `inset`                       | [x] CMP-039; `border.panel.focus`          |
+| Data contract            | [x] none                                                                                                        | [x] none                                | [ ] NO: R-3's logical ids per grid (§6.2) | [ ] NO: D04-G3, D04-G4                     |
+| Contrast                 | [x] spec §7.6 (computed); D04-G1                                                                                | [x] CMP-039's                           | [x] CMP-039's                             | [x] CMP-039's                              |
+| Storybook                | [x] §D                                                                                                          | [x] §D                                  | [x] §D                                    | [x] §D                                     |
+| Sign-off                 | [ ] owner approval pending                                                                                      | [ ] owner approval pending              | [ ] owner approval pending                | [ ] owner approval pending                 |
 
 ## §B Who applies what
 
@@ -91,7 +91,7 @@ Old is a verbatim fragment of the cited line at `95a4f2765` (the tool checks it)
 | QA-3 | focus a ladder level; replay a recorded re-seed without that level                                     | focus is on the nearest level by price (ties toward the touch); the polite region received exactly one W-4; `activeElement` is never the body        | no Q01 case; new for Q03 |
 | QA-4 | from the TopBar press `Ctrl+\` once per region, then once more; repeat under `data-focus-ring="thick"` | the regions arrive in §3's order and wrap to the TopBar; one W-1 per arrival; the ring's computed outline matches §7.1 in both geometries            | TC-105, TC-117           |
 
-## §H The board plan (drawn later in this PR; a Penpot lane)
+## §H The board plan (drawn in this PR; spec §0 as built)
 
 The boards of spec §0, on page `E47-D04 — Focus model`; frames named `<archetype>/<state> · <theme>`. Data: a seeded synthetic book and position set, declared synthetic on every board's face; only the instrument's tick size comes from a recorded fixture. Each board's frames:
 
@@ -110,7 +110,7 @@ The boards of spec §0, on page `E47-D04 — Focus model`; frames named `<archet
 
 ## §I Summary for #1303
 
-1. Text-first focus model + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards pending, drawn later in this PR; `05` §3.4 item 11 is the normative expansion.
+1. Text-first focus model + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards drawn in this PR (spec §0 as built); `05` §3.4 item 11 is the normative expansion.
 2. Landmarks and one `h1`; E15-D15's ring generalised to five archetypes, each with its sequence, zones, keys and initial target.
 3. Every one of the 159<!--=COUNT:map.ids--> `14` ids mapped to one archetype; the tool checks each against its `14` Type line.
 4. A dense grid is one stop: one `Tab` out, `Esc` by layers to the panel header, focus keyed by logical id.
