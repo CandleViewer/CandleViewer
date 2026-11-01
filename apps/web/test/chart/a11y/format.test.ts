@@ -49,6 +49,37 @@ describe("number formatting", () => {
     expect(ticksToDecimal(1, 64000, 0.05, 2)).toBe("64000.05");
   });
 
+  it("ticksToDecimal refuses a non-representable price at BTC magnitude (review fold)", () => {
+    expect(() => ticksToDecimal(0, 64000.25, 0.1, 1)).toThrow(RangeError);
+    expect(() => ticksToDecimal(1, 100000.05, 0.1, 1)).toThrow(RangeError);
+    expect(() => ticksToDecimal(0, 64000, 0.25, 1)).toThrow(RangeError);
+    expect(() => ticksToDecimal(0, 99999.005, 0.01, 2)).toThrow(RangeError);
+    expect(() => ticksToDecimal(0, 64000.1, 0.05, 1)).toThrow(RangeError);
+  });
+
+  it("property: BTC-magnitude origins that the digits show pass exactly, others throw", () => {
+    const rnd = lcg(5278);
+    const cases: [number, number][] = [
+      [1, 0.1],
+      [1, 0.5],
+      [2, 0.01],
+      [2, 0.5],
+    ];
+    for (let n = 0; n < 1_000; n++) {
+      const [decimals, tick] = cases[n % cases.length] as [number, number];
+      const unit = 10 ** decimals;
+      const intOrigin = 60_000 * unit + Math.floor(rnd() * 40_000 * unit);
+      const origin = intOrigin / unit; // the nearest double to the decimal, as a feed would send it
+      const ticks = Math.floor(rnd() * 200) - 100;
+      const tickInt = Math.round(tick * unit);
+      const got = ticksToDecimal(ticks, origin, tick, decimals);
+      expect(got).toBe(scaledToDecimal(intOrigin + ticks * tickInt, decimals));
+      // one extra digit on the origin is not representable at `decimals`
+      const off = (intOrigin * 10 + 5) / (unit * 10);
+      expect(() => ticksToDecimal(ticks, off, tick, decimals)).toThrow(RangeError);
+    }
+  });
+
   it("ticksToDecimal never re-quantises a float (0.1-tick trap)", () => {
     expect(ticksToDecimal(3, 64000, 0.1, 1)).toBe("64000.3");
     expect(ticksToDecimal(21, 64000, 0.5, 1)).toBe("64010.5");

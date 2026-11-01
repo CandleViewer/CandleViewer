@@ -56,7 +56,9 @@ export function scaledToDecimal(scaled: number, decimals: number): string {
 function exactScaled(value: number, unit: number, what: string): number {
   const scaled = value * unit;
   const int = Math.round(scaled);
-  if (Math.abs(scaled - int) > 1e-6 * Math.max(1, Math.abs(scaled)))
+  // ~1e-9 relative (a float product's noise is ~1e-16), floored at 1e-9 absolute: at BTC magnitude a looser bound
+  // reaches 0.5 and silently re-quantises 64000.25 at 1 decimal.
+  if (Math.abs(scaled - int) > 1e-9 * Math.max(1, Math.abs(scaled)))
     throw new RangeError(`${what} ${value} needs more than ${Math.log10(unit)} decimals`);
   return int;
 }

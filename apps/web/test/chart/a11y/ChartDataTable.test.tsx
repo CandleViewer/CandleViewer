@@ -127,6 +127,26 @@ describe("SCR-045 grid semantics", () => {
   });
 });
 
+describe("empty state and roving tabindex (review fold)", () => {
+  it("zero bars: a grid named by its caption holding a 'No bars loaded' row, no axe violation", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    const { container } = setup(0, { levels: 0 });
+    const grid = screen.getByRole("grid", { name: "BTCUSDT 1m — 0 bars loaded" });
+    expect(within(grid).getByRole("heading", { name: "No bars loaded" })).toBeInTheDocument();
+    const res = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    const bad = res.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+    expect(bad.map((v) => v.id)).toEqual([]);
+  });
+
+  it("exactly one tabindex=0 in the grid (the roving stop), also with a bar expanded", () => {
+    setup(10, { initialBar: 2 });
+    const grid = screen.getByRole("grid");
+    expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+    key("Enter");
+    expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+  });
+});
+
 describe("Gherkin 5: windowed at 100 000 bars", () => {
   it("draws only the window around the cursor, with absolute row indices", () => {
     setup(100_000);

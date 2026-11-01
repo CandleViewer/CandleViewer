@@ -26,6 +26,8 @@ export const LEVEL_HEADERS = ["price", "bid", "ask", "delta", "imbalance"] as co
 
 export const IMBALANCE_WORDS = { bid: "Bid-stacked", ask: "Ask-stacked", none: "—" } as const;
 export const NOT_AVAILABLE = "—";
+/** PROPOSED (no deck string): the grid's empty row; the grid itself stays named by its caption ("0 bars loaded"). */
+export const NO_BARS = "No bars loaded";
 export const NO_FOOTPRINT = "No footprint for this bar";
 
 const rows = (n: number): string => `${n.toLocaleString("en-GB")} ${n === 1 ? "row" : "rows"}`;

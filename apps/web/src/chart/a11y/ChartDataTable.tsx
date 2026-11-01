@@ -10,12 +10,13 @@
  */
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FocusEvent, JSX, KeyboardEvent } from "react";
-import { Table, type TableColumn, type TableRowContext } from "@candleviewer/ui";
+import { EmptyState, Table, type TableColumn, type TableRowContext } from "@candleviewer/ui";
 import {
   BAR_HEADERS,
   EXPANDER_HEADER,
   LEVEL_HEADERS,
   NOT_AVAILABLE,
+  NO_BARS,
   NO_FOOTPRINT,
   SAY,
   collapseName,
@@ -457,6 +458,7 @@ export function ChartDataTable(props: ChartDataTableProps): JSX.Element {
         onRowsInView={onRowsInView}
         renderRow={renderRow}
         announce={say}
+        emptyState={<EmptyState title={NO_BARS} />}
       />
     </div>
   );
