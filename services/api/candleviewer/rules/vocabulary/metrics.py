@@ -125,12 +125,12 @@ _ROWS: tuple[_Row, ...] = _FLOW + _MARKET + _ACCOUNT
 _NULLABLE: Final = "before warmup completes or when an input is unavailable"
 _NO_OI: Final = "no OI sample in the bar, or the bar-open OI is past the staleness bound"
 #: The per-bar derivatives rows (24 §7.2): bar-scoped, so `on_bar_close`, with the exact None
-#: case the `DerivativesEngine` (E24-T04) yields; never defaulted to zero or to a quadrant.
+#: case the `DerivativesEngine` (E24-T04) yields; OI is never defaulted to zero or a quadrant.
 _BAR_SCOPED: Final[Mapping[str, str]] = MappingProxyType(
     {
         "open_interest_delta": _NO_OI,
         "oi_price_quadrant": _NO_OI + ", or a flat price or OI change",
-        "liquidation_notional": "never: a bar with no prints is 0",
+        "liquidation_notional": "never None: a bar with no prints, or a liquidation feed gap, reads 0",
     }
 )
 

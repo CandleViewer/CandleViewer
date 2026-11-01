@@ -10,17 +10,29 @@ Semantics (bars are half-open `[start_ms, end_ms)`, all times exchange ms UTC):
   last sample inside the bar, `OI(open)` the last at or before its start within the bound, and
   `open_interest` is `OI(close)`, else `OI(open)` carried (never past the bound). No
   sample in the bar, or a stale open, is the None case: `open_interest_delta` and
-  `oi_price_quadrant` are None, never 0 or a quadrant (US-DERIV-002 scenario 3).
+  `oi_price_quadrant` are None, never 0 or a quadrant (US-DERIV-002 scenario 3). A lone sample
+  at exactly `start_ms` is both the open and the close: delta 0, reason `flat`.
 - The quadrant is the sign of the bar's price move (`close - open`) against the sign of the OI
   delta; a flat price or flat OI classifies nothing (None).
 - Ticker values (funding, basis, premium) come from the last snapshot inside the bar. A bar with
   no snapshot falls back, for the funding rate only, to the settled row whose period covers it.
 - `funding_rate` and `funding_annualized` are percent (the descriptors' unit); the
   annualisation is `domain.funding.annualised_pct`, the one formula.
-- Liquidations bucket per bar by `liquidated_side`; half-open bars count every print once.
+- Liquidations bucket per bar by `liquidated_side`; half-open bars count every print once, and
+  an identical print (same `ts_ms`, side, notional and `batch_index`) is counted once.
 
-Incremental path: an input at or after the current (last) bar's start recomputes that bar only;
-an earlier one, or a replaced earlier bar, recomputes the window. Both give the same series.
+Bounded state (C-2.18): at most `max_bars` bars (the oldest drops on append), and the row stores
+keep only what a bar in the window reads: per bar the last ticker snapshot, the last OI sample at
+its start and the last inside it, and its liquidation prints; per gap the last OI sample; nothing
+before the first bar except an OI sample within `OI_STALENESS_MS` of it. Rows past the last bar
+wait for the next one, at most `MAX_PENDING_ROWS` per store; more are refused, not dropped.
+
+Incremental path: a row recomputes only the bars it can change (a ticker or liquidation its own
+bar; OI its own bar plus the bars starting within `OI_STALENESS_MS` after it; a settlement at
+`T` the bars whose last ms lies in `[T - interval, T)`), and the `on_*` methods return the bars
+whose metrics changed, oldest first. The result always equals a full recompute.
+
+Not thread-safe: one engine per symbol, driven from one event loop.
 """
 
 from __future__ import annotations
@@ -29,9 +41,18 @@ import time
 from bisect import bisect_left, bisect_right
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    DecimalTuple,
+    DivisionByZero,
+    InvalidOperation,
+    Overflow,
+    localcontext,
+)
 from itertools import pairwise
-from typing import Final, Literal
+from typing import Final, Literal, Protocol
 
 from candleviewer.domain.funding import annualised_pct, resolve_funding_interval_minutes
 from candleviewer.orderflow.derivatives_metrics import (
@@ -43,9 +64,25 @@ from candleviewer.orderflow.errors import OrderflowError
 #: OI resampling staleness bound: twice the coarsest OI sampling the engine is fed (the 5-min
 #: history interval). Past it the open sample is absent; never carried forward (BQ-5).
 OI_STALENESS_MS: Final = 600_000
+#: The visible window the ticket budgets (1 500 bars); the oldest bar drops past it.
+MAX_BARS: Final = 1_500
+#: Rows per store waiting past the last bar for the next one; a stalled grid refuses more.
+MAX_PENDING_ROWS: Final = 65_536
+#: Inputs are refused outside `1e-30 < |x| < 1e30` (or zero), so no arithmetic can overflow.
+_MAX_ADJUSTED: Final = 30
+#: The engine's arithmetic context: fixed, so results never depend on the thread's context.
+_CTX: Final = Context(
+    prec=28,
+    rounding=ROUND_HALF_EVEN,
+    Emax=999_999,
+    Emin=-999_999,
+    traps=[InvalidOperation, DivisionByZero, Overflow],
+)
 _MS_PER_MIN: Final = 60_000
 _HUNDRED: Final = Decimal(100)
 _ZERO: Final = Decimal(0)
+_LOW: Final = -(1 << 63)
+_HIGH: Final = 1 << 63
 
 LiquidatedSide = Literal["long", "short"]
 Quadrant = Literal["long_buildup", "short_covering", "short_buildup", "long_unwind"]
@@ -53,12 +90,21 @@ Value = Decimal | int | str | None
 
 
 class DerivativesInputError(OrderflowError, ValueError):
-    """An input row is malformed: a NaN/infinite number, an unordered grid or a bad param."""
+    """An input row is malformed: a NaN/infinite/out-of-range number, a negative quantity, an
+    unordered grid, a stalled grid's overflow or a bad param."""
 
 
 def _finite(v: Decimal | None, what: str) -> None:
-    if v is not None and not v.is_finite():
-        raise DerivativesInputError(f"{what} is not a finite number")
+    if v is None:
+        return
+    if not v.is_finite() or (v != 0 and not -_MAX_ADJUSTED < v.adjusted() < _MAX_ADJUSTED):
+        raise DerivativesInputError(f"{what} is not a finite number in range")
+
+
+def _non_negative(v: Decimal, what: str) -> None:
+    _finite(v, what)
+    if v < 0:
+        raise DerivativesInputError(f"{what} is negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,8 +131,8 @@ class OiSample:
     source: str  # kept so a displayed value is attributable (ticket security note R)
 
     def __post_init__(self) -> None:
-        _finite(self.open_interest, "open_interest")
-        _finite(self.open_interest_value, "open_interest_value")
+        _non_negative(self.open_interest, "open_interest")
+        _non_negative(self.open_interest_value, "open_interest_value")
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,12 +162,16 @@ class FundingRow:
 
 @dataclass(frozen=True, slots=True)
 class LiquidationPrint:
+    """`batch_index` is the print's index in its exchange push (the store's dedup key leg), so
+    two real prints with equal `ts_ms`, side and notional stay distinct."""
+
     ts_ms: int
     liquidated_side: LiquidatedSide
     notional: Decimal
+    batch_index: int = 0
 
     def __post_init__(self) -> None:
-        _finite(self.notional, "notional")
+        _non_negative(self.notional, "notional")
         if self.liquidated_side not in ("long", "short"):
             raise DerivativesInputError("liquidated_side must be long or short")
 
@@ -178,6 +228,8 @@ def metric_value(m: BarMetrics, name: str, params: Mapping[str, str] | None = No
         raise DerivativesInputError(f"{name}: param value outside {dict(allowed)}")
     mark = p.get("source") == "mark"
     side = p.get("side")
+    with localcontext(_CTX):
+        both = m.liquidation_long + m.liquidation_short
     values: dict[str, Value] = {
         "open_interest": m.open_interest,
         "open_interest_value": m.open_interest_value,
@@ -191,7 +243,7 @@ def metric_value(m: BarMetrics, name: str, params: Mapping[str, str] | None = No
         "liquidation_notional": (
             m.liquidation_long if side == "long"
             else m.liquidation_short if side == "short"
-            else m.liquidation_long + m.liquidation_short
+            else both
         ),
     }  # fmt: skip
     return values[name]
@@ -207,6 +259,16 @@ def classify_quadrant(price_move: Decimal, oi_delta: Decimal | None) -> Quadrant
 
 
 _Row = OiSample | TickerSnapshot | FundingRow | LiquidationPrint
+#: Where a timestamp falls on the grid: before the first bar, in a bar, between two bars, or
+#: past the last bar (pending: the next bar is not known yet).
+_Seg = Literal["head", "bar", "gap", "tail"]
+Update = tuple["BarMetrics", ...]
+
+
+class _Store(Protocol):
+    def __len__(self) -> int: ...
+    def span(self, start: int, end: int) -> tuple[int, int]: ...
+    def keep(self, lo: int, hi: int, idx: Sequence[int]) -> None: ...
 
 
 class _Sorted[R: _Row]:
@@ -223,20 +285,40 @@ class _Sorted[R: _Row]:
         self.ts.insert(i, row.ts_ms)
         self.rows.insert(i, row)
 
+    def __len__(self) -> int:
+        return len(self.rows)
+
     def span(self, start: int, end: int) -> tuple[int, int]:
         """Indices `[lo, hi)` of the rows with `start <= ts_ms < end`."""
         return bisect_left(self.ts, start), bisect_left(self.ts, end)
+
+    def keep(self, lo: int, hi: int, idx: Sequence[int]) -> None:
+        """Keep, of the rows `[lo, hi)`, only those at the (absolute, ascending) `idx`."""
+        if len(idx) != hi - lo:
+            self.rows[lo:hi] = [self.rows[j] for j in idx]
+            self.ts[lo:hi] = [self.ts[j] for j in idx]
+
+
+def _start(b: DerivBar) -> int:
+    return b.start_ms
+
+
+def _end(b: DerivBar) -> int:
+    return b.end_ms
 
 
 _FAMILIES: Final = ("open_interest", "funding", "basis", "liquidation_notional")
 
 
 class DerivativesEngine:
-    """Per-symbol state: the bar grid, the input rows, and the computed series."""
+    """Per-symbol state: the bar grid (at most `max_bars`), the rows it reads, the series."""
 
-    def __init__(self, instrument: InstrumentMeta) -> None:
+    def __init__(self, instrument: InstrumentMeta, *, max_bars: int = MAX_BARS) -> None:
+        if max_bars < 1:
+            raise DerivativesInputError("max_bars must be at least 1")
         self._interval_ms = resolve_funding_interval_minutes(instrument) * _MS_PER_MIN
         self._interval_min = self._interval_ms // _MS_PER_MIN
+        self._max_bars = max_bars
         self._bars: list[DerivBar] = []
         self._oi: _Sorted[OiSample] = _Sorted()
         self._tickers: _Sorted[TickerSnapshot] = _Sorted()
@@ -244,10 +326,19 @@ class DerivativesEngine:
         self._liqs: _Sorted[LiquidationPrint] = _Sorted()
         self._series: list[BarMetrics] = []
         self._none: list[str | None] = []  # per bar: why its OI delta / quadrant is None
+        self._counted_ms: int | None = None  # the latest closed bar the None counter has seen
+        self._next_funding: tuple[int, int] | None = None  # (ts_ms, next_funding_time_ms)
 
     @property
     def series(self) -> tuple[BarMetrics, ...]:
         return tuple(self._series)
+
+    def retained(self) -> Mapping[str, int]:
+        """How many bars and rows the engine holds (the C-2.18 bound, observable)."""
+        return {
+            "bars": len(self._bars), "oi": len(self._oi.rows), "tickers": len(self._tickers.rows),
+            "funding": len(self._funding.rows), "liquidations": len(self._liqs.rows),
+        }  # fmt: skip
 
     def load(
         self,
@@ -258,17 +349,25 @@ class DerivativesEngine:
         funding: Iterable[FundingRow] = (),
         liquidations: Iterable[LiquidationPrint] = (),
     ) -> tuple[BarMetrics, ...]:
-        """Replace every input and recompute the window; the closed bars' None cases count."""
+        """Replace every input (the last `max_bars` bars) and recompute the window; each closed
+        bar's None case counts once, however often it is loaded."""
         for prev, nxt in pairwise(bars):
             if nxt.start_ms < prev.end_ms:
                 raise DerivativesInputError("bar grid must be ordered and non-overlapping")
-        self._bars = list(bars)
+        self._bars = list(bars[-self._max_bars :])
         self._oi, self._tickers = _Sorted(oi), _Sorted(tickers)
-        self._funding, self._liqs = _Sorted(funding), _Sorted(liquidations)
+        self._funding, self._liqs = _Sorted(funding), _Sorted(dict.fromkeys(liquidations))
+        self._next_funding = None
+        for snap in self._tickers.rows:
+            self._note_next_funding(snap)
+        self._tidy_all()
+        try:
+            self._check_pending()
+        except DerivativesInputError:
+            self.load(())  # refuse the whole load, leave an empty engine
+            raise
         self.recompute()
-        for reason in self._none[:-1]:
-            if reason is not None:
-                deriv_engine_none_bars_total.labels(reason=reason).inc()
+        self._count_closed()
         return self.series
 
     def recompute(self) -> tuple[BarMetrics, ...]:
@@ -277,73 +376,189 @@ class DerivativesEngine:
         return self.series
 
     def upsert_bar(self, bar: DerivBar) -> BarMetrics:
-        """Replace the current bar (same start) or append the next one."""
+        """Replace the current bar (same `[start, end)`, revised prices) or append the next."""
         if self._bars and bar.start_ms == self._bars[-1].start_ms:
-            if len(self._bars) > 1 and bar.start_ms < self._bars[-2].end_ms:
-                raise DerivativesInputError("bar overlaps the previous bar")
+            if bar.end_ms != self._bars[-1].end_ms:
+                raise DerivativesInputError("the current bar is replaced on the same grid slot")
             self._bars[-1] = bar
-            return self._recompute_current()
+            (self._series[-1],), (self._none[-1],) = self._compute(self._bars[-1:])
+            return self._series[-1]
         if self._bars and bar.start_ms < self._bars[-1].end_ms:
             raise DerivativesInputError("only the current bar is replaced; bars are appended")
-        if self._none and self._none[-1] is not None:
-            deriv_engine_none_bars_total.labels(reason=self._none[-1]).inc()  # it just closed
         self._bars.append(bar)
+        self._count_closed()  # the previous bar just closed
+        prev_end = self._bars[-2].end_ms if len(self._bars) > 1 else _LOW
+        self._tidy("head" if len(self._bars) == 1 else "gap", prev_end, bar.start_ms)
+        self._tidy("bar", bar.start_ms, bar.end_ms)
         (metrics,), (reason,) = self._compute([bar])
         self._series.append(metrics)
         self._none.append(reason)
+        if len(self._bars) > self._max_bars:
+            del self._bars[0], self._series[0], self._none[0]
+            self._tidy("head", _LOW, self._bars[0].start_ms)
         return metrics
 
-    def on_oi(self, sample: OiSample) -> BarMetrics | None:
-        self._oi.add(sample)
-        return self._after(sample.ts_ms)
+    def on_oi(self, sample: OiSample) -> Update:
+        """Recomputes the sample's bar and the bars starting within `OI_STALENESS_MS` of it."""
+        t = sample.ts_ms
+        self._add(self._oi, sample)
+        first = bisect_left(self._bars, t, key=_start)
+        last = bisect_right(self._bars, t + OI_STALENESS_MS, key=_start)
+        own = bisect_right(self._bars, t, key=_start) - 1
+        lo = own if own >= 0 and t < self._bars[own].end_ms else first
+        return self._refresh(range(lo, last))
 
-    def on_ticker(self, snapshot: TickerSnapshot) -> BarMetrics | None:
-        self._tickers.add(snapshot)
-        return self._after(snapshot.ts_ms)
+    def on_ticker(self, snapshot: TickerSnapshot) -> Update:
+        self._add(self._tickers, snapshot)
+        self._note_next_funding(snapshot)
+        return self._refresh(self._own(snapshot.ts_ms))
 
-    def on_liquidation(self, liq: LiquidationPrint) -> BarMetrics | None:
-        self._liqs.add(liq)
-        return self._after(liq.ts_ms)
+    def on_liquidation(self, liq: LiquidationPrint) -> Update:
+        """An identical print already held is ignored (counted once)."""
+        lo, hi = self._liqs.span(liq.ts_ms, liq.ts_ms + 1)
+        if liq in self._liqs.rows[lo:hi]:
+            return ()
+        self._add(self._liqs, liq)
+        return self._refresh(self._own(liq.ts_ms))
 
-    def on_funding(self, row: FundingRow) -> BarMetrics | None:
-        """A settlement covers a whole funding period, so it may touch closed bars: full."""
-        self._funding.add(row)
-        self.recompute()
-        return self._series[-1] if self._series else None
+    def on_funding(self, row: FundingRow) -> Update:
+        """A settlement at `T` covers the bars whose last ms lies in `[T - interval, T)`."""
+        self._add(self._funding, row)
+        t = row.ts_ms
+        lo = bisect_left(self._bars, t - self._interval_ms + 1, key=_end)
+        return self._refresh(range(lo, bisect_right(self._bars, t, key=_end)))
 
     def time_to_funding_ms(self, now_ms: int, clock_offset_ms: int) -> int | None:
         """Live countdown: the latest `next_funding_time_ms` minus the exchange-synced now
         (`now_ms + clock_offset_ms`, the offset being exchange minus local), floored at 0."""
-        for snap in reversed(self._tickers.rows):
-            if snap.next_funding_time_ms is not None:
-                return max(0, snap.next_funding_time_ms - (now_ms + clock_offset_ms))
-        return None
-
-    def _after(self, ts_ms: int) -> BarMetrics | None:
-        if not self._bars:
+        if self._next_funding is None:
             return None
-        if ts_ms >= self._bars[-1].start_ms:
-            return self._recompute_current()
-        self.recompute()  # a late row may change a closed bar
-        return self._series[-1]
+        return max(0, self._next_funding[1] - (now_ms + clock_offset_ms))
 
-    def _recompute_current(self) -> BarMetrics:
-        (self._series[-1],), (self._none[-1],) = self._compute(self._bars[-1:])
-        return self._series[-1]
+    # --- state ------------------------------------------------------------------------------
+
+    def _note_next_funding(self, snap: TickerSnapshot) -> None:
+        nft, cur = snap.next_funding_time_ms, self._next_funding
+        if nft is not None and (cur is None or snap.ts_ms >= cur[0]):
+            self._next_funding = (snap.ts_ms, nft)
+
+    def _segment(self, ts: int) -> tuple[_Seg, int, int]:
+        """The grid segment holding `ts`, as (kind, start, end)."""
+        bars = self._bars
+        i = bisect_right(bars, ts, key=_start) - 1
+        if not bars or (i == len(bars) - 1 and ts >= bars[i].end_ms):
+            return "tail", (bars[-1].end_ms if bars else _LOW), _HIGH
+        if i < 0:
+            return "head", _LOW, bars[0].start_ms
+        if ts < bars[i].end_ms:
+            return "bar", bars[i].start_ms, bars[i].end_ms
+        return "gap", bars[i].end_ms, bars[i + 1].start_ms
+
+    def _add[R: _Row](self, store: _Sorted[R], row: R) -> None:
+        seg, start, end = self._segment(row.ts_ms)
+        if seg == "tail" and len(store.rows) - store.span(start, end)[0] >= MAX_PENDING_ROWS:
+            raise DerivativesInputError("too many rows past the bar grid; append the next bar")
+        store.add(row)
+        if seg != "tail":
+            self._tidy(seg, start, end)
+
+    def _check_pending(self) -> None:
+        start = self._bars[-1].end_ms if self._bars else _LOW
+        for store in self._all():
+            if len(store) - store.span(start, _HIGH)[0] > MAX_PENDING_ROWS:
+                raise DerivativesInputError("too many rows past the bar grid")
+
+    def _keep_idx(self, seg: _Seg, start: int, end: int) -> list[tuple[int, int, list[int]]]:
+        """Per store (oi, tickers, funding, liquidations): the span `[lo, hi)` of one segment
+        and the indices a bar in the window still reads."""
+        out: list[tuple[int, int, list[int]]] = []
+        lo, hi = self._oi.span(start, end)
+        keep: list[int] = []
+        if hi > lo:
+            if seg == "bar":
+                j = bisect_right(self._oi.ts, start, lo, hi) - 1  # the last sample at the start
+                keep = [j, hi - 1] if lo <= j < hi - 1 else [hi - 1]
+            elif seg == "gap" or self._oi.ts[hi - 1] >= self._bars[0].start_ms - OI_STALENESS_MS:
+                keep = [hi - 1]
+        out.append((lo, hi, keep))
+        lo, hi = self._tickers.span(start, end)
+        out.append((lo, hi, [hi - 1] if seg == "bar" and hi > lo else []))
+        lo, hi = self._funding.span(start, end)
+        out.append((lo, hi, [] if seg == "head" else list(range(lo, hi))))
+        lo, hi = self._liqs.span(start, end)
+        out.append((lo, hi, list(range(lo, hi)) if seg == "bar" else []))
+        return out
+
+    def _all(self) -> tuple[_Store, ...]:
+        return self._oi, self._tickers, self._funding, self._liqs
+
+    def _tidy(self, seg: _Seg, start: int, end: int) -> None:
+        if seg == "tail" or not self._bars:
+            return
+        for store, (lo, hi, idx) in zip(self._all(), self._keep_idx(seg, start, end), strict=True):
+            store.keep(lo, hi, idx)
+
+    def _tidy_all(self) -> None:
+        """Compact every store in one pass over the grid (`load`)."""
+        if not self._bars:
+            return
+        segs: list[tuple[_Seg, int, int]] = [("head", _LOW, self._bars[0].start_ms)]
+        for b, nxt in pairwise(self._bars):
+            segs += [("bar", b.start_ms, b.end_ms), ("gap", b.end_ms, nxt.start_ms)]
+        last = self._bars[-1]
+        segs.append(("bar", last.start_ms, last.end_ms))
+        keeps: list[list[int]] = [[], [], [], []]
+        for seg, start, end in segs:
+            for k, (_, _, idx) in zip(keeps, self._keep_idx(seg, start, end), strict=True):
+                k += idx
+        for store, k in zip(self._all(), keeps, strict=True):
+            k += range(store.span(last.end_ms, _HIGH)[0], len(store))  # pending: all of them
+            store.keep(0, len(store), k)
+
+    def _own(self, ts: int) -> range:
+        i = bisect_right(self._bars, ts, key=_start) - 1
+        return range(i, i + 1) if i >= 0 and ts < self._bars[i].end_ms else range(0)
+
+    def _count_closed(self) -> None:
+        """Count the None case of every closed bar (all but the last) not counted yet."""
+        lo = (
+            0
+            if self._counted_ms is None
+            else bisect_right(self._bars, self._counted_ms, key=_start)
+        )
+        for i in range(lo, len(self._bars) - 1):
+            if (reason := self._none[i]) is not None:
+                deriv_engine_none_bars_total.labels(reason=reason).inc()
+            self._counted_ms = self._bars[i].start_ms
+
+    def _refresh(self, idx: range) -> Update:
+        """Recompute the bars at `idx`; return those whose metrics changed, oldest first."""
+        if not idx:
+            return ()
+        rows, reasons = self._compute(self._bars[idx.start : idx.stop])
+        changed: list[BarMetrics] = []
+        for i, row, reason in zip(idx, rows, reasons, strict=True):
+            if row != self._series[i]:
+                changed.append(row)
+            self._series[i], self._none[i] = row, reason
+        return tuple(changed)
+
+    # --- formulas ---------------------------------------------------------------------------
 
     def _compute(self, bars: Sequence[DerivBar]) -> tuple[list[BarMetrics], list[str | None]]:
         """One pass per metric family (each timed as a batch), then one row per bar."""
-        t0 = time.perf_counter()
-        ois = [self._oi_part(b) for b in bars]
-        t1 = time.perf_counter()
-        snaps = [self._snapshot(b) for b in bars]
-        annual: dict[Decimal, Decimal] = {}
-        funding = [self._funding_part(b, s, annual) for b, s in zip(bars, snaps, strict=True)]
-        t2 = time.perf_counter()
-        bases = [_basis_part(s) for s in snaps]
-        t3 = time.perf_counter()
-        liqs = [self._liquidation_part(b) for b in bars]
-        t4 = time.perf_counter()
+        with localcontext(_CTX):
+            t0 = time.perf_counter()
+            ois = [self._oi_part(b) for b in bars]
+            t1 = time.perf_counter()
+            snaps = [self._snapshot(b) for b in bars]
+            annual: dict[DecimalTuple, Decimal] = {}
+            funding = [self._funding_part(b, s, annual) for b, s in zip(bars, snaps, strict=True)]
+            t2 = time.perf_counter()
+            bases = [_basis_part(s) for s in snaps]
+            t3 = time.perf_counter()
+            liqs = [self._liquidation_part(b) for b in bars]
+            t4 = time.perf_counter()
         for family, dt in zip(_FAMILIES, (t1 - t0, t2 - t1, t3 - t2, t4 - t3), strict=True):
             deriv_engine_compute_seconds.labels(metric=family).observe(dt)
         rows = [
@@ -380,7 +595,7 @@ class DerivativesEngine:
         return self._tickers.rows[hi - 1] if hi > lo else None
 
     def _funding_part(
-        self, bar: DerivBar, snap: TickerSnapshot | None, annual: dict[Decimal, Decimal]
+        self, bar: DerivBar, snap: TickerSnapshot | None, annual: dict[DecimalTuple, Decimal]
     ) -> tuple[Decimal | None, Decimal | None, int | None]:
         rate = snap.funding_rate if snap is not None else None
         if rate is None:
@@ -390,9 +605,10 @@ class DerivativesEngine:
             to_funding = max(0, snap.next_funding_time_ms - snap.ts_ms)
         if rate is None:
             return None, None, to_funding
-        if rate not in annual:
-            annual[rate] = annualised_pct(rate, self._interval_min)
-        return rate * _HUNDRED, annual[rate], to_funding
+        key = rate.as_tuple()  # the exact representation, so the result never depends on order
+        if key not in annual:
+            annual[key] = annualised_pct(rate, self._interval_min)
+        return rate * _HUNDRED, annual[key], to_funding
 
     def _liquidation_part(self, bar: DerivBar) -> tuple[Decimal, Decimal]:
         lo, hi = self._liqs.span(bar.start_ms, bar.end_ms)

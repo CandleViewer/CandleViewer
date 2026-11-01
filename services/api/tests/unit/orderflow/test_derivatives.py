@@ -9,11 +9,12 @@ from decimal import Decimal
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from prometheus_client import REGISTRY
 
 from candleviewer.domain.funding import FundingIntervalUnknown
 from candleviewer.orderflow.derivatives import (
+    MAX_PENDING_ROWS,
     OI_STALENESS_MS,
-    BarMetrics,
     DerivativesEngine,
     DerivativesInputError,
     DerivBar,
@@ -172,6 +173,11 @@ def test_time_to_funding_per_bar_and_live_against_a_skewed_clock() -> None:
         lambda: LiquidationPrint(0, "long", D("NaN")),
         lambda: LiquidationPrint(0, "both", D(1)),  # type: ignore[arg-type]  # the refused value
         lambda: DerivBar(5, 5, D(1), D(1)),
+        lambda: OiSample(0, D(-1), D(1), "x"),
+        lambda: OiSample(0, D(1), D("-0.5"), "x"),
+        lambda: LiquidationPrint(0, "short", D(-3)),
+        lambda: TickerSnapshot(0, last_price=D("1e999999")),  # huge: refused, not an Overflow
+        lambda: TickerSnapshot(0, index_price=D("1e-40")),  # a tiny divisor likewise
     ],
 )
 def test_non_finite_or_malformed_inputs_are_rejected(make: object) -> None:
@@ -199,6 +205,8 @@ def test_bar_grid_must_be_ordered_and_only_the_current_bar_replaced() -> None:
     with pytest.raises(DerivativesInputError):
         e.upsert_bar(bar(0))
     assert e.upsert_bar(bar(1, "101", "99")).start_ms == bar(1).start_ms
+    with pytest.raises(DerivativesInputError):  # same start, another slot
+        e.upsert_bar(DerivBar(T0 + H, T0 + 3 * H, D(1), D(1)))
     assert e.upsert_bar(bar(2)).start_ms == bar(2).start_ms and len(e.series) == 3
 
 
@@ -206,65 +214,173 @@ def test_incremental_ticker_recomputes_the_current_bar_only() -> None:
     e = engine()
     e.load([bar(0), bar(1)], tickers=[TickerSnapshot(T0 + 1, last_price=D(1), index_price=D(1))])
     before = e.series[0]
-    cur = e.on_ticker(TickerSnapshot(T0 + H + 1, last_price=D(3), index_price=D(2)))
-    assert cur is not None and cur.basis_last == 1 and e.series[0] is before
+    (cur,) = e.on_ticker(TickerSnapshot(T0 + H + 1, last_price=D(3), index_price=D(2)))
+    assert cur.start_ms == T0 + H and cur.basis_last == 1 and e.series[0] is before
 
 
-def test_a_late_row_recomputes_the_window() -> None:
+def test_a_late_liquidation_revises_only_its_closed_bar_and_names_it() -> None:
     e = engine()
-    e.load([bar(0), bar(1)])
-    e.on_liquidation(LiquidationPrint(T0 + 5, "short", D(4)))
-    assert e.series[0].liquidation_short == 4
+    e.load([bar(0), bar(1), bar(2)])
+    changed = e.on_liquidation(LiquidationPrint(T0 + 5, "short", D(4)))
+    assert [m.start_ms for m in changed] == [T0] and e.series[0].liquidation_short == 4
 
 
-def test_inputs_before_any_bar_return_none() -> None:
+def test_a_late_oi_sample_revises_its_bar_and_the_bars_it_opens() -> None:
     e = engine()
-    assert e.on_oi(oi(T0, "1")) is None
-    assert e.on_funding(FundingRow(T0, D("0.0001"))) is None
+    e.load([bar(i, width=OI_STALENESS_MS // 2) for i in range(5)], oi=[oi(T0 + 1, "1")])
+    w = OI_STALENESS_MS // 2
+    e.on_oi(oi(T0 + 3 * w + 1, "2"))
+    changed = e.on_oi(oi(T0 + w + 1, "5"))  # bar 1's close, bars 2-3's open within the bound
+    assert [m.start_ms for m in changed] == [T0 + w, T0 + 2 * w, T0 + 3 * w]
 
 
-# --- property: incremental == full recompute -------------------------------------------------
+def test_a_settlement_revises_the_bars_of_its_period_only() -> None:
+    e = engine(60)
+    e.load([bar(i, width=H // 2) for i in range(6)])
+    changed = e.on_funding(FundingRow(T0 + 2 * H, D("0.0001")))  # covers [T0 + H, T0 + 2H)
+    assert [m.start_ms for m in changed] == [T0 + H, T0 + H + H // 2]
+    assert [m.funding_rate for m in e.series] == [None, None, D("0.01"), D("0.01"), None, None]
 
-_ts = st.integers(min_value=T0 - H, max_value=T0 + 4 * H)
+
+def test_inputs_before_any_bar_change_nothing() -> None:
+    e = engine()
+    assert e.on_oi(oi(T0, "1")) == ()
+    assert e.on_funding(FundingRow(T0, D("0.0001"))) == ()
+
+
+def test_a_duplicate_liquidation_print_counts_once() -> None:
+    e = engine()
+    p = LiquidationPrint(T0 + 5, "long", D(2))
+    e.load([bar(0), bar(1)], liquidations=[p, p])
+    assert e.series[0].liquidation_long == 2
+    assert e.on_liquidation(p) == () and e.series[0].liquidation_long == 2
+    e.on_liquidation(LiquidationPrint(T0 + 5, "long", D(2), batch_index=1))  # a distinct print
+    assert e.series[0].liquidation_long == 4
+
+
+def test_state_stays_bounded_after_many_appends() -> None:
+    e = DerivativesEngine(InstrumentMeta(funding_interval_min=60), max_bars=50)
+    w = 60_000
+    e.load([DerivBar(T0, T0 + w, D(1), D(1))])
+    for i in range(1, 2_000):
+        s = T0 + i * w
+        e.upsert_bar(DerivBar(s, s + w, D(1), D(2)))
+        for k in range(10):  # ten 100 ms-ish snapshots and samples per bar
+            e.on_ticker(TickerSnapshot(s + k, last_price=D(1), index_price=D(1)))
+            e.on_oi(oi(s + k, str(k)))
+        e.on_liquidation(LiquidationPrint(s + 1, "long", D(1)))
+        e.on_funding(FundingRow(s + 1, D("0.0001")))
+    got = e.retained()
+    assert got["bars"] == len(e.series) == 50
+    assert got["tickers"] <= 50 and got["oi"] <= 2 * 50 + 1 and got["liquidations"] <= 50
+    assert got["funding"] <= 50
+
+
+def test_a_stalled_grid_refuses_rows_past_the_pending_bound() -> None:
+    e = engine()
+    e.load([bar(0)], tickers=[TickerSnapshot(T0 + H + i) for i in range(MAX_PENDING_ROWS)])
+    with pytest.raises(DerivativesInputError):
+        e.on_ticker(TickerSnapshot(T0 + 2 * H))
+    with pytest.raises(DerivativesInputError):
+        engine().load([bar(0)], oi=[oi(T0 + H + i, "1") for i in range(MAX_PENDING_ROWS + 1)])
+
+
+def _none_count(reason: str) -> float:
+    return REGISTRY.get_sample_value("deriv_engine_none_bars_total", {"reason": reason}) or 0.0
+
+
+def test_none_bars_count_once_across_reloads() -> None:
+    e = engine()
+    before = _none_count("no_oi_sample")
+    e.load([bar(0), bar(1), bar(2)])
+    e.load([bar(0), bar(1), bar(2)])
+    assert _none_count("no_oi_sample") - before == 2  # bars 0 and 1 closed; bar 2 is current
+    e.upsert_bar(bar(3))
+    assert _none_count("no_oi_sample") - before == 3
+
+
+def test_a_lone_sample_at_the_bar_start_is_flat() -> None:
+    m = engine().load([bar(0)], oi=[oi(T0, "10")])[0]
+    assert (m.open_interest, m.open_interest_delta, m.oi_price_quadrant) == (D(10), D(0), None)
+
+
+def test_annualisation_is_independent_of_the_rate_representation() -> None:
+    snaps = [TickerSnapshot(T0 + 1, funding_rate=D("0.00010")), TickerSnapshot(T0 + H + 1,
+             funding_rate=D("0.0001"))]  # fmt: skip
+    a = engine().load([bar(0), bar(1)], tickers=snaps)
+    b = engine().load([bar(1)], tickers=snaps[1:])
+    assert str(a[1].funding_annualized) == str(b[0].funding_annualized)
+
+
+# --- property: targeted incremental == full recompute -------------------------------------
+
+_EDGES = sorted(
+    {T0 + i * H + d for i in range(-1, 6) for d in (0, -1, OI_STALENESS_MS, -OI_STALENESS_MS)}
+)
+_ts = st.one_of(st.integers(min_value=T0 - H, max_value=T0 + 5 * H), st.sampled_from(_EDGES))
 _px = st.decimals(min_value=1, max_value=1000, places=2)
+_rate = st.sampled_from([D("0.0001"), D("-0.0002"), D("0.00010")])
 _rows = st.one_of(
     st.builds(OiSample, _ts, _px, _px, st.just("ws_ticker")),
-    st.builds(TickerSnapshot, _ts, _px, _px, _px, st.just(D("0.0001")), _ts),
+    st.builds(TickerSnapshot, _ts, _px, _px, _px, st.one_of(st.none(), _rate), _ts),
     st.builds(LiquidationPrint, _ts, st.sampled_from(["long", "short"]), _px),
+    st.builds(FundingRow, _ts, _rate),
 )
+_Row = OiSample | TickerSnapshot | LiquidationPrint | FundingRow
 
 
-def _feed(e: DerivativesEngine, row: object) -> BarMetrics | None:
+def _feed(e: DerivativesEngine, row: _Row) -> tuple[object, ...]:
     if isinstance(row, OiSample):
         return e.on_oi(row)
     if isinstance(row, TickerSnapshot):
         return e.on_ticker(row)
-    assert isinstance(row, LiquidationPrint)
+    if isinstance(row, FundingRow):
+        return e.on_funding(row)
     return e.on_liquidation(row)
 
 
-@settings(max_examples=150, deadline=None)
-@given(prices=st.lists(st.tuples(_px, _px), min_size=1, max_size=4), data=st.data())
+@settings(max_examples=200, deadline=None)
+@given(
+    prices=st.lists(st.tuples(_px, _px), min_size=1, max_size=5),
+    max_bars=st.integers(min_value=2, max_value=6),
+    data=st.data(),
+)
 def test_incremental_updates_equal_a_full_recompute(
-    prices: list[tuple[Decimal, Decimal]], data: st.DataObject
+    prices: list[tuple[Decimal, Decimal]], max_bars: int, data: st.DataObject
 ) -> None:
-    """Bars appended one by one, rows (current-bar and late ones) fed after each, the current
-    bar re-closed: the series equals one full recompute over the same inputs."""
+    """Bars appended one by one (the oldest dropping past `max_bars`), rows on and off the grid
+    and at its edges fed after each, the current bar re-priced: after every row the targeted
+    update equals a full recompute and returns exactly the bars that changed; at the end the
+    series equals one fresh load of every input."""
     bars = [DerivBar(T0 + i * H, T0 + (i + 1) * H, o, c) for i, (o, c) in enumerate(prices)]
-    inc, fed = engine(), []
+    inc = DerivativesEngine(InstrumentMeta(funding_interval_min=60), max_bars=max_bars)
+    fed: list[_Row] = []
     inc.load(bars[:1])
     for i, b in enumerate(bars):
         if i:
             inc.upsert_bar(b)
-        for row in data.draw(st.lists(_rows, max_size=10)):
-            _feed(inc, row)
+        for row in data.draw(st.lists(_rows, max_size=8)):
+            before = inc.series
+            changed = _feed(inc, row)
             fed.append(row)
-    inc.upsert_bar(bars[-1])  # the current bar re-closed with the same prices
-    full = engine()
-    full.load(
-        bars,
-        oi=[r for r in fed if isinstance(r, OiSample)],
-        tickers=[r for r in fed if isinstance(r, TickerSnapshot)],
-        liquidations=[r for r in fed if isinstance(r, LiquidationPrint)],
-    )
-    assert inc.series == full.series
+            after = inc.series
+            assert changed == tuple(a for a, p in zip(after, before, strict=True) if a != p)
+            assert inc.recompute() == after
+        o, c = data.draw(st.tuples(_px, _px))
+        bars[i] = DerivBar(b.start_ms, b.end_ms, o, c)
+        inc.upsert_bar(bars[i])  # the current bar re-priced
+    full = DerivativesEngine(InstrumentMeta(funding_interval_min=60), max_bars=max_bars)
+    oracle = DerivativesEngine(InstrumentMeta(funding_interval_min=60), max_bars=max_bars)
+    # The oracle keeps every row (no compaction), so a pruning bug shared by both engine paths
+    # still shows up as a difference.
+    oracle._tidy_all = lambda: None  # type: ignore[method-assign]  # disable pruning only
+    for e in (full, oracle):
+        e.load(
+            bars,
+            oi=[r for r in fed if isinstance(r, OiSample)],
+            tickers=[r for r in fed if isinstance(r, TickerSnapshot)],
+            funding=[r for r in fed if isinstance(r, FundingRow)],
+            liquidations=[r for r in fed if isinstance(r, LiquidationPrint)],
+        )
+    assert inc.series == full.series == oracle.series
+    assert inc.time_to_funding_ms(T0, 0) == full.time_to_funding_ms(T0, 0)
