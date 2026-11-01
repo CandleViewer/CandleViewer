@@ -13,6 +13,11 @@ export interface Ctx2DLike {
   lineTo(x: number, y: number): void;
   fill(): void;
   stroke(): void;
+  /** Label text in `degraded-2d` (E11-S11 PR B, C-104); a context without them draws no text. */
+  font?: string;
+  textAlign?: string;
+  textBaseline?: string;
+  fillText?(text: string, x: number, y: number): void;
   /** The padded store's clip (E11-S10, BQ-149); every real context has them. */
   save?(): void;
   restore?(): void;
