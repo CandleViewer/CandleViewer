@@ -31,7 +31,7 @@ stores the first (BQ-3).
 
 #2695 (SR-015 / SR-016): with the user repository wired, every refused second-factor or
 recovery code also counts on the account (`record_login_failure`, the login's
-`LOCKOUT_THRESHOLD` in `LOCKOUT_DURATION`), a completed sign-in resets that count, and an open
+`LOCKOUT_THRESHOLD` in `LOCKOUT_DURATION`), an accepted second factor resets that count, and an open
 challenge of a locked account is refused with the same `MfaChallengeLocked`.
 """
 
@@ -252,7 +252,7 @@ class MfaService:
             raise MfaChallengeLocked("too many failed attempts")
 
     async def _record_sign_in(self, user_id: str) -> None:
-        """#2695: a completed sign-in (the second factor accepted) resets the account count."""
+        """#2695: an accepted second factor resets the account count (before the session mint)."""
         if self._users is not None:
             await self._users.record_login_success(user_id)
 
@@ -435,6 +435,7 @@ class MfaService:
         if done is None:
             raise UserDisabled(None)
         if not done:
+            # Challenge only, not the account (#2695): the code matched; another request spent it.
             await self._repository.record_challenge_attempt(challenge_id)
             raise RecoveryCodeInvalid("invalid or already-used recovery code")
         await self._record_sign_in(str(check.user_id))
