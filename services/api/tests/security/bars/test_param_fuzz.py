@@ -24,7 +24,8 @@ from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from tests.contract._market_world import MarketWorld
+from tests.contract._generated_contract import _at, _deref
+from tests.contract._market_world import MarketWorld, operation
 from tests.security.bars import _corpus, _oracle
 
 PR = settings(
@@ -65,11 +66,57 @@ def test_param_fuzz_dictionary_probe_answers_per_the_oracle(case: _corpus.Case) 
     _oracle.check(case.op, case.query, _world().get(case.op, case.query))
 
 
-def test_param_fuzz_dictionary_covers_both_routes_and_every_parameter() -> None:
-    names = {name for c in _CASES for name in c.query}
-    assert {"getBars", "getKlines"} == {c.op for c in _CASES}
-    assert {"symbol", "bar_type", "param", "interval", "from", "to", "limit", "cursor"} <= names
-    assert {"price_type"} <= names and sum(c.op == "getBars" for c in _CASES) >= 400
+def _declared(op: str) -> set[str]:
+    """The query parameters 22 declares on `op`, `$ref`s followed: the coverage guard's oracle,
+    so a parameter added to the contract is a probe the dictionary must gain."""
+    params = (
+        _at(_deref(p["$ref"].removeprefix("#"))) if "$ref" in p else p
+        for p in operation(op)[1]["parameters"]
+    )
+    return {str(p["name"]) for p in params if p.get("in") == "query"}
+
+
+@pytest.mark.parametrize("op", ["getBars", "getKlines"])
+def test_param_fuzz_dictionary_probes_every_parameter_22_declares(op: str) -> None:
+    """Each declared parameter is sent at least once with a value other than the served base's."""
+    base = _corpus.base_query(op)
+    probed = {n for c in _CASES if c.op == op for n, v in c.query.items() if base.get(n) != v}
+    declared = _declared(op)
+    assert {"include_open", "include_delta"} <= declared  # the guard reads the right section
+    assert declared <= probed, sorted(declared - probed)
+    assert sum(c.op == op for c in _CASES) >= 250
+
+
+_FLAG_CASES = [
+    (op, flag, value)
+    for op in ("getBars", "getKlines")
+    for flag in _corpus.FLAGS
+    for value in _corpus.FLAG_VALUES
+]
+
+
+@pytest.mark.parametrize(("op", "flag", "value"), _FLAG_CASES)
+def test_param_fuzz_boolean_flag_is_refused_or_coerced_as_documented(
+    op: str, flag: str, value: object
+) -> None:
+    """22 types `include_open` and `include_delta` as `boolean`: a value the documented coercion
+    (`_corpus.coerced`) cannot read is 422 `validation_failed`, never served; one it reads is
+    served with that meaning: `include_delta` puts the `delta` member on every bar or on none,
+    and with `include_open` false no unconfirmed bar is served."""
+    query = {**_corpus.base_query(op), flag: value}
+    resp = _world().get(op, query)
+    _oracle.check(op, query, resp)
+    meaning = _corpus.coerced(value)
+    if meaning is None:
+        assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed"), resp.text
+        return
+    assert resp.status_code == 200, resp.text[:300]
+    served = resp.json()["bars"]
+    assert served, "the base query serves bars, so the meaning is observable"
+    if flag == "include_delta":
+        assert {"delta" in bar for bar in served} == {meaning}
+    elif not meaning:
+        assert all(bar["confirm"] for bar in served)
 
 
 _INSTANTS = st.datetimes(

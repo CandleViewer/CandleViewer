@@ -2,19 +2,16 @@
 by `QUERY_TIMEOUT_S`"): a store that never answers, or answers with a raw driver error, ends the
 request as 503 `store_unavailable`, never a hang and never a 500.
 
-A hung call waits on an `asyncio.Event` nobody sets (no sleep). There is no fake clock here: the
-route's deadline and the test's guard both run on the event loop's real clock. The deadline is
-lowered to 50 ms where it is read, and the test cuts the request at `GUARD_S` (1 s), so a request
-still running then has no deadline. `test_deadline_bars_hung_read_or_count_is_503` is the canary
-that the lowered deadline takes effect: its reads are bounded, so it fails if the patch misses.
-The app runs in process over `httpx.ASGITransport` (no socket).
+Every test runs on a `VirtualTimeLoop` (`@virtual`, `tests/unit/audit/audit_waits.py`, as the
+deadline tests of `tests/unit/ws/` and `tests/contract/` do, C-13.7): the route's real 2 s
+deadline and the test's `GUARD_S` both run on fake seconds, which move only when nothing else can
+happen, so a deadline passes on the clock, never because the host is slow. A hung call waits on
+an `asyncio.Event` nobody sets (no sleep). The deadline is not lowered: a request still running at
+`GUARD_S` has none. The app runs in process over `httpx.ASGITransport` (no socket).
 
 A known gap is a strict xfail on how it fails: a hang hits the guard (`pytest.fail`), a driver
-error is a 500 (`AssertionError` on the status).
-
-Findings (#452 F2): `/market/klines` has no deadline on the hot read or the recording-start read,
-and a raw driver error from the hot read is a 500; `/market/bars` has neither for its
-recording-start read, and its bar read maps only timeouts and socket errors (#3287 owns that half).
+error is a 500 (`AssertionError` on the status). The findings register on #452 holds the analysis
+(F2; the /market/bars half is #3287).
 """
 
 from __future__ import annotations
@@ -26,19 +23,18 @@ import asyncpg
 import httpx
 import pytest
 
-from candleviewer.api import market, market_bars
 from candleviewer.bars import limits
-from candleviewer.ingestion import kline_read
 from tests.contract._market_world import KLINES_NOW_US, NOW, READER, T0, operation
 from tests.contract.test_market_bars_contract import _iso
 from tests.security.bars.conftest import BAR_READ, HOT_READ, RECORDING, TOTALS, Fault, Stores, hang
+from tests.unit.audit.audit_waits import virtual
 
-DEADLINE_S: Final = 0.05
-GUARD_S: Final = 1.0
-F2_BARS: Final = "#452 findings row F2 (bars half: #3287): the recording-start read has no deadline"
-F2_BARS_DRIVER: Final = "#452 findings row F2 (bars half: #3287): a raw driver error is a 500"
-F2_KLINES: Final = "#452 findings row F2: /market/klines reads have no SR-E12-01 deadline"
-F2_KLINES_DRIVER: Final = "#452 findings row F2: a raw driver error on the klines hot read is a 500"
+#: Fake seconds past SR-E12-01's deadline at which a request still running is a hang.
+GUARD_S: Final = limits.QUERY_TIMEOUT_S * 5
+F2_BARS: Final = "#452 findings row F2 (bars half: #3287): a hung recording-start read"
+F2_BARS_DRIVER: Final = "#452 findings row F2 (bars half: #3287): a driver error from the bar read"
+F2_KLINES: Final = "#452 findings row F2: a hung /market/klines store read"
+F2_KLINES_DRIVER: Final = "#452 findings row F2: a driver error from the klines hot read"
 BARS: Final = {"symbol": "BTCUSDT", "from": _iso(T0), "to": _iso(NOW), "limit": 10}
 _HOUR_US: Final = 3_600_000_000
 _KLINES: Final = {"symbol": "BTCUSDT", "interval": "1", "limit": 10,
@@ -55,17 +51,6 @@ def _is_500(reason: str) -> pytest.MarkDecorator:
 
 async def _driver_error() -> None:
     raise asyncpg.InterfaceError("connection is closed")
-
-
-@pytest.fixture(autouse=True)
-def _short_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`limits` defines the deadline and `market_bars` imports it: a rename fails here
-    (`raising=True`). `market` and `kline_read` read none today (F2): their attribute is created
-    so a fix that imports the constant into either is lowered too."""
-    for module in (limits, market_bars):
-        monkeypatch.setattr(module, "QUERY_TIMEOUT_S", DEADLINE_S, raising=True)
-    for module in (market, kline_read):
-        monkeypatch.setattr(module, "QUERY_TIMEOUT_S", DEADLINE_S, raising=False)
 
 
 async def answer(stores: Stores, op: str, query: dict[str, object]) -> httpx.Response:
@@ -89,6 +74,7 @@ async def assert_unavailable(stores: Stores, op: str, query: dict[str, object], 
     ("bar_type", "param", "call"),
     [("time", "1", BAR_READ), ("tick", "100", BAR_READ), ("tick", "100", TOTALS)],
 )
+@virtual
 async def test_deadline_bars_hung_read_or_count_is_503(
     stores: Stores, bar_type: str, param: str, call: str
 ) -> None:
@@ -108,7 +94,8 @@ async def test_deadline_bars_hung_read_or_count_is_503(
         pytest.param("getKlines", HOT_READ, _driver_error, marks=_is_500(F2_KLINES_DRIVER)),
     ],
 )
-async def test_deadline_unbounded_or_unmapped_store_call_is_503(
+@virtual
+async def test_deadline_faulted_store_call_is_503(
     stores: Stores, op: str, call: str, fault: Fault
 ) -> None:
     stores.faults[call] = fault

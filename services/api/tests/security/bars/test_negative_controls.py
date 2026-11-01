@@ -13,16 +13,19 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Final
 
+import httpx
 import pytest
 
 from candleviewer.api import market, market_bars, market_response
 from candleviewer.api.market import MarketDataPrincipal
 from candleviewer.bars import spec
 from tests.contract import _market_world as mw
+from tests.security.bars import _oracle
 from tests.security.bars import test_authz_and_revocation as authz
 from tests.security.bars import test_caps_and_cost as caps
 from tests.security.bars import test_deadlines as deadlines
 from tests.security.bars.conftest import BAR_READ, Stores, hang
+from tests.unit.audit.audit_waits import virtual
 
 _HUGE: Final = 10**18
 
@@ -109,10 +112,12 @@ def test_negative_control_case_fails_with_its_defence_removed(
         check(stores)
 
 
+@virtual
 async def test_negative_control_deadline_removed_hangs_to_the_guard(
     stores: Stores, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """SR-E12-01's deadline lifted to an hour: the hung bar read now outlives the 1 s guard."""
+    """SR-E12-01's deadline lifted to an hour: the hung bar read now outlives the guard (fake
+    seconds, `@virtual`)."""
     monkeypatch.setattr(market_bars, "QUERY_TIMEOUT_S", 3_600.0, raising=True)
     stores.faults[BAR_READ] = hang
     query = {**deadlines.BARS, "bar_type": "time", "param": "1"}
@@ -125,3 +130,29 @@ def test_negative_control_without_revocation_the_update_arrives(wire: str) -> No
     that arrives before the `pong`."""
     frames = authz.run_revocation(revoke=False).frames
     assert "d" in [f["t"] for f in frames], [f["t"] for f in frames]
+
+
+_PROBE: Final = "P" * 40  # longer than the oracle's echo bound
+_PROBLEM: Final = {"code": "validation_failed", "status": 400}
+#: `(query, a fabricated answer, the oracle rule it breaks)`: each oracle rule fires on its own
+#: input, so a known gap's `raises=` names a rule that can fail, never one that is inert.
+_BROKEN: Final = [
+    ({}, httpx.Response(500, json={"code": "internal_error", "status": 500}), _oracle.StatusError),
+    ({}, httpx.Response(400, json={"code": "made_up", "status": 400}), _oracle.StatusError),
+    ({}, httpx.Response(400, json={**_PROBLEM, "detail": "Traceback (most recent call last)"}),
+     _oracle.LeakError),
+    ({}, httpx.Response(400, json={**_PROBLEM, "detail": 'File "/srv/x.py", line 1'}),
+     _oracle.LeakError),
+    ({"param": _PROBE}, httpx.Response(400, json={**_PROBLEM, "detail": _PROBE}),
+     _oracle.LeakError),
+    ({"from": "2020-01-01T00:00:00Z", "to": "2022-01-01T00:00:00Z", "bar_type": "time",
+      "param": "D"}, httpx.Response(200, json={"bars": []}), _oracle.SpanCapError),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("query", "resp", "rule"), _BROKEN)
+def test_negative_control_oracle_rule_fires_on_its_input(
+    query: dict[str, object], resp: httpx.Response, rule: type[_oracle.OracleError]
+) -> None:
+    with pytest.raises(rule):
+        _oracle.check("getBars", query, resp)

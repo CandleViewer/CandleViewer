@@ -7,14 +7,14 @@
   echo of a probe value longer than 32 characters.
 - A 200 obeys the caps (SR-E12-01/02): the body is at most 2 MiB, and the requested window is at
   most 400 d (time bars, klines) or 31 d (non-time bars), and for time bars at most 250 000 bars.
-  The window is measured as the client asked for it, `from` to `to` (#452 finding F1).
+  The window is measured as the client asked for it, `from` to `to`, in exact integer µs.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Final
 
 import httpx
@@ -32,11 +32,14 @@ from tests.contract._market_world import KLINES_NOW_US, NOW
 CODES: Final = frozenset(e["code"] for e in SPEC["x-error-codes"])
 STATUSES: Final = frozenset({200, 400, 401, 403, 422, 503})
 #: Built from parts so the suite's own source holds no SQL statement (Semgrep raw-SQL rule).
+#: A body is JSON, so a leaked frame's quote arrives escaped: `File \\?"` matches both forms.
 _LEAK: Final = re.compile(
-    "|".join((r"Traceback", r'File "', r"/candleviewer/", r"\bSEL" + r"ECT\b", r"\bFROM bars_")),
+    "|".join((r"Traceback", r'File \\?"', r"/candleviewer/", r"\bSEL" + r"ECT\b", r"\bFROM bars_")),
     re.IGNORECASE,
 )
 ECHO_MAX: Final = 32
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+_MICROSECOND: Final = timedelta(microseconds=1)
 _TIME_WIDTH_US: Final = {k: v * 1000 for k, v in TIME_INTERVALS.items()}
 
 
@@ -45,7 +48,7 @@ def _us(value: object, default: int) -> int:
         return default
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     parsed = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-    return int(parsed.timestamp() * 1_000_000)
+    return (parsed - _EPOCH) // _MICROSECOND  # exact integer µs: no float on the way
 
 
 def requested_span_us(op: str, query: Mapping[str, object]) -> int:

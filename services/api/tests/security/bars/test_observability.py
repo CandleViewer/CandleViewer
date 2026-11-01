@@ -2,10 +2,9 @@
 is counted and logged, with the offending value escaped and truncated, and an alert watches the
 rejection and rebuild rates.
 
-As built, only `bar_type`/`param` refusals (and the klines `interval`/`price_type`) are counted,
-in `bars_endpoint_param_rejected_total{reason}`; the ticket's `api_request_rejected_total
-{endpoint,reason}` does not exist, no refusal is logged, and no alert rule names a `bars_*` series
-(#452 findings row F4: F4a the counter and log, F4b the alert).
+The `bar_type`/`param` refusals are counted in `bars_endpoint_param_rejected_total{reason}` (a
+passing case). The ticket's `api_request_rejected_total{endpoint,reason}`, the refusal log and the
+alert are known gaps, the #452 findings row F4 (F4a the counter and log, F4b the alert).
 """
 
 from __future__ import annotations
@@ -22,8 +21,8 @@ from tests.contract._market_world import KLINES_NOW_US, NOW, T0
 from tests.security.bars.conftest import Stores
 from tests.security.bars.test_caps_and_cost import DAY_US, bars, klines
 
-F4A: Final = "#452 findings row F4 (F4a): refusals other than param are not counted or logged"
-F4B: Final = "#452 findings row F4 (F4b): no alert rule watches the bars rejection or rebuild rate"
+F4A: Final = "#452 findings row F4 (F4a): the refusal counter and log for every refusal path"
+F4B: Final = "#452 findings row F4 (F4b): an alert on the bars rejection and rebuild rates"
 _ALERTS: Final = Path(__file__).resolve().parents[5] / "infra" / "prometheus" / "alerts"
 _PROBE: Final = "\x1b[31m" + "A" * 100
 

@@ -16,6 +16,7 @@ import statistics
 import time
 from collections import Counter
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Final
 
@@ -39,13 +40,14 @@ from tests.contract.test_market_bars_contract import _iso
 from tests.security.bars.conftest import BAR_READ, HOT_READ, RECORDING, TOTALS, Stores
 
 DAY_US: Final = 86_400_000_000
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 MIN_US: Final = 60_000_000
 TIME_DAYS, NON_TIME_DAYS, MAX_BARS, MAX_LIMIT = 400, 31, 250_000, 5_000
 #: #452 BQ-5, proposed into X01 §3 as SR-E12-01's rejection-cost bound: the median CPU time one
 #: refused `tick:1` request adds over a 401, in process. The one place the number lives.
 REJECTION_CPU_BUDGET_S: Final = 0.002
-F1: Final = "#452 findings row F1: a pre-epoch `from` is measured from the epoch, not from `from`"
-F3: Final = "#452 findings row F3: no per-user rate limit or single-flight on the REST bar reads"
+F1: Final = "#452 findings row F1: a window whose `from` is before 1970"
+F3: Final = "#452 findings row F3: one session sending a burst of maximal pages"
 F8: Final = (
     "#452 findings row F8: the applied floor is 1 for qty_step < 0.1; the documented 10 x qty_step"
     " floor is unreachable over the integer wire grammar"
@@ -276,9 +278,8 @@ def test_caps_tick_1_refusal_costs_under_the_cpu_budget(stores: Stores) -> None:
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=F1)
 def test_caps_pre_epoch_window_is_measured_from_its_from(stores: Stores) -> None:
-    """X01 AC-01: `from=1900-01-01 to=1970-06-01` spans about 70 years, over the 400-day cap. The
-    route measures it from 1970-01-01 (`max(start_us, after_us + 1)` with no cursor), so it serves
-    it and reads storage over the whole window."""
+    """X01 AC-01: `from=1900-01-01 to=1970-06-01` spans about 70 years, over the 400-day cap: it
+    is refused before any bar read. The findings register on #452 holds the analysis."""
     query = {"symbol": "BTCUSDT", "bar_type": "time", "param": "1", "limit": 10,
              "from": "1900-01-01T00:00:00Z", "to": "1970-06-01T00:00:00Z"}  # fmt: skip
     assert_problem(stores.get("getBars", query), 422, "bar_window_too_large")
@@ -321,7 +322,7 @@ def test_caps_non_rfc_3339_time_parses_to_its_instant_accepted_f6(field: str, va
     klines_at = market._parse_time(value, default=None)
     assert klines_at is not None, field
     assert market_bars._ts_us(value) == _INSTANTS[value]
-    assert int(klines_at.timestamp() * 1_000_000) == _INSTANTS[value]
+    assert (klines_at - _EPOCH) // timedelta(microseconds=1) == _INSTANTS[value]  # exact
 
 
 @pytest.mark.xfail(strict=True, raises=BarParamOutOfRange, reason=F8)
@@ -339,9 +340,9 @@ def test_caps_qty_floor_is_ten_qty_steps(kind: str, field: str) -> None:
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=F3)
 def test_caps_one_session_looping_maximal_pages_is_throttled(stores: Stores) -> None:
-    """BR-36: one session looping `limit=5000` pages serialises every other session's reads behind
-    its own on the `bars` pgwire lock. 60 back-to-back pages in one burst meet no 429; the fix is
-    contract-first (22-api declares no 429 on getBars/getKlines)."""
+    """BR-36: 60 back-to-back `limit=5000` pages from one session meet a 429 before the 60th, and
+    fewer than 60 bar reads. Contract-first (a 429 on getBars/getKlines in 22); the findings
+    register on #452 holds the analysis."""
     query = bars("time", "1", T0, NOW, limit=MAX_LIMIT)
     statuses = [stores.get("getBars", query).status_code for _ in range(60)]
     assert 429 in statuses
