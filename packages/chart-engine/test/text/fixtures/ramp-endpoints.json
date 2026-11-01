@@ -1,0 +1,21 @@
+{
+  "provenance": "Hand-copied (E11-S11 PR B, BQ-274, G-86) from packages/ui/tokens/primitives.tokens.json and semantic-{dark,light}.tokens.json at aef2cc150 and E06-D01 §5: the cell text colour, the interim outline (G-83: palette.neutral.0 / palette.light.neutral.0 at 80 %) and the delta ramp's endpoints (bid, ask, imbalance and the zero end, surface.canvas). Replace with E18's LUT endpoints when it lands.",
+  "alpha": 0.8,
+  "themes": {
+    "dark": {
+      "text": "#E8EAED",
+      "outline": "#0B0E11",
+      "fills": ["#2EBD59", "#E5484D", "#F0B441", "#11151A"]
+    },
+    "light": {
+      "text": "#14171A",
+      "outline": "#FFFFFF",
+      "fills": ["#1C7A3C", "#C7373C", "#9A6A05", "#F6F7F9"]
+    },
+    "hc": {
+      "text": "#F6F8FA",
+      "outline": "#0B0E11",
+      "fills": ["#6BD48A", "#F08A8A", "#F0B441", "#11151A"]
+    }
+  }
+}

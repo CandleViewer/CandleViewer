@@ -12,8 +12,12 @@ export function decimalsOf(step: number): number {
   return 10;
 }
 
-/** `64050.5` at 1 decimal is "64,050.5"; a value that rounds to zero has no sign. */
+/**
+ * `64050.5` at 1 decimal is "64,050.5"; a value that rounds to zero has no sign. A non-finite
+ * value is "" (never "Infinity" / "NaN": every emitted character is in F-03's set).
+ */
 export function formatNumber(v: number, decimals: number): string {
+  if (!Number.isFinite(v)) return "";
   const fixed = Math.abs(v).toFixed(decimals);
   const dot = fixed.indexOf(".");
   const int = dot < 0 ? fixed : fixed.slice(0, dot);

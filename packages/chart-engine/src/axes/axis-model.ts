@@ -3,17 +3,25 @@
 // names and the announcements. `update` runs once per frame before collect and returns at once
 // when nothing it reads changed (a signature of the viewport, the layout and the theme), so a
 // still chart costs a compare; a TRANSFORM or LAYOUT change rebuilds the axes; before the main
-// series brings its tick size there are no axes at all (no grid, no message). Labels are not
-// drawn on the canvas yet: E11-S11's batched SDF text consumes `priceSet` / `timeSet` (G-47).
+// series brings its tick size there are no axes at all (no grid, no message). The kept labels of
+// both axes are written into one SDF text batch, one draw call (E11-S06 PR 3 with E11-S11 PR B,
+// closing G-47), measured with the atlas metrics once the atlas is ready.
+import { PROGRAM } from "../scene/instance-layout.js";
 import type { Rect } from "../scene/layout-engine.js";
+import { TextBatch, type TextInk } from "../text/text-batch.js";
 import { displayValue, priceToScreen, screenToTime } from "../viewport/transform.js";
 import type { PaneTransform, ViewportState } from "../viewport/types.js";
 import { TickSet } from "./decimate.js";
 import { clockText, createZoned, dateText, formatNumber, ZoneClock } from "./format.js";
 import { AxisGrid, GRID_NODE_ID, GRID_TOKENS, parseHex, TIER } from "./grid.js";
-import { fixedMeasure, GutterCache, type TextMeasure } from "./gutter.js";
+import { fixedMeasure, GUTTER_PAD_PX, GutterCache, type TextMeasure } from "./gutter.js";
 import { PRICE_KIND, PriceTicks } from "./price-ticks.js";
 import { RANK, TimeTicks } from "./time-ticks.js";
+
+export const AXIS_TEXT_ID = "main/axis-text";
+/** The axis label token (E11-D02 §6) and the class labels are set in (compact 11 px). */
+export const LABEL_TOKEN = "color.text.secondary";
+export const LABEL_CLASS = 1;
 
 /** E11-D02 §6's compact density gaps G, CSS px (density and text scale are T04's: G-51). */
 export const DENSITY_GAP = { time: 80, price: 40 } as const;
@@ -55,6 +63,12 @@ export class AxisModel {
   readonly price = new PriceTicks();
   readonly time: TimeTicks;
   readonly grid = new AxisGrid(GRID_NODE_ID, { zIndex: -1 });
+  /** Both axes' labels: one retained SDF batch (`labels` on a 2D chart, `off` without atlas). */
+  readonly text = new TextBatch(AXIS_TEXT_ID, PROGRAM.sdfText);
+  private readonly ink: { rgba: Float32Array; css: string } = {
+    rgba: new Float32Array(4),
+    css: "",
+  };
   readonly gutter = new GutterCache();
   /** `engine.axis.*` (BQ-204): internal, as `FrameStats` is frozen. */
   readonly counters = { ticksDrawn: [0, 0], labelsDecimated: [0, 0] };
@@ -80,7 +94,7 @@ export class AxisModel {
 
   constructor(
     timeZone = "UTC",
-    readonly measure: TextMeasure = fixedMeasure(),
+    public measure: TextMeasure = fixedMeasure(),
   ) {
     this.time = new TimeTicks(new ZoneClock(timeZone));
   }
@@ -122,6 +136,7 @@ export class AxisModel {
     const shift = tag > 0 || cluster > 0 ? RANK.day : Infinity;
     c.labelsDecimated[0] = ts.decimate(gap, lo, hi, shift);
     this.writeGrid(vp, layout, rect, theme);
+    this.writeText(vp, layout, rect);
     const a = this.relabel(ps, this.priceLabels);
     const b = this.relabel(ts, this.timeLabels);
     c.ticksDrawn[0] = this.timeLabels.length;
@@ -132,6 +147,12 @@ export class AxisModel {
     return restate && this.names(p.scaleMode, p.autoScale)
       ? UPDATE.grid | UPDATE.labels
       : UPDATE.grid;
+  }
+
+  /** Measures with `m` from now on (the atlas metrics, BQ-271): the gutter re-measures. */
+  setMeasure(m: TextMeasure): void {
+    this.measure = m;
+    this.invalidate();
   }
 
   /** Forces the next `update` to rebuild (a restored context re-uploads the grid ring). */
@@ -174,6 +195,8 @@ export class AxisModel {
       this.palette = theme;
       for (let i = 0; i < GRID_TOKENS.length; i += 1)
         parseHex(theme[GRID_TOKENS[i] ?? ""], g.colors, 4 * i);
+      parseHex(theme[LABEL_TOKEN], this.ink.rgba, 0);
+      this.ink.css = theme[LABEL_TOKEN] ?? "#808080";
     }
     g.begin(vp.dpr, Math.round(l.height * vp.dpr));
     const ps = this.priceSet;
@@ -190,6 +213,25 @@ export class AxisModel {
     }
     g.vLine(r[2], 0, l.height, TIER.rule);
     g.hLine(l.timeAxis[1], 0, r[2], TIER.rule);
+  }
+
+  /** The kept labels into the text batch: price left in the gutter, time centred in the strip. */
+  private writeText(vp: ViewportState, l: AxisLayout, r: Rect): void {
+    const t = this.text;
+    t.begin(vp.dpr, Math.round(l.height * vp.dpr));
+    if (t.mode === "off") return;
+    const ink: TextInk = this.ink;
+    const ps = this.priceSet;
+    const x = r[2] + GUTTER_PAD_PX / 2;
+    for (let i = 0; i < ps.n; i += 1) {
+      if (ps.kept[i] === 1) t.label(ps.text[i] ?? "", x, ps.pos[i] as number, LABEL_CLASS, 0, ink);
+    }
+    const ts = this.timeSet;
+    const y = l.timeAxis[1] + l.timeAxis[3] / 2;
+    for (let i = 0; i < ts.n; i += 1) {
+      if (ts.kept[i] === 1)
+        t.label(ts.text[i] ?? "", ts.pos[i] as number, y, LABEL_CLASS, 0.5, ink);
+    }
   }
 
   /** Copies `set`'s kept labels into `out`; true when they differ from what it held. */

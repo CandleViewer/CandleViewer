@@ -15,4 +15,16 @@ describe("perf scene: the axes rebuild on every pan frame (counted)", () => {
     expect(axes.gutter.remeasures).toBe(1); // the magnitude class never changed
     expect(axes.counters.ticksDrawn).toEqual([axes.timeLabels.length, axes.priceLabels.length]);
   });
+
+  it("axis-render (E11-S06 PR 3): every kept label of both axes in the one text batch", () => {
+    const bench = new AxisTicksBench(5_000, "UTC", true);
+    const { axes } = bench;
+    bench.step();
+    const grown = axes.text.grown;
+    for (let f = 0; f < 300; f += 1) bench.step();
+    const chars = [...axes.priceLabels, ...axes.timeLabels].join("").replaceAll(" ", "");
+    expect(axes.text.count).toBe(chars.length);
+    expect(axes.text.grown).toBe(grown); // the ring is warm: no growth on a pan
+    expect(axes.gutter.remeasures).toBe(1); // measured with the atlas metrics, once
+  });
 });

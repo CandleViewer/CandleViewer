@@ -1,12 +1,23 @@
 // E11-S11 PR A: the atlas service on the procedural stand-in platform — cache across launches,
 // F-03's verification, regeneration after a bad record, borrowing, and every generation failure.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mulberry32 } from "../../bench/fixtures/rng.mjs";
+import { AxisTicksBench } from "../../bench/scenes/axis-ticks.js";
 import {
   MemoryKv,
   proceduralPlatform,
   TEST_FONTS,
   type ProceduralOptions,
 } from "../../bench/fixtures/text-platform.js";
+import {
+  civil,
+  clockText,
+  createZoned,
+  dateText,
+  DAY_MS,
+  formatNumber,
+  MONTHS,
+} from "../../src/axes/format.js";
 import { METRIC_STRIDE, type AtlasImage } from "../../src/text/atlas-build.js";
 import {
   encodeRecord,
@@ -48,10 +59,39 @@ const digest = (img: AtlasImage | undefined) => img && [fnv1a(img.rows), img.use
 const TRADING = [...TRADING_GLYPHS].length;
 
 describe("F-03's glyph set", () => {
-  it("is exactly the digits, their separators and signs, the space, `?`, `:` and `/`", () => {
-    expect(TRADING_GLYPHS).toBe("0123456789.,-+%×KMB▲▼() ?:/");
+  it("is the digits, their separators and signs, the space, `?`, `:`, `/` and month letters", () => {
+    expect(TRADING_GLYPHS).toBe("0123456789.,-+%×KMB▲▼() ?:/ADFJNOSabceglnoprtuvy");
   });
-  it.todo("every glyph the formatters can emit is in the set (pending: E11-S11 PR B)");
+  it("every glyph the axis formatters emit is in the set (E11-S11 PR B)", () => {
+    const seen = new Set<string>();
+    const add = (t: string): void => [...t].forEach((c) => seen.add(c));
+    const rnd = mulberry32(20261101);
+    for (let i = 0; i < 10_000; i += 1) {
+      const v = (rnd() - 0.5) * 10 ** Math.floor(rnd() * 16);
+      add(`${v > 0 ? "+" : ""}${formatNumber(v, i % 11)}%`); // the percent kind's label too
+    }
+    const z = createZoned();
+    for (let day = -800_000; day < 800_000; day += 997) {
+      civil(day, z);
+      add(`${z.year}`);
+      add(dateText(z));
+      add(clockText((((day * 7919) % DAY_MS) + DAY_MS) % DAY_MS, true));
+    }
+    MONTHS.forEach(add);
+    // Deterministic edges: exponent form, the decimals cap, negative zero, non-finite (""),
+    // the largest safe integer and the smallest subnormal.
+    for (const v of [1e21, -1e21, 1e-7, -0, 0, Infinity, -Infinity, NaN, 2 ** 53, 5e-324])
+      for (let d = 0; d <= 10; d += 1) add(formatNumber(v, d));
+    expect([formatNumber(Infinity, 2), formatNumber(NaN, 0), formatNumber(1e21, 0)]).toEqual([
+      "",
+      "",
+      "1e+21",
+    ]);
+    const bench = new AxisTicksBench(5_000, "America/New_York");
+    for (let f = 0; f < 60; f += 1) bench.step();
+    [...bench.axes.priceLabels, ...bench.axes.timeLabels].forEach(add);
+    expect([...seen].filter((c) => !TRADING_GLYPHS.includes(c))).toEqual([]);
+  });
 });
 
 describe("the store connection is closed (BQ-273)", () => {
@@ -321,6 +361,7 @@ describe("glyph coverage and generation failures (BQ-259, BQ-272)", () => {
     await done;
     expect([events, ready, svc.image, p.loads, p.releases]).toEqual([[], [], null, 2, 2]);
     expect(p.rasters).toBeLessThan(194); // the ui task never ran
+    expect((p.kv as MemoryKv).closes).toBe(1); // the store, open mid-build, is closed by dispose
   });
 
   it("a dispose during the F-03 yield re-derives nothing and deletes no valid record", async () => {
