@@ -3599,6 +3599,21 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=66,
     ),
     _s(
+        "oms_partial_close_total",
+        "counter",
+        "requests",
+        ("result",),
+        "closePosition requests below 100 percent (E29-S03, #978), counted once each from the "
+        "route's step 13 on, by result: accepted (its first 202), qty_below_minimum or "
+        "dust_remainder (step 13's size refusals), position_changed (the position flat or smaller "
+        "than the close, by the stored row or by the venue's read) or rejected (any other "
+        "answer). A repeat answered from the 24 h record or the anchor is not counted.",
+        "dashboard",
+        _P,
+        "E29",
+        max_series=5,
+    ),
+    _s(
         "oms_clock_drift_blocked_total",
         "counter",
         "requests",

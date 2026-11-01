@@ -4267,7 +4267,14 @@ export interface paths {
      *       `max_order_qty`, `max_mkt_order_qty`), answered `lot_size_violation` when the quantity
      *       is listed and `validation_failed` otherwise. Price is also snapped/validated against
      *       `tick_size`; qty against `qty_step`/min/max (`tick_size_violation` /
-     *       `lot_size_violation`).
+     *       `lot_size_violation`), and the order's notional against `min_notional`
+     *       (`lot_size_violation`), except for an order the server classifies as only reducing its
+     *       position (below), which the exchange alone judges, so an exit is never refused for
+     *       its notional (E29-S03, #978). A reduce-only order whose quantity is the whole size of
+     *       the position its side closes, as the exchange's read shows it at validation, is not
+     *       held to `min_order_qty` either, so a position under the minimum stays closable (the
+     *       orchestrator's ruling (a) of 2026-11-01); a partial reduce-only order under it is
+     *       still `lot_size_violation`.
      *     * A native exchange-side stop-loss is mandatory for every entry (C-2.6, arch P4). The
      *       server classifies an order by its effect on the exchange-truth position, never by
      *       its label: an order that is not reduce-only, or whose quantity exceeds the position
@@ -4839,6 +4846,53 @@ export interface paths {
      *     recorded on its anchor, and that `429` is replayed with `Idempotency-Replayed: true` and
      *     no `Retry-After`. Never refused for want of the arm (C-2.6). Amended 2026-10-29 by an orchestrator contract decision (#915),
      *     before the route was implemented.
+     *
+     *     **The size (E29-S03, #978).** The server resolves the size before any exchange call,
+     *     from the position as stored (the row `getPosition` returns, which a confirmation shows),
+     *     never from a client's figure or a fresh exchange read: `pct` of its `size`, or `qty`,
+     *     floored to the instrument's `qty_step` (`24-internal-schemas.md` section 1.3 rule 2),
+     *     and the whole `size` at 100 % or for a `qty` equal to it. The order carries that size,
+     *     so the `202`'s `order.qty` is the size the close sends. A close is refused
+     *     `422 validation_failed` before anything is sent, its rule in `errors[].rule`, when:
+     *     - `position_flat`: the stored position is flat;
+     *     - `exceeds_position`: a `qty` above the stored size;
+     *     - `listed`: no instrument is listed under the position's symbol (`errors[].field`
+     *       `symbol`), so no size can be resolved;
+     *     - `qty_below_minimum`: the resolved size of a partial close is below the instrument's
+     *       `min_order_qty`, zero included (`errors[].limit` the minimum);
+     *     - `dust_remainder`: a partial close would leave a remainder above zero but below the
+     *       smallest size that can itself be closed (`errors[].remaining` the remainder,
+     *       `errors[].limit` that size): the instrument's `min_order_qty`, or SR-E22-03's
+     *       `MIN_SIZE_FLOOR` where that is larger (the size worth `min_notional` at the symbol's
+     *       reference price, ceiled to `qty_step`), which holds until E29-K01 (#843) confirms
+     *       whether the exchange exempts a reduce-only order from its minimum notional. A client
+     *       offers the full close in its place: `pct: "100"` under a new `Idempotency-Key`.
+     *     The last two also carry `errors[].symbol` and `errors[].resolved`, the size the close
+     *     resolved to, and a partial close that breaks both lists `dust_remainder` first in
+     *     `errors[]`, the rule only the full close answers. A close of the whole size meets
+     *     neither. Each refusal is recorded
+     *     (`position.closed`, `denied`) before it is answered. A close, as every order the server
+     *     classifies as only reducing its position, is exempt from the server's own
+     *     minimum-notional check (`min_notional`): the exchange arbitrates (E29-S03 BQ-5, C-2.6).
+     *     A close of the whole position, its quantity the size the exchange's read shows at
+     *     validation, is exempt from the server's own `min_order_qty` check too, so a position
+     *     under the instrument's minimum stays closable and the exchange arbitrates (C-2.6, the
+     *     orchestrator's ruling (a) of 2026-11-01): its order's `orders.submit` record names the
+     *     exemption (`min_qty_exempt: full_close`), and the exchange's rejection is the
+     *     `502 exchange_error` with its return code, never sent again under a new `orderLinkId`
+     *     (C-2.10).
+     *
+     *     **The exchange's read is the guard (E29-S03).** The submission reads the exchange's own
+     *     position before anything is recorded (`24-internal-schemas.md` section 8.4 step 3d): a
+     *     close it does not show reducing the position, now flat or smaller than the close, is
+     *     refused `422 validation_failed` with `position_flat` or `exceeds_position`, recorded as
+     *     the submission records a refusal (`orders.submit`, `denied`), no order written or sent,
+     *     and the size is never re-derived. A close the exchange rejects is
+     *     `502 exchange_error` with its return code alone (`110017` when a reduce-only close met
+     *     a position that shrank or closed), anchored and replayed as any `502` is; the server
+     *     then reads the account's positions once, on the `poll` lane, and applies the row the
+     *     read shows for the position through the position store, whose writes never replace a
+     *     newer row, so the `positions` topic carries the position as the exchange shows it.
      */
     post: operations["closePosition"];
     delete?: never;
@@ -10238,6 +10292,10 @@ export interface components {
         /** @description The limit the value breaks, in the member's own unit. */
         limit?: components["schemas"]["Decimal"];
         message?: string;
+        /** @description `dust_remainder` only: the size the close would leave open, the stored size less `resolved`. */
+        remaining?: components["schemas"]["Decimal"];
+        /** @description `closePosition`'s size rules only (`qty_below_minimum`, `dust_remainder`): the size the close resolved to, floored to the instrument's `qty_step`. */
+        resolved?: components["schemas"]["Decimal"];
         rule?: string;
         /** @description The instrument whose exchange limit the value breaks, for a rule that checks one. */
         symbol?: components["schemas"]["Symbol"];
@@ -19788,7 +19846,15 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
-      422: components["responses"]["UnprocessableEntity"];
+      /** @description `validation_failed`: the body breaks its schema, or the close breaks a rule of its size (see the description: `position_flat`, `exceeds_position`, `listed`, `qty_below_minimum`, `dust_remainder`). Nothing was sent. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       /** @description `exchange_rate_limited` with `Retry-After`, or the per-user `rate_limited` of every route, before the persist: nothing was sent and no key was bound. A refusal at the send is recorded on the anchor (see the description) and replayed with `Idempotency-Replayed: true` and no `Retry-After`. */
       429: {
         headers: {

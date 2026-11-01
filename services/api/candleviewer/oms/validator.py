@@ -39,7 +39,15 @@ type-alias pattern `admin.wiring` already uses to avoid a direct import edge.
    (24-internal-schemas.md Sec.1.3 rule 3); the answer is `tick_size_violation` if a price is off
    its tick, else `lot_size_violation` if the quantity or the notional is, else
    `validation_failed`. A market order has no price of its own: its reference price measures its
-   notional only.
+   notional only. An order that only reduces (its effect `REDUCE`, which `SizedOrder` holds
+   for a reduce-only order alone, SR-E29-01), every close among them, is exempt from
+   `min_notional` alone: the server never refuses an exit for its notional, and the venue
+   arbitrates (E29-S03 #978 BQ-5, C-2.6); an amend's terms (`check_terms`) and every other order
+   are held to it. A reduce-only close of the whole position (`closes_whole`: its quantity the
+   size of the position its side closes, as the venue's read showed it at validation) is exempt
+   from `min_order_qty` too, so a position under the instrument's minimum stays closable and the
+   venue arbitrates (C-2.6's carve-out, the orchestrator's ruling (a) of 2026-11-01); a partial
+   reduce-only order under the minimum keeps its refusal.
 
 `Validator.check_route` refuses an order whose environment is not its route's (C-2.11): a demo
 account's order never reaches a live client, nor the reverse. Decimal throughout.
@@ -69,7 +77,7 @@ from .ports import OrderEffect, SizedOrder
 if TYPE_CHECKING:
     from candleviewer.accounts.profiles import AccountProfile
     from candleviewer.domain.events import Instrument
-    from candleviewer.domain.primitives import Environment
+    from candleviewer.domain.primitives import Environment, Qty
 
 #: `InstrumentPolicy`'s violations as `errors[]` items: the field, and the instrument limit broken.
 _POLICY_RULES: Final[Mapping[FilterViolationCode, tuple[str, str]]] = MappingProxyType(
@@ -86,6 +94,15 @@ _POLICY_RULES: Final[Mapping[FilterViolationCode, tuple[str, str]]] = MappingPro
 _NOT_FOR_MARKET: Final = frozenset(
     {FilterViolationCode.PRICE_NOT_TICK_MULTIPLE, FilterViolationCode.QTY_ABOVE_MAX}
 )
+#: The one filter an order that only reduces is exempt from (BQ-5): the venue judges its notional.
+_NOT_FOR_AN_EXIT: Final = frozenset({FilterViolationCode.NOTIONAL_BELOW_MIN})
+#: The filter a reduce-only close of the whole position is exempt from too: the venue judges it.
+_NOT_FOR_A_WHOLE_CLOSE: Final = frozenset({FilterViolationCode.QTY_BELOW_MIN})
+#: The pair the order's write-ahead record (`orders.submit`) names the whole close's exemption
+#: with, as the orchestrator's ruling (a) words it: `min_qty_exempt: full_close`. The audit chain
+#: is append-only (C-2.9), so a key once written is never corrected.
+EXEMPT_FIELD: Final = "min_qty_exempt"
+EXEMPT_WHOLE_CLOSE: Final = "full_close"
 _TICK_RULES: Final = frozenset({"tick_size"})
 _LOT_RULES: Final = frozenset(
     {"qty_step", "min_order_qty", "max_order_qty", "max_mkt_order_qty", "min_notional"}
@@ -154,14 +171,25 @@ class Validator:
             )
 
     def check_order(
-        self, order: SizedOrder, *, instrument: Instrument, profile: AccountProfile | None
+        self,
+        order: SizedOrder,
+        *,
+        instrument: Instrument,
+        profile: AccountProfile | None,
+        position_qty: Qty | None = None,
     ) -> None:
         """Refuse the sized, rounded `order` (see the module docstring for the steps); return
-        when it may go on to the risk gate."""
+        when it may go on to the risk gate. `position_qty` is the size of the position the
+        order's side closes, as the venue's read showed it (`closes_whole`)."""
         if instrument.symbol != order.symbol:
             raise ValueError("the instrument is not the order's symbol")
         self.assert_order_placement_allowed()
-        errors = _terms_errors(order, instrument)
+        errors = _terms_errors(
+            order,
+            instrument,
+            reduces=order.effect is OrderEffect.REDUCE,
+            whole=closes_whole(order, position_qty),
+        )
         if order.effect is not OrderEffect.REDUCE:
             if profile is None:
                 raise RiskRefused("No profile allows this order.")
@@ -189,9 +217,13 @@ class Validator:
             )
 
 
-def _terms_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]:
+def _terms_errors(
+    order: SizedOrder, instrument: Instrument, *, reduces: bool = False, whole: bool = False
+) -> list[FieldError]:
     """Steps 2 and 4 of the module docstring: a figure step 2 refuses raises; step 4's
-    violations are listed for the caller, which may add the leverage's."""
+    violations are listed for the caller, which may add the leverage's. `reduces` is an order
+    that only reduces, exempt from `min_notional` (BQ-5); `whole` a reduce-only close of the whole
+    position, exempt from `min_order_qty` too (`closes_whole`)."""
     non_finite = _non_finite_errors(order)
     if non_finite:
         raise OrderInvalid(errors=non_finite)
@@ -209,9 +241,21 @@ def _terms_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]
             raise OrderInvalid(errors=malformed)
         if order.order_type == "market":
             violations = [v for v in violations if v.code not in _NOT_FOR_MARKET]
+        if reduces:
+            violations = [v for v in violations if v.code not in _NOT_FOR_AN_EXIT]
+        if whole:
+            violations = [v for v in violations if v.code not in _NOT_FOR_A_WHOLE_CLOSE]
         return [*map(_policy_error, violations), *_order_path_errors(order, instrument)]
     except InvalidOperation as error:  # a figure no step can judge: DivisionImpossible
         raise OrderInvalid() from error
+
+
+def closes_whole(order: SizedOrder, position_qty: Qty | None) -> bool:
+    """Whether `order` is a reduce-only close of the whole position (the orchestrator's ruling (a)
+    of 2026-11-01): reduce-only, and its quantity the size of the position its side closes, as the
+    venue's read showed it at validation (`position_qty`; None when the read showed none). Such a
+    close is exempt from `min_order_qty`, so a position under the minimum stays closable."""
+    return order.reduce_only and position_qty is not None and order.qty == position_qty
 
 
 def symbol_allowed(profile: AccountProfile, instrument: Instrument) -> bool:

@@ -21,14 +21,25 @@ next:
     `oms_not_ready`). The C-2.6 carve-out (24 Sec.8.10, 22 `Forbidden`): `trading.oms_enabled`,
     live trading not enabled, the B18 kill switch and the order-entry gate never refuse a close,
     and its `SubmitContext` is `protective`, which this code alone sets, so the pipeline passes
-    them too; 13. the position against the body: a flat position, or a `qty` above its size, is
-    422 `validation_failed`;
-14. the close (`oms.position_writes.close_request`) through the submission pipeline, as a task the
-    runtime tracks, shielded from the client's disconnect: its `202` is 22 `OrderAcceptance`
+    them too; 13. the position against the body, then its size (E29-S03 #978): a flat position or
+    a `qty` above its size, then, for a partial close, a size under the instrument's
+    `min_order_qty` or one that would leave a remainder under it, or under SR-E22-03's
+    `MIN_SIZE_FLOOR` where that is larger until E29-K01 confirms the venue fact (BQ-5)
+    (`resolve_close`, from the admitted row and the instrument the runtime reads), is 422
+    `validation_failed` naming each rule;
+14. the close (`oms.position_writes.close_request`, sized by step 13's size as its `fixed_qty`)
+    through the submission pipeline, as a task the runtime tracks, shielded from the client's
+    disconnect: its `202` is 22 `OrderAcceptance`
     (`order` set, `trade_group` null), kept 24 h; at 100 % the closed size's Partial-mode
     conditionals are swept once the close fills and the venue reads the position flat; below 100 %
     the position's protective orders are left as they are (C-2.6). One `position.closed` record
-    correlates the request with its order before the answer returns.
+    correlates the request with its order, and carries its size (what the body asked, the size
+    sent, the size left, and whether the floor changed it), before the answer returns.
+    `oms_partial_close_total{result}` counts each close below 100 % once, from step 13 on. The
+    pipeline's read of the venue's position is the guard (BQ-7): a close it does not show
+    reducing is refused there, `PositionChanged`, answered 422 as step 13's own rules are, never
+    re-sized; a close the venue rejects (`502`, its return code alone) re-reads its position once
+    (`PositionWrites.refresh`) before the answer.
 
 **closeAllPositions.** A protective write in a view-as context too, on the same terms. The
 principal, `positions:write`, the rate, the body (22: the account ids, the symbol,
@@ -55,6 +66,7 @@ import uuid
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Annotated, Any, Final, Protocol
 
 import structlog
@@ -95,13 +107,16 @@ from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
-from candleviewer.domain.primitives import AccountId, Environment, GroupId
+from candleviewer.domain.events import Instrument
+from candleviewer.domain.primitives import AccountId, Environment, GroupId, Symbol
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.cancel_all import CancelAllRequest, ScopedAccounts
 from candleviewer.oms.errors import (
     PROBLEMS,
+    RULE_EXCEEDS_POSITION,
+    RULE_POSITION_FLAT,
     AccountScopeDenied,
     AuditNotDurable,
     FieldError,
@@ -109,6 +124,7 @@ from candleviewer.oms.errors import (
     OmsError,
     OmsNotReady,
     OrderInvalid,
+    PositionChanged,
     StoreUnavailable,
     problem_for,
 )
@@ -119,10 +135,12 @@ from candleviewer.oms.position_writes import (
     CLOSE_ACTION,
     FLATTEN_ACTION,
     CloseFill,
+    CloseSize,
     CloseTerms,
     VenuePosition,
     close_request,
     is_full_close,
+    resolve_close,
 )
 from candleviewer.oms.reads import OmsReads
 from candleviewer.oms.submit import (
@@ -149,9 +167,11 @@ __all__ = [
     "PositionRuntime",
     "close_all_body",
     "make_position_close_router",
+    "partial_result",
     "position_errors",
     "read_close",
     "replayed_body",
+    "size_detail",
 ]  # fmt: skip
 
 CLOSE_PATH: Final = "/positions/{positionId}/close"
@@ -169,6 +189,12 @@ RATE_PER_MINUTE: Final = 60
 #: Keys the in-process guard holds at once (C-2.18), as the exit routes' guard bounds its own.
 MAX_IN_FLIGHT: Final = 1_024
 _HUNDRED: Final = Decimal(100)
+#: `oms_partial_close_total`'s closed `result` set (20 Sec.12.1, BQ-12): a step-13 rule's answer
+#: by its rule, any other answer `rejected`.
+_PARTIAL_RESULTS: Final[Mapping[str, str]] = MappingProxyType({
+    "qty_below_minimum": "qty_below_minimum", "dust_remainder": "dust_remainder",
+    "position_flat": "position_changed", "exceeds_position": "position_changed",
+})  # fmt: skip
 
 type Body = dict[str, object]
 
@@ -212,6 +238,7 @@ class _Anchors(Protocol):
 
 
 class _Positions(Protocol):
+    async def instrument(self, symbol: Symbol) -> Instrument: ...
     async def entry_stop_ready(self, account_id: AccountId) -> None: ...
     async def group_key_free(
         self, created_by: uuid.UUID, key: uuid.UUID, request_sha256: str
@@ -220,6 +247,7 @@ class _Positions(Protocol):
         self, account_id: uuid.UUID, order_id: uuid.UUID, *, deadline: float
     ) -> CloseFill: ...
     async def venue_position(self, row: PositionRow) -> VenuePosition: ...
+    async def refresh(self, row: PositionRow) -> bool: ...
     async def record(self, record: RequestRecord) -> bool: ...
     async def sweep_after_close(
         self, row: PositionRow, order_id: uuid.UUID, *, actor: SubmitActor,
@@ -284,11 +312,42 @@ def read_close(raw: bytes) -> CloseTerms | tuple[FieldError, ...]:
 def position_errors(row: PositionRow, terms: CloseTerms) -> tuple[FieldError, ...]:
     """The body against the position (step 13): an open position, a `qty` within its size."""
     if row.side not in ("Buy", "Sell") or row.size <= 0:
-        return (FieldError("positionId", "position_flat", "The position is flat."),)
+        return (FieldError("positionId", RULE_POSITION_FLAT, "The position is flat."),)
     if terms.qty is not None and terms.qty > row.size:
         message = "Send at most the position's size: a close never opens the other side."
-        return (FieldError("qty", "exceeds_position", message),)
+        return (FieldError("qty", RULE_EXCEEDS_POSITION, message),)
     return ()
+
+
+def size_detail(terms: CloseTerms, size: CloseSize) -> dict[str, str]:
+    """A close's size in its `position.closed` record (24 Sec.15.5, BQ-9): what the body asked,
+    the size sent, the size left and whether the floor changed it. Only ever a record's, never a
+    log's (C-12.6)."""
+    asked = ("requested_pct", terms.pct) if terms.pct is not None else ("requested_qty", terms.qty)
+    figures = {asked[0]: asked[1], "resolved_qty": size.qty, "remaining_qty": size.remaining}
+    shown = {name: format(value, "f") for name, value in figures.items() if value is not None}
+    return shown | {"rounded": str(size.rounded).lower()}
+
+
+def advisory_floor(read: Callable[[str], Decimal | None] | None, symbol: str) -> Decimal | None:
+    """Step 13's dust floor for `symbol` (SR-E22-03's `MIN_SIZE_FLOOR`, BQ-5), advisory: a floor
+    that cannot be read is left out, so the close is held to `min_order_qty` alone and never
+    refused for want of it (C-2.6). Logged by its failure's type alone (C-12.6)."""
+    if read is None:
+        return None
+    try:
+        return read(symbol)
+    except Exception as exc:  # advisory: an unread floor never refuses an exit (C-2.6)
+        _log().warning("oms_close_floor_unread", failure=type(exc).__name__)
+        return None
+
+
+def partial_result(error: OmsError, status: int) -> str:
+    """A refused close's `oms_partial_close_total` result: a step-13 rule's `422` by its rule,
+    any other answer `rejected`."""
+    if status != 422 or not isinstance(error, OrderInvalid) or not error.errors:
+        return "rejected"
+    return _PARTIAL_RESULTS.get(error.errors[0].rule, "rejected")
 
 
 async def replayed_body(
@@ -331,10 +390,14 @@ def make_position_close_router(
     auth: SessionsLike | None = None, replays: IdempotencyCache | None = None,
     limiter: WriteLimiter | None = None, pager: Pager | None = None,
     protective: ProtectiveWrites | None = None,
+    min_size_floor: Callable[[str], Decimal | None] | None = None,
 ) -> APIRouter:  # fmt: skip
     """`closePosition` and `closeAllPositions` (module docstring). `audit` takes `rbac.denied`,
     `records` the refusals; `replays` is the 24 h record of first `2xx` answers; `protective`, the
-    view-as guard's registry, learns that these handlers decide a viewer's close themselves."""
+    view-as guard's registry, learns that these handlers decide a viewer's close themselves;
+    `min_size_floor` is SR-E22-03's `MIN_SIZE_FLOOR` of a symbol, step 13's dust floor until
+    E29-K01 (BQ-5): None, a symbol it does not list, or a floor it cannot read
+    (`advisory_floor`) leaves `min_order_qty` alone."""
     if protective is not None:
         protective.register(_OPERATION)
         protective.register(_ALL_OPERATION)
@@ -345,6 +408,13 @@ def make_position_close_router(
     running: set[tuple[str, str]] = set()
     spec = next(spec for spec in CATALOGUE if spec.name == "oms_submit_rejected_total")
     rejected = metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
+    spec = next(spec for spec in CATALOGUE if spec.name == "oms_partial_close_total")
+    partials = metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
+
+    def count_partial(full: bool, result: str) -> None:
+        """`oms_partial_close_total` (20 Sec.12.1): a close below 100 % once, from step 13 on."""
+        if not full:
+            partials.labels(result).inc()
 
     def not_ready() -> Response:
         rejected.labels(PROBLEMS[OmsNotReady].code).inc()
@@ -374,6 +444,14 @@ def make_position_close_router(
             return invalid(*error.errors)
         return order_problem(error, pager=paging)
 
+    async def refreshed(oms: PositionRuntime, row: PositionRow) -> None:
+        """BQ-7: a rejected close (`110017`, the position shrank under it, among others) re-reads
+        its position once before the answer; best effort, so the answer always stands."""
+        try:
+            await oms.positions.refresh(row)
+        except OmsError as exc:  # the order lane stopped meanwhile: the stream's push follows
+            _log().warning("oms_close_refresh_unrun", error=type(exc).__name__)
+
     async def replayed(adm: _Admitted, outcome: SubmitOutcome) -> Response:
         """A decided anchor's answer: its recorded `429`/`502`, or its rows as read now."""
         if outcome.status != 202:
@@ -388,14 +466,22 @@ def make_position_close_router(
         return JSONResponse(body, 202, {"Idempotency-Replayed": "true"})
 
     async def answer(adm: _Admitted, order: OrderRequest, context: SubmitContext,
-                     full: bool) -> Response:  # fmt: skip
+                     size: CloseSize) -> Response:  # fmt: skip
         """Step 14's task: the close's answer, its record, the sweep, and a first `202` kept."""
-        caller, oms = adm.caller, adm.oms
+        caller, oms, full = adm.caller, adm.oms, size.full
         try:
             outcome = await oms.submission.submit(order, context)
+        except PositionChanged as exc:  # BQ-7: the venue's read refused it, nothing sent
+            count_partial(full, "position_changed")
+            return invalid(*exc.errors)  # recorded by the pipeline; step 13's own 422
         except OmsError as exc:  # recorded by the pipeline before it was raised
+            count_partial(full, "rejected")
             return order_problem(exc, pager=paging)
         if outcome.status != 202:
+            if not outcome.replayed:  # a repeat's answer is never counted (20 Sec.12.1)
+                count_partial(full, "rejected")
+            if outcome.status == 502 and not outcome.replayed:
+                await refreshed(oms, caller.row)
             return outcome_problem(outcome)
         if outcome.replayed or outcome.written is None:
             try:
@@ -407,11 +493,13 @@ def make_position_close_router(
         detail: Mapping[str, str | None] = {
             "position_id": str(row.id), "order_id": str(order_id), "symbol": row.symbol,
             "full": str(full).lower(), "environment": oms.route.environment,
+            **size_detail(caller.body, size),
         }  # fmt: skip
         await oms.positions.record(RequestRecord(
             CLOSE_ACTION, row.exchange_account_id, "position", row.id, "success", "info",
             "requested", caller.actor, detail, caller.request_id,
         ))  # fmt: skip
+        count_partial(full, "accepted")
         if full:
             await oms.positions.sweep_after_close(
                 row, order_id, actor=caller.actor, request_id=caller.request_id
@@ -471,16 +559,22 @@ def make_position_close_router(
             errors = position_errors(row, terms)
             if errors:
                 raise OrderInvalid(errors[0].message, errors=errors)
+            instrument = await oms.positions.instrument(Symbol(row.symbol))
+            floor = advisory_floor(min_size_floor, row.symbol)
+            size = resolve_close(row, terms, instrument, floor=floor)  # no exchange call (BQ-2)
         except OmsError as exc:
             if step == "key":
                 return order_problem(exc)  # 400: no key to bind, unaudited as the body is
-            return await audit_refusal(exc, caller, step)
+            answered = await audit_refusal(exc, caller, step)
+            if step == "position":
+                count_partial(is_full_close(row, terms), partial_result(exc, answered.status_code))
+            return answered
         context = SubmitContext(caller.actor, key, digest, caller.request_id,
                                 operation=_OPERATION, protective=True)  # fmt: skip
-        order, full = close_request(row, terms), is_full_close(row, terms)
+        order = close_request(row, terms, size.qty)
         running.add(held)
         try:
-            task = oms.run(answer(adm, order, context, full))
+            task = oms.run(answer(adm, order, context, size))
         except OmsNotReady:
             running.discard(held)
             return not_ready()

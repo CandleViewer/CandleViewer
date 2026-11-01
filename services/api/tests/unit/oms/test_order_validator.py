@@ -46,7 +46,12 @@ from candleviewer.oms.ports import (
     SizedOrder,
     StopOffset,
 )
-from candleviewer.oms.validator import OrderPlacementRefused, Validator, symbol_allowed
+from candleviewer.oms.validator import (
+    OrderPlacementRefused,
+    Validator,
+    closes_whole,
+    symbol_allowed,
+)
 
 ACCOUNT = AccountId(UUID("7d3c9a10-28a1-4c1e-9e01-0000000000a2"))
 _PROFILES = Path(__file__).resolve().parents[2] / "fixtures" / "profiles"
@@ -609,6 +614,70 @@ def test_an_order_that_only_reduces_is_not_held_to_the_leverage() -> None:
     _check(_order(**_REDUCE), instrument=_instrument(max_leverage=Decimal("2")))
 
 
+# --- BQ-5 (E29-S03 #978, as ruled): an exit is never refused for its notional --------------------
+
+#: A sell of 0.010 at 400: a notional of 4, under the instrument's minimum of 5.
+_SMALL: dict[str, Any] = {"qty": Decimal("0.010"), "price": Decimal("400.0"),
+                          "reference_price": Decimal("400.0")}  # fmt: skip
+
+
+@pytest.mark.parametrize("order_type", ["limit", "market"])
+def test_bq5_an_order_that_only_reduces_is_never_refused_for_its_notional(order_type: str) -> None:
+    """C-2.6: the venue arbitrates an exit's notional; the server's own check never traps one."""
+    priced = {"price": None} if order_type == "market" else {}
+    _check(_order(**_REDUCE, **(_SMALL | priced), order_type=order_type))
+
+
+def test_bq5_an_entry_under_the_minimum_notional_is_still_refused() -> None:
+    stop = {"stop_loss": Decimal("390.0")}
+    with pytest.raises(LotSizeViolation) as refused:
+        _check(_order(**_SMALL, **stop))
+    assert _rules(refused.value) == [("qty", "min_notional")]
+
+
+def test_bq5_a_reduce_only_order_not_shown_to_reduce_is_held_to_the_minimum_notional() -> None:
+    """Fail closed: a reduce-only order the venue's read does not show reducing is an entry."""
+    entry = {"effect": OrderEffect.ENTRY, "stop_loss": Decimal("410.0")}
+    with pytest.raises(LotSizeViolation) as refused:
+        _check(_order(**(_REDUCE | _SMALL | entry)))
+    assert ("qty", "min_notional") in _rules(refused.value)
+
+
+def test_bq5_the_exemption_rests_on_a_reducing_order_being_reduce_only() -> None:
+    """The exemption reads the effect alone: `SizedOrder` refuses a `REDUCE` that is not
+    reduce-only (SR-E29-01), so no order outside the reduce-only flag can reach it."""
+    with pytest.raises(ValueError, match="only reduces is reduce_only"):
+        _order(**(_REDUCE | _SMALL | {"reduce_only": False}))
+
+
+@pytest.mark.parametrize(
+    ("qty", "rule"),
+    [("0.0105", "qty_step"), ("0.005", "min_order_qty"), ("150", "max_order_qty")],
+    ids=["off_the_step", "under_the_minimum_not_whole", "above_the_limit_ceiling"],
+)
+def test_bq5_an_exit_is_held_to_every_other_filter(qty: str, rule: str) -> None:
+    """The exemption drops `min_notional` alone: a reduce-only limit order that is not a close of
+    the whole position (the read shows 160 open) keeps the lot step, `min_order_qty`'s 400 (the
+    whole-close ruling's partial case) and `max_order_qty`, which the filters judge within the
+    market's higher ceiling (a quantity above both is the bound step's, before any exemption)."""
+    validator = Validator(read_only_gate=_Gate())
+    exit_ = _order(**(_REDUCE | _SMALL | {"qty": Decimal(qty)}))
+    higher = _instrument(max_mkt_order_qty=Decimal("200"))
+    with pytest.raises(LotSizeViolation) as refused:
+        validator.check_order(
+            exit_, instrument=higher, profile=_profile(), position_qty=Decimal("160")
+        )
+    assert _rules(refused.value) == [("qty", rule)]
+
+
+def test_bq5_an_amends_terms_stay_held_to_the_minimum_notional() -> None:
+    """The exemption is a close's, at `check_order`: an amend's terms keep the check."""
+    validator = Validator(read_only_gate=_Gate())
+    with pytest.raises(LotSizeViolation) as refused:
+        validator.check_terms(_order(**(_REDUCE | _SMALL)), instrument=_instrument())
+    assert _rules(refused.value) == [("qty", "min_notional")]
+
+
 # --- the read-only gate and the trading status ---------------------------------------------------
 
 
@@ -907,3 +976,74 @@ def test_property_check_order_answers_any_finite_figures_with_a_typed_refusal_on
         assert outside or named or isinstance(refused.__cause__, InvalidOperation)
     else:
         assert not outside  # a figure outside its bounds is never passed
+
+
+# --- a close of the whole position (the orchestrator's ruling (a) of 2026-11-01) --------------
+
+#: A sell of 0.005, under the instrument's minimum of 0.01.
+_TINY: dict[str, Any] = {"qty": Decimal("0.005")}
+
+
+def _check_closing(
+    order: SizedOrder, position_qty: Decimal | None, *, instrument: Instrument | None = None
+) -> None:
+    validator = Validator(read_only_gate=_Gate())
+    validator.check_order(
+        order,
+        instrument=instrument or _instrument(),
+        profile=_profile(),
+        position_qty=position_qty,
+    )
+
+
+def test_whole_close_a_reduce_only_close_of_the_whole_position_under_the_minimum_passes() -> None:
+    """C-2.6's carve-out: a position under the instrument's minimum stays closable; the venue
+    arbitrates its whole close."""
+    _check_closing(_order(**(_REDUCE | _TINY)), Decimal("0.005"))
+
+
+def test_whole_close_a_partial_reduce_only_order_under_the_minimum_keeps_its_400() -> None:
+    with pytest.raises(LotSizeViolation) as refused:
+        _check_closing(_order(**(_REDUCE | _TINY)), Decimal("0.008"))
+    assert _rules(refused.value) == [("qty", "min_order_qty")]
+
+
+def test_whole_close_an_order_not_reduce_only_is_never_exempt_whatever_its_size() -> None:
+    with pytest.raises(LotSizeViolation) as refused:
+        _check_closing(_order(**_TINY), Decimal("0.005"))
+    assert ("qty", "min_order_qty") in _rules(refused.value)
+
+
+def test_whole_close_with_no_position_read_keeps_the_minimum() -> None:
+    with pytest.raises(LotSizeViolation):
+        _check_closing(_order(**(_REDUCE | _TINY)), None)
+
+
+@pytest.mark.parametrize(
+    ("figures", "overrides", "violated"),
+    [
+        ({"qty": Decimal("0.0055")}, {}, ("qty", "qty_step")),
+        ({"qty": Decimal("0.005"), "price": Decimal("63100.05")}, {}, ("price", "tick_size")),
+        ({"qty": Decimal("150")}, {"max_mkt_order_qty": Decimal("200")}, ("qty", "max_order_qty")),
+    ],
+    ids=["off_the_step", "off_the_tick", "above_the_limit_ceiling"],
+)
+def test_whole_close_is_held_to_every_other_filter(
+    figures: dict[str, Any], overrides: dict[str, Any], violated: tuple[str, str]
+) -> None:
+    """The exemption drops `min_order_qty` alone: a reduce-only close of the whole position (the
+    read shows its own size) keeps the lot step, the tick and `max_order_qty`, which the filters
+    judge within the market's higher ceiling (a quantity above both is the bound step's, before
+    any exemption)."""
+    order = _order(**(_REDUCE | figures))
+    with pytest.raises(OrderRefused) as refused:
+        _check_closing(order, order.qty, instrument=_instrument(**overrides))
+    assert _rules(refused.value) == [violated]
+
+
+def test_closes_whole_needs_reduce_only_and_the_whole_size_the_read_showed() -> None:
+    order = _order(**(_REDUCE | _TINY))
+    assert closes_whole(order, Decimal("0.005")) is True
+    assert closes_whole(order, Decimal("0.006")) is False
+    assert closes_whole(order, None) is False
+    assert closes_whole(_order(**_TINY), Decimal("0.005")) is False

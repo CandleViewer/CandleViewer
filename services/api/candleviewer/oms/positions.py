@@ -526,6 +526,12 @@ class PositionProjection:
             _log().error("position_page_failed", kind=type(exc).__name__)
 
 
+def row_state(p: Position) -> PositionState:
+    """The `positions` row a position read writes: a pushed row's, and a rejected close's re-read
+    (`oms.position_writes`, E29-S03 BQ-7), through one mapping."""
+    return _state(p)
+
+
 def _state(p: Position) -> PositionState:
     """The `positions` row of a pushed position; the stamp from integer microseconds."""
     return PositionState(
