@@ -5,7 +5,9 @@ name: fuzz-nightly
 # refusal or a bounded value, in bounded memory. No atheris dependency (C-12): Python uses a
 # Hypothesis mutation strategy, TS a seeded-PRNG loop.
 #   python      every `fuzz`-marked test of services/api/tests/unit/ws: the CVWB and msgpack
-#               decoders, the topic and option parsers, the JSON client-frame path
+#               decoders, the topic and option parsers, the JSON client-frame path; then, in a step
+#               of its own, the `fuzz`-marked test of services/api/tests/security/bars/
+#               test_param_fuzz.py (#452, E12-X02): the bars and klines REST parameter property
 #   typescript  both `test:fuzz` projects: @candleviewer/protocol (the CVWB decoders) and
 #               @candleviewer/web (the client codec)
 #
@@ -23,8 +25,13 @@ name: fuzz-nightly
 #               1080 s). A new fuzz test is counted by the next run; none collected leaves pytest to
 #               fail the job
 #   typescript  the budget / 2 projects: 900 s each (Saturday 5400 s)
+#   bars        not time-boxed: the property draws a fixed 5 000 derandomised queries (its
+#               NIGHTLY settings), the same on every night, so the step's own timeout is sized from
+#               that count and comes out of the job's setup headroom. It runs whether or not the WS
+#               step failed. Derandomised, a failing query replays from the commit alone, so the
+#               step prints only its counts (`--tb=no -rN`): the query stays out of the log
 # Cost: two jobs, so about 60 runner-minutes of fuzzing a night and 6 runner-hours on Saturday,
-# plus setup. scripts/tests/test_fuzz_nightly_budget.py pins the split, the selection and the
+# plus setup and the bars step's few minutes. scripts/tests/test_fuzz_nightly_budget.py pins the split, the selection and the
 # timeouts.
 #
 # #415 (E17-X02): the repository is public, so the job keeps failing inputs out of its logs and
@@ -99,6 +106,11 @@ jobs:
           share=$((CV_FUZZ_BUDGET_SECONDS / (targets > 0 ? targets : 1)))
           export CV_FUZZ_SECONDS="$((share > 0 ? share : 1))"
           uv run pytest tests/unit/ws -m "fuzz and not flaky" --no-cov -p no:randomly -p no:cacheprovider
+      - name: Bars REST parameter fuzz (Hypothesis, 5 000 derandomised queries)
+        if: ${{ !cancelled() }}
+        working-directory: services/api
+        timeout-minutes: 10
+        run: uv run pytest tests/security/bars/test_param_fuzz.py -m "fuzz and not flaky" --no-cov -p no:randomly -p no:cacheprovider -q --tb=no -rN
       - name: Encrypt failing inputs
         if: failure()
         env:
