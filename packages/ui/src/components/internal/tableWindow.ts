@@ -45,14 +45,6 @@ export function rowsInView({
   return { first, last: Math.max(first, last) };
 }
 
-/**
- * Spacer rows before the first drawn row so that it lands on the child position its absolute index has: the zebra
- * (`:nth-child(even)`) then follows the list, not the window. One spacer holds the height; an even offset adds an
- * empty one.
- */
-export const leadingSpacers = (offset: number): 0 | 1 | 2 =>
-  offset <= 0 ? 0 : offset % 2 === 1 ? 1 : 2;
-
 /** One child of a windowed body, in order: a drawn row, a spacer holding undrawn rows' height, or an empty pad. */
 export type BodyPart =
   | { readonly kind: "row"; readonly r: number }
@@ -68,8 +60,9 @@ const GAP_KEYS = [
 /**
  * A windowed body's children (E29-D05 §5.3 G-01: the window plus, at most, the one focused row outside it): each
  * drawn row at its absolute index `r` (1 is the list's first row), the undrawn rows between them held by one spacer
- * per gap, and an empty pad before a spacer where the next row would otherwise sit on a child of the wrong parity,
- * so the zebra follows the list (`leadingSpacers`' rule, for every gap). `drawn` is ascending and within 1..total.
+ * per gap, and an empty pad before a spacer where the next row would otherwise sit on a child of the wrong parity, so
+ * the zebra (`:nth-child(even)`) follows the list, not the window: before a window alone, one spacer, and the pad first
+ * on an even offset. `drawn` is ascending and within 1..total.
  */
 export function bodyParts(drawn: readonly number[], total: number): readonly BodyPart[] {
   const parts: BodyPart[] = [];

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bodyParts, leadingSpacers, rowsInView } from "../src/components/internal/tableWindow.js";
+import { bodyParts, rowsInView } from "../src/components/internal/tableWindow.js";
 
 // The rows a scrolled region shows below its sticky header, as absolute indices (CMP-049's window seam).
 const view = {
@@ -45,7 +45,7 @@ describe("bodyParts", () => {
       0,
     );
 
-  it("a window alone: leadingSpacers' children, then the window, then one spacer", () => {
+  it("a window alone: one spacer before it (the pad first on an even offset), then one after", () => {
     expect(bodyParts([4, 5, 6], 10)).toEqual([
       { kind: "spacer", key: "cv-before", rows: 3 },
       { kind: "row", r: 4 },
@@ -56,7 +56,8 @@ describe("bodyParts", () => {
     for (let offset = 0; offset < 12; offset += 1) {
       const drawn = [offset + 1, offset + 2];
       const lead = bodyParts(drawn, 20).findIndex((part) => part.kind === "row");
-      expect(lead).toBe(leadingSpacers(offset));
+      // No spacer at the top; one on an odd offset; on an even one, the pad and the spacer.
+      expect(lead).toBe(offset === 0 ? 0 : offset % 2 === 1 ? 1 : 2);
     }
   });
 
