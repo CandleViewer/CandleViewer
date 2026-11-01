@@ -29,6 +29,9 @@ export interface PositionsGridLiq {
   readonly mmRatePct?: string | null | undefined;
 }
 
+/** Why R is "—" (#5239's `RUnavailable`): no stop on the row, no entry or mark price, or a stop at the entry. */
+export type PositionsGridRUnavailable = "no_stop" | "no_price" | "zero_distance";
+
 /**
  * One open position as the grid draws it: the fields of the apps/web positions model's `PositionRowModel` it reads
  * (#5239 `model/rowMapping.ts`), so that model's rows pass as they stand once `liq` is beside them. Money and prices
@@ -53,8 +56,14 @@ export interface PositionsGridRow {
   readonly unrealisedPnl: string | null;
   /** The frame's `realised_pnl_session`, or `null`: "—" (#911 BQ-8). */
   readonly realisedToday: { readonly value: string | null };
-  /** The server's R or the host's derivation; `null`: "—", read "R unavailable: no stop price" (D02 §5.1). */
-  readonly r: { readonly value: string | null };
+  /**
+   * The server's R or the host's derivation (#5239's `RValue`); `null`: "—" with its reason, which only for `no_stop`
+   * is D02 §5.1's "R unavailable: no stop price" (#911 BQ-8).
+   */
+  readonly r: {
+    readonly value: string | null;
+    readonly reason?: PositionsGridRUnavailable | undefined;
+  };
   readonly leverage: string | null;
   readonly marginMode: { readonly value: "cross" | "isolated" | "portfolio" | null };
   readonly liqPrice: string | null;
@@ -218,6 +227,14 @@ const SIDE_GLYPH = { long: "▲", short: "▼" } as const;
 /** D02 §5.1: a null liquidation price is "—", spoken so. */
 const NO_LIQ = "no liquidation price from Bybit";
 const NO_VALUE = "no value";
+
+/**
+ * What a "—" R reads (D02 §5.1, #911 BQ-8): D02's "R unavailable: no stop price", CMP-116's own default, only where
+ * the row has no stop. No entry or mark price, a stop at the entry (a breakeven stop) or no reason given read a neutral
+ * "R unavailable", never a false "no stop price"; fuller words are G-W3's to give.
+ */
+const rReading = (r: PositionsGridRow["r"]): string | undefined =>
+  r.reason === "no_stop" ? undefined : "R unavailable";
 
 /**
  * D02 §5.3's cell anatomy per tier (D01 D5): the glyph (a text glyph until CMP-019 registers `triangle`,
@@ -591,12 +608,19 @@ function PositionRow<R extends PositionsGridRow>({
             <PnLBadge value={row.unrealisedPnl} format="abs" currency={parts.currency} />
           </td>
         );
-      case "r":
+      case "r": {
+        const reading = rReading(row.r);
         return (
           <td key={id} {...grid.cellProps(c, numeric)}>
-            <PnLBadge value={row.r.value} format="r" places={2} />
+            <PnLBadge
+              value={row.r.value}
+              format="r"
+              places={2}
+              {...(reading === undefined ? {} : { nullReading: reading })}
+            />
           </td>
         );
+      }
       case "rpnl_today":
         return (
           <td key={id} {...grid.cellProps(c, numeric)}>
