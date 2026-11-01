@@ -112,6 +112,9 @@ services:
         condition: service_healthy
       questdb:
         condition: service_healthy
+      # #4014: the schema step (`migrate`, below) runs first; `api` never starts after a failed one.
+      migrate:
+        condition: service_completed_successfully
     environment:
       CV_ENVIRONMENT: ${CV_ENVIRONMENT:-demo}
       CV_FEED: ${CV_FEED:-synthetic}
@@ -176,15 +179,19 @@ services:
       cv-internal:
         ipv4_address: 172.28.0.10
 
-  # #3897: the deploy's explicit schema step, a one-shot built from the api's Dockerfile: `alembic
-  # upgrade head`, the QuestDB DDL the image ships, then the drift guard
-  # (docs/ops/runbooks/storage-migrate.md). Opt-in (`--profile core --profile migrate run --rm
-  # --build migrate`) and NOT a dependency of `api`: an automated apply waits for #3093. A non-zero
-  # exit stops the deploy. On a fresh database run it once before `api`: the api's rules service
-  # reads its Postgres tables at start on every storage backend, the fake one included, and the
-  # api exits until they exist.
-  # `pull_policy: build` rebuilds it on every run, so it is this checkout's build and never a stale
-  # one; it shares no `image:` tag with `api` (docker-compose.dev.yml builds api's `builder` target).
+  # #3897: the schema step, a one-shot built from the api's Dockerfile: `alembic upgrade head`, the
+  # QuestDB DDL the image ships, then the drift guard (docs/ops/runbooks/storage-migrate.md). `api`
+  # waits for it to complete successfully (#4014), so every `up` that includes `api` runs it first,
+  # and a non-zero exit stops that `up` before `api` starts. It shares `core` with `api` because
+  # compose refuses an `api` that depends on a service of an inactive profile, and keeps `migrate`
+  # so that `--profile core --profile migrate` selects it as before. `run --rm --build migrate`
+  # runs it alone and returns its exit status as the shell's. On a fresh database the first `up`
+  # creates the tables before `api` starts: the api's rules service reads them at start on every
+  # storage backend, the fake one included.
+  # `pull_policy: build` rebuilds it on every `up` and `run`, so it is this checkout's build and
+  # never a stale one; it shares no `image:` tag with `api` (docker-compose.dev.yml builds api's
+  # `builder` target). The deploy overlay gives it the image the deploy verified instead
+  # (docker-compose.deploy.yml).
   # The step reads CV_PG_DSN inside the container; here it comes from CV_PG_OWNER_DSN
   # (Settings.pg_owner_dsn, the cv_owner login) and never from the CV_PG_DSN that `api` reads, which
   # stays the app role's. The default is the dev stack's, as for `api`.
@@ -193,7 +200,7 @@ services:
       context: ../..
       dockerfile: infra/images/Dockerfile.api
     pull_policy: build
-    profiles: ["migrate"]
+    profiles: ["core", "migrate"]
     entrypoint: ["python", "-m", "candleviewer.storage.migrate"]
     depends_on:
       postgres:

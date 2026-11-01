@@ -20,6 +20,12 @@ name: _job-migrations
 # integration suite, a 60s upgrade-timing budget (§9.3 rule 11), and a
 # byte-identical-modulo-timestamps schema dump assertion around the
 # round-trip.
+#
+# #4014 adds the QuestDB twin of the lockfile step (CI-QDB-LOCK-000 to -005):
+# `backend/db/questdb/lockfile.json` pins the bytes of every applied `*.sql`
+# file there, and `tools/ci/verify_questdb_ddl_lock.py` compares the tree with
+# the lock and with the merge base (C-5.4). The `migrations` filter of pr.yml
+# names that directory, so a PR that edits only a DDL file starts this job.
 
 on:
   workflow_call: {}
@@ -81,6 +87,14 @@ jobs:
           # A merge train has neither: it is built on main (#3783).
           BASE_REF: ${{ github.base_ref || github.event.merge_group.base_ref || 'main' }}
         run: uv run --project services/api python tools/ci/verify_migration_lockfile.py --base-ref "origin/${BASE_REF#refs/heads/}"
+
+      - name: QuestDB DDL lock (#4014, C-5.4 — an applied file is never edited)
+        working-directory: .
+        env:
+          # A merge group has no base_ref; its target branch is merge_group.base_ref, a full ref (#3433).
+          # A merge train has neither: it is built on main (#3783).
+          BASE_REF: ${{ github.base_ref || github.event.merge_group.base_ref || 'main' }}
+        run: uv run --project services/api python tools/ci/verify_questdb_ddl_lock.py --base-ref "origin/${BASE_REF#refs/heads/}"
 
       - name: Bootstrap cv_owner/cv_app/cv_ro roles and privileges (#1556)
         working-directory: .

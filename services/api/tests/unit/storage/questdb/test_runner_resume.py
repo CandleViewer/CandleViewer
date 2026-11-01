@@ -7,7 +7,8 @@ shape 0004 re-creates. No docker: `_Engine` models only what was measured on `qu
 (2026-10-21): a plain duplicate `ADD COLUMN` raises, `table_columns()` of an absent table raises and
 shows an `ALTER` only once the table's WAL apply ran, `DROP TABLE` drops the rows, and
 `CREATE TABLE IF NOT EXISTS` and `DEDUP ENABLE UPSERT KEYS` can be repeated. The real engine is
-`tests/integration/storage/test_questdb_ddl_resume.py`.
+`tests/integration/storage/test_questdb_ddl_resume.py`. The prefix tests (#4014) also compare the
+partitioning of each table, which `_Engine` records from its `CREATE`.
 """
 
 from __future__ import annotations
@@ -60,13 +61,16 @@ class _Table:
     rows: int = 0
     behind: int = 0  # ALTERs the WAL apply job has not applied yet
     suspended: bool = False
+    partition: str = ""  # PARTITION BY unit, as its CREATE declared it
     applied: dict[str, str] = field(init=False)  # what `table_columns()` shows
 
     def __post_init__(self) -> None:
         self.applied = dict(self.columns)
 
 
-_CREATE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\) TIMESTAMP", re.IGNORECASE)
+_CREATE = re.compile(
+    r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\) TIMESTAMP\(\w+\) PARTITION BY (\w+)", re.IGNORECASE
+)
 _KEYS = re.compile(r"DEDUP UPSERT KEYS\s*\(([^)]*)\)", re.IGNORECASE)
 _ADD = re.compile(r"ALTER TABLE (\w+) ADD COLUMN (\w+) (\w+)", re.IGNORECASE)
 _DEDUP = re.compile(r"ALTER TABLE (\w+) DEDUP ENABLE UPSERT KEYS\s*\(([^)]*)\)", re.IGNORECASE)
@@ -103,7 +107,8 @@ class _Engine:
             defs = [column.split() for column in m[2].split(",")]
             columns = {name.strip('"').lower(): kind.upper() for name, kind, *_ in defs}
             keys = _KEYS.search(text)
-            self.tables.setdefault(m[1].lower(), _Table(columns, _keys(keys[1]) if keys else set()))
+            created = _Table(columns, _keys(keys[1]) if keys else set(), partition=m[3].upper())
+            self.tables.setdefault(m[1].lower(), created)
         elif text.upper().startswith("DROP TABLE IF EXISTS"):
             self.tables.pop(text.rstrip(";").split()[-1].lower(), None)
         elif m := _ADD.match(text):
@@ -254,10 +259,18 @@ async def test_a_column_present_with_another_type_is_drift_and_its_file_stays_un
     assert engine.records == NAMES[:5]
 
 
-async def test_an_ilp_shaped_table_stops_the_run_at_0003_before_any_drop() -> None:
+@pytest.mark.parametrize(
+    "kept_keys",
+    [set(), {"ts"}],
+    ids=["no-keys", "some-keys"],
+)
+async def test_an_ilp_shaped_bars_table_stops_the_run_at_0003_before_0004_drops_it(
+    kept_keys: set[str],
+) -> None:
+    """A table with only some of its first CREATE's keys is drift too, not just a keyless one."""
     engine = await _migrated(records_kept=2)
     for table in engine.tables.values():
-        table.keys = set()  # ILP creates the DDL's columns and no upsert keys (#3897)
+        table.keys = set(kept_keys)  # ILP creates the DDL's columns and no upsert keys (#3897)
 
     with pytest.raises(StorageSchemaDrift, match="table bars_time lacks its DDL upsert keys"):
         await run_migrations(engine, DDL_DIR, sleep=_no_sleep)
@@ -281,8 +294,10 @@ async def test_the_guard_reads_columns_only_after_the_alter_was_applied() -> Non
 
     await run_migrations(engine, DDL_DIR, sleep=record)  # "already exists" if it read too early
 
-    # The record read's and the guard's, then one before each 0007 ALTER after its first: each
-    # waits for the one before it on `heatmap_cells` to be applied.
+    # Five waits, all the guard's (the fake does not model the record table, so its read waits for
+    # nothing): `liquidations` once, as 0005's ALTER is not applied yet; `orderbook_deltas` once,
+    # before 0006's second ADD COLUMN on it; `heatmap_cells` three times, before the second to
+    # fourth ADD COLUMN of 0007. Each waits for the ALTER before it on that table to be applied.
     assert engine.records == NAMES and slept == [0.02] * 5
 
 
@@ -358,3 +373,90 @@ def test_every_shipped_statement_has_a_resume_rule(path: Path) -> None:
         and drop_target(stmt) not in recreated
     ]
     assert unruled == []
+
+
+# --- Every upgrade path ends at a fresh install's tables (#4014) -------------------------------
+#
+# The guard skips the `DROP TABLE` of a re-created table once the live table has the re-creation's
+# column names and upsert keys, and `0004`'s check compares nothing else. A file that re-creates a
+# table only to change a column type, drop an upsert key or move the partitioning would therefore be
+# skipped. No shipped file does; the first one that does fails the prefix test below.
+
+
+def _shape(table: _Table | None) -> tuple[dict[str, str], frozenset[str], str] | None:
+    """A table as its DDL fixes it: columns with their types, upsert keys and partitioning."""
+    return None if table is None else (dict(table.columns), frozenset(table.keys), table.partition)
+
+
+def _first_files(directory: Path, prefix: int, work: Path) -> tuple[list[Path], Path]:
+    """The files of `directory` in order, and a directory in `work` holding the first `prefix`."""
+    files = sorted(directory.glob("*.sql"))
+    installed = work / "installed"
+    installed.mkdir(parents=True)
+    for path in files[:prefix]:
+        shutil.copy(path, installed / path.name)
+    return files, installed
+
+
+async def _tables_that_differ_from_a_fresh_install(
+    directory: Path, prefix: int, work: Path
+) -> list[str]:
+    """Install the first `prefix` files of `directory`, run the whole directory on top, and name the
+    tables whose shape differs from a fresh install's: each statement as written, once, in order."""
+    files, installed = _first_files(directory, prefix, work)
+    fresh = _Engine()
+    for path in files:
+        for statement in parse_ddl_file_statements(path):
+            await fresh.execute(statement)
+    upgraded = _Engine()
+    await run_migrations(upgraded, installed, sleep=_no_sleep)
+    assert upgraded.records == [path.name for path in files[:prefix]]  # exactly the prefix is there
+    await run_migrations(upgraded, directory, sleep=_no_sleep)
+    names = sorted(fresh.tables.keys() | upgraded.tables.keys())
+    return [n for n in names if _shape(fresh.tables.get(n)) != _shape(upgraded.tables.get(n))]
+
+
+@pytest.mark.parametrize("prefix", range(len(FILES) + 1))
+async def test_an_install_at_any_prefix_of_the_files_ends_with_the_tables_of_a_fresh_install(
+    prefix: int, tmp_path: Path
+) -> None:
+    assert await _tables_that_differ_from_a_fresh_install(DDL_DIR, prefix, tmp_path) == []
+
+
+_T = (
+    "CREATE TABLE IF NOT EXISTS t (ts TIMESTAMP, symbol SYMBOL, price {price}) TIMESTAMP(ts) "
+    "PARTITION BY {unit} WAL DEDUP UPSERT KEYS({keys});\n"
+)
+
+
+def _re_create(tmp_path: Path, **changed: str) -> Path:
+    """`0001.sql` creates `t`; `0002.sql` drops and re-creates it with only `changed` different."""
+    shape = {"price": "DOUBLE", "unit": "DAY", "keys": "ts, symbol, price"}
+    directory = tmp_path / "ddl"
+    directory.mkdir()
+    (directory / "0001.sql").write_text(_T.format(**shape), encoding="utf-8")
+    (directory / "0002.sql").write_text(
+        "DROP TABLE IF EXISTS t;\n" + _T.format(**(shape | changed)), encoding="utf-8"
+    )
+    return directory
+
+
+async def test_the_prefix_check_reports_a_re_create_that_only_changes_a_column_type(
+    tmp_path: Path,
+) -> None:
+    ddl = _re_create(tmp_path, price="LONG")
+    assert await _tables_that_differ_from_a_fresh_install(ddl, 1, tmp_path / "work") == ["t"]
+
+
+async def test_the_prefix_check_reports_a_re_create_that_only_changes_the_upsert_keys(
+    tmp_path: Path,
+) -> None:
+    ddl = _re_create(tmp_path, keys="ts, symbol")  # a subset of the live keys: the guard's skip
+    assert await _tables_that_differ_from_a_fresh_install(ddl, 1, tmp_path / "work") == ["t"]
+
+
+async def test_the_prefix_check_reports_a_re_create_that_only_changes_the_partitioning(
+    tmp_path: Path,
+) -> None:
+    ddl = _re_create(tmp_path, unit="MONTH")
+    assert await _tables_that_differ_from_a_fresh_install(ddl, 1, tmp_path / "work") == ["t"]

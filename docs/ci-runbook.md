@@ -1098,6 +1098,34 @@ index alone, removing nothing.
   `WARN` and never fails the gate by itself: it asks the reviewer to confirm
   the Security review (C-10.2).
 
+### CI-QDB-LOCK-* — applied QuestDB DDL files (`tools/ci/verify_questdb_ddl_lock.py`, C-5.4)
+
+The `migrations` job runs the check after the Alembic lockfile step. It compares the `*.sql` files of
+`backend/db/questdb/` with `backend/db/questdb/lockfile.json` and with the tree at the merge base
+with `origin/main`, by bytes: a comment or a line ending is a change. Run it from the repo root with
+`python3 tools/ci/verify_questdb_ddl_lock.py`; `--no-base-check` skips the merge-base comparison, is
+for local use and is never passed by CI. No option rewrites the lock.
+
+- **CI-QDB-LOCK-000** (internal error, exit 2): the lock is missing or malformed (no object `files`,
+  a key that is not a bare `*.sql` name, an entry without a 64-digit lowercase `sha256`, a key that
+  appears twice), the merge base with the base ref cannot be resolved (a bad ref, a shallow clone),
+  or git cannot be read. Repair the lock or fetch the full history; an unresolvable base is never
+  read as an empty one.
+- **CI-QDB-LOCK-001** (a locked file's bytes differ from its entry): the file was edited after it
+  was locked. Restore it with `git checkout origin/main -- backend/db/questdb/<file>`. An applied file
+  is never edited (C-5.4): fix forward with a new file.
+- **CI-QDB-LOCK-002** (a `*.sql` file has no entry): a new file adds its entry in the PR that adds
+  it. Run `sha256sum backend/db/questdb/<file>` and add `"<file>": {"sha256": "<that hash>"}` to
+  `files` in `lockfile.json`, in filename order. A file that another PR added and left unlisted gets
+  its entry the same way.
+- **CI-QDB-LOCK-003** (an entry's file is not on disk): the file was deleted or renamed, and the
+  runner applies a renamed file again as a new one. Restore the file under its name.
+- **CI-QDB-LOCK-004** (a file at the merge base differs at HEAD, or is gone): the PR edited, deleted
+  or renamed an applied file, and the check reads the merge base, so rewriting the file's entry with
+  it does not pass. Restore the file and add a new one.
+- **CI-QDB-LOCK-005** (a `*.sql` entry is a symlink or not a regular file): the runner reads a DDL
+  file's own bytes. Replace it with a regular file.
+
 ### CI-IMG-* — container image supply chain (merge-to-main, `main.yml`)
 
 - **CI-IMG-001** (unpinned base image): a `FROM` line in a Dockerfile is not
@@ -1225,8 +1253,12 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   20 s, so a docker daemon that hangs can use up the smoke window. On dev this triggers
   automatic redeploy of the last known-good digest (`rolled-back` ledger
   entry); on staging it stops and alerts — roll back manually (§8). Check
-  the container logs for a stuck boot-time migration (advisory lock,
-  E03-T10) first; a long CI-DEP-002 wait is often a CI-DEP-004 in disguise.
+  the `migrate` step's log first (`docker compose ... logs migrate`): a
+  failed schema step stops `up` before `api` starts, and a long wait on its
+  advisory lock (E03-T10) is a CI-DEP-004. After a failed `up` the deploy
+  leaves the exited `migrate` container in place; once its log is read,
+  remove it (`docker compose ... rm -f migrate`): it holds the owner DSN the
+  step ran with.
 - **CI-DEP-003** (image mismatch after deploy): the probes are ok, but the
   running `api` container's image id is not the image id of the verified
   `<ref>@<digest>`; the error names both ids. The smoke test compares
@@ -1243,10 +1275,11 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   pins the `api` image: `docker compose ... config --images` prints only
   the image names (plain `config` prints the environment, credentials
   included).
-- **CI-DEP-004** (migration lock timeout): the boot-time Alembic advisory
-  lock (E03-T10) did not release within its own timeout, so the container
-  never reaches `/readyz`. Surfaces here as a CI-DEP-002 smoke timeout;
-  check the API container's boot logs for the lock-wait message.
+- **CI-DEP-004** (migration lock timeout): the `migrate` step's advisory
+  lock (E03-T10) did not release within its own timeout, so the step exits 4
+  and `up` starts no `api`. Surfaces here as the CI-DEP-002 of a failed `up`
+  (`service "migrate" didn't complete successfully: exit 4`); the step's log
+  has the lock-wait message (`docs/ops/runbooks/storage-migrate.md`).
 
 ### CI-DOC-* — documentation drift (this runbook's own gate)
 
@@ -1329,18 +1362,23 @@ section in the same sprint — do not just work around it and move on.
   `cosign verify`s the digest immediately before applying it, renders
   `infra/compose/.env` from `infra/compose/.env.example`, runs
   `docker compose ... up -d --wait --no-build` with the deploy overlay
-  `infra/compose/docker-compose.deploy.yml` (the `api` service runs the
-  verified `<ref>@<digest>`), smoke-tests `/healthz` + `/readyz` and checks
-  that the running `api` container's image id is the verified image's
-  (CI-DEP-003 otherwise), then appends a record to
+  `infra/compose/docker-compose.deploy.yml` (the `api` service and the
+  `migrate` step it waits for run the verified `<ref>@<digest>`), removes
+  the exited `migrate` container (it holds the owner DSN the step ran with;
+  after a failed `up` it stays, for its log), smoke-tests `/healthz` +
+  `/readyz` and checks that the running `api` container's image id is the
+  verified image's (CI-DEP-003 otherwise), then appends a record to
   `deployments/ledger.jsonl` (sha, digest, environment, actor, timestamp,
   outcome, duration) — committed by the workflow for auditability until
   E04's observability lands.
 - **Dev** auto-rolls-back on a failed smoke test: the previous `success`
   ledger entry's digest is looked up, verified and deployed automatically
-  through the same overlay, and the smoke test checks that the running
-  `api` container's image id is that digest's. Both outcomes
-  (`smoke-failed` or `sha-mismatch`, then `rolled-back`) land in the ledger.
+  through the same overlay with `up --no-deps api`, so only `api` is
+  recreated and the older image's schema step is not run (it cannot find a
+  revision a newer image applied; the schema stays forward), and the smoke
+  test checks that the running `api` container's image id is that digest's.
+  Both outcomes (`smoke-failed` or `sha-mismatch`, then `rolled-back`) land
+  in the ledger.
 - **Staging never auto-rolls-back** (a half-rolled-back staging environment
   mid-soak is harder to reason about than a stopped one) — a failed smoke
   test stops the job; roll back manually by dispatching
@@ -1349,7 +1387,12 @@ section in the same sprint — do not just work around it and move on.
   or the digest recorded in `main.yml`'s `image-supply-chain-evidence`
   artifact / SBOM-diff job summary). That rollback is a deploy of the
   previous digest: it runs through the same overlay, and the smoke test
-  checks its image id.
+  checks its image id. It is a full `up`, so it runs that image's schema
+  step first, and against a schema a newer image migrated the step refuses
+  (exit 4: Alembic cannot find the database's revision; exit 9: QuestDB
+  holds columns a newer DDL file added) and `up` starts no `api`; start the
+  older `api` alone with `up --no-deps api`, the way out for both
+  (`docs/ops/runbooks/storage-migrate.md`).
 - Rollback never runs a down-migration (ADR-0013 rule 9): migrations are
   additive expand/contract, so redeploying an older image against the
   current schema is always safe; the deploy script does not invoke

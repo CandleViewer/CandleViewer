@@ -7,16 +7,16 @@ name: deploy-dev
 #
 # Runs on the self-hosted dev-host runner: no SSH keys held in GitHub, the
 # runner is inside the trust boundary and holds no secrets beyond its own
-# registration token (SR-141). Migrations run on container boot under an
-# advisory lock (E03-T10); `docker compose up --wait` blocks on the `api`
-# service healthcheck, which only goes healthy once that boot sequence
-# completes, so this workflow never smoke-tests a container that is still
-# migrating.
+# registration token (SR-141). Migrations run in the `migrate` one-shot
+# before `api` starts, from the image this workflow verified, under an
+# advisory lock (E03-T10): `api` waits for it to exit 0 (#4014), and a
+# failed step stops `docker compose up --wait` before `api` starts, so
+# this workflow never smoke-tests an `api` that is still migrating.
 #
 # Error codes: CI-DEP-001 signature verification failed, CI-DEP-002 smoke
 # failed, CI-DEP-003 image mismatch after deploy, CI-DEP-004 migration lock
-# timeout (surfaced inside the boot sequence itself; a stuck migration
-# shows up here as a CI-DEP-002 smoke timeout).
+# timeout (the `migrate` step exits 4 and compose starts no `api`: a stuck
+# migration shows up here as the CI-DEP-002 of a failed `up`).
 
 on:
   workflow_run:

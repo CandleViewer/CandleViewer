@@ -14,12 +14,13 @@ YAML, without needing Docker installed. Rules 1-3 apply to the base file:
 Rule 4 applies to the deploy overlay, ``docker-compose.deploy.yml``, which
 ``tools/ci/deploy_dev.py`` applies over the base file and runs with ``--no-build``:
 
-4. It sets only the ``api`` service, and only its image, pinned to the
-   verified ``${CV_API_IMAGE_REF:?...}@${CV_IMAGE_DIGEST:?...}``, a pull policy
-   (``always`` or ``missing``) and ``read_only: true``. ``build``, mounts,
+4. It sets only the ``api`` and ``migrate`` services (the schema step ``api`` waits
+   for), and for each only its image, pinned to the verified
+   ``${CV_API_IMAGE_REF:?...}@${CV_IMAGE_DIGEST:?...}``, and a pull policy
+   (``always`` or ``missing``); ``api`` also ``read_only: true``. ``build``, mounts,
    ``entrypoint``, ``command`` and any other key, service or top-level entry
    are refused: the deploy runs the image it verified, with that image's own
-   entrypoint and code.
+   entrypoint and code, for the API and for the schema step.
 
 Rule 5 applies to every compose file (``docker-compose*.yml``):
 
@@ -107,8 +108,12 @@ DEPLOY_OVERLAY = Path(__file__).parent.parent / "compose" / "docker-compose.depl
 # `:?` makes compose refuse to start while the variable is unset or empty.
 _DEPLOY_IMAGE_RE = re.compile(r"^\$\{CV_API_IMAGE_REF:\?[^}]+\}@\$\{CV_IMAGE_DIGEST:\?[^}]+\}$")
 _DEPLOY_PULL_POLICIES = ("always", "missing")
-_DEPLOY_API_KEYS = frozenset({"image", "pull_policy", "read_only"})
-_DEPLOY_REFUSED = {  # any other key outside _DEPLOY_API_KEYS: "is not set by the deploy overlay"
+#: The services the overlay sets and the keys each may carry (migrate's root stays the base's).
+_DEPLOY_KEYS = {
+    "api": frozenset({"image", "pull_policy", "read_only"}),
+    "migrate": frozenset({"image", "pull_policy"}),
+}
+_DEPLOY_REFUSED = {  # any other key outside _DEPLOY_KEYS: "is not set by the deploy overlay"
     "build": "builds locally; the deploy runs the image it verified",
     "volumes": "mounts {value!r}; the deploy runs the image's own code",
     "entrypoint": "replaces the image's entrypoint ({value!r})",
@@ -298,24 +303,27 @@ def check_healthchecks(compose: dict[str, Any]) -> list[str]:
 
 
 def check_deploy_overlay(compose: dict[str, Any]) -> list[str]:
-    """Rule 4: only the api service's verified image, a pull policy and a read-only root."""
+    """Rule 4: the api and migrate services' verified image and a pull policy, and the api's
+    read-only root."""
     compose = compose or {}  # an empty file: every required key is missing
     services = _services(compose)
     extra = [f"top-level '{key}'" for key in compose if key != "services"]
-    extra += [f"service '{name}'" for name in services if name != "api"]
-    errors = [f"{what}: the deploy overlay sets only services.api" for what in extra]
-    api = services.get("api") or {}
-    for key in sorted(set(api) - _DEPLOY_API_KEYS):
-        why = _DEPLOY_REFUSED.get(key, "is not set by the deploy overlay")
-        errors.append(f"service 'api': {key} {why.format(value=api[key])}")
-    if api.get("read_only") is not True:
-        errors.append(f"service 'api': read_only is {api.get('read_only')!r}, not true")
-    image, policy = api.get("image"), api.get("pull_policy")
-    if not isinstance(image, str) or not _DEPLOY_IMAGE_RE.match(image):
-        pin = "${CV_API_IMAGE_REF:?...}@${CV_IMAGE_DIGEST:?...}"
-        errors.append(f"service 'api': image {image!r} is not pinned to {pin}")
-    if policy not in _DEPLOY_PULL_POLICIES:
-        errors.append(f"service 'api': pull_policy {policy!r} is neither always nor missing")
+    extra += [f"service '{name}'" for name in services if name not in _DEPLOY_KEYS]
+    only = "the deploy overlay sets only services.api and services.migrate"
+    errors = [f"{what}: {only}" for what in extra]
+    for name, keys in _DEPLOY_KEYS.items():
+        service = services.get(name) or {}
+        for key in sorted(set(service) - keys):
+            why = _DEPLOY_REFUSED.get(key, "is not set by the deploy overlay")
+            errors.append(f"service '{name}': {key} {why.format(value=service[key])}")
+        if "read_only" in keys and service.get("read_only") is not True:
+            errors.append(f"service '{name}': read_only is {service.get('read_only')!r}, not true")
+        image, policy = service.get("image"), service.get("pull_policy")
+        if not isinstance(image, str) or not _DEPLOY_IMAGE_RE.match(image):
+            pin = "${CV_API_IMAGE_REF:?...}@${CV_IMAGE_DIGEST:?...}"
+            errors.append(f"service '{name}': image {image!r} is not pinned to {pin}")
+        if policy not in _DEPLOY_PULL_POLICIES:
+            errors.append(f"service '{name}': pull_policy {policy!r} is neither always nor missing")
     return errors
 
 

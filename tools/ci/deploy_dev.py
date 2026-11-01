@@ -13,9 +13,12 @@ Flow (ticket "Scope / Deliverables" + acceptance scenarios):
      `CV_GIT_SHA` set to the just-verified build and run
      `docker compose ... up -d --wait --no-build` over the base file and the
      deploy overlay `infra/compose/docker-compose.deploy.yml`: the `api`
-     service runs the verified `<ref>@<digest>`, which compose also gets in
+     service, and the `migrate` one-shot that it waits for (the schema step,
+     #4014), run the verified `<ref>@<digest>`, which compose also gets in
      its own environment (`--wait` waits on the `api` healthcheck, which is
-     only `/healthz`; step 3 checks the image).
+     only `/healthz`; step 3 checks the image). Once `up` has returned, the
+     exited `migrate` container, which holds the owner DSN the step ran with,
+     is removed; after a failed `up` it stays, for its log.
   3. Smoke test: poll `GET /healthz` and `GET /readyz` until both report
      `status: ok`, then check that the running `api` container's image id
      equals the verified image's id (`check_running_image`; CI-DEP-003
@@ -23,18 +26,18 @@ Flow (ticket "Scope / Deliverables" + acceptance scenarios):
   4. Append a `deployments/ledger.jsonl` record (success or failure).
   5. Dev-only: on smoke failure, automatically redeploy the previous digest
      (recorded in the ledger) through steps 1-3 with the same compose files,
-     and record that as its own entry — staging never auto-rolls-back
-     (ticket "Technical notes"); a staging rollback is a deploy of the
-     previous digest.
+     restarting `api` alone (`up --no-deps api`: the previous image's schema
+     step is not run, and the schema stays forward), and record that as its
+     own entry — staging never auto-rolls-back (ticket "Technical notes"); a
+     staging rollback is a deploy of the previous digest.
 
 Stdlib + `urllib.request` only; no third-party HTTP client needed for a
 handful of polling GETs from a CI/runner context.
 
 Error codes: CI-DEP-001 signature verification failed, CI-DEP-002 smoke
 failed, CI-DEP-003 image mismatch after deploy, CI-DEP-004 migration lock
-timeout (surfaced by the migration job itself; this script only waits on
-the compose healthcheck, which stays unhealthy while the boot-time
-migration/advisory-lock step is in progress).
+timeout (the `migrate` step exits 4 and compose starts no `api`: this script
+reports that failed `up` as CI-DEP-002).
 """
 
 from __future__ import annotations
@@ -234,12 +237,20 @@ def _compose_args(compose_files: tuple[str, ...], profile: str) -> list[str]:
 
 
 def compose_up(
-    compose_files: tuple[str, ...], *, image_ref: str, digest: str, profile: str = "core"
+    compose_files: tuple[str, ...],
+    *,
+    image_ref: str,
+    digest: str,
+    profile: str = "core",
+    api_alone: bool = False,
 ) -> None:
     """`up -d --wait --no-build`, so nothing is built, with the verified ref and digest set in
     compose's own environment: they win over `.env` and the runner's environment when compose
-    interpolates the deploy overlay's `image:`. CI-DEP-002 if `up` fails."""
+    interpolates the deploy overlay's `image:`. `api_alone` adds `--no-deps api`: only `api` is
+    recreated, and the schema step it waits for (`migrate`) is not run. CI-DEP-002 if `up` fails."""
     args = [*_compose_args(compose_files, profile), "up", "-d", "--wait", "--no-build"]
+    if api_alone:
+        args += ["--no-deps", "api"]
     env = {**os.environ, "CV_API_IMAGE_REF": image_ref, "CV_IMAGE_DIGEST": digest}
     result = subprocess.run(args, capture_output=True, text=True, check=False, env=env)
     if result.returncode != 0:
@@ -247,6 +258,18 @@ def compose_up(
             "CI-DEP-002",
             f"docker compose up --wait failed: {result.stderr.strip()[:1000]}",
         )
+
+
+def remove_schema_step(compose_files: tuple[str, ...], *, profile: str = "core") -> None:
+    """Remove the exited `migrate` container once `up` has returned. Compose hands the step the
+    owner DSN as its `CV_PG_DSN`, and a stopped container keeps it in its configuration until it
+    is removed or recreated. `rm` takes stopped containers only (no `-s`), so a running `api` is
+    left alone. Only a successful `up` gets here: after a failed one the container stays, for its
+    log (`docs/ops/runbooks/storage-migrate.md`). CI-DEP-002 if `rm` fails."""
+    _docker_query(
+        [*_compose_args(compose_files, profile), "rm", "-f", "migrate"],
+        "docker compose rm -f migrate",
+    )
 
 
 def _get_json(url: str, timeout_s: float = 3.0) -> dict:
@@ -262,7 +285,7 @@ _DOCKER_QUERY_TIMEOUT_S = 20.0
 
 
 def _docker_query(args: list[str], what: str) -> str:
-    """Run one read-only docker query; CI-DEP-002 (never echoing stdout) if it cannot complete."""
+    """Run one docker command, bounded; CI-DEP-002 (never echoing stdout) if it cannot complete."""
     try:
         result = subprocess.run(
             args, capture_output=True, text=True, check=False, timeout=_DOCKER_QUERY_TIMEOUT_S
@@ -425,6 +448,7 @@ def deploy(
 
     try:
         compose_up(compose_files, image_ref=image_ref, digest=digest)
+        remove_schema_step(compose_files)
         smoke_test(base_url, image, compose_files, timeout_s=smoke_timeout_s)
     except DeployError as exc:
         outcome: Literal["smoke-failed", "sha-mismatch"] = (
@@ -495,7 +519,10 @@ def _auto_rollback(
     just wrote (which itself is not a success), so this never loops back to
     the digest that just failed. The previous digest then goes through what a
     forward deploy does: `cosign verify`, `compose_up` with the same compose
-    files and the full smoke test, image-id check included.
+    files and the full smoke test, image-id check included. `compose_up` starts
+    `api` alone: the previous image's `migrate` cannot find a revision that the
+    failed image applied, so the step is not run and the schema stays forward
+    (migrations are backward-compatible for one release: C-5.1, ADR-0013 rule 9).
     """
     previous_digest = read_last_success_digest(environment, ledger_path)
     if previous_digest is None or previous_digest == failed_digest:
@@ -515,7 +542,7 @@ def _auto_rollback(
             image_digest=previous_digest,
             git_sha="rollback",
         )
-        compose_up(compose_files, image_ref=image_ref, digest=previous_digest)
+        compose_up(compose_files, image_ref=image_ref, digest=previous_digest, api_alone=True)
         smoke_test(
             base_url, f"{image_ref}@{previous_digest}", compose_files, timeout_s=smoke_timeout_s
         )

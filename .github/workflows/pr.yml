@@ -308,6 +308,9 @@ jobs:
               - 'services/api/**/models.py'
               - 'services/api/alembic.ini'
               - 'tools/ci/verify_migration_lockfile.py'
+              # The applied QuestDB DDL files, their lock and the check that pins them (#4014).
+              - 'backend/db/questdb/**'
+              - 'tools/ci/verify_questdb_ddl_lock.py'
               - 'tools/ci/migration_lint.py'
               - 'tools/ci/security-sensitive-tables.txt' # migration_lint.py's CI-MIG-006 list
               - 'tools/ci/run_previous_release_upgrade.py'
@@ -774,8 +777,10 @@ jobs:
     needs: changed-paths
     # E03-T10 base gate (single-head/drift/expand-contract/upgrade-path) plus
     # bugfix #1556 (E07-T02 / #168 defect 1) additions: timing budget,
-    # lockfile integrity, cv_app privilege matrix. Applicable whenever a
-    # migration revision file, models.py or the migration tooling changes.
+    # lockfile integrity, cv_app privilege matrix; #4014 adds the lock check of
+    # the QuestDB DDL files. Applicable whenever a migration revision file,
+    # models.py, a DDL file under backend/db/questdb/ or the migration tooling
+    # changes.
     if: ${{ needs.changed-paths.outputs.migrations == 'true' }}
     uses: ./.github/workflows/_job-migrations.yml
 

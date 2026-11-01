@@ -32,48 +32,75 @@ has run on that QuestDB. The step applies each DDL file once, on a QuestDB that 
 not listed and those tables hold bar data without `0004`'s columns and upsert keys (tables created by
 ILP, for example), take a rebuild plan or a backup first: the rows in them are dropped. A table that
 already has both is kept: that is a run that applied `0004` and died before its record (see "After a
-crash").
+crash"). The step also runs on the first `up` that includes `api`, so read `_cv_migrations` first.
 
 Stop the API and every other ILP writer before the first run on an install that has tables: a live
 writer can create a table again between a drop and its re-creation. On an install that has tables but
 no `_cv_migrations` (the case #3897 came from: ILP created them on first write), drop or rebuild those
 tables first. `CREATE TABLE IF NOT EXISTS` leaves the shape ILP inferred (no DEDUP keys) and the drift
 guard compares column names only. A plain `ADD COLUMN` of a column that exists on a table lacking its
-DDL upsert keys now stops the run at exit 9, before any drop, as it stopped at exit 7 before #3093. A
-keyless table that lacks the column still reaches `0004`'s drop: the check before the run is yours.
+DDL upsert keys, as a table ILP created does, now stops the run at exit 9, as it stopped at exit 7
+before #3093: for the `bars_*` tables that is at `0003`, before `0004` drops them. A keyless table
+that lacks the column still reaches `0004`'s drop: the check before the run is yours.
 
 ```bash
 C="docker compose -f infra/compose/docker-compose.yml"
-CV_PG_OWNER_DSN='<the cv_owner DSN>' $C --profile core --profile migrate run --rm --build migrate \
-  && $C --profile core up -d --build api
+CV_PG_OWNER_DSN='<the cv_owner DSN>' $C --profile core up -d --build api
+```
+
+The `migrate` container stays after the step exits, and its stored configuration holds the owner
+DSN it was given (`docker inspect` shows it to anyone with Docker access) until it is removed or
+recreated. Remove it once the `up` has returned; a running `api` is left alone. If the step failed,
+read its log first (`$C --profile core logs migrate`), then remove it:
+
+```bash
+$C --profile core rm -f migrate
 ```
 
 The step reads `CV_PG_OWNER_DSN` (the owner role, `cv_owner`: `21-database-schema.md` §9.1). Compose
 hands it to the `migrate` container as its `CV_PG_DSN`; the `api` service does not take it, and
-`CV_PG_DSN` stays the app role's (`cv_app`, which has no DDL privileges). Give the owner DSN to that
-one command, as above, so the owner login is not left in the shell's environment or in
-`infra/compose/.env` for the commands that follow: never `export` it and never write it to `.env`.
+`CV_PG_DSN` stays the app role's (`cv_app`, which has no DDL privileges). Every `up` that
+includes `api` runs the step, so give the owner DSN to each such `up`, and to a `run` of the step,
+as a prefix, as above, so the owner login is not left in the shell's environment or in
+`infra/compose/.env` for the commands that do not need it: never `export` it and never write it to
+`.env`.
 The shell also keeps the line you type in its history, so never paste the literal DSN: use
 `CV_PG_OWNER_DSN="$(<secret-store read>)"` as the prefix, which reads it from the operator's secret
 store, or type the line with a leading space under `HISTCONTROL=ignorespace`. On the dev stack `cv` is
 the owner, so `CV_PG_OWNER_DSN` is the same DSN as `CV_PG_DSN`; left unset, compose uses its
-placeholder DSN and the login fails (exit 4).
+placeholder DSN, the login fails (exit 4) and `up` starts no `api`.
 
 `--build` makes the one-shot and the API this checkout's build. Compose reuses an image that exists
 (`run` and `up` build only a missing one), so a release that adds a revision or a DDL file could
 otherwise run the step from an older build, apply nothing new, exit 0, and then start the new API on
-the old schema. `migrate` also has `pull_policy: build`, which makes `run` rebuild it even without
-the flag, and it shares no image tag with `api` (the dev override builds api's `builder` target);
-`api` has no such key, so it needs the flag.
+the old schema. `migrate` also has `pull_policy: build`, which makes `up` and `run` rebuild it even
+without the flag, and it shares no image tag with `api` (the dev override builds api's `builder`
+target); `api` has no such key, so it needs the flag.
 
-`run` starts Postgres and QuestDB if they are down, waits until they are healthy and returns the
-step's exit status, so `&&` starts the API on 0 only. `migrate` is opt-in (profile `migrate`) and not
-yet a dependency of `api`: the crash window between a file's DDL and its `_cv_migrations` record no
-longer fails the next run (#3093, see "After a crash"), but compose does not wire the apply in. Until
-it does, a person, or a deploy script that stops on a non-zero exit, runs it. To automate it, `api`
-gets `depends_on: {migrate: {condition: service_completed_successfully}}` and `migrate` the profiles
-`["core", "migrate"]`, together: compose refuses an `api` that depends on a service of an inactive
-profile.
+`up` starts Postgres and QuestDB if they are down, waits until they are healthy, runs the `migrate`
+one-shot and starts `api` once it has exited 0: `api` has
+`depends_on: {migrate: {condition: service_completed_successfully}}`, and `migrate` has the profiles
+`core` and `migrate`, because compose refuses an `api` that depends on a service of an inactive
+profile. The step runs on every `up` that includes `api`, a routine one of a running stack too:
+compose runs the `migrate` container again (it starts the exited one, or creates it once it was
+removed), and a run with nothing left to apply exits 0 (the crash window between a file's DDL and
+its `_cv_migrations` record no longer fails a run, #3093: see "After a crash"). A failed step stops
+that `up` (see "Exit status"): `api` is not started, and an `api` that is already running is left
+as it is. `restart api` and `up --no-deps api` start `api` alone and run no step, which is how to
+start an older image on a schema a newer one migrated: a full `up` of that image runs its step
+first, and the step refuses, with exit 4 when Alembic cannot find the database's revision and with
+exit 9 when QuestDB holds columns that a newer DDL file added (`StorageSchemaDrift`, those columns
+as `extra`).
+
+To run the step alone, as a rehearsal or the first run on a new install, give it the owner DSN the
+same way. `run` starts Postgres and QuestDB if they are down, waits until they are healthy and
+returns the step's exit status as the shell's. It names the `core` profile: `--profile migrate`
+alone is refused, because the two stores `migrate` waits for are in `core` and compose refuses a
+service whose dependency's profile is inactive.
+
+```bash
+CV_PG_OWNER_DSN='<the cv_owner DSN>' $C --profile core run --rm --build migrate
+```
 
 The step also needs `CV_QUESTDB_PG`, plus `CV_QUESTDB_PG_USER` and `CV_QUESTDB_PG_PASSWORD` if
 QuestDB's login is not the default (compose passes those two to neither `migrate` nor `api` today).
@@ -87,7 +114,11 @@ A failure is one JSON line, `storage_migrate_failed`: `step` (`ddl_files`, `pg_l
 `questdb_ddl` or `drift_guard`), `error` (the class in snake_case, as the log redaction replaces a run
 of 18 to 36 letters as an API key), `code` (the typed error's stable code), `exit_code`, `ddl_dir` and
 the typed error's own fields. It holds no DSN or driver message. Exit 8 also logs the runner's own
-`questdb_wal_not_applied` warning first.
+`questdb_wal_not_applied` warning first. Under `up`, compose reports a failed step as
+`service "migrate" didn't complete successfully: exit <n>` (Compose v5) and starts no `api`: `<n>`
+is one of the statuses below, and the step's own `exit_code` is in its `storage_migrate_failed` line
+in `$C --profile core logs migrate`. `run --rm migrate` returns the status as the shell's exit
+status.
 
 - **0 `OK`**: done; `storage_migrate_done` holds `questdb_files_applied`.
 - **1 `UNEXPECTED`**: a refused setting (a traceback names it) or an error with no class here (its
@@ -101,7 +132,8 @@ the typed error's own fields. It holds no DSN or driver message. Exit 8 also log
 - **6 `QUESTDB_UNAVAILABLE`** (`StorageTierUnavailable`): QuestDB refused the connection or the login,
   dropped it (SQLSTATE class 08, or a connection already closed) or stopped answering. Alembic has
   already run. A drop in the middle of a DDL file leaves that file's earlier statements applied: the
-  retry finishes the file (see "After a crash"). Check `CV_QUESTDB_PG`, its login and `questdb`.
+  retry finishes the file (see "After a crash"). Keep the API and every ILP writer stopped until the
+  re-run exits 0. Check `CV_QUESTDB_PG`, its login and `questdb`.
 - **7 `DDL_REFUSED`** (`StorageQueryFailed`): QuestDB refused a statement (`sqlstate`). Files before
   it are recorded; statements of the failing file that ran before the refusal stay applied, and a
   re-run skips them (see "After a crash"). A table that ILP created before the first run (the #3897
@@ -112,7 +144,8 @@ the typed error's own fields. It holds no DSN or driver message. Exit 8 also log
   (`table`; `reason`: `timeout` after 30 s, `suspended` or `unexpected_shape`). The statement it waited
   for was not run, and a re-run finishes the file. For `suspended`, fix the cause and run
   `ALTER TABLE <table> RESUME WAL;` (`recorder-rolloff.md`). For `timeout`, check `wal_tables()`, stop
-  the API and every other ILP writer or wait for the apply to catch up, then re-run.
+  the API and every other ILP writer or wait for the apply to catch up, then re-run. Keep the API
+  and every ILP writer stopped until the re-run exits 0.
 - **9 `SCHEMA_DRIFT`** (`StorageSchemaDrift`): a live table's column names differ from its DDL's once
   QuestDB's apply settled (about 5 s); `detail` names the table and the missing and extra columns. The
   runner raises it too (`step` `questdb_ddl`) for an `ADD COLUMN` whose column exists with another
@@ -129,16 +162,19 @@ QuestDB has no transactional DDL, so a step that was killed, lost its connection
 `ADD COLUMN`, and before a `DROP TABLE` of a table the same file re-creates (`0004`), the runner waits
 for that table's WAL apply and reads the live table. A column that is there with the DDL's type is
 skipped when the table has the upsert keys its first `CREATE` declares; a table without them (ILP sets
-none) stops the run at exit 9 before any drop, as it stopped at exit 7 before #3093. A `DROP TABLE` is
+none) stops the run at exit 9, as a table ILP created stopped at exit 7 before #3093: the `bars_*`
+tables stop at `0003`, before `0004` drops them. A `DROP TABLE` is
 skipped when the table already has every column and upsert key of its re-creation, so the bars written
 since are kept; an older table is still dropped and re-created. Each skip is one
 `questdb_statement_skipped` line (`filename`, `kind`, `table`, and `column` for an `ADD COLUMN`) and a
 file with a skip logs one `questdb_migration_resumed` warning: an earlier run died, find out why.
-Neither carries a value.
+Neither carries a value. Keep the API and every ILP writer stopped until the re-run exits 0: a writer
+that runs first can add a column the file was about to add, which the guard reads as the crash's own
+effect.
 
 **Incident note (#3093, P1).** The runner recorded a file only after its last statement and checked
 none, so a re-run failed at a plain `ADD COLUMN` (exit 7) and a re-run of `0004` dropped the six
 `bars_*` tables first. Found while fixing #3064 (#3077); filed 2026-10-17 as P2, raised to P1 that
 day; reproduced on 2026-10-21 on QuestDB 8.1.1, where 10 of 11 sampled crash points failed or lost
 rows. No loss is known: this step shipped on 2026-10-21 (#3982) and the rows are derived bars. Its
-risk register entry (`32-risk-register.md`) is tracked by #4014.
+risk register entry is a bullet of RSK-012 in `32-risk-register.md`.

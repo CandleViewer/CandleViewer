@@ -228,7 +228,9 @@ async def _effect_present(
 
     - `ADD COLUMN t.c TYPE` (8.1.1 rejects `IF NOT EXISTS`): skipped when `c` is on `t` with that
       type and `t` has the upsert keys its first `CREATE` declares (ILP sets none); a column of
-      another type, or a table without those keys, is `StorageSchemaDrift`, never a skip.
+      another type, or a table without those keys, is `StorageSchemaDrift`, never a skip. Those
+      keys are the first `CREATE`'s because keys only grow: a future re-key that removes one makes
+      a resumed `ADD COLUMN` on that table raise `StorageSchemaDrift` (exit 9), never skip.
     - `DROP TABLE t` of a table the same file re-creates (0004): skipped when `t` already has every
       column and upsert key of that re-creation, so the rows written since survive. A superset, not
       an equality: a later additive file must not make a lost record wipe the table. An old-shape

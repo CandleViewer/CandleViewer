@@ -318,7 +318,8 @@ bootstrap_invite() { # #4479's mint, in bootstrap-owner on this terminal: its to
   fi
   say "Starting api again."
   "${COMPOSE[@]}" --profile core up -d --wait api </dev/null ||
-    die "api did not get healthy after the bootstrap: read its log (runbook step 4)"
+    die "api did not get healthy after the bootstrap: read the logs of migrate (the schema" \
+      "step that runs first) and api (runbook step 4)"
   API_STOPPED=false
 }
 

@@ -160,7 +160,8 @@ EVENT_VALUES = [
     ("pr.yml:gates", SCAN % ("head", "head", "head")),
     ("pr.yml:ci-required", "needs.changed-paths.outputs.pr"),
     ("pr.yml:ci-required", DRAFT_FLAG),  # PR_DRAFT: empty off a pull request; read on one only
-    ("_job-migrations.yml:migrations", MIGRATIONS_BASE),
+    ("_job-migrations.yml:migrations", MIGRATIONS_BASE),  # the Alembic lock step
+    ("_job-migrations.yml:migrations", MIGRATIONS_BASE),  # the QuestDB DDL lock step (#4014)
 ]
 LANE = r'^\s*"?([\w-]+)"?:\s*\{\s*applicable:\s*(.+?),\s*result:\s*process\.env\.(RESULT_\w+)'
 SKIP = "CI-GATE-002: gate misconfiguration: %s applicable but skipped"
@@ -745,16 +746,26 @@ def test_every_condition_and_value_that_reads_the_event_is_reviewed() -> None:
     assert sorted(values) == sorted(EVENT_VALUES)
 
 
+#: The migrations job's two lock checks: the Alembic revisions and the QuestDB DDL files (#4014).
+LOCK_CHECKS = ["verify_migration_lockfile.py", "verify_questdb_ddl_lock.py"]
+
+
+def _lock_step(script: str) -> dict[str, Any]:
+    steps = _load("_job-migrations.yml")["jobs"]["migrations"]["steps"]
+    (step,) = [s for s in steps if script in str(s.get("run"))]
+    return step
+
+
+@pytest.mark.parametrize("script", LOCK_CHECKS, ids=["alembic", "questdb"])
 @pytest.mark.parametrize(
     "context",
     [{"github.base_ref": "main"}, {"github.event.merge_group.base_ref": MAIN}, _train(HEAD)],
     ids=["pr", "merge-group", "train"],
 )
 def test_migration_lockfile_check_compares_every_event_with_origin_main(
-    context: dict[str, str], tmp_path: Path
+    context: dict[str, str], script: str, tmp_path: Path
 ) -> None:
-    steps = _load("_job-migrations.yml")["jobs"]["migrations"]["steps"]
-    (step,) = [s for s in steps if "verify_migration_lockfile.py" in str(s.get("run"))]
+    step = _lock_step(script)
     # A merge group has no base_ref; its target branch is merge_group.base_ref, a full ref.
     fallback = "${{ " + MIGRATIONS_BASE + " }}"
     assert step["env"] == {"BASE_REF": fallback}
@@ -768,6 +779,15 @@ def test_migration_lockfile_check_compares_every_event_with_origin_main(
     proc = subprocess.run(run, env=env, capture_output=True, text=True, timeout=30)
     args = proc.stdout.splitlines()
     assert (proc.returncode, args[args.index("--base-ref") + 1]) == (0, "origin/main")
+
+
+@pytest.mark.parametrize("script", LOCK_CHECKS, ids=["alembic", "questdb"])
+def test_the_lock_steps_never_skip_the_base_comparison(script: str) -> None:
+    # --no-base-check is for local use: a step that passes it compares nothing with the merge base,
+    # so a file edited together with its own entry would pass. The step also fails the job.
+    step = _lock_step(script)
+    assert "--no-base-check" not in step["run"]
+    assert {"if", "continue-on-error"}.isdisjoint(step)
 
 
 def test_workflow_run_consumers_of_pr_ignore_merge_group_runs() -> None:
