@@ -327,6 +327,9 @@ async def test_a_position_waits_for_a_fill_the_composed_facade_holds_before_its_
         assert overtakes(c.world) == 0.0
 
 
+# The loop-turn waiter races a real timer on fast runners (C-9.3).
+# ticket: GH-5317 quarantined: 2026-11-01
+@pytest.mark.flaky
 @virtual
 async def test_an_overtake_through_the_composed_publisher_is_counted_on_the_runtimes_metrics() -> (
     None

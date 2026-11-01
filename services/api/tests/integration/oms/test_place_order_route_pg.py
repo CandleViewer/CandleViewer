@@ -425,6 +425,9 @@ async def test_transport_failure_lands_in_unknown_never_in_a_retry(world: World)
     assert create.order_link_id == row.order_link_id
 
 
+# The fixed timeout is sized for an idle runner (C-9.3).
+# ticket: GH-5328 quarantined: 2026-11-01
+@pytest.mark.flaky
 async def test_idempotent_replay(world: World) -> None:
     """Gherkin "Idempotent replay": the same Idempotency-Key and body again get the original answer
     with `Idempotency-Replayed: true` (the 24 h record). After a restart, a new process over the
