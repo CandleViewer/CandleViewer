@@ -757,7 +757,7 @@ Deviation: `BatchBuilder.patch` folded an empty range into the pending one, so `
 | #395 BQ-16 | `bar-store` microbenches | Coordinator ruling 2026-11-01 02:51Z / acceptance 03:38Z (RelayRoom R28), as the chart-engine CODEOWNER: F-02's per-bar checks stay unconditional. With the flags column written only once a series carries flags and the merge checked only when the first time is at or before the last bar's, the interleaved medians (8 rounds) are 1 M one-bar appends 34.4 → 40.6 ms (+6.3 ms per 1 M, about 6 ns a bar; ≤ 120 ms budget, about 79 ms headroom) and 100 k mutation steps 9.6 → 10.6 ms. No baseline moved: both are `*.perf.test.ts` budgets, in neither `bench/baseline.json` nor the matrix baselines, and `bench/results.json` is byte-identical. Joining the baselined set is a row for E11-T06 #449. |
 
 Seam limit: the scene graph cannot remove nodes, so `removeSeries` hides and unregisters the
-series' two hosts and frees its store and ring, and host node ids carry a generation number so a
+series' three hosts (wick, body and, since PR 2, the gap seam) and frees its store and ring, and host node ids carry a generation number so a
 re-added series id cannot collide. Node removal is a row for E11 (the scene graph).
 
 ## OHLC bars, gap seams, bar picks and `dataState` (E12-S06 PR 2)
