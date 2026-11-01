@@ -20,6 +20,7 @@ import hashlib
 import json
 import re
 from collections.abc import Iterator
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +98,35 @@ def test_gitleaks_scans_the_design_tokens_with_no_allowlisted_path() -> None:
     assert allowed == []
 
 
+class _InlineScripts(HTMLParser):
+    """Collects the bodies of inline `<script>` elements (no `src`), as a browser tokenises them."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.bodies: list[str] = []
+        self._open: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "script" and not any(name == "src" for name, _ in attrs):
+            self._open = []
+
+    def handle_data(self, data: str) -> None:
+        if self._open is not None:
+            self._open.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "script" and self._open is not None:
+            self.bodies.append("".join(self._open))
+            self._open = None
+
+
+def _inline_scripts(html: str) -> list[str]:
+    parser = _InlineScripts()
+    parser.feed(html)
+    parser.close()
+    return parser.bodies
+
+
 def test_the_web_meta_csp_runs_no_inline_script_without_its_hash() -> None:
     html = INDEX.read_text(encoding="utf-8")
     (policy,) = re.findall(
@@ -104,9 +134,7 @@ def test_the_web_meta_csp_runs_no_inline_script_without_its_hash() -> None:
     )
     sources = _script_src(policy)
     assert sources and all(SCRIPT_SOURCE.fullmatch(source) for source in sources), sources
-    inline = re.findall(
-        r"<script\b(?![^>]*\bsrc=)[^>]*>(.*?)</script>", html, flags=re.DOTALL | re.IGNORECASE
-    )
+    inline = _inline_scripts(html)
     for body in inline:
         digest = base64.b64encode(hashlib.sha256(body.encode("utf-8")).digest()).decode()
         assert f"'sha256-{digest}'" in sources, "an inline script without its hash in script-src"
