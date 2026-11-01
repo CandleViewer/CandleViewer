@@ -28,7 +28,9 @@ Gates:
   G-AMEND     A1..An in order under 12.4; each row cites `12`, `13`, `14` or `24`, names the
               feeding AD and an owner; an owner-document change is an A row, never an edit.
   G-TESTABLE  AD-1..AD-10 in order; each row has a satisfies clause and a violates clause and
-              no aesthetic-only word (LEXICON_AESTHETIC).
+              no aesthetic-only word (LEXICON_AESTHETIC); AD-6's clauses carry AD_PINS (a
+              pattern, not lightness alone; never a side or direction); OQ-4 hands E21-D02 the
+              E09-D09 T2 clauses (OQ4_T2_PINS); C5 names the wire default 900 (`23`:752).
   G-HEURISTIC every F row is `(heuristic)`; no participant, count, timing or attributed quote.
   G-DEFAULTS  the centring, placement, axis, trail, tier and pulled rows carry the BQ list's
               ORCH-defaults, a persona rationale and the deciding probe.
@@ -132,6 +134,20 @@ SCENARIOS: tuple[str, ...] = (
 )
 
 # The BQ list's ORCH-defaults (comment BQ_COMMENT): row lead -> words its default cell must hold.
+AD_PINS: dict[str, tuple[str, ...]] = {
+    "satisfies if": ("pattern", "not by lightness alone"),
+    "violates if": ("hue or lightness alone", "side or direction"),
+}
+OQ4_T2_PINS: tuple[str, ...] = (
+    'aria-disabled="true"',
+    "never `disabled`",
+    "aria-describedby",
+    "CMP-079",
+    "`lock`",
+    "E09-D09 §3.1",
+    "E21-D02 #440",
+)
+C5_PIN = "wire default 900 (`23`:752)"
 DEFAULT_PINS: dict[str, tuple[str, ...]] = {
     "Centring mode": ("auto-follow", "edge-band", "free-scroll", "`Space`"),
     "Heatmap placement": ("beside the ladder",),
@@ -569,6 +585,20 @@ def g_testable(t: Texts) -> list[Finding]:
                 out.append(Finding("G-TESTABLE", f"{lead(row)}: aesthetic-only word '{word}'"))
         if len(row) < 7 or not re.search(r"\b(?:F-\d+|RQ\d+|W\d+)\b", row[5]):
             out.append(Finding("G-TESTABLE", f"{lead(row)}: no feeding finding"))
+        if lead(row) == "AD-6":
+            for clause, pins in AD_PINS.items():
+                cell = " ".join(c for c in row if c.lower().startswith(clause))
+                for word in pins:
+                    if word not in cell:
+                        out.append(Finding("G-TESTABLE", f"AD-6 {clause} lacks '{word}'"))
+    oq4 = [r for r in data_rows(section(t.memo, "12. Contradictions")) if lead(r) == "OQ-4"]
+    oq4_text = " ".join(" ".join(r) for r in oq4)
+    for word in OQ4_T2_PINS:
+        if word not in oq4_text:
+            out.append(Finding("G-TESTABLE", f"OQ-4 lacks the T2 clause '{ascii_clip(word)}'"))
+    c5 = [r for r in data_rows(section(t.memo, "12. Contradictions")) if lead(r) == "C5"]
+    if not any(C5_PIN in " ".join(r) for r in c5):
+        out.append(Finding("G-TESTABLE", "C5 does not name the wire default 900"))
     return out
 
 
@@ -1041,6 +1071,26 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
                 POINTER_LINE, POINTER_LINE[:-2] + "; PROPOSED: the heatmap beside the ladder)."
             ),
         ),
+    ),
+    (
+        "M36 AD-6 satisfied by a lightness-only difference",
+        "G-TESTABLE",
+        memo_mut(lambda m: sub1(m, "differ by a pattern (hollow", "differ in lightness (hollow")),
+    ),
+    (
+        "M37 AD-6 drops never a side or direction",
+        "G-TESTABLE",
+        memo_mut(lambda m: sub1(m, "also marks a side or direction", "also marks a trend")),
+    ),
+    (
+        "M38 OQ-4 drops aria-disabled",
+        "G-TESTABLE",
+        memo_mut(lambda m: sub1(m, '`aria-disabled="true"`, never', "a dimmed control, never")),
+    ),
+    (
+        "M39 C5 drops the wire default",
+        "G-TESTABLE",
+        memo_mut(lambda m: sub1(m, ", wire default 900 (`23`:752),", ",")),
     ),
 )
 
