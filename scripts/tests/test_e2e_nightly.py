@@ -4,9 +4,9 @@
 (docs/ci-runbook.md section 2), got no e2e signal until a later PR started the lane.
 
 `e2e-nightly.yml` calls `_job-e2e.yml` on `main` every night and runs all of it: the four
-`e2e-web` shards, `e2e-staging`, `a11y-axe` and `e2e-electron`. `e2e-electron` runs when its caller
-sets `_job-e2e.yml`'s `electron` input, as the nightly does (the suite is green since #3393), or on
-a `release/*` head: `pr.yml` keeps the default. A red scheduled run opens an issue from a job that
+`e2e-web` shards, `e2e-staging`, `a11y-axe` and `e2e-electron`. Since E10-Q02 `e2e-electron` runs on
+every call, a PR's included (C-9.1 #8); the nightly still passes the `electron` input, which the lane
+keeps for its callers. A red scheduled run opens an issue from a job that
 holds `issues: write` and nothing else, and runs no checkout and no action. A red nightly blocks the
 next release (C-9.2) through the release checklist: 07 section 4.1 and the issue form `release.yml`
 opens for each cut both ask for a green run on the `main` tip being cut.
@@ -46,10 +46,9 @@ LANE_FILE = "_job-e2e.yml"
 LANE = f"./.github/workflows/{LANE_FILE}"
 CRON = "53 2 * * *"
 #: The lane's jobs that run on every call: the matrix the ticket's "Done when" names.
-EVERY_CALL = {"e2e-web", "e2e-staging", "a11y-axe"}
-#: Context a scheduled run leaves empty; only e2e-electron's `if:` may read it ("not release/*").
+EVERY_CALL = {"e2e-web", "e2e-staging", "a11y-axe", "e2e-electron"}  # e2e-electron: E10-Q02
+#: Context a scheduled run leaves empty; no job of the lane may read it.
 PR_ONLY = ("github.head_ref", "github.base_ref", "github.event.pull_request", "github.event.number")
-ELECTRON_IF = "${{ inputs.electron || startsWith(github.head_ref, 'release/') }}"
 REPORT_IF = "${{ always() && github.event_name == 'schedule' && needs.e2e.result != 'success' }}"
 #: #3449: the repository variable that names the one issue a red night comments on.
 TRACKER_VAR = "CV_E2E_NIGHTLY_TRACKER_ISSUE"
@@ -137,29 +136,31 @@ def test_e2e_nightly_runs_the_whole_e2e_lane_every_night() -> None:
     jobs = _load(NIGHTLY)["jobs"]
     assert [name for name, job in jobs.items() if "uses" in job] == ["e2e"]
     # No `if:`, secrets or permissions of its own: it runs every night, on `contents: read`. It
-    # asks for e2e-electron, which pr.yml runs on release/* heads only (C-9.2's full matrix).
-    assert jobs["e2e"] == {"name": "e2e-nightly", "uses": LANE, "with": {"electron": True}}
+    # still passes the `electron` input, which e2e-electron no longer needs (E10-Q02), and the
+    # `quarantine` input, the only lane that runs the `@flaky` tests (E10-Q02, C-9.3).
+    assert jobs["e2e"] == {
+        "name": "e2e-nightly",
+        "uses": LANE,
+        "with": {"electron": True, "quarantine": True},
+    }
     lane = _load(LANE_FILE)["jobs"]
     assert set(lane) == EVERY_CALL | {"e2e-electron"}
     assert [name for name in sorted(EVERY_CALL) if "if" in lane[name]] == []
-    assert lane["e2e-electron"]["if"] == ELECTRON_IF
     assert lane["e2e-web"]["strategy"]["matrix"] == {"shard": [1, 2, 3, 4]}
 
 
 def test_e2e_lane_reads_no_pull_request_context_a_schedule_leaves_empty() -> None:
     # The nightly calls the lane on a schedule event, where these are empty: a job that needed one
-    # would break only at night. e2e-electron's `if:` reads the head ref as "not a release head".
+    # would break only at night.
     lane = _load(LANE_FILE)["jobs"]
-    assert [text for text in _strings(lane) if any(name in text for name in PR_ONLY)] == [
-        ELECTRON_IF
-    ]
+    assert [text for text in _strings(lane) if any(name in text for name in PR_ONLY)] == []
 
 
-def test_e2e_electron_runs_when_its_caller_asks_or_on_a_release_head() -> None:
+def test_e2e_electron_runs_on_every_call_and_the_input_stays_for_its_callers() -> None:
     electron = _triggers(LANE_FILE)["workflow_call"]["inputs"]["electron"]
     assert (electron["type"], electron["default"]) == ("boolean", False)
-    assert _load(LANE_FILE)["jobs"]["e2e-electron"]["if"] == ELECTRON_IF
-    # The callers: pr.yml passes nothing, so a PR runs the smoke on release/* heads only, as before.
+    assert "if" not in _load(LANE_FILE)["jobs"]["e2e-electron"]  # E10-Q02: every PR (C-9.1 #8)
+    # The callers: pr.yml passes nothing and still gets e2e-electron.
     calls: dict[str, list[dict[str, Any]]] = {}
     for path in sorted(WORKFLOWS.glob("*.yml")):
         jobs = (_load(path.name).get("jobs") or {}).values()

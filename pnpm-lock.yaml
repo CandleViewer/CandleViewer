@@ -251,6 +251,9 @@ importers:
       '@candleviewer/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@candleviewer/fixtures':
+        specifier: workspace:*
+        version: link:../../packages/fixtures
       '@candleviewer/web':
         specifier: workspace:*
         version: link:../web
@@ -315,6 +318,9 @@ importers:
       '@candleviewer/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@candleviewer/fixtures':
+        specifier: workspace:*
+        version: link:../../packages/fixtures
       '@candleviewer/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -450,6 +456,15 @@ importers:
       '@candleviewer/config':
         specifier: workspace:*
         version: link:../config
+      '@candleviewer/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@playwright/test':
+        specifier: ^1.64.1
+        version: 1.64.1
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
       '@vitest/coverage-v8':
         specifier: ^4.1.12
         version: 4.1.12(@vitest/browser@4.1.12)(vitest@4.1.12)
@@ -459,9 +474,15 @@ importers:
       globals:
         specifier: ^15.14.0
         version: 15.15.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.71.2
+        version: 8.71.2(eslint@9.39.5(jiti@2.6.1)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@types/node@24.19.1)(@vitest/browser-playwright@4.1.12)(@vitest/coverage-v8@4.1.12)(jsdom@25.0.1(supports-color@7.2.0))(vite@6.4.4(@types/node@24.19.1)(jiti@2.6.1)(yaml@2.9.1))
+        version: 4.1.12(@types/node@22.20.5)(@vitest/browser-playwright@4.1.12)(@vitest/coverage-v8@4.1.12)(jsdom@25.0.1(supports-color@7.2.0))(vite@6.4.4(@types/node@22.20.5)(jiti@2.6.1)(yaml@2.9.1))
 
   packages/protocol:
     devDependencies:
@@ -7136,7 +7157,7 @@ snapshots:
       '@vitest/browser': 4.1.12(vite@6.4.4(@types/node@22.20.5)(jiti@2.6.1)(yaml@2.9.1))(vitest@4.1.12)
       '@vitest/mocker': 4.1.12(vite@6.4.4(@types/node@22.20.5)(jiti@2.6.1)(yaml@2.9.1))
       tinyrainbow: 3.2.0
-      vitest: 4.1.12(@types/node@22.20.5)(@vitest/browser-playwright@4.1.12)(@vitest/coverage-v8@4.1.12)(jsdom@25.0.1(supports-color@10.2.2))(vite@6.4.4(@types/node@22.20.5)(jiti@2.6.1)(yaml@2.9.1))
+      vitest: 4.1.12(@types/node@22.20.5)(@vitest/browser-playwright@4.1.12)(@vitest/coverage-v8@4.1.12)(jsdom@25.0.1(supports-color@7.2.0))(vite@6.4.4(@types/node@22.20.5)(jiti@2.6.1)(yaml@2.9.1))
     transitivePeerDependencies:
       - bufferutil
       - msw
@@ -10676,7 +10697,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 22.20.5
-      '@vitest/browser-playwright': 4.1.12(playwright@1.64.1)(vite@6.4.4(@types/node@22.20.5)(jiti@2.6.1)(yaml@2.9.1))(vitest@4.1.12)
+      '@vitest/browser-playwright': 4.1.12(vite@6.4.4(@types/node@22.20.5)(jiti@2.6.1)(yaml@2.9.1))(vitest@4.1.12)
       '@vitest/coverage-v8': 4.1.12(@vitest/browser@4.1.12)(vitest@4.1.12)
       jsdom: 25.0.1(supports-color@7.2.0)
     transitivePeerDependencies:

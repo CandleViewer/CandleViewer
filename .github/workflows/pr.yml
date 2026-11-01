@@ -268,6 +268,10 @@ jobs:
             e2e:
               - 'apps/web/**'
               - 'apps/desktop/**'
+              # E10-Q02: the shared E2E support both suites import, and the flaky summary
+              - 'packages/fixtures/src/e2e/**'
+              - 'packages/fixtures/bin/**'
+              - 'packages/fixtures/package.json'
               - 'packages/chart-engine/**'
               - 'packages/protocol/**'
               # The a11y job runs on this filter too: the design system (its Storybook included),

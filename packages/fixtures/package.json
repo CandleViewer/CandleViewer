@@ -7,13 +7,15 @@
   "type": "module",
   "main": "./src/index.mjs",
   "exports": {
-    ".": "./src/index.mjs"
+    ".": "./src/index.mjs",
+    "./e2e": "./src/e2e/index.ts",
+    "./e2e/stubs": "./src/e2e/stubs.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings=0 && node ./scripts/verify.mjs && vitest run",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "typecheck": "echo \"@candleviewer/fixtures: no TS sources to typecheck\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:cov": "vitest run --coverage",
     "build": "echo \"@candleviewer/fixtures: nothing to build\"",
@@ -25,6 +27,11 @@
     "globals": "^15.14.0",
     "vitest": "^4.1.12",
     "@vitest/coverage-v8": "^4.1.12",
-    "eslint": "^9.17.0"
+    "eslint": "^9.17.0",
+    "@candleviewer/protocol": "workspace:*",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^22.20.5",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.71.2"
   }
 }

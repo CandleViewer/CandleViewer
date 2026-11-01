@@ -6,9 +6,9 @@ name: _job-e2e
 # Four sub-jobs, each its own required-check name once GitHub Actions exposes
 # reusable-workflow job names (precedent: `_job-py.yml`'s `architecture` job):
 #   - `e2e-web`      : Playwright web suite, sharded 4x, every PR.
-#   - `e2e-electron` : Electron smoke, `release/*` branches + nightly only
-#                      (not on every PR — Electron packaging is slow). The nightly
-#                      (e2e-nightly.yml) asks for it through the `electron` input below.
+#   - `e2e-electron` : Electron suite on every call (E10-Q02: C-9.1 #8 puts the Electron
+#                      main-window smoke in the e2e gate), the unpacked `dist/` plus one
+#                      smoke on the `electron-builder --dir` package.
 #   - `a11y-axe`     : axe-core assertions over the E2E web routes (subset of
 #                      `e2e-web`'s own specs, e.g. smoke.spec.ts) plus this repo's
 #                      `vitest-axe` component suite (apps/web unit tests already
@@ -22,18 +22,22 @@ name: _job-e2e
 #
 # Flake handling: Playwright's own `retries: 1` in CI (see playwright.config.ts)
 # gives one automatic retry; a failure that still fails after the retry is
-# CI-E2E-001. Retries are visible in the uploaded JSON reporter output for
-# E03-Q03's (deferred, R1) quarantine automation to consume later.
+# CI-E2E-001. A pass on retry is counted from the JSON report into the job summary
+# (E10-Q02), and `@flaky` tests are quarantined by each config's grepInvert (C-9.3).
 
 on:
   workflow_call:
     inputs:
-      # #3383: the caller asks for the Electron smoke. The job used to key on
-      # `github.event_name == 'schedule'`, which in a called workflow is the caller's event, so
-      # it depended on who called; pr.yml runs on pull_request only and never matched it. The
-      # default keeps pr.yml as it was: the smoke runs on release/* heads only.
+      # #3383: the caller asked for the Electron smoke. Since E10-Q02 e2e-electron runs on every
+      # call (C-9.1 #8); the input stays so callers that pass it (e2e-nightly.yml) are unchanged.
       electron:
-        description: "Run e2e-electron on any head (release/* heads always run it)"
+        description: "Kept for callers; e2e-electron now runs on every call (E10-Q02)"
+        type: boolean
+        default: false
+      # E10-Q02 (C-9.3): the quarantine leg. e2e-nightly.yml sets it, so each `@flaky` test still
+      # runs every night in the configs' `flaky-nightly` project; pr.yml leaves it off.
+      quarantine:
+        description: "Also run the @flaky (quarantined) tests, reported in the job summary"
         type: boolean
         default: false
 
@@ -87,13 +91,47 @@ jobs:
         working-directory: apps/web
         run: npx playwright test -c e2e/playwright.config.ts --grep-invert "@demo-rest-only" --shard=${{ matrix.shard }}/4 --retries=1
 
+      - name: Flaky count to the job summary (passed only on retry, C-9.3)
+        if: always()
+        working-directory: apps/web
+        env:
+          CV_LANE: e2e-web shard ${{ matrix.shard }}
+        run: node ../../packages/fixtures/bin/flaky-summary.mjs
+
+      # The quarantine leg (nightly only): a known-flaky test reports here without turning the
+      # release-blocking nightly red; its P1 ticket tracks the fix (C-9.3).
+      - name: Quarantined @flaky tests (flaky-nightly project, shard ${{ matrix.shard }}/4)
+        if: ${{ always() && inputs.quarantine }}
+        continue-on-error: true
+        working-directory: apps/web
+        env:
+          CV_E2E_QUARANTINE: "1"
+        run: npx playwright test -c e2e/playwright.config.ts --grep-invert "@demo-rest-only" --shard=${{ matrix.shard }}/4 --retries=1 --pass-with-no-tests --output test-results-quarantine
+
+      - name: Quarantine count to the job summary
+        if: ${{ always() && inputs.quarantine }}
+        working-directory: apps/web
+        env:
+          CV_LANE: e2e-web shard ${{ matrix.shard }} quarantine (@flaky)
+        run: node ../../packages/fixtures/bin/flaky-summary.mjs
+
       - name: Upload failure artifacts (traces/videos/screenshots — failure only)
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-web-failure-shard-${{ matrix.shard }}
           path: apps/web/test-results/
-          retention-days: 14
+          retention-days: 7 # E10-Q02 (ticket Security notes); stub values only, no real session
+
+      # E10-Q02 screenshot corpus (capture.spec.ts): uploaded on every run, no committed baseline.
+      - name: Upload the screenshot corpus
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-web-corpus-shard-${{ matrix.shard }}
+          path: apps/web/test-results/*/corpus/*.png
+          if-no-files-found: ignore
+          retention-days: 7
 
   e2e-staging:
     name: e2e-staging
@@ -182,7 +220,6 @@ jobs:
 
   e2e-electron:
     name: e2e-electron
-    if: ${{ inputs.electron || startsWith(github.head_ref, 'release/') }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
     steps:
@@ -225,11 +262,59 @@ jobs:
         working-directory: apps/desktop
         run: npx playwright install --with-deps chromium
 
+      # E10-Q02 (BQ-07): the shell as it ships, unpacked (no installer, no signing), from the
+      # Electron binary already fetched above, so packaging downloads no second copy.
+      - name: Package the shell (electron-builder --dir)
+        working-directory: apps/desktop
+        run: |
+          pkg="$(node -p "require('path').dirname(require.resolve('electron/package.json'))")"
+          pnpm exec electron-builder --config electron-builder.yml --linux --dir \
+            -c.electronDist="$pkg/dist" -c.linux.executableName=candleviewer
+          echo "CV_PACKAGED_EXECUTABLE=$PWD/release/linux-unpacked/candleviewer" >> "$GITHUB_ENV"
+
+      # As perf-engine-matrix.yml (#4975; ADR-0011 "Decision — 2026-10-29"): the hosted image blocks
+      # unprivileged user namespaces, so Chromium's sandbox needs its SUID helper, root-owned and
+      # 4755, for the unpacked and the packaged shell alike. `--no-sandbox` would test a shell the
+      # product never ships; shell-smoke.spec.ts asserts the renderers are sandboxed.
+      - name: Make Electron's sandbox helpers setuid root
+        working-directory: apps/desktop
+        run: |
+          pkg="$(node -p "require('path').dirname(require.resolve('electron/package.json'))")"
+          for sandbox in "$pkg/dist/chrome-sandbox" release/linux-unpacked/chrome-sandbox; do
+            if ! { test -f "$sandbox" && ! test -L "$sandbox"; }; then
+              echo "::error::$sandbox is missing or a symlink"; exit 1
+            fi
+            sudo chown root:root "$sandbox"
+            sudo chmod 4755 "$sandbox"
+          done
+
       # Electron needs an X display: the runner image ships xvfb, which the `build` job's
       # Electron-hardening gate (_job-js.yml) uses the same way.
-      - name: Electron smoke suite (release/* branches and nightly only)
+      - name: Electron suite (unpacked dist/ and the packaged smoke)
         working-directory: apps/desktop
         run: xvfb-run -a pnpm run e2e --retries=1
+
+      - name: Flaky count to the job summary (passed only on retry, C-9.3)
+        if: always()
+        working-directory: apps/desktop
+        env:
+          CV_LANE: e2e-electron
+        run: node ../../packages/fixtures/bin/flaky-summary.mjs
+
+      - name: Quarantined @flaky tests (flaky-nightly project)
+        if: ${{ always() && inputs.quarantine }}
+        continue-on-error: true
+        working-directory: apps/desktop
+        env:
+          CV_E2E_QUARANTINE: "1"
+        run: xvfb-run -a pnpm run e2e --retries=1 --pass-with-no-tests --output test-results-quarantine
+
+      - name: Quarantine count to the job summary
+        if: ${{ always() && inputs.quarantine }}
+        working-directory: apps/desktop
+        env:
+          CV_LANE: e2e-electron quarantine (@flaky)
+        run: node ../../packages/fixtures/bin/flaky-summary.mjs
 
       - name: Upload failure artifacts (failure only)
         if: failure()
@@ -237,4 +322,4 @@ jobs:
         with:
           name: e2e-electron-failure
           path: apps/desktop/test-results/
-          retention-days: 14
+          retention-days: 7 # E10-Q02 (ticket Security notes); stub values only, no real session

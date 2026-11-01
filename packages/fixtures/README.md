@@ -23,6 +23,24 @@ TypeScript and Python test suites (CONSTITUTION.md C-13.5, `.claude/rules/40-tes
 - `turbo.json` — makes every data file and that plan an input of `lint` and the
   tests, so a data-only change can never be answered from a cached run.
 
+## `e2e` subpath: shared Playwright support (E10-Q02)
+
+`@candleviewer/fixtures/e2e` and `@candleviewer/fixtures/e2e/stubs` (TypeScript, `src/e2e/`) are
+the support both E2E suites share: `apps/desktop` imports them and never `apps/web` (C-3.5). Test-only,
+never bundled into an app; stubs only, no secret, no live backend, no exchange (C-13.5).
+
+| Module    | What it gives                                                                                                  |
+| --------- | -------------------------------------------------------------------------------------------------------------- |
+| `stubs`   | Network-layer API stubs (`stubSession`, `json`, the leak guard); `apps/web/e2e/support/api.ts` re-exports them |
+| `routes`  | `ROUTE_EXPECTATIONS`: the declared outcome of every route id × role, and the landing classifier                |
+| `outcome` | `expectSettledOutcome`: a landing classified the same three reads in a row, no fixed sleep                     |
+| `csp`     | `sr112Findings`: a policy compared with SR-112 directive by directive, plus SR-119's exchange-host ban         |
+| `egress`  | The egress guard for a browser context and for the Electron main process (loopback only)                       |
+| `capture` | Capture conventions for the screenshot corpus: frozen clock, no motion, fixed viewports, capture twice         |
+
+`bin/flaky-summary.mjs` writes a Playwright JSON report's counts to the CI job summary. The unit
+tests of the pure helpers are `test/e2e/`; the test plan is `docs/qa/e10-shell-test-plan.md`.
+
 **No fixture in this package may originate from a live network call in a test
 or CI run.** Fixtures are recorded via the (future) recorder tool and reviewed
 before commit.

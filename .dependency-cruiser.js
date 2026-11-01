@@ -89,9 +89,14 @@ module.exports = {
       severity: "error",
       comment:
         "§9 #18 deep-import ban: only `@candleviewer/fixtures`'s declared entry points may " +
-        "be imported, never `packages/fixtures/src/**` directly from outside it.",
+        "be imported, never `packages/fixtures/src/**` directly from outside it. Its entry " +
+        "points are source files (`exports`: `.`, `./e2e`, `./e2e/stubs`; E10-Q02), so the " +
+        "resolved targets of those three are the only ones allowed.",
       from: { pathNot: "^packages/fixtures" },
-      to: { path: "^packages/fixtures/src" },
+      to: {
+        path: "^packages/fixtures/src",
+        pathNot: "^packages/fixtures/src/(index\\.mjs|e2e/(index|stubs)\\.ts)$",
+      },
     },
     {
       name: "no-deep-imports-rule-graph",

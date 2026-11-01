@@ -7,8 +7,8 @@ import playwrightConfig from "../e2e/playwright.config";
 // defaults are all "off", so the upload-artifact step in
 // _job-e2e.yml had nothing to upload.
 describe("apps/web e2e playwright config", () => {
-  it("enables trace capture for retried/failed runs", () => {
-    expect(playwrightConfig.use?.trace).toBe("on-first-retry");
+  it("keeps the trace of every failed run, the first attempt included (E10-Q02 BQ-20)", () => {
+    expect(playwrightConfig.use?.trace).toBe("retain-on-failure");
   });
 
   it("enables screenshot capture on failure", () => {

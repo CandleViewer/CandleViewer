@@ -123,20 +123,14 @@ EVENT_CONDITIONS = {
     # The freeze proposal artifact for a dependency PR's reviewer; the freeze check still runs:
     FREEZE_UPLOAD: "${{ !cancelled() && steps.freeze.outcome == 'failure' && (github.actor == "
     "'dependabot[bot]' || contains(github.event.pull_request.labels.*.name, 'dependencies')) }}",
-    # release/* heads only; the nightly matrix covers `main` (07-release-and-prr.md section 4.1;
-    # test_e2e_nightly.py pins the expression):
-    "_job-e2e.yml:e2e-electron": (
-        "${{ inputs.electron || startsWith(github.head_ref, 'release/') }}"
-    ),
 }
-#: The unguarded pull-request reads: the three conditions above that are false on a merge group,
+#: The unguarded pull-request reads: the two conditions above that are false on a merge group,
 #: each allowed as exactly that read, not as a place where any read may go.
 FALSE_ON_A_MERGE_GROUP = {
     (where, EVENT_CONDITIONS[where].removeprefix("${{ ").removesuffix(" }}"))
     for where in (
         "_job-integration.yml:audit-query-plan",
         FREEZE_UPLOAD,
-        "_job-e2e.yml:e2e-electron",
     )
 }
 #: The draft clause's reads: one in each deferred lane's `if:`, one in the resolver step's env
