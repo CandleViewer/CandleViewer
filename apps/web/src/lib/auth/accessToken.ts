@@ -20,6 +20,8 @@
  *   cleared) or `unavailable`. Any other `401` from the refresh, or `endSession`, forgets it and routes to
  *   sign-in (SCR-001); a logout's `2xx` forgets it.
  * - `onLocked` listeners (SCR-005, #1640) hear of an idle lock a refresh or a call's `401` found.
+ * - `onEnded` listeners hear of the session's end in this tab, whatever ended it, so what holds requests
+ *   made under it aborts them (E10-T05 BQ-15: the keymap's profile store).
  */
 import type { ErrorCode, generated } from "@candleviewer/protocol";
 import { CSRF_HEADER, readCsrfCookie } from "../http/csrfCookie";
@@ -158,6 +160,11 @@ export interface AccessTokenHolder extends TokenSource {
    * `401 session_idle_locked`. Returns the unsubscribe.
    */
   onLocked(listener: () => void): () => void;
+  /**
+   * Calls `listener` each time the session ends in this tab: `clear`, `endSession`, a logout's `2xx`, a
+   * refresh that finds it lost, or a sibling tab's sign-out. An idle lock is no end. Returns the unsubscribe.
+   */
+  onEnded(listener: () => void): () => void;
   /** One refresh, shared by every caller while it runs; never rejects; `failed` once `REFRESH_WAIT_MS` pass. */
   refresh(): Promise<RefreshOutcome>;
   /**
@@ -339,18 +346,20 @@ export function createAccessTokenHolder(
   /** Refreshes that wait for a sibling's bundle. */
   const waiting = new Set<() => void>();
   const lockListeners = new Set<() => void>();
+  const endListeners = new Set<() => void>();
   const channel = openChannel();
 
-  /** Tells the `onLocked` listeners; one that throws neither stops the others nor fails the call. */
-  function reportLocked(): void {
-    for (const listener of lockListeners) {
+  /** Tells `listeners`; one that throws neither stops the others nor fails the call. */
+  function tell(listeners: ReadonlySet<() => void>): void {
+    for (const listener of listeners) {
       try {
         listener();
       } catch {
-        // a listener's own failure: the lock is still reported to the rest
+        // a listener's own failure: the news still reaches the rest
       }
     }
   }
+  const reportLocked = (): void => tell(lockListeners);
 
   const fresh = (): boolean =>
     token !== null && !stale && Date.now() < token.expiresAtMs - REFRESH_LEAD_MS - HANDOUT_SLACK_MS;
@@ -423,6 +432,7 @@ export function createAccessTokenHolder(
     ended += 1;
     lockedUntil = 0;
     clearTimeout(timer);
+    tell(endListeners); // BQ-15: the session ended here, so no request made under it goes on
   }
 
   function clear(): void {
@@ -590,6 +600,10 @@ export function createAccessTokenHolder(
     onLocked(listener) {
       lockListeners.add(listener);
       return () => void lockListeners.delete(listener);
+    },
+    onEnded(listener) {
+      endListeners.add(listener);
+      return () => void endListeners.delete(listener);
     },
     async getToken(): Promise<TokenResult> {
       if (signedOut) return { kind: "unavailable" };
