@@ -44,7 +44,7 @@ PROTECTIVE_WRITES: Final[Mapping[str, tuple[tuple[str, str], str]]] = MappingPro
         "setKillSwitch": (("POST", "/trading/kill-switch"), "E39-S03"),
         "amendOrder": (("PATCH", "/orders/{orderId}"), "E29-T04"),
         "amendTradeGroup": (("POST", "/trade-groups/{tradeGroupId}/amend"), "E34-S03"),
-        "setPositionTpSl": (("PUT", "/positions/{positionId}/tpsl"), "E29-T07"),
+        "setPositionTpSl": (("PUT", "/positions/{positionId}/tpsl"), "E32-S07"),
         "cancelOrder": (("DELETE", "/orders/{orderId}"), "E29-T04"),
         "cancelAllOrders": (("POST", "/orders/cancel-all"), "E29-T04"),
         "closePosition": (("POST", "/positions/{positionId}/close"), "E29-T07"),
@@ -58,7 +58,7 @@ class ProtectiveWrites:
 
     Five of the eight handlers are registered, `cancelAllOrders`, `cancelOrder` and `amendOrder`
     (E29-T04, #913 slice 4), `closePosition` and `closeAllPositions` (E29-T07, #915); E39-S03
-    mounts `setKillSwitch`, E29-T07 `setPositionTpSl` and E34-S03 `amendTradeGroup`. Each handler
+    mounts `setKillSwitch`, E32-S07 `setPositionTpSl` and E34-S03 `amendTradeGroup`. Each handler
     registers its operation as it is mounted (`register`). It then decides view-as itself, after
     validation and before it asks for a step-up (#3223 item 4, option a), by the classification of
     24 Sec.8.10 (`oms.exits.protective_amend` for an amend). A request with any non-protective
