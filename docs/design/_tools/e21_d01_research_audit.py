@@ -107,8 +107,8 @@ H2_EXPECTED: tuple[str, ...] = (
     r"4\. Persona walkthrough",
     r"5\. Competitive review \(public documentation fetched \d{4}-\d{2}-\d{2}\)",
     r"6\. Recommended defaults, one per research question",
-    r"7\. Adopted decisions AD-1\.\.AD-10 \(ranked; PROPOSED\)",
-    r"8\. Performance kill-list \(budgets #1 and #14\)",
+    r"7\. Adopted decisions AD-1\.\.AD-10 \(ranked; heuristic, PROPOSED\)",
+    r"8\. Performance kill-list \(budgets #1 and #14; heuristic, PROPOSED\)",
     r"9\. Downstream feeds and flag state",
     r"10\. Owner session protocol \(ready to run; nothing below has been run\)",
     r"11\. Owner walkthrough checklist",
@@ -460,6 +460,10 @@ def g_quote(t: Texts) -> list[Finding]:
         if line in comp_lines and line.strip():
             if "<https://" not in line:
                 out.append(Finding("G-QUOTE", f"line {n}: competitive quote without a URL"))
+            for cell in cells(line):
+                tail = cell.rsplit("<https://", 1)[-1].split(">", 1)[-1]
+                if "<https://" in cell and any(len(q) >= QUOTE_MIN for q in QUOTE_RE.findall(tail)):
+                    out.append(Finding("G-QUOTE", f"line {n}: a quote after its cell's last URL"))
             continue
         src = line_sources(t, line)
         for q in quotes:
@@ -839,6 +843,17 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         memo_mut(
             lambda m: sub1(
                 m, " <https://www.sierrachart.com/index.php?page=doc/ChartTrading.html>", ""
+            )
+        ),
+    ),
+    (
+        "M11b a competitive quote after its cell's last URL",
+        "G-QUOTE",
+        memo_mut(
+            lambda m: sub1(
+                m,
+                "ChartTrading.html>",
+                'ChartTrading.html> · "an unsourced sentence added after the URL"',
             )
         ),
     ),
