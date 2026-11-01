@@ -57,6 +57,7 @@ export type {
   PositionsGridGroup,
   PositionsGridLiq,
   PositionsGridProps,
+  PositionsGridRUnavailable,
   PositionsGridRow,
   PositionsGridTier,
   PositionsGridTotals,

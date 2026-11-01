@@ -67,7 +67,7 @@ const SUB1_ETH = row("Sub-1", "ETHUSDT", {
   mark: "2561.00",
   unrealisedPnl: "-121.50",
   realisedToday: { value: null },
-  r: { value: null },
+  r: { value: null, reason: "no_stop" },
   liqPrice: null,
   marginMode: { value: "cross" },
   liq: { tier: "near", distancePct: null, mmRatePct: "72" },
@@ -214,6 +214,25 @@ describe("PositionsGrid (CMP-114): the treegrid", { timeout: 60_000 }, () => {
     expect(within(main).getByText("profit 0.32 R")).toBeInTheDocument();
     expect(within(main).getByText("profit 12.40 USDT")).toBeInTheDocument();
   });
+
+  it.each([
+    ["no_stop", "R unavailable: no stop price"],
+    ["no_price", "R unavailable"],
+    ["zero_distance", "R unavailable"],
+    [undefined, "R unavailable"],
+  ] as const)(
+    "a null R with reason %s reads %j: D02's words only where the row has no stop (BQ-8)",
+    async (reason, reading) => {
+      const r = { value: null, ...(reason === undefined ? {} : { reason }) };
+      await mount(<Host groups={[group("main", "Main · LIVE", [{ ...MAIN, r }])]} />);
+      const main = rowNamed(/^BTCUSDT · Long · 0\.250/);
+      const cell = main.querySelector<HTMLElement>(
+        `[data-cv-c="${headerOf("r").getAttribute("data-cv-c") ?? ""}"]`,
+      );
+      expect(cell?.querySelector(".cv-visually-hidden")?.textContent).toBe(reading);
+      expect(cell?.querySelector('[aria-hidden="true"]')?.textContent).toBe("—");
+    },
+  );
 
   it("pins the select column, Account and Symbol, and the Actions column when it shows", async () => {
     await mount(<Host rowActions={() => undefined} />);
