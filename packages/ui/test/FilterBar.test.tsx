@@ -216,11 +216,19 @@ describe("FilterBar (CMP-055): read-only (T2, E09-D09 §2.2)", () => {
       expect(control.disabled).toBe(false);
       expect(control).toHaveAccessibleDescription(REASON);
     }
-    expect(within(add).getByRole("img", { name: "Not available" })).toBeInTheDocument();
+    // Composed as CMP-177's controls are (2a): CMP-001's named lock leads, and the one notice describes them.
+    for (const pointed of [add, controls[3]]) {
+      const lock = within(pointed as HTMLElement).getByRole("img", { name: "Not available" });
+      expect(pointed?.firstElementChild).toContainElement(lock);
+      expect(pointed).toHaveAttribute("data-cmp", "CMP-001");
+    }
     const notice = group().querySelectorAll(".cv-filterbar__reason");
     expect([...notice].map((node) => [node.textContent, node.getAttribute("aria-hidden")])).toEqual(
-      [[REASON, "true"]],
+      [[REASON, null]],
     );
+    // One notice, many pointers (G-T2.5, B-5309-05): Add filter, Clear all and every chip's remove point at it.
+    for (const control of controls)
+      expect(control).toHaveAttribute("aria-describedby", notice[0]?.id);
     await userEvent.tab();
     expect(controls[0]).toHaveFocus();
   });
