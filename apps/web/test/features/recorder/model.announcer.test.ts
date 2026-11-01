@@ -77,6 +77,7 @@ describe("recorder batch announcer", () => {
     ]);
     announcer.release("level-3");
     announcer.alert("level-3", "Recording stopped: …");
+    vi.advanceTimersByTime(0); // said as its turn ends, with any other alert of that turn
     expect(said.at(-1)).toEqual(["assertive", "Recording stopped: …", 11_000]);
   });
 
@@ -119,6 +120,21 @@ describe("recorder batch announcer", () => {
     expect(said.filter(([politeness]) => politeness === "assertive")).toEqual([
       ["assertive", "Recording stopped: A. Incident: C.", 10_000],
     ]);
+  });
+
+  it("test_batch_alerts_in_one_turn_are_one_write_and_one_released_in_it_is_left_out", () => {
+    // Two writes in one tick would commit only the last (the page's last-wins region): a turn's alerts are one write.
+    const { said, announcer } = harness();
+    announcer.alert("level-3", "Recording stopped: A.");
+    announcer.alert("incident:ETHUSDT:open", "Incident: B.");
+    vi.advanceTimersByTime(0);
+    expect(said).toEqual([["assertive", "Recording stopped: A. Incident: B.", 0]]);
+    vi.advanceTimersByTime(1_000);
+    announcer.alert("incident:SOLUSDT:open", "Incident: C.");
+    announcer.release("incident:SOLUSDT:open"); // its condition ended within the turn
+    announcer.alert("incident:XRPUSDT:open", "Incident: D.");
+    vi.advanceTimersByTime(0);
+    expect(said.slice(1)).toEqual([["assertive", "Incident: D.", 1_000]]);
   });
 
   it("test_batch_dispose_cancels_the_waiting_batch", () => {
