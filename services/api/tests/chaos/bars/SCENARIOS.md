@@ -34,12 +34,23 @@ fix lands, so the fix removes the marker.
 |---|---|---|---|---|---|
 | 1 | Process or WS drop mid-bar: resume from store, or marked gapped | #1, #12 | PR-2 | WS drop mid-bar: backfilled, bars == golden, no bar closed twice, `ingest_ws_up` 1 -> 0 -> 1 ✅; restart mid-bar: golden, same epoch, replayed closes identical ✅; tape lag past the ring: `bars_restore_gap_total`, `bar_restore_gap`, WARN ✅ | no backfill loses prints; restart without the tape loses prints; a tape that reaches the ring raises no alarm |
 | 2 | Tape gap (REST backfill ok / down) | #1, #3 | PR-1 | recovered: bars == golden ✅; unrecovered: `GapEvent`, `trade_gaps_total`, health ✅; bar marked (`gap_before`) ✅ (#529 gap-marking fix) | no-backfill run fails the golden |
-| 3 | Out-of-order and duplicate prints | #3 | PR-1 | dup suppressed upstream ✅; reorder amends the closed bar ✅; > 60 s dropped, counted, logged ✅ | a duplicate leaking into a builder breaks conservation |
+| 3 | Out-of-order and duplicate prints | #3 | PR-1 | dup suppressed upstream ✅; reorder amends the closed bar ✅; > 60 s dropped, counted, logged ✅ | with `TradeStream`'s ring replaced by a no-op (monkeypatched), a duplicated frame is double counted by the volume, tick, range and renko folds |
 | 4 | 5xx and 10018 during kline backfill | #5 | PR-2 | every 3rd page limited: complete, nothing lost; 4 limits in a row: full-jitter delays in `[1, cap]`; `loading_older_bars` while earlier pages stay readable; 5 in a row: partial, resumed without refetching; 5xx retried ✅ | the bounds helper rejects an immediate retry and a delay past 60 s |
 | 5 | Store restart / write failure | #10 | PR-2 | short outage (< 7.5 s): store == golden, nothing dropped ✅; nothing reported persisted while the store rejects ✅; long outage: dropped loudly (`bars_write_failed_total{reason="transient_exhausted"}`, `degraded`, ERROR), stored + dropped == submitted ✅; replay of dropped rows: xfail (#531); real QuestDB stop/start: `test_s05b` (nightly) | a sink that acks and discards fails the golden |
 | 6 | Host clock jumps +-2 s, +-2 min | #6 | PR-1 | bars == golden, no drops, no amends, alarm ✅ (#529 fix: bars on the exchange-corrected clock) | the raw host clock drops prints (+2 min) and re-emits amended bars (+2 s) |
 | 7 | Kill mid renko rebuild | #12 (extension) | PR-2 | skipped placeholder: blocked by #535 (no rebuild exists) | - |
 | 8 | Delisted or halted symbol | none (extension of #1) | PR-2 | bars == golden; at most the clock close after the last print, no empty bar; feed `delisted`, demand refused, bars healthy ✅ | filler empty bars fail the helper |
+
+SR-040 (malformed payloads, BQ-14, PR-2): `test_sr040_hostile_print.py`. A hostile REST backfill row
+never reaches the bus or a bar (the gap is reported unrecovered); negative control: the helper
+fails on a leaked row or a NaN price.
+
+## Harness behaviours the scenarios rely on
+
+| Behaviour | Where it matters |
+|---|---|
+| No grace period on an `on_clock` tick at a bar's exact close: a tick with `now` equal to a time bar's close closes it, so a print that arrives after that tick is late (amends it), it does not fold in. `BarsRig.run` therefore ticks after the step's frames: a frame published at a bar's close time carries prints stamped 5 ms earlier and still belongs to that bar | scenarios 2, 3 and 6: the amend counts and the golden's last time bar |
+| The golden's tail `closed` flag is ignored for time series only; an activity series' tail is forming in both the golden and the rig, so it must match | every golden comparison (`golden.diffs(kind=...)`) |
 
 ## Open defects (strict xfails)
 

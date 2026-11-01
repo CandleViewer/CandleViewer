@@ -42,6 +42,7 @@ from tests.chaos.bars import _golden as golden
 from tests.chaos.bars._rig import SYMBOL, TIME_5S, VOLUME_1
 from tests.chaos.bars._sinks import CaptureSink
 from tests.chaos.ingestion._clock import EPOCH_S
+from tests.chaos.ingestion._rig import metric
 from tests.unit.bars._set_harness import Clock, FakeTape, settle
 
 pytestmark = pytest.mark.chaos
@@ -137,7 +138,7 @@ async def test_s01b_a_restart_mid_bar_resumes_to_the_golden_in_the_same_epoch(
     expected = await golden.golden_bars(tape, SPECS, SYMBOL)
     for label in SPECS:
         merged = _merged(label, life1, life2)
-        golden.assert_matches_golden(expected[label], merged, label)
+        golden.assert_matches_golden(expected[label], merged, label, kind=SPECS[label].kind)
         golden.assert_monotonic(merged, label)
         epochs = {
             s.generation
@@ -191,9 +192,9 @@ async def test_s01b_a_tape_that_lags_past_the_ring_is_marked_never_silent(
 ) -> None:
     monkeypatch.setattr(builder_set, "RECENT_RING", 4)
     tape = _tape()
-    before = bars_restore_gap_total._value.get()
+    before = metric(bars_restore_gap_total)
     bars_set, logs = await _restore_with_tape_ending_at(tmp_path, tape, _cut(tape, BLOB_AT_US) + 2)
-    assert bars_restore_gap_total._value.get() == before + 1
+    assert metric(bars_restore_gap_total) == before + 1
     assert BarsHealthReason.RESTORE_GAP in bars_set.health_reasons()
     warned = [e for e in logs if e["event"] == "bars_restore_gap"]
     assert [e["log_level"] for e in warned] == ["warning"]
@@ -206,8 +207,8 @@ async def test_s01b_negative_control_a_tape_that_reaches_the_ring_raises_no_alar
     monkeypatch.setattr(builder_set, "RECENT_RING", 4)
     tape = _tape()
     blob_cut = _cut(tape, BLOB_AT_US)
-    before = bars_restore_gap_total._value.get()
+    before = metric(bars_restore_gap_total)
     bars_set, _ = await _restore_with_tape_ending_at(tmp_path, tape, blob_cut + 40)
-    assert bars_restore_gap_total._value.get() == before
+    assert metric(bars_restore_gap_total) == before
     assert BarsHealthReason.RESTORE_GAP not in bars_set.health_reasons()
     await bars_set.stop()
