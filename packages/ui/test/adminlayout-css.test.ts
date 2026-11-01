@@ -29,9 +29,22 @@ describe("adminlayout.css contract (CMP-087; E42-D03 §4, §15, board 10 row F)"
     );
     const item = find(normal, ".cv-adminlayout__item", "margin-inline-end");
     expect(item).toContain("margin-inline-end: var(--space-inset-sm)");
-    expect(item).toContain("max-width: 100%");
+    expect(item).toContain("max-width: calc(100% - var(--space-inset-sm))");
     expect(find(normal, ".cv-adminlayout__text", "overflow-wrap")).toContain("anywhere");
     expect(css.all).not.toMatch(/text-overflow|line-clamp|overflow:\s*hidden|nowrap/);
+  });
+
+  it("leaves no margin to overflow the strip at 200 %: none after the list, a pill's fits its line", () => {
+    // A11Y-5287-02: the list's trailing margin followed the last pill, so in the real shell at 200 %
+    // the strip overflowed the canvas by 8 px. Only the title keeps one, before the first pill, and
+    // a pill wide enough to wrap alone keeps its own margin inside the line.
+    expect(find(normal, ".cv-adminlayout__list", "margin-inline-end")).toBe("");
+    expect(find(normal, ".cv-adminlayout__none", "margin-inline-end")).toBe("");
+    expect(find(normal, ".cv-adminlayout__title", "margin-inline-end")).toContain(
+      "margin-inline-end: var(--space-inset-sm)",
+    );
+    const item = find(normal, ".cv-adminlayout__item", "max-width");
+    expect(item).toContain("max-width: calc(100% - var(--space-inset-sm))");
   });
 
   it("items: the tone pill, a control-height target, primary text, no underline", () => {

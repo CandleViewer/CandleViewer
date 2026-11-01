@@ -27,6 +27,11 @@ describe("keyvaluerow.css contract", () => {
     );
   });
 
+  it("label: breaks between words, never inside one, in a host that breaks anywhere (CMP-178's)", () => {
+    // A-5330-04: "Maintenance" broke as "Maintenanc / e" in a 307 px tile; the value wraps instead.
+    expect(find(normal, ".cv-kv__label", "overflow-wrap")).toContain("overflow-wrap: break-word");
+  });
+
   it("stacked and emphasis: start-aligned column; a base number steps up to type.num.md", () => {
     expect(find(normal, '.cv-kv[data-layout="stacked"]', "flex-direction")).toContain("column");
     expect(
