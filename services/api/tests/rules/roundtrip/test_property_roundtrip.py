@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -51,6 +52,16 @@ def test_roundtrip_plan_splits_the_exact_document_count() -> None:
     assert len({s for *_, s in p}) == len(p)  # every shard has its own seed
 
 
+def replay_note(shard: tuple[str, int, int]) -> str:
+    """The seed and the exact command that replays a failing shard (the plan is deterministic)."""
+    kind, n, shard_seed = shard
+    return (
+        f"[roundtrip] failing shard kind={kind} documents={n} shard_seed={shard_seed}; replay: "
+        f"CV_ROUNDTRIP_SEED={SEED} CV_ROUNDTRIP_EXAMPLES={EXAMPLES} "
+        f"CV_ROUNDTRIP_WORKERS={WORKERS} uv run pytest tests/rules/roundtrip -q --no-cov -s"
+    )
+
+
 #: A worker that dies (OOM-kill, host pressure) poisons the whole pool; the shards are seeded and
 #: pure, so re-running the unfinished ones in a fresh pool is exact. Real property failures are
 #: ordinary exceptions from ``f.result()`` and are never retried.
@@ -70,7 +81,13 @@ def run_shards(shards: list[tuple[str, int, int]]) -> list[tuple[int, float]]:
             with ProcessPoolExecutor(max_workers=min(WORKERS, len(todo))) as pool:
                 futures = {i: pool.submit(run_shard, *shards[i], DB) for i in todo}
                 for i, f in futures.items():
-                    results[i] = f.result()
+                    try:
+                        results[i] = f.result()
+                    except BrokenProcessPool:
+                        raise
+                    except Exception as exc:  # a real property failure: name the seed (#1942)
+                        exc.add_note(replay_note(shards[i]))
+                        raise
         except BrokenProcessPool as exc:
             last_exc = exc
             print(f"[roundtrip] worker died (attempt {attempt + 1}/{POOL_RESTARTS + 1}): {exc!r}")
@@ -139,6 +156,68 @@ def test_roundtrip_run_shards_survives_a_dead_worker(monkeypatch: pytest.MonkeyP
         run_shards([("any", 3, 1)])
     assert isinstance(info.value.__cause__, BrokenProcessPool)
     assert len(built) == 2  # POOL_RESTARTS + 1 attempts, then give up
+
+
+class InlinePool:
+    """A pool stand-in that runs each shard in this process, so a fake failure is deterministic."""
+
+    def __init__(self, max_workers: int) -> None:
+        self.max_workers = max_workers
+
+    def __enter__(self) -> InlinePool:
+        return self
+
+    def __exit__(self, *a: object) -> None:
+        return None
+
+    def submit(self, fn: Any, *args: Any) -> Any:
+        class Done:
+            def __init__(self) -> None:
+                self.error: Exception | None = None
+                self.value: tuple[int, float] = (0, 0.0)
+                try:
+                    self.value = fn(*args)
+                except Exception as exc:
+                    self.error = exc
+
+            def result(self) -> tuple[int, float]:
+                if self.error is not None:
+                    raise self.error
+                return self.value
+
+        return Done()
+
+
+def test_roundtrip_failure_reports_its_seed_and_the_replay_reproduces_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1942: a failing shard names the seed; replaying with it reproduces the same failure."""
+    bad_seed = 4_242 + 1000  # the fixed fake counter-example: the first "form" shard of seed 4242
+
+    def fake_shard(kind: str, n: int, shard_seed: int, db: str | None) -> tuple[int, float]:
+        if shard_seed == bad_seed:
+            raise AssertionError(f"counter-example kind={kind} shard_seed={shard_seed}")
+        return (n, 0.0)
+
+    monkeypatch.setattr(this, "ProcessPoolExecutor", InlinePool)
+    monkeypatch.setattr(this, "run_shard", fake_shard)
+    monkeypatch.setattr(this, "SEED", 4_242)
+    monkeypatch.setattr(this, "EXAMPLES", 30)
+    monkeypatch.setattr(this, "WORKERS", 2)
+    with pytest.raises(AssertionError, match="counter-example") as first:
+        run_shards(plan(30, 2, 4_242))
+    notes = "\n".join(getattr(first.value, "__notes__", []))
+    assert f"shard_seed={bad_seed}" in notes, notes
+    assert "CV_ROUNDTRIP_SEED=4242" in notes, notes
+
+    # Replay: rebuild the run from the reported environment only, as a developer would.
+    env = dict(re.findall(r"(CV_ROUNDTRIP_\w+)=(\d+)", notes))
+    monkeypatch.setattr(this, "SEED", int(env["CV_ROUNDTRIP_SEED"]))
+    monkeypatch.setattr(this, "EXAMPLES", int(env["CV_ROUNDTRIP_EXAMPLES"]))
+    monkeypatch.setattr(this, "WORKERS", int(env["CV_ROUNDTRIP_WORKERS"]))
+    with pytest.raises(AssertionError, match="counter-example") as again:
+        run_shards(plan(int(env["CV_ROUNDTRIP_EXAMPLES"]), int(env["CV_ROUNDTRIP_WORKERS"]), 4_242))
+    assert str(again.value) == str(first.value)
 
 
 @pytest.mark.parametrize("strategy", [any_rule, form_rule], ids=["any", "form"])
