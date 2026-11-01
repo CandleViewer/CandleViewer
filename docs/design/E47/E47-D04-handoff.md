@@ -27,6 +27,7 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 | A                                      | Target                         | Applied by                                 |
 | -------------------------------------- | ------------------------------ | ------------------------------------------ |
 | `05` §3.4 item 11, the `05`:46 pointer | `05`                           | this PR (BQ-2)                             |
+| E29-D05's A-02, the `05`:63 cell       | `05`                           | this PR (BQ-4, ruled)                      |
 | D04-A1, D04-A2                         | `15` CMP-039                   | E47-D10 (#1309), the CMP-039 contribution  |
 | D04-A3, D04-A4, D04-A5                 | `15` CMP-043, CMP-044, CMP-049 | the `15` owner, at the owner's sign-off PR |
 | D04-A6, D04-A7                         | `14` SCR-010, SCR-050          | the `14` owner, at the owner's sign-off PR |
@@ -115,5 +116,5 @@ The boards of spec §0, on page `E47-D04 — Focus model`; frames named `<archet
 4. A dense grid is one stop: one `Tab` out, `Esc` by layers to the panel header, focus keyed by logical id.
 5. The ring is two-tone and enclosed by its halo; measured over 12 backgrounds in three themes; a thick variant on the shipped preference.
 6. Data never moves focus; a vanished level or row hands focus to a named successor with one label; never the body.
-7. Dialogs trap, open on a safe target and restore to the invoker; the BQ defaults are built, the ruling pending.
+7. Dialogs trap, open on a safe target and restore to the invoker; BQ-0 … BQ-10 are ruled (eight defaults; one PR with `Closes #1303`, `Esc` never cancels with `05`:63 fixed, no third surrogate ceiling).
 8. The audit's G-CITE checks that each cited line exists and is non-blank, not that it says what is claimed; cite content is a reviewer's check.

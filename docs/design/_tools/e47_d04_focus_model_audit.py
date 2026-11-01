@@ -17,8 +17,9 @@ the anchored values, the default-deny pins and the mutations).
    the base, the D02 catalogue's at its merge commit (G-CITE); every "verbatim" copy string occurs
    on its cited line (G-QUOTE); every Old fragment of the hand-off's A-rows occurs verbatim on its
    cited line (G-AROW).
-3. **Gates.** One FAIL line per gate: G-PENDING (the BQ section names the BQ comment and carries
-   BQ-0 … BQ-10 once each, each "default built; ruling pending" until a ruling flips it),
+3. **Gates.** One FAIL line per gate: G-RULED (the heading names the ruling and the list; the
+   ruling's sentences verbatim, bold dropped), G-PENDING (BQ-0 … BQ-10 once each, the three the
+   ruling changed marked "RULED, changed", the other eight "ruled as the default"),
    G-BOARDS (at most ten boards, twins at most a third, every board pending or drawn with its id
    and PNG, the not-drawn paragraph), G-ARCH (the five archetype columns, every cell filled, the
    ring table's archetypes), G-MAP (every `14` id exactly once; the reserved ids are exactly those
@@ -28,7 +29,8 @@ the anchored values, the default-deny pins and the mutations).
    destination that is never the body, and an announcement cell), G-SAFE (no initial target is a
    destructive or committing control), G-CONTRAST (12 backgrounds incl. the brightest heatmap
    cells and the canvas; ring-halo pair and edge at least 3:1 in every theme), G-NORM (`05` §3.4
-   item 11 carries every R-n of §1.4 and points here; the dead `05`:46 pointer is gone), G-HEUR,
+   item 11 carries every R-n of §1.4 and points here; the dead `05`:46 pointer is gone; the
+   "Cancel focused order" row binds `Ctrl+Delete`, never a bare `Esc`, BQ-4), G-HEUR,
    G-WALK (at most ten items), G-OWNER (G-ledger owners are tickets or owners, never an agent),
    G-UNMERGED, G-URL, G-UNTOUCHED (only this ticket's files, `05` and the boards differ from the
    merge base with origin/main), G-BUDGET (600 spec lines, 150 hand-off lines), G-MUTLIST.
@@ -119,10 +121,49 @@ THEMES: dict[str, tuple[str, ...]] = {
     "hc": ("primitives", "semantic-dark", "semantic-hc"),
 }
 
-BQ_COMMENT = "6552540452"  # the BQ list on #1303; no ruling yet
-BQ_PENDING_HEAD = "defaults built; ruling pending (the BQ comment on #1303)"
-BQ_PENDING = "default built; ruling pending"
+RULING_ID = "6552808402"  # the rulings of record on #1303 (2026-11-01 03:20Z)
+BQ_LIST_ID = "6552540452"  # the BQ list on #1303
+BQ_DEFAULT = "ruled as the default"
+BQ_CHANGED = "RULED, changed (the ruled sentence above)"
+BQ_CHANGED_IDS = ("BQ-0", "BQ-4", "BQ-7")
 BQ_IDS = tuple(f"BQ-{n}" for n in range(11))
+# The ruling of record, its bold marks dropped; the list's author is named as "the BQ list".
+RULED: tuple[str, ...] = (
+    (
+        "Rulings of record — E47-D04 (#1303) BQ-0..BQ-10 (the BQ list 6552540452); orchestrator,"
+        " 2026-11-01 03:20Z, under the owner's 2026-10-29 delegation (#2701 6490317249). No OWNER item."
+    ),
+    (
+        "Eight as the defaults. Three change, each checked against the cited merged text by an"
+        " independent pre-screen:"
+    ),
+    (
+        "- BQ-0 — closing keyword: as #1302 — one PR, `Closes #1303`; carried rows as comments to"
+        " their owners."
+    ),
+    (
+        '- BQ-4 — `Esc` and orders: "bare `Esc` never cancels an order" contradicts the merged'
+        ' `05`:63 ("Cancel focused order | `Esc`") and arguably `05`:49 (cancels an order draft) —'
+        " the file this spec edits (BQ-2). The rule you want is backed by the merged E29-D01 D9 and"
+        " E29-D05 A-02 (`E29-D05.md:654`), which `05` never absorbed: cite D9 / A-02 in the new rule"
+        " and fix the `05`:63 cell in the same PR (one content edit, the owner is `05`), so `05` does"
+        " not contradict itself."
+    ),
+    (
+        '- BQ-7 — the surrogate ceiling: "no merged text gives a ceiling" is false — E06-D03 D1'
+        " hard-caps the mirror at 1,800 nodes (`E06-D03.md:79`) and F2 caps its table at 200 rows"
+        ' (:66), and #5293 (E14-K01, in the merge queue) adds `05` §6.1.1 "up to 200 surrogates".'
+        " Do not introduce 128 as a third number: state the two merged ceilings and the K01 cap, and"
+        " hand any new figure to E47-D06 / E46 to confirm under bench (your own default's owners) as"
+        " a PROPOSED row."
+    ),
+    (
+        "Rebase note: #5293 edits `05` §6.1.1 (≈ :144), away from your :46 / :90–104 hunks — rebase"
+        " only. Build once #5248's register is read from `main` (it is)."
+    ),
+)
+NORM_CANCEL = "Cancel focused order"
+NORM_CANCEL_KEY = "`Ctrl+Delete` (when order row focused)"
 
 ARCHS = ("workspace", "full-page form", "dialog", "overlay / palette", "dense grid")
 ARCH_KEYS = {
@@ -596,12 +637,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-13",
-        "mark BQ-4 settled without a ruling",
+        "mark the changed BQ-4 as ruled as the default",
         "G-PENDING",
         "spec",
         "## The questions",
-        "never cancels an order — default built; ruling pending",
-        "never cancels an order — accepted",
+        "fixed in this PR — RULED, changed (the ruled sentence above)",
+        "fixed in this PR — ruled as the default",
     ),
     Mutation(
         "M-14",
@@ -695,6 +736,24 @@ MUTATIONS: tuple[Mutation, ...] = (
         "## 17.",
         "| G-WALK",
         "| G-WALKS",
+    ),
+    Mutation(
+        "M-25",
+        "drop 'third' from the ruled BQ-7 sentence",
+        "G-RULED",
+        "spec",
+        "## The questions",
+        "Do not introduce 128 as a third number",
+        "Do not introduce 128 as a number",
+    ),
+    Mutation(
+        "M-26",
+        "bind a bare `Esc` to `05`'s Cancel focused order again",
+        "G-NORM",
+        "norm",
+        "",
+        "`Ctrl+Delete` (when order row focused)",
+        "`Esc` (when order row focused)",
     ),
 )
 PROBES: tuple[Mutation, ...] = (
@@ -851,21 +910,30 @@ def g_arow(t: Texts) -> list[Finding]:
     return out
 
 
-def g_pending(t: Texts) -> list[Finding]:
+def g_ruled(t: Texts) -> list[Finding]:
     s, e, region = section(t.spec, "## The questions")
     head = t.spec.split("\n")[s - 1] if s else ""
     lines = t.spec.split("\n")[s:e]
     bad: list[str] = []
-    if BQ_PENDING_HEAD not in head:
-        bad.append("the heading does not say the defaults are built and the ruling pending")
-    if not any(BQ_COMMENT in ln for ln in lines):
-        bad.append(f"the BQ comment {BQ_COMMENT} is not named")
+    if f"RULED (orchestrator, comment {RULING_ID}, on the BQ list {BQ_LIST_ID})" not in head:
+        bad.append("the heading does not name the ruling and the list")
+    for k, para in enumerate(RULED, 1):
+        if para not in lines:
+            bad.append(f"ruled paragraph {k} is not verbatim")
+    return [("G-RULED", b, "spec", region) for b in bad]
+
+
+def g_pending(t: Texts) -> list[Finding]:
+    s, e, region = section(t.spec, "## The questions")
+    lines = t.spec.split("\n")[s:e]
+    bad: list[str] = []
     for bq in BQ_IDS:
         rows = [ln for ln in lines if ln.startswith(f"- **{bq}**")]
+        want = BQ_CHANGED if bq in BQ_CHANGED_IDS else BQ_DEFAULT
         if len(rows) != 1:
             bad.append(f"{bq} appears {len(rows)} times")
-        elif BQ_PENDING not in rows[0]:
-            bad.append(f"{bq} is not marked '{BQ_PENDING}'")
+        elif want not in rows[0] or (BQ_DEFAULT if want == BQ_CHANGED else BQ_CHANGED) in rows[0]:
+            bad.append(f"{bq} is not marked '{want}'")
     return [("G-PENDING", b, "spec", region) for b in bad]
 
 
@@ -1058,6 +1126,9 @@ def g_norm(t: Texts) -> list[Finding]:
             bad.append("`05` §3.4 item 11's rules differ from the spec's §1.4")
     if "§4.2 landmark model" in t.norm:
         bad.append("the dead `05`:46 pointer is still there")
+    cancel = [ln for ln in lines if ln.startswith("|") and f"| {NORM_CANCEL} " in ln]
+    if len(cancel) != 1 or NORM_CANCEL_KEY not in cancel[0]:
+        bad.append("`05`'s Cancel focused order row does not bind `Ctrl+Delete` (BQ-4)")
     return [("G-NORM", b, "norm", "") for b in bad]
 
 
@@ -1220,7 +1291,7 @@ def repin(t: Texts) -> int:
 def findings(t: Texts, values: Values) -> list[Finding]:
     out: list[Finding] = []
     out += g_anchor(t, values) + g_marker(t) + g_cite(t) + g_quote(t) + g_arow(t)
-    out += g_pending(t) + g_boards(t) + g_arch(t) + g_map(t) + g_findings(t)
+    out += g_ruled(t) + g_pending(t) + g_boards(t) + g_arch(t) + g_map(t) + g_findings(t)
     out += g_retain(t) + g_safe(t) + g_contrast(t) + g_norm(t) + g_heur(t) + g_walk(t)
     out += g_owner(t)
     out += g_lines(t, "G-UNMERGED", lambda ln: any(p in ln for p in UNMERGED_PATHS), "a path")
