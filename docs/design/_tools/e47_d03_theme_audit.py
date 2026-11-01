@@ -11,7 +11,7 @@ values, the default-deny pins and the mutations).
 1. **Values.** Every `{{KIND:key}}` placeholder is written by `--fill` as `VALUE<!--=KIND:key-->`
    and re-derived under `--check` (G-ANCHOR); a placeholder left behind or a stray HTML comment
    FAILs (G-MARKER). Kinds: CR `theme/fg/bg` (WCAG 2.x ratio, truncated to two decimals), ACC
-   `theme/fg` (the lowest CR over the four accent surfaces), DE `theme/sim/a/b` (CIE76 between
+   `theme/fg` (the lowest CR over the five accent surfaces), DE `theme/sim/a/b` (CIE76 between
    the two simulated colours, truncated to one decimal), SIM `theme/sim/token` (simulated hex),
    HEX `theme/token`, RAMP `theme/sim/ramp` (`ordered` when the stops' L* distance from the
    canvas grows with every stop, `inverted` when it shrinks, else `mixed`), STEP `theme/sim/ramp`
@@ -19,7 +19,8 @@ values, the default-deny pins and the mutations).
    and of the base files). Themes: `dark`, `light`, `hc`; a `+` suffix applies the hand-off's
    proposed token diff (PROPOSED below). Sims: `none`, `deut`, `prot` (Brettel/Vienot), `trit`
    (Machado 2009), `grey` (relative-luminance projection) — the matrices of
-   `tools/contrast/color-math.mjs`, ported with its rounding.
+   `tools/contrast/color-math.mjs`, ported with its rounding. Ratios and ΔE are truncated,
+   never rounded up, and a bar is met by the unrounded value.
 2. **Cites.** Every `NN`:line and KEY:line cite resolves to a non-blank line at the base (G-CITE);
    every "verbatim" copy string occurs on its cited line (G-QUOTE); every Old fragment of the
    hand-off's A-rows occurs verbatim on its cited line (G-AROW).
@@ -42,7 +43,9 @@ values, the default-deny pins and the mutations).
 4. **Pins (G-RULED).** The BQ bullets are pinned verbatim in `e47_d03_ruled_pins.txt`;
    `--repin-ruled` is the only writer (when the ruling lands, the section flips and is re-pinned)
    and refuses while a placeholder is unfilled.
-5. **--self-test** applies every mutation (M-n) in memory with the values frozen at the filled
+5. **--list-keys** prints every resolved key per theme (`theme+` with the token diff) with its
+   source set: `own` when the theme's last set defines it, else the set it is inherited from.
+6. **--self-test** applies every mutation (M-n) in memory with the values frozen at the filled
    baseline; each must make exactly one gate FAIL, the one it names; the texts on disk are checked
    byte-identical afterwards (sha256). Output is ASCII.
 
@@ -50,6 +53,7 @@ Usage (from the repo root):
   python3 -I docs/design/_tools/e47_d03_theme_audit.py --check [--fill]
   python3 -I docs/design/_tools/e47_d03_theme_audit.py --self-test
   python3 -I docs/design/_tools/e47_d03_theme_audit.py --repin-ruled
+  python3 -I docs/design/_tools/e47_d03_theme_audit.py --list-keys [THEME ...]
 Exit 0 = no FAIL; 1 = at least one FAIL.
 """
 
@@ -78,7 +82,7 @@ OWN = (SPEC_REL, HAND_REL, TOOL_REL, PIN_REL)
 OWN_BOARDS = re.compile(r"^docs/design/E47/img/E47-D03-\d\d-[a-z0-9-]+\.png$")
 OWN_KIT = re.compile(r"^docs/design/_tools/sheets/e47-d03/")
 POINTER_14 = "- **Hi-fi (E47-D03, #1302):**"
-SPEC_BUDGET = 630
+SPEC_BUDGET = 650
 HAND_BUDGET = 170
 
 PLAN = {
@@ -128,6 +132,10 @@ PROPOSED: dict[str, dict[str, str]] = {
     "semantic-dark": {
         "color.border.strong": "{palette.neutral.600}",
         "border.control": "{border.hairline}",
+        "color.data-confidence.disconnected.text": "{color.text.secondary}",
+        "color.data-confidence.disconnected.surface": "{color.surface.sunken}",
+        "color.data-confidence.reconnecting.text": "{color.text.secondary}",
+        "color.data-confidence.reconnecting.surface": "{color.surface.sunken}",
     },
     "semantic-light": {
         "color.border.strong": "{palette.light.neutral.500}",
@@ -147,6 +155,7 @@ ACCENT_SURFACES = (
     "color.surface.canvas",
     "color.surface.raised",
     "color.surface.overlay",
+    "color.surface.selected",
 )
 CANVAS = "color.surface.canvas"
 RAMPS: dict[str, tuple[str, ...]] = {
@@ -798,7 +807,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-22",
-        "drop Purple's high-contrast warning",
+        "drop a preset's high-contrast warning",
         "G-ACCENT",
         "spec",
         "### 8.2",
@@ -822,6 +831,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         "## 15.",
         "G-QUOTE",
         "G-CITE",
+    ),
+    Mutation(
+        "M-25",
+        "drop Amber's light warning",
+        "G-ACCENT",
+        "spec",
+        "### 8.2",
+        "| light                |\n| Purple",
+        "| none                 |\n| Purple",
     ),
 )
 
@@ -1469,18 +1487,46 @@ def repin() -> int:
     return 0
 
 
+def key_sources(theme: str) -> list[tuple[str, str]]:
+    """(key, source set) of every resolved key: `own` or the set it is inherited from."""
+    base, plus = theme.rstrip("+"), theme.endswith("+")
+    src: dict[str, str] = {}
+    for f in THEMES[base]:
+        for k in token_file(f):
+            src[k] = f
+        if plus:
+            for k in PROPOSED.get(f, {}):
+                src[k] = f
+    last = THEMES[base][-1]
+    return [(k, "own" if src[k] == last else f"inherited from {src[k]}") for k in sorted(src)]
+
+
+def list_keys(themes: list[str]) -> int:
+    for theme in themes or ["dark", "light", "hc"]:
+        if theme.rstrip("+") not in THEMES:
+            print(f"FAIL unknown theme {theme}")
+            return 1
+        for key, source in key_sources(theme):
+            if not key.startswith("palette"):
+                print(f"{theme}\t{key}\t{source}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0] if __doc__ else None)
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true")
     mode.add_argument("--self-test", action="store_true")
     mode.add_argument("--repin-ruled", action="store_true")
+    mode.add_argument("--list-keys", nargs="*", metavar="THEME")
     ap.add_argument("--fill", action="store_true", help="with --check: write values first")
     args = ap.parse_args()
     if args.self_test:
         return self_test()
     if args.repin_ruled:
         return repin()
+    if args.list_keys is not None:
+        return list_keys(args.list_keys)
     return check(args.fill)
 
 

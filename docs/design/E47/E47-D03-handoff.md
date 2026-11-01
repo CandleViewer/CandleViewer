@@ -24,14 +24,14 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
 ## §B Who applies what
 
-| Rows                              | Target                                                                | Applied by                                            |
-| --------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------- |
-| D03-D1 … D03-D14                  | `packages/ui/tokens/*.tokens.json` (§11.2 runbook A, steps 4–6)       | E47-D10 (#1309)                                       |
-| D03-A10, D03-A11, D03-A7 … D03-A9 | `tools/contrast/pairs.mjs`, `exemptions.json`, `encodings.json`       | E47-D10 (#1309) with the `tools/contrast` code owners |
-| D03-A12, D03-A13                  | `packages/ui/scripts/chart-color-modes.mjs`, `apps/web` engine tokens | E47-D10 (#1309) with the frontend owners              |
-| D03-A1 … D03-A4                   | `14` SCR-116                                                          | `14`'s owner, at the owner's sign-off PR              |
-| D03-A5, D03-A14                   | `15` CMP-074, CMP-031                                                 | `15`'s owner                                          |
-| D03-A6                            | `16` §2.1                                                             | `16`'s owner                                          |
+| Rows                                       | Target                                                                              | Applied by                                                                                                        |
+| ------------------------------------------ | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| D03-D1 … D03-D18                           | `packages/ui/tokens/*.tokens.json` (§11.2 runbook A, steps 4–6)                     | E47-D10 (#1309)                                                                                                   |
+| D03-A10, D03-A11, D03-A15, D03-A7 … D03-A9 | `tools/contrast/pairs.mjs`, `exemptions.json`, `encodings.json`, `data-ink-lib.mjs` | E47-D10 (#1309) with the `tools/contrast` code owners                                                             |
+| D03-A12, D03-A13                           | `packages/ui/scripts/chart-color-modes.mjs`, `apps/web` engine tokens               | E47-D10 (#1309) with the frontend owners                                                                          |
+| D03-A1 … D03-A4                            | `14` SCR-116                                                                        | `14`'s owner, at the owner's sign-off PR; D03-A4's payload is stated to E05-D02 (#161), the analytics owner (J16) |
+| D03-A5, D03-A14                            | `15` CMP-074, CMP-031                                                               | `15`'s owner                                                                                                      |
+| D03-A6                                     | `16` §2.1                                                                           | `16`'s owner                                                                                                      |
 
 ## §C Copy-ready rows (PROPOSED)
 
@@ -55,27 +55,32 @@ Old is a verbatim fragment of the cited line at `95a4f2765` (the tool checks it)
 | D03-A12 | `chart-color-modes.mjs` | the remap (MODES:13)   | `["color.footprint.bid", "color.footprint.ask"],`                                      | insert after: the CVD-safe palette also maps `color.heatmap.{bid,ask}.1–5` to `color.cvd.heatmap.{bid,ask}.1–5` and `color.footprint.imbalance` to `color.cvd.imbalance` (E47-D03 §2.3)                                                                                                                                                                                                   |
 | D03-A13 | `chartColorMode.ts`     | engine tokens (ENG:15) | `"color.footprint.ask",`                                                               | insert after: the heatmap ramp and imbalance tokens of D03-A12, so the engine re-uploads them in one block                                                                                                                                                                                                                                                                                |
 | D03-A14 | `15` CMP-031            | Purpose (`15`:371)     | (drawing tool colour, account colour, heatmap ramp preview)                            | (drawing tool colour, account colour, heatmap ramp preview, the SCR-116 accent presets, E47-D03 §8.2)                                                                                                                                                                                                                                                                                     |
+| D03-A15 | `data-ink-lib.mjs`      | GRADIENTS (INK:48)     | `{ id: "heatmap.ask", anchors: side("ask") },`                                         | insert after: `cvd.heatmap.bid` / `cvd.heatmap.ask` gradients over `color.cvd.heatmap.{bid,ask}.1–5`, and a direction check under A11Y-C004: each stop's L* distance from `CANVAS` grows with the stop, so an inverted ramp fails (E47-D03 §7.3)                                                                                                                                          |
 
 ### §C.2 The token diff (one schema; applied by E47-D10)
 
-| D       | Set            | Token                     | Old                            | New                            | Why                                                                                                |
-| ------- | -------------- | ------------------------- | ------------------------------ | ------------------------------ | -------------------------------------------------------------------------------------------------- |
-| D03-D1  | primitives     | `palette.blue.200`        | —                              | `#A8C7FA`                      | the high-contrast link (H-8; F-12)                                                                 |
-| D03-D2  | semantic-hc    | `color.text.link`         | —                              | `{palette.blue.200}`           | 7:1 in high contrast on every surface (§3.4)                                                       |
-| D03-D3  | semantic-dark  | `color.border.strong`     | `{palette.neutral.400}`        | `{palette.neutral.600}`        | control boundaries at 3:1 (R-6; F-9); high contrast inherits it, fixing the strong < default order |
-| D03-D4  | semantic-light | `color.border.strong`     | `{palette.light.neutral.300}`  | `{palette.light.neutral.500}`  | as D03-D3 in light                                                                                 |
-| D03-D5  | semantic-dark  | `border.control`          | —                              | `{border.hairline}`            | a new alias every control boundary binds                                                           |
-| D03-D6  | semantic-hc    | `border.control`          | —                              | `{border.thick}`               | high contrast adds weight, not only contrast (T Tech)                                              |
-| D03-D7  | semantic-light | `color.cvd.heatmap.bid.1` | `{palette.cvd.light.blue.5}`   | `{palette.cvd.light.blue.1}`   | the light CVD ramp reads in the right direction (§7.3)                                             |
-| D03-D8  | semantic-light | `color.cvd.heatmap.bid.2` | `{palette.cvd.light.blue.4}`   | `{palette.cvd.light.blue.2}`   | as D03-D7                                                                                          |
-| D03-D9  | semantic-light | `color.cvd.heatmap.bid.4` | `{palette.cvd.light.blue.2}`   | `{palette.cvd.light.blue.4}`   | as D03-D7                                                                                          |
-| D03-D10 | semantic-light | `color.cvd.heatmap.bid.5` | `{palette.cvd.light.blue.1}`   | `{palette.cvd.light.blue.5}`   | as D03-D7                                                                                          |
-| D03-D11 | semantic-light | `color.cvd.heatmap.ask.1` | `{palette.cvd.light.orange.5}` | `{palette.cvd.light.orange.1}` | as D03-D7                                                                                          |
-| D03-D12 | semantic-light | `color.cvd.heatmap.ask.2` | `{palette.cvd.light.orange.4}` | `{palette.cvd.light.orange.2}` | as D03-D7                                                                                          |
-| D03-D13 | semantic-light | `color.cvd.heatmap.ask.4` | `{palette.cvd.light.orange.2}` | `{palette.cvd.light.orange.4}` | as D03-D7                                                                                          |
-| D03-D14 | semantic-light | `color.cvd.heatmap.ask.5` | `{palette.cvd.light.orange.1}` | `{palette.cvd.light.orange.5}` | as D03-D7                                                                                          |
+| D       | Set            | Token                                        | Old                            | New                            | Why                                                                                                        |
+| ------- | -------------- | -------------------------------------------- | ------------------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| D03-D1  | primitives     | `palette.blue.200`                           | —                              | `#A8C7FA`                      | the high-contrast link (H-8; F-12)                                                                         |
+| D03-D2  | semantic-hc    | `color.text.link`                            | —                              | `{palette.blue.200}`           | 7:1 in high contrast on every surface (§3.4)                                                               |
+| D03-D3  | semantic-dark  | `color.border.strong`                        | `{palette.neutral.400}`        | `{palette.neutral.600}`        | control boundaries at 3:1 (R-6; F-9); high contrast inherits it, fixing the strong < default order         |
+| D03-D4  | semantic-light | `color.border.strong`                        | `{palette.light.neutral.300}`  | `{palette.light.neutral.500}`  | as D03-D3 in light                                                                                         |
+| D03-D5  | semantic-dark  | `border.control`                             | —                              | `{border.hairline}`            | a new alias every control boundary binds                                                                   |
+| D03-D6  | semantic-hc    | `border.control`                             | —                              | `{border.thick}`               | high contrast adds weight, not only contrast (T Tech)                                                      |
+| D03-D7  | semantic-light | `color.cvd.heatmap.bid.1`                    | `{palette.cvd.light.blue.5}`   | `{palette.cvd.light.blue.1}`   | the light CVD ramp reads in the right direction (§7.3)                                                     |
+| D03-D8  | semantic-light | `color.cvd.heatmap.bid.2`                    | `{palette.cvd.light.blue.4}`   | `{palette.cvd.light.blue.2}`   | as D03-D7                                                                                                  |
+| D03-D9  | semantic-light | `color.cvd.heatmap.bid.4`                    | `{palette.cvd.light.blue.2}`   | `{palette.cvd.light.blue.4}`   | as D03-D7                                                                                                  |
+| D03-D10 | semantic-light | `color.cvd.heatmap.bid.5`                    | `{palette.cvd.light.blue.1}`   | `{palette.cvd.light.blue.5}`   | as D03-D7                                                                                                  |
+| D03-D11 | semantic-light | `color.cvd.heatmap.ask.1`                    | `{palette.cvd.light.orange.5}` | `{palette.cvd.light.orange.1}` | as D03-D7                                                                                                  |
+| D03-D12 | semantic-light | `color.cvd.heatmap.ask.2`                    | `{palette.cvd.light.orange.4}` | `{palette.cvd.light.orange.2}` | as D03-D7                                                                                                  |
+| D03-D13 | semantic-light | `color.cvd.heatmap.ask.4`                    | `{palette.cvd.light.orange.2}` | `{palette.cvd.light.orange.4}` | as D03-D7                                                                                                  |
+| D03-D14 | semantic-light | `color.cvd.heatmap.ask.5`                    | `{palette.cvd.light.orange.1}` | `{palette.cvd.light.orange.5}` | as D03-D7                                                                                                  |
+| D03-D15 | semantic-dark  | `color.data-confidence.disconnected.text`    | `{color.text.primary}`         | `{color.text.secondary}`       | DS-CR-1 (A11Y-R-E08-D12-F-01): a disconnected row no longer reads as live; light and high contrast inherit |
+| D03-D16 | semantic-dark  | `color.data-confidence.disconnected.surface` | —                              | `{color.surface.sunken}`       | as D03-D15                                                                                                 |
+| D03-D17 | semantic-dark  | `color.data-confidence.reconnecting.text`    | `{color.text.primary}`         | `{color.text.secondary}`       | as D03-D15                                                                                                 |
+| D03-D18 | semantic-dark  | `color.data-confidence.reconnecting.surface` | —                              | `{color.surface.sunken}`       | as D03-D15                                                                                                 |
 
-14<!--=COUNT:diff--> values; `.3` stays (it maps to itself). After applying: `build:tokens`, `contrast:gate` (expect the A11Y-C007 stale-matrix step, then `contrast:data-ink` and commit the matrix, `16`:519), `verify_tokens.py`, and this tool's §3.4 and §7.3 rows read on the `+` themes become the base rows.
+18<!--=COUNT:diff--> values; `.3` stays (it maps to itself). After applying: `build:tokens`, `contrast:gate` (expect the A11Y-C007 stale-matrix step, then `contrast:data-ink` and commit the matrix, `16`:519), `verify_tokens.py`, and this tool's §3.4 and §7.3 rows read on the `+` themes become the base rows.
 
 ## §D Storybook story lists (each story per theme and density, `15`:41)
 
@@ -90,7 +95,7 @@ Old is a verbatim fragment of the cited line at `95a4f2765` (the tool checks it)
 ## §E Owner walkthrough checklist (each frame a 1280 × 800 window)
 
 - [ ] Board 01: every control has a visible label; the chosen accent shows a check glyph, not only a ring.
-- [ ] Board 02: the warning reads W-1 with a glyph; the swatch keeps its colour; text stays on the link token.
+- [ ] Board 02: Amber in light on a selected row: the warning reads W-1 with a glyph; the swatch keeps its colour; text stays on the link token.
 - [ ] Board 03: borders read heavier in high contrast; links read clearly in a drawer.
 - [ ] Board 04: the light twin keeps every word of board 01.
 - [ ] Board 05: at 150 % and at 200 % nothing is clipped and Reset is reachable.
@@ -104,11 +109,12 @@ Old is a verbatim fragment of the cited line at `95a4f2765` (the tool checks it)
 
 | Consumer                       | Builds from                                     | Waits on               |
 | ------------------------------ | ----------------------------------------------- | ---------------------- |
-| E47-D10 (#1309)                | §C.2, §C.1 D03-A7 … D03-A13                     | —                      |
+| E47-D10 (#1309)                | §C.2, §C.1 D03-A7 … D03-A13, D03-A15            | —                      |
 | E47-D05 (#1304)                | spec §10 (increase contrast and forced colours) | —                      |
 | E47-D08 (#1307)                | spec §3.2 (no flash colour), D03-G2             | —                      |
 | E47-Q01 (#1314) cases 410, 413 | spec §7.2, §8.2, W-1                            | D03-G3 for screenshots |
 | E47-S08 (#1322)                | spec §8                                         | D03-G1                 |
+| E08-D04                        | D03-D15 … D03-D18 (DS-CR-1)                     | E47-D10 (#1309)        |
 
 ## §G Board plan (drawn later in this PR)
 
@@ -117,7 +123,7 @@ Frames are named `SCR-116/<state> · <theme>` or `ink/<surface> · <theme or sim
 | Board | Frames                                                                                                                                    |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | 01    | `SCR-116/default · dark`, `SCR-116/preview-tile · dark`                                                                                   |
-| 02    | `SCR-116/accent-below-bar · hc`                                                                                                           |
+| 02    | `SCR-116/accent-below-bar · light`                                                                                                        |
 | 03    | `SCR-116/default · hc`                                                                                                                    |
 | 04    | `SCR-116/default · light`                                                                                                                 |
 | 05    | `SCR-116/text-150 · dark`, `SCR-116/zoom-200 · dark`                                                                                      |
@@ -129,9 +135,9 @@ Frames are named `SCR-116/<state> · <theme>` or `ink/<surface> · <theme or sim
 
 ## §H Summary for #1302
 
-1. Text-first spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards planned (2<!--=COUNT:boards.light--> light twins), drawn later in this PR.
+1. Text-first spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards planned (3<!--=COUNT:boards.light--> in light, 2 of them twins), drawn later in this PR.
 2. Three themes × one CVD-safe chart palette × two conventions, one overlay schema; the six ticket ids map onto it.
-3. Every pair recomputed per theme; 18<!--=COUNT:exempt.stale--> stale exemptions to remove; H-8, the control borders and the high-contrast border order closed by 14<!--=COUNT:diff--> token values.
+3. Every pair recomputed per theme; 18<!--=COUNT:exempt.stale--> stale exemptions to remove; H-8, the control borders and the high-contrast border order and DS-CR-1 closed by 18<!--=COUNT:diff--> token values.
 4. The light CVD heatmap ramp runs backwards; the diff reverses it on the same primitives.
 5. Every surface keeps a non-colour channel; greyscale proves no hue pair suffices alone.
-6. SCR-116: closed accent presets measured per theme, the verbatim warning, no T2.
+6. SCR-116: closed accent presets measured per theme on a selected row too, the verbatim warning, no T2.
