@@ -100,6 +100,8 @@ const MINTING: ReadonlySet<string> = new Set([
   "/api/v1/auth/mfa/recovery",
   "/api/v1/auth/mfa/enroll/confirm",
   "/api/v1/auth/step-up",
+  // #2110: a password change revokes every session of the user and answers the caller's replacement
+  "/api/v1/auth/password",
 ]);
 /** The pre-session ones (`security: []`): no bearer goes to them. */
 const PRE_SESSION: ReadonlySet<string> = new Set([
@@ -581,10 +583,13 @@ export function createAccessTokenHolder(
       // a call that mints or rotates a session must not race a refresh: it runs under the lock with the
       // token of that moment (none to a pre-session call), and its bundle is held before the lock is let go
       if (MINTING.has(path)) {
-        return exclusive(
+        const minted = await exclusive(
           async () => adopt(await attempt(PRE_SESSION.has(path) ? undefined : token?.value)),
           init,
         );
+        // an idle-locked session's refusal is SCR-005's, here as on any other call (`onLocked`)
+        if (minted.status === 401 && (await codeOf(minted)) === IDLE_LOCKED) reportLocked();
+        return minted;
       }
       const cookieOnly = bearerRefused && COOKIE_IDENTIFIED.has(path);
       const sent = cookieOnly ? undefined : token?.value;
