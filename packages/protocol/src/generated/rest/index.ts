@@ -3770,6 +3770,26 @@ export interface paths {
      *     `big_trade_notional` (largest print notional in the window; `window_ms` 1000) and
      *     `big_trade_zscore` (z-score of print size against the rolling mean; `window` 500 prints,
      *     `z_threshold` 3.0) — the defaults of the rules vocabulary and 24 §7.2 (E22-T02, #654).
+     *
+     *     Derivatives (E24-T04, #723): `open_interest`, `open_interest_value`,
+     *     `open_interest_delta`, `oi_price_quadrant`, `funding_rate`, `funding_annualized`,
+     *     `time_to_funding_ms`, `basis`, `premium_pct` and `liquidation_notional` are the 24 §7.2
+     *     descriptors, each read through the one derivatives engine, so a pane, this endpoint and
+     *     a rule condition read the same number. `funding_basis` is `basis` and
+     *     `liquidation_intensity` is `liquidation_notional` (the same value, params and unit).
+     *     They are bar-scoped on `bar_type=time` only (`param` a time interval, default `1`): one
+     *     point per stored bar, `t` its open time, `estimated` false, `unit` the descriptor's.
+     *     Their params go in `params` (`{"basis":{"source":"mark"}}`): `source` is `last` (the
+     *     default) or `mark`, `side` is `both` (the default), `long` or `short`.
+     *     `oi_price_quadrant`'s `v` is its enum value. A bar with no OI sample has a `null` OI
+     *     delta and quadrant, never 0; a bar with no liquidation prints reads `"0"`. Ticker
+     *     snapshots are not stored, so `basis`, `premium_pct` and `time_to_funding_ms` are set
+     *     only on the bar holding the latest snapshot and are `null` before it; `funding_rate`
+     *     falls back to the settled rate. The window holds at most 1 500 bars and 400 days
+     *     (`to` defaults to now, `from` to 500 bars before `to`): a wider one, or one holding
+     *     more stored rows than a request may read, is `400 invalid_time_range`. Every bound and
+     *     param is checked before any store read. A code this server does not compute yet is
+     *     `422 validation_failed`.
      */
     get: operations["getMetrics"];
     put?: never;
@@ -9548,7 +9568,16 @@ export interface components {
       | "funding_basis"
       | "liquidation_intensity"
       | "big_trade_notional"
-      | "big_trade_zscore";
+      | "big_trade_zscore"
+      | "open_interest"
+      | "open_interest_value"
+      | "oi_price_quadrant"
+      | "funding_rate"
+      | "funding_annualized"
+      | "time_to_funding_ms"
+      | "basis"
+      | "premium_pct"
+      | "liquidation_notional";
     MetricPoint: {
       /** @description Per-point detail for event-like metrics (iceberg, stop_run, absorption). */
       meta?: {
@@ -9556,7 +9585,11 @@ export interface components {
       };
       /** Format: date-time */
       t: string;
-      v: components["schemas"]["Decimal"] | null;
+      /** @description A decimal, `null`, or for an enum metric (`oi_price_quadrant`) its value. */
+      v:
+        | components["schemas"]["Decimal"]
+        | null
+        | ("long_buildup" | "short_covering" | "short_buildup" | "long_unwind");
     };
     MetricSeries: {
       /** @description True for heuristic metrics (arch P10). */
