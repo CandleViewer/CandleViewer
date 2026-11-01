@@ -9,8 +9,8 @@ Shared rules (tick and volume bars are activity bars, not time-aligned):
 - Trades are folded in arrival order. A closed bar is final: a late or out-of-order trade
   goes into the open bar, never back into a closed one (re-splitting closed volume bars
   would renumber the series). Duplicate suppression is upstream (`TradeStream`).
-- `gap_before` is always `False`: these builders see no data-gap signal; the recorder
-  marks gaps (E16).
+- `gap_before` is always `False` from the builder: it sees no data-gap signal. `BarBuilderSet`
+  stamps it on the next bar after an unrecovered tape gap (`builder_set.py`, #529).
 - The first bar of a fresh builder has `partial=True`; its `open_time` is the timestamp
   where the available tape begins. Only trades are consumed, never REST klines.
 - `on_clock` is a no-op: activity bars never close on the clock.

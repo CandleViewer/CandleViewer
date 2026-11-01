@@ -158,7 +158,10 @@ async def test_a_failed_first_build_raises_in_its_waiter_and_leaves_no_lease(
     assert raised_a.value is raised_b.value is err and store.loads == 1  # one build, one error
     assert _holders(s) == set() and s._building == {}
     assert s._leases.keys() == (((SYM, T3.spec_hash),) if shared else ())
-    assert (SYM in s._lanes, len(bus._subscriptions)) == (shared, int(shared))
+    assert (SYM in s._lanes, len(bus._subscriptions)) == (
+        shared,
+        2 * int(shared),
+    )  # trade + gap subscription
     _consistent(s, a=a, b=b)
     await s.stop()
 

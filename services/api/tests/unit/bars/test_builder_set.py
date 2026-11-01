@@ -30,7 +30,8 @@ async def test_set_eight_specs_one_subscription_every_builder_advanced(tmp_path:
     s = make_set(tmp_path, bus=bus, sinks=[sink])
     for i, spec in enumerate(_specs(8)):
         await s.register(spec, SYM, f"c{i}")
-    assert len(bus._subscriptions) == 1  # one bus read per trade, no per-builder subscription
+    # one bus read per trade, no per-builder subscription (plus the symbol's gap topic, #529)
+    assert [x.name for x in bus._subscriptions] == [f"bars.{SYM}", f"bars.{SYM}.gap"]
     await bus.publish(TOPIC, trade(T0, seq=1))
     await settle(bus, s)
     assert sorted(h for h, *_ in sink.seen) == sorted(sp.spec_hash for sp in _specs(8))

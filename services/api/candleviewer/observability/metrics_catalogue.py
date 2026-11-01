@@ -1389,6 +1389,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "bars_gap_detected_total",
+        "counter",
+        "gaps",
+        ("reason",),
+        "Tape gap windows the bars lane saw, by whether ingestion recovered them.",
+        "reason=unrecovered = a hole in the tape: the next bar of every builder carries"
+        " gap_before (trade_gap_unrecovered on ingestion health)",
+        _L,
+        "E12",
+        max_series=2,  # reason: recovered | unrecovered
+        exported=True,
+    ),
+    _s(
         "bars_restore_gap_total",
         "counter",
         "restores",

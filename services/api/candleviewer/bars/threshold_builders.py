@@ -24,7 +24,8 @@ row gains the column.
 
 Delta bars. After each trade the bar closes when `abs(delta) >= delta_threshold`; closure is final
 (delta moving back below the threshold cannot reopen it). A closing trade may overshoot; nothing is
-split and no `split_from_trade_id` exists. `gap_before` is always False.
+split and no `split_from_trade_id` exists. The builder's `gap_before` is always False
+(`BarBuilderSet` stamps the next bar after an unrecovered tape gap, #529).
 
 Late / out-of-order trades follow the S02 rule still pending ratification (#2013): a closed bar is
 final and a late trade joins the open bar. `on_clock` is a no-op.
