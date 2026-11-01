@@ -31,6 +31,16 @@ describe("BarStore flags column (BQ-3)", () => {
     expect(Array.from(store.view().flags)).toEqual([0, 0]);
   });
 
+  it("turns the flags column on at the first flagged batch, a patch included; zeros after", () => {
+    const store = new BarStore({ maxBars: 4, initialCapacity: 4 });
+    store.append(bars(0, 4));
+    store.patch(1, { ...bars(1, 1), flags: Uint8Array.of(BAR_FLAG.amended) });
+    store.append(bars(4, 2)); // evicts minutes 0 and 1; the reused slots are written as 0
+    expect(Array.from(store.view().flags)).toEqual([0, 0, 0, 0]);
+    store.append({ ...bars(6, 1), flags: Uint8Array.of(BAR_FLAG.forming) });
+    expect(Array.from(store.view().flags)).toEqual([0, 0, 0, 2]);
+  });
+
   it("refuses a flags column of the wrong type or length", () => {
     const store = new BarStore();
     const wrongType = { ...bars(0, 1), flags: new Int8Array(1) as unknown as Uint8Array };

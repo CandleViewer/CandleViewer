@@ -29,6 +29,26 @@ function setup() {
 }
 
 describe("BatchBuilder: sub-range patches", () => {
+  it("an empty range adds nothing: [4, 4) then [0, 0) uploads nothing (E12-S06 regression)", () => {
+    const { graph, builder, uploads, frame } = setup();
+    const store = new BarStore({ maxBars: 64, initialCapacity: 64 });
+    const s = new NullSeries("s");
+    graph.addNode("p0", "series", s);
+    s.count = store.append(bars(4)).to;
+    frame();
+    expect(uploads.splice(0)).toEqual(["s[0,4)"]);
+    builder.patch("s", store.append(bars(0, store.indexToTime(3) + 60e6))); // [4, 4)
+    builder.patch("s", store.prepend(bars(0))); // [0, 0)
+    graph.markData("s");
+    frame();
+    expect(uploads.splice(0)).toEqual([]);
+    builder.patch("s", store.patch(2, { ...bars(1, store.indexToTime(2)) })); // [2, 3)
+    builder.patch("s", store.append(bars(0, store.indexToTime(3) + 60e6))); // [4, 4)
+    graph.markData("s");
+    frame();
+    expect(uploads.splice(0)).toEqual(["s[2,3)"]);
+  });
+
   it("uploads only the range each store mutation touched, rebased, once per frame", () => {
     const { graph, builder, uploads, frame } = setup();
     const store = new BarStore({ maxBars: 64, initialCapacity: 64 });
