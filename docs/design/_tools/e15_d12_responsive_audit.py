@@ -78,7 +78,8 @@ its code:
   protective write needs a taller window.
 - [G-BOARDS] PR 3's boards: the pack's §11.1 register holds ten rows (8 dark, 2 light twins),
   each name, export and slug agreeing, the exports equal to the `E15-D12-*.png` files present;
-  its as-drawn table names each board id (BOARD_IDS) and each PNG's IHDR size; the AC trace's
+  its as-drawn table names each board id (BOARD_IDS), each PNG's IHDR size and the sha256 of
+  its committed bytes (so a dark export cannot pass as its light twin); the AC trace's
   and §13's "boards at PR 3" / "[ ] Drawn: PR 3" are flipped; the hand-off's "Final Penpot link"
   cells read `[x]` with the page name and page id, and no "PR 3" and no URL.
 
@@ -160,17 +161,17 @@ IMG_PREFIX = IMG_DIR + "/E15-D12-"
 AS_BUILT = "### 11.1 As built (PR 3)"
 PAGE_NAME = "E15-D12 responsive and degraded"
 PAGE_ID = "b96edf38-8e58-8006-8008-e18400657fc2"
-BOARD_IDS = (  # r4
-    "b96edf38-8e58-8006-8008-e18e25e3c000",
-    "b96edf38-8e58-8006-8008-e18e517de620",
-    "b96edf38-8e58-8006-8008-e18eb8952a5b",
-    "b96edf38-8e58-8006-8008-e18ee0e3946a",
-    "b96edf38-8e58-8006-8008-e18f09c1947e",
-    "b96edf38-8e58-8006-8008-e18f374e673f",
-    "b96edf38-8e58-8006-8008-e18f546369a3",
-    "b96edf38-8e58-8006-8008-e18f73ded10b",
-    "b96edf38-8e58-8006-8008-e18f9325881b",
-    "b96edf38-8e58-8006-8008-e18fbdd67488",
+BOARD_IDS = (  # r5
+    "b96edf38-8e58-8006-8008-e19c18bc9175",
+    "b96edf38-8e58-8006-8008-e19c5e662f76",
+    "b96edf38-8e58-8006-8008-e19cd831ccdb",
+    "b96edf38-8e58-8006-8008-e19d020532f1",
+    "b96edf38-8e58-8006-8008-e19d2f2c28ad",
+    "b96edf38-8e58-8006-8008-e19d5cbaf88b",
+    "b96edf38-8e58-8006-8008-e19d7e1ce646",
+    "b96edf38-8e58-8006-8008-e19da31a58b5",
+    "b96edf38-8e58-8006-8008-e19dc55661df",
+    "b96edf38-8e58-8006-8008-e19df4c553f2",
 )
 BOARD_THEMES = {"dark": 8, "light": 2}  # BQ-19: eight dark, two light twins
 PUBLIC_IDS = frozenset((PAGE_ID, *BOARD_IDS))
@@ -1096,6 +1097,9 @@ def ac1_counts(pack: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------- texts and values
 
 
+Png = tuple[str, tuple[int, int] | None, str]  # path, IHDR size, sha256 of the bytes
+
+
 @dataclass(frozen=True)
 class Texts:
     pack: str
@@ -1106,7 +1110,7 @@ class Texts:
     now: tuple[tuple[str, str], ...]  # ("14" | "15" | "16", working-tree text)
     mbase: tuple[tuple[str, str], ...]  # ("14" | "15" | "16", merge-base text)
     sources: tuple[tuple[str, str], ...] = ()
-    pngs: tuple[tuple[str, tuple[int, int] | None], ...] = ()  # E15-D12-*.png: its IHDR size
+    pngs: tuple[Png, ...] = ()  # E15-D12-*.png: its IHDR size and its sha256
 
 
 def docs(t: Texts) -> list[tuple[str, str]]:
@@ -1791,7 +1795,8 @@ BOARDS_NO = r"boards? \d\d(?:(?:, | and )\d\d)* \(§11\.1\)"
 AC_DRAWN = re.compile(rf"^text done; drawn on {BOARDS_NO}$")
 DOD_DRAWN = re.compile(rf"\[x\] Drawn: {BOARDS_NO}\.")
 AC_ROWS = tuple(f"AC{n} " for n in range(1, 7))
-STALE = ("boards at PR 3", "[ ] Drawn: PR 3", "drawn when the desk frees")
+STALE = ("boards at PR 3", "[ ] Drawn: PR 3", "drawn when the desk frees", "Draft with PR 1 of 3")
+SHA_CELL = re.compile(r"^`([0-9a-f]{64})`$")
 LINK_ROW = "| Final Penpot link"
 LINK_WORDS = f"page `{PAGE_NAME}`, page id `{PAGE_ID}`"
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
@@ -1804,9 +1809,12 @@ def png_size(data: bytes) -> tuple[int, int] | None:
     return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
 
 
-def read_pngs() -> tuple[tuple[str, tuple[int, int] | None], ...]:
-    found = sorted((ROOT / IMG_DIR).glob("E15-D12-*.png"))
-    return tuple((f"{IMG_DIR}/{p.name}", png_size(p.read_bytes()[:24])) for p in found)
+def read_pngs() -> tuple[Png, ...]:
+    out: list[Png] = []
+    for p in sorted((ROOT / IMG_DIR).glob("E15-D12-*.png")):
+        data = p.read_bytes()
+        out.append((f"{IMG_DIR}/{p.name}", png_size(data[:24]), hashlib.sha256(data).hexdigest()))
+    return tuple(out)
 
 
 def as_built_tables(pack: str) -> dict[tuple[str, ...], list[list[str]]]:
@@ -1834,7 +1842,9 @@ def board_problems(t: Texts) -> list[str]:
     if AS_BUILT not in t.pack:
         return [f"the pack has no {AS_BUILT[4:]!r} section"]
     bad: list[str] = []
-    rows, pngs = register(t.pack), dict(t.pngs)
+    rows = register(t.pack)
+    pngs = {p: size for p, size, _ in t.pngs}
+    shas = {p: sha for p, _, sha in t.pngs}
     themes = [r[3] if len(r) > 3 else "" for r in rows]
     if len(rows) != len(BOARD_IDS):
         bad.append(f"the register holds {len(rows)} rows, not {len(BOARD_IDS)}")
@@ -1858,6 +1868,7 @@ def board_problems(t: Texts) -> list[str]:
     drawn = as_built_tables(t.pack).get(DRAWN_HEAD, [])
     if [r[0] for r in drawn] != sorted(exports):
         bad.append("the as-drawn table does not list the register's boards in order")
+    sha_off: list[str] = []
     for r in drawn:
         i = int(r[0]) if r[0].isdigit() else 0
         if not 1 <= i <= len(BOARD_IDS) or len(r) < 3 or r[1] != f"`{BOARD_IDS[i - 1]}`":
@@ -1867,6 +1878,11 @@ def board_problems(t: Texts) -> list[str]:
         got = pngs.get(exports.get(r[0], ""))
         if not m or got != (int(m.group(1)), int(m.group(2))):
             bad.append(f"as drawn {r[0]}: {r[2]!r} is not the PNG's IHDR size {got}")
+        h = SHA_CELL.match(r[3] if len(r) > 3 else "")
+        if not h or shas.get(exports.get(r[0], "")) != h.group(1):
+            sha_off.append(r[0])
+    if sha_off:  # one finding: a swap of two exports is one defect
+        bad.append(f"as drawn: the committed PNG's sha256 is not its row's for {sha_off}")
     ac = [split_row(ln) for ln in lines(t.pack) if ln.startswith(tuple("| " + a for a in AC_ROWS))]
     for row in ac:
         if len(row) < 3 or not AC_DRAWN.match(row[-1]):
@@ -2082,12 +2098,18 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "let a hidden tab hold the protective actions without a route",
         _sub("spec", PROTECT_REACH, "behind a hidden tab only where the panel is"),
     ),
-    (
-        "G-BOARDS",
-        "type board 03's PNG height one pixel short",
-        _resub("pack", r"(^\| 03 +\| `[0-9a-f-]+` +\| 2032 × )2132", r"\g<1>2131"),
-    ),
+    ("G-BOARDS", "swap the bytes of two same-size exports (05 and 09)", lambda t: _swap(t, 5, 9)),
 )
+
+
+def _swap(t: Texts, a: int, b: int) -> Texts:
+    """The working tree with the bytes of exports a and b swapped (their sizes are equal)."""
+    p = list(t.pngs)
+    i, j = (
+        next(k for k, x in enumerate(p) if x[0].startswith(f"{IMG_PREFIX}{n:02d}-")) for n in (a, b)
+    )
+    p[i], p[j] = (p[i][0], p[j][1], p[j][2]), (p[j][0], p[i][1], p[i][2])
+    return replace(t, pngs=tuple(p))
 
 
 def _pr2(t: Texts, extra: str = "", pins: str | None = None) -> Texts:
@@ -2191,6 +2213,11 @@ PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "G-UNTOUCHED",
         "PR 3 with a token JSON file changed beside the boards",
         lambda t: replace(t, changed=(t.changed or ()) + (TOKENS_DIR + "/x.json",)),
+    ),
+    (
+        "G-BOARDS",
+        "type board 03's PNG height one pixel short",
+        _resub("pack", r"(^\| 03 +\| `[0-9a-f-]+` +\| 2032 × )2132", r"\g<1>2131"),
     ),
     (
         "G-BOARDS",
