@@ -44,15 +44,24 @@ def _docker(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def docker_find(port: int) -> Mapping[str, object] | None:
-    """The real finder: `docker ps` for the publisher of `port`, then `docker inspect` of it."""
-    ps = _docker("ps", "-q", "--filter", f"publish={port}")
+Runner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+def docker_find(port: int, run: Runner = _docker) -> Mapping[str, object] | None:
+    """The real finder: `docker ps` for the publisher of `port`, then `docker inspect` of it.
+    `run(*args)` is the one subprocess seam (a fake in the unit tests: no docker)."""
+    ps = run("ps", "-q", "--filter", f"publish={port}")
     ids = ps.stdout.split()
     if ps.returncode != 0 or len(ids) != 1:
         return None
-    out = _docker("inspect", ids[0])
-    docs = json.loads(out.stdout) if out.returncode == 0 and out.stdout.strip() else []
-    return docs[0] if len(docs) == 1 and isinstance(docs[0], dict) else None
+    out = run("inspect", ids[0])
+    try:
+        docs = json.loads(out.stdout) if out.returncode == 0 and out.stdout.strip() else []
+    except ValueError:
+        return None
+    return (
+        docs[0] if isinstance(docs, list) and len(docs) == 1 and isinstance(docs[0], dict) else None
+    )
 
 
 def questdb_ownership_skip(
@@ -75,3 +84,9 @@ def questdb_ownership_skip(
         if labels.get("com.docker.compose.service") != "questdb":
             return f"port {port} is not published by the questdb service"
     return None
+
+
+def refusal_outcome(env: Mapping[str, str]) -> str:
+    """What a refused gate does: `skip`, or `fail` when `CV_CHAOS_MUST_RUN=1` (the integration job
+    sets it, so the leg can never go silently green by skipping there)."""
+    return "fail" if env.get("CV_CHAOS_MUST_RUN") == "1" else "skip"
