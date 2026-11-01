@@ -26,7 +26,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.domain.order_entry import REFUSAL_REASONS, OrderEntryRefusal, RefusalReason
 from candleviewer.domain.primitives import Environment
-from candleviewer.oms_wiring import InterimKillSwitch
+from candleviewer.oms_wiring import HaltingKillSwitch, InterimKillSwitch
 from candleviewer.profiles_wiring import wire_profiles
 from candleviewer.settings import Settings
 from candleviewer.trade_groups_wiring import GATE_REASONS, GateReadiness, NoLockouts
@@ -160,7 +160,10 @@ def test_the_root_wires_the_definition_reads_and_announces_the_interim_lockouts_
     assert [log["event"] for log in logs].count("trade_groups_interim_port") == 1
     assert source._live_enabled is False  # the setting's default
     assert source._live_flag is app.state.feature_flags.live_enabled  # the OMS's view of the flag
-    assert isinstance(getattr(source._kill_switch, "__self__", None), InterimKillSwitch)
+    # #2904 (G-79): the one B18 port, the interim with the audit-chain break halt folded in
+    port = getattr(source._kill_switch, "__self__", None)
+    assert isinstance(port, HaltingKillSwitch) and isinstance(port.inner, InterimKillSwitch)
+    assert not port._halt.engaged  # the fake backend's halt starts clear
     gate = app.state.trade_groups_gate  # over the flag's view, the preview ready (S3c, ruling 6)
     assert (gate._enabled, gate._preview_ready) == (app.state.feature_flags.trade_groups, True)
     # a router given no store or no readiness answers 503, not this

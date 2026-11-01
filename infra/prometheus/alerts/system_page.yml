@@ -125,6 +125,20 @@ groups:
         annotations:
           summary: "Audit chain verification is not passing: no run passed for 26 hours, or no runner is wired in live"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-auditverifynotpassing"
+      - alert: AuditBreakHaltEngaged
+        # #2904: order entry is halted after a verified audit-chain break (04 section 8.1
+        # "Enforced posture"), or the API could not read the halt records (fail closed). A
+        # condition page: it stands until the Owner acknowledges the break, and its [RESOLVED]
+        # means order entry resumed. Its own component, so AuditChainVerificationFailed's window
+        # and this page never inhibit each other.
+        expr: max by (env) (cv_audit_break_halt_state) == 1
+        for: 1m
+        labels:
+          severity: page
+          component: audit_break_halt
+        annotations:
+          summary: "Order entry halted after an audit-chain break: the Owner must acknowledge it"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditbreakhaltengaged"
       - alert: KekUnavailable
         # A state gauge, not increase(): the failure happens at boot before the first scrape,
         # and the latch lasts for the life of the process (E27-T02 review).

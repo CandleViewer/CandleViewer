@@ -107,6 +107,7 @@
 ["cv_alert_suppressed_total", "counter", ["reason"], "planned", "E40"]
 ["cv_alerts_armed", "gauge", [], "planned", "E40"]
 ["cv_api_keys_rows", "gauge", ["state"], "live", "E27"]
+["cv_audit_break_halt_state", "gauge", [], "live", "E42"]
 ["cv_audit_chain_verified_state", "gauge", [], "live", "E42"]
 ["cv_audit_lane_anomalies_total", "counter", ["reason"], "live", "E09"]
 ["cv_audit_lane_appended_total", "counter", ["class"], "live", "E09"]

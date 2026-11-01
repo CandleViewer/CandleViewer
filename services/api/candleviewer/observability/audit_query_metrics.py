@@ -60,6 +60,13 @@ audit_chain_verification_failures_total = Counter(
     "audit_chain_verification_failures_total",
     "Audit hash-chain verifications that found a break.",
 )
+#: #2904: 1 while order entry is halted on an unacknowledged audit-chain break, or while the
+#: chain's halt records have not been read (fail closed); 0 otherwise.
+cv_audit_break_halt_state = Gauge(
+    "cv_audit_break_halt_state",
+    "Audit-chain break halt: 1 while position-opening order entry is halted on an "
+    "unacknowledged break or an unread halt state, else 0.",
+)
 
 EXPORTED_NAMES: Final = frozenset(
     {
@@ -67,6 +74,7 @@ EXPORTED_NAMES: Final = frozenset(
         "cv_audit_query_timeouts_total",
         "cv_audit_chain_verified_state",
         "audit_chain_verification_failures_total",
+        "cv_audit_break_halt_state",
     }
 )
 

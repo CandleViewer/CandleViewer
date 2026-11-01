@@ -790,6 +790,61 @@ async def test_the_switches_refuse_a_resumed_create_after_its_lookup_and_before_
     assert rig.audits.written == [] and rig.notices.got == []
 
 
+def _protective_close(environment: Any = "live") -> NewOrder:
+    """What `closePosition` and `closeAllPositions` record (`position_writes.close_request`): a
+    reduce-only market `flatten`, with no stop of its own."""
+    account = LIVE_ACCOUNT if environment == "live" else ACCOUNT
+    return new_order(
+        account, environment, intent="flatten", reduce_only=True, side="Sell",
+        order_type="Market", price=None, stop_loss=None, take_profit=None,
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "refusal", [TradingDisabled(), OrderEntryRefused(NO_ACTIVE_KEY)], ids=["switch", "gate"]
+)
+async def test_a_resumed_protective_close_passes_the_switches_and_is_re_sent(
+    refusal: TradingDisabled,
+) -> None:
+    """C-2.6 (24 Sec.8.10), as `submit`'s step 6 carve-out: a resumed reduce-only `flatten` that
+    no lookup found is re-sent while the kill switch, the audit-break halt or the order-entry gate
+    refuses, logged as admitted; the clock halt and the fence still apply (the next test)."""
+    rig = build_rig()
+    order = _protective_close()
+    rig.switches.refusals[LIVE_ACCOUNT] = refusal
+    with capture_logs() as logs:
+        answer = await _resumed(rig, order, age_us=SECOND_US)
+    assert answer["ok"] is True
+    assert rig.calls(rig.live) == [*_LOOKUP, *_LOOKUP, "place_order"]
+    sent = rig.live.calls[-1].request
+    assert isinstance(sent, PlaceOrderRequest) and sent.reduce_only is True
+    [line] = [log for log in logs if log["event"] == "oms_resend_protective_close_admitted"]
+    assert line["order_link_id"] == order.order_link_id
+
+
+async def test_a_resumed_protective_close_is_still_refused_by_the_clock_halt() -> None:
+    """The carve-out is the switches' `TradingDisabled` only: a tripped clock halt still refuses
+    the re-send (SEC-2B1-01), and nothing is sent."""
+    rig = build_rig()
+    rig.switches.refusals[LIVE_ACCOUNT] = TradingDisabled()
+    rig.halt.trip()
+    with pytest.raises(ResendRefused) as refused:
+        await _resumed(rig, _protective_close(), age_us=SECOND_US)
+    assert isinstance(refused.value.refusal, ClockDriftBlocked)
+    assert rig.calls(rig.live) == _LOOKUP
+
+
+async def test_a_resumed_reduce_only_order_that_is_no_flatten_is_still_refused() -> None:
+    """Only the protective routes' `flatten` is carved out: a reduce-only `scale_out` placed by
+    `placeOrder` is refused as any create is."""
+    rig = build_rig()
+    order = dataclasses.replace(_protective_close(), intent="scale_out")
+    rig.switches.refusals[LIVE_ACCOUNT] = TradingDisabled()
+    with pytest.raises(ResendRefused):
+        await _resumed(rig, order, age_us=SECOND_US)
+    assert rig.calls(rig.live) == _LOOKUP
+
+
 @pytest.mark.parametrize("live", [False, True], ids=["demo_in_window", "live_past_the_bound"])
 async def test_a_tripped_clock_halt_refuses_a_resumed_create_after_the_switches(live: bool) -> None:
     """SEC-2B1-01 (24 Sec.8.6 `10002`, C-2.21): while the halt stands, a resumed create no lookup

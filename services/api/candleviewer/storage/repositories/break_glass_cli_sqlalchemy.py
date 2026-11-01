@@ -1,5 +1,7 @@
 """`SqlAlchemyBreakGlassDatabase`: the offline break-glass CLI's whole Postgres side (E09-S11
-#2119 slice 5, decision R2c); `SqlAlchemyBootstrapOwnerDatabase`, the bootstrap-Owner CLI's (#4479).
+#2119 slice 5, decision R2c); `SqlAlchemyBootstrapOwnerDatabase`, the bootstrap-Owner CLI's (#4479);
+`SqlAlchemyAuditAckDatabase`, the audit-chain break acknowledgement CLI's (#2904: `audit_log` and
+the read of an active Owner, no writer but the audit append).
 
 One pool serves the CLI's stores (`audit_log`, `kek_versions` and the one-transaction reset
 store) and the cv-api probe. Every session of the pool carries this run's `application_name`,
@@ -26,6 +28,7 @@ from candleviewer.storage.repositories.bootstrap_owner_sqlalchemy import (
     SqlAlchemyBootstrapOwnerRepository,
 )
 from candleviewer.storage.repositories.break_glass_sqlalchemy import (
+    SqlAlchemyActiveOwners,
     SqlAlchemyBreakGlassRepository,
 )
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
@@ -99,3 +102,12 @@ class SqlAlchemyBootstrapOwnerDatabase(_CliDatabase):
     def __init__(self, dsn: str) -> None:
         super().__init__(dsn, "bootstrap")
         self.bootstrap_owners = SqlAlchemyBootstrapOwnerRepository(self._relational)
+
+
+class SqlAlchemyAuditAckDatabase(_CliDatabase):
+    """An acknowledgement run's stores (#2904): `audit_log` and the active-Owner read. It runs
+    beside cv-api: the chain's append is serialised by its advisory lock."""
+
+    def __init__(self, dsn: str) -> None:
+        super().__init__(dsn, "audit-ack")
+        self.owners = SqlAlchemyActiveOwners(self._relational)

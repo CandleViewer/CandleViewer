@@ -14,7 +14,9 @@ its incident (E42-T05, `21-database-schema.md` 3.10.2a), commit once.
 A refusal or any error rolls back and changes zero rows. In M10 so `auth` imports
 no storage driver (ADR-0003). Static, parameterised statements; the recovery code
 arrives as its keyed hash, never in clear, and only the consume statement binds it.
-The offline CLI (slice 5) also names its target through `find_active_owner`, read only.
+The offline CLI (slice 5) also names its target through `find_active_owner`, read only;
+`SqlAlchemyActiveOwners` is that read alone, for the audit-chain break acknowledgement CLI (#2904),
+which holds no reset.
 """
 
 from __future__ import annotations
@@ -150,6 +152,15 @@ class SqlAlchemyBreakGlassRepository:
         async with self._relational.unit_of_work() as uow:
             rows = (await uow.session.execute(_FIND_OWNER, {"ident": identifier})).all()
         return str(rows[0][0]) if len(rows) == 1 else None
+
+
+class SqlAlchemyActiveOwners:
+    """`find_active_owner` alone, read only (#2904): no object that can reset."""
+
+    def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
+        self._relational = relational
+
+    find_active_owner = SqlAlchemyBreakGlassRepository.find_active_owner
 
 
 class SqlAlchemyBreakGlassEvents:
