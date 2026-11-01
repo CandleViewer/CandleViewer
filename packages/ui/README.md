@@ -24,17 +24,18 @@ Tailwind-config-as-source, two parallel density scales, naive dark→light inver
 
 ## Token build (E05-T01)
 
-One `pnpm --filter @candleviewer/ui build:tokens` run produces six artefacts
+One `pnpm --filter @candleviewer/ui build:tokens` run produces these artefacts
 from `docs/plan/16-design-system-brief.md#11`:
 
-| Artefact                             | Format                                           | Consumer                 |
-| ------------------------------------ | ------------------------------------------------ | ------------------------ |
-| `build/css/tokens.dark.css`          | `[data-theme="dark"]` custom properties          | React app                |
-| `build/css/tokens.light.css`         | `[data-theme="light"]` custom properties         | React app                |
-| `build/css/tokens.high-contrast.css` | `[data-theme="high-contrast"]` custom properties | React app                |
-| `build/ts/tokens.ts`                 | typed nested `const tokens = {...} as const`     | React, Storybook         |
-| `build/engine/theme-uniforms.json`   | flat `{ hex, rgba }` per chart-category token    | WebGL chart engine (E11) |
-| `build/electron/tokens.main.json`    | flat key→value JSON, no CSS/TS syntax            | Electron main process    |
+| Artefact                                   | Format                                                            | Consumer                 |
+| ------------------------------------------ | ----------------------------------------------------------------- | ------------------------ |
+| `build/css/tokens.dark.css`                | `[data-theme="dark"]` custom properties                           | React app                |
+| `build/css/tokens.light.css`               | `[data-theme="light"]` custom properties                          | React app                |
+| `build/css/tokens.high-contrast.css`       | `[data-theme="high-contrast"]` custom properties                  | React app                |
+| `build/ts/tokens.ts`                       | typed nested `const tokens = {...} as const`                      | React, Storybook         |
+| `build/engine/theme-uniforms.<theme>.json` | flat `{ hex, rgba }` per chart-category token, one file per theme | WebGL chart engine (E11) |
+| `build/engine/theme-uniforms.json`         | the dark export under its original name                           | WebGL chart engine (E11) |
+| `build/electron/tokens.main.json`          | flat key→value JSON, no CSS/TS syntax                             | Electron main process    |
 
 Custom Style Dictionary formats (`json/flat-rgba`, `json/flat`,
 `typescript/nested-object`) live in `tools/style-dictionary/formats/` with

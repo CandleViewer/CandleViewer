@@ -28,6 +28,13 @@ describe("json/flat-rgba format helpers", () => {
     expect(isEngineToken("color.buy.default")).toBe(true);
   });
 
+  it("routes the chart slots and the CVD-safe palette to the engine (E11-D05 §4, G16)", () => {
+    expect(isEngineToken("color.chart.pane.bg.default")).toBe(true);
+    expect(isEngineToken("color.chart.pill.text.on-marker")).toBe(true);
+    expect(isEngineToken("color.cvd.heatmap.bid.1")).toBe(true);
+    expect(isEngineToken("color.cvd.buy")).toBe(true);
+  });
+
   it("excludes non-chart token names from the engine filter", () => {
     expect(isEngineToken("color.text.primary")).toBe(false);
     expect(isEngineToken("space.inset.md")).toBe(false);
