@@ -98,6 +98,29 @@ describe("button.css contract", () => {
     }
   });
 
+  it("the validity look: the fill and the label at the disabled opacity, the focus ring kept whole", () => {
+    // Never the whole control's opacity: the focus outline must keep its contrast (WCAG 2.4.7).
+    const plate = find(normal, ".cv-button[data-unavailable]::before", "opacity");
+    expect(plate?.body).toContain("background: var(--cv-button-bg)");
+    expect(plate?.body).toContain("opacity: var(--opacity-disabled)");
+    const words = find(
+      normal,
+      ".cv-button[data-unavailable] > :is(.cv-button__label, .cv-button__icon)",
+      "opacity",
+    );
+    expect(words?.body).toContain("opacity: var(--opacity-disabled)");
+    expect(find(normal, ".cv-button[data-unavailable]", "opacity")).toBeUndefined();
+    const fill = find(normal, ".cv-button[data-unavailable][data-variant]", "background");
+    expect(fill?.body).toContain("background: transparent");
+    // Forced colours: the words grey, as plain disabled's do; no plate.
+    expect(find(forced, ".cv-button[data-unavailable][data-variant]", "color")?.body).toContain(
+      "color: GrayText",
+    );
+    expect(find(forced, ".cv-button[data-unavailable]::before", "content")?.body).toContain(
+      "content: none",
+    );
+  });
+
   it("the label never wraps and truncates with an ellipsis", () => {
     const label = find(normal, ".cv-button__label", "white-space");
     for (const d of ["white-space: nowrap", "overflow: hidden", "text-overflow: ellipsis"])
