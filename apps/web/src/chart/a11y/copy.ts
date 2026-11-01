@@ -34,12 +34,16 @@ export const expandName = (levels: number): string => `Expand ${levels} levels`;
 export const collapseName = (levels: number): string => `Collapse ${levels} levels`;
 export const levelsCaption = (levels: number, high: string, low: string): string =>
   `${levels} price levels, ${high} to ${low}`;
+/** A level row's position and its bar, said with the row (E11-D04 §6.1: the bar's time describes its levels). */
+export const levelPosition = (level: number, levels: number, barTime: string): string =>
+  `Level ${level} of ${levels}, bar ${barTime}`;
 export const tableCaption = (title: string, bars: number): string =>
   `${title} — ${bars.toLocaleString("en-GB")} bars loaded`;
 
 /** The table's polite lines, once per user action (E11-D04 §17.3). */
 export const SAY = {
-  chart: "Chart",
+  /** PROPOSED: "Chart view" reads on its own out of context (a11y lens r1 n2). */
+  chart: "Chart view",
   tableRow: (row: number, total: number): string =>
     `Data table, row ${row.toLocaleString("en-GB")} of ${total.toLocaleString("en-GB")}`,
   expanded: (levels: number): string => `Expanded, ${levels} levels`,
@@ -47,6 +51,7 @@ export const SAY = {
   selected: (n: number): string => `Selected, ${rows(n)}`,
   deselected: "Deselected",
   copied: (n: number, columns: number): string => `Copied ${rows(n)}, ${columns} columns as TSV`,
+  copyFailed: "Copy failed",
   copiedCapped: (cap: number, n: number): string =>
     `Copied the first ${cap.toLocaleString("en-GB")} of ${n.toLocaleString("en-GB")} selected rows as TSV`,
 } as const;

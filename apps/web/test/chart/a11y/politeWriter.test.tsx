@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
+import { PreferencesProvider } from "../../../src/features/a11y-preferences";
 import {
   ShellAnnouncer,
   announce,
@@ -9,6 +11,8 @@ import {
   AMBIENT_CADENCE_MS,
   createAmbientWriter,
   sayToShell,
+  useAmbientWriter,
+  type AmbientWriter,
   type AnnouncePrefs,
 } from "../../../src/chart/a11y/politeWriter";
 
@@ -26,6 +30,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   clearAnnouncements();
 });
 
@@ -112,6 +117,44 @@ describe("ambient writer: throttled, latest wins (05 §6.2)", () => {
     expect(say).toHaveBeenCalledTimes(1);
   });
 
+  it("an unchanged value is not said again; a changed one is", () => {
+    const { w, say } = writer();
+    w.set("last", "Last price 1");
+    vi.advanceTimersByTime(0);
+    for (let i = 0; i < 5; i++) {
+      w.set("last", "Last price 1");
+      vi.advanceTimersByTime(AMBIENT_CADENCE_MS);
+    }
+    expect(say).toHaveBeenCalledTimes(1);
+    w.set("last", "Last price 2");
+    w.set("last", "Last price 1"); // back to what was said before the window closed: nothing new
+    vi.runAllTimers();
+    expect(say).toHaveBeenCalledTimes(1);
+    w.alert("Disconnected");
+    w.set("last", "Last price 1"); // after a disconnect the value is news again
+    vi.runAllTimers();
+    expect(say).toHaveBeenLastCalledWith("polite", "Last price 1");
+  });
+
+  it("a cadence read live keeps the pending value when the cadence changes", () => {
+    let cadence = AMBIENT_CADENCE_MS;
+    const say = vi.fn<(p: "polite" | "assertive", text: string) => void>();
+    const w = createAmbientWriter({
+      fields: ["last"],
+      prefs: () => ALWAYS,
+      say,
+      cadenceMs: () => cadence,
+    });
+    w.set("last", "Last price 1");
+    vi.advanceTimersByTime(0);
+    cadence = 5_000;
+    w.set("last", "Last price 2");
+    vi.advanceTimersByTime(4_999);
+    expect(say).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(say).toHaveBeenLastCalledWith("polite", "Last price 2");
+  });
+
   it("refuses an undeclared field", () => {
     expect(() => writer().w.set("mark", "x")).toThrow(RangeError);
   });
@@ -129,5 +172,56 @@ describe("the shell path", () => {
       "aria-live",
       "assertive",
     );
+  });
+});
+
+describe("useAmbientWriter", () => {
+  function Child({ w }: { w: AmbientWriter }): null {
+    useEffect(() => w.alert("Disconnected"), [w]);
+    return null;
+  }
+  function Host(): JSX.Element {
+    const w = useAmbientWriter(["last"]);
+    return <Child w={w} />;
+  }
+
+  it("a write from a child's mount effect, before the hook's own effect, is heard", async () => {
+    vi.useRealTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) }),
+    );
+    render(
+      <PreferencesProvider>
+        <ShellAnnouncer />
+        <Host />
+      </PreferencesProvider>,
+    );
+    await waitFor(() =>
+      expect(document.querySelector('[aria-live="assertive"]')).toHaveTextContent("Disconnected"),
+    );
+  });
+
+  it("is silent after unmount", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) }),
+    );
+    let captured: AmbientWriter | null = null;
+    function Grab(): null {
+      captured = useAmbientWriter(["last"]);
+      return null;
+    }
+    const view = render(
+      <PreferencesProvider>
+        <ShellAnnouncer />
+        <Grab />
+      </PreferencesProvider>,
+    );
+    view.unmount();
+    (captured as AmbientWriter | null)?.alert("Disconnected");
+    vi.runAllTimers();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(document.body).not.toHaveTextContent("Disconnected");
   });
 });

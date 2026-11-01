@@ -43,6 +43,12 @@ describe("number formatting", () => {
     expect(() => scaledToDecimal(0.5, 1)).toThrow(RangeError);
   });
 
+  it("ticksToDecimal refuses a tick or an origin the digits cannot show", () => {
+    expect(() => ticksToDecimal(1, 64000, 0.05, 1)).toThrow(RangeError);
+    expect(() => ticksToDecimal(1, 0.05, 0.1, 1)).toThrow(RangeError);
+    expect(ticksToDecimal(1, 64000, 0.05, 2)).toBe("64000.05");
+  });
+
   it("ticksToDecimal never re-quantises a float (0.1-tick trap)", () => {
     expect(ticksToDecimal(3, 64000, 0.1, 1)).toBe("64000.3");
     expect(ticksToDecimal(21, 64000, 0.5, 1)).toBe("64010.5");

@@ -4,13 +4,14 @@
  * data tables" (SCR-117) makes the table the panel's default view. The chart stays mounted while the table shows, so
  * switching back neither recreates the engine nor re-sends data.
  */
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useDefaultPanelView } from "../../features/a11y-preferences/consumers";
 import { registerCommand } from "../../keymap/KeymapHost";
 import { ChartDataTable, type ChartDataTableProps } from "./ChartDataTable";
 import { SAY, VIEW_CHART, VIEW_GROUP, VIEW_TABLE, VIEW_TABLE_HINT } from "./copy";
-import { sayToShell } from "./politeWriter";
+import { politeToShell } from "./politeWriter";
+import "./chartTable.css";
 
 export const TABLE_TOGGLE_COMMAND = "chart.table_toggle";
 
@@ -47,7 +48,7 @@ function attach(entry: PanelEntry): () => void {
 
 export interface ChartTablePanelProps extends Omit<
   ChartDataTableProps,
-  "focusOnOpen" | "initialBar"
+  "focusOnOpen" | "initialBar" | "onExit"
 > {
   /** The panel's name (its region label), e.g. "BTCUSDT 1m". */
   readonly title: string;
@@ -55,16 +56,20 @@ export interface ChartTablePanelProps extends Omit<
   readonly chart: ReactNode;
   /** The chart's cursor bar, where the table opens; default the latest bar. */
   readonly cursorBar?: number;
+  /** The panel title's heading level, from the host's outline (default 2). */
+  readonly headingLevel?: 2 | 3 | 4 | 5 | 6;
 }
 
 export function ChartTablePanel(props: ChartTablePanelProps): JSX.Element {
-  const { title, chart, cursorBar, ...table } = props;
+  const { title, chart, cursorBar, headingLevel = 2, ...table } = props;
+  const Heading = `h${headingLevel}` as const;
   const preferred = useDefaultPanelView();
   const [override, setOverride] = useState<"chart" | "table" | null>(null);
   const view = override ?? preferred;
   const [byKey, setByKey] = useState(false);
   const root = useRef<HTMLElement>(null);
   const chartSlot = useRef<HTMLDivElement>(null);
+  const tableButton = useRef<HTMLButtonElement>(null);
   const headerId = useId();
 
   const show = (next: "chart" | "table", fromKey: boolean): void => {
@@ -72,15 +77,20 @@ export function ChartTablePanel(props: ChartTablePanelProps): JSX.Element {
     setOverride(next);
   };
   const toggleRef = useRef<() => void>(() => undefined);
-  toggleRef.current = () => show(view === "table" ? "chart" : "table", true);
+  // The ref follows the render in an effect, so render stays pure (code lens r1 m3).
+  useLayoutEffect(() => {
+    toggleRef.current = () => show(view === "table" ? "chart" : "table", true);
+  });
 
   useEffect(() => attach({ root: () => root.current, toggle: () => toggleRef.current() }), []);
 
-  // Back on the chart by key: focus returns to the chart surface (a user action, `05` §3.4.3), said once.
+  // Back on the chart by key: focus returns to the chart surface (a user action, `05` §3.4.3), said once. A chart
+  // with nothing focusable leaves focus on the Table button, never on the page body (a11y lens r1 m4).
   useEffect(() => {
     if (!byKey || view !== "chart") return;
-    chartSlot.current?.querySelector<HTMLElement>('[role="figure"], [tabindex]')?.focus();
-    (table.say ?? ((text: string) => sayToShell("polite", text)))(SAY.chart);
+    const surface = chartSlot.current?.querySelector<HTMLElement>('[role="figure"], [tabindex]');
+    (surface ?? tableButton.current)?.focus();
+    (table.say ?? politeToShell)(SAY.chart);
     setByKey(false);
   }, [byKey, view, table.say]);
 
@@ -92,19 +102,22 @@ export function ChartTablePanel(props: ChartTablePanelProps): JSX.Element {
       className="cv-chart-panel"
     >
       <header className="cv-chart-panel__header">
-        <h2 id={headerId} className="cv-chart-panel__title">
+        <Heading id={headerId} className="cv-chart-panel__title">
           {title}
-        </h2>
+        </Heading>
         <div role="group" aria-label={VIEW_GROUP} className="cv-chart-panel__views">
           <button
             type="button"
+            className="cv-chart-panel__view cv-focus-ring"
             aria-pressed={view === "chart"}
             onClick={() => show("chart", false)}
           >
             {VIEW_CHART}
           </button>
           <button
+            ref={tableButton}
             type="button"
+            className="cv-chart-panel__view cv-focus-ring"
             aria-pressed={view === "table"}
             aria-keyshortcuts="Alt+T"
             title={VIEW_TABLE_HINT}
@@ -114,6 +127,8 @@ export function ChartTablePanel(props: ChartTablePanelProps): JSX.Element {
           </button>
         </div>
       </header>
+      {/* `hidden` while the table is the shown alternative: a recorded deviation from `05` §6.1's "the mirror is never
+          display:none" (code lens r1 m7); the engine host's 0x0 re-measure on return is carried to the mount. */}
       <div ref={chartSlot} hidden={view === "table"}>
         {chart}
       </div>
@@ -122,6 +137,7 @@ export function ChartTablePanel(props: ChartTablePanelProps): JSX.Element {
           {...table}
           title={title}
           focusOnOpen={byKey}
+          onExit={() => show("chart", true)}
           {...(cursorBar === undefined ? {} : { initialBar: cursorBar })}
         />
       ) : null}

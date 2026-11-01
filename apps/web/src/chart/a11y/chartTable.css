@@ -1,0 +1,112 @@
+/*
+ * SCR-045's own classes (E47-S01, #1316): the chart panel's header and view switch, the grid's expander and the
+ * footprint level rows. Tokens only (no hard-coded colour or spacing); CMP-049 (`table.css`) already draws the rows,
+ * the selected and the active row, and the CMP-039 ring on every cell. No motion: the view switch and expand are
+ * instant in both motion modes (E11-D04 §17.5), so reduced motion needs nothing here.
+ */
+
+.cv-chart-panel {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  color: var(--color-text-primary);
+}
+
+.cv-chart-panel__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-inset-xs) var(--space-inset-sm);
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+}
+
+.cv-chart-panel__title {
+  margin: 0;
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+}
+
+.cv-chart-panel__views {
+  display: inline-flex;
+  gap: var(--space-inset-xs);
+}
+
+/* The Chart / Table segment: a 24 x 24 CSS px target at least (SC 2.5.8, E11-D04 §17.4), the pressed one filled. */
+.cv-chart-panel__view {
+  min-block-size: var(--size-target-min);
+  min-inline-size: var(--size-target-min);
+  padding: 0 var(--space-inset-sm);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  cursor: pointer;
+}
+
+.cv-chart-panel__view:hover {
+  background: var(--color-surface-hover);
+}
+
+.cv-chart-panel__view[aria-pressed="true"] {
+  border-color: var(--color-border-selected);
+  background: var(--color-surface-selected);
+}
+
+/* The table fills the panel; CMP-049's region scrolls inside it, so the panel never scrolls the page sideways. */
+.cv-chart-table {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  max-block-size: 100%;
+}
+
+/* The expander: the disclosure's pointer target, 24 x 24 at least, ringed by CMP-039 (`cv-focus-ring`). */
+.cv-chart-table__expander {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--size-target-min);
+  min-inline-size: var(--size-target-min);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.cv-chart-table__expander:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/*
+ * A level row sits inside its bar (E11-D04 §6.1): surface.app, one step from the canvas, and a 2 px border.strong
+ * indent rule on its first cell (decorative; "Level k of N" in that cell carries the nesting). Rows stay 24 px tall:
+ * the row is the target.
+ */
+.cv-table__row.cv-chart-table__level {
+  background: var(--color-surface-app);
+}
+
+.cv-table__row.cv-chart-table__level > :first-child {
+  box-shadow: inset calc(var(--border-thick) * 1px) 0 0 0 var(--color-border-strong);
+}
+
+/* Each level cell names its own column (the bar columns' headers do not): the label is secondary text. */
+.cv-chart-table__level-label {
+  color: var(--color-text-secondary);
+}
+
+@media (forced-colors: active) {
+  .cv-chart-panel__view[aria-pressed="true"] {
+    border-color: Highlight;
+  }
+
+  .cv-table__row.cv-chart-table__level > :first-child {
+    border-inline-start: calc(var(--border-thick) * 1px) solid CanvasText;
+  }
+}

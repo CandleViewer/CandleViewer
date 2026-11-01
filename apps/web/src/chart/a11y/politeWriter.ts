@@ -6,7 +6,7 @@
  * Allocation: `set` stores the caller's string in a preallocated slot and arms at most one timer per cadence window,
  * so a 20 Hz stream allocates nothing per tick here.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useInsertionEffect, useRef } from "react";
 import {
   REGION_BUDGET_MS,
   announce,
@@ -30,7 +30,8 @@ export interface AmbientWriterOptions {
   readonly fields: readonly string[];
   /** The user's announcement preferences, read at each `set`. */
   readonly prefs: () => AnnouncePrefs;
-  readonly cadenceMs?: number;
+  /** The cadence, or a reader of it: a reader lets the cadence change without losing pending values. */
+  readonly cadenceMs?: number | (() => number);
   /** Writes one message; defaults to the shell announcer. */
   readonly say?: (politeness: Politeness, text: string) => void;
   readonly now?: () => number;
@@ -54,10 +55,18 @@ export function sayToShell(politeness: Politeness, text: string): void {
   forget(key);
 }
 
+/** The table's polite line through the shell announcer. */
+export const politeToShell = (text: string): void => sayToShell("polite", text);
+
 export function createAmbientWriter(options: AmbientWriterOptions): AmbientWriter {
-  const { fields, prefs, cadenceMs = AMBIENT_CADENCE_MS, say = sayToShell } = options;
+  const { fields, prefs, say = sayToShell } = options;
+  const option = options.cadenceMs;
+  const cadence =
+    typeof option === "function" ? option : (): number => option ?? AMBIENT_CADENCE_MS;
   const now = options.now ?? ((): number => Date.now());
   const latest: (string | null)[] = fields.map(() => null);
+  /** What each field last said: an unchanged value is not said again (a flat market stays quiet). */
+  const spoken: (string | null)[] = fields.map(() => null);
   let timer: ReturnType<typeof setTimeout> | null = null;
   let lastOwnWrite = -Infinity;
   let disposed = false;
@@ -68,10 +77,14 @@ export function createAmbientWriter(options: AmbientWriterOptions): AmbientWrite
     const parts: string[] = [];
     for (let i = 0; i < latest.length; i++) {
       const text = latest[i];
-      if (text !== null && text !== undefined) parts.push(text);
+      if (text !== null && text !== undefined) {
+        parts.push(text);
+        spoken[i] = text;
+      }
       latest[i] = null;
     }
     if (parts.length === 0) return;
+    // PROPOSED joiner pending E47-D06 (#1305): fields read as sentences (". "); the bar sentence uses ", ".
     say("polite", parts.join(". "));
     lastOwnWrite = now();
   };
@@ -82,7 +95,7 @@ export function createAmbientWriter(options: AmbientWriterOptions): AmbientWrite
     // Another writer's message is not cut inside the shell's per-region budget (E17-D02 §11).
     const other = lastWrittenAt("polite");
     const foreign = other > lastOwnWrite ? other + REGION_BUDGET_MS : -Infinity;
-    const due = Math.max(lastOwnWrite + cadenceMs, foreign, t);
+    const due = Math.max(lastOwnWrite + cadence(), foreign, t);
     timer = setTimeout(flush, due - t);
   };
 
@@ -93,12 +106,17 @@ export function createAmbientWriter(options: AmbientWriterOptions): AmbientWrite
       if (slot < 0) throw new RangeError(`unknown ambient field "${field}"`);
       // Eligibility only; the cadence itself is this writer's timer, so the latest value is never lost.
       if (!shouldAnnounce(prefs(), { significant, cadenceElapsed: true })) return;
+      if (text === spoken[slot]) {
+        latest[slot] = null; // latest wins, and the latest is what was last said
+        return;
+      }
       latest[slot] = text;
       schedule();
     },
     alert(text) {
       if (disposed) return;
       latest.fill(null);
+      spoken.fill(null); // after a disconnect, the next value is news again
       say("assertive", text);
     },
     dispose() {
@@ -110,8 +128,9 @@ export function createAmbientWriter(options: AmbientWriterOptions): AmbientWrite
 }
 
 /**
- * The writer for a component's lifetime, reading the preferences live; disposed on unmount (no write after it).
- * `fields` is read once, at mount.
+ * The writer for a component's lifetime, reading the preferences and the cadence live; disposed on unmount (no
+ * write after it). Created on first use, so a child's mount effect that writes before this hook's effect runs is
+ * heard, and a cadence change keeps the pending values. `fields` is read once, at first use.
  */
 export function useAmbientWriter(
   fields: readonly string[],
@@ -119,25 +138,39 @@ export function useAmbientWriter(
 ): AmbientWriter {
   const { prefs } = usePreferences();
   const prefsRef = useRef<AnnouncePrefs>(prefs);
-  prefsRef.current = prefs;
-  const writer = useRef<AmbientWriter | null>(null);
-  const fieldsRef = useRef(fields);
-  useEffect(() => {
-    const created = createAmbientWriter({
-      fields: fieldsRef.current,
-      prefs: () => prefsRef.current,
-      cadenceMs,
-    });
-    writer.current = created;
-    return () => {
-      created.dispose();
-      if (writer.current === created) writer.current = null;
-    };
-  }, [cadenceMs]);
-  const facade = useRef<AmbientWriter>({
-    set: (field, text, significant) => writer.current?.set(field, text, significant),
-    alert: (text) => writer.current?.alert(text),
-    dispose: () => writer.current?.dispose(),
+  const cadenceRef = useRef(cadenceMs);
+  // Refs follow the render in an effect (render stays pure); insertion effects run before any layout effect.
+  useInsertionEffect(() => {
+    prefsRef.current = prefs;
+    cadenceRef.current = cadenceMs;
   });
+  const fieldsRef = useRef(fields);
+  const writer = useRef<AmbientWriter | null>(null);
+  const unmounted = useRef(false);
+  useEffect(() => {
+    unmounted.current = false; // StrictMode's second mount: the next write creates a fresh writer
+    return () => {
+      unmounted.current = true;
+      writer.current?.dispose();
+      writer.current = null;
+    };
+  }, []);
+  const facade = useRef<AmbientWriter | null>(null);
+  facade.current ??= ((): AmbientWriter => {
+    const get = (): AmbientWriter | null => {
+      if (unmounted.current) return null;
+      writer.current ??= createAmbientWriter({
+        fields: fieldsRef.current,
+        prefs: () => prefsRef.current,
+        cadenceMs: () => cadenceRef.current,
+      });
+      return writer.current;
+    };
+    return {
+      set: (field, text, significant) => get()?.set(field, text, significant),
+      alert: (text) => get()?.alert(text),
+      dispose: () => writer.current?.dispose(),
+    };
+  })();
   return facade.current;
 }

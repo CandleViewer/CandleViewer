@@ -75,6 +75,22 @@ describe("SCR-045 entry from the chart panel header (equal status)", () => {
     expect(within(region).queryByRole("grid")).toBeNull();
   });
 
+  it("takes its heading level from the host", () => {
+    prefs({});
+    render(
+      <PreferencesProvider>
+        <ChartTablePanel
+          title="BTCUSDT 1m"
+          chart={chart}
+          series={series}
+          headingLevel={3}
+          writeClipboard={async () => undefined}
+        />
+      </PreferencesProvider>,
+    );
+    expect(screen.getByRole("heading", { level: 3, name: "BTCUSDT 1m" })).toBeInTheDocument();
+  });
+
   it("'Always show data tables' makes the table the panel's default view", async () => {
     prefs({ always_show_tables: true });
     renderPanel();
@@ -96,7 +112,41 @@ describe("Alt+T (chart.table_toggle)", () => {
     act(() => altT());
     expect(screen.queryByRole("grid")).toBeNull();
     expect(screen.getByRole("figure")).toHaveFocus();
-    expect(politeText()).toBe("Chart");
+    expect(politeText()).toBe("Chart view");
+  });
+
+  it("Esc with nothing selected or open returns to the chart, focus on its surface", () => {
+    prefs({});
+    renderPanel();
+    screen.getByRole("figure").focus();
+    act(() => altT());
+    act(() => {
+      fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
+    });
+    expect(screen.queryByRole("grid")).toBeNull();
+    expect(screen.getByRole("figure")).toHaveFocus();
+    expect(politeText()).toBe("Chart view");
+  });
+
+  it("back on a chart with nothing focusable, focus goes to the Table button, not the page", () => {
+    prefs({});
+    render(
+      <PreferencesProvider>
+        <ShellAnnouncer />
+        <KeymapHost />
+        <ChartTablePanel
+          title="BTCUSDT 1m"
+          chart={<div>loading</div>}
+          series={series}
+          writeClipboard={async () => undefined}
+        />
+      </PreferencesProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Table" }));
+    act(() => screen.getByRole("grid").querySelector<HTMLElement>('[tabindex="0"]')?.focus());
+    act(() => altT());
+    expect(screen.queryByRole("grid")).toBeNull();
+    expect(screen.getByRole("button", { name: "Table" })).toHaveFocus();
   });
 
   it("does nothing outside a chart panel", () => {

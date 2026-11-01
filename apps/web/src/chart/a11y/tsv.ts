@@ -19,6 +19,10 @@ export interface Tsv {
   readonly capped: boolean;
 }
 
+/*
+ * No escaping: every field is a decimal string, an ISO time or a fixed imbalance word, so none can hold a tab or a
+ * line break (series.test pins it). A free-text column (notes, E47-S02) must add escaping before it joins the copy.
+ */
 const opt = (value: string | undefined): string => (value === undefined ? "" : tsvDecimal(value));
 
 export function buildTsv(

@@ -77,6 +77,17 @@ describe("TSV (E11-D04 §8.3)", () => {
     expect(buildTsv(s, [0], null, null).text.split("\n")[1]?.endsWith("\t1.500\t\t")).toBe(true);
   });
 
+  it("no field holds a tab or a line break, so the format needs no escaping", () => {
+    const s = makeSeries({ bars: 8 });
+    const lines = buildTsv(s, [0, 1, 2, 3, 4, 5, 6, 7], 3, cvdPrefix(s)).text.split("\n");
+    expect(lines.at(-1)).toBe("");
+    const header = (lines[0] ?? "").split("\t").length;
+    for (const line of lines.slice(1, -1)) {
+      expect(line).not.toMatch(/\r/);
+      expect(line.split("\t").length).toBeLessThanOrEqual(header);
+    }
+  });
+
   it("caps a copy at 10,000 rows", () => {
     const s = makeSeries({ bars: TSV_ROW_CAP + 5, levels: 0 });
     const all = Array.from({ length: TSV_ROW_CAP + 5 }, (_, i) => i);

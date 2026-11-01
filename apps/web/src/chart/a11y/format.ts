@@ -52,7 +52,20 @@ export function scaledToDecimal(scaled: number, decimals: number): string {
   return negative ? `-${body}` : body;
 }
 
-/** A price in ticks as an exact decimal: `priceOrigin + ticks × tickSize`, in scaled integers (`26` §8). */
+/** `value × unit` as an integer, or a RangeError when `decimals` cannot show `value` exactly. */
+function exactScaled(value: number, unit: number, what: string): number {
+  const scaled = value * unit;
+  const int = Math.round(scaled);
+  if (Math.abs(scaled - int) > 1e-6 * Math.max(1, Math.abs(scaled)))
+    throw new RangeError(`${what} ${value} needs more than ${Math.log10(unit)} decimals`);
+  return int;
+}
+
+/**
+ * A price in ticks as an exact decimal: `priceOrigin + ticks × tickSize`, in scaled integers (`26` §8). A tick or an
+ * origin that `decimals` cannot show (tick 0.05 at 1 decimal) is a RangeError, never a silently re-quantised price;
+ * the table's render path shows "not available" for it.
+ */
 export function ticksToDecimal(
   ticks: number,
   priceOrigin: number,
@@ -60,7 +73,8 @@ export function ticksToDecimal(
   decimals: number,
 ): string {
   const unit = 10 ** decimals;
-  const scaled = Math.round(priceOrigin * unit) + ticks * Math.round(tickSize * unit);
+  const scaled =
+    exactScaled(priceOrigin, unit, "price origin") + ticks * exactScaled(tickSize, unit, "tick");
   return scaledToDecimal(scaled, decimals);
 }
 
