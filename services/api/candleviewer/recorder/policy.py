@@ -15,6 +15,13 @@ refused with a `RecorderCapRefused` warning, a metric and a denied audit record,
 retried every tick. A `position_open` start may pre-empt one evictable symbol. Disk pressure
 (E16-T07) refuses a new chart-open start the same way (cause `disk_pressure`), nothing else.
 
+Auto caps (E16-FR-01, #1738): symbols recording for `chart_open` alone are capped at
+`CV_RECORDER_MAX_AUTO_SYMBOLS`; a new chart-open start past it is refused the same way, cause
+`symbol_cap` on the wire and `auto_cap_refused` in the audit (a manual or position start is
+never refused by it). A caller that names the session (`session_id`) is held to
+`auto_caps.SessionAutoBook`: a chart ref past its distinct-symbol cap or start rate is not
+taken (the chart stays live-only), audited denied once per (session, symbol).
+
 Pin semantics (`set_pin`, audited `retention.change`): a pinned symbol's data is never
 deleted by retention (E16-T06), and a pinned symbol is never a pre-emption victim and
 is exempt from auto-eviction (E16-T07), like a manual entry. A pin alone does not start
@@ -55,6 +62,7 @@ from pydantic import ValidationError
 import candleviewer.statechart.bindings.b11_recording as b11
 from candleviewer.bus.models import Topic
 from candleviewer.observability.context import current_request_uuid
+from candleviewer.recorder.auto_caps import SessionAutoBook, SessionRefusal
 from candleviewer.recorder.control import HIDDEN_CAUSES, RecordReason
 from candleviewer.recorder.errors import (
     InvalidRecordedSymbolError,
@@ -67,6 +75,8 @@ from candleviewer.recorder.errors import (
     RecorderSymbolNotRecordedError,
 )
 from candleviewer.recorder.metrics import (
+    recorder_auto_record_active,
+    recorder_auto_record_refused_total,
     recorder_b11_error_total,
     recorder_cap_preempted_total,
     recorder_cap_refused_total,
@@ -331,6 +341,11 @@ class PolicyConfig:
     max_refs_per_symbol: int = 64
     #: What a NULL `retention_days` keeps and `None` restores: `CV_RECORDER_RETENTION_DAYS` (22).
     default_retention_days: int = 30
+    #: E16-FR-01: symbols recording for `chart_open` alone (`CV_RECORDER_MAX_AUTO_SYMBOLS`).
+    max_auto_symbols: int = 20
+    #: E16-FR-01: per session, distinct chart-open symbols held and new ones per minute.
+    max_auto_per_session: int = 20
+    auto_start_rate_per_min: int = 10
 
 
 #: The library interpreter, opaque to M11 (only `statechart/` may type it).
@@ -428,13 +443,27 @@ class RecordingPolicy:
         #: E16-T04: B11 state-entry hooks are forwarded here (SessionManager.on_b11_state) so
         #: the session row mirrors the published state without querying the interpreter.
         self._state_observer: StateObserver | None = None
+        self._sessions = SessionAutoBook(
+            max_per_session=self._cfg.max_auto_per_session,
+            rate_per_min=self._cfg.auto_start_rate_per_min,
+        )
 
     def observe_states(self, observer: StateObserver) -> None:
         self._state_observer = observer
 
     # --- public triggers ---------------------------------------------------------------
 
-    async def on_chart_opened(self, symbol: str, chart_id: str) -> None:
+    async def on_chart_opened(
+        self, symbol: str, chart_id: str, *, session_id: str | None = None
+    ) -> None:
+        """`session_id` is the server-side session the chart belongs to (never client input);
+        with it, the session's limits apply (E16-FR-01). None: only the global caps do."""
+        _valid(symbol)
+        if session_id is not None:
+            refusal = self._sessions.check(session_id, symbol, self._now())
+            if refusal is not None:
+                await self._refuse_session(session_id, symbol, refusal)
+                return
         s = self._sym(symbol, kind="chart")
         if s is None:
             logger().warning("recorder_chart_ref_refused", symbol=symbol, cause="symbol_cap")
@@ -443,12 +472,18 @@ class RecordingPolicy:
         if new and len(s.charts) >= self._cfg.max_refs_per_symbol:
             logger().warning("recorder_chart_ref_refused", symbol=symbol, cause="ref_cap")
             return
+        if session_id is not None:
+            self._sessions.commit(session_id, symbol, chart_id, self._now())
         s.charts.setdefault(chart_id, self._now())
         if new:  # a ref already held was mirrored when it opened
             await self._mirror_ref(symbol, "chart", chart_id, add=True)
         await self._reconcile(symbol)
 
-    async def on_chart_closed(self, symbol: str, chart_id: str) -> None:
+    async def on_chart_closed(
+        self, symbol: str, chart_id: str, *, session_id: str | None = None
+    ) -> None:
+        if session_id is not None:
+            self._sessions.release(session_id, _valid(symbol), chart_id, self._now())
         s = self._syms.get(_valid(symbol))
         if s is not None:
             s.charts.pop(chart_id, None)
@@ -740,6 +775,15 @@ class RecordingPolicy:
     def _at_cap(self) -> bool:
         return len(self._active()) >= self._cfg.max_symbols
 
+    def _auto_count(self) -> int:
+        """Active symbols held by no manual entry and no position: recording for `chart_open`
+        alone, lingering ones included (they hold their slot until the grace ends)."""
+        return sum(
+            1
+            for sym in self._active()
+            if (s := self._syms.get(sym)) is None or not (s.manual or s.positions)
+        )
+
     def position_open(self, symbol: str) -> bool:
         """The `StreamWriter` gate's plain predicate (E16-T07): True until the warm-up gate
         opens (the position cache may not be authoritative yet), then the positions set."""
@@ -885,6 +929,7 @@ class RecordingPolicy:
             if self.leaf(symbol) is None and s.idle():
                 self._syms.pop(symbol, None)
             await self._publish(symbol)
+            recorder_auto_record_active.set(self._auto_count())
 
     async def _mirror_ref(self, symbol: str, kind: str, ident: str, *, add: bool) -> None:
         """Keep the active row's `reason_refs` in step with a trigger that opened or closed, so
@@ -943,6 +988,9 @@ class RecordingPolicy:
         if new and reason == "chart_open" and self._disk_refuses():
             await self._refuse(symbol, s, reason, cause="disk_pressure")
             return
+        if new and reason == "chart_open" and self._auto_count() >= self._cfg.max_auto_symbols:
+            await self._refuse(symbol, s, reason, detail="auto_cap")
+            return
         if new and reason != "manual" and self._at_cap():
             if reason != "position_open" or not await self._preempt_for(symbol):
                 await self._refuse(symbol, s, reason)
@@ -981,25 +1029,40 @@ class RecordingPolicy:
             s.resumed_from = reason
 
     async def _refuse(
-        self, symbol: str, s: _Sym, reason: Reason, cause: RefusalCause = "symbol_cap"
+        self,
+        symbol: str,
+        s: _Sym,
+        reason: Reason,
+        cause: RefusalCause = "symbol_cap",
+        *,
+        detail: Literal["auto_cap"] | None = None,
     ) -> None:
         """Cap or disk refusal: warning event + metric + audit, once per (symbol, reason) until it
         starts or its trigger lapses (`_reconcile` forgets a refusal whose reason is no longer
         wanted, so one that returns is announced again); `_due` keeps it queued, so every tick
-        retries it."""
+        retries it. `detail="auto_cap"` (E16-FR-01) keeps the wire cause and names the auto cap
+        in the log, the metric and the audit reason."""
         again = reason in s.refused
         s.refused[reason] = cause  # the latest cause, announced or not
         if again:
             return
         recorder_cap_refused_total.labels(reason=reason).inc()
+        if detail is not None:
+            recorder_auto_record_refused_total.labels(cause=detail).inc()
         logger().warning(
-            "recorder_cap_refused", symbol=symbol, reason=reason, cause=cause, env=self._env
+            "recorder_cap_refused",
+            symbol=symbol,
+            reason=reason,
+            cause=cause,
+            detail=detail,
+            env=self._env,
         )
+        audit_reason = "cap_refused" if cause == "symbol_cap" else cause
         await self._audit_emit(
             "recorder.start",
             symbol,
             SYSTEM_ACTOR,
-            reason="cap_refused" if cause == "symbol_cap" else cause,
+            reason=audit_reason if detail is None else f"{detail}_refused",
             extra={"trigger": reason},
             outcome="denied",
         )
@@ -1007,6 +1070,23 @@ class RecordingPolicy:
             symbol=symbol, reason=reason, ts_event=int(self._now() * 1e6), cause=cause
         )
         await self._bus.publish(self._refused_topic, ev)
+
+    async def _refuse_session(self, session_id: str, symbol: str, cause: SessionRefusal) -> None:
+        """A chart ref over its session's limits is not taken: the chart stays live-only. Counted
+        every time; logged and audited denied once per (session, symbol). The session id is never
+        logged or audited (it names a login, not a fact about the symbol)."""
+        recorder_auto_record_refused_total.labels(cause=cause).inc()
+        if not self._sessions.first_denial(session_id, symbol):
+            return
+        logger().warning("recorder_chart_ref_refused", symbol=symbol, cause=cause, env=self._env)
+        await self._audit_emit(
+            "recorder.start",
+            symbol,
+            SYSTEM_ACTOR,
+            reason=f"{cause}_refused",
+            extra={"trigger": "chart_open"},
+            outcome="denied",
+        )
 
     async def _preempt_for(self, symbol: str) -> bool:
         """A position is money at risk: stop the lowest-priority evictable symbol to make

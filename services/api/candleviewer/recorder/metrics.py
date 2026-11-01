@@ -25,6 +25,17 @@ recorder_cap_preempted_total = Counter(
     "recorder_cap_preempted_total",
     "Chart-only recordings stopped to make room for an open position.",
 )
+#: E16-FR-01 (#1738): symbols recording for `chart_open` alone, and the auto-record triggers
+#: refused by `cause`: `auto_cap` (CV_RECORDER_MAX_AUTO_SYMBOLS), `session_cap`
+#: (CV_RECORDER_MAX_AUTO_PER_SESSION), `session_rate` (CV_RECORDER_AUTO_START_RATE_PER_MIN).
+recorder_auto_record_active = Gauge(
+    "recorder_auto_record_active", "Symbols recording for an open chart alone (E16-FR-01)."
+)
+recorder_auto_record_refused_total = Counter(
+    "recorder_auto_record_refused_total",
+    "Auto-record triggers refused: auto_cap, session_cap or session_rate (E16-FR-01).",
+    ["cause"],
+)
 recorder_b11_error_total = Counter(
     "recorder_b11_error_total",
     "B11 recording machines that entered `error` (retried with backoff).",

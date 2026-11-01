@@ -21,6 +21,9 @@ from candleviewer.settings import Settings
     ("field", "below", "floor"),
     [
         ("recorder_max_symbols", 0, 1),
+        ("recorder_max_auto_symbols", 0, 1),
+        ("recorder_max_auto_per_session", 0, 1),
+        ("recorder_auto_start_rate_per_min", 0, 1),
         ("recorder_wal_max_bytes", (1 << 20) - 1, 1 << 20),
         ("disk_cap_gb", 0, 1),
     ],

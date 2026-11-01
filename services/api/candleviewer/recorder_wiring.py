@@ -191,6 +191,9 @@ def policy_config(settings: Settings) -> PolicyConfig:
         autorecord_enabled=settings.recorder_autorecord_enabled,
         max_symbols=settings.recorder_max_symbols,
         default_retention_days=settings.recorder_retention_days,
+        max_auto_symbols=settings.recorder_max_auto_symbols,
+        max_auto_per_session=settings.recorder_max_auto_per_session,
+        auto_start_rate_per_min=settings.recorder_auto_start_rate_per_min,
     )
 
 

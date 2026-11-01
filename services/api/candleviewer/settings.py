@@ -703,6 +703,11 @@ class Settings(BaseSettings):
     recorder_autostop_grace_s: int = Field(default=1800, ge=0)
     recorder_autorecord_enabled: bool = True
     recorder_max_symbols: int = Field(default=20, ge=1)
+    # E16-FR-01 (#1738): symbols recording for an open chart alone; per session, the distinct
+    # chart-open symbols held and the new ones admitted in any 60 s.
+    recorder_max_auto_symbols: int = Field(default=20, ge=1)
+    recorder_max_auto_per_session: int = Field(default=20, ge=1)
+    recorder_auto_start_rate_per_min: int = Field(default=10, ge=1)
     # #2223 (24 Sec.13.7): the periodic book seek anchor's cadence, at any book depth.
     recorder_snapshot_interval_s: int = Field(default=60, ge=1, le=3600)
     # E16-T03: StreamWriter spill WAL (bounded; SR-096 — a volume separate from the backend).

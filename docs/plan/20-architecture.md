@@ -910,6 +910,9 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_RECORDER_AUTOSTOP_GRACE_S`   | int    | `1800`                    | runtime | linger after last reason; re-acquire cancels                                                                        |
 | `CV_RECORDER_AUTORECORD_ENABLED` | bool   | `true`                    | runtime | chart-open only; never gates position/manual                                                                        |
 | `CV_RECORDER_MAX_SYMBOLS`        | int    | `20`                      | runtime | manual add 422 / auto-start refused above                                                                           |
+| `CV_RECORDER_MAX_AUTO_SYMBOLS`   | int    | `20`                      | runtime | symbols recording for an open chart alone; a new chart-open start is refused above (E16-FR-01), never a manual or position start |
+| `CV_RECORDER_MAX_AUTO_PER_SESSION` | int  | `20`                      | runtime | distinct chart-open symbols one session may hold; a chart past it stays live-only (E16-FR-01) |
+| `CV_RECORDER_AUTO_START_RATE_PER_MIN` | int | `10`                    | runtime | new chart-open symbols one session may add in any 60 s; past it a chart stays live-only (E16-FR-01) |
 | `CV_RECORDER_SNAPSHOT_INTERVAL_S` | int | `60` | runtime | periodic book seek anchor, any depth (24 §13.7); a skip is counted, not a gap |
 | `CV_RECORDER_WAL_DIR`            | path   | `<data dir>/recorder-wal` | process | StreamWriter spill WAL; absolute, no `..`, inside the data dir; must not share a volume with Postgres/logs (SR-096) |
 | `CV_RECORDER_WAL_MAX_BYTES`      | int    | `1073741824`              | process | WAL cap (all streams); past it: drop + `backpressure_drop` gap                                                      |

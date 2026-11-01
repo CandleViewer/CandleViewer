@@ -4105,7 +4105,7 @@ class RecordingState(BaseModel):
 
 | Value            | Field               | Raised by                   | Meaning                                                                           |
 | ---------------- | ------------------- | --------------------------- | --------------------------------------------------------------------------------- |
-| `symbol_cap`     | `refusal`           | `RecordingPolicy` (E16-T02) | an auto-start is refused at `CV_RECORDER_MAX_SYMBOLS` and retried every tick      |
+| `symbol_cap`     | `refusal`           | `RecordingPolicy` (E16-T02) | an auto-start is refused at `CV_RECORDER_MAX_SYMBOLS`, or a chart-open start at `CV_RECORDER_MAX_AUTO_SYMBOLS` (E16-FR-01), and retried every tick |
 | `disk_pressure`  | `refusal`           | `RecordingPolicy` (E16-T07) | a chart-open start is refused from disk level 2, or on a refused volume           |
 | `chart_open`     | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a chart of the symbol is open                             |
 | `position_open`  | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a position is open (INV-B11-a)                            |
