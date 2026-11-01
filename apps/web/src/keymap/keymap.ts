@@ -11,7 +11,8 @@ export type KeymapContext =
   | "Replay"
   | "Rules"
   | "Admin"
-  | "Settings";
+  | "Settings"
+  | "Tape";
 
 export interface KeymapCommand {
   readonly id: string;

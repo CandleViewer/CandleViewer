@@ -49,6 +49,15 @@ export const PAIRS = [
   { fg: "color.sell.default", bg: "color.surface.app", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.buy.default", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.sell.default", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  // E22-S01 (#714) G-63 / D02-G5: the SCR-053 tape's rows. The tier-2 band's text, and the side
+  // glyph and 2 px accent on the row surface and on the band (D02 §14's seven PROPOSED rows).
+  { fg: "color.text.primary", bg: "color.buy.subtle", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.primary", bg: "color.sell.subtle", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.tertiary", bg: "color.sell.subtle", threshold: THRESHOLD.TEXT },
+  { fg: "color.buy.default", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.sell.default", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.buy.default", bg: "color.buy.subtle", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.sell.default", bg: "color.sell.subtle", threshold: THRESHOLD.NON_TEXT },
 
   // --- Buy/sell high-contrast (7:1 stretch target) --------------------
   { fg: "color.buy.hc", bg: "color.surface.app", threshold: THRESHOLD.HIGH_CONTRAST },

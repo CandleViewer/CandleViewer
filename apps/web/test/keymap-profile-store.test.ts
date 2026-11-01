@@ -260,7 +260,7 @@ describe("switched on: queued only with settings:write (A55), as the whole profi
 
   it("CR-305C-02, pin: every command is sent with the scope 22's table gives its context", async () => {
     const table = new Map(scopeTable());
-    expect(table.size).toBe(11); // the eleven rows: the keymap has commands in nine, the contract pin holds the copy
+    expect(table.size).toBe(12); // the twelve rows: the keymap has commands in ten, the contract pin holds the copy
     const calls = stubServer();
     signIn("u-1", "owner");
     const store = m.httpProfileStore();
