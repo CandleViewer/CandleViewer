@@ -209,14 +209,21 @@ def test_roundtrip_failure_reports_its_seed_and_the_replay_reproduces_it(
     notes = "\n".join(getattr(first.value, "__notes__", []))
     assert f"shard_seed={bad_seed}" in notes, notes
     assert "CV_ROUNDTRIP_SEED=4242" in notes, notes
+    assert "kind=form " in notes, notes
+    assert "documents=5 " in notes, notes
 
     # Replay: rebuild the run from the reported environment only, as a developer would.
     env = dict(re.findall(r"(CV_ROUNDTRIP_\w+)=(\d+)", notes))
-    monkeypatch.setattr(this, "SEED", int(env["CV_ROUNDTRIP_SEED"]))
-    monkeypatch.setattr(this, "EXAMPLES", int(env["CV_ROUNDTRIP_EXAMPLES"]))
-    monkeypatch.setattr(this, "WORKERS", int(env["CV_ROUNDTRIP_WORKERS"]))
+    seed = int(env["CV_ROUNDTRIP_SEED"])
+    examples = int(env["CV_ROUNDTRIP_EXAMPLES"])
+    workers = int(env["CV_ROUNDTRIP_WORKERS"])
+    monkeypatch.setattr(this, "SEED", seed)
+    monkeypatch.setattr(this, "EXAMPLES", examples)
+    monkeypatch.setattr(this, "WORKERS", workers)
     with pytest.raises(AssertionError, match="counter-example") as again:
-        run_shards(plan(int(env["CV_ROUNDTRIP_EXAMPLES"]), int(env["CV_ROUNDTRIP_WORKERS"]), 4_242))
+        run_shards(plan(examples, workers, seed))
+    again_notes = "\n".join(getattr(again.value, "__notes__", []))
+    assert again_notes == notes, again_notes
     assert str(again.value) == str(first.value)
 
 
