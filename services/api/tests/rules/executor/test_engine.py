@@ -569,6 +569,31 @@ async def test_a_snapshot_no_run_row_can_hold_stops_the_fire_as_a_failed_write()
     assert "1E+100" not in repr(logs) and "1e+100" not in repr(logs).lower()
 
 
+async def test_a_snapshot_no_run_row_can_hold_stops_a_refused_fires_job_without_an_alert() -> None:
+    """The same snapshot on a refused fire's record-only job: it writes nothing and raises no
+    alert (its refusal was counted and paged on the tick), and each failed write, the first
+    action's records and the close tried once after them, is logged on the audit queue by its
+    class alone, never the value."""
+    engine = Engine(Handler({}))
+    refused = replace(
+        fire(engine.emit, "a1", "a2"),
+        kind="refused_fire",
+        metric_values={"price": Decimal("1E+100")},
+    )
+    with capture_logs() as logs:
+        async with asyncio.timeout(GUARD_S):
+            await engine.executor.execute(refused)
+    assert engine.records.runs == {} and engine.records.closed == {}
+    assert engine.records.events == [] and engine.records.audits == []
+    assert engine.alerts.raised == [] and engine.alerts.settled_rules == []
+    failed = [(e["event"], e["queue"], e["cause"]) for e in logs if e["log_level"] == "error"]
+    assert failed == [
+        ("rules.records_failed", "rule-dispatch-audit", "IrValueError"),
+        ("rules.run_close_failed", "rule-dispatch-audit", "IrValueError"),
+    ]
+    assert "1E+100" not in repr(logs) and "1e+100" not in repr(logs).lower()
+
+
 async def test_a_retry_whose_write_ahead_fails_keeps_the_first_result() -> None:
     records = FlakyRecords("fired", nth=2)  # the retry's `rules.fired`
     engine = Engine(Handler({"a1": [NO_ANSWER, OK], "a2": [OK]}), records=records)

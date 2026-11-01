@@ -67,8 +67,17 @@ _INSERT_RUN = sa.text(
     ":trigger, CAST(:account_id AS uuid), :symbol, CAST(:snapshot AS jsonb), :matched, "
     ":error_code, :error_message, :duration_ms)"
 )
-#: The write-ahead path's: the fire's own id, so a repeat of the run lands once.
-_INSERT_RUN_AHEAD = sa.text(_INSERT_RUN.text + " ON CONFLICT (id) DO NOTHING")
+#: The write-ahead path's: the fire's own id, so a repeat of the run lands once. `_INSERT_RUN` and
+#: its conflict clause, written out whole so that no built string reaches `sa.text`; a unit test
+#: (`test_the_write_ahead_run_insert_is_the_plain_insert_and_its_conflict_clause`) pins the two.
+_INSERT_RUN_AHEAD = sa.text(
+    "INSERT INTO rule_runs (id, rule_id, rule_version_id, status, mode, trigger_reason, "
+    "scope_account_id, scope_symbol, input_snapshot, matched, error_code, error_message, "
+    "duration_ms) VALUES (CAST(:id AS uuid), CAST(:rule_id AS uuid), "
+    "CAST(:version_id AS uuid), CAST(:status AS rule_run_status), CAST(:mode AS rule_mode), "
+    ":trigger, CAST(:account_id AS uuid), :symbol, CAST(:snapshot AS jsonb), :matched, "
+    ":error_code, :error_message, :duration_ms) ON CONFLICT (id) DO NOTHING"
+)
 #: `UNIQUE (rule_run_id, seq)` makes an append safe to repeat; the append-only trigger never fires
 #: for a skipped insert.
 _APPEND_EVENT = sa.text(
