@@ -125,6 +125,8 @@ AUDIT_OUTCOME_ACTIONS: tuple[str, ...] = (
     "auth.login_failed",
     "auth.mfa_failed",
     "auth.recovery_codes_exhausted",
+    # `PUT /auth/password` outcome and refusal rows (`api/password.py`, #5270).
+    "auth.password_change",
 )
 auth_audit_outcome_lost_total = Counter(
     "auth_audit_outcome_lost_total",

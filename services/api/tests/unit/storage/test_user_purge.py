@@ -48,6 +48,7 @@ _STATE_KEYS = {
     "sessions_revoked",
     "mfa_methods_deleted",
     "recovery_rows_deleted",
+    "history_rows_deleted",
 }
 #: The repo's "no usable password" value: an Argon2id head and a random 32-hex tail.
 _UNUSABLE = re.compile(r"\$argon2id\$v=19\$m=65536,t=3,p=4\$[0-9a-f]{32}")
@@ -73,6 +74,7 @@ class _Db:
         live: Sequence[uuid.UUID] = (),
         mfa: int = 1,
         codes: int = 10,
+        history: int = 4,
         commit_error: BaseException | None = None,
         audit_error: BaseException | None = None,
         actor_owner: bool = True,
@@ -88,6 +90,7 @@ class _Db:
             m._SCRUB_SESSIONS: [(uuid.uuid4(),) for _ in range(sessions)],
             m._DROP_MFA: [(uuid.uuid4(),) for _ in range(mfa)],
             m._DROP_RECOVERY: [(uuid.uuid4(),) for _ in range(codes)],
+            m._DROP_PASSWORD_HISTORY: [(_NOW,) for _ in range(history)],
         }
         self.commit_error, self.audit_error = commit_error, audit_error
         self.log: list[Any] = []
@@ -404,7 +407,7 @@ async def test_anonymise_writes_the_surrogate_and_nulls_pii_with_users_anonymise
     recovery code deleted, the deferred constraints, `users.anonymise`, then the commit: one
     transaction (orchestrator ruling, 2026-10-20)."""
     live = sorted((uuid.uuid4(), uuid.uuid4()))
-    db = _Db(("disabled", _DUE_AT, None), sessions=3, live=live, mfa=2, codes=8)
+    db = _Db(("disabled", _DUE_AT, None), sessions=3, live=live, mfa=2, codes=8, history=3)
     done = await _store(db).anonymise(_UID)
     assert done == purge.Anonymised(_UID, _NOW, tuple(live))
     assert all(type(i) is uuid.UUID for i in done.revoked_session_ids)
@@ -416,6 +419,7 @@ async def test_anonymise_writes_the_surrogate_and_nulls_pii_with_users_anonymise
         m._SCRUB_SESSIONS,
         m._DROP_MFA,
         m._DROP_RECOVERY,
+        m._DROP_PASSWORD_HISTORY,
         CONSTRAINTS_NOW,
         "AUDIT users.anonymise success",
         "COMMIT",
@@ -446,6 +450,10 @@ async def test_anonymise_writes_the_surrogate_and_nulls_pii_with_users_anonymise
     dropped = (
         (m._DROP_MFA, "DELETE FROM mfa_methods WHERE user_id = CAST(:id AS uuid)"),
         (m._DROP_RECOVERY, "DELETE FROM recovery_codes WHERE user_id = CAST(:id AS uuid)"),
+        (
+            m._DROP_PASSWORD_HISTORY,
+            "DELETE FROM password_history WHERE user_id = CAST(:id AS uuid) RETURNING retired_at",
+        ),
     )
     for stmt, sql in dropped:
         assert sql in str(stmt) and db.params(stmt) == [{"id": str(_UID)}]
@@ -475,6 +483,7 @@ async def test_anonymise_writes_the_surrogate_and_nulls_pii_with_users_anonymise
             "sessions_revoked": 2,
             "mfa_methods_deleted": 2,
             "recovery_rows_deleted": 8,
+            "history_rows_deleted": 3,
         },
     }
     # The writer's redaction keeps every key and value: none is secret-shaped, and none is a value

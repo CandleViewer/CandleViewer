@@ -18,6 +18,7 @@ from prometheus_client import generate_latest
 
 from candleviewer.app import create_app
 from candleviewer.audit.actions import validate_action
+from candleviewer.auth import metrics
 from candleviewer.auth.metrics import (
     AUDIT_OUTCOME_ACTIONS,
     AUTH_EXPORTED_NAMES,
@@ -87,3 +88,13 @@ def test_create_app_serves_the_series_on_the_scraped_registry() -> None:
     text = generate_latest(app.state.app_context.metrics).decode()
     samples = [ln for ln in text.splitlines() if ln.startswith(f"{NAME}{{")]
     assert len(samples) == len(_VALUES) and all('env="demo"' in ln for ln in samples)
+
+
+def test_a_lost_password_change_outcome_counts_under_its_own_label() -> None:
+    """#5270: `PUT /auth/password`'s outcome rows count per action, not under `other`."""
+    assert normalise_outcome_action("auth.password_change") == "auth.password_change"
+    child = metrics.auth_audit_outcome_lost_total.labels(action="auth.password_change")
+    other = metrics.auth_audit_outcome_lost_total.labels(action="other")
+    before, before_other = child._value.get(), other._value.get()
+    child.inc()
+    assert (child._value.get(), other._value.get()) == (before + 1, before_other)

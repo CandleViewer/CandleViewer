@@ -1509,8 +1509,8 @@ exists yet), `auth.mfa_failed` for a refused second factor, recovery or confirm 
 for a second factor whose mint then failed in the store (`500`, reason `unminted`: it voids the
 `auth.session_created` written ahead, and the error log `auth.mfa_verify.unminted` names the
 `user_id` and the `new_session_id`),
-`auth.recovery_codes_exhausted`, and a recovery's `unplanned` `auth.session_revoked`. Each lost one
-is counted under its action and logs one error, `auth.login_audit.outcome_lost`, with `action` and
+`auth.recovery_codes_exhausted`, `PUT /auth/password`'s outcome and refusal rows (`auth.password_change`), and a recovery's `unplanned` `auth.session_revoked`. Each lost one
+is counted under its action and logs one error, `auth.login_audit.outcome_lost` (`auth.password_change.outcome_lost` for the password route), with `action` and
 `error` only (no identifier, address or session id, C-12.6); the answer stands, and the counter the
 route moves before the row (`auth_login_failures_total`, `auth_enrolments_total`), where there is
 one, still shows the attempt. A mint's write-ahead records are not among them: they stay on the
