@@ -76,12 +76,12 @@ export function createPane(id: PaneId, opts: PaneOptions, host: PaneHost): PaneI
       live();
       let options: SeriesOptionsMap[T] = { ...opts };
       let visible = true;
-      // Candle and OHLC bars feed the `bars` store; the other stores' encoders arrive with them
-      // (E11-T03 / E12, README BQ-13). The batch's buffer is transferred: after `setData`,
-      // `append` or `prependHistory` the caller's arrays are detached (length 0), so the same
-      // object cannot be sent twice.
+      // Candle, hollow (E12-S07) and OHLC bars feed the `bars` store; the other stores' encoders
+      // arrive with them (E11-T03 / E12, README BQ-13). The batch's buffer is transferred: after
+      // `setData`, `append` or `prependHistory` the caller's arrays are detached (length 0), so
+      // the same object cannot be sent twice.
       const send =
-        type === "candles" || type === "bars"
+        type === "candles" || type === "hollow" || type === "bars"
           ? (op: DataOp, d: unknown): void => {
               live();
               const { layout, buffer } = encodeCandles(d as CandleData);

@@ -12,7 +12,12 @@
 // (G-23). A refused batch (F-01 decode, F-02 store) leaves the store byte-identical. PR 2: OHLC
 // `bars` draw through `BarSeries`; a plot pick that misses every object tries the series' bars
 // (the geometry twin); a frame posts `dataState` when its visible range empties or fills, and an
-// empty one hides the background layer (the grid, BQ-9).
+// empty one hides the background layer (the grid, BQ-9). E12-S07: `setSeriesKind` (and the
+// `heikinAshi` series option) redraws a series as candles, hollow candles or OHLC bars, with
+// Heikin-Ashi on or off, over the same store (no data resent); Heikin-Ashi with a footprint is
+// refused (`ENGINE_SERIES_INCOMPATIBLE`) and the series keeps drawing. Two metrics:
+// `series_type_switch_duration_ms{target}` (the switch to the end of the next frame) and
+// `series_incompatible_combination_total{combination}`.
 import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
@@ -62,6 +67,7 @@ import {
   ENGINE_NO_WEBGL2,
   ENGINE_ATLAS_GENERATION_FAILED,
   fontsOk,
+  ENGINE_SERIES_INCOMPATIBLE,
   INPUT,
   INPUT_STRIDE,
   rejectReason,
@@ -139,15 +145,32 @@ export interface RenderRuntime {
   dataRejected(id: ChartId): Readonly<Record<string, number>> | undefined;
   /** Internal (E12-S06, BQ-9): a chart's scene graph, read by tests (the hidden grid layer). */
   graph(id: ChartId): scene.SceneGraph | undefined;
+  /** Internal (E12-S07): the series-kind metrics, per chart. */
+  seriesMetrics(id: ChartId): Readonly<SeriesMetrics> | undefined;
+}
+
+/** Upper bounds of `series_type_switch_duration_ms`' buckets (the 100 ms budget is one); the last is open. */
+export const SWITCH_BUCKETS_MS = [5, 10, 25, 50, 100, 250, Infinity] as const;
+
+/** E12-S07's two series-kind metrics (internal, read by tests and the bench; not on §8's FrameStats). */
+export interface SeriesMetrics {
+  /** `series_type_switch_duration_ms{target}`: counts per `SWITCH_BUCKETS_MS` bucket. */
+  readonly switchDurationMs: Record<string, Uint32Array>;
+  /** `series_incompatible_combination_total{combination}`. */
+  readonly incompatible: Record<string, number>;
+  /** The switch awaiting its frame: its target and start (an injected clock), else null. */
+  pending: string | null;
+  pendingAt: number;
 }
 
 /** One runtime-owned series (E12-S06): its store is the CPU truth, the ring its GPU mirror. */
 export interface SeriesEntry {
-  readonly kind: BarSeriesKind;
+  /** The kind drawn now (E12-S07: `setSeriesKind` changes it). */
+  kind: BarSeriesKind;
   readonly pane: number;
   readonly store: BarStore;
   readonly ring: CandleRing;
-  /** The plugin drawing it: a `CandleSeries` for candles, a `BarSeries` for OHLC bars. */
+  /** The plugin drawing it: a `CandleSeries` for candles and hollow, a `BarSeries` for OHLC bars. */
   readonly candle: CandleSeries;
   /** A bar pick's `objectId` (`series.<id>`), made once. */
   readonly pickId: string;
@@ -229,6 +252,7 @@ interface Instance {
   /** BQ-9: the last `dataState` posted (null before the first frame), and the bar pick's slot. */
   dataState: "empty" | "ready" | null;
   readonly barHit: BarHit;
+  readonly kinds: SeriesMetrics;
 }
 
 /** The ObjectIndex's rebuild after the main series is removed (a `replace` of nothing). */
@@ -584,7 +608,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     const store = new BarStore();
     const ring = new CandleRing(inst.builder);
-    const candle = kind === "candles" ? new CandleSeries(ring) : new BarSeries(ring);
+    const candle = kind === "bars" ? new BarSeries(ring) : new CandleSeries(ring, kind);
     const entry: SeriesEntry = { kind, pane, store, ring, candle, pickId: `series.${sid}` };
     inst.series.set(sid, entry);
     inst.seriesList.push(entry);
@@ -603,7 +627,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
    */
   function mountCandle(inst: Instance, sid: number, c: CandleSeries): void {
     const deps: HostDeps = { viewport: inst.viewport, pane: 0, theme: () => inst.hostTheme };
-    const base = `${c.shape === "candles" ? "series.candle" : "series.ohlc"}.${sid}.${inst.mounts++}`;
+    const base = `${c.mountLabel}.${sid}.${inst.mounts++}`;
     const hosts = c.mount(inst.graph, "main", base, deps);
     for (let p = 0; p < hosts.length; p += 1) {
       inst.blocks.set((hosts[p] as { id: string }).id, c.blocks[p] as BatchUniforms);
@@ -649,6 +673,38 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         recoverable: true,
       });
     }
+  }
+
+  /**
+   * E12-S07: series `sid` redrawn as `kind`, Heikin-Ashi on or off, over its own store (no data
+   * resent, viewport and scale untouched). HA with a footprint is refused: counted, posted as a
+   * recoverable `ENGINE_SERIES_INCOMPATIBLE`, and nothing changes, so the series keeps drawing.
+   */
+  function setSeriesKind(inst: Instance, sid: number, kind: BarSeriesKind, ha: boolean): void {
+    const s = inst.series.get(sid);
+    if (s === undefined) {
+      fail(inst.id, `no series ${sid} on chart ${inst.id}`);
+      return;
+    }
+    const m = inst.kinds;
+    if (ha && inst.elements.footprint > 0) {
+      const combination = "heikin-ashi+footprint";
+      m.incompatible[combination] = (m.incompatible[combination] ?? 0) + 1;
+      deps.post({
+        t: "error",
+        id: inst.id,
+        code: ENGINE_SERIES_INCOMPATIBLE,
+        message: `series ${sid}: Heikin-Ashi cannot draw with a footprint; ${s.kind} kept`,
+        recoverable: true,
+      });
+      return;
+    }
+    m.pending = ha ? `${kind}+heikin-ashi` : kind;
+    m.pendingAt = deps.now();
+    s.candle.setKind(kind, ha, s.store);
+    s.kind = kind;
+    for (const h of s.candle.hosts) inst.graph.markData(h.id);
+    touch(inst);
   }
 
   function removeSeries(inst: Instance, sid: number): void {
@@ -767,11 +823,20 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "setSeriesOptions": {
         // BQ-12: `isTimeAligned` (default true) only switches the gap seam (and E11-S06's labels).
         const s = inst.series.get(cmd.series);
-        const aligned = (cmd.options as { isTimeAligned?: unknown }).isTimeAligned;
+        const opts = cmd.options as { isTimeAligned?: unknown; heikinAshi?: unknown };
+        const aligned = opts.isTimeAligned;
         if (s !== undefined && typeof aligned === "boolean") s.candle.timeAligned = aligned;
+        // E12-S07 (BQ-5): `CandleOptions.heikinAshi` is the same switch as `setSeriesKind`.
+        const ha = opts.heikinAshi;
+        if (s !== undefined && typeof ha === "boolean" && ha !== s.candle.heikinAshi) {
+          setSeriesKind(inst, cmd.series, s.kind, ha);
+        }
         touch(inst);
         return;
       }
+      case "setSeriesKind":
+        setSeriesKind(inst, cmd.series, cmd.kind, cmd.heikinAshi === true);
+        return;
       case "release":
         retire(inst);
         charts.delete(inst.id);
@@ -870,6 +935,12 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         mounts: old?.mounts ?? 0,
         dataState: null,
         barHit: createBarHit(),
+        kinds: old?.kinds ?? {
+          switchDurationMs: {},
+          incompatible: {},
+          pending: null,
+          pendingAt: 0,
+        },
       };
       // BQ-53: the DataModel is kept; its rings now patch the fresh scene's batches.
       for (const [sid, s] of inst.series) {
@@ -1002,6 +1073,18 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       deps.post({ t: "a11y", id: inst.id, cursorSummary: inst.summary });
     }
     const end = deps.now();
+    const kinds = inst.kinds;
+    if (kinds.pending !== null) {
+      // `series_type_switch_duration_ms{target}`: the switch to the end of its first frame.
+      const ms = end - kinds.pendingAt;
+      const counts = (kinds.switchDurationMs[kinds.pending] ??= new Uint32Array(
+        SWITCH_BUCKETS_MS.length,
+      ));
+      let b = 0;
+      while (ms > (SWITCH_BUCKETS_MS[b] as number)) b += 1;
+      counts[b] = (counts[b] as number) + 1;
+      kinds.pending = null;
+    }
     if (inst.config.bench || end - inst.lastFrameAt >= FRAME_SAMPLE_MS) {
       inst.lastFrameAt = end;
       deps.post({
@@ -1085,6 +1168,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     atlasCounters: () => atlas?.counters ?? null,
     series: (id, sid) => charts.get(id)?.series.get(sid),
     dataRejected: (id) => charts.get(id)?.dataRejected,
+    seriesMetrics: (id) => charts.get(id)?.kinds,
     graph: (id) => charts.get(id)?.graph,
   };
 }
