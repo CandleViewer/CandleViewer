@@ -32,6 +32,9 @@ packages/protocol/wire-contract.v1.golden.json text eol=lf
 packages/fixtures/golden/policy/*.json                      text eol=lf linguist-generated=true
 services/api/candleviewer/auth/generated_permissions.py    text eol=lf linguist-generated=true
 services/api/candleviewer/auth/rbac_seed.json              text eol=lf linguist-generated=true
+# #5269 / SR-028: the offline breached-password digests, written only by
+# services/api/scripts/build_breached_passwords.py (SecLists Common-Credentials, MIT).
+services/api/candleviewer/auth/data/breached_passwords.sha1 text eol=lf linguist-generated=true
 
 # E13-T02: indicator golden vectors, written by `CV_REGEN_GOLDEN=1 pytest
 # tests/unit/orderflow/indicators/test_golden_vectors.py` (json.dumps + LF) and byte-checked by it.
