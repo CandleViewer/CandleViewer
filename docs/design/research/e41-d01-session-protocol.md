@@ -60,7 +60,7 @@ The moderator reads each prompt as written and adds only "say more" or "what wou
 | WD-8     | "This tag says auto. Remove it. What is kept?"             | whether removal is expected to leave a record           | a record of the removal is expected        |
 | WD-10    | "Export this list. What is in the file?"                   | whether account data, environment and range are named   | all three are named from the confirm       |
 
-**Walkthrough-only, not testable with P1 / P2:** WD-9 (group siblings), WD-11 (table view, P3), WD-12 (IA, not drawable by a participant), WD-13 (Viewer read-only, P3) and WD-14 (formula link) — checked in the memo §4 P3 walkthrough and §10.
+**Walkthrough-only, not testable with P1 / P2:** WD-9 (group siblings), WD-11 (table view, P3), WD-12 (IA, not drawable by a participant), WD-13 (Viewer write controls T2, P3) and WD-14 (formula link) — checked in the memo §4 P3 walkthrough and §10.
 
 ## 5. Recording the outcome
 

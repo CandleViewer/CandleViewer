@@ -25,6 +25,11 @@ Gates (each prints `FAIL G-NAME: ...`):
   G-WALK     the owner walkthrough has at most ten items
   G-COMMENT  no HTML comment in the memo or the protocol
   G-17       `17` carries the section 1.6 journey; `14` carries no E41-D01 pointer (an A-row)
+  G-T2       WD-13 renders the Viewer's write controls T2 with E09-D09's `rbac.permission` key:
+             no hiding wording, no screen-owned RBAC string in the copy deck, CMP-019 and
+             CMP-079 named
+  G-A11Y     board 10 carries 200 % reflow, forced colours and focus return for the SCR-096
+             modal and the export confirm
   G-SCOPE    only this PR's files differ from `git merge-base HEAD origin/main`; the ruling keeps
              `12`, `13`, `14` and `24` unedited (their changes are A-rows)
 
@@ -128,6 +133,7 @@ CITES: dict[str, str] = {
     "21:3315": "is_aggregate         boolean",
     "21:3318-3319": "is_paper             boolean",
     "21:3379": "CREATE UNIQUE INDEX ux_jtag_name ON journal_tags (lower(name))",
+    "22:1165": "    - journal:write",
     "22:9657": "items: { type: string, maxLength: 40 }",
     "22:9840": "name: { type: string, minLength: 1, maxLength: 40 }",
     "22:9864": "breakdowns by symbol, tag, session hour",
@@ -409,6 +415,32 @@ def g_17(d: Docs) -> list[str]:
     return fails
 
 
+T2_HIDING_RE = re.compile(
+    r"no (write )?control is shown|reads only: no|write controls? (is|are) (hidden|absent)",
+    re.IGNORECASE,
+)
+
+
+def g_t2(d: Docs) -> list[str]:
+    wd = wd_ids(d).get("WD-13", [])
+    text = " | ".join(wd)
+    fails = [] if wd else ["WD-13 is missing"]
+    if wd and ("T2" not in text or "`rbac.permission`" not in text or "E09-D09" not in text):
+        fails.append("WD-13 must render the Viewer's write controls T2 with `rbac.permission`")
+    fails += [f"hiding wording {m.group(0)!r}" for m in T2_HIDING_RE.finditer(d.memo)]
+    deck = rows(section(d.memo, "7.1 Copy deck"))
+    fails += [f"screen-owned RBAC string {r[0]}" for r in deck if re.match(r"(view|rbac)\.", r[0])]
+    comps = re.search(r"^Components named on the boards.*$", d.memo, re.MULTILINE)
+    listed = comps.group(0) if comps else ""
+    fails += [f"{c} not in the components line" for c in ("CMP-019", "CMP-079") if c not in listed]
+    return fails
+
+
+def g_a11y(d: Docs) -> list[str]:
+    need = ("Board 10 is the carrier", "**reflow**", "**forced colours**", "**focus return**")
+    return [f"board 10 a11y line lacks {n!r}" for n in need if n not in d.memo]
+
+
 def g_scope(d: Docs) -> list[str]:
     return [f"out-of-scope change: {p}" for p in sorted(set(d.changed) - ALLOWED_CHANGES)]
 
@@ -416,7 +448,7 @@ def g_scope(d: Docs) -> list[str]:
 GATES: dict[str, Callable[[Docs], list[str]]] = {
     "G-" + fn.__name__[2:].upper(): fn
     for fn in (g_cite, g_rule, g_ac, g_find, g_wd, g_states, g_comp, g_advice, g_heur, g_public)
-    + (g_bq, g_boards, g_walk, g_comment, g_17, g_scope)
+    + (g_bq, g_boards, g_walk, g_comment, g_17, g_t2, g_a11y, g_scope)
 }
 
 
@@ -476,6 +508,12 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("G-COMMENT", "protocol", "## 1. Purpose", "<!--\nnote\n-->\n\n## 1. Purpose"),
     ("G-17", "ux17", "### 1.6 Review journey", "### 1.6 Review map"),
     ("G-17", "scr14", "### SCR-094 —", POINTER + "(x)\n\n### SCR-094 —"),
+    ("G-T2", "memo", "stay visible as T2", "are not shown"),
+    ("G-T2", "memo", '`rbac.permission` with the §3.2 verb "', '`view.readonly` with the verb "'),
+    ("G-T2", "memo", "| export.failed ", "| view.readonly  | Read-only |\n| export.failed "),
+    ("G-T2", "memo", "CMP-075, CMP-079,", "CMP-075,"),
+    ("G-A11Y", "memo", "**forced colours**", "**high contrast**"),
+    ("G-A11Y", "memo", "**focus return**", "**focus**"),
     ("G-SCOPE", "changed", "", "docs/plan/22-api-openapi.yaml"),
     ("G-SCOPE", "changed", "", SCR14),
 ]
