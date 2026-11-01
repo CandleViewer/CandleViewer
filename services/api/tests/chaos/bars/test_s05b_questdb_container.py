@@ -2,8 +2,10 @@
 
 The container leg of `test_s05_store_outage.py` (E12-Q06 AC2), run only by the nightly /
 merge-queue integration job that brings up the compose stack (`-m "chaos and integration"`,
-`tests/chaos/storage/_stack.py`). Without a reachable QuestDB the test is skipped: it never
-starts a container itself.
+`tests/chaos/storage/_stack.py`). It stops and starts the compose QuestDB, so it runs only where
+that stack is the job's own: on GitHub Actions, or locally with `CV_CHAOS_STACK=1` on a stack you
+own. Anywhere else, and without a reachable QuestDB, it is skipped; it never starts a container
+that was not already up.
 
 `BarWriter` over the production `IlpWriter` over a real TCP socket writes the recorded-corpus
 volume bars of a unique symbol; QuestDB is stopped half way (the second half is submitted while
@@ -15,7 +17,9 @@ The fake-store half of the scenario (retry budget, loud drops, accounting) is th
 
 from __future__ import annotations
 
+import os
 import uuid
+from collections.abc import Awaitable, Callable
 
 import pytest
 
@@ -47,6 +51,8 @@ class _Exec:
 
 @pytest.fixture(autouse=True)
 async def _questdb_reachable() -> None:
+    if not (os.environ.get("GITHUB_ACTIONS") or os.environ.get("CV_CHAOS_STACK") == "1"):
+        pytest.skip("stops the compose QuestDB: CI, or CV_CHAOS_STACK=1 on a stack you own")
     if not await st.qdb_up():
         pytest.skip("QuestDB compose stack not reachable: nightly integration lane only")
 
@@ -69,6 +75,20 @@ async def _has(symbol: str, n: int) -> bool:
         return False  # QuestDB still answering from its restart
 
 
+def _flushed_and_has(ilp: IlpWriter, symbol: str, n: int) -> Callable[[], Awaitable[bool]]:
+    """Poll body: `BarWriter` hands rows to the ILP writer asynchronously, so push whatever it has
+    reached by now (a batch under `flush_rows` waits for the next flush) and count what landed."""
+
+    async def check() -> bool:
+        try:
+            await ilp.flush("bars_volume")
+        except Exception:
+            return False  # QuestDB still down or restarting: the rows stay buffered
+        return await _has(symbol, n)
+
+    return check
+
+
 async def test_s05b_questdb_stopped_mid_stream_leaves_each_bar_once() -> None:
     conn = await st.qdb_connect()
     try:
@@ -86,11 +106,12 @@ async def test_s05b_questdb_stopped_mid_stream_leaves_each_bar_once() -> None:
     await writer.start()
     try:
         await writer.submit(expected[:half], VOLUME_1, generation=GENERATION)
-        await ilp.flush("bars_volume")
-        await st.until(lambda: _has(symbol, half), "arrange: first half visible", VISIBLE_S)
+        await st.until(
+            _flushed_and_has(ilp, symbol, half), "arrange: first half visible", VISIBLE_S
+        )
         async with st.stopped("questdb", st.qdb_up):
             await writer.submit(expected[half:], VOLUME_1, generation=GENERATION)
-        await st.until(lambda: _has(symbol, len(expected)), "recovery: every bar", 120)
+        await st.until(_flushed_and_has(ilp, symbol, len(expected)), "recovery: every bar", 120)
         assert await writer.stop() == 0
         await ilp.stop()
         assert await _stored(symbol) == [(b.index, float(b.close)) for b in expected]
