@@ -326,6 +326,7 @@ class AuthService:
                 clock=self._clock,
                 skew_reporter=skew_reporter,
                 failure_floor=self._login_failure_floor,
+                users=self._repository,  # #2695: second-factor refusals count on the account
             )
             if self._invite_repository is not None:
                 self._invites = InviteService(

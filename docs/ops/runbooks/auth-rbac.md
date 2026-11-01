@@ -114,10 +114,11 @@ each refusal also counts toward the five failed unlocks that revoke the session.
 
 Telemetry for a lock: counter `auth_lockouts_total` (no labels) rises by 1 when a failed password
 check applies the lock: the fifth failure, or the first failure after an expired lock (at login,
-from a wrong step-up password, §2, or from a wrong `POST /auth/unlock` password). At login and in
-step-up the failure that trips the lock has no `auth.account_locked` row of its own (it is audited
-as `auth.login_failed` or `auth.step_up_failed`), so there this counter is the only record that the
-lock itself was applied. At `POST /auth/unlock` that failure's `auth.unlock_failed` row is followed
+from a wrong step-up password, §2, or from a wrong `POST /auth/unlock` password). A refused
+second-factor or recovery code at sign-in counts toward the same lock (#2695). At login, at the
+second factor and in step-up the failure that trips the lock has no `auth.account_locked` row of
+its own (it is audited as `auth.login_failed`, `auth.mfa_failed` or `auth.step_up_failed`), so
+there this counter is the only record that the lock itself was applied. At `POST /auth/unlock` that failure's `auth.unlock_failed` row is followed
 by an `auth.account_locked` row (reason `unlock_failed`), both written before the answer. The
 counter does not name the user, it does not move for attempts refused while locked (at login, the
 `auth.account_locked` rows above) and it does not move on a successful login, so it confirms that a
