@@ -53,7 +53,7 @@ import {
 import { refusalText } from "./refusal";
 import { detailHeading } from "./RecorderChrome";
 import { RetentionConfirmDialog, type RetentionChange } from "./RetentionConfirmDialog";
-import { RowDetailDrawer } from "./RowDetailDrawer";
+import { RowDetailDrawer, type DetailPurge } from "./RowDetailDrawer";
 import { StopDialog } from "./StopDialog";
 import { useStepUpHost } from "./stepUpHost";
 import type { Gap } from "./useRecorderData";
@@ -167,6 +167,8 @@ export interface RecorderGridProps {
   readonly gaps?: readonly Gap[];
   /** SCR-141, once registered: the detail's retention select offers "Custom…" (BQ-11). */
   readonly onCustomRetention?: (() => void) | undefined;
+  /** The page's purge: the detail's Purge…, busy while this client's purge runs (D02 §6.5, §6.7). */
+  readonly purge?: DetailPurge | undefined;
 }
 
 /** A re-add keeps the row's own settings, so it changes no kept data's retention (`22`: no step-up). */
@@ -212,6 +214,7 @@ export function RecorderGrid({
   status = null,
   gaps = [],
   onCustomRetention,
+  purge,
 }: RecorderGridProps): JSX.Element {
   const order = useRef<GridOrder | null>(null);
   order.current = nextOrder(order.current, rows, sort);
@@ -520,6 +523,7 @@ export function RecorderGrid({
           if (detailRow.current !== null) chooseRetention(detailRow.current, value);
         }}
         customRetention={onCustomRetention !== undefined}
+        purge={purge}
         onDepth={(next) => {
           if (detailRow.current !== null) void changeDepth(detailRow.current, next);
         }}

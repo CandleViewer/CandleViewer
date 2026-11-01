@@ -69,6 +69,11 @@ export const DETAIL_REFUSED = {
 export const PURGE_TEXT = {
   /** PROPOSED (owner E16-D04, beside its `storage.purge.*.reason` rows): the reason field's validity reason. */
   reasonShort: "Give a reason of at least 3 characters.",
-  /** PROPOSED (#5309's lens, D-5309-11): the purge line's CMP-023 name. */
-  bar: "Purge of {symbol}",
+  /** PROPOSED (C-5347-04): a purge the server reports done with no `freed_bytes`, never "Purged — of …". */
+  finished: "Purge of {symbol} finished.",
+  /**
+   * PROPOSED code token (C-5347-04): a purge that ended `succeeded` with partitions it could not delete
+   * (`Job.result.failed`) reads as `storage.purge.failed` with this code; the server's status is a contract gap.
+   */
+  partial: "partial",
 } as const;

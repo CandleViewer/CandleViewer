@@ -73,6 +73,10 @@ import {
 } from "./RecorderChrome";
 import { RecorderGrid } from "./RecorderGrid";
 import { RecordSymbolDialog } from "./RecordSymbolDialog";
+import { purgeTargets } from "./purge";
+import { PurgeDialog } from "./PurgeDialog";
+import { PurgeView } from "./PurgeView";
+import { usePurge } from "./usePurge";
 import { useRecorderData, type RecorderDataOptions } from "./useRecorderData";
 import { useRunningIndex } from "../symbol-search/searchSession";
 
@@ -131,6 +135,12 @@ export function RecorderScreen({
   const [detail, setDetail] = useState<string | null>(null);
   const openDetail = useCallback((symbol: string) => setDetail(symbol), []);
   useEffect(() => registerRecorderExtensions({ openRowDetail: openDetail }), [openDetail]);
+  const purge = usePurge();
+  // A purge's end changes the disk figures: the storage report is read again, once (C-5347-03).
+  const { rereadStorage } = data;
+  useEffect(() => {
+    if (purge.ended) rereadStorage();
+  }, [purge.ended, rereadStorage]);
   // The page's own clock, the injected one in tests (C-5309-13), read once at mount.
   const mountedAt = useRef<number | null>(null);
   mountedAt.current ??= (dataOptions?.now ?? Date.now)();
@@ -152,6 +162,16 @@ export function RecorderScreen({
       },
     }),
     [],
+  );
+  /** The card's Purge data…: where the dialog returns focus when its opener went (the banner's, FM-04), else the H1. */
+  const purgeId = useId();
+  const purgeFallback = useMemo(
+    () => ({
+      get current(): HTMLElement | null {
+        return document.getElementById(purgeId) ?? pageHeading.current;
+      },
+    }),
+    [purgeId, pageHeading],
   );
 
   // The story's own key, once per entry (C-z); StrictMode's second run is the same entry.
@@ -318,6 +338,22 @@ export function RecorderScreen({
           toMs: incidentGap?.toMs ?? null,
         };
   const levelThree = facts.level === 3 ? levelThreeBanner(facts, policy) : null;
+  // Purge data… (D02 §6.5): the symbols it offers; its line in the card while level 3 or an incident holds the
+  // banner slot, and its result there (§3, §3.2).
+  const targets = purgeTargets(rows, data.storage.data);
+  const purgeAction =
+    targets.length === 0
+      ? undefined
+      : {
+          busy: purge.busy,
+          open: (symbol?: string) => purge.open(symbol),
+          symbols: targets.map((target) => target.symbol),
+        };
+  const slotTaken = levelThree !== null || incident !== null;
+  const purgeInCard =
+    purge.state !== null && (slotTaken || purge.state.phase === "succeeded") ? (
+      <PurgeView state={purge.state} placement="card" onOpen={openDetail} />
+    ) : null;
 
   // BG-05: each banner is said once per condition key, its words as they were at its entry; a figure that moves later
   // says nothing (BG-04). The key goes when its condition ends, so a new episode is said again. An incident first
@@ -393,9 +429,13 @@ export function RecorderScreen({
         <BannerSlot
           levelThree={levelThree}
           incident={incident}
-          purge={null}
+          purge={purge.state}
           onViewGaps={gapsLanding.land}
           onRetentionPolicy={openRetention}
+          onPurge={
+            purgeAction === undefined ? undefined : { busy: purge.busy, open: () => purge.open() }
+          }
+          onOpenSymbol={openDetail}
         />
         <DiskCardPanel
           card={card}
@@ -417,8 +457,19 @@ export function RecorderScreen({
                 </Button>
               )}
               <CompactNow />
+              {purgeAction === undefined ? null : (
+                <Button
+                  id={purgeId}
+                  variant="secondary"
+                  loading={purge.busy}
+                  onClick={() => purge.open()}
+                >
+                  {DECK["storage.purge.button"][0]}
+                </Button>
+              )}
             </>
           }
+          purgeLine={purgeInCard}
         />
         {loading || statusFailed ? null : (
           <SummaryLine
@@ -466,6 +517,7 @@ export function RecorderScreen({
             status={data.status.data}
             gaps={data.gaps}
             onCustomRetention={openRetention}
+            purge={purgeAction}
           />
         )}
         <GapTable gaps={data.gaps} nowMs={nowMs} hostRef={gapsLanding.hostRef} />
@@ -486,6 +538,15 @@ export function RecorderScreen({
           }}
           readBack={data.rereadList}
           fallbackFocusRef={recordButton}
+        />
+        <PurgeDialog
+          open={purge.dialogFor !== undefined}
+          symbol={purge.dialogFor ?? null}
+          symbols={targets}
+          onClose={purge.close}
+          onStarted={purge.started}
+          readBack={data.rereadStorage}
+          fallbackFocusRef={purgeFallback}
         />
         {RetentionEditor === undefined ? null : (
           <RetentionEditor

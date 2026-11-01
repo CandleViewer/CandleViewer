@@ -5,7 +5,7 @@
  * assertive region (RG-11's `alert`), and the gap table. Each draws what the model computed; none decides a write
  * (C-12.4).
  */
-import { useEffect, useRef, useState, type JSX, type ReactNode, type RefObject } from "react";
+import { useRef, type JSX, type ReactNode, type RefObject } from "react";
 import {
   Button,
   Callout,
@@ -18,6 +18,7 @@ import {
   type TableColumn,
 } from "@candleviewer/ui";
 import { TEXT, fill } from "./copy";
+import { PurgeView, type PurgeViewState } from "./PurgeView";
 import { formatClock, formatDate, formatDuration, updatedLine, type DiskCard } from "./model";
 import { GAP_REASONS, PAGE_TEXT, UNKNOWN_GAP } from "./pageCopy";
 import type { Gap } from "./useRecorderData";
@@ -72,21 +73,19 @@ export interface IncidentBanner {
   readonly toMs: number | null;
 }
 
-/** A purge this client started (#484 PR 3 drives it). */
-export interface PurgeBanner {
-  readonly symbol: string;
-  readonly beforeMs: number;
-  readonly pct: number;
-}
-
 export interface BannerSlotProps {
   /** The level-3 banner's sentence (the model's `levelThreeBanner`), or null below level 3. */
   readonly levelThree: string | null;
   readonly incident: IncidentBanner | null;
-  readonly purge: PurgeBanner | null;
+  /** A purge this client started (`usePurge`): its running line or its outcome (`PurgeView`). */
+  readonly purge: PurgeViewState | null;
   readonly onViewGaps: () => void;
   /** "Retention policy", once SCR-141 is registered (BQ-11). */
   readonly onRetentionPolicy?: (() => void) | undefined;
+  /** The level-3 banner's "Purge data…", busy while this client's purge runs (D02 §3, §6.5). */
+  readonly onPurge?: { readonly busy: boolean; readonly open: () => void } | undefined;
+  /** A failed purge's "Open {symbol}": the symbol's row detail (D02 §3.2). */
+  readonly onOpenSymbol?: ((symbol: string) => void) | undefined;
 }
 
 /** "1 204": D02 §3's grouping of a count. */
@@ -106,13 +105,19 @@ export function BannerSlot({
   purge,
   onViewGaps,
   onRetentionPolicy,
+  onPurge,
+  onOpenSymbol,
 }: BannerSlotProps): JSX.Element | null {
   if (levelThree !== null) {
     const [title, body] = split(levelThree);
-    const actions =
-      onRetentionPolicy === undefined
+    const actions = [
+      ...(onPurge === undefined
         ? []
-        : [{ label: PAGE_TEXT.retentionPolicy, onClick: onRetentionPolicy }];
+        : [{ label: TEXT.levelThreeActions[0], onClick: onPurge.open, loading: onPurge.busy }]),
+      ...(onRetentionPolicy === undefined
+        ? []
+        : [{ label: PAGE_TEXT.retentionPolicy, onClick: onRetentionPolicy }]),
+    ];
     return (
       <Callout key="level-3" tone="danger" live="off" title={title} actions={actions}>
         {body}
@@ -131,31 +136,14 @@ export function BannerSlot({
     );
   }
   if (purge !== null) {
-    const pct = Math.round(purge.pct);
-    const line = fill(TEXT.purgeRunning, {
-      "{symbol}": purge.symbol,
-      "{date}": formatDate(purge.beforeMs),
-      "{pct}": pct,
-    });
-    const [title, body] = split(line);
+    // Its words are said once by `usePurge`, through the shell's announcer (A-5347-04).
     return (
-      <div key={`purge-${purge.symbol}`}>
-        <Callout tone="info" live="off" title={title}>
-          {body}
-        </Callout>
-        <ProgressBar
-          label={fill(PAGE_TEXT.purgeBar, { "{symbol}": purge.symbol })}
-          value={pct}
-          valueText={`${pct} %`}
-        />
-        {/* Said once, as the line arrives (G-02: no start string; the line itself, BG-02). */}
-        <SaidOnce
-          text={fill(TEXT.purgeRunning, {
-            "{symbol}": purge.symbol,
-            "{date}": formatDate(purge.beforeMs),
-          }).replace(": {pct} %", "")}
-        />
-      </div>
+      <PurgeView
+        key={`purge-${purge.symbol}`}
+        state={purge}
+        placement="banner"
+        onOpen={(symbol) => onOpenSymbol?.(symbol)}
+      />
     );
   }
   return null;
@@ -171,20 +159,6 @@ export function incidentSentence(incident: IncidentBanner): string {
         "{from}": formatClock(incident.fromMs),
         "{to}": formatClock(incident.toMs),
       });
-}
-
-/**
- * A `role="status"` line in the DOM empty at mount, its text set once after it (05 §6.2, R-5: a region announces what
- * arrives in it, so a region mounted with its text may say nothing); later texts for the same mount are not said.
- */
-function SaidOnce({ text }: { readonly text: string }): JSX.Element {
-  const [shown, setShown] = useState<string | null>(null);
-  useEffect(() => setShown((prev) => prev ?? text), [text]);
-  return (
-    <span className="cv-visually-hidden" role="status">
-      {shown}
-    </span>
-  );
 }
 
 /** What the page's assertive region says: re-keyed per write, so the same words after a release are said again. */
@@ -217,6 +191,8 @@ export interface DiskCardPanelProps {
   readonly onSuggested: (action: string) => void;
   /** The card's entry points and Compact now (D02 §1). */
   readonly actions: ReactNode;
+  /** A purge's line while level 3 or an incident holds the banner slot, or its result (D02 §3, §3.2). */
+  readonly purgeLine?: ReactNode;
 }
 
 /** The disk card (D02 §3, §8.3): the state-first headline, the bar with its words, the scale, the formula. */
@@ -225,6 +201,7 @@ export function DiskCardPanel({
   loading,
   onSuggested,
   actions,
+  purgeLine = null,
 }: DiskCardPanelProps): JSX.Element | null {
   if (loading) {
     return (
@@ -258,6 +235,7 @@ export function DiskCardPanel({
             {line}
           </Text>
         ))}
+        {purgeLine}
         {card.suggested.length === 0 ? null : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-inset-xs)" }}>
             {card.suggested.map((action) => (
