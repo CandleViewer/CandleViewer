@@ -16,7 +16,7 @@ order-placing handler arrives with its slice's native-stop suite.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, get_args
@@ -120,8 +120,17 @@ class Handler(Protocol):
     async def send(self, prepared: Prepared, *, client_ref: str) -> HandlerAnswer: ...
 
 
+class BoundHandler(Handler, Protocol):
+    """A handler a slice binds (E35-T13; BQ-2 of #5005): `capability` names what it needs, which
+    must be its type's in the table."""
+
+    @property
+    def capability(self) -> Capability: ...
+
+
 class HandlerTableError(Exception):
-    """The table is incomplete, or a type declares neither `idempotent` nor a guard."""
+    """The table is incomplete, or a type declares neither `idempotent` nor a guard, or a handler
+    is bound where the table refuses it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,3 +239,19 @@ def build_handlers(
 
 
 HANDLERS: Final[Mapping[str, HandlerSpec]] = build_handlers(BINDINGS, ACTIONS, RETIRED_ACTIONS)
+
+
+def bind_handlers(
+    table: Mapping[str, HandlerSpec], handlers: Mapping[str, BoundHandler]
+) -> Mapping[str, HandlerSpec]:
+    """`table` with `handlers` bound (24 §11.5; BQ-2 of #5005), or `HandlerTableError`: a type
+    outside it, a type refused for good, or a handler whose capability is not its type's."""
+    bound = dict(table)
+    for action_type, handler in handlers.items():
+        spec = table.get(action_type)
+        if spec is None or spec.refused_as is not None:
+            raise HandlerTableError(f"{action_type} takes no handler")
+        if handler.capability != spec.capability:
+            raise HandlerTableError(f"{action_type} needs the {spec.capability} capability")
+        bound[action_type] = replace(spec, handler=handler)
+    return MappingProxyType(bound)

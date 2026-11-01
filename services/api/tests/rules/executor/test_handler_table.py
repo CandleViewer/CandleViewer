@@ -26,6 +26,7 @@ from candleviewer.rules.executor.handlers import (
     HandlerSpec,
     HandlerTableError,
     Prepared,
+    bind_handlers,
     build_handlers,
     prepared,
 )
@@ -200,3 +201,20 @@ def test_prepared_keeps_a_frozen_copy_no_later_change_reaches() -> None:
     assert request_sha256(prep.request) == prep.request_sha256
     with pytest.raises(TypeError):  # read-only at every depth
         prep.request["stop"]["trigger"] = Decimal("2")
+
+
+class _Capable(_Bound):
+    """A bindable handler of the `signals` capability (E35-T13, BQ-2 of #5005)."""
+
+    capability: Capability = "signals"
+
+
+def test_a_handler_binds_only_to_a_type_of_its_capability() -> None:
+    """BQ-2 of #5005: binding checks each handler against its type's declared capability, and
+    refuses a type outside the table or one refused for good; the static table stays unbound."""
+    bound = bind_handlers(HANDLERS, {"emit_signal": _Capable()})
+    assert isinstance(bound["emit_signal"].handler, _Capable)
+    assert HANDLERS["emit_signal"].handler is None  # a new table; the static one is unchanged
+    for action_type in ("set_variable", "place_order", "widen_stop", "teleport"):
+        with pytest.raises(HandlerTableError, match=action_type):
+            bind_handlers(HANDLERS, {action_type: _Capable()})
