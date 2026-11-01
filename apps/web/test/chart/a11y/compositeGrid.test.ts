@@ -4,6 +4,7 @@ import {
   createGridState,
   drawnRange,
   gridMoveOf,
+  nearestDecimalKey,
   needsRecentre,
   reduceGrid,
   scrollToShow,
@@ -165,7 +166,7 @@ describe("reduceGrid on data churn", () => {
     let s = createGridState(LADDER, { row: 90 }, keys);
     expect(s.key).toBe("64010");
     const shifted = prices(64105, 200); // five new rows above: 64010 is now row 95
-    s = reduceGrid(s, { type: "data", rows: 200, cols: 1, rowKeys: shifted }, shifted);
+    s = reduceGrid(s, { type: "data", rows: 200, cols: 1 }, shifted);
     expect(s.focus.row).toBe(95);
     expect(s.key).toBe("64010");
   });
@@ -174,12 +175,40 @@ describe("reduceGrid on data churn", () => {
     const keys = prices(64100, 200);
     let s = createGridState(LADDER, { row: 150 }, keys);
     const fewer = prices(63000, 100); // 63950 is not among them
-    s = reduceGrid(s, { type: "data", rows: 100, cols: 1, rowKeys: fewer }, fewer);
+    s = reduceGrid(s, { type: "data", rows: 100, cols: 1 }, fewer);
     expect(s.focus.row).toBe(99);
     expect(s.key).toBe(fewer[99]);
     s = reduceGrid(s, { type: "data", rows: 10, cols: 1 });
     expect(s.focus.row).toBe(9);
     expect(s.key).toBeNull();
+  });
+
+  it("with nearestDecimalKey a gone key lands on the nearest price, not the same index (code m5)", () => {
+    const keys = prices(64100, 200);
+    let s = createGridState(LADDER, { row: 10 }, keys); // 64090
+    const shifted = prices(64105, 205).filter((k) => k !== "64090");
+    s = reduceGrid(s, { type: "data", rows: 204, cols: 1 }, shifted, nearestDecimalKey);
+    expect(s.key).toBe("64091");
+    const far = prices(63000, 50);
+    s = reduceGrid(s, { type: "data", rows: 50, cols: 1 }, far, nearestDecimalKey);
+    expect(s.key).toBe("63000");
+  });
+
+  it("nearestDecimalKey is exact on decimals and declines non-decimal keys", () => {
+    expect(nearestDecimalKey("1.05", ["1", "1.1", "2"])).toBe(0); // a tie: the first
+    expect(nearestDecimalKey("1.06", ["1", "1.1", "2"])).toBe(1);
+    expect(nearestDecimalKey("-0.5", ["-2", "0.25", "3"])).toBe(1);
+    expect(nearestDecimalKey("99999999999999999.01", ["99999999999999999", "1"])).toBe(0);
+    expect(nearestDecimalKey("1", ["a", "2"])).toBe(-1);
+    expect(nearestDecimalKey("1", [])).toBe(-1);
+  });
+
+  it("a window or page under one row is clamped to one (n2)", () => {
+    const s = createGridState({ ...LADDER, windowRows: 0, pageRows: -3 }, { row: 5 });
+    expect(s.windowRows).toBe(1);
+    expect(s.pageRows).toBe(1);
+    expect(windowOf(s)).toEqual({ first: 5, last: 5 });
+    expect(reduceGrid(s, { type: "move", move: "pageDown" }).focus.row).toBe(6);
   });
 
   it("a move keeps the key it had when no keys are passed and the row did not change", () => {

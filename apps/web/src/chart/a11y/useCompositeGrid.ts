@@ -16,6 +16,7 @@ import {
   type GridAxis,
   type GridPos,
   type GridState,
+  type NearestRow,
 } from "./compositeGrid";
 
 export interface UseCompositeGridOptions {
@@ -28,6 +29,8 @@ export interface UseCompositeGridOptions {
   readonly windowRows?: number;
   /** Row identity (a ladder row's price): keep the array's identity stable between data changes. */
   readonly rowKeys?: readonly string[];
+  /** Where the stop goes when its key leaves the rows (`nearestDecimalKey` for a price ladder). */
+  readonly nearestRow?: NearestRow;
   readonly initial?: Partial<GridPos>;
 }
 
@@ -62,8 +65,10 @@ export const DEFAULT_PAGE_ROWS = 10;
 interface Step {
   readonly action: GridAction;
   readonly keys: readonly string[] | undefined;
+  readonly nearest?: NearestRow | undefined;
 }
-const step = (s: GridState, { action, keys }: Step): GridState => reduceGrid(s, action, keys);
+const step = (s: GridState, { action, keys, nearest }: Step): GridState =>
+  reduceGrid(s, action, keys, nearest);
 
 const cellIn = (root: HTMLElement | null, pos: GridPos): HTMLElement | null =>
   root?.querySelector<HTMLElement>(`[data-cg-row="${pos.row}"][data-cg-col="${pos.col}"]`) ?? null;
@@ -95,7 +100,7 @@ export function useCompositeGrid(options: UseCompositeGridOptions): CompositeGri
   const [seen, setSeen] = useState({ rows, cols, rowKeys });
   if (seen.rows !== rows || seen.cols !== cols || seen.rowKeys !== rowKeys) {
     setSeen({ rows, cols, rowKeys });
-    dispatch({ action: { type: "data", rows, cols, rowKeys }, keys: rowKeys });
+    dispatch({ action: { type: "data", rows, cols }, keys: rowKeys, nearest: options.nearestRow });
   }
 
   const ref = useRef<HTMLDivElement>(null);

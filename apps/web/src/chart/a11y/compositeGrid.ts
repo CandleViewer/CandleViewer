@@ -45,13 +45,14 @@ export type GridAction =
   | { readonly type: "move"; readonly move: GridMove }
   /** Focus landed on a cell by pointer or by the AT: the stop follows it. */
   | { readonly type: "focus"; readonly row: number; readonly col: number }
-  /** Data churn: a new row count (and keys, for row identity), or new columns. */
-  | {
-      readonly type: "data";
-      readonly rows: number;
-      readonly cols: number;
-      readonly rowKeys?: readonly string[] | undefined;
-    };
+  /** Data churn: a new row count or new columns; the new row keys are the reducer's `rowKeys` argument. */
+  | { readonly type: "data"; readonly rows: number; readonly cols: number };
+
+/**
+ * Where the stop goes when its row's key has left the data: the index of the nearest remaining key, or -1 to keep
+ * the same index. A ladder passes `nearestDecimalKey`, so the stop lands on the nearest price, not an unrelated one.
+ */
+export type NearestRow = (lost: string, keys: readonly string[]) => number;
 
 export const clampIndex = (v: number, lo: number, hi: number): number =>
   Math.min(Math.max(v, lo), hi);
@@ -85,6 +86,32 @@ export function scrollToShow(first: number, size: number, row: number, total: nu
   else if (row > next + size - 1) next = row - size + 1;
   return clampIndex(next, 0, Math.max(total - size, 0));
 }
+
+const SIGNED_DECIMAL = /^-?\d+(?:\.\d+)?$/;
+
+/** The index of the key numerically nearest `lost` (decimal strings, exact); the first on a tie; -1 if any is not a decimal. */
+export const nearestDecimalKey: NearestRow = (lost, keys) => {
+  const all = [lost, ...keys];
+  if (!all.every((k) => SIGNED_DECIMAL.test(k))) return -1;
+  const scale = Math.max(...all.map((k) => (k.split(".")[1] ?? "").length));
+  const scaled = (k: string): bigint => {
+    const [int = "0", frac = ""] = k.replace("-", "").split(".");
+    const v = BigInt(int + frac.padEnd(scale, "0"));
+    return k.startsWith("-") ? -v : v;
+  };
+  const target = scaled(lost);
+  let best = -1;
+  let bestGap = 0n;
+  keys.forEach((k, i) => {
+    const d = scaled(k) - target;
+    const gap = d < 0n ? -d : d;
+    if (best < 0 || gap < bestGap) {
+      best = i;
+      bestGap = gap;
+    }
+  });
+  return best;
+};
 
 const PLAIN_MOVES: ReadonlyMap<string, GridMove> = new Map([
   ["ArrowUp", "up"],
@@ -155,19 +182,27 @@ export function createGridState(
   start: Partial<GridPos> = {},
   rowKeys?: readonly string[],
 ): GridState {
-  const base: GridState = { ...config, focus: { row: 0, col: 0 }, key: null, first: 0 };
-  const row = clampIndex(start.row ?? 0, 0, lastRow(config));
+  // A window or page under one row would draw nothing or never move: at least one row each.
+  const sized: GridConfig = {
+    ...config,
+    windowRows: Math.max(1, Math.floor(config.windowRows) || 1),
+    pageRows: Math.max(1, Math.floor(config.pageRows) || 1),
+  };
+  const base: GridState = { ...sized, focus: { row: 0, col: 0 }, key: null, first: 0 };
+  const row = clampIndex(start.row ?? 0, 0, lastRow(sized));
   return place(base, { row, col: start.col ?? 0 }, rowKeys?.[row] ?? null);
 }
 
 /**
- * The reducer. A key the row keys no longer hold (the price scrolled off the book) clamps to the nearest row; a key
- * that moved keeps the stop on its row, wherever the row went.
+ * The reducer. `rowKeys` is the one source of row identity, for every action. A key that moved keeps the stop on its
+ * row, wherever the row went; a key the rows no longer hold (the price left the book) goes to `nearest`'s row when
+ * given, else stays at the same index (clamped), which on a shifted book is a different price.
  */
 export function reduceGrid(
   s: GridState,
   action: GridAction,
   rowKeys?: readonly string[],
+  nearest?: NearestRow,
 ): GridState {
   switch (action.type) {
     case "move": {
@@ -179,8 +214,10 @@ export function reduceGrid(
       return place(s, { row: action.row, col: action.col }, rowKeys?.[action.row] ?? null);
     case "data": {
       const next: GridState = { ...s, rows: action.rows, cols: action.cols };
-      const keys = action.rowKeys;
-      const found = s.key === null || keys === undefined ? -1 : keys.indexOf(s.key);
+      const keys = rowKeys;
+      let found = s.key === null || keys === undefined ? -1 : keys.indexOf(s.key);
+      if (found < 0 && s.key !== null && keys !== undefined && nearest !== undefined)
+        found = nearest(s.key, keys);
       const row = found >= 0 ? found : s.focus.row;
       const clamped = clampIndex(row, 0, lastRow(next));
       return place(next, { row, col: s.focus.col }, keys?.[clamped] ?? null);

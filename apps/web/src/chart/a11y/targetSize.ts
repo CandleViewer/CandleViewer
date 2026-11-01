@@ -12,6 +12,8 @@ export interface TargetSizeException {
   readonly id: string;
   readonly sc: "2.5.8";
   readonly basis: "essential";
+  /** Why the other SC 2.5.8 exceptions are not the basis, so the record is not read as one of them. */
+  readonly notApplicable: Readonly<Record<"spacing" | "equivalent", string>>;
   readonly component: string;
   readonly screens: readonly string[];
   readonly condition: string;
@@ -28,7 +30,13 @@ export const TARGET_SIZE_EXCEPTIONS: readonly TargetSizeException[] = [
     basis: "essential",
     component: "CMP-109",
     screens: ["SCR-030"],
-    condition: "footprint cells below 24 CSS px at maximum chart zoom-out",
+    condition:
+      "footprint cells below 24 CSS px at maximum chart zoom-out; the cell size at default zoom is not asserted " +
+      "here (no layout in jsdom; the pixel measure is a carried row)",
+    notApplicable: {
+      spacing: "adjacent cells abut, so a 24 px circle around a small cell overlaps its neighbours",
+      equivalent: "SCR-045 is another screen, not a control on the same page",
+    },
     alternative: "SCR-045",
     source: "05-accessibility-standard.md §3.4.7",
   },

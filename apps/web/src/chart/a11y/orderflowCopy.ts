@@ -7,13 +7,19 @@
 
 export type BookSide = "bid" | "ask";
 export type OrderSide = "buy" | "sell";
+/** The order environments a keyboard order can target (C-2.11; testnet places no orders from the ladder). */
+export type OrderEnv = "live" | "demo";
+
+/** A value the row cannot show (a data fault): said as words, drawn as SCR-045's dash. */
+export const UNAVAILABLE = { said: "not available", shown: "—" } as const;
 
 /** Footprint cell sentence parts (CMP-109; 05 §4.3: the imbalance state as a word). */
 export const CELL = {
   bid: (v: string): string => `bid ${v}`,
   ask: (v: string): string => `ask ${v}`,
   delta: (v: string): string => `delta ${v}`,
-  imbalance: { bid: "bid imbalance", ask: "ask imbalance", none: "no imbalance" },
+  /** Said only when flagged (05 §4.3); an unflagged cell says nothing about imbalance (a11y lens L-6). */
+  imbalance: { bid: "bid imbalance", ask: "ask imbalance" },
   estimated: "estimated",
 } as const;
 
@@ -23,6 +29,13 @@ export const LADDER = {
   ownOrder: (side: OrderSide, qty: string): string => `your ${side} order ${qty} working`,
   ownOrders: (n: number): string => `${n} of your orders working`,
   position: (side: "long" | "short", qty: string): string => `your ${side} position ${qty}`,
+  /** The visible twins of the own-order and position words (a11y lens M-3: not only in the name). */
+  ownShown: (side: OrderSide, qty: string): string => `${side === "buy" ? "Buy" : "Sell"} ${qty}`,
+  ownsShown: (n: number): string => `${n} orders`,
+  positionShown: (side: "long" | "short", qty: string): string =>
+    `${side === "long" ? "Long" : "Short"} ${qty}`,
+  /** The empty ladder's line, in place of a grid with no rows (a11y lens L-4). */
+  empty: "No price levels in the book",
 } as const;
 
 /** Heatmap cell readout on focus (CMP-111; 05 §4.1: price, size and side). */
@@ -46,23 +59,36 @@ export const MARK = {
 
 /** The keyboard-order read-back (05 §3.3.5: the resolved per-account quantities, before commit). */
 export const READBACK = {
-  kind: { limit: "limit", aggressive: "aggressive" },
-  head: (side: OrderSide, kind: string, symbol: string, price: string): string =>
-    `${side === "buy" ? "Buy" : "Sell"} ${kind} ${symbol} at ${price}`,
-  leg: (account: string, qty: string): string => `${account} ${qty}`,
+  /** Lead with the order type, then the side ("Limit buy", "Aggressive buy"; a11y lens M-1). */
+  kind: { limit: "Limit", aggressive: "Aggressive" },
+  /** The environment as the top bar's badge says it (05 §4.1, C-2.11). */
+  env: { live: "LIVE", demo: "DEMO" },
+  head: (kind: string, side: OrderSide, symbol: string, env: string, price: string): string =>
+    `${kind} ${side} ${symbol}, ${env}, at ${price}`,
+  /** A colon parts a name from its quantity, so a name ending in a digit never runs into it. */
+  leg: (account: string, qty: string): string => `${account}: ${qty}`,
+  qty: (qty: string, unit: string | undefined): string =>
+    unit === undefined ? qty : `${qty} ${unit}`,
   total: (accounts: number, qty: string): string =>
     `${accounts} ${accounts === 1 ? "account" : "accounts"}, total ${qty}`,
   /** Said instead of any account when a leg is outside the caller's access: no name, no id. */
   refused: "Order not shown: an account is not available to you",
   empty: "Order not shown: no account selected",
   zero: "Order not shown: a quantity is zero",
+  duplicate: "Order not shown: an account is listed twice",
+  envMismatch: "Order not shown: an account is in a different environment",
+  ambiguous: "Order not shown: account names are ambiguous",
+  invalid: "Order not shown: a price or quantity is not valid",
 } as const;
 
-/** The fill line, assertive (05 §6.2: order filled is a discrete event). */
+/** The fill line, assertive (05 §6.2: order filled is a discrete event). The state leads (a11y lens M-2). */
 export const FILL = {
-  line: (side: OrderSide, qty: string, symbol: string, price: string, account: string): string =>
-    `Filled: ${side === "buy" ? "bought" : "sold"} ${qty} ${symbol} at ${price}, ${account}`,
-  partial: "partial",
+  state: { full: "Filled", partial: "Partially filled" },
+  line: (state: string, side: OrderSide, qty: string, symbol: string, price: string): string =>
+    `${state}: ${side === "buy" ? "bought" : "sold"} ${qty} ${symbol} at ${price}`,
+  account: (line: string, account: string): string => `${line}, ${account}`,
+  /** The tail of a batch longer than `FILL_BATCH_CEILING`. */
+  more: (n: number): string => `${n} more ${n === 1 ? "fill" : "fills"}`,
 } as const;
 
 export const GRID_NAME = {

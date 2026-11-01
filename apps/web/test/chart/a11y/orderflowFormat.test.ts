@@ -5,6 +5,7 @@ import {
   footprintCellSentence,
   heatmapCellSentence,
   ladderRowSentence,
+  orUnavailable,
   sizeText,
 } from "../../../src/chart/a11y/orderflowFormat";
 import { formatBarSentence } from "../../../src/chart/a11y/format";
@@ -28,7 +29,7 @@ describe("footprint cell sentence (CMP-109)", () => {
         delta: "-8",
         imbalance: null,
       }),
-    ).toBe("64,010.5, bid 20, ask 12, delta −8, no imbalance");
+    ).toBe("64,010.5, bid 20, ask 12, delta −8");
     expect(
       footprintCellSentence({
         price: "1",
@@ -44,7 +45,7 @@ describe("footprint cell sentence (CMP-109)", () => {
   it("zero, negative and very large values", () => {
     expect(
       footprintCellSentence({ price: "0.0001", bid: "0", ask: "0", delta: "0", imbalance: null }),
-    ).toBe("0.0001, bid 0, ask 0, delta +0, no imbalance");
+    ).toBe("0.0001, bid 0, ask 0, delta +0");
     expect(
       footprintCellSentence({
         price: "123456789.5",
@@ -140,9 +141,26 @@ describe("sign and size helpers", () => {
   it("a negative size or a non-decimal is a RangeError, never shown", () => {
     expect(() => sizeText("-1")).toThrow(RangeError);
     expect(() => sizeText("1e3")).toThrow(RangeError);
-    expect(() => ladderRowSentence({ price: "1", bid: "-1", ask: "0", side: "bid" })).toThrow(
-      RangeError,
-    );
     expect(sizeText("1234567.125")).toBe("1,234,567.125");
+  });
+
+  it("a ladder row never throws: a faulty field reads 'not available', the rest still reads (code m4)", () => {
+    expect(ladderRowSentence({ price: "1", bid: "-1", ask: "0", side: "bid" })).toBe(
+      "1, bid not available, ask 0, bid side",
+    );
+    expect(
+      ladderRowSentence({
+        price: "x",
+        bid: "2",
+        ask: "0",
+        side: "bid",
+        own: [{ side: "buy", qty: "-1" }],
+        position: { side: "short", qty: "1e2" },
+      }),
+    ).toBe(
+      "not available, bid 2, ask 0, bid side, your buy order not available working, " +
+        "your short position not available",
+    );
+    expect(orUnavailable(sizeText, "-3", "—")).toBe("—");
   });
 });

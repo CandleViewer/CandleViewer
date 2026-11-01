@@ -84,7 +84,8 @@ describe("footprint grid on the shared pattern (E18-S11's wording)", () => {
     const flagged = screen.getAllByRole("gridcell", { name: /ask imbalance$/ })[0] as HTMLElement;
     expect(flagged.querySelector("[data-cv-pattern='dashed']")).not.toBeNull();
     expect(flagged.textContent).toContain("Ask imbalance");
-    const plain = screen.getAllByRole("gridcell", { name: /no imbalance$/ })[0] as HTMLElement;
+    const plain = screen.getAllByRole("gridcell", { name: /delta [+−]\d+$/ })[0] as HTMLElement;
+    expect(plain).not.toHaveAccessibleName(/imbalance/);
     expect(plain.querySelector("[data-cv-pattern]")).toBeNull();
   });
 

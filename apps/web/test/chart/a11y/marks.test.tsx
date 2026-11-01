@@ -9,7 +9,7 @@ import {
   SideMark,
   SignedValue,
 } from "../../../src/chart/a11y/marks";
-import { colourless, expectCssPattern, expectNoHueAlone } from "./noHueAlone";
+import { atSignature, expectCssPattern, expectNoHueAlone, visualSignature } from "./noHueAlone";
 
 const CSS = readFileSync(
   resolve(import.meta.dirname, "../../../src/chart/a11y/orderflowMarks.css"),
@@ -19,28 +19,32 @@ const mount = (node: JSX.Element): HTMLElement => render(node).container;
 
 describe("no-hue-alone (05 §4): every state survives without colour", () => {
   it("footprint: delta −8 and +8, flagged and plain cells", () => {
-    expectNoHueAlone("footprint", {
-      plus: mount(
-        <FootprintCellContent
-          cell={{ price: "1", bid: "2", ask: "10", delta: "8", imbalance: null }}
-        />,
-      ),
-      minus: mount(
-        <FootprintCellContent
-          cell={{ price: "1", bid: "10", ask: "2", delta: "-8", imbalance: null }}
-        />,
-      ),
-      flagged: mount(
-        <FootprintCellContent
-          cell={{ price: "1", bid: "2", ask: "10", delta: "8", imbalance: "ask" }}
-        />,
-      ),
-      bidFlag: mount(
-        <FootprintCellContent
-          cell={{ price: "1", bid: "2", ask: "10", delta: "8", imbalance: "bid" }}
-        />,
-      ),
-    });
+    expectNoHueAlone(
+      "footprint",
+      {
+        plus: mount(
+          <FootprintCellContent
+            cell={{ price: "1", bid: "2", ask: "10", delta: "8", imbalance: null }}
+          />,
+        ),
+        minus: mount(
+          <FootprintCellContent
+            cell={{ price: "1", bid: "10", ask: "2", delta: "-8", imbalance: null }}
+          />,
+        ),
+        flagged: mount(
+          <FootprintCellContent
+            cell={{ price: "1", bid: "2", ask: "10", delta: "8", imbalance: "ask" }}
+          />,
+        ),
+        bidFlag: mount(
+          <FootprintCellContent
+            cell={{ price: "1", bid: "2", ask: "10", delta: "8", imbalance: "bid" }}
+          />,
+        ),
+      },
+      CSS,
+    );
   });
 
   it("CVD: rising, falling and flat", () => {
@@ -66,7 +70,7 @@ describe("no-hue-alone (05 §4): every state survives without colour", () => {
         <ImbalanceMark side={side} /> <SignedValue value={side === "bid" ? "-40" : "40"} />
       </span>
     );
-    expectNoHueAlone("imbalance-tracker", { bid: mount(row("bid")), ask: mount(row("ask")) });
+    expectNoHueAlone("imbalance-tracker", { bid: mount(row("bid")), ask: mount(row("ask")) }, CSS);
   });
 
   it("the check fails a hue-only pair (it would catch a regression)", () => {
@@ -76,6 +80,28 @@ describe("no-hue-alone (05 §4): every state survives without colour", () => {
     expect(() =>
       expectNoHueAlone("empty", { blank: mount(<span className="cv-of-side--bid" />) }),
     ).toThrow(/no non-colour channel/);
+  });
+
+  it("an accessible name is not a visual channel: a pair differing only by aria-label fails", () => {
+    const a = mount(<span aria-label="bid imbalance">8</span>);
+    const b = mount(<span aria-label="ask imbalance">8</span>);
+    expect(atSignature(a)).not.toBe(atSignature(b));
+    expect(() => expectNoHueAlone("label-only", { a, b })).toThrow(/by colour alone/);
+  });
+
+  it("a declared pattern counts only when the stylesheet draws it", () => {
+    const el = mount(
+      <span className="cv-of-signed--up" data-cv-pattern="dashed">
+        8
+      </span>,
+    );
+    expect(() => visualSignature(el, CSS)).toThrow(/declared but not drawn/);
+    const hidden = mount(
+      <span>
+        8<span className="cv-visually-hidden">ask</span>
+      </span>,
+    );
+    expect(visualSignature(hidden)).toBe("8");
   });
 });
 
@@ -91,7 +117,7 @@ describe("the marks' channels", () => {
   it("an imbalance reads as its word and declares the dashed pattern, drawn in CSS for grayscale and forced colours", () => {
     const el = mount(<ImbalanceMark side="ask" />);
     expect(el.textContent).toContain("Ask imbalance");
-    expect(colourless(el)).toContain("pattern:dashed");
+    expect(visualSignature(el, CSS)).toContain("pattern:dashed");
     expectCssPattern(CSS, ".cv-of-imbalance", /border:[^;]*dashed/);
     expectCssPattern(CSS, ".cv-of-cell--imbalance", /border:[^;]*dashed/);
     expect(CSS).toMatch(

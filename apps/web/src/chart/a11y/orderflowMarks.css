@@ -76,7 +76,7 @@
 /* A ladder row is the target: 24 x 24 CSS px at least at default zoom (SC 2.5.8, 05 §3.4.7). Bids left, asks right. */
 .cv-of-ladder__cell {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 1fr auto 1fr auto;
   gap: var(--space-inset-sm);
   align-items: center;
   min-block-size: var(--size-target-min);
@@ -92,6 +92,24 @@
 
 .cv-of-ladder__ask {
   justify-self: end;
+}
+
+/* Own orders and position: words in a bordered chip, so the state is seen without its name or its hue. */
+.cv-of-ladder__mine {
+  display: inline-flex;
+  gap: var(--space-inset-xs);
+}
+
+.cv-of-ladder__own,
+.cv-of-ladder__position {
+  padding: 0 var(--space-inset-xs);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+}
+
+.cv-of-ladder__empty {
+  margin: 0;
+  color: var(--color-text-secondary);
 }
 
 @media (forced-colors: active) {
