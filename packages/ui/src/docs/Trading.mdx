@@ -139,16 +139,17 @@ out. Account groups (or symbols, or trade groups) at level 1 hold their position
 | paused chip  | button (`UpdatesPausedChip`) | "Updates paused · 2 new · 1 closed"                                                         | applies the held rows; critical (`status.danger.subtle`) while a held row has NO SL                    |
 
 The liquidation tier is the host's reading (its thresholds and hysteresis, E29-D02 §5.3): the cell draws glyph, word and
-distance, never colour alone, and a Critical row adds a 2 px leading accent on its first, pinned cell. The glyphs are
-the interim text glyphs (△, !, !!) until CMP-019 registers `triangle`, `alert-circle` and `octagon-alert` (E29-D04
-§2.8.7). A null R reads E29-D02's "R unavailable: no stop price" only for a row with no stop (the host's `reason`, #911
-BQ-8); no entry or mark price, or a stop at the entry, reads "R unavailable". Rows past 50 are windowed, the focused row
-kept mounted outside the window (G-01). The Actions column shows only when the host passes `rowActions` (CMP-057's props
-per row, each gate the host's from its own operation; a scope's reason points at the host's one notice), which mounts
-with the ticket that wires the row actions (#911 BQ-3); the group header's ⋯ (Flatten account…) mounts with it. In the
-360 px dock (`variant="narrow"`): Symbol · Side · Size · uPnL · Status, the base coin and the uPnL unit in the names
-only, and no Actions column: every row action stays in the row menu (`Shift+F10`, the Menu key, a right-click; E29-D02
-§11.5, D-12). No motion of its own: every state swap is a cut (Mo-8, Mo-10).
+distance, never colour alone, and a Critical row adds a 2 × 12 px leading accent (2 × 16 comfortable) at the start of
+its first, pinned cell. The plain numeric cells set their numerals in `type.num.base` with tabular figures; CMP-116 sets
+its own. The glyphs are the interim text glyphs (△, !, !!) until CMP-019 registers `triangle`, `alert-circle` and
+`octagon-alert` (E29-D04 §2.8.7). A null R reads E29-D02's "R unavailable: no stop price" only for a row with no stop
+(the host's `reason`, #911 BQ-8); no entry or mark price, or a stop at the entry, reads "R unavailable". Rows past 50
+are windowed, the focused row kept mounted outside the window (G-01). The Actions column shows only when the host passes
+`rowActions` (CMP-057's props per row, each gate the host's from its own operation; a scope's reason points at the
+host's one notice), which mounts with the ticket that wires the row actions (#911 BQ-3); the group header's ⋯ (Flatten
+account…) mounts with it. In the 360 px dock (`variant="narrow"`): Symbol · Side · Size · uPnL · Status, the base coin
+and the uPnL unit in the names only, and no Actions column: every row action stays in the row menu (`Shift+F10`, the
+Menu key, a right-click; E29-D02 §11.5, D-12). No motion of its own: every state swap is a cut (Mo-8, Mo-10).
 
 Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): rows follow the text scale and the columns widen
 with it, numerals never truncating; the grid scrolls sideways under its pinned select, Account and Symbol columns and
