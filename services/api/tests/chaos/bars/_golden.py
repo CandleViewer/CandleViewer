@@ -10,16 +10,20 @@ documented tolerance as `runner.reference_diffs`).
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Sequence
 from decimal import Decimal
 from itertools import pairwise
+from typing import Any
 
 from bench.bar_conformance import runner
 from bench.bar_determinism import comparator
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.exchange.base.models import TradeEvent
 from candleviewer.ingestion.trade_stream import GapEvent
+from tests._corpus import frames
+from tests.chaos.ingestion._feed import retime
 from tests.chaos.ingestion._rig import Rig
 
 _EID = uuid.UUID(int=1)
@@ -27,9 +31,26 @@ _EID = uuid.UUID(int=1)
 
 def venue_tape(rig: Rig, symbol: str) -> list[TradeEvent]:
     """Every print the venue emitted, in the `(ts_event, trade_id)` order `TradeStream` merges."""
+    return _tape(list(rig.ex.trades.prints[symbol]), symbol)
+
+
+def corpus_tape(
+    symbol: str, *, frames_n: int, start_ms: int, step_ms: int = 500
+) -> list[TradeEvent]:
+    """The recorded BTC trade corpus re-timed to one frame per `step_ms` from `start_ms`.
+
+    Only the timestamps are rewritten (the feeder's own `retime`); prices, sizes, sides and trade
+    ids are the recorded ones (C-13.5)."""
+    recs: list[dict[str, Any]] = []
+    for k, frame in enumerate(frames("ws/clean_publicTrade_BTCUSDT.jsonl")[:frames_n]):
+        recs.extend(json.loads(retime(frame, start_ms + k * step_ms))["data"])
+    return _tape(recs, symbol)
+
+
+def _tape(recs: Sequence[dict[str, Any]], symbol: str) -> list[TradeEvent]:
     events: list[TradeEvent] = []
-    for rec in rig.ex.trades.prints[symbol]:
-        price, qty = Decimal(rec["p"]), Decimal(rec["v"])
+    for rec in recs:
+        price, qty = Decimal(str(rec["p"])), Decimal(str(rec["v"]))
         events.append(
             TradeEvent.model_construct(
                 schema_version=1,
@@ -110,3 +131,39 @@ def assert_gap_marked(bars: Sequence[Bar], gap: GapEvent, what: str) -> None:
     first = after[0]
     if not (first.gap_before or first.partial):
         raise GapNotMarkedError(f"{what}: bar {first.index} hides the gap")
+
+
+_ROW_COLUMNS = ("open", "high", "low", "close", "volume", "trade_count")
+
+
+def row_problems(golden: Sequence[Bar], rows: Sequence[dict[str, object]]) -> list[str]:
+    """What is wrong with the persisted rows of one series, against its golden (empty = right).
+
+    Every golden bar except the still-forming tail is stored, each exactly once (the store is
+    keyed by index), with the golden's OHLCV and trade count; nothing is stored that the venue
+    did not print."""
+    by_index: dict[int, dict[str, object]] = {}
+    problems: list[str] = []
+    for row in rows:
+        index = int(str(row["index"]))
+        if index in by_index:
+            problems.append(f"bar {index} stored twice")
+        by_index[index] = row
+    problems += [
+        f"bar {i} missing from the store" for i in range(len(golden) - 1) if i not in by_index
+    ]
+    for index, row in by_index.items():
+        if index >= len(golden):
+            problems.append(f"bar {index} stored but never printed")
+            continue
+        bar = golden[index]
+        want = {
+            "open": float(bar.open), "high": float(bar.high), "low": float(bar.low),
+            "close": float(bar.close), "volume": float(bar.volume), "trade_count": bar.trade_count,
+        }  # fmt: skip
+        problems += [
+            f"bar {index} {col}: stored {row[col]!r}, golden {want[col]!r}"
+            for col in _ROW_COLUMNS
+            if row[col] != want[col]
+        ]
+    return problems

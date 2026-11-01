@@ -14,18 +14,20 @@ Deviations from the composition root (keep in sync with SCENARIOS.md):
   composition as `app.exchange_corrected_clock` (unit-tested in `test_bars_clock_wiring.py`)
   over the rig's skewable host clock. `clock="raw"` is the pre-#529 wiring (the host clock
   alone) and exists only for the negative controls.
-* No QuestDB writer, WS publisher or indicator engine: `CaptureSink` stands for the emit path.
+* No WS publisher or indicator engine: `CaptureSink` stands for the emit path. `extra_sinks`
+  adds the store seam (`WriterSink` over a `BarWriter` over a `FlakyRowSink`, scenario 5).
 """
 
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
 from candleviewer.bars.builder_set import BarBuilderSet, default_factory
-from candleviewer.bars.emit import EmitRouter
+from candleviewer.bars.emit import BarSink, EmitRouter
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.state_store import StateStore
 from candleviewer.ingestion.rejection import corrected_now_us
@@ -54,8 +56,11 @@ class BarsRig:
         specs: dict[str, BarSpec] | None = None,
         *,
         clock: ClockSource = "corrected",
+        symbol: str = SYMBOL,
+        extra_sinks: Sequence[BarSink] = (),
     ) -> None:
         self.rig = rig
+        self.symbol = symbol
         self.specs = specs if specs is not None else SPECS
         self.sink = CaptureSink()
         self._root = tempfile.TemporaryDirectory(prefix="bars-chaos-")
@@ -67,7 +72,7 @@ class BarsRig:
         self.set = BarBuilderSet(
             rig.bus,
             rig.env,
-            EmitRouter([self.sink]),
+            EmitRouter([self.sink, *extra_sinks]),
             StateStore(Path(self._root.name)),
             now_us=self.now_us,
             factory=default_factory,
@@ -76,7 +81,7 @@ class BarsRig:
 
     async def start(self) -> None:
         for label, spec in self.specs.items():
-            await self.set.register(spec, SYMBOL, f"chaos:{label}")
+            await self.set.register(spec, self.symbol, f"chaos:{label}")
         await self.rig.clock.settle()
 
     async def run(self, feed: Feeder, seconds: float) -> None:
