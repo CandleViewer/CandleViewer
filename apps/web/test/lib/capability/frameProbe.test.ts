@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classify,
+  classifyStarved,
   describeMeasurement,
   FRAME_BUDGET_MS,
   HARD_CAP_PANES,
@@ -8,6 +9,7 @@ import {
   MIN_WINDOW_FRAMES,
   percentile,
   reducedTrigger,
+  TRIGGER_MIN_COVERAGE,
   TRIGGER_OUTLIER_MS,
   TRIGGER_THRESHOLD_MS,
   TRIGGER_WARMUP_MS,
@@ -83,17 +85,40 @@ describe("classify (#371 Test plan: fast, borderline, slow, noisy)", () => {
     }
   });
 
+  it("classify_spike_leaves_the_exact_p95_and_result_unchanged", () => {
+    // 108 frames at 5 ms and 12 at 12 ms: the nearest-rank p95 is 12 (p90 would be 5, p100 the spike)
+    const w = Array.from({ length: WINDOW_FRAMES }, (_, i) => (i % 10 === 9 ? 12 : 5));
+    const clean = classify([{ paneCount: 4, frameMs: w }]);
+    const spiked = classify([{ paneCount: 4, frameMs: w.map((v, i) => (i === 50 ? 200 : v)) }]);
+    expect(clean.p95FrameMs).toBe(12);
+    expect(clean.recommendedMaxPanes).toBe(Math.floor(FRAME_BUDGET_MS / HEADROOM / 3)); // 12 / 4 per pane
+    expect(spiked).toEqual(clean);
+  });
+
+  it("classify_noisy_two_windows_with_no_slope_fall_back_to_the_top_window", () => {
+    // one pane measured slower than four (noise): a clamped slope of 0 would promise the 16-pane cap
+    const flat = (ms: number, n: number): FrameWindow => ({
+      paneCount: n,
+      frameMs: Array(WINDOW_FRAMES).fill(ms),
+    });
+    const r = classify([flat(9, 1), flat(8, 4)]);
+    expect(r.recommendedMaxPanes).toBe(Math.floor(FRAME_BUDGET_MS / HEADROOM / 2)); // 8 / 4 per pane
+    expect(r.recommendedMaxPanes).toBeLessThan(HARD_CAP_PANES);
+  });
+
   it("classify_single_window_charges_the_fixed_cost_to_the_panes", () => {
     const r = classify([{ paneCount: 4, frameMs: Array(WINDOW_FRAMES).fill(8) }]);
     expect(r.recommendedMaxPanes).toBe(Math.floor(FRAME_BUDGET_MS / HEADROOM / 2));
   });
 
-  it("classify_flat_cost_fits_the_cap_or_nothing", () => {
+  it("classify_flat_cost_is_charged_to_the_top_window", () => {
     const flat = (ms: number, n: number): FrameWindow => ({
       paneCount: n,
       frameMs: Array(WINDOW_FRAMES).fill(ms),
     });
-    expect(classify([flat(5, 1), flat(5, 4)]).recommendedMaxPanes).toBe(HARD_CAP_PANES);
+    expect(classify([flat(2, 1), flat(2, 4)]).recommendedMaxPanes).toBe(HARD_CAP_PANES);
+    expect(classify([flat(5, 1), flat(5, 4)]).recommendedMaxPanes).toBe(11);
+    // the line through the top window says 2, but one pane already missed: never at or above a miss
     expect(classify([flat(20, 1), flat(20, 4)]).recommendedMaxPanes).toBe(0);
   });
 
@@ -106,6 +131,28 @@ describe("classify (#371 Test plan: fast, borderline, slow, noisy)", () => {
     expect(() => classify([{ paneCount: 1, frameMs: [...series(3), Number.NaN] }])).toThrow(
       RangeError,
     );
+  });
+});
+
+describe("classifyStarved (a window closed on time with too few frames)", () => {
+  it("classifyStarved_with_no_earlier_window_is_zero_and_reduced", () => {
+    const r = classifyStarved([], { paneCount: 1, frameMs: [300, 320, 340] });
+    expect(r).toEqual({
+      p95FrameMs: 340,
+      recommendedMaxPanes: 0,
+      recommendedProfile: "reduced",
+      paneCount: 1,
+      sampleCount: 3,
+    });
+  });
+
+  it("classifyStarved_caps_the_earlier_answer_below_the_starved_count", () => {
+    const one: FrameWindow = { paneCount: 1, frameMs: Array(WINDOW_FRAMES).fill(2) };
+    const r = classifyStarved([one], { paneCount: 4, frameMs: [400] });
+    expect(r.recommendedMaxPanes).toBe(3);
+    expect(r.recommendedProfile).toBe("reduced");
+    expect(r.sampleCount).toBe(WINDOW_FRAMES + 1);
+    expect(() => classifyStarved([], { paneCount: 1, frameMs: [] })).toThrow(RangeError);
   });
 });
 
@@ -187,6 +234,34 @@ describe("reducedTrigger (E15-D12 BQ-10, calibrated by E15-K01 §9)", () => {
     const r = reducedTrigger(frames);
     expect(r.fired).toBe(true);
     expect(r.p95FrameMs).toBe(250);
+  });
+
+  it("reducedTrigger_a_hidden_gap_does_not_make_a_full_window", () => {
+    // 2 s of slow frames after the warm-up, then the window hidden for 60 s, then 10 slow frames: the span is
+    // over 60 s but the frames cover under a second of it
+    const before = Array.from({ length: 120 }, (_, i) => ({
+      atMs: TRIGGER_WARMUP_MS + (i * 1000) / 60,
+      frameMs: 25,
+    }));
+    const after = Array.from({ length: 10 }, (_, i) => ({
+      atMs: TRIGGER_WARMUP_MS + 62_000 + (i * 1000) / 60,
+      frameMs: 25,
+    }));
+    const r = reducedTrigger([...before, ...after]);
+    expect(TRIGGER_MIN_COVERAGE).toBe(0.5);
+    expect(r.fired).toBe(false);
+    expect(r.p95FrameMs).toBeNull();
+  });
+
+  it("reducedTrigger_newest_slow_frame_waits_for_its_neighbour", () => {
+    const base = timed(71, () => 9);
+    const end = base[base.length - 1]?.atMs ?? 0;
+    const at = (k: number, frameMs: number) => ({ atMs: end + (k * 1000) / 60, frameMs });
+    // a slow newest frame after a fast one is undecided: left out
+    expect(reducedTrigger([...base, at(1, 250)]).frameCount).toBe(reducedTrigger(base).frameCount);
+    // its slow neighbour arrives: a run, both kept, as two fast frames would be
+    const two = reducedTrigger([...base, at(1, 250), at(2, 250)]);
+    expect(two.frameCount).toBe(reducedTrigger([...base, at(1, 9), at(2, 9)]).frameCount);
   });
 
   it("reducedTrigger_borderline_is_strictly_above", () => {
