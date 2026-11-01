@@ -109,18 +109,20 @@ class LoadedAuthKeyring:
     def recovery_code_digests(self, code: str, user_id: UUID) -> tuple[str, ...]:
         """Hex digests of `code` for `user_id`: the one to store (bound to the user), then, on an
         imported keyring only, the env key's old digest, which a lookup also accepts. Over the cap
-        (no contract body is), `ValueError`: S5's adapter counts that as a wrong code."""
+        (no contract body is), `ValueError`: S5's adapter counts that as a wrong code. A failure
+        after the code is normalised (a `user_id` of another type) leaves no code in a frame."""
+        norm = b""
         try:
             self._require_open()
             norm = normalise_code(code)
+            bound = hmac.new(self._rc_key, env.rc_preimage(user_id, norm), sha256).hexdigest()
+            old = hmac.new(self._rc_key, norm, sha256).hexdigest() if self._ak_imported else None
         except BaseException as exc:
-            scrub_frames(exc)  # `normalise_code`'s frame holds the code
-            del code  # and so does this one
+            scrub_frames(exc)  # the frames below hold the code and the key
+            del code  # and this one held the code, as typed and normalised
+            norm = b""
             raise
-        out = [hmac.new(self._rc_key, env.rc_preimage(user_id, norm), sha256).hexdigest()]
-        if self._ak_imported:
-            out.append(hmac.new(self._rc_key, norm, sha256).hexdigest())
-        return tuple(out)
+        return (bound,) if old is None else (bound, old)
 
     def close(self) -> None:
         self._ak_closed = True
@@ -189,12 +191,18 @@ def _new_keyring(
 
 
 def wrap_verified(kek: LoadedKek, key: bytearray, key_id: UUID, purpose: str) -> str:
-    """Wrap `key`, then prove (in constant time) the wrap opens to it before anyone stores it."""
-    ref = kek.wrap_auth_key(key, key_id=key_id, purpose=purpose)
-    check = kek.unwrap_auth_key(ref, key_id=key_id, purpose=purpose)
+    """Wrap `key`, then prove (in constant time) the wrap opens to it before anyone stores it. A
+    failure leaves no key in a frame: the frames below are cleared, the opened copy zeroed."""
+    check = bytearray()
     try:
+        ref = kek.wrap_auth_key(key, key_id=key_id, purpose=purpose)
+        check = kek.unwrap_auth_key(ref, key_id=key_id, purpose=purpose)
         if not hmac.compare_digest(check, key):
             raise AuthKeyringUnavailable("auth_keyring_mismatch")
+    except BaseException as exc:
+        scrub_frames(exc)  # `env.seal`'s and `env.open_`'s frames hold the KEK and the key
+        del key  # and this one held it: the caller zeroes it
+        raise
     finally:
         env.zero(check)
     return ref
