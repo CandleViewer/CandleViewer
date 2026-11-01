@@ -67,7 +67,7 @@ Board 02 of nine (§0 L82: the throttled line with the Partial chip; the long wa
 
 ## Sources (7)
 
-- spec E08-D10.md md5 1b86f428 and hand-off md5 c6177822 (§0 L82, §H L98, §3-§7, §10-§13)
+- spec E08-D10.md md5 6edf1ad0 and hand-off md5 d1e97ea3 (§0 L82, §H L98, §3-§7, §10-§13)
 - docs/design/E11/E11-D04.md md5 02f3ff69
 - docs/design/E22/E22-D02.md md5 9acb071a
 - docs/design/E22/E22-D03.md md5 858221c5

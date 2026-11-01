@@ -106,7 +106,7 @@ The boards of spec §0; frames named `SCR-151/<variant>/<state> · <theme>`. Dat
 
 ## §I Summary for #178
 
-1. Text-first hi-fi of SCR-151's E08 variants + hand-off + default-deny audit tool; 9<!--=COUNT:boards--> boards drawn in this PR (spec §0 as built), the light variants beyond board 08 the ruled text-only exception (BQ-2).
+1. Text-first hi-fi of SCR-151's E08 variants + hand-off + default-deny audit tool; 9<!--=COUNT:boards--> boards drawn in this PR (spec §0 as built), the light variants beyond board 08 the ruled text-only exception (BQ-2), the high-contrast variants beyond board 09 text only on the same reading (spec D10-C16 … D10-C20).
 2. Backfill shows bars loaded of a target in bars, or bars and the oldest date; never pages, a countdown or a false percentage.
 3. Throttled is a `backfilling` sub-case: the exchange's hold-back in plain words, a Partial chip, automatic retries, no spinner; the Owner alone gets a link to SCR-147.
 4. A gap is marked in context: `gapped` when reconstructed, a separator row with its cause when missing; never merged, never emptying the panel.

@@ -51,8 +51,10 @@ COMPONENTS = SHEETS_DIR / "tools" / "components.offline.json"
 TOKENS_FILE = SHEETS_DIR / "tools" / "token-sync.json"
 REPO = KIT_DIR.parents[4]  # the checkout's root: every source read is REPO / <repo-relative path>, md5-pinned below
 DOCS = {  # key -> (repo-relative path, md5): every read is md5-checked
-    "spec": ("docs/design/E08/E08-D10.md", "1b86f4281f38251d7caf8ffb7c554af4"),
-    "handoff": ("docs/design/E08/E08-D10-handoff.md", "c617782256bdf7e654e0ae0472c7dbc8"),
+    # spec and hand-off re-pinned at the design-read fold: lines extended in place or added after the last cited
+    # line (spec L371, hand-off L105), so every L<n> / §H cite on the nine boards reads the same text
+    "spec": ("docs/design/E08/E08-D10.md", "6edf1ad0f42c75e9b5d56574cb48bdd3"),
+    "handoff": ("docs/design/E08/E08-D10-handoff.md", "d1e97ea31bc194a0d5903df11736a6b8"),
     "D04E11": ("docs/design/E11/E11-D04.md", "02f3ff690f4c840aebb734889d0a17c6"),
     "D02E22": ("docs/design/E22/E22-D02.md", "9acb071a5f887a00b0de9f384b4685f8"),
     "D03E22": ("docs/design/E22/E22-D03.md", "858221c5367167df2af72b460517d19c"),
@@ -91,7 +93,7 @@ def spec_md5_ok() -> dict[str, bool]:
 _DRIFT = [n for n, ok in spec_md5_ok().items() if not ok]
 if _DRIFT:  # every L<n> cite and every parsed string assumes the pinned bytes
     raise SystemExit(f"e08d10kit: source text drifted from DOCS md5 ({', '.join(_DRIFT)}): re-read, re-check, re-pin")
-_COMMENT = re.compile(r"<!--.*?-->")
+_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 LINES = {k: _COMMENT.sub("", _doc_bytes(k).decode("utf-8")).split("\n") for k in DOCS if k != "fixture"}
 SPEC_LINES, HANDOFF_LINES = LINES["spec"], LINES["handoff"]
 
