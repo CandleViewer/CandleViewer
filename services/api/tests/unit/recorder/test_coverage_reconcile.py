@@ -12,6 +12,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.api.market_coverage import _gap
 from candleviewer.recorder.coverage import (
+    PRESENCE_RETRY_US,
     PRESENCE_TTL_US,
     UNVERIFIED_CAUSE,
     CoverageService,
@@ -178,6 +179,27 @@ async def test_a_presence_failure_fails_closed_without_raising(fail: Exception) 
     assert any(e["event"] == "recorder_coverage_reconcile_failed" for e in logs)
     liquidations = [(i.lo, i.hi) for i in got["liquidations"].intervals]
     assert liquidations == [(LO, WATERMARK), (WATERMARK, HI)]  # not a reconciled stream
+
+
+async def test_a_failed_presence_read_backs_off_for_the_symbol_then_retries() -> None:
+    """A slow or down QuestDB is read once per symbol per back-off, not per stream and request."""
+    store, _ = await _store()
+    clock = UsClock(NOW)
+    presence = FakePresence()
+    presence.fail = StoredPresenceTimeout("slow")
+    svc = _svc(store, presence, clock=clock)
+    with capture_logs() as logs:
+        await svc.coverage("BTCUSDT", STREAMS, LO, HI)
+        svc.invalidate("BTCUSDT")  # a session or gap write does not cut the back-off short
+        clock.t += PRESENCE_RETRY_US - 1
+        (got,) = await svc.coverage("BTCUSDT", ["tickers"], LO, HI)
+    assert len(presence.calls) == 1  # the first reconciled stream only
+    assert [e["event"] for e in logs].count("recorder_coverage_reconcile_failed") == 1
+    assert (WATERMARK, HI, UNVERIFIED_CAUSE) in [(g.lo, g.hi, g.cause) for g in got.gaps]
+    presence.fail = None
+    clock.t += 1
+    (got,) = await svc.coverage("BTCUSDT", ["tickers"], LO, HI)
+    assert len(presence.calls) == 2 and got.gaps == ()
 
 
 async def test_the_cold_tier_and_archive_windows_are_untouched() -> None:

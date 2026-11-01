@@ -29,7 +29,9 @@ import asyncpg
 from candleviewer.domain.sql_names import assert_bind_count, ts_param, ts_us_from_row
 
 BUCKET_US: Final = 60_000_000
-#: Recorder stream -> its presence query: one row per 1-minute bucket that holds a row.
+#: Recorder stream -> its presence query: one row per 1-minute bucket that holds a row. Keyed by
+#: the Postgres `stream_kind` value the recorder's sessions and gaps carry (21 Sec.1.2), so
+#: funding is `funding` (table `funding_rates`), as in `repositories.recorded.STREAM_BY_DB_KIND`.
 PRESENCE_SQL: Final[Mapping[str, str]] = MappingProxyType(
     {
         "trades": (

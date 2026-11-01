@@ -18,9 +18,15 @@ retried every tick. A `position_open` start may pre-empt one evictable symbol. D
 Auto caps (E16-FR-01, #1738): symbols recording for `chart_open` alone are capped at
 `CV_RECORDER_MAX_AUTO_SYMBOLS`; a new chart-open start past it is refused the same way, cause
 `symbol_cap` on the wire and `auto_cap_refused` in the audit (a manual or position start is
-never refused by it). A caller that names the session (`session_id`) is held to
-`auto_caps.SessionAutoBook`: a chart ref past its distinct-symbol cap or start rate is not
-taken (the chart stays live-only), audited denied once per (session, symbol).
+never refused by it). It is an admission cap: no recording is stopped to honour it, so a symbol
+whose manual entry or position ends while its chart stays open, or an auto row resumed at start-up,
+keeps recording and can take the count past the cap; no new chart-open start is admitted until
+it is back under. Only a manual entry, a position or a restart overshoots it, never chart opens.
+A caller that names the session (`session_id`) is held to `auto_caps.SessionAutoBook`: a chart
+ref past its distinct-symbol cap or start rate is not taken (the chart stays live-only), audited
+denied once per (session, symbol). A taken ref counts against its session even while its start
+is refused by a global cap or disk pressure: it stays queued and retried every tick, so it is
+held.
 
 Pin semantics (`set_pin`, audited `retention.change`): a pinned symbol's data is never
 deleted by retention (E16-T06), and a pinned symbol is never a pre-emption victim and
@@ -457,7 +463,9 @@ class RecordingPolicy:
         self, symbol: str, chart_id: str, *, session_id: str | None = None
     ) -> None:
         """`session_id` is the server-side session the chart belongs to (never client input);
-        with it, the session's limits apply (E16-FR-01). None: only the global caps do."""
+        with it, the session's limits apply (E16-FR-01). None: only the global caps do. A ref
+        taken here counts against the session even if its start is then refused by a global cap
+        or disk pressure: it stays queued for the tick's retry, so the session holds it."""
         _valid(symbol)
         if session_id is not None:
             refusal = self._sessions.check(session_id, symbol, self._now())
@@ -1073,10 +1081,11 @@ class RecordingPolicy:
 
     async def _refuse_session(self, session_id: str, symbol: str, cause: SessionRefusal) -> None:
         """A chart ref over its session's limits is not taken: the chart stays live-only. Counted
-        every time; logged and audited denied once per (session, symbol). The session id is never
+        every time; logged and audited denied once per (session, symbol), at most
+        `auto_caps.DENIAL_AUDITS_PER_MIN` a minute per session. The session id is never
         logged or audited (it names a login, not a fact about the symbol)."""
         recorder_auto_record_refused_total.labels(cause=cause).inc()
-        if not self._sessions.first_denial(session_id, symbol):
+        if not self._sessions.first_denial(session_id, symbol, self._now()):
             return
         logger().warning("recorder_chart_ref_refused", symbol=symbol, cause=cause, env=self._env)
         await self._audit_emit(

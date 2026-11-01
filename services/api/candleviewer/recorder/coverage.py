@@ -19,8 +19,11 @@ hold stored rows, so a deleted or shrunk gap row cannot make absent data read as
 claimed covered but holding no rows, longer than the stream's tolerance, is taken out of the
 intervals and listed as a gap with cause `unverified_data` (no contract `reason`: the route
 omits it). A presence read that fails reports the whole hot-tier span that way (fail closed),
-logged, never raised. Presence is cached per `(symbol, stream)` for `PRESENCE_TTL_US`, and
-`invalidate` drops it. The cold tier is trusted through its roll-off watermark and manifest.
+logged, never raised; the symbol's hot tier then reads that way without a new read for
+`PRESENCE_RETRY_US`, so a slow or down QuestDB is not re-scanned on every request. Presence is
+cached per `(symbol, stream)` for `PRESENCE_TTL_US`, and `invalidate` drops it (not the failure
+back-off: session and gap writes are frequent). The cold tier is trusted through its roll-off
+watermark and manifest.
 """
 
 from __future__ import annotations
@@ -74,6 +77,9 @@ RECONCILE_TOLERANCE_US: Final[Mapping[str, int]] = MappingProxyType(
 )
 #: Data arrives without a session or gap write, so presence is re-read at least this often.
 PRESENCE_TTL_US: Final = 60_000_000
+#: After a failed presence read, every reconciled stream of the symbol fails closed without a
+#: new read for this long: one timeout per symbol, not one per stream and request.
+PRESENCE_RETRY_US: Final = 10_000_000
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -189,6 +195,8 @@ class CoverageService:
         self._presence = presence
         #: symbol -> stream -> (read_at, lo, hi, spans): the last presence read.
         self._seen: OrderedDict[str, dict[str, tuple[int, int, int, list[Span]]]] = OrderedDict()
+        #: symbol -> the time of its last failed presence read (`PRESENCE_RETRY_US`).
+        self._failed: OrderedDict[str, int] = OrderedDict()
         self._archive = archive
         self._now_us = now_us
         self._marks = watermarks
@@ -305,9 +313,16 @@ class CoverageService:
         presence = self._presence
         if presence is None or tol is None or not hot:
             return []
+        failed_at = self._failed.get(symbol)
+        if failed_at is not None and now - failed_at < PRESENCE_RETRY_US:
+            return union(hot)  # still backing off: fail closed without a read (or a log line)
         try:
             stored, fresh = await self._stored(presence, symbol, stream, hot[0].lo, hot[-1].hi, now)
         except Exception as exc:  # fail closed: unverifiable coverage is not reported covered
+            self._failed[symbol] = now
+            self._failed.move_to_end(symbol)
+            while len(self._failed) > _CACHE_MAX:
+                self._failed.popitem(last=False)
             logger().error(
                 "recorder_coverage_reconcile_failed",
                 symbol=symbol,
@@ -315,6 +330,7 @@ class CoverageService:
                 error=type(exc).__name__,
             )
             return union(hot)
+        self._failed.pop(symbol, None)
         absent = [a for a in subtract(hot, stored) if a.hi - a.lo > tol]
         if absent and fresh:
             recorder_coverage_reconcile_mismatch_total.labels(stream=stream).inc()

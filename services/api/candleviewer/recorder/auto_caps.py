@@ -9,8 +9,10 @@ can ask for.
 
 Pure and synchronous (C-2.20: no statechart, no I/O). Every container is bounded (C-2.18): at
 most `max_sessions` sessions, least recently used evicted first; per session, the held symbols
-by `max_per_session`, the rate window by `rate_per_min`, the denied set by `MAX_DENIED`. A
-session id comes from the server-side caller only, never from a client "record" flag.
+by `max_per_session`, the rate window by `rate_per_min`, the denied set by `MAX_DENIED`, and
+the denials audited by `DENIAL_AUDITS_PER_MIN` in any sliding 60 s. A session id comes from the
+server-side caller only, never from a client "record" flag; the symbol is only checked to be a
+plain instrument code here, so the caller passes instrument-registry symbols only (R-S1).
 """
 
 from __future__ import annotations
@@ -24,6 +26,9 @@ MAX_SESSIONS: Final = 4096
 #: Distinct (session, symbol) denials remembered per session, so each is audited once. Past it a
 #: denial is still refused and counted, but not audited again (an audit flood is a DoS too).
 MAX_DENIED: Final = 1024
+#: Denials one session may have audited in any `WINDOW_S`: a burst of refused symbols is
+#: counted in full but audited at this rate (a denied symbol not audited yet is audited later).
+DENIAL_AUDITS_PER_MIN: Final = 10
 WINDOW_S: Final = 60.0
 
 SessionRefusal = Literal["session_cap", "session_rate"]
@@ -34,6 +39,7 @@ class _Session:
     held: dict[str, set[str]] = field(default_factory=dict)  # symbol -> chart ids
     starts: deque[float] = field(default_factory=deque)  # admissions of a NEW symbol
     denied: set[str] = field(default_factory=set)
+    audits: deque[float] = field(default_factory=deque)  # times of audited denials
 
 
 class SessionAutoBook:
@@ -74,12 +80,18 @@ class SessionAutoBook:
         charts.add(chart_id)
         s.denied.discard(symbol)
 
-    def first_denial(self, session_id: str, symbol: str) -> bool:
-        """True the first time `(session_id, symbol)` is denied: the caller audits it then."""
+    def first_denial(self, session_id: str, symbol: str, now: float) -> bool:
+        """True the first time `(session_id, symbol)` is denied within the session's audit
+        budget: the caller audits it then."""
         s = self._touch(session_id)
         if symbol in s.denied or len(s.denied) >= MAX_DENIED:
             return False
+        while s.audits and now - s.audits[0] >= WINDOW_S:
+            s.audits.popleft()
+        if len(s.audits) >= DENIAL_AUDITS_PER_MIN:
+            return False
         s.denied.add(symbol)
+        s.audits.append(now)
         return True
 
     def release(self, session_id: str, symbol: str, chart_id: str, now: float) -> None:

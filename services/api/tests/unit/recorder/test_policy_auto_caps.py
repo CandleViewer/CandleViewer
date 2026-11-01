@@ -10,7 +10,13 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from candleviewer.recorder.auto_caps import MAX_DENIED, MAX_SESSIONS, SessionAutoBook
+from candleviewer.recorder.auto_caps import (
+    DENIAL_AUDITS_PER_MIN,
+    MAX_DENIED,
+    MAX_SESSIONS,
+    WINDOW_S,
+    SessionAutoBook,
+)
 from candleviewer.recorder.metrics import (
     recorder_auto_record_active,
     recorder_auto_record_refused_total,
@@ -211,9 +217,65 @@ def test_the_session_book_forgets_a_session_with_nothing_held_or_in_window() -> 
 
 def test_the_session_book_audits_a_bounded_number_of_denials() -> None:
     book = SessionAutoBook(max_per_session=1, rate_per_min=1)
-    firsts = [book.first_denial("s", f"S{i}") for i in range(MAX_DENIED + 1)]
+    firsts = [
+        book.first_denial("s", f"S{i}", (i // DENIAL_AUDITS_PER_MIN) * WINDOW_S)
+        for i in range(MAX_DENIED + 1)
+    ]
     assert firsts.count(True) == MAX_DENIED and firsts[-1] is False
-    assert book.first_denial("s", "S0") is False  # each (session, symbol) once
+    assert book.first_denial("s", "S0", 1e9) is False  # each (session, symbol) once
+
+
+def test_the_session_book_audits_a_denial_burst_at_its_rate() -> None:
+    book = SessionAutoBook(max_per_session=1, rate_per_min=1)
+    burst = [book.first_denial("s", f"S{i}", 0.0) for i in range(50)]
+    assert burst.count(True) == DENIAL_AUDITS_PER_MIN
+    assert book.first_denial("s", "S49", WINDOW_S - 0.5) is False  # the window has not moved
+    assert book.first_denial("s", "S49", WINDOW_S) is True  # not audited yet: audited now
+    assert book.first_denial("s", "S0", WINDOW_S) is False  # audited once already
+
+
+async def test_a_session_denial_burst_is_counted_in_full_and_audited_at_the_rate(
+    clock: FakeClock,
+) -> None:
+    audit = FakeAudit()
+    p = _policy(clock, audit, max_symbols=100, max_auto_symbols=100, max_auto_per_session=1)
+    before = _value(recorder_auto_record_refused_total, cause="session_cap")
+    try:
+        await p.on_chart_opened(_sym(0), "c0", session_id="sess-a")
+        for i in range(1, 51):
+            await p.on_chart_opened(_sym(i), f"c{i}", session_id="sess-a")
+        assert _value(recorder_auto_record_refused_total, cause="session_cap") == before + 50
+        assert len(_denied(audit, "session_cap_refused")) == DENIAL_AUDITS_PER_MIN
+    finally:
+        await p.stop()
+
+
+async def test_the_auto_cap_admits_no_new_chart_start_while_a_transition_holds_it_over(
+    clock: FakeClock,
+) -> None:
+    """An admission cap: a manual entry that ends under an open chart leaves the symbol recording
+    for its chart (nothing is stopped), past the cap; the next chart-open start is refused."""
+    audit = FakeAudit()
+    p = _policy(clock, audit, max_symbols=10, max_auto_symbols=1)
+    try:
+        await p.on_chart_opened(_sym(0), "c0")
+        await p.add_manual("BTCUSDT", OWNER)
+        await p.on_chart_opened("BTCUSDT", "c1")
+        clock.advance(60)
+        await p.tick()
+        assert _value(recorder_auto_record_active) == 1
+        await p.remove_manual("BTCUSDT", OWNER)
+        await p.tick()
+        assert {_sym(0), "BTCUSDT"} <= set(p.effective_set())  # neither recording is stopped
+        assert _value(recorder_auto_record_active) == 2
+        await p.on_chart_opened(_sym(1), "c2")
+        clock.advance(60)
+        await p.tick()
+        assert p.start_refusal(_sym(1)) == "symbol_cap"
+        assert _sym(1) not in p.effective_set()
+        assert _denied(audit, "auto_cap_refused") == [_sym(1)]
+    finally:
+        await p.stop()
 
 
 _steps = st.lists(
