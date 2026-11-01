@@ -92,6 +92,9 @@ export function TopBar(props: TopBarProps): JSX.Element {
           ? { disabledReason: SEARCH_REASON }
           : { onClick: onSearch, "aria-keyshortcuts": ariaKeys(props.searchHint) })}
         data-cmp="CMP-084"
+        // E10-D04 names.json shell.topbar.search: "Search commands, Ctrl+K" (the comma is the pause a
+        // screen reader needs); the visible words lead the name, so SC 2.5.3 holds (punctuation is ignored).
+        aria-label={`Search commands, ${props.searchHint}`}
       >
         Search commands <kbd style={KBD}>{props.searchHint}</kbd>
       </Button>
