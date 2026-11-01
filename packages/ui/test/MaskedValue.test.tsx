@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { act, Profiler, StrictMode, useEffect, useState, type JSX } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
@@ -684,5 +686,68 @@ describe("MaskedValue (CMP-034)", () => {
     } finally {
       spies.forEach((spy) => spy.mockRestore());
     }
+  });
+});
+
+/** packages/ui/src, read from disk: the analytics leg's import scan (E05-X02, Gherkin 3). */
+const SRC = resolve(import.meta.dirname, "../src");
+/** Module specifiers that would mean a telemetry or analytics sink inside the design system. */
+const TELEMETRY =
+  /\b(?:analytics|telemetry|tracking|beacon|sentry|posthog|segment|mixpanel|amplitude|gtag|datadog|otel|opentelemetry)\b/i;
+const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["']([^"']+)["']/g;
+
+describe("MaskedValue (CMP-034), E05-X02 secret-handling gaps", () => {
+  it("analytics: across the whole lifecycle the host callback only ever receives one boolean", async () => {
+    const onToggleReveal = fn();
+    function Host({ revealed }: { revealed: boolean }): JSX.Element {
+      return (
+        <MaskedValue
+          value={VALUE}
+          label={LABEL}
+          revealed={revealed}
+          onToggleReveal={onToggleReveal}
+          copyable
+        />
+      );
+    }
+    const host = document.body.appendChild(document.createElement("div"));
+    const r = createRoot(host);
+    await act(async () => r.render(<Host revealed />));
+    // A press and Hide; a press, Copy and the auto-hide; a press and a window blur; a press and
+    // maskAllValues(); a press and the host's veto.
+    await press(toggle(host));
+    await press(toggle(host));
+    await press(toggle(host));
+    await press(copyButton(host));
+    await advance(MASKED_VALUE_AUTO_HIDE_MS);
+    await press(toggle(host));
+    await fire(window, "blur");
+    await press(toggle(host));
+    await act(async () => maskAllValues());
+    await press(toggle(host));
+    await act(async () => r.render(<Host revealed={false} />));
+    expectMasked(host);
+    const calls = onToggleReveal.mock.calls as unknown[][];
+    expect(calls.length).toBeGreaterThanOrEqual(9);
+    for (const args of calls) {
+      expect(args).toHaveLength(1);
+      expect(typeof args[0]).toBe("boolean");
+    }
+    expect(JSON.stringify(calls)).not.toContain(VALUE);
+    await act(async () => r.unmount());
+  });
+
+  it("analytics: no packages/ui source imports a telemetry or analytics module", () => {
+    const files = readdirSync(SRC, { recursive: true, encoding: "utf8" }).filter((file) =>
+      /\.(?:ts|tsx|mts|mjs|js)$/.test(file),
+    );
+    expect(files.length).toBeGreaterThan(50);
+    const hits = files.flatMap((file) =>
+      [...readFileSync(join(SRC, file), "utf8").matchAll(IMPORT)]
+        .map(([, specifier]) => specifier ?? "")
+        .filter((specifier) => TELEMETRY.test(specifier))
+        .map((specifier) => `${file}: ${specifier}`),
+    );
+    expect(hits).toEqual([]);
   });
 });

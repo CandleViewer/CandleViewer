@@ -49,6 +49,10 @@ export default tseslint.config(
       ...reactPlugin.configs.recommended.rules,
       ...reactHooksPlugin.configs.recommended.rules,
       "react/react-in-jsx-scope": "off",
+      // E05-X02 (SR-127): no component or story renders raw HTML. Semgrep's
+      // cv-shell-dangerously-set-inner-html covers src/ in CI; this catches it in the editor and
+      // covers .storybook/ too. test/eslint-rules/eslint-config.test.ts pins it.
+      "react/no-danger": "error",
     },
     settings: {
       react: { version: "18.3" },
