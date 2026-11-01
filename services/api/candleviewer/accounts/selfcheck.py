@@ -141,10 +141,11 @@ FRESHNESS_GRACE: Final = timedelta(minutes=15)
 KEY_DEADLINE_S: Final = 12.0
 #: Bound on every other external await: the key list, a client's close, each audit or write.
 READ_TIMEOUT_S: Final = 10.0
-#: One key's whole check: `verify()`, the close and at most six audit or store steps (the last is
-#: the policy violation's record, after the disarm's record and its mark), plus one step of
-#: margin. The deadline derives from the wired bounds, so it cuts only an unbounded await.
-CHECK_STEPS: Final = 8
+#: One key's whole check: `verify()`, the close and at most seven audit or store steps (the last
+#: is the policy violation's record, after the disarm's record, its mark and the key's status
+#: write), plus one step of margin. The deadline derives from the wired bounds, so it cuts only
+#: an await with no bound of its own.
+CHECK_STEPS: Final = 9
 #: The boot assertion as a whole: past it the job fails closed and start-up goes on (#836). It
 #: is fixed, not scaled by the key count, because the API serves nothing, `/healthz` included,
 #: until it ends (the compose healthcheck reports unhealthy after about 100 s). At SCR-126's 3 s

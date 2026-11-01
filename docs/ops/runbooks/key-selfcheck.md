@@ -53,7 +53,10 @@ or that column by hand (C-2.9).
 
 Find the key and the rule as an Owner (`GET $API/admin/audit?action=account.tested`), then fix the
 key at the exchange. The whitelist is edited in the exchange's web dashboard only (ADR-0009).
-Until `rotateApiKey` (#897) and `revokeApiKey` (#898) ship, "replace" and "store" below wait: `createApiKey` answers 409 while the key is active, and a key deleted at the exchange keeps failing (`key_wrong_environment`), so order entry stays read-only; fix the key in place where you can.
+A failed key is `invalid` and is never checked again (#5281), so fixing it in place cannot end
+the latch: fix the cause at the exchange (the table below), then revoke the key and store a
+compliant one, as Recovery says. Fixing the key in place applies only while its status write is
+held back (its `account.tested` record was refused, so the key is still `active`).
 
 | Rule                                                    | Fix at the exchange                                                                                                                              |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -83,13 +86,18 @@ possible database tamper, as `auth-rbac.md` §5 treats an audit-chain break:
    `revokeApiKey` (#898). Until then the row stays, every borrow of it is refused and the latch
    holds (fail closed); Security decides the next step.
 
-Recovery: restart cv-api via the launcher. Only a restart clears the latch (a passing hourly
-re-check never does, nothing clears it by hand), and the start-up pass checks the key again before
-the app serves. Fix the key first: its rule stays in `api_keys.last_error_code`, so a start-up check
-with no verdict keeps the failure, logs `key_selfcheck_failed` with `restored` true and latches
-again; only a pass clears it (decision 3 on #836).
+Recovery: revoke the failing key with `revokeApiKey` (#898). When it is the account's last key,
+the route asks for an exposure choice (`409 open_exposure`): answer `leave_positions` (see
+`OpenExposure`; a flatten cannot act while the system is read-only). Store a compliant key, then
+restart cv-api via the launcher. Only a restart clears the latch (a passing hourly re-check never
+does, nothing clears it by hand), and an `invalid` key is never checked again: a restart with the
+failing key still stored latches `FAILED` again. Only while the status write is held back (the
+key still `active`) does the start-up pass check the key again before the app serves; fix it
+first then: its rule stays in `api_keys.last_error_code`, so a start-up check with no verdict
+keeps the failure, logs `key_selfcheck_failed` with `restored` true and latches again; only a
+pass clears it (decision 3 on #836).
 Verify: no `starting in read-only mode` line for an `accounts.*` reason, and a new
-`account.tested` with outcome success for the key. `KeySelfCheckFailed` resolves once a pass finds
+`account.tested` with outcome success for the new key. `KeySelfCheckFailed` resolves once a pass finds
 no failing key, and `KeySelfCheckLatched` then fires until the restart. The disarmed account stays
 disarmed: re-arming `trading_enabled` has no operation yet, so a force-disabled account has no
 audited way back until #3657 ships (decision 16 on #836). Never re-arm in SQL (C-2.9).

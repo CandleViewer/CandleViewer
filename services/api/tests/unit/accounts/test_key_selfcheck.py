@@ -784,8 +784,9 @@ async def test_a_hanging_write_never_undoes_the_failure_latch(step: str) -> None
 
 def test_the_overall_deadline_covers_every_bounded_step_of_a_check() -> None:
     check = World(timeout_s=25.0, key_deadline_s=15.0).check
-    # verify(); then the close, six audit or store steps and one step of margin
-    assert check._deadline_s == 15.0 + (1 + 6 + 1) * 25.0
+    # verify(); then the close, seven audit or store steps (the status write is the seventh) and
+    # one step of margin
+    assert check._deadline_s == 15.0 + (1 + 7 + 1) * 25.0
 
 
 async def test_a_check_past_its_deadline_fails_closed() -> None:
