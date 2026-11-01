@@ -22,6 +22,8 @@
  *   keeps the old list, so the feed re-reads the directory: `setAccounts` names and drops the
  *   accounts it no longer lists (SR-E29-11). The subscription continues with the kept accounts;
  *   it is made again with the reduced set (§9.5's invitation) only when the directory changed.
+ *   Not covered: an account that leaves the subscription but stays listed (`account_disabled`,
+ *   `key_revoked`) is not named, because the directory still lists it.
  */
 import type { ConsumerSpec, TopicHandle, WsClient } from "../../lib/ws/api";
 import { createFrameScheduler, type FrameMark } from "../../lib/ws/client/frameScheduler";
