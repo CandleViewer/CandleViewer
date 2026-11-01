@@ -125,18 +125,6 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2027-03-25"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/913"
-  # E43-T05-B1: EX-05 (http-cache-semantics) was cleared by a pnpm override to 4.3.0 (#1857) and
-  # removed. EX-06 (braces) has no patched release upstream (2026-10-03); dev/build-time only
-  # (lint-staged), not shipped in the runtime.
-  # Approval is the owner CODEOWNER security-review of PR #1745; the entries
-  # take effect only when the owner merges it (C-12.3). Not self-approved.
-  - id: "GHSA-vfj7-8cjw-p6xm"
-    tool: npm-audit
-    severity: HIGH
-    reason: "EX-06: braces@3.0.3 - no patched version exists upstream as of 2026-10-03; dev/build-time only via lint-staged > micromatch. Re-check: re-run pnpm audit at each freeze; remove when a patched version ships"
-    approver: "basiltt" # approval = owner CODEOWNER security-review merge of PR #1745
-    expires: "2026-12-31"
-    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1737"
   # #3558: the Medium and Low advisories left on main after #3494 (policy 35 §8.4) and the
   # open Dependabot alerts. 30-release-roadmap.md §4.4 R0 wants a dated entry per Medium. No
   # pnpm advisory has a fix short of a major upgrade; tauri's (2.11.1) is in its installed major

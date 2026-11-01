@@ -63,7 +63,7 @@ REGISTER_PINS = (
     " -p no:cacheprovider -q"
 )
 PINNED = {
-    "test_repo_register_accepts_the_braces_ghsa_exception_with_approver_and_expiry",
+    "test_repo_register_holds_no_braces_exception_so_its_finding_blocks",
     "test_repo_register_covers_the_0004_migration_findings",
     "test_repo_register_codeql_line_entries_still_hold_the_code_they_accept",
     "test_repo_register_mfa_token_hash_entries_still_hash_a_random_token",
