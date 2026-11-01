@@ -38,6 +38,9 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
    so an entry) after the guard, both `reduce_only_tpsl`, never a late rejection at the venue.
    A read this step needs that fails is 503 `exchange_unavailable` with `Retry-After` (Q-B);
 4. `Validator.check_order` on the sized, rounded order (SR-E29-04): 400, or 403 for the profile;
+   a reduce-only close of the whole position step 3d's read showed is exempt from `min_order_qty`
+   (the orchestrator's ruling (a) of 2026-11-01, C-2.6), and its `orders.submit` record names the
+   exemption (`exemption: min_order_qty_whole_close`);
 5. the risk gate on that order (403 `risk_limit_breached`);
 6. the synchronous switches (live trading, the B18 kill switch, the order-entry gate), ruling R1's
    second check, just before anything is recorded (403 `trading_disabled`, the gate's with its
@@ -240,7 +243,7 @@ from .ports import (
 )
 from .routing import RoutedPositions, TradingRouter, Transport
 from .sizing import SIZING_RETRY_AFTER_S, EntryIntent, EntrySize, EntrySizer
-from .validator import Validator
+from .validator import EXEMPT_WHOLE_CLOSE, Validator, closes_whole
 
 __all__ = [
     "EXCHANGE_ERROR", "PLACE_WAIT_S", "POSITION_TIMEOUT_S", "RATE_LIMITED", "READ_RETRY_AFTER_S",
@@ -551,6 +554,10 @@ class _Trace:
     order: NewOrder | None = None
     persisted: bool = False
     size: EntrySize | None = None
+    #: The size of the position the order's side closes, as step 3d's read showed it, and
+    #: whether the whole close's `min_order_qty` exemption let the order through (ruling (a)).
+    closable: Qty | None = None
+    exempt: bool = False
     validating: ExitStack = field(default_factory=ExitStack)
     result: str | None = None
 
@@ -859,7 +866,11 @@ class OrderSubmission:
         trace.step = "classify"
         sized = await self._sized(trace, account, instrument, profile, bare=bare)
         trace.step = "validate"
-        self._validator.check_order(sized, instrument=instrument, profile=profile)
+        self._validator.check_order(
+            sized, instrument=instrument, profile=profile, position_qty=trace.closable
+        )
+        whole = closes_whole(sized, trace.closable)
+        trace.exempt = whole and sized.qty < instrument.min_order_qty
         trace.step = "risk"
         decision = self._ports.risk_gate.check(sized, profile=profile)
         if not decision.allowed:
@@ -1069,6 +1080,8 @@ class OrderSubmission:
             raise ExchangeUnavailable(retry_after_s=READ_RETRY_AFTER_S) from None
         if trace.context.protective and request.reduce_only and effect is not OrderEffect.REDUCE:
             raise _position_changed(request.side, position)
+        if position is not None and position.side not in (None, request.side):
+            trace.closable = position.qty  # the whole close's size, for the validator (ruling (a))
         return effect
 
     async def _reference(
@@ -1483,6 +1496,8 @@ class OrderSubmission:
             "trade_group_id": group_id,
             "anchor_id": str(persisted.anchor_id),
         }
+        if trace.exempt:  # ruling (a): the record names the whole close's exemption
+            detail["exemption"] = EXEMPT_WHOLE_CLOSE
         records: list[RequestRecord | KeyedRecord] = [
             self._request_record(
                 trace, SUBMIT_ACTION, "order", row.id, "success", "validated", detail

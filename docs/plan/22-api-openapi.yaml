@@ -6466,7 +6466,11 @@ paths:
           `lot_size_violation`), and the order's notional against `min_notional`
           (`lot_size_violation`), except for an order the server classifies as only reducing its
           position (below), which the exchange alone judges, so an exit is never refused for
-          its notional (E29-S03, #978).
+          its notional (E29-S03, #978). A reduce-only order whose quantity is the whole size of
+          the position its side closes, as the exchange's read shows it at validation, is not
+          held to `min_order_qty` either, so a position under the minimum stays closable (the
+          orchestrator's ruling (a) of 2026-11-01); a partial reduce-only order under it is
+          still `lot_size_violation`.
         * A native exchange-side stop-loss is mandatory for every entry (C-2.6, arch P4). The
           server classifies an order by its effect on the exchange-truth position, never by
           its label: an order that is not reduce-only, or whose quantity exceeds the position
@@ -8136,6 +8140,13 @@ paths:
         (`position.closed`, `denied`) before it is answered. A close, as every order the server
         classifies as only reducing its position, is exempt from the server's own
         minimum-notional check (`min_notional`): the exchange arbitrates (E29-S03 BQ-5, C-2.6).
+        A close of the whole position, its quantity the size the exchange's read shows at
+        validation, is exempt from the server's own `min_order_qty` check too, so a position
+        under the instrument's minimum stays closable and the exchange arbitrates (C-2.6, the
+        orchestrator's ruling (a) of 2026-11-01): its order's `orders.submit` record names the
+        exemption (`exemption: min_order_qty_whole_close`), and the exchange's rejection is the
+        `502 exchange_error` with its return code, never sent again under a new `orderLinkId`
+        (C-2.10).
 
         **The exchange's read is the guard (E29-S03).** The submission reads the exchange's own
         position before anything is recorded (`24-internal-schemas.md` section 8.4 step 3d): a
