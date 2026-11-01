@@ -156,6 +156,7 @@ from candleviewer.api.indicators import make_indicators_router
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
 from candleviewer.api.market_coverage import make_data_coverage_router
+from candleviewer.api.market_metrics import make_market_metrics_router
 from candleviewer.api.me import make_me_router
 from candleviewer.api.notifications import make_notifications_router
 from candleviewer.api.oms_reads import make_oms_reads_router
@@ -267,6 +268,7 @@ from candleviewer.book.service import BookService
 from candleviewer.budget_wiring import build_disk_budget
 from candleviewer.bus.models import Topic
 from candleviewer.bus.service import BusService
+from candleviewer.derivatives_wiring import bar_source, derivatives_query_provider
 from candleviewer.domain.events import InstrumentUpdatedEvent
 from candleviewer.exchange.base.instruments import InstrumentsFetcher, RiskLimitsFetcher
 from candleviewer.exchange.base.models import LiquidationEvent, TickerEvent, TradeEvent
@@ -3287,6 +3289,17 @@ def create_app(
     app.include_router(
         make_liquidations_router(
             lambda: ctx.orderflow.liquidations, principal_resolver=audit_resolver
+        )
+    )
+    # E24-T04 (#723): the derivatives codes of `/market/metrics`, one engine per request over the
+    # stored bars, OI, funding and liquidations (503 until all are composed); same resolver rules.
+    app.include_router(
+        make_market_metrics_router(
+            derivatives_query_provider(
+                ctx, None if bars_reader is None else bar_source(bars_reader)
+            ),
+            principal_resolver=audit_resolver,
+            now_us=lambda: time.time_ns() // 1000,
         )
     )
     # E08-S04: in-memory hot tape (newest-first); same resolver/fail-closed rules.
