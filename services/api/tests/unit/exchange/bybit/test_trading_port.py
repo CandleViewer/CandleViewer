@@ -343,7 +343,8 @@ async def test_the_service_port_answers_a_10018_as_an_ack_with_its_default_retri
 @pytest.mark.parametrize(
     ("name", "requested", "lane"),
     [
-        ("cancel_order", None, "critical"),
+        ("cancel_order", "critical", "critical"),
+        ("cancel_order", "entry", "entry"),
         ("cancel_all", None, "critical"),
         ("set_trading_stop", None, "critical"),
         ("set_leverage", None, "entry"),
@@ -359,8 +360,13 @@ def test_a_calls_lane_is_the_tables_or_its_requests(name: str, requested: Any, l
 
 @pytest.mark.parametrize(
     ("name", "requested"),
-    [("cancel_order", "entry"), ("open_orders", "critical"), ("place_order", None)],
-    ids=["exit-given-a-lane", "read-given-a-lane", "create-given-none"],
+    [
+        ("cancel_all", "entry"),
+        ("open_orders", "critical"),
+        ("place_order", None),
+        ("cancel_order", None),
+    ],
+    ids=["exit-given-a-lane", "read-given-a-lane", "create-given-none", "cancel-given-none"],
 )
 def test_a_call_naming_its_lane_twice_or_never_is_refused(name: str, requested: Any) -> None:
     """One place names each lane: a call site that also names one could only mask a mismatch."""
@@ -371,9 +377,9 @@ def test_a_call_naming_its_lane_twice_or_never_is_refused(name: str, requested: 
 async def test_a_call_site_naming_a_lane_the_table_fixes_is_refused_unsent() -> None:
     venue, governor = Venue(), RecordingGovernor()
     port = make_port(venue, governor=governor)
-    body = {"category": "linear", "symbol": "BTCUSDT", "orderId": ORDER_ID}
+    body = {"category": "linear", "symbol": "BTCUSDT", "orderFilter": "Order"}
     with pytest.raises(ValueError, match="endpoint table's or its request's"):
-        await port._trade("cancel_order", account(), body=body, lane="entry")
+        await port._trade("cancel_all", account(), body=body, lane="entry")
     assert (venue.sent, governor.acquired) == ([], [])
 
 

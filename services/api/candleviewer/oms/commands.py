@@ -13,7 +13,9 @@ registered (`expect`), else the stored row, so a retry sends the same `order_lin
 native stop (C-2.10, C-2.6). A stop or take-profit that is not a finite price above zero is
 refused before anything is sent, whatever the exchange port checks (#2877 ruling 2), and so is an
 order that is not reduce-only and names no stop (C-2.6, SEC-2B1-04), which `FirstPersist.check`
-and B1's gate already refuse upstream. A reduce-only order with a reducing intent takes the
+and B1's gate already refuse upstream. A rule's order (its row's `origin`, 21 Sec.3.3.4) takes the
+`entry` lane, a reduce-only one included, so a create a restart resumes keeps it (24 Sec.8.4
+"Rule-originated orders" item 3); any other reduce-only order with a reducing intent takes the
 `critical` lane, any other the `entry` lane (SR-E29-01, 24 Sec.8.7). A registered order is a first
 send (`place_or_adopt`). One not registered is a create a restart resumes (SR-E29-15, [LANE-26]),
 in this order:
@@ -106,9 +108,12 @@ request's or the denial's (C-2.9), still raise, which B1 also lands in `sl_missi
 **cancel** (24 Sec.8.8 rule 6, SR-E29-06; INV-B1-h, INV-B1-j; the S4 rulings Q8, Q9 and Q11).
 B1's cancel in `cancel_pending` and a KILL's (`kill_cancel`): one `cancel` call names the stored
 row by its exchange order id once bound, else by its own id (a KILL out of `unknown`), the same
-every time (C-2.10; no `ext-` key on the wire, 24 Sec.14.2 rule 11), from the `critical` lane
-(C-12.7). Nothing gates it: an exit is never gated (24 Sec.8.10, C-2.6). A recorded stop's row
-is never a KILL's to cancel (C-2.6, INV-B1-p); a user's cancel of one goes out only once a
+every time (C-2.10; no `ext-` key on the wire, 24 Sec.14.2 rule 11), in the lane its exit
+registered with it (`ExitWatch.lane`: a rule's own cancel `entry`, every other reason `critical`,
+24 Sec.8.4 item 3), and in `critical` when it finds none (a KILL's, or a rebuilt machine's call
+resumed after a restart, its reason lost: the protective direction, C-12.7). Nothing gates it:
+an exit is never gated (24 Sec.8.10, C-2.6). A recorded stop's row is never a KILL's to cancel
+(C-2.6, INV-B1-p); a user's cancel of one goes out only once a
 `poll`-lane read shows its position flat (Q9, fail closed); both refuse `NATIVE_STOP_REQUIRED`,
 so B1 keeps the row live (INV-B1-j), as on `STORE_UNAVAILABLE`, a read before the send that failed
 (nothing sent, retried after `STORE_UNAVAILABLE_RETRY_AFTER_S`) and `ACCOUNT_UNAVAILABLE`, an
@@ -128,14 +133,17 @@ denied), is re-paired (both sides, a side the order lacks left out) and recorded
 and settled. A held key answers `STOP_REQUEST_IN_FLIGHT`; a raise leaves the rows in flight (S1).
 An account the port cannot sign for (refused, or with no active key) answers `ACCOUNT_UNAVAILABLE`,
 audited, nothing sent (the 11:34Z ruling); a read that fails before the send, `STORE_UNAVAILABLE`.
-Its records name the request whose registration B1's call spent (`expect_exit`, `_spend`), each
-request's registration its own (#4643): each side's request and each void the principal with the
-role and the correlation id, the port's own refusals the correlation id (C-2.9, #3990). B1's call
-spends only a registration whose command the facade took (`take_exit`, #4662), so a call that
-comes after its exit ended never names another request whose command waits at the facade. A call
-that finds none (a registration dropped past `max_watches`, or forgotten by an exit service that
-ended first, `oms.exits`) names no request, and says so: each of its records is marked
-`attribution: unregistered`, and it is logged once (`oms_exit_call_unregistered`, SEC-4662-01).
+It goes in its registration's lane when that names one (a rule's amend, `entry`: 24 Sec.8.4
+"Rule-originated orders" item 3), else in the order's own (a reduce-only order whose intent
+reduces `critical`, any other `entry`). Its records name the request whose registration B1's call
+spent (`expect_exit`, `_spend`), each request's registration its own (#4643): each side's request
+and each void the principal with the role and the correlation id, the port's own refusals the
+correlation id (C-2.9, #3990). B1's call spends only a registration whose command the facade took
+(`take_exit`, #4662), so a call that comes after its exit ended never names another request whose
+command waits at the facade. A call that finds none (a registration dropped past `max_watches`,
+or forgotten by an exit service that ended first, `oms.exits`) names no request, and says so:
+each of its records is marked `attribution: unregistered`, and it is logged once
+(`oms_exit_call_unregistered`, SEC-4662-01).
 """
 
 from __future__ import annotations
@@ -434,10 +442,13 @@ def order_id_kept(raw: object) -> str | None:
 
 def place_request(order: StoredOrder, account: AccountRef) -> PlaceOrderRequest:
     """The create for the stored `order`, in the trading port's vocabulary, for `account`: the same
-    id, terms and native stop on every send (C-2.10, C-2.6). `critical` only for a reduce-only order
-    whose intent reduces (SR-E29-01; the reserve is the exits', C-12.7), else `entry`."""
+    id, terms and native stop on every send (C-2.10, C-2.6). A rule's order (its row's `origin`)
+    rides `entry`, a reduce-only one included, so a create a restart resumes keeps the lane its
+    request had (24 Sec.8.4 "Rule-originated orders" item 3, C-12.7); any other is `critical` only
+    when it is reduce-only and its intent reduces (SR-E29-01; the reserve is the exits'), else
+    `entry`."""
     lane: OrderLane = "entry"
-    if order.reduce_only and order.intent in REDUCING_INTENTS:
+    if order.origin != "rule" and order.reduce_only and order.intent in REDUCING_INTENTS:
         lane = "critical"
     trigger_by = None if order.trigger_by is None else _TRIGGERS[order.trigger_by]
     direction = order.trigger_direction
@@ -561,6 +572,15 @@ def _protective(row: OrderRow) -> bool:
     still refuse. The row keeps no route, so a reduce-only `flatten` `placeOrder` recorded passes
     too: reduce-only, it can never open or add to a position."""
     return row.reduce_only and row.intent == "flatten"
+
+
+def _amend_lane(row: OrderRow, watch: ExitWatch | None) -> OrderLane:
+    """An amend's lane: its registration's when that names one (a rule's amend, `entry`, 24
+    Sec.8.4 "Rule-originated orders" item 3), else the order's own: `critical` for a reduce-only
+    order whose intent reduces (SR-E29-01), any other `entry`."""
+    if watch is not None and watch.lane is not None:
+        return watch.lane
+    return "critical" if row.reduce_only and row.intent in REDUCING_INTENTS else "entry"
 
 
 def _check_stops(order: StoredOrder) -> None:
@@ -687,13 +707,16 @@ class ExitWatch:
     raised (Q11) or the registration was dropped or forgotten; the venue's 110001 answers
     why the order parks (`_parked`), as S4-C reads it apart from a fault. B1's call spends it once
     the facade took its command (`OmsCommandPort.take_exit`); a KILL's spends none.
-    `request_id` and `actor` name the request the exit is for (#3990)."""
+    `request_id` and `actor` name the request the exit is for (#3990). `lane` is the lane its
+    exit service registered for B1's call (24 Sec.8.4 "Rule-originated orders" item 3): a
+    cancel's by its reason, an amend's `entry` for a rule's, None for the order's own lane."""
 
     order_id: UUID
     kind: ExitKind
     _future: asyncio.Future[Mapping[str, Any] | None] = field(repr=False)
     request_id: UUID | None = None
     actor: SubmitActor | None = None
+    lane: OrderLane | None = None
 
     @property
     def answered(self) -> bool:
@@ -1252,13 +1275,15 @@ class OmsCommandPort:
         *,
         request_id: UUID | None = None,
         actor: SubmitActor | None = None,
+        lane: OrderLane | None = None,
     ) -> ExitWatch:
         """Register the exit an exit service is about to command (`CANCEL`, `AMEND`), answered as
-        B1 was. Each is its request's own (#4643): a second of the order and kind never replaces
-        the first. B1's call spends it only once the facade took its command (`take_exit`,
-        `_spend`); past `max_watches` the oldest is dropped, answered None (C-2.18)."""
+        B1 was, in `lane` when it names one. Each is its request's own (#4643): a second of the
+        order and kind never replaces the first. B1's call spends it only once the facade took its
+        command (`take_exit`, `_spend`); past `max_watches` the oldest is dropped, answered None
+        (C-2.18)."""
         future = asyncio.get_running_loop().create_future()
-        watch = ExitWatch(order_id, kind, future, request_id, actor)
+        watch = ExitWatch(order_id, kind, future, request_id, actor, lane)
         self._exits[watch] = False
         while len(self._exits) > self._max_watches:
             dropped, _ = self._exits.popitem(last=False)
@@ -1305,8 +1330,11 @@ class OmsCommandPort:
         kill = command.kind == "kill_cancel"
         order_id = _uuid(command.order.get("order_id"))  # parsed before any registration is popped
         watch = None if kill else self._spend(order_id, "cancel")
+        # The registration's lane, its reason's; a KILL's, or a call that finds none (a rebuilt
+        # machine's, resumed after a restart), `critical`: the protective direction (C-12.7).
+        lane: OrderLane = "critical" if watch is None or watch.lane is None else watch.lane
         try:
-            answer = await self._cancel(command, kill=kill)
+            answer = await self._cancel(command, kill=kill, lane=lane)
         except BaseException as exc:
             if watch is not None:
                 watch.resolve(_parked(exc))
@@ -1315,7 +1343,7 @@ class OmsCommandPort:
             watch.resolve(answer)
         return answer
 
-    async def _cancel(self, command: b01.Command, *, kill: bool) -> dict[str, Any]:
+    async def _cancel(self, command: b01.Command, *, kill: bool, lane: OrderLane) -> dict[str, Any]:
         bound = self._kill_cancel_timeout_s if kill else self._cancel_timeout_s
         by = self._deadline(bound)  # all of the cancel, inside B1's own bound on it
         try:  # the reads before the send: one that fails sends nothing, so the order stays live
@@ -1345,6 +1373,7 @@ class OmsCommandPort:
             symbol=row.symbol,
             order_link_id=link,
             exchange_order_id=row.exchange_order_id,
+            lane=lane,
         )
         try:
             call = port.cancel_order(request)  # a KILL's never waits on a cancel-all fold
@@ -1465,7 +1494,7 @@ class OmsCommandPort:
             trigger_price=requested.get("trigger_price"),
             take_profit=take_profit,
             stop_loss=stop,
-            lane="critical" if row.reduce_only and row.intent in REDUCING_INTENTS else "entry",
+            lane=_amend_lane(row, watch),
         )
         _check_amend_stops(request)
         recorded: tuple[RecordedStopRow, ...] = ()

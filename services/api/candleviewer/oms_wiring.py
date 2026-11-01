@@ -140,6 +140,7 @@ from candleviewer.oms.ports import (
     OrderFigures,
     Profiles,
     RequestRecord,
+    RuleOrigin,
     RuntimePortName,
     SubmissionPorts,
     SubmitActor,
@@ -836,10 +837,18 @@ class AuditWriterPort(Protocol):
     async def emit_keyed(self, action: str, name: str, **fields: Any) -> None: ...
 
 
-def _actor(actor: SubmitActor | None, user_id: UUID | None) -> dict[str, Any]:
-    """The columns that say who acted: the user and role of `actor`, else the OMS itself. A record
-    that names a user but no actor has no role to record (C-2.9), so it is refused, never
-    labelled without one: a site that drops the actor fails its write."""
+def _actor(
+    actor: SubmitActor | None, user_id: UUID | None, origin: RuleOrigin | None = None
+) -> dict[str, Any]:
+    """The columns that say who acted: a rule's request's rule (`origin`, `rule:<rule_id>@v<n>`,
+    with no user, session or address: 24 Sec.15.5, the E35 threat model's RE-S1), else the user
+    and role of `actor`, else the OMS itself. A record that names a user but no actor has no role
+    to record (C-2.9), so it is refused, never labelled without one: a site that drops the actor
+    fails its write; so is a rule's record that names no owner."""
+    if origin is not None:
+        if actor is None:
+            raise ValueError("a rule's record names the owner it acts for")
+        return {"actor_label": origin.actor_label, "actor_user_id": None}
     if actor is not None:
         return {
             "actor_label": f"user:{actor.role}",
@@ -852,14 +861,32 @@ def _actor(actor: SubmitActor | None, user_id: UUID | None) -> dict[str, Any]:
     return {"actor_label": SYSTEM_ACTOR, "actor_user_id": None}
 
 
+def _rule_state(actor: SubmitActor | None, origin: RuleOrigin | None) -> dict[str, Any]:
+    """What a rule's request's record adds to `after_state` (24 Sec.15.5, RE-S1): the decision's
+    source, the rule's id and version, its run and node, and both users' ids and roles, the owner
+    the `SubmitActor` it acts for; ids and names only (C-12.6). Nothing for any other record."""
+    if origin is None or actor is None:
+        return {}
+    armer = origin.armed_by
+    return {
+        "decision_source": "rule", "actor_type": "rule", "rule_id": str(origin.rule_id),
+        "rule_version": str(origin.version), "run_id": str(origin.run_id),
+        "node_id": origin.node_id, "owner_user_id": str(actor.user_id), "owner_role": actor.role,
+        "armed_by_user_id": None if armer is None else str(armer),
+        "armed_by_role": origin.armed_by_role,
+    }  # fmt: skip
+
+
 class OmsAudit:
     """The OMS's `SubmitAudit` and `OrderAudit` over the audit writer: a `KeyedRecord` through
     `emit_keyed`, under the id `record_id` names ahead (`keyed_record_id`), a `RequestRecord` and
     an `OrderAuditRecord` through `emit`. A record names its actor and role (`user:<role>`, with
-    its session and address), or `system:oms` where none is given, its object, its account and
-    detail as `after_state` (ids, state names, codes and, on `trade_group.submit`, the sizing
-    explanation with its figures (SR-E28-13), never a credential, C-12.6), its correlation id and
-    the process's environment. `write` returns once the record is durable, else raises (C-2.9)."""
+    its session and address), or `system:oms` where none is given, or a rule's request's rule
+    (`rule:<rule_id>@v<n>`, its fields and both users in `after_state`, 24 Sec.15.5), its object,
+    its account and detail as `after_state` (ids, state names, codes and, on
+    `trade_group.submit`, the sizing explanation with its figures (SR-E28-13), never a
+    credential, C-12.6), its correlation id and the process's environment. `write` returns once
+    the record is durable, else raises (C-2.9)."""
 
     def __init__(self, writer: AuditWriterPort, *, environment: Environment) -> None:
         self._writer, self._environment = writer, environment
@@ -881,11 +908,12 @@ class OmsAudit:
             await self._writer.emit(record.action, object_id=str(record.order_id), **fields)
             return
         fields |= {"object_kind": record.object_kind, "object_id": str(record.object_id)}
+        fields["after_state"] |= _rule_state(record.actor, record.origin)
         if isinstance(record, KeyedRecord):
-            fields |= _actor(record.actor, record.actor_user_id)
+            fields |= _actor(record.actor, record.actor_user_id, record.origin)
             await self._writer.emit_keyed(record.action, record.name, **fields)
         else:
-            fields |= _actor(record.actor, record.actor.user_id)
+            fields |= _actor(record.actor, record.actor.user_id, record.origin)
             await self._writer.emit(record.action, **fields)
 
 
@@ -2028,10 +2056,16 @@ class OnLaneExits:
         return await _on_lane(self.parts, record, None)
 
     async def cancel_admitted(
-        self, row: OrderRow, *, actor: SubmitActor, reason: CancelReason, request_id: UUID | None
+        self,
+        row: OrderRow,
+        *,
+        actor: SubmitActor,
+        reason: CancelReason,
+        request_id: UUID | None,
+        origin: RuleOrigin | None = None,
     ) -> ExitOutcome:
         cancel = self.parts.exits.cancel_admitted(
-            row, actor=actor, reason=reason, request_id=request_id
+            row, actor=actor, reason=reason, request_id=request_id, origin=origin
         )
         return await _on_lane(self.parts, cancel, None)
 
