@@ -151,6 +151,31 @@
   opacity: var(--opacity-disabled);
 }
 
+/*
+ * The validity look (form validity, never T2; E09-D09 §9.1, E16-D04 §1.3): a Tab stop whose own fill and label sit at
+ * the disabled opacity, with no lock. The fill dims on a plate and the label in its own box, never the whole control,
+ * so the focus ring keeps its contrast; the host's reason sits beside it at full opacity.
+ */
+.cv-button[data-unavailable],
+.cv-button[data-unavailable][data-variant] {
+  background: transparent;
+  cursor: not-allowed;
+}
+
+.cv-button[data-unavailable]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--cv-button-bg);
+  opacity: var(--opacity-disabled);
+}
+
+.cv-button[data-unavailable] > :is(.cv-button__label, .cv-button__icon) {
+  opacity: var(--opacity-disabled);
+}
+
 .cv-button__glyph {
   display: inline-flex;
   width: var(--size-icon);
@@ -211,6 +236,22 @@
 
   .cv-button[data-gated]::before {
     content: none;
+  }
+
+  /* The validity look greys its words as plain disabled does; it stays a Tab stop, so its border stays. */
+  .cv-button[data-unavailable],
+  .cv-button[data-unavailable][data-variant] {
+    border-color: GrayText;
+    background: ButtonFace;
+    color: GrayText;
+  }
+
+  .cv-button[data-unavailable]::before {
+    content: none;
+  }
+
+  .cv-button[data-unavailable] > :is(.cv-button__label, .cv-button__icon) {
+    opacity: 1;
   }
 
   .cv-button__glyph {
