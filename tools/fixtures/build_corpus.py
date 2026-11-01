@@ -10,7 +10,8 @@ are the first such captures (#3447), listed here, never rewritten. The
 (#2877 ruling R2), listed here and never rewritten either: the builder emits only
 their manifest entries. The `rest/risk_limit_*.json` files (S-RL, #913) are replies recorded
 by `capture_fixture.py --rest-path`, listed here and never rewritten either. So is
-`rest/docs-open-interest.json` (E24-T01, #665), the open-interest page's Response Example.
+`rest/docs-open-interest.json` (E24-T01, #665), the open-interest page's Response Example,
+and `ws/docs-all-liquidation.jsonl` (E24-T03, #667), the all-liquidation page's Response Example.
 Re-running is byte-identical (seeded RNG, fixed epoch).
 Run: python tools/fixtures/build_corpus.py
 """
@@ -233,6 +234,34 @@ def oi_pages(symbol: str) -> list[dict[str, Any]]:
             for part, nxt in ((rows[:200], cursor), (rows[200:], ""))]  # fmt: skip
 
 
+#: E24-T03 (#667): `allLiquidation.{symbol}` pushes in the docs page's frame shape
+#: (`ws/docs-all-liquidation.jsonl`, transcribed), values generated: a cascade of 8 pushes 500 ms
+#: apart, push 2 holding two identical prints (only `batch_index` tells them apart), push 4 five
+#: prints inside one second, and push 2 replayed after a reconnect as the last frame.
+LIQ_T0 = T0 + 600_000
+LIQ_NOTE = ("frame shape transcribed from the docs page (ws/docs-all-liquidation.jsonl); "
+            "values generated (seeded)")  # fmt: skip
+
+
+def liquidation_burst(symbol: str) -> list[str]:
+    rng = random.Random(6670)  # noqa: S311 - deterministic fixture, not crypto
+    px, pushes = Decimal("63000.0"), []
+    for k in range(8):
+        ts, n = LIQ_T0 + k * 500, (1, 3, 2, 5, 1, 2, 4, 1)[k]
+        rows = []
+        for j in range(n):
+            px += Decimal(rng.randint(-20, 20)) / 10
+            qty = Decimal(rng.randint(1, 900)) / 1000
+            rows.append({"T": ts - 400 + j * 90, "s": symbol, "S": rng.choice(("Buy", "Sell")),
+                         "v": f"{qty:.3f}", "p": f"{px:.1f}"})  # fmt: skip
+        if k == 1:
+            rows[1] = dict(rows[0])  # two prints alike in one push: kept apart by batch_index
+        pushes.append({"topic": f"allLiquidation.{symbol}", "type": "snapshot", "ts": ts,
+                       "data": rows})  # fmt: skip
+    pushes.append(pushes[1] | {"ts": LIQ_T0 + 9_000})  # replayed after the reconnect
+    return [_dump(p) for p in pushes]
+
+
 _SRC = "documented-shape (exception #1778 A)"
 _RECORDED = {"capture_date": "2026-10-19",
              "source": "capture_fixture.py, fixture-drift run 39210373369 (redacted)"}  # fmt: skip
@@ -384,6 +413,18 @@ def build() -> list[dict[str, Any]]:
                     host="bybit-exchange.github.io", cap=4_000)
              | _TRANSCRIBED | {"capture_date": "2026-10-31", "retrieved": "2026-10-31"}
              | oi_docs)  # fmt: skip
+    liq_page = "websocket/public/all-liquidation"
+    liq_docs = {"source_url": _DOCS_URL + liq_page,
+                "source_ref": f"{_DOCS_REF}:docs/v5/{liq_page}.mdx"}  # fmt: skip
+    _write_lines("ws/allLiquidation_BTCUSDT_burst.jsonl", liquidation_burst("BTCUSDT"))
+    m.append(_entry("ws/allLiquidation_BTCUSDT_burst.jsonl", "BTCUSDT", "allLiquidation.BTCUSDT",
+                    "cascade: 8 pushes @500 ms, twin prints in push 2, push 2 replayed last",
+                    cap=8_000) | liq_docs | {"note": LIQ_NOTE, "source": _SRC, "retrieved": "2026-10-31"})  # fmt: skip
+    m.append(_entry("ws/docs-all-liquidation.jsonl", "ROSEUSDT", "allLiquidation.ROSEUSDT",
+                    "docs Response Example: one Sell print (a short was liquidated)",
+                    host="bybit-exchange.github.io", cap=4_000)
+             | _TRANSCRIBED | {"capture_date": "2026-10-31", "retrieved": "2026-10-31"}
+             | liq_docs)  # fmt: skip
     for name, after in (("instruments_before", False), ("instruments_after", True)):
         _write_json(f"rest/{name}.json", instruments(after))
         m.append(_entry(f"rest/{name}.json", "*", "GET /v5/market/instruments-info",

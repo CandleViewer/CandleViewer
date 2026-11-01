@@ -20,6 +20,7 @@ from candleviewer.api.funding import make_funding_router
 from candleviewer.api.health import make_health_router
 from candleviewer.api.health_report import make_health_report_router
 from candleviewer.api.instruments import make_instruments_router
+from candleviewer.api.liquidations import make_liquidations_router
 from candleviewer.api.log_level import make_log_level_router
 from candleviewer.api.market import make_market_router
 from candleviewer.api.open_interest import make_open_interest_router
@@ -36,6 +37,7 @@ __all__ = [
     "make_health_report_router",
     "make_health_router",
     "make_instruments_router",
+    "make_liquidations_router",
     "make_log_level_router",
     "make_market_router",
     "make_open_interest_router",

@@ -91,6 +91,7 @@ from candleviewer.api import (
     make_health_report_router,
     make_health_router,
     make_instruments_router,
+    make_liquidations_router,
     make_log_level_router,
     make_market_router,
     make_open_interest_router,
@@ -269,7 +270,7 @@ from candleviewer.bus.models import Topic
 from candleviewer.bus.service import BusService
 from candleviewer.domain.events import InstrumentUpdatedEvent
 from candleviewer.exchange.base.instruments import InstrumentsFetcher, RiskLimitsFetcher
-from candleviewer.exchange.base.models import TickerEvent, TradeEvent
+from candleviewer.exchange.base.models import LiquidationEvent, TickerEvent, TradeEvent
 from candleviewer.exchange.base.service import ExchangeBaseService
 from candleviewer.exchange.base.universe import UniverseTickerSource
 
@@ -302,6 +303,7 @@ from candleviewer.ingestion.instruments_refresh import InstrumentsRefreshSchedul
 from candleviewer.ingestion.kline_backfill import KlineBackfillService, KlineFetcher
 from candleviewer.ingestion.kline_coverage import Range
 from candleviewer.ingestion.kline_read import KlineReadService, RecordingStart
+from candleviewer.ingestion.liquidation_stream import LiquidationStream
 from candleviewer.ingestion.metrics import export_ingestion_metrics, ingest_enabled
 from candleviewer.ingestion.planner import SubscriptionPlanner
 from candleviewer.ingestion.reconnect import ReconnectPolicy
@@ -315,6 +317,7 @@ from candleviewer.journal.service import JournalService
 from candleviewer.key_import_wiring import wire_key_import
 from candleviewer.key_selfcheck_wiring import wire_key_selfcheck
 from candleviewer.key_test_wiring import wire_key_test
+from candleviewer.liquidations_wiring import wire_liquidations
 from candleviewer.machine_state_wiring import RegistryFeed
 from candleviewer.net import (
     BindingSelfCheck,
@@ -365,6 +368,7 @@ from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHistory
 from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
 from candleviewer.orderflow.limits import min_size_floor, notional_size
+from candleviewer.orderflow.liquidations import LiquidationMeter, LiquidationStore
 from candleviewer.orderflow.liquidity_metrics import export_liquidity_metrics
 from candleviewer.orderflow.open_interest import OiStore
 from candleviewer.orderflow.service import OrderflowService
@@ -430,6 +434,7 @@ from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.observability import LoggingSystemEventSink
 from candleviewer.storage.cold.scrub import ScrubTask
 from candleviewer.storage.cold.watermarks import FileWatermarkStore
+from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.questdb.heatmap_store import QuestDbHeatmapStore
 from candleviewer.storage.questdb.wiring import LazyPgWire, QuestDbRowSink
@@ -565,6 +570,7 @@ from candleviewer.ws_wiring import (
     default_snapshot_router,
     heatmap_topic,
     ingestion_streams,
+    liquidations_topic,
     liquidity_engine,
     loop_call_later,
     oms_topics,
@@ -1853,6 +1859,9 @@ def create_app(
         floor=functools.partial(_catalogue_min_size_floor, ctx),
     )
     snapshot_adapters["trades"] = ws_trades
+    # E24-T03 (#667): the order-flow module's `liquidations` topics over the liquidation stream.
+    ws_liquidations = liquidations_topic(ctx, ws_sequencing)
+    snapshot_adapters["liquidations"] = ws_liquidations
     # E21-T01 (#604): the book module's `book` topics, snapped from the window each holds over the
     # live book and published in the publisher's own window per depth; the runtime's, as above.
     ws_book = book_topic(ctx, ws_sequencing)
@@ -1921,7 +1930,15 @@ def create_app(
         ws_upstream,
         resolved,
         machines=machine_states,
-        feeds=(ws_ticker, ws_revisions, ws_trades, ws_book, ws_heatmap, ws_liquidity),
+        feeds=(
+            ws_ticker,
+            ws_revisions,
+            ws_trades,
+            ws_liquidations,
+            ws_book,
+            ws_heatmap,
+            ws_liquidity,
+        ),
     )
     # E17-T03 (#412): every connection's outbound budget, from the `CV_WS_*` budget settings
     # (the one outbound path since #2409 removed its flag).
@@ -3287,6 +3304,13 @@ def create_app(
             lambda: ctx.orderflow.open_interest, principal_resolver=audit_resolver
         )
     )
+    # E24-T03 (#667): recorded liquidations, local table only; same resolver/fail-closed rules.
+    _compose_liquidations(ctx, resolved)
+    app.include_router(
+        make_liquidations_router(
+            lambda: ctx.orderflow.liquidations, principal_resolver=audit_resolver
+        )
+    )
     # E08-S04: in-memory hot tape (newest-first); same resolver/fail-closed rules.
     app.include_router(
         make_trades_router(
@@ -3902,6 +3926,25 @@ def _compose_open_interest(
     )
 
 
+def _compose_liquidations(ctx: AppContext, settings: Settings) -> None:
+    """E24-T03 (#667): fake backend -> in-memory store; real -> the QuestDB store over the hot
+    tier's own writer and reader, built on first use (the open-interest pattern)."""
+    from candleviewer.storage.questdb.liquidation_store import (
+        InMemoryLiquidationStore,
+        QuestDbLiquidationStore,
+    )
+    from candleviewer.storage.questdb.repository import QuestDbMarketDataRepository
+
+    def _real(repo: object) -> LiquidationStore | None:
+        if not isinstance(repo, QuestDbMarketDataRepository):
+            return None
+        return QuestDbLiquidationStore(*repo.derivatives_io)
+
+    fake = settings.storage_backend == "fake"
+    store = InMemoryLiquidationStore() if fake else None
+    wire_liquidations(ctx, store=store, store_factory=None if fake else _real)
+
+
 def _compose_instrument_catalogue(
     ctx: AppContext, settings: Settings, public_rest: PublicRest | None = None
 ) -> PublicRest | None:
@@ -4230,6 +4273,31 @@ def wire_public_ws(
             clock=clock,
             event_window=window,
             writer=_TickerWriter(),
+        )
+    )
+
+    class _LiquidationWriter:
+        """E24-T03: the stream's write-behind into the order-flow liquidation store."""
+
+        async def write_liquidations(self, events: Sequence[LiquidationEvent]) -> None:
+            service = ctx.orderflow.liquidations
+            if service is None:
+                raise StorageTierUnavailable("liquidation store not composed")
+            await service.write(events)
+
+    ctx.ingestion.attach_liquidations(
+        LiquidationStream(
+            bus=ctx.bus.bus,
+            env=env,
+            set_desired=lambda topics: _set_desired("liquidation", topics),
+            parse_frame=adapter.parse_liquidation_frame,
+            topic_for=adapter.liquidation_topic,
+            is_listed=_is_listed,
+            recorded=ctx.recorder.recorded_symbols,  # every recorded symbol is subscribed
+            writer=_LiquidationWriter(),
+            observer=LiquidationMeter(),
+            clock=clock,
+            event_window=window,  # a future-stamped print cannot wedge clustering (#667)
         )
     )
     # #1916/#1905: per-topic dispatch lanes behind the pump; the pump touches

@@ -23,7 +23,12 @@ PUBLIC_WS_URLS: dict[str, str] = {
     "testnet": "wss://stream-testnet.bybit.com/v5/public/linear",
 }
 
-_TOPIC_KIND: dict[str, str] = {"orderbook": "book", "publicTrade": "trade", "tickers": "ticker"}
+_TOPIC_KIND: dict[str, str] = {
+    "orderbook": "book",
+    "publicTrade": "trade",
+    "tickers": "ticker",
+    "allLiquidation": "liquidation",  # E24-T03: no staleness limit, a quiet market is silent
+}
 
 
 def topic_kind(topic: str) -> str:
@@ -67,7 +72,7 @@ def frame_route(frame: str) -> tuple[str, str, str] | None:
         return None
     topic = m.group(1)
     kind = topic_kind(topic)
-    if kind not in ("book", "trade", "ticker"):
+    if kind not in ("book", "trade", "ticker", "liquidation"):
         return None
     return topic, kind, topic.rsplit(".", 1)[-1]
 

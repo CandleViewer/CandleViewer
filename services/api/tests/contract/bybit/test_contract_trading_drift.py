@@ -370,7 +370,13 @@ def test_every_transcription_names_its_route() -> None:
     """A REST transcription names its route; a WS one its private topic or reply (G-8b)."""
     transcribed = [(p, e) for p, e in _entries(CORPUS_ROOT) if e.get("source") == TRANSCRIBED]
     rest = [str(e["stream"]) for p, e in transcribed if p.parent.name == "rest"]
-    ws = [str(e["stream"]) for p, e in transcribed if p.parent.name == "ws"]
+    # A public market topic (`allLiquidation.*`, #667) is no private route to name: the check
+    # is the private-trading one, so it covers the `ws/private-*` transcriptions only.
+    ws = [
+        str(e["stream"])
+        for p, e in transcribed
+        if p.parent.name == "ws" and p.name.startswith("private-")
+    ]
     assert rest and all(route(label) is not None for label in rest)
     assert ws and all(ws_label(label) is not None for label in ws)
 
