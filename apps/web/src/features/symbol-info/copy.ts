@@ -171,6 +171,8 @@ export const clockAlarmAt = (at: string, about: string): string =>
   `at ${at} UTC (in about ${about})`;
 export const clockSkew = (ms: number): string =>
   `Clock skew ${String(ms)} ms — the countdown may be off`;
+export const fundingSpokenName = (about: string, at: string): string =>
+  `Next funding in ${about}, at ${at} UTC`;
 /** PROPOSED (the deck gives the plural; the singular "1 minute" is this layer's; owner: E08-D13). */
 export const fundingSpoken = (symbol: string, minutes: number): string =>
   `${symbol} funding settles in ${String(minutes)} ${minutes === 1 ? "minute" : "minutes"}.`;

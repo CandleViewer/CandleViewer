@@ -29,7 +29,8 @@ export type ContractPhase =
 
 /** The words of a failure's cause (D-12): by status only, never `Problem.detail`. */
 export function causeText(failure: DetailFailure): string {
-  if (failure.cause === "network") return copy.CAUSE_NETWORK;
+  // A body that is not the symbol's detail is read as unreachable: no "answered 200", no new copy.
+  if (failure.cause === "network" || failure.cause === "malformed") return copy.CAUSE_NETWORK;
   if (failure.cause === "unavailable") return copy.CAUSE_UNAVAILABLE;
   return copy.causeAnswered(failure.status);
 }
@@ -55,7 +56,9 @@ export function contractPhase(
     case "forbidden":
       return { kind: "forbidden", text: copy.FORBIDDEN };
     case "failed": {
-      const instance = outcome.failure.cause === "network" ? null : outcome.failure.instance;
+      const failure = outcome.failure;
+      const instance =
+        failure.cause === "network" || failure.cause === "malformed" ? null : failure.instance;
       return {
         kind: "failed",
         heading: copy.loadFailed(symbol),
@@ -157,6 +160,8 @@ export interface LiveInput {
   readonly feedDown: boolean;
   readonly hasItem: boolean;
   readonly lastDataMs: number | null;
+  /** When the subscription was made (epoch ms), for "No live values yet" after 5 s with no item. */
+  readonly awaitingSinceMs: number | null;
   readonly nowMs: number;
   /** The server's `meta.stale`, with the instant it began (epoch ms) when sent. */
   readonly serverStale: { readonly sinceMs: number | null } | null;
@@ -193,14 +198,16 @@ export function liveState(input: LiveInput): LiveState {
       text: copy.disconnected(input.lastDataMs === null ? "—" : utcTime(input.lastDataMs)),
     };
   }
-  const age = input.lastDataMs === null ? null : Math.max(input.nowMs - input.lastDataMs, 0);
   if (!input.hasItem) {
-    // `sub_ok` with no `snap` yet: static rows, and "No live values yet" after 5 s.
+    // `sub_ok` with no `snap` yet: static rows, and "No live values yet" after 5 s of waiting.
+    const waited =
+      input.awaitingSinceMs === null ? null : Math.max(input.nowMs - input.awaitingSinceMs, 0);
     return {
       kind: "awaiting",
-      text: age !== null && age >= STALE_T1_MS ? copy.NO_LIVE_VALUES : null,
+      text: waited !== null && waited >= STALE_T1_MS ? copy.NO_LIVE_VALUES : null,
     };
   }
+  const age = input.lastDataMs === null ? null : Math.max(input.nowMs - input.lastDataMs, 0);
   const last = input.lastDataMs === null ? null : copy.lastUpdate(utcSeconds(input.lastDataMs));
   if (input.feedDown) {
     return {
@@ -235,7 +242,8 @@ export function liveState(input: LiveInput): LiveState {
   if (input.itemStale || (age !== null && age >= STALE_T1_MS)) {
     return {
       kind: "stale_t1",
-      marker: copy.staleT1(`${String(seconds ?? Math.floor(STALE_T1_MS / 1000))}s`),
+      // An item flagged stale with no time of its own has no age to show: never a made-up "Stale 5s".
+      marker: seconds === null ? copy.LIVE_STALE : copy.staleT1(`${String(seconds)}s`),
       lastUpdate: last,
       announce: copy.LIVE_STALE,
     };
