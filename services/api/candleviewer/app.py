@@ -164,6 +164,7 @@ from candleviewer.api.order_cancel_all import make_cancel_all_router
 from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import SessionTradingPrincipalResolver
 from candleviewer.api.orders import OrderPrincipals, make_orders_router
+from candleviewer.api.password import make_password_router
 from candleviewer.api.position_close import make_position_close_router
 from candleviewer.api.position_leverage import make_position_leverage_router
 from candleviewer.api.position_reverse import make_position_reverse_router
@@ -839,10 +840,13 @@ def build_auth_service(
     if not real:
         return AuthService()
     relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "auth")
+    users = SqlAlchemyUserRepository(
+        relational, _record_factory(UserRecord), clock=clock or (lambda: datetime.now(UTC))
+    )
     return AuthService(
-        SqlAlchemyUserRepository(
-            relational, _record_factory(UserRecord), clock=clock or (lambda: datetime.now(UTC))
-        ),
+        users,
+        # #2110: the password change reads and writes the same rows (21 Sec.3.1.1a).
+        password_store=users,
         pepper=settings.auth_pepper.get_secret_value(),
         mfa_repository=SqlAlchemyMfaRepository(
             relational, _record_factory(MfaMethodRecord), _record_factory(MfaChallengeRecord)
@@ -1769,6 +1773,8 @@ def create_app(
             unlock_authority=lambda: ctx.auth.step_up if ctx.auth.step_up_is_active else None,
         )
     )
+    # #2110: `PUT /auth/password`, self only; rotates the caller's session like the enrolment.
+    app.include_router(make_password_router(ctx.auth, ctx.audit, csrf=csrf_codec))
     # #3085: the viewer reads and ends its own session's view-as context. The service is read per
     # request (built below; `None` on the fake backend, where both answer 503 after
     # authenticating), and the target's names come from the identity provider's narrow read.

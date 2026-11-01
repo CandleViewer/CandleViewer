@@ -159,13 +159,13 @@ info:
       "Cross-origin (CORS)"), every response that issues a new `__Host-cv_csrf` value (not an
       expiry) to a request whose `Origin` is listed also carries that value in an `X-CSRF-Token`
       response header (`components.headers.CsrfTokenIssued`), in the request header's
-      `<nonce>.<mac>` format. Today the six operations that issue the token in code declare it,
+      `<nonce>.<mac>` format. Today the seven operations that issue the token in code declare it,
       on their `200`: `POST /auth/login` (its enrolment-only answer, `status=authenticated`),
       `POST /auth/mfa/verify`, `POST /auth/mfa/recovery`, `POST /auth/mfa/enroll/confirm`,
-      `POST /auth/refresh` and `GET /auth/session`. `POST /auth/step-up`, which the issue list
-      above says rotates both cookies, issues none in code yet (its route does not rotate the
-      session yet, #2101; ADR-0038 F5): it declares the header in the change that makes it issue
-      one. `GET /auth/session` then always carries the current session's token: the re-issued
+      `POST /auth/refresh`, `PUT /auth/password` and `GET /auth/session`. `POST /auth/step-up`,
+      which the issue list above says rotates both cookies, issues none in code yet (its route
+      does not rotate the session yet, #2101; ADR-0038 F5): it declares the header in the change
+      that makes it issue one. `GET /auth/session` then always carries the current session's token: the re-issued
       value when it re-issues the cookie, else the verified cookie value. The header is declared
       but never `required`: with the flag off, or for a request whose `Origin` is absent or not
       listed, no response carries it. Every response that carries it is
@@ -616,6 +616,10 @@ x-error-codes:
     status: 403
     title: Session is enrolment-only; enrol and confirm a TOTP method first
     retryable: false
+  - code: current_password_invalid
+    status: 403
+    title: The current password given to change the password is wrong (counts toward the account lockout)
+    retryable: false
   - code: positions_unknown
     status: 409
     title: Open-position state is unavailable; resend with acknowledge_unknown_positions=true
@@ -784,6 +788,18 @@ x-error-codes:
   - code: idempotency_key_reused
     status: 422
     title: Idempotency-Key reused with a different body (the code the recorder job routes ship)
+    retryable: false
+  - code: password_breached
+    status: 422
+    title: The new password is on the local breached-password list or follows a simple pattern
+    retryable: false
+  - code: password_reused
+    status: 422
+    title: The new password equals the current one or one of the user's last 4 retired passwords
+    retryable: false
+  - code: password_policy
+    status: 422
+    title: The new password breaks a password-policy rule other than the breached list (errors name the rule)
     retryable: false
   # --- 429 / 5xx ---------------------------------------------------------
   - code: rate_limited
@@ -2125,9 +2141,67 @@ paths:
       tags: [auth]
       operationId: authChangePassword
       summary: Change the current user's password
-      description: Revokes all other sessions on success. Argon2id, minimum 12 characters, checked against a local breached-password list.
+      description: >
+        Changes the password of the caller's own user (`scope: self`, SR-026: no member, header
+        or query parameter names another user). Not step-up gated: the re-verified current
+        password is the proof SR-028 asks for (orchestrator ruling on #2110, BQ-220). The policy
+        is `04-security-program.md` §6.3.1, the one module invite redemption shares.
+
+        **Order of checks.** Each step is answered before the next runs. (1) The session:
+        `401 unauthenticated`, `session_revoked` or `session_idle_locked`. (2) CSRF:
+        `403 csrf_token_invalid` (a call bound to no session at all gets this first, as every
+        unsafe operation does). (3) The session's state: `403 mfa_enrollment_required`
+        (an enrolment-only session may not change its password), `403 view_as_read_only` and
+        `403 session_read_only`. (4) The body: a missing member, an empty `current_password`, a
+        member the schema does not declare or a value longer than 512 characters is
+        `422 validation_failed` with `errors[{field, rule}]` (`rule` one of `required`,
+        `min_length`, `max_length`, `additional_properties`), decided before any password is
+        checked and counting no failure. (5) Verification capacity: when the sign-in
+        verifications already in flight fill the server's bound, `429 rate_limited` with
+        `Retry-After`, before any password is checked. (6) The current password, on login's
+        Argon2id path and account lockout counters: a wrong one is `403 current_password_invalid`;
+        it counts toward the account lockout (5 failures in 15 minutes) and a locked account gets
+        the same answer. The session stays signed in, and it is not a step-up strike. No rule on
+        the new password runs before this check passes, so the answers below are no oracle for a
+        caller who does not know the current password. (7) The policy, its rules checked in
+        this order: the length, the list and the pattern, the identity. A new password on the
+        local breached-password list, or with fewer than 4 distinct characters, is
+        `422 password_breached`; one shorter than 14 code points, or one that contains the
+        username or the local part of the email address (3 characters or more,
+        case-insensitive), is `422 password_policy` with `errors[{field: new_password, rule}]`,
+        `rule` `min_length` or `contains_identity`. (8) The history: a new
+        password equal to the current one or to one of the user's last 4 retired passwords (the
+        last 5 in all) is `422 password_reused`. Refusal bodies carry no password material, no
+        breach source or count and nothing about which retired password matched.
+
+        **Success.** The audit records are written ahead (C-2.9, `503 audit_unavailable` when
+        the writer cannot take them within 2 seconds, nothing changed). One transaction then
+        swaps the password hash, compared against the hash the current password was verified
+        against, and records the retired hash in the user's history (4 kept); a concurrent
+        change that won first is `409 conflict` and nothing changes. Every session of the user is
+        then revoked as `password_change`, the caller's included (their sockets close), and a
+        replacement session is minted for the caller (SR-013). It keeps the old session's
+        absolute expiry and idle timeout, so the change never extends the session, and starts
+        with no step-up grant, no grace window, no step-up strikes, no read-only window and no
+        pending challenge. The `200` carries the replacement's access token in `tokens` (the
+        `TokenBundle` of `POST /auth/mfa/verify`; `refresh_token` is null) and sets rotated
+        `cv_refresh` and `__Host-cv_csrf` cookies bound to it (SR-041). The old access and
+        refresh tokens stop working at once. If the rotation fails after the commit, the new
+        password stands and the answer is `503` telling the client to sign in again with it.
+
+        **Audit.** `auth.password_change` is written ahead (`after_state.stage: intent`), with
+        one `auth.session_revoked` per live session of the user (reason `password_change`) and
+        the replacement's `auth.session_created` (`rotated_from`), and once more after the
+        rotation (`stage: outcome`). A refusal from step 6 on is one `auth.password_change`
+        row with outcome `failure` or `denied` and reason `current_password_invalid`,
+        `password_breached`, `password_policy`, `password_reused`, `conflict` or `verify_busy`;
+        a wrong password that locks the account also writes `auth.account_locked`. No record
+        carries a password, a hash or a length.
+
+        **Idempotency.** `ignored`: the `200` carries a live access token, which is never stored.
+        A request re-sent after a success carries the revoked session's token and gets `401`.
       x-rbac: { permissions: [], scope: self }
-      x-idempotency: optional
+      x-idempotency: ignored
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
@@ -2135,11 +2209,201 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/ChangePasswordRequest" }
       responses:
-        "204": { description: "Password changed." }
+        "200":
+          description: Password changed; the session was rotated.
+          headers:
+            Set-Cookie:
+              {
+                description: "Rotated `cv_refresh` cookie and a rotated `__Host-cv_csrf` cookie bound to the replacement session (SR-041)",
+                schema: { type: string },
+              }
+            X-CSRF-Token: { $ref: "#/components/headers/CsrfTokenIssued" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangePasswordResponse" }
+              examples:
+                changed:
+                  value:
+                    status: password_changed
+                    tokens:
+                      access_token: "<opaque token — example placeholder>"
+                      token_type: Bearer
+                      expires_in: 720
+                      refresh_expires_in: 30600
+                      refresh_token: null
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
-        "422": { $ref: "#/components/responses/UnprocessableEntity" }
-        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+        "403":
+          description: >
+            `current_password_invalid` for a wrong current password (step 6), and the refusals
+            of steps 2 and 3: `csrf_token_invalid`, `mfa_enrollment_required`,
+            `view_as_read_only` and `session_read_only`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                currentPasswordInvalid:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/current_password_invalid",
+                      title: "The current password given to change the password is wrong (counts toward the account lockout)",
+                      status: 403,
+                      detail: "Your current password is incorrect.",
+                      instance: "urn:cv:req:0193f2bb-6101",
+                      code: current_password_invalid,
+                    }
+                csrfTokenInvalid:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/csrf_token_invalid",
+                      title: "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session (SR-041)",
+                      status: 403,
+                      detail: "X-CSRF-Token header is missing.",
+                      instance: "urn:cv:req:0193f2bb-6102",
+                      code: csrf_token_invalid,
+                    }
+                viewAsReadOnly:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/view_as_read_only",
+                      title: "Session is viewing as another user, read-only; end view-as to make changes",
+                      status: 403,
+                      detail: "End view-as to make changes.",
+                      instance: "urn:cv:req:0193f2bb-6103",
+                      code: view_as_read_only,
+                    }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: >
+            `validation_failed` (step 4), `password_breached`, `password_policy` (step 7) or
+            `password_reused` (step 8). `detail` is the §6.3.1 sentence of `04-security-program.md`
+            for the code; `errors` names the field and the rule, never the value.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                breached:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/password_breached",
+                      title: "The new password is on the local breached-password list or follows a simple pattern",
+                      status: 422,
+                      detail: "This password appears in a known breach list.",
+                      instance: "urn:cv:req:0193f2bb-6201",
+                      code: password_breached,
+                    }
+                reused:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/password_reused",
+                      title: "The new password equals the current one or one of the user's last 4 retired passwords",
+                      status: 422,
+                      detail: "You can't reuse any of your last 5 passwords.",
+                      instance: "urn:cv:req:0193f2bb-6202",
+                      code: password_reused,
+                    }
+                policy:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/password_policy",
+                      title: "The new password breaks a password-policy rule other than the breached list (errors name the rule)",
+                      status: 422,
+                      detail: "Your password can't contain your username or email.",
+                      instance: "urn:cv:req:0193f2bb-6203",
+                      code: password_policy,
+                      errors:
+                        [
+                          {
+                            field: new_password,
+                            rule: contains_identity,
+                            message: "Your password can't contain your username or email.",
+                          },
+                        ],
+                    }
+                tooShort:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/password_policy",
+                      title: "The new password breaks a password-policy rule other than the breached list (errors name the rule)",
+                      status: 422,
+                      detail: "Use at least 14 characters.",
+                      instance: "urn:cv:req:0193f2bb-6204",
+                      code: password_policy,
+                      errors:
+                        [
+                          {
+                            field: new_password,
+                            rule: min_length,
+                            message: "Use at least 14 characters.",
+                          },
+                        ],
+                    }
+                invalid:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/validation_failed",
+                      title: "Request body or parameters failed schema validation",
+                      status: 422,
+                      detail: "The request body does not match its schema.",
+                      instance: "urn:cv:req:0193f2bb-6205",
+                      code: validation_failed,
+                      errors:
+                        [
+                          {
+                            field: current_password,
+                            rule: required,
+                            message: "current_password is required",
+                          },
+                        ],
+                    }
+        "429":
+          description: Verification capacity is full (step 5); retry after `Retry-After` seconds. No password was checked.
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                busy:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/rate_limited",
+                      title: "Per-user API rate limit exceeded",
+                      status: 429,
+                      detail: "Too many sign-in attempts are being checked; retry shortly.",
+                      instance: "urn:cv:req:0193f2bb-6301",
+                      code: rate_limited,
+                      retry_after_seconds: 1,
+                    }
+        "503":
+          description: >
+            `audit_unavailable` when the records written ahead cannot be written (nothing
+            changed); `store_unavailable` when the backend is not wired, or when the rotation
+            failed after the new password was committed (the new password stands: sign in again
+            with it).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                auditUnavailable:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/audit_unavailable",
+                      title: "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)",
+                      status: 503,
+                      detail: "audit unavailable",
+                      instance: "urn:cv:req:0193f2bb-6401",
+                      code: audit_unavailable,
+                    }
+                unrotated:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/store_unavailable",
+                      title: "QuestDB / Postgres / Parquet tier unavailable",
+                      status: 503,
+                      detail: "password changed; sign in again",
+                      instance: "urn:cv:req:0193f2bb-6402",
+                      code: store_unavailable,
+                    }
 
   /auth/_perf/argon2-params:
     get:
@@ -13462,7 +13726,7 @@ paths:
               required: [password]
               additionalProperties: false
               properties:
-                password: { type: string, minLength: 12, maxLength: 512 }
+                password: { type: string, minLength: 14, maxLength: 512 }
       responses:
         "200":
           description: TOTP enrolment started.
@@ -13477,7 +13741,11 @@ paths:
                   secret_base32: { type: string }
         "403": { description: A role field was supplied; the invited role cannot be changed. }
         "404": { $ref: "#/components/responses/NotFound" }
-        "422": { description: Password violates the policy. }
+        "422":
+          description: >
+            Password violates the policy (`code: password_policy`): the SR-028 rules shared with
+            `authChangePassword`, the minimum of 14 code points (`24` `AuthConfig.password_min_length`)
+            included.
         "429": { description: Too many invalid attempts from this address. }
         "503": { $ref: "#/components/responses/AuthUnavailable" }
 
@@ -18488,9 +18756,24 @@ components:
       type: object
       additionalProperties: false
       required: [current_password, new_password]
+      description: >
+        No member names a user (SR-026). `new_password`'s policy minimum, 14 code points
+        (`24-internal-schemas.md` `AuthConfig.password_min_length`), is checked after the current
+        password and answered `422 password_policy` (rule `min_length`), not by this schema, so
+        no length rule is decided before the current password is verified.
       properties:
-        current_password: { type: string, format: password }
-        new_password: { type: string, format: password, minLength: 12, maxLength: 512 }
+        current_password:
+          { type: string, format: password, minLength: 1, maxLength: 512, writeOnly: true }
+        new_password:
+          { type: string, format: password, minLength: 1, maxLength: 512, writeOnly: true }
+    ChangePasswordResponse:
+      type: object
+      additionalProperties: false
+      required: [status, tokens]
+      description: The `200` of `authChangePassword`; the replacement session's access token.
+      properties:
+        status: { const: password_changed }
+        tokens: { $ref: "#/components/schemas/TokenBundle" }
     UnlockRequest:
       type: object
       additionalProperties: false

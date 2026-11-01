@@ -2,13 +2,14 @@
 
 `components.headers.CsrfTokenIssued` is the `X-CSRF-Token` response header that gives the SR-041
 token to a page that cannot read the backend's cookie. The contract (C-6.1) declares it on the
-`200` of the six operations that issue the token in code: `POST /auth/login` (its enrolment-only
+`200` of the seven operations that issue the token in code: `POST /auth/login` (its enrolment-only
 answer), `POST /auth/mfa/verify`, `POST /auth/mfa/recovery`, `POST /auth/mfa/enroll/confirm`,
-`POST /auth/refresh` and `GET /auth/session`. `POST /auth/step-up`, which the contract says
-rotates both cookies, issues none in code yet; it gains the header in the change that makes it
-issue one (ADR-0038 F5). `POST /auth/logout` expires the cookie and carries none (ADR-0038 3b).
-A flag can withhold the header, and only a request whose `Origin` is listed can get it, so it is
-never `required`; it takes the request header's schema and is sensitive in logs (SR-006).
+`POST /auth/refresh`, `PUT /auth/password` (#5292) and `GET /auth/session`. `POST /auth/step-up`,
+which the contract says rotates both cookies, issues none in code yet; it gains the header in the
+change that makes it issue one (ADR-0038 F5). `POST /auth/logout` expires the cookie and carries
+none (ADR-0038 3b). A flag can withhold the header, and only a request whose `Origin` is listed
+can get it, so it is never `required`; it takes the request header's schema and is sensitive in
+logs (SR-006).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ _ISSUING = {
     ("post", "/auth/mfa/recovery", "200"),
     ("post", "/auth/mfa/enroll/confirm", "200"),
     ("post", "/auth/refresh", "200"),
+    ("put", "/auth/password", "200"),
     ("get", "/auth/session", "200"),
 }
 _AUDIENCE = "a request whose `Origin` is listed"
@@ -115,7 +117,7 @@ def test_csrf_token_header_prose_names_every_issuing_operation_and_the_step_up_g
     for method, path, _status in sorted(_ISSUING):
         assert f"`{method.upper()} {path}`" in prose
     assert "`POST /auth/step-up`" in prose
-    assert "Today the six operations" in prose  # the count the set above pins
+    assert "Today the seven operations" in prose  # the count the set above pins
     assert "(its enrolment-only answer" in prose  # which of login's two `200`s issues it
 
 

@@ -32,6 +32,10 @@ _SESSIONS_OWN = {
         "classifies the session as enrolment-only, then refuses or passes"
     ),
     ("api/idle_lock.py", "_idle_lock_refusal"): "the session's own idle lock",
+    ("api/password.py", "make_password_router.change_password"): (
+        "the session's own password change: the route authenticates the bearer itself before"
+        " reading the body, and re-verifies the current password (#2110, BQ-220)"
+    ),
     ("api/sessions.py", "make_session_router._authenticate"): (
         "the session's own row: its own operations act on it, and GET /auth/sessions asks the"
         " subject itself"

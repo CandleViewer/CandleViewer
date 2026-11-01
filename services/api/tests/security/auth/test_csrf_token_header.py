@@ -102,12 +102,21 @@ def _session(stack: Stack, sent: Sent) -> Any:
     return stack.client.get("/auth/session", headers=[*sent, ("Authorization", f"Bearer {access}")])
 
 
+def _change_password(stack: Stack, sent: Sent) -> Any:
+    """`PUT /auth/password` (#5292): the change rotates the session, so it issues a new token."""
+    name, _, seed = _user(stack)
+    auth = _bearer(stack, stack.sign_in(name, seed))
+    body = {"current_password": PW, "new_password": "brand-new-Secret-42!"}  # test-only literal
+    return stack.client.put("/auth/password", headers=[*sent, *auth.items()], json=body)
+
+
 _DRIVE: dict[Op, Callable[[Stack, Sent], Any]] = {
     ("post", "/auth/login", "200"): _login,
     ("post", "/auth/mfa/verify", "200"): _verify,
     ("post", "/auth/mfa/recovery", "200"): _recovery,
     ("post", "/auth/mfa/enroll/confirm", "200"): _confirm,
     ("post", "/auth/refresh", "200"): _refresh,
+    ("put", "/auth/password", "200"): _change_password,
     ("get", "/auth/session", "200"): _session,
 }
 

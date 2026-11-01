@@ -24,6 +24,9 @@ class FakeUserRepository(UserRepository):
     def __init__(self) -> None:
         self.users: dict[str, UserRecord] = {}
         self.rehash_calls: list[tuple[str, str, dict[str, int]]] = []
+        #: #2110: retired hashes per user, `(retired_at, hash)`; `fail_change` makes a change raise.
+        self.history: dict[str, list[tuple[datetime, str]]] = {}
+        self.fail_change: Exception | None = None
         #: Where `record_login_failure` puts its work for an id with no row; never read.
         self._discarded: dict[str, UserRecord] = {}
 
@@ -80,6 +83,35 @@ class FakeUserRepository(UserRepository):
         user = self.users.get(user_id)
         if user is not None:  # an unknown id changes no row, like the SQL UPDATE
             self.users[user_id] = user.model_copy(update={"mfa_required": True})
+
+    # -- #2110: the password change's store (`PasswordStore`, 21 Sec.3.1.1a) -----------------
+
+    async def recent_password_hashes(self, user_id: str, *, limit: int) -> tuple[str, ...]:
+        rows = sorted(self.history.get(user_id, []), reverse=True)
+        return tuple(h for _, h in rows[:limit])
+
+    async def change_password(
+        self,
+        user_id: str,
+        *,
+        expected_hash: str,
+        new_hash: str,
+        algo_params: dict[str, int],
+        keep: int,
+        now: datetime,
+    ) -> bool:
+        """The compare-and-swap, the retirement and the prune in one synchronous step."""
+        if self.fail_change is not None:
+            raise self.fail_change
+        user = self.users.get(user_id)
+        if user is None or user.password_hash != expected_hash:
+            return False
+        self.users[user_id] = user.model_copy(
+            update={"password_hash": new_hash, "password_algo_params": algo_params}
+        )
+        rows = sorted([*self.history.get(user_id, []), (now, expected_hash)], reverse=True)
+        self.history[user_id] = rows[:keep]
+        return True
 
 
 def make_user(

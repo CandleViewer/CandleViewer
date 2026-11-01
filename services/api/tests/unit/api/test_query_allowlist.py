@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from candleviewer.api import alerts, me, onboarding, sessions, users
+from candleviewer.api import alerts, me, onboarding, password, sessions, users
 from candleviewer.api.contract_conformance import load_openapi_spec
 
 
@@ -36,6 +36,7 @@ def _declared_query(spec: dict[str, Any], path: str, method: str) -> frozenset[s
         ("post", "/auth/logout", sessions.LOGOUT_QUERY),
         ("post", "/auth/unlock", sessions.UNLOCK_QUERY),
         ("post", "/auth/lock", sessions.LOCK_QUERY),
+        ("put", "/auth/password", password.CHANGE_PASSWORD_QUERY),
         ("delete", "/me/sessions/{sessionId}", sessions.REVOKE_MY_SESSION_QUERY),
         ("get", "/alerts", alerts.LIST_ALERTS_QUERY),
         ("get", "/alerts/{alertId}", alerts.GET_ALERT_QUERY),

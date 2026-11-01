@@ -534,6 +534,27 @@ ALTER TABLE users
   ADD CONSTRAINT users_purge_shape CHECK (anonymised_at IS NULL OR purge_after IS NOT NULL);
 ```
 
+#### 3.1.1a `password_history` (#2110, #2330, migration `0061_password_history`)
+
+The Argon2id hashes a password change retired, for SR-028's reuse rule (`04-security-program.md` §6.3.1): `PUT /auth/password` refuses the current password and the user's last 4 retired ones, the last 5 in all (`422 password_reused`). The change runs as one unit of work: a compare-and-swap `UPDATE users SET password_hash = :new, password_algo_params = :params, password_changed_at = :now WHERE id = :id AND password_hash = :expected` (no row: a concurrent change won, `409 conflict`, nothing written), the insert of the retired hash, and the prune of all but the 4 newest rows of the user. Nothing else writes the table; a transparent rehash on login (§3.1.1 `password_algo_params`) retires no password. Class S (§12): never selected outside the auth store, never returned, never logged.
+
+| Column          | Type        | Null | Default | Constraints / notes                                       |
+| --------------- | ----------- | ---- | ------- | --------------------------------------------------------- |
+| `user_id`       | uuid        | no   | —       | PK part; FK → users(id) ON DELETE CASCADE                 |
+| `password_hash` | text        | no   | —       | Argon2id encoded string of a retired password, **SECRET** |
+| `retired_at`    | timestamptz | no   | `now()` | PK part; when the change retired it                       |
+
+```sql
+CREATE TABLE password_history (
+  user_id        uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  password_hash  text NOT NULL,
+  retired_at     timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, retired_at),
+  CONSTRAINT ph_pwd_argon CHECK (password_hash LIKE '$argon2id$%')
+);
+COMMENT ON COLUMN password_history.password_hash IS 'SECRET: Argon2id digest of a retired password; never logged, never returned by API';
+```
+
 #### 3.1.2 `roles`, `permissions`, `role_permissions`, `user_roles`
 
 ```sql
@@ -5112,6 +5133,7 @@ NAMING_CONVENTION = {
 | `0056_sessions_lock_state`      | `sessions.locked_at` and `sessions.unlocked_at`, two nullable columns with no default (§3.1.4): a session's lock by request and its last unlock — **E09-S03-F1 #4743**; the downgrade refuses while a live session is locked by request                                                                                                 |
 | `0057_se_component_statechart`  | `statechart` added to `se_component` (§3.10.2): the inspector's failed-seal row — **E42-T07 #1025**; on `0056_sessions_lock_state` (#4743); the downgrade refuses while a `statechart` row exists                                                                                                                                       |
 | `0058_oms_handovers`            | `oms_handovers` (§3.3.12): what a lookup or the private stream hands to the next reconciliation pass, at most 1,000 entries per account, its guard `trg_oh_guard` and the `PII:` comments of `record` and `payload` — **E29-T06 #914**; the downgrade refuses while any entry exists; on `0057_se_component_statechart` (#1025)         |
+| `0061_password_history`         | `password_history` (§3.1.1a): the retired Argon2id hashes behind SR-028's reuse rule, 4 kept per user, `ph_pwd_argon` and the `SECRET:` comment of `password_hash` — **#2110 / #2330**; the downgrade refuses while any row exists; on `0060_recording_write_owner_only` (#5265)                                                        |
 
 ---
 
@@ -5413,6 +5435,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `users`                                                | `display_name`                          | P1         | plaintext                                       | Set to NULL when the user is purged (O6, below)                                                                                                 |
 | `users`                                                | `username`                              | P1         | plaintext                                       | Replaced by the surrogate when the user is purged (O6, below); audit rows keep the name they were written with                                  |
 | `users`                                                | `password_hash`                         | S          | Argon2id                                        | Never selected outside the auth module; excluded from `SELECT *` via explicit column lists; replaced by no usable password on purge (O6, below) |
+| `password_history`                                     | `password_hash`                         | S          | Argon2id                                        | Auth store only; 4 kept per user, pruned on change; CASCADE with the user; not yet cleared by the O6 purge (#2110)                              |
 | `users`                                                | `last_login_ip`                         | P2         | plaintext                                       | Set to NULL when the user is purged (O6, below)                                                                                                 |
 | `sessions`                                             | `refresh_token_hash`                    | S          | SHA-256 of token                                | Raw token exists only in the response body and the client                                                                                       |
 | `sessions`                                             | `ip`, `user_agent`, `tailscale_node`    | P2         | plaintext                                       | Set to NULL when the user is purged (O6, below); no reaper deletes session rows yet                                                             |

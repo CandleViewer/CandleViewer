@@ -98,6 +98,28 @@ _REHASH_SQL = sa.text(
     "password_changed_at = now() WHERE id = CAST(:id AS uuid)"
 )
 _REQUIRE_MFA_SQL = sa.text("UPDATE users SET mfa_required = true WHERE id = CAST(:id AS uuid)")
+#: The password change (#2110, 21 Sec.3.1.1a): a compare-and-swap on the hash the current password
+#: was verified against, so a concurrent change that won first leaves this one writing nothing.
+_CHANGE_PASSWORD_SQL = sa.text("""
+    UPDATE users SET password_hash = :new, password_algo_params = CAST(:p AS jsonb),
+                     password_changed_at = :now
+    WHERE id = CAST(:id AS uuid) AND password_hash = :expected AND deleted_at IS NULL
+    RETURNING id
+    """)
+_RETIRE_PASSWORD_SQL = sa.text(
+    "INSERT INTO password_history (user_id, password_hash, retired_at) "
+    "VALUES (CAST(:id AS uuid), :old, :now)"
+)
+_PRUNE_HISTORY_SQL = sa.text("""
+    DELETE FROM password_history
+    WHERE user_id = CAST(:id AS uuid) AND retired_at NOT IN (
+      SELECT retired_at FROM password_history WHERE user_id = CAST(:id AS uuid)
+      ORDER BY retired_at DESC LIMIT :keep)
+    """)
+_RECENT_HISTORY_SQL = sa.text(
+    "SELECT password_hash FROM password_history WHERE user_id = CAST(:id AS uuid) "
+    "ORDER BY retired_at DESC LIMIT :n"
+)
 
 
 class SqlAlchemyUserRepository:
@@ -163,6 +185,50 @@ class SqlAlchemyUserRepository:
             ).first()
             await uow.commit()
         return None if row is None else row._mapping["locked_until"]
+
+    async def recent_password_hashes(self, user_id: str, *, limit: int) -> tuple[str, ...]:
+        """The user's newest retired hashes, newest first, at most *limit* (#2110)."""
+        async with self._relational.unit_of_work() as uow:
+            rows = await uow.session.execute(_RECENT_HISTORY_SQL, {"id": user_id, "n": limit})
+            hashes = tuple(str(row._mapping["password_hash"]) for row in rows)
+            await uow.commit()
+        return hashes
+
+    async def change_password(
+        self,
+        user_id: str,
+        *,
+        expected_hash: str,
+        new_hash: str,
+        algo_params: dict[str, int],
+        keep: int,
+        now: datetime,
+    ) -> bool:
+        """One unit of work (#2110, BQ-227 / BQ-232): swap the hash only while it is still
+        *expected_hash*, retire that hash and prune the user's history to the *keep* newest.
+        `False`, with nothing written, when a concurrent change won first."""
+        async with self._relational.unit_of_work() as uow:
+            swapped = (
+                await uow.session.execute(
+                    _CHANGE_PASSWORD_SQL,
+                    {
+                        "id": user_id,
+                        "new": new_hash,
+                        "p": json.dumps(algo_params),
+                        "now": now,
+                        "expected": expected_hash,
+                    },
+                )
+            ).first()
+            if swapped is None:
+                await uow.rollback()
+                return False
+            await uow.session.execute(
+                _RETIRE_PASSWORD_SQL, {"id": user_id, "old": expected_hash, "now": now}
+            )
+            await uow.session.execute(_PRUNE_HISTORY_SQL, {"id": user_id, "keep": keep})
+            await uow.commit()
+        return True
 
     async def rehash_password(
         self, user_id: str, *, password_hash: str, algo_params: dict[str, int]

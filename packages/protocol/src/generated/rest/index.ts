@@ -1918,7 +1918,11 @@ export interface paths {
     get?: never;
     /**
      * Change the current user's password
-     * @description Revokes all other sessions on success. Argon2id, minimum 12 characters, checked against a local breached-password list.
+     * @description Changes the password of the caller's own user (`scope: self`, SR-026: no member, header or query parameter names another user). Not step-up gated: the re-verified current password is the proof SR-028 asks for (orchestrator ruling on #2110, BQ-220). The policy is `04-security-program.md` §6.3.1, the one module invite redemption shares.
+     *     **Order of checks.** Each step is answered before the next runs. (1) The session: `401 unauthenticated`, `session_revoked` or `session_idle_locked`. (2) CSRF: `403 csrf_token_invalid` (a call bound to no session at all gets this first, as every unsafe operation does). (3) The session's state: `403 mfa_enrollment_required` (an enrolment-only session may not change its password), `403 view_as_read_only` and `403 session_read_only`. (4) The body: a missing member, an empty `current_password`, a member the schema does not declare or a value longer than 512 characters is `422 validation_failed` with `errors[{field, rule}]` (`rule` one of `required`, `min_length`, `max_length`, `additional_properties`), decided before any password is checked and counting no failure. (5) Verification capacity: when the sign-in verifications already in flight fill the server's bound, `429 rate_limited` with `Retry-After`, before any password is checked. (6) The current password, on login's Argon2id path and account lockout counters: a wrong one is `403 current_password_invalid`; it counts toward the account lockout (5 failures in 15 minutes) and a locked account gets the same answer. The session stays signed in, and it is not a step-up strike. No rule on the new password runs before this check passes, so the answers below are no oracle for a caller who does not know the current password. (7) The policy, its rules checked in this order: the length, the list and the pattern, the identity. A new password on the local breached-password list, or with fewer than 4 distinct characters, is `422 password_breached`; one shorter than 14 code points, or one that contains the username or the local part of the email address (3 characters or more, case-insensitive), is `422 password_policy` with `errors[{field: new_password, rule}]`, `rule` `min_length` or `contains_identity`. (8) The history: a new password equal to the current one or to one of the user's last 4 retired passwords (the last 5 in all) is `422 password_reused`. Refusal bodies carry no password material, no breach source or count and nothing about which retired password matched.
+     *     **Success.** The audit records are written ahead (C-2.9, `503 audit_unavailable` when the writer cannot take them within 2 seconds, nothing changed). One transaction then swaps the password hash, compared against the hash the current password was verified against, and records the retired hash in the user's history (4 kept); a concurrent change that won first is `409 conflict` and nothing changes. Every session of the user is then revoked as `password_change`, the caller's included (their sockets close), and a replacement session is minted for the caller (SR-013). It keeps the old session's absolute expiry and idle timeout, so the change never extends the session, and starts with no step-up grant, no grace window, no step-up strikes, no read-only window and no pending challenge. The `200` carries the replacement's access token in `tokens` (the `TokenBundle` of `POST /auth/mfa/verify`; `refresh_token` is null) and sets rotated `cv_refresh` and `__Host-cv_csrf` cookies bound to it (SR-041). The old access and refresh tokens stop working at once. If the rotation fails after the commit, the new password stands and the answer is `503` telling the client to sign in again with it.
+     *     **Audit.** `auth.password_change` is written ahead (`after_state.stage: intent`), with one `auth.session_revoked` per live session of the user (reason `password_change`) and the replacement's `auth.session_created` (`rotated_from`), and once more after the rotation (`stage: outcome`). A refusal from step 6 on is one `auth.password_change` row with outcome `failure` or `denied` and reason `current_password_invalid`, `password_breached`, `password_policy`, `password_reused`, `conflict` or `verify_busy`; a wrong password that locks the account also writes `auth.account_locked`. No record carries a password, a hash or a length.
+     *     **Idempotency.** `ignored`: the `200` carries a live access token, which is never stored. A request re-sent after a success carries the revoked session's token and gets `401`.
      */
     put: operations["authChangePassword"];
     post?: never;
@@ -7802,11 +7806,18 @@ export interface components {
       } & components["schemas"]["AdminSliceStatus"];
       subaccounts?: components["schemas"]["SubaccountCapacity"];
     };
+    /** @description No member names a user (SR-026). `new_password`'s policy minimum, 14 code points (`24-internal-schemas.md` `AuthConfig.password_min_length`), is checked after the current password and answered `422 password_policy` (rule `min_length`), not by this schema, so no length rule is decided before the current password is verified. */
     ChangePasswordRequest: {
       /** Format: password */
       current_password: string;
       /** Format: password */
       new_password: string;
+    };
+    /** @description The `200` of `authChangePassword`; the replacement session's access token. */
+    ChangePasswordResponse: {
+      /** @constant */
+      status: "password_changed";
+      tokens: components["schemas"]["TokenBundle"];
     };
     ChartTemplate: components["schemas"]["ChartTemplateInput"] & {
       /** Format: date-time */
@@ -15396,17 +15407,57 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Password changed. */
-      204: {
+      /** @description Password changed; the session was rotated. */
+      200: {
+        headers: {
+          /** @description Rotated `cv_refresh` cookie and a rotated `__Host-cv_csrf` cookie bound to the replacement session (SR-041) */
+          "Set-Cookie"?: string;
+          "X-CSRF-Token": components["headers"]["CsrfTokenIssued"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChangePasswordResponse"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      /** @description `current_password_invalid` for a wrong current password (step 6), and the refusals of steps 2 and 3: `csrf_token_invalid`, `mfa_enrollment_required`, `view_as_read_only` and `session_read_only`. */
+      403: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
       };
-      401: components["responses"]["Unauthorized"];
-      403: components["responses"]["CsrfTokenInvalid"];
-      422: components["responses"]["UnprocessableEntity"];
-      503: components["responses"]["ServiceUnavailable"];
+      409: components["responses"]["Conflict"];
+      /** @description `validation_failed` (step 4), `password_breached`, `password_policy` (step 7) or `password_reused` (step 8). `detail` is the §6.3.1 sentence of `04-security-program.md` for the code; `errors` names the field and the rule, never the value. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Verification capacity is full (step 5); retry after `Retry-After` seconds. No password was checked. */
+      429: {
+        headers: {
+          "Retry-After": components["headers"]["RetryAfter"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description `audit_unavailable` when the records written ahead cannot be written (nothing changed); `store_unavailable` when the backend is not wired, or when the rotation failed after the new password was committed (the new password stands: sign in again with it). */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
     };
   };
   authRefresh: {
@@ -17751,7 +17802,7 @@ export interface operations {
         content?: never;
       };
       404: components["responses"]["NotFound"];
-      /** @description Password violates the policy. */
+      /** @description Password violates the policy (`code: password_policy`): the SR-028 rules shared with `authChangePassword`, the minimum of 14 code points (`24` `AuthConfig.password_min_length`) included. */
       422: {
         headers: {
           [name: string]: unknown;

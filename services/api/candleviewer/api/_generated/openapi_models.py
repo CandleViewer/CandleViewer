@@ -448,8 +448,16 @@ class ChangePasswordRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    current_password: SecretStr
-    new_password: Annotated[SecretStr, Field(max_length=512, min_length=12)]
+    current_password: Annotated[SecretStr, Field(max_length=512, min_length=1)]
+    new_password: Annotated[SecretStr, Field(max_length=512, min_length=1)]
+
+
+class ChangePasswordResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    status: Literal["password_changed"]
+    tokens: TokenBundle
 
 
 class UnlockRequest(BaseModel):
