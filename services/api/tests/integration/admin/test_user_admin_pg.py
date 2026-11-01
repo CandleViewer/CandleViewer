@@ -42,9 +42,9 @@ from candleviewer.api.users import (
     user_etag,
 )
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.owner_floor import OwnerFloorError
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.settings import Settings
+from candleviewer.storage.errors import ActorNotAuthorised
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -191,9 +191,11 @@ async def _demote(
 
 async def test_ten_parallel_demotions_one_wins(db: Any) -> None:
     """AC4 (AC-ADM-28, SR-055, D6): in each of 10 rounds, from two enabled owners A and B, A's
-    call demotes B while B's demotes A. Exactly one answers 200 and the other 409 `conflict`; the
-    loser writes one `rbac.denied` (`owner_floor`) and no change record (UL-F13); one enabled owner
-    remains. Odd rounds race a `PATCH` against a `PUT`: both take the one owner lock."""
+    call demotes B while B's demotes A. Exactly one answers 200; the other, whose own owner role
+    the winner has just revoked, is refused by its actor's re-read under the owner lock (#2593):
+    the 403 `forbidden` a fresh request of B's gets at entry, one `rbac.denied`
+    (`actor_role_revoked`) and no change record (UL-F13); one enabled owner remains. Odd rounds
+    race a `PATCH` against a `PUT`: both take the one owner lock."""
     rel, engine = db
     audit = _Audit()
     transport = httpx.ASGITransport(app=_admin_app(rel, audit))
@@ -213,9 +215,15 @@ async def test_ten_parallel_demotions_one_wins(db: Any) -> None:
                     await _until_blocked(probe, 2)
                 async with asyncio.timeout(_WAIT_S):
                     won, lost = await asyncio.gather(first, second)
-            assert (won.status_code, lost.status_code) == (200, 409), (i, won.text, lost.text)
-            assert lost.json()["code"] == "conflict", i
-            assert audit.of(b) == [("rbac.denied", "owner_floor")], i  # the loser: one denial
+            assert (won.status_code, lost.status_code) == (200, 403), (i, won.text, lost.text)
+            assert lost.json() == {
+                "type": "about:blank",
+                "title": "Forbidden",
+                "status": 403,
+                "code": "forbidden",
+                "reason": "missing_permission",
+            }, i
+            assert audit.of(b) == [("rbac.denied", "actor_role_revoked")], i  # one denial
             assert sorted(act for act, _ in audit.of(a)) == ["roles.grant", "roles.revoke"], i
             assert await _active_owners(engine) == [a], i
             assert await _roles(engine, b) == ["manager"] and await _roles(engine, a) == ["owner"]
@@ -225,8 +233,9 @@ async def test_ten_parallel_demotions_one_wins(db: Any) -> None:
 async def test_patch_disable_vs_demote_keeps_owner(db: Any) -> None:
     """AC6: of the last two owners one is demoted by a `PATCH` while the other is disabled (the
     store the PATCH and DELETE disable share), 10 rounds behind the lock-hold barrier: the first
-    to queue wins, the loser is refused by the count it read under the lock and its audit hook is
-    never called, and one enabled owner remains."""
+    to queue wins, the loser, whose actor the winner has just demoted or disabled, is refused by
+    its actor's re-read under the lock (#2593) and its audit hook is never called, and one enabled
+    owner remains."""
     rel, engine = db
     admin = SqlAlchemyUserAdminStore(rel, owner_floor=_floor, audit_timeout_s=_WAIT_S)
     lifecycle = _store(rel)
@@ -257,7 +266,7 @@ async def test_patch_disable_vs_demote_keeps_owner(db: Any) -> None:
                 won, lost = await asyncio.gather(first, second, return_exceptions=True)
         winner, loser = ("demote", "disable") if demote_first else ("disable", "demote")
         assert not isinstance(won, BaseException), (i, won)
-        assert isinstance(lost, OwnerFloorError) and lost.__context__ is None, (i, lost)
+        assert isinstance(lost, ActorNotAuthorised) and lost.__context__ is None, (i, lost)
         assert len(hooks[winner].calls) == 1 and hooks[loser].calls == [], i
         survivor = disabled if demote_first else demoted
         assert await _active_owners(engine) == [survivor], i

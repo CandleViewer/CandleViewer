@@ -231,8 +231,8 @@ class _AuthInvites:
     def __init__(self, auth: AuthService) -> None:
         self._auth = auth
 
-    async def revoke(self, user_id: uuid.UUID, *, audit: InviteAudit) -> None:
-        await self._auth.invites.revoke(user_id, audit=audit)
+    async def revoke(self, user_id: uuid.UUID, *, actor: uuid.UUID, audit: InviteAudit) -> None:
+        await self._auth.invites.revoke(user_id, actor=actor, audit=audit)
 
 
 def _utc_now() -> datetime:

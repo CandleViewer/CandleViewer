@@ -137,6 +137,9 @@ class _Rows(FakeSessionRepository):
             return [] if status is None else [(status.value,)]
         if stmt is floor.ROLES:
             return [SimpleNamespace(_mapping={"roles": sorted(self.roles[user])})]
+        if stmt is floor.ACTOR_IS_ACTIVE_OWNER:  # #2593: `user` is the actor here
+            held = "owner" in self.roles.get(user, ()) and self.status(user) is UserStatus.ACTIVE
+            return [(1,)] if held else []
         if stmt is lifecycle._DISABLE:
             writes.append(functools.partial(self._set_status, user, UserStatus.DISABLED))
             return []

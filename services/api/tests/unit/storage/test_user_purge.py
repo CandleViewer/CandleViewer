@@ -27,6 +27,8 @@ from candleviewer.audit.actions import UnknownAuditAction, validate_action
 from candleviewer.audit.redact import redact
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import placeholder_password_hash
+from candleviewer.storage.errors import ActorNotAuthorised
+from candleviewer.storage.repositories import owner_floor_sqlalchemy as f
 from candleviewer.storage.repositories import user_purge as purge
 from candleviewer.storage.repositories import user_purge_sqlalchemy as m
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW
@@ -50,6 +52,8 @@ _STATE_KEYS = {
 #: The repo's "no usable password" value: an Argon2id head and a random 32-hex tail.
 _UNUSABLE = re.compile(r"\$argon2id\$v=19\$m=65536,t=3,p=4\$[0-9a-f]{32}")
 _PII = ("email", "username", "display_name", "last_login_ip", "user_agent", "device_label")
+#: #2593: the owner lock and the actor's re-read, after the user row and before any answer.
+_RECHECK = [f.LOCK_OWNERS, f.COUNT_OWNERS, f.ACTOR_IS_ACTIVE_OWNER]
 
 
 class _DriverUUID(uuid.UUID):
@@ -71,8 +75,12 @@ class _Db:
         codes: int = 10,
         commit_error: BaseException | None = None,
         audit_error: BaseException | None = None,
+        actor_owner: bool = True,
     ) -> None:
         self.rows: dict[Any, list[Any]] = {
+            f.LOCK_OWNERS: [(uuid.uuid4(),)] * 2,
+            f.COUNT_OWNERS: [(2,)],
+            f.ACTOR_IS_ACTIVE_OWNER: [(1,)] if actor_owner else [],  # #2593
             m._LOCK_FOR_SCHEDULE: [user] if user is not None else [],
             m._LOCK_FOR_ANONYMISE: [user] if user is not None else [],
             m._DUE: [(_DriverUUID(str(u)), _DUE_AT) for u in due],
@@ -90,7 +98,11 @@ class _Db:
         async def execute(stmt: Any, params: Any = None) -> Any:
             self.log.append((stmt, params))
             rows = self.rows.get(stmt, [])
-            return SimpleNamespace(first=lambda: rows[0] if rows else None, all=lambda: rows)
+            return SimpleNamespace(
+                first=lambda: rows[0] if rows else None,
+                all=lambda: rows,
+                scalar_one=lambda: rows[0][0],
+            )
 
         async def commit() -> None:
             if self.commit_error is not None:
@@ -220,6 +232,7 @@ async def test_schedule_sets_purge_after_90_days_out_and_writes_users_delete_ahe
     assert db.order() == [
         m._LOCK_TIMEOUT,
         m._LOCK_FOR_SCHEDULE,
+        *_RECHECK,
         m._SCHEDULE,
         CONSTRAINTS_NOW,
         "AUDIT users.delete success",
@@ -253,7 +266,7 @@ async def test_schedule_repeat_is_a_noop_that_keeps_the_first_date(row: tuple[An
     """A second delete with purge postpones nothing and writes no second `users.delete`."""
     db = _Db(row)
     assert await _schedule(db) == purge.PurgeSchedule(_UID, _DUE_AT, changed=False)
-    assert db.order() == [m._LOCK_TIMEOUT, m._LOCK_FOR_SCHEDULE] and db.records == []
+    assert db.order() == [m._LOCK_TIMEOUT, m._LOCK_FOR_SCHEDULE, *_RECHECK] and db.records == []
 
 
 @pytest.mark.parametrize(
@@ -272,7 +285,25 @@ async def test_schedule_refuses_a_user_that_is_not_disabled(
     db = _Db(row)
     with pytest.raises(error):
         await _schedule(db)
-    assert db.order() == [m._LOCK_TIMEOUT, m._LOCK_FOR_SCHEDULE] and db.records == []
+    assert db.order() == [m._LOCK_TIMEOUT, m._LOCK_FOR_SCHEDULE, *_RECHECK] and db.records == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [("disabled", None, None), ("disabled", _DUE_AT, None), ("active", None, None), None],
+    ids=["schedule", "repeat", "re-enabled", "missing"],
+)
+async def test_schedule_by_an_actor_no_longer_an_owner_is_refused_before_any_answer(
+    row: tuple[Any, ...] | None,
+) -> None:
+    """#2593: the actor is re-read under the owner lock, after the user row and ahead of the
+    not-found, not-disabled and repeat answers; nothing is written, recorded or committed."""
+    db = _Db(row, actor_owner=False)
+    with pytest.raises(ActorNotAuthorised) as caught:
+        await _schedule(db)
+    assert caught.value.actor_id == str(_ACTOR)
+    assert db.order() == [m._LOCK_TIMEOUT, m._LOCK_FOR_SCHEDULE, *_RECHECK] and db.records == []
+    assert db.params(f.ACTOR_IS_ACTIVE_OWNER) == [{"id": str(_ACTOR)}]
 
 
 async def test_schedule_with_audit_down_changes_nothing() -> None:

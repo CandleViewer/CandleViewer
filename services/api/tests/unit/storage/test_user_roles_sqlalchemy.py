@@ -16,12 +16,17 @@ from sqlalchemy.exc import IntegrityError
 
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
-from candleviewer.storage.errors import StorageConstraintViolated, WriteAheadTimeout
+from candleviewer.storage.errors import (
+    ActorNotAuthorised,
+    StorageConstraintViolated,
+    WriteAheadTimeout,
+)
 from candleviewer.storage.repositories import owner_floor_sqlalchemy as f
 from candleviewer.storage.repositories import user_roles_sqlalchemy as m
 
 _UID, _ACTOR = uuid.uuid4(), uuid.uuid4()
-_LOCKED_OWNERS = [f.LOCK_OWNERS, f.COUNT_OWNERS]
+#: The owner lock, the count after it and the actor's re-read (#2593).
+_LOCKED_OWNERS = [f.LOCK_OWNERS, f.COUNT_OWNERS, f.ACTOR_IS_ACTIVE_OWNER]
 _ROW = "canary-2748-row"  # a value the server's DETAIL would quote
 
 
@@ -35,7 +40,13 @@ class _Rel:
     """Fake UoW keyed by statement; records statements, audit calls and the commit."""
 
     def __init__(
-        self, exists: bool = True, owners: int = 1, raise_at: Any = None, counted: int | None = None
+        self,
+        exists: bool = True,
+        owners: int = 1,
+        raise_at: Any = None,
+        counted: int | None = None,
+        *,
+        actor_owner: bool = True,
     ) -> None:
         roles = [SimpleNamespace(_mapping={"roles": ["owner"]})] if exists else []
         self.rows: dict[Any, list[Any]] = {
@@ -43,6 +54,7 @@ class _Rel:
             f.LOCK_OWNERS: [(uuid.uuid4(),)] * owners,
             f.ROLES: roles,
             f.COUNT_OWNERS: [(owners if counted is None else counted,)],
+            f.ACTOR_IS_ACTIVE_OWNER: [(1,)] if actor_owner else [],
         }
         self.raise_at, self.sqlstate = raise_at, "23514"
         self.constraint: str | None = None
@@ -96,7 +108,21 @@ async def test_reads_return_effective_roles_none_for_unknown_and_owner_count() -
 async def test_apply_roles_unknown_user_returns_false_without_writes_or_audit() -> None:
     rel = _Rel(exists=False)
     assert await _apply(rel) is False
-    assert rel.order() == [f.LOCK_USER] and not rel.committed
+    assert rel.order() == [f.LOCK_USER, *_LOCKED_OWNERS] and not rel.committed
+
+
+@pytest.mark.parametrize("exists", [True, False], ids=["target", "no-target"])
+async def test_apply_roles_actor_no_longer_an_owner_is_refused_before_any_answer_or_write(
+    exists: bool,
+) -> None:
+    """#2593: the actor re-read after the owner lock is no active owner: refused before the
+    not-found answer, the floor, any write and the write-ahead audit; nothing commits."""
+    rel = _Rel(exists=exists, owners=2, actor_owner=False)
+    with pytest.raises(ActorNotAuthorised) as refused:
+        await _apply(rel)
+    assert refused.value.actor_id == str(_ACTOR)
+    assert rel.order() == [f.LOCK_USER, *_LOCKED_OWNERS] and not rel.committed
+    assert rel.ran[-1][1] == {"id": str(_ACTOR)}
 
 
 async def test_apply_roles_last_owner_refused_under_lock_before_any_write_or_audit() -> None:
@@ -130,7 +156,7 @@ async def test_apply_roles_writes_ahead_audit_with_the_locked_set_then_commits()
     writes = [m.DROP_ROLES, m.GRANT_ROLES, f.CONSTRAINTS_NOW, "AUDIT"]
     assert rel.order() == [f.LOCK_USER, *_LOCKED_OWNERS, f.ROLES, *writes] and rel.committed
     assert rel.ran[-1] == ("AUDIT", frozenset({"owner"}))
-    assert rel.ran[5][1] == {"id": str(_UID), "roles": ["viewer"], "by": str(_ACTOR)}
+    assert rel.ran[6][1] == {"id": str(_UID), "roles": ["viewer"], "by": str(_ACTOR)}
 
 
 async def test_apply_roles_refused_audit_write_rolls_the_change_back() -> None:

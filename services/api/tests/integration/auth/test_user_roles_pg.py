@@ -2,9 +2,11 @@
 
 Each owner demotes the other at the same moment. A third connection holds every
 owner grant until both callers are blocked on it, so the two transactions really
-overlap; on release exactly one wins and the other is refused by the owner-floor
-check on the count it read under lock (not by the deferred DB trigger), leaving one
-active owner. Not run locally (no docker); exercised by CI `integration`.
+overlap; on release exactly one wins and the other, whose actor the winner has just
+demoted, is refused by its actor's re-read under the lock (#2593; before the floor
+check and the deferred DB trigger), leaving one active owner. A self-demotion of the
+last owner still meets the floor. Not run locally (no docker); exercised by CI
+`integration`.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
+from candleviewer.storage.errors import ActorNotAuthorised
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -95,14 +98,19 @@ async def test_mutual_demotion_of_the_two_owners_leaves_exactly_one(pg_dsn: str)
                 await _until_blocked(probe, 2)
             results = await asyncio.gather(*calls, return_exceptions=True)
             assert sum(r is True for r in results) == 1, results
-            (loser,) = [r for r in results if isinstance(r, OwnerFloorError)]
-            assert loser.__context__ is None  # the locked count refused it, not the trigger
+            (loser,) = [r for r in results if isinstance(r, ActorNotAuthorised)]
+            assert loser.__context__ is None  # the re-read refused it, not the trigger
             winner = a if results[0] is True else b
             got: uuid.UUID = (await probe.execute(_GRANTED_BY, {"id": str(winner)})).scalar_one()
             assert got == (b if winner == a else a)  # the new grant records its actor
         assert await store.count_active_owners() == 1 and audited == [frozenset({"owner"})]
+        survivor = b if winner == a else a
+        with pytest.raises(OwnerFloorError) as floor:  # the last owner demoting itself
+            await store.apply_roles(survivor, demote, actor=survivor, audit=audit)
+        assert floor.value.__context__ is None and len(audited) == 1
         assert await store.get_roles(uuid.uuid4()) is None
-        assert await store.apply_roles(uuid.uuid4(), demote, actor=a, audit=audit) is False
+        # #2593: only an active owner's change is answered, a missing target's included
+        assert await store.apply_roles(uuid.uuid4(), demote, actor=survivor, audit=audit) is False
     finally:
         await rel.dispose()
         await engine.dispose()

@@ -17,7 +17,11 @@ from sqlalchemy.exc import IntegrityError
 
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
-from candleviewer.storage.errors import StorageConstraintViolated, WriteAheadTimeout
+from candleviewer.storage.errors import (
+    ActorNotAuthorised,
+    StorageConstraintViolated,
+    WriteAheadTimeout,
+)
 from candleviewer.storage.repositories import identity_sqlalchemy as identity
 from candleviewer.storage.repositories import owner_floor_sqlalchemy as f
 from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as m
@@ -60,6 +64,7 @@ class _Rel:
         sqlstate: str = "23514",
         commit_error: BaseException | None = None,
         constraint: str | None = None,
+        actor_owner: bool = True,
     ) -> None:
         found = status is not None
         self.rows: dict[Any, list[Any]] = {
@@ -67,6 +72,7 @@ class _Rel:
             f.ROLES: [SimpleNamespace(_mapping={"roles": list(roles)})] if found else [],
             f.LOCK_OWNERS: [(uuid.uuid4(),)] * 2,  # the floor reads the fresh count, not these
             f.COUNT_OWNERS: [(owners,)],
+            f.ACTOR_IS_ACTIVE_OWNER: [(1,)] if actor_owner else [],  # #2593
             m._REVOKE_SESSIONS: [(_DriverUUID(str(s)),) for s in sessions],
             m._LIVE_GRANTS: [(_DriverUUID(str(a)), trade) for a, trade in grants],
         }
@@ -121,7 +127,9 @@ async def _disable(rel: _Rel, error: BaseException | None = None) -> UserStatusC
     return await _store(rel).disable(_UID, actor=_ACTOR, now=_NOW, audit=_hook(rel, error))
 
 
-_LOCKED = [f.LOCK_USER, f.ROLES, f.LOCK_OWNERS, f.COUNT_OWNERS]
+#: #2593: the owner lock and the actor's re-read come before every answer, a repeat's included.
+_OWNER_LOCK = [f.LOCK_OWNERS, f.COUNT_OWNERS, f.ACTOR_IS_ACTIVE_OWNER]
+_LOCKED = [f.LOCK_USER, *_OWNER_LOCK, f.ROLES]
 _CASCADE = [m._DISABLE, m._REVOKE_SESSIONS, m._LIVE_GRANTS, m._REVOKE_GRANTS]
 #: The user as `identity_sqlalchemy.read_user` reads it under the lock (E42-T09's precondition).
 _USER_ROW = {
@@ -146,8 +154,9 @@ def _readable(rel: _Rel) -> _Rel:
 
 async def test_disable_judges_its_precondition_on_the_user_read_under_the_lock() -> None:
     """E42-T09 (#2649, UL3-T1): a caller's precondition (the PATCH's `If-Match`)
-    gets the user read in the transaction right after the user-row lock, before the owner lock or
-    any write; a change committed before that lock is what it sees."""
+    gets the user read in the transaction right after the user-row lock and the owner lock with the
+    actor's re-read (#2593), before any write; a change committed before that lock is what it
+    sees."""
     rel, seen = _readable(_Rel()), list[dict[str, object]]()
     change = await _store(rel).disable(
         _UID, actor=_ACTOR, now=_NOW, audit=_hook(rel), check=lambda u: seen.append(dict(u))
@@ -156,8 +165,9 @@ async def test_disable_judges_its_precondition_on_the_user_read_under_the_lock()
     assert seen == [_USER_ROW]
     assert rel.order() == [
         f.LOCK_USER,
+        *_OWNER_LOCK,
         identity._USER_SQL,
-        *_LOCKED[1:],
+        f.ROLES,
         *_CASCADE,
         f.CONSTRAINTS_NOW,
         "AUDIT",
@@ -175,7 +185,7 @@ async def test_a_refused_precondition_writes_nothing_even_for_a_repeat(status: s
 
     with pytest.raises(LookupError):
         await _store(rel).disable(_UID, actor=_ACTOR, now=_NOW, audit=_hook(rel), check=stale)
-    assert rel.order() == [f.LOCK_USER, identity._USER_SQL] and not rel.committed
+    assert rel.order() == [f.LOCK_USER, *_OWNER_LOCK, identity._USER_SQL] and not rel.committed
 
 
 async def test_a_user_gone_by_the_precondition_read_is_none() -> None:
@@ -185,7 +195,7 @@ async def test_a_user_gone_by_the_precondition_read_is_none() -> None:
         _UID, actor=_ACTOR, now=_NOW, audit=_hook(rel), check=checked.append
     )
     assert got is None and checked == [] and not rel.committed
-    assert rel.order() == [f.LOCK_USER, identity._USER_SQL]
+    assert rel.order() == [f.LOCK_USER, *_OWNER_LOCK, identity._USER_SQL]
 
 
 async def test_disable_statement_order_lock_user_lock_owners_dml_constraints_audit_commit() -> None:
@@ -199,8 +209,8 @@ async def test_disable_statement_order_lock_user_lock_owners_dml_constraints_aud
     assert change == rel.ran[-1][1] == expected
     assert change is not None  # the ids are plain `uuid.UUID`s, not the driver's subclass
     assert all(type(i) is uuid.UUID for i in (*change.revoked_session_ids, *change.revoked_grants))
-    assert rel.ran[5][1] == {"id": str(_UID), "now": _NOW, "reason": "user_disabled"}
-    assert rel.ran[7][1] == {"id": str(_UID), "revoked": [str(_A), str(_B)]}
+    assert rel.ran[6][1] == {"id": str(_UID), "now": _NOW, "reason": "user_disabled"}
+    assert rel.ran[8][1] == {"id": str(_UID), "revoked": [str(_A), str(_B)]}
 
 
 async def test_disable_with_no_session_or_grant_revokes_none_and_audits_once() -> None:
@@ -210,7 +220,7 @@ async def test_disable_with_no_session_or_grant_revokes_none_and_audits_once() -
     assert rel.order() == [*_LOCKED, *_CASCADE, f.CONSTRAINTS_NOW, "AUDIT"] and rel.committed
     assert change is not None and change.changed and change == rel.ran[-1][1]
     assert (change.revoked_session_ids, change.revoked_grants) == ((), {})
-    assert rel.ran[7][1] == {"id": str(_UID), "revoked": []}
+    assert rel.ran[8][1] == {"id": str(_UID), "revoked": []}
 
 
 async def test_disable_self_target_refused_before_any_statement() -> None:
@@ -223,15 +233,33 @@ async def test_disable_self_target_refused_before_any_statement() -> None:
 async def test_disable_unknown_user_returns_none_without_writes_or_audit() -> None:
     rel = _Rel(status=None)
     assert await _disable(rel) is None
-    assert rel.order() == [f.LOCK_USER] and not rel.committed
+    assert rel.order() == [f.LOCK_USER, *_OWNER_LOCK] and not rel.committed
 
 
-async def test_disable_already_disabled_user_is_noop_without_owner_lock_writes_or_audit() -> None:
+async def test_disable_already_disabled_user_is_noop_without_writes_or_audit() -> None:
+    """#2593: a repeat takes the owner lock and re-reads the actor too, so a revoked actor is
+    never told that a no-op succeeded; it writes and audits nothing."""
     rel = _Rel(status="disabled")
     change = await _disable(rel)
     assert change == UserStatusChange(_UID, "disabled", "disabled", frozenset({"manager"}))
     assert not change.changed
-    assert rel.order() == [f.LOCK_USER, f.ROLES] and not rel.committed
+    assert rel.order() == [f.LOCK_USER, *_OWNER_LOCK, f.ROLES] and not rel.committed
+
+
+@pytest.mark.parametrize("status", ["active", "disabled", None], ids=["change", "repeat", "gone"])
+async def test_disable_by_an_actor_no_longer_an_owner_is_refused_before_any_answer(
+    status: str | None,
+) -> None:
+    """#2593: the actor re-read after the owner lock is no active owner: refused before the
+    not-found answer, the no-op answer, the precondition, any write and the audit."""
+    rel = _readable(_Rel(status=status, actor_owner=False))
+    checked = list[object]()
+    with pytest.raises(ActorNotAuthorised):
+        await _store(rel).disable(
+            _UID, actor=_ACTOR, now=_NOW, audit=_hook(rel), check=checked.append
+        )
+    assert rel.order() == [f.LOCK_USER, *_OWNER_LOCK] and not rel.committed
+    assert checked == []
 
 
 async def test_disable_last_active_owner_refused_under_lock_before_any_write_or_audit() -> None:

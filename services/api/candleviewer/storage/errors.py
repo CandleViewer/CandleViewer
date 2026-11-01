@@ -195,6 +195,29 @@ class WriteAheadTimeout(StorageError, TimeoutError):
     code = "STORAGE_WRITE_AHEAD_TIMEOUT"
 
 
+#: #2593: the `rbac.denied` reason a route records for an `ActorNotAuthorised` (an audit field,
+#: never an answer: the answer is the entry refusal).
+ACTOR_ROLE_REVOKED = "actor_role_revoked"
+
+
+class ActorNotAuthorised(StorageError):
+    """#2593: the actor of an owner-only write is no longer an active owner when the write's own
+    transaction reads it, after the owner lock (`require_active_owner`): demoted, disabled,
+    deleted or its grant expired since the request was authorised at entry. Raised before any
+    write and before the write-ahead audit, so the unit of work rolls back with nothing changed.
+    Carries the actor's id only; the route answers the 403 a fresh request gets at entry and
+    records `rbac.denied` after the rollback."""
+
+    code = "STORAGE_ACTOR_NOT_AUTHORISED"
+
+    def __init__(self, actor_id: str) -> None:
+        super().__init__("the actor is not an active owner")
+        self.actor_id = actor_id
+
+    def __reduce__(self) -> tuple[type[ActorNotAuthorised], tuple[str]]:
+        return type(self), (self.actor_id,)
+
+
 class IlpRowError(StorageError, ValueError):
     """A row handed to `IlpWriter.write_rows` is malformed (E49-K01-F2, #1636).
 
@@ -371,6 +394,7 @@ ERROR_CODES: dict[type[StorageError], str] = {
     StorageQueryFailed: StorageQueryFailed.code,
     StorageConstraintViolated: StorageConstraintViolated.code,
     WriteAheadTimeout: WriteAheadTimeout.code,
+    ActorNotAuthorised: ActorNotAuthorised.code,
     IlpRowError: IlpRowError.code,
     MissingDesignatedTimestamp: MissingDesignatedTimestamp.code,
     InvalidSymbol: InvalidSymbol.code,

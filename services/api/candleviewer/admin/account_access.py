@@ -26,6 +26,7 @@ from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.lifecycle_metrics import user_lifecycle_steps_total
 from candleviewer.auth.step_up import PositionStateProvider
 from candleviewer.observability.context import current_request_uuid, spawn
+from candleviewer.storage.errors import ActorNotAuthorised
 from candleviewer.storage.repositories import account_access as aa
 
 COUNT_TIMEOUT_S: Final = 2.0  # AC7: how long the open-position count may take, then unknown
@@ -43,6 +44,7 @@ _REFUSALS: Final = (
     aa.AccessBusyError,
     aa.AccessPositionsUnknownError,
     aa.AccessAuditUnavailableError,
+    ActorNotAuthorised,  # #2593: the actor is no longer an active owner
 )
 
 

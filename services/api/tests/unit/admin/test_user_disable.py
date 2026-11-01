@@ -39,7 +39,13 @@ from candleviewer.rules.manager import RuleError
 from candleviewer.rules.scope_state import SnapshotScopeState
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories import identity_sqlalchemy
-from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW, LOCK_USER
+from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
+    ACTOR_IS_ACTIVE_OWNER,
+    CONSTRAINTS_NOW,
+    COUNT_OWNERS,
+    LOCK_OWNERS,
+    LOCK_USER,
+)
 from candleviewer.storage.repositories.user_lifecycle import UserSelfTargetError, UserStatusChange
 from candleviewer.user_cascade_wiring import ScopeRefreshAdapter
 from candleviewer.ws.revocation import (
@@ -161,7 +167,9 @@ class _World:
     async def record(self, record: SessionRecord, now: object, reason: str) -> None:
         self.mark(f"b16:{reason}")
 
-    async def revoke_invite(self, user_id: uuid.UUID, *, audit: InviteAudit) -> None:
+    async def revoke_invite(
+        self, user_id: uuid.UUID, *, actor: uuid.UUID, audit: InviteAudit
+    ) -> None:
         self.mark("invite")  # as `InviteService.revoke`: the hook runs only for an open invite
         if self.invite is not None:
             raise self.invite
@@ -967,7 +975,8 @@ async def test_a_refused_precondition_rolls_back_unrecorded_and_is_counted() -> 
     with pytest.raises(errors.UserVersionConflictError):
         await w.disable(precondition=stale)
     assert seen == [["manager"]] and not w.rel.committed
-    assert w.rel.order() == [LOCK_USER, identity_sqlalchemy._USER_SQL]
+    owner_lock = [LOCK_OWNERS, COUNT_OWNERS, ACTOR_IS_ACTIVE_OWNER]  # #2593, before the read
+    assert w.rel.order() == [LOCK_USER, *owner_lock, identity_sqlalchemy._USER_SQL]
     assert w.calls == [] and w.post_commit() == []
     moved = {r: _calls(r) - n for r, n in before.items() if _calls(r) != n}
     assert moved == {"version_conflict": 1}
@@ -977,3 +986,34 @@ async def test_a_precondition_that_holds_lets_the_disable_run() -> None:
     w = _World(_readable(_Rel()))
     assert await w.disable(precondition=lambda locked: None) == DisableResult(changed=True)
     assert w.rel.committed and len(w.of("users.disable")) == 1
+
+
+# -- #2593: the actor re-read at the effect, in the store's transaction ----------------------
+
+
+@pytest.mark.parametrize("status", ["active", "disabled"], ids=["change", "repeat"])
+async def test_an_actor_no_longer_an_owner_is_refused_at_the_effect_audited_after(
+    status: str,
+) -> None:
+    """The store refuses before any write, a repeat's no-op included: one `rbac.denied` after the
+    rollback, naming the session (#4174), and the guard's own 403 reason; nothing else is
+    recorded or run, and the call counts once as `forbidden`."""
+    w = _World(_Rel(status=status, actor_owner=False))
+    before = {r: _calls(r) for r in ACTION_RESULTS["disable"]}
+    with pytest.raises(errors.LifecycleActorRevokedError) as refused:
+        await w.disable(session_id=_SESSION)
+    assert (refused.value.reason, refused.value.code) == ("forbidden_role", "forbidden")
+    assert not w.rel.committed and w.post_commit() == []
+    [denied] = w.calls
+    assert (denied["action"], denied["reason"]) == ("rbac.denied", "actor_role_revoked")
+    assert (denied["session_id"], denied["actor_user_id"]) == (_SESSION, _OWNER.user_id)
+    assert denied["object_id"] == str(_TARGET)
+    moved = {r: _calls(r) - n for r, n in before.items() if _calls(r) != n}
+    assert moved == {"forbidden": 1}
+
+
+async def test_an_actor_refused_at_the_effect_unaudited_is_503() -> None:
+    w = _World(_Rel(actor_owner=False), fail={"rbac.denied": [AuditUnavailable("down")]})
+    with pytest.raises(errors.LifecycleAuditUnavailableError):
+        await w.disable()
+    assert not w.rel.committed and w.calls == []

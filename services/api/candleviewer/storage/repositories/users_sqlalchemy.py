@@ -30,7 +30,7 @@ from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
     OwnerFloorCheck,
     counted_roles,
     floor_refusal,
-    lock_active_owners,
+    require_active_owner,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -205,17 +205,17 @@ def _columns(before: Mapping[str, Any], patch: UserPatch) -> dict[str, bool] | N
 
 
 class SqlAlchemyUserAdminStore:
-    """The `User` read model and its locked update (E42-T09, #2649). The update is one
-    transaction (R7): lock the user row, then every active-owner grant in key order (the owner lock
-    the role and lifecycle stores take, so role and status changes queue and never deadlock);
-    read the representation and hand it to the caller's precondition (`If-Match`, R6); apply
-    what changes, re-checking the owner floor on the count read under the lock (a target that is
-    not active holds no counted owner grant); fire the deferred owner-floor trigger; read the
-    result; await the caller's write-ahead audit, bounded (C-2.9, #2510); commit. Any raise
-    before the commit rolls it all back. A patch that changes nothing writes and audits nothing.
-    Once the user's purge has run (E42-T10 #2650) every change is refused before any write, so
-    nothing the purge nulled is filled again (O6); an enable otherwise cancels a pending purge
-    with the status change, ahead of the audit (#965 R6)."""
+    """The `User` read model and its locked update (E42-T09, #2649). The update is one transaction
+    (R7): lock the user row, then every active-owner grant in key order (the owner lock the role and
+    lifecycle stores take, so role and status changes queue and never deadlock); re-read the actor
+    as an active owner (#2593, before any answer or write); read the representation and hand it to
+    the caller's precondition (`If-Match`, R6); apply what changes, re-checking the owner floor on
+    the count read under the lock (a target that is not active holds no counted owner grant); fire
+    the deferred owner-floor trigger; read the result; await the caller's write-ahead audit, bounded
+    (C-2.9, #2510); commit. Any raise before the commit rolls it all back. A patch that changes
+    nothing writes and audits nothing. Once the user's purge has run (E42-T10 #2650) every change is
+    refused before any write, so nothing the purge nulled is filled again (O6); an enable otherwise
+    cancels a pending purge with the status change, ahead of the audit (#965 R6)."""
 
     def __init__(
         self,
@@ -243,7 +243,9 @@ class SqlAlchemyUserAdminStore:
         check: UserPrecondition,
         audit: UserUpdateAudit,
     ) -> UserUpdate | None:
-        """Apply `patch` (new grants record `actor`); `None` if the user does not exist. Raises
+        """Apply `patch` (new grants record `actor`); `None` if the user does not exist.
+        `ActorNotAuthorised` (#2593) when `actor` is no longer an active owner, checked after the
+        owner lock and before the not-found answer, the no-change answer and any write. Raises
         what `check`, the owner-floor check or `audit` raises, `PurgeUserAnonymisedError` for any
         change to an anonymised user, a `StorageQueryFailed` typed by its facts
         (`StorageConstraintViolated` for a constraint) for any `IntegrityError` other than this
@@ -254,9 +256,10 @@ class SqlAlchemyUserAdminStore:
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session
-                if (row := (await s.execute(LOCK_USER, {"id": uid})).first()) is None:
+                row = (await s.execute(LOCK_USER, {"id": uid})).first()
+                owners = await require_active_owner(s, str(actor))  # #2593: before not-found
+                if row is None:
                     return None
-                owners = await lock_active_owners(s)
                 if (before := await read_user(s, uid)) is None:
                     return None
                 check(before)

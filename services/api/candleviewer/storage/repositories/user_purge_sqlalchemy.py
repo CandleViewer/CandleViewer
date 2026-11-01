@@ -2,8 +2,10 @@
 
 `schedule` (behind `DELETE /users/{userId}?purge=true`, after the E42-T04 disable) and `anonymise`
 (the reaper's, one user per call) each run one transaction: bound every lock wait
-(`lock_timeout`); lock the user row (`FOR NO KEY UPDATE`, as the lifecycle store does) and re-check
-it; write; run the deferred constraints (the owner-floor trigger fires before any record); write the
+(`lock_timeout`); lock the user row (`FOR NO KEY UPDATE`, as the lifecycle store does), then, for
+`schedule`, every active-owner grant, and re-read the actor as an active owner (#2593,
+`require_active_owner`: `ActorNotAuthorised` before any answer or write); re-check the row;
+write; run the deferred constraints (the owner-floor trigger fires before any record); write the
 record ahead of the commit (`users.delete` or `users.anonymise`, R5), bounded by `audit_timeout_s`;
 commit. A refused or late record rolls everything back (`PurgeAuditUnavailableError`). A commit that
 then fails or is cancelled may have landed, so its record is closed by a `failure` one, reason
@@ -33,7 +35,10 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW
+from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
+    CONSTRAINTS_NOW,
+    require_active_owner,
+)
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -190,9 +195,11 @@ class SqlAlchemyUserPurgeStore:
     ) -> PurgeSchedule:
         """S14: schedule a disabled user's purge `USERS_PURGE_AFTER_DAYS` from now, `users.delete`
         ahead, naming the actor, their session and the request. A purge already scheduled or run
-        is kept as it is (no second record). Raises `PurgeUserNotFoundError`,
-        `PurgeUserNotDisabledError` or `PurgeAuditUnavailableError` with nothing changed, or what
-        the driver raises (a failed commit's outcome is unknown, and its record is closed)."""
+        is kept as it is (no second record). Raises `ActorNotAuthorised` (#2593: the actor is no
+        longer an active owner, read after the user and owner locks, ahead of every other answer),
+        `PurgeUserNotFoundError`, `PurgeUserNotDisabledError` or `PurgeAuditUnavailableError` with
+        nothing changed, or what the driver raises (a failed commit's outcome is unknown, and its
+        record is closed)."""
         uid, purge_after = str(user_id), self._clock() + self._window
         who = {
             "actor_label": str(actor_user_id),
@@ -206,6 +213,9 @@ class SqlAlchemyUserPurgeStore:
                 s = uow.session
                 await s.execute(_LOCK_TIMEOUT, {"timeout": self._lock_timeout})
                 row = (await s.execute(_LOCK_FOR_SCHEDULE, {"id": uid})).first()
+                # #2593: the owner lock after the user row (the disable's order), the actor re-read
+                # ahead of the not-found, not-disabled and repeat answers.
+                await require_active_owner(s, str(actor_user_id))
                 if row is None:
                     raise PurgeUserNotFoundError(uid)
                 status, scheduled, _ = row

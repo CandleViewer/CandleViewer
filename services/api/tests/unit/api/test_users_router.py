@@ -22,7 +22,7 @@ from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.observability.correlation import CorrelationMiddleware
-from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.errors import ActorNotAuthorised, WriteAheadTimeout
 
 OWNER = uuid.uuid4()
 TARGET = uuid.uuid4()
@@ -731,3 +731,40 @@ def test_put_roles_grant_and_revoke_records_name_the_session_and_the_address() -
         ("roles.grant", SESSION, "100.64.0.9"),
         ("roles.revoke", SESSION, "100.64.0.9"),
     ]
+
+
+# -- #2593: the actor's role re-checked at the effect, inside the store's transaction ----------
+
+
+class _RevokedActorStore(_Store):
+    """The Postgres store's re-read after the owner lock (`require_active_owner`) found the
+    actor demoted since entry: refused before the write and before the write-ahead hook."""
+
+    async def apply_roles(
+        self, user_id: uuid.UUID, roles: frozenset[str], *, actor: uuid.UUID, audit: _Hook
+    ) -> bool:
+        raise ActorNotAuthorised(str(actor))
+
+
+def test_put_roles_refused_at_the_effect_answers_the_entry_403_and_audits_after() -> None:
+    store, em, n = _RevokedActorStore({"viewer"}, 2), _Emitter(), _Notifier()
+    r = _client(store, _admin(), em, n).put(f"/users/{TARGET}/roles", json={"roles": ["manager"]})
+    entry = _client(_Store({"viewer"}, 2), _manager(), _Emitter(), _Notifier()).put(
+        f"/users/{TARGET}/roles", json={"roles": ["manager"]}
+    )
+    assert (r.status_code, entry.status_code) == (403, 403)
+    assert r.json() == entry.json()  # a client cannot tell the effect's refusal from the entry's
+    assert "challenge_id" not in r.json()
+    assert store.roles == frozenset({"viewer"}) and n.users == []
+    [denied] = em.calls  # nothing written ahead: the one record is the refusal's
+    assert (denied["action"], denied["reason"]) == ("rbac.denied", "actor_role_revoked")
+    assert (denied["actor_user_id"], denied["object_id"]) == (OWNER, str(TARGET))
+    assert denied["session_id"] == SESSION
+
+
+def test_put_roles_refused_at_the_effect_unaudited_is_503() -> None:
+    store, em, n = _RevokedActorStore({"viewer"}, 2), _Emitter(fail=True), _Notifier()
+    r = _client(store, _admin(), em, n).put(f"/users/{TARGET}/roles", json={"roles": ["manager"]})
+    assert r.status_code == 503
+    assert r.json()["code"] == "audit_unavailable"
+    assert store.roles == frozenset({"viewer"})

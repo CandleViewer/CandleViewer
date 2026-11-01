@@ -7,6 +7,14 @@ such changes queue, never deadlock), applies the injected `OwnerFloorCheck` (M18
 not import auth) to the count read after that lock and to the target's `counted_roles`, and
 fires the deferred trigger before its write-ahead audit (`CONSTRAINTS_NOW`); `floor_refusal`
 maps its 23514 onto the check, from the error's facts alone (#2748).
+
+#2593: every owner-only write re-checks its actor at the effect, in its own transaction, with
+`require_active_owner`: after the owner lock, a fresh `ACTOR_IS_ACTIVE_OWNER` statement (never the
+locked id set: a locking read does not see that an owner it queued behind was disabled) decides,
+and no row refuses with `ActorNotAuthorised` before any write. Every writer that can demote or
+disable an active owner takes the owner lock first, so of a revoke and an in-flight write exactly
+one is ordered first: the revoke commits and the write is refused, or the write commits and the
+revoke is ordered after its effect.
 """
 
 from __future__ import annotations
@@ -16,6 +24,7 @@ from collections.abc import Callable
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from candleviewer.storage.errors import ActorNotAuthorised
 from candleviewer.storage.repositories.relational_sqlalchemy import query_failure
 
 #: `(current_roles, new_roles, active_owner_count)`; raises to refuse the change.
@@ -46,6 +55,13 @@ LOCK_OWNERS = sa.text(
     "ORDER BY ur.user_id FOR UPDATE OF ur"
 )
 CONSTRAINTS_NOW = sa.text("SET CONSTRAINTS ALL IMMEDIATE")
+#: #2593: `COUNT_OWNERS`'s predicate for one user, the actor of an owner-only write.
+ACTOR_IS_ACTIVE_OWNER = sa.text(
+    "SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+    "JOIN users u ON u.id = ur.user_id WHERE ur.user_id = CAST(:id AS uuid) "
+    "AND r.name = 'owner' AND u.deleted_at IS NULL "
+    "AND u.status = 'active' AND (ur.expires_at IS NULL OR ur.expires_at > now())"
+)
 
 
 async def effective_roles(session: AsyncSession, user_id: str) -> frozenset[str] | None:
@@ -68,6 +84,18 @@ async def lock_active_owners(session: AsyncSession) -> int:
     (a `users` row, not a grant) would still look active, so the count is a new statement."""
     await session.execute(LOCK_OWNERS)
     return int((await session.execute(COUNT_OWNERS)).scalar_one())
+
+
+async def require_active_owner(session: AsyncSession, actor: str) -> int:
+    """#2593: lock every active-owner grant (`lock_active_owners`), then read the actor afresh;
+    raise `ActorNotAuthorised` unless the actor is an active, undeleted user holding an unexpired
+    owner grant. Call it before any write and any early return of the unit of work, after the
+    target's `LOCK_USER` if there is one (the owner lock's key order). Answers the active-owner
+    count read after the lock, for a floor check."""
+    owners = await lock_active_owners(session)
+    if (await session.execute(ACTOR_IS_ACTIVE_OWNER, {"id": actor})).first() is None:
+        raise ActorNotAuthorised(actor)
+    return owners
 
 
 def floor_refusal(

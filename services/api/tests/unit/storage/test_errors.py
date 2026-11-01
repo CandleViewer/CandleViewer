@@ -14,6 +14,7 @@ import pytest
 
 from candleviewer.storage.errors import (
     ERROR_CODES,
+    ActorNotAuthorised,
     AuditEntryTooLarge,
     BackupCheckViolation,
     BackupWriteOnceViolation,
@@ -69,6 +70,7 @@ def test_error_codes_are_stable_and_unique() -> None:
         StorageQueryFailed: "STORAGE_QUERY_FAILED",
         StorageConstraintViolated: "STORAGE_CONSTRAINT_VIOLATED",
         WriteAheadTimeout: "STORAGE_WRITE_AHEAD_TIMEOUT",
+        ActorNotAuthorised: "STORAGE_ACTOR_NOT_AUTHORISED",
         IlpRowError: "STORAGE_ILP_ROW_INVALID",
         MissingDesignatedTimestamp: "STORAGE_ILP_MISSING_DESIGNATED_TS",
         InvalidSymbol: "STORAGE_ILP_INVALID_SYMBOL",

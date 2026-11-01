@@ -36,7 +36,7 @@ from candleviewer.settings import Settings
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, CLOSE_USER_DISABLED, RevocationHub
 from tests.csrf_helpers import arm_csrf
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, InMemoryOwnerReset, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -106,11 +106,13 @@ class _Env:
         for user_id in _ROLES:
             user = make_user(password_hash=_INERT_DIGEST, username=str(user_id), email="u@x.t")
             users.add(user.model_copy(update={"id": user_id}))
+        mfa = FakeMfaRepository()
         self.auth = AuthService(
             users,
-            mfa_repository=FakeMfaRepository(),
+            mfa_repository=mfa,
             session_repository=self.repo,
             clock=self.clock,
+            owner_reset=InMemoryOwnerReset(users, mfa, self.repo),  # #2593
         )
         monkeypatch.setattr(app_module, "build_auth_service", lambda *_a, **_k: self.auth)
         # The gateway checks token expiry on its wall clock (#2259): share the injected one.

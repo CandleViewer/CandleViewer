@@ -42,6 +42,15 @@ class LifecycleForbiddenError(UserLifecycleError):  # 403: `forbidden_role` or `
         self.reason = reason
 
 
+class LifecycleActorRevokedError(LifecycleForbiddenError):
+    """#2593: refused at the effect, the actor no longer being an active owner when the change's
+    own transaction read it. Its reason is the guard's own (`forbidden_role`), so the answer is
+    the 403 a fresh request gets at entry; the route of a PATCH answers its own entry refusal."""
+
+    def __init__(self) -> None:
+        super().__init__("forbidden_role")
+
+
 class UserNotFoundError(UserLifecycleError):
     code = "not_found"
 

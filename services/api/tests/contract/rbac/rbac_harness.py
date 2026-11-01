@@ -63,6 +63,7 @@ from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsState
 from candleviewer.recorder.retention import PrunePlan, RunReport
 from candleviewer.rules.manager import InMemoryRuleStore
+from candleviewer.storage.errors import ActorNotAuthorised
 from candleviewer.storage.repositories.account_access import (
     AccessGrant,
     AccessUserNotFoundError,
@@ -403,7 +404,7 @@ class _Invites:
     async def reissue(self, user_id: uuid.UUID, *, invited_by: uuid.UUID, audit: Any) -> Any:
         raise InviteNotFound(str(user_id))
 
-    async def revoke(self, user_id: uuid.UUID, *, audit: Any) -> None:
+    async def revoke(self, user_id: uuid.UUID, *, actor: uuid.UUID, audit: Any) -> None:
         raise InviteNotFound(str(user_id))
 
     async def inspect(self, token: str, *, source_ip: str) -> Any:
@@ -535,6 +536,9 @@ class UserStore:
     async def count_active_owners(self) -> int:
         return sum("owner" in r for r in self.roles.values())
 
+    def is_active_owner(self, user_id: uuid.UUID) -> bool:
+        return "owner" in self.roles.get(user_id, frozenset())
+
     async def apply_roles(
         self,
         user_id: uuid.UUID,
@@ -543,6 +547,8 @@ class UserStore:
         actor: uuid.UUID,
         audit: Callable[[frozenset[str]], Awaitable[None]],
     ) -> bool:
+        if not self.is_active_owner(actor):  # #2593: the actor re-read at the effect, first
+            raise ActorNotAuthorised(str(actor))
         await audit(self.roles[user_id])  # write-ahead, as the Postgres store does (C-2.9)
         self.roles[user_id] = roles
         return True

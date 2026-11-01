@@ -2,12 +2,13 @@
 
 M10: the owner floor (M18) and the audit record (M19) are injected, and the owner-floor lock is
 the role store's (`owner_floor_sqlalchemy.py`), so a disable and a demotion of the last two
-owners queue on it (#965 AC6). `disable` (R7) refuses a self-target before any statement, then:
-lock the user row; judge a caller's precondition (E42-T09: a PATCH's `If-Match`) on the user read
-under that lock; a user already disabled is a no-op (AC5); lock the owner grants and refuse
-the last active owner; set `disabled`; revoke every live session; soft-revoke every live grant
-(never a DELETE: the freeze columns, the cap and `granted_by` are never written, O4); run the
-deferred constraints (23514 maps onto the floor refusal); await the caller's audit hook, bounded
+owners queue on it (#965 AC6). `disable` (R7) refuses a self-target before any statement, then: lock
+the user row; lock the owner grants and re-read the actor as an active owner (#2593: refused before
+any answer, so a revoked actor is never told a no-op succeeded); judge a caller's precondition
+(E42-T09: a PATCH's `If-Match`) on the user read under that lock; a user already disabled is a no-op
+(AC5); refuse the last active owner; set `disabled`; revoke every live session; soft-revoke every
+live grant (never a DELETE: the freeze columns, the cap and `granted_by` are never written, O4); run
+the deferred constraints (23514 maps onto the floor refusal); await the caller's audit hook, bounded
 by `audit_timeout_s` (C-2.9); commit. A raise before the commit rolls all of it back; if the hook
 had started, its record may be durable, and the caller closes it. The post-commit steps (B16
 REVOKE, sockets, rule disarm, invite revoke) are slice S4's. The session revoke sees only its
@@ -34,7 +35,7 @@ from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
     counted_roles,
     effective_roles,
     floor_refusal,
-    lock_active_owners,
+    require_active_owner,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -110,14 +111,15 @@ class SqlAlchemyUserLifecycleStore:
         `check` (E42-T09) gets the `User` read right after the user-row lock, before anything is
         written, a repeat included.
 
-        Raises `UserSelfTargetError`, what `check` raises, what the owner-floor check raises for
-        the last active owner, what `audit` raises, a `StorageQueryFailed` typed by its facts
-        (`StorageConstraintViolated` for a constraint) for any `IntegrityError` other than this
-        change's floor (#2748), or `WriteAheadTimeout` when `audit` outlives `audit_timeout_s`;
-        on any of them the transaction rolls back and nothing changes. A driver or commit
-        `TimeoutError` is raised as is: the outcome is unknown. If the commit landed, the
-        revoked ids are lost with the exception; `read_back_disable` finds them again (#3445).
-        A retry is AC5's no-op and returns no ids."""
+        Raises `UserSelfTargetError`, `ActorNotAuthorised` (#2593: `actor` is no longer an active
+        owner, checked after the owner lock and before any answer), what `check` raises, what the
+        owner-floor check raises for the last active owner, what `audit` raises, a
+        `StorageQueryFailed` typed by its facts (`StorageConstraintViolated` for a constraint) for
+        any `IntegrityError` other than this change's floor (#2748), or `WriteAheadTimeout` when
+        `audit` outlives `audit_timeout_s`; on any of them the transaction rolls back and nothing
+        changes. A driver or commit `TimeoutError` is raised as is: the outcome is unknown. If the
+        commit landed, the revoked ids are lost with the exception; `read_back_disable` finds them
+        again (#3445). A retry is AC5's no-op and returns no ids."""
         if user_id == actor:
             raise UserSelfTargetError(str(user_id))
         uid = str(user_id)
@@ -125,7 +127,10 @@ class SqlAlchemyUserLifecycleStore:
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session
-                if (row := (await s.execute(LOCK_USER, {"id": uid})).first()) is None:
+                row = (await s.execute(LOCK_USER, {"id": uid})).first()
+                # #2593: the owner lock before any answer, a repeat's no-op included
+                owners = await require_active_owner(s, str(actor))
+                if row is None:
                     return None
                 if check is not None:  # what a change committed before this lock left
                     if (current := await read_user(s, uid)) is None:
@@ -135,7 +140,7 @@ class SqlAlchemyUserLifecycleStore:
                 if before == "disabled":
                     return UserStatusChange(user_id, before, before, roles)
                 counted = counted_roles(before, roles)
-                self._owner_floor(counted, _NO_ROLES, await lock_active_owners(s))
+                self._owner_floor(counted, _NO_ROLES, owners)
                 await s.execute(_DISABLE, {"id": uid})
                 params = {"id": uid, "now": now, "reason": REVOKED_REASON}
                 rows = (await s.execute(_REVOKE_SESSIONS, params)).all()

@@ -2,7 +2,9 @@
 
 One transaction (#965 R7) that locks in the order of 21-database-schema.md §3.1.3, each wait
 bounded by `lock_timeout` (a timeout or a deadlock refuses the change: `AccessBusyError`): the
-user row (a disable or soft delete of the same user queues behind it), refused unless `active`;
+user row (a disable or soft delete of the same user queues behind it); the owner lock, then the
+actor re-read as an active owner (#2593: `ActorNotAuthorised`, before any other answer); the user
+refused unless `active`;
 the accounts named, `FOR SHARE` (an account soft delete queues behind it), the whole set refused
 if one is unknown or deleted; every grant row of the user. A change that removes a live grant
 while a count is unknown needs the acknowledgement (#965 O2, #2648 Q2). Then it soft-revokes the
@@ -32,7 +34,7 @@ import structlog
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.errors import ActorNotAuthorised, StorageQueryFailed
 from candleviewer.storage.repositories.account_access import (
     AccessAuditEmitter,
     AccessAuditUnavailableError,
@@ -47,6 +49,7 @@ from candleviewer.storage.repositories.account_access import (
     AccessUserNotFoundError,
     RemovalContext,
 )
+from candleviewer.storage.repositories.owner_floor_sqlalchemy import require_active_owner
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -67,6 +70,7 @@ _REFUSALS: Mapping[type[BaseException], str] = {
     AccessBusyError: "busy",
     AccessPositionsUnknownError: "positions_unknown",
     AccessAuditUnavailableError: "audit_unavailable",
+    ActorNotAuthorised: "actor_not_authorised",
 }
 #: Logged at info; any other outcome (`self_target`, `busy`, `audit_unavailable`,
 #: `commit_failed`, `cancelled`, `error`) at warning.
@@ -242,13 +246,13 @@ class SqlAlchemyAccountAccessStore:
         is what the caller read of the user's exposure; `None` reads as both counts unknown.
         `actor_ip` and `session_id` name the caller in the write-ahead and the closing record.
 
-        Raises `AccessSelfTargetError`, `AccessUserNotFoundError`, `AccessUserNotActiveError`,
-        `AccessUnknownAccountError`, `AccessBusyError`, `AccessPositionsUnknownError`,
-        `AccessAuditUnavailableError` or `StorageQueryFailed` (any driver error, its text
-        dropped); on any of them nothing changes, bar a commit cut off in flight or a session
-        that fails to close after it, which may leave the change committed. A write-ahead
-        record whose emit timed out or was cancelled may still land (see `_write_ahead`): the
-        grant rows are the truth."""
+        Raises `AccessSelfTargetError`, `ActorNotAuthorised` (#2593), `AccessUserNotFoundError`,
+        `AccessUserNotActiveError`, `AccessUnknownAccountError`, `AccessBusyError`,
+        `AccessPositionsUnknownError`, `AccessAuditUnavailableError` or `StorageQueryFailed` (any
+        driver error, its text dropped); on any of them nothing changes, bar a commit cut off in
+        flight or a session that fails to close after it, which may leave the change committed. A
+        write-ahead record whose emit timed out or was cancelled may still land (see
+        `_write_ahead`): the grant rows are the truth."""
         outcome = "error"
         written: _States | None = None  # recorded ahead, commit not yet confirmed
         who = _Who(actor_user_id, request_id, actor_ip, session_id)
@@ -323,6 +327,7 @@ class SqlAlchemyAccountAccessStore:
         uid = str(user_id)
         await s.execute(_LOCK_TIMEOUT, {"timeout": self._lock_timeout})
         user = (await s.execute(_LOCK_USER, {"id": uid})).first()
+        await require_active_owner(s, str(actor))  # #2593: after the user, before any answer
         if user is None:
             raise AccessUserNotFoundError(uid)
         if user[0] != "active":

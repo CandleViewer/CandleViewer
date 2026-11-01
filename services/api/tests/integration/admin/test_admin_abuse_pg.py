@@ -9,12 +9,15 @@ deployed app.
 
 The owner floor (each route's lock and the store's, and `0001`'s trigger) must leave exactly one
 winner per round and an enabled Owner after every round. Each round starts from two fresh Owners,
-the only enabled ones. A round counts only when the race occurred: both requests authorised
-before either committed, so the loser meets the floor, 409. A loser authorised after the winner's
-commit is refused by its re-read role (403) or its revoked session (401) instead; that round
-changed nothing on the loser's side, is retried with a new pair, at most `_TRIES` rounds in all,
-and is never counted. A single-threaded test would pass against a store with no lock, so both
-requests of a round are in flight at once on the app's loop (ticket technical notes).
+the only enabled ones. A round counts only when the race occurred: both requests authorised before
+either committed. Such a loser is refused after its authorisation: by the role route's floor
+pre-check, 409 with one `rbac.denied` (`owner_floor`), or (#2593) by its store's re-read of its own
+actor, whose owner role or status the winner has just taken, which answers the 403 the route gives
+at entry with one `rbac.denied` (`actor_role_revoked`). A loser authorised after the winner's commit
+is refused by its re-read role (403) or its revoked session (401) at entry instead; that round
+changed nothing on the loser's side, is retried with a new pair, at most `_TRIES` rounds in all, and
+is never counted. A single-threaded test would pass against a store with no lock, so both requests
+of a round are in flight at once on the app's loop (ticket technical notes).
 
 The app is `create_app()` with every store on the database; only the audit writer is a stand-in,
 and the clock is the test's. The sessions carry a live `users` window, as after a completed
@@ -191,6 +194,21 @@ def _of(records: list[dict[str, Any]], user: uuid.UUID) -> list[dict[str, Any]]:
     return [r for r in records if str(r.get("actor_user_id")) == str(user)]
 
 
+def _raced(lost: httpx.Response, denied: list[str], *, floor_denial: list[str]) -> bool:
+    """Whether the loser was authorised before the winner's commit, checking its refusal: the
+    floor's 409 (`floor_denial` its records), or #2593's refusal at the effect, the entry's 403
+    with one `rbac.denied` (`actor_role_revoked`). Else it was refused at entry (401 or 403)."""
+    if lost.status_code == 409:
+        assert lost.json()["code"] == "conflict", lost.text  # the floor's 409, no other
+        assert denied == floor_denial, denied
+        return True
+    if denied == ["actor_role_revoked"]:
+        assert lost.status_code == 403 and lost.json()["code"] == "forbidden", lost.text
+        return True
+    assert lost.status_code in (401, 403), lost.text  # authorised after the winner's commit
+    return False
+
+
 def _rounds(dsn: str, play: Callable[[uuid.UUID, uuid.UUID], bool]) -> int:
     """Run `play(a, b)` on fresh pairs until `_ROUNDS` of them raced; the number of tries."""
     counted = tries = 0
@@ -226,12 +244,7 @@ def test_ac_adm_28_mutual_demotions_leave_one_winner_and_an_owner_every_round(
             assert demoted == ["owner"]  # the winner's one change record
             assert not [r for r in _of(seen, loser) if r["action"] in _CHANGES]
             denied = [r["reason"] for r in _of(seen, loser) if r["action"] == "rbac.denied"]
-            if lost.status_code != 409:  # authorised after the winner's commit: no race
-                assert lost.status_code == 403, lost.text
-                return False
-            assert lost.json()["code"] == "conflict", lost.text  # the floor's 409, no other
-            assert denied == ["owner_floor"], denied  # the floor refused it (AC-ADM-28)
-            return True
+            return _raced(lost, denied, floor_denial=["owner_floor"])
 
         _rounds(pg_dsn, play)
 
@@ -267,15 +280,11 @@ def test_ul_ac03_a_disable_racing_a_demotion_leaves_one_winner_and_an_owner_ever
                 assert changes == ["owner"]
             assert not [r for r in _of(seen, loser) if r["action"] in _CHANGES]
             denied = [r["reason"] for r in _of(seen, loser) if r["action"] == "rbac.denied"]
-            if lost.status_code != 409:  # authorised after the winner's commit: no race
-                assert lost.status_code in (401, 403), lost.text
-                return False
-            assert lost.json()["code"] == "conflict", lost.text  # the floor's 409, no other
-            # A losing demotion writes one `rbac.denied` (owner_floor), a losing disable none
-            # (UL-F13: refused under the lock, unaudited).
-            assert denied == (["owner_floor"] if loser == b else []), denied
+            # A losing demotion's floor writes one `rbac.denied` (owner_floor), a losing
+            # disable's none (UL-F13: refused under the lock, unaudited).
+            raced = _raced(lost, denied, floor_denial=["owner_floor"] if loser == b else [])
             assert winner in asyncio.run(_owners(pg_dsn))
-            return True
+            return raced
 
         _rounds(pg_dsn, play)
 

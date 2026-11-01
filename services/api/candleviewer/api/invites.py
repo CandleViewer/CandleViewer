@@ -5,7 +5,9 @@ Owner side (`users:write`): `POST /users`, `GET /users/invites`,
 (`HANDLER_GATED_ROUTES`, #2304 slice 3c): RBAC, the audit check, the body (a create) or the
 target's lookup (a re-issue needs an `invited` user, a revoke a pending invite: `404`) come
 first, and only then the `users` step-up (unwired: 503), its challenge naming the role or the
-user's id, never a username, an email or a display name.
+user's id, never a username, an email or a display name. #2593: each store re-reads the actor as
+an active owner after the owner lock, before any write; a refusal is one `rbac.denied` after the
+rollback and the 403 a fresh request gets at entry.
 
 Invitee side (unauthenticated, per-IP throttled): `GET /invites/{token}`
 validates without consuming; `POST /invites/{token}` sets the password, consumes
@@ -54,9 +56,9 @@ from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.invite_repository import InviteAudit
 from candleviewer.auth.invite_service import InviteService, InviteTamperReason
 from candleviewer.auth.models import CreatedInvite, InviteCreateRequest, InviteRecord
-from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
+from candleviewer.auth.scopes import DenyReason, ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.observability.context import current_request_uuid
-from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.errors import ACTOR_ROLE_REVOKED, ActorNotAuthorised, WriteAheadTimeout
 
 _TOKEN = Path(alias="inviteToken", min_length=16, max_length=128)
 _UNIFORM_DETAIL = "This invitation link is not valid."
@@ -193,6 +195,31 @@ def make_invites_router(
             )
         return principal
 
+    async def _refused_at_effect(
+        principal: PrincipalSnapshot, request: Request, target: uuid.UUID | None
+    ) -> JSONResponse:
+        """#2593: the store re-read the actor after the owner lock and found no active owner, so
+        nothing was written or recorded ahead. One `rbac.denied` after the rollback, naming the
+        session (#4174), then the 403 `_owner` answers a fresh request from the demoted actor;
+        `503` when that record cannot be written (C-2.9)."""
+        named = {} if target is None else {"object_kind": "user", "object_id": str(target)}
+        try:
+            await NamesSession(emitter, auth, request).emit(
+                "rbac.denied",
+                actor_label=str(principal.user_id),
+                actor_user_id=principal.user_id,
+                actor_ip=_actor_ip(request),
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason=ACTOR_ROLE_REVOKED,
+                request_id=current_request_uuid(),
+                **named,
+            )
+        except (AuditError, RuntimeError):  # RuntimeError: audit not started
+            return _problem(503, "Service unavailable", _AUDIT_DOWN)
+        reason = DenyReason.MISSING_PERMISSION.value
+        return _problem(403, "Forbidden", "forbidden", code="forbidden", reason=reason)
+
     async def _audit_owner(
         action: str, principal: PrincipalSnapshot, target: uuid.UUID, role: str, request: Request
     ) -> None:
@@ -301,6 +328,8 @@ def make_invites_router(
             invite = await auth.invites.create(
                 parsed, invited_by=got.user_id, audit=_write_ahead("users.invited", got, request)
             )
+        except ActorNotAuthorised:  # #2593: refused at the effect, nothing created
+            return await _refused_at_effect(got, request, None)
         except InviteConflict:
             return _problem(409, "Conflict", "email or username already in use")
         except (_AuditRefused, WriteAheadTimeout):  # the SQL store bounds the hook
@@ -337,6 +366,8 @@ def make_invites_router(
         hook = _write_ahead("users.invite_reissued", got, request)
         try:
             invite = await auth.invites.reissue(user_id, invited_by=got.user_id, audit=hook)
+        except ActorNotAuthorised:  # #2593: refused at the effect, no token minted
+            return await _refused_at_effect(got, request, user_id)
         except InviteNotFound:
             return _problem(404, "Not found", "no invited user with this id")
         except (_AuditRefused, WriteAheadTimeout):
@@ -359,8 +390,12 @@ def make_invites_router(
             return gate
         try:
             await auth.invites.revoke(
-                user_id, audit=_write_ahead("users.invite_revoked", got, request)
+                user_id,
+                actor=got.user_id,
+                audit=_write_ahead("users.invite_revoked", got, request),
             )
+        except ActorNotAuthorised:  # #2593: refused at the effect, nothing revoked
+            return await _refused_at_effect(got, request, user_id)
         except InviteNotFound:
             return _problem(404, "Not found", "no pending invite for this user")
         except (_AuditRefused, WriteAheadTimeout):

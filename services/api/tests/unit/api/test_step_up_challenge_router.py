@@ -72,7 +72,7 @@ from tests.unit.api.test_step_up_router import (
     _Sessions,
 )
 from tests.unit.api.test_users_router import _Notifier, _Resolver, _Store
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
+from tests.unit.auth.auth_fakes import FakeUserRepository, InMemoryOwnerReset, make_user, no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -159,8 +159,11 @@ async def _world() -> _World:
         await rows.create_session(record)
     hasher, users = Hasher(), FakeUserRepository()
     users.add(make_user(password_hash=await hasher.hash(_PW)).model_copy(update={"id": user}))
+    reset = InMemoryOwnerReset(users, repo, rows)  # #2593: the reset's unit of work
     auth = _Auth(
-        StepUpService(repo, rows, enc, users, hasher, clock=clock, sleep=no_wait),
+        StepUpService(
+            repo, rows, enc, users, hasher, clock=clock, sleep=no_wait, owner_reset=reset
+        ),
         _Sessions(sessions),
     )
     audit = _Emitter()

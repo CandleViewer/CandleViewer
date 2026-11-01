@@ -46,7 +46,7 @@ from candleviewer.auth.view_as import (
     ViewAsState,
 )
 from candleviewer.observability.context import current_request_uuid
-from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.errors import ActorNotAuthorised, WriteAheadTimeout
 
 _ENDED_ACTION: Final = "admin.view_as_ended"
 _STARTED_ACTION: Final = "admin.view_as_started"
@@ -328,7 +328,9 @@ class ViewAsService:
         close `view_as_changed` and re-`auth` into the target's scope), `held` (409
         `view_as_active`) or neither (the session is gone). Nothing starts when a record cannot be
         written:
-        `ViewAsStartUnavailable`, `audit_unavailable` or `store_unavailable`. A self-targeting
+        `ViewAsStartUnavailable`, `audit_unavailable` or `store_unavailable`. #2593: the unit of
+        work re-reads the viewer as an active owner under the owner lock, before anything:
+        `ActorNotAuthorised`, nothing started or recorded. A self-targeting
         start is a caller error (`ValueError`): the route refuses it first. `ip` is the address the
         start came from, which `admin.view_as_started` names (`actor_ip`)."""
         state = ViewAsState.start(uuid4(), target_user_id, now=now)
@@ -383,7 +385,7 @@ class ViewAsService:
             )
         except (_AuditDown, WriteAheadTimeout) as exc:
             raise ViewAsStartUnavailable("audit_unavailable") from exc
-        except ValueError:
+        except (ValueError, ActorNotAuthorised):  # #2593: the viewer is no longer an owner
             raise
         except Exception as exc:
             raise ViewAsStartUnavailable("store_unavailable") from exc

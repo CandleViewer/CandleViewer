@@ -54,6 +54,8 @@ from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import (
     AuthError,
+    AuthServiceUnavailable,
+    ResetTargetNotFound,
     SelfResetRefused,
     SessionReadOnly,
     SessionRevoked,
@@ -76,6 +78,7 @@ from candleviewer.auth.step_up import (
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.redaction import redact_text
+from candleviewer.storage.errors import ACTOR_ROLE_REVOKED, ActorNotAuthorised
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _PROBLEM = "application/problem+json"
@@ -1077,6 +1080,27 @@ def make_step_up_router(
             )
         except SelfResetRefused:
             return _problem(403, "forbidden", "Forbidden", "owners cannot reset their own TOTP")
+        except ActorNotAuthorised:  # #2593: refused at the effect, nothing changed or recorded
+            try:  # after the rollback; then `_owner`'s answer, never a challenge
+                await _ahead(
+                    _audit(
+                        "rbac.denied",
+                        record,
+                        actor_ip=source_ip(request.scope),
+                        object_kind="user",
+                        object_id=str(user_id),
+                        outcome=AuditOutcome.DENIED,
+                        severity=Severity.WARNING,
+                        reason=ACTOR_ROLE_REVOKED,
+                    )
+                )
+            except AuditRefused:
+                return _audit_unavailable()
+            return _problem(403, "forbidden", "Forbidden", "owner only")
+        except ResetTargetNotFound:  # gone since the lookup: nothing changed
+            return _problem(404, "not_found", "Not found", "user not found")
+        except AuthServiceUnavailable:  # no reset store wired: fail closed
+            return _problem(503, "service_unavailable", "Service unavailable", "reset not wired")
         except SessionReadOnly as exc:  # downgraded after the gate, as `require_elevation_for`
             return readonly_problem(exc)
         except StepUpRequired:  # the grace window lapsed after the gate: a new challenge

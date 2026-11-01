@@ -1,12 +1,13 @@
 """`UserDisableService`: the disable cascade of `DELETE /users/{userId}` and E42-T09's `PATCH`
 (E42-T04 S4, #965, SR-029). In order (R7): `users:write`, then a self-target (SR-055), each refusal
 audited before any read (U25); the open-position and -order counts (O2: read only); the store's
-transaction (S3), which judges a caller's precondition (the PATCH's `If-Match`, E42-T09) on the
-user read under the user-row lock before any write, and whose hook refuses an unacknowledged
-unknown count (AC7) and writes `users.disable` ahead (O6). A change that did not commit closes
-that record with a `failure` one (C-2.9): `not_applied` if the store never reached its commit,
-`outcome_unknown` (no after state) if the commit itself failed, since a driver timeout or a
-cancellation there may have gone through.
+transaction (S3), which re-reads the actor as an active owner under the owner lock (#2593: refused
+with one `rbac.denied` after the rollback and the guard's 403), judges a caller's precondition (the
+PATCH's `If-Match`, E42-T09) on the user read under the user-row lock before any write, and whose
+hook refuses an unacknowledged unknown count (AC7) and writes `users.disable` ahead (O6). A change
+that did not commit closes that record with a `failure` one (C-2.9): `not_applied` if the store
+never reached its commit, `outcome_unknown` (no after state) if the commit itself failed, since a
+driver timeout or a cancellation there may have gone through.
 After such an error (not a cancellation) one read-back, in a new transaction the store bounds,
 settles it (#3445): a user read back as disabled, with the very sessions the hook saw revoked at
 the disable's instant, is taken as this change (with no session, a concurrent disable can pass for
@@ -44,6 +45,7 @@ import structlog
 from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.errors import (
     LastOwnerError,
+    LifecycleActorRevokedError,
     LifecycleAuditUnavailableError,
     LifecycleForbiddenError,
     PositionsUnknownError,
@@ -63,7 +65,11 @@ from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.auth.session_service import RevocationSink, publish_revoked
 from candleviewer.auth.step_up import PositionStateProvider
 from candleviewer.observability.context import current_request_id, current_request_uuid, spawn
-from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.errors import (
+    ACTOR_ROLE_REVOKED,
+    ActorNotAuthorised,
+    WriteAheadTimeout,
+)
 from candleviewer.storage.repositories.user_lifecycle import (
     REVOKED_REASON,
     LifecycleAuditHook,
@@ -121,7 +127,7 @@ class SessionRevokeRecorder(Protocol):  # the process's B16 charts: `StepUpServi
 
 
 class InviteRevoker(Protocol):  # `InviteService`: `audit` runs only if one is open (#2793)
-    async def revoke(self, user_id: uuid.UUID, *, audit: InviteAudit) -> None: ...
+    async def revoke(self, user_id: uuid.UUID, *, actor: uuid.UUID, audit: InviteAudit) -> None: ...
 
 
 class RuleDisarmer(Protocol):  # `user_cascade_wiring.RuleDisarmAdapter`: B9 DISARM, audited ahead
@@ -364,6 +370,23 @@ class UserDisableService:
             raise self._refused("audit_unavailable", LifecycleAuditUnavailableError()) from exc
         raise self._refused("self_target", LifecycleForbiddenError("self_target"))
 
+    async def _deny_revoked(self, who: dict[str, Any], session_id: uuid.UUID | None) -> NoReturn:
+        """#2593: the actor is no longer an active owner (read in the change's transaction, which
+        rolled back): one `rbac.denied` after the rollback, then the guard's own 403, or a 503 if
+        the record cannot be written."""
+        try:
+            await self._audit.emit(
+                "rbac.denied",
+                **who,
+                session_id=session_id,
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason=ACTOR_ROLE_REVOKED,
+            )
+        except _AUDIT_DOWN as exc:
+            raise self._refused("audit_unavailable", LifecycleAuditUnavailableError()) from exc
+        raise self._refused("forbidden", LifecycleActorRevokedError())
+
     async def _commit(
         self,
         user_id: uuid.UUID,
@@ -412,6 +435,8 @@ class UserDisableService:
             raise self._refused("last_owner", LastOwnerError(str(user_id))) from exc
         except UserSelfTargetError:  # the store's own SR-055 check: the same audited 403
             await self._deny_self(_who(actor, user_id, rid), session_id)
+        except ActorNotAuthorised:  # #2593: refused under the owner lock, before any write
+            await self._deny_revoked(_who(actor, user_id, rid), session_id)
         except _AuditRefusedError as exc:  # AC8: nothing durable, nothing changed
             raise self._refused("audit_unavailable", LifecycleAuditUnavailableError()) from exc
         except BaseException as exc:
@@ -595,7 +620,7 @@ class UserDisableService:
             await self._audit.emit("users.invite_revoked", **_who(actor, user_id, rid), **fields)
 
         with contextlib.suppress(InviteNotFound):
-            await self._invites.revoke(user_id, audit=write_ahead)
+            await self._invites.revoke(user_id, actor=actor, audit=write_ahead)
 
     def _refused(self, result: str, error: UserLifecycleError) -> UserLifecycleError:
         user_lifecycle_total.labels(action="disable", result=result).inc()

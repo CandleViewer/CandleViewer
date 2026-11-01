@@ -6,7 +6,8 @@ composition root, not imported (C-3.1). Static, parameterised SQL over effective
 `apply_roles` is one transaction under the owner-floor lock it shares with the
 user lifecycle store (`owner_floor_sqlalchemy.py`): lock the target user (changes
 to one user queue), lock every active-owner grant in key order (concurrent
-demotions and disables queue, never deadlock), re-check the floor on the count
+demotions and disables queue, never deadlock), re-read the actor as an active
+owner (#2593: refused before any write, a missing target included), re-check the floor on the count
 read after that lock (a target that is not active holds no counted owner grant),
 replace the set, fire the deferred owner-floor trigger (SQLSTATE 23514 maps onto
 the same check), then hand the locked before-set to the caller's write-ahead
@@ -35,7 +36,7 @@ from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
     counted_roles,
     effective_roles,
     floor_refusal,
-    lock_active_owners,
+    require_active_owner,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -112,19 +113,22 @@ class SqlAlchemyUserRoleStore:
         self, user_id: uuid.UUID, roles: frozenset[str], *, actor: uuid.UUID, audit: AuditHook
     ) -> bool:
         """Replace the role set atomically (new grants record `actor`); False if the user
-        does not exist. Raises what the owner-floor check or `audit` raises, a `StorageQueryFailed`
-        typed by its facts (`StorageConstraintViolated` for a constraint) for any `IntegrityError`
-        other than this change's floor (#2748), or `WriteAheadTimeout` when `audit` outlives its
-        bound; each rolls the transaction back, so nothing changes without its audit record."""
+        does not exist. `ActorNotAuthorised` (#2593) when `actor` is no longer an active owner,
+        checked after the owner lock and before the not-found answer and any write. Raises what the
+        owner-floor check or `audit` raises, a `StorageQueryFailed` typed by its facts
+        (`StorageConstraintViolated` for a constraint) for any `IntegrityError` other than this
+        change's floor (#2748), or `WriteAheadTimeout` when `audit` outlives its bound; each rolls
+        the transaction back, so nothing changes without its audit record."""
         uid, wanted = str(user_id), sorted(roles)
         current: frozenset[str] = frozenset()
         counted = current  # what the floor counts of `current` (`counted_roles`)
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session
-                if (row := (await s.execute(LOCK_USER, {"id": uid})).first()) is None:
+                row = (await s.execute(LOCK_USER, {"id": uid})).first()
+                owners = await require_active_owner(s, str(actor))  # #2593: before not-found
+                if row is None:
                     return False
-                owners = await lock_active_owners(s)
                 current = await effective_roles(s, uid) or current
                 counted = counted_roles(str(row[0]), current)
                 self._owner_floor(counted, roles, owners)
