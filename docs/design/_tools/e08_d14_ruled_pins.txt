@@ -1,8 +1,8 @@
 # E08-D14 pins: one cited endpoint per line, `KEY:line sha1-16` of its words at the base.
 # Written only by `e08_d14_designqa_audit.py --repin-ruled`.
-14:1041 d0501599be09df3d
-14:2323 2ac25ed19b557d68
-14:3084 3b43992b459e4490
+14:1045 d0501599be09df3d
+14:2333 2ac25ed19b557d68
+14:3095 3b43992b459e4490
 A11YS:20 71dd2f9c5099de2d
 CHIP:30 5c76857c2a16a416
 CHIP:31 8b8bde7b5e961af4
