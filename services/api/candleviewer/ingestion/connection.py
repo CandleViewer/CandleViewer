@@ -17,13 +17,14 @@ import itertools
 import json
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import Topic
 from candleviewer.exchange.base.errors import RateBudgetExceededError
 from candleviewer.exchange.base.reconnect import ConnectionGuard
-from candleviewer.ingestion.metrics import ingest_ws_up
+from candleviewer.ingestion.metrics import ingest_subscribe_rejected_total, ingest_ws_up
 from candleviewer.ingestion.planner import SubscriptionPlanner
 from candleviewer.ingestion.reconnect import ReconnectPolicy
 from candleviewer.ingestion.watchdog import (
@@ -50,6 +51,18 @@ _conn_ids = itertools.count(1)
 
 
 MAX_FRAME_BYTES = 1_048_576  # explicit cap on a single WS frame (E08-X01)
+#: #1955: topic-level subscribe/unsubscribe acks awaited at once (oldest dropped past it) and
+#: how long one may stay unanswered before it is counted `timeout`.
+MAX_PENDING_ACKS = 256
+ACK_TIMEOUT_S = 10.0
+_ACK_PREFIX = '{"success"'  # Bybit op replies lead with it; data frames lead with `topic`
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingAck:
+    op: str
+    topics: tuple[str, ...]
+    deadline: float
 
 
 class Socket(Protocol):
@@ -110,6 +123,9 @@ class ConnectionManager:
         #: Per-topic stale resubscribes on the live socket (#1913); these are
         #: subscription ops, not dials, so they never touch the SR-039 budget.
         self.topic_resubscribes = 0
+        #: #1955: `req_id` -> unanswered topic-level op; bounded, insertion-ordered (oldest first).
+        self._pending: dict[str, _PendingAck] = {}
+        self._req_ids = itertools.count(1)
         self._interp: Any = None
         self._key = f"public-{next(_conn_ids)}"
         self._sock: Socket | None = None
@@ -206,6 +222,7 @@ class ConnectionManager:
             await self._sleep(delay)
         self._sock = await self._factory()
         self._subscribed = None  # a fresh socket holds no subscriptions
+        self._pending.clear()  # acks for a dead socket never arrive
         self.opens += 1
 
     async def authenticate(self) -> None:  # public feed: never reached
@@ -232,7 +249,43 @@ class ConnectionManager:
 
     async def _send_op(self, sock: Socket, op: str, topics: set[str]) -> None:
         for batch in self._planner.plan(topics):
-            await sock.send(json.dumps({"op": op, "args": list(batch.topics)}))
+            await self._send_tracked(sock, op, list(batch.topics))
+
+    async def _send_tracked(self, sock: Socket, op: str, topics: list[str]) -> None:
+        """Send one topic-level op carrying a `req_id`, and await its ack (#1955)."""
+        req_id = f"cv-{next(self._req_ids)}"
+        if len(self._pending) >= MAX_PENDING_ACKS:  # never block: drop the oldest, count it
+            del self._pending[next(iter(self._pending))]
+            ingest_subscribe_rejected_total.labels(reason="overflow").inc()
+        self._pending[req_id] = _PendingAck(op, tuple(topics), self._clock() + ACK_TIMEOUT_S)
+        await sock.send(json.dumps({"op": op, "args": topics, "req_id": req_id}))
+
+    def _on_ack(self, frame: str) -> None:
+        """A `{"success": ...}` reply: settle the pending op it answers (others, e.g. the
+        pong, carry no tracked `req_id`). A refused subscribe counts and marks its topics stale,
+        so the existing per-topic stale resubscribe retries it."""
+        try:
+            msg = json.loads(frame)
+        except ValueError:
+            return
+        if not isinstance(msg, dict):
+            return
+        req_id = msg.get("req_id")
+        pending = self._pending.pop(req_id, None) if isinstance(req_id, str) else None
+        if pending is not None and msg.get("success") is not True:
+            self._ack_failed(pending, "rejected")
+
+    def _ack_failed(self, pending: _PendingAck, reason: str) -> None:
+        ingest_subscribe_rejected_total.labels(reason=reason).inc()
+        if pending.op == "subscribe":
+            for topic in pending.topics:
+                self._watchdog.force_stale(topic)
+
+    def _expire_acks(self) -> None:
+        now = self._clock()
+        late = [rid for rid, p in self._pending.items() if p.deadline <= now]
+        for rid in late:
+            self._ack_failed(self._pending.pop(rid), "timeout")
 
     async def resubscribe_topic(self, topic: str) -> None:
         """Force a fresh snapshot for one topic: unsubscribe then subscribe, paced by the
@@ -248,8 +301,8 @@ class ConnectionManager:
             return
         if delay > 0:
             await self._sleep(delay)
-        await sock.send(json.dumps({"op": "unsubscribe", "args": [topic]}))
-        await sock.send(json.dumps({"op": "subscribe", "args": [topic]}))
+        await self._send_tracked(sock, "unsubscribe", [topic])
+        await self._send_tracked(sock, "subscribe", [topic])
 
     async def close_socket(self) -> None:
         await self.teardown_session()
@@ -341,6 +394,8 @@ class ConnectionManager:
             frame = await sock.recv(MAX_FRAME_BYTES)
             if len(frame) > MAX_FRAME_BYTES:
                 raise ValueError("ws frame exceeds MAX_FRAME_BYTES")
+            if frame.startswith(_ACK_PREFIX):
+                self._on_ack(frame)  # still forwarded below: the parsers ignore op replies
             rec = self._latency
             if rec is None or not rec.sample():
                 self._on_message(frame)  # unsampled: no stamps, no allocation
@@ -375,6 +430,7 @@ class ConnectionManager:
         every watched topic is stale: then the socket itself is suspect."""
         while True:
             await self._sleep(self._check_interval)
+            self._expire_acks()
             if stale := self._watchdog.check():
                 for topic in stale:
                     await self._publish(feed_health(topic, "stale", 0.0, now_us=self._now_us()))
@@ -390,6 +446,6 @@ class ConnectionManager:
         sock = self._sock
         if sock is None or topic not in self._desired:
             return
-        await sock.send(json.dumps({"op": "unsubscribe", "args": [topic]}))
-        await sock.send(json.dumps({"op": "subscribe", "args": [topic]}))
+        await self._send_tracked(sock, "unsubscribe", [topic])
+        await self._send_tracked(sock, "subscribe", [topic])
         self.topic_resubscribes += 1

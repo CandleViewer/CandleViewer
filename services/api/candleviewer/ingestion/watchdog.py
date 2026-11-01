@@ -81,6 +81,14 @@ class StalenessWatchdog:
             self._last[topic] = self._clock()
             self._stale.discard(topic)
 
+    def force_stale(self, topic: str) -> None:
+        """#1955: age a watched topic past its limit (its subscribe was refused or went
+        unanswered), so the next `check()` reports it stale and the usual per-topic
+        resubscribe retries it. No-op for unwatched or limitless topics."""
+        limit = self._limits.get(self._kind(topic))
+        if topic in self._last and limit is not None:
+            self._last[topic] = min(self._last[topic], self._clock() - limit)
+
     def reset(self) -> None:
         """Restart staleness timers (after a reconnect)."""
         now = self._clock()
