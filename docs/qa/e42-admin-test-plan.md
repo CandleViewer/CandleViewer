@@ -118,17 +118,17 @@ replaced by one that raises `AuditUnavailable` for that record only, as
 
 ### S01: the admin shell, the re-auth gate and SCR-120 (US-ADMIN-001, 002, 004, 010, 011)
 
-**AD-S01-01 Entry without a fresh step-up meets the gate [R]** (`e2e`, `contract`; E42-S01 "Owner enters the
-admin area with a stale token"; SCR-149; D02 D2 and A-14)
+**AD-S01-01 Entry asks for no step-up and the overview loads [R]** (`e2e`, `contract`; E42-S01 "Owner
+enters the admin area", amended under D8 (#2701 ledger 2 row 12; E42-S01 BQ-1): per-action step-up, SCR-149
+retired; D02 D2)
 
-- Pre: OWNER, whose last step-up is older than the router's freshness window (the browser's clock moves it).
-- Steps: open `/admin`; enter the correct password and TOTP.
-- Expected: the gate, as `role="alertdialog"` with a focus trap, says why it is shown and how long the
-  result lasts. After the correct answer the admin area renders. `Esc` cancels to the previous non-admin
-  route.
+- Pre: OWNER, with no step-up grace live.
+- Steps: open `/admin`.
+- Expected: the "Admin area" band renders as the first content of the page and the overview loads; no dialog
+  or alertdialog opens and no `POST /auth/step-up` is sent.
 - Server: the entry itself is a read, which the server records but never refuses (AC-ADM-30). Every
-  dangerous action is still challenged server-side (AD-S01-N01).
-- Audit: `auth.step_up_granted` for OWNER, then `admin.area_entered` (allowed, with its `reauth_age_s`). See
+  dangerous action is still challenged server-side, per action (AD-S01-04, AD-S01-N01).
+- Audit: `admin.area_entered` (allowed, with its `reauth_age_s`) for each `/admin/*` read the page makes. See
   Q-1.
 
 **AD-S01-02 A non-owner cannot reach the admin area [R]** (`e2e`, `contract`; E42-S01 "Non-owner cannot
@@ -167,15 +167,19 @@ independently"; SCR-120)
   §8.2's 800 ms. See Q-25.
 - Audit: `admin.area_entered` (allowed), once per call.
 
-**AD-S01-04 Re-auth expires mid-edit** (`e2e`; E42-S01 "Re-auth expires mid-edit"; D02 D2)
+**AD-S01-04 A protected change is challenged while the owner edits** (`e2e`; E42-S01's failure scenario,
+amended under D8 (E42-S01 BQ-1); D02 D2)
 
-- Pre: OWNER on SCR-122, with 10 seconds left on the `users` class's grace.
-- Steps: change two fields; move the server's clock past the grace (§0); press Save; re-authenticate.
-- Expected: the server answers the save `403 step_up_required`. The gate overlays the page, with the form
-  content still under the scrim. After re-authentication the held save is sent once, unchanged (method,
-  path, body and `Idempotency-Key`), and the page says "Saved".
-- Audit: `auth.step_up_required`, then `auth.step_up_granted`, then `auth.step_up_grace_used` and the save's
-  own record once (for a role change, `roles.grant` or `roles.revoke`).
+- Pre: OWNER on an admin form with unsaved content and no live grace for the action's class. E42-S01 runs it
+  on SCR-123, the one admin form it ships; SCR-122's Save is E42-S02's.
+- Steps: change the fields; submit; answer the step-up with the correct password and code; then repeat and
+  cancel.
+- Expected: the server answers `403 step_up_required`. The step-up dialog opens as `role="alertdialog"` over
+  the page, with the form content unchanged. After the correct answer the held request is sent once,
+  unchanged (method, path, body and `Idempotency-Key`). Cancel keeps the page and its content and says "Not
+  sent".
+- Audit: `auth.step_up_required`, then `auth.step_up_granted`, then the action's own record once (for an
+  invitation, `users.invited`).
 
 **AD-S01-05 The backend is degraded** (`e2e`; E42-S01 "Backend degraded")
 
@@ -1143,10 +1147,10 @@ changed there would permanently break an append-only, hash-chained log.
 
 | Story   | Gherkin scenario                                      | Cases                                                              |
 | ------- | ----------------------------------------------------- | ------------------------------------------------------------------ |
-| E42-S01 | Owner enters the admin area with a stale token        | AD-S01-01, AD-S01-N01, AD-S01-N02, AD-S01-N04, AD-S01-N05, CH-AD-3 |
+| E42-S01 | Owner enters the admin area (amended under D8)        | AD-S01-01, AD-S01-N01, AD-S01-N02, AD-S01-N04, AD-S01-N05, CH-AD-3 |
 | E42-S01 | Non-owner cannot reach the admin area                 | AD-S01-02, CH-AD-1                                                 |
 | E42-S01 | Overview tiles resolve independently                  | AD-S01-03, CH-AD-5                                                 |
-| E42-S01 | (failure) Re-auth expires mid-edit                    | AD-S01-04, AD-S01-N02, AD-S01-N03, CH-AD-4                         |
+| E42-S01 | (failure) A protected change is challenged mid-edit   | AD-S01-04, AD-S01-N02, AD-S01-N03, CH-AD-4                         |
 | E42-S01 | (edge) Backend degraded                               | AD-S01-05                                                          |
 | E42-S02 | Create and assign role                                | AD-S02-01, AD-S02-N01, AD-S02-N02, AD-S02-N06, AD-S02-N07          |
 | E42-S02 | Disable revokes access quickly                        | AD-S02-02, AD-X-01, AD-S02-N04                                     |
