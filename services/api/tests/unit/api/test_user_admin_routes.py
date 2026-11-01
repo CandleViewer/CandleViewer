@@ -791,7 +791,7 @@ def test_a_failed_role_push_after_the_commit_is_logged_never_rolled_back(
         r = env.patch(M, {"roles": ["manager"]})
     assert r.status_code == 200 and env.store.users[M]["roles"] == ["manager"]
     assert env.pushed == [M] and env.log[-1] == "commit"  # the push ran after the commit
-    (line,) = [e for e in logs if e["event"] == "users.update.step"]
+    (line,) = [e for e in logs if e["event"] == "users.update.step" and e["step"] == "roles_push"]
     assert (line["log_level"], line["step"], line["outcome"]) == ("error", "roles_push", "failed")
     assert _pushes("failed") == failed + 1
 

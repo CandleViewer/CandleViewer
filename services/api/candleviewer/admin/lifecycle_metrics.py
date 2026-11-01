@@ -4,7 +4,8 @@ declared here and pinned by tests to the module that writes each: the disable's 
 cascade's steps and outcomes in `admin/user_disable.py`, the grants push (`step`
 `grants_push`, `outcome` `pushed`, `timeout` or `failed`) in `admin/account_access.py` (#2648),
 and the role push of a committed role change (`step` `roles_push`, `outcome` `ok` or `failed`,
-a failure of the registry push or of the view-as hook before it, #3085 S5b) in `api/users.py`
+a failure of the registry push or of the view-as hook before it, #3085 S5b) and its session revoke
+(`step` `session_revoke`, `outcome` `ok` or `failed`, SR-013 #2101) in `api/users.py`
 (E42-T09, #2649).
 Every series is bound at import, so the first failure after a restart is an increase that the
 lifecycle tickets in `infra/prometheus/alerts/system_ticket.yml` can see."""
@@ -28,7 +29,8 @@ ACTION_RESULTS: Final[Mapping[str, tuple[str, ...]]] = {
 #: good). Each step after the commit (`user_disable.STEPS`) runs on every call and passes or fails
 #: (cut off too); B16 and the invite revoke may have nothing to do. The closing record of a change
 #: that did not commit is one attempt. The grants push: done, still running when the request
-#: stopped waiting, or failed. The role push of a committed role change: done or failed.
+#: stopped waiting, or failed. The role push of a committed role change: done or failed, and its
+#: session revoke (#2101): done or failed.
 STEP_OUTCOMES: Final[Mapping[str, tuple[str, ...]]] = {
     "socket_close": ("ok", "failed"),  # S7: every call closes every socket of the user
     "session_sweep": ("ok", "failed"),
@@ -39,6 +41,7 @@ STEP_OUTCOMES: Final[Mapping[str, tuple[str, ...]]] = {
     "closing_record": ("ok", "failed"),
     "grants_push": ("pushed", "timeout", "failed"),
     "roles_push": ("ok", "failed"),  # E42-T09 (#2649), `PUT .../roles` and `PATCH`; with its hook
+    "session_revoke": ("ok", "failed"),  # #2101: the same routes end the user's sessions first
 }
 
 user_lifecycle_total = Counter(

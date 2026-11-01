@@ -5559,12 +5559,14 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "change (roles_push, E42-T09 #2649): ok or failed, a failure of the registry push or "
         "of the view-as hook before it (#3085 S5b), the log line's part telling which; when "
         "both fail it reads view_as_hook, and the registry's failure is on "
-        "admin.view_as.registry_push_failed.",
-        "UserLifecycleStepFailed (a cascade step, closing record or role push failed in 15m, "
-        "ticket); UserGrantsPushFailed (a grants push failed or timed out in 15m, ticket)",
+        "admin.view_as.registry_push_failed. The session revoke that comes first "
+        "(session_revoke, SR-013 #2101): ok or failed.",
+        "UserLifecycleStepFailed (a cascade step, closing record, role push or session revoke "
+        "failed in 15m, ticket); UserGrantsPushFailed (a grants push failed or timed out in 15m, "
+        "ticket)",
         _L,
         "E42",
-        max_series=21,  # ok and failed for eight steps, skipped for two, the grants push's three
+        max_series=23,  # ok and failed for nine steps, skipped for two, the grants push's three
         exported=True,
     ),
     # --- Latency budget (E04-T06, US-OBS-002) -------------------------------
