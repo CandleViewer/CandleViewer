@@ -67,7 +67,7 @@ Board 02 of 10 (§0 L67: V-2: Amber in light below 4.5:1 on a selected row, W-1 
 
 ## Sources (1)
 
-- spec E47-D03.md md5 ea4ad258 and hand-off E47-D03-handoff.md md5 da47f763 (§0 L67; hand-off §G L126)
+- spec E47-D03.md md5 a79ee897 and hand-off E47-D03-handoff.md md5 9115b708 (§0 L67; hand-off §G L126)
 
 ## Tokens (46)
 

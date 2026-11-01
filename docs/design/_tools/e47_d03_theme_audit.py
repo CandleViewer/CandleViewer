@@ -69,11 +69,14 @@ import math
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "95a4f2765"  # origin/main when the spec was written; every cite is read here
+# the hand-off's §C.1 A-rows (Old and cite) are read here: re-pinned after #5237 rewrote SCR-116
+AROW_BASE = "11d698e36"
 
 SPEC_REL = "docs/design/E47/E47-D03.md"
 HAND_REL = "docs/design/E47/E47-D03-handoff.md"
@@ -201,6 +204,11 @@ def at_base(rel: str) -> str:
 @functools.lru_cache(maxsize=64)
 def base_lines(rel: str) -> tuple[str, ...]:
     return tuple(at_base(rel).split("\n"))
+
+
+@functools.lru_cache(maxsize=64)
+def arow_lines(rel: str) -> tuple[str, ...]:
+    return tuple(git("show", f"{AROW_BASE}:{rel}").split("\n"))
 
 
 def changed_paths() -> tuple[str, ...]:
@@ -797,8 +805,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-AROW",
         "hand",
         "### §C.1",
-        "CVD-safe deuteranopia",
-        "CVD safe deuteranopia",
+        "a chart-palette choice",
+        "a chart palette choice",
     ),
     Mutation(
         "M-20",
@@ -954,17 +962,18 @@ def g_cite(t: Texts) -> list[Finding]:
             if rel.startswith("?"):
                 out.append(("G-CITE", f"unknown cite key {rel[1:]}", doc, region))
                 continue
-            lines = base_lines(rel)
+            arow = doc == "hand" and "### §C.1" in region
+            lines = arow_lines(rel) if arow else base_lines(rel)
             if not (1 <= n <= len(lines)) or not lines[n - 1].strip():
                 out.append(("G-CITE", f"{rel}:{n} is not a non-blank line", doc, region))
     return out
 
 
-def cited_text(cite_cell: str) -> str:
+def cited_text(cite_cell: str, at: Callable[[str], tuple[str, ...]] = base_lines) -> str:
     return "\n".join(
-        base_lines(rel)[n - 1]
+        at(rel)[n - 1]
         for rel, n in cite_targets(cite_cell)
-        if not rel.startswith("?") and 1 <= n <= len(base_lines(rel))
+        if not rel.startswith("?") and 1 <= n <= len(at(rel))
     )
 
 
@@ -990,7 +999,7 @@ def g_arow(t: Texts) -> list[Finding]:
         old = row[3].strip()
         if old.startswith("`") and old.endswith("`") and old.count("`") == 2:
             old = old[1:-1]
-        if not cite_targets(row[2]) or old not in cited_text(row[2]):
+        if not cite_targets(row[2]) or old not in cited_text(row[2], arow_lines):
             out.append(("G-AROW", f"{row[0]}'s Old is not verbatim on {row[2]}", "hand", region))
     return out
 

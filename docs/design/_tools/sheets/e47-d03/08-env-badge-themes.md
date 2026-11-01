@@ -53,7 +53,7 @@ Board 08 of 10 (§0 L73: §9: CMP-074 / CMP-075 LIVE and DEMO in dark, light, hi
 
 ## Sources (1)
 
-- spec E47-D03.md md5 ea4ad258 and hand-off E47-D03-handoff.md md5 da47f763 (§0 L73; hand-off §G L132)
+- spec E47-D03.md md5 a79ee897 and hand-off E47-D03-handoff.md md5 9115b708 (§0 L73; hand-off §G L132)
 
 ## Tokens (33)
 

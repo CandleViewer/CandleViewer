@@ -55,7 +55,7 @@ SPEC = REPO / "docs/design/E47/E47-D03.md"
 HANDOFF = REPO / "docs/design/E47/E47-D03-handoff.md"
 # re-pinned at the boards commit: §0's Status cells and As built, the DoD and the version line, the hand-off's §A row,
 # §G heading and §H line were extended in place, so every L<n> / §G cite on the ten boards reads the same text
-SPEC_MD5 = {SPEC.name: "ea4ad258fb6822ea406aee3addc8c640", HANDOFF.name: "da47f7636f71c6da7572d3dbfe504daa"}
+SPEC_MD5 = {SPEC.name: "a79ee8972d1636d41c19d3287d9e80a7", HANDOFF.name: "9115b70824595e8c72db3d3111ad43f5"}
 
 REV = "r1"
 PITCH_X, PITCH_Y = 6000, 3200  # grid: x = ((NN-1) mod 5) * 6000, y = floor((NN-1)/5) * 3200
