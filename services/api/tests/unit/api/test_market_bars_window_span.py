@@ -5,17 +5,19 @@ No storage is reachable: the fake reader fails the test if a refused request rea
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from candleviewer.api.market import MarketDataPrincipal
 from candleviewer.api.market_bars import make_market_bars_router, window_span_us
 from candleviewer.bars.limits import MAX_TIME_WINDOW_US
+from candleviewer.bars.reader import BarPage
 
 _NOW = 1_800_000_000_000_000
 _US_PER_DAY = 86_400_000_000
@@ -33,11 +35,17 @@ class _Reader:
         raise AssertionError("a refused request must not reach the reader")
 
 
-def _client() -> TestClient:
+class _EmptyReader:
+    async def read_bars(self, *a: object, **k: object) -> BarPage:
+        return BarPage(rows=[], next_cursor=None, stale=False)
+
+
+def _client(reader: _Reader | _EmptyReader | None = None) -> TestClient:
     app = FastAPI()
+    served = reader or _Reader()
     app.include_router(
         make_market_bars_router(
-            lambda: _Reader(),
+            lambda: served,
             principal_resolver=_Resolver(),
             symbol_listed=lambda s: True,
             now_us=lambda: _NOW,
@@ -91,3 +99,23 @@ def test_cap_boundary_is_unchanged_for_post_epoch_windows() -> None:
     assert window_span_us(0, MAX_TIME_WINDOW_US, None) == MAX_TIME_WINDOW_US
     assert window_span_us(_US_PER_DAY, _US_PER_DAY + 5, 7) == 5  # cursor before `from`
     assert window_span_us(0, 100, 49) == 50  # cursor inside the window
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+#: Whole seconds from year 2 to year 2100, so pre-1970 values are well covered.
+_SECONDS = st.integers(min_value=-62_000_000_000, max_value=4_100_000_000)
+_ROUTE_CLIENT = _client(_EmptyReader())
+
+
+def _iso(seconds: int) -> str:
+    return (_EPOCH + timedelta(seconds=seconds)).isoformat()
+
+
+@settings(max_examples=60, derandomize=True, deadline=None)
+@given(start=_SECONDS, end=_SECONDS)
+def test_property_every_served_window_is_within_the_cap(start: int, end: int) -> None:
+    """A 200 never covers more than the time-bar cap, whatever `from`/`to` (pre-1970 included)."""
+    resp = _ROUTE_CLIENT.get("/market/bars", params={**_Q, "from": _iso(start), "to": _iso(end)})
+    assert resp.status_code in {200, 400, 422}
+    if resp.status_code == 200:
+        assert 0 <= end - start <= MAX_TIME_WINDOW_US // 1_000_000

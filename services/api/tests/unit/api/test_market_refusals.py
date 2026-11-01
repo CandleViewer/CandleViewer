@@ -88,6 +88,11 @@ def _count(reason: str) -> float:
     )
 
 
+def _route_count(route: str, reason: str) -> float:
+    labels = {"route": route, "reason": reason}
+    return REGISTRY.get_sample_value("api_request_rejected_total", labels) or 0.0
+
+
 def _refusals(logs: list[MutableMapping[str, Any]]) -> list[MutableMapping[str, Any]]:
     return [entry for entry in logs if entry["event"] == "market_request_refused"]
 
@@ -153,13 +158,14 @@ def test_refusal_increments_the_counter_and_logs_once(
     client = _bars(**kwargs) if route == "bars" else _klines(**kwargs)
     query = {**(_BARS_Q if route == "bars" else _KLINES_Q), **override}
     query = {k: v for k, v in query.items() if v != ""}
-    before = _count(reason)
+    before, before_route = _count(reason), _route_count(route, reason)
 
     with capture_logs() as logs:
         resp = client.get(f"/market/{route}", params=query)
 
     assert resp.status_code == status
     assert _count(reason) == before + 1
+    assert _route_count(route, reason) == before_route + 1
     [entry] = _refusals(logs)
     assert (entry["route"], entry["reason"], entry["status"]) == (route, reason, status)
     assert entry["log_level"] == "warning"
@@ -214,6 +220,27 @@ def test_refusal_log_carries_neither_the_session_nor_the_cursor_payload() -> Non
             headers={"authorization": "Bearer s3cret-token", "cookie": "cv_session=s3cret"},
         )
     assert "s3cret" not in repr(logs)
+    [entry] = _refusals(logs)
+    assert "cursor" not in entry  # only its length is logged
+    assert entry["cursor_len"] == len(_BAD_CURSOR)
+
+
+def test_forbidden_refusal_logs_the_user_id_only() -> None:
+    with capture_logs() as logs:
+        _bars(_NO_PERM).get("/market/bars", params=_BARS_Q)
+        _klines(_NO_PERM).get("/market/klines", params=_KLINES_Q)
+
+    first, second = _refusals(logs)
+    assert first["user_id"] == second["user_id"] == "'u2'"
+
+
+def test_the_route_counter_drops_unknown_labels() -> None:
+    from candleviewer.bars.metrics import record_rejected
+
+    record_rejected("/etc/passwd", "invalid")
+    record_rejected("bars", "../x")
+    assert _route_count("/etc/passwd", "invalid") == 0.0
+    assert _route_count("bars", "../x") == 0.0
 
 
 def test_escape_value_short_values_are_repr_escaped_and_not_marked() -> None:

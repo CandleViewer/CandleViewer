@@ -1675,6 +1675,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "api_request_rejected_total",
+        "counter",
+        "requests",
+        ("route", "reason"),
+        "bars/klines requests refused, by route (bars|klines) and reason (#452 F4a).",
+        "spike = probing / fuzzing (SR-E12-03); alert on the rate per reason",
+        _L,
+        "E12",
+        max_series=22,
+        exported=True,
+    ),
+    _s(
         "bars_endpoint_source_tier_total",
         "counter",
         "responses",

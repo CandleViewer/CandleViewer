@@ -185,6 +185,11 @@ bars_endpoint_param_rejected_total = Counter(
     "bars/klines requests refused, by reason (bounded set).",
     labelnames=("reason",),
 )
+api_request_rejected_total = Counter(
+    "api_request_rejected_total",
+    "bars/klines requests refused, by route and reason (#452 F4a).",
+    labelnames=("route", "reason"),
+)
 bars_endpoint_source_tier_total = Counter(
     "bars_endpoint_source_tier_total",
     "Responses that served rows from a tier (one per tier per response).",
@@ -270,6 +275,13 @@ def record_param_rejected(reason: str) -> None:
         bars_endpoint_param_rejected_total.labels(reason=reason).inc()
 
 
+def record_rejected(route: str, reason: str) -> None:
+    """Count one refusal of `route` in `api_request_rejected_total`; both labels are closed sets
+    (`ENDPOINT_ROUTES`, `PARAM_REJECT_REASONS`), an unknown value is dropped, never minted."""
+    if route in ENDPOINT_ROUTES and reason in PARAM_REJECT_REASONS:
+        api_request_rejected_total.labels(route=route, reason=reason).inc()
+
+
 #: Names served by `export_bars_metrics` (the S01/S02 builder counters plus the above, and the
 #: write and read path series of `bars.writer` / `bars.reader`, #1998).
 EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
@@ -307,6 +319,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_endpoint_rows_returned_total",
         "bars_endpoint_422_no_data_recorded_total",
         "bars_endpoint_param_rejected_total",
+        "api_request_rejected_total",
         "bars_endpoint_source_tier_total",
         "bars_tape_read_degraded_total",
         "bar_renko_multi_brick_total",

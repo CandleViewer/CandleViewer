@@ -125,6 +125,9 @@ class _Principal(Protocol):
     `MarketDataPrincipal` and the session resolver's `audit.access.AuditPrincipal` (which
     the composition root injects, #2092) satisfy it structurally."""
 
+    @property
+    def user_id(self) -> object: ...
+
     def has(self, permission: str) -> bool: ...
 
 
@@ -315,6 +318,7 @@ def make_market_router(
                     _problem(
                         403, "Forbidden", f"Reading market data requires {_REQUIRED_PERMISSION}."
                     ),
+                    user_id=principal.user_id,
                 )
             )
 
@@ -325,6 +329,7 @@ def make_market_router(
         interval: str,
         from_: str | None = Query(default=None, alias="from"),
         to: str | None = Query(default=None, alias="to"),
+        # Refused by FastAPI (422) before this handler runs: not counted or logged (#452 m2).
         limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
         # S1: no `max_length` here — FastAPI's pre-handler 422 would echo the value and skip
         # the Problem shape; `decode_cursor` enforces the length and returns `invalid_cursor`.
@@ -403,7 +408,7 @@ def make_market_router(
                 return _refused("invalid_cursor", problem(
                     400, "invalid_cursor", "Invalid cursor",
                     "The cursor is not valid for this request; restart without a cursor.",
-                ), symbol=symbol, interval=interval, cursor=cursor)  # fmt: skip
+                ), symbol=symbol, interval=interval, cursor_len=len(cursor))  # fmt: skip
         if end_us - start_us > MAX_TIME_WINDOW_US:
             # The only window refusal (22-api): the SR-E12-02 hard cap. Anything narrower is
             # served page by page.

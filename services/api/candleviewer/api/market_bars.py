@@ -93,6 +93,9 @@ def _log() -> Any:
 
 
 class _Principal(Protocol):
+    @property
+    def user_id(self) -> object: ...
+
     def has(self, permission: str) -> bool: ...
 
 
@@ -223,7 +226,8 @@ def make_market_bars_router(
             )))  # fmt: skip
         if not principal.has(_REQUIRED_PERMISSION):
             detail = f"Reading market data requires {_REQUIRED_PERMISSION}."
-            raise _Rejected(_refused("forbidden", problem(403, "forbidden", "Forbidden", detail)))
+            raise _Rejected(_refused("forbidden", problem(403, "forbidden", "Forbidden", detail),
+                                     user_id=principal.user_id))  # fmt: skip
 
     async def _print_estimate(
         symbol: str, spec: BarSpec, bar_type: str, rng: TimeRange
@@ -268,6 +272,7 @@ def make_market_bars_router(
         param: str,
         from_: str | None = Query(default=None, alias="from"),
         to: str | None = Query(default=None, alias="to"),
+        # Refused by FastAPI (422) before this handler runs: not counted or logged (#452 m2).
         limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
         cursor: str | None = Query(default=None),  # length enforced by decode_cursor (#2087 S1)
         include_open: bool = Query(default=False),
@@ -307,7 +312,7 @@ def make_market_bars_router(
                 detail = "The cursor is not valid for this request; restart without it."
                 return _refused("invalid_cursor",
                                 problem(400, "invalid_cursor", "Invalid cursor", detail),
-                                symbol=symbol, cursor=cursor)  # fmt: skip
+                                symbol=symbol, cursor_len=len(cursor))  # fmt: skip
         if symbol_listed is None or (reader := reader_provider()) is None:
             return _refused("unavailable", problem(503, "store_unavailable",
                             "Service unavailable", "Bar storage is not ready yet."))  # fmt: skip
