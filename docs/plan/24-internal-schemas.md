@@ -6679,6 +6679,14 @@ The orchestrator assigned this number on 2026-10-31 (23:40Z, with #5267's unique
 - 22 `getHeatmap` documents the recorded read, the clamp (2 000 columns, 512 rows, the bucket coarsened along its enum), newest-first paging with a bound `cursor`, the 2-per-user backfill limit (`429 rate_limited`) and abort handling, and gains `401` and `429`. `HeatmapResponse` gains `first_available`, `history`, `samples`, `estimated_columns`, `effective_time_bucket_ms`, `segments` (the new `HeatmapSegment`), `clamped` and `next_cursor`, all additive (C-6.3). `getOrderbookSnapshot` is unchanged.
 - With them: `21-database-schema.md` §7 (the effective resolution past 180 days) and `23-ws-protocol.md` §6.1.1 (the REST fields of scroll-back). No WS frame, table, column, chart or `machine_hash` change, and no migration.
 
+### 19.75 2026-11-01 — 26 §8 `CandleData`, 23 / 26 §6 `bars` layout: the optional `flags` column (E12-S06, #395)
+
+Assigned by the E12-S06 rulings of record (BQ-3). Additive only: no field is renamed, removed or narrowed.
+
+- 26 §8 `CandleData` gains `flags?: Uint8Array`, one byte per bar: bit 0 `gap_before`, bit 1 forming (not confirmed), bit 2 partial, bit 3 amended; bits 4–7 are reserved and a batch that sets one is refused (`ENGINE_DECODE_ERROR`, `engine.data.rejected{reason="flags"}`). Absent, every bar reads 0.
+- The engine's `bars` buffer (26 §6) carries it as a seventh, 1-byte column after `volume`; six columns stay valid. The `data` message gains an optional `series` id and the `ack` echoes it, so the host's backpressure is per series.
+- The renderer-side store refuses a bar with `high < low`, `open` or `close` outside `[low, high]`, or negative volume (threat model F-02), and narrows prices to ticks only through the exported `toTicks` (F-01, BQ-10); a refusal leaves the store byte-identical.
+
 ### 19.76 2026-10-31 — 22 `listRules`: a cursor that is not a rule id is refused (E35, #2291)
 
 This is the number the orchestrator assigned on 2026-11-01 (02:36Z), above `main`'s last entry, §19.70, and every number already assigned to a change in flight; it keeps it through its rebases.

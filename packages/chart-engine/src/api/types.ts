@@ -96,6 +96,8 @@ export interface CandleData {
   volume: Float32Array;
   priceOrigin: number;
   tickSize: number;
+  // E12-S06 (BQ-3, additive; 24 §19.75): gap_before, forming, partial, amended bits per bar.
+  flags?: Uint8Array;
 }
 
 export interface FootprintData {
