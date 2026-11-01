@@ -166,7 +166,13 @@ invariant (C-4.14).
    the invoking user's uid, and the gate accepts only a run directory that uid owns (R1C-01 (a)); root gets no
    pass of its own. **S16b** is the fixture clock in the E27 timers, which waits on #896 and #899. The stack is
    brought up and taken down by `infra/scripts/account_fixture_stack.py` (runbook:
-   `docs/ops/runbooks/account-fixture-stack.md`).
+   `docs/ops/runbooks/account-fixture-stack.md`). Its driver (`cvdev/account_fixture/drive.py`, in the `fixture-drive`
+   one-shot, behind the seed's gate) signs a seeded user in with a TOTP step not used yet, steps up and calls the
+   api, printing statuses and masked bodies only. The re-run on the stack loaded 40 of the 49 scenarios through
+   the shipped key pipeline: 32 pass, 8 on their stub half (their cases read routes not served yet, #896, #899),
+   and 9 stay blocked-pending-dependency with their owners named (rotation, #897; the order lane and #3007;
+   leverage, #899). #2893 closes on that record (#833, E27-Q01; BQ-7 as ruled), and each owner ticket re-runs its
+   rows when it merges.
 10. **A test-only switch, not a C-4.13 flag,** like `CV_TEST_CLOCK` (`settings.py:264-266`), which is not in
     the flag catalogue (`admin/flags/catalogue.py:25`). A flag is runtime, Owner-toggled and in every build;
     this switch is fixed at boot and its code is not in the release image. Each slice fails closed (until S7

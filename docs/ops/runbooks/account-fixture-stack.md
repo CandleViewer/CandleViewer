@@ -78,6 +78,55 @@ need it as the default (`demo_ws_unreachable`, `ws_auth_then_drop`); every other
 python3 $S restart-api --project <project> --default demo_ws_unreachable
 ```
 
+## Drive it
+
+The driver (`python -m cvdev.account_fixture.drive`) runs in the project's `fixture-drive` one-shot, as root, with
+the run directory read-only and the project's session volume. It prints statuses and masked bodies, never a
+credential, a token or a code.
+
+```bash
+D="python3 $S drive --project <project> --"            # and -f <lane file> before --, if up took one
+$D signin qa-owner-1                                     # password, then a code for a TOTP step not used yet
+$D call qa-owner-1 GET /me
+$D call qa-owner-1 POST /exchange-accounts --body-json \
+  '{"exchange":"bybit","environment":"demo","kind":"main","label":"QA Main","exchange_uid":"90000001"}'
+```
+
+- **`signin <user>`** reads the user's password and TOTP secret from the run directory, signs in, waits for a 30 s
+  step the user has not used (the api refuses a replayed step: a sign-in right after another one waits up to
+  30 s), checks `GET /me` and keeps the session (the bearer, the CSRF token, the last step used) in a 0600 file in
+  the session volume. An expired session later answers `401 unauthenticated`: sign in again.
+- **`call <user> <METHOD> <PATH> [--body-json JSON]`** sends one request with the session: the bearer, the
+  `__Host-cv_csrf` cookie and, on a write, its `X-CSRF-Token` header and a new `Idempotency-Key`. A
+  `403 step_up_required` is answered on the spot (the password and a code for an unused step, with the
+  challenge's id), and the held request is sent again unchanged, its key included. It prints
+  `HTTP <status> <problem code or ->` and the answer's body, every credential and token in it masked.
+- **`scan <PATH>...`** counts, per path, how often any value this run generated appears in it (the run
+  directory's files, the env file's secrets, the sessions' tokens): counts only, exit 1 on any hit. Copy a record
+  or a saved log into the run directory first (the invoking user owns it) and scan it at `/run-dir/<name>`.
+
+**Loading a scenario** (the E27 test plan's section 11 load check): store the scenario's pack key on the account
+its manifest's `tester_inputs` names (`QA Main`, UID `90000001`, or `QA Sub 1`, UID `90000011`), with the derived
+secret and `expected_uid`:
+
+```bash
+$D call qa-owner-1 POST /exchange-accounts/<account id>/keys --body-json \
+  '{"api_key":"fixture-compliant-0001","api_secret":"fixture-compliant-secret-not-real","label":"compliant","expected_uid":"90000001"}'
+```
+
+The answer holds the pipeline's verdict; the stub's side is in the request log, `requests.jsonl` in the api's
+`CV_ACCOUNT_FIXTURE_DIR` (`docker compose ... exec api`; leave its `host` field out of a record), and the audit
+actions in Postgres. An account holds one key: revoke it (`DELETE /exchange-accounts/<id>/keys/<key id>`) before
+the next. On a loaded host a revoke can answer `503 store_unavailable` (its consequence reads are bounded at
+250 ms each): send it again. `rate_limited_10018` makes the adapter hold every REST call of the stack for 10
+minutes (the IP-level back-off, `24-internal-schemas.md` §8.6), so load it last, or wait out the hold
+(`bybit_ip_hold_remaining_seconds` on the api's metrics). A stub-half scenario is stored, then switched with the
+switch CLI
+(`exec api python -m cvdev.account_fixture.cli switch <key id> [--to S]`, packages/fixtures/accounts/README.md),
+or needs the stack default (`restart-api --default`, above). A key switched to a scenario that rejects it leaves the
+account's exposure unreadable, so its revoke answers `409 exposure_unknown`: switch a stub-half key back
+(`switch <key id> --to compliant`) before you revoke it.
+
 ## Take it down
 
 ```bash

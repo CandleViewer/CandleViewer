@@ -733,6 +733,7 @@ a fail.
 | C: 201–212                                   | —         | stub              | per case    | pending (E27-S03, E27-T04, fixture pack, #2893 clock) | —        | —      |
 | D: 301–316                                   | —         | demo + stub       | per case    | pending (E27-S04, fixture pack, #2893)                | —        | —      |
 | E: 401–422                                   | —         | demo + stub       | per case    | pending (E27-S05, E27-T04, fixture pack, #2893)       | —        | —      |
+| Scenario load check: each §9.3 scenario once | see #833  | demo stack + stub | all         | 32 pass, 8 stub half, 9 blocked-pending-dependency    | #833     | —      |
 
 ## 12. Sign-off
 
