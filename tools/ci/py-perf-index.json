@@ -12,6 +12,7 @@
     "tests/rules/test_rule_save_bounds.py": 1.45,
     "tests/rules/test_validator_endpoints.py": 2.87,
     "tests/security/auth/test_credential_abuse.py": 57.68,
+    "tests/security/bars/test_caps_and_cost.py": 2.87,
     "tests/security/ingestion/test_resource_exhaustion.py": 7.13,
     "tests/security/ws/test_account_refusal_parity.py": 8.9,
     "tests/security/ws/test_fair_scheduling_real_socket.py": 7.05,
