@@ -168,7 +168,7 @@ export function SessionsSection({
   };
 
   return (
-    <section aria-labelledby={`${id}-h`} aria-busy={list.kind === "loading"}>
+    <section id="security" aria-labelledby={`${id}-h`} aria-busy={list.kind === "loading"}>
       <h2 id={`${id}-h`} ref={heading} tabIndex={-1}>
         Sessions
       </h2>

@@ -6,4 +6,12 @@ export {
   type SettingsResetSource,
 } from "./SettingsLayout";
 export { SettingsNav, currentSectionId } from "./SettingsNav";
-export { SECTIONS, SETTINGS, searchSettings, resultsSentence } from "./sections";
+export {
+  SCOPE_PENDING_RULING,
+  SCOPE_VOCABULARY,
+  SECTIONS,
+  SETTINGS,
+  resultsSentence,
+  searchSettings,
+  settingEntry,
+} from "./sections";

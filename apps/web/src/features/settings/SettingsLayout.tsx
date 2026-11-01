@@ -1,4 +1,4 @@
-import { useRef, useState, type JSX, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type JSX, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import { Button, SearchBox } from "@candleviewer/ui";
 import { announce, forget } from "../app-shell/announcer";
@@ -29,6 +29,22 @@ export function SettingsLayout({ children, reset }: SettingsLayoutProps): JSX.El
   const [previewing, setPreviewing] = useState(false);
   const resetButton = useRef<HTMLSpanElement>(null);
   const searching = query.trim() !== "";
+  const searchId = useId();
+
+  // A hash change (Security, Accessibility) moves focus to that section's heading; the first render is left alone.
+  const previousHash = useRef(hash);
+  useEffect(() => {
+    if (previousHash.current === hash) return;
+    previousHash.current = hash;
+    const target = hash === "" ? null : document.getElementById(hash.slice(1));
+    const heading = target?.querySelector<HTMLElement>("h1, h2") ?? null;
+    if (heading === null) return;
+    if (!heading.hasAttribute("tabindex")) {
+      heading.setAttribute("tabindex", "-1");
+      heading.addEventListener("blur", () => heading.removeAttribute("tabindex"), { once: true });
+    }
+    heading.focus();
+  }, [hash]);
 
   function closePreview(): void {
     setPreviewing(false);
@@ -36,11 +52,11 @@ export function SettingsLayout({ children, reset }: SettingsLayoutProps): JSX.El
   }
 
   return (
-    <div style={{ display: "flex", gap: "var(--space-inset-lg, 16px)" }}>
-      <div>
-        <label htmlFor="settings-search">Search settings</label>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-inset-lg, 16px)" }}>
+      <div style={{ flex: "0 1 16rem", minWidth: 0 }}>
+        <label htmlFor={searchId}>Search settings</label>
         <SearchBox
-          id="settings-search"
+          id={searchId}
           label="Search settings"
           value={query}
           onChange={setQuery}
@@ -48,7 +64,7 @@ export function SettingsLayout({ children, reset }: SettingsLayoutProps): JSX.El
         />
         <SettingsNav />
       </div>
-      <div style={{ flex: 1 }}>
+      <div style={{ flex: "1 1 20rem", minWidth: 0 }}>
         {searching ? (
           <section aria-labelledby="settings-results-title">
             <h2 id="settings-results-title">Search results ({results.length})</h2>
@@ -57,7 +73,7 @@ export function SettingsLayout({ children, reset }: SettingsLayoutProps): JSX.El
                 <li key={r.key}>
                   <p>{r.path}</p>
                   <p>{r.setting?.description ?? r.section.description}</p>
-                  {r.setting !== null && <p>{r.setting.scope}</p>}
+                  {r.setting !== null && <p>Scope: {r.setting.scope}</p>}
                   {r.section.path === undefined ? (
                     <p>{NOT_BUILT_REASON}</p>
                   ) : (
@@ -93,14 +109,14 @@ export function SettingsLayout({ children, reset }: SettingsLayoutProps): JSX.El
               reset.onConfirm();
               announce(
                 "polite",
-                `${section.label} reset: ${n} settings restored.`,
+                `${section.label} reset: ${n} ${n === 1 ? "setting" : "settings"} restored.`,
                 "settings:reset",
               );
               closePreview();
             }}
           />
         ) : null}
-        {children}
+        {searching ? null : children}
       </div>
     </div>
   );

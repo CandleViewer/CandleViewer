@@ -9,7 +9,12 @@ const fixturesOnly = process.env["CV_STORYBOOK_A11Y_FIXTURES"] === "1";
 const config: StorybookConfig = {
   stories: fixturesOnly
     ? ["./__fixtures__/*.stories.tsx"]
-    : ["../src/**/*.mdx", "../src/**/*.stories.@(ts|tsx)"],
+    : [
+        "../src/**/*.mdx",
+        "../src/**/*.stories.@(ts|tsx)",
+        // CMP-086 lives in apps/web (router-coupled); its one story file is listed here, not globbed.
+        "../../../apps/web/src/features/settings/SettingsNav.stories.tsx",
+      ],
   // The E05-T03 addon set: docs pages, the a11y panel and its gate, and the Vitest addon that runs
   // every story's play function and axe check. Controls, toolbars and interactions are core.
   addons: ["@storybook/addon-docs", "@storybook/addon-a11y", "@storybook/addon-vitest"],

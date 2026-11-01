@@ -5,6 +5,8 @@ import {
   type ChartConvention,
   type ChartPalette,
 } from "../../shell/bootstrap/preferencesApply.js";
+import { SettingRow } from "../settings/SettingRow.js";
+import { settingEntry } from "../settings/sections.js";
 import { applyChartColorModeToSurfaces } from "./chartColorMode.js";
 import { registeredEngines } from "./engineRegistry.js";
 
@@ -45,31 +47,39 @@ export function AppearanceScreen(): JSX.Element {
   return (
     <div>
       <h1>Appearance</h1>
-      <fieldset>
-        <legend>Chart palette</legend>
-        {(["default", "cvd-safe"] as const).map((p) => (
-          <label key={p} style={{ ...TARGET, display: "inline-flex", alignItems: "center" }}>
+      <SettingRow {...settingEntry("chart-palette")}>
+        {({ labelId, describedBy }) => (
+          <fieldset aria-labelledby={labelId} aria-describedby={describedBy}>
+            {(["default", "cvd-safe"] as const).map((p) => (
+              <label key={p} style={{ ...TARGET, display: "inline-flex", alignItems: "center" }}>
+                <input
+                  type="radio"
+                  name="chart-palette"
+                  value={p}
+                  checked={palette === p}
+                  style={TARGET}
+                  onChange={() => change(p, convention)}
+                />
+                {p === "default" ? "Default (green / red)" : "Colour-blind safe (blue / orange)"}
+              </label>
+            ))}
+          </fieldset>
+        )}
+      </SettingRow>
+      <SettingRow {...settingEntry("chart-convention")}>
+        {({ describedBy }) => (
+          <label style={{ ...TARGET, display: "inline-flex", alignItems: "center" }}>
             <input
-              type="radio"
-              name="chart-palette"
-              value={p}
-              checked={palette === p}
+              type="checkbox"
+              aria-describedby={describedBy}
+              checked={convention === "inverted"}
               style={TARGET}
-              onChange={() => change(p, convention)}
+              onChange={(e) => change(palette, e.target.checked ? "inverted" : "standard")}
             />
-            {p === "default" ? "Default (green / red)" : "Colour-blind safe (blue / orange)"}
+            Invert buy/sell colours
           </label>
-        ))}
-      </fieldset>
-      <label style={{ ...TARGET, display: "inline-flex", alignItems: "center" }}>
-        <input
-          type="checkbox"
-          checked={convention === "inverted"}
-          style={TARGET}
-          onChange={(e) => change(palette, e.target.checked ? "inverted" : "standard")}
-        />
-        Invert buy/sell colours
-      </label>
+        )}
+      </SettingRow>
       <p role="status">{saved ? "Saved." : ""}</p>
       <section aria-label="Preview">
         {LEGEND_VIEWS.map((view) => (

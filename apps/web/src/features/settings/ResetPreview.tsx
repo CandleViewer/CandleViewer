@@ -26,17 +26,23 @@ export function ResetPreview({
   onCancel,
 }: ResetPreviewProps): JSX.Element {
   const heading = useRef<HTMLHeadingElement>(null);
+  const section = useRef<HTMLElement>(null);
   useEffect(() => heading.current?.focus(), []);
+  const cancel = useRef(onCancel);
+  cancel.current = onCancel;
   useEffect(() => {
+    // Esc cancels only while focus is inside the preview, so it never closes anything else.
+    const root = section.current;
+    if (root === null) return;
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape") cancel.current();
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onCancel]);
+    root.addEventListener("keydown", onKey);
+    return () => root.removeEventListener("keydown", onKey);
+  }, []);
   const changing = items.filter((i) => i.current !== i.defaultValue);
   return (
-    <section aria-labelledby="settings-reset-title">
+    <section ref={section} aria-labelledby="settings-reset-title">
       <h2 id="settings-reset-title" ref={heading} tabIndex={-1}>
         Reset {sectionLabel} to defaults
       </h2>

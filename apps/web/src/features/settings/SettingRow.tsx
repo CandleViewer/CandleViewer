@@ -15,7 +15,7 @@ export function SettingRow({ label, description, scope, children }: SettingRowPr
   const labelId = `${id}-label`;
   const describedBy = `${id}-desc ${id}-scope`;
   return (
-    <div role="group" aria-labelledby={labelId}>
+    <div>
       <p id={labelId} style={{ fontWeight: 600, margin: 0 }}>
         {label}
       </p>
@@ -23,7 +23,7 @@ export function SettingRow({ label, description, scope, children }: SettingRowPr
         {description}
       </p>
       <p id={`${id}-scope`} style={{ margin: 0 }}>
-        {scope}
+        Scope: {scope}
       </p>
       {children({ labelId, describedBy })}
     </div>

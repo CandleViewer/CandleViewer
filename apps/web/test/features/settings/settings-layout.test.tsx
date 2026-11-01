@@ -7,7 +7,11 @@ import {
   ResetPreview,
   SettingRow,
   SettingsLayout,
+  SCOPE_PENDING_RULING,
+  SCOPE_VOCABULARY,
+  SETTINGS,
   currentSectionId,
+  settingEntry,
   resultsSentence,
   searchSettings,
 } from "../../../src/features/settings";
@@ -79,11 +83,14 @@ describe("SettingsNav", () => {
     expect(item).toHaveFocus();
   });
 
-  it("moves between items with the arrow keys, Home and End", () => {
+  it("is one Tab stop on the open section; the arrows move it, Home and End jump", () => {
     view();
     const nav = screen.getByRole("navigation", { name: "Settings" });
     const links = [...nav.querySelectorAll<HTMLElement>("[data-nav-item]")];
-    links[0]?.focus();
+    const stops = (): HTMLElement[] => links.filter((l) => l.tabIndex === 0);
+    expect(stops()).toEqual([within(nav).getByRole("link", { name: "Appearance" })]);
+    act(() => links[0]?.focus());
+    expect(stops()).toEqual([links[0]]);
     user.keyboard("{ArrowDown}");
     expect(links[1]).toHaveFocus();
     user.keyboard("{End}");
@@ -96,6 +103,17 @@ describe("SettingsNav", () => {
 });
 
 describe("settings search", () => {
+  it("shows results in place of the page, and the page again when the search is cleared", () => {
+    view();
+    expect(screen.getByRole("heading", { name: "Appearance", level: 1 })).toBeVisible();
+    const box = screen.getByRole("searchbox", { name: "Search settings" });
+    fireEvent.change(box, { target: { value: "palette" } });
+    expect(screen.queryByRole("heading", { name: "Appearance", level: 1 })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Reset Appearance/ })).toBeNull();
+    fireEvent.change(box, { target: { value: "" } });
+    expect(screen.getByRole("heading", { name: "Appearance", level: 1 })).toBeVisible();
+  });
+
   beforeEach(() => vi.useFakeTimers());
 
   it("announces the count once, after typing stops, with each section path", () => {
@@ -118,7 +136,7 @@ describe("settings search", () => {
     fireEvent.change(box, { target: { value: "palette" } });
     const results = screen.getByRole("region", { name: /search results/i });
     expect(within(results).getByText("Settings > Appearance > Chart palette")).toBeVisible();
-    expect(within(results).getByText(/this device only/i)).toBeVisible();
+    expect(within(results).getByText(/^Scope: \[scope: pending ruling\]$/)).toBeVisible();
     fireEvent.change(box, { target: { value: "zzzz" } });
     act(() => {
       vi.advanceTimersByTime(SEARCH_SAY_MS);
@@ -179,7 +197,7 @@ describe("reset preview", () => {
     user.click(screen.getByRole("button", { name: /Reset Appearance/ }));
     user.click(screen.getByRole("button", { name: "Reset 1 setting" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("Appearance reset: 1 settings restored.")).toBeInTheDocument();
+    expect(screen.getByText("Appearance reset: 1 setting restored.")).toBeInTheDocument();
   });
 
   it("with nothing to change the confirm is disabled with its reason", () => {
@@ -197,17 +215,33 @@ describe("reset preview", () => {
   });
 });
 
+describe("scope text", () => {
+  it("is always a term of the SCR-110 vocabulary or the pending-ruling placeholder", () => {
+    const allowed: readonly string[] = [...Object.values(SCOPE_VOCABULARY), SCOPE_PENDING_RULING];
+    expect(SETTINGS.length).toBeGreaterThan(0);
+    for (const setting of SETTINGS) expect(allowed).toContain(setting.scope);
+  });
+
+  it("per-user server settings read Per user; device-only ones read the placeholder", () => {
+    const scopeOf = (id: string): string => settingEntry(id).scope;
+    expect(scopeOf("reduced-motion")).toBe("Per user");
+    expect(scopeOf("active-sessions")).toBe("Per user");
+    expect(scopeOf("chart-palette")).toBe(SCOPE_PENDING_RULING);
+    expect(scopeOf("keybindings")).toBe(SCOPE_PENDING_RULING);
+  });
+});
+
 describe("SettingRow", () => {
   it("names the control by its label and describes it with description and scope", () => {
     render(
-      <SettingRow label="Reduced motion" description="Calm animation." scope="Applies to you.">
+      <SettingRow label="Reduced motion" description="Calm animation." scope="Per user">
         {({ labelId, describedBy }) => (
           <input type="checkbox" aria-labelledby={labelId} aria-describedby={describedBy} />
         )}
       </SettingRow>,
     );
     const box = screen.getByRole("checkbox", { name: "Reduced motion" });
-    expect(box).toHaveAccessibleDescription("Calm animation. Applies to you.");
+    expect(box).toHaveAccessibleDescription("Calm animation. Scope: Per user");
   });
 });
 

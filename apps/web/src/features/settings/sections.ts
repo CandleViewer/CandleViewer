@@ -50,6 +50,7 @@ export const SECTIONS: readonly SettingsSection[] = [
     id: "notifications",
     label: "Notifications",
     description: "Channels and quiet hours per event.",
+    path: "/settings/notifications",
   },
   {
     id: "data-performance",
@@ -76,97 +77,118 @@ export interface SettingEntry {
   readonly label: string;
   readonly description: string;
   /** Who and what the setting applies to; said beside the control. */
-  readonly scope: string;
+  readonly scope: SettingScope;
 }
 
-const DEVICE = "Applies to this device only.";
-const ACCOUNT = "Applies to your account on every device.";
+/**
+ * The scope vocabulary of US-SET-001 ("each setting shows whether it is per user, per workspace, per symbol or
+ * per account"). No scope text is written anywhere else.
+ */
+export const SCOPE_VOCABULARY = {
+  user: "Per user",
+  workspace: "Per workspace",
+  symbol: "Per symbol",
+  account: "Per account",
+} as const;
 
-/** Only settings that exist today; a section not built yet has no entries and is found by its name. */
+/**
+ * A setting kept only on this device (localStorage) has no term in that vocabulary. Until the owner rules on one,
+ * it shows this placeholder, so no invented scope wording ships.
+ */
+export const SCOPE_PENDING_RULING = "[scope: pending ruling]";
+
+export type SettingScope =
+  (typeof SCOPE_VOCABULARY)[keyof typeof SCOPE_VOCABULARY] | typeof SCOPE_PENDING_RULING;
+
+/** Server-stored per user: `PUT /api/v1/settings` (accessibility subtree), `GET /api/v1/me/sessions`. */
+const USER = SCOPE_VOCABULARY.user;
+
+/** Only settings that exist today (scope = where each is stored today); a section not built yet has no entries and is found by its name. */
 export const SETTINGS: readonly SettingEntry[] = [
   {
     id: "chart-palette",
     sectionId: "appearance",
     label: "Chart palette",
     description: "Default or colour-blind safe colours for charts.",
-    scope: DEVICE,
+    scope: SCOPE_PENDING_RULING,
   },
   {
     id: "chart-convention",
     sectionId: "appearance",
     label: "Colour convention",
     description: "Which colour means buy and which means sell.",
-    scope: DEVICE,
+    scope: SCOPE_PENDING_RULING,
   },
   {
     id: "keybindings",
     sectionId: "hotkeys",
     label: "Key bindings",
     description: "Rebind, unbind or reset a command's keys.",
-    scope: "Applies to your keymap profile.",
+    // Device store (localStorage, keyed by user); the server profile store is wired off (keymap/profileStore.ts).
+    scope: SCOPE_PENDING_RULING,
   },
   {
     id: "active-sessions",
     sectionId: "security",
     label: "Active sessions",
     description: "See where you are signed in and sign a device out.",
-    scope: ACCOUNT,
+    scope: USER,
   },
   {
     id: "reduced-motion",
     sectionId: "accessibility",
     label: "Reduced motion",
     description: "Follow the system, or always or never reduce animation.",
-    scope: ACCOUNT,
+    scope: USER,
   },
   {
     id: "increased-contrast",
     sectionId: "accessibility",
     label: "Increased contrast",
     description: "Follow the system, or always or never use high contrast.",
-    scope: ACCOUNT,
+    scope: USER,
   },
   {
     id: "canvas-animation",
     sectionId: "accessibility",
     label: "Disable canvas animation",
     description: "Stop chart animation, fades and flashes on update.",
-    scope: ACCOUNT,
+    scope: USER,
   },
   {
     id: "data-tables",
     sectionId: "accessibility",
     label: "Always show data tables",
     description: "Show the table alternative beside every chart.",
-    scope: ACCOUNT,
+    scope: USER,
   },
   {
     id: "focus-ring",
     sectionId: "accessibility",
     label: "Thicker focus ring",
     description: "Draw a heavier outline on the focused control.",
-    scope: ACCOUNT,
+    scope: USER,
   },
   {
     id: "announce-prices",
     sectionId: "accessibility",
     label: "Announce price updates",
     description: "Off, on significant change, or always.",
-    scope: ACCOUNT,
+    scope: USER,
   },
   {
     id: "verbosity",
     label: "Screen-reader verbosity",
     sectionId: "accessibility",
     description: "How much a screen reader says for streaming panels.",
-    scope: ACCOUNT,
+    scope: USER,
   },
   {
     id: "keyboard-only",
     sectionId: "accessibility",
     label: "Keyboard-only mode",
     description: "Reveal a form equivalent for every drag-only interaction.",
-    scope: ACCOUNT,
+    scope: USER,
   },
 ];
 
@@ -203,6 +225,13 @@ export function searchSettings(query: string): readonly SearchResult[] {
 }
 
 /** The sentence the announcer says: the count, then up to five section paths. */
+/** The entry for a setting id; a missing id is a programming error. */
+export function settingEntry(id: string): SettingEntry {
+  const entry = SETTINGS.find((s) => s.id === id);
+  if (entry === undefined) throw new Error(`unknown setting ${id}`);
+  return entry;
+}
+
 export function resultsSentence(results: readonly SearchResult[]): string {
   const n = results.length;
   const head = `${n} ${n === 1 ? "result" : "results"}`;
