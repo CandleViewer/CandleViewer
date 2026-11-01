@@ -317,8 +317,11 @@ describe("PositionsGrid (CMP-114): the treegrid", { timeout: 60_000 }, () => {
     expect(document.activeElement?.closest("tr")).toHaveAttribute("aria-rowindex", "101");
   });
 
-  it("keeps the focused row mounted when the region scrolls the window away from it (G-01)", async () => {
-    // A laid-out region of 240 px under a 24 px header, rows 24 px tall, scrolled by `scroll`.
+  /**
+   * A laid-out region of 240 px under a 24 px header, rows 24 px tall: nine rows in view. `scrollTo` scrolls it by
+   * whole rows and reports the scroll, as the region's own event does.
+   */
+  const layOut = (): { readonly scrollTo: (row: number) => void } => {
     let scroll = 0;
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
       this: HTMLElement,
@@ -338,17 +341,25 @@ describe("PositionsGrid (CMP-114): the treegrid", { timeout: 60_000 }, () => {
     });
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(240);
     vi.spyOn(HTMLElement.prototype, "scrollTop", "get").mockImplementation(() => scroll);
-    const host = await mount(<Host groups={MANY} totals={undefined} />);
+    return {
+      scrollTo: (row) => {
+        scroll = row * 24;
+        act(() => {
+          grid().closest(".cv-table__region")?.dispatchEvent(new Event("scroll"));
+        });
+      },
+    };
+  };
+
+  it("keeps the focused row mounted when the region scrolls the window away from it (G-01)", async () => {
+    const region = layOut();
+    await mount(<Host groups={MANY} totals={undefined} />);
     // The mount's measured view (rows 0 to 8) sits inside the first window: nothing is drawn again.
     expect(within(grid()).getAllByRole("row")).toHaveLength(41);
     const first = rowNamed("P0USDT · Long · 0.250 P0 · A0");
     const cell = within(first).getAllByRole("gridcell")[1];
     act(() => cell?.focus());
-    scroll = 1200;
-    const region = host.querySelector<HTMLElement>(".cv-table__region");
-    act(() => {
-      region?.dispatchEvent(new Event("scroll"));
-    });
+    region.scrollTo(50);
     // Rows 50 to 58 are past the drawn rows: the window draws 40 to 68, and the focused row stays outside it.
     expect(document.activeElement).toBe(cell);
     expect(first.isConnected).toBe(true);
@@ -357,6 +368,23 @@ describe("PositionsGrid (CMP-114): the treegrid", { timeout: 60_000 }, () => {
     expect(drawn).toHaveLength(30);
     expect(drawn[0]).toBe(first);
     expect(drawn[1]).toHaveAttribute("aria-rowindex", "42");
+  });
+
+  it("re-windows while half the overscan is still drawn past the view, before any undrawn row shows", async () => {
+    const region = layOut();
+    await mount(<Host groups={MANY} totals={undefined} />);
+    // Rows 26 to 34 in view: five drawn rows (35 to 39) still lie past them, so the window holds.
+    region.scrollTo(26);
+    expect(within(grid()).getAllByRole("row")).toHaveLength(41);
+    // Rows 27 to 35: within five of the drawn end, the window re-centres on them (17 to 45) while 39 is drawn.
+    region.scrollTo(27);
+    const drawn = within(grid()).getAllByRole("row").slice(1);
+    expect(drawn).toHaveLength(29);
+    expect(drawn[0]).toHaveAttribute("aria-rowindex", "19");
+    expect(drawn.at(-1)).toHaveAttribute("aria-rowindex", "47");
+    // Back at the top, the list's own first row is no edge to keep clear of.
+    region.scrollTo(0);
+    expect(within(grid()).getAllByRole("row").slice(1)[0]).toHaveAttribute("aria-rowindex", "2");
   });
 });
 
