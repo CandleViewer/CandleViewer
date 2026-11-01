@@ -45,7 +45,9 @@ export const ATLAS_CONFIG: AtlasConfig = {
 /**
  * The mono glyphs re-derived before a cached atlas is first used (F-03, BQ-265): E06-D01's
  * numeric set, plus every other glyph a formatted number or time can carry — the space (a digit's
- * advance in a mono face: grouping and padding), `?` (BQ-269's replacement) and `:` `/` (time
- * axis). A slot outside this set is trusted on the checksum; the Inter digits are (by ruling).
+ * advance in a mono face: grouping and padding), `?` (BQ-269's replacement), `:` `/` (time axis)
+ * and the month names' letters (E11-S11 PR B: every character the axis formatters emit is
+ * verified, test/text/atlas.test.ts). A slot outside this set is trusted on the checksum; the
+ * Inter digits are (by ruling).
  */
-export const TRADING_GLYPHS = "0123456789.,-+%×KMB▲▼() ?:/";
+export const TRADING_GLYPHS = "0123456789.,-+%×KMB▲▼() ?:/ADFJNOSabceglnoprtuvy";

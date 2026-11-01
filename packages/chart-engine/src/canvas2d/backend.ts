@@ -10,6 +10,7 @@ import type { PaneUniformSource } from "../gl/submit.js";
 import { DrawTrace } from "../gl/trace.js";
 import type { RetainedBatch } from "../scene/batch-builder.js";
 import { attributeOffset, INSTANCE_LAYOUTS, PROGRAM } from "../scene/instance-layout.js";
+import { LABEL_STRIDE, TextBatch } from "../text/text-batch.js";
 import type { PaneUniforms } from "../viewport/transform.js";
 import type { Ctx2DLike } from "./ctx2d.js";
 import { type PaintArgs, PAINTERS } from "./painters.js";
@@ -46,6 +47,12 @@ const WIDTH = attributeOffset(PROGRAM.line, "a_width");
 const sixteenths = (v: number | undefined): number =>
   v === undefined || !Number.isFinite(v) ? 1 : Math.min(Math.max(Math.round(v * 16), 1), 65535);
 const EMPTY = new Int32Array(0);
+/**
+ * The host-loaded CSS face the 2D label painter sets. No generic family: the engine never names a
+ * fallback; if the host has not loaded the face, the browser's substitution is the host's (C-104).
+ */
+export const FONT_2D = '"JetBrains Mono"';
+const ALIGN = ["left", "center", "right"] as const;
 
 const byte = (v: number | undefined): number => {
   const b = Math.round((v ?? 0) * 255);
@@ -54,10 +61,14 @@ const byte = (v: number | undefined): number => {
 
 export class Canvas2DBackend implements RenderBackend {
   readonly trace = new DrawTrace();
+  /** Labels not painted because the context has no `fillText` (C-104, internal). */
+  labelsSkipped = 0;
   readonly failure: BackendFailure | null = null;
   readonly drawsIn2d = true;
   readonly loss = null;
   readonly gpuMemoryMbEstimate = 0;
+  /** Unused: 2D draws label strings, not glyphs (the GL text uniforms' slot, BQ-267). */
+  readonly textUniforms = new Float32Array(8);
   private panes: PaneUniformSource | null = null;
   private background: string | undefined;
   private readonly slots = new Map<string, Slot>();
@@ -68,6 +79,9 @@ export class Canvas2DBackend implements RenderBackend {
   private readonly frameSlots: (Slot | undefined)[] = [];
   private readonly frameBlocks: (PaneUniforms | null)[] = [];
   private run = 1;
+  /** The last label size and its CSS font: rebuilt only when the size changes. */
+  private fontPx = -1;
+  private font = "";
   private readonly args: PaintArgs = {
     data: new Float32Array(0),
     ints: EMPTY,
@@ -160,7 +174,15 @@ export class Canvas2DBackend implements RenderBackend {
       this.frameBlocks[i] = block;
       const layout = INSTANCE_LAYOUTS[b.program];
       const painter = PAINTERS[b.program] ?? null;
-      const { data, head, stride } = slot.source;
+      const src = slot.source;
+      if (src instanceof TextBatch && src.mode === "labels" && b.program === PROGRAM.sdfText) {
+        this.flush(ctx); // the layer's shapes first: labels sit on top of them
+        this.labels(ctx, src, Math.min(b.count, src.labels));
+        trace.draws += 1;
+        if (trace.enabled) trace.nodes.push(b.nodeId);
+        continue;
+      }
+      const { data, head, stride } = src;
       // sdf-text (BQ-88), a cell batch with no pane block, or a ring narrower than its layout.
       if (painter === null || layout === undefined || stride < layout.stride) {
         trace.skipped += 1;
@@ -184,6 +206,34 @@ export class Canvas2DBackend implements RenderBackend {
     }
     this.flush(ctx);
     return null;
+  }
+
+  /** A label batch's strings with `fillText` (C-104): axes and drawings; cells stay reduced. */
+  private labels(ctx: Ctx2DLike, t: TextBatch, n: number): void {
+    if (ctx.fillText === undefined) {
+      this.labelsSkipped += n; // a context with no text API: counted, never silent
+      return;
+    }
+    // The text state is put back after, so no later painter inherits it (no save/restore: the
+    // padded-store clip owns that pair).
+    const { font, textAlign, textBaseline, fillStyle } = ctx;
+    ctx.textBaseline = "middle";
+    for (let i = 0; i < n; i += 1) {
+      const o = i * LABEL_STRIDE;
+      const px = t.lab[o + 2] ?? 0;
+      if (px !== this.fontPx) {
+        this.fontPx = px;
+        this.font = `${px}px ${FONT_2D}`;
+      }
+      ctx.font = this.font;
+      ctx.textAlign = ALIGN[Math.round((t.lab[o + 3] ?? 0) * 2)] ?? "left";
+      ctx.fillStyle = t.inks[i] ?? "";
+      ctx.fillText(t.texts[i] ?? "", t.lab[o] ?? 0, t.lab[o + 1] ?? 0);
+    }
+    if (font !== undefined) ctx.font = font;
+    if (textAlign !== undefined) ctx.textAlign = textAlign;
+    if (textBaseline !== undefined) ctx.textBaseline = textBaseline;
+    ctx.fillStyle = fillStyle;
   }
 
   /** The instance's bucket, joined to this run on first use. */

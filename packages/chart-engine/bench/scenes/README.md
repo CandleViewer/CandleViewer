@@ -7,6 +7,7 @@ Except `input-router.ts`: E11-S04 production bench code over `src/interaction`, 
 Except `scale-mode-switch.ts` and `autoscale-fit.ts`: E11-S05 production bench code over `src/viewport`, driven by Vitest (BQ-126).
 Except `hit-pick.ts`: E11-S08 production bench code over `src/hit`, driven by Vitest (BQ-141).
 Except `atlas-build.ts`: E11-S11 production bench code over `src/text`, driven by Vitest (BQ-275).
+Except `text-batch.ts`: E11-S11 PR B production bench code over `src/text`, driven by Vitest (BQ-275).
 Except `resize-drag.ts`: E11-S10 production bench code over `src/worker`, driven by Vitest (BQ-154).
 Except `axis-ticks.ts`: E11-S06 production bench code over `src/axes`, driven by Vitest (BQ-204).
 

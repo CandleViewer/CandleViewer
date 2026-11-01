@@ -3,7 +3,7 @@
 // and the Canvas2D backend (its painters) read one ring the same way. DOM- and GL-free.
 
 /** A batch's `program` number: the state-sort key of 26 §3.1, shared by both backends. */
-export const PROGRAM = { line: 0, quad: 1, sdfText: 2, barCell: 3 } as const;
+export const PROGRAM = { line: 0, quad: 1, sdfText: 2, barCell: 3, sdfTextOutline: 4 } as const;
 
 /** [shader attribute, float offset in the slot, components, read as int32 bits]. */
 export type InstanceAttribute = readonly [name: string, offset: number, size: number, int: boolean];
@@ -13,6 +13,16 @@ export interface InstanceLayout {
   readonly stride: number;
   readonly attributes: readonly InstanceAttribute[];
 }
+
+/** `sdf-text` (E11-S11 PR B, BQ-267): device px y up, the atlas UV rect, RGBA per glyph. */
+const TEXT_LAYOUT: InstanceLayout = {
+  stride: 12,
+  attributes: [
+    ["a_rect", 0, 4, false],
+    ["a_uv", 4, 4, false],
+    ["a_color", 8, 4, false],
+  ],
+};
 
 /**
  * Indexed by `PROGRAM`. `line` and `quad` are device px with y up (the shaders' `u_viewport`
@@ -35,13 +45,7 @@ export const INSTANCE_LAYOUTS: readonly InstanceLayout[] = [
       ["a_color", 4, 4, false],
     ],
   },
-  {
-    stride: 8,
-    attributes: [
-      ["a_rect", 0, 4, false],
-      ["a_uv", 4, 4, false],
-    ],
-  },
+  TEXT_LAYOUT,
   {
     stride: 8,
     attributes: [
@@ -50,6 +54,7 @@ export const INSTANCE_LAYOUTS: readonly InstanceLayout[] = [
       ["a_color", 4, 4, false],
     ],
   },
+  TEXT_LAYOUT, // sdf-text-outline: the same instances (E11-S11 PR B)
 ];
 
 /** The float offset of `name` in `program`'s slot (a module-load lookup, never per frame). */

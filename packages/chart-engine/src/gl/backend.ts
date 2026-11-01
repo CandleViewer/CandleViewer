@@ -72,6 +72,11 @@ export interface RenderBackend extends UploadSink {
   attach(nodeId: string, source: VertexSource): void;
   /** The clear colour, from the theme's background token. */
   setBackground(css: string | undefined): void;
+  /**
+   * The text programs' frame uniforms (E11-S11 PR B, BQ-267): outline px, spread, atlas width
+   * and height, then the outline RGBA; the runtime writes them, the 2D backend ignores them.
+   */
+  readonly textUniforms: Float32Array;
   /** The SDF atlas's packed rows into texture `ATLAS_TEXTURE` (E11-S11; 2D draws text by font). */
   uploadAtlas(atlas: AtlasRows): void;
   /** Frees what the backend made (chart release). */
@@ -88,6 +93,7 @@ export class GLBackend implements RenderBackend, LossCapable {
   readonly drawsIn2d = false;
   readonly loss: LossCapable = this;
   paneUniforms: PaneUniformSource | null = null;
+  readonly textUniforms = new Float32Array(8);
   private readonly rgb = [0, 0, 0];
   private background: string | undefined = "#000";
   /** Whether SCISSOR_TEST is on: only while the store is padded, so an exact one adds no call. */

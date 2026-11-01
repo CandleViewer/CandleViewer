@@ -2,11 +2,14 @@
 // 3 px pan with autoscale's window moving too, so every step rebuilds both axes: candidates,
 // decimation, the grid ring and the label lists. The ticket's budget is ≤ 0.5 ms per axis per
 // frame; the .perf.test.ts times both axes together against 1 ms, the counted test the output.
-// The label draw itself is E11-S11's (G-47): this scene times the model, not glyphs. A zone other
-// than UTC reads its offsets from the clock's per-hour cache (BQ-203), timed as its own case.
+// With `text` it is also `axis-render` (E11-S06 PR 3, G-47): the kept labels written into the
+// axis SDF batch from their cached runs, measured with the atlas metrics. A zone other than UTC
+// reads its offsets from the clock's per-hour cache (BQ-203), timed as its own case.
 import { AxisModel, type AxisLayout } from "../../src/axes/axis-model.js";
 import { BarStore } from "../../src/model/BarStore.js";
+import { AtlasMetrics } from "../../src/text/glyph-runs.js";
 import { ChartViewport, type PaneTransform } from "../../src/viewport/index.js";
+import { buildAtlas } from "./atlas-build.js";
 import { bars } from "./pan-zero-upload.js";
 
 const W = 1920;
@@ -16,7 +19,9 @@ const THEME = {
   "color.grid.line": "#1e2329",
   "color.border.default": "#2b3139",
   "color.text.tertiary": "#848e9c",
+  "color.text.secondary": "#b7bdc6",
 };
+let metrics: AtlasMetrics | null = null;
 
 export class AxisTicksBench {
   readonly viewport: ChartViewport;
@@ -31,8 +36,14 @@ export class AxisTicksBench {
   rebuilt = 0;
   private turn = 0;
 
-  constructor(n = 5_000, timeZone = "UTC") {
+  constructor(n = 5_000, timeZone = "UTC", text = false) {
     this.axes = new AxisModel(timeZone);
+    if (text) {
+      metrics ??= new AtlasMetrics(buildAtlas()); // one CPU atlas, as one per runtime
+      this.axes.text.mode = "glyphs";
+      this.axes.text.metrics = metrics;
+      this.axes.setMeasure(metrics.measureFor(1));
+    }
     const store = new BarStore();
     store.append(bars(n));
     this.viewport = new ChartViewport(store);

@@ -74,10 +74,14 @@ export function paintBarCell(ctx: Ctx2DLike, a: PaintArgs): void {
   ctx.rect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
 }
 
-/** Indexed by `PROGRAM`; `sdf-text` has none: the 2D path cannot rebuild strings (BQ-88). */
+/**
+ * Indexed by `PROGRAM`. The text programs have none: a label batch paints its strings with
+ * `fillText` (`Canvas2DBackend`, E11-S11 PR B), and cell text stays in the reduced list (G-4).
+ */
 export const PAINTERS: readonly (((ctx: Ctx2DLike, a: PaintArgs) => void) | null)[] = [
   paintLine,
   paintQuad,
   null,
   paintBarCell,
+  null,
 ];
