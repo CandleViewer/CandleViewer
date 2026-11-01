@@ -38,9 +38,9 @@ values, the default-deny pins and the mutations).
    exactly when it now meets its bar, retune naming a token-diff row), G-DIFF (the hand-off's
    token diff equals PROPOSED; Old is the base value), G-HEUR, G-WALK (at most ten items),
    G-OWNER (owners are tickets or spec owners, never an agent), G-URL (no URL, host or local
-   path), G-UNTOUCHED (only this ticket's files, its boards and one `14` pointer line differ from
-   the merge base with origin/main), G-BUDGET and G-MUTLIST (the spec's mutation table equals
-   this tool's list).
+   path), G-UNTOUCHED (only this ticket's files, its boards, its sheet kit with its MANIFEST lines
+   and .prettierignore entry, and one `14` pointer line differ from the merge base with
+   origin/main), G-BUDGET and G-MUTLIST (the spec's mutation table equals this tool's list).
 4. **Pins (G-RULED).** Every non-blank line of the BQ section (the ruling quoted verbatim and the
    BQ bullets) is pinned in `e47_d03_ruled_pins.txt`; `--repin-ruled` is the only writer and
    refuses while a placeholder is unfilled.
@@ -81,7 +81,10 @@ TOOL_REL = "docs/design/_tools/e47_d03_theme_audit.py"
 PIN_REL = "docs/design/_tools/e47_d03_ruled_pins.txt"
 OWN = (SPEC_REL, HAND_REL, TOOL_REL, PIN_REL)
 OWN_BOARDS = re.compile(r"^docs/design/E47/img/E47-D03-\d\d-[a-z0-9-]+\.png$")
-OWN_KIT = re.compile(r"^docs/design/_tools/sheets/e47-d03/")
+# the boards' sheet kit, its MANIFEST lines and the .prettierignore entry for its packed sheets
+OWN_KIT = re.compile(
+    r"^(?:docs/design/_tools/sheets/(?:e47-d03/|MANIFEST\.sha256$)|\.prettierignore$)"
+)
 POINTER_14 = "- **Hi-fi (E47-D03, #1302):**"
 SPEC_BUDGET = 650
 HAND_BUDGET = 170
