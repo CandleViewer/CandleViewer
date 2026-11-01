@@ -2,7 +2,7 @@
  * E29-S01 (#911) integration: the store, the feed and the real `positionsApi` behind a fake `fetch`
  * and fake topic handles (BQ-19: no MSW, no new dependency), read through the hooks a panel uses.
  * Three accounts, grouping (account, trade group), filter and clear, the empty state, a failed
- * snapshot and Retry, the Viewer, the locked chip, and the client half of manager scope (BQ-13:
+ * snapshot and Retry, the Viewer, the account states, and the client half of manager scope (BQ-13:
  * the server refuses a filter naming an account outside the grants, audited; its tests are E29-T07's).
  */
 import { act, render, screen, within } from "@testing-library/react";
@@ -31,7 +31,6 @@ import {
 } from "../../../src/features/positions/positionsStore";
 import {
   COMMIT_INTERVAL_MS,
-  lockoutChannel,
   SNAPSHOT_BUDGET_MS,
   startPositionsFeed,
   type PositionsFeed,
@@ -130,9 +129,6 @@ function Panel({
         return (
           <table key={group.key ?? "none"} aria-label={`group ${group.key ?? "none"}`}>
             <caption>{`${group.count} · uPnL ${group.unrealisedPnl ?? "—"} · net ${group.netSize ?? "—"}`}</caption>
-            {signal?.lockout === "locked" && (
-              <p>{bindDeck("blotter.ui.lockout_chip", { "00:00": "00:00" })}</p>
-            )}
             {signal !== undefined && accountLine(signal, role) !== null && (
               <p>{accountLine(signal, role)?.line}</p>
             )}
@@ -288,29 +284,7 @@ describe("the Viewer", () => {
   });
 });
 
-describe("the locked chip (B20, S-21)", () => {
-  it("a locked risk lockout puts the chip on its account's group", async () => {
-    await open();
-    ws.live("positions")[0]?.push(snap(golden("ws_positions_snapshot.json")));
-    ws.live(lockoutChannel(SUB2))[0]?.push(
-      snap({
-        machine_kind: "risk_lockout",
-        state: "locked",
-        tags: ["trading_blocked"],
-        degraded: false,
-        machine_hash: "0".repeat(64),
-        environment: "live",
-        updated_at_ms: 1,
-      }),
-    );
-    await settle(TICK);
-    const chip = "Locked · daily loss limit · until 00:00 UTC · closing and reducing still work";
-    expect(
-      within(screen.getByRole("table", { name: `group ${SUB2}` })).getByText(chip),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText(chip)).toHaveLength(1);
-  });
-
+describe("the account states (BQ-14; no B20 subscription)", () => {
   it("an account notice shows its line on the group (BQ-14)", async () => {
     await open();
     ws.live("positions")[0]?.push(snap(golden("ws_positions_snapshot.json")));
