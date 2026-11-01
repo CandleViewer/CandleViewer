@@ -904,46 +904,46 @@
     {
       "id": "SCR-012",
       "name": "Command palette",
-      "coverage": "unreachable: not built",
-      "coverageReason": "not built: palette trigger disabled, TopBar.tsx:27 SEARCH_REASON 'The command palette is not available in this build.'",
-      "owningTicket": "E05-S03 #266",
-      "ownerResolution": "BQ-04 amended: rule step 2 (the one Story whose title or Context names it); ticket closed",
+      "coverage": "partial",
+      "coverageReason": "partial: E10-S05 #5236 mounts CommandPaletteHost in ShellLayout (Ctrl+K and the CMP-084 trigger); the Panel, Symbol and Setting groups have no source yet",
+      "owningTicket": "E10-S05 #5236",
+      "ownerResolution": "hand-resolved: SCR-012's build ticket, E10-S05 (#5236), filed as a plan gap on 2026-10-31",
       "deepPassListed": false,
       "states": [
         {
           "name": "empty query (recent + suggested)",
           "source": "catalogue",
-          "status": "unreachable",
-          "reason": "not built"
+          "status": "not run",
+          "reason": "the E47 sweep driver has not re-run since E10-S05 (#5236); the build ticket's own evidence: CommandPaletteHost.test.tsx (RTL, axe in three themes) and e2e/command-palette.spec.ts"
         },
         {
           "name": "results",
           "source": "catalogue",
-          "status": "unreachable",
-          "reason": "not built"
+          "status": "not run",
+          "reason": "the E47 sweep driver has not re-run since E10-S05 (#5236); the build ticket's own evidence: CommandPaletteHost.test.tsx (RTL, axe in three themes) and e2e/command-palette.spec.ts"
         },
         {
           "name": "no results (\"No command or symbol matches 'xyz'\")",
           "source": "catalogue",
-          "status": "unreachable",
-          "reason": "not built"
+          "status": "not run",
+          "reason": "the E47 sweep driver has not re-run since E10-S05 (#5236); the build ticket's own evidence: CommandPaletteHost.test.tsx (RTL, axe in three themes) and e2e/command-palette.spec.ts"
         },
         {
           "name": "RBAC-disabled entries greyed with a reason",
           "source": "catalogue",
-          "status": "unreachable",
-          "reason": "not built"
+          "status": "not run",
+          "reason": "the E47 sweep driver has not re-run since E10-S05 (#5236); the build ticket's own evidence: CommandPaletteHost.test.tsx (RTL, axe in three themes) and e2e/command-palette.spec.ts"
         }
       ],
       "evidence": {
         "automated": {
-          "verdict": "unreachable (not built)"
+          "verdict": "not run (the E47 sweep driver has not re-run since E10-S05 (#5236))"
         },
         "keyboard": {
-          "verdict": "unreachable (not built)"
+          "verdict": "not run (the E47 sweep driver has not re-run since E10-S05 (#5236))"
         },
         "deep": {
-          "verdict": "unreachable (not built)"
+          "verdict": "not run (the E47 sweep driver has not re-run since E10-S05 (#5236))"
         },
         "sr": {
           "owner": "E47-T04"
@@ -951,25 +951,26 @@
       },
       "wcag22": {
         "2.4.11": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (not audited: the E47 sweep driver has not re-run since E10-S05 (#5236))"
         },
         "2.5.7": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (not audited: the E47 sweep driver has not re-run since E10-S05 (#5236))"
         },
         "2.5.8": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (not audited: the E47 sweep driver has not re-run since E10-S05 (#5236))"
         },
         "3.2.6": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (not audited: the E47 sweep driver has not re-run since E10-S05 (#5236))"
         },
         "3.3.7": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (not audited: the E47 sweep driver has not re-run since E10-S05 (#5236))"
         },
         "3.3.8": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (not audited: the E47 sweep driver has not re-run since E10-S05 (#5236))"
         }
       },
-      "noFindings": false
+      "noFindings": false,
+      "scope": "built part (the Navigate and Action groups, over the route manifest and the keymap registry; the Panel, Symbol and Setting groups have no source yet)"
     },
     {
       "id": "SCR-013",
@@ -13235,14 +13236,18 @@
         "tool": "second rater: inspection (R2-F10)",
         "heuristic": true
       },
-      "owningTicket": "E05-S03 #266",
-      "status": "open",
+      "owningTicket": "E10-S05 #5236",
+      "status": "fixed",
       "title": "D-07 / R2-F10, fail (routed): only the nav rail reaches these pages; one way is not 'more than one way'",
       "observed": "The nav rail is the only way to reach the page; the command palette (SCR-012) is not built (its trigger is disabled) and there is no search or site map.",
       "expected": "2.4.5: more than one way to locate the page, e.g. the command palette / search (SCR-012). Adjudication: D-07: fail 2.4.5, routed: the row's owner is SCR-012's build ticket (E05-S03 #266, closed at the audited sha), status 'fail (routed)', not n/a; the register holds it as open until SCR-012 ships. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "priority": "P2",
       "alsoOn": ["SCR-123"],
-      "evidence": ["docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication"]
+      "evidence": [
+        "docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication",
+        "apps/web/e2e/command-palette.spec.ts",
+        "apps/web/test/features/command-palette/CommandPaletteHost.test.tsx"
+      ]
     }
   ]
 }

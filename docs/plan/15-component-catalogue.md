@@ -684,6 +684,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Storybook**: Default, Grouped, NoResults, EmptyQuery, RbacDisabled, Destructive (J12).
 - **Tests**: unit, visual, axe, keyboard, fuzzy-match unit tests.
 - **As built (E05-S03)**: `packages/ui` `CommandPalette` in a CMP-043 Dialog (640 px); `commands[]` adds `disabledReason?` / `destructive?` / `shortcut?` (display keys); `sections?` are the host's empty-query groups; `onRequestConfirm(command, scope)` replaces running a destructive row (the palette stays open); `onRunGroup?` is `Ctrl+Enter` and shows the footer; ↓ / ↑ wrap, Home / End and PageUp / PageDown move the active option; an in-house fuzzy scorer (`internal/fuzzy.ts`); every string a prop with an English default for stories; the dialog keeps CMP-043's close button as a second Tab stop; no Loading story (no source names one). Stories: Default (EmptyQuery), Filtered (Grouped), NoResults, WithConfirms (Destructive), Gated (RbacDisabled), LongText.
+- **As built (E10-S05, #5236)**: mounted once as SCR-012 by `apps/web` `features/command-palette/CommandPaletteHost` inside the shell (`ShellLayout`); the host passes `commands` already sorted in the fixed group order (the primitive groups by first appearance), `sections` (Recent, Suggested), `onRequestConfirm` (closes, then `runCommand` reaches the command's own confirm), and the strings from one `copy.ts` (title "Command palette", input "Search commands", listbox "Commands", "{n} results": PROPOSED). The primitive's own filter, 500 ms count settle and polite region are used unchanged; no `onRunGroup`, so no `Ctrl+Enter` footer. No change to the component.
 
 ### CMP-060 NotificationCenter (bell dropdown)
 
@@ -817,7 +818,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.surface.raised`, `elevation.1`.
 - **Storybook**: Default.
 - **Tests**: unit, visual, axe.
-- **As built (E10-S01, #304)**: in `apps/web`, one row in DOM and focus order: wordmark, CMP-075 badge, the Account / Symbol / Interval pickers as disabled-with-reason placeholders ("Not available in this build."), the CMP-084 search trigger (disabled with its reason until E10-S03 registers the palette), the CMP-076 chip, the user's name and role as text and a Sign out button (CMP-061 stand-in), then the CMP-211 slot. No workspace switcher or notification centre here: notifications are the CMP-209 launcher. The badge is announced politely on every route change through the shell's one announcer.
+- **As built (E10-S01, #304)**: in `apps/web`, one row in DOM and focus order: wordmark, CMP-075 badge, the Account / Symbol / Interval pickers as disabled-with-reason placeholders ("Not available in this build."), the CMP-084 search trigger (enabled since E10-S05, #5236, mounted SCR-012), the CMP-076 chip, the user's name and role as text and a Sign out button (CMP-061 stand-in), then the CMP-211 slot. No workspace switcher or notification centre here: notifications are the CMP-209 launcher. The badge is announced politely on every route change through the shell's one announcer.
 - **As built (E08-S09)**: the Symbol placeholder above is gone. Between the Account and Interval placeholders the TopBar draws CMP-219, opening SCR-102, only once a workspace binds a pane; until then it is absent, with no placeholder.
 
 ### CMP-073 WorkspaceSwitcher
@@ -953,6 +954,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: inherits CMP-001.
 - **Storybook**: Default.
 - **Tests**: unit, visual, axe.
+- **As built (E10-S05, #5236)**: the TopBar's "Search commands `Ctrl+K`" button (`SEARCH_TRIGGER_ID`) is enabled with `aria-keyshortcuts="Control+K"` and opens SCR-012 through the same toggle as `Ctrl+K`; its "not available in this build" state is gone. Focus returns to it when the palette closes after opening from it.
 
 ### CMP-085 SkipLink
 

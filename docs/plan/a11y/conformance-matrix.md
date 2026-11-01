@@ -6,11 +6,11 @@ Generated, do not edit: regenerate with `python3 docs/plan/a11y/_tools/register.
 
 - Audited sha: `a6ec967627b74737c6b462691cab8262a7176877`
 - Environment: vite preview build of apps/web at the audited sha on <loopback>, API stubbed at the network layer with apps/web/e2e/support, WS harness; Playwright Chromium headless. Not the demo environment, not Electron, no live exchange, no real credentials. Screen reader: proxies only (NVDA / JAWS / VoiceOver not run). Rater: an agent.
-- Screens: 159 rows; 27 reachable (20 covered, 7 partial); 122 unreachable (5 built, not mounted; 117 not built; 0 need a state the harness cannot induce); 10 reserved.
-- States: 812 (145 on reachable screens); 63 covered, 704 unreachable, 45 not run.
+- Screens: 159 rows; 28 reachable (20 covered, 8 partial); 121 unreachable (5 built, not mounted; 116 not built; 0 need a state the harness cannot induce); 10 reserved.
+- States: 812 (149 on reachable screens); 63 covered, 700 unreachable, 49 not run.
 - Deep pass: 12 of 33 listed ids auditable; 8 run.
 - WCAG 2.2 cells (6 per non-reserved row): n/a 109, pass 41, pass (exception) 12, unreachable 732 (unreachable counted apart from n/a).
-- Findings: 28 in all, 14 open (Level A 5, AA 9; P0 0, P1 9, P2 5, P3 0; needs filing go 0); explicit no-findings rows: 6 (no finding recorded in this run's checks; not a conformance claim; 0 of them have second-rater disagreements pending adjudication, record §10.5).
+- Findings: 28 in all, 13 open (Level A 5, AA 8; P0 0, P1 9, P2 4, P3 0; needs filing go 0); explicit no-findings rows: 6 (no finding recorded in this run's checks; not a conformance claim; 0 of them have second-rater disagreements pending adjudication, record §10.5).
 - Patterns: A11Y-P-01 (2), A11Y-P-02 (4), A11Y-P-03 (1), A11Y-P-04 (3), A11Y-P-05 (2), A11Y-P-06 (3), A11Y-P-07 (1).
 - Screen reader: the sign-off passes are E47-T04's; this sweep records proxies only.
 
@@ -18,7 +18,7 @@ Generated, do not edit: regenerate with `python3 docs/plan/a11y/_tools/register.
 
 | Band         | Area                                       | Reachable | Rows | Open findings |
 | ------------ | ------------------------------------------ | --------- | ---- | ------------- |
-| SCR-001..019 | Auth, app shell, global chrome, onboarding | 14        | 19   | 11            |
+| SCR-001..019 | Auth, app shell, global chrome, onboarding | 15        | 19   | 11            |
 | SCR-020..029 | Workspaces, dockable panel system, layouts | 0         | 10   | 0             |
 | SCR-030..049 | Charting                                   | 0         | 20   | 0             |
 | SCR-050..059 | Order flow                                 | 0         | 10   | 0             |
@@ -26,8 +26,8 @@ Generated, do not edit: regenerate with `python3 docs/plan/a11y/_tools/register.
 | SCR-080..089 | Rule engine                                | 0         | 10   | 0             |
 | SCR-090..099 | Alerts, journal, analytics, replay         | 0         | 10   | 0             |
 | SCR-100..109 | Watchlist, symbol search, symbol info      | 0         | 10   | 0             |
-| SCR-110..119 | Settings (user-scoped)                     | 4         | 10   | 3             |
-| SCR-120..149 | Admin (owner-only)                         | 1         | 30   | 2             |
+| SCR-110..119 | Settings (user-scoped)                     | 4         | 10   | 2             |
+| SCR-120..149 | Admin (owner-only)                         | 1         | 30   | 1             |
 | SCR-150..159 | Global system states                       | 7         | 10   | 3             |
 
 ## Matrix
@@ -48,7 +48,7 @@ Automated `pass (0 violations; N unresolved)`: axe found no violation, but N col
 | SCR-009 | (reserved)                                        | reserved: no screen             | 0 / 0          | n/a                                | n/a                   | reserved    | reserved    | reserved         | reserved    | reserved         | reserved    | n/a            | E47-T04 | 0 / 0           | unassigned     |
 | SCR-010 | App shell (global chrome)                         | partial                         | 2 / 6          | pass (0 violations; 3 unresolved)  | pass (traversal only) | pass        | n/a         | pass             | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 1           | E10-S01 #304   |
 | SCR-011 | Navigation rail (expanded) & workspace switcher   | covered                         | 1 / 4          | pass                               | pass (traversal only) | pass        | n/a         | pass             | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 0           | E10-S01 #304   |
-| SCR-012 | Command palette                                   | unreachable: not built          | 0 / 4          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | 0 / 0           | E05-S03 #266   |
+| SCR-012 | Command palette                                   | partial                         | 0 / 4          | not run                            | not run               | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | not run        | E47-T04 | 0 / 0           | E10-S05 #5236  |
 | SCR-013 | Hotkey cheatsheet overlay                         | covered                         | 1 / 3          | pass (0 violations; 2 unresolved)  | pass (traversal only) | pass        | n/a         | pass (exception) | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 0           | E39-S05 #1012  |
 | SCR-014 | Notification centre (right-rail drawer)           | partial                         | 1 / 12         | pass                               | pass (traversal only) | pass        | n/a         | pass             | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 0           | E40-S02 #1130  |
 | SCR-015 | Global toast host                                 | covered                         | 1 / 7          | pass                               | pass (traversal only) | n/a         | n/a         | n/a              | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 0           | E10-S01 #304   |
@@ -148,7 +148,7 @@ Automated `pass (0 violations; N unresolved)`: axe found no violation, but N col
 | SCR-109 | (reserved)                                        | reserved: no screen             | 0 / 0          | n/a                                | n/a                   | reserved    | reserved    | reserved         | reserved    | reserved         | reserved    | n/a            | E47-T04 | 0 / 0           | unassigned     |
 | SCR-110 | Settings home                                     | unreachable: not built          | 0 / 1          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | 0 / 0           | E10 (epic)     |
 | SCR-111 | Profile settings                                  | unreachable: not built          | 0 / 3          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | 0 / 0           | E09 (epic) #36 |
-| SCR-112 | Security settings                                 | partial                         | 1 / 6          | pass (0 violations; 21 unresolved) | pass (traversal only) | pass        | n/a         | pass             | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 2           | E09-S02 #229   |
+| SCR-112 | Security settings                                 | partial                         | 1 / 6          | pass (0 violations; 21 unresolved) | pass (traversal only) | pass        | n/a         | pass             | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 1           | E09-S02 #229   |
 | SCR-113 | Hotkey editor                                     | covered                         | 1 / 3          | pass                               | pass                  | pass        | n/a         | pass (exception) | n/a         | n/a              | n/a         | n/a; spot pass | E47-T04 | 0 / 0           | E30-S05 #1089  |
 | SCR-114 | Trading defaults settings                         | unreachable: not built          | 0 / 23         | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | 0 / 0           | E30-S07 #1091  |
 | SCR-115 | Notifications settings                            | unreachable: not built          | 0 / 9          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | 0 / 0           | E40-S02 #1130  |
@@ -159,7 +159,7 @@ Automated `pass (0 violations; N unresolved)`: axe found no violation, but N col
 | SCR-120 | Admin home / overview                             | unreachable: not built          | 0 / 3          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | 0 / 0           | E42-S01 #1022  |
 | SCR-121 | Admin: users list                                 | unreachable: not built          | 0 / 5          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | deferred       | E47-T04 | 0 / 0           | E42-S02 #1023  |
 | SCR-122 | Admin: user detail / edit                         | unreachable: not built          | 0 / 7          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | 0 / 0           | E42-S03 #1134  |
-| SCR-123 | Admin: invite user                                | covered                         | 1 / 6          | pass (0 violations; 13 unresolved) | pass (traversal only) | pass        | n/a         | pass (exception) | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 2           | E42-S02 #1023  |
+| SCR-123 | Admin: invite user                                | covered                         | 1 / 6          | pass (0 violations; 13 unresolved) | pass (traversal only) | pass        | n/a         | pass (exception) | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 1           | E42-S02 #1023  |
 | SCR-124 | Admin: "view as" (read-only impersonation)        | unreachable: not built          | 0 / 8          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | 0 / 0           | E42-S03 #1134  |
 | SCR-125 | Admin: Bybit accounts list                        | unreachable: not built          | 0 / 6          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | 0 / 0           | E27-S01 #895   |
 | SCR-126 | Admin: add / edit Bybit account                   | unreachable: not built          | 0 / 5          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | 0 / 0           | E27-S02 #896   |
