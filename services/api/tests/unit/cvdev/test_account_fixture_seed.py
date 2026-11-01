@@ -33,6 +33,7 @@ from sqlalchemy.exc import ProgrammingError
 from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
 from candleviewer.settings import Environment, FeedMode, Settings
 from cvdev.account_fixture import cli, seed
+from cvdev.account_fixture.pack import PACK_ROOT, Pack, fixture_key_ids
 from cvdev.account_fixture.seed import DatabaseFacts
 from scripts import seed_fixture_user
 
@@ -525,6 +526,30 @@ def test_roster_matches_plan_9_1() -> None:
     assert list(roster.items()) == list(zip(USERS, ROLES, strict=True))
     assert all(re.fullmatch(r"[a-z0-9-]{3,32}", user) for user in roster)  # users_uname_len
     assert set(seed.USER_FILES) == CLOSED
+
+
+def test_six_registered_accounts_each_with_its_own_uid_and_pack_key_id() -> None:
+    """E27-Q03 AC1 (BQ-04, ruled 2026-11-01): a main account and five sub-accounts under it, the
+    first three as the plan's 9.2 names them, every UID and key id their own, every key id one the
+    stub admits (a pack key id), and `users` still writes only its own files."""
+    plan = Path(__file__).resolve().parents[5] / "qa/plans/e27-accounts-test-plan.md"
+    section = plan.read_text("utf-8").split("### 9.2 Accounts", 1)[1].split("\n### ", 1)[0]
+    rows = [[c.strip(" `") for c in line.strip("| \n").split("|")] for line in section.splitlines()]
+    in_plan = {row[0]: (row[3], row[4]) for row in rows if row and row[0].startswith("acct-demo")}
+    accounts = seed.ACCOUNTS
+    mains = [a for a in accounts if a.parent_uid is None]
+
+    assert len(accounts) == 6 and len(mains) == 1
+    assert all(a.parent_uid == mains[0].uid for a in accounts if a is not mains[0])
+    for field in ("alias", "label", "uid", "key_id"):
+        assert len({getattr(a, field) for a in accounts}) == 6, field
+    assert {a.alias: (a.uid, a.label) for a in accounts[:3]} == {
+        alias: in_plan[alias] for alias in ("acct-demo-main", "acct-demo-sub1", "acct-demo-sub2")
+    }
+    assert all(re.fullmatch(r"9000[0-9]{4}", a.uid) for a in accounts)  # the plan's UID range
+    root = Path(__file__).resolve().parents[5]
+    assert {a.key_id for a in accounts} <= fixture_key_ids(Pack(root / PACK_ROOT))
+    assert set(seed.USER_FILES) == CLOSED  # fixture data only: the `users` files are unchanged
 
 
 # --- The probe, and the order of the gate -------------------------------------------------------
