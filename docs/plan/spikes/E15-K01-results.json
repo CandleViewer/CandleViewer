@@ -2050,7 +2050,8 @@
       },
       "recommendedMaxPanes": 16,
       "profile": "full",
-      "ceilingIsLowerBound": false
+      "ceilingLowerBound": 16,
+      "ceilingUpperBound": 16
     },
     {
       "leg": "dgpu-shared-A",
@@ -2110,7 +2111,8 @@
       },
       "recommendedMaxPanes": 16,
       "profile": "full",
-      "ceilingIsLowerBound": false
+      "ceilingLowerBound": 16,
+      "ceilingUpperBound": 16
     },
     {
       "leg": "dgpu-shared-A",
@@ -2170,7 +2172,8 @@
       },
       "recommendedMaxPanes": 16,
       "profile": "full",
-      "ceilingIsLowerBound": false
+      "ceilingLowerBound": 16,
+      "ceilingUpperBound": 16
     },
     {
       "leg": "dgpu-shared-B",
@@ -2230,7 +2233,8 @@
       },
       "recommendedMaxPanes": 16,
       "profile": "full",
-      "ceilingIsLowerBound": false
+      "ceilingLowerBound": 16,
+      "ceilingUpperBound": 16
     },
     {
       "leg": "dgpu-worker-ctx",
@@ -2259,7 +2263,8 @@
       },
       "recommendedMaxPanes": 1,
       "profile": "reduced",
-      "ceilingIsLowerBound": true
+      "ceilingLowerBound": 1,
+      "ceilingUpperBound": 16
     },
     {
       "leg": "dgpu-inline",
@@ -2299,7 +2304,8 @@
       },
       "recommendedMaxPanes": 6,
       "profile": "full",
-      "ceilingIsLowerBound": false
+      "ceilingLowerBound": 6,
+      "ceilingUpperBound": 15
     },
     {
       "leg": "dgpu-proxy",
@@ -2339,7 +2345,8 @@
       },
       "recommendedMaxPanes": 4,
       "profile": "full",
-      "ceilingIsLowerBound": true
+      "ceilingLowerBound": 4,
+      "ceilingUpperBound": 16
     },
     {
       "leg": "igpu-shared",
@@ -2379,7 +2386,8 @@
       },
       "recommendedMaxPanes": 16,
       "profile": "full",
-      "ceilingIsLowerBound": false
+      "ceilingLowerBound": 16,
+      "ceilingUpperBound": 16
     },
     {
       "leg": "igpu-shared-cpu4x",
@@ -2419,7 +2427,8 @@
       },
       "recommendedMaxPanes": 16,
       "profile": "full",
-      "ceilingIsLowerBound": false
+      "ceilingLowerBound": 16,
+      "ceilingUpperBound": 16
     },
     {
       "leg": "igpu-inline-cpu4x",
@@ -2479,7 +2488,8 @@
       },
       "recommendedMaxPanes": 6,
       "profile": "full",
-      "ceilingIsLowerBound": false
+      "ceilingLowerBound": 6,
+      "ceilingUpperBound": 7
     },
     {
       "leg": "igpu-inline-cpu4x-dr",
@@ -2519,7 +2529,8 @@
       },
       "recommendedMaxPanes": 6,
       "profile": "full",
-      "ceilingIsLowerBound": true
+      "ceilingLowerBound": 6,
+      "ceilingUpperBound": 16
     },
     {
       "leg": "swiftshader-shared",
@@ -2554,7 +2565,8 @@
       },
       "recommendedMaxPanes": 0,
       "profile": "reduced",
-      "ceilingIsLowerBound": false
+      "ceilingLowerBound": 0,
+      "ceilingUpperBound": 0
     },
     {
       "leg": "swiftshader-probe",
@@ -2589,7 +2601,8 @@
       },
       "recommendedMaxPanes": 0,
       "profile": "reduced",
-      "ceilingIsLowerBound": false
+      "ceilingLowerBound": 0,
+      "ceilingUpperBound": 0
     }
   ],
   "repro": [
@@ -2764,7 +2777,7 @@
       "density": "orderflow-proxy",
       "rep": 0,
       "p95FrameMs": 7.39,
-      "recommendedMaxPanes": 16,
+      "recommendedMaxPanes": 7,
       "recommendedProfile": "full",
       "paneCount": 4
     },
@@ -3346,91 +3359,104 @@
         "density": "bare",
         "recommendedMaxPanes": 16,
         "profile": "full",
-        "lowerBound": false
+        "ceilingLowerBound": 16,
+        "ceilingUpperBound": 16
       },
       {
         "leg": "dgpu-shared-A",
         "density": "indicators",
         "recommendedMaxPanes": 16,
         "profile": "full",
-        "lowerBound": false
+        "ceilingLowerBound": 16,
+        "ceilingUpperBound": 16
       },
       {
         "leg": "dgpu-shared-A",
         "density": "drawings",
         "recommendedMaxPanes": 16,
         "profile": "full",
-        "lowerBound": false
+        "ceilingLowerBound": 16,
+        "ceilingUpperBound": 16
       },
       {
         "leg": "dgpu-shared-B",
         "density": "drawings",
         "recommendedMaxPanes": 16,
         "profile": "full",
-        "lowerBound": false
+        "ceilingLowerBound": 16,
+        "ceilingUpperBound": 16
       },
       {
         "leg": "dgpu-worker-ctx",
         "density": "indicators",
         "recommendedMaxPanes": 1,
         "profile": "reduced",
-        "lowerBound": true
+        "ceilingLowerBound": 1,
+        "ceilingUpperBound": 16
       },
       {
         "leg": "dgpu-inline",
         "density": "indicators",
         "recommendedMaxPanes": 6,
         "profile": "full",
-        "lowerBound": false
+        "ceilingLowerBound": 6,
+        "ceilingUpperBound": 15
       },
       {
         "leg": "dgpu-proxy",
         "density": "orderflow-proxy",
         "recommendedMaxPanes": 4,
         "profile": "full",
-        "lowerBound": true
+        "ceilingLowerBound": 4,
+        "ceilingUpperBound": 16
       },
       {
         "leg": "igpu-shared",
         "density": "indicators",
         "recommendedMaxPanes": 16,
         "profile": "full",
-        "lowerBound": false
+        "ceilingLowerBound": 16,
+        "ceilingUpperBound": 16
       },
       {
         "leg": "igpu-shared-cpu4x",
         "density": "indicators",
         "recommendedMaxPanes": 16,
         "profile": "full",
-        "lowerBound": false
+        "ceilingLowerBound": 16,
+        "ceilingUpperBound": 16
       },
       {
         "leg": "igpu-inline-cpu4x",
         "density": "indicators",
         "recommendedMaxPanes": 6,
         "profile": "full",
-        "lowerBound": false
+        "ceilingLowerBound": 6,
+        "ceilingUpperBound": 7
       },
       {
         "leg": "igpu-inline-cpu4x-dr",
         "density": "drawings",
         "recommendedMaxPanes": 6,
         "profile": "full",
-        "lowerBound": true
+        "ceilingLowerBound": 6,
+        "ceilingUpperBound": 16
       },
       {
         "leg": "swiftshader-shared",
         "density": "indicators",
         "recommendedMaxPanes": 0,
         "profile": "reduced",
-        "lowerBound": false
+        "ceilingLowerBound": 0,
+        "ceilingUpperBound": 0
       },
       {
         "leg": "swiftshader-probe",
         "density": "indicators",
         "recommendedMaxPanes": 0,
         "profile": "reduced",
-        "lowerBound": false
+        "ceilingLowerBound": 0,
+        "ceilingUpperBound": 0
       }
     ],
     "probeIndicators": [

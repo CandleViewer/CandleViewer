@@ -605,6 +605,7 @@ for (const leg of LEGS)
       if (c.p95 * RULE.HEADROOM <= RULE.BUDGET_MS) ceiling = c.n;
       else break;
     const max = Math.min(RULE.HARD_CAP, ceiling);
+    const firstMiss = rows.find((c) => c.p95 * RULE.HEADROOM > RULE.BUDGET_MS);
     curves.push({
       leg: leg.id,
       density,
@@ -621,8 +622,11 @@ for (const leg of LEGS)
       fit: { interceptMs: slope === null ? null : r3(my - slope * mx), slopeMsPerPane: r3(slope) },
       recommendedMaxPanes: max,
       profile: max >= RULE.FULL_MIN ? "full" : "reduced",
-      // a ceiling at the largest measured N is "at least" that N: nothing above it was measured
-      ceilingIsLowerBound: max === Math.max(...xs) && max < RULE.HARD_CAP,
+      // the true ceiling lies in [lower, upper]: lower = the rule's ceiling (the largest measured N that
+      // passes); upper = the first measured N that misses, minus one, or the cap when none misses (D-8:
+      // replaces the run's `ceilingIsLowerBound`, which missed the gap between measured counts)
+      ceilingLowerBound: max,
+      ceilingUpperBound: firstMiss ? Math.min(RULE.HARD_CAP, firstMiss.n - 1) : RULE.HARD_CAP,
     });
   }
 // the probe (mirror of the app's classify) on the measured windows: one at one pane and one at four, per rep
@@ -755,7 +759,8 @@ const decision = {
     density: c.density,
     recommendedMaxPanes: c.recommendedMaxPanes,
     profile: c.profile,
-    lowerBound: c.ceilingIsLowerBound,
+    ceilingLowerBound: c.ceilingLowerBound,
+    ceilingUpperBound: c.ceilingUpperBound,
   })),
   probeIndicators: probeRuns
     .filter((p) => p.density === "indicators")

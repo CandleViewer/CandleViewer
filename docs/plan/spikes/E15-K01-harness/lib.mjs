@@ -96,8 +96,10 @@ export const SWIFTSHADER_FLAGS = Object.freeze([
 
 // ---- Mirrors of the app's rules, for the harness to apply to the measured series ---------------------------
 // The app's own code is `apps/web/src/lib/capability/` (not imported here either). Its unit test
-// `e15k01Fixture.test.ts` runs the app's `classify` and `reducedTrigger` on the measured windows this harness
-// writes and asserts the same answers, so the mirror and the app cannot drift silently.
+// `e15k01Fixture.test.ts` checks the app's `classify` against the answers this harness wrote into the fixture,
+// and loads this file to run the app's `classify` and `reducedTrigger` beside these mirrors (`outliers:
+// "isolated"`) on the measured windows, so the mirror and the app cannot drift silently. This file still
+// imports nothing from the app.
 
 /** Mirror of `frameProbe.ts` `classify` (PROPOSED values, E15-K01 §5). */
 export function classify(
@@ -112,12 +114,22 @@ export function classify(
     const mx = pts.reduce((s, p) => s + p.n, 0) / pts.length,
       my = pts.reduce((s, p) => s + p.p95, 0) / pts.length;
     const sxx = pts.reduce((s, p) => s + (p.n - mx) ** 2, 0);
-    perPane = Math.max(0, pts.reduce((s, p) => s + (p.n - mx) * (p.p95 - my), 0) / sxx);
-    fixed = Math.max(0, my - perPane * mx);
+    const slope = pts.reduce((s, p) => s + (p.n - mx) * (p.p95 - my), 0) / sxx;
+    // a slope <= 0 is noise, not a free pane: keep the one-window rule on the top point (added after the
+    // run with the app's guard, E15-K01 D-8; it changes one stored probe run, the order-flow proxy's rep 0)
+    if (slope > 0) {
+      perPane = slope;
+      fixed = Math.max(0, my - slope * mx);
+    }
   }
   const limit = budgetMs / headroom;
   const fit = perPane > 0 ? Math.floor((limit - fixed) / perPane) : fixed <= limit ? hardCap : 0;
-  const max = Math.max(0, Math.min(hardCap, fit));
+  // never at or above a pane count whose own window missed (with the slope guard, D-8)
+  const missed = pts.filter((p) => p.p95 > limit).map((p) => p.n);
+  const max = Math.max(
+    0,
+    Math.min(hardCap, missed.length ? Math.min(...missed) - 1 : hardCap, fit),
+  );
   return {
     p95FrameMs: top.p95,
     recommendedMaxPanes: max,
@@ -131,7 +143,9 @@ export function classify(
  * taken while visible and focused: drop everything before `warmupMs`, drop frames over `outlierMs`, then fire
  * when the p95 of the trailing `windowMs` is above `thresholdMs` (evaluated once the window is full).
  * `outliers: "all"` (what the run applied: every frame over `outlierMs` dropped) or `"isolated"` (only a frame
- * whose neighbours are not over it: the reading E15-K01 §9 T3 adopts and the app implements).
+ * whose neighbours are not over it: the reading E15-K01 §9 T3 adopts and the app implements). A window is full
+ * when the kept frames span it and, counting each frame as at least 1/60 s, cover `minCoverage` of it (added
+ * after the run with the app's rule, D-8; the run's samples are contiguous, so no stored outcome changes).
  */
 export function reducedTrigger(
   samples,
@@ -141,6 +155,7 @@ export function reducedTrigger(
     warmupMs = 10_000,
     outlierMs = 200,
     outliers = "all",
+    minCoverage = 0.5,
   } = {},
 ) {
   const warm = samples.filter((s) => s.t >= warmupMs);
@@ -153,6 +168,8 @@ export function reducedTrigger(
     return { fired: false, p95: null, frames: kept.length };
   const end = kept[kept.length - 1].t;
   const win = kept.filter((s) => s.t > end - windowMs).map((s) => s.ms);
+  if (win.reduce((c, ms) => c + Math.max(ms, 1000 / 60), 0) < windowMs * minCoverage)
+    return { fired: false, p95: null, frames: win.length };
   const p95 = percentile(win, 95);
   return { fired: p95 > thresholdMs, p95, frames: win.length };
 }
