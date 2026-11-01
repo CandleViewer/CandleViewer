@@ -21,29 +21,40 @@ Gates (each FAIL led by its code):
   a `deferred-owned` or `not-comparable-yet` row names an owner story with its issue; an
   `owner-run` row names its OR leg.
 - [G06-GEOM] the E12-D06 values this pass lifts agree with the formulas evaluated at the samples
-  (D06's own body widths at the ladder samples equal `body_px`).
+  (D06's own body widths at the ladder samples equal `body_px`); a GE expected cell holds exactly
+  the evaluated value.
 - [G07-COPY] every deck key a `pass` CP row names equals, part by part, a built string literal of
   the files the row cites; the ticket's superseded strings stand in no built source tree.
-- [G08-REGISTER] every DF row has a class and a severity from the ruled sets, an owner of the form
-  `E12-Dnn · area/<slug>` and a target story; no Blocking row stands without an IS row.
+- [G08-REGISTER] every DF row has a class and a severity from the ruled sets, a Clause that cites,
+  an owner of the form `Exx-Dnn · area/<slug>` (or a plan doc `NN · area/<slug>`) and a target
+  story; no Blocking row stands without an IS row.
 - [G09-IDS] the ids of each table family are unique and in order.
 - [G10-HYGIENE] no lane-private word, URL, local path, uuid or closing keyword in the own files.
 - [G11-RULED] section R lists BQ-01..BQ-25 once each with the ruling stamp; no BQ marker is left.
 - [G12-SCOPE] the changed paths are the own files and the `E12-D13-*` captures only.
 - [G13-FREEZE] post-merge mode: every merged table row stands unchanged.
-- [G14-RERUN] every `deferred-owned`, `not-comparable-yet` and `out-of-scope` row is named by a row
-  of the re-run table.
+- [G14-RERUN] every `deferred-owned`, `not-comparable-yet`, `out-of-scope`, `compared-in-part` and
+  story-owned `known` row is named by the re-run row of EVERY story its owner cell names (a row
+  with no owner story by any re-run row).
 - [G15-CAPTURE] every CA row names an existing capture of the changed set, run kind `emulated`, a
-  DPR of 1, 1.25 or 2; every `E12-D13-*` PNG is named by a CA row; each file is a PNG.
+  DPR of 1, 1.25 or 2; every `E12-D13-*` PNG is named by a CA row; each file is a PNG whose pixel
+  size is the row's CSS box times its DPR.
 - [G16-EVENTS] the EV rows are E12-D12 §13's events in order; a name with a built call site is not
   `deferred-owned`, and a name with none is.
 - [G17-SURFACES] the SU rows are the seven surfaces of `T Scope`, in order.
-- [G18-TOKENS] each token TK-1 names ships in every theme and is bound by the card's source;
-  `color.chart.background` ships in none (TK-3).
+- [G18-TOKENS] each token a `pass` TK row names resolves in every theme and is bound by the
+  source the row cites; TK-1 names one; `color.chart.background` ships in none (TK-3).
+- [G19-LEDGER] every story cited with its issue (owner and target cells, the RR and RT rows) is a
+  ticket of the backlog ledger with that issue number; each RR row's sprint is its story's.
+- [G20-ROUTING] for each story with both an RT row (§13.1) and an RR row (§14), the RT row's open
+  run rows and the RR row's rows are the same set; every story an open row names has both.
+- [G21-ROLES] the SC rows carry E12-D12 §14.1's R-01..R-13 in order, each citing its own line and
+  restating its four role cells, its T2 key and its components.
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL; `--fill` writes the
-computed values into the spec's slots and markers; `--self-test` applies one mutation per gate to an
-in-memory copy and passes only when each adds FAILs of its gate's code and the base run is clean;
+computed values into the spec's slots and markers; `--self-test` applies at least one mutation per
+gate to an in-memory copy and passes only when each adds FAILs of its gate's code and the base run
+is clean;
 `--repin-ruled` rewrites the pins file from the spec's cites and is its only writer.
 
 Usage: python3 -I -B docs/design/_tools/e12_d13_designqa_audit.py [--check] [--json] [--fill]
@@ -82,6 +93,8 @@ D06_REL = "docs/design/E12/E12-D06.md"
 D12_REL = "docs/design/E12/E12-D12.md"
 DECK_REL = "docs/design/E12/E12-D12-copy.json"
 CAL_REL = "docs/plan/backlog/_tools/calendar_cv.py"
+LEDGER_REL = "docs/plan/backlog/_tools/published.json"
+TICKETS_REL = "docs/plan/backlog/all-tickets.json"
 D06_TOOL_REL = "docs/design/_tools/e12_d06_series_audit.py"
 DS_SRC = "packages/ui/tokens"
 BUILT_TREES = ("apps/web/src", "packages/ui/src", "packages/chart-engine/src")
@@ -98,6 +111,11 @@ CODE_KEYS = {
     "RESIZE": "packages/chart-engine/src/host/resize.ts",
     "PROTO": "packages/chart-engine/src/worker/protocol.ts",
     "README": "docs/design/README.md",
+    "TYPCSS": "packages/ui/src/components/typography.css",
+    "ERRCSS": "packages/ui/src/components/errorstate.css",
+    "BTNCSS": "packages/ui/src/components/button.css",
+    "UIR": "packages/ui/README.md",
+    "UITOK": "packages/ui/tokens/primitives.tokens.json",
 }
 DESIGN_KEYS = {f"D{n:02d}": f"docs/design/E12/E12-D{n:02d}.md" for n in (*range(2, 10), 11, 12)}
 KEY_RE = r"D0[2-9]|D1[12]|\d\d|E\d\d-D\d\d|" + "|".join(CODE_KEYS)
@@ -139,16 +157,31 @@ RUN_FAMILIES = (
     "PF",
     "EV",
 )
-ID_FAMILIES = (*RUN_FAMILIES, "DF", "RT", "DR", "RR", "OR", "CO", "BQ")
+ID_FAMILIES = (*RUN_FAMILIES, "DF", "C", "RT", "DR", "RR", "OR", "CO", "BQ")
 STORY = re.compile(r"E\d\d-[A-Z]\d\d \(#\d+\)")
+STORY_PARTS = re.compile(r"\b(E\d\d-[A-Z]\d\d) \(#(\d+)\)")
+OPEN = ("deferred-owned", "not-comparable-yet", "out-of-scope (unbuilt)", "compared-in-part")
 SEVERITIES = ("Blocking", "Major", "Minor", "Info")
 CLASSES = ("implementation defect", "accepted divergence", "specification gap")
-OWNER = re.compile(r"^`E\d\d-D\d\d · area/[a-z-]+`$")
+OWNER = re.compile(r"^`(?:E\d\d-D\d\d|\d\d) · area/[a-z-]+`$")
 SURFACES = ("SCR-030", "SCR-031", "SCR-041", "SCR-042", "SCR-045", "SCR-047", "SCR-048")
 SUPERSEDED = ("Needs recorded ticks", "Values below one tick are not allowed.")
 DPRS = ("1", "1.25", "2")
 SAMPLE_KEYS = tuple(f"sample-{n}" for n in range(1, 6))
 GE_SAMPLE = {"ge-01": "sample-1", "ge-02": "sample-2", "ge-03": "sample-3"}
+# The TK rows' token values, resolved from the token JSON at the base (dark theme layering).
+TK_TOKENS = {
+    "tk.heading-sm": "type.ui.heading-sm",
+    "tk.body": "type.ui.body",
+    "tk.label": "type.ui.label",
+    "tk.caption": "type.ui.caption",
+    "tk.inset-md": "space.inset.md",
+    "tk.inset-sm": "space.inset.sm",
+    "tk.inset-xs": "space.inset.xs",
+    "tk.mono": "font.family.mono",
+    "tk.ui": "font.family.ui",
+}
+TOKEN_NAME = re.compile(r"`((?:color|type|space|font)\.[\w.-]+)`")
 STORY_COMPONENTS = {
     "cmp181": "CandleSeries",
     "cmp220": "IntervalPicker",
@@ -392,6 +425,8 @@ class Ctx:
     d12: str
     deck: dict[str, dict[str, str]]
     images: list[str]
+    ledger: dict[str, int]
+    sprints: dict[str, str]
 
     def base_line(self, key: str, n: int) -> str | None:
         rel = key_path(key, self.base)
@@ -416,6 +451,14 @@ def build_ctx() -> Ctx:
     images = sorted(
         f"{IMG_DIR}/{p.name}" for p in (ROOT / IMG_DIR).glob("E12-D13-*") if p.is_file()
     )
+    pub = json.loads(show(base, LEDGER_REL) or "{}")
+    ledger = {k: int(v["number"]) for k, v in pub.items() if isinstance(v, dict) and "number" in v}
+    tickets = json.loads(show(base, TICKETS_REL) or "[]")
+    sprints = {
+        str(t["key"]): str(t.get("sprint") or "")
+        for t in tickets
+        if isinstance(t, dict) and "key" in t
+    }
     return Ctx(
         spec=read(SPEC_REL),
         pins=read(PINS_REL),
@@ -427,6 +470,8 @@ def build_ctx() -> Ctx:
         d12=show(base, D12_REL) or "",
         deck=deck,
         images=images,
+        ledger=ledger,
+        sprints=sprints,
     )
 
 
@@ -470,6 +515,10 @@ def geom_values(ctx: Ctx) -> dict[str, str]:
     out["ge-07"] = f"{2 * up} · " + " / ".join(str(2 * up * hair(d)) for d in dprs)
     zero = int(a["GEOM:zero.h"])
     out["ge-08"] = f"{zero} · " + " / ".join(str(zero * hair(d)) for d in dprs)
+    # GE-03 under the other reading of D06 §2 (the device re-force applies at every width)
+    s3 = Decimal(a["LADDER:sample-3"])
+    css3 = int(d06.body_px(s3))
+    out["ge-03.alt"] = " / ".join(str(device_body(css3, s3, d, 0)) for d in dprs)
     return out
 
 
@@ -508,11 +557,93 @@ def shipped(base: str, token: str) -> bool:
     return bool(themes) and all(token in theme_names(base, t) for t in themes)
 
 
+@functools.cache
+def theme_tokens(base: str, name: str) -> dict[str, object]:
+    """Every token of a theme, its sets layered in order (a later set wins)."""
+    out: dict[str, object] = {}
+    for f in layering(base).get(name, ()):
+        data = json.loads(show(base, f"{DS_SRC}/{f}.tokens.json") or "{}")
+        if isinstance(data, dict):
+            out.update(
+                {k: v["$value"] for k, v in data.items() if isinstance(v, dict) and "$value" in v}
+            )
+    return out
+
+
+def resolve(base: str, theme: str, token: str, depth: int = 0) -> str:
+    """A token's value with its `{ref}`s resolved; a typography token as `family · N px · W · LH`."""
+    toks = theme_tokens(base, theme)
+    if depth > 12 or token not in toks:
+        raise KeyError(f"{token} does not resolve in {theme}")
+    val = toks[token]
+
+    def one(v: object) -> str:
+        if isinstance(v, list):
+            return ", ".join(one(x) for x in v)
+        text = str(v)
+        m = re.fullmatch(r"\{([\w.-]+)\}", text)
+        return resolve(base, theme, m[1], depth + 1) if m else text
+
+    if isinstance(val, dict):
+        return " · ".join(
+            (
+                one(val["fontFamily"]),
+                f"{one(val['fontSize'])} px",
+                one(val["fontWeight"]),
+                one(val["lineHeight"]),
+            )
+        )
+    return one(val)
+
+
+def token_value(base: str, token: str) -> str:
+    """The value in every theme; differing values FAIL by raising."""
+    got = {resolve(base, t, token) for t in layering(base)}
+    if len(got) != 1:
+        raise ValueError(f"{token} differs across the themes: {sorted(got)}")
+    value = got.pop()
+    return f"{value} px" if token.startswith("space.") else value
+
+
 def manifest_rows(d12: str) -> list[tuple[str, str]]:
     """D12 §12's token rows: (token, the pack's mark `shipped` / `absent`)."""
     sec = section(d12, "12. ")
     pat = re.compile(r"^\| `([\w.-]+)`\s*\| (shipped|absent)<!--=TOKEN:", re.MULTILINE)
     return [(m[1], m[2]) for m in pat.finditer(sec)]
+
+
+def role_rows(d12: str) -> list[tuple[int, list[str]]]:
+    """E12-D12 §14.1's R rows, each with its line number in the file at the base."""
+    out: list[tuple[int, list[str]]] = []
+    inside = False
+    for n, ln in enumerate(d12.split("\n"), start=1):
+        if ln.startswith("### 14.1 "):
+            inside = True
+            continue
+        if inside and heading_level(ln):
+            break
+        if inside and re.match(r"^\|\s*R-\d\d\s*\|", ln):
+            out.append((n, cells(ln)))
+    return out
+
+
+def owner_stories(row: list[str]) -> set[str]:
+    return {m[1] for m in STORY_PARTS.finditer(row[-1])} if row else set()
+
+
+def reruns(status: str, stories: set[str]) -> bool:
+    """A row the re-run table carries: open, or `known` with an owner story."""
+    return status in OPEN or (status == "known" and bool(stories))
+
+
+def story_rows(text: str, family: str, story_col: int, ids_col: int) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for r in rows(text, family):
+        if len(r) <= max(story_col, ids_col):
+            continue
+        for m in STORY_PARTS.finditer(r[story_col]):
+            out.setdefault(m[1], set()).update(expand_ids(r[ids_col]))
+    return out
 
 
 def cp_keys(row: list[str]) -> list[str]:
@@ -565,6 +696,12 @@ def compute(ctx: Ctx) -> dict[str, str]:
         v[f"s0{n}.start"], v[f"s0{n}.end"] = s.isoformat(), e.isoformat()
     s9, _ = cal.sprint_range(9)
     v["ahead.s09"] = (s9 - datetime.timedelta(days=14)).isoformat()
+    for key, tok in TK_TOKENS.items():
+        v[key] = token_value(ctx.base, tok)
+    v["sc"] = str(len(rows(spec, "SC")))
+    v["roles"] = str(len(role_rows(ctx.d12)))
+    v["c"] = str(len(rows(spec, "C")))
+    v["rt"] = str(len(rows(spec, "RT")))
     return v
 
 
@@ -679,8 +816,8 @@ def g_geom(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(("G06-GEOM", f"D06's body at {sk} reads {said}, the formula gives {got}"))
     for r in rows(ctx.spec, "GE"):
         key = r[0].lower()
-        if key in vals and vals[key] not in r[4]:
-            f.append(("G06-GEOM", f"{r[0]}: the expected cell is not the evaluated value"))
+        if key in vals and AUDIT.sub("", r[4]).strip() != vals[key]:
+            f.append(("G06-GEOM", f"{r[0]}: the expected cell is not exactly the evaluated value"))
 
 
 def g_copy(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -706,6 +843,8 @@ def g_register(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(("G08-REGISTER", f"{r[0]}: class {r[1][:30]!r} is not a ruled class"))
         if r[2] not in SEVERITIES:
             f.append(("G08-REGISTER", f"{r[0]}: severity {r[2]!r} is not on the scale"))
+        if not (MD_CITE.search(r[3]) or "§" in r[3]):
+            f.append(("G08-REGISTER", f"{r[0]}: the Clause {r[3]!r} cites nothing"))
         if not OWNER.match(r[4]):
             f.append(("G08-REGISTER", f"{r[0]}: owner {r[4]!r} is not a spec and its area"))
         if not STORY.fullmatch(r[5]):
@@ -768,32 +907,48 @@ def g_rerun(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     named: set[str] = set()
     for r in rows(ctx.spec, "RR"):
         named |= expand_ids(r[1])
+    by_story = story_rows(ctx.spec, "RR", 2, 1)
     if not named:
         f.append(("G14-RERUN", "no re-run row found"))
     for fam in RUN_FAMILIES:
         for r in rows(ctx.spec, fam):
             st = status_of(r)
-            open_row = st in ("deferred-owned", "not-comparable-yet", "out-of-scope (unbuilt)")
-            if open_row and r[0] not in named:
+            stories = owner_stories(r)
+            if not reruns(st, stories):
+                continue
+            if not stories and r[0] not in named:
                 f.append(("G14-RERUN", f"{r[0]} is {st} and no re-run row names it"))
+            for story in sorted(stories):
+                if r[0] not in by_story.get(story, set()):
+                    f.append(("G14-RERUN", f"{r[0]} is {st}; the re-run row of {story} omits it"))
 
 
 def g_capture(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     named: set[str] = set()
     for r in rows(ctx.spec, "CA"):
-        if len(r) != 9:
-            f.append(("G15-CAPTURE", f"{r[0]}: {len(r)} cells, not 9"))
+        if len(r) != 10:
+            f.append(("G15-CAPTURE", f"{r[0]}: {len(r)} cells, not 10"))
             continue
         rel = f"{IMG_DIR}/{r[1].strip('`')}"
         named.add(rel)
+        head = (ROOT / rel).read_bytes()[:24] if rel in ctx.images else b""
+        box = re.fullmatch(r"(\d+)x(\d+)", r[3])
+        if r[5] not in DPRS or r[6] != "emulated" or box is None:
+            f.append(
+                ("G15-CAPTURE", f"{r[0]}: DPR {r[5]!r}, run {r[6]!r} or box {r[3]!r} not ruled")
+            )
         if rel not in ctx.images:
             f.append(("G15-CAPTURE", f"{r[0]}: {rel} does not exist"))
         elif ctx.merged_spec is None and rel not in ctx.changed:
             f.append(("G15-CAPTURE", f"{r[0]}: {rel} is not in the change set"))
-        elif (ROOT / rel).read_bytes()[:8] != PNG_MAGIC:
+        elif head[:8] != PNG_MAGIC:
             f.append(("G15-CAPTURE", f"{r[0]}: {rel} is not a PNG"))
-        if r[4] not in DPRS or r[5] != "emulated":
-            f.append(("G15-CAPTURE", f"{r[0]}: DPR {r[4]!r} or run {r[5]!r} is not ruled"))
+        elif box is not None and r[5] in DPRS:
+            dpr = Decimal(r[5])
+            want = (rhu(int(box[1]) * dpr), rhu(int(box[2]) * dpr))
+            got = (int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big"))
+            if got != want:
+                f.append(("G15-CAPTURE", f"{r[0]}: {rel} is {got}, not the box x DPR {want}"))
     for img in ctx.images:
         if img not in named:
             f.append(("G15-CAPTURE", f"{img} is named by no CA row"))
@@ -818,20 +973,107 @@ def g_surfaces(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
 
 
 def g_tokens(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
-    tk = {r[0]: r for r in rows(ctx.spec, "TK")}
-    ces = show(ctx.base, CODE_KEYS["CES"]) or ""
-    named = re.findall(r"`(color\.[\w.]+)`", tk.get("TK-1", ["", ""])[1])
-    if not named:
+    tk = rows(ctx.spec, "TK")
+    first = {r[0]: r for r in tk}.get("TK-1", ["", ""])
+    if not TOKEN_NAME.findall(first[1]):
         f.append(("G18-TOKENS", "TK-1 names no token"))
-    for tok in named:
-        if not shipped(ctx.base, tok):
-            f.append(("G18-TOKENS", f"TK-1: {tok} is not shipped in every theme"))
-        if f"var(--{tok.replace('.', '-')})" not in ces:
-            f.append(("G18-TOKENS", f"TK-1: {tok} is not bound by the card's source"))
+    for r in tk:
+        if status_of(r) != "pass" or len(r) < 3:
+            continue
+        src = ""
+        for key, _, _ in cite_spans(r[2]):
+            rel = key_path(key, ctx.base)
+            src += (show(ctx.base, rel) if rel else None) or ""
+        for tok in TOKEN_NAME.findall(r[1]):
+            if tok.startswith("color."):
+                ok = shipped(ctx.base, tok)
+            else:
+                try:
+                    ok = bool(token_value(ctx.base, tok))
+                except RUN_ERRORS:
+                    ok = False
+            if not ok:
+                f.append(("G18-TOKENS", f"{r[0]}: {tok} does not resolve in every theme"))
+            if f"var(--{tok.replace('.', '-')}" not in src:
+                f.append(("G18-TOKENS", f"{r[0]}: {tok} is not bound by the source the row cites"))
     if shipped(ctx.base, "color.chart.background"):
         f.append(("G18-TOKENS", "TK-3: color.chart.background ships; the row is stale"))
     if vals.get("tk.agree") != vals.get("tk.rows"):
         f.append(("G18-TOKENS", "TK-2: a manifest row disagrees with the base"))
+
+
+def g_ledger(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
+    if not ctx.ledger or not ctx.sprints:
+        f.append(("G19-LEDGER", "the backlog ledger could not be read at the base"))
+        return
+    for ln in ctx.spec.split("\n"):
+        lead = cells(ln)[0] if ln.startswith("|") else ln[:24]
+        for m in STORY_PARTS.finditer(ln):
+            if ctx.ledger.get(m[1]) != int(m[2]):
+                f.append(("G19-LEDGER", f"{lead}: {m[0]} is not a ledger ticket with that issue"))
+    for r in rows(ctx.spec, "RR"):
+        hit = STORY_PARTS.search(r[2]) if len(r) > 3 else None
+        if hit is None:
+            continue
+        want = ctx.sprints.get(hit[1], "")
+        if not want or not re.match(re.escape(want) + r"(?!\d)", r[3]):
+            f.append(("G19-LEDGER", f"{r[0]}: sprint {r[3]!r} is not {hit[1]}'s {want!r}"))
+
+
+def g_routing(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
+    status = {r[0]: r for fam in RUN_FAMILIES for r in rows(ctx.spec, fam)}
+    rt = story_rows(ctx.spec, "RT", 1, 2)
+    rr = story_rows(ctx.spec, "RR", 2, 1)
+    if not rt or not rr:
+        f.append(("G20-ROUTING", "no RT or RR row names a story"))
+        return
+
+    def owned(story: str, ids: set[str]) -> set[str]:
+        return {
+            i
+            for i in ids
+            if i in status
+            and story in owner_stories(status[i])
+            and reruns(status_of(status[i]), owner_stories(status[i]))
+        }
+
+    for story in sorted(set(rt) | set(rr)):
+        a = owned(story, rt.get(story, set()))
+        b = rr.get(story, set())
+        if story in rr and story not in rt:
+            f.append(("G20-ROUTING", f"{story} has a re-run row and no comment row"))
+            continue
+        for i in sorted(a ^ b):
+            where = "the comment" if i in a else "the re-run row"
+            f.append(("G20-ROUTING", f"{story}: {i} is in {where} only"))
+    for i, r in sorted(status.items()):
+        for story in sorted(owner_stories(r)):
+            if reruns(status_of(r), owner_stories(r)) and i not in rt.get(story, set()):
+                f.append(("G20-ROUTING", f"{i}: the comment row of {story} omits it"))
+
+
+def g_roles(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
+    roles = role_rows(ctx.d12)
+    if [c[0] for _, c in roles] != [f"R-{n:02d}" for n in range(1, 14)]:
+        f.append(("G21-ROLES", "E12-D12 §14.1 does not read as R-01..R-13"))
+        return
+    sc = [r for r in rows(ctx.spec, "SC") if len(r) > 3 and re.match(r"R-\d\d\b", r[2])]
+    if [r[2][:4] for r in sc] != [c[0] for _, c in roles]:
+        f.append(("G21-ROLES", "the SC rows do not carry R-01..R-13 once each, in order"))
+    names = ("Owner", "Manager", "Viewer", "viewing as")
+    for (line, d), r in zip(roles, sc, strict=False):
+        text = norm(" ".join(r))
+        if not any(k == "D12" and a <= line <= b for k, a, b in cite_spans(r[3])):
+            f.append(("G21-ROLES", f"{r[0]}: the Clause does not cite `D12`:{line}"))
+        for name, col in zip(names, (3, 4, 5, 6), strict=True):
+            if f"{name}: {norm(d[col])}" not in text:
+                f.append(("G21-ROLES", f"{r[0]}: the {name} cell of {d[0]} is not restated"))
+        key = re.search(r"`([a-z]+\.[a-z_]+)`", d[7])
+        if key and f"`{key[1]}`" not in r[2]:
+            f.append(("G21-ROLES", f"{r[0]}: the T2 key {key[1]} of {d[0]} is missing"))
+        for cmp_id in re.findall(r"CMP-\d+", d[7]):
+            if cmp_id not in text:
+                f.append(("G21-ROLES", f"{r[0]}: {cmp_id} of {d[0]} is missing"))
 
 
 GATES: list[tuple[str, Callable[[Ctx, dict[str, str], Findings], None]]] = [
@@ -853,6 +1095,9 @@ GATES: list[tuple[str, Callable[[Ctx, dict[str, str], Findings], None]]] = [
     ("G16-EVENTS", g_events),
     ("G17-SURFACES", g_surfaces),
     ("G18-TOKENS", g_tokens),
+    ("G19-LEDGER", g_ledger),
+    ("G20-ROUTING", g_routing),
+    ("G21-ROLES", g_roles),
 ]
 
 
@@ -931,6 +1176,20 @@ def set_cell(text: str, row_id: str, index: int, value: str) -> str:
     return "\n".join(out)
 
 
+def in_row(text: str, row_id: str, old: str, new: str) -> str:
+    """Replace `old` inside the one table row `row_id` only."""
+    out = []
+    done = False
+    for ln in text.split("\n"):
+        if not done and re.match(rf"^\|\s*{re.escape(row_id)}\s*\|", ln) and old in ln:
+            ln = ln.replace(old, new, 1)
+            done = True
+        out.append(ln)
+    if not done:
+        raise ValueError(f"mutation anchor missing: {old[:40]!r} in {row_id}")
+    return "\n".join(out)
+
+
 def first(pattern: str, text: str) -> str:
     m = re.search(pattern, text, re.MULTILINE)
     if not m:
@@ -998,6 +1257,29 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
         lambda c: _spec(
             c,
             _swap(c.spec, "binds `color.status.danger.strong`", "binds `color.status.danger.loud`"),
+        ),
+    ),
+    # the lens round's slipped mutations, one each
+    (
+        "G06-GEOM",
+        lambda c: _spec(c, in_row(c.spec, "GE-01", "11 / 19 <!--", "11 / 19 / 21 <!--")),
+    ),
+    ("G08-REGISTER", lambda c: _spec(c, set_cell(c.spec, "DF-2", 3, ""))),
+    ("G14-RERUN", lambda c: _spec(c, in_row(c.spec, "RR-7", "SR-12, SR-13", "SR-12"))),
+    ("G14-RERUN", lambda c: _spec(c, in_row(c.spec, "RR-9", "CP-6; ", ""))),
+    ("G15-CAPTURE", lambda c: _spec(c, set_cell(c.spec, "CA-2", 5, "2"))),
+    (
+        "G18-TOKENS",
+        lambda c: _spec(c, in_row(c.spec, "TK-7", "`type.ui.body`", "`type.ui.heading-md`")),
+    ),
+    ("G19-LEDGER", lambda c: _spec(c, set_cell(c.spec, "DF-1", 5, "E12-S12 (#999999)"))),
+    ("G19-LEDGER", lambda c: _spec(c, set_cell(c.spec, "MX-05", 6, "E99-S99 (#1)"))),
+    ("G19-LEDGER", lambda c: _spec(c, set_cell(c.spec, "RR-8", 3, "Sprint 07"))),
+    ("G20-ROUTING", lambda c: _spec(c, in_row(c.spec, "RT-1", "CA-1; ", ""))),
+    (
+        "G21-ROLES",
+        lambda c: _spec(
+            c, in_row(c.spec, "SC-2", "Manager: T2 `rbac.owner_only`", "Manager: absent")
         ),
     ),
 ]
