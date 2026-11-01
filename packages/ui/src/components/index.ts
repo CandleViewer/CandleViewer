@@ -196,6 +196,18 @@ export type { CancellableWait, InlineSpinnerTextProps } from "./InlineSpinnerTex
 export { Kbd } from "./Kbd.js";
 export type { KbdProps } from "./Kbd.js";
 
+export {
+  FundingCountdown,
+  formatFundingCount,
+  fundingCountdownState,
+  fundingRateSign,
+  spokenFundingCount,
+} from "./FundingCountdown.js";
+export type {
+  FundingCountdownProps,
+  FundingCountdownState,
+  FundingRateSign,
+} from "./FundingCountdown.js";
 export { KeyValueRow } from "./KeyValueRow.js";
 export type { KeyValueRowProps } from "./KeyValueRow.js";
 
@@ -272,6 +284,13 @@ export type {
 export { RadioGroup } from "./RadioGroup.js";
 export type { RadioGroupBaseProps, RadioGroupProps, RadioOption } from "./RadioGroup.js";
 
+export { SymbolInfoPopover } from "./SymbolInfoPopover.js";
+export type {
+  SymbolInfoContract,
+  SymbolInfoLive,
+  SymbolInfoPopoverProps,
+  SymbolInfoPopoverState,
+} from "./SymbolInfoPopover.js";
 export { RbacGate } from "./RbacGate.js";
 export type { RbacGateChild, RbacGateForm, RbacGateIconChild, RbacGateProps } from "./RbacGate.js";
 export { RBAC_REASONS, formatRbacReason } from "./rbacReasons.js";

@@ -1,0 +1,54 @@
+/*
+ * CMP-125 SymbolInfoPopover body (E08-D06 §9), inside CMP-017's surface. Tokens only; static. Band labels are
+ * type.ui.label in color.text.secondary and carry the boundary by heading, not by colour; the stale marker
+ * (CMP-239) sits in the live band's head. Long text wraps: nothing truncates at 200 % zoom.
+ */
+.cv-symbol-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-md);
+  min-width: 0;
+}
+
+.cv-symbol-info__band {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+  min-width: 0;
+}
+
+.cv-symbol-info__band-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-inset-xs);
+}
+
+.cv-symbol-info__band-label {
+  margin: 0;
+  color: var(--color-text-primary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+}
+
+.cv-symbol-info__rows {
+  margin: 0;
+}
+
+.cv-symbol-info__message {
+  margin: 0;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.cv-symbol-info__message[data-missing] {
+  color: var(--color-text-tertiary);
+}
+
+@media (forced-colors: active) {
+  .cv-symbol-info__message,
+  .cv-symbol-info__message[data-missing] {
+    color: CanvasText;
+  }
+}

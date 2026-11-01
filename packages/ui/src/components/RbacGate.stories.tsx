@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { Button } from "./Button.js";
 import { Callout } from "./Callout.js";
+import { EmptyState } from "./EmptyState.js";
 import { FormField } from "./FormField.js";
 import { IconButton } from "./IconButton.js";
 import { RbacGate, type RbacGateProps } from "./RbacGate.js";
@@ -205,5 +206,57 @@ export const FormNotice: Story = {
       await expect(control).toHaveAccessibleDescription(OWNER_ONLY);
     }
     await expect(canvas.getAllByText(OWNER_ONLY)).toHaveLength(1);
+  },
+};
+
+/**
+ * The sentence form (E09-D09 §8): an empty state whose sole CTA is gated. Denied renders CMP-026 with `cta` omitted
+ * and the reason as its description: text only, no button, no lock glyph, nothing to press or describe.
+ */
+const sentenceGate = (gate: DeniedGate | { allowed: true }): Story => ({
+  render: () => (
+    <RbacGate
+      form="sentence"
+      title="Not recorded"
+      variant="recording-not-started"
+      {...(gate as DeniedGate)}
+    >
+      <EmptyState
+        variant="recording-not-started"
+        title="Not recorded"
+        actions={[{ label: "Record this symbol…", onClick: fn() }]}
+      />
+    </RbacGate>
+  ),
+});
+
+export const FormSentenceOwnerOnly: Story = {
+  ...sentenceGate({
+    allowed: false,
+    reason: "rbac.owner_only",
+    fills: { verb: "start recording" },
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("Only the owner can start recording.")).toBeTruthy();
+    await expect(canvas.queryByRole("button")).toBeNull();
+    await expect(canvas.getByRole("heading", { name: "Not recorded" })).toBeTruthy();
+  },
+};
+
+export const FormSentenceViewAs: Story = {
+  ...sentenceGate({ allowed: false, reason: "rbac.view_as", fills: { user: "alex" } }),
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByText("Read-only while viewing as alex.")).toBeTruthy();
+    await expect(within(canvasElement).queryByRole("button")).toBeNull();
+  },
+};
+
+export const FormSentenceAllowed: Story = {
+  ...sentenceGate({ allowed: true }),
+  play: async ({ canvasElement }) => {
+    await expect(
+      within(canvasElement).getByRole("button", { name: "Record this symbol…" }),
+    ).toBeTruthy();
   },
 };

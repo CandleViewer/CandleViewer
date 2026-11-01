@@ -1,5 +1,7 @@
 import { cloneElement, useEffect, type JSX, type ReactElement } from "react";
 import type { IconName } from "../icons/registry.js";
+import { EmptyState, type EmptyStateEmptyProps } from "./EmptyState.js";
+import type { HeadingLevel } from "./Typography.js";
 import { GateNoticeProvider } from "./internal/disabledReason.js";
 import { fillRbacReason, type RbacReasonArgs, type RbacReasonKey } from "./rbacReasons.js";
 
@@ -42,14 +44,35 @@ interface FormNotice {
   readonly children: RbacGateChild;
 }
 
+/**
+ * The sentence form (E09-D09 §8, `32-design-specs` G-T2.1c): an empty state whose sole CTA is gated. Allowed
+ * renders the child (the host's empty state with its CTA); denied renders CMP-026 with `cta` omitted, the reason
+ * its `description` in `color.text.secondary`: no button, no CMP-019 `lock` glyph, no `aria-disabled` (there is
+ * nothing to press, describe or announce). The reason is text, read in the surface's browse order.
+ */
+interface FormSentence {
+  readonly form: "sentence";
+  readonly noticeId?: never;
+  /** The fact the empty state states, e.g. "Not recorded". */
+  readonly title: string;
+  /** CMP-026's variant for the denied block; default `no-data`. */
+  readonly variant?: EmptyStateEmptyProps["variant"];
+  /** The heading's level; default 3, so it fits its panel's outline. */
+  readonly headingLevel?: HeadingLevel;
+  /** The allowed rendering: the host's CMP-026 with its CTA. */
+  readonly children: ReactElement;
+}
+
 /** The rendering (E05-D02 G15); `tooltip` only for icon-only controls, `notice` only with `noticeId`. */
-export type RbacGateForm = "inline" | "tooltip" | "notice";
+export type RbacGateForm = "inline" | "tooltip" | "notice" | "sentence";
 
 type GateForm<F extends RbacGateForm> = F extends "tooltip"
   ? FormTooltip
   : F extends "notice"
     ? FormNotice
-    : FormInline;
+    : F extends "sentence"
+      ? FormSentence
+      : FormInline;
 
 /** T1: the session may use the control. A `reason` here is ignored, so a host may keep it computed. */
 interface Allowed {
@@ -90,12 +113,13 @@ const isIconOnly = (child: ReactElement): boolean => {
  * Allowed renders the child unchanged. Denied hands the reason sentence to the child's own
  * `disabledReason`, so the atom renders T2 itself: `aria-disabled`, never `disabled`, focusable,
  * `aria-describedby` to the reason, the lock glyph; no overlay layer (E09-D09 §2.2, §9). The three forms
- * (E05-D02 G15): `inline` (default), `tooltip` (icon-only controls), `notice` (with `noticeId`). The notice
+ * (E05-D02 G15): `inline` (default), `tooltip` (icon-only controls), `notice` (with `noticeId`), and `sentence` (E09-D09 §8). The notice
  * form's provider is mounted allowed or denied, so a gate that flips never remounts the control.
  */
 export function RbacGate<F extends RbacGateForm = "inline">(props: RbacGateProps<F>): JSX.Element {
   // The form is a type parameter, which does not narrow; read it as the plain union it is at run time.
   const { form, noticeId } = props as { readonly form?: RbacGateForm; readonly noticeId?: string };
+  const sentence = props as Partial<FormSentence>;
   const misused = form === "tooltip" && !isIconOnly(props.children);
   // Once per mount (and again only if the misuse comes back), not on every render.
   useEffect(() => {
@@ -104,6 +128,17 @@ export function RbacGate<F extends RbacGateForm = "inline">(props: RbacGateProps
     }
   }, [misused]);
   const reason = props.allowed ? undefined : fillRbacReason(props.reason, props.fills);
+  if (form === "sentence") {
+    if (reason === undefined) return props.children as ReactElement;
+    return (
+      <EmptyState
+        variant={sentence.variant ?? "no-data"}
+        title={sentence.title ?? ""}
+        description={reason}
+        {...(sentence.headingLevel === undefined ? {} : { headingLevel: sentence.headingLevel })}
+      />
+    );
+  }
   const child =
     reason === undefined
       ? props.children
