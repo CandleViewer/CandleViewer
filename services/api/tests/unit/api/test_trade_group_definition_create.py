@@ -176,7 +176,32 @@ def test_mixed_environments_are_refused_naming_the_accounts(world: World) -> Non
     entry["message"] = "This account is not in the definition's environment."
     detail = f"{MIXED} 'E28-A' (demo), 'E28-LIVE-MAIN' (live)."
     assert (got.status_code, got.json()["detail"], got.json()["errors"]) == (400, detail, [entry])
-    assert NEW not in world.records and world.texts == [] and world.audited == []
+    assert NEW not in world.records and world.texts == []
+    assert world.audited == [refused_record(None, entry)]
+
+
+def refused_record(definition: UUID | None, *entries: dict[str, str]) -> dict[str, Any]:
+    """#5120 (C-2.9, C-2.11): the one record of a mixed definition, written before the answer:
+    the Owner, its role and the request, the errors by account id and never a label."""
+    return {
+        "action": "trade_group_definition.save_refused", "committed": False,
+        "actor_label": str(OWNER), "actor_user_id": OWNER, "actor_ip": "testclient",
+        "session_id": None, "env": "demo", "object_kind": "trade_group_definition",
+        "object_id": None if definition is None else str(definition), "request_id": None,
+        "outcome": "denied", "severity": "warning", "reason": "environment_mismatch",
+        "after_state": {"role": "owner", "environment": "demo", "errors": list(entries)},
+    }  # fmt: skip
+
+
+@pytest.mark.parametrize("fault", [AuditUnavailable("down"), RuntimeError("off"), TimeoutError()])
+def test_a_mixed_definition_whose_record_is_unwritten_is_503(
+    world: World, fault: Exception
+) -> None:
+    """#5120: the refusal's record goes first; unwritten, `503 audit_unavailable`, nothing."""
+    world.faults["audit"] = fault
+    got = world.post(payload(A, L))
+    assert (got.status_code, got.json()["code"]) == (503, "audit_unavailable")
+    assert NEW not in world.records and world.audited == []
 
 
 def test_no_common_symbol_is_refused_with_scr_062s_sentence(world: World) -> None:
