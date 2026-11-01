@@ -190,6 +190,20 @@ describe("PositionsGrid (CMP-114): the treegrid", () => {
     expect(within(main).getByRole("rowheader", { name: "BTCUSDT" }).tagName).toBe("TH");
   });
 
+  it("a position row carries its key, so the host can tell which one holds focus; a group or totals row none", async () => {
+    await mount(<Host />);
+    expect(rowNamed("BTCUSDT · Long · 0.250 BTC · Main")).toHaveAttribute(
+      "data-key",
+      GROUPS[0]?.rows[0]?.key ?? "",
+    );
+    const keyed = within(grid())
+      .getAllByRole("row")
+      .filter((row) => row.hasAttribute("data-key"));
+    expect(keyed.map((row) => row.getAttribute("data-key"))).toEqual(
+      GROUPS.flatMap((g) => g.rows.map((r) => r.key)),
+    );
+  });
+
   it("an account the directory does not name shows its id in place of a label", async () => {
     await mount(<Host groups={[group("x", "x", [{ ...MAIN, accountLabel: null }])]} />);
     expect(rowNamed("BTCUSDT · Long · 0.250 BTC · id-Main")).toBeInTheDocument();
