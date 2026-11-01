@@ -8,12 +8,15 @@ Blocks (exit 2, reason on stderr):
      tracked on origin/main (or main) - C-5.4. A new file and the lock beside the files pass.
   3. Content that imports xstate_statemachine outside services/api/candleviewer/statechart/
      (CV-LINT-IMPORT; tests/xstate_contract/ is allowed for parity tests).
-A shell edit (sed -i, a heredoc) never reaches this hook: the CI lock check is the gate for 2.
+The path is normalised as text before it is matched (separators, `.` and `..` segments; no
+filesystem access, so a symlink is not followed). The hook is an early warning: a shell edit
+(sed -i, a heredoc) never reaches it, and the CI lock check is the gate for 2.
 """
 from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -25,6 +28,11 @@ ALLOWED_TEST_DIRS = ("services/api/tests/xstate_contract/", "tests/xstate_contra
 # A worktree of the project sits under its directory: the files in it are the project's own paths.
 WORKTREE_RE = re.compile(r"^\.claude/worktrees/[^/]+/")
 IMPORT_RE = re.compile(r"^\s*(from\s+xstate_statemachine\b|import\s+xstate_statemachine\b)", re.M)
+
+
+def norm(path: str) -> str:
+    """`path` with its separators and its `.` and `..` segments resolved, as text only."""
+    return posixpath.normpath(path.replace("\\", "/"))
 
 
 def rel(path: str, root: str) -> str:
@@ -63,7 +71,7 @@ def main() -> int:
     if not path:
         return 0
     root = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
-    r = rel(path, root)
+    r = rel(norm(path), root)
 
     if r.startswith(MIGRATIONS) and r.endswith(".py") and applied_on_main(r, root):
         print(

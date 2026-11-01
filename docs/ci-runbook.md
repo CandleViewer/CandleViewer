@@ -1209,8 +1209,9 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   20 s, so a docker daemon that hangs can use up the smoke window. On dev this triggers
   automatic redeploy of the last known-good digest (`rolled-back` ledger
   entry); on staging it stops and alerts — roll back manually (§8). Check
-  the container logs for a stuck boot-time migration (advisory lock,
-  E03-T10) first; a long CI-DEP-002 wait is often a CI-DEP-004 in disguise.
+  the `migrate` step's log first (`docker compose ... logs migrate`): a
+  failed schema step stops `up` before `api` starts, and a long wait on its
+  advisory lock (E03-T10) is a CI-DEP-004.
 - **CI-DEP-003** (image mismatch after deploy): the probes are ok, but the
   running `api` container's image id is not the image id of the verified
   `<ref>@<digest>`; the error names both ids. The smoke test compares
@@ -1227,10 +1228,11 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   pins the `api` image: `docker compose ... config --images` prints only
   the image names (plain `config` prints the environment, credentials
   included).
-- **CI-DEP-004** (migration lock timeout): the boot-time Alembic advisory
-  lock (E03-T10) did not release within its own timeout, so the container
-  never reaches `/readyz`. Surfaces here as a CI-DEP-002 smoke timeout;
-  check the API container's boot logs for the lock-wait message.
+- **CI-DEP-004** (migration lock timeout): the `migrate` step's advisory
+  lock (E03-T10) did not release within its own timeout, so the step exits 4
+  and `up` starts no `api`. Surfaces here as the CI-DEP-002 of a failed `up`
+  (`service "migrate" didn't complete successfully: exit 4`); the step's log
+  has the lock-wait message (`docs/ops/runbooks/storage-migrate.md`).
 
 ### CI-DOC-* — documentation drift (this runbook's own gate)
 
@@ -1322,9 +1324,12 @@ section in the same sprint — do not just work around it and move on.
   E04's observability lands.
 - **Dev** auto-rolls-back on a failed smoke test: the previous `success`
   ledger entry's digest is looked up, verified and deployed automatically
-  through the same overlay, and the smoke test checks that the running
-  `api` container's image id is that digest's. Both outcomes
-  (`smoke-failed` or `sha-mismatch`, then `rolled-back`) land in the ledger.
+  through the same overlay with `up --no-deps api`, so only `api` is
+  recreated and the older image's schema step is not run (it cannot find a
+  revision a newer image applied; the schema stays forward), and the smoke
+  test checks that the running `api` container's image id is that digest's.
+  Both outcomes (`smoke-failed` or `sha-mismatch`, then `rolled-back`) land
+  in the ledger.
 - **Staging never auto-rolls-back** (a half-rolled-back staging environment
   mid-soak is harder to reason about than a stopped one) — a failed smoke
   test stops the job; roll back manually by dispatching
@@ -1333,7 +1338,10 @@ section in the same sprint — do not just work around it and move on.
   or the digest recorded in `main.yml`'s `image-supply-chain-evidence`
   artifact / SBOM-diff job summary). That rollback is a deploy of the
   previous digest: it runs through the same overlay, and the smoke test
-  checks its image id.
+  checks its image id. It is a full `up`, so it runs that image's schema
+  step first: against a schema a newer image migrated the step exits 4 and
+  `up` starts no `api`; start the older `api` alone with `up --no-deps api`
+  (`docs/ops/runbooks/storage-migrate.md`).
 - Rollback never runs a down-migration (ADR-0013 rule 9): migrations are
   additive expand/contract, so redeploying an older image against the
   current schema is always safe; the deploy script does not invoke

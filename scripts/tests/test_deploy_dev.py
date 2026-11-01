@@ -591,13 +591,39 @@ def test_dev_rollback_runs_the_previous_digest_and_checks_its_image_id(
     assert run_deploy(tmp_path, env_example, ledger, digest=DIGEST_B, auto_rollback=True) == 1
     assert docker.ups == [DIGEST_B, DIGEST_A]
     forward_up, rollback_up = (c for c in docker.calls if "up" in c)
-    assert forward_up == rollback_up  # the same files, overlay and --no-build
+    # The same files, overlay, `--wait` and `--no-build`, for `api` alone (the test below).
+    assert rollback_up == [*forward_up, "--no-deps", "api"]
     checked = [c[-1] for c in docker.calls if c[:3] == ["docker", "image", "inspect"]]
     assert checked == [f"{REF}@{DIGEST_B}", f"{REF}@{DIGEST_A}"]
     rows = [json.loads(x) for x in ledger.read_text(encoding="utf-8").splitlines()][1:]
     outcomes = [(r["outcome"], r["digest"]) for r in rows]
     assert outcomes == [("sha-mismatch", DIGEST_B), ("rolled-back", DIGEST_A)]
     assert IDS[DIGEST_A] in rows[0]["detail"] and IDS[DIGEST_B] in rows[0]["detail"]
+
+
+def test_dev_rollback_restarts_api_alone_and_never_runs_the_schema_step(
+    tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch, clock: None
+) -> None:
+    """The forward `up` names no service, so compose runs `migrate` ahead of `api`. The previous
+    image's `migrate` cannot find a revision that a newer image applied, so the rollback's `up`
+    names `api` with `--no-deps`: only `api` is recreated, on the previous digest, and the schema
+    stays forward (migrations are backward-compatible for one release: C-5.1, ADR-0013 rule 9)."""
+    ledger = tmp_path / "ledger.jsonl"
+    dd.append_ledger(
+        dd.LedgerEntry("prev-sha", DIGEST_A, "dev", "ci", "2026-01-01T00:00:00Z", "success"), ledger
+    )
+    docker = stateful_docker(monkeypatch, pinned=[DIGEST_A])  # the forward deploy runs A, not B
+    probes(monkeypatch)
+    assert run_deploy(tmp_path, env_example, ledger, digest=DIGEST_B, auto_rollback=True) == 1
+    assert docker.ups == [DIGEST_B, DIGEST_A]
+    forward_up, rollback_up = (c for c in docker.calls if "up" in c)
+    assert forward_up[-1] == "--no-build" and "--no-deps" not in forward_up
+    assert rollback_up[-3:] == ["--no-build", "--no-deps", "api"]
+    assert [c for c in docker.calls if "migrate" in c] == []  # no call names the step
+    base = yaml.safe_load(BASE.read_text(encoding="utf-8"))["services"]
+    assert "migrate" in base["api"]["depends_on"]  # so only `--no-deps` keeps it out of this `up`
+    outcomes = [json.loads(x)["outcome"] for x in ledger.read_text(encoding="utf-8").splitlines()]
+    assert outcomes == ["success", "sha-mismatch", "rolled-back"]
 
 
 @pytest.mark.parametrize("pinned", [[], [DIGEST_B]], ids=["runs-it", "runs-another-image"])

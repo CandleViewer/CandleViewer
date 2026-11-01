@@ -27,6 +27,13 @@ sys.path.insert(0, str(ROOT))
 s = importlib.import_module("tools.ci.security_review_label")
 
 LABEL_PATH = "/issues/7/labels"
+# #4014: the lock gates the `migrations` lane runs, spelled here so that dropping one from GATE
+# fails this list, not only the list built from it: the two verifiers and the QuestDB DDL lock.
+LOCK_GATES = (
+    "tools/ci/verify_questdb_ddl_lock.py",
+    "tools/ci/verify_migration_lockfile.py",
+    "backend/db/questdb/lockfile.json",
+)
 SECURITY = [
     *(f"services/api/{m}/x.py" for m in s.MODULES),  # C-10.2's spelling
     *(f"services/api/candleviewer/{m}/sub/x.py" for m in s.MODULES),  # the real package (#2708)
@@ -62,6 +69,7 @@ SECURITY = [
     "scripts/tests/test_pr_yml_merge_group.py",
     "scripts/tests/test_pr_yml_path_filters.py",
     "scripts/tests/test_check_required_check_reconciliation.py",
+    *LOCK_GATES,
     "docs/a/b/c/apikey-rotation.md",  # the four globs on a file name in a deep path
     "services/api/tests/fixtures/key_verification/error_10003.json",  # and on a directory's (C-2.8)
     "packages/fixtures/accounts/expired_key/manifest.json",
@@ -233,6 +241,14 @@ def test_a_file_name_cannot_inject_a_workflow_command(capsys: pytest.CaptureFixt
 
 def test_a_missing_label_is_added_once() -> None:
     api = FakeApi(["docs/x.md", AUTH, ".github/workflows/pr.yml"], labels=("type/chore",))
+    assert (s.main([], api), api.posts()) == (0, [ADD])
+
+
+@pytest.mark.parametrize("path", LOCK_GATES)
+def test_a_pr_that_touches_a_lock_gate_is_labelled(path: str) -> None:
+    """A change to a lock the `migrations` lane enforces is a C-10.2 change: the PR gets the label
+    and the security review, not only the CODEOWNER's."""
+    api = FakeApi(["docs/x.md", path], labels=("type/chore",))
     assert (s.main([], api), api.posts()) == (0, [ADD])
 
 

@@ -82,7 +82,9 @@ step cannot find the database's revision and exits 4.
 
 To run the step alone, as a rehearsal or the first run on a new install, give it the owner DSN the
 same way. `run` starts Postgres and QuestDB if they are down, waits until they are healthy and
-returns the step's exit status as the shell's:
+returns the step's exit status as the shell's. It names the `core` profile: `--profile migrate`
+alone is refused, because the two stores `migrate` waits for are in `core` and compose refuses a
+service whose dependency's profile is inactive.
 
 ```bash
 CV_PG_OWNER_DSN='<the cv_owner DSN>' $C --profile core run --rm --build migrate

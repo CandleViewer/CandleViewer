@@ -75,7 +75,7 @@ def _run(
     )
 
 
-def _edit(path: Path) -> dict[str, str]:
+def _edit(path: Path | str) -> dict[str, str]:
     return {"file_path": str(path), "old_string": "applied", "new_string": "changed"}
 
 
@@ -124,6 +124,26 @@ def test_hook_recognises_a_path_under_a_worktree_of_the_project(
 ) -> None:
     done = _run(project, _edit(project / ".claude" / "worktrees" / "feature" / applied))
     assert done.returncode == 2 and "C-5.4" in done.stderr
+
+
+@pytest.mark.parametrize("applied", [APPLIED_DDL, APPLIED_REVISION], ids=["questdb", "alembic"])
+def test_hook_normalises_the_path_before_matching(project: Path, applied: str) -> None:
+    """The directory rules read the path after its separators and its `.` and `..` segments are
+    resolved as text: a file is the same file however its path is spelled, in the project or in a
+    worktree of it. A new file spelled the long way round still passes."""
+    folder, name = applied.rsplit("/", 1)
+    parent = folder.rsplit("/", 1)[1]
+    for base in (str(project), f"{project}/.claude/worktrees/feature"):
+        for spelled in (
+            f"{base}/./{applied}",
+            f"{base}//{folder}//{name}",
+            f"{base}/{folder}/../{parent}/{name}",
+            f"{base}/elsewhere/../{applied}",
+        ):
+            done = _run(project, _edit(spelled))
+            assert done.returncode == 2 and "C-5.4" in done.stderr, spelled
+    new = f"{project}/{folder}/../{parent}/9999_new{Path(name).suffix}"
+    assert _run(project, _edit(new)).returncode == 0, new
 
 
 @pytest.mark.parametrize("stdin", ["", "not json"], ids=["empty", "not-json"])

@@ -517,7 +517,8 @@ def test_the_bootstrap_output_reaches_the_terminal_and_nothing_else(full: Run) -
         ({"run": 6}, "audit_unavailable", 2),
         ({"run": 18}, "not_candidate (not a usable bootstrap email, or a user who cannot become "
                       "the Owner)", 2),
-        ({"up": 1}, "did not get healthy", 3),
+        ({"up": 1}, "did not get healthy after the bootstrap: read the logs of migrate (the schema "
+                    "step that runs first) and api", 3),
     ],
     ids=["stop", "phrase", "owner-exists", "kek", "audit", "not-candidate", "up"],
 )  # fmt: skip

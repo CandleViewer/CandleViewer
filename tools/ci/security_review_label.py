@@ -14,7 +14,8 @@ The rules follow C-10.2 verbatim (scripts/tests/test_security_review_label.py pa
 - anything under `infra/`; CI workflow files: `.github/workflows/`, `.github/actions/` and GATE,
   this rule's own code, so a PR that narrows the rule is labelled by main's copy of it, and the
   code that judges `ci-required` (its resolver, the proof that it judges every C-9.1 lane and the
-  tests that pin them and pr.yml's gates, #5177), so a PR that weakens the gate is labelled too;
+  tests that pin them and pr.yml's gates, #5177), so a PR that weakens the gate is labelled too,
+  and the locks the `migrations` lane enforces (#4014: its two verifiers and the QuestDB DDL lock);
 - authentication/session code in apps/web: WEB_AUTH_PATHS, and any `auth`, `session` or `sessions`
   directory under apps/web/src/, so a new slice counts before the list names it;
 - dependency manifests in any directory: MANIFESTS (package and lock files, and the pnpm and npm
@@ -89,7 +90,9 @@ POSTINSTALL = ("tools/ci/allowed-postinstall.json", "tools/ci/run-allowed-postin
 # The gate's own code, matched as CI workflow files are: this rule and its test, and (#5177) the
 # code that judges `ci-required`: its resolver, the proof that it judges every C-9.1 lane, and the
 # tests that pin that proof and pr.yml's gates. Files, not `scripts/tests/`: `_literal` would take
-# the directory by prefix, but that would label every script test, most of them no gate's.
+# the directory by prefix, but that would label every script test, most of them no gate's. Last
+# (#4014): the locks the `migrations` lane enforces, the Alembic and QuestDB DDL verifiers and the
+# QuestDB DDL lock, so a PR that weakens one is labelled and reviewed as security.
 GATE = (
     "tools/ci/security_review_label.py",
     "scripts/tests/test_security_review_label.py",
@@ -99,6 +102,9 @@ GATE = (
     "scripts/tests/test_pr_yml_merge_group.py",
     "scripts/tests/test_pr_yml_path_filters.py",
     "scripts/tests/test_check_required_check_reconciliation.py",
+    "tools/ci/verify_questdb_ddl_lock.py",
+    "tools/ci/verify_migration_lockfile.py",
+    "backend/db/questdb/lockfile.json",
 )
 WORDS = ("key", "secret", "token", "crypt")
 API_ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, http.client.HTTPException)
