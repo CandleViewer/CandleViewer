@@ -45,7 +45,9 @@ STEP_UP_CLASS = "live_enablement"
 _UNBINDABLE = "The request body is not I-JSON, so a step-up cannot be bound to it."
 
 #: `RulesManager` audit event -> registered `audit.actions` verb (the closed 3.10.1 list);
-#: the full event name is preserved in `after_state.event`.
+#: the full event name is preserved in `after_state.event`. Any other event is refused
+#: (`UnknownRuleAuditEvent`): `rule.fired` and `rule.blocked` carry a rule actor and a fire key,
+#: which only the executor's records adapter writes (24 Sec.15.5).
 _ACTIONS: dict[str, str] = {
     "rule.armed": "rules.arm",
     "rule.disarmed": "rules.disarm",
@@ -64,6 +66,15 @@ _DENIED = frozenset(
     {"rule.mode_refused", "rule.system_rule_refused", "rule.system_rule_tampered",
      "rule.import_refused", "rule.scope_refused"}
 )  # fmt: skip
+
+
+class UnknownRuleAuditEvent(LookupError):
+    """A rules audit event `make_rules_audit` does not map: refused before anything is written,
+    never filed under another verb (E35-T09)."""
+
+    def __init__(self, event: str) -> None:
+        super().__init__(f"unmapped rules audit event {event!r}")
+        self.event = event
 
 
 def _before(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -112,10 +123,13 @@ def make_rules_audit(emitter: Any) -> Callable[[str, dict[str, Any]], Any]:
     """Write-ahead audit callback (C-2.9) for `RulesManager`: ir_hash, environment, scope."""
 
     async def audit(action: str, payload: dict[str, Any]) -> None:
+        verb = _ACTIONS.get(action)
+        if verb is None:
+            raise UnknownRuleAuditEvent(action)
         named = payload.get("actor")
         actor = None if named is None else acting_user(str(named))  # the viewer while viewing
         await emitter.emit(
-            _ACTIONS.get(action, "rules.version_create"),
+            verb,
             actor_label=str(actor or "system"),
             actor_user_id=actor,
             outcome=AuditOutcome.DENIED if action in _DENIED else AuditOutcome.SUCCESS,

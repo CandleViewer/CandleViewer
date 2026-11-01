@@ -3917,9 +3917,9 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E35",
         max_series=2,
     ),
-    # E35-S03 (#863; 24 Sec.11.5, Sec.11.9): the action executor's series. Closed label sets: the
-    # 25 action types, the 6 ActionResult outcomes and the 16 blocked_by values; never an account,
-    # a rule, a user or a value.
+    # E35-S03 (#863; 24 Sec.11.5, Sec.11.9): the action executor's series, live since E35-T09
+    # (`rules/executor/metrics.py`). Closed label sets: the 25 action types, the 6 ActionResult
+    # outcomes and the 16 blocked_by values; never an account, a rule, a user or a value.
     _s(
         "rule_actions_total",
         "counter",
@@ -3927,7 +3927,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("type", "result"),
         "Rule actions by type and result (ActionResult.outcome), one per action and account.",
         "dashboard only",
-        _P,
+        _L,
         "E35",
         max_series=150,
     ),
@@ -3938,7 +3938,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("type",),
         "One rule action from its dispatch to its result, by action type.",
         "dashboard only",
-        _P,
+        _L,
         "E35",
         buckets=(0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.3, 1.0, 5.0),
         max_series=25,
@@ -3950,7 +3950,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("reason",),
         "Rule actions whose result names a blocked_by, by that closed set (24 Sec.11.9).",
         "dashboard only",
-        _P,
+        _L,
         "E35",
         max_series=16,
     ),
@@ -3960,10 +3960,26 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "actions",
         ("reason",),
-        "Armed rule actions dropped, nothing sent, because the dispatch-time re-read of the rule's "
-        "row (24 Sec.11.5 check 1) failed: timeout (no answer within its bound) or store_error.",
+        "Rule check-1 reads that failed, one per fire at most: the dispatch-time re-read of the "
+        "rule's row (24 Sec.11.5 check 1), by reason: timeout (no answer within its bound) or "
+        "store_error.",
         "dashboard only",
-        _P,
+        _L,
+        "E35",
+        max_series=2,
+    ),
+    # E35-T09 (#5000, BQ-4): `kind` is a closed set of two, the record-only job the full audit queue
+    # shed: `refused_fire` (a fire the full fire queue refused) or `scope_denial`.
+    _s(
+        "rule_records_shed_total",
+        "counter",
+        "jobs",
+        ("kind",),
+        "Rule record-only jobs the full audit queue shed, never awaited, by kind: refused_fire "
+        "(a refused fire's run row and per-action records) or scope_denial (a scope-skipped "
+        "evaluation's audit records).",
+        "dashboard only",
+        _L,
         "E35",
         max_series=2,
     ),

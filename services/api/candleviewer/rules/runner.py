@@ -98,8 +98,7 @@ class RuleEvaluationRunner:
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            await asyncio.wait({task})  # its own cancel raises nothing; one aimed at us goes on
         self._evaluators.clear()
 
     async def _run(self) -> None:

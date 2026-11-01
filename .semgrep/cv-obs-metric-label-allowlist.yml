@@ -168,6 +168,11 @@ rules:
       # reason, also (E35-T08, #4999, rule_dispatch_reread_failed_total): why a dispatch-time re-read
       #   of a rule's row failed, {timeout, store_error} (`rules/service.RereadFailure`), never an
       #   identifier; max_series=2.
+      # kind, also (E35-T09, #5000, rule_records_shed_total): the record-only job the full audit
+      #   queue shed, {refused_fire, scope_denial}, never a rule or an account; max_series=2.
+      # reason, also (E35-T09, #5000, rule_actions_blocked_total): what stopped a rule action, the
+      #   closed 16 of `rules/executor/results.BlockedBy` (24 Sec.11.9), never an identifier;
+      #   max_series=16.
       - metavariable-regex:
           metavariable: $LABEL
           regex: "^(?!(action|bucket|builtin|cap|cause|class|code|depth|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger|trigger_mode|type|version|where|wire)$).*$"

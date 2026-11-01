@@ -406,6 +406,7 @@ from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.manager import REFUSED_CAPS, Actor
 from candleviewer.rules.service import RulesService
+from candleviewer.rules_oms_wiring import RuleAlerts, rule_action_records, rule_metrics
 from candleviewer.rules_store_pg import PostgresRuleStore
 from candleviewer.settings import (
     STOP_SLACK_S,
@@ -3365,6 +3366,23 @@ def create_app(
         store=rule_store,
         audit=_rules_audit,
         broadcast=_rules_broadcast,
+    )
+    # E35-T09: the action executor's records written ahead (the run row and its events, and
+    # `rules.fired` / `rules.blocked`), its alerts and its metrics (24 §11.5). No handler and no OMS
+    # sink: every armed action ends blocked until its slice binds its handler (BQ-17).
+    ctx.rules.bind(
+        records=rule_action_records(
+            SqlAlchemyRulesRepository(
+                SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "rule_runs")
+            ),
+            _LazyAuditEmitter(ctx.audit),
+        ),
+        alerts=RuleAlerts(
+            PgSystemEventWriter(health_pg, redact_details=system_event_redactor())
+            if health_pg is not None
+            else None
+        ),
+        metrics=rule_metrics(metrics_facade),
     )
     rules_actor = (
         SessionRulesActorResolver(
