@@ -18,12 +18,15 @@ Gates (each prints `FAIL G-NAME: ...`):
   G-ADVICE   the copy deck exists; no imperative or evaluative word in it (AC3)
   G-HEUR     no participant count, observation or quote is claimed
   G-PUBLIC   no host, local path, uuid, workspace name or secret-shaped string; URLs allow-listed
-  G-BQ       the BQ heading names the posted comment; BQ-1..BQ-16 each have a row
+  G-BQ       the BQ heading is RULED with the ruling comment, the body names the BQ list comment,
+             the ruling's terms are folded (Partial memo PR, boards PR closes, interim rulings);
+             BQ-1..BQ-16 each have a row
   G-BOARDS   the boards table exists; at most ten boards, each PENDING or drawn
   G-WALK     the owner walkthrough has at most ten items
   G-COMMENT  no HTML comment in the memo or the protocol
-  G-17       `17` carries the section 1.6 journey; `14` carries exactly one pointer line
-  G-SCOPE    only this PR's files differ from `git merge-base HEAD origin/main`
+  G-17       `17` carries the section 1.6 journey; `14` carries no E41-D01 pointer (an A-row)
+  G-SCOPE    only this PR's files differ from `git merge-base HEAD origin/main`; the ruling keeps
+             `12`, `13`, `14` and `24` unedited (their changes are A-rows)
 
 Usage: python3 -I docs/design/_tools/e41_d01_audit.py --check
        python3 -I docs/design/_tools/e41_d01_audit.py --self-test
@@ -46,8 +49,16 @@ PROTOCOL = "docs/design/research/e41-d01-session-protocol.md"
 UX17 = "docs/plan/17-ux-diagrams.md"
 SCR14 = "docs/plan/14-screens-catalogue.md"
 TOOL = "docs/design/_tools/e41_d01_audit.py"
-ALLOWED_CHANGES = {MEMO, PROTOCOL, UX17, SCR14, TOOL}
+ALLOWED_CHANGES = {MEMO, PROTOCOL, UX17, TOOL}
 BQ_COMMENT = "6563728342"
+RULING_COMMENT = "6563817618"
+RULING_TERMS = (
+    "`Refs #1017` + `Partial:`",
+    "the research-boards PR closes #1017",
+    "becomes an interim ruling on the orchestrator's design approval",
+    "the owner can reverse by one line",
+    "is an A-row (§8), not an edit",
+)
 
 KEYS: dict[str, str] = {
     "04": "docs/plan/04-security-program.md",
@@ -339,8 +350,7 @@ def g_heur(d: Docs) -> list[str]:
 
 
 def g_public(d: Docs) -> list[str]:
-    pointer = "\n".join(ln for ln in d.scr14.splitlines() if ln.startswith(POINTER))
-    text = "\n".join((d.memo, d.protocol, section(d.ux17, "1.6 "), pointer))
+    text = "\n".join((d.memo, d.protocol, section(d.ux17, "1.6 ")))
     fails = [f"URL host {h} not allow-listed" for h in URL_RE.findall(text) if h not in URL_HOSTS]
     fails += [f"public-repo pattern /{p}/" for p in PUBLIC_BANNED if re.search(p, text)]
     hexes = set(re.findall(r"\b[0-9a-f]{32,}\b", text)) - {BASE}
@@ -349,12 +359,18 @@ def g_public(d: Docs) -> list[str]:
 
 def g_bq(d: Docs) -> list[str]:
     ok = re.search(
-        rf"^## BQ list — (defaults built; ruling pending|RULED) \(comment {BQ_COMMENT}\)$",
+        rf"^## BQ list — RULED \(comment {RULING_COMMENT}\)$",
         d.memo,
         re.MULTILINE,
     )
-    fails = [] if ok else [f"BQ heading must name comment {BQ_COMMENT}"]
-    have = {r[0] for r in rows(section(d.memo, "BQ list"))}
+    fails = [] if ok else [f"BQ heading must be RULED (comment {RULING_COMMENT})"]
+    body = section(d.memo, "BQ list")
+    if f"comment {BQ_COMMENT}" not in body:
+        fails.append(f"BQ section must name the BQ list comment {BQ_COMMENT}")
+    fails += [f"ruling term missing: {term!r}" for term in RULING_TERMS if term not in body]
+    if "later push of this PR" in d.memo:
+        fails.append("the boards are drawn in the research-boards PR, not this PR")
+    have = {r[0] for r in rows(body)}
     return fails + [f"BQ-{i} has no row" for i in range(1, 17) if f"BQ-{i}" not in have]
 
 
@@ -388,8 +404,8 @@ def g_comment(d: Docs) -> list[str]:
 def g_17(d: Docs) -> list[str]:
     body = section(d.ux17, "1.6 Review journey")
     fails = [] if "```mermaid\njourney" in body else ["`17` lacks the section 1.6 journey"]
-    if sum(ln.startswith(POINTER) for ln in d.scr14.splitlines()) != 1:
-        fails.append("`14` must carry exactly one E41-D01 pointer line")
+    if any(ln.startswith(POINTER) for ln in d.scr14.splitlines()):
+        fails.append("`14` must carry no E41-D01 pointer line (ruled: an A-row, not an edit)")
     return fails
 
 
@@ -451,13 +467,17 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         "See `https://penpot.example.org/f`.\n\n## 11. Security",
     ),
     ("G-PUBLIC", "protocol", "## 5. Recording", "Notes sit in a scratch-dir.\n\n## 5. Recording"),
-    ("G-BQ", "memo", "ruling pending (comment 6563728342)", "ruling pending"),
+    ("G-BQ", "memo", "RULED (comment 6563817618)", "defaults built; ruling pending"),
+    ("G-BQ", "memo", "the owner can reverse by one line", "the owner may reverse it"),
+    ("G-BQ", "memo", "## 11. Security", "Drawn in a later push of this PR.\n\n## 11. Security"),
     ("G-BOARDS", "memo", "| 10  | keyboard", "| 11  | extra | PENDING |\n| 10  | keyboard"),
     ("G-BOARDS", "memo", "## 0. Wireframe boards", "## 0. Boards"),
     ("G-WALK", "memo", "10. Rule OQ-1", "11. Rule OQ-1"),
     ("G-COMMENT", "protocol", "## 1. Purpose", "<!--\nnote\n-->\n\n## 1. Purpose"),
     ("G-17", "ux17", "### 1.6 Review journey", "### 1.6 Review map"),
+    ("G-17", "scr14", "### SCR-094 —", POINTER + "(x)\n\n### SCR-094 —"),
     ("G-SCOPE", "changed", "", "docs/plan/22-api-openapi.yaml"),
+    ("G-SCOPE", "changed", "", SCR14),
 ]
 
 

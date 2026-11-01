@@ -1,6 +1,6 @@
 # E41-D01 — UX research: how the owner reviews a closed trade, and what counts as evidence
 
-- **Ticket:** E41-D01 (issue #1017, P1, Sprint 16; parent E41) · **Status:** In Review — text-first (protocol v0, not piloted): this memo, the session protocol (`e41-d01-session-protocol.md`), the `17` §1.6 journey and the audit tool; the SCR-093..096 boards are PENDING (§0), drawn in a later push of this PR · **Owner approval pending** (agent-delivery adaptations, owner decision 2026-09-25) · **Method:** heuristic evaluation + persona walkthrough + public-documentation competitive review; **no session was run — no participant, timing or quote exists**; every finding is `(heuristic)` and every decision is **PROPOSED** until the owner rules on #1017.
+- **Ticket:** E41-D01 (issue #1017, P1, Sprint 16; parent E41) · **Status:** In Review — text-first (protocol v0, not piloted): this memo, the session protocol (`e41-d01-session-protocol.md`), the `17` §1.6 journey and the audit tool; this text PR says `Refs #1017` + `Partial:` and does not close the ticket; the SCR-093..096 boards are PENDING (§0) and the research-boards PR, which carries `Closes #1017`, draws them · **BQ list RULED** (comment 6563817618) · **Owner approval pending** (agent-delivery adaptations, owner decision 2026-09-25) · **Method:** heuristic evaluation + persona walkthrough + public-documentation competitive review; **no session was run — no participant, timing or quote exists**; every finding is `(heuristic)` and every decision is **PROPOSED**; the orchestrator's design approval of this PR adopts them as interim rulings under the 2026-10-29 delegation, and the owner can reverse any one by one line on #1017.
 - **Scope:** SCR-093 Journal list, SCR-094 Trade detail / post-mortem, SCR-095 Analytics dashboard, SCR-096 Tag manager, read through US-JRN-001..010, the personas P1, P2b and P3, `21` §3.7 and the `22` journal operations. **Out of scope (ticket):** hi-fi, tokens, motion (E41-D02 / D03); replay and alerts boards; quantitative instrumentation studies.
 - **Read at:** `origin/main` `46e6acd2ddf3835580a801ac9b143d32f4478090`. **Key:** `NN`:line = `docs/plan/NN-*` at that base (`22` = `docs/plan/22-api-openapi.yaml`); every cite is re-read by `docs/design/_tools/e41_d01_audit.py --check`.
 - **Ids:** **RQ** research question · **H** hypothesis · **F** finding · **WD** wireframe decision · **C** contradiction · **G** contract gap · **A** catalogue amendment · **N** new-component note · **OQ** open question · **N1–N10** Nielsen's heuristics.
@@ -9,38 +9,38 @@
 
 Status key: **done** = delivered as worded · **heuristic-only** = delivered through the adaptation, pending the owner's sessions · **substituted** = a live-session deliverable replaced by the heuristic run, the protocol and the owner walkthrough · **open** = needs the boards or an owner decision.
 
-| AC or deliverable                                                    | Where                                         | Status                                  |
-| -------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------- |
-| AC1 — 3 moderated sessions, recorded with consent                    | protocol; §10 walkthrough                     | substituted                             |
-| AC1 — ≥5 numbered findings, each traced to a wireframe decision      | §5 F-1..F-8, §6 WD-1..WD-13                   | heuristic-only                          |
-| AC2 — every declared state exists as a frame; no unlisted component  | §7 frame list, §8 N-rows; boards §0           | open — frames listed, boards PENDING    |
-| AC3 — low-sample caveat on every rate; no prescriptive language      | WD-3, WD-4, §7.1 copy deck, the audit lexicon | open — text done; frames PENDING (§0)   |
-| DoD — sessions run, notes and consent recorded                       | protocol §2–§4                                | substituted                             |
-| DoD — findings memo published and linked from the ticket             | this file                                     | done in PR, pending merge and the link  |
-| DoD — journey map merged into `17`                                   | `17` §1.6                                     | done in PR, pending merge (heuristic)   |
-| DoD — wireframes, all four screens, all states, shareable link       | §0                                            | open — drawn in a later push of this PR |
-| DoD — CDO review and sign-off comment                                | #1017                                         | open — owner approval pending           |
-| DoD — new-component candidates CMP-166..169 flagged to design system | §8 A-rows and N-rows to E41-D04 #1082         | open — recorded in §8; #1082 post open  |
-| Scope — IA: `/journal`, `/journal/analytics`, SCR-094, SCR-096 shape | WD-12                                         | done (PROPOSED)                         |
-| Observability — the six analytics events                             | §9                                            | done                                    |
+| AC or deliverable                                                    | Where                                         | Status                                 |
+| -------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------- |
+| AC1 — 3 moderated sessions, recorded with consent                    | protocol; §10 walkthrough                     | substituted                            |
+| AC1 — ≥5 numbered findings, each traced to a wireframe decision      | §5 F-1..F-8, §6 WD-1..WD-13                   | heuristic-only                         |
+| AC2 — every declared state exists as a frame; no unlisted component  | §7 frame list, §8 N-rows; boards §0           | open — frames listed, boards PENDING   |
+| AC3 — low-sample caveat on every rate; no prescriptive language      | WD-3, WD-4, §7.1 copy deck, the audit lexicon | open — text done; frames PENDING (§0)  |
+| DoD — sessions run, notes and consent recorded                       | protocol §2–§4                                | substituted                            |
+| DoD — findings memo published and linked from the ticket             | this file                                     | done in PR, pending merge and the link |
+| DoD — journey map merged into `17`                                   | `17` §1.6                                     | done in PR, pending merge (heuristic)  |
+| DoD — wireframes, all four screens, all states, shareable link       | §0                                            | open — the boards PR (`Closes #1017`)  |
+| DoD — CDO review and sign-off comment                                | #1017                                         | open — interim on design approval      |
+| DoD — new-component candidates CMP-166..169 flagged to design system | §8 A-rows and N-rows to E41-D04 #1082         | open — recorded in §8; #1082 post open |
+| Scope — IA: `/journal`, `/journal/analytics`, SCR-094, SCR-096 shape | WD-12                                         | done (PROPOSED)                        |
+| Observability — the six analytics events                             | §9                                            | done                                   |
 
 ## Deviations
 
 1. **Sessions.** Moderated sessions, recordings and quotes are substituted by §3–§5, the protocol and the §10 walkthrough (ticket "Agent-delivery adaptations"); AC1's sessions stay **open** for the owner.
 2. **Figma → Penpot.** Boards on the Penpot page `E41-D01` (name + id only), exports under `docs/design/E41/img/`.
 3. **Paths.** The brief's `apps/web` paths and pnpm commands do not apply: this is a docs-only PR.
-4. **Commits.** Text commits say `Refs #1017` with a `Partial:` note; the closing keyword waits for the boards push.
+4. **Two PRs (BQ-1, RULED).** This memo PR says `Refs #1017` with a `Partial:` note and closes nothing; the research-boards PR carries `Closes #1017` (`docs/design/README.md`'s boards rule holds for research tickets too).
 5. **States per screen.** The ticket asks loading, empty, partial, reconciling and insufficient sample on all four screens; BQ-7's default builds `14`'s States lines plus the checklist states, so SCR-094 has no empty or reconciling frame, SCR-096 no loading or partial, and insufficient sample is on SCR-095 only (§7).
-6. **`14` edit.** BQ-7 and BQ-9 promised only PROPOSED A-rows; this PR also adds one pointer line under SCR-093 in `14`, so every `14` cite below line 2176 is one line lower at HEAD (cites here key to the base).
+6. **No owner-document edit.** Per the ruling, every proposed change to `12`, `13`, `14` or `24` is an A-row in §8, not an edit; this PR leaves those files untouched (the `14` pointer to this memo is A-7).
 7. **Competitive sources.** BQ-5 asks a fetched date, a URL and a verbatim quote per row; the pages could not be fetched, so §3 rows carry search-index descriptions only and feed no decision alone.
 
-## BQ list — defaults built; ruling pending (comment 6563728342)
+## BQ list — RULED (comment 6563817618)
 
-The pre-writing BQ list (BQ-0..BQ-16) is posted on #1017 as comment 6563728342. This memo builds exactly on its ORCH-defaults; each section names the BQ it carries. When the ruling lands this heading flips to RULED and any amended default becomes a text revision plus a redraw of the affected boards.
+The pre-writing BQ list (BQ-0..BQ-16) is posted on #1017 as comment 6563728342; the orchestrator's ruling of record, comment 6563817618, rules every ORCH-default as proposed, BQ-0 through BQ-16. This memo builds exactly on those defaults; each section names the BQ it carries. As ruled: every finding stays `(heuristic)` with no invented participant, quote or timing; every decision stays PROPOSED and becomes an interim ruling on the orchestrator's design approval of this PR (2026-10-29 delegation), which the owner can reverse by one line; every proposed `12` / `13` / `14` / `24` change is an A-row (§8), not an edit; this memo PR is `Refs #1017` + `Partial:` and the research-boards PR closes #1017.
 
 | BQ    | Default built here                                                                                                 | Where             |
 | ----- | ------------------------------------------------------------------------------------------------------------------ | ----------------- |
-| BQ-1  | `Refs #1017` + `Partial:`; AC1 substituted; the closing keyword only with the boards                               | AC trace          |
+| BQ-1  | `Refs #1017` + `Partial:`; AC1 substituted; `Closes #1017` only on the research-boards PR                          | AC trace          |
 | BQ-2  | this memo + `e41-d01-session-protocol.md` + `17` §1.6; the wireframe spec `docs/design/E41/E41-D01.md` with boards | header, §0        |
 | BQ-3  | 5–8 findings, each → ≥1 WD naming `SCR-0nn/<state>` with one Given/Then check; all four SCRs covered               | §5, §6            |
 | BQ-4  | walkthroughs for P1, P2b, P3; the protocol recruits P1 + P2 only                                                   | §4                |
@@ -59,7 +59,7 @@ The pre-writing BQ list (BQ-0..BQ-16) is posted on #1017 as comment 6563728342. 
 
 ## 0. Wireframe boards (Penpot) — PENDING
 
-Drawn in a later push of this PR, after this text merges into the Penpot queue; lo-fi, dark only, ten boards, each frame named `SCR-0nn/<state>` from §7. Nothing below is drawn yet.
+Drawn in the research-boards PR (`Closes #1017`), after this text merges, through the Penpot queue; lo-fi, dark only, ten boards, each frame named `SCR-0nn/<state>` from §7. Nothing below is drawn yet.
 
 | #   | Board                                                                                      | State   |
 | --- | ------------------------------------------------------------------------------------------ | ------- |
@@ -187,6 +187,7 @@ Located on 2026-11-01 through a web search; the pages themselves could not be fe
 | A-4 | `14`: a States line for SCR-094 and SCR-096 from §7                                                                                                                              | E41-D03 #1081                |
 | A-5 | `12`: an M-row for the SCR-096 tag-manager modal                                                                                                                                 | E41-D02 #1018                |
 | A-6 | `13`:406: SCR-096 joins M-019 and M-025 as the flow's modal surfaces                                                                                                             | E41-D02 #1018                |
+| A-7 | `14`: one pointer line under SCR-093 naming this memo, changing no requirement                                                                                                   | E41-D02 #1018                |
 | N-1 | R-distribution histogram (no catalogued component; CMP-024 is a sparkline)                                                                                                       | E41-D04 #1082                |
 | N-2 | MAE/MFE scatter, shape by outcome (`14`:2206)                                                                                                                                    | E41-D04 #1082                |
 
