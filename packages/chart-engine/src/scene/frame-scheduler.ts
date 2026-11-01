@@ -118,6 +118,10 @@ export class FrameScheduler {
   private under = 0;
   private underFrom = 0; // `t` of the first frame of the current run under 85 %
   private readonly shedAt = new Float64Array(CADENCE_MS.length).fill(-Infinity);
+  /** BQ-12: `prepare` ran and `finish` has not; the frame's `t` and its first half's ms. */
+  private prepared = false;
+  private t = 0;
+  private prepMs = 0;
 
   constructor(
     readonly graph: SceneGraph,
@@ -179,10 +183,69 @@ export class FrameScheduler {
     }
   }
 
-  /** input → drain → layout → update/collect → build → submit (06 §4.3, BQ-S4, BQ-43). */
+  /**
+   * E11-S09 (BQ-12): the frame's first half, input → animations → drain → layout. The runtime
+   * runs it for every chart, then propagates the sync groups, then `finish`es every chart, so a
+   * member lands in the same tick whatever the chart order. A second call before `finish` (a sync
+   * woke the chart after its first half) re-runs the layout hook only: nothing steps twice.
+   */
+  prepare(t: number): void {
+    this.scheduled = false;
+    let done = false;
+    try {
+      if (this.prepared) this.relayout();
+      else {
+        const start = this.clock.now();
+        this.t = t;
+        this.prepMs = this.runPrepare(t, start) - start;
+      }
+      this.prepared = true;
+      done = true;
+    } finally {
+      if (!done) {
+        this.prepared = false;
+        this.settle(this.queue.length > 0); // the throw itself propagates (26 §11)
+      }
+    }
+  }
+
+  /** BQ-12: the frame's second half, update/collect → build → submit; a no-op unless prepared. */
+  finish(): void {
+    if (!this.prepared) return;
+    this.prepared = false;
+    let done = false;
+    try {
+      const at = this.clock.now();
+      this.runFinish(this.t, at - this.prepMs, at);
+      done = true;
+    } finally {
+      if (!done) this.settle(this.queue.length > 0);
+    }
+  }
+
+  /** A sync re-ran the layout hook between the halves: its time joins the layout's. */
+  private relayout(): void {
+    const from = this.clock.now();
+    this.hooks.layout?.(this.ctx);
+    const ms = this.clock.now() - from;
+    this.timings.layoutMs += ms;
+    this.prepMs += ms;
+  }
+
+  /**
+   * input → drain → layout → update/collect → build → submit (06 §4.3, BQ-S4, BQ-43): the whole
+   * frame in one span (a chart on its own clock, or a worker with no sync group). E11-S09 (BQ-12):
+   * the same two halves the runtime's three-phase tick calls apart, `start` and the layout's end
+   * passed as arguments, so this path writes no extra field and reads the clock no extra time.
+   */
   private run(t: number): void {
-    const { ctx, sink, timings, hooks } = this;
     const start = this.clock.now();
+    this.runFinish(t, start, this.runPrepare(t, start));
+  }
+
+  /** input → drain → layout; returns the layout's end on the clock. */
+  private runPrepare(t: number, start: number): number {
+    const { ctx, timings, hooks } = this;
     timings.ms.fill(0);
     ctx.begin(t, this.budgetMs);
     if (this.resumed) ctx.dt = 0; // nothing animated while parked
@@ -201,7 +264,16 @@ export class FrameScheduler {
     hooks.layout?.(ctx);
     const laidOut = this.clock.now();
     timings.layoutMs = laidOut - at;
-    at = laidOut;
+    return laidOut;
+  }
+
+  /**
+   * update/collect → build → submit from `at`, then the budget accounting and the park decision.
+   * `start` is the frame's start as this chart's own time: when the halves run apart (BQ-12) it
+   * is `at` less the first half's ms, never counting the other charts' halves between them.
+   */
+  private runFinish(t: number, start: number, at: number): void {
+    const { ctx, sink, timings, hooks } = this;
     ctx.budgetMsRemaining = this.budgetMs - (at - start);
     sink.reset();
     // Spent before collect: shed every rung, each still on its cadence floor (BQ-35 closed).

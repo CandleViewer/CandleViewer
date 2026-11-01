@@ -286,8 +286,9 @@ describe("one message per frame", () => {
     host.input("wheel", [INPUT.wheel, 0, 0, 3, 0, 1]);
     host.resize(10, 10, 1);
     host.resize(30, 20, 2);
-    host.sync("g", [1, 2], null);
-    host.sync("g", [3, 4], 3);
+    const origin = { worker: "w9", chart: 4, seq: 2 };
+    host.sync("g", { timeRange: [1, 2], crosshair: null, origin: { ...origin, seq: 1 } });
+    host.sync("g", { crosshair: 3, origin }); // BQ-21: one origin merged, an absent field kept
     settle();
     const inputs = inboxOf(w, "input") as Extract<ToWorker, { t: "input" }>[];
     expect(inputs.map((m) => [m.kind, m.events.length])).toEqual([
@@ -296,7 +297,7 @@ describe("one message per frame", () => {
     ]);
     expect(inboxOf(w, "resize")).toEqual([{ t: "resize", id: 1, width: 30, height: 20, dpr: 2 }]);
     expect(inboxOf(w, "sync")).toEqual([
-      { t: "sync", groupId: "g", timeRange: [3, 4], crosshair: 3 },
+      { t: "sync", groupId: "g", timeRange: [1, 2], crosshair: 3, origin },
     ]);
     for (let i = 0; i < INPUT_MAX_ROWS + 5; i += 1)
       host.input("pointer", [INPUT.move, i, 0, 0, 0, 1]);
@@ -312,9 +313,28 @@ describe("one message per frame", () => {
     host.dispose();
     host.input("pointer", [0, 0, 0, 0, 0, 0]);
     host.resize(1, 1, 1);
-    host.sync("g", [1, 2], null);
+    host.sync("g", { timeRange: [1, 2] });
     host.command({ k: "release" });
     expect(host.exportPng()).resolves.toBeNull();
+  });
+
+  it("never merges syncs from two origin workers: each keeps its own payload (m5)", () => {
+    const host = hostOn(workerDoc());
+    settle();
+    const w = lastWorker();
+    const a1 = { worker: "wa", chart: 1, seq: 1 };
+    const b1 = { worker: "wb", chart: 1, seq: 1 };
+    host.sync("g", { timeRange: [1, 2], origin: a1 });
+    host.sync("g", { crosshair: 5, origin: b1 }); // another worker: A's goes out as it is
+    host.sync("g", { crosshair: 6, origin: { ...b1, seq: 2 } }); // B's own: merged
+    host.sync("h", { timeRange: [3, 4], origin: { ...b1, seq: 3 } }); // another group: flushed
+    settle();
+    expect(inboxOf(w, "sync")).toEqual([
+      { t: "sync", groupId: "g", timeRange: [1, 2], origin: a1 },
+      { t: "sync", groupId: "g", crosshair: 6, origin: { ...b1, seq: 2 } },
+      { t: "sync", groupId: "h", timeRange: [3, 4], origin: { ...b1, seq: 3 } },
+    ]);
+    host.dispose();
   });
 
   it("captures pointer (coalesced), wheel and size changes from the container", () => {
@@ -632,6 +652,31 @@ describe("Scenario: Worker death is recovered", () => {
       },
       { k: "addPane", pane: 2, share: 0.2, label: "CVD pane" },
     ]);
+    host.dispose();
+  });
+
+  it("replays the last setSync after a restart under a fresh worker id (E11-S09 PR 2, BQ-9)", () => {
+    const host = hostOn(workerDoc());
+    settle();
+    const initOf = (w: FakeWorker): Extract<ToWorker, { t: "init" }> =>
+      inboxOf(w, "init").at(-1) as Extract<ToWorker, { t: "init" }>;
+    const first = initOf(lastWorker()).config.workerId;
+    expect(first).toMatch(/^worker-\d+\.0$/);
+    const modes = { time: true, crosshair: false, levels: true };
+    host.command({ k: "setSync", groupId: "a", modes, relay: false });
+    host.command({ k: "setSync", groupId: "b", modes, relay: true }); // the last one wins
+    lastWorker().kill();
+    vi.advanceTimersByTime(1000);
+    settle();
+    const cmds = (inboxOf(lastWorker(), "command") as Extract<ToWorker, { t: "command" }>[]).map(
+      (m) => m.cmd,
+    );
+    expect(cmds).toEqual([{ k: "setSync", groupId: "b", modes, relay: true }]);
+    // A restarted worker relays under a new origin, so its seq starting at 1 is never stale.
+    const second = initOf(lastWorker()).config.workerId;
+    expect(second).toMatch(/\.1$/);
+    expect(second).not.toBe(first);
+    expect(host.link).toBeTypeOf("object");
     host.dispose();
   });
 

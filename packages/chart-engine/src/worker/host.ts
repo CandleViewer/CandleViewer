@@ -29,6 +29,7 @@ import {
   type PendingData,
   type RunMode,
   type StoreId,
+  type SyncMessage,
   type ThemeLut,
   type ToWorker,
 } from "./protocol.js";
@@ -97,6 +98,11 @@ interface Client {
 interface Link {
   readonly runMode: RunMode;
   readonly counters: HostCounters;
+  /**
+   * E11-S09 PR 2 (BQ-7): the id `init.config.workerId` carries, unique per link and per worker
+   * spawn, so a restarted worker's relay seq starts afresh under a new origin.
+   */
+  readonly workerId: string;
   add(client: Client): ChartId;
   remove(id: ChartId): void;
   post(msg: ToWorker, transfer: Transferable[]): void;
@@ -105,10 +111,15 @@ interface Link {
 /** Moves `buffer` into a new ArrayBuffer and detaches the original (no copy, like a transfer). */
 const move = (buffer: ArrayBuffer): ArrayBuffer => structuredClone(buffer, { transfer: [buffer] });
 
+/** Links made in this realm's module instance: each worker id is `<mode>-<n>.<spawn>`. */
+let linkSeq = 0;
+
 function inlineLink(env: HostEnv, unlink: () => void): Link {
   const clients = new Map<ChartId, Client>();
   const counters: HostCounters = { messagesDropped: 0, conflated: 0, restarts: 0 };
   let seq = 0;
+  linkSeq += 1;
+  const workerId = `inline-${linkSeq}.0`;
   const runtime: RenderRuntime = createRenderRuntime({
     runMode: "inline",
     post: (msg) => {
@@ -124,6 +135,7 @@ function inlineLink(env: HostEnv, unlink: () => void): Link {
   return {
     runMode: "inline",
     counters,
+    workerId,
     add(client): ChartId {
       seq += 1;
       clients.set(seq, client);
@@ -150,6 +162,8 @@ function workerLink(env: HostEnv, unlink: () => void): Link {
   let restarting = false;
   let dead = false;
   let readyAt: number | null = null;
+  linkSeq += 1;
+  const linkNo = linkSeq;
 
   const onMessage = (ev: { data: unknown }): void => {
     const msg = ev.data as FromWorker;
@@ -207,6 +221,9 @@ function workerLink(env: HostEnv, unlink: () => void): Link {
   return {
     runMode: "worker",
     counters,
+    get workerId(): string {
+      return `worker-${linkNo}.${counters.restarts}`;
+    },
     add(client): ChartId {
       seq += 1;
       clients.set(seq, client);
@@ -327,8 +344,13 @@ export interface ChartHost {
   ): void;
   /** Debounced to one `resize` per frame. */
   resize(width: number, height: number, dpr: number): void;
-  /** Coalesced to one `sync` per frame (last wins). */
-  sync(groupId: string, timeRange: readonly [number, number], crosshair: number | null): void;
+  /**
+   * E11-S09 PR 2 (BQ-21): a group's propagation relayed from another worker, coalesced to one
+   * `sync` per frame: a later one's fields replace the pending one's, an absent field keeps it.
+   */
+  sync(groupId: string, payload: Omit<SyncMessage, "t" | "groupId">): void;
+  /** BQ-21: the worker link this chart runs on (the registry's identity for "spans > 1"). */
+  readonly link: object;
   /** Hands `buffer` over (it is detached on return) under the two-in-flight rule. */
   data(store: StoreId, op: DataOp, layout: BufferLayout, buffer: ArrayBuffer): void;
   command(cmd: Command): void;
@@ -372,6 +394,8 @@ function retainKey(cmd: Command): string | null {
       return `pane:${cmd.pane}`;
     case "setPaneShares":
       return "shares";
+    case "setSync":
+      return "sync"; // E11-S09 PR 2 (BQ-9): the group and modes survive a restart
     default:
       return null;
   }
@@ -399,7 +423,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   let pendingResize: ResizeMsg | null = null;
   /** The last size sent: replayed after a restart so the restored chart keeps it. */
   let size: ResizeMsg | null = null;
-  let pendingSync: ToWorker | null = null;
+  let pendingSync: SyncMessage | null = null;
   const rows = new Map<InputKind, { buf: Float32Array; n: number }>();
   // The open wheel row per fold key in the pending batch (-1: none) and its float64 sums.
   const folded = new Int32Array(FOLD_KEYS).fill(-1);
@@ -421,7 +445,12 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   const init = (): void => {
     const canvas = o.canvas();
     const dpr = size?.dpr ?? o.dpr;
-    const config = { bench: o.bench, syncGroup: o.syncGroup, timeZone: o.timeZone ?? "UTC" };
+    const config = {
+      bench: o.bench,
+      syncGroup: o.syncGroup,
+      timeZone: o.timeZone ?? "UTC",
+      workerId: link.workerId,
+    };
     const extra = {
       ...(forced && { profile: "degraded-2d" as const }),
       ...(reduce && { reducedMotion: true }),
@@ -576,6 +605,9 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   return {
     runMode: link.runMode,
     counters: link.counters,
+    get link(): object {
+      return link;
+    },
     input(kind, row, fold): void {
       if (disposed) return;
       let r = rows.get(kind);
@@ -621,9 +653,24 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       pendingResize = { t: "resize", id, width, height, dpr };
       schedule();
     },
-    sync(groupId, timeRange, crosshair): void {
+    sync(groupId, payload): void {
       if (disposed) return;
-      pendingSync = { t: "sync", groupId, timeRange, crosshair };
+      // m5: only one origin worker's messages for one group are merged; another's flushes the
+      // pending one first, so a payload always travels with its own origin and seq.
+      const same =
+        pendingSync?.groupId === groupId && pendingSync.origin?.worker === payload.origin?.worker;
+      if (pendingSync !== null && !same) link.post(pendingSync, []);
+      const prev = same ? pendingSync : null;
+      const timeRange = payload.timeRange ?? prev?.timeRange;
+      const crosshair = payload.crosshair !== undefined ? payload.crosshair : prev?.crosshair;
+      const origin = payload.origin ?? prev?.origin;
+      pendingSync = {
+        t: "sync",
+        groupId,
+        ...(timeRange !== undefined && { timeRange }),
+        ...(crosshair !== undefined && { crosshair }),
+        ...(origin !== undefined && { origin }),
+      };
       schedule();
     },
     data(store, op, layout, buffer): void {

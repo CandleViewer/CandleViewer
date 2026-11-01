@@ -214,8 +214,10 @@ export default tseslint.config(
     // E11-S08: and picking (src/hit, BQ-140). E11-S11: and the SDF atlas (src/text, BQ-261), whose
     // font, raster and store needs reach the browser only through the TextPlatform seam.
     // E11-S06: and the axes (src/axes). E11-S07: and the crosshair and readout models (src/overlays).
+    // E11-S09 PR 2: and the sync groups and their main-thread registry (src/sync),
+    // which reach the page only through each member's `say`.
     files: [
-      "src/{core,layers,scene,model,gl,viewport,canvas2d,interaction,hit,text,axes,overlays}/**/*.ts",
+      "src/{core,layers,scene,model,gl,viewport,canvas2d,interaction,hit,text,axes,overlays,sync}/**/*.ts",
     ],
     rules: {
       "no-restricted-globals": ["error", ...NETWORK_GLOBALS, ...DOM_GLOBALS],

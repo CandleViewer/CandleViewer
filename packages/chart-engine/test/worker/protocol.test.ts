@@ -38,6 +38,29 @@ const valid: ToWorker[] = [
   { t: "input", id: 1, kind: "pointer", events: new Float32Array(INPUT_STRIDE) },
   { t: "data", id: 1, store: "bars", op: "append", layout: f64(2), buffer: new ArrayBuffer(16) },
   { t: "sync", groupId: "g", timeRange: [1, 2], crosshair: null },
+  // E11-S09 PR 2 (BQ-7, BQ-9): fields optional per mode, an origin, and the group command.
+  { t: "sync", groupId: "g", crosshair: 5, origin: { worker: "worker-1.0", chart: 2, seq: 3 } },
+  { t: "sync", groupId: "g" },
+  {
+    t: "command",
+    id: 1,
+    cmd: {
+      k: "setSync",
+      groupId: "g",
+      modes: { time: true, crosshair: false, levels: true },
+      relay: true,
+    },
+  },
+  {
+    t: "command",
+    id: 1,
+    cmd: {
+      k: "setSync",
+      groupId: null,
+      modes: { time: false, crosshair: false, levels: false },
+      relay: false,
+    },
+  },
   { t: "command", id: 1, cmd: { k: "setViewport", timeStart: 1, timeEnd: 2 } },
   { t: "command", id: 1, cmd: { k: "setSeriesOptions", series: 0, options: {} } },
   { t: "command", id: 1, cmd: { k: "addDrawing", drawingId: "d", kind: "trend" } },
@@ -171,6 +194,50 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
     ["a store below the exact size", { ...valid[1], backingWidth: 9 }, "malformed resize"],
     ["a fractional store", { ...valid[1], backingHeight: 138.5 }, "malformed resize"],
     ["a bad sync", { t: "sync", groupId: "g", timeRange: [1], crosshair: null }, "malformed sync"],
+    ...(
+      [
+        ["an empty group id", { groupId: "" }],
+        ["a group id over 120", { groupId: "g".repeat(121) }],
+        ["a falling range", { timeRange: [2, 1] }],
+        ["a NaN crosshair", { crosshair: Number.NaN }],
+        ["an origin without a seq", { origin: { worker: "w", chart: 1 } }],
+        ["a negative seq", { origin: { worker: "w", chart: 1, seq: -1 } }],
+        ["a numeric origin worker", { origin: { worker: 1, chart: 1, seq: 1 } }],
+        ["a bad origin chart", { origin: { worker: "w", chart: -1, seq: 1 } }],
+        ["an origin worker over 120", { origin: { worker: "w".repeat(121), chart: 1, seq: 1 } }],
+      ] as const
+    ).map(([name, over]): [string, object, string] => [
+      `a sync with ${name}`,
+      { t: "sync", groupId: "g", ...over },
+      "malformed sync",
+    ]),
+    ...(
+      [
+        ["a missing mode", { modes: { time: true, crosshair: true } }],
+        ["a non-boolean relay", { relay: 1 }],
+        ["a numeric group", { groupId: 3 }],
+        ["an empty group", { groupId: "" }],
+      ] as const
+    ).map(([name, over]): [string, object, string] => [
+      `a setSync with ${name}`,
+      {
+        t: "command",
+        id: 1,
+        cmd: {
+          k: "setSync",
+          groupId: "g",
+          modes: { time: true, crosshair: true, levels: false },
+          relay: false,
+          ...over,
+        },
+      },
+      "malformed command",
+    ]),
+    [
+      "an init with a numeric workerId",
+      { ...valid[0], config: { bench: false, syncGroup: null, workerId: 4 } },
+      "malformed init",
+    ],
     ["an unknown command", { t: "command", id: 1, cmd: { k: "eval" } }, "malformed command"],
     [
       "an unknown magnet mode",

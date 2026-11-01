@@ -88,8 +88,9 @@ afterEach(() => {
 describe("idle: O(1), no rewrite, nothing published", () => {
   it("test_idle_noPointerNoRemote_resizeAndPanFrames_neverWriteTheLines_norPublish", () => {
     const write = vi.spyOn(CrosshairNode.prototype, "write");
+    const peer = ctx2d();
     init(1, ctx2d(), "g", true);
-    init(2, ctx2d(), "g", true); // a peer: a publish would hand it a remote line, so a frame
+    init(2, peer, "g", true); // a peer: a published crosshair would hand it a remote line
     frame(4);
     out.length = 0;
     for (let i = 0; i < 20; i += 1) {
@@ -98,9 +99,19 @@ describe("idle: O(1), no rewrite, nothing published", () => {
       frame();
     }
     expect(of("frame", 1).length).toBeGreaterThanOrEqual(20); // chart 1 drew every frame
-    expect(write).not.toHaveBeenCalled(); // the idle exit: no signature compare at all
-    expect(of("frame", 2)).toEqual([]); // `published` stayed NaN: the peer never woke
-    expect(of("crosshair", 1)).toEqual([]);
+    // The idle exit in both charts: no signature compare at all. A remote crosshair applied to
+    // the peer would take it out of the idle path and write its lines, so this also pins the
+    // peer's remote crosshair at null (nothing crosshair was published or applied).
+    expect(write).not.toHaveBeenCalled();
+    expect(strokes(peer.ctx, 0, MUTED)).toBe(0); // no remote line drawn in the peer
+    expect([...of("crosshair", 1), ...of("crosshair", 2)]).toEqual([]);
+    // E11-S09 PR 2 (BQ-13): the pan itself is time-synced, so the peer follows chart 1's range.
+    const range = (id: number): number[] | undefined => {
+      const v = of("viewport", id).at(-1);
+      return v && [v.timeStart, v.timeEnd];
+    };
+    expect(range(2)).toBeDefined();
+    expect(range(2)).toEqual(range(1));
   });
 });
 

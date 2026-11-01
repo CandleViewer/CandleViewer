@@ -244,3 +244,180 @@ describe("Frame faults and the budget notice (26 §11, BQ-37, BQ-44)", () => {
     expect(scheduler.timings.ms[5]).toBe(0); // paneRedraw is the batch build's, not layout's
   });
 });
+
+describe("E11-S09 PR 2 (BQ-12): the frame in two halves for the three-phase tick", () => {
+  it("test_prepare_thenFinish_runsEveryStageOnce_inOrder", () => {
+    const log: string[] = [];
+    const { series, scheduler } = build({
+      input: () => void log.push("input"),
+      layout: () => void log.push("layout"),
+      build: () => void log.push("build"),
+      submit: () => void log.push("submit"),
+    });
+    scheduler.wake();
+    scheduler.prepare(1016);
+    expect([log, series.collects]).toEqual([["input", "layout"], 0]); // collect waits for finish
+    scheduler.prepare(1016); // a sync woke it between the halves: the layout hook only
+    expect(log).toEqual(["input", "layout", "layout"]);
+    scheduler.finish();
+    expect(log).toEqual(["input", "layout", "layout", "build", "submit"]);
+    expect([series.collects, scheduler.frames]).toEqual([1, 1]);
+    scheduler.finish(); // not prepared: nothing
+    expect([series.collects, scheduler.frames]).toEqual([1, 1]);
+  });
+
+  it("test_finish_frameTime_excludesTheGapBetweenTheHalves", () => {
+    const { clock, scheduler } = build({
+      layout: () => clock.advance(2),
+      submit: () => clock.advance(3),
+    });
+    scheduler.wake();
+    scheduler.prepare(1016);
+    clock.advance(40); // other charts' first halves run here
+    scheduler.finish();
+    expect(scheduler.timings.total).toBe(5); // 2 ms of layout + 3 ms of submit, never the 40
+    expect(scheduler.takeNotice(scheduler.budgetNotice)).toBeNull(); // not over budget
+  });
+
+  it("test_prepare_throws_endsTheFrame_finishIsANoOp_andTheQueueRewakes", () => {
+    let boom = true;
+    const { graph, series, clock, scheduler } = build({
+      layout: () => {
+        if (boom) throw new Error("layout failed");
+      },
+    });
+    scheduler.enqueue(() => graph.markData("s"));
+    scheduler.enqueue(() => graph.markData("s"));
+    const before = clock.requests;
+    expect(() => scheduler.prepare(1016)).toThrow("layout failed");
+    scheduler.finish();
+    expect(series.collects).toBe(0);
+    boom = false;
+    scheduler.wake();
+    expect(clock.requests).toBeGreaterThanOrEqual(before);
+    scheduler.prepare(1032);
+    scheduler.prepare(1032); // relayout path
+    scheduler.finish();
+    expect(series.collects).toBe(1);
+    scheduler.wake();
+    scheduler.prepare(1048);
+    boom = true;
+    expect(() => scheduler.prepare(1048)).toThrow("layout failed"); // a failed relayout
+    scheduler.finish(); // ends the frame: nothing collected
+    expect(series.collects).toBe(1);
+  });
+});
+
+describe("E11-S09 PR 2 (BQ-12): the one-span frame and the two halves stay in step", () => {
+  it("test_runVsPrepareFinish_everyStageAndDecision_matches_over240ScriptedFrames", () => {
+    // The same script on two schedulers: one driven by its clock (`run`), one by prepare +
+    // finish back to back. Every stage costs time (input, the drain, layout, submit), some
+    // frames go over budget (the ladder sheds and recovers), animations run and end, mutations
+    // queue past the drain clamp, and idle stretches park the loop.
+    const cost = (f: number): number => (f % 40 < 12 ? 9 : 2);
+    const rig = () => {
+      const log: string[] = [];
+      const masks: number[] = [];
+      const dts: number[] = [];
+      let f = 0;
+      const parts = build({
+        input: () => {
+          log.push("input");
+          parts.clock.advance(0.5);
+        },
+        layout: () => {
+          log.push("layout");
+          parts.clock.advance(cost(f));
+        },
+        build: () => void log.push("build"),
+        submit: () => {
+          log.push("submit");
+          parts.clock.advance(cost(f));
+          f += 1;
+        },
+      });
+      const frameOf = parts.graph.frame.bind(parts.graph);
+      parts.graph.frame = (ctx, sink, shed = 0) => {
+        masks.push(shed);
+        frameOf(ctx, sink, shed);
+      };
+      /** A decaying animation that records the dt it was stepped with. */
+      const animate = (): void => {
+        let left = 5;
+        parts.scheduler.animate({
+          step: (dt) => {
+            dts.push(dt);
+            parts.graph.markViewport();
+            return (left -= 1) > 0;
+          },
+        });
+      };
+      const mutate = (n: number): void => {
+        for (let k = 0; k < n; k += 1) {
+          parts.scheduler.enqueue(() => {
+            parts.clock.advance(1.5); // 4 ms drain clamp: a burst of 5 leaves some queued
+            parts.graph.markData("s");
+          });
+        }
+      };
+      return { ...parts, log, masks, dts, animate, mutate };
+    };
+    const a = rig();
+    const b = rig();
+    type Rig = ReturnType<typeof rig>;
+    const seen = (r: Rig) => {
+      const { scheduler: s } = r;
+      return [
+        [...s.timings.ms],
+        s.timings.layoutMs,
+        s.timings.total,
+        s.shedLevel,
+        s.lod,
+        s.frames,
+        s.ctx.dt,
+        s.ctx.budgetMsRemaining,
+        s.deferredMutations,
+        s.parked,
+        r.series.collects,
+        r.series.lastFlags,
+        s.takeNotice()?.code ?? null,
+        s.takeNotice(s.budgetNotice)?.code ?? null,
+      ];
+    };
+    const drive = (r: Rig, f: number): void => {
+      if (f % 60 >= 45) return; // idle: whatever is left runs out, then the loop parks
+      if (f % 7 === 0) r.animate();
+      if (f % 11 === 0) r.mutate(5);
+      r.graph.markViewport();
+      r.scheduler.wake();
+    };
+    let shed = 0;
+    let parks = 0;
+    let deferred = 0;
+    for (let f = 0; f < 240; f += 1) {
+      drive(a, f);
+      drive(b, f);
+      a.clock.tick(); // runs a's pending frame, if any
+      b.clock.advance(16);
+      if (!b.scheduler.parked) {
+        b.scheduler.prepare(b.clock.now());
+        b.scheduler.finish();
+      }
+      expect(seen(b), `frame ${f}`).toEqual(seen(a));
+      shed = Math.max(shed, a.scheduler.shedLevel);
+      deferred = Math.max(deferred, a.scheduler.deferredMutations);
+      if (a.scheduler.parked) parks += 1;
+    }
+    expect(b.log).toEqual(a.log);
+    expect(b.masks).toEqual(a.masks);
+    expect(b.dts).toEqual(a.dts);
+    // The script reached every branch it is meant to pin.
+    expect(shed).toBeGreaterThan(0);
+    expect(a.masks.some((m) => m !== 0)).toBe(true);
+    expect(deferred).toBeGreaterThan(0);
+    expect(parks).toBeGreaterThan(0);
+    expect(a.dts.filter((dt) => dt === 0).length).toBeGreaterThan(1); // a dt of 0 after parks
+    expect(a.dts.some((dt) => dt > 0)).toBe(true);
+    expect(a.scheduler.timings.ms[0]).toBeGreaterThan(0); // input is not trivially 0
+  });
+});

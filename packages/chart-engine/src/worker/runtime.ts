@@ -44,6 +44,7 @@ import { Readout, type BarSource, type ReadoutProvider } from "../overlays/reado
 import * as scene from "../scene/index.js";
 import { AtlasService, type AtlasCounters, type AtlasDetails } from "../text/atlas.js";
 import type { ChartFont, TextPlatform } from "../text/platform.js";
+import { DEFAULT_SYNC_MODES, SyncHub, type SyncCounters } from "../sync/SyncGroup.js";
 import { defaultWeight } from "../scene/pane-shares.js";
 import {
   AutoScaler,
@@ -157,7 +158,16 @@ export interface RenderRuntime {
    * uniform block was written with at the last submit; `FrameStats` stays frozen (G-15).
    */
   paneStats(id: ChartId): PaneStats[] | undefined;
+  /**
+   * Internal (E11-S09 PR 2, BQ-13): `engine.sync.propagations_per_frame` (≤ 1 per group per
+   * frame), `group_members`, `echoes` (a hub-level guard: the runtime absorbs apply-phase changes
+   * before publishing, so it stays 0 by construction) and the dropped remote propagations;
+   * `FrameStats` stays frozen (G-15).
+   */
+  readonly syncCounters: Readonly<SyncCounters>;
 }
+
+export type { SyncCounters };
 
 /** One pane's time state as last submitted (BQ-14): every pane's must be identical. */
 export interface PaneStats {
@@ -254,7 +264,7 @@ interface CrossSlot {
   rest: () => void;
   /** The synced crosshair's bar time in µs (BQ-5); drawn only, never announced. */
   remote: number | null;
-  /** The time last published to the sync group; NaN when none. */
+  /** The local crosshair time last published (or absorbed from a sync); NaN when none. */
   published: number;
   /** E11-S09 (BQ-6): the index of the pane under the local crosshair; -1 while hidden. */
   pane: number;
@@ -336,6 +346,21 @@ interface Instance {
   lastFrameAt: number;
   /** Pointer, wheel, touch and key routing plus the glide (E11-S04). */
   readonly gestures: Gestures;
+  /**
+   * E11-S09 PR 2 (BQ-13): the view moved by this chart's own gestures or `setViewport` since its
+   * last publication; an applied sync never sets it. `inputAt` is its last local input's time
+   * (the later wins when two members publish in one frame); `pubT0`/`pubT1` the range last
+   * published or applied, so an unchanged range is not published again.
+   */
+  localMoved: boolean;
+  inputAt: number;
+  pubT0: number;
+  pubT1: number;
+  /** BQ-12: a sync changed this chart since the flush; the tick it was last prepared in. */
+  synced: boolean;
+  preparedIn: number;
+  /** Its frame request was pending after the tick's first phase (kept across a re-prepare). */
+  wantedNext: boolean;
   /** One pane's object and structural indices (E11-S08) and their reused result slots. */
   readonly objects: ObjectIndex;
   readonly structural: StructuralIndex;
@@ -382,6 +407,20 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   let report: CapabilityReport | null = null;
   /** One CPU atlas per runtime, uploaded into each chart's context (BQ-277). */
   let atlas: AtlasService | null = null;
+  /** BQ-12: the tick's number, the charts prepared in it, and the apply phase's flag. */
+  let tickNo = 0;
+  const preparedList: Instance[] = [];
+  let applyingSync = false;
+  /** BQ-7, BQ-13: this worker's sync groups; applies through `applyTime`/`applyCrosshair`. */
+  const hub = new SyncHub({
+    applyTime: (chart, t0, t1) => applyTime(chart, t0, t1),
+    applyCrosshair: (chart, time) => {
+      const inst = charts.get(chart);
+      if (inst !== undefined && applyRemoteCrosshair(inst, time) && applyingSync)
+        inst.synced = true;
+    },
+    relay: (groupId, p) => deps.post({ t: "sync", id: p.origin.chart, groupId, ...p }),
+  });
 
   const fail = (id: ChartId | null, message: string): void => {
     deps.post({ t: "error", id, code: ENGINE_DECODE_ERROR, message, recoverable: true });
@@ -780,37 +819,76 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         inst.builder.patch(CROSSHAIR_NODE_ID, crossRange.set("replace", 0, c.node.count, 0));
       }
     }
-    publishCrosshair(inst);
   }
 
   /**
-   * BQ-6: the local crosshair's bar time to every other chart of the same sync group, once per
-   * change (null once hidden). S09 (#446) replaces the loop with `SyncGroup`. No echo: a chart
-   * publishes only its own local crosshair, never a remote one it was given (`remote` never
-   * touches `state`), so a peer without a local cursor computes NaN, equal to its `published`,
-   * and sends nothing back.
+   * E11-S09 PR 2 (BQ-13), at the end of the layout hook: this chart's own changes go to its sync
+   * group, once each: the range when its gestures or `setViewport` moved it (the leader's glide
+   * included, frame by frame), and its local crosshair's bar time (null once hidden). A remote
+   * crosshair never touches `state` and an applied range never sets `localMoved`, so nothing a
+   * chart was given is published back; a change made while a propagation is applied (the tick's
+   * third phase) is absorbed, never re-published.
    */
-  function publishCrosshair(inst: Instance): void {
-    const group = inst.config.syncGroup;
-    if (group === null) return;
+  function publish(inst: Instance): void {
     const c = inst.cross;
+    if (hub.groupOf(inst.id) === null) {
+      inst.localMoved = false;
+      return;
+    }
     const t = c.state.visible ? timeAt(inst.viewport.map, c.state.bar) : Number.NaN;
+    const vp = inst.viewport;
+    const moved = inst.localMoved;
+    inst.localMoved = false;
+    if (applyingSync) {
+      c.published = t;
+      return;
+    }
+    if (moved && (!Object.is(vp.timeStart, inst.pubT0) || !Object.is(vp.timeEnd, inst.pubT1))) {
+      inst.pubT0 = vp.timeStart;
+      inst.pubT1 = vp.timeEnd;
+      hub.publishTime(inst.id, inst.inputAt, vp.timeStart, vp.timeEnd);
+    }
     if (Object.is(t, c.published)) return;
     c.published = t;
-    for (const peer of charts.values()) {
-      if (peer !== inst && peer.config.syncGroup === group) {
-        applyRemoteCrosshair(peer, Number.isNaN(t) ? null : t);
-      }
-    }
+    hub.publishCrosshair(inst.id, inst.inputAt, Number.isNaN(t) ? null : t);
+  }
+
+  /** A local input or command moved or may move this chart (BQ-13): its time orders publishers. */
+  function local(inst: Instance): void {
+    inst.inputAt = deps.now();
+  }
+
+  /**
+   * BQ-13: a member's range from its group. Its glide stops (the leader coasts and publishes per
+   * frame); `localMoved`, the summary, `a11y`, the readout and the magnet are never touched.
+   */
+  function applyTime(chart: ChartId, t0: number, t1: number): void {
+    const inst = charts.get(chart);
+    if (inst === undefined) return;
+    inst.gestures.stop();
+    inst.pubT0 = t0;
+    inst.pubT1 = t1;
+    const changed = inst.viewport.setTimeRange(t0, t1);
+    moved(inst, changed);
+    if (changed && applyingSync) inst.synced = true; // the flush's: re-prepared this tick
   }
 
   /**
    * BQ-5: a remote crosshair is drawn only. It never sets the summary or posts `a11y`, the
    * readout or a magnet change (E11-D01 D3: never announced, never in the DOM mirror).
    */
-  function applyRemoteCrosshair(inst: Instance, timeUs: number | null): void {
-    if (inst.cross.remote === timeUs) return;
+  function applyRemoteCrosshair(inst: Instance, timeUs: number | null): boolean {
+    if (inst.cross.remote === timeUs) return false;
     inst.cross.remote = timeUs;
+    touch(inst);
+    return true;
+  }
+
+  /** BQ-9: joins, leaves or re-modes; a chart out of crosshair sync drops its remote line. */
+  function setSync(inst: Instance, cmd: Extract<Command, { k: "setSync" }>): void {
+    hub.join(inst.id, cmd.groupId, cmd.modes, cmd.relay);
+    if (cmd.groupId === null || !cmd.modes.crosshair) applyRemoteCrosshair(inst, null);
+    inst.cross.published = Number.NaN; // a new group hears the local crosshair afresh
     touch(inst);
   }
 
@@ -911,6 +989,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     if ((r & UPDATE.labels) !== 0) inst.axesDirty = true;
     resolveCrosshair(inst);
+    publish(inst);
   }
 
   /** F-13 (BQ-92): no export while the pixels cannot be trusted; the reason, never a stale PNG. */
@@ -1043,6 +1122,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     switch (cmd.k) {
       case "setViewport":
         inst.gestures.stop();
+        local(inst);
+        inst.localMoved = true; // the app's own move is published to the group (BQ-13)
         moved(inst, inst.viewport.setTimeRange(cmd.timeStart, cmd.timeEnd));
         return;
       case "setTheme":
@@ -1083,8 +1164,12 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         inst.cross.magnet = cmd.magnetMode; // re-resolved next frame; never announced here
         touch(inst);
         return;
+      case "setSync":
+        setSync(inst, cmd);
+        return;
       case "release":
         retire(inst);
+        hub.leave(inst.id);
         charts.delete(inst.id);
         if (charts.size === 0) {
           atlas?.dispose(); // the faces leave the font set; a build in flight stops
@@ -1111,12 +1196,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
 
   function dispatch(msg: ToWorker): void {
     if (msg.t === "sync") {
-      for (const inst of charts.values()) {
-        if (inst.config.syncGroup !== msg.groupId) continue;
-        inst.gestures.stop();
-        moved(inst, inst.viewport.setTimeRange(msg.timeRange[0], msg.timeRange[1]));
-        applyRemoteCrosshair(inst, msg.crosshair); // remote-only (BQ-5)
-      }
+      hub.receive(msg.groupId, msg); // BQ-7: own origin and stale seq dropped; remote-only (BQ-5)
       return;
     }
     if (msg.t === "init") {
@@ -1168,7 +1248,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         lod: { candles: 0, footprint: 0 },
         lastFrameAt: Number.NEGATIVE_INFINITY,
         gestures: new Gestures(viewport, scene.layout, {
-          moved: (changed) => moved(inst, changed),
+          moved: (changed) => {
+            if (changed) inst.localMoved = true; // BQ-13: a local move, the glide's included
+            moved(inst, changed);
+          },
           hover: (x, y) => pointerAt(inst, x, y),
           animate: (m) => inst.scheduler.animate(m),
           say: (code) => (inst.axes.say = code),
@@ -1178,6 +1261,13 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         structural: old
           ? old.structural.rebind(viewport, scene.layout)
           : new StructuralIndex(viewport, scene.layout),
+        localMoved: false,
+        inputAt: Number.NEGATIVE_INFINITY,
+        pubT0: Number.NaN,
+        pubT1: Number.NaN,
+        synced: false,
+        preparedIn: -1,
+        wantedNext: false,
         hit: createPickHit(),
         where: createStructuralHit(),
         hover: { id: null, part: "body", handle: -1 },
@@ -1196,6 +1286,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       cross.rest = () => rested(inst);
       if (old !== undefined) restack(inst, old);
       charts.set(msg.id, inst);
+      if (msg.config.workerId !== undefined) hub.worker = msg.config.workerId;
+      // BQ-9: `config.syncGroup` joins with the default modes; a re-init keeps the membership.
+      if (old === undefined && msg.config.syncGroup !== null) {
+        hub.join(msg.id, msg.config.syncGroup, DEFAULT_SYNC_MODES);
+      }
       touch(inst);
       return;
     }
@@ -1209,6 +1304,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         resize(inst, msg);
         return;
       case "input":
+        local(inst);
         if (msg.kind === "wheel") holdLines(inst); // a wheel burst hides the lines (D06 §5.2)
         inst.gestures.apply(msg.kind === "touch", msg.events);
         if (inst.gestures.active) {
@@ -1421,21 +1517,86 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     });
   }
 
+  /**
+   * E11-S09 PR 2 (BQ-12), the three-phase tick: (1) every chart with a frame requested runs its
+   * first half (input, animations, drain, layout, crosshair, publish); (2) the sync groups
+   * propagate once; (3) every member a propagation changed runs its first half (again, layout
+   * only, if it already ran), with publishing absorbed; (4) every prepared chart finishes
+   * (collect, build, submit). A member lands in the same tick whatever the charts' order.
+   */
   function tick(): void {
     scheduled = false;
+    if (hub.counters.groupMembers === 0) {
+      // No group on this worker: phases 2 and 3 are empty, so each chart's frame runs in one
+      // span, the pre-S09 path (single-chart frames pay nothing for sync).
+      for (const inst of charts.values()) {
+        const frame = inst.slot.frame;
+        if (frame === null || inst.parked || inst.suspended) continue; // its request is kept
+        inst.slot.frame = null;
+        // A throwing canvas or context fails its own chart's frame, recoverably; it never
+        // escapes the frame callback, where a worker would make it an uncaught error (E11-T02).
+        try {
+          frame(deps.now());
+        } catch (e) {
+          fail(inst.id, e instanceof Error ? e.message : "render failed");
+        }
+        notify(inst, inst.scheduler.takeNotice(inst.scheduler.budgetNotice));
+        notify(inst, inst.scheduler.takeNotice());
+      }
+      return;
+    }
+    tickNo += 1;
+    preparedList.length = 0;
+    hub.beginFrame();
     for (const inst of charts.values()) {
-      const frame = inst.slot.frame;
-      if (frame === null || inst.parked || inst.suspended) continue; // its request is kept
+      if (inst.slot.frame === null || inst.parked || inst.suspended) continue; // request kept
       inst.slot.frame = null;
+      prepareChart(inst);
+    }
+    for (let i = 0; i < preparedList.length; i += 1) {
+      const inst = preparedList[i] as Instance;
+      inst.wantedNext = inst.slot.frame !== null;
+    }
+    applyingSync = true;
+    try {
+      hub.flush();
+      for (const inst of charts.values()) {
+        if (!inst.synced) continue;
+        inst.synced = false;
+        if (inst.slot.frame === null || inst.parked || inst.suspended) continue;
+        // The sync's wake is this phase's; a request made in phase 1 stays for the next tick.
+        const again = inst.preparedIn === tickNo && inst.wantedNext;
+        inst.slot.frame = null;
+        prepareChart(inst);
+        if (again) inst.scheduler.wake();
+      }
+    } finally {
+      applyingSync = false;
+    }
+    for (let i = 0; i < preparedList.length; i += 1) {
+      const inst = preparedList[i] as Instance;
       // A throwing canvas or context fails its own chart's frame, recoverably; it never escapes
       // the frame callback, where a worker would turn it into an uncaught error (E11-T02).
       try {
-        frame(deps.now());
+        inst.scheduler.finish();
       } catch (e) {
         fail(inst.id, e instanceof Error ? e.message : "render failed");
       }
       notify(inst, inst.scheduler.takeNotice(inst.scheduler.budgetNotice));
       notify(inst, inst.scheduler.takeNotice());
+    }
+  }
+
+  /** BQ-12: one chart's first half; listed once per tick for the finish phase. */
+  function prepareChart(inst: Instance): void {
+    if (inst.preparedIn !== tickNo) {
+      inst.preparedIn = tickNo;
+      preparedList.push(inst);
+    }
+    try {
+      inst.scheduler.prepare(deps.now());
+    } catch (e) {
+      fail(inst.id, e instanceof Error ? e.message : "render failed");
     }
   }
 
@@ -1496,6 +1657,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       };
     },
     crosshairCounters: (id) => charts.get(id)?.cross.counters,
+    get syncCounters(): Readonly<SyncCounters> {
+      return hub.counters;
+    },
     paneStats: (id) =>
       charts.get(id)?.panes.map((p) => ({
         key: p.key,
