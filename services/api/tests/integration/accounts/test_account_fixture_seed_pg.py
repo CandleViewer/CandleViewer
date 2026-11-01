@@ -12,7 +12,9 @@ message.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import re
 import subprocess
 import sys
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -235,3 +237,76 @@ async def test_seed_refuses_a_database_that_is_not_a_throwaway_and_writes_nothin
     assert not list(run_dir.iterdir())
     with psycopg.connect(dsn.replace("postgresql+asyncpg", "postgresql")) as check:
         assert check.execute("SELECT count(*) FROM users").fetchone() == (0,)
+
+
+#: R1S-06: the credential a failing run's DSN carries, which no output may show.
+_CREDENTIAL = "it-dsn-credential-6d2"
+#: The line the seed's catch-all prints for an exception the gate does not name: its class alone.
+_NAMED_CLASS = re.compile(rf"account-fixture: refused: {re.escape(seed.FAILED)} \(([A-Za-z]+)\)\n")
+
+
+def _as_marked_role(server: str, dsn: str) -> str:
+    """`dsn` signed in as a superuser role whose password is `_CREDENTIAL`, made once a server."""
+    with psycopg.connect(_url(server, "test", "postgresql"), autocommit=True) as admin:
+        if admin.execute("SELECT 1 FROM pg_roles WHERE rolname = 'marked'").fetchone() is None:
+            admin.execute(
+                sql.SQL("CREATE ROLE marked LOGIN SUPERUSER PASSWORD {}").format(
+                    sql.Literal(_CREDENTIAL)
+                )
+            )
+    return re.sub(r"//[^@/]*@", f"//marked:{_CREDENTIAL}@", dsn, count=1)
+
+
+@pytest.mark.parametrize("failure", ["unreachable", "not-a-throwaway", "statement"])
+async def test_a_real_failing_run_shows_no_credential_or_sql_parameter(
+    failure: str,
+    server: str,
+    database: Callable[[str], str],
+    tmp_path: Path,
+    lane_key: str,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """R1S-06, one real failing run each way, its stdout, stderr and logs captured: a database
+    nothing answers at, a database not named `*_test`, and a seeder statement that the server
+    refuses, whose exception text holds the statement and its parameters. Each run is exit 2 and
+    one fixed line, naming the exception's class where one is raised; the DSN's credential, the
+    generated password and every SQL parameter stay out of every output. The logs are the seed's
+    own at every level and everything else from WARNING up, what the one-shot (which configures no
+    logging) emits: SQLAlchemy echoes its statements and parameters at INFO only when an operator
+    turns its logger on, which no run of the seed does."""
+    caplog.set_level(logging.WARNING)
+    caplog.set_level(logging.DEBUG, logger="cvdev")
+    if failure == "unreachable":  # a socket directory with no server in it
+        dsn = f"postgresql+asyncpg://marked:{_CREDENTIAL}@/fixture_test?host={tmp_path}/none"
+    elif failure == "not-a-throwaway":
+        dsn = _as_marked_role(server, database("kept"))
+    else:
+        dsn = _as_marked_role(server, database("statement_test"))
+        with psycopg.connect(dsn.replace("postgresql+asyncpg", "postgresql")) as conn:
+            conn.execute(
+                "CREATE FUNCTION refuse() RETURNS trigger LANGUAGE plpgsql AS "
+                "$$ BEGIN RAISE EXCEPTION 'refused by this test'; END $$"
+            )
+            conn.execute("CREATE TRIGGER refuse BEFORE INSERT ON users EXECUTE FUNCTION refuse()")
+    run_dir = _run_dir(tmp_path, "run")
+
+    with structlog.testing.capture_logs() as events:
+        code = await _seed(_settings(tmp_path, dsn, lane_key), run_dir)
+
+    out, err = capsys.readouterr()
+    shown = [out, err, *(r.getMessage() for r in caplog.records), *map(str, events)]
+    named = _NAMED_CLASS.fullmatch(err)
+    if failure == "not-a-throwaway":
+        assert err == f"account-fixture: refused: {seed.NOT_THROWAWAY}\n"
+    else:
+        assert named is not None, err  # the fixed line: no value in it, only the class
+        assert named[1] not in ("Exception", "SeedRefused")
+    assert (code, out) == (2, "")
+    password = run_dir / "pw-qa-owner-1"  # written before the seeder's first statement
+    marks = [_CREDENTIAL, dsn, "fixture.invalid", "$argon2", "INSERT INTO", "parameters"]
+    marks += ["refused by this test"]  # the trigger's own text, which only the exception holds
+    marks += [password.read_text(encoding="ascii")] if password.exists() else []
+    echoed = any(mark in text for mark in marks for text in shown)  # a boolean: no value printed
+    assert not echoed
+    assert password.exists() is (failure == "statement")  # only that run reached the seeder
