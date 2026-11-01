@@ -630,6 +630,20 @@ vendored fonts, the table edit and the `<Chart>` font binding are PR C.
   all of a theme or nothing. `packTheme` writes the quads into a caller-owned `Float32Array`.
 - `Density.ts`: `densityRecord(mode)` returns E11-D05 §6's whole frozen record; no API sets one member.
 - `patterns.ts`: D05 §7's eight pattern ids and §7.2's five dash ids, with fixed indices.
+- `oklab.ts` (PR-3): sRGB ↔ linear ↔ OkLab with `tools/contrast`'s transfer and D05 §5.1's
+  matrices (G4 parity vectors in `test/theme/oklab.test.ts`); every converter writes into `out`.
+- `ColorLut.ts` (PR-3): `ColorLutWriter` writes the bid / ask intensity and delta ramps as
+  256-entry RGBA8 rows (`LUT_ROW`), OkLab piecewise-linear between D05 §5.3's stops, into a
+  caller-owned `Uint8Array`. `GLBackend.uploadLuts` puts them in texture `LUT_TEXTURE` (256 × 3,
+  clamped): the first call defines it, every later theme switch is one `texSubImage2D`. Scene
+  `bench/scenes/lut-gen.ts`, gated at ≤ 2 ms per LUT.
+- LUT sampling contract (for PR-4's shaders): the texture is LINEAR-filtered on both axes, so
+  sample texel centres only. `intensityU(t) = (255t + 0.5) / 256`;
+  `deltaU(t) = (128 + t · (t < 0 ? 128 : 127) + 0.5) / 256` (the delta row is asymmetric: 128
+  steps below zero, 127 above, so the naive `(t + 1) / 2` misses the canvas texel at t = 0);
+  `lutV(row) = (row + 0.5) / 3`. At t = 0 (intensity entry 0, delta entry 128) the LUT holds the
+  opaque canvas colour: consumers emit no fragment there (discard, or alpha 0), per D05's "no ink
+  at exactly zero".
 
 ## Design deltas (E11-T04 PR-2; the BQ-T04 PROPOSED defaults, not yet ruled)
 
@@ -641,6 +655,8 @@ vendored fonts, the table edit and the `<Chart>` font binding are PR C.
 | BQ-T04-07 | Pairs   | Every pair ≥ 3:1.                           | Classes per D05 Q4: eight decorative slots, measured on the ninth (pane.bg.default), are listed as `decorative`, not omitted.                                                                                             |
 | —         | Slots   | —                                           | No `color.cvd.*` slot (G16: no engine route yet) and no `color.chart.line` / `.baseline` (E12-D09's).                                                                                                                     |
 | —         | Hatch   | E06-D01 §3: 45°, 2 px pitch, no line width. | `pattern.hatch.estimated` takes a 1 px line.                                                                                                                                                                              |
+| BQ-T04-06 | LUTs    | Three LUTs incl. "imbalance intensity".     | Bid, ask, delta; no imbalance LUT (G8). Delta: the current D05 §5.3 stops behind the tokens (ε = 1/8; Q5 unruled); entries 0..128 are t −1..0, 128..255 are 0..+1. The canvas stop is `color.heatmap.zero`.               |
+| —         | LUTs    | CVD-safe twins; convention swap.            | Inverted swaps the bid and ask rows, and the delta row's ±ε stops (`bid.1` at −ε, `ask.1` at +ε) because the host's remap already swapped its ±1 ends. No CVD-safe stops until G16; the palette changes no row.           |
 
 ## Scripts
 
