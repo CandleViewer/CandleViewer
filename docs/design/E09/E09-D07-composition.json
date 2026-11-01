@@ -131,7 +131,7 @@
       "component": "CMP-200",
       "variant": "Default",
       "purpose": "the pre-auth chassis",
-      "source": "`14`:168",
+      "source": "`14`:169",
       "event": "auth.mfa_verified",
       "status": "published at PR 3"
     },
@@ -193,7 +193,7 @@
       "component": "CMP-200",
       "variant": "Default",
       "purpose": "the pre-auth chassis",
-      "source": "`14`:193",
+      "source": "`14`:194",
       "event": "auth.mfa_enroll",
       "status": "published at PR 3"
     },
@@ -382,7 +382,7 @@
       "component": "CMP-098",
       "variant": "WithLockNow",
       "purpose": "the timeout warning",
-      "source": "`22`:1803",
+      "source": "`22`:1802",
       "event": "auth.session_locked",
       "status": "published at PR 3",
       "event_status": "declared in `22` (authLock) by #4941; registered when #4743 ships the route"
@@ -510,7 +510,7 @@
       "component": "CMP-205",
       "variant": "Default",
       "purpose": "the enrolment QR",
-      "source": "`22`:13248",
+      "source": "`22`:13281",
       "event": "auth.mfa_enroll",
       "status": "local with a dated plan",
       "plan": "holder OQ-1, due at once (the pack's §11): adopts the published component when the build-owner plan ticket lands"
@@ -555,7 +555,7 @@
       "component": "CMP-097",
       "variant": "Default",
       "purpose": "the setup steps",
-      "source": "`14`:468",
+      "source": "`14`:470",
       "event": "—",
       "status": "published at PR 3"
     },
@@ -568,7 +568,7 @@
       "component": "CMP-097",
       "variant": "PartiallyComplete",
       "purpose": "the setup steps",
-      "source": "`22`:23075",
+      "source": "`22`:23133",
       "event": "—",
       "status": "local with a dated plan",
       "plan": "holder OQ-1, due at once (the pack's §11): adopts the published component when the build-owner plan ticket lands"
@@ -599,7 +599,7 @@
       "component": "CMP-097",
       "variant": "BlockedUntil",
       "purpose": "the setup steps",
-      "source": "`22`:23077",
+      "source": "`22`:23135",
       "event": "—",
       "status": "local with a dated plan",
       "plan": "holder OQ-1, due at once (the pack's §11): adopts the published component when the build-owner plan ticket lands"
@@ -630,7 +630,7 @@
       "component": "CMP-205",
       "variant": "Default",
       "purpose": "the enrolment QR",
-      "source": "`14`:2358",
+      "source": "`14`:2378",
       "event": "auth.mfa_enroll",
       "status": "held",
       "plan": "holder D12 G-12: re-enrolment is not specified"
@@ -644,7 +644,7 @@
       "component": "CMP-206",
       "variant": "Default",
       "purpose": "the recovery codes, shown once",
-      "source": "`14`:2358",
+      "source": "`14`:2378",
       "event": "auth.recovery_codes_regenerated",
       "status": "held",
       "plan": "holder D12 G-3: no regenerate operation"
@@ -658,7 +658,7 @@
       "component": "CMP-201",
       "variant": "CurrentPassword",
       "purpose": "a password field",
-      "source": "`14`:2983",
+      "source": "`14`:3003",
       "event": "auth.step_up_granted",
       "status": "published at PR 3",
       "attrs": {
@@ -674,7 +674,7 @@
       "component": "CMP-204",
       "variant": "Empty",
       "purpose": "the code control",
-      "source": "`14`:2983",
+      "source": "`14`:3003",
       "event": "auth.step_up_granted",
       "status": "published at PR 3",
       "attrs": {
@@ -704,7 +704,7 @@
       "component": "CMP-097",
       "variant": "Default",
       "purpose": "the setup steps",
-      "source": "`14`:446",
+      "source": "`14`:448",
       "event": "—",
       "status": "published at PR 3"
     },
@@ -717,7 +717,7 @@
       "component": "CMP-201",
       "variant": "NewPassword",
       "purpose": "a password field",
-      "source": "`14`:446",
+      "source": "`14`:448",
       "event": "—",
       "status": "published at PR 3",
       "attrs": {
@@ -733,7 +733,7 @@
       "component": "CMP-205",
       "variant": "Default",
       "purpose": "the enrolment QR",
-      "source": "`14`:446",
+      "source": "`14`:448",
       "event": "auth.mfa_enroll",
       "status": "published at PR 3"
     },
@@ -746,7 +746,7 @@
       "component": "CMP-206",
       "variant": "Default",
       "purpose": "the recovery codes, shown once",
-      "source": "`14`:446",
+      "source": "`14`:448",
       "event": "auth.mfa_enrolled",
       "status": "published at PR 3"
     },
@@ -759,7 +759,7 @@
       "component": "CMP-207",
       "variant": "SignedInDemo, SignedInLive",
       "purpose": "the build line",
-      "source": "`14`:2450",
+      "source": "`14`:2470",
       "event": "—",
       "status": "published at PR 3"
     },
@@ -772,7 +772,7 @@
       "component": "CMP-207",
       "variant": "PreAuthVersionOnly, SignedInDemo, SignedInLive",
       "purpose": "the build line",
-      "source": "`14`:2998",
+      "source": "`14`:3019",
       "event": "—",
       "status": "published at PR 3"
     },
@@ -785,7 +785,7 @@
       "component": "CMP-207",
       "variant": "PreAuthVersionOnly, SignedInDemo, SignedInLive",
       "purpose": "the build line",
-      "source": "`14`:3092",
+      "source": "`14`:3115",
       "event": "—",
       "status": "published at PR 3"
     },
@@ -798,7 +798,7 @@
       "component": "CMP-207",
       "variant": "PreAuthVersionOnly, SignedInDemo, SignedInLive",
       "purpose": "the build line",
-      "source": "`14`:3113",
+      "source": "`14`:3136",
       "event": "—",
       "status": "published at PR 3"
     }
