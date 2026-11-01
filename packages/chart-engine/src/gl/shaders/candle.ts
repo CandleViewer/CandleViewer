@@ -81,7 +81,7 @@ void main() {
     y0 = u_geom[1].z > 0.0 ? u_geom[1].y : 0.0;
   } else {
     float left = floor(centre - body * 0.5 + 0.5);
-    float weight = part == 5 && dir < 2 ? (colourUp ? h : 2.0 * h) : (dir == 1 ? 2.0 * h : h);
+    float weight = part == 5 && dir != 3 ? (colourUp ? h : 2.0 * h) : (dir == 1 ? 2.0 * h : h);
     float stem = left + floor((body - h) * 0.5);
     x0 = stem;
     w = weight;
@@ -114,9 +114,11 @@ void main() {
       y1 = yOf(a_ohlc.y);
     }
   }
-  // partColor: the wicks, the seam, doji and zero-range neutral; the hollow body by colour-up;
-  // else up or down.
-  int row = base == 0 || part == 4 || dir >= 2 ? 2 : part == 6 ? (colourUp ? 0 : 1) : dir;
+  // partColor: the wicks and the seam neutral; the hollow body (a doji's too, D06 §9) by
+  // colour-up; else doji and zero-range neutral, up or down.
+  int row = base == 0 || part == 4
+    ? 2
+    : part == 6 && dir != 3 ? (colourUp ? 0 : 1) : dir >= 2 ? 2 : dir;
   v_color = u_palette[row];
   v_fill = v_color;
   int outline = w >= 3.0 * u_geom[1].x ? 2 : 1; // D06 §3.2: every side from 3 CSS px

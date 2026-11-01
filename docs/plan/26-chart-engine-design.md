@@ -387,6 +387,8 @@ Target steady-state: **≤ 18 draw calls per pane**, ≤ 40 for a 3-pane chart.
 
 _Shipped (E12-S06): candles and OHLC bars share the `candle` program and one instance ring per series: an instance is `[open, high, low, close]` i32 ticks plus a meta word (flags | direction), and `u_batch` picks the part per batch. Candles draw the wick and the body, OHLC bars the stem and the open / close ticks (a 10-vertex strip, two quads joined by degenerate bridges): two draws each. Below 5 CSS px an OHLC series draws the candle mark (E12-D06 §3.2). A `gap_before` bar adds a seam hairline at its slot's left edge in `color.candle.wick`, drawn by the same program from a small per-series list of slots: one more draw, only while such a bar is in view and the series is time-aligned (E12-D06 §8)._
 
+_Known gap (E12-S07, for the autoscale wiring ticket): Heikin-Ashi draws derived candles whose high or low can lie outside the real bars' range, while autoscale fits the real prices. The price extent source must read the displayed ring values (or offer an HA-extremes mode), and `CandleRing.setMode` must bump the source version so autoscale refits on a kind switch._
+
 ---
 
 ## 5. Visual and theming rules

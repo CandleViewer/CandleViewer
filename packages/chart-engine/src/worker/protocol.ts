@@ -105,8 +105,8 @@ const SCALE_MODES: ReadonlySet<unknown> = new Set(["linear", "log", "percent", "
 export type BarSeriesKind = "candles" | "hollow" | "bars";
 const BAR_SERIES: ReadonlySet<unknown> = new Set(["candles", "hollow", "bars"]);
 /**
- * E12-S07: a `setSeriesKind` the chart cannot draw (Heikin-Ashi with a footprint): refused, the
- * series keeps drawing its previous kind. An `error` event's code, recoverable.
+ * E12-S07: a combination the chart cannot draw (Heikin-Ashi with a footprint, or over OHLC bars):
+ * refused, the previous combination keeps drawing. An `error` event's code, recoverable.
  */
 export const ENGINE_SERIES_INCOMPATIBLE = "ENGINE_SERIES_INCOMPATIBLE";
 

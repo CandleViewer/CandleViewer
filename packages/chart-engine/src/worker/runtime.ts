@@ -677,8 +677,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
 
   /**
    * E12-S07: series `sid` redrawn as `kind`, Heikin-Ashi on or off, over its own store (no data
-   * resent, viewport and scale untouched). HA with a footprint is refused: counted, posted as a
-   * recoverable `ENGINE_SERIES_INCOMPATIBLE`, and nothing changes, so the series keeps drawing.
+   * resent, viewport and scale untouched). HA with a footprint, or over OHLC bars (D06 §3.3
+   * defines it over candles), is refused: counted, posted as a recoverable
+   * `ENGINE_SERIES_INCOMPATIBLE`, and nothing changes, so the series keeps drawing.
    */
   function setSeriesKind(inst: Instance, sid: number, kind: BarSeriesKind, ha: boolean): void {
     const s = inst.series.get(sid);
@@ -687,16 +688,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       return;
     }
     const m = inst.kinds;
-    if (ha && inst.elements.footprint > 0) {
-      const combination = "heikin-ashi+footprint";
-      m.incompatible[combination] = (m.incompatible[combination] ?? 0) + 1;
-      deps.post({
-        t: "error",
-        id: inst.id,
-        code: ENGINE_SERIES_INCOMPATIBLE,
-        message: `series ${sid}: Heikin-Ashi cannot draw with a footprint; ${s.kind} kept`,
-        recoverable: true,
-      });
+    if (ha && (inst.elements.footprint > 0 || kind === "bars")) {
+      const other = kind === "bars" ? "bars" : "footprint";
+      refuse(inst, `heikin-ashi+${other}`, `series ${sid}: Heikin-Ashi cannot draw with ${other}`);
       return;
     }
     m.pending = ha ? `${kind}+heikin-ashi` : kind;
@@ -705,6 +699,29 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     s.kind = kind;
     for (const h of s.candle.hosts) inst.graph.markData(h.id);
     touch(inst);
+  }
+
+  /** E12-S07: one refused combination: counted and posted; the caller changes nothing. */
+  function refuse(inst: Instance, combination: string, why: string): void {
+    const m = inst.kinds.incompatible;
+    m[combination] = (m[combination] ?? 0) + 1;
+    deps.post({
+      t: "error",
+      id: inst.id,
+      code: ENGINE_SERIES_INCOMPATIBLE,
+      message: `${why}; the previous combination keeps drawing`,
+      recoverable: true,
+    });
+  }
+
+  /** E12-S07: a series drawing Heikin-Ashi, else -1 (a footprint batch is refused against it). */
+  function haSeries(inst: Instance): number {
+    const list = inst.seriesList;
+    for (let i = 0; i < list.length; i += 1) {
+      const s = list[i] as SeriesEntry;
+      if (s.candle.heikinAshi) return i;
+    }
+    return -1;
   }
 
   function removeSeries(inst: Instance, sid: number): void {
@@ -975,6 +992,13 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
           storeBars(inst, msg.series, msg.op, msg.layout, msg.buffer);
           deps.post({ t: "ack", id: inst.id, store: msg.store, series: msg.series });
           touch(inst);
+          return;
+        }
+        // E12-S07: footprint data against a Heikin-Ashi series is refused (counted, acked); the
+        // series keeps drawing and the footprint count does not move.
+        if (msg.store === "footprint" && haSeries(inst) >= 0) {
+          refuse(inst, "heikin-ashi+footprint", "a footprint batch cannot draw with Heikin-Ashi");
+          deps.post({ t: "ack", id: inst.id, store: msg.store });
           return;
         }
         // Without a series id a batch only moves the element count (pre-E12-S06 callers).

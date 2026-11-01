@@ -76,23 +76,26 @@ export const fullOutline = (w: number, geom: ArrayLike<number>): boolean =>
 
 /**
  * The palette row a part of a bar is drawn in (the shader's choice, line for line). `mark` is
- * `meta >> 4` (`MARK`): the dir, and for the hollow parts the colour-up bit (D06 §4.2).
+ * `meta >> 4` (`MARK`): the dir, and for the hollow parts the colour-up bit (D06 §4.2). A hollow
+ * doji keeps that colour (D06 §9 doji row: "Hollow: the body keeps §4.2's previous-close colour
+ * and wick weight"); a zero-range bar stays neutral.
  */
 export function partColor(part: number, mark: number): number {
   const dir = mark & MARK.dir;
-  if (
-    part === CANDLE_PART.wick ||
-    part === CANDLE_PART.seam ||
-    part === CANDLE_PART.hollowWick ||
-    dir >= CANDLE_DIR.doji
-  ) {
-    return PALETTE.wick; // D06 §9: doji and zero-range marks are neutral; R-6
+  if (part === CANDLE_PART.wick || part === CANDLE_PART.seam || part === CANDLE_PART.hollowWick) {
+    return PALETTE.wick; // R-6: wicks and the seam are neutral
   }
-  if (part === CANDLE_PART.hollowBody) return mark & MARK.colourUp ? PALETTE.up : PALETTE.down;
+  if (part === CANDLE_PART.hollowBody && dir !== CANDLE_DIR.zeroRange) {
+    return mark & MARK.colourUp ? PALETTE.up : PALETTE.down;
+  }
+  if (dir >= CANDLE_DIR.doji) return PALETTE.wick; // D06 §9: doji and zero-range are neutral
   return dir === CANDLE_DIR.up ? PALETTE.up : PALETTE.down;
 }
 
-/** D06 §4.2: a hollow body (close ≥ open, not a doji or zero-range) is outline-only. */
+/**
+ * D06 §4.2: a hollow body (close ≥ open) is outline-only. A doji or zero-range body is at most
+ * 2 hairlines tall, all edge, so it paints whole (the same pixels).
+ */
 export const hollowFill = (part: number, mark: number): boolean =>
   part === CANDLE_PART.hollowBody &&
   (mark & MARK.dir) < CANDLE_DIR.doji &&
@@ -139,9 +142,10 @@ export function candleRect(
   // The body's left edge snapped to a device pixel; every part is centred on it from there.
   const left = Math.floor(centre - body * 0.5 + 0.5);
   // D06 §3.1 / §3.2: 1 hairline up, 2 down; doji and zero-range marks keep one. §4.2: the hollow
-  // wick's weight follows the colour-up bit (close vs previous close), not the body's dir.
+  // wick's weight follows the colour-up bit (close vs previous close), not the body's dir; a
+  // doji's too (§9 doji row), a zero-range bar's not.
   const weight =
-    part === CANDLE_PART.hollowWick && dir < CANDLE_DIR.doji
+    part === CANDLE_PART.hollowWick && dir !== CANDLE_DIR.zeroRange
       ? mark & MARK.colourUp
         ? hair
         : 2 * hair

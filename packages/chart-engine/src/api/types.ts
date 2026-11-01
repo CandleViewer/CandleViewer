@@ -355,7 +355,7 @@ export interface CandleOptions {
   isTimeAligned?: boolean;
   /**
    * E12-S07 (BQ-5, additive): draw the Heikin-Ashi transform (E12-D06 §3.3); prices read real
-   * (R-4). Refused with a footprint (`ENGINE_SERIES_INCOMPATIBLE`); absent means off.
+   * (R-4). Refused with a footprint or on OHLC bars (`ENGINE_SERIES_INCOMPATIBLE`); absent: off.
    */
   heikinAshi?: boolean;
 }

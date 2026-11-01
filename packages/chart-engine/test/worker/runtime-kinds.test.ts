@@ -210,6 +210,60 @@ describe("Heikin-Ashi with a footprint (refused)", () => {
   });
 });
 
+describe("footprint data under Heikin-Ashi, and Heikin-Ashi over OHLC bars (refused)", () => {
+  function footprintBatch(): void {
+    const { layout, buffer } = encodeCandles({
+      time: Float64Array.of(0),
+      open: Int32Array.of(1),
+      high: Int32Array.of(1),
+      low: Int32Array.of(1),
+      close: Int32Array.of(1),
+      volume: Float32Array.of(1),
+      priceOrigin: 0,
+      tickSize: 1,
+    });
+    rt.handle({ t: "data", id: 1, store: "footprint", op: "replace", layout, buffer });
+  }
+
+  it("a footprint batch after HA is refused, counted and acked; the HA series keeps drawing", () => {
+    candles();
+    cmd({ k: "setSeriesKind", series: 0, kind: "candles", heikinAshi: true });
+    frame();
+    const s = entry();
+    const [written, cap, sent] = [s.ring.written, s.ring.capacity, acks()];
+    footprintBatch();
+    expect(errors().at(-1)).toMatchObject({ code: ENGINE_SERIES_INCOMPATIBLE, recoverable: true });
+    expect(acks()).toBe(sent + 1);
+    expect(rt.seriesMetrics(1)?.incompatible).toEqual({ "heikin-ashi+footprint": 1 });
+    expect(drawn(() => view(1, 41))).toEqual([`4 ${cap}`, `4 ${cap}`]);
+    expect([s.candle.heikinAshi, s.ring.written]).toEqual([true, written]);
+    // Nothing was stored, so HA off then on again is not refused.
+    cmd({ k: "setSeriesKind", series: 0, kind: "candles" });
+    cmd({ k: "setSeriesKind", series: 0, kind: "candles", heikinAshi: true });
+    expect(entry().candle.heikinAshi).toBe(true);
+    cmd({ k: "setSeriesKind", series: 0, kind: "candles" });
+    footprintBatch(); // without HA: accepted
+    expect(rt.seriesMetrics(1)?.incompatible).toEqual({ "heikin-ashi+footprint": 1 });
+  });
+
+  it("HA over OHLC bars is refused: the bars keep drawing, the option path too", () => {
+    cmd({ k: "addSeries", series: 0, kind: "bars" });
+    bars();
+    view(0, 40);
+    frame();
+    const s = entry();
+    const cap = s.ring.capacity;
+    cmd({ k: "setSeriesKind", series: 0, kind: "bars", heikinAshi: true });
+    expect(errors().at(-1)).toMatchObject({ code: ENGINE_SERIES_INCOMPATIBLE, recoverable: true });
+    cmd({ k: "setSeriesOptions", series: 0, options: { heikinAshi: true } });
+    expect(rt.seriesMetrics(1)?.incompatible).toEqual({ "heikin-ashi+bars": 2 });
+    expect([s.kind, s.candle.heikinAshi]).toEqual(["bars", false]);
+    expect(drawn(() => view(1, 41))).toEqual([`4 ${cap}`, `10 ${cap}`]);
+    cmd({ k: "setSeriesKind", series: 0, kind: "candles", heikinAshi: true }); // candles: allowed
+    expect([entry().kind, entry().candle.heikinAshi]).toEqual(["candles", true]);
+  });
+});
+
 describe("series_type_switch_duration_ms{target}", () => {
   it("one count per switch, in its target's bucket, at the end of the next frame", () => {
     candles();

@@ -110,22 +110,36 @@ describe("hollow candle: the four marks (D06 §4.2)", () => {
     }
   });
 
-  it("doji and zero-range keep the neutral candle marks (D06 §9)", () => {
-    const { ring } = hollowRing([
+  it("a doji keeps §4.2's previous-close colour and wick weight; zero-range stays neutral", () => {
+    // D06 §9, doji row: "Hollow: the body keeps §4.2's previous-close colour and wick weight".
+    const rows = [
       [10, 12, 8, 11],
-      [11, 13, 9, 11],
-      [11, 11, 11, 11],
-    ]);
-    for (const i of [1, 2]) {
+      [11, 13, 9, 11], // doji, 11 ≥ 11: up colour, 1 hairline wick
+      [10, 12, 8, 10], // doji, 10 < 11: down colour, 2 hairline wick
+      [10, 10, 10, 10], // zero-range: neutral, 1 hairline
+    ];
+    const { ring } = hollowRing(rows);
+    const g = geom(12, 1);
+    const [out, ref] = [new Float64Array(4), new Float64Array(4)];
+    const seen = [1, 2, 3].map((i) => {
       const m = mark(ring, i);
-      expect(m & MARK.dir).toBe(i === 1 ? CANDLE_DIR.doji : CANDLE_DIR.zeroRange);
-      expect([partColor(CANDLE_PART.hollowBody, m), hollowFill(CANDLE_PART.hollowBody, m)]).toEqual(
-        [PALETTE.wick, false],
-      );
-      const out = new Float64Array(4);
-      candleRect(CANDLE_PART.hollowWick, i, 11, 13, 9, 11, m, K, 0, 0, geom(12, 1), out);
-      expect(out[2]).toBe(1);
-    }
+      const [o = 0, h = 0, l = 0, c = 0] = rows[i] ?? [];
+      candleRect(CANDLE_PART.hollowWick, i, o, h, l, c, m, K, 0, 0, g, out);
+      const wick = out[2];
+      // The body keeps the candle's §9 doji / zero-range geometry, painted whole.
+      candleRect(CANDLE_PART.hollowBody, i, o, h, l, c, m, K, 0, 0, g, out);
+      candleRect(CANDLE_PART.body, i, o, h, l, c, m & MARK.dir, K, 0, 0, g, ref);
+      expect(Array.from(out)).toEqual(Array.from(ref));
+      expect(hollowFill(CANDLE_PART.hollowBody, m)).toBe(false);
+      expect(partColor(CANDLE_PART.hollowWick, m)).toBe(PALETTE.wick);
+      return [m & MARK.dir, partColor(CANDLE_PART.hollowBody, m), wick];
+    });
+    const { doji, zeroRange } = CANDLE_DIR;
+    expect(seen).toEqual([
+      [doji, PALETTE.up, 1],
+      [doji, PALETTE.down, 2],
+      [zeroRange, PALETTE.wick, 1],
+    ]);
   });
 
   it("below 3 CSS px the hosts draw the candle's wick and body (D06 §5.5)", () => {
