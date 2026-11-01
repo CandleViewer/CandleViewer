@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type CSSProperties, type JSX } from "react";
 import { NavLink, useNavigate } from "react-router";
-import { Icon } from "@candleviewer/ui";
+import { Icon, Tooltip } from "@candleviewer/ui";
 import { getMeClaims } from "../../lib/auth/meCache";
 import { registerCommand } from "../../keymap/KeymapHost";
 import { ROUTE_MANIFEST } from "../../routes/manifest";
@@ -77,7 +77,7 @@ const ARROWS: Readonly<Record<string, (i: number, n: number) => number>> = {
 export interface NavRailProps {
   /** Count words per item ("2 new"). Nothing supplies one yet; the slot renders nothing. */
   readonly badges?: NavBadges;
-  /** The 64 px icon rail (S6): labels concealed but named, a hover tooltip stand-in per item. */
+  /** The 64 px icon rail (S6): labels concealed but named, a CMP-016 echo tooltip per item. */
   readonly collapsed?: boolean;
   readonly reduceMotion?: boolean;
 }
@@ -135,28 +135,35 @@ export function NavRail({
         const badge = badges[item.id];
         return (
           <li key={item.id}>
-            <NavLink
-              to={item.to}
-              style={linkStyle}
-              aria-label={badge === undefined ? undefined : `${item.label}, ${badge}`}
-              aria-keyshortcuts={`Alt+${item.digit}`}
-              // CMP-016 stand-in: D03 §5.3's "Alerts · 2 new · Alt+5" on hover only (not on focus).
-              title={
+            {/* CMP-016 echo (D03 §5.3 "Alerts · 2 new · Alt+5"), on hover and keyboard focus (SC 1.4.13).
+                The name already lives in the label span, so the tooltip is aria-hidden. Empty content
+                (expanded) renders no node and keeps one stable tree, so focus survives the toggle. */}
+            <Tooltip
+              mode="echo"
+              side="right"
+              content={
                 collapsed
                   ? [item.label, badge, `Alt+${item.digit}`].filter(Boolean).join(" · ")
-                  : undefined
+                  : ""
               }
             >
-              {item.icon !== null ? (
-                <Icon name={item.icon} />
-              ) : collapsed ? (
-                <span aria-hidden="true" style={INITIAL}>
-                  {item.label.charAt(0)}
-                </span>
-              ) : null}
-              <span style={labelStyle(collapsed, reduceMotion)}>{item.label}</span>
-              {badge === undefined ? null : <span style={BADGE}>{badge}</span>}
-            </NavLink>
+              <NavLink
+                to={item.to}
+                style={linkStyle}
+                aria-label={badge === undefined ? undefined : `${item.label}, ${badge}`}
+                aria-keyshortcuts={`Alt+${item.digit}`}
+              >
+                {item.icon !== null ? (
+                  <Icon name={item.icon} />
+                ) : collapsed ? (
+                  <span aria-hidden="true" style={INITIAL}>
+                    {item.label.charAt(0)}
+                  </span>
+                ) : null}
+                <span style={labelStyle(collapsed, reduceMotion)}>{item.label}</span>
+                {badge === undefined ? null : <span style={BADGE}>{badge}</span>}
+              </NavLink>
+            </Tooltip>
           </li>
         );
       })}

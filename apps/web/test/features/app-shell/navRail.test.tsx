@@ -233,3 +233,56 @@ describe("E10-S01 S5: range bindings in the dispatcher and the validator", () =>
     expect(validateBinding("global.nav_rail", "Alt+1..9", cur())).toBeNull();
   });
 });
+
+describe("E10-Q03 fix 1: the collapsed rail's CMP-016 echo tooltip (SC 1.4.13)", () => {
+  const renderRail = (collapsed: boolean) => {
+    signIn("owner");
+    return render(
+      <MemoryRouter initialEntries={["/journal"]}>
+        <NavRail collapsed={collapsed} badges={{ alerts: "2 new" }} />
+      </MemoryRouter>,
+    );
+  };
+  const tip = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="tooltip"]');
+
+  it("shows on keyboard focus with the name, badge and key, aria-hidden so nothing reads twice", () => {
+    renderRail(true);
+    const link = screen.getByRole("link", { name: "Alerts, 2 new" });
+    expect(link).not.toHaveAttribute("title");
+    expect(link).not.toHaveAttribute("aria-describedby");
+    expect(document.querySelector('[role="tooltip"]:not([hidden])')).toBeNull(); // hidden until focus
+    act(() => link.focus());
+    fireEvent.focus(link); // jsdom: a script focus is not focus-visible, so no echo without this
+    const shown = document.querySelector<HTMLElement>('[role="tooltip"]:not([hidden])');
+    expect(shown).not.toBeNull();
+    expect(shown).toHaveAttribute("aria-hidden", "true");
+    expect(shown).toHaveTextContent("Alerts · 2 new · Alt+5");
+    expect(screen.queryByRole("tooltip")).toBeNull(); // aria-hidden: absent from the a11y tree
+  });
+
+  it("Esc hides it and keeps focus on the link", () => {
+    renderRail(true);
+    const link = screen.getByRole("link", { name: "Journal" });
+    act(() => link.focus());
+    fireEvent.focus(link);
+    expect(document.querySelector('[role="tooltip"]:not([hidden])')).not.toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.querySelector('[role="tooltip"]:not([hidden])')).toBeNull();
+    expect(link).toHaveFocus();
+  });
+
+  it("renders no tooltip node when expanded, and the link keeps its identity across the toggle", () => {
+    const { rerender } = renderRail(false);
+    const link = screen.getByRole("link", { name: "Journal" });
+    act(() => link.focus());
+    fireEvent.focus(link);
+    expect(tip()).toBeNull(); // expanded: empty content renders no node at all
+    rerender(
+      <MemoryRouter initialEntries={["/journal"]}>
+        <NavRail collapsed badges={{ alerts: "2 new" }} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("link", { name: "Journal" })).toBe(link);
+    expect(link).toHaveFocus();
+  });
+});

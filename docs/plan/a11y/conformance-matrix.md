@@ -10,7 +10,7 @@ Generated, do not edit: regenerate with `python3 docs/plan/a11y/_tools/register.
 - States: 812 (145 on reachable screens); 63 covered, 704 unreachable, 45 not run.
 - Deep pass: 12 of 33 listed ids auditable; 8 run.
 - WCAG 2.2 cells (6 per non-reserved row): n/a 109, pass 41, pass (exception) 12, unreachable 732 (unreachable counted apart from n/a).
-- Findings: 28 in all, 14 open (Level A 5, AA 9; P0 0, P1 9, P2 5, P3 0; needs filing go 0); explicit no-findings rows: 6 (no finding recorded in this run's checks; not a conformance claim; 0 of them have second-rater disagreements pending adjudication, record §10.5).
+- Findings: 30 in all, 14 open (Level A 5, AA 9; P0 0, P1 9, P2 5, P3 0; needs filing go 0); explicit no-findings rows: 5 (no finding recorded in this run's checks; not a conformance claim; 0 of them have second-rater disagreements pending adjudication, record §10.5).
 - Patterns: A11Y-P-01 (2), A11Y-P-02 (4), A11Y-P-03 (1), A11Y-P-04 (3), A11Y-P-05 (2), A11Y-P-06 (3), A11Y-P-07 (1).
 - Screen reader: the sign-off passes are E47-T04's; this sweep records proxies only.
 

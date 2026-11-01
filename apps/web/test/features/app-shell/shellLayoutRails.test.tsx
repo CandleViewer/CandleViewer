@@ -67,6 +67,12 @@ const durations = (transition: string): string[] =>
     (m) => `motion.duration.${m[1] ?? ""}`,
   );
 
+/** The rail's echoes (the only tooltips carrying an Alt+N hint). */
+const railEchoes = (): (string | null)[] =>
+  [...document.querySelectorAll('[role="tooltip"]')]
+    .map((n) => n.textContent)
+    .filter((t) => t?.includes("Alt+"));
+
 beforeEach(() => {
   resetMeClaims();
   setMeClaims({ authenticated: true, role: "owner", permissions: [] });
@@ -89,15 +95,19 @@ describe("E10-S01 S6: nav rail collapse", () => {
     expect(railToggle()).toHaveAccessibleName("Expand navigation rail");
     expect(rail().querySelector("[data-rail]")).toHaveAttribute("data-rail", "collapsed");
     for (const name of ["Terminal", "Rules", "Settings", "Admin"]) {
-      expect(within(rail()).getByRole("link", { name })).toHaveAttribute(
-        "title",
-        expect.stringContaining(`${name} · Alt+`),
-      );
+      const link = within(rail()).getByRole("link", { name });
+      expect(link).not.toHaveAttribute("title"); // the CMP-016 echo replaced the title (SC 1.4.13)
+      fireEvent.focus(link);
+      // the item's own echo carries its hint (what the old title held), aria-hidden: the name stays the only read
+      expect(railEchoes()).toContainEqual(expect.stringContaining(`${name} · Alt+`));
     }
+    for (const tip of document.querySelectorAll('[role="tooltip"]'))
+      expect(tip).toHaveAttribute("aria-hidden", "true");
     fireEvent.click(railToggle());
     expect(railToggle()).toHaveAttribute("aria-expanded", "true");
     expect(railToggle()).toHaveAccessibleName("Collapse navigation rail");
     expect(within(rail()).getByRole("link", { name: "Rules" })).not.toHaveAttribute("title");
+    expect(railEchoes()).toEqual([]); // expanded: no tooltip node
   });
 
   it("keeps a denied item out of the collapsed rail: no link, tooltip or glyph (manager)", async () => {
@@ -106,7 +116,8 @@ describe("E10-S01 S6: nav rail collapse", () => {
     fireEvent.click(railToggle());
     expect(rail().querySelector('a[href^="/admin"]')).toBeNull();
     const links = within(rail()).getAllByRole("link");
-    expect(links.map((a) => a.getAttribute("title") ?? "").join("|")).not.toContain("Admin");
+    for (const a of links) fireEvent.focus(a);
+    expect(railEchoes().join("|")).not.toContain("Admin");
     // one hidden initial per visible item, each inside its own (non-admin) link
     const glyphs = [...rail().querySelectorAll('a > span[aria-hidden="true"]')];
     expect(glyphs).toHaveLength(links.length);

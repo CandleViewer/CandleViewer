@@ -122,6 +122,10 @@ describe("CMP-092 DegradedModeBanner in ShellBannerSlot", () => {
       `Dismiss ${exchangeFeedDown.message}`,
       `Dismiss ${ruleEngineDown.message}`,
     ]);
+    // E10-Q03: the rows sit in one landmark (axe `region`, moderate, was 12 cells of the shell sweep)
+    expect(screen.getByRole("region", { name: "System notices" })).toContainElement(
+      screen.getByText(maintenance.message),
+    );
     await expectNoSeriousAxe();
   });
 

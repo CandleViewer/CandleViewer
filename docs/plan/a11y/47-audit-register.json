@@ -4,8 +4,8 @@
     "t01Register": "docs/plan/a11y/findings.json",
     "auditedSha": "a6ec967627b74737c6b462691cab8262a7176877",
     "inputs": {
-      "docs/plan/14-screens-catalogue.md": "cdf8673282fb6160d400a93165fee3f0018dc340",
-      "docs/plan/a11y/findings.json": "35e7928c0f72565c834eb45b0ddd68b25aee3563"
+      "docs/plan/14-screens-catalogue.md": "c3ad20c64a90a7b534e0f45f7a854ef64c5f08ce",
+      "docs/plan/a11y/findings.json": "55fb95f3a45dab6950924fcb0c47c5c20cad6081"
     },
     "reviews": [
       "E09-D10",
@@ -124,18 +124,18 @@
       "no findings at sha": 10,
       "not auditable at sha": 109
     },
-    "findings": 119,
-    "fixed": 13,
-    "open": 106,
+    "findings": 121,
+    "fixed": 16,
+    "open": 105,
     "bySeverity": {
       "blocker": 4,
       "major": 26,
-      "minor": 64,
+      "minor": 63,
       "info": 12
     },
     "bySource": {
       "E47-D02 G-T2 pass": 2,
-      "E47-T01 register": 28,
+      "E47-T01 register": 30,
       "review E08-D12": 8,
       "review E09-D10": 50,
       "review E12-D11": 7,
@@ -144,7 +144,7 @@
     },
     "byOwner": {
       "E47-D03": 16,
-      "E47-D04": 16,
+      "E47-D04": 15,
       "E47-D05": 2,
       "E47-D06": 5,
       "E47-D07": 34,
@@ -233,7 +233,7 @@
       "coverage": "partial",
       "evidence": "axe pass in dark, light, high-contrast; keyboard fail",
       "verdict": "findings",
-      "verdictReason": "15 open finding(s); 1 T01 finding(s) fixed since the audit",
+      "verdictReason": "14 open finding(s); 2 T01 finding(s) fixed since the audit",
       "auditor": "agent-run (E47-D02 lane)",
       "date": "2026-10-31",
       "surface": "chrome",
@@ -428,7 +428,7 @@
       "coverage": "covered",
       "evidence": "axe pass in dark, light, high-contrast; keyboard pass",
       "verdict": "no findings at sha",
-      "verdictReason": "covered",
+      "verdictReason": "covered; 1 T01 finding(s) fixed since the audit",
       "auditor": "agent-run (E47-D02 lane)",
       "date": "2026-10-31",
       "surface": "chrome",
@@ -438,7 +438,9 @@
         "checked": 0,
         "unchecked": 4
       },
-      "findings": [],
+      "findings": [
+        "A11Y-F-0031"
+      ],
       "t01Owner": "E10-S01 #304"
     },
     {
@@ -468,7 +470,7 @@
       "coverage": "covered",
       "evidence": "axe pass in dark, light, high-contrast; keyboard pass",
       "verdict": "no findings at sha",
-      "verdictReason": "covered; 1 T01 finding(s) fixed since the audit",
+      "verdictReason": "covered; 2 T01 finding(s) fixed since the audit",
       "auditor": "agent-run (E47-D02 lane)",
       "date": "2026-10-31",
       "surface": "chrome",
@@ -479,7 +481,8 @@
         "unchecked": 5
       },
       "findings": [
-        "A11Y-F-0026"
+        "A11Y-F-0026",
+        "A11Y-F-0030"
       ],
       "t01Owner": "E39-S05 #1012"
     },
@@ -552,7 +555,7 @@
       "coverage": "covered",
       "evidence": "axe pass in dark, light, high-contrast; keyboard fail",
       "verdict": "findings",
-      "verdictReason": "2 open finding(s); 1 T01 finding(s) fixed since the audit",
+      "verdictReason": "1 open finding(s); 2 T01 finding(s) fixed since the audit",
       "auditor": "agent-run (E47-D02 lane)",
       "date": "2026-10-31",
       "surface": "chrome",
@@ -991,8 +994,8 @@
       "canvasLayers": null,
       "signoff": {
         "line": "Design sign-off acceptance checklist",
-        "checked": 0,
-        "unchecked": 6
+        "checked": 4,
+        "unchecked": 2
       },
       "findings": [
         "A11Y-R-E14-D10-F-01",
@@ -1166,8 +1169,8 @@
       "canvasLayers": null,
       "signoff": {
         "line": "Design sign-off acceptance checklist",
-        "checked": 0,
-        "unchecked": 5
+        "checked": 1,
+        "unchecked": 4
       },
       "findings": [
         "A11Y-R-E12-D11-F-02"
@@ -1208,8 +1211,8 @@
       "canvasLayers": null,
       "signoff": {
         "line": "Design sign-off acceptance checklist",
-        "checked": 0,
-        "unchecked": 4
+        "checked": 4,
+        "unchecked": 0
       },
       "findings": [],
       "t01Owner": "E16-S05 #487"
@@ -1228,8 +1231,8 @@
       "canvasLayers": null,
       "signoff": {
         "line": "Design sign-off acceptance checklist",
-        "checked": 0,
-        "unchecked": 5
+        "checked": 4,
+        "unchecked": 1
       },
       "findings": [
         "A11Y-R-E12-D11-F-06"
@@ -3537,7 +3540,7 @@
       "title": "DP-001: Sign-in disables the focused fields and button while busy; focus drops to body, and stays there on 429 and mfa_required",
       "remedy": "Focus stays on (or returns to) a meaningful element: keep the submit control focusable (aria-disabled instead of disabled, with the submit handler ignoring activation while a request is pending or the 429 lockout is active, so no duplicate POSTs) or move focus to the status/summary on every outcome.",
       "remediation": "E47-S05 #1319",
-      "status": "open",
+      "status": "in-progress",
       "designOwner": "E47-D04",
       "ownerReason": "focus order and visibility criteria",
       "surface": "chrome",
@@ -3592,7 +3595,7 @@
       "title": "DP-003 (advisory, D-10: not a 4.1.2 failure): Show-password toggle flips its name and aria-pressed together ('Hide password, pressed')",
       "remedy": "A toggle keeps one name and flips aria-pressed (CMP-201 states: reveal 'aria-pressed=\"true\", the name unchanged'), e.g. 'Show password' pressed/not pressed. Adjudication: D-10: name, role and value are programmatically determinable, so 4.1.2 holds; kept as a Minor (advisory) finding against 4.1.2 (the double announcement contradicts itself), routed to the component's owner as a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "remediation": "#5196",
-      "status": "fixed (#5214, 9684b740138f)",
+      "status": "fixed",
       "designOwner": "E47-D10",
       "ownerReason": "name/role/value and error identification are a primitive and pattern contract",
       "surface": "chrome",
@@ -3645,9 +3648,9 @@
       "class": null,
       "pattern": "A11Y-P-02",
       "title": "DP-005: Each invite-wizard step change leaves focus on body; step 4 (codes shown once) is entered silently",
-      "remedy": "Focus moves to the new step's h1 (tabindex=-1) on each step change, so 'Step 3 of 4' and the one-time recovery-codes warning are read.",
+      "remedy": "On each step change focus moves to the new step's first control, or to the heading when the invite turns invalid, so 'Step 3 of 4' and the one-time recovery-codes warning are read.",
       "remediation": "E47-S05 #1319",
-      "status": "open",
+      "status": "fixed",
       "designOwner": "E47-D04",
       "ownerReason": "focus order and visibility criteria",
       "surface": "chrome",
@@ -3674,7 +3677,7 @@
       "title": "DP-006 (4.1.2, with 1.3.1; re-classed from 3.3.1 by D-09): Password-change error messages are not programmatically tied to their field (no aria-invalid / aria-describedby)",
       "remedy": "4.1.2 / 1.3.1: the field in error carries aria-invalid=true and an aria-describedby to its message, so the association the visual layout implies is programmatic; focus moves to the first invalid field. Advisory: the server refusal names the current password ('Current password is incorrect'). Adjudication: D-09: 3.3.1 passes (the error is identified and described in text in an alert region); the finding is re-classed under 4.1.2 / 1.3.1 (no programmatic association), still Level A, kept; a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "remediation": "#5196",
-      "status": "fixed (#5214, 9684b740138f)",
+      "status": "fixed",
       "designOwner": "E47-D10",
       "ownerReason": "name/role/value and error identification are a primitive and pattern contract",
       "surface": "chrome",
@@ -3701,7 +3704,7 @@
       "title": "DP-007 (2.4.3, with 4.1.3 secondary; D-08): 'Password changed' replaces the form with focus on body and nothing announced",
       "remedy": "Focus moves to the 'Password changed' heading (or a status announces it). Adjudication: D-08: one finding, primary SC 2.4.3 with 4.1.3 as the secondary SC (one defect, one row). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "remediation": "E47-S05 #1319",
-      "status": "open",
+      "status": "in-progress",
       "designOwner": "E47-D04",
       "ownerReason": "focus order and visibility criteria",
       "surface": "chrome",
@@ -3782,7 +3785,7 @@
       "title": "DP-010: Step-up dialog closes at the challenge expiry with no warning and no way to continue",
       "remedy": "2.2.1: warn at least 20 s before the time limit and offer a simple way to continue. A remedy may only re-issue a fresh challenge on request; it never extends the old one or softens the factor (BQ-10): (a) a re-issue is a new server-issued challenge_id with the same factors; the step-up failure count (the session's failures_remaining), the read-only downgrade after the third failure and the auth.step_up_required audit continue across a re-issue, which never resets the count; (b) at expiry the typed password and code are discarded, never retained or replayed into the new challenge; only the held, non-secret action state survives; the pre-expiry warning renders only the remaining time of the server's challenge_expires_at. The TTL and the failure count never change. Note: Whether the 'essential' exception covers a security challenge window is for the second rater / security lens; no exception is claimed here (Level A cannot carry a nomination). Adjudication: filed in #5196 (filing go, decision 2a; owner the auth surfaces, E09). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "remediation": "#5196",
-      "status": "fixed (#5214, 9684b740138f)",
+      "status": "fixed",
       "designOwner": "E47-D08",
       "ownerReason": "time limits and motion criteria",
       "surface": "chrome",
@@ -3809,7 +3812,7 @@
       "title": "DP-011: Step-up Confirm stays disabled with no text saying why; no format hint on the code field",
       "remedy": "The required format is stated ('6-digit code from your authenticator app') and an invalid entry is described in text when the user tries to submit. Note: The typed-confirmation mismatch (case-sensitive target) behaves the same way (silent disabled Confirm). Per BQ-10 that is a note for S08 #1322, not a finding, and no remedy may relax it. Also touches SC 3.3.2. Adjudication: filed in #5196 (filing go, decision 2a; owner the auth surfaces, E09). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "remediation": "#5196",
-      "status": "fixed (#5214, 9684b740138f)",
+      "status": "fixed",
       "designOwner": "E47-D10",
       "ownerReason": "name/role/value and error identification are a primitive and pattern contract",
       "surface": "chrome",
@@ -3836,7 +3839,7 @@
       "title": "DP-012: Third failed step-up closes the dialog with only 'Not sent'; the error and its consequence are not described",
       "remedy": "The third error is described in text before or as the dialog closes ('Incorrect code. Too many attempts: the invitation was not sent. ...'), announced assertively. Adjudication: filed in #5196 (filing go, decision 2a; owner the auth surfaces, E09). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "remediation": "#5196",
-      "status": "fixed (#5214, 9684b740138f)",
+      "status": "fixed",
       "designOwner": "E47-D10",
       "ownerReason": "name/role/value and error identification are a primitive and pattern contract",
       "surface": "chrome",
@@ -3863,7 +3866,7 @@
       "title": "DP-013: A scrim click moves focus out of the step-up modal to the page behind it",
       "remedy": "Focus stays inside the modal dialog (focusin guard or inert background), as SCR-005 does.",
       "remediation": "E47-S05 #1319",
-      "status": "open",
+      "status": "in-progress",
       "designOwner": "E47-D04",
       "ownerReason": "focus order and visibility criteria",
       "surface": "chrome",
@@ -4174,7 +4177,7 @@
       "title": "D-01 / R2-F09: document.title is the product name on every route; no route sets a descriptive title",
       "remedy": "2.4.2: each route sets a unique, descriptive title (page, then product). Adjudication: D-01: upheld as one Level A pattern finding (A11Y-P-07, page titles), owner the shell / routing (E10-S01 #304 as the open build ticket); a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "remediation": "#5196",
-      "status": "fixed (#5213, aec583dcc862)",
+      "status": "fixed",
       "designOwner": "engineering-only",
       "ownerReason": "page titles and multiple ways to find a page are routing behaviour, not a design deliverable",
       "surface": "chrome",
@@ -4201,7 +4204,7 @@
       "title": "D-03 / R2-F01: the shortcuts dialog renders below the fold, focus stays on body and Escape does not close it",
       "remedy": "2.4.3: on open, focus moves into the dialog (CMP-094); Escape closes it and focus returns to the trigger. Adjudication: D-03: new Level A finding; owner the keymap cheatsheet (E10-S02's lane); a row in #5196 (filing go, decision 2a). #5160 changed SCR-013 after the audited sha: this row describes the audited sha and is re-checked first. ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "remediation": "#5196",
-      "status": "fixed (#5214, 9684b740138f)",
+      "status": "fixed",
       "designOwner": "E47-D04",
       "ownerReason": "focus order and visibility criteria",
       "surface": "chrome",
@@ -4228,7 +4231,7 @@
       "title": "D-04 / R2-F02: after Finish or Escape the guided tour removes its dialog and focus falls to body",
       "remedy": "2.4.3: on Finish or Escape focus returns to the element that opened the tour (or the host's named fallback, the checklist). Adjudication: D-04: new Level A finding, a member of pattern A11Y-P-01 (focus return); a row in #5196 (filing go, decision 2a). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "remediation": "#5196",
-      "status": "fixed (#5214, 9684b740138f)",
+      "status": "fixed",
       "designOwner": "E47-D04",
       "ownerReason": "focus order and visibility criteria",
       "surface": "chrome",
@@ -4255,7 +4258,7 @@
       "title": "D-05 / R2-F05: the toast auto-dismisses after about 5 s; hover does not pause it and it cannot be re-read in place (2.2.1, with 4.1.3)",
       "remedy": "2.2.1 (and 4.1.3): the DS toast pauses on hover and focus and offers a re-readable log or the shell's announcer history (CMP-045 A11y: 'pauses on hover/focus, and provides a persistent-log fallback'); none of 2.2.1's exceptions (real-time, essential, 20 hours) applies. Adjudication: D-05: an auto-dismissing toast is a content-set time limit; fail 2.2.1 (and 4.1.3); filed as #5197 for the design-system lane (filing go, decision 2b). ADJUDICATED (orchestrator, 2026-10-31, #1323 adjudication of record — 6543611748).",
       "remediation": "#5197",
-      "status": "fixed (#5215, d721407c71d7)",
+      "status": "fixed",
       "designOwner": "E47-D08",
       "ownerReason": "time limits and motion criteria",
       "surface": "chrome",
@@ -4286,6 +4289,60 @@
       "status": "open",
       "designOwner": "engineering-only",
       "ownerReason": "page titles and multiple ways to find a page are routing behaviour, not a design deliverable",
+      "surface": "chrome",
+      "scReason": "",
+      "remedyNote": "",
+      "vehicle": ""
+    },
+    {
+      "id": "A11Y-F-0030",
+      "screenSource": "T01 register",
+      "source": "E47-T01 register",
+      "sourceId": "A11Y-F-0030",
+      "screens": [
+        "SCR-013"
+      ],
+      "sc": [
+        "1.4.3"
+      ],
+      "level": "AA",
+      "severity": "major",
+      "sourceSeverity": "serious",
+      "class": null,
+      "pattern": null,
+      "title": "The cheatsheet's Customise link took the browser's default link colour: below 4.5:1 on the raised surface in dark and high contrast",
+      "remedy": "1.4.3: link text reaches 4.5:1 on color.surface.raised in every theme; the CMP-021 Link atom (color.text.link, always underlined) is used.",
+      "remediation": "E10-Q03 #302",
+      "status": "fixed",
+      "designOwner": "E47-D03",
+      "ownerReason": "colour and contrast criteria",
+      "surface": "chrome",
+      "scReason": "",
+      "remedyNote": "",
+      "vehicle": ""
+    },
+    {
+      "id": "A11Y-F-0031",
+      "screenSource": "T01 register",
+      "source": "E47-T01 register",
+      "sourceId": "A11Y-F-0031",
+      "screens": [
+        "SCR-011"
+      ],
+      "sc": [
+        "1.4.13"
+      ],
+      "level": "AA",
+      "severity": "minor",
+      "sourceSeverity": "moderate",
+      "class": null,
+      "pattern": null,
+      "title": "The collapsed rail's name, badge and key hint were a native title: no keyboard focus, not dismissible, not hoverable",
+      "remedy": "1.4.13: the hint shows on hover and keyboard focus, stays while hovered, and Esc dismisses it with focus kept: the CMP-016 Tooltip in echo mode (aria-hidden, so nothing is read twice).",
+      "remediation": "E10-Q03 #302",
+      "status": "fixed",
+      "designOwner": "engineering-only",
+      "ownerReason": "the collapsed rail's hint was a native title; fixed in E10-Q03 (#302) by the existing CMP-016 Tooltip in echo mode, so no new design is owed",
       "surface": "chrome",
       "scReason": "",
       "remedyNote": "",

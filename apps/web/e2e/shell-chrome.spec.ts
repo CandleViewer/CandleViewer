@@ -91,33 +91,133 @@ const THEMES = [
   ["high-contrast", { theme: "dark", high_contrast: true }],
 ] as const;
 
+// E10-Q03: both densities, and every impact level counts (E10-S01 counted serious/critical at one density).
 for (const [name, appearance] of THEMES)
-  for (const role of ["owner", "viewer"] as const)
-    test(`E10-S01 chrome in ${name} for ${role}: badge visible, no serious axe violation`, async ({
-      page,
-    }) => {
-      await stubSession(page, { role });
-      await page.route("**/api/v1/me/preferences", (r) => r.fulfill(json({ appearance })));
-      await page.goto("/journal");
-      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-      await expect(page.locator("html")).toHaveAttribute("data-theme", name);
-      await expect(page.getByRole("img", { name: "Trading environment: Demo" })).toBeVisible();
-      // The chrome only: the routed screens are judged by the a11y gate's own collectors. Each
-      // target must exist, so an include that matches nothing cannot pass silently.
-      const CHROME = ["header", 'nav[aria-label="Primary"]', "aside", "footer"] as const;
-      let axe = new AxeBuilder({ page }).withTags([...AXE_GATE_TAGS]);
-      for (const target of CHROME) {
-        await expect(page.locator(target), target).toHaveCount(1);
-        axe = axe.include(target);
-      }
-      const res = await axe.analyze();
-      const blocking = res.violations.filter(
-        (v) => v.impact === "serious" || v.impact === "critical",
-      );
-      expect(
-        blocking.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`),
-      ).toEqual([]);
-    });
+  for (const density of ["compact", "comfortable"] as const)
+    for (const role of ["owner", "viewer"] as const)
+      test(`E10-S01 chrome in ${name}/${density} for ${role}: badge visible, no axe violation of any impact`, async ({
+        page,
+      }) => {
+        await stubSession(page, { role });
+        await page.route("**/api/v1/me/preferences", (r) =>
+          r.fulfill(json({ appearance: { ...appearance, density } })),
+        );
+        await page.goto("/journal");
+        await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+        await expect(page.locator("html")).toHaveAttribute("data-theme", name);
+        await expect(page.locator("html")).toHaveAttribute("data-density", density);
+        await expect(page.getByRole("img", { name: "Trading environment: Demo" })).toBeVisible();
+        // The chrome only: the routed screens are judged by the a11y gate's own collectors. Each
+        // target must exist, so an include that matches nothing cannot pass silently.
+        const CHROME = ["header", 'nav[aria-label="Primary"]', "aside", "footer"] as const;
+        // Two scans, every impact counted: the gate's tags, then the best-practice rules (region, heading-order).
+        const scan = (): AxeBuilder => {
+          let axe = new AxeBuilder({ page });
+          for (const target of CHROME) axe = axe.include(target);
+          return axe;
+        };
+        for (const target of CHROME) await expect(page.locator(target), target).toHaveCount(1);
+        const gate = await scan()
+          .withTags([...AXE_GATE_TAGS])
+          .analyze();
+        const practice = await scan()
+          .options({ runOnly: { type: "tag", values: ["best-practice"] } })
+          .analyze();
+        const res = { violations: [...gate.violations, ...practice.violations] };
+        expect(
+          res.violations.map(
+            (v) => `${v.impact}/${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`,
+          ),
+        ).toEqual([]);
+      });
+
+// E10-Q03 (Gherkin 3): a LIVE session says so, once per route change, politely.
+test("E10-Q03 LIVE session: the badge names Live and each route change announces it once", async ({
+  page,
+}) => {
+  await stubSession(page, { role: "owner" });
+  await page.route("**/api/v1/me", (r) =>
+    r.fulfill(
+      json({
+        role: "owner",
+        permissions: [],
+        session: { environment: "live", elevated_until: null },
+      }),
+    ),
+  );
+  await page.goto("/journal");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(
+    page.getByRole("banner").getByRole("img", { name: "Trading environment: Live" }),
+  ).toBeVisible();
+  const before = (await polite(page))?.seq ?? 0;
+  await rail(page).getByRole("link", { name: "Replay", exact: true }).click();
+  await expect(page).toHaveURL(/\/replay$/u);
+  await expect.poll(async () => (await polite(page))?.seq ?? 0).toBe(before + 1);
+  expect((await polite(page))?.text).toBe("Trading environment: Live");
+  // not again for a re-render: the sequence stays put
+  await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
+  expect((await polite(page))?.seq).toBe(before + 1);
+});
+
+// E10-Q03 (Gherkin 2): each overlay's Esc closes it and returns focus to what opened it.
+test("E10-Q03 Esc closes the cheatsheet and the drawer and returns focus to their trigger", async ({
+  page,
+}) => {
+  await stubSession(page, { role: "owner" });
+  await page.goto("/journal");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+
+  const drawerButton = page.getByRole("button", { name: "Notifications" });
+  await page.keyboard.press("Shift"); // keyboard modality: the launcher's focus is :focus-visible
+  await drawerButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(drawerButton).toHaveAttribute("aria-expanded", "true");
+  // The launcher's own CMP-016 tooltip is showing (keyboard focus) and takes the first Esc, as the
+  // APG tooltip pattern says (the topmost layer takes it); the second closes the drawer.
+  await page.keyboard.press("Escape");
+  await expect(drawerButton).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator('[role="tooltip"]:not([hidden])')).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(drawerButton).toHaveAttribute("aria-expanded", "false");
+  await expect(drawerButton).toBeFocused();
+
+  const toggle = rail(page).getByRole("button", { name: /navigation rail$/u });
+  await toggle.focus();
+  await page.keyboard.press("Control+/");
+  const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(sheet).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+  await expect(toggle).toBeFocused();
+});
+
+// E10-Q03 fix 1: the collapsed rail's name, badge and key show on keyboard focus (SC 1.4.13), Esc keeps
+// focus, and nothing is read twice (the echo is aria-hidden; the link keeps its own name).
+test("E10-Q03 collapsed rail: the CMP-016 echo shows on keyboard focus and Esc hides it", async ({
+  page,
+}) => {
+  await stubSession(page, { role: "owner" });
+  await page.goto("/journal");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  const toggle = rail(page).getByRole("button", { name: /navigation rail$/u });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await page.keyboard.press("Shift"); // keyboard modality: the next focus is :focus-visible
+  const link = rail(page).getByRole("link", { name: "Journal", exact: true });
+  await link.focus();
+  const echo = page.locator('[role="tooltip"]:not([hidden])');
+  await expect(echo).toHaveText(/^Journal · Alt\+\d$/u);
+  await expect(echo).toHaveAttribute("aria-hidden", "true");
+  await expect(link).not.toHaveAttribute("title");
+  await page.keyboard.press("Escape");
+  await expect(echo).toHaveCount(0);
+  await expect(link).toBeFocused();
+  // expanded again: no echo at all
+  await toggle.click();
+  await link.focus();
+  await expect(page.locator('[role="tooltip"]:not([hidden])')).toHaveCount(0);
+});
 
 // #304 S10 (A11Y-F-0016, SC 1.4.10): at 320 CSS px the rail is collapsed by default, and expanded it
 // is an overlay over `main` (the drawer pattern), never a column: `main` keeps its width either way.

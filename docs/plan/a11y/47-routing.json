@@ -338,9 +338,13 @@
     "A11Y-D02-T2-SCR-112": {
       "owner": "engineering-only",
       "reason": "a documentation fix to 14's component list by 14's owner (#2701), modelled on E08-D12 F-03, not a design deliverable"
+    },
+    "A11Y-F-0031": {
+      "owner": "engineering-only",
+      "reason": "the collapsed rail's hint was a native title; fixed in E10-Q03 (#302) by the existing CMP-016 Tooltip in echo mode, so no new design is owed"
     }
   },
-  "statusOverridesNote": "The register status comes from findings.json, which this PR does not edit (the E47-T01 sweep PR owns it). Each entry here marks a finding fixed on main by the named merged PR; the tool applies it on top of the register, and an entry stops applying once findings.json itself says fixed (then the register's status is kept). Remove an entry when findings.json catches up.",
+  "statusOverridesNote": "The register status comes from findings.json (E47-T01 owns the sweep rows; E10-Q03 #302 adds A11Y-F-0030 and A11Y-F-0031). Each entry here marks a finding fixed on main by the named merged PR; the tool applies it on top of the register, and an entry stops applying once findings.json itself says fixed (then the register's status is kept). Remove an entry when findings.json catches up.",
   "statusOverrides": {
     "A11Y-F-0003": {
       "status": "fixed",
