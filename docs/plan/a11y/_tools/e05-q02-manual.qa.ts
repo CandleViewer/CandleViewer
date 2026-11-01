@@ -6,7 +6,10 @@
 //               ConfirmDialog standard and hold (the hold's discrete two-press path runs in the story's own
 //               play function on the story clock; the check below asserts that play finished and that the
 //               hold Confirm never reads a bare Enter), plus a generic Tab walk over every story
-//               (every tabbable element reachable, no keyboard trap, SC 2.1.1 / 2.1.2).
+//               (a fixed-point trap, or a repeated focus cycle shorter than the tabbable count outside an
+//               aria-modal, fails unless Escape takes focus out of the open dialog; reach is recorded per
+//               element, SC 2.1.1 / 2.1.2). Keyboard, Tab walk, zoom and motion run in all three themes at
+//               compact density; a story that pins its own motion is recorded with skip: true.
 //   zoom      - a dense table (compact density, the three themes) at 200 % zoom (a 640 x 400 CSS-px viewport,
 //               full-page-zoom emulation, WCAG 1.4.4; SC 1.4.10 reflow at 320 x 256 is not run here) and
 //               125 % text scale (root font-size 125 %, WCAG 1.4.4): no horizontal page
@@ -34,6 +37,8 @@ interface Rec {
   readonly theme: string;
   readonly sc: string;
   readonly pass: boolean;
+  /** Not applicable: recorded, never counted as asserted. */
+  readonly skip?: boolean;
   readonly detail: string;
 }
 const isRecord = (v: unknown): v is { [k: string]: unknown } =>
@@ -49,10 +54,13 @@ const pinnedFinished = (): boolean => {
   return render?.phase === "finished";
 };
 
+/** The theme the running test drives; each test sets it first (one test per worker at a time). */
+let THEME: string = "dark";
+
 async function open(
   page: Page,
   story: string,
-  theme = "dark",
+  theme = THEME,
   density = "compact",
   motion = "system",
 ): Promise<void> {
@@ -85,8 +93,9 @@ const rec = (
   sc: string,
   pass: boolean,
   detail: string,
-  theme = "dark",
-): Rec => ({ check, group, story, theme, sc, pass, detail });
+  theme = THEME,
+  skip = false,
+): Rec => ({ check, group, story, theme, sc, pass, ...(skip ? { skip } : {}), detail });
 const failures = (rows: readonly Rec[]): string =>
   rows
     .filter((r) => !r.pass)
@@ -118,408 +127,425 @@ const gridPos = (page: Page): Promise<string> =>
     return `${rows.indexOf(row)},${[...row.children].indexOf(el)}`;
   });
 
-test("keyboard: skip link", async ({ page }) => {
-  const rows: Rec[] = [];
-  await open(page, "atoms-skiplink--unfocused");
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await page.keyboard.press("Tab");
-  const first = await focusLabel(page);
-  rows.push(
-    rec(
-      "skip link is the first Tab stop",
-      "keyboard",
-      "atoms-skiplink--unfocused",
-      "2.4.1",
-      /Skip to main content/.test(first),
-      first,
-    ),
-  );
-  await page.keyboard.press("Enter");
-  const target = await page.evaluate(() => ({
-    role: document.activeElement?.getAttribute("role") ?? document.activeElement?.tagName,
-    tag: document.activeElement?.tagName,
-  }));
-  rows.push(
-    rec(
-      "Enter moves focus to the main region",
-      "keyboard",
-      "atoms-skiplink--unfocused",
-      "2.4.1",
-      target.tag === "MAIN" || target.role === "main",
-      JSON.stringify(target),
-    ),
-  );
-  save("keyboard-skiplink", rows);
-  expect(failures(rows)).toBe("");
-});
-
-test("keyboard: combobox", async ({ page }) => {
-  const rows: Rec[] = [];
-  const story = "molecules-combobox--sync";
-  await open(page, story);
-  await page.keyboard.press("Tab");
-  const focused = await page.evaluate(() => document.activeElement?.getAttribute("role"));
-  rows.push(
-    rec(
-      "Tab reaches the combobox",
-      "keyboard",
-      story,
-      "2.1.1",
-      focused === "combobox",
-      String(focused),
-    ),
-  );
-  await page.keyboard.press("ArrowDown");
-  const expanded = await page.getByRole("combobox").getAttribute("aria-expanded");
-  rows.push(
-    rec(
-      "ArrowDown opens the list",
-      "keyboard",
-      story,
-      "2.1.1",
-      expanded === "true",
-      `aria-expanded=${String(expanded)}`,
-    ),
-  );
-  const options = await page.getByRole("option").count();
-  rows.push(
-    rec(
-      "the open list exposes options",
-      "keyboard",
-      story,
-      "1.3.1",
-      options > 0,
-      `${options} option(s)`,
-    ),
-  );
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Enter");
-  const value = await page.getByRole("combobox").inputValue();
-  const closed = await page.getByRole("combobox").getAttribute("aria-expanded");
-  rows.push(
-    rec(
-      "ArrowDown then Enter picks an option and closes",
-      "keyboard",
-      story,
-      "2.1.1",
-      value !== "" && closed === "false",
-      `value="${value}", aria-expanded=${String(closed)}`,
-    ),
-  );
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Escape");
-  const afterEsc = await page.getByRole("combobox").getAttribute("aria-expanded");
-  rows.push(
-    rec(
-      "Escape closes the list; focus stays in the field",
-      "keyboard",
-      story,
-      "2.1.1",
-      afterEsc === "false" && (await focusLabel(page)).includes("combobox"),
-      `aria-expanded=${String(afterEsc)}`,
-    ),
-  );
-  save("keyboard-combobox", rows);
-  expect(failures(rows)).toBe("");
-});
-
-test("keyboard: menu", async ({ page }) => {
-  const rows: Rec[] = [];
-  const story = "molecules-menu--default";
-  await open(page, story);
-  await page.keyboard.press("Tab");
-  const trigger = page.getByRole("button", { name: "Layer actions" });
-  rows.push(
-    rec(
-      "Tab reaches the trigger",
-      "keyboard",
-      story,
-      "2.1.1",
-      await trigger.evaluate((e) => e === document.activeElement),
-      await focusLabel(page),
-    ),
-  );
-  await page.keyboard.press("Enter");
-  const menu = await page.getByRole("menu").count();
-  const first = await focusLabel(page);
-  rows.push(
-    rec(
-      "Enter opens the menu, focus on the first item",
-      "keyboard",
-      story,
-      "2.1.1",
-      menu === 1 && /menuitem/.test(first),
-      first,
-    ),
-  );
-  await page.keyboard.press("ArrowDown");
-  const second = await focusLabel(page);
-  rows.push(
-    rec(
-      "ArrowDown moves to the next item",
-      "keyboard",
-      story,
-      "2.1.1",
-      second !== first && /menuitem/.test(second),
-      second,
-    ),
-  );
-  await page.keyboard.press("End");
-  const last = await focusLabel(page);
-  rows.push(
-    rec("End moves to the last item", "keyboard", story, "2.1.1", /Remove/.test(last), last),
-  );
-  await page.keyboard.press("Escape");
-  await page
-    .getByRole("menu")
-    .waitFor({ state: "detached", timeout: 2000 })
-    .catch(() => undefined);
-  rows.push(
-    rec(
-      "Escape closes the menu and returns focus to the trigger",
-      "keyboard",
-      story,
-      "2.4.3",
-      (await page.getByRole("menu").count()) === 0 &&
-        (await trigger.evaluate((e) => e === document.activeElement)),
-      await focusLabel(page),
-    ),
-  );
-  await page.keyboard.press("Enter");
-  await page.getByRole("menu").waitFor();
-  await page.keyboard.press("Enter");
-  await page
-    .getByRole("menu")
-    .waitFor({ state: "detached", timeout: 2000 })
-    .catch(() => undefined);
-  rows.push(
-    rec(
-      "Enter on an item activates it and closes the menu",
-      "keyboard",
-      story,
-      "2.1.1",
-      (await page.getByRole("menu").count()) === 0 &&
-        (await trigger.evaluate((e) => e === document.activeElement)),
-      await focusLabel(page),
-    ),
-  );
-  save("keyboard-menu", rows);
-  expect(failures(rows)).toBe("");
-});
-
-test("keyboard: table", async ({ page }) => {
-  const rows: Rec[] = [];
-  const story = "molecules-table--grid";
-  await open(page, story);
-  await page.keyboard.press("Tab");
-  rows.push(
-    rec(
-      "Tab enters the grid on the first header",
-      "keyboard",
-      story,
-      "2.1.1",
-      (await gridPos(page)) === "0,0",
-      await gridPos(page),
-    ),
-  );
-  const move = async (
-    keys: string,
-    expected: (p: string) => boolean,
-    name: string,
-  ): Promise<void> => {
-    await page.keyboard.press(keys);
-    const p = await gridPos(page);
-    rows.push(rec(`${keys}: ${name}`, "keyboard", story, "2.1.1", expected(p), p));
-  };
-  await move("ArrowDown", (p) => p === "1,0", "next row, same column");
-  await move("ArrowRight", (p) => p === "1,1", "next cell");
-  await move("End", (p) => p.startsWith("1,") && p !== "1,1", "last cell of the row");
-  await move("Home", (p) => p === "1,0", "first cell of the row");
-  await move(
-    "Control+End",
-    (p) => {
-      const [r, c] = p.split(",").map(Number);
-      return (r ?? 0) > 1 && (c ?? 0) > 1;
-    },
-    "last cell of the grid",
-  );
-  await move("Control+Home", (p) => p === "0,0", "first cell of the grid");
-  await page.keyboard.press("Tab");
-  const out = await page.evaluate(
-    () => !document.querySelector("table")?.contains(document.activeElement),
-  );
-  rows.push(
-    rec(
-      "Tab leaves the grid (one tab stop)",
-      "keyboard",
-      story,
-      "2.1.2",
-      out,
-      await focusLabel(page),
-    ),
-  );
-
-  const sortable = "molecules-table--sortable";
-  await open(page, sortable);
-  await page.keyboard.press("Tab");
-  const header = page.locator("th", { has: page.locator("button", { hasText: "Symbol" }) });
-  const before = await header.getAttribute("aria-sort");
-  await page.keyboard.press("Enter");
-  const after = await header.getAttribute("aria-sort");
-  rows.push(
-    rec(
-      "Enter on a sortable header changes aria-sort",
-      "keyboard",
-      sortable,
-      "2.1.1",
-      before !== after && after !== "none",
-      `${String(before)} -> ${String(after)}`,
-    ),
-  );
-
-  const selectable = "molecules-table--selectable";
-  await open(page, selectable);
-  await page.keyboard.press("Tab");
-  // The story ends with every row selected, so Space on select-all clears them.
-  const checked = (): Promise<number> => page.getByRole("checkbox", { checked: true }).count();
-  const was = await checked();
-  await page.keyboard.press("Space");
-  await page.waitForTimeout(300);
-  const now = await checked();
-  rows.push(
-    rec(
-      "Space on select-all toggles every row",
-      "keyboard",
-      selectable,
-      "2.1.1",
-      was > 1 && now === 0,
-      `${was} checked -> ${now} checked`,
-    ),
-  );
-  await page.keyboard.press("Space");
-  await page.waitForTimeout(300);
-  rows.push(
-    rec(
-      "Space again selects them all",
-      "keyboard",
-      selectable,
-      "2.1.1",
-      (await checked()) === was,
-      `${await checked()} checked`,
-    ),
-  );
-  save("keyboard-table", rows);
-  expect(failures(rows)).toBe("");
-});
-
-test("keyboard: confirm dialog", async ({ page }) => {
-  const rows: Rec[] = [];
-  const std = "molecules-confirmdialog--standard";
-  await open(page, std);
-  await page.keyboard.press("Tab");
-  await page.keyboard.press("Enter");
-  await page.getByRole("alertdialog").waitFor();
-  rows.push(
-    rec(
-      "Enter on the opener opens the dialog, focus on Cancel",
-      "keyboard",
-      std,
-      "2.4.3",
-      /Cancel/.test(await focusLabel(page)),
-      await focusLabel(page),
-    ),
-  );
-  await page.keyboard.press("Tab");
-  rows.push(
-    rec(
-      "Tab reaches Confirm",
-      "keyboard",
-      std,
-      "2.1.1",
-      /Freeze sub_001/.test(await focusLabel(page)),
-      await focusLabel(page),
-    ),
-  );
-  await page.keyboard.press("Tab");
-  rows.push(
-    rec(
-      "focus stays inside the dialog (no trap exit, no escape to the page)",
-      "keyboard",
-      std,
-      "2.1.2",
-      await page.evaluate(() => document.activeElement?.closest("[role=alertdialog]") !== null),
-      await focusLabel(page),
-    ),
-  );
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  rows.push(
-    rec(
-      "Escape closes the dialog, focus returns to the opener",
-      "keyboard",
-      std,
-      "2.4.3",
-      /Freeze sub_001/.test(await focusLabel(page)),
-      await focusLabel(page),
-    ),
-  );
-
-  // The hold: the story's play function runs the whole path (pointer hold, early release, the discrete
-  // double press with real key events) on the story clock; a story the play function failed never reaches
-  // phase "finished", so open() passing is the assertion. Here: the hold Confirm does not read a bare Enter.
-  for (const hold of [
-    "molecules-confirmdialog--hold",
-    "molecules-confirmdialog--hold-keyboard",
-    "molecules-confirmdialog--hold-released-early",
-  ]) {
-    await open(page, hold);
+for (const theme of THEMES)
+  test(`keyboard: skip link, ${theme}`, async ({ page }) => {
+    THEME = theme;
+    const rows: Rec[] = [];
+    await open(page, "atoms-skiplink--unfocused");
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press("Tab");
+    const first = await focusLabel(page);
     rows.push(
       rec(
-        "the hold story's play function (keyboard and pointer paths) completes",
+        "skip link is the first Tab stop",
         "keyboard",
-        hold,
-        "2.1.1",
-        true,
-        "phase finished",
+        "atoms-skiplink--unfocused",
+        "2.4.1",
+        /Skip to main content/.test(first),
+        first,
       ),
     );
-  }
-  const held = "molecules-confirmdialog--hold";
-  await open(page, held);
-  await page.getByRole("button", { name: "Flatten all" }).focus();
-  await page.keyboard.press("Enter");
-  await page.getByRole("alertdialog").waitFor();
-  const confirm = page.getByRole("button", { name: /flatten 4 positions — all accounts/i });
-  await confirm.focus();
-  await page.keyboard.press("Enter");
-  rows.push(
-    rec(
-      "a bare Enter on the hold Confirm does not confirm",
-      "keyboard",
-      held,
-      "2.1.1",
-      (await page.getByRole("alertdialog").count()) === 1,
-      "dialog still open",
-    ),
-  );
-  rows.push(
-    rec(
-      "the hold ring has a name and a text twin",
-      "keyboard",
-      held,
-      "1.3.1",
-      (await page.getByRole("progressbar").count()) === 1 &&
-        /Hold to/.test(
-          (await page.getByRole("progressbar").getAttribute("aria-label")) ??
-            (await page.getByRole("progressbar").getAttribute("aria-labelledby")) ??
-            "",
+    await page.keyboard.press("Enter");
+    const target = await page.evaluate(() => ({
+      role: document.activeElement?.getAttribute("role") ?? document.activeElement?.tagName,
+      tag: document.activeElement?.tagName,
+    }));
+    rows.push(
+      rec(
+        "Enter moves focus to the main region",
+        "keyboard",
+        "atoms-skiplink--unfocused",
+        "2.4.1",
+        target.tag === "MAIN" || target.role === "main",
+        JSON.stringify(target),
+      ),
+    );
+    save(`keyboard-skiplink-${theme}`, rows);
+    expect(failures(rows)).toBe("");
+  });
+
+for (const theme of THEMES)
+  test(`keyboard: combobox, ${theme}`, async ({ page }) => {
+    THEME = theme;
+    const rows: Rec[] = [];
+    const story = "molecules-combobox--sync";
+    await open(page, story);
+    await page.keyboard.press("Tab");
+    const focused = await page.evaluate(() => document.activeElement?.getAttribute("role"));
+    rows.push(
+      rec(
+        "Tab reaches the combobox",
+        "keyboard",
+        story,
+        "2.1.1",
+        focused === "combobox",
+        String(focused),
+      ),
+    );
+    await page.keyboard.press("ArrowDown");
+    const expanded = await page.getByRole("combobox").getAttribute("aria-expanded");
+    rows.push(
+      rec(
+        "ArrowDown opens the list",
+        "keyboard",
+        story,
+        "2.1.1",
+        expanded === "true",
+        `aria-expanded=${String(expanded)}`,
+      ),
+    );
+    const options = await page.getByRole("option").count();
+    rows.push(
+      rec(
+        "the open list exposes options",
+        "keyboard",
+        story,
+        "1.3.1",
+        options > 0,
+        `${options} option(s)`,
+      ),
+    );
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    const value = await page.getByRole("combobox").inputValue();
+    const closed = await page.getByRole("combobox").getAttribute("aria-expanded");
+    rows.push(
+      rec(
+        "ArrowDown then Enter picks an option and closes",
+        "keyboard",
+        story,
+        "2.1.1",
+        value !== "" && closed === "false",
+        `value="${value}", aria-expanded=${String(closed)}`,
+      ),
+    );
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Escape");
+    const afterEsc = await page.getByRole("combobox").getAttribute("aria-expanded");
+    rows.push(
+      rec(
+        "Escape closes the list; focus stays in the field",
+        "keyboard",
+        story,
+        "2.1.1",
+        afterEsc === "false" && (await focusLabel(page)).includes("combobox"),
+        `aria-expanded=${String(afterEsc)}`,
+      ),
+    );
+    save(`keyboard-combobox-${theme}`, rows);
+    expect(failures(rows)).toBe("");
+  });
+
+for (const theme of THEMES)
+  test(`keyboard: menu, ${theme}`, async ({ page }) => {
+    THEME = theme;
+    const rows: Rec[] = [];
+    const story = "molecules-menu--default";
+    await open(page, story);
+    await page.keyboard.press("Tab");
+    const trigger = page.getByRole("button", { name: "Layer actions" });
+    rows.push(
+      rec(
+        "Tab reaches the trigger",
+        "keyboard",
+        story,
+        "2.1.1",
+        await trigger.evaluate((e) => e === document.activeElement),
+        await focusLabel(page),
+      ),
+    );
+    await page.keyboard.press("Enter");
+    const menu = await page.getByRole("menu").count();
+    const first = await focusLabel(page);
+    rows.push(
+      rec(
+        "Enter opens the menu, focus on the first item",
+        "keyboard",
+        story,
+        "2.1.1",
+        menu === 1 && /menuitem/.test(first),
+        first,
+      ),
+    );
+    await page.keyboard.press("ArrowDown");
+    const second = await focusLabel(page);
+    rows.push(
+      rec(
+        "ArrowDown moves to the next item",
+        "keyboard",
+        story,
+        "2.1.1",
+        second !== first && /menuitem/.test(second),
+        second,
+      ),
+    );
+    await page.keyboard.press("End");
+    const last = await focusLabel(page);
+    rows.push(
+      rec("End moves to the last item", "keyboard", story, "2.1.1", /Remove/.test(last), last),
+    );
+    await page.keyboard.press("Escape");
+    await page
+      .getByRole("menu")
+      .waitFor({ state: "detached", timeout: 2000 })
+      .catch(() => undefined);
+    rows.push(
+      rec(
+        "Escape closes the menu and returns focus to the trigger",
+        "keyboard",
+        story,
+        "2.4.3",
+        (await page.getByRole("menu").count()) === 0 &&
+          (await trigger.evaluate((e) => e === document.activeElement)),
+        await focusLabel(page),
+      ),
+    );
+    await page.keyboard.press("Enter");
+    await page.getByRole("menu").waitFor({ timeout: 5_000 });
+    await page.keyboard.press("Enter");
+    await page
+      .getByRole("menu")
+      .waitFor({ state: "detached", timeout: 2000 })
+      .catch(() => undefined);
+    rows.push(
+      rec(
+        "Enter on an item activates it and closes the menu",
+        "keyboard",
+        story,
+        "2.1.1",
+        (await page.getByRole("menu").count()) === 0 &&
+          (await trigger.evaluate((e) => e === document.activeElement)),
+        await focusLabel(page),
+      ),
+    );
+    save(`keyboard-menu-${theme}`, rows);
+    expect(failures(rows)).toBe("");
+  });
+
+for (const theme of THEMES)
+  test(`keyboard: table, ${theme}`, async ({ page }) => {
+    THEME = theme;
+    const rows: Rec[] = [];
+    const story = "molecules-table--grid";
+    await open(page, story);
+    await page.keyboard.press("Tab");
+    rows.push(
+      rec(
+        "Tab enters the grid on the first header",
+        "keyboard",
+        story,
+        "2.1.1",
+        (await gridPos(page)) === "0,0",
+        await gridPos(page),
+      ),
+    );
+    const move = async (
+      keys: string,
+      expected: (p: string) => boolean,
+      name: string,
+    ): Promise<void> => {
+      await page.keyboard.press(keys);
+      const p = await gridPos(page);
+      rows.push(rec(`${keys}: ${name}`, "keyboard", story, "2.1.1", expected(p), p));
+    };
+    await move("ArrowDown", (p) => p === "1,0", "next row, same column");
+    await move("ArrowRight", (p) => p === "1,1", "next cell");
+    await move("End", (p) => p.startsWith("1,") && p !== "1,1", "last cell of the row");
+    await move("Home", (p) => p === "1,0", "first cell of the row");
+    await move(
+      "Control+End",
+      (p) => {
+        const [r, c] = p.split(",").map(Number);
+        return (r ?? 0) > 1 && (c ?? 0) > 1;
+      },
+      "last cell of the grid",
+    );
+    await move("Control+Home", (p) => p === "0,0", "first cell of the grid");
+    await page.keyboard.press("Tab");
+    const out = await page.evaluate(
+      () => !document.querySelector("table")?.contains(document.activeElement),
+    );
+    rows.push(
+      rec(
+        "Tab leaves the grid (one tab stop)",
+        "keyboard",
+        story,
+        "2.1.2",
+        out,
+        await focusLabel(page),
+      ),
+    );
+
+    const sortable = "molecules-table--sortable";
+    await open(page, sortable);
+    await page.keyboard.press("Tab");
+    const header = page.locator("th", { has: page.locator("button", { hasText: "Symbol" }) });
+    const before = await header.getAttribute("aria-sort");
+    await page.keyboard.press("Enter");
+    const after = await header.getAttribute("aria-sort");
+    rows.push(
+      rec(
+        "Enter on a sortable header changes aria-sort",
+        "keyboard",
+        sortable,
+        "2.1.1",
+        before !== after && after !== "none",
+        `${String(before)} -> ${String(after)}`,
+      ),
+    );
+
+    const selectable = "molecules-table--selectable";
+    await open(page, selectable);
+    await page.keyboard.press("Tab");
+    // The story ends with every row selected, so Space on select-all clears them.
+    const checked = (): Promise<number> => page.getByRole("checkbox", { checked: true }).count();
+    const was = await checked();
+    await page.keyboard.press("Space");
+    // A failed wait is recorded by the row below (now !== 0), not thrown.
+    await expect
+      .poll(checked, { timeout: 5_000 })
+      .toBe(0)
+      .catch(() => undefined);
+    const now = await checked();
+    rows.push(
+      rec(
+        "Space on select-all toggles every row",
+        "keyboard",
+        selectable,
+        "2.1.1",
+        was > 1 && now === 0,
+        `${was} checked -> ${now} checked`,
+      ),
+    );
+    await page.keyboard.press("Space");
+    await expect
+      .poll(checked, { timeout: 5_000 })
+      .toBe(was)
+      .catch(() => undefined);
+    rows.push(
+      rec(
+        "Space again selects them all",
+        "keyboard",
+        selectable,
+        "2.1.1",
+        (await checked()) === was,
+        `${await checked()} checked`,
+      ),
+    );
+    save(`keyboard-table-${theme}`, rows);
+    expect(failures(rows)).toBe("");
+  });
+
+for (const theme of THEMES)
+  test(`keyboard: confirm dialog, ${theme}`, async ({ page }) => {
+    THEME = theme;
+    const rows: Rec[] = [];
+    const std = "molecules-confirmdialog--standard";
+    await open(page, std);
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    await page.getByRole("alertdialog").waitFor();
+    rows.push(
+      rec(
+        "Enter on the opener opens the dialog, focus on Cancel",
+        "keyboard",
+        std,
+        "2.4.3",
+        /Cancel/.test(await focusLabel(page)),
+        await focusLabel(page),
+      ),
+    );
+    await page.keyboard.press("Tab");
+    rows.push(
+      rec(
+        "Tab reaches Confirm",
+        "keyboard",
+        std,
+        "2.1.1",
+        /Freeze sub_001/.test(await focusLabel(page)),
+        await focusLabel(page),
+      ),
+    );
+    await page.keyboard.press("Tab");
+    rows.push(
+      rec(
+        "focus stays inside the dialog (no trap exit, no escape to the page)",
+        "keyboard",
+        std,
+        "2.1.2",
+        await page.evaluate(() => document.activeElement?.closest("[role=alertdialog]") !== null),
+        await focusLabel(page),
+      ),
+    );
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    rows.push(
+      rec(
+        "Escape closes the dialog, focus returns to the opener",
+        "keyboard",
+        std,
+        "2.4.3",
+        /Freeze sub_001/.test(await focusLabel(page)),
+        await focusLabel(page),
+      ),
+    );
+
+    // The hold: the story's play function runs the whole path (pointer hold, early release, the discrete
+    // double press with real key events) on the story clock; a story the play function failed never reaches
+    // phase "finished", so open() passing is the assertion. Here: the hold Confirm does not read a bare Enter.
+    for (const hold of [
+      "molecules-confirmdialog--hold",
+      "molecules-confirmdialog--hold-keyboard",
+      "molecules-confirmdialog--hold-released-early",
+    ]) {
+      await open(page, hold);
+      rows.push(
+        rec(
+          "the hold story's play function (keyboard and pointer paths) completes",
+          "keyboard",
+          hold,
+          "2.1.1",
+          true,
+          "phase finished",
         ),
-      "progressbar present",
-    ),
-  );
-  save("keyboard-confirm", rows);
-  expect(failures(rows)).toBe("");
-});
+      );
+    }
+    const held = "molecules-confirmdialog--hold";
+    await open(page, held);
+    await page.getByRole("button", { name: "Flatten all" }).focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("alertdialog").waitFor();
+    const confirm = page.getByRole("button", { name: /flatten 4 positions — all accounts/i });
+    await confirm.focus();
+    await page.keyboard.press("Enter");
+    rows.push(
+      rec(
+        "a bare Enter on the hold Confirm does not confirm",
+        "keyboard",
+        held,
+        "2.1.1",
+        (await page.getByRole("alertdialog").count()) === 1,
+        "dialog still open",
+      ),
+    );
+    rows.push(
+      rec(
+        "the hold ring has a name and a text twin",
+        "keyboard",
+        held,
+        "1.3.1",
+        (await page.getByRole("progressbar").count()) === 1 &&
+          /Hold to/.test(
+            (await page.getByRole("progressbar").getAttribute("aria-label")) ??
+              (await page.getByRole("progressbar").getAttribute("aria-labelledby")) ??
+              "",
+          ),
+        "progressbar present",
+      ),
+    );
+    save(`keyboard-confirm-${theme}`, rows);
+    expect(failures(rows)).toBe("");
+  });
 
 // Generic Tab walk over every story: every tabbable element is reached; Tab never gets stuck.
 const STATIC =
@@ -540,10 +566,24 @@ function storyIds(): string[] {
 const IDS = storyIds();
 const CHUNK = Math.ceil(IDS.length / 16);
 
-/** Press Tab through the open story: the tabbable count, the distinct stops reached, a trap if focus stops moving. */
-async function walk(
-  page: Page,
-): Promise<{ count: number; modal: boolean; reached: number; stuck: boolean }> {
+interface Walk {
+  readonly count: number;
+  readonly modal: boolean;
+  readonly reached: number;
+  /** Length of a repeated focus cycle entered before the document end (1 = focus never moves); 0 = none. */
+  readonly cycle: number;
+  readonly unreachedGrouped: number;
+  readonly unreachedOther: readonly string[];
+}
+
+/**
+ * Press Tab through the open story, from the top, until focus leaves the document (the "(body)" stop) or
+ * count + 3 presses. Detects: a fixed point (focus does not move) and any repeated focus cycle entered before
+ * the document end that is shorter than the tabbable count while no aria-modal is present (a modal's own
+ * focus trap legitimately cycles). Records reach: every tabbable element is tagged, and those never focused
+ * are counted as grouped (a radio group takes one Tab stop, the rest are arrow-key members) or listed.
+ */
+async function walk(page: Page): Promise<Walk> {
   const res = await page.evaluate(() => {
     const sel = "a[href],button,input,select,textarea,summary,[tabindex],[contenteditable='true']";
     const vis = (el: Element): boolean => {
@@ -558,71 +598,142 @@ async function walk(
       el.closest("[inert],[hidden]") === null &&
       el.closest("[aria-hidden='true']") === null;
     const all = [...document.querySelectorAll(sel)].filter(tabbable);
+    const grouped: boolean[] = [];
+    const named: string[] = [];
+    all.forEach((el, i) => {
+      el.setAttribute("data-q02-tab", String(i));
+      grouped.push(el instanceof HTMLInputElement && el.type === "radio");
+      named.push(
+        `${el.tagName.toLowerCase()}.${String(el.getAttribute("class") ?? "").split(" ")[0] ?? ""} "${(el.getAttribute("aria-label") ?? el.textContent ?? "").trim().slice(0, 24)}"`,
+      );
+    });
     const modal = document.querySelector("[aria-modal='true']") !== null;
-    return { count: all.length, modal };
+    return { count: all.length, modal, grouped, named };
   });
-  const seen = new Set<string>();
-  let stuck = false;
-  let last = "";
+  const seq: string[] = [];
+  let cycle = 0;
   for (let n = 0; n < res.count + 3; n += 1) {
     await page.keyboard.press("Tab");
     const key = await page.evaluate(() => {
       const el = document.activeElement;
       if (!el || el === document.body) return "(body)";
+      const tag = el.getAttribute("data-q02-tab");
+      if (tag !== null) return tag;
       const path: string[] = [];
       for (let e: Element | null = el; e && path.length < 6; e = e.parentElement)
         path.push(
           `${e.tagName}${e.id}${String([...(e.parentElement?.children ?? [])].indexOf(e))}`,
         );
-      return path.join("<");
+      return `x:${path.join("<")}`;
     });
-    // Focus that does not move on a Tab press while another stop exists is a keyboard trap (2.1.2).
-    if (key === last && key !== "(body)" && res.count > 1) {
-      stuck = true;
+    if (key === "(body)") break; // focus left the document: the end of the document order
+    const first = seq.indexOf(key);
+    if (first >= 0) {
+      cycle = seq.length - first;
       break;
     }
-    last = key;
-    if (key !== "(body)") seen.add(key);
+    seq.push(key);
   }
-  const reached = seen.size;
-  return { count: res.count, modal: res.modal, reached, stuck };
+  const reachedSet = new Set(seq);
+  let unreachedGrouped = 0;
+  const unreachedOther: string[] = [];
+  for (let i = 0; i < res.count; i += 1) {
+    if (reachedSet.has(String(i))) continue;
+    if (res.grouped[i] === true) unreachedGrouped += 1;
+    else unreachedOther.push(res.named[i] ?? String(i));
+  }
+  return {
+    count: res.count,
+    modal: res.modal,
+    reached: reachedSet.size,
+    cycle: res.modal ? 0 : cycle > 0 && cycle < res.count ? cycle : 0,
+    unreachedGrouped,
+    unreachedOther,
+  };
 }
 
-for (let i = 0; i < IDS.length; i += CHUNK) {
-  const chunk = IDS.slice(i, i + CHUNK);
-  test(`tab walk ${String(i / CHUNK + 1)}`, async ({ page }) => {
-    test.setTimeout(900_000);
-    const rows: Rec[] = [];
-    for (const story of chunk) {
-      await open(page, story);
-      const w = await walk(page);
-      const res = w;
-      const reached = w.reached;
-      const stuck = w.stuck;
-      const pass = !stuck && (res.count === 0 || reached > 0);
-      rows.push(
-        rec(
-          "Tab walk: no trap, the first Tab reaches a stop",
-          "keyboard",
-          story,
-          "2.1.1 / 2.1.2",
-          pass,
-          `tabbable=${res.count} reached=${reached} stuck=${String(stuck)} modal=${String(res.modal)}`,
-        ),
-      );
-    }
-    save(`tabwalk-${String(i / CHUNK + 1).padStart(2, "0")}`, rows);
-    expect(failures(rows)).toBe("");
+/**
+ * With focus on the first tabbable stop inside an open dialog, does Escape take focus out of it (the dialog
+ * closes, or asks its host to and returns focus to its opener)? A demo story may pin `open`, so the dialog
+ * node can stay; the exit is the focus leaving it. Two presses at most: the first may dismiss a tooltip.
+ */
+async function escapeLeaves(page: Page): Promise<boolean> {
+  const had = await page.evaluate(() => {
+    const dialog = document.querySelector("[role='dialog']");
+    const inner = dialog?.querySelector<HTMLElement>("[data-q02-tab]");
+    inner?.focus();
+    return inner !== undefined && inner !== null;
   });
+  if (!had) return false;
+  const out = (): Promise<boolean> =>
+    page.evaluate(() => {
+      const dialog = document.querySelector("[role='dialog']");
+      return dialog === null || !dialog.contains(document.activeElement);
+    });
+  // The first Escape dismisses the focused control's tooltip (SC 1.4.13), the second leaves the dialog.
+  for (let n = 0; n < 2; n += 1) {
+    await page.keyboard.press("Escape");
+    const left = await expect
+      .poll(out, { timeout: 1_500 })
+      .toBe(true)
+      .then(() => true)
+      .catch(() => false);
+    if (left) return true;
+  }
+  return false;
 }
 
-test("negative controls: the keyboard trap and clip checks trip", async ({ page }) => {
-  await open(page, "molecules-table--compact");
+for (const theme of THEMES) {
+  for (let i = 0; i < IDS.length; i += CHUNK) {
+    const chunk = IDS.slice(i, i + CHUNK);
+    test(`tab walk ${String(i / CHUNK + 1)}, ${theme}`, async ({ page }) => {
+      test.setTimeout(900_000);
+      THEME = theme;
+      const rows: Rec[] = [];
+      for (const story of chunk) {
+        await open(page, story);
+        let w = await walk(page);
+        const cycled = w.cycle;
+        // Pass: no focus cycle shorter than the tabbable count (outside a modal), and the first Tab lands on
+        // a stop when something is tabbable. Unreached elements are recorded in the detail, not asserted.
+        // A cycle through an open non-modal dialog (drawer, popover) is a standard-exit case, not a trap,
+        // when Escape takes focus out of that dialog (SC 2.1.2 allows any standard exit): it is passed with that note.
+        let exit = "";
+        if (w.cycle > 0) {
+          const closed = await escapeLeaves(page);
+          exit = closed
+            ? " cycleExit=Escape takes focus out of the open non-modal dialog"
+            : " cycleExit=none";
+          if (closed) w = { ...w, cycle: 0 };
+        }
+        const pass = w.cycle === 0 && (w.count === 0 || w.reached > 0);
+        rows.push(
+          rec(
+            "Tab walk: no trap or short focus cycle, the first Tab reaches a stop",
+            "keyboard",
+            story,
+            "2.1.1 / 2.1.2",
+            pass,
+            `tabbable=${w.count} reached=${w.reached} cycle=${cycled} modal=${String(w.modal)} unreachedGrouped=${w.unreachedGrouped} unreachedOther=${w.unreachedOther.length}${exit}${w.unreachedOther.length > 0 ? ` [${w.unreachedOther.slice(0, 4).join("; ")}]` : ""}`,
+          ),
+        );
+      }
+      save(`tabwalk-${theme}-${String(i / CHUNK + 1).padStart(2, "0")}`, rows);
+      expect(failures(rows)).toBe("");
+    });
+  }
+}
+
+test("negative controls: the keyboard trap, cycle and clip checks trip", async ({ page }) => {
+  const trapStory = "molecules-table--compact";
+  const rows: Rec[] = [];
+  // 1. A fixed point: Tab always lands on the same button.
+  await open(page, trapStory);
   await page.evaluate(() => {
     const root = document.querySelector("#storybook-root") ?? document.body;
     root.insertAdjacentHTML(
       "beforeend",
-      '<button id="t1">a</button><button id="t2">b</button><div id="clip" style="width:20px;overflow:hidden;white-space:nowrap">a long clipped sentence</div>',
+      '<button id="t1">a</button><button id="t2">b</button><button id="t3">c</button><div id="clip" style="width:20px;overflow:hidden;white-space:nowrap">a long clipped sentence</div>',
     );
     document.addEventListener("keydown", (e) => {
       if (e.key === "Tab") {
@@ -631,26 +742,82 @@ test("negative controls: the keyboard trap and clip checks trip", async ({ page 
       }
     });
   });
-  const trap = await walk(page);
+  const fixed = await walk(page);
+  rows.push(
+    rec(
+      "controls trip: a fixed-point Tab trap is detected",
+      "control",
+      trapStory,
+      "2.1.2",
+      fixed.cycle === 1,
+      JSON.stringify(fixed),
+    ),
+  );
   const cut = await clipped(page);
-  const row = rec(
-    "controls trip: a Tab trap is detected",
-    "control",
-    "molecules-table--compact",
-    "2.1.2",
-    trap.stuck,
-    JSON.stringify(trap),
+  rows.push(
+    rec(
+      "controls trip: a hard clip is detected",
+      "control",
+      trapStory,
+      "1.4.4 (200 % zoom)",
+      cut.hard.some((h) => h.includes("long clipped")),
+      cut.hard.join("; "),
+    ),
   );
-  const row2 = rec(
-    "controls trip: a hard clip is detected",
-    "control",
-    "molecules-table--compact",
-    "1.4.10",
-    cut.hard.some((h) => h.includes("long clipped")),
-    cut.hard.join("; "),
+  // 2. A two-element cycle among three-plus stops: Tab alternates t1 and t2 and never reaches the rest.
+  await open(page, trapStory);
+  await page.evaluate(() => {
+    const root = document.querySelector("#storybook-root") ?? document.body;
+    root.insertAdjacentHTML(
+      "beforeend",
+      '<button id="t1">a</button><button id="t2">b</button><button id="t3">c</button>',
+    );
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Tab") return;
+      e.preventDefault();
+      const on = document.activeElement?.id;
+      document.getElementById(on === "t1" ? "t2" : "t1")?.focus();
+    });
+  });
+  const loop = await walk(page);
+  rows.push(
+    rec(
+      "controls trip: a short focus cycle is detected",
+      "control",
+      trapStory,
+      "2.1.2",
+      loop.cycle === 2,
+      JSON.stringify(loop),
+    ),
   );
-  save("control", [row, row2]);
-  expect(failures([row, row2])).toBe("");
+  // 3. A modal's own cycle is not flagged.
+  await open(page, trapStory);
+  await page.evaluate(() => {
+    const root = document.querySelector("#storybook-root") ?? document.body;
+    root.insertAdjacentHTML(
+      "beforeend",
+      '<div aria-modal="true"><button id="t1">a</button><button id="t2">b</button><button id="t3">c</button></div>',
+    );
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Tab") return;
+      e.preventDefault();
+      const on = document.activeElement?.id;
+      document.getElementById(on === "t1" ? "t2" : "t1")?.focus();
+    });
+  });
+  const modal = await walk(page);
+  rows.push(
+    rec(
+      "controls hold: a cycle inside an aria-modal is not flagged",
+      "control",
+      trapStory,
+      "2.1.2",
+      modal.cycle === 0 && modal.modal,
+      JSON.stringify(modal),
+    ),
+  );
+  save("control", rows);
+  expect(failures(rows)).toBe("");
 });
 
 // ------------------------------------------------------------------------------------------------- zoom
@@ -721,6 +888,7 @@ const unpinHosts = (page: Page): Promise<void> =>
 
 for (const theme of THEMES) {
   test(`zoom: dense table, ${theme}`, async ({ page }) => {
+    THEME = theme;
     test.setTimeout(300_000);
     const rows: Rec[] = [];
     for (const story of TABLE_STORIES) {
@@ -926,101 +1094,104 @@ const pinsMotion = (page: Page): Promise<boolean> =>
 
 const MOTION_IDS = IDS;
 const MCHUNK = Math.ceil(MOTION_IDS.length / 8);
-for (let i = 0; i < MOTION_IDS.length; i += MCHUNK) {
-  const chunk = MOTION_IDS.slice(i, i + MCHUNK);
-  test(`motion probe ${String(i / MCHUNK + 1)}`, async ({ page }) => {
-    test.setTimeout(900_000);
-    const rows: Rec[] = [];
-    for (const story of chunk) {
-      const theme = "dark";
-      await page.emulateMedia({ reducedMotion: "no-preference" });
-      await open(page, story, theme, "compact", "off");
-      const safe = await motionProbe(page);
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await open(page, story, theme, "compact", "on");
-      if (await pinsMotion(page)) {
-        // The story pins its own motion state (a motion-safe or recipe demo): the override cannot apply to it.
+for (const theme of THEMES)
+  for (let i = 0; i < MOTION_IDS.length; i += MCHUNK) {
+    const chunk = MOTION_IDS.slice(i, i + MCHUNK);
+    test(`motion probe ${String(i / MCHUNK + 1)}, ${theme}`, async ({ page }) => {
+      test.setTimeout(900_000);
+      THEME = theme;
+      const rows: Rec[] = [];
+      for (const story of chunk) {
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        await open(page, story, theme, "compact", "off");
+        const safe = await motionProbe(page);
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await open(page, story, theme, "compact", "on");
+        if (await pinsMotion(page)) {
+          // The story pins its own motion state (a motion-safe or recipe demo): the override cannot apply to it.
+          rows.push(
+            rec(
+              "reduced motion: story pins its own motion state, not applicable",
+              "motion",
+              story,
+              "2.3.3",
+              true,
+              `pinned; ${safe.length} animated element(s) by design`,
+              theme,
+              true,
+            ),
+          );
+          continue;
+        }
+        const reduced = await motionProbe(page);
+        const reducedPaths = new Set(reduced.map((p) => p.path));
+        const lost = safe.filter((p) => !reducedPaths.has(p.path));
+        const ends = await endStates(
+          page,
+          lost.map((p) => p.path),
+        );
+        const hasState = await page.evaluate(
+          () =>
+            document.querySelector(
+              "[role=dialog],[role=alertdialog],[role=status],[role=progressbar],[role=alert]",
+            ) !== null,
+        );
+        // (a) nothing the reduced render animates; (b) every element whose motion was removed is in its end
+        // state, and the change it conveyed has a non-motion cue signal: its own text / name / value, or any
+        // live, dialog or progress role anywhere on the page. That last clause is page-level: it can pass when an
+        // unrelated such element exists, so the check is a DOM signal, not proof the change is perceivable.
+        const hidden = lost.filter((p) => ends[p.path] !== true);
+        const noCue = lost.filter((p) => p.cue === "" && !hasState);
+        // The recipe demo stories draw the safe value beside the reduce value on purpose: the reduce half must stop.
+        const demo = story.startsWith("foundations-motion-recipes--");
         rows.push(
           rec(
-            "reduced motion: story pins its own motion state, not applicable",
+            "reduced motion: no animation survives data-motion=reduce",
             "motion",
             story,
             "2.3.3",
-            true,
-            `pinned; ${safe.length} animated element(s) by design`,
+            demo ? reduced.length < safe.length : reduced.length === 0,
+            `safe animated ${safe.length}, reduced animated ${reduced.length}${
+              reduced.length > 0
+                ? `; still: ${reduced
+                    .slice(0, 3)
+                    .map((p) => `${p.key} ${p.animation}`)
+                    .join(", ")}`
+                : ""
+            }`,
             theme,
           ),
         );
-        continue;
+        rows.push(
+          rec(
+            "reduced motion: elements whose motion was removed show their end state",
+            "motion",
+            story,
+            "2.3.3",
+            hidden.length === 0,
+            hidden
+              .slice(0, 3)
+              .map((p) => p.key)
+              .join(", ") || `${lost.length} checked`,
+            theme,
+          ),
+        );
+        rows.push(
+          rec(
+            "reduced motion: the change keeps a non-motion cue",
+            "motion",
+            story,
+            "1.3.1 / 4.1.3",
+            noCue.length === 0,
+            noCue
+              .slice(0, 3)
+              .map((p) => p.key)
+              .join(", ") || `${lost.length} checked`,
+            theme,
+          ),
+        );
       }
-      const reduced = await motionProbe(page);
-      const reducedPaths = new Set(reduced.map((p) => p.path));
-      const lost = safe.filter((p) => !reducedPaths.has(p.path));
-      const ends = await endStates(
-        page,
-        lost.map((p) => p.path),
-      );
-      const hasState = await page.evaluate(
-        () =>
-          document.querySelector(
-            "[role=dialog],[role=alertdialog],[role=status],[role=progressbar],[role=alert]",
-          ) !== null,
-      );
-      // (a) nothing the reduced render animates; (b) every element whose motion was removed is in its end
-      // state, and the change it conveyed has a non-motion cue: its own text / name / value, or a live or
-      // dialog role on the page (a scrim fading in is decorative; the dialog's role and the focus move convey it).
-      const hidden = lost.filter((p) => ends[p.path] !== true);
-      const noCue = lost.filter((p) => p.cue === "" && !hasState);
-      // The recipe demo stories draw the safe value beside the reduce value on purpose: the reduce half must stop.
-      const demo = story.startsWith("foundations-motion-recipes--");
-      rows.push(
-        rec(
-          "reduced motion: no animation survives data-motion=reduce",
-          "motion",
-          story,
-          "2.3.3",
-          demo ? reduced.length < safe.length : reduced.length === 0,
-          `safe animated ${safe.length}, reduced animated ${reduced.length}${
-            reduced.length > 0
-              ? `; still: ${reduced
-                  .slice(0, 3)
-                  .map((p) => `${p.key} ${p.animation}`)
-                  .join(", ")}`
-              : ""
-          }`,
-          theme,
-        ),
-      );
-      rows.push(
-        rec(
-          "reduced motion: elements whose motion was removed show their end state",
-          "motion",
-          story,
-          "2.3.3",
-          hidden.length === 0,
-          hidden
-            .slice(0, 3)
-            .map((p) => p.key)
-            .join(", ") || `${lost.length} checked`,
-          theme,
-        ),
-      );
-      rows.push(
-        rec(
-          "reduced motion: the change keeps a non-motion cue",
-          "motion",
-          story,
-          "1.3.1 / 4.1.3",
-          noCue.length === 0,
-          noCue
-            .slice(0, 3)
-            .map((p) => p.key)
-            .join(", ") || `${lost.length} checked`,
-          theme,
-        ),
-      );
-    }
-    save(`motion-${String(i / MCHUNK + 1).padStart(2, "0")}`, rows);
-    expect(failures(rows)).toBe("");
-  });
-}
+      save(`motion-${theme}-${String(i / MCHUNK + 1).padStart(2, "0")}`, rows);
+      expect(failures(rows)).toBe("");
+    });
+  }
