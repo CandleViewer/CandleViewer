@@ -149,7 +149,9 @@ exceptions are needed, so EX-02..EX-04 are withdrawn (§16.2 of `04-security-pro
 http-cache-semantics (GHSA-ch52-4w7c-c8xp) and braces (GHSA-vfj7-8cjw-p6xm). Both are build/dev-only
 transitives; recorded as EX-05/EX-06 (EX-02..EX-04 stay withdrawn) (§16.2) and in `security/accepted-risks.yaml`, expiry 2026-12-31.
 **Update (#1857):** EX-05 is cleared by a `pnpm-workspace.yaml` override (`http-cache-semantics >=4.3.0 <5`,
-no major bump) and its register entry removed; EX-06 (braces, no upstream patch) remains.
+no major bump) and its register entry removed.
+**Update (#1737):** EX-06 (braces) is closed: `lint-staged` 16.4.0 drops `micromatch`, the only path to
+`braces`, and the exception is removed from `security/accepted-risks.yaml`.
 The freeze-manifest `pnpm-graph` hash mismatch (defect 2) is only mitigated here by OS-independent normalisation
 (unit-tested); it is NOT verified on Windows+Linux, so #1737 must not be closed on it: track it as a separate bug.
 
@@ -172,14 +174,14 @@ The `npm-audit` step's gate read npm's `vulnerabilities` schema, but the step fe
 `pnpm audit --json`, which writes `advisories` + `metadata`, so the gate saw no findings. It now
 reads pnpm 12.5.1's report and fails closed on anything else (CI-SEC-005). On `main` (d77138f07)
 `pnpm audit` reported 2 Critical, 2 High, 6 Moderate and 1 Low; the overrides below (in
-`pnpm-workspace.yaml`, each floored at the first patched release) leave 1 High (EX-06),
+`pnpm-workspace.yaml`, each floored at the first patched release) leave 1 High (braces; closed by #1737, see the table),
 6 Moderate and 1 Low, which the gate's High threshold passes.
 
 | Package                     | Advisory                                                           | Path                                        | Area            | Decision                                                                                                                                                           |
 | --------------------------- | ------------------------------------------------------------------ | ------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | tinypool 1.1.1 (2 Critical) | GHSA-5gmw-xhrv-c9v3, GHSA-85c8-ppgw-ccpr                           | transitive, vitest 3.2.7                    | test-only       | **Fixed**: `overrides: tinypool >=2.1.2 <3` (2.2.0); every vitest suite passes on it. Remove with vitest 4 (#1819)                                                 |
 | source-map-js 1.2.1 (High)  | GHSA-68fv-2mgg-jv7q                                                | transitive, postcss and magicast            | build/test-time | **Fixed**: `overrides: source-map-js >=1.2.2 <2` (1.2.2); the ui and web builds pass                                                                               |
-| braces 3.0.3 (High)         | GHSA-vfj7-8cjw-p6xm                                                | transitive, lint-staged                     | dev-only        | Unchanged: EX-06 (`security/accepted-risks.yaml`), expires 2026-12-31                                                                                              |
+| braces 3.0.3 (High)         | GHSA-vfj7-8cjw-p6xm                                                | transitive, lint-staged                     | dev-only        | **Fixed**: `lint-staged` 16.4.0 (no `micromatch`); EX-06 removed (#1737)                                                                                           |
 | 6 Moderate, 1 Low           | uuid, react-router ×2, vitest, @vitest/mocker, sprintf-js; esbuild | transitive (react-router ships in apps/web) | mixed           | **Accepted** to 2026-11-20 (pre-R1 cut): one dated entry per advisory in `security/accepted-risks.yaml` (#3558), as R0's gate (`30-release-roadmap.md` §4.4) wants |
 
 #3558: none of the seven pnpm advisories has a fix short of a major upgrade.
