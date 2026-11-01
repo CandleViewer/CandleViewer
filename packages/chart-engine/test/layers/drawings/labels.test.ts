@@ -4,7 +4,7 @@
 // screen bounds; the Canvas 2D path's `fillText` of the clamped, stripped label with a font built
 // from its size alone (SR-E14-03/04); the GL stand-in and the 2D path putting a label's baseline
 // on the same pixel; and Scenario 3, the text budget.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DrawingsDragBench } from "../../../bench/scenes/drawings-drag.js";
 import { mulberry32 } from "../../../bench/fixtures/rng.mjs";
 import { GLBackend } from "../../../src/gl/backend.js";
@@ -136,6 +136,57 @@ describe("the drawing-label ring", () => {
     recs[1] = rec(input("ray", [T(9), 1, T(10), 1], "two"));
     ring.encode(recs, atlas, 1);
     expect([ring.lo, ring.hi]).toEqual([3, 6]);
+  });
+
+  it("incremental: a drag rewrites only the moved drawing's glyphs; the rest are skipped", () => {
+    const ring = new LabelInstances();
+    const recs = ["one", "two", "six"].map((l, k) => rec(input("ray", [T(k), k, T(k + 1), k], l)));
+    ring.encode(recs, atlas, 1);
+    recs[1] = rec(input("ray", [T(9), 1, T(10), 1], "two")); // measured before the spy
+    const glyph = vi.spyOn(atlas, "glyph");
+    ring.encode(recs, atlas, 1);
+    expect([glyph.mock.calls.length, ring.lo, ring.hi]).toEqual([3, 3, 6]);
+    ring.encode(recs, atlas, 1, 1, 1); // a theme change (styleRev): every label rewrites
+    expect(glyph.mock.calls.length).toBe(3 + 9);
+    glyph.mockRestore();
+  });
+
+  it("incremental encodes equal a fresh full encode across seeded patches (200 steps)", () => {
+    const rng = mulberry32(3581);
+    const word = (): string => "abc de".slice(0, 1 + Math.floor(rng() * 6));
+    const make = (k: number): ReturnType<typeof rec> =>
+      rec(input("ray", [T(k % 50), k % 40, T((k % 50) + 1), 1], word(), { id: `r${k}` }));
+    const ring = new LabelInstances();
+    let recs = Array.from({ length: 12 }, (_, k) => make(k));
+    for (let step = 0; step < 200; step += 1) {
+      const pick = Math.floor(rng() * recs.length);
+      const roll = rng();
+      if (roll < 0.5) recs[pick] = make(step + 100);
+      else if (roll < 0.7) recs.splice(pick, 1);
+      else if (roll < 0.9) recs.push(make(step + 500));
+      else reindex(recs[pick] as ReturnType<typeof rec>, minuteMap(), 2); // anchor re-indexed
+      if (recs.length === 0) recs = [make(step)];
+      const dpr = step % 37 === 0 ? 2 : 1;
+      ring.encode(recs, atlas, dpr);
+      const fresh = new LabelInstances();
+      fresh.encode(
+        recs.map((r) => ({ ...r, labelAt: -1, labelEpoch: -1 })),
+        atlas,
+        dpr,
+      );
+      const words = ring.count * LABEL_STRIDE;
+      expect([...ring.data.slice(0, words)], `step ${step}`).toEqual([
+        ...fresh.data.slice(0, words),
+      ]);
+      expect([ring.count, ring.runCount, ring.texts]).toEqual([
+        fresh.count,
+        fresh.runCount,
+        fresh.texts,
+      ]);
+      expect([...ring.runs.slice(0, ring.runCount * RUN_STRIDE)]).toEqual([
+        ...fresh.runs.slice(0, fresh.runCount * RUN_STRIDE),
+      ]);
+    }
   });
 
   it("grows the run table past its first 16 runs, keeping every text", () => {

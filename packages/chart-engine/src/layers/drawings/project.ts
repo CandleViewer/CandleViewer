@@ -8,7 +8,7 @@ import { ContentNode } from "../../scene/node.js";
 import type { MutationRange } from "../../model/counters.js";
 import { PROGRAM } from "../../scene/instance-layout.js";
 import type { BatchSink } from "../../scene/pool.js";
-import { indexAt, indexToScreen, priceToScreen } from "../../viewport/transform.js";
+import { indexAt, indexToScreen, priceCoefficients, projectRel } from "../../viewport/transform.js";
 import type { IndexTimeMap, ViewportState } from "../../viewport/types.js";
 import { MAX_DRAWINGS, type SetDrawings } from "./model.js";
 import {
@@ -19,8 +19,8 @@ import {
   type ThemeColours,
 } from "./record.js";
 import { FillInstances } from "./fills.js";
-import { FakeAtlas, type GlyphSource, measure } from "./glyphs.js";
-import { fontOf, LabelInstances, labelOf, offsetOf } from "./labels.js";
+import { FakeAtlas, type GlyphSource } from "./glyphs.js";
+import { LabelInstances, measureLabel } from "./labels.js";
 import { LineInstances } from "./lines.js";
 import { DrawingCounters, type DrawingMetrics } from "./metrics.js";
 import type { InstanceRing } from "./ring.js";
@@ -51,11 +51,16 @@ export function reindex(r: DrawingRecord, map: IndexTimeMap, stamp: number): voi
     corner(box, i3, (tick[2] as number) + (tick[1] as number) - (tick[0] as number));
   }
   r.stamp = stamp;
+  r.labelEpoch = -1; // its anchor's bar index moved: the label re-encodes
 }
 
 /** The scratch a pass writes: [x0, y0, x1, y1]; then the plot as [width, top, bottom]. */
 const SEG = new Float64Array(4);
 const PLOT = new Float64Array(3);
+/** Pane 0's y coefficients, filled once per `screenBounds` (bit-identical to `priceToScreen`). */
+const PY = new Float64Array(8);
+const Y = { base: 0 };
+const priceY = (tick: number): number => projectRel(PY, tick - Y.base);
 /** A direction shorter than this is a point: no 1/dx blows up to ±Infinity or NaN. */
 const EPS = 1e-9;
 /** Bounds are clamped to ±1e7 CSS px before the Float32 write: always finite. */
@@ -98,32 +103,27 @@ function extend(ax: number, ay: number, dx: number, dy: number, both: boolean): 
  * stroke; NaN when hidden. Every anchor of a visible drawing projects inside it, and so does its
  * measured label's box (PR 2) under `glyphs`' ascent and descent.
  */
-export function screenBounds(
-  vp: ViewportState,
-  r: DrawingRecord,
-  out: Float32Array,
-  o: number,
-  glyphs: GlyphSource | null = null,
-) {
+export function screenBounds(vp: ViewportState, r: DrawingRecord, out: Float32Array, o: number) {
   const { kind, visible, style } = r.input;
   if (visible === false) return void out.fill(Number.NaN, o, o + 4);
   const { idx, tick, box } = r;
   PLOT[0] = vp.plotWidth;
   PLOT[1] = vp.panes[0]?.plotTop ?? 0;
   PLOT[2] = PLOT[1] + (vp.panes[0]?.plotHeight ?? 0);
+  Y.base = priceCoefficients(vp, 0, PY);
   const ix = indexToScreen(vp, idx[0] as number);
   if (kind === "hline") {
-    const y = priceToScreen(vp, 0, tick[0] as number);
+    const y = priceY(tick[0] as number);
     seg(0, y, PLOT[0], y);
   } else if (kind === "vline") seg(ix, PLOT[1], ix, PLOT[2]);
   else if (kind === "ray" || kind === "line") {
-    const ay = priceToScreen(vp, 0, tick[0] as number);
-    const dy = priceToScreen(vp, 0, tick[1] as number) - ay;
+    const ay = priceY(tick[0] as number);
+    const dy = priceY(tick[1] as number) - ay;
     extend(ix, ay, indexToScreen(vp, idx[1] as number) - ix, dy, kind === "line");
   } else {
     // Monotone on both axes in every scale mode, so the box's corners bound every anchor.
-    const y0 = priceToScreen(vp, 0, box[1] as number);
-    const y1 = priceToScreen(vp, 0, box[3] as number);
+    const y0 = priceY(box[1] as number);
+    const y1 = priceY(box[3] as number);
     seg(indexToScreen(vp, box[0] as number), y0, indexToScreen(vp, box[2] as number), y1);
   }
   const pad = style.width / 2;
@@ -131,24 +131,20 @@ export function screenBounds(
   let y0 = Math.min(SEG[1] as number, SEG[3] as number) - pad;
   let x1 = Math.max(SEG[0] as number, SEG[2] as number) + pad;
   let y1 = Math.max(SEG[1] as number, SEG[3] as number) + pad;
-  if (glyphs !== null && r.labelEm > 0 && labelOf(r) !== "") {
-    // The label box from the first anchor: offset right and up (none for `text`), em × size.
-    const size = fontOf(r);
-    const off = offsetOf(r);
-    const ax = ix + off;
-    const ay = priceToScreen(vp, 0, tick[0] as number) - off;
-    x0 = Math.min(x0, ax);
-    x1 = Math.max(x1, ax + r.labelEm * size);
-    y0 = Math.min(y0, ay - glyphs.ascent * size);
-    y1 = Math.max(y1, ay + glyphs.descent * size);
+  if (r.labelEm > 0) {
+    // A measured, non-empty label: its box (CSS px from the first anchor, `measureLabel`'s).
+    const lb = r.labelBox;
+    const ay = priceY(tick[0] as number);
+    x0 = Math.min(x0, ix + (lb[0] as number));
+    y0 = Math.min(y0, ay + (lb[1] as number));
+    x1 = Math.max(x1, ix + (lb[2] as number));
+    y1 = Math.max(y1, ay + (lb[3] as number));
   }
   out[o] = px(x0);
   out[o + 1] = px(y0);
   out[o + 2] = px(x1);
   out[o + 3] = px(y1);
 }
-
-const M = new Float64Array(2);
 
 /**
  * The `drawing-fill` (slice 3) and `drawing-label` (PR 2) batches' nodes: the batch builder keeps
@@ -216,6 +212,7 @@ export class DrawingsNode extends ContentNode {
   private mapLength = -1;
   private stamp = 0;
   private dpr = 0;
+  private styleRev = 0;
 
   constructor(id: string) {
     super(id);
@@ -269,12 +266,10 @@ export class DrawingsNode extends ContentNode {
         encode = true;
       }
       if (r.labelEm < 0) {
-        measure(this.glyphs, labelOf(r), M);
-        r.labelEm = M[0] as number;
-        r.labelGlyphs = M[1] as number;
+        measureLabel(r, this.glyphs);
         encode = true;
       }
-      screenBounds(vp, r, this.bounds, 4 * i, this.glyphs);
+      screenBounds(vp, r, this.bounds, 4 * i);
     }
     this.boundsPasses += 1;
     this.boundsDirty = true;
@@ -289,7 +284,8 @@ export class DrawingsNode extends ContentNode {
     }
     this.lines.encode(order, vp.dpr, this.opacity);
     this.fills.encode(order, vp.dpr, this.opacity);
-    this.labels.encode(order, this.glyphs, vp.dpr, this.opacity);
+    if ((this.dirty & Dirty.STYLE) !== 0) this.styleRev += 1; // a theme: every label's colour
+    this.labels.encode(order, this.glyphs, vp.dpr, this.opacity, this.styleRev);
     this.encodes += 1;
     // Collected after this node: their counts are this encode's.
     this.fillNode.dirty |= Dirty.DATA;

@@ -663,7 +663,11 @@ label sits on the record's first anchor, re-projected from the pane block like t
 uploads nothing); a `text` drawing's baseline is its anchor, any other kind's label sits 4 CSS px
 right of and above it; the size is `style.fontSize` (8..48, default 12) in device px, so a DPR
 change re-encodes. A code point the atlas lacks draws `?`; a space advances with no instance. The
-label box (advance × size, ascent and descent) widens the drawing's `drawingBounds`. The 2D path
+encode is incremental: a record whose glyphs and run still sit where it last wrote them, under
+the same epoch (DPR, opacity, glyph source, theme, ring capacity), is skipped, so a drag rewrites
+the dragged drawing's glyphs alone (a re-index or a slot shift rewrites that record; a seeded test
+holds every incremental encode equal to a fresh one). The label box (advance × size, ascent and
+descent, cached per record at measure time) widens the drawing's `drawingBounds`. The 2D path
 keeps one run per label (anchor, offset, size, colour) and the record's clamped string, and
 `fillText`s it, bucketed by colour and size: the font is `<px>px sans-serif`, built from the size
 alone, never from input (SR-E14-04); the text is data, never parsed (SR-E14-03).

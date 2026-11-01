@@ -19,6 +19,16 @@ export interface DrawingRecord {
   /** The label's advance in em and its drawn glyphs under the node's `GlyphSource`; -1: unmeasured. */
   labelEm: number;
   labelGlyphs: number;
+  /** The label's box in CSS px from the first anchor's screen point [x0, y0, x1, y1]. */
+  readonly labelBox: Float64Array;
+  /**
+   * Where the label ring last wrote this record's glyphs and run, under which ring epoch: an
+   * encode skips a record whose slots and epoch still match (only a changed drawing re-encodes);
+   * -1 after a re-index (its anchor moved) or on a new record.
+   */
+  labelAt: number;
+  labelRun: number;
+  labelEpoch: number;
 }
 
 /** The colour a token resolves to when the theme lacks it and `color.drawing.default` too. */
@@ -78,6 +88,10 @@ export function toRecord(d: DrawingInput): DrawingRecord {
     fill: -1,
     labelEm: -1,
     labelGlyphs: 0,
+    labelBox: new Float64Array(4),
+    labelAt: -1,
+    labelRun: -1,
+    labelEpoch: -1,
   };
   resolveColours(r, {});
   for (let i = 0; i < n; i += 1) {

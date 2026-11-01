@@ -1,12 +1,21 @@
 // The `drawing-label` instance ring (E14-T03 PR 2): each visible drawing's clamped label as one
 // instance per drawn glyph (a space advances with none), anchored at the record's first anchor in
 // chart space, so a pan or zoom rewrites nothing; the glyph boxes are device px (CSS × dpr) and
-// rebuilt on DATA, STYLE or a DPR change only. Beside the glyphs it keeps one run per label (the
-// anchor, offset, font px and colour) and the label strings themselves, which the Canvas 2D path
+// rebuilt on DATA, STYLE or a DPR change only, and then only for the records that changed. Beside
+// the glyphs it keeps one run per label (the anchor, offset, font px and colour) and the label
+// strings themselves, which the Canvas 2D path
 // draws with `fillText` (26 §3.7's fallback): text as data, never parsed, no CSS built from it.
 // Glyph metrics come through the `GlyphSource` seam (#358 BQ-1). DOM- and GL-free.
 import { attributeOffset, PROGRAM } from "../../scene/instance-layout.js";
-import { codeAt, GLYPH, GLYPH_WORDS, type GlyphSource, glyphOf, width16 } from "./glyphs.js";
+import {
+  codeAt,
+  GLYPH,
+  GLYPH_WORDS,
+  type GlyphSource,
+  glyphOf,
+  measure,
+  width16,
+} from "./glyphs.js";
 import type { DrawingRecord } from "./record.js";
 import { attributesOf, flatten, InstanceRing } from "./ring.js";
 
@@ -38,6 +47,25 @@ export const offsetOf = (r: DrawingRecord): number =>
   r.input.kind === "text" ? 0 : LABEL_OFFSET_PX;
 
 const G = new Float64Array(GLYPH_WORDS);
+const M = new Float64Array(2);
+
+/**
+ * Measures `r`'s label under `glyphs` (on DATA or a new glyph source, never per frame): its
+ * advance in em, its drawn glyphs, and its box in CSS px from the first anchor's screen point
+ * (`labelBox`: offset right and up, none for `text`; advance × size; ascent and descent).
+ */
+export function measureLabel(r: DrawingRecord, glyphs: GlyphSource): void {
+  measure(glyphs, labelOf(r), M);
+  r.labelEm = M[0] as number;
+  r.labelGlyphs = M[1] as number;
+  const size = fontOf(r);
+  const off = offsetOf(r);
+  const b = r.labelBox;
+  b[0] = off;
+  b[1] = -off - glyphs.ascent * size;
+  b[2] = off + r.labelEm * size;
+  b[3] = -off + glyphs.descent * size;
+}
 const PREMUL = new Float64Array(4);
 
 export class LabelInstances extends InstanceRing {
@@ -47,13 +75,28 @@ export class LabelInstances extends InstanceRing {
   runCount = 0;
   /** Each run's text: the record's own clamped string (no copy). */
   readonly texts: string[] = [];
+  /** Bumped when every record must rewrite; a record's `labelEpoch` names the one it wrote in. */
+  private epoch = 0;
+  private readonly key = { dpr: 0, opacity: -1, glyphs: null as GlyphSource | null, style: -1 };
 
   constructor() {
     super(LABEL_STRIDE);
   }
 
   /** Writes every label's glyphs and run in draw order; a pan never calls this. */
-  encode(order: readonly DrawingRecord[], glyphs: GlyphSource, dpr: number, opacity = 1): void {
+  /**
+   * Writes the labels in draw order, incrementally: a record whose glyphs and run sit where it
+   * last wrote them, under the same epoch (DPR, opacity, glyph source, theme and capacity), is
+   * skipped, so a drag re-encodes the dragged drawing's glyphs alone (and any that shifted slot).
+   * A pan never calls this: the anchor is chart space.
+   */
+  encode(
+    order: readonly DrawingRecord[],
+    glyphs: GlyphSource,
+    dpr: number,
+    opacity = 1,
+    styleRev = 0,
+  ): void {
     let total = 0;
     let runs = 0;
     for (let i = 0; i < order.length; i += 1) {
@@ -62,14 +105,39 @@ export class LabelInstances extends InstanceRing {
       total += n;
       if (labelOf(r) !== "") runs += 1;
     }
+    const data = this.data;
+    const runData = this.runs;
     this.begin(total);
     this.reserveRuns(runs);
+    const k = this.key;
+    if (
+      data !== this.data ||
+      runData !== this.runs ||
+      k.dpr !== dpr ||
+      k.opacity !== opacity ||
+      k.glyphs !== glyphs ||
+      k.style !== styleRev
+    ) {
+      this.epoch += 1; // every record rewrites (compare-first still uploads only real changes)
+      k.dpr = dpr;
+      k.opacity = opacity;
+      k.glyphs = glyphs;
+      k.style = styleRev;
+    }
     let at = 0;
     let run = 0;
     for (let i = 0; i < order.length; i += 1) {
       const r = order[i] as DrawingRecord;
       const text = labelOf(r);
       if (text === "") continue;
+      if (r.labelAt === at && r.labelRun === run && r.labelEpoch === this.epoch) {
+        at += r.labelGlyphs; // unchanged since its last write: skipped
+        run += 1;
+        continue;
+      }
+      r.labelAt = at;
+      r.labelRun = run;
+      r.labelEpoch = this.epoch;
       const size = fontOf(r) * dpr;
       const dx = offsetOf(r) * dpr;
       const dy = 0 - dx; // up by the offset (+0, never -0, for `text`)

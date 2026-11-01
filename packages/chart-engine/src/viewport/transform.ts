@@ -147,6 +147,17 @@ export function unprojectRel(c: ArrayLike<number>, y: number): number {
 }
 
 /** `sy` for every mode (26 §3.5): through `projectRel` from `priceLow`; `tick` from `priceOrigin`. */
+/**
+ * `priceToScreen`'s coefficients for `pane` into `out` (8 words), once: then `projectRel(out,
+ * tick - base)` for each tick, bit-identical to `priceToScreen` (E14-T03: a bounds pass projects
+ * several ticks per drawing). Returns `base`, the pane's `priceLow`.
+ */
+export function priceCoefficients(vp: ViewportState, pane: number, out: Float64Array): number {
+  const p = paneOf(vp, pane);
+  coefficients(p, p.priceLow, out);
+  return p.priceLow;
+}
+
 export function priceToScreen(vp: ViewportState, pane: number, tick: number): number {
   const p = paneOf(vp, pane);
   coefficients(p, p.priceLow, CPU);
