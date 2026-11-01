@@ -1,38 +1,41 @@
 # E05 security review — design-system dependencies, CSP impact and Storybook (E05-X02)
 
 - Ticket: E05-X02 (#272), epic E05 (#30). Threat model: `docs/plan/threat-models/E05-design-system.md`
-  (E05-X01, here `TM`). Blockers: E05-X01 (#215) and E05-T03 (#269) closed; **E05-S04 (#267) open**.
-- Audited sha: `main` `8addd87a73` (2026-10-31). Counts and versions below are read there; paths are
-  repo-relative.
+  (E05-X01, here `TM`). Blockers: E05-X01 (#215), E05-T03 (#269) and E05-S04 (#267) all Done.
+- Audited sha: `main` `8addd87a73` (2026-10-31), the pre-stage; **re-run at S04's closing sha
+  `2ea37eca034b0c1ddb95bb40e08321b3c0ef0ac9` (#5237, 2026-11-01) in §14.** Counts and versions in §1–§13
+  are read at the pre-stage sha and §14 diffs them; paths are repo-relative.
 - Method: the pipeline's own tools, run locally where they can be (`pnpm audit`, `pnpm licenses`, Semgrep at
   the pinned version), cited from the PR head's CI job where they cannot (CodeQL, the gitleaks binary).
   Agent review only; this is not the human security engineer's review the ticket's DoD names (§15).
 - Disclosure: advisories are named by package@version, severity and the entry or tracker that decides them;
   no advisory id, CVE id or exploit detail appears here (C-12.13, `SECURITY.md`).
 
-> **Status: pre-staged, not final.** E05-S04 (#267) was In Progress when these results were taken, with
-> named slices unbuilt (CMP-062, CMP-063, CMP-228, the RbacGate `tooltip` / `notice` forms). Every
-> tree-dependent result (§2–§9, §11, §12 G5) is re-run at S04's closing sha (#267 slice H) and diffed in
-> §14, one commit before this record is READY. Open for READY: that re-run, the orchestrator's approval
-> comment on the accepted-risk entries (§13) and the agent security review on #30 (§15).
+> **Status: READY.** §1–§13 were pre-staged while E05-S04 (#267) was In Progress, with named slices
+> unbuilt (CMP-062, CMP-063, CMP-228, the RbacGate `tooltip` / `notice` forms). S04 closed with #5237 at
+> `2ea37eca` (2026-11-01); every tree-dependent result (§2–§9, §11, §12 G5) was re-run there and diffed
+> in §14. Verdict after the re-run: no Critical or High finding; the one open finding (the RbacGate
+> statement, §12) is closed; no new finding. What stays outside this file: the orchestrator's approval
+> comment on the accepted-risk entries (§13) and the agent security review on #30 (§15), both given on
+> GitHub at READY.
 
 ## 0. Ruling
 
 The BQ list on #272 was ruled on 2026-10-31 (17:39Z) by the orchestrator under the owner's 2026-10-29
 delegation (#2701): every BQ as proposed, with these decisions.
 
-| BQ  | Ruled                                                                                                                                  | Where    |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| 01  | Pre-stage on a draft; the re-run at S04's closing sha (#267 slice H) is one commit before READY                                        | §14      |
-| 03  | Fix High; fix or allowlist each Medium with `expires`; the orchestrator approves the entries by comment under the delegation           | §3, §13  |
-| 05  | C-12.3's 12-month rule on existing direct and first-level dependencies gives Info rows, not fails (the rule binds new dependencies)    | §5       |
-| 08  | G2 reads "not weakened, hash pending #304"; with one comment on #304 that meets the DoD, without waiting                               | §10, §16 |
-| 09  | `style-src 'unsafe-inline'` facts go to E43-T12 (#1239); no CSP change                                                                 | §10      |
-| 10  | "No publish target exists; the dev and VR servers bind loopback"; A4 re-anchored in RSK-029, dated under the delegation; no new ticket | §11      |
-| 14  | The missing RbacGate statement is a finding routed to #267 slice H; no catalogue edit here                                             | §12      |
-| 18  | Accepted risks signed by the orchestrator under the delegation, with its wording; the owner ratifies                                   | §13, §15 |
-| 20  | One PR; while a draft, `Refs #272` and a `Partial:` line, no closing verb; at READY the body takes the closing line                    | PR body  |
-| 23  | Licences over prod and dev; a dev-only off-allowlist licence is an Info finding; CI's `--prod` scope gap routed by comment             | §6       |
+| BQ  | Ruled                                                                                                                                       | Where    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| 01  | Pre-stage on a draft; the re-run at S04's closing sha (#267 slice H) is one commit before READY                                             | §14      |
+| 03  | Fix High; fix or allowlist each Medium with `expires`; the orchestrator approves the entries by comment under the delegation                | §3, §13  |
+| 05  | C-12.3's 12-month rule on existing direct and first-level dependencies gives Info rows, not fails (the rule binds new dependencies)         | §5       |
+| 08  | G2 reads "not weakened, hash pending #304"; with one comment on #304 that meets the DoD, without waiting                                    | §10, §16 |
+| 09  | `style-src 'unsafe-inline'` facts go to E43-T12 (#1239); no CSP change                                                                      | §10      |
+| 10  | "No publish target exists; the dev and VR servers bind loopback"; A4 re-anchored in RSK-029, dated under the delegation; no new ticket      | §11      |
+| 14  | The missing RbacGate statement is a finding routed to #267 slice H; no catalogue edit here                                                  | §12      |
+| 18  | Accepted risks signed by the orchestrator under the delegation, with its wording; the owner ratifies                                        | §13, §15 |
+| 20  | One PR; while a draft, `Refs #272` and a `Partial:` line, no closing verb. Amended at READY: the body keeps `Refs #272` (#272 closes by QA) | PR body  |
+| 23  | Licences over prod and dev; a dev-only off-allowlist licence is an Info finding; CI's `--prod` scope gap routed by comment                  | §6       |
 
 ## 1. What the ticket assumes vs what shipped
 
@@ -95,8 +98,8 @@ closure: 7 Medium package@version rows (6 distinct advisories) and 4 Low advisor
 - None is on the runtime path (§2): `packages/ui` ships its `dist/` bundle, and `@floating-ui/*` has no
   advisory.
 - **Reconciliation with `security/accepted-risks.yaml`:** of its six `npm-audit` / `dependabot` entries,
-  one covered this closure (the esbuild Low above). Its 2026-11-20 expiry may fall before the S04 re-run;
-  if it does, that is a finding for #3639, by comment. This PR adds six `npm-audit` entries, one per Medium
+  one covered this closure (the esbuild Low above). Its 2026-11-20 expiry could have fallen before the S04
+  re-run; it did not (the re-run is dated 2026-11-01, §14). This PR adds six `npm-audit` entries, one per Medium
   advisory (the seven rows), ticket #272, expiring 2026-11-20 (inside C-12.3's 30 days, with the #3639
   batch). They take effect with the orchestrator's approval comment on the PR (§13).
 - **Dependabot:** 6 open alerts at the audit time, all outside `packages/ui` (CI's Semgrep venv and the
@@ -238,7 +241,8 @@ not a defence against script already running in the page (that is the CSP's and 
 component (`RbacGate.tsx`) and the Molecules docs, and **absent** from the catalogue entry
 (`15-component-catalogue.md` CMP-079), which `TM` row L7 requires, and from `RbacGate.stories.tsx`, which
 S04's Security notes require. Routed to #267 slice H by comment (BQ-14): the statement goes into S04's
-"As built" lines and the catalogue entry there; no catalogue edit here.
+"As built" lines and the catalogue entry there; no catalogue edit here. **Closed at the re-run** (§14): slice H
+put it in the catalogue's "As built (E05-S04)" line and in the stories' docs description.
 
 **G5, no HTML injection:** zero uses in `packages/ui` and `apps/web/src` (JSX attribute or `createElement`
 prop). The one textual hit is a type-level ban (`IconSvg.tsx` omits the prop from its props). Enforced by
@@ -252,20 +256,57 @@ the Semgrep rule in CI and, from this PR, `react/no-danger: "error"` over `packa
 | vite@6.4.4, minimatch@10.2.6 / 5.1.9 / 3.1.5, glob@13.0.6 on dev/build paths (§3)               | Medium   | Accepted-risk entries in `security/accepted-risks.yaml` (ticket #272, expires 2026-11-20): no patched release (vite) or the fix is a major the parents do not take. Accepted under the owner's 2026-10-29 delegation, #2701 6490317249; the owner ratifies. In effect with the orchestrator's approval comment |
 | qs@6.16.0, fast-uri@3.1.8 on dev/build paths (§3)                                               | Medium   | **Fix preferred**: a patch-level workspace override (qs 6.16.1, fast-uri 3.1.9), a lockfile change outside this PR's write set. Until it lands, entries on the same terms as the row above; the fix PR removes them                                                                                            |
 | The entries match on the advisory, so each covers it workspace-wide, not only for `packages/ui` | Info     | recorded; every path it covers is dev or build (§3)                                                                                                                                                                                                                                                            |
-| esbuild accepted-risk entry may expire before the S04 re-run (§3)                               | Low      | #3639, by comment, if it does                                                                                                                                                                                                                                                                                  |
+| esbuild accepted-risk entry may expire before the S04 re-run (§3)                               | Low      | #3639, by comment, if it does. Closed: it did not (§14)                                                                                                                                                                                                                                                        |
 | eslint 9 unsupported; eslint-plugin-react stale (§5)                                            | Info     | frontend-platform lane's next dependency pass                                                                                                                                                                                                                                                                  |
 | caniuse-lite CC-BY-4.0, dev-only; CI's `--prod` licence scope (§6)                              | Info     | the `license-check` gate's owner, by comment                                                                                                                                                                                                                                                                   |
-| RbacGate statement missing from the catalogue and the stories (§12)                             | finding  | #267 slice H, by comment                                                                                                                                                                                                                                                                                       |
+| RbacGate statement missing from the catalogue and the stories (§12)                             | finding  | #267 slice H, by comment. Closed at `2ea37eca` (§14)                                                                                                                                                                                                                                                           |
 | `style-src 'unsafe-inline'` (§10)                                                               | input    | E43-T12 (#1239), by comment                                                                                                                                                                                                                                                                                    |
 | A4 re-review trigger names a ticket that does not exist (§11)                                   | residual | RSK-029 re-anchored, dated under the delegation; the owner ratifies                                                                                                                                                                                                                                            |
 
-No Critical or High finding exists at the audited sha. G1's "each Medium has a dated accepted-risk entry"
-is met once the orchestrator's approval comment is on the PR.
+No Critical or High finding exists at the audited sha, nor at the re-run sha (§14). G1's "each Medium has a
+dated accepted-risk entry" is met once the orchestrator's approval comment is on the PR.
 
 ## 14. Re-run at S04's closing sha
 
-Pending. At S04's close: re-run §2 (inventory diff), §3 (same inventory-membership rule), §4, §5, §6, §9 and §11's fixture pass and G5 at
-that sha, and record the diff here against the pre-staged results above.
+E05-S04 (#267) closed with #5237, merged to `main` as `2ea37eca034b0c1ddb95bb40e08321b3c0ef0ac9` on
+2026-11-01. Everything below was re-run at that sha on 2026-11-01 and diffed against §2–§13; the PR's own
+base (`40e63d45`) changes none of the paths this review reads after `2ea37eca`.
+
+**What changed in the window** (`8addd87a73..2ea37eca`, 55 commits). `pnpm-lock.yaml`, `pnpm-workspace.yaml`
+and every `package.json` are byte-identical, as are `apps/web/index.html`, `apps/desktop/src/main/csp.ts`,
+`packages/ui/src/theme/prepaint.ts`, `.gitleaks.toml`, `tools/ci/licenses-allowlist.json`,
+`tools/ci/allowed-postinstall.json`, the Semgrep pin and `packages/ui/.storybook/main.ts`. In `packages/ui`,
+100 non-image files changed (55 added, 45 modified) and 678 VR baselines were added (14 story families:
+WatchlistRow, PreviewTile, DensityToggle, ThemeSwitcher, FileDrop, WatchlistGroupTabs, ColumnPicker,
+FreshnessMarker, Table, RbacGate, the E05-S04 theming matrix, the theming perf story, Checkbox, Button).
+`.storybook/` gained `idlePointer.ts` and `eventually.ts` and a `preview.ts` `beforeEach`; `theme-bundles.ts`
+re-ordered its CSS imports and added the new components' files; one token alias changed
+(`semantic-light` `color.surface.hover`). `CONSTITUTION.md` §9 #14 was amended (v2.1.1, #5272) to admit
+OFL-1.1 for the two vendored typefaces; that is not an npm dependency and is outside the §2 inventory.
+
+| §   | Pre-staged result                                                              | At `2ea37eca`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Status    |
+| --- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| 2   | 787 closure, 3 runtime, 233 Storybook; exact runtime pin                       | identical lockfile and manifests, so the inventory, the runtime path and the pinning facts are the same; no new dependency, no new version                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | confirmed |
+| 3   | 0 Critical, 0 High, 6 Medium, 4 Low; 7 Medium + 4 Low rows                     | `pnpm audit --json` on 2026-11-01: 0 / 0 / 6 / 4, the same ten advisory rows (same package@version set, same patched ranges, vite and deepmerge still without one). The esbuild entry (expires 2026-11-20) is in force. Dependabot: 6 open alerts, all outside `packages/ui` (5 on CI's Semgrep venv, 1 on the chart-engine Tauri bench harness), as before. The six entries stand as written                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | confirmed |
+| 4   | `postinstall`: esbuild only; no `preinstall` / `install`                       | a workspace-wide enumeration from a fresh lockfile install (3,064 manifests, a superset of the closure) finds the same three esbuild `postinstall` hooks and one `install` hook outside the inventory (`electron-winstaller`, the desktop packager's), none of which runs under `ignoreScripts: true`; the allowlist file is unchanged                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | confirmed |
+| 5   | eslint 9 line deprecated; eslint-plugin-react stale; 20 first-level            | registry re-read 2026-11-01: eslint 9.39.5 still marked unsupported (10.x current); eslint-plugin-react's latest is still 7.37.5 (2025-04-03); no other direct dependency is deprecated at its resolved or latest version; the stale first-level set is unchanged (the only first-level releases in the window were `rollup` and `ws`, neither stale). Info rows as before                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | confirmed |
+| 6   | 779 allowed, 7 allowlisted-only, 1 CC-BY-4.0 dev-only                          | identical closure and allowlist file, so the licence table is the same; the §9 #14 amendment adds OFL-1.1 for vendored fonts and does not touch the npm closure. Info finding as before                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | confirmed |
+| 8   | Semgrep 1.181.0: 308 rules, 600 files, 0 findings; injection rule 433 files, 0 | the same 11 registry packs plus every `.semgrep/cv-*.yml` over `packages/ui`: **308 rules, 655 files, 0 findings, 0 errors**; `cv-shell-dangerously-set-inner-html` over `apps` and `packages`: 467 files, 0 findings; CI's `security/semgrep/auth` pack over its three targets: 13 rules, 1,608 files, 0 findings                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | confirmed |
+| 9   | gitleaks not run locally; approximation helpers 0 hits                         | **the pinned gitleaks binary (8.30.1, CI's) was run this time**: `detect --no-git` over the whole tree at `2ea37eca` (200 MB), no leaks; over `packages/ui` at the PR head, no leaks; the PR's own commits (`git` mode), no leaks. The one token change is covered. The pytest pin (no allowlisted path under `tokens/`) is green                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | confirmed |
+| 10  | `script-src 'self'` both sites; no inline script; 16 `style=` in 12            | both CSP sites and the pre-paint script unchanged; the pytest pins are green. `style={…}` props in non-story sources: **19 in 14 files** (new: `PreviewTile.tsx`, `Table.tsx`), still the E43-T12 (#1239) input, not a CSP change. G2 stays "not weakened, hash pending #304"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | confirmed |
+| 11  | no publish target; loopback servers; 84 story sources; 4,374 baselines         | no workflow publishes (`test_no_workflow_publishes_a_storybook_build` green on the window's workflow changes; the dev server and the VR server flags are unchanged). Story, MDX and `.storybook` sources: **96** (24 added or changed); the scripted literal pass over those 24 found only synthetic data: `manager@example.com`, `example.com` URLs, `ALTnnnUSDT` / `BTCUSDT` / `ETHUSDT` / `SOLUSDT` / `FOOUSDT` symbols, public-level prices (64,012.50; 3,144.21), round turnover and byte counts, and one deliberate `<script>alert(1)</script>` text fixture whose story asserts it renders as text. VR baselines: **5,052** (+678); a seeded (272) sample of 12 of the 552 new baselines in the grid, tile, picker, switcher and notice stories was viewed: synthetic rows, no account id, key, balance or personal data (a sample, not every image). The new `.storybook` modules are tester-only (gated on Vitest's browser flag), with no network or storage | confirmed |
+| 12  | RbacGate statement absent from the catalogue and the stories                   | present in both: the catalogue's "As built (E05-S04)" line for CMP-079 ("a UI affordance, not an authorisation control (the server enforces, C-12.4)") and `RbacGate.stories.tsx`'s docs description. G3 and G4 sources are unchanged in the window; `MaskedValue.test.tsx` and `eslint-rules/eslint-config.test.ts` re-run green (46 tests)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | closed    |
+| 12  | G5: zero `dangerouslySetInnerHTML` uses                                        | zero uses in `packages/ui` and `apps/web/src` (grep and the Semgrep rule); the only textual hits are the `IconSvg.tsx` type-level ban and `innerHTML` reads in tests and story assertions that check a value is absent. `react/no-danger` is pinned by the lint test                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | confirmed |
+
+**New surface checked, no finding.** CMP-067 FileDrop (new in the window) is the design system's first
+file input: it refuses a file over `maxBytes` (64 KB) before reading it, holds a drop to the native
+`accept` list, decodes UTF-8 and refuses other bytes, never interprets the text itself (the host parses and
+previews), and the preview renders the host's content as text nodes only; its tests pin each of those
+(`test/FileDrop.test.tsx`). T2 (RbacGate) is an affordance on it, not the control, as §12 says.
+
+**New findings: none.** Per-finding status: every §13 row is confirmed as written except the two closed
+above (the esbuild expiry row and the RbacGate statement). The accepted-risk entries, their expiries and
+RSK-029 need no change.
 
 ## 15. Sign-off
 
@@ -278,14 +319,14 @@ that sha, and record the diff here against the pre-staged results above.
 
 ## 16. Gherkin and DoD map
 
-| Item                                                              | State                                                                                    |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| G1 zero Critical / High; each Medium dated                        | zero Critical / High; Mediums entered, approval comment pending; final at the S04 re-run |
-| G2 CSP not weakened                                               | not weakened, hash pending #304                                                          |
-| G3 MaskedValue                                                    | automated and green (screen reader by proxy; the real pass is #262)                      |
-| G4 hold gate                                                      | automated and green                                                                      |
-| G5 no HTML injection                                              | zero uses; lint rule and Semgrep rule; final at the S04 re-run                           |
-| DoD: hash requirement on E10                                      | on #304; the one confirmation comment meets it (BQ-08)                                   |
-| DoD: Storybook private, fixtures synthetic                        | no publish target; dev and VR servers loopback; fixtures synthetic                       |
-| DoD: security engineer comment on #30                             | agent review pending; human comment not given here                                       |
-| DoD: accepted risks dated, Owner-signed, in `32-risk-register.md` | RSK-029 updated; signed under the delegation, the owner ratifies                         |
+| Item                                                              | State                                                                              |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| G1 zero Critical / High; each Medium dated                        | zero Critical / High at both shas (§14); Mediums entered, approval comment pending |
+| G2 CSP not weakened                                               | not weakened, hash pending #304; both policies unchanged at the re-run (§14)       |
+| G3 MaskedValue                                                    | automated and green (screen reader by proxy; the real pass is #262)                |
+| G4 hold gate                                                      | automated and green                                                                |
+| G5 no HTML injection                                              | zero uses at both shas; lint rule and Semgrep rule (§14)                           |
+| DoD: hash requirement on E10                                      | on #304; the one confirmation comment meets it (BQ-08)                             |
+| DoD: Storybook private, fixtures synthetic                        | no publish target; dev and VR servers loopback; fixtures synthetic                 |
+| DoD: security engineer comment on #30                             | agent review pending; human comment not given here                                 |
+| DoD: accepted risks dated, Owner-signed, in `32-risk-register.md` | RSK-029 updated; signed under the delegation, the owner ratifies                   |
