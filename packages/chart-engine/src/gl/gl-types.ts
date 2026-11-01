@@ -57,6 +57,7 @@ export interface GL2Like {
   activeTexture(unit: number): void;
   bindTexture(target: number, texture: GLObject | null): void;
   texParameteri(target: number, pname: number, param: number): void;
+  pixelStorei(pname: number, param: number): void;
   texImage2D(
     ...a: [number, number, number, number, number, number, number, number, ArrayBufferView | null]
   ): void;
@@ -89,8 +90,14 @@ export const GL = {
   TEXTURE_MIN_FILTER: 0x2801,
   TEXTURE_MAG_FILTER: 0x2800,
   LINEAR: 0x2601,
+  TEXTURE_WRAP_S: 0x2802,
+  TEXTURE_WRAP_T: 0x2803,
+  CLAMP_TO_EDGE: 0x812f,
   RGBA: 0x1908,
   RGBA8: 0x8058,
+  R8: 0x8229,
+  RED: 0x1903,
+  UNPACK_ALIGNMENT: 0x0cf5,
   UNSIGNED_BYTE: 0x1401,
   TRIANGLE_STRIP: 0x0005,
   COLOR_BUFFER_BIT: 0x4000,

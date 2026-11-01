@@ -16,6 +16,9 @@ export interface ChartOptions {
   syncGroup?: string;
   maxBars?: number; // default 200_000
   memoryBudgetMb?: number; // default 600
+  // Design delta BQ-258 (E11-S11): the design fonts' bytes for the SDF atlas (C-2.16: the
+  // engine fetches nothing). Copied per chart; absent means no atlas is built.
+  fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[];
 }
 
 export interface Chart {
@@ -156,8 +159,9 @@ export interface ChartEvents {
     message: string;
     recoverable: boolean;
     /**
-     * On `ENGINE_CONTEXT_LOST` (BQ-64) and `ENGINE_NO_WEBGL2` (E11-T05, BQ-90) only; the UI never
-     * parses `message`. The second names what `degraded-2d` reduces and why, as codes.
+     * On `ENGINE_CONTEXT_LOST` (BQ-64), `ENGINE_NO_WEBGL2` (E11-T05, BQ-90) and
+     * `ENGINE_ATLAS_GENERATION_FAILED` (E11-S11, BQ-272) only; the UI never parses `message`.
+     * The second names what `degraded-2d` reduces and why, as codes; the third why no atlas.
      */
     details?:
       | { attempt: number; maxAttempts: number; nextTryMs: number }
@@ -166,7 +170,8 @@ export interface ChartEvents {
             "footprint-text" | "heatmap" | "bubbles" | "profile-shading" | "gpu-effects"
           )[];
           reason: "no-webgl2" | "context-failed" | "compile-failed" | "restore-failed" | "forced";
-        };
+        }
+      | { atlasReason: "no-font" | "font-load" | "coverage" | "overflow" | "raster" };
   };
 }
 

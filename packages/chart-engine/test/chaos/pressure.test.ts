@@ -23,6 +23,8 @@ import { asHtml, FakeDocument, FakeElement } from "../api/fake-dom.js";
 import { FULL } from "../gl/fake-gl.js";
 import { bars, STEP } from "../model/fixtures.js";
 import { fakeEnv, FakeWorker } from "../worker/fake-worker.js";
+import { MemoryKv, proceduralPlatform, TEST_FONTS } from "../../bench/fixtures/text-platform.js";
+import type { KvStore } from "../../src/text/platform.js";
 import {
   candleBatch,
   dataMsg,
@@ -31,6 +33,7 @@ import {
   lossCanvas,
   rng,
   roomyGl,
+  runtimeOnFakeClock,
   SEEDS,
 } from "./harness.js";
 
@@ -294,7 +297,28 @@ describe("Scope: degraded paths", () => {
   );
 
   it.todo("F-14 runMode reported in the SCR-046 allowlist (pending: E11-T07 #523)");
-  it.todo("IndexedDB unavailable during atlas caching (pending: E11-S11 #336)");
+  const stores: Record<string, () => Promise<KvStore | null>> = {
+    "the open throws": () => Promise.reject(new Error("SecurityError")),
+    "get hangs past the 250 ms bound": async () =>
+      Object.assign(new MemoryKv(), { get: () => new Promise<unknown>(() => undefined) }),
+    "put rejects (quota)": async () =>
+      Object.assign(new MemoryKv(), { put: () => Promise.reject(new Error("QuotaExceeded")) }),
+  };
+
+  it.each(Object.keys(stores))(
+    "IndexedDB unavailable during atlas caching (%s): in-memory atlas, the chart renders, no code",
+    async (name) => {
+      const text = proceduralPlatform({ store: stores[name] ?? null });
+      const { rt, out, init } = runtimeOnFakeClock("inline", text);
+      const gl = roomyGl();
+      init(lossCanvas(gl), 1, { fonts: TEST_FONTS });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(out.filter((m) => m.t === "error")).toEqual([]);
+      expect(rt.atlasCounters()).toMatchObject({ cacheHit: false, rasterized: 194 });
+      expect(gl.textures.filter((t) => t.startsWith("image"))).toHaveLength(1);
+      expect(out.some((m) => m.t === "frame")).toBe(true);
+    },
+  );
   it.todo(
     "memory pressure to the 70 % threshold emits ENGINE_MEMORY_PRESSURE once (pending: E11-S15 #448)",
   );

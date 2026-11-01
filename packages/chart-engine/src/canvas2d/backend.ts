@@ -100,6 +100,9 @@ export class Canvas2DBackend implements RenderBackend {
     this.background = css;
   }
 
+  /** No texture in 2D: label runs paint with `fillText` from their strings (E11-S11 PR B). */
+  uploadAtlas(): void {}
+
   dispose(): void {
     this.slots.clear();
     this.buckets.clear();

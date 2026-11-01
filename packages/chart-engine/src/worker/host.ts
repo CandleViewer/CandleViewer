@@ -5,6 +5,7 @@
 // buffer, and restarts a lost worker. DOM side: this file is in tsconfig.dom.json's program.
 import { probeRenderProfile } from "../host/mount.js";
 import { createRenderRuntime, type RenderRuntime } from "./runtime.js";
+import { createTextPlatform, type TextScope } from "./text-platform.js";
 import {
   conflate,
   INPUT,
@@ -16,6 +17,7 @@ import {
   RESTART_BACKOFF_MS,
   type BufferLayout,
   type CapabilityReport,
+  type ChartFont,
   type ChartId,
   type Command,
   type DataOp,
@@ -42,7 +44,8 @@ export interface WorkerLike {
 export interface HostEnv {
   createWorker(): WorkerLike;
   requestFrame(cb: () => void): void;
-  setTimer(cb: () => void, ms: number): void;
+  /** One-shot timer; it may return its cancel (the atlas's bounded store calls use it). */
+  setTimer(cb: () => void, ms: number): void | (() => void);
   now(): number;
   probe(): CapabilityReport;
   correlationId(): string;
@@ -114,6 +117,7 @@ function inlineLink(env: HostEnv, unlink: () => void): Link {
     now: () => env.now(),
     setTimer: (cb, ms) => env.setTimer(cb, ms),
     probe: () => env.probe(),
+    text: createTextPlatform(globalThis as unknown as TextScope),
   });
   return {
     runMode: "inline",
@@ -271,7 +275,8 @@ export function defaultHostEnv(doc: Document): HostEnv {
       else setTimeout(cb, 16);
     },
     setTimer: (cb, ms) => {
-      setTimeout(cb, ms);
+      const t = setTimeout(cb, ms);
+      return () => clearTimeout(t);
     },
     now: () => performance.now(),
     probe: () => probeRenderProfile(doc),
@@ -297,6 +302,8 @@ export interface ChartHostOptions {
   readonly bench: boolean;
   /** The app's resolved motion mode at mount (E11-S04 BQ-104); `setMotion` updates it. */
   readonly reducedMotion?: boolean;
+  /** The design fonts (E11-S11 BQ-258); every `init` carries them, a restart's included. */
+  readonly fonts?: readonly ChartFont[];
   readonly listener: HostListener;
 }
 
@@ -399,6 +406,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
     const extra = {
       ...(forced && { profile: "degraded-2d" as const }),
       ...(reduce && { reducedMotion: true }),
+      ...(o.fonts !== undefined && { fonts: o.fonts }),
     };
     if (link.runMode === "worker") {
       const off = canvas.transferControlToOffscreen();

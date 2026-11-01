@@ -2,6 +2,7 @@
 // every call, behaves like a lost context after `loseContext()` (calls no-op, `getError` is
 // CONTEXT_LOST_WEBGL, `create*` returns null), and can fail call N (`failAt`) to inject faults.
 import { probeCapabilities, type CapabilityReport } from "../../src/gl/capability.js";
+import { fnv1a } from "../../src/text/hash.js";
 import { GL, type ContextAttributes, type GL2Like, type GLObject } from "../../src/gl/gl-types.js";
 
 export interface FakeGlOptions {
@@ -142,9 +143,26 @@ export class FakeGl implements GL2Like {
   bindVertexArray = (): void => void this.call("bindVertexArray");
   activeTexture = (): void => void this.call("activeTexture");
   bindTexture = (): void => void this.call("bindTexture");
-  texParameteri = (): void => void this.call("texParameteri");
-  texImage2D = (): void => void this.call("texImage2D");
-  texSubImage2D = (): void => void this.call("texSubImage2D");
+  /** `texParameteri` calls a live context took, as `<pname> <param>` (E11-S11 wrap modes). */
+  readonly texParams: string[] = [];
+  texParameteri = (_target: number, pname: number, v: number): void => {
+    if (this.call("texParameteri")) this.texParams.push(`${pname} ${v}`);
+  };
+  pixelStorei = (pname: number, v: number): void => {
+    if (this.call("pixelStorei")) this.textures.push(`store ${pname} ${v}`);
+  };
+  /** Texture uploads a live context took (E11-S11): `image <fmt> <w>x<h>`, `rows <h> <fnv>`. */
+  readonly textures: string[] = [];
+  texImage2D = (...a: unknown[]): void => {
+    if (this.call("texImage2D")) this.textures.push(`image ${String(a[2])} ${a[3]}x${a[4]}`);
+  };
+  texSubImage2D = (...a: unknown[]): void => {
+    if (!this.call("texSubImage2D")) return;
+    const px = a[8] as Uint8Array;
+    this.textures.push(
+      `rows ${String(a[5])} ${fnv1a(px.subarray(0, Number(a[4]) * Number(a[5])))}`,
+    );
+  };
   viewport = (): void => void this.call("viewport");
   clearColor(...rgba: number[]): void {
     const hex = (v: number): string =>
