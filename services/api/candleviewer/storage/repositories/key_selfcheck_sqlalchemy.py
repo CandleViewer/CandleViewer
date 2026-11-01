@@ -158,7 +158,7 @@ class SqlAlchemyKeySelfCheckStore:
 
     async def retire_key(self, key_id: UUID, *, status: RetiredStatus) -> bool:
         if status not in _RETIRED:
-            raise ValueError("a failed check sets `invalid` or `expired` only")
+            raise AccountsStoreError("a failed check sets `invalid` or `expired` only")
         return await self._write(_RETIRE, id=str(key_id), status=status)
 
     async def invalid_keys(self) -> tuple[InvalidKey, ...]:

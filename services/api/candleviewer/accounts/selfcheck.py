@@ -15,9 +15,12 @@ another environment (C-2.11). Outcomes (threat model `E27-accounts.md` D7, SR-E2
   message stays verbatim on the standing result for display). The record follows the conditional
   update that reports the disarm, and its mark follows the record; a refused record is logged
   critical, stays owed and is re-sent on the next pass. The record names the disarm's time
-  (`disarmed_at`), however late it is sent. Then the key's status becomes `invalid`, whatever the
-  audit sink did, as the disarm (#5281; SR-032, TC-134): M2 signs only an `active` or `rotating`
-  key, so the key signs nothing more, and the pass leaves the key's rows readable. A verdict with
+  (`disarmed_at`), however late it is sent. Then the key's status becomes `invalid` (#5281;
+  SR-032, TC-134), once its write-ahead `account.tested` is written (C-2.9: no status change
+  without its record): a refused record withholds the status write, logged critical, and the key,
+  still a target, is checked, recorded and retired by the next pass, while the latch and the
+  disarm hold. M2 signs only an `active` or `rotating` key, so a retired key signs nothing more,
+  and the pass leaves the key's rows readable. A verdict with
   no verified facts (an exchange refusal, such as a key deleted at the venue) cannot verify
   withdrawal-off or the allowlist (`04` §5.14 KV3), so it is such a failure.
   `security.key_policy_violation` (`policy_violation`, decision 12 on #836) comes last, after the
@@ -55,7 +58,10 @@ again, and only a pass,
 whose write clears `last_error_*`, ends it. The code follows its write-ahead `account.tested`, so
 one double fault remains: a failure whose record or code write was refused, then a restart whose
 boot check has no verdict, latches nothing for that key until its last pass leaves the window (at
-most one interval plus 15 minutes). The account stays disarmed only if its disarm committed. The
+most one interval plus 15 minutes). The key's status follows that record too, so a refused one
+leaves the key `active` in the store: every pass, the boot pass included, checks it as any target,
+and its status moves at the first failing check whose record is written. The account stays
+disarmed only if its disarm committed. The
 disarm waits for that record and that code (at most two bounds, one when only the audit sink
 hangs), so a stop or the boot deadline inside that wait, or a store fault that refuses the disarm
 too, leaves the account armed until the window ends. The verified columns and a committed disarm
@@ -158,6 +164,13 @@ _REASON_TEXT: Final = {
     FAILED: "A stored API key failed its self-check.",
     STALE: "A stored API key has no recent passing self-check.",
     UNAVAILABLE: "The stored API keys could not be checked.",
+}
+#: What ends each latch, as the notice tells the Owner: a stored `invalid` key latches `FAILED`
+#: again at every restart until the Owner revokes it (#5281).
+_UNTIL: Final = {
+    FAILED: "until the Owner revokes the failing key and a restart passes the check.",
+    STALE: "until a restart passes the check.",
+    UNAVAILABLE: "until a restart passes the check.",
 }
 #: Latch precedence: a failure replaces a weaker latch of this job's. Another module's latch (the
 #: KEK's: no key can be verified without it) is never replaced.
@@ -446,7 +459,7 @@ class KeySelfCheck:
         held = self._gate.latched_reason_code
         if held is not None and (held not in _RANK or _RANK[held] >= _RANK[code]):
             return False
-        text = f"{_REASON_TEXT[code]} Order entry stays off until a restart passes the check."
+        text = f"{_REASON_TEXT[code]} Order entry stays off {_UNTIL[code]}"
         self._gate.latch(reason_code=code, reason_text=text)
         self._latched = True
         return True
@@ -654,8 +667,8 @@ class KeySelfCheck:
         actor: Mapping[str, object],
     ) -> None:
         """Latch first (not for a lapsed key); then the verdict's record and its rule code, the
-        force-disable and the key's status whatever they did, and the policy-violation record
-        last (decision 2 on #836: enforcement first)."""
+        force-disable whatever they did, the key's status once its record is written (C-2.9),
+        and the policy-violation record last (decision 2 on #836: enforcement first)."""
         key, rule, egress = target.key_id, verdict.failures[0].rule.value, self._policy.egress_ip
         status: RetiredStatus = "expired" if lapsed(verdict) else "invalid"
         if status == "invalid":  # a lapsed key disables its account alone (SR-034, TC-212)
@@ -667,19 +680,27 @@ class KeySelfCheck:
         crit = {"severity": "critical", "reason": rule}
         summary = {**self._summary(verdict, now), "key_status": status}
         tested = {"outcome": "failure", "after_state": summary, **crit}
+        recorded = False
+
+        async def tested_record() -> None:
+            nonlocal recorded
+            await self._emit("account.tested", "api_key", key, actor, **tested)
+            recorded = True
+
         await self._write(
-            key,
-            lambda: self._emit("account.tested", "api_key", key, actor, **tested),
-            lambda: self._store.record_error(key, code=rule, at=now),
+            key, tested_record, lambda: self._store.record_error(key, code=rule, at=now)
         )
         await self._disarm(PolicyDisarm(account_id, rule, now))
-        await self._retire(check, status)
+        if recorded:  # write-ahead (C-2.9): the status moves only once its record is written
+            await self._retire(check, status)
+        else:  # the key stays a target, so the next pass records and retires it (#5281)
+            logger().critical("key_selfcheck_retire_withheld", key_id=str(key), key_status=status)
         await self._violation(key, account_id, verdict)
         self._failing()  # its alert now, not after the run's other keys
 
     async def _retire(self, check: KeyCheck, status: RetiredStatus) -> None:
-        """The key's status after a failed check, whatever the audit sink did, as the disarm
-        (C-2.8 enforcement first; its record is the write-ahead `account.tested`). A write that
+        """The key's status after a failed check, run only once its write-ahead
+        `account.tested` is written (C-2.9; the latch and the disarm came first). A write that
         times out or raises leaves the key usable as far as this pass knows, so the next pass
         checks it again while the latch holds; an `invalid` key's result outlives the key list."""
         try:

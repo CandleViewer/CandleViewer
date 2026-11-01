@@ -188,7 +188,7 @@ async def test_retire_binds_the_environment_and_refuses_any_other_status() -> No
         {"id": str(KEY), "status": "expired", "env": "demo"},
     ]
     for status in ("revoked", "active", "rotating", "pending"):
-        with pytest.raises(ValueError, match="invalid"):
+        with pytest.raises(AccountsStoreError, match="invalid"):
             await _store(rel).retire_key(KEY, status=cast(Any, status))
     assert len(rel.calls) == 2 and rel.commits == 2  # a refused status runs no SQL
 
