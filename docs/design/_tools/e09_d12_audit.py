@@ -97,7 +97,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "121e9e989b"  # v1's base: every v1 line's cite was read here (the spec's Inputs line)
-BASE_V2 = "16d70feed9"  # v2's base: every v2 line's cite is read here (the Ticket line)
+BASE_V2 = "be4294d0e2"  # v2's base: every v2 line's cite is read here (the Ticket line)
 V1_SHA = "67ab4aa8a5"  # v1 as merged (#4959): G-V1-FROZEN's reference and G-DELTA's pins
 V2_MARK = "(v2)"  # every v2 block's heading ends with it
 HEAD = "origin/main"  # G-VERSION: a cited range edited at origin/main FAILs (PR mode)
@@ -3575,18 +3575,18 @@ def pin_findings(t: Texts) -> list[Finding]:
 R2_QUOTES = ("(E09-D12)", "Outside", "pending")
 # v2's load-bearing fragments: (cite id, line at BASE_V2, text the line must hold)
 CITED_V2: tuple[tuple[str, int, str], ...] = (
-    ("22", 1832, "operationId: authLock"),
-    ("22", 1196, "Every failed sign-in gets one answer, whatever the account's state"),
-    ("22", 1864, "if the audit sink is"),
-    ("22", 1865, "the session is not locked"),
-    ("22", 24308, "maxLength: 32"),
+    ("22", 1847, "operationId: authLock"),
+    ("22", 1211, "Every failed sign-in gets one answer, whatever the account's state"),
+    ("22", 1879, "if the audit sink is"),
+    ("22", 1880, "the session is not locked"),
+    ("22", 24795, "maxLength: 32"),
     ("04", 834, "Every failed sign-in gets one answer"),
     ("04", 844, "Absolute lifetime 12 h"),
-    ("14", 468, "link not valid"),
-    ("15", 2609, 'the constant name "Show password"'),
-    ("15", 2646, "name contains its visible heading"),
-    ("15", 2660, "untinted"),
-    ("15", 2684, "`version: string`"),
+    ("14", 471, "link not valid"),
+    ("15", 2624, 'the constant name "Show password"'),
+    ("15", 2661, "name contains its visible heading"),
+    ("15", 2675, "untinted"),
+    ("15", 2699, "`version: string`"),
     ("ACT", 53, '"auth.session_locked"'),
     ("D07", 22, "`E09-D07 auth band`"),
     ("D07", 37, "Nothing in the band is published."),
@@ -3605,11 +3605,11 @@ CITED_V2: tuple[tuple[str, int, str], ...] = (
     ("D10", 919, "the owner MFA-reset operation"),
     ("D10", 931, "forces enrolment under a fresh password re-authentication"),
     ("E17D02", 249, "owned by the app shell"),
-    ("22", 14603, "Available to any authenticated"),
-    ("16", 631, "re-sync needed: <what changed>"),
-    ("22", 1848, "A request with only the cookie is"),
-    ("22", 1850, "`403 csrf_token_invalid` and nothing is locked"),
-    ("22", 1851, "`401 unauthenticated`, whatever cookie comes with it"),
+    ("22", 14986, "Available to any authenticated"),
+    ("16", 632, "re-sync needed: <what changed>"),
+    ("22", 1863, "A request with only the cookie is"),
+    ("22", 1865, "`403 csrf_token_invalid` and nothing is locked"),
+    ("22", 1866, "`401 unauthenticated`, whatever cookie comes with it"),
 )
 REGISTER_HEAD = "17.1 The v2 delta register"
 MODES_HEAD = "17.2 The modes and the gates"
@@ -3963,43 +3963,48 @@ def cite_label(cid: str, a: int, b: int) -> str:
 # each v2 cite's recorded text at the v2 base (lens M5): written once here, never by
 # --repin-ruled, so a cite moved to another line or a line edited under it FAILs G-CITE
 CITE_TEXT_V2: dict[str, str] = {
+    "14:144": "- **States:** idle · submitting · error (one message for eve",
+    "14:215": "- **Audit:** `auth.password_change` (with `auth.session_revo",
+    "INVITE:85-88": "<h1 ref={land} tabIndex={-1}>",
+    "INVITE:148-188": "return (",
+    "LOGIN:124-130": "<TwoFactorStep",
     "04:834": "| SR-014 | Login responses MUST be indistinguishable between",
     "04:844": "sha:231ebfdea0fb",
     "05:116": "- Demo vs Live: colour (documented owner decision: Live = re",
     "14:143": "- **Interactions/hotkeys:** `Enter` submits; Tab order usern",
     "14:148": "- **Analytics/audit:** `auth.login.attempt`, `auth.login.suc",
-    "14:171": '- **States:** idle · verifying · invalid code ("That code is',
-    "14:174": "- **Sign-off:** [ ] paste behaviour [ ] recovery-code path [",
-    "14:263": "- **Validation:** typed confirmation must match exactly (cas",
-    "14:468": "- **States:** invite valid · link not valid (expired, used a",
-    "14:2370": "- **Data:** `GET /api/v1/me/sessions`, `DELETE /api/v1/me/se",
-    "15:2609": "sha:8394fa59db3d",
-    "15:2646": "sha:4a31c4d92f44",
-    "15:2655-2666": "### CMP-205 QrCode",
-    "15:2660": "- **Tokens**: the card `color.surface.raised`; the bitmap an",
-    "15:2684": "- **Props**: `version: string` (before sign-in the version l",
-    "15:2687": "- **Storybook**: PreAuthVersionOnly, SignedInDemo, SignedInL",
-    "16:631": "- **Re-open, don't drift (§13.5 made operational).** A chang",
-    "22:1196-1201": "Every failed sign-in gets one answer, whatever the account's",
-    "22:1196-1205": "Every failed sign-in gets one answer, whatever the account's",
-    "22:1829": "/auth/lock:",
-    "22:1835": "Locks the calling session at once, exactly as if its idle de",
-    "22:1841-1843": "the `auth.session_locked` audit row's time. The body is the ",
-    "22:1844-1845": "Lock records no activity and never moves `expires_at`; only ",
-    "22:1848-1850": '`cv_refresh` cookie identifies no lock (see "Idle lock"). A ',
-    "22:1851": "access token past its lifetime is `401 unauthenticated`, wha",
-    "22:1852-1853": "Self only: any query parameter is refused with `422` (SR-026",
-    "22:1852": "Self only: any query parameter is refused with `422` (SR-026",
-    "22:1856": "* A session that is already idle-locked answers `200` with i",
-    "22:1859-1860": "* A revoked session, or one past its absolute lifetime, answ",
-    "22:1864-1865": "The lock's record is `auth.session_locked`, written ahead (C",
-    "22:14603-14604": "Backs the About dialog and the Electron update check. Availa",
-    "22:18510": "End of the 12 h absolute lifetime. Refresh, extend, lock and",
-    "22:24308": "version: { type: string, minLength: 1, maxLength: 32, patter",
+    "14:172": '- **States:** idle · verifying · invalid code ("That code is',
+    "14:175": "- **Sign-off:** [ ] paste behaviour [ ] recovery-code path [",
+    "14:264": "- **Validation:** typed confirmation must match exactly (cas",
+    "14:471": "- **States:** invite valid · link not valid (expired, used a",
+    "14:2401": "- **Data:** `GET /api/v1/me/sessions`, `DELETE /api/v1/me/se",
+    "15:2624": "sha:8394fa59db3d",
+    "15:2661": "sha:4a31c4d92f44",
+    "15:2670-2681": "### CMP-205 QrCode",
+    "15:2675": "- **Tokens**: the card `color.surface.raised`; the bitmap an",
+    "15:2699": "- **Props**: `version: string` (before sign-in the version l",
+    "15:2702": "- **Storybook**: PreAuthVersionOnly, SignedInDemo, SignedInL",
+    "16:632": "- **Re-open, don't drift (§13.5 made operational).** A chang",
+    "22:1211-1216": "Every failed sign-in gets one answer, whatever the account's",
+    "22:1211-1220": "Every failed sign-in gets one answer, whatever the account's",
+    "22:1844": "/auth/lock:",
+    "22:1850": "Locks the calling session at once, exactly as if its idle de",
+    "22:1856-1858": "the `auth.session_locked` audit row's time. The body is the ",
+    "22:1859-1860": "Lock records no activity and never moves `expires_at`; only ",
+    "22:1863-1865": '`cv_refresh` cookie identifies no lock (see "Idle lock"). A ',
+    "22:1866": "access token past its lifetime is `401 unauthenticated`, wha",
+    "22:1867-1868": "Self only: any query parameter is refused with `422` (SR-026",
+    "22:1867": "Self only: any query parameter is refused with `422` (SR-026",
+    "22:1871": "* A session that is already idle-locked answers `200` with i",
+    "22:1874-1875": "* A revoked session, or one past its absolute lifetime, answ",
+    "22:1879-1880": "The lock's record is `auth.session_locked`, written ahead (C",
+    "22:14986-14987": "Backs the About dialog and the Electron update check. Availa",
+    "22:18908": "End of the 12 h absolute lifetime. Refresh, extend, lock and",
+    "22:24795": "version: { type: string, minLength: 1, maxLength: 32, patter",
     "ACT:35-142": '"auth.login",',
     "ACT:45": '"auth.idle_locked",',
     "ACT:53": '"auth.session_locked",',
-    "CHECK:60": "{item.reason ? <span> - {item.reason}</span> : null}",
+    "CHECK:60": "{/* `reason` is free text: never rendered raw, the state wor",
     "D07:22": "- **BQ-2 (confirmed).** Three PRs in that order — pack, cata",
     "D07:37": "**Nothing in the band is published.** No band component exis",
     "D07:104-115": "## 4. The ten contracts (BQ-11 ... BQ-20)",
@@ -4046,8 +4051,8 @@ CITE_TEXT_V2: dict[str, str] = {
     "D10:919": "| G-8 | the owner MFA-reset operation (Q-7 as RULED): the `r",
     "D10:931": "| Q-7 | does re-enrolment after an owner reset ask a step-up",
     "E17D02:249": "One live-region pair (polite + assertive) pre-rendered empty",
-    "LOGIN:4-10": 'type State = "idle" | "submitting" | "invalid" | "rate_limit',
-    "LOGIN:94-132": "return (",
+    "LOGIN:5-14": 'type State = "idle" | "submitting" | "invalid" | "rate_limit',
+    "LOGIN:134-173": "return (",
 }
 # built from pieces, so this file holds none of the words the public-text rules keep out
 BANNED_WORDS = re.compile(
@@ -4343,37 +4348,37 @@ def g_ops2(t: Texts) -> list[Finding]:
 ERR2_ROWS: dict[str, tuple[str, int, int, str, str, str]] = {
     "locked account": (
         "401 unauthenticated",
-        1196,
-        1201,
+        1211,
+        1216,
         "`auth.login.failed`",
         "F-1",
         "SCR-001 `error-generic`",
     ),
     "Lock now: revoked or expired session": (
         "401 session_revoked",
-        1859,
-        1860,
+        1874,
+        1875,
         "—",
         "—",
         "SCR-001; no reason line",
     ),
     "Lock now: access token past its lifetime": (
         "401 unauthenticated",
-        1851,
-        1851,
+        1866,
+        1866,
         "—",
         "—",
         "SCR-001; no reason line",
     ),
     "Lock now: no access token (the cookie only)": (
         "403 csrf_token_invalid",
-        1848,
-        1850,
+        1863,
+        1865,
         "—",
         "—",
         "nothing visible",
     ),
-    "Lock now: unavailable": ("503", 1864, 1865, "`auth.unreachable`", "F-4", "the host's"),
+    "Lock now: unavailable": ("503", 1879, 1880, "`auth.unreachable`", "F-4", "the host's"),
 }
 
 
@@ -4724,15 +4729,15 @@ def own_row_ids(spec: str) -> frozenset[str]:
 # stands at that line at the v2 base: v1's old text for an open row, the new text for an
 # applied one)
 AROW_STATUS: dict[str, tuple[str, str, int, str]] = {
-    "A-4": ("applied in part", "14", 468, "link not valid"),
-    "A-7": ("applied", "15", 2684, "`version: string`"),
+    "A-4": ("applied in part", "14", 471, "link not valid"),
+    "A-7": ("applied", "15", 2699, "`version: string`"),
     "A-2": ("open", "14", 143, "remember"),
     "A-3": ("open", "05", 116, "every screen"),
-    "A-5": ("open", "14", 2370, "me/sessions"),
-    "A-6": ("open", "14", 263, "Confirm disabled until"),
+    "A-5": ("open", "14", 2401, "me/sessions"),
+    "A-6": ("applied", "14", 264, "Confirm stays enabled"),
     "A-8": ("open", "14", 148, "auth.login.attempt"),
-    "A-9": ("open", "14", 174, "US-AUTH-"),
-    "A-10": ("open", "14", 171, "Codes refresh every 30 s"),
+    "A-9": ("open", "14", 175, "US-AUTH-"),
+    "A-10": ("open", "14", 172, "Codes refresh every 30 s"),
 }
 
 
@@ -4843,9 +4848,9 @@ def g_screens(t: Texts) -> list[Finding]:
 # contract facts the v2 blocks state, tied to `22` at the v2 base (lens Minor 14): (the words in
 # the spec, the `22` line, the words there)
 FACTS = (
-    ("1 to 32 printable ASCII characters", 24308, "maxLength: 32"),
-    ("is refused with `422`", 1852, "refused with `422`"),
-    ("a session already locked answers `200` and changes nothing", 1856, "answers `200`"),
+    ("1 to 32 printable ASCII characters", 24795, "maxLength: 32"),
+    ("is refused with `422`", 1867, "refused with `422`"),
+    ("a session already locked answers `200` and changes nothing", 1871, "answers `200`"),
 )
 
 
@@ -5227,8 +5232,8 @@ def lever_merge_base() -> Callable[[], None]:
 
 
 def lever_drift_v2() -> Callable[[], None]:
-    """A range a v2 line cites (`22`:1829, §0.1 and §3.4) edited at `origin/main`."""
-    DRIFT.append(("docs/plan/22-api-openapi.yaml", 1829, "  /auth/locked:"))
+    """A range a v2 line cites (`22`:1844, §0.1 and §3.4) edited at `origin/main`."""
+    DRIFT.append(("docs/plan/22-api-openapi.yaml", 1844, "  /auth/locked:"))
     return popper(DRIFT)
 
 
@@ -6160,7 +6165,7 @@ MUTATIONS = (
         "Y-25",
         "G-CITE",
         "a v2 cite past the file",
-        spec=sub("(`22`:1835)", "(`22`:99999)"),
+        spec=sub("(`22`:1850)", "(`22`:99999)"),
         repin=True,
     ),
     Mutation(
@@ -6231,7 +6236,7 @@ MUTATIONS = (
         "Y-35",
         "G-CITE",
         "a v2 cite moved to the next line",
-        spec=sub("(`22`:1835)", "(`22`:1836)"),
+        spec=sub("(`22`:1850)", "(`22`:1851)"),
         repin=True,
     ),
     Mutation(

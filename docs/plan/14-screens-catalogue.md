@@ -147,9 +147,8 @@ graph LR
 - **Performance:** first paint ≤1 s cold; no chart bundle loaded on this route (code-split).
 - **Analytics/audit:** `auth.login.attempt`, `auth.login.success`, `auth.login.failure` (audit, with IP), `auth.login.rate_limited`.
 - **Sign-off checklist:** [ ] error copy never leaks account existence [ ] rate-limit countdown designed [ ] 125 % zoom layout [ ] dark + light + CVD-safe themes [ ] keyboard-only pass.
-- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
-
 - **Design QA (E09-D11):** [E09-D11.md](../design/E09/E09-D11.md) — the built screen has no account-disabled state: one message for every credential failure (DF-47, accepted under `16` §13.5).
+- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
 - **Stories:** US-ONB-001, US-ONB-008.
 
 ### SCR-002 — Two-factor (TOTP) challenge
@@ -271,9 +270,8 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Hi-fi (E09-D06):** code-only, code+typed confirmation, valid-grace (server expiry), failures 1-2, 3rd-failure read-only downgrade (5 min), no-grace variant for Live enablement / kill-switch disable. Spec: `docs/design/E09/E09-D06.md`.
 - **Motion (E09-D08):** `docs/design/E09/E09-D08.md` — open / close, the one-frame failure feedback, the grace indicator's cadence, the input-opacity rule and the reduced-motion variants.
 - **Design sign-off acceptance checklist:** [ ] the exact action being authorised is restated verbatim in the dialog [ ] remaining-TTL indicator for an already-valid step-up token [ ] failure/lockout state drawn [ ] cancel returns the caller to a safe no-op state
-- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
-
 - **Design QA (E09-D11):** [E09-D11.md](../design/E09/E09-D11.md) — the built dialog warns before its challenge expires and offers a fresh challenge (DF-46, accepted); Confirm stays enabled and names the first unmet field on a press (DF-45, accepted).
+- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
 
 ### SCR-010 — App shell (global chrome)
 
