@@ -1,6 +1,8 @@
 # E12 bars store memory at the 32-spec cap (E12-T06 D2-G4, #399)
 
-Status: **harness delivered; the 24 h reading (the fallback, coordinator ruling 4) fails R4 only; D2-G4 stays open.**
+Status: **D2-G4 closed on the `default` memdiag leg (run 40020104619, R4 −0.020 MB/h; ruled 2026-10-31,
+#399 issuecomment-6545764042). The laptop fallback (+0.2475) and the `cv-bench-01` nightly (+0.2358) stay on
+record as FAIL readings of R4; see "D2-G4 closed" below.**
 
 This record holds the D2-G4 fallback reading (coordinator ruling 4): run 39396280082 was cancelled at its
 2100-minute timeout with no report, so `soak_bars --profile full` ran once on a laptop, as "The reading" says:
@@ -8,7 +10,7 @@ machine profile `laptop-i7-13850HX`, not `cv-bench-01`; 24 h of scenario time in
 baseline recorded, and the committed baseline is a smoke run, so its gate compared nothing. The rule that
 judges it was recorded on #399 before the reading existed and is quoted below. Every cell of the reading
 table's 24 h column comes from the laptop run's report or is computed from its curve, and its 1.5 h column is
-quoted from #3861; none is invented. `bars_enabled` stays off at least until the line passes.
+quoted from #3861; none is invented. The line was a precondition for the flag flip; the flag was removed in #399 (bars are always on), and the line stays recorded here as history.
 
 The line is D2-G4 of #399's flag checklist: "memory at the 32-spec cap measured in the soak lane before
 `bars_enabled` flips". Does the bars path hold budget #8 (06 §2 row 8, 300 MB a symbol) at 32 specs a
@@ -21,7 +23,7 @@ a `BarBuilderSet` and a `SeriesStore` holding 32 series of 1 000 bars (6 tick, 9
 delta), hydrated through the production tail read from the recorded golden bars and fed by the soak's trade
 stream (50 prints and 10 book deltas a second a symbol, seed 7), on a virtual clock (about 3 h of wall time
 on the laptop that recorded the baseline). Process RSS is sampled every 60 s (1 441 samples); the judged
-figure is the RSS the lanes add, per symbol, in MiB. The lane never reads `bars_enabled`.
+figure is the RSS the lanes add, per symbol, in MiB. The lane never read the (since removed) `bars_enabled` flag.
 
 ## The pass rule, fixed before the reading (#399, issuecomment-6297719530)
 
@@ -118,6 +120,47 @@ include that scenario's heap and the lane-added figure could move either way. Th
 against 145.6 MB. The R4 figure agrees three ways: the report's `rss_plateau_slope` and the block read
 0.2475 MB/h over 721 samples, an independent offline script +0.248; the block prints `1441 86400.0`.
 
+## D2-G4 closed (2026-10-31)
+
+After the fallback above, two more 24 h readings of the same rule exist, both on `cv-bench-01` (machine
+profile `bench-runner`), and the diagnosis that reconciles them is in
+[`e12-bars-r4-diagnosis.md`](e12-bars-r4-diagnosis.md) ("The result"):
+
+| Reading                                        | Run         | Head        | R4 (MB/h a symbol, 721 samples) | Other checks         |
+| ---------------------------------------------- | ----------- | ----------- | ------------------------------- | -------------------- |
+| laptop fallback (above)                        | none        | `bd82bdce2` | +0.2475: FAIL                   | pass                 |
+| nightly `soak_bars` (`perf-ingestion-nightly`) | 39741074901 | `362590b93` | +0.2358: FAIL                   | pass                 |
+| memdiag `default` leg (`perf-bars-memdiag`)    | 40020104619 | `f496b01e2` | −0.020: PASS                    | R1-R3 pass; complete |
+
+The combined `memdiag judge` verdict over the four legs is **NOT REPRODUCED** (#399, issuecomment-6545806239),
+and the diagnosis is allocator retention, not a leak: with pymalloc off (`malloc` leg, run 40169689142) the
+glibc in-use bytes are flat to falling over hours 12-24 while free bytes in the arena rise, and with
+allocations of 128 KiB or more on mmap (`mmap128k` leg, run 40249045721) no step of 1 MiB or more appears
+after the first half hour.
+
+**Ruled (BQ-1, 2026-10-31, under the owner's delegation of 2026-10-29):** D2-G4 closes on the `default` leg,
+as the diagnosis rule's own text says. That reading is a `--profile full` `soak_bars` run of 24 h meeting
+all four checks of the pass rule above, on `cv-bench-01` (in a process that also probed the allocator
+hourly, as the diagnosis rule records), so it satisfies the rule as written; no budget,
+limit, band or baseline changed. The two FAIL readings stay on record as FAIL readings, not withdrawn: the
+diagnosis explains them as the same growth pattern, a staircase of 1.8-4.0 MiB heap steps whose slope over
+the window is decided by the size of the step nearest its middle and by whether pymalloc releases memory
+after it. The tie-break is one host-quiet nightly `soak_bars`, judged by the same R4 and named here with its
+run id when it lands; it does not hold the closing PR.
+
+**Fragility, recorded.** R4 near 0.18 is decided by single step sizes: on the recorded curves, the nightly's
+h17.60 step at 1.84 MiB instead of 4.00 reads 0.1671, and the default leg without its two releases reads
+0.1323 (0.2144 with a 4.00 MiB step as well), so 3 of the 5 bench and laptop runs pass and 2 fail. A future
+reading on either side of 0.18 is not by itself a change in behaviour; a rise in glibc in-use bytes
+(`uordblks`) over hours 12-24 would be. On the 30-day projection R4 was derived from: at the worst reading,
++0.2475 MB/h from 178 MB, linear growth would reach budget #8's 300 MB after about 20 days of continuous
+running, and the measured growth decays (hours 2-12 at 0.20-0.37 MB/h, hours 12-24 at −0.02 to 0.25).
+
+The standing conditions below still hold at the closing reading's head and at this record's: neither
+`bars/series_store.py`, `bars/builder_set.py` nor `bars/models.py` has changed since `e784738b5`, nor the
+sink list in `bars_wiring.py` since `4a921a101`. The reading with E13's indicators sink in the lane is owed
+by the first host-quiet nightly after #399 merges, and the flip was not held for it ("Noted" below).
+
 ## Noted, not part of the verdict
 
 - **The shape of the R4 failure, observed and not diagnosed**: the process RSS never falls; it climbs in
@@ -137,9 +180,13 @@ against 145.6 MB. The R4 figure agrees three ways: the report's `rss_plateau_slo
   not exercised: neither the level nor R4 says anything about that path.
 - **Outside the figure**: the bar writer (up to about 85 MiB a process), the WS publisher, WS delivery
   (#568, #528, after #399), tape replay at restore and E13's indicators sink: E13-T02 (#3927, `4a921a101`)
-  added it to `wire_bars` after `e784738b5`, and the reading's head carries it, but the lane composes the
-  store alone (`EmitRouter([self.store])`), so the figure leaves it out. #3927 left the lane as it
-  was (none of its files is under `services/api/bench`), so a `soak_bars` reading with the sink in the lane
-  is owed before the flip (#399). A passing reading stands for the D2-G4 line while `bars/series_store.py`,
+  added it to `wire_bars` after `e784738b5`, and the reading's head carries it, but the lane at those
+  readings composed the store alone (`EmitRouter([self.store])`), so the figure leaves it out (history).
+  #399 removes the flag (D2-G4 closed on the default leg, ruled above) and the lane composes the indicators
+  sink from #399 on (`EmitRouter([store, indicators])`, no history reader, no listener; no instances are held, so only
+  the emit-path overhead is measured). The `soak_bars`
+  reading with the sink in the lane is owed by the first host-quiet nightly after #399 merges and is
+  recorded on #399's QA record. The flip was not held for it, per the coordinator's ruling of 2026-10-31.
+  A passing reading of the earlier lane stands for the D2-G4 line while `bars/series_store.py`,
   `bars/builder_set.py` and `bars/models.py` are as at `e784738b5` and the sink list in `bars_wiring.py` is
-  as at `4a921a101`; the flip also waits for the reading with the sink in the lane.
+  as at `4a921a101`.

@@ -47,8 +47,8 @@ from tests.unit.ws._seq_support import validate
 _MATRIX: dict[str, Any] = yaml.safe_load(rbac.MATRIX_PATH.read_text(encoding="utf-8"))
 _TOPICS: dict[str, dict[str, Any]] = _MATRIX["topics"]
 #: `bars`, `footprint` and `indicators` take a `BarBuilderSet` lease whose build reads the real
-#: tape store on this backend (I/O), and `indicators` is served only with `bars_enabled`
-#: (E13-T02). Their check is the same `marketdata:read` decision as `book` or `trades`.
+#: tape store on this backend (I/O). Their check is the same `marketdata:read` decision as
+#: `book` or `trades`.
 _LEASED = frozenset({"bars", "footprint", "indicators"})
 FAMILIES = tuple(sorted(set(_TOPICS) - _LEASED))
 #: `machines.*` rows are scoped by entity, not by an `exchange_account_ids` option.

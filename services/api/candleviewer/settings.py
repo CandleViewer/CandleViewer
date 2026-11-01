@@ -85,6 +85,10 @@ WS_BACKPRESSURE_FLAG_REMOVED: Final = (
     "CV_WS_BACKPRESSURE_ENABLED was removed in #2409 (the WS outbound pipeline always runs): "
     "delete the line"
 )
+#: #399: the refusal of a `.env` or environment that still sets the removed bars flag.
+BARS_ENABLED_FLAG_REMOVED: Final = (
+    "CV_BARS_ENABLED was removed in #399 (the bar builders and writer always run): delete the line"
+)
 #: The two fixed 0.1 s ticks of the exit path: uvicorn's main loop sees the exit request within
 #: 0.1 s, and `Server.shutdown` sleeps 0.1 s before its drain. `PlannedShutdownServer`'s poll and
 #: uvicorn's drain poll add nothing to the worst case: `asyncio.wait` returns on completion and
@@ -785,14 +789,16 @@ class Settings(BaseSettings):
     # (`MIN_STOP_BUDGET_S`, `MIN_DRAIN_TIMEOUT_S`).
     api_stop_budget_s: int = Field(default=30, ge=MIN_STOP_BUDGET_S, le=120)
     uvicorn_drain_timeout_s: int = Field(default=5, ge=MIN_DRAIN_TIMEOUT_S, le=30)
-    # E12 #2031: run the BarBuilderSet + BarWriter in the app (C-4.13: off by default; removal
-    # with E12-T05 #398 / E12-T06 #399, the first consumers). Never gates a safety invariant.
-    # `bars_state_root` holds the 60 s state blobs, created owner-only (0700) where the platform
-    # allows. Empty (default) = `<data dir>/bars/state`, where the data dir is the parent of
-    # `parquet_root` (the app's only data-dir setting). Otherwise it must be absolute and not a
-    # symlink; it is normalised with expanduser().resolve() at settings load.
-    bars_enabled: bool = False
+    # E12 #2031: the BarBuilderSet + BarWriter always run in the app (the `bars_enabled` flag,
+    # C-4.13, was removed in #399). `bars_state_root` holds the 60 s state blobs, created
+    # owner-only (0700) where the platform allows. Empty (default) = `<data dir>/bars/state`,
+    # where the data dir is the parent of `parquet_root` (the app's only data-dir setting).
+    # Otherwise it must be absolute and not a symlink; it is
+    # normalised with expanduser().resolve() at settings load.
     bars_state_root: str = ""
+    # #399: `CV_BARS_ENABLED`, removed. A tombstone like `ws_backpressure_enabled`: any value is
+    # refused at load with `BARS_ENABLED_FLAG_REMOVED`; nothing reads it.
+    bars_enabled: None = Field(default=None, exclude=True, repr=False)
     # E42-T05 (#966 Q7): the backup volume, the only place backup artefacts are read from
     # (`storage/backup_artefacts.py`); only the backup engine writes it. Empty (default) = unwired.
     # Declared after every path `_refuse_unsafe_backup_root` compares, so they are in `info.data`.
@@ -1220,6 +1226,15 @@ class Settings(BaseSettings):
         if value is None:
             return None
         raise ValueError(WS_BACKPRESSURE_FLAG_REMOVED)
+
+    @field_validator("bars_enabled", mode="before")
+    @classmethod
+    def _refuse_the_removed_bars_flag(cls, value: object) -> None:
+        """#399: any value given at all is refused, with what to do; only the unset default,
+        `None`, passes. The message names no value (C-12.6)."""
+        if value is None:
+            return None
+        raise ValueError(BARS_ENABLED_FLAG_REMOVED)
 
     @field_validator("uvicorn_drain_timeout_s", mode="before")
     @classmethod

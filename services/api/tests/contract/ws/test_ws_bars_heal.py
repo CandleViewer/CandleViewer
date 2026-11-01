@@ -1,5 +1,5 @@
 """#2787 (E12-T06 D2-H1, P4b-2): the heal chain end to end, through `create_app`'s own composition
-(`bars_enabled` on) behind its real `/ws` router, on both wires. A series whose first read failed is
+behind its real `/ws` router, on both wires. A series whose first read failed is
 served live-only; a later read, started by another holder's `ensure` or by the heal driver's tick,
 finds its stored bars. The store's repair hook, set by `create_app`, then sends the `history_repair`
 `snap` (23 §7.4): as the very next frame, with `previous_seq` and no `d`, to the subscriber whose
@@ -61,7 +61,7 @@ async def _load(uid: uuid.UUID) -> PrincipalSnapshot:
 
 
 class _Stack:
-    """`create_app` with `bars_enabled` on, its store reading through `reads` (one result per read)
+    """`create_app`, its store reading through `reads` (one result per read)
     on the test's clock; the lease service is a fake, since a real `register` would replay the
     tape. Emissions go through the composed set's own router: store, publisher and writer."""
 
@@ -79,7 +79,7 @@ class _Stack:
         )
         settings = Settings(
             environment=Environment.DEMO, allowed_origins=ORIGIN, git_sha="heal", version="1.0.0",
-            bars_enabled=True, bars_state_root=str(tmp_path / "bars"), metrics_enabled=False,
+            bars_state_root=str(tmp_path / "bars"), metrics_enabled=False,
             ws_shutdown_grace_ms=0,
         )  # fmt: skip
         app = create_app(settings, snapshot_loader=_load, ws_authenticate=_authenticate)

@@ -292,8 +292,8 @@ class SubscriptionServices:
     upstream: UpstreamRefs = field(default_factory=UpstreamRefs)
     bars: BarLeases | None = None
     series: SeriesHolds | None = None  # E12-T06: the `bars` snapshot store; None: no hold
-    #: E13-T02: the indicator engine an `indicators.*` subscription holds instances of (with
-    #: `bars_enabled`); None: its instances are validated and echoed, and nothing is held.
+    #: E13-T02: the indicator engine an `indicators.*` subscription holds instances of;
+    #: None: its instances are validated and echoed, and nothing is held.
     indicators: IndicatorInstances | None = None
     #: E22-T02: the `trades` tapes a live `trades.*` subscription leases; None: it holds none.
     trades: TradesLeases | None = None
@@ -310,8 +310,9 @@ class SubscriptionServices:
     snapshots: SnapshotSource | None = None
     snapshot_cache: SnapshotCache = field(default_factory=SnapshotCache)
     sequencing: SequencingHub | None = None
-    #: §6.1: the deployment runs with `bars_enabled` off, so `bars.*` is refused `unknown_topic`.
-    #: Set by the app from settings (a bare `bars=None` only means "no lease to take").
+    #: §6.1: `bars.*` and `indicators.*` are refused `unknown_topic`. The app never sets it (the
+    #: `bars_enabled` flag is gone, #399); it stays a services-level seam for tests of the
+    #: refusal paths (a bare `bars=None` only means "no lease to take").
     bars_off: bool = False
     #: E21-T01 (§6.1, §16.2): the deep-book cap (`ws.max_deep_book_subs`) and whether depth 500
     #: is offered (`heatmap_depth_500`, C-4.13, off: `book.*.500` is `invalid_topic_format`).
@@ -996,11 +997,11 @@ class ConnectionAuthz:
     def _indicators(
         self, sub: Subscription
     ) -> tuple[BarSpec | None, tuple[Requested, ...], dict[str, Any] | None]:
-        """§6.1 for `indicators.*`, before anything is held: `unknown_topic` while the bars feature
-        is off and for a replay (the topic is live only); the series' spec, bounded as `bars.*`
-        bounds it (SR-E12-03); the instances against the catalogue (`resolve_instances`, IR-24,
-        IR-41), refused `invalid_options` on `instances`. The accepted ones are echoed in
-        `effective`, every param written out, each with its `key`."""
+        """§6.1 for `indicators.*`, before anything is held: `unknown_topic` for a replay (the
+        topic is live only); the series' spec, bounded as `bars.*` bounds it (SR-E12-03); the
+        instances against the catalogue (`resolve_instances`, IR-24, IR-41),
+        refused `invalid_options` on `instances`. The accepted ones are echoed in `effective`,
+        every param written out, each with its `key`."""
         if self.services.bars_off or sub.replay_session_id is not None:
             return None, (), _fail(sub.ch, "unknown_topic", _UNSERVED)
         spec, refused = _bar_spec(sub, self.services.qty_step)
@@ -1014,9 +1015,9 @@ class ConnectionAuthz:
         return spec, requested, None
 
     def _bars_refusal(self, sub: Subscription) -> dict[str, Any] | None:
-        """§6.1: `unknown_topic` while the bars feature is off, and `subscription_limit` past
-        SR-E12-07's per-connection cap (live and replay `bars.*` count alike). `footprint.*`
-        keeps §7.7 until #2197, but its spec is still bounded (`_bar_spec`)."""
+        """§6.1: `subscription_limit` past SR-E12-07's per-connection cap (live and replay `bars.*`
+        count alike). `footprint.*` keeps §7.7 until #2197, but its spec is still bounded
+        (`_bar_spec`)."""
         if self.services.bars_off:
             return _fail(sub.ch, "unknown_topic", _UNSERVED)
         held = sum(

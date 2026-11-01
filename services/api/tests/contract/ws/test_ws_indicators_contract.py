@@ -1,5 +1,5 @@
 """E13-T02 (#426): the `indicators.*` topic against `23-ws-protocol.md` §6.1, §7.4, §8.2, §10.2
-and §14.10, through the real `/ws` router, wired as `create_app` wires it with `bars_enabled`:
+and §14.10, through the real `/ws` router, wired as `create_app` wires it:
 the series store and the indicator engine on the emit path, the engine's publisher and the
 `indicators` snapshot source on the conformance world's hub, and a lease service that records.
 The harness client validates every frame on receipt (§13, §14.10). Bars are the recorded BTCUSDT

@@ -8,7 +8,10 @@ access outside `tmp_path` (Constitution C-13.5/C-13.7).
 from __future__ import annotations
 
 import gc
+import os
+import shutil
 import sys
+import tempfile
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from types import ModuleType
@@ -62,6 +65,28 @@ class RecordingAuditSink:
 
     def actions(self) -> list[str]:
         return [c["action"] for c in self.calls]
+
+
+_BARS_STATE_ROOT_OWNED: str | None = None
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """#399: the bars runtime always runs, so every `create_app` lifespan opens the settings' bars
+    state root (default `/data/bars/state`). Point `CV_BARS_STATE_ROOT` at a session temp dir so no
+    test touches `/data`, unless the environment already names one. It is set here, before any test
+    module is imported, so module-level environment snapshots (the rbac leak guard's
+    `_ORIGINAL_ENV`) see it as the baseline. Tests that pass `bars_state_root=` explicitly (init
+    kwargs outrank the environment) are unaffected."""
+    global _BARS_STATE_ROOT_OWNED
+    if "CV_BARS_STATE_ROOT" not in os.environ:
+        _BARS_STATE_ROOT_OWNED = tempfile.mkdtemp(prefix="cv-bars-state-")
+        os.environ["CV_BARS_STATE_ROOT"] = _BARS_STATE_ROOT_OWNED
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    if _BARS_STATE_ROOT_OWNED is not None:
+        os.environ.pop("CV_BARS_STATE_ROOT", None)
+        shutil.rmtree(_BARS_STATE_ROOT_OWNED, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

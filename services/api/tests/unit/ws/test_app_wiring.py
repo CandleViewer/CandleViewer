@@ -123,27 +123,18 @@ def test_create_app_composes_gateway_services(world: tuple[TestClient, _Kill]) -
     assert isinstance(st.ws_hub, GatewayHub)
     assert isinstance(st.ws_events, WsEvents) and st.ws_events.registry is st.ws_registry
     assert isinstance(st.ws_runtime, WsRuntime) and st.ws_runtime.hub is st.ws_hub
-    assert svc.bars_off is True  # `bars_enabled` defaults off: bars.* is `unknown_topic` (§6.1)
+    assert svc.bars_off is False  # bars.* and indicators.* are always served (#399)
 
 
-def test_bars_feature_on_lets_bars_topics_through() -> None:
-    app = create_app(_settings().model_copy(update={"bars_enabled": True}))
-    assert app.state.ws_registry.services.bars_off is False
-
-
-@pytest.mark.parametrize("enabled", [False, True])
-def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_source(
-    enabled: bool, monkeypatch: pytest.MonkeyPatch
+def test_bars_wires_the_lease_service_store_publisher_and_snapshot_source(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#2709-3: `bars_enabled` implies a `BarBuilderSet` lease service, `None` when off. #399 D2:
+    """#2709-3: the app always wires a `BarBuilderSet` lease service. #399 D2:
     store, publisher, then writer on the emit path; the store behind the snapshots and the hold.
     The sinks are looked up by name, so a later sink does not move this test (#426)."""
-    app = create_app(_settings().model_copy(update={"bars_enabled": enabled}))
+    app = create_app(_settings())
     svc = app.state.ws_registry.services
     source = svc.snapshots._sources.get("bars")
-    if not enabled:
-        assert (svc.bars, svc.series, source) == (None, None, None)
-        return
     assert isinstance(svc.bars, BarBuilderSet) and isinstance(svc.series, SeriesStore)
     sinks = {sink.name: sink for sink in svc.bars._router._sinks}
     store, publisher, writer = sinks["series_store"], sinks["ws"], sinks["questdb"]
@@ -165,20 +156,14 @@ def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_sourc
     assert isinstance(svc.snapshots._sources["book"], BookTopic)  # #604's, over #2196's source
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_bars_feature_wires_the_indicator_engine_fourth_with_its_publisher_and_source(
-    enabled: bool,
-) -> None:
-    """E13-T02 (#426): with `bars_enabled` the engine is the fourth sink (store, publisher,
+def test_bars_wires_the_indicator_engine_fourth_with_its_publisher_and_source() -> None:
+    """E13-T02 (#426): the engine is the fourth sink (store, publisher,
     engine, writer: it re-primes from the store, which holds each close first), the gateway's
     instance service and the source of `indicators.*` snapshots; its listener publishes on the
-    gateway's hub. Off, none of it exists and `indicators.*` stays `unknown_topic`."""
-    app = create_app(_settings().model_copy(update={"bars_enabled": enabled}))
+    gateway's hub (#399: always on)."""
+    app = create_app(_settings())
     svc = app.state.ws_registry.services
     source = svc.snapshots._sources.get("indicators")
-    if not enabled:
-        assert (svc.indicators, source, svc.bars_off) == (None, None, True)
-        return
     names = [sink.name for sink in svc.bars._router._sinks]
     assert names == ["series_store", "ws", "indicators", "questdb"]
     engine = svc.bars._router._sinks[2]
@@ -193,7 +178,7 @@ def test_bars_feature_wires_the_indicator_engine_fourth_with_its_publisher_and_s
 def test_bar_emit_sink_errors_bound_and_help_cover_every_reason_the_wired_sinks_mint() -> None:
     """The emit router mints each wired sink's name and `<sink>_timeout`, the WS publisher its own
     reasons: the catalogue bound counts them all, and its help text names every wired sink."""
-    app = create_app(_settings().model_copy(update={"bars_enabled": True}))
+    app = create_app(_settings())
     sinks = {sink.name for sink in app.state.ws_registry.services.bars._router._sinks}
     swap = "ws_generation_swap"  # the publisher's swap reason: a literal at its mint site
     reasons = {*sinks, *(f"{n}_timeout" for n in sinks), swap, *(r for r, _ in _CAUSES.values())}

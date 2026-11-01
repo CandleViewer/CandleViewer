@@ -1599,60 +1599,57 @@ def create_app(
     public_rest = PublicRest(ctx) if resolved.ingestion_ws_enabled else None
     if public_rest is not None:
         wire_public_ws(ctx, kline_boundary, public_rest, machine_feed)
-    # E12 #2031 (flag `bars_enabled`, default off - C-4.13; removal with #398/#399): the set
-    # and its writer are started/stopped by the lifespan (set first, then writer).
+    # E12 #2031: the set and its writer are started/stopped by the lifespan (set first, then
+    # writer). Always on: the `bars_enabled` flag was removed in #399.
     # #399: the WS series store (hydrated by the reader, built first) and the bars publisher on
     # the gateway's one hub (the machine states above share it), both on the emit path.
     bars_reader: BarReader | None = None
-    bars_series: SeriesStore | None = None
-    indicators: IndicatorEngine | None = None
     snapshot_adapters: dict[str, SnapshotSource] = {}
-    if resolved.bars_enabled:
-        bars_sink = _build_bars_sink(resolved)
-        bars_clock = bars_now_us or (lambda: time.time_ns() // 1000)
-        # #2787 D2-G2 (D-G2 = A): the store's reads on their own connection, closed after the
-        # sink; REST bars, klines and the writer keep the sink's (20-architecture.md §4.2).
-        hydrate_wire: LazyPgWire | None = None
-        hydrate_reader: BarReader | None = None
-        if bars_sink is not None:
-            bars_reader = BarReader(bars_sink.pgwire, _no_rebuild_executor, now_us=bars_clock)
-            hydrate_wire = bars_sink.pgwire.sibling("bars_hydrate")
-            hydrate_reader = BarReader(hydrate_wire, _no_rebuild_executor, now_us=bars_clock)
-        bars_series = SeriesStore(hydrate_reader.read_tail if hydrate_reader is not None else None)
-        scales = functools.partial(_catalogue_scales, ctx)
-        publisher = BarsPublisher(ws_sequencing, scales, swap_reason="generation_swap")
-        # E13-T02 (#426): the indicator engine, on the emit path after the publisher; it primes
-        # from the store, and reads older bars through the store's own reader, so its reads join
-        # the first reads on `bars_hydrate`, never REST's connection (D-G2, 20 §4.2).
-        history = StoredHistory(hydrate_reader) if hydrate_reader is not None else None
-        indicators = IndicatorEngine(bars_series, history=history, now_us=bars_clock)
-        indicators.listen(IndicatorsPublisher(ws_sequencing))
-        # #2787 D2-H1, 23 §7.4: a repairing read reaches the subscribers through the store's hook
-        # alone, never a task that diffs `latest()` across an await (it can miss a repair).
-        bars_series.on_repair(_repair_hooks(publisher.history_repair, indicators.history_repair))
-        app.state.bars_runtime = wire_bars(
-            ctx,
-            inner_sink=bars_sink,
-            sink_stop=bars_sink.stop if bars_sink is not None else None,
-            sink_degraded=(lambda: bars_sink.pgwire.degraded) if bars_sink is not None else None,
-            reader_stop=hydrate_wire.close if hydrate_wire is not None else None,
-            now_us=bars_clock,
-            tick_size=lambda sym: _catalogue_tick_size(ctx, sym),
-            series=bars_series,
-            publisher=publisher,
-            indicators=indicators,
+    bars_sink = _build_bars_sink(resolved)
+    bars_clock = bars_now_us or (lambda: time.time_ns() // 1000)
+    # #2787 D2-G2 (D-G2 = A): the store's reads on their own connection, closed after the
+    # sink; REST bars, klines and the writer keep the sink's (20-architecture.md §4.2).
+    hydrate_wire: LazyPgWire | None = None
+    hydrate_reader: BarReader | None = None
+    if bars_sink is not None:
+        bars_reader = BarReader(bars_sink.pgwire, _no_rebuild_executor, now_us=bars_clock)
+        hydrate_wire = bars_sink.pgwire.sibling("bars_hydrate")
+        hydrate_reader = BarReader(hydrate_wire, _no_rebuild_executor, now_us=bars_clock)
+    bars_series = SeriesStore(hydrate_reader.read_tail if hydrate_reader is not None else None)
+    scales = functools.partial(_catalogue_scales, ctx)
+    publisher = BarsPublisher(ws_sequencing, scales, swap_reason="generation_swap")
+    # E13-T02 (#426): the indicator engine, on the emit path after the publisher; it primes
+    # from the store, and reads older bars through the store's own reader, so its reads join
+    # the first reads on `bars_hydrate`, never REST's connection (D-G2, 20 §4.2).
+    history = StoredHistory(hydrate_reader) if hydrate_reader is not None else None
+    indicators = IndicatorEngine(bars_series, history=history, now_us=bars_clock)
+    indicators.listen(IndicatorsPublisher(ws_sequencing))
+    # #2787 D2-H1, 23 §7.4: a repairing read reaches the subscribers through the store's hook
+    # alone, never a task that diffs `latest()` across an await (it can miss a repair).
+    bars_series.on_repair(_repair_hooks(publisher.history_repair, indicators.history_repair))
+    app.state.bars_runtime = wire_bars(
+        ctx,
+        inner_sink=bars_sink,
+        sink_stop=bars_sink.stop if bars_sink is not None else None,
+        sink_degraded=(lambda: bars_sink.pgwire.degraded) if bars_sink is not None else None,
+        reader_stop=hydrate_wire.close if hydrate_wire is not None else None,
+        now_us=bars_clock,
+        tick_size=lambda sym: _catalogue_tick_size(ctx, sym),
+        series=bars_series,
+        publisher=publisher,
+        indicators=indicators,
+    )
+    # #2487: quarantined, or the symbol's tape past the watchdog's trade limit (§6, §7.2).
+    stale = series_stale(ctx, app.state.bars_runtime.builder_set.quarantined)
+    snapshot_adapters["bars"] = BarsSnapshotSource(
+        bars_series, scales, seed=publisher.note_generation, stale=stale
+    )
+    snapshot_adapters["indicators"] = IndicatorsSnapshotSource(indicators, stale=stale)
+    if bars_reader is not None and ctx.ingestion.klines is not None:
+        # E12-T05: `/market/klines` tier (1) — tape-built `bars_time` wins over klines.
+        ctx.ingestion.klines.attach_tape(
+            tape_time_bar_reader(bars_reader, timeout_s=QUERY_TIMEOUT_S)
         )
-        # #2487: quarantined, or the symbol's tape past the watchdog's trade limit (§6, §7.2).
-        stale = series_stale(ctx, app.state.bars_runtime.builder_set.quarantined)
-        snapshot_adapters["bars"] = BarsSnapshotSource(
-            bars_series, scales, seed=publisher.note_generation, stale=stale
-        )
-        snapshot_adapters["indicators"] = IndicatorsSnapshotSource(indicators, stale=stale)
-        if bars_reader is not None and ctx.ingestion.klines is not None:
-            # E12-T05: `/market/klines` tier (1) — tape-built `bars_time` wins over klines.
-            ctx.ingestion.klines.attach_tape(
-                tape_time_bar_reader(bars_reader, timeout_s=QUERY_TIMEOUT_S)
-            )
     # E07-X02 (SR-094): supervised weekly scrub; started/stopped by the lifespan.
     app.state.scrub_task = (
         ScrubTask(
@@ -1860,7 +1857,6 @@ def create_app(
             {"machines": machine_states, "book": ws_book, **snapshot_adapters}
         ),
         sequencing=ws_sequencing,
-        bars_off=not resolved.bars_enabled,
         max_deep_book_subs=resolved.ws_max_deep_book_subs,  # E21-T01 (23 §16.2)
         depth_500=resolved.heatmap_depth_500,
         machines=machine_states,

@@ -1,6 +1,8 @@
 # E12 bars soak memory: what moves R4's slope (E12-T06 D2-G4, #399)
 
-Status: **harness and reading rule committed before any dispatch; no leg has run, results pending.**
+Status: **the combined `judge` verdict is NOT REPRODUCED (2026-10-31); D2-G4 is closed on the
+`default` leg as ruled (#399, issuecomment-6545764042), with the nightly's 0.2358 kept on record as a FAIL
+reading. The harness and the reading rule below were committed before any dispatch and are unchanged.**
 
 The 24 h `soak_bars` reading in [`e12-bars-store-memory.md`](e12-bars-store-memory.md) fails R4 only: the
 RSS the lanes add climbs +0.2475 MB/h a symbol (MB a MiB) over hours 12-24, in steps with long flat runs.
@@ -144,6 +146,126 @@ How `judge` applies it (the constants and `rule` in `memdiag.py`):
   DedupeRing's same-size set rebuilds, a schedule the hash seed does not move; those at h12.20 and h22.92
   are off that grid, and nothing yet shows that they repeat. The one-sided move and the net-rise drop bound
   false moves, and the rise times show whether the default's pattern repeated in the allocator legs.
+
+## The result (2026-10-31)
+
+Posted on #399 as issuecomment-6545806239. It is analysis of recorded artifacts only: no soak, bench or
+leg ran for it. `judge` ran at `main` `00d2418ed` (`memdiag.py` unchanged since the tag) over the four legs'
+artifacts.
+
+### The inputs
+
+| Leg                                 | Run         | Artifact (expires)                 | Leg report                                                                                                            | W24 slope, MiB/h a symbol |
+| ----------------------------------- | ----------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `default`                           | 40020104619 | `memdiag-default` (2026-11-23)     | `default.json`, complete (1 441 samples, t = 86 400 s), `reading: true`                                               | **−0.020**                |
+| `tracemalloc`                       | 40079474569 | `memdiag-tracemalloc` (2026-11-24) | none: only `tracemalloc.jsonl`, probes h0-h2 and snapshots h1-h2; the step was cancelled at 17.7 h, before the report | attribution only          |
+| `malloc`                            | 40169689142 | `memdiag-malloc` (2026-11-25)      | `malloc.json`, complete, allocator self-check passed                                                                  | +0.084                    |
+| `mmap128k`                          | 40249045721 | `memdiag-mmap128k` (2026-11-25)    | `mmap128k.json`, complete, allocator self-check passed                                                                | +0.076                    |
+| for comparison: nightly `soak_bars` | 39741074901 | `e08-perf-pack-full` (2027-01-20)  | the runner's report, at `362590b93`                                                                                   | **+0.2358 (FAIL)**        |
+
+The three leg reports share head `f496b01e2` (tag `bench/r4-legs-1`), the scenario's sha256 (`10bb3a9a…`),
+machine profile `bench-runner`, glibc 2.43, Python 3.12.15 and THP `madvise`, so M3 holds. In every leg the
+runner's own R1-R4 pass (R4 −0.020, +0.084 and +0.076, each ≤ 0.18) and R3 holds (1 000 at the cap,
+105 062 closes folded, 0 degraded).
+
+### The verdict
+
+**`memdiag judge` (combined, exit 0): NOT REPRODUCED.** The default's W24 slope is −0.020 MiB/h a symbol
+(net rise +0.18 MiB), a valid reading whose slope is the runner's R4; `malloc` (+0.084) and `mmap128k`
+(+0.076) are valid and comparable with it (M3); `tracemalloc` has no report. Annotation: `uordblks` rose
+0.64 of RSS's rise over W24. The rule decides on the `default` leg first, so the allocator legs cannot
+change the outcome; they answer BQ-2 below. The output is `memdiag-verdict.{md,json}`, written by `judge`
+next to the downloaded artifacts (kept off the repository, as the leg reports are).
+
+### Why the nightly read 0.2358 and the default leg −0.020
+
+Ruled out from the artifacts:
+
+- **The window or the estimator.** Both are the Theil-Sen slope of the lane-added RSS a symbol over
+  t = 43 200 to 86 400 s (721 samples). Recomputed from each run's own `_curve`: 0.2358 and −0.0198, the
+  reports' figures to four places.
+- **The code.** Between `362590b93` (the nightly) and `f496b01e2` (the legs) nothing changed under
+  `candleviewer/bars/`; under `bench/ingestion/` only the memdiag harness was added and budget #13's smoke
+  reporting changed, neither on the soak's memory path.
+- **The hourly probes, as the cause.** They run on the hour and allocate 10-20 KiB. The events that decide
+  the two readings (below) fall at h17.60-17.63, h19.90 and h21.03, none on the hour, and are 1.8-4.5 MiB
+  each; the allocator legs probe hourly too and read +0.08. A probe nudging the heap layout is not ruled
+  out, but it does not explain the size of the difference.
+
+What the curves show: the gross growth in the window is the same. The steps of 1 MiB or more in W24 add
++7.68 MiB of process RSS in the nightly (4.00 at h17.60, 1.84 at h17.83, 1.84 at h23.28) and +7.49 MiB in
+the default leg (1.84 at h12.27, 1.84 at h17.63, 1.95 at h19.92, 1.86 at h22.97). Two events differ:
+
+1. **The step near h17.6 is 4.00 MiB in the nightly and 1.84 MiB in the default leg.** It is the scheduled
+   large rebuild near the window's middle (the laptop run's h17.57). How far the heap top grows for it
+   depends on the free-list state at that moment.
+2. **The default leg gave memory back: −4.48 MiB at h19.90 and −1.54 MiB at h21.03.** The glibc arena stayed
+   at 319.42 MiB across both falls, so this was pymalloc releasing empty arenas (pymalloc blocks
+   2 690 310 → 2 689 552). The nightly has no fall of 0.5 MiB or more in its 24 h.
+
+The step-size staircase, as counterfactuals on the recorded curves (R4's estimator, W24, MiB/h a symbol):
+
+| Curve                                                           | W24 slope |
+| --------------------------------------------------------------- | --------- |
+| nightly as recorded                                             | 0.2358    |
+| nightly with its h17.60 step at 1.84 instead of 4.00            | 0.1671    |
+| nightly without the h17.60 step                                 | 0.0955    |
+| default as recorded                                             | −0.0198   |
+| default without its two releases                                | 0.1323    |
+| default without the releases and with a 4.00 MiB step at h17.63 | 0.2144    |
+
+The two runs are one process with one growth pattern, and each of the two events alone moves R4 across
+0.18. Theil-Sen over a staircase of 3-4 steps is decided by the size of the step nearest the window's
+middle and by whether anything is released after it (the estimator's blind spots are in
+[`e12-bars-store-memory.md`](e12-bars-store-memory.md)). Host sharing plausibly shifts the allocation
+interleaving that sets both: the nightly ran under load 11-16, took 13 h 46 min of wall time against the
+default leg's 11 h 14 min, and had an event-loop lag p95 of 929 ms against 718 ms. The artifacts cannot
+prove that.
+
+The decay is the same on the four bench-runner curves: the h2-12 slopes are 0.20-0.37 (nightly 0.309,
+default 0.366, malloc 0.233, mmap128k 0.201), the h12-24 slopes −0.02 to 0.24 (the laptop's 0.2475).
+Growth slows after warm-up and has not been shown to stop inside 24 h. R4 reads PASS or FAIL by the run:
+3 runs pass (default, malloc, mmap128k) and 2 fail (nightly, laptop).
+
+### BQ-2: allocator retention, not a leak
+
+- **`malloc` (pymalloc off, every Python object a glibc allocation).** Over W24, glibc in-use bytes
+  (`uordblks`) are flat to falling: slope −0.015 MiB/h a symbol, rise −0.20 MiB a symbol. Free bytes in the
+  arena (`fordblks`) rise +0.13 MiB/h, and RSS +0.084. A leak of live objects would raise `uordblks`; it
+  does not.
+- **`default`.** Over h12-24, process `uordblks` went 294.55 → 294.89 MiB (+0.34 MiB in 12 h), the glibc
+  arena 315.97 → 321.25 (+5.28) and `fordblks` 21.42 → 26.36 (+4.94); pymalloc blocks fell from 2 691 821
+  to 2 689 426. Every W24 step but one is glibc heap growth with `uordblks` unchanged (±0.015 MiB): the heap
+  top grows to fit a transient large allocation and keeps the space as free space afterwards.
+- **`mmap128k`.** With allocations of 128 KiB or more on mmap, there is no RSS step of 1 MiB or more after
+  h0.48 in the whole 24 h; its W24 rise, +0.92 MiB a symbol, is sub-MiB creep. So the 1.8 and 4.0 MiB steps
+  are large tables re-allocated on the heap: allocator high-water retention, not live growth. Under the
+  rule this is no move (M1 is one-sided, and its slope is above the default's).
+- **`tracemalloc`.** Its data covers h0-h2 only, the warm-up the rule excludes (`WARMUP_H = 2`), with no
+  `vs_h2` snapshot, so it cannot qualify a LEAK line. Its hour-2 "+4 744 pydantic instances" are `Bar`s
+  built at `bars/time_builder.py:176` (`Bar.model_construct`) and stored at `bars/series_store.py:463`,
+  which evicts the oldest past `MAX_HISTORY` (L464-L465, at `f496b01e2`): the store's turnover (M-1), live
+  bars replacing hydrated ones, at −208 to 0 B net a bar. R3's `bars_store_at_cap` = 1 000 at every sample
+  shows the store stays bounded.
+
+**Answer (ruled, BQ-2):** allocator retention (the glibc heap's high-water mark), not a reference leak. No
+`series_store` storage rewrite is owed for R4. GC-untracked storage stays #3641's question (pause time),
+with `gc.freeze` as its mitigation. Were R4's residual to be removed rather than ruled, the lever the
+evidence supports is the allocator (an mmap threshold, or `malloc_trim` after large rebuilds), not the data
+structure, as a separate, measured change. **BQ-3:** no `tracemalloc` re-run; the `malloc` leg answers the
+leak question it was to attribute.
+
+### The ruling, and the fragility
+
+D2-G4 is closed on the `default` leg (#399, issuecomment-6545764042): NOT REPRODUCED, as the rule's text
+says, the one registered reading taken under the rule's controls, at one head, R1-R4 passing, with this
+diagnosis attached. No limit, band or baseline moved, so the nightly's 0.2358 stays on record as a FAIL
+reading, explained above as the same staircase. R4 near 0.18 is decided by single step sizes: the two
+readings are within one step of each other. On the 30-day projection R4 was derived from: at the worst
+reading, 0.2475 MB/h from 178 MB, linear growth would reach 300 MB after about 20 days of continuous
+running; the measured growth decays (h2-12 against h12-24 above), so a linear projection overstates it. The tie-break
+is one host-quiet nightly `soak_bars`, judged by the same R4 and named in the store-memory record with its
+run id when it lands; it does not hold the closing PR.
 
 ## Re-running `judge`
 

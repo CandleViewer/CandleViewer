@@ -2,8 +2,8 @@
 
 Only the composition root sees the bus, the storage tier and the bars module together (C-3.1).
 
-* Flag `bars_enabled` (C-4.13, default **off**): no consumer calls `register()` yet; E12-T05 (#398)
-  and E12-T06 (#399) land the consumers and remove the flag. Never gates a safety invariant.
+* Always on: the `bars_enabled` flag (C-4.13) was removed with E12-T06 (#399); it never gated a
+  safety invariant.
 * `BarsRuntime` is the one lifecycle owner started/stopped by the lifespan. The set's ticker and
   lane tasks and the writer's drain task are spawned and tracked by those classes (C-2.18); every
   queue is bounded (`BarWriter(max_buffered)`, lane `maxsize`). With the WS series store it owns
