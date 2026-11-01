@@ -41,7 +41,13 @@ fix lands, so the fix removes the marker.
 | Test | Why it fails today | Owner |
 |---|---|---|
 | `test_s02_first_bar_after_an_unrecovered_hole_is_flagged` | Bars never consume `GapEvent`: with REST down the hole is reported by ingestion only, and the bars across it are emitted closed with `gap_before` / `partial` unset (AC1) | #529 follow-up row: gap marking |
-| Replay after writer exhaustion (scenario 5, PR-2) | `BarWriter` drops rows after its 5 attempts; nothing re-emits them | #529 follow-up row: writer replay |
+| Replay after writer exhaustion (scenario 5, PR-2) | `BarWriter` drops rows after its 5 attempts; nothing re-emits them | #531 (writer replay) |
+
+## Signals that do not exist (BQ-8)
+
+| Failure | Missing signal | Pinned by |
+|---|---|---|
+| Unrecovered tape gap | no bars-side health reason: `BarsHealthReason` has no tape-gap member, so the bars report healthy while ingestion reports `trade_gap_unrecovered` | `test_s02_unrecovered_gap_leaves_the_bars_health_unchanged` |
 
 ## Mapping to the ticket's observability names
 
@@ -60,7 +66,7 @@ not a colour), `trade_duplicates_suppressed_total`, `bars_amended_total`,
   `tests/unit/test_bars_clock_wiring.py` pins in the app. `clock="raw"` is the pre-#529
   wiring and exists only for the negative controls.
 - No QuestDB writer, WS publisher or indicator engine on the emit path (PR-2 adds the store seam).
-- Not covered here: SR-040 malformed payloads (ingestion `test_s06`), the UX live-region
+- Not covered here: SR-040 malformed payloads (ingestion `test_s06`; the thin bars-rig test is PR-2), the UX live-region
   assertions (#419) and the performance targets (needs the load harness).
 
 Note: `_rig.py` composes the corrected clock itself (`corrected_now_us(offset, host_now)`), so this

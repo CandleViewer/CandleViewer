@@ -92,6 +92,17 @@ async def test_s02_unrecovered_gap_is_reported_and_the_bars_lack_the_lost_prints
     assert golden.total_volume(bars.bars("vol:1")) < golden.total_volume(expected["vol:1"])
 
 
+async def test_s02_unrecovered_gap_leaves_the_bars_health_unchanged(
+    rig: Rig, bars: BarsRig
+) -> None:
+    """BQ-8: the bars have no tape-gap health reason; ingestion's is the only one (SCENARIOS.md)."""
+    rig.ex.inject(Fault(FaultKind.HTTP_STATUS, status=503, count=50, path=BACKFILL_PATH))
+    await _tape_with_hole(rig, bars, tail_s=BACKFILL_RETRY_BUDGET_S)
+    await bars.finish()
+    assert rig.observe().gaps[0].recovered is False
+    assert bars.set.health_reasons() == ()
+
+
 async def test_s02_negative_control_a_pipeline_without_backfill_fails_the_golden(
     rig: Rig, bars: BarsRig
 ) -> None:
@@ -114,7 +125,7 @@ async def test_s02_gap_marker_helper_demands_a_flag_on_the_first_bar_after_the_h
     await bars.finish()
     gap = rig.observe().gaps[0]
     unflagged = bars.bars("vol:1")
-    with pytest.raises(AssertionError, match="hides the gap"):
+    with pytest.raises(golden.GapNotMarkedError, match="hides the gap"):
         golden.assert_gap_marked(unflagged, gap, "vol:1")
     first = next(i for i, b in enumerate(unflagged) if b.close_time >= gap.end_us)
     flagged = [*unflagged]
@@ -124,7 +135,7 @@ async def test_s02_gap_marker_helper_demands_a_flag_on_the_first_bar_after_the_h
 
 @pytest.mark.xfail(
     strict=True,
-    raises=AssertionError,
+    raises=golden.GapNotMarkedError,
     reason="bars never consume GapEvent: #529 follow-up row, fixed by the gap-marking PR-3 (AC1)",
 )
 async def test_s02_first_bar_after_an_unrecovered_hole_is_flagged(rig: Rig, bars: BarsRig) -> None:

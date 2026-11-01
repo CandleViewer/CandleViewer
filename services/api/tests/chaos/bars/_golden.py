@@ -93,11 +93,20 @@ def assert_monotonic(bars: Sequence[Bar], what: str) -> None:
         assert cur.open_time >= prev.open_time, f"{what}: bar {cur.index} opens before {prev.index}"
 
 
+class GapNotMarkedError(AssertionError):
+    """The first bar after an unrecovered hole is presented as complete (AC1).
+
+    Its own type, so a strict xfail can name exactly this failure and not, say, a scenario timeout
+    (`ScenarioTimeoutError` is also an `AssertionError`).
+    """
+
+
 def assert_gap_marked(bars: Sequence[Bar], gap: GapEvent, what: str) -> None:
     """AC1: the first bar to close after an unrecovered hole is not presented as complete."""
     after = [b for b in bars if b.close_time >= gap.end_us]
     if not after:
-        # A distinct type, so the strict xfail (raises=AssertionError) cannot pass for this reason.
+        # Not a GapNotMarkedError, so the strict xfail cannot pass for this reason.
         raise LookupError(f"{what}: no bar closes after the gap")
     first = after[0]
-    assert first.gap_before or first.partial, f"{what}: bar {first.index} hides the gap"
+    if not (first.gap_before or first.partial):
+        raise GapNotMarkedError(f"{what}: bar {first.index} hides the gap")
