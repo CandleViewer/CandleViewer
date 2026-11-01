@@ -13,6 +13,11 @@ export interface RecorderExtensionView {
   readonly storage: StorageUsage | null;
   readonly frame: RecorderFrame | null;
   readonly stale: boolean;
+  /**
+   * The page's history, its rows' oldest `started_at` (ms), as its disk card reads it (A-5309-03): growth 0 reads
+   * "Steady" past an hour of it. Absent or null when none is known (C-486P3-02).
+   */
+  readonly historySinceMs?: number | null | undefined;
 }
 
 /** SCR-141, a dialog over SCR-140 (E16-D03): focus returns to "Retention policy" on close (KB-09). */
@@ -21,9 +26,23 @@ export interface RetentionEditorProps extends RecorderExtensionView {
   readonly onClose: () => void;
 }
 
+/** The page's purge (E16-D02 §6.5's one dialog, #484 PR 3), handed to SCR-142's entry points (E16-D04 §7). */
+export interface StoragePanelPurge {
+  /** A purge this client started is queued or running: Purge data… is busy (D04 §1.3). */
+  readonly busy: boolean;
+  /** Opens the purge dialog, `symbol` preselected when given, its typed field empty. */
+  readonly open: (symbol?: string) => void;
+}
+
 /** SCR-142, a section of `/admin/recorder` (E16-D04): its heading takes `headingId` ("Storage details" moves there). */
 export interface StoragePanelProps extends RecorderExtensionView {
   readonly headingId: string;
+  /** Purge data… on the QuestDB and Parquet cards (D04 §7): drawn only while the page passes its purge. */
+  readonly purge?: StoragePanelPurge | undefined;
+  /** "Shorten retention" (D04 §5: → SCR-141), while SCR-141 is registered. */
+  readonly openRetention?: (() => void) | undefined;
+  /** E16-D02 §8.3's suggested actions by their words, run as SCR-140's disk card runs them. */
+  readonly onSuggested?: ((action: string) => void) | undefined;
 }
 
 export interface RecorderExtensions {
