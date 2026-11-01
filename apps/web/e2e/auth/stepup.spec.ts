@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, packTest as test } from "../ga/fixtures";
 import { assertNoClientSecrets, json, stubSession, watchForLeaks } from "../support/api";
 import { seriousAxe } from "../support/axe";
 import { OTP_SEED, totp } from "../support/totp";
@@ -82,7 +83,7 @@ async function inviteWithChallenge(
 
 const GRANTED = { status: 200, body: { elevated_until: T0.toISOString(), action_class: "users" } };
 
-test("E09-TC-C04 a stale elevation never pre-empts /admin: the page renders, no step-up is sent", async ({
+test("E09-TC-C04 a stale elevation never pre-empts /admin: the page renders, no step-up is sent @ga-regression @ga-area-primary @story-US-ONB-005", async ({
   page,
 }) => {
   await page.clock.install({ time: T0 });
@@ -103,7 +104,7 @@ test("E09-TC-C04 a stale elevation never pre-empts /admin: the page renders, no 
   expect(stepUps).toEqual([]);
 });
 
-test("E09-TC-C05 the step-up answers the server's challenge and the held invite is re-sent once", async ({
+test("E09-TC-C05 the step-up answers the server's challenge and the held invite is re-sent once @ga-regression @ga-area-primary @story-US-ONB-005", async ({
   page,
 }) => {
   const guard = watchForLeaks(page, ["step-up-marker-x"]);
@@ -133,7 +134,7 @@ const EXPIRED = "Not sent: the confirmation timed out. Your entries on this page
 const LOCKED =
   "Incorrect code. Too many attempts: this was not sent, and your session is read-only for 5 minutes.";
 
-test("E09-TC-C06 at challenge_expires_at the held invite is dropped: warned 30 s ahead, then why (fake clock)", async ({
+test("E09-TC-C06 at challenge_expires_at the held invite is dropped: warned 30 s ahead, then why (fake clock) @ga-regression @ga-area-primary @story-US-ONB-005", async ({
   page,
 }) => {
   const wire = await inviteWithChallenge(page, GRANTED);
@@ -156,7 +157,7 @@ test("E09-TC-C06 at challenge_expires_at the held invite is dropped: warned 30 s
   expect(wire.creates).toHaveLength(1);
 });
 
-test("E09-TC-C05 Confirm with an empty password is explained, never the browser's bubble (A11Y-F-0011)", async ({
+test("E09-TC-C05 Confirm with an empty password is explained, never the browser's bubble (A11Y-F-0011) @ga-regression @ga-area-primary @story-US-ONB-005", async ({
   page,
 }) => {
   const wire = await inviteWithChallenge(page, GRANTED);
@@ -172,7 +173,7 @@ test("E09-TC-C05 Confirm with an empty password is explained, never the browser'
   expect(wire.stepUps).toEqual([]);
 });
 
-test("E09-TC-C05 rejected code keeps the dialog open with an accessible error", async ({
+test("E09-TC-C05 rejected code keeps the dialog open with an accessible error @ga-regression @ga-area-primary @story-US-ONB-005", async ({
   page,
 }) => {
   const wire = await inviteWithChallenge(page, { status: 401, body: { code: "mfa_invalid" } });
@@ -187,7 +188,9 @@ test("E09-TC-C05 rejected code keeps the dialog open with an accessible error", 
   expect(wire.creates).toHaveLength(1);
 });
 
-test("E09-TC-C05 non-owner is denied (404) rather than offered step-up", async ({ page }) => {
+test("E09-TC-C05 non-owner is denied (404) rather than offered step-up @ga-regression @ga-area-primary @story-US-ONB-005", async ({
+  page,
+}) => {
   await page.clock.install({ time: T0 });
   await stubSession(page, { role: "manager" });
   await page.goto("/admin/users");
@@ -206,7 +209,7 @@ const CLOSERS: readonly (readonly [string, (page: Page) => Promise<void>])[] = [
 ];
 
 for (const [name, close] of CLOSERS) {
-  test(`E09-TC-C05 ${name} drops the held invite unsent: Not sent, no step-up sent, focus back on the form`, async ({
+  test(`E09-TC-C05 ${name} drops the held invite unsent: Not sent, no step-up sent, focus back on the form @ga-regression @ga-area-primary @story-US-ONB-005`, async ({
     page,
   }) => {
     const wire = await inviteWithChallenge(page, GRANTED);
@@ -220,7 +223,7 @@ for (const [name, close] of CLOSERS) {
   });
 }
 
-test("E09-TC-C05 the third refused code drops the held invite unsent: three step-ups sent, why and what follows, no re-send", async ({
+test("E09-TC-C05 the third refused code drops the held invite unsent: three step-ups sent, why and what follows, no re-send @ga-regression @ga-area-primary @story-US-ONB-005", async ({
   page,
 }) => {
   const wire = await inviteWithChallenge(page, { status: 401, body: { code: "mfa_invalid" } });
@@ -269,7 +272,7 @@ const READ_ONLY: Answer = {
   },
 };
 
-test("E09-TC-C05 the server's 403 session_read_only on the third code drops the held invite unsent: why and what follows, no re-send", async ({
+test("E09-TC-C05 the server's 403 session_read_only on the third code drops the held invite unsent: why and what follows, no re-send @ga-regression @ga-area-primary @story-US-ONB-005", async ({
   page,
 }) => {
   const wire = await inviteWithChallenge(page, strike(2), strike(1), READ_ONLY);
@@ -287,7 +290,7 @@ test("E09-TC-C05 the server's 403 session_read_only on the third code drops the 
   expect(wire.creates).toHaveLength(1); // the held invite is never re-sent
 });
 
-test("E09-TC-C05 keyboard-only: Tab and Shift+Tab cycle inside the dialog and never reach the form behind it", async ({
+test("E09-TC-C05 keyboard-only: Tab and Shift+Tab cycle inside the dialog and never reach the form behind it @ga-regression @ga-area-primary @story-US-ONB-005", async ({
   page,
 }) => {
   await inviteWithChallenge(page, GRANTED);

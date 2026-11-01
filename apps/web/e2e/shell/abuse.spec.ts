@@ -1,6 +1,6 @@
 import { json, sessionInfo, stubSession } from "../support/api";
 import { seriousAxe } from "../support/axe";
-import { badge, expect, test } from "./fixtures";
+import { badge, expect, test } from "../ga/fixtures";
 
 // E10-Q02, the per-PR abuse subset absorbed from E10-X03 (plan step AB-1..AB-4). Each title names
 // the client-side control it holds; the server-side half (C-12.4) is the backend RBAC suite.
@@ -8,7 +8,7 @@ import { badge, expect, test } from "./fixtures";
 const ADMIN_PATHS = ["/admin", "/admin/users", "/admin/keys/x1/rotate"];
 
 for (const role of ["manager", "viewer"] as const)
-  test(`@abuse @plan-AB-1 route guard: a ${role}'s admin deep links render not-found and fetch no admin data`, async ({
+  test(`@abuse @plan-AB-1 route guard: a ${role}'s admin deep links render not-found and fetch no admin data @ga-regression @ga-area-admin`, async ({
     page,
   }) => {
     const adminCalls: string[] = [];
@@ -25,7 +25,7 @@ for (const role of ["manager", "viewer"] as const)
     expect(adminCalls).toEqual([]);
   });
 
-test("@abuse @plan-AB-2 route guard: after a server-side downgrade the next navigation re-reads /me and denies the admin route", async ({
+test("@abuse @plan-AB-2 route guard: after a server-side downgrade the next navigation re-reads /me and denies the admin route @ga-regression @ga-area-admin", async ({
   page,
 }) => {
   let role: "owner" | "viewer" = "owner";
@@ -59,7 +59,7 @@ const HOSTILE_APPEARANCE = [
 ];
 
 for (const [n, appearance] of HOSTILE_APPEARANCE.entries())
-  test(`@abuse @plan-AB-3 badge: preference set ${n + 1} cannot hide the environment badge`, async ({
+  test(`@abuse @plan-AB-3 badge: preference set ${n + 1} cannot hide the environment badge @ga-regression @ga-area-admin`, async ({
     page,
   }) => {
     await stubSession(page, { role: "viewer" });
@@ -69,7 +69,7 @@ for (const [n, appearance] of HOSTILE_APPEARANCE.entries())
     await expect(badge(page)).toBeInViewport();
   });
 
-test("@abuse @plan-AB-3 badge: at 200% zoom (half the CSS viewport) the badge stays in view", async ({
+test("@abuse @plan-AB-3 badge: at 200% zoom (half the CSS viewport) the badge stays in view @ga-regression @ga-area-admin", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 640, height: 400 }); // 1280x800 at 200%
@@ -79,7 +79,7 @@ test("@abuse @plan-AB-3 badge: at 200% zoom (half the CSS viewport) the badge st
   expect(await seriousAxe(page)).toEqual([]);
 });
 
-test("@abuse @plan-AB-4 CSP: a stylesheet from another origin is refused (style-src 'self')", async ({
+test("@abuse @plan-AB-4 CSP: a stylesheet from another origin is refused (style-src 'self') @ga-regression @ga-area-admin", async ({
   page,
 }) => {
   await stubSession(page, { role: "viewer" });

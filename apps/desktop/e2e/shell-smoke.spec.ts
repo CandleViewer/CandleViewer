@@ -16,7 +16,7 @@ import {
 // contents, the served CSP and its <meta> fallback match SR-112 directive by directive with no
 // exchange host (SR-119), the renderers are OS-sandboxed, and nothing leaves the loopback.
 
-test("@plan-EL-1 signs in on stubs, reaches /terminal and shows the environment badge", async () => {
+test("@plan-EL-1 signs in on stubs, reaches /terminal and shows the environment badge @ga-regression @ga-area-shell", async () => {
   const shell = await launchShell({ devServer: true });
   const { app, win } = shell;
   await stubSession(win, { role: "owner" });
@@ -34,7 +34,7 @@ test("@plan-EL-1 signs in on stubs, reaches /terminal and shows the environment 
   await closeShell(shell);
 });
 
-test("@plan-EL-2 SR-110 on every web contents, SR-112 header and meta, OS sandbox (app:// load)", async () => {
+test("@plan-EL-2 SR-110 on every web contents, SR-112 header and meta, OS sandbox (app:// load) @ga-regression @ga-area-shell", async () => {
   const shell = await launchShell();
   const { app, win } = shell;
   await win.waitForURL(/^app:\/\/candleviewer\//u);
