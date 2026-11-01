@@ -639,7 +639,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-OWNER",
         "spec",
         "### 17.2",
-        "epic E08 (#35), which owns the live fetcher; the `22` owner",
+        "epic E08 (#35): no ticket names the live fetcher yet",
         "a worker agent",
     ),
     Mutation(

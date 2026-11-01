@@ -6,21 +6,21 @@ Components: **CMP-026 EmptyState** (the `backfill-in-progress` block and its thr
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                     | CMP-026 (E08 variants)                                                         | CMP-023 / CMP-038 (progress)                          | CMP-011 (chips)                                 |
-| ------------------------ | ------------------------------------------------------------------------------ | ----------------------------------------------------- | ----------------------------------------------- |
-| Final Penpot link        | [ ] page `E08-D10 SCR-151 empty and backfill states`; boards PENDING (spec §0) | [ ] the same page: boards 01, 08, 09 PENDING          | [ ] the same page: boards 01–03 PENDING         |
-| Variants × states        | [x] spec §2, §3, §4, §5                                                        | [x] spec §3 (known and unknown target), §4 (frozen)   | [x] spec §3, §4, §6                             |
-| Keyboard table           | [x] spec §3–§6 "Keyboard and focus" rows; §10.1                                | [x] not focusable                                     | [x] static, not a stop (spec §6)                |
-| Accessible name and role | [x] heading `h3`, cause as description (spec §10.1)                            | [x] "History loaded so far", value text W-3           | [x] words in the panel's accessible description |
-| Live data                | [x] spec §10.2, every row with its `max_rate`                                  | [x] never a live region; ≤ 1 Hz samples (T-4)         | [x] never announced                             |
-| Motion pair              | [x] cuts only (spec §7)                                                        | [x] steps per sample; no loop, no spinner on throttle | [x] none                                        |
-| Density notes            | [x] compact; the 480 px block (E16-D05)                                        | [x] the `progress?` slot                              | [x] the header's status slot                    |
-| Essential exceptions     | [x] none                                                                       | [x] none                                              | [x] none                                        |
-| Tokens used              | [x] spec §11                                                                   | [x] spec §11                                          | [x] spec §11                                    |
-| Data contract            | [ ] NO: D10-G1 (PROPOSED `backfill` fields)                                    | [ ] NO: D10-G1                                        | [x] `coverage_holes`, `recording_started_at`    |
-| Contrast                 | [x] spec §11 (computed)                                                        | [x] spec §11 (computed)                               | [x] spec §11 (computed)                         |
-| Storybook                | [x] §D                                                                         | [x] §D                                                | [x] §D                                          |
-| Sign-off                 | [ ] owner approval pending                                                     | [ ] owner approval pending                            | [ ] owner approval pending                      |
+| Item                     | CMP-026 (E08 variants)                                                         | CMP-023 / CMP-038 (progress)                          | CMP-011 (chips)                                                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------ | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Final Penpot link        | [ ] page `E08-D10 SCR-151 empty and backfill states`; boards PENDING (spec §0) | [ ] the same page: boards 01, 08, 09 PENDING          | [ ] the same page: boards 01–03 PENDING                                                                                      |
+| Variants × states        | [x] spec §2, §3, §4, §5                                                        | [x] spec §3 (known and unknown target), §4 (frozen)   | [x] spec §3, §4, §6                                                                                                          |
+| Keyboard table           | [x] spec §3–§6 "Keyboard and focus" rows; §10.1                                | [x] not focusable                                     | [x] the Partial chip: a described static stop (KB-19, spec §4); `backfilling` and `gapped`: static, not a stop (spec §4, §6) |
+| Accessible name and role | [x] heading `h3`, cause as description (spec §10.1)                            | [x] "History loaded so far", value text W-3           | [x] Partial: `role="note"`, missing range in its description; the others' words in the panel's description                   |
+| Live data                | [x] spec §10.2, every row with its `max_rate`                                  | [x] never a live region; ≤ 1 Hz samples (T-4)         | [x] never announced                                                                                                          |
+| Motion pair              | [x] cuts only (spec §7)                                                        | [x] steps per sample; no loop, no spinner on throttle | [x] none                                                                                                                     |
+| Density notes            | [x] compact; the 480 px block (E16-D05)                                        | [x] the `progress?` slot                              | [x] the header's status slot                                                                                                 |
+| Essential exceptions     | [x] none                                                                       | [x] none                                              | [x] none                                                                                                                     |
+| Tokens used              | [x] spec §11                                                                   | [x] spec §11                                          | [x] spec §11                                                                                                                 |
+| Data contract            | [ ] NO: D10-G1 (PROPOSED `backfill` fields)                                    | [ ] NO: D10-G1                                        | [x] `coverage_holes`, `recording_started_at`                                                                                 |
+| Contrast                 | [x] spec §11 (computed)                                                        | [x] spec §11 (computed)                               | [x] spec §11 (computed)                                                                                                      |
+| Storybook                | [x] §D                                                                         | [x] §D                                                | [x] §D                                                                                                                       |
+| Sign-off                 | [ ] owner approval pending                                                     | [ ] owner approval pending                            | [ ] owner approval pending                                                                                                   |
 
 ## §B Who applies what
 
@@ -49,11 +49,11 @@ Old is a verbatim fragment of the cited line at `fef3148c5` (the tool checks it)
 
 ## §D Storybook story lists (each story per theme and density, `15`:41)
 
-| Component | Stories                                                                                             |
-| --------- | --------------------------------------------------------------------------------------------------- |
-| CMP-026   | the merged list + BackfillKnownTarget · BackfillOpenTarget · BackfillThrottled · ThrottledOwnerLink |
-| CMP-023   | the merged list + BackfillBars · FrozenAtSample                                                     |
-| CMP-011   | the merged list + BackfillingChip · GappedChip · PartialBackTo                                      |
+| Component | Stories                                                                                                            |
+| --------- | ------------------------------------------------------------------------------------------------------------------ |
+| CMP-026   | the merged list + BackfillKnownTarget · BackfillOpenTarget · BackfillThrottled · ThrottledOwnerLink · GaveUpNoRows |
+| CMP-023   | the merged list + BackfillBars · FrozenAtSample                                                                    |
+| CMP-011   | the merged list + BackfillingChip · GappedChip · PartialBackTo                                                     |
 
 ## §E Owner walkthrough checklist (each frame a 1280 × 800 window; compact density)
 
@@ -62,7 +62,7 @@ Old is a verbatim fragment of the cited line at `fef3148c5` (the tool checks it)
 - [ ] Board 02: the throttled line says older bars are still loading and being retried; the result is labelled partial.
 - [ ] Board 02: only the Owner's frame shows the diagnostic link; the Manager's frame shows no trace of it.
 - [ ] Board 03: a reconstructed window and a missing window read differently, and neither empties the panel.
-- [ ] Board 04: the three classes read as three different facts; none says "No data".
+- [ ] Board 04: the E08 strings replace D02's two and read as the data-not-recorded class; none says "No data".
 - [ ] Board 05: a cache hit shows data with no skeleton; nothing appears before the slow-path threshold.
 - [ ] Board 06: each announcing row has a rate; the progress is never announced per sample.
 - [ ] Boards 08–09: the light and high-contrast twins keep every word.
@@ -90,19 +90,19 @@ An item marked (not found) had no pointer when the role ran; its fold is named a
 
 ## §H The board plan (a Penpot lane, later in this PR)
 
-The boards of spec §0; frames named `SCR-151/<variant>/<state> · <theme>`. Data: a seeded synthetic history (seed 178), not recorded, declared synthetic on every board's face; only the instrument's tick size comes from the recorded fixture. PROPOSED fields (R-7) are labelled on every frame that uses them: boards 01, 02, 05 and 08.
+The boards of spec §0; frames named `SCR-151/<variant>/<state> · <theme>`. Data: a seeded synthetic history (seed 178), not recorded, declared synthetic on every board's face; only the instrument's tick size comes from the recorded fixture. PROPOSED fields (R-7) are labelled on every frame that uses them: boards 01, 02, 05 and 08. Hosts: board 02's `throttled/in-context · dark` is SCR-053's header (BQ-6, narrowed by D10-Q3); the other in-context frames use a generic E08 history panel; SCR-045 is not drawn (D10-A5 only).
 
-| Board | Frames                                                                                                                       |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------- |
-| 01    | `backfill/known-target · dark`, `backfill/open-target · dark`, `backfill/in-context · dark`, `backfill/cut · dark`           |
-| 02    | `throttled/in-context · dark`, `throttled/long-wait · dark`, `throttled/gave-up · dark`, `throttled/owner-vs-manager · dark` |
-| 03    | `gap/gapped · dark`, `gap/hole-row · dark`, `gap/both · dark`, `gap/vs-stale · dark`                                         |
-| 04    | `classes/e08-delta · dark`, `classes/three · dark`                                                                           |
-| 05    | `timing/cache-hit · dark`, `timing/slow-path · dark`, `timing/definitive-empty · dark`                                       |
-| 06    | `a11y/focus-order · dark`, `a11y/status-rows · dark`                                                                         |
-| 07    | `redlines · dark`                                                                                                            |
-| 08    | `throttled/in-context · light`, `gap/hole-row · light`, `backfill/known-target · light`                                      |
-| 09    | `backfill/known-target · hc`, `gap/hole-row · hc`                                                                            |
+| Board | Frames                                                                                                                                                       |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 01    | `backfill/known-target · dark`, `backfill/open-target · dark`, `backfill/in-context · dark`, `backfill/cut · dark`                                           |
+| 02    | `throttled/in-context · dark`, `throttled/long-wait · dark`, `throttled/gave-up · dark`, `throttled/owner-vs-manager · dark`                                 |
+| 03    | `gap/gapped · dark`, `gap/hole-row · dark`, `gap/both · dark`, `gap/vs-stale · dark`                                                                         |
+| 04    | `classes/e08-delta · dark` (W-10 and W-11 over D02's two strings), `classes/e08-exemplars · dark` (the E08 table; the three classes stay E16-D05 board 01's) |
+| 05    | `timing/cache-hit · dark`, `timing/slow-path · dark`, `timing/definitive-empty · dark`                                                                       |
+| 06    | `a11y/focus-order · dark` (the Partial chip's stop), `a11y/retry-focus · dark`, `a11y/status-rows · dark`                                                    |
+| 07    | `redlines · dark`                                                                                                                                            |
+| 08    | `throttled/in-context · light`, `gap/hole-row · light`, `backfill/known-target · light`                                                                      |
+| 09    | `backfill/known-target · hc`, `gap/hole-row · hc`                                                                                                            |
 
 ## §I Summary for #178
 
