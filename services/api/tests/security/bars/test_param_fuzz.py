@@ -81,6 +81,8 @@ def test_param_fuzz_dictionary_probes_every_parameter_22_declares(op: str) -> No
     declared = _declared(op)
     assert {"include_open", "include_delta"} <= declared  # the guard reads the right section
     assert declared <= probed, sorted(declared - probed)
+    # One floor for both routes: getKlines has about 270 probes, getBars about 470 (the ticket's
+    # "about 450 + 250"), so 250 is the klines side's floor, not a loosened bars one.
     assert sum(c.op == op for c in _CASES) >= 250
 
 
@@ -92,7 +94,13 @@ _FLAG_CASES = [
 ]
 
 
-@pytest.mark.parametrize(("op", "flag", "value"), _FLAG_CASES)
+@pytest.mark.parametrize(
+    ("op", "flag", "value"),
+    _FLAG_CASES,
+    ids=[
+        f"{op}-{flag}-{i % len(_corpus.FLAG_VALUES)}" for i, (op, flag, _) in enumerate(_FLAG_CASES)
+    ],
+)
 def test_param_fuzz_boolean_flag_is_refused_or_coerced_as_documented(
     op: str, flag: str, value: object
 ) -> None:
