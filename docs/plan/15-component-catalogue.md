@@ -467,6 +467,8 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ## 2. Molecules (CMP-040..069)
 
+- **As built (E47-S05)**: a guard test (`packages/ui/test/focus-ring-guard.test.ts`) fails on any CSS, inline style, Tailwind class or markup that removes an outline (`outline: none|0`) without a replacement ring in the same rule or a registered container-focus site, and holds `color.focus.ring` to every pair of the `tools/contrast` registry in light, dark and high contrast. A focused control is also never left under sticky chrome (WCAG 2.4.11): the shell registers the TopBar and StatusBar with `focusInsets` (`apps/web/src/features/app-shell/focusInsets.ts`), which sets `scroll-padding-top/bottom` on `main` and scrolls a focus the browser left covered, on `focusin` only.
+
 ### CMP-040 FormField
 
 - **Tier**: Molecule · **Purpose**: label + control + help/error text wrapper composing any atom input.
@@ -524,6 +526,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tests**: unit, visual, axe, keyboard-only path for hold-variant (explicit CI gate per a11y standard §3.1.4).
 - **As built (E05-S03)**: no `initialFocus` prop: focus always starts on Cancel (H32). Adds `confirmVariant?: "danger"|"buy"|"sell"|"primary"` (default `danger`), `restatementLabel?` (default "What this does"), `typedInstruction?` (default "Type {token} to confirm"), `armedLabel?` (default "Press again to {effect}"), `summaryLoading?` (Confirm natively disabled until the summary loads), `failure?: {message, retry?, details?}` (the partial-failure state), `confirmDisabledReason?` (the gated Confirm), `size?`, `fallbackFocusRef?` and an injected `now?` clock. `onConfirm(meta)` carries `{variant, gate, elapsedMs}`, where `gate` is `click`, `typed`, `pointer-hold`, `key-hold` or `double-press` (the audit hook under Observability); `onCancel(reason)` adds `cancel` and `timeout` to CMP-043's reasons. Storybook ships Standard, Guard, Typed, TypedMatch, Hold, HoldReleasedEarly, Holding, Armed, HoldKeyboard (the keyboard path), HoldReducedMotion, Busy, PartialFailure, ConfirmGated, OrderConfirm, CountingDown, TimedOut, LongText and a contrast pair; no RuleDisarm story yet. The gate × state matrix for E05-X02 is in `docs/plan/qa/E05-S03-qa-handoff.md`.
 - **Motion spec**: [E42-D04.md](../design/E42/E42-D04.md) (E42-D04 §13, after E09-D08 D2; the scrim fades over `normal`, the card is a cut focused in frame 0, the exit `fast` — PROPOSED).
+- **As built (E47-S05)**: every dialog built in `apps/web`, and the `packages/ui` dialogs it uses, is held to one conformance matrix (`apps/web/test/dialog-conformance.test.tsx`): focus moves in on open, Tab and Shift+Tab stay inside, Esc does what the dialog's contract says (cancel; a typed-confirm treats Esc as Cancel and never confirms), focus returns to the opener and never to `body`, the dialog is named, axe finds nothing serious. A dialog added to `apps/web/src` without a row fails the scan. The step-up scrim click keeps focus inside (A11Y-F-0013) and the WS fatal modal takes focus, a trap and Esc.
 
 ### CMP-045 Toast / Notification
 
@@ -965,6 +968,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tests**: unit, visual, axe, keyboard-first-tab test.
 - **As built (E10-S01, #304)**: the shell first shipped a temporary single-target stand-in in `apps/web` ("Skip to main content" → the shell's `main`), the first Tab stop on every shell page, until the `packages/ui` component (E05-S04, #267) replaces it.
 - **As built (E05-S04)**: takes `targets[]`, the first "Skip to main content" and then one per region the route mounts (J19, J20); activating one moves focus to its target.
+- **As built (E47-S05)**: the shell mounts one skip target, `main` (`#cv-main`); "Skip to order ticket" and "Skip to chart" wait for those regions to mount, and the link already takes more targets. Every built screen exposes its named regions in the tree snapshot (`apps/web/e2e/a11y/regions.spec.ts`: a public screen its `main`; a shell screen banner, navigation "Primary", main, complementary "Side panels", contentinfo), and `Ctrl+\` walks the landmarks in DOM order and wraps (`05` §3.4 rule 1).
 
 ### CMP-086 SettingsNav / SettingsLayout
 
@@ -1053,6 +1057,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: inherits CMP-043.
 - **Storybook**: Default.
 - **Tests**: unit, visual, axe.
+- **As built (E47-S05)**: the cheatsheet opens on `Ctrl+/` (`global.cheatsheet`, as shipped; `05` §3.2 names `?`, reconciled to `Ctrl+/` there) and from a visible **Help** control, the first control of the TopBar's trailing group (after the connection chip, before the name and Sign out), the same slot and order on every shell screen (WCAG 3.2.6; `apps/web/e2e/a11y/help-entry.spec.ts`). It is a button with `aria-keyshortcuts`, carries `data-cmp="CMP-094"`, and focus returns to it on close. The public screens (R-001, R-901..903) have no TopBar and provide the shortcut only.
 
 ### CMP-095 FeatureFlagChip (visible-in-UI flag indicator, admin/dev only)
 
