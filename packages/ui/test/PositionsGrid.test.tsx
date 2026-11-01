@@ -203,6 +203,50 @@ describe("PositionsGrid (CMP-114): the treegrid", { timeout: 60_000 }, () => {
     );
   });
 
+  it("a null leverage or margin mode is a dash with its spoken reason (D-7)", async () => {
+    await mount(
+      <Host
+        groups={[
+          group("main", "Main · LIVE", [{ ...MAIN, leverage: null, marginMode: { value: null } }]),
+        ]}
+      />,
+    );
+    const main = rowNamed(/^BTCUSDT · Long · 0\.250/);
+    for (const id of ["leverage", "margin"]) {
+      const cell = main.querySelector<HTMLElement>(
+        `[data-cv-c="${headerOf(id).getAttribute("data-cv-c") ?? ""}"]`,
+      );
+      expect(cell?.querySelector('[aria-hidden="true"]')?.textContent).toBe("—");
+      expect(cell?.querySelector(".cv-visually-hidden")?.textContent).toBe("no value");
+    }
+  });
+
+  it("one node carries a row's description, never two with one id; with no tier column, a hidden one", async () => {
+    const sentence =
+      "Critical — near liquidation: 14 % of the entry buffer left, 0.5 % from liquidation";
+    await mount(<Host columns={[...POSITIONS_GRID_COLUMNS, "status"]} />);
+    const both = rowNamed(/^SOLUSDT/);
+    const id = both.getAttribute("aria-describedby") ?? "";
+    expect(document.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
+    expect(document.getElementById(id)?.closest("[data-part]")).toHaveAttribute(
+      "data-part",
+      "LiqTierCell",
+    );
+    expect(both).toHaveAccessibleDescription(sentence);
+  });
+
+  it("a host that hides both tier columns keeps the sentence as the row's description, out of its cells' names", async () => {
+    await mount(<Host columns={["side", "size"]} />);
+    const sol = rowNamed(/^SOLUSDT/);
+    expect(sol).toHaveAccessibleDescription(
+      "Critical — near liquidation: 14 % of the entry buffer left, 0.5 % from liquidation",
+    );
+    expect(document.getElementById(sol.getAttribute("aria-describedby") ?? "")).toHaveAttribute(
+      "hidden",
+    );
+    expect(within(sol).getByRole("rowheader")).toHaveAccessibleName("SOLUSDT");
+  });
+
   it("sets the plain numeric cells in type.num.base; CMP-116's cells and the words keep their own (D02 §12)", async () => {
     await mount(<Host />);
     const main = rowNamed(/^BTCUSDT · Long · 0\.250/);
@@ -522,6 +566,17 @@ describe("PositionsGrid (CMP-114): GroupHeaderRow (D02 §5.5)", { timeout: 60_00
     expect(main.closest("tr")).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("an account's state marker follows the header's figures, in its name (D02 §5.5, §10.2; BQ-14)", async () => {
+    await mount(
+      <Host groups={[group("main", "Main · LIVE", [MAIN], { marker: <span>checking</span> })]} />,
+    );
+    expect(
+      within(grid()).getByRole("rowheader", { name: /^Main · LIVE · One-way · 1 position · / }),
+    ).toHaveAccessibleName(
+      "Main · LIVE · One-way · 1 position · uPnL profit 8.00 USDT · rPnL today profit 37.40 USDT · checking",
+    );
+  });
+
   it("a group of the positions with no trade group is keyed apart", async () => {
     await mount(<Host groups={[group(null, "No trade group", [MAIN])]} />);
     const header = within(grid()).getByRole("rowheader", { name: /^No trade group/ });
@@ -612,12 +667,17 @@ describe("PositionsGrid (CMP-114): selection (D-3)", { timeout: 60_000 }, () => 
     expect(onSelect).toHaveBeenLastCalledWith([MAIN.key, SUB1_BTC.key, SUB1_ETH.key, SUB2_SOL.key]);
   });
 
-  it("Space on a group header or the totals selects nothing; Ctrl+A there selects all", async () => {
+  it("Space on a group header or the totals selects nothing and never scrolls; Ctrl+A there selects all", async () => {
     const onSelect = vi.fn();
     await mount(<Host onSelect={onSelect} />);
     const header = within(grid()).getByRole("rowheader", { name: /^Main · LIVE/ });
     act(() => header.focus());
     await userEvent.keyboard(" ");
+    expect(onSelect).not.toHaveBeenCalled();
+    // Handled, so the region does not scroll a page as an unhandled Space would (CMP-049's rule).
+    expect(fireEvent.keyDown(header, { key: " " })).toBe(false);
+    const totalCell = grid().querySelector<HTMLElement>(".cv-table__totals th");
+    expect(fireEvent.keyDown(totalCell as HTMLElement, { key: " " })).toBe(false);
     expect(onSelect).not.toHaveBeenCalled();
     const total = grid().querySelector<HTMLElement>(".cv-table__totals th");
     act(() => total?.focus());
