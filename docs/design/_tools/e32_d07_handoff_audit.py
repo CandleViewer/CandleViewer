@@ -22,7 +22,9 @@ Gates (one mutation each in `--self-test`):
   G-COPY      every COPY block equals its source block at the base, byte for byte.
   G-CITE      every `KEY`:line cite (and its `, :n` continuations) is in range at the base and the
               range's ends are non-blank; copied blocks are the source's own and are skipped.
-  G-VERSION   every cited line's content stands at `origin/main` (moved = WARN, gone = FAIL).
+  G-VERSION   PR-1 mode: every cited line's content stands at `origin/main` (moved = WARN, gone =
+              FAIL). Post-merge mode: every cite is judged at its frozen base `BASE` (the base
+              the merged spec records), so a moved main neither WARNs nor FAILs.
   G-CONTRAST  the review's §7.1 pairs in three themes through `themes.json`'s layering.
   G-CVD       the §7.2 pairs through `cvd_sim.py`'s greyscale weights and two matrices (parsed
               from its source) and this pack's own tritanopia matrix (Machado et al. 2009).
@@ -43,7 +45,7 @@ Gates (one mutation each in `--self-test`):
               lines.
   G-UNTOUCHED PR-1 mode: the tree differs from the merge-base only in this pack's files and `14`,
               and `14` equals the merge-base with the six lines applied by content. Post-merge
-              mode: `14` is untouched.
+              mode: `14` is untouched; only the listed bundle tools (BUNDLE_TOOLS) may change.
   G-TICKS     every evidence cite of the six `14` ticks resolves at the base: a `§n` to a heading
               of the named parent, a board to its board list, a row id to a table row (the ticks are
               a Texts field, so the self-test moves them in the tool and in `14` together).
@@ -95,6 +97,19 @@ BQ_TOTAL = 19
 SPEC_REL = "docs/design/E32/E32-D07.md"
 REVIEW_REL = "docs/design/E32/E32-D07-a11y.md"
 DECK_REL = "docs/design/E32/E32-D07-copy.json"
+# post-merge, only these tool files may change in the one bundle that fixes them (G-SCOPE)
+BUNDLE_TOOLS = (
+    "docs/design/_tools/e09_d11_designqa_audit.py",
+    "docs/design/_tools/e12_d11_a11y_review_audit.py",
+    "docs/design/_tools/e14_d10_a11y_review_audit.py",
+    "docs/design/_tools/e14_k01_spike_audit.py",
+    "docs/design/_tools/e32_d07_handoff_audit.py",
+    "docs/design/_tools/e14_d12_handoff_audit.py",
+    "docs/design/_tools/e12_d12_handoff_audit.py",
+    "docs/design/_tools/e08_d13_handoff_audit.py",
+    "docs/design/_tools/e07_d01_storage_model_audit.py",
+)
+
 TOOL_REL = "docs/design/_tools/e32_d07_handoff_audit.py"
 PIN_REL = "docs/design/_tools/e32_d07_ruled_pins.txt"
 PLAN14_REL = "docs/plan/14-screens-catalogue.md"
@@ -1304,8 +1319,16 @@ def g_cite(t: Texts) -> list[Finding]:
     return one("G-CITE", bad)
 
 
+VERSION_LEVER = "lever:version-at-head"  # self-test only: judge G-VERSION at origin/main post-merge
+
+
 def g_version(t: Texts) -> list[Finding]:
     out: list[Finding] = []
+    if post_merge(t) and VERSION_LEVER not in t.env.memo:
+        # post-merge, every cite is judged at its frozen base (G-CITE), not at the moving main
+        return [
+            Finding("NOTE", "G-VERSION", "post-merge: judged at the frozen base, nothing further")
+        ]
     seen: set[tuple[str, int]] = set()
     for doc, key, a, b, n in all_cites(t):
         base = t.env.lines(t.env.base, PATHS[key])
@@ -1520,7 +1543,8 @@ def g_untouched(t: Texts) -> list[Finding]:
     if t.changed is None:
         return one("G-UNTOUCHED", ["git did not list the changed paths"])
     for p in t.changed:
-        if p not in OWN_PATHS:
+        sibling = post_merge(t) and p in BUNDLE_TOOLS  # a bundled tool fix
+        if p not in OWN_PATHS and not sibling:
             bad.append(f"{p} differs from the merge-base (not this pack's)")
     base14 = t.env.show(t.env.mb, PLAN14_REL) or ""
     if post_merge(t):
@@ -1717,9 +1741,14 @@ def audit(t: Texts, timings: dict[str, float] | None = None) -> list[Finding]:
     return found + pins
 
 
+def resolve_base(base: str) -> str:
+    """The full sha of the recorded base; empty when it does not resolve (`load` then exits)."""
+    return (git_raw("rev-parse", "--verify", f"{base}^{{commit}}") or "").strip()
+
+
 def load() -> Texts:
     mb = merge_base()
-    full = (git_raw("rev-parse", "--verify", f"{BASE}^{{commit}}") or "").strip()
+    full = resolve_base(BASE)
     if mb is None or not full:
         raise SystemExit(f"`git merge-base HEAD {HEAD_REF}` or the base {BASE} does not resolve")
     env = Env(full, mb, {})
@@ -1787,7 +1816,30 @@ def head_gone(t: Texts) -> Texts:
     rel = PATHS["D04"]
     ls = t.env.lines(t.env.base, rel)
     ls[442] = ls[442] + " (edited)"
-    return with_text(t, HEAD_REF, rel, "\n".join(ls))
+    out = with_text(t, HEAD_REF, rel, "\n".join(ls))
+    out.env.memo[VERSION_LEVER] = True  # PR-1 judgement in either mode
+    return out
+
+
+def frozen_base_problems(t: Texts) -> list[str]:
+    """Post-merge cites freeze at the recorded base: a moved merge-base must not move them."""
+    out: list[str] = []
+    sim = "f" * 40  # stands for a main that has moved on since the pack merged
+    memo = {k: v for k, v in t.env.memo.items() if k != VERSION_LEVER}
+    memo[f"show:{sim}:{SPEC_REL}"] = t.spec
+    memo[f"show:{sim}:{PLAN14_REL}"] = t.plan14
+    moved = head_gone(replace(t, env=Env(t.env.base, sim, memo)))
+    moved.env.memo.pop(VERSION_LEVER, None)
+    if [x for x in g_version(moved) if x.level != "NOTE"]:
+        out.append("post-merge G-VERSION follows the moving main, not the recorded base")
+    if compute(moved)["SHA:base"] != t.env.base[:10] or not t.env.base.startswith(BASE):
+        out.append("the cite base followed the merge-base, not the recorded base")
+    recorded = set(re.findall(r"(\S+)<!--=SHA:base-->", t.spec))
+    if recorded != {BASE}:
+        out.append(f"the spec records the base {sorted(recorded)}, the tool reads at {BASE}")
+    if resolve_base("0" * 40):
+        out.append("an unresolvable recorded base was accepted (load must exit)")
+    return out
 
 
 def deck_edit(t: Texts) -> Texts:
@@ -1795,6 +1847,11 @@ def deck_edit(t: Texts) -> Texts:
     k = "d05:sl.loosen.refused"
     data["entries"][k]["text"] = data["entries"][k]["text"] + " "
     return replace(t, deck=json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
+def sibling_tool_changed(t: Texts) -> Texts:
+    """An unrelated file under the tools directory is not in the bundle allow-list."""
+    return replace(t, changed=[*(t.changed or []), "docs/design/_tools/cvd_sim.py"])
 
 
 def parent_changed(t: Texts) -> Texts:
@@ -1818,6 +1875,10 @@ def tick_moved(t: Texts) -> Texts:
     if old not in ticks["SCR-064"] or old not in t.plan14:
         raise SystemExit("self-test: the SCR-064 tick evidence is not found")
     ticks["SCR-064"] = ticks["SCR-064"].replace(old, new)
+    if post_merge(t):  # the merged `14` carries the same ticks, so G-UNTOUCHED stays quiet
+        t = with_text(
+            t, t.env.mb, PLAN14_REL, (t.env.show(t.env.mb, PLAN14_REL) or "").replace(old, new)
+        )
     return replace(t, ticks=ticks, plan14=t.plan14.replace(old, new))
 
 
@@ -1861,6 +1922,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("G-OPENROWS", "widen a parent's range past its last row",
              subst("| G-1..G-23 ", "| G-1..G-24 ")),
     Mutation("G-UNTOUCHED", "edit a parent in the same tree", parent_changed),
+    Mutation("G-UNTOUCHED", "an unrelated tool file", sibling_tool_changed),
     Mutation("G-TICKS", "point a tick's evidence at a missing section and board (tool and 14)",
              tick_moved),
     Mutation("G-T2", "drop the reason node's `aria-describedby` link from R-5",
@@ -1915,6 +1977,11 @@ def selftest() -> tuple[bool, list[str]]:
     every = {gate_name(g) for g in GATES} | {"G-RULED-PIN"}
     missed = sorted(every - gates_hit)
     ok &= not missed
+    frozen = frozen_base_problems(base)
+    ok &= not frozen
+    out += [ascii_line(f"FAIL frozen base: {p}") for p in frozen]
+    out.append(f"self-test: frozen base {'ok' if not frozen else 'FAIL'} (moved merge-base, "
+               "a moved main and an unresolvable base)")  # fmt: skip
     restored = digest(base) == before and disk == [
         hashlib.sha256(read_raw(r).encode()).hexdigest() for r in OWN_PATHS if (ROOT / r).exists()
     ]

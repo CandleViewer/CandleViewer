@@ -11,7 +11,8 @@ FAILs.
 Two modes, chosen by content, never by branch name. PR-1 mode: the spec is absent at the
 merge-base; the diff may touch only the three own files and add the three `14` pointer lines.
 Post-merge mode: the spec ships at the merge-base; every merged table row stands unchanged and
-only later rows, the own files and the merged pointer lines may move.
+only later rows, the own files and the merged pointer lines may move; every cite is read at the
+base the merged spec recorded (`audit:sha`), not at the merge-base with the moving main.
 
 Gates (each FAIL led by its code):
 
@@ -89,6 +90,19 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[3]
 TOOLS = ROOT / "docs" / "design" / "_tools"
 SPEC_REL = "docs/design/E14/E14-D10.md"
+# post-merge, only these tool files may change in the one bundle that fixes them (G-SCOPE)
+BUNDLE_TOOLS = (
+    "docs/design/_tools/e09_d11_designqa_audit.py",
+    "docs/design/_tools/e12_d11_a11y_review_audit.py",
+    "docs/design/_tools/e14_d10_a11y_review_audit.py",
+    "docs/design/_tools/e14_k01_spike_audit.py",
+    "docs/design/_tools/e32_d07_handoff_audit.py",
+    "docs/design/_tools/e14_d12_handoff_audit.py",
+    "docs/design/_tools/e12_d12_handoff_audit.py",
+    "docs/design/_tools/e08_d13_handoff_audit.py",
+    "docs/design/_tools/e07_d01_storage_model_audit.py",
+)
+
 TOOL_REL = "docs/design/_tools/e14_d10_a11y_review_audit.py"
 PINS_REL = "docs/design/_tools/e14_d10_ruled_pins.txt"
 P14_REL = "docs/plan/14-screens-catalogue.md"
@@ -412,11 +426,34 @@ def load_contrast(base: str) -> tuple[list[ContrastRow], list[ContrastRow]]:
     return raw, union
 
 
+def frozen_base(merged_spec: str | None, mb: str) -> str:
+    """PR-1: the merge-base. Post-merge: the base the merged spec recorded in its own
+    `audit:sha` marker (the base its pins were read at), never the merge commit or moving main.
+    Falls back to the merge-base when the marker is missing or does not resolve (G02 then FAILs).
+    """
+    if merged_spec is None:
+        return mb
+    for m in AUDIT.finditer(merged_spec):
+        if m[1] == "sha" and re.fullmatch(r"[0-9a-f]{40}", m[2]):
+            probe = subprocess.run(
+                ["git", "cat-file", "-e", m[2] + "^{commit}"],
+                cwd=ROOT,
+                check=False,
+                stderr=subprocess.DEVNULL,
+                timeout=60,
+            )
+            if probe.returncode == 0:
+                return m[2]
+    return mb
+
+
 def build_ctx(with_contrast: bool = True) -> Ctx:
-    base = merge_base()
+    mb = merge_base()
+    merged_spec = show(mb, SPEC_REL)
+    base = frozen_base(merged_spec, mb)
     changed = sorted(
         {
-            *git("diff", "--name-only", base).split(),
+            *git("diff", "--name-only", mb).split(),
             *git("ls-files", "-o", "--exclude-standard").split(),
         }
     )
@@ -427,9 +464,9 @@ def build_ctx(with_contrast: bool = True) -> Ctx:
         pins=read(PINS_REL),
         tool=read(TOOL_REL),
         p14=read(P14_REL),
-        p14_base=show(base, P14_REL) or "",
+        p14_base=show(mb, P14_REL) or "",  # this branch's own `14` edits, in both modes
         changed=changed,
-        merged_spec=show(base, SPEC_REL),
+        merged_spec=merged_spec,
         base=base,
         base_date=datetime.date.fromisoformat(date_s),
         images=[Path(p).name for p in git("ls-tree", "--name-only", base, f"{IMG_DIR}/").split()],
@@ -997,7 +1034,9 @@ def g_ruled(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
 
 def g_scope(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     for p in ctx.changed:
-        if p not in OWN and p != P14_REL:
+        # post-merge, a fix to this tool may ship in one bundle with its sibling design tools
+        sibling = ctx.merged_spec is not None and p in BUNDLE_TOOLS
+        if p not in OWN and p != P14_REL and not sibling:
             f.append(("G13-SCOPE", f"{p} is outside the edit set"))
 
 
@@ -1374,6 +1413,10 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
     ("G12-RULED", lambda c: _spec(c, _swap(c.spec, f"| {RULED_STAMP} |", "| pending |"))),
     ("G13-SCOPE", lambda c: dataclasses.replace(c, changed=[*c.changed, "docs/plan/15-x.md"])),
     (
+        "G13-SCOPE",
+        lambda c: dataclasses.replace(c, changed=[*c.changed, "docs/design/_tools/cvd_sim.py"]),
+    ),
+    (
         "G14-POINTERS",
         lambda c: dataclasses.replace(
             c, p14="\n".join(ln for ln in c.p14.split("\n") if "the drawing entry only" not in ln)
@@ -1476,6 +1519,24 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
 ]
 
 
+def frozen_base_problems(ctx: Ctx) -> list[str]:
+    """Post-merge cites freeze at the recorded base: a moved merge-base must not move them."""
+    out: list[str] = []
+    moved = "f" * 40  # stands for a main that has moved on since the pack merged
+    if frozen_base(None, moved) != moved:
+        out.append("PR-1 mode must read at the merge-base")
+    if ctx.merged_spec is not None:
+        if frozen_base(ctx.merged_spec, moved) != ctx.base:
+            out.append("post-merge mode follows the merge-base, not the recorded base")
+        no_marker = ctx.merged_spec.replace("audit:sha=", "audit:unused=")
+        if frozen_base(no_marker, moved) != moved:
+            out.append("post-merge mode with no recorded base must fall back, which G02 then fails")
+        stale = re.sub(r"(audit:sha=)[0-9a-f]{40}", r"\g<1>" + "0" * 40, ctx.merged_spec)
+        if frozen_base(stale, moved) != moved:
+            out.append("an unresolvable recorded base was accepted")
+    return out
+
+
 def self_test(ctx: Ctx) -> tuple[int, int, list[str]]:
     _, base = run(ctx)
     problems: list[str] = []
@@ -1496,6 +1557,7 @@ def self_test(ctx: Ctx) -> tuple[int, int, list[str]]:
     gates = {code for code, _ in GATES}
     if gates - {code for code, _ in MUTATIONS}:
         problems.append("a gate has no mutation")
+    problems += frozen_base_problems(ctx)
     return passed, len(MUTATIONS), problems
 
 
