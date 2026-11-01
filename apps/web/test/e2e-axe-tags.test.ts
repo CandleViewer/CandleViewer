@@ -60,6 +60,7 @@ describe("the a11y gate's axe tags (#3700)", () => {
       "a11y/axe.collect.ts",
       "e09-auth-a11y.spec.ts",
       "e09-auth-a11y.spec.ts",
+      "e17/support.ts", // E17-Q04's zero-violation scan of the transport states (#569)
       "shell-chrome.spec.ts", // the shell chrome per theme and role (#304)
       "support/axe.ts", // the one scan the E09-Q02 auth specs call (#293), SCR-006's step-up dialog (#2725) included
       "system-states/break-glass-notice.spec.ts", // SR-023's SCR-153 notice row (#306)
