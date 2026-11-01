@@ -428,6 +428,36 @@ async def test_a_failed_read_fails_the_scan_and_judges_what_was_read() -> None:
     assert rig.kinds() == ["account_stale"]  # in memory, read whatever the store does
 
 
+class _OneReadFails(InMemoryStuckReads):
+    """The orders read or the positions read raises, the other answers."""
+
+    def __init__(self, failing: str) -> None:
+        super().__init__()
+        self.failing = failing
+
+    async def stuck_orders(
+        self, environment: Any, *, limit: int
+    ) -> tuple[tuple[StuckOrderRow, ...], bool]:
+        if self.failing == "orders":
+            raise RuntimeError("the orders read failed")
+        return await super().stuck_orders(environment, limit=limit)
+
+    async def naked_positions(self, environment: Any, *, limit: int) -> tuple[Any, bool]:
+        if self.failing == "positions":
+            raise RuntimeError("the positions read failed")
+        return await super().naked_positions(environment, limit=limit)
+
+
+@pytest.mark.parametrize("failing", ["orders", "positions"])
+async def test_either_read_failing_alone_fails_the_scan(failing: str) -> None:
+    """Each read's failure is the scan's: the other read is still judged."""
+    reads = _OneReadFails(failing)
+    rig = build(reads=reads)
+    reads.orders["demo"], reads.positions["demo"] = [order()], [position()]
+    assert await rig.detector.scan() == "failed"
+    assert rig.kinds() == ([] if failing == "orders" else ["in_flight"])
+
+
 async def test_an_incident_whose_sinks_were_cut_is_raised_by_the_next_scan() -> None:
     """A scan the bound cuts marks raised only the incidents whose sinks ran."""
     rig = build()
