@@ -118,10 +118,13 @@ def refuse_env_keys_in_live(env_name: str, keys: EnvKeys) -> None:
 
 
 def _keyring_fields(records: Sequence[Mapping[str, Any]], origin: str) -> dict[str, str]:
-    """A keyring's record: where, which rows by purpose, their versions and origin (BQ-8)."""
+    """A keyring's record: where, which rows by purpose, their versions and origin (BQ-8).
+    `kek_version` is the version the rows are wrapped under as read, never the running KEK's: the
+    oldest when a failed re-wrap left them apart, the KEK the keyring still needs."""
     ids = {r["purpose"]: str(r["id"]) for r in records}
     first, keyring = records[0], {"totp_seal_id": ids[TOTP], "recovery_hmac_id": ids[RECOVERY]}
-    versions = {"key_version": str(first["key_version"]), "kek_version": str(first["kek_version"])}
+    held = min(r["kek_version"] for r in records)
+    versions = {"key_version": str(first["key_version"]), "kek_version": str(held)}
     return {**_ACTOR, "env": first["env"], "origin": origin, **versions, **keyring}
 
 
@@ -259,8 +262,8 @@ async def open_at_boot(
     except AuthKeyringUnavailable as exc:
         return None, exc.reason
     try:
-        fields = _keyring_fields(rows, rows[0]["origin"])  # one origin: `load_keyring` checked
-        await audit(LOADED, fields | {"kek_version": str(kek.version)})
+        # One origin (`load_keyring` checked); the rows' own KEK versions, as they opened.
+        await audit(LOADED, _keyring_fields(rows, rows[0]["origin"]))
     except BaseException as exc:
         ring.close()  # a keyring is never used unrecorded
         if not isinstance(exc, Exception):

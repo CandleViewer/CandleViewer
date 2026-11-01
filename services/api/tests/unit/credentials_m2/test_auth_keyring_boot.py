@@ -392,6 +392,34 @@ async def test_a_rewrap_that_fails_still_opens_under_the_previous_kek_and_is_cou
     assert _down(svc, ctx) == ("auth_keyring_stranded", HealthStatus.DEGRADED, False, 1)
 
 
+@pytest.mark.parametrize(
+    ("failing", "kek_version"),
+    [((), "2"), (("totp_seal",), "1"), (("recovery_hmac", "totp_seal"), "1")],
+    ids=["both_moved", "one_left_at_v1", "none_moved"],
+)
+async def test_the_load_record_names_the_kek_version_its_rows_are_stored_at(
+    monkeypatch: pytest.MonkeyPatch, failing: tuple[str, ...], kek_version: str
+) -> None:
+    """A rotation boot under v2: `loaded` names the version the rows opened under, never the
+    running KEK's; when a failed re-wrap left them apart, the oldest, the KEK still needed."""
+    keyring, store = await _generated()
+    real = keyring.rewrap
+
+    async def rewrap(key_id: UUID, **kw: Any) -> bool:
+        if kw["audit"][1]["purpose"] in failing:
+            raise RuntimeError("store down")
+        return await real(key_id, **kw)
+
+    monkeypatch.setattr(keyring, "rewrap", rewrap)
+    audit = AuditLog()
+    svc, ctx = await _booted(keyring, _Src(KEK_V2, 2), _Src(KEK_V1, 1), store=store, audit=audit)
+    assert _down(svc, ctx) == ("", HealthStatus.OK, False, 0)
+    moved = {r["purpose"] for r in keyring.rows if r["kek_version"] == 2}
+    assert moved == {"recovery_hmac", "totp_seal"} - set(failing)
+    [(_, fields)] = [r for r in audit.records if r[0] == custody.LOADED]
+    assert fields["kek_version"] == kek_version
+
+
 async def test_a_new_wrap_not_proven_to_open_is_never_stored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

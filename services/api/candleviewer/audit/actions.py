@@ -388,8 +388,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # #2152 S4 (ADR-0009 Amendment 4, BQ-8): the auth keyring at boot, M2's records: an
         # existing keyring opened (through the sink, as `kek_loaded`); the one-time import of the
         # env keys and a generated keyring, each committed with its rows; a row moved at the
-        # rotation boot, committed with its compare-and-set; and, at error, a keyring MFA cannot
-        # use (`secrets/_auth_custody.py`). Ids, purpose, versions and origin only.
+        # rotation boot, committed with its compare-and-set (`secrets/_auth_custody.py`): ids,
+        # purpose, versions (`kek_version` is the rows' own) and origin only. And, at error, a
+        # keyring MFA cannot use (`secrets/service.py`), which carries the reason and its
+        # remediation text instead.
         "security.auth_keyring_loaded",
         "security.auth_keyring_imported",
         "security.auth_keyring_enrolled",
