@@ -556,6 +556,12 @@ class World:
     #: more watch a test lets happen (`watches.tick`).
     watched: list[float] = field(default_factory=list)
     watches: Beats = field(default_factory=Beats)
+    #: The serving loop's tick (#913 L4) on a clock and a wait of the test's, as the heartbeat's
+    #: are `beats`, so the fence of new submits closes only when a test stalls the tick. On its
+    #: default wall clock a create the sweep resumed met the fence once the runner took longer than
+    #: `SERVING_STALE_S` between two beats, which are timers on the loop's clock, and that clock
+    #: stands still on a `VirtualTimeLoop` while a waiter turns it (#5317).
+    ticks: Beats = field(default_factory=Beats)
     binder: Binder = field(default_factory=Binder)
     #: The dev-only account fixture's lane transport factory, None in production (#913 L1d).
     lane_transport: Callable[[], Transport] | None = None
@@ -622,8 +628,12 @@ class World:
             "sleep": self.clock.sleep, "lane": self.lane, "heartbeat": self.heartbeat,
             "fencing": self.fencing, "watch": self.watch, "lane_signing": self.binder,
             "lane_transport": self.lane_transport, "health": self.tracked, "hub": self.hub,
+            "serving_tick": self.serving_tick,
         }  # fmt: skip
         return OmsRuntime(settings, **(built | over))
+
+    def serving_tick(self) -> oms_wiring.ServingTick:
+        return oms_wiring.ServingTick(clock=self.ticks.clock, wait=self.ticks.wait)
 
     async def watch(self, seconds: float) -> None:
         self.watched.append(seconds)
