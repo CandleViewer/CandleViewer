@@ -95,6 +95,8 @@ def test_artefacts_are_scrubbed_before_any_upload_and_uploads_fail_closed(
     scrubs = {s["id"]: i for i, s in enumerate(steps) if "scrub_artifacts.py" in str(s.get("run"))}
     assert set(scrubs) == {"scrub-results", "scrub"}
     assert all(steps[i]["if"] == "always()" for i in scrubs.values())
+    # Bounded, so an overrun fails the step and skips the uploads deliberately (fail-closed).
+    assert all(steps[i]["timeout-minutes"] == 10 for i in scrubs.values())
     assert f"ga-results-{lane}" in steps[scrubs["scrub-results"]]["run"]
     assert "test-results" in steps[scrubs["scrub"]]["run"]
     uploads = [i for i, s in enumerate(steps) if "upload-artifact" in str(s.get("uses", ""))]
