@@ -191,7 +191,7 @@ MachineEventSinkUnavailable = MachineEventUnavailable
 
 #: The M2 records that page: a KEK that failed to load or re-wrap, and stranded rows (#2266);
 #: a signing key that cannot be used, and a retired one that still held its seed (#889, ADR-0039
-#: decision 2, Q3).
+#: decision 2, Q3); an auth keyring MFA cannot use (#2152 S4, BQ-8).
 _SECRETS_ERRORS = frozenset(
     {
         "security.kek_load_failed",
@@ -200,6 +200,7 @@ _SECRETS_ERRORS = frozenset(
         "security.audit_signing_key_unavailable",
         "security.audit_signing_key_material_destroyed",
         "security.audit_signing_key_rotation_failed",  # #889 S7: a rotation that did not commit
+        "security.auth_keyring_load_failed",
     }
 )
 #: M2 refusals (#2266; #889 S7's rotation): stored as denied, at warning, as the other refusals
@@ -210,6 +211,9 @@ _SECRETS_REFUSED = frozenset(
 #: The audit export signing key's records (#889, ADR-0039 decision 7): `object_kind`
 #: `audit_signing_key`, whose `key_id` is the export key's id, never an API key's.
 _SIGNING_KEY_ACTIONS = ("security.audit_signing_key_", "security.audit_export_")
+#: The auth keyring's records (#2152 S4, BQ-8): `object_kind` `auth_key`, the row a record names
+#: by `auth_key_id` (a `key_id` would read as an API key's).
+_AUTH_KEY_ACTIONS = "security.auth_keyring_"
 #: Members M2's `(action, fields)` port carries as `"true"`/`"false"`, stored as JSON booleans
 #: (22 `rotateAuditSigningKey`: `retired_material_destroyed: true`); any other value raises
 #: (`KeyError`) before the record is written or built, so a typo never records `false`.
@@ -220,14 +224,17 @@ _BOOL = {"true": True, "false": False}
 def _secrets_audit_columns(action: str, fields: dict[str, str]) -> dict[str, Any]:
     """The audit columns of one M2 record, for the WAL sink and the row builder alike. Fields
     are ids only; the actor comes from the wiring-bound caller identity, never the borrower."""
-    signing_key = action.startswith(_SIGNING_KEY_ACTIONS)
+    if action.startswith(_AUTH_KEY_ACTIONS):
+        kind, object_id = "auth_key", fields.get("auth_key_id")
+    else:
+        signing_key = action.startswith(_SIGNING_KEY_ACTIONS)
+        kind = "audit_signing_key" if signing_key else "api_key" if "key_id" in fields else "kek"
+        object_id = fields.get("key_id", fields.get("active_key_id"))  # a rotation's new key
     columns: dict[str, Any] = {
         "actor_label": f"{fields.get('actor_kind', 'system')}:{fields.get('actor_role', '')}",
         "actor_user_id": fields.get("actor_user_id"),
-        "object_kind": (
-            "audit_signing_key" if signing_key else "api_key" if "key_id" in fields else "kek"
-        ),
-        "object_id": fields.get("key_id", fields.get("active_key_id")),  # a rotation's new key
+        "object_kind": kind,
+        "object_id": object_id,
         "severity": Severity.ERROR if action in _SECRETS_ERRORS else Severity.INFO,
         "after_state": {k: _BOOL[v] if k in _BOOLEANS else v for k, v in fields.items()},
         "request_id": current_request_uuid(),  # the request the change is part of (#3990)

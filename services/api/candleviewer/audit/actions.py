@@ -385,6 +385,16 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "security.audit_signing_key_rewrapped",
         "security.audit_signing_key_material_destroyed",
         "security.audit_signing_key_unavailable",
+        # #2152 S4 (ADR-0009 Amendment 4, BQ-8): the auth keyring at boot, M2's records: an
+        # existing keyring opened (through the sink, as `kek_loaded`); the one-time import of the
+        # env keys and a generated keyring, each committed with its rows; a row moved at the
+        # rotation boot, committed with its compare-and-set; and, at error, a keyring MFA cannot
+        # use (`secrets/_auth_custody.py`). Ids, purpose, versions and origin only.
+        "security.auth_keyring_loaded",
+        "security.auth_keyring_imported",
+        "security.auth_keyring_enrolled",
+        "security.auth_keyring_rewrapped",
+        "security.auth_keyring_load_failed",
         # #889 S6b (ADR-0039 decisions 3 and 7): the export signer's write-ahead record, before
         # every signature, and the record that closes it when signing then fails
         # (`secrets/export_signer.py`).
