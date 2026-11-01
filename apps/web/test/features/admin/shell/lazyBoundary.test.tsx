@@ -1,24 +1,30 @@
 /**
  * E42-S01 (#1022) BQ-7: the admin area's code loads only after the route guard let the session in
  * (E42-D03 §11: "the 404 with no call and no admin code loaded"). The admin area is one module behind
- * `React.lazy`; this file counts its evaluations, which stand for the chunk a browser would fetch.
- * One test, so no other test can have loaded the module first: the module registry is this file's.
+ * `React.lazy`, SCR-120's overview inside it; this file counts both modules' evaluations, which stand
+ * for the chunk a browser would fetch. One test, so no other test can have loaded either module
+ * first: the module registry is this file's.
  */
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as AdminAreaModule from "../../../../src/features/admin/shell/AdminArea";
+import type * as OverviewModule from "../../../../src/features/admin/overview/OverviewPage";
 import { resetMeClaims, setMeClaims } from "../../../../src/lib/auth/meCache";
 import { ROUTE_MANIFEST } from "../../../../src/routes/manifest";
 import type { Role } from "../../../../src/routes/rbac";
 import { buildRoutes } from "../../../../src/routes/tree";
 import { resetShellState, setShellState, type Me } from "../../../../src/shell/bootstrap/store";
 
-const chunk = vi.hoisted(() => ({ loads: 0 }));
+const chunk = vi.hoisted(() => ({ loads: 0, overview: 0 }));
 vi.mock("../../../../src/features/admin/shell/AdminArea", async (importOriginal) => {
   chunk.loads += 1;
   return importOriginal<typeof AdminAreaModule>();
+});
+vi.mock("../../../../src/features/admin/overview/OverviewPage", async (importOriginal) => {
+  chunk.overview += 1;
+  return importOriginal<typeof OverviewModule>();
 });
 
 const ADMIN_ROUTES = ROUTE_MANIFEST.filter(
@@ -78,8 +84,12 @@ describe("E42-S01 BQ-7: the admin area's code sits behind the guard", () => {
           router.dispose();
         }
       }
-      expect(chunk.loads).toBe(0);
-      expect(requested().filter((url) => url.includes("/api/v1/admin"))).toEqual([]);
+      expect([chunk.loads, chunk.overview]).toEqual([0, 0]); // R-300's overview included
+      // None of the area's reads either: no `/admin/*` call, and not the Users tile's
+      // `/users/invites`, its one read outside that prefix (S-5330-04).
+      const areaReads = (url: string): boolean =>
+        url.includes("/api/v1/admin") || url.includes("/api/v1/users/invites");
+      expect(requested().filter(areaReads)).toEqual([]);
 
       // The positive control, through the same watchers: an owner walks in from the journal.
       sessionFor("owner");
@@ -98,6 +108,13 @@ describe("E42-S01 BQ-7: the admin area's code sits behind the guard", () => {
         () => expect(requested().some((u) => u.endsWith("/users/invites"))).toBe(true),
         ROUTE_WAIT,
       );
+      // Only now does the owner's area read: the strip's sources on every admin route.
+      await waitFor(() => expect(requested()).toContain("/api/v1/admin/overview"), ROUTE_WAIT);
+      // And R-300 mounts SCR-120 from the same chunk, which was evaluated once.
+      await act(() => router.navigate("/admin"));
+      await screen.findByRole("heading", { name: "Overview", level: 1 }, ROUTE_WAIT);
+      expect([chunk.loads, chunk.overview]).toEqual([1, 1]);
+      await waitFor(() => expect(requested()).toContain("/api/v1/admin/health"), ROUTE_WAIT);
     },
   );
 });
