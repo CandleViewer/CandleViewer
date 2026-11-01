@@ -22,6 +22,7 @@ from candleviewer.observability import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.rules.evaluator import Evaluator, SnapshotBuilder
 from candleviewer.rules.evaluator.engine import EvaluationResult
+from candleviewer.rules.executor.budget import CircuitBreaker, OrderBudget
 from candleviewer.rules.executor.dispatch import AuditDispatch, Fire, FireDispatch, JobKind
 from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
 from candleviewer.rules.executor.gates import Gates, Halts
@@ -38,6 +39,7 @@ from candleviewer.rules.executor.ports import (
 )
 from candleviewer.rules.executor.results import BlockedBy
 from candleviewer.rules.ir.models import Rule
+from candleviewer.rules.limits import SCOPE_DENIALS_BEFORE_DISARM
 from candleviewer.rules.manager import (
     Audit,
     Broadcast,
@@ -127,6 +129,11 @@ class RulesService:
         self._principal: PrincipalReads | None = None  # E35-T11 binds the reads
         self._notional: NotionalRebuild | None = None  # E35-T11 binds the day's rebuild
         self._stop_check: StopCheck | None = None  # E35-T12 binds it
+        #: The SR-104 order budget, from its boot settings (`create_app`); unbound, the defaults
+        #: with no rebuild, so every order action is refused as not confirmed.
+        self._budget = OrderBudget()
+        #: Consecutive `scope` or `permission` refusals, by rule and account (BQ-10).
+        self._strikes: dict[tuple[str, UUID | None], int] = {}
         self._executor: ActionExecutor | None = None  # while the evaluator runs
         self._dispatch: FireDispatch | None = None  # the fire queue, while the evaluator runs
         self._audits: AuditDispatch | None = None  # the record-only jobs' queue, beside it
@@ -146,6 +153,7 @@ class RulesService:
         principal: PrincipalReads | None = None,
         notional: NotionalRebuild | None = None,
         stop_check: StopCheck | None = None,
+        budget: OrderBudget | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
         Each option is set only when given, so a later call (E35-S05's simulation sink, the
@@ -161,7 +169,7 @@ class RulesService:
         the rollout port its checks 2 and 3 read, and `principal` the owner's and the armer's
         snapshots check 5 reads (E35-T10; E35-T11 binds them, and unbound, check 5 refuses);
         `notional` the day's allowance rebuild (E35-T11's) and `stop_check` check 8's comparison
-        (E35-T12's), each refusing while unbound."""
+        (E35-T12's), each refusing while unbound; `budget` the SR-104 order budget of check 7."""
         if action_sink is not None:
             self._action_sink = action_sink
         if simulation_sink is not None:
@@ -180,6 +188,8 @@ class RulesService:
             self._notional = notional
         if stop_check is not None:
             self._stop_check = stop_check
+        if budget is not None:
+            self._budget = budget
         if store is not None:
             self._store = store
         if audit is not None:
@@ -350,6 +360,24 @@ class RulesService:
         if reason == "kill_switch":
             self._halts.killed[rule_id] = self._clock()
             self._drop(rule_id, "kill_switch")
+        else:  # `scope_denied`: the auto-disarm landed
+            self._metrics.autodisarmed()
+            for key in [k for k in self._strikes if k[0] == rule_id]:
+                del self._strikes[key]
+
+    def _scope_outcome(self, rule_id: str, account_id: UUID | None, refused: bool) -> None:
+        """The auto-disarm's count (24 §11.5; RE-E1, BQ-10), synchronous: each `scope` or
+        `permission` refusal at dispatch and each scope-skipped evaluation on the tick adds one
+        for the rule and account, a pass of check 5 on that account clears it, and from the
+        `SCOPE_DENIALS_BEFORE_DISARM`th on the manager disarms the rule beside the tick, never
+        awaited here."""
+        key = (rule_id, account_id)
+        if not refused:
+            self._strikes.pop(key, None)
+            return
+        strikes = self._strikes[key] = self._strikes.get(key, 0) + 1
+        if strikes >= SCOPE_DENIALS_BEFORE_DISARM and self._manager is not None:
+            self._manager.auto_disarm(rule_id, "scope_denied")
 
     def _drop(self, rule_id: str, reason: BlockedBy) -> None:
         """The rule's waiting fires, out of its lane (never the one that runs), each counted as
@@ -403,7 +431,12 @@ class RulesService:
                 stop=self._stop_check,
             ),
             records=run_records, audit=action_audit, alerts=self._alerts, metrics=self._metrics,
-            stand_in=stand_in, halts=self._halts,
+            stand_in=stand_in, halts=self._halts, budget=self._budget,
+            breaker=CircuitBreaker(
+                self._halts, move=manager.trip_breaker, drop=self._drop, alerts=self._alerts,
+                metrics=self._metrics, clock=self._clock,
+            ),
+            on_scope=self._scope_outcome,
         )  # fmt: skip
         dispatch = self._dispatch = FireDispatch(self._refused, executor.execute)
         audits = self._audits = AuditDispatch(self._shed, executor.execute)
@@ -449,6 +482,7 @@ class RulesService:
             if kind == "scope_denial":
                 for req in reqs:
                     self._metrics.refused(req.action_type, "scope")
+                self._scope_outcome(str(rule.rule_id), ref.account_id, True)  # one per evaluation
             queue.offer(
                 Fire(
                     str(rule.rule_id), run_id, reqs, emit, kind=kind, version_id=item.version_id,

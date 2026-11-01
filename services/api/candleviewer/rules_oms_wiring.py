@@ -9,7 +9,9 @@ user id and no request id (04 SR-062), and both users' roles as the principal sn
 was checked against gave them, `None` when it was not read (E35-T10, BQ-5).
 `RuleAlerts` binds the executor's alerts to the page line and to `system_events` (BQ-7), and
 `rule_metrics` its series to the app's metrics facade (BQ-8); `app.py` binds all three. E35-T10's
-`rule_switches` binds checks 2 and 3 to the two flag views and the B18 verdict the OMS takes.
+`rule_switches` binds checks 2 and 3 to the two flag views and the B18 verdict the OMS takes, and
+`rule_order_budget` the SR-104 order budget, its counts rebuilt over the rules repository and its
+boot settings refused above their hard caps; `RuleAlerts` also pages the circuit breaker's trips.
 Outcome and severity go as their values (C-3.3 keeps `audit` from this module, as from
 `oms_stream_wiring`). Nothing here logs: the input snapshot is financial and confidential (21
 §3.4.3).
@@ -27,8 +29,11 @@ import structlog
 from candleviewer.domain.primitives import AccountId
 from candleviewer.observability.health_probes import SystemEvent, SystemEventWriter
 from candleviewer.observability.metrics import Metrics
+from candleviewer.rules.executor.budget import DAY_S, OrderBudget
+from candleviewer.rules.executor.handlers import COUNTS_ORDERS
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.ports import ActionAuditFields, EventRow, RunRow, RunStatus
+from candleviewer.rules.limits import ORDER_BUDGET_CAPS
 from candleviewer.storage.repositories.rules_sqlalchemy import (
     RuleEventInsert,
     SqlAlchemyRulesRepository,
@@ -36,10 +41,11 @@ from candleviewer.storage.repositories.rules_sqlalchemy import (
 
 #: Each alert's `system_events` row: component `rules`, its kind and a fixed message; the ids
 #: ride in `details`, so the incident gathers every occurrence under one entry.
-AlertKind = Literal["partial_fire", "write_ahead_failed"]
+AlertKind = Literal["partial_fire", "write_ahead_failed", "circuit_breaker"]
 _ALERT_MESSAGES: Final[dict[str, str]] = {
     "partial_fire": "A rule fire partly took effect: one of its actions did not succeed.",
     "write_ahead_failed": "A rule action was not sent: its records could not be written ahead.",
+    "circuit_breaker": "A rule's circuit breaker tripped: its order budget was spent.",
 }
 #: The bound on one alert's `system_events` write, in the dispatch worker.
 ALERT_EVENT_TIMEOUT_S: Final = 2.0
@@ -166,11 +172,28 @@ class RuleAlerts:
         self._paged.discard(("partial_fire", rule_id))
         self._paged.discard(("write_ahead_failed", rule_id))
 
+    def breaker_tripped(self, rule_id: str, run_id: UUID, node_id: str) -> None:
+        """The P1 page of a trip (24 §11.7, BQ-8): the `cv_page` CRITICAL line, on every trip,
+        never deduplicated by episode."""
+        ids = {"rule_id": rule_id, "run_id": str(run_id), "node_id": node_id}
+        _log().critical("rules.circuit_breaker_tripped", cv_page=True, **ids)
+
+    async def breaker_moved(self, rule_id: str, run_id: UUID, node_id: str, *, moved: bool) -> None:
+        """The trip's one `system_events` row, saying whether the rule was moved; a rule that was
+        not moved is paged again."""
+        ids = {"rule_id": rule_id, "run_id": str(run_id), "node_id": node_id}
+        if not moved:
+            _log().critical("rules.circuit_breaker_not_moved", cv_page=True, **ids)
+        await self._event("circuit_breaker", ids | {"moved": "true" if moved else "false"})
+
     async def _alert(self, kind: AlertKind, rule_id: str, run_id: UUID, node_id: str) -> None:
         ids = {"rule_id": rule_id, "run_id": str(run_id), "node_id": node_id}
         if (kind, rule_id) not in self._paged:
             self._paged.add((kind, rule_id))
             _log().critical(f"rules.{kind}", cv_page=True, **ids)
+        await self._event(kind, ids)
+
+    async def _event(self, kind: AlertKind, ids: dict[str, str]) -> None:
         if self._events is None:
             return
         event = SystemEvent("rules", kind, "critical", _ALERT_MESSAGES[kind], ids)
@@ -185,6 +208,40 @@ class RuleAlerts:
 def rule_metrics(metrics: Metrics) -> ExecutorMetrics:
     """The executor's series over the app's metrics facade (BQ-8)."""
     return ExecutorMetrics(metrics)
+
+
+class RuleBudgetRebuild:
+    """`BudgetRebuild` over the rules repository (24 §11.7, BQ-7): the ages of a rule's counted
+    `action_start` events of its armed runs of the last 24 h, on the database's clock, which the
+    budget places on its own wall clock as it reads them, so two clocks never skew a window."""
+
+    def __init__(self, repository: SqlAlchemyRulesRepository) -> None:
+        self._repository = repository
+
+    async def order_ages(self, rule_id: str, *, limit: int) -> tuple[float, ...]:
+        types = sorted(COUNTS_ORDERS)
+        ages = await self._repository.order_action_ages(rule_id, types, since_s=DAY_S, limit=limit)
+        return tuple(float(age) for age in ages)
+
+
+class OrderBudgetAboveCap(ValueError):
+    """A boot setting of the order budget above its hard cap: the app refuses to start."""
+
+
+def rule_order_budget(
+    per_minute: int, per_day: int, repository: SqlAlchemyRulesRepository | None
+) -> OrderBudget:
+    """The SR-104 order budget from its two boot settings (24 §11.7, §16.1; BQ-6), for
+    `RulesService.bind(budget=...)`: `create_app` builds it whatever `rules_evaluator_enabled`
+    says, so a setting above its hard cap (`rules.limits.ORDER_BUDGET_CAPS`) refuses start."""
+    for setting, value, cap in (
+        ("CV_RULES_ORDER_BUDGET_PER_MINUTE", per_minute, ORDER_BUDGET_CAPS["per_minute"]),
+        ("CV_RULES_ORDER_BUDGET_PER_DAY", per_day, ORDER_BUDGET_CAPS["per_day"]),
+    ):
+        if value > cap:
+            raise OrderBudgetAboveCap(f"{setting} is above its hard cap of {cap}")
+    rebuild = None if repository is None else RuleBudgetRebuild(repository)
+    return OrderBudget(per_minute, per_day, rebuild=rebuild)
 
 
 #: The account B18 is asked about for an action that names none (24 §11.5 check 3): no grant names

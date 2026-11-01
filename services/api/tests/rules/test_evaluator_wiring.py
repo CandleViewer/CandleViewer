@@ -52,7 +52,8 @@ async def test_evaluator_not_constructed_when_flag_off() -> None:
 def test_create_app_binds_the_executors_records_alerts_and_metrics() -> None:
     """E35-T09: the composition root binds the action executor's records written ahead (the run
     row and its events, `rules.fired` and `rules.blocked`), its alerts and its five series (24
-    §11.5, BQ-7, BQ-8). Unbound, every armed action would fail closed and nothing be counted."""
+    §11.5, BQ-7, BQ-8), with E35-T10's breaker trips and auto-disarms. Unbound, every armed
+    action would fail closed and nothing be counted."""
     rules = create_app().state.app_context.rules
     assert rules._records is not None
     run_records, action_audit = rules._records
@@ -61,6 +62,7 @@ def test_create_app_binds_the_executors_records_alerts_and_metrics() -> None:
     assert set(rules._metrics._series) == {
         "rule_actions_total", "rule_action_duration_seconds", "rule_actions_blocked_total",
         "rule_dispatch_reread_failed_total", "rule_records_shed_total",
+        "rule_circuit_breaker_trips_total", "rule_autodisarm_total",
     }  # fmt: skip
 
 

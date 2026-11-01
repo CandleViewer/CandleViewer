@@ -5,7 +5,9 @@ the first, the evaluation budget in the IR `limits` block: `max_fires_per_hour` 
 `max_fires_per_day`, counted per scope instance. A value above its default needs the Owner role
 (04 §7.2.2 row 26); a value above its hard cap is refused for every role. Arming checks both
 again, the Owner check on the arming actor. The second layer, the order budget counted at
-dispatch with its circuit breaker, belongs to the action executor (#863).
+dispatch with its circuit breaker, belongs to the action executor (#863): its defaults and hard
+caps live here too (`ORDER_BUDGET_DEFAULTS`, `ORDER_BUDGET_CAPS`; E35-T10), beside the count of
+scope refusals that disarms a rule (`SCOPE_DENIALS_BEFORE_DISARM`).
 
 The defaults are read from `RuleLimits`, never restated. The caps live only here (C-16.5): the
 contract mirrors them as `x-cv-limit-caps` on `RuleIr`, and a contract test keeps the two equal.
@@ -32,6 +34,19 @@ LIMIT_DEFAULTS: Final[Mapping[str, int]] = MappingProxyType(
     {name: int(RuleLimits.model_fields[name].default) for name in BUDGET_FIELDS}
 )
 _LABELS: Final = {"max_fires_per_hour": "Fires per hour", "max_fires_per_day": "Fires per day"}
+#: SR-104's order budget per rule (24 §11.7; E35-T10, BQ-6): the defaults the two boot settings
+#: start from (`CV_RULES_ORDER_BUDGET_PER_MINUTE`, `CV_RULES_ORDER_BUDGET_PER_DAY`), and the hard
+#: caps no setting may exceed (`create_app` refuses to start above one). Interim, pending the
+#: owner's ratification (#2701): one order a second per rule stays well under the per-UID create
+#: budget the rate governor holds, and the daily cap keeps the minute cap's ratio to its default.
+ORDER_BUDGET_DEFAULTS: Final[Mapping[str, int]] = MappingProxyType(
+    {"per_minute": 10, "per_day": 200}
+)
+ORDER_BUDGET_CAPS: Final[Mapping[str, int]] = MappingProxyType({"per_minute": 60, "per_day": 2_000})
+#: Consecutive `scope` or `permission` refusals per rule and account, the tick's scope-skipped
+#: evaluations included, that disarm the rule (24 §11.5; RE-E1, BQ-10). Interim, pending the
+#: owner's ratification (#2701).
+SCOPE_DENIALS_BEFORE_DISARM: Final = 5
 
 
 def above_default(limits: RuleLimits) -> dict[str, int]:
@@ -65,6 +80,9 @@ __all__ = [
     "BUDGET_FIELDS",
     "LIMIT_CAPS",
     "LIMIT_DEFAULTS",
+    "ORDER_BUDGET_CAPS",
+    "ORDER_BUDGET_DEFAULTS",
+    "SCOPE_DENIALS_BEFORE_DISARM",
     "above_cap",
     "above_default",
     "cap_message",
