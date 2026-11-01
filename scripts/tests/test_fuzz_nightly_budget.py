@@ -43,7 +43,9 @@ BARS_FUZZ = API_TESTS / "security" / "bars" / "test_param_fuzz.py"
 #: took on a loaded 8-core box (the 300-example PR-lane property in 10.6 s, #452), so a slower
 #: night still ends inside the step's timeout.
 BARS_EXAMPLE_CEILING_S = 0.1
-SETUP_MINUTES = 5  # checkout, uv, `uv sync --frozen` and the encrypt and upload steps
+#: The least a job timeout leaves past its fuzzing for setup: checkout, uv, `uv sync --frozen` and
+#: the encrypt and upload steps.
+SETUP_MINUTES = 15
 BUDGET = {False: 30 * 60, True: 3 * 60 * 60}  # seconds a job fuzzes for: a night's, the weekend's
 LOCAL = not os.environ.get("CI")  # off CI a missing tool skips a test; on CI it fails the test
 #: `(github.event.schedule == '<cron>' || inputs.weekend) && <long> || <short>`: GitHub's `&&` and
@@ -308,7 +310,9 @@ def test_the_web_fuzz_project_needs_no_built_workspace_package() -> None:
 def test_each_timeout_covers_the_budget_with_setup_headroom(job: str) -> None:
     for weekend, seconds in BUDGET.items():
         timeout = _pick(DOC["jobs"][job]["timeout-minutes"], weekend=weekend)
-        assert seconds // 60 + 15 <= timeout <= seconds // 60 + 60, (weekend, timeout)
+        bars = int(_bars_step()["timeout-minutes"]) if job == "python" else 0  # its own step
+        fuzzing = seconds // 60 + bars
+        assert fuzzing + SETUP_MINUTES <= timeout <= fuzzing + 60, (weekend, timeout)
 
 
 def test_saturday_runs_the_weekend_budget_and_each_other_night_the_nightly_one() -> None:
@@ -369,13 +373,10 @@ def test_the_bars_step_keeps_a_failing_query_out_of_the_public_log() -> None:
     assert {"--tb=no", "-rN", "-q"} <= set(args) and "CV_FUZZ" not in _bars_step()["run"]
 
 
-def test_the_bars_step_timeout_is_sized_from_its_examples_and_fits_the_job() -> None:
+def test_the_bars_step_timeout_is_sized_from_its_examples() -> None:
     examples = _bars_examples()
     assert examples >= 5_000  # "several thousand" per the ticket, both routes
     needed = math.ceil(examples * BARS_EXAMPLE_CEILING_S / 60)
     step_timeout = int(_bars_step()["timeout-minutes"])
-    assert needed <= step_timeout <= 2 * needed
-    for weekend, seconds in BUDGET.items():
-        job_timeout = _pick(DOC["jobs"]["python"]["timeout-minutes"], weekend=weekend)
-        assert seconds // 60 + step_timeout + SETUP_MINUTES <= job_timeout, weekend
+    assert needed <= step_timeout <= 2 * needed  # the job's room for it: the timeout test above
 

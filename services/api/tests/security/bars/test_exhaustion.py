@@ -87,7 +87,9 @@ async def test_exhaustion_identical_concurrent_reads_are_coalesced(stores: Store
     responses = await flight
     assert [r.status_code for r in responses] == [200] * N
     if (reads := stores.calls[BAR_READ]) > 1:
-        raise NotCoalesced(f"{N} identical concurrent requests made {reads} bar reads")
+        raise NotCoalesced(
+            f"{N} identical concurrent requests made {reads} bar reads ({arrived['n']} in flight)"
+        )
 
 
 class RebuildsMultiplied(AssertionError):
