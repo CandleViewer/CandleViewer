@@ -228,7 +228,7 @@ async def test_owner_reset_refused_by_its_write_ahead_audit_keeps_chart_and_sock
     async def refuse(methods: int, live: int, /) -> None:
         raise RuntimeError("WAL unwritable")
 
-    deps = (base._mfa, sessions, base._encryptor, base._users, base._hasher)
+    deps = (base._mfa, sessions, base._keyring, base._users, base._hasher)
     svc = StepUpService(
         *deps,
         clock=clock,
@@ -259,7 +259,7 @@ async def test_hydration_from_row_is_not_re_audited(b16_audit: RecordingAuditSin
     svc, clock, seed, user, sessions = await _setup()
     await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
     rebuilt = StepUpService(
-        svc._mfa, sessions, svc._encryptor, svc._users, svc._hasher, clock=clock, sleep=no_wait
+        svc._mfa, sessions, svc._keyring, svc._users, svc._hasher, clock=clock, sleep=no_wait
     )
     before = len(b16_audit.calls)
     await rebuilt.require_elevation("s1", "keys")  # chart rebuilt from the row
