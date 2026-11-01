@@ -22,10 +22,10 @@ body:
       label: Timebox (days)
       description: Agreed with the Architect — propose here, confirmed at Refinement.
       options:
-        - "1"
-        - "2"
-        - "3"
-        - "5"
+        - "1 day"
+        - "2 days"
+        - "3 days"
+        - "5 days"
     validations:
       required: true
   - type: textarea
