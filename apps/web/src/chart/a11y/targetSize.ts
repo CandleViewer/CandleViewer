@@ -1,6 +1,6 @@
 /**
  * Target-size accounting for the order-flow grids (E47-S02, #1358 BQ-09; `05` §3.4.7, WCAG 2.2 SC 2.5.8). The DOM
- * rows built here (the ladder surrogate) are at least `size.target.min` (24 CSS px) tall and wide at default zoom;
+ * rows a consumer builds on the composite grid (the E21-S01 ladder) must be at least `size.target.min` (24 CSS px) tall and wide at default zoom;
  * the footprint cells the engine draws may fall below it at maximum zoom-out, which `05` §3.4.7 allows as the
  * essential exception only with the table alternative named as the compensating control.
  */
