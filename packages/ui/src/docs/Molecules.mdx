@@ -583,6 +583,30 @@ stacked: a stale row is a tint, demoted text and one CMP-239 chip; a stale OI ba
 initialising and not-live rows show "—" with a word; a delisted row merges its live cells. Disconnected is one
 `data-cv-feed="disconnected"` on an ancestor (no chip, text at `opacity.muted`). Values never announce.
 
+### RecorderStatusRow (CMP-177; in SCR-140 a row of the APG Grid through CMP-049's row contract, standalone a group)
+
+| Keys                            | Action                                                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Arrows, Home / End, Page        | CMP-049's grid keys: one Tab stop, by cell; the Since and Depth cells are absent in the narrow plan.   |
+| Enter on a cell with no control | Opens the row's detail (`onOpenDetail`), the symbol's cell included; a held key opens it once.         |
+| Enter / F2 on a control cell    | Into its controls (Why?, Keep forever, the action); Esc back to the cell (CMP-049's interactive cell). |
+| Enter / Space on a T2 action    | Changes nothing; the reason is said once per press, politely, and shows in the cell's echo (2b).       |
+| Tab (stacked, or standalone)    | The symbol, Why?, Keep forever, then the action: each a Tab stop (D02H table 2).                       |
+
+| Element      | Role                        | Name                                                                       | ARIA                                                                                                      |
+| ------------ | --------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| row          | row (standalone: group)     | "BTCUSDT, manual, recording since 1 Sep 2026, 34.8 GB, keep forever on"    | standalone: named "{symbol} recording", the summary its description; the date only on a "recording" state |
+| symbol       | rowheader (a button inside) | the symbol                                                                 | the button opens the detail; no Tab stop of its own while the grid roves                                  |
+| Why?         | button (CMP-002)            | "Why is SOLUSDT recorded?"                                                 | `aria-expanded`, `aria-controls`; its popover's Keep recording returns focus to it                        |
+| state        | gridcell                    | the state's words ("Degraded · stream unhealthy · 2 gaps in 24 h")         | one line, cut with an ellipsis; the icon `aria-hidden`; CMP-049's echo shows the whole words while cut    |
+| Keep forever | switch                      | "Keep BTCUSDT data forever" ("Not available" first while T2)               | `aria-checked`; T2: `aria-disabled`, described by the reason                                              |
+| action       | button (CMP-001 ghost)      | "Stop recording BTCUSDT", "Keep recording BTCUSDT", "Record BTCUSDT again" | T2: `aria-disabled`, the lock leading, described by the hidden reason node (grid) or the inline one (2a)  |
+
+The columns are E16-D02 §1's widths in `em` of the root's 16 px, each its own minimum, so the grid stacks into
+cards rather than squeeze a column; a host narrower than the nine (72 em) shows the narrow seven (62 em). Stacked,
+a T2 reason sits inline under its action and a control a frame removes hands focus to the row's next stop. Values
+never announce: the host's summary region says the 10 s batch of state changes.
+
 ### WatchlistGroupTabs (CMP-162, APG Tabs, manual activation)
 
 | Keys                                 | Action                                                                                  |
@@ -624,6 +648,33 @@ lock leads the label), outside the movable range; the range's end buttons are T2
 every box and move button is T2 with it, and the menu's button is; `writeReasonId` points them at the host's
 one notice; without it the list shows the reason once itself, before its boxes (rendering 2a: each box's
 lock leads its label, and every gated box and move button points at that line).
+
+### FilterBar (CMP-055, a named group; Add filter is the APG Menu Button)
+
+| Keys                              | Action                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Tab                               | Each chip's remove, then Add filter, then Clear all (from two chips on).                          |
+| Enter, Space, Delete or Backspace | On a chip's remove: removes the chip; focus to the next chip, else the previous, else Add filter. |
+| Enter / ↓ on Add filter           | Opens the fields; → or Enter opens a field's values.                                              |
+| Space on a value                  | Toggles it; the menu stays open.                                                                  |
+| Enter on a value                  | Toggles it and closes the menu; focus back on Add filter.                                         |
+| A held key                        | Acts once: its repeats remove or open nothing more.                                               |
+| T2: any key on a control          | Changes nothing; Enter or Space re-shows the reason once per press.                               |
+
+| Element    | Role                      | Name                                              | ARIA                                                                                           |
+| ---------- | ------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| bar        | group                     | "Active filters"                                  | with no chip it reads "No filters"                                                             |
+| chip       | text (CMP-011)            | "{field}: {value}" ("Reason: Auto")               | its label may cut; the remove's name keeps it whole                                            |
+| remove     | button (CMP-002)          | "Remove Reason: Auto"                             | T2: `aria-disabled`, the lock badge and the echo (2b), described by the bar's one notice       |
+| Add filter | button (CMP-001) and menu | "Add filter" ("Not available Add filter" T2)      | `aria-haspopup="menu"`, `aria-expanded`; T2: the lock leads the label, the notice describes it |
+| value      | menuitemcheckbox          | the value ("Degraded")                            | `aria-checked` when applied                                                                    |
+| Clear all  | button (CMP-001 ghost)    | "Clear all"                                       | from two chips on; T2 as Add filter                                                            |
+| notice     | text                      | the host's reason (`formatRbacReason`'s sentence) | the one `aria-describedby` target of every control (one notice, many pointers)                 |
+
+Each change of the set, whoever made it, is said once, politely, never at mount or per key ("Filter added:
+{chip}.", "Filter removed: {chip}.", "All filters cleared.", else "Filters: {chips}."), through the host's
+`announce` when it owns its surface's region, else the bar's own `role="status"`; a refused press takes the same
+channel. The bar and its chips wrap at any width or text scale.
 
 ### FileDrop / Import control (CMP-067; the button is APG Button, the zone has no role)
 
