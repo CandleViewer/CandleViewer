@@ -177,7 +177,7 @@ describe("Scenario: A zero-size container does not crash or burn CPU", () => {
 });
 
 describe("BQ-157: a resize never moves the cursor", () => {
-  it("a resize and a DPR change post no new cursor summary", () => {
+  it("a resize and a DPR change post no cursor summary (E11-S07: hover never does, BQ-3)", () => {
     rt.handle({
       t: "input",
       id: 1,
@@ -185,13 +185,13 @@ describe("BQ-157: a resize never moves the cursor", () => {
       events: new Float32Array([INPUT.move, 50, 5, 0, 0, 0]),
     });
     frame();
-    const summaries = of("a11y").length;
-    expect(summaries).toBeGreaterThan(0);
+    expect(of("crosshair")).toHaveLength(1);
     resize(500, 250, 1);
     frame();
     resize(500, 250, 2);
     frame();
-    expect(of("a11y")).toHaveLength(summaries);
+    expect(of("a11y")).toEqual([]);
+    expect(of("crosshair").every((c) => c.driver === "pointer")).toBe(true);
   });
 });
 

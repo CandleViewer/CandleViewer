@@ -57,6 +57,8 @@ function scenario(runMode: RunMode): unknown[] {
   const at = (): number => Math.floor((Date.now() - t0) / 16);
   chart.subscribe("viewportChanged", (p) => log.push(["viewport", at(), p]));
   chart.subscribe("frameStats", (p) => log.push(["frame", at(), p]));
+  chart.subscribe("crosshair", (p) => log.push(["crosshair", at(), p])); // E11-S07
+  chart.subscribe("readout", (p) => log.push(["readout", at(), p]));
   chart.timeScale.setVisibleRange({ from: 0, to: 4e9 });
   vi.advanceTimersByTime(16);
   container.dispatch("pointerdown", pointer(100, 1, 1));
@@ -143,15 +145,17 @@ describe("Scenario: Inline fallback is behaviourally identical", () => {
     const inline = scenario("inline");
     expect(FakeWorker.created).toHaveLength(1); // inline never spawns a worker
     expect(worker.filter((e) => (e as unknown[])[0] === "viewport").length).toBeGreaterThan(2);
+    expect(worker.filter((e) => (e as unknown[])[0] === "crosshair").length).toBeGreaterThan(0);
     expect((worker.at(-1) as unknown[]).slice(2)).toEqual([800, 200, "800px", "200px"]);
     expect(inline).toEqual(worker);
   });
 
-  it("the a11y transport, the LOD trace and picks arrive on the same schedule", () => {
+  it("the transport, the LOD trace and picks arrive on the same schedule", () => {
     const worker = transport("worker");
     const inline = transport("inline");
     const kinds = new Set(worker.map((e) => ((e as unknown[])[1] as FromWorker).t));
-    expect([...kinds].sort()).toEqual(["a11y", "frame", "pick", "ready", "viewport"]);
+    // E11-S07: hover never posts `a11y` (BQ-3); this 0×0 canvas has no plot to cross.
+    expect([...kinds].sort()).toEqual(["frame", "pick", "ready", "viewport"]);
     expect(inline).toEqual(worker);
   });
 });

@@ -13,6 +13,7 @@ import {
   ENGINE_CONTEXT_RESTORE_FAILED,
   ENGINE_CONTEXT_RESTORED,
   ENGINE_NO_WEBGL2,
+  INPUT,
   type FromWorker,
 } from "../../src/worker/protocol.js";
 import {
@@ -49,11 +50,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-type Phase = "idle" | "pan" | "storm";
+type Phase = "idle" | "pan" | "storm" | "cross";
 const LOST = [ENGINE_CONTEXT_LOST, true] as const;
 const RESTORED = [ENGINE_CONTEXT_RESTORED, true] as const;
 
-/** One op of `phase`: nothing, a pan with the crosshair (sync), or a bars batch. */
+/**
+ * One op of `phase`: nothing, a pan with the remote crosshair (sync), a bars batch, or the local
+ * crosshair following the pointer over the plot (E11-S07).
+ */
 function op(rt: ReturnType<typeof runtimeOnFakeClock>["rt"], phase: Phase, r: Rng, i: number) {
   const T0 = 1_700_000_000_000_000;
   if (phase === "pan") {
@@ -62,6 +66,9 @@ function op(rt: ReturnType<typeof runtimeOnFakeClock>["rt"], phase: Phase, r: Rn
     rt.handle({ t: "sync", groupId: "g", timeRange: [start, end], crosshair: start + 60_000_000 });
   } else if (phase === "storm") {
     rt.handle(dataMsg(candleBatch(r, i * 50, r.int(1, 50))));
+  } else if (phase === "cross") {
+    const events = new Float32Array([INPUT.move, r.int(0, 130), r.int(0, 70), 0, 0, 0]);
+    rt.handle({ t: "input", id: 1, kind: "pointer", events });
   }
 }
 
@@ -89,10 +96,15 @@ function session(seed: number, phase: Phase, lose: boolean) {
     c.restore();
   }
   frames(64);
+  // One more frame (a touch, nothing moved): the batches it draws.
+  const mark = gl.log.length;
+  rt.handle({ t: "command", id: 1, cmd: { k: "setSeriesOptions", series: 0, options: {} } });
+  frames(16);
+  const draws = gl.log.slice(mark).filter((c) => c === "drawArraysInstanced").length;
   const uniforms = new Map(gl.uniforms.map(([name, ...v]) => [name, v]));
   return {
     out,
-    gl: { live: gl.alive.size, clear: gl.clears.at(-1), uniforms: [...uniforms].sort() },
+    gl: { live: gl.alive.size, clear: gl.clears.at(-1), uniforms: [...uniforms].sort(), draws },
   };
 }
 
@@ -100,6 +112,7 @@ function session(seed: number, phase: Phase, lose: boolean) {
 const settled = (s: ReturnType<typeof session>) => ({
   viewport: last(s.out, "viewport"),
   a11y: last(s.out, "a11y"),
+  crosshair: last(s.out, "crosshair"),
   frame: last(s.out, "frame"),
   acks: s.out.filter((m) => m.t === "ack").length,
   gl: s.gl,
@@ -189,9 +202,22 @@ describe("Scenario: Context loss restores a correct scene within the budget (G1)
   });
 
   it.todo("G1 at 3 runtime panes with pane ratios kept (pending: E11-S09 #446)");
-  it.todo(
-    "G1 with an active crosshair series drawn, not only the a11y summary (pending: E11-S07 #388)",
-  );
+  it("G1 with an active crosshair series drawn, not only the a11y summary, 25 seeds", () => {
+    for (const seed of SEEDS) {
+      const ref = session(seed, "cross", false);
+      const hit = session(seed, "cross", true);
+      expect(codes(hit.out), `seed ${seed}`).toEqual([LOST, RESTORED]);
+      const cross = ref.out.filter((m) => m.t === "crosshair").at(-1);
+      expect(cross?.visible, `seed ${seed}`).toBe(true); // the session ends with a live cursor
+      expect(ref.gl.draws, `seed ${seed}`).toBeGreaterThan(0); // its dashed lines are drawn
+      // The same cursor, the same lines (draws, ring bytes in the estimate) after the restore.
+      expect(settled(hit), `seed ${seed}`).toEqual(settled(ref));
+      expect(
+        hit.out.filter((m) => m.t === "a11y"),
+        `seed ${seed}`,
+      ).toEqual([]);
+    }
+  });
   it.todo("G1 golden: the post-restore frame matches the pre-loss frame (pending: E11-T08 #391)");
   it("G1 loss during SDF atlas generation: the CPU build finishes, one upload after restore", async () => {
     const run = async (lose: boolean) => {

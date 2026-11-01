@@ -694,6 +694,12 @@ shell announcer; the engine owns no live region. `bench/scenes/axis-ticks.ts` ti
 | G-52  | Sessions   | Boundaries from the setting.               | Gap: E12; day boundaries in the chart's zone only, and "the leftmost label carries the date" waits with the drawn text (G-47).                                             |
 | G-53  | Tab order  | Axis stops in the chart's order.           | Gap: S13 places the stops; the app routes `candleviewer:announce` to its shell announcer (`apps/web`, not in this PR).                                                     |
 
+## Crosshair (E11-S07 PR 1)
+
+- Idle cost: a chart with no pointer seen, no remote line and nothing drawn or published skips the
+  crosshair stage in O(1), and its node joins the scene graph only with its first lines. On a
+  never-pointed chart the gesture hold therefore no longer arms (benign: there is nothing to hide).
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/chart-engine build` — tsup ESM build with `.d.ts` (entries:

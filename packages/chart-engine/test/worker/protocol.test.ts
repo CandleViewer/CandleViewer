@@ -53,6 +53,8 @@ const valid: ToWorker[] = [
     cmd: { k: "setPriceScale", pane: 0, mode: "log", auto: false, marginTop: 0.45 },
   },
   { t: "command", id: 1, cmd: { k: "export", reqId: 1 } },
+  // E11-S07 (BQ-4): the magnet, one of three modes.
+  { t: "command", id: 1, cmd: { k: "setCrosshair", magnetMode: "weak" } },
   { t: "command", id: 1, cmd: { k: "release" } },
 ];
 
@@ -125,6 +127,16 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
     ["a fractional store", { ...valid[1], backingHeight: 138.5 }, "malformed resize"],
     ["a bad sync", { t: "sync", groupId: "g", timeRange: [1], crosshair: null }, "malformed sync"],
     ["an unknown command", { t: "command", id: 1, cmd: { k: "eval" } }, "malformed command"],
+    [
+      "an unknown magnet mode",
+      { t: "command", id: 1, cmd: { k: "setCrosshair", magnetMode: "medium" } },
+      "malformed command",
+    ],
+    [
+      "a magnet without a mode",
+      { t: "command", id: 1, cmd: { k: "setCrosshair" } },
+      "malformed command",
+    ],
     [
       "an inverted viewport",
       { t: "command", id: 1, cmd: { k: "setViewport", timeStart: 2, timeEnd: 1 } },

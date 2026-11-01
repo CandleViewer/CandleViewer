@@ -173,13 +173,16 @@ describe("Scenario: The backend swap is invisible to the rest of the engine (S3)
     rt.handle({ t: "command", id: 1, cmd: { k: "pickAt", x: 75, y: 40 } });
     rt.handle({ t: "resize", id: 1, width: 180, height: 90, dpr: 2 });
     frame();
-    return out.filter((m) => m.t === "viewport" || m.t === "pick" || m.t === "a11y");
+    vi.advanceTimersByTime(200); // E11-S07: the crosshair returns after the wheel's rest
+    const kinds = new Set(["viewport", "pick", "a11y", "crosshair", "readout"]);
+    return out.filter((m) => kinds.has(m.t));
   }
 
-  it("the same input script on fake GL and fake 2D gives equal viewport, pick and a11y", () => {
+  it("the same input script on fake GL and fake 2D gives equal viewport, pick, a11y and crosshair", () => {
     const gl = script(new FakeGl({ params: ROOMY }));
     const twoD = script(null);
     expect(gl.length).toBeGreaterThan(4);
+    expect(gl.some((m) => m.t === "crosshair" && m.visible)).toBe(true);
     expect(twoD).toEqual(gl);
   });
 });

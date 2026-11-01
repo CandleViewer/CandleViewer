@@ -240,7 +240,7 @@ describe("the frame scheduler in the runtime (E11-S01 PR3)", () => {
 });
 
 describe("interaction", () => {
-  it("pans on drag, zooms at the cursor, reports the crosshair and posts viewport once per frame", () => {
+  it("pans on drag, zooms at the cursor, shows the crosshair after the gesture and posts viewport once per frame", () => {
     make(false, null, 1, canvas(264)); // a 200 px plot (BQ-101)
     rt.handle({ t: "command", id: 1, cmd: { k: "setViewport", timeStart: 0, timeEnd: 2e9 } });
     rt.handle({ t: "input", id: 1, kind: "pointer", events: row(INPUT.down, 100) });
@@ -266,7 +266,9 @@ describe("interaction", () => {
         anchorTick: null,
       },
     ]);
-    expect(of("a11y")).toHaveLength(1);
+    // E11-S07: an up with no glide shows the crosshair at once (E11-D06 §5.2); no a11y (BQ-3).
+    expect(of("crosshair").map((c) => c.visible)).toEqual([true]);
+    expect(of("a11y")).toEqual([]);
     rt.handle({ t: "input", id: 1, kind: "wheel", events: row(INPUT.wheel, 0, 500) });
     rt.handle({ t: "input", id: 1, kind: "key", events: row(INPUT.key, KEY.zoomIn) });
     rt.handle({ t: "input", id: 1, kind: "key", events: row(INPUT.key, 9) }); // unbound key
@@ -274,21 +276,25 @@ describe("interaction", () => {
     const vp = of("viewport").at(-1);
     // The wheel zooms out by e at x = 0, the key in by 1.1 (E11-S04 BQ-108).
     expect(((vp?.timeEnd ?? 0) - (vp?.timeStart ?? 0)) / 2e9).toBeCloseTo(Math.exp(1) / 1.1, 9);
-    rt.handle({ t: "input", id: 1, kind: "touch", events: row(INPUT.move, 150) });
-    frame();
-    expect(of("a11y")).toHaveLength(2);
+    expect(of("crosshair").map((c) => c.visible)).toEqual([true, false]); // the wheel's hold
+    rt.handle({ t: "input", id: 1, kind: "pointer", events: row(INPUT.move, 150) });
+    frame(); // the next pointer move ends the hold before its 150 ms
+    expect(of("crosshair").at(-1)).toMatchObject({ visible: true, driver: "pointer" });
+    expect(of("a11y")).toEqual([]);
   });
 
-  it("applies a sync to its group only", () => {
+  // E11-S07 (BQ-5) changed this pin: a remote crosshair is drawn only, never announced.
+  it("applies a sync to its group only, its crosshair as remote-only", () => {
     make(false, "g", 1);
     make(false, "other", 2);
     rt.handle({ t: "sync", groupId: "g", timeRange: [10, 20], crosshair: 15 });
     frame();
     expect(of("viewport").map((v) => v.id)).toEqual([1]);
-    expect(of("a11y")).toEqual([{ t: "a11y", id: 1, cursorSummary: "1970-01-01T00:00:00.000Z" }]);
     rt.handle({ t: "sync", groupId: "g", timeRange: [10, 20], crosshair: null });
     frame();
-    expect(of("a11y").at(-1)?.cursorSummary).toBe("");
+    expect(out.filter((m) => m.t === "a11y" || m.t === "crosshair" || m.t === "readout")).toEqual(
+      [],
+    );
   });
 
   // E11-S08 (BQ-135) changed this pin: an explicit pick always replies; hover is edge-triggered.
