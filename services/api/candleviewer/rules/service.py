@@ -9,6 +9,7 @@ module, but it does no real work until its owning epic lands.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from time import monotonic
@@ -23,16 +24,19 @@ from candleviewer.rules.evaluator import Evaluator, SnapshotBuilder
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.executor.dispatch import AuditDispatch, Fire, FireDispatch, JobKind
 from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
-from candleviewer.rules.executor.gates import Gates
+from candleviewer.rules.executor.gates import Gates, Halts
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.metrics import RereadFailure as RereadFailure
 from candleviewer.rules.executor.ports import (
     ActionAudit,
     AlertPort,
+    NotionalRebuild,
     PrincipalReads,
     RuleSwitches,
     RunRecords,
+    StopCheck,
 )
+from candleviewer.rules.executor.results import BlockedBy
 from candleviewer.rules.ir.models import Rule
 from candleviewer.rules.manager import (
     Audit,
@@ -41,6 +45,7 @@ from candleviewer.rules.manager import (
     InMemoryRuleStore,
     RulesManager,
     RuleStore,
+    StopReason,
 )
 from candleviewer.rules.runner import (
     EvalTick,
@@ -91,7 +96,10 @@ if TYPE_CHECKING:
 class RulesService:
     """Empty scaffold for the M15 `rules` module lifecycle."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        #: E35-T10: the monotonic clock a fire's offer time and a rule's trip and kill times share.
+        self._clock = clock
+        self._halts = Halts()
         self._started = False
         self._tasks: set[asyncio.Task[bool]] = set()
         self._registry: MetricRegistry | None = None
@@ -117,6 +125,8 @@ class RulesService:
         # E35-T10: the checks' ports (unbound: each refuses, so no armed action is handed over).
         self._switches: RuleSwitches | None = None
         self._principal: PrincipalReads | None = None  # E35-T11 binds the reads
+        self._notional: NotionalRebuild | None = None  # E35-T11 binds the day's rebuild
+        self._stop_check: StopCheck | None = None  # E35-T12 binds it
         self._executor: ActionExecutor | None = None  # while the evaluator runs
         self._dispatch: FireDispatch | None = None  # the fire queue, while the evaluator runs
         self._audits: AuditDispatch | None = None  # the record-only jobs' queue, beside it
@@ -134,6 +144,8 @@ class RulesService:
         metrics: ExecutorMetrics | None = None,
         switches: RuleSwitches | None = None,
         principal: PrincipalReads | None = None,
+        notional: NotionalRebuild | None = None,
+        stop_check: StopCheck | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
         Each option is set only when given, so a later call (E35-S05's simulation sink, the
@@ -147,7 +159,9 @@ class RulesService:
         write-ahead ports, `alerts` its partial-fire and write-ahead alerts and `metrics` its
         series (E35-T09, `rules_oms_wiring`); `switches` the master switch, both kill switches and
         the rollout port its checks 2 and 3 read, and `principal` the owner's and the armer's
-        snapshots check 5 reads (E35-T10; E35-T11 binds them, and unbound, check 5 refuses)."""
+        snapshots check 5 reads (E35-T10; E35-T11 binds them, and unbound, check 5 refuses);
+        `notional` the day's allowance rebuild (E35-T11's) and `stop_check` check 8's comparison
+        (E35-T12's), each refusing while unbound."""
         if action_sink is not None:
             self._action_sink = action_sink
         if simulation_sink is not None:
@@ -162,6 +176,10 @@ class RulesService:
             self._switches = switches
         if principal is not None:
             self._principal = principal
+        if notional is not None:
+            self._notional = notional
+        if stop_check is not None:
+            self._stop_check = stop_check
         if store is not None:
             self._store = store
         if audit is not None:
@@ -326,6 +344,26 @@ class RulesService:
                 kind=job.kind, actions=len(job.requests),
             )  # fmt: skip
 
+    def _rule_stopped(self, rule_id: str, reason: StopReason) -> None:
+        """The manager's hook, once per rule it moved out of `armed` (E35-T10): a killed rule's
+        kill time is stamped and its waiting fires are dropped (24 §11.7, BQ-9)."""
+        if reason == "kill_switch":
+            self._halts.killed[rule_id] = self._clock()
+            self._drop(rule_id, "kill_switch")
+
+    def _drop(self, rule_id: str, reason: BlockedBy) -> None:
+        """The rule's waiting fires, out of its lane (never the one that runs), each counted as
+        its actions' `blocked` results and recorded refused whole through the audit queue, as one
+        record-only job offered and never awaited (24 §11.7): its run row closed `aborted`, and
+        per action `action_fail` and `rules.blocked` with `reason`."""
+        if self._dispatch is None:
+            return
+        for fire in self._dispatch.drop(rule_id):
+            for req in fire.requests:
+                self._metrics.refused(req.action_type, reason)
+            if self._audits is not None:
+                self._audits.offer(replace(fire, kind="refused_fire", refused_by=reason))
+
     def registry(self) -> MetricRegistry | None:
         """Metric registry while the engine module is running; `None` otherwise (-> 503)."""
         return self._registry if self._started else None
@@ -338,6 +376,7 @@ class RulesService:
             self._manager.set_hooks(audit=self._audit)
         if self._broadcast is not None:
             self._manager.set_hooks(broadcast=self._broadcast)
+        self._manager.set_hooks(rule_stopped=self._rule_stopped)
         self._started = True
         # E35-X02 (i): out-of-band tampering with a protected sys.* rule is audited at boot.
         await self._manager.verify_system_rules()
@@ -359,9 +398,12 @@ class RulesService:
         stand_in = None if self._action_sink is _discard_actions else self._action_sink
         executor = self._executor = ActionExecutor(
             check_one=self._check_one, scope_check=self._scope_check,
-            gates=Gates(switches=self._switches, principal=self._principal),
-            records=run_records, audit=action_audit,
-            alerts=self._alerts, metrics=self._metrics, stand_in=stand_in,
+            gates=Gates(
+                switches=self._switches, principal=self._principal, notional=self._notional,
+                stop=self._stop_check,
+            ),
+            records=run_records, audit=action_audit, alerts=self._alerts, metrics=self._metrics,
+            stand_in=stand_in, halts=self._halts,
         )  # fmt: skip
         dispatch = self._dispatch = FireDispatch(self._refused, executor.execute)
         audits = self._audits = AuditDispatch(self._shed, executor.execute)
@@ -411,6 +453,7 @@ class RulesService:
                 Fire(
                     str(rule.rule_id), run_id, reqs, emit, kind=kind, version_id=item.version_id,
                     trigger_type=result.trigger_type, metric_values=result.metric_values,
+                    offered_at=self._clock(), limits=rule.limits,
                 )
             )  # fmt: skip
 

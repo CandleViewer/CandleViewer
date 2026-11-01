@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, get_args
@@ -177,6 +178,23 @@ class PrincipalReads(Protocol):
     binds them; unbound, every action that reaches check 5 is refused (`permission`)."""
 
     def principal(self, user_id: UUID) -> PrincipalView | None: ...
+
+
+class StopCheck(Protocol):
+    """Check 8's read-only port to the recorded-stop writer's own comparison (24 §11.5, §8.8 rule
+    5; BQ-12): whether the stop action on that account leaves the stop in force no looser, and a
+    cancel selects no native stop-loss. E35-T12 binds it; unbound, every stop action is refused
+    (`native_sl`)."""
+
+    def admits(self, req: ActionRequest, account_id: UUID | None) -> bool: ...
+
+
+class NotionalRebuild(Protocol):
+    """The day's notional a rule has sent, rebuilt from the rows its answers wrote (24 §11.7;
+    BQ-11), which E35-T11 binds; unbound, an entry of a rule with `max_daily_notional` set is
+    refused (`cap`)."""
+
+    async def day_notional(self, rule_id: str, day: date) -> Decimal: ...
 
 
 class RuleSwitches(Protocol):

@@ -31,9 +31,15 @@ from candleviewer.rules.executor.handlers import (
 )
 from candleviewer.rules.executor.keys import request_sha256
 from candleviewer.rules.executor.results import BlockedBy
-from candleviewer.rules.ir.models import ActionType
+from candleviewer.rules.ir.models import ActionType, RuleScope
+from candleviewer.rules.scope import ScopeInstanceRef
 from candleviewer.rules.vocabulary.catalogue import ACTIONS, RETIRED_ACTIONS
-from tests.rules.executor.request_builders import Switches
+from tests.rules.executor.request_builders import Switches, action_request
+
+#: Any request: check 8 refuses `widen_stop` by its type, whatever the request names.
+_REQ = action_request(
+    RuleScope(level="account"), uuid.UUID(int=0xA1), ScopeInstanceRef("*@*", None, None)
+)
 
 ACCOUNT = uuid.UUID(int=0xB1)
 
@@ -69,13 +75,13 @@ def refusal(spec: HandlerSpec) -> BlockedBy | None:
     """What the checks that read the table refuse (E35-T10): check 2 (`unavailable` while no
     handler is bound, the rollout port on, no stand-in), then check 8 (a type refused for good)."""
     gates = Gates(switches=Switches(rollout=True))
-    return gates.before_scope(spec, None, stand_in=False) or gates.stop_check(spec)
+    return gates.before_scope(spec, None, stand_in=False) or gates.stop_check(spec, _REQ, None)
 
 
 class _Bound:
     """A handler that a later slice would bind: here only to show the table's refusal goes."""
 
-    def prepare(self, req: Any, account_id: Any) -> Prepared:
+    def prepare(self, req: Any, account_id: Any, *, max_notional_usd: Any = None) -> Prepared:
         raise AssertionError("never reached")
 
     async def send(self, prepared: Prepared, *, client_ref: str) -> HandlerAnswer:
@@ -168,7 +174,7 @@ def test_widen_stop_is_refused_as_native_sl_never_unavailable() -> None:
     spec = HANDLERS["widen_stop"]
     gates = Gates(switches=Switches(rollout=False))  # the rollout port off: still never unavailable
     assert gates.before_scope(spec, None, stand_in=False) is None
-    assert gates.stop_check(spec) == "native_sl"
+    assert gates.stop_check(spec, _REQ, None) == "native_sl"
     assert refusal(spec) == "native_sl"
     assert refusal(replace(spec, handler=_Bound())) == "native_sl"  # a binding changes nothing
     assert (spec.places_orders, spec.capability, spec.bound_by) == (False, "none", None)

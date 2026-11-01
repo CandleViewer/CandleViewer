@@ -25,7 +25,7 @@ from candleviewer.flags_wiring import FeatureFlagsRuntime
 from candleviewer.oms_wiring import InterimKillSwitch
 from candleviewer.rules.executor.dispatch import Fire
 from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
-from candleviewer.rules.executor.gates import PRINCIPAL_MAX_AGE_S, Gates
+from candleviewer.rules.executor.gates import PRINCIPAL_MAX_AGE_S, Gates, Halts
 from candleviewer.rules.executor.handlers import (
     ENGINE_INTERNAL,
     HANDLERS,
@@ -35,7 +35,7 @@ from candleviewer.rules.executor.handlers import (
     prepared,
 )
 from candleviewer.rules.executor.keys import dedupe_key
-from candleviewer.rules.ir.models import Action, ActionType, RuleScope
+from candleviewer.rules.ir.models import MAX_ACTIONS, Action, ActionType, RuleLimits, RuleScope
 from candleviewer.rules.scope import (
     ActionRequest,
     ScopedActionEmitter,
@@ -70,8 +70,12 @@ class Double:
         self, sent: list[tuple[str, str]], answer: HandlerAnswer, refuse: set[uuid.UUID]
     ) -> None:
         self.sent, self.answer, self.refuse = sent, answer, refuse
+        self.ceilings: list[tuple[str, Decimal | None]] = []  # the allowance each request got
 
-    def prepare(self, req: ActionRequest, account_id: uuid.UUID | None, **_: Any) -> Prepared:
+    def prepare(
+        self, req: ActionRequest, account_id: uuid.UUID | None, *, max_notional_usd: Decimal | None
+    ) -> Prepared:
+        self.ceilings.append((req.payload.node_id, max_notional_usd))
         return prepared({"node": req.payload.node_id, "account": str(account_id)})
 
     async def send(self, prep: Prepared, *, client_ref: str) -> HandlerAnswer:
@@ -121,6 +125,11 @@ class Gated:
     checked: list[tuple[str, str]] = field(default_factory=list)  # check 1 per (node, account)
     refuse: set[uuid.UUID] = field(default_factory=set)  # the accounts the doubles refuse
     now: float = 1000.0  # the executor's monotonic clock, frozen; the principal reads on it
+    limits: RuleLimits = field(default_factory=RuleLimits)  # every fire's
+    notional: Any = None  # the allowance's day rebuild (`NotionalRebuild`), unbound by default
+    stop: Any = None  # check 8's port (`StopCheck`), unbound by default
+    wall: float = 1_798_761_600.0  # 2027-01-01T00:00:00Z: the allowance's UTC day
+    halts: Halts = field(default_factory=Halts)  # the trip and kill times
     executor: ActionExecutor = field(init=False)
 
     def __post_init__(self) -> None:
@@ -129,13 +138,23 @@ class Gated:
             check_one=self.check_one, scope_check=self.scope_check, gates=self.gates(),
             records=self.records, audit=self.records, metrics=self.counted.metrics,
             handlers=bound_table(self.sent, self.answers, self.refuse), clock=self.clock,
+            halts=self.halts,
         )  # fmt: skip
 
     def clock(self) -> float:
         return self.now
 
     def gates(self) -> Gates:
-        return Gates(switches=self.switches, principal=self.principals)
+        return Gates(
+            switches=self.switches, principal=self.principals, notional=self.notional,
+            stop=self.stop, wall=lambda: self.wall,
+        )  # fmt: skip
+
+    def ceilings(self) -> list[tuple[str, Decimal | None]]:
+        """The allowance each prepared request got, in order, across every double."""
+        table = self.executor._handlers
+        return [c for spec in table.values() if isinstance(spec.handler, Double)
+                for c in spec.handler.ceilings]  # fmt: skip
 
     async def check_one(self, req: ActionRequest) -> RowVerdict:
         self.checked.append((req.payload.node_id, str(req.instance.account_id)))
@@ -156,6 +175,7 @@ class Gated:
         return None
 
     async def run(self, *reqs: ActionRequest, **fire: Any) -> None:
+        fire = {"limits": self.limits} | fire
         await self.executor.execute(Fire(RULE, RUN, tuple(reqs), self.emit, version_id="v", **fire))
 
     def results(self) -> list[tuple[str, str, str | None]]:
@@ -275,28 +295,37 @@ def _fail(gated: Gated, check: int) -> None:
         gated.denied["a1"] = "grant_revoked"
     elif check == 5:
         gated.principals.missing.add(ARMER)
+    elif check == 6:  # the action is second in IR order, past the per-fire count
+        gated.limits = RuleLimits(max_actions_per_fire=1)
+    # check 8: `widen_stop` by type, and a stop action while the stop check's port is unbound
 
 
 _FIRST: dict[int, tuple[str, str | None]] = {
     1: ("skipped", "mode_changed"), 2: ("blocked", "rules_disabled"), 3: ("blocked", "kill_switch"),
-    4: ("blocked", "scope"), 5: ("blocked", "permission"), 8: ("blocked", "native_sl"),
+    4: ("blocked", "scope"), 5: ("blocked", "permission"), 6: ("blocked", "cap"),
+    8: ("blocked", "native_sl"),
 }  # fmt: skip
+#: Each check k that applies to a type: an entry meets checks 1 to 7, a stop action 1 to 6 and 8.
+_ORDERS = [(k, "place_order") for k in (1, 2, 3, 4, 5, 6)] + [
+    (k, t) for t in ("widen_stop", "modify_stop_loss") for k in (1, 2, 3, 4, 5, 6, 8)
+]
 
 
-@pytest.mark.parametrize(
-    ("k", "action_type"),
-    [(k, "place_order") for k in (1, 2, 3, 4, 5)] + [(k, "widen_stop") for k in (1, 2, 3, 4, 5, 8)],
-)
+@pytest.mark.parametrize(("k", "action_type"), _ORDERS)
 async def test_check_order_is_stable_first_refusal_wins(k: int, action_type: str) -> None:
     """Scenario: The first refusal wins in a fixed order. Checks k to 8 all fail (each that
-    applies to the type: check 8 to `widen_stop` by type), and the result names check k's."""
+    applies to the type: check 8 to a stop action), and the result names check k's. The action
+    is second in its fire, after a notification that goes on whatever it meets."""
     gated = Gated()
     for check in range(k, 9):
         _fail(gated, check)
-    await gated.run(action("a1", action_type))
+    await gated.run(
+        action("a0", "send_notification", on_error="continue"), action("a1", action_type)
+    )
     outcome, reason = _FIRST[k]
-    assert gated.results() == [("a1", outcome, reason)] and gated.sent == []
-    assert gated.audited() == [("rules.blocked", "a1", reason)]
+    assert [r for r in gated.results() if r[0] == "a1"] == [("a1", outcome, reason)]
+    assert ("rules.blocked", "a1", reason) in gated.audited()
+    assert "a1" not in {node for node, _ in gated.sent}
 
 
 async def test_widen_stop_reads_kill_switch_while_engaged_and_native_sl_otherwise() -> None:
@@ -314,12 +343,19 @@ async def test_widen_stop_reads_kill_switch_while_engaged_and_native_sl_otherwis
 async def test_an_oms_action_is_unavailable_while_the_rollout_port_reads_off() -> None:
     """Check 2's second half: with its handler bound, an action whose capability reaches past the
     engine is `unavailable` while the rollout port reads off, as the composition root binds it; an
-    engine-internal one runs, and `widen_stop` is refused at check 8 by type."""
+    engine-internal one runs, and `widen_stop` is refused at check 8 by type. The 25 types go in
+    fires of at most `MAX_ACTIONS`, the most a rule holds, so check 6 refuses none."""
     gated = Gated(_bound(_Views(lambda: True, lambda: False), rolled_out=False))
     internal = tuple(t for t in TYPES if HANDLERS[t].capability in ENGINE_INTERNAL)
     past = tuple(t for t in TYPES if t not in internal)
-    reqs = (action(f"a{n}", t, on_error="continue") for n, t in enumerate(past + internal))
-    await gated.run(*reqs)
+    types = past + internal
+    for first in range(0, len(types), MAX_ACTIONS):
+        run = uuid.UUID(int=0x100 + first)
+        await gated.run(
+            *(action(f"a{n}", types[n], on_error="continue", run_id=run)
+              for n in range(first, min(first + MAX_ACTIONS, len(types)))),
+            run_id=run,
+        )  # fmt: skip
     refused = {node: reason for node, outcome, reason in gated.results() if outcome == "blocked"}
     expected = {f"a{n}": "unavailable" for n, t in enumerate(past) if t != "widen_stop"}
     assert refused == expected | {f"a{past.index('widen_stop')}": "native_sl"}
@@ -682,3 +718,166 @@ async def test_records_carry_both_roles_from_the_principal_snapshot() -> None:
         ("rules.fired", "a1", "owner", "manager"), ("rules.blocked", "a2", "owner", "manager"),
         ("rules.blocked", "a3", None, None),
     ]  # fmt: skip
+
+
+# --- Per-fire limits, the allowance, the stop check and the confirmation block (BQ-11, BQ-12) ----
+
+_SENT_100 = HandlerAnswer("accepted", notional_usd=Decimal("100"))
+
+
+class _Days:
+    """`NotionalRebuild`: each rule's day as the rows its answers wrote; `down` fails the read."""
+
+    def __init__(self, spent: Decimal = Decimal(0), *, down: bool = False) -> None:
+        self.spent, self.down = spent, down
+        self.asked: list[tuple[str, str]] = []
+
+    async def day_notional(self, rule_id: str, day: Any) -> Decimal:
+        self.asked.append((rule_id, day.isoformat()))
+        if self.down:
+            raise ConnectionError("the order store is unreachable")
+        return self.spent
+
+
+async def test_max_actions_per_fire_blocks_the_excess_actions() -> None:
+    """Scenario: The per-fire limit blocks the excess actions: `max_actions_per_fire` 2 and four
+    actions; the third and fourth are blocked `cap`, naming the rule's limit, by their place in IR
+    order. Under `abort_remaining`, the fourth is skipped after the third's refusal."""
+    gated = Gated(limits=RuleLimits(max_actions_per_fire=2))
+    await gated.run(*(action(f"a{n}", "send_notification", on_error="continue") for n in range(4)))
+    assert gated.results() == [
+        ("a0", "ok", None), ("a1", "ok", None), ("a2", "blocked", "cap"), ("a3", "blocked", "cap"),
+    ]  # fmt: skip
+    details = {
+        e.payload["blocked_detail"] for _, e in gated.records.events if e.kind == "action_fail"
+    }
+    assert details == {"Not done — the rule took as many actions as one firing may."}
+    stops = Gated(limits=RuleLimits(max_actions_per_fire=2))
+    await stops.run(*(action(f"a{n}", "send_notification") for n in range(4)))
+    assert [r[1] for r in stops.results()] == ["ok", "ok", "blocked", "skipped"]
+
+
+@pytest.mark.parametrize("spent", ["100", "60"], ids=["exactly-spent", "overspent"])
+async def test_a_spent_notional_allowance_blocks_as_cap_never_clamped(spent: str) -> None:
+    """24 §11.7 (C-12.5): once the fire has sent its `max_notional_per_fire`, the next entry is
+    refused `cap` before any handler, never sent with what is left clamped to it, an exactly spent
+    allowance included."""
+    answer = HandlerAnswer("accepted", notional_usd=Decimal(spent))
+    gated = Gated(limits=RuleLimits(max_notional_per_fire=Decimal("100")),
+                  answers={"place_order": answer, "scale_in": answer})  # fmt: skip
+    await gated.run(*(action(f"a{n}", "scale_in", on_error="continue") for n in range(3)))
+    outcomes = [outcome for _, outcome, _ in gated.results()]
+    sent = 1 if spent == "100" else 2  # 60 + 60 = 120: the third is past the limit
+    assert outcomes == ["ok"] * sent + ["blocked"] * (3 - sent)
+    assert [node for node, _ in gated.sent] == [f"a{n}" for n in range(sent)]
+    assert gated.ceilings() == [("a0", Decimal("100")), ("a1", Decimal("40"))][:sent]
+    detail = "Not done — this firing used up the rule's notional limit."
+    assert all(e.payload["blocked_detail"] == detail for _, e in gated.records.events
+               if e.kind == "action_fail")  # fmt: skip
+
+
+async def test_the_allowance_is_the_smaller_remainder_of_the_fire_and_the_utc_day() -> None:
+    """24 §11.7: the ceiling handed to `Handler.prepare` is the smaller of the fire's and the UTC
+    day's remainders; the day is rebuilt once per rule and day, and the ledger is fed from each
+    accepted answer's notional. A new UTC day is rebuilt again."""
+    days = _Days(Decimal("100"))
+    gated = Gated(limits=RuleLimits(max_notional_per_fire=Decimal("500"),
+                                    max_daily_notional=Decimal("300")),
+                  answers={"place_order": HandlerAnswer("accepted", notional_usd=Decimal("150"))},
+                  notional=days)  # fmt: skip
+    await gated.run(action("a1", on_error="continue"), action("a2", on_error="continue"))
+    gated.wall += 86_400  # the next UTC day
+    await gated.run(action("a3"))
+    assert gated.ceilings() == [
+        ("a1", Decimal("200")),  # the day's 300 - 100 rebuilt, under the fire's 500
+        ("a2", Decimal("50")),  # the day's 300 - 250, under the fire's 350
+        ("a3", Decimal("200")),  # the next day, rebuilt again
+    ]
+    assert days.asked == [(RULE, "2027-01-01"), (RULE, "2027-01-02")]
+
+
+async def test_a_reduce_only_order_never_meets_the_notional_allowance() -> None:
+    """BQ-11 (C-2.6): only entries meet the allowance; a reduce-only order runs with no ceiling,
+    even with the allowance spent, and the column names the six entries alone."""
+    entries = {t for t, spec in HANDLERS.items() if spec.meets_allowance}
+    assert entries == {
+        "place_order", "scale_in", "reverse_position", "arm_chase_limit", "start_iceberg_slice",
+        "start_twap",
+    }  # fmt: skip
+    gated = Gated(limits=RuleLimits(max_notional_per_fire=Decimal("100")),
+                  answers={"place_order": _SENT_100})  # fmt: skip
+    reduce = ("scale_out", "flatten_position", "flatten_all_positions")
+    reqs = (action(f"r{n}", t, on_error="continue") for n, t in enumerate(reduce))
+    await gated.run(action("a0", on_error="continue"), *reqs)
+    assert [outcome for _, outcome, _ in gated.results()] == ["ok"] * 4
+    assert gated.ceilings() == [("a0", Decimal("100")), ("r0", None), ("r1", None), ("r2", None)]
+
+
+@pytest.mark.parametrize("port", ["unbound", "down"])
+async def test_an_unrebuilt_daily_allowance_blocks_entries_as_cap(port: str) -> None:
+    """24 §11.7 (BQ-11): while the day's rebuild is unbound (E35-T11 binds it) or its read fails,
+    an entry of a rule with `max_daily_notional` set is refused `cap`, and the read runs again at
+    the next entry; a reduce-only order is not held to it."""
+    days = None if port == "unbound" else _Days(down=True)
+    gated = Gated(limits=RuleLimits(max_daily_notional=Decimal("300")), notional=days)
+    await gated.run(action("a1", on_error="continue"), action("a2", "flatten_position",
+                    on_error="continue"), action("a3"))  # fmt: skip
+    assert gated.results() == [
+        ("a1", "blocked", "cap"), ("a2", "ok", None), ("a3", "blocked", "cap"),
+    ]  # fmt: skip
+    detail = "Not done — the rule's daily notional limit is used up or unconfirmed."
+    refused = [
+        e.payload["blocked_detail"] for _, e in gated.records.events if e.kind == "action_fail"
+    ]
+    assert refused == [detail, detail]
+    if days is not None:
+        assert len(days.asked) == 2  # tried again at the next entry
+
+
+class _Stops:
+    """Check 8's port: admits the stop actions on `admitted` accounts, refuses the rest."""
+
+    def __init__(self, admitted: set[uuid.UUID]) -> None:
+        self.admitted, self.asked = admitted, list[str]()
+
+    def admits(self, req: ActionRequest, account_id: uuid.UUID | None) -> bool:
+        self.asked.append(req.action_type)
+        return account_id in self.admitted
+
+
+async def test_an_unbound_stop_check_refuses_as_native_sl() -> None:
+    """24 §11.5 check 8 (BQ-12): every action that sets, moves or cancels a stop asks the stop in
+    force through the port; while it is unbound (E35-T12 binds it) each is refused `native_sl`,
+    never clamped; bound, the writer's comparison decides. `rules.blocked` alone is written."""
+    stopping = sorted(t for t, spec in HANDLERS.items() if spec.touches_stop)
+    assert stopping == [
+        "cancel_all_orders", "cancel_order", "modify_stop_loss", "move_to_breakeven",
+        "tighten_stop",
+    ]  # fmt: skip
+    reqs = [action(f"a{n}", t, on_error="continue") for n, t in enumerate(stopping)]
+    unbound = Gated()
+    await unbound.run(*reqs)
+    assert {(o, r) for _, o, r in unbound.results()} == {("blocked", "native_sl")}
+    assert unbound.sent == [] and {v for v, _, _ in unbound.audited()} == {"rules.blocked"}
+    judged = Gated(stop=_Stops({A}))
+    await judged.run(*reqs)
+    assert {(o, r) for _, o, r in judged.results()} == {("ok", None)}
+    refused = Gated(stop=_Stops(set()))
+    await refused.run(*reqs)
+    assert {(o, r) for _, o, r in refused.results()} == {("blocked", "native_sl")}
+
+
+async def test_a_confirmation_required_fire_is_blocked_and_never_executed_later() -> None:
+    """Scenario: Confirmation-required fires are blocked until the queue lands (interim, BQ-14):
+    a rule with `require_confirmation` has its fire refused whole at dispatch, before check 1: each
+    action `blocked` (`confirmation_unavailable`) with `rules.blocked`, the run row closed
+    `aborted`; nothing is held for later, so nothing of it is ever sent."""
+    gated = Gated(limits=RuleLimits(require_confirmation=True))
+    await gated.run(action("a1", on_error="continue"), action("a2", "send_notification"))
+    blocked = "confirmation_unavailable"
+    assert gated.results() == [("a1", "blocked", blocked), ("a2", "blocked", blocked)]
+    assert gated.audited() == [("rules.blocked", "a1", blocked), ("rules.blocked", "a2", blocked)]
+    assert gated.records.closed[RUN][0] == "aborted" and gated.checked == []
+    gated.limits = RuleLimits()  # the rule's next fire, confirmation no longer required
+    await gated.run(action("a3"))
+    assert gated.sent == [("a3", str(A))]  # the blocked fire's actions never run later

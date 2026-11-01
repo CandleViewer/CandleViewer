@@ -844,3 +844,71 @@ async def test_every_worker_ends_cancelled_at_stop_idle_ones_too(rig: DispatchRi
     assert len(workers) == dispatch.DISPATCH_WORKERS + dispatch.AUDIT_WORKERS
     await rig.svc.stop(GUARD_S)
     assert [t.get_name() for t in workers if not t.cancelled()] == []
+
+
+class _Held:
+    """`execute` that logs each fire it runs and holds a fire of a `held` rule until released."""
+
+    def __init__(self, *held: str) -> None:
+        self.ran: list[tuple[str, int]] = []
+        self.held = {rule: asyncio.Event() for rule in held}
+        self.running = asyncio.Event()
+
+    async def __call__(self, fire: dispatch.Fire) -> None:
+        self.ran.append((fire.rule_id, fire.run_id.int))
+        if (gate := self.held.get(fire.rule_id)) is not None:
+            self.running.set()
+            await gate.wait()
+
+
+async def _idle(fires: dispatch.FireDispatch) -> None:
+    async with asyncio.timeout(GUARD_S):
+        await fires.idle()
+
+
+async def _none(_req: ActionRequest) -> None:
+    return None
+
+
+async def test_drop_takes_a_rules_waiting_fires_and_nothing_else() -> None:
+    """E35-T10 (24 §11.7): `drop` takes the rule's waiting fires out of its lane, oldest first, and
+    leaves the fire that runs and every other rule's lane; dropping a rule with nothing waiting
+    takes nothing."""
+    other = str(uuid.UUID(int=9))
+    held = _Held(RULE)
+    fires = dispatch.FireDispatch(_never_refused, held)
+    fires.start()
+    for fire in (_fire(1, "a1", emit=_none), _fire(2, "a1", emit=_none),
+                 _fire(3, "a1", emit=_none), _fire(4, "b1", emit=_none, rule=other)):  # fmt: skip
+        assert fires.offer(fire)
+    async with asyncio.timeout(GUARD_S):
+        await held.running.wait()  # fire 1 runs; 2 and 3 wait in its rule's lane
+    dropped = fires.drop(RULE)
+    assert [f.run_id.int for f in dropped] == [2, 3] and fires.drop(RULE) == ()
+    assert fires.drop("no-such-rule") == ()
+    held.held[RULE].set()
+    await _idle(fires)
+    await fires.stop(0.0)
+    assert sorted(held.ran) == sorted([(RULE, 1), (other, 4)])  # nothing dropped ever ran
+    assert fires.queued == 0
+
+
+async def test_a_dropped_lane_never_stalls_the_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A lane emptied while it waits its turn keeps it: the worker that meets it skips it, the
+    queue still runs empty (`idle`), and the rule's next fire runs in a lane of its own."""
+    monkeypatch.setattr(dispatch, "DISPATCH_WORKERS", 1)
+    other = str(uuid.UUID(int=9))
+    held = _Held(other)
+    fires = dispatch.FireDispatch(_never_refused, held)
+    fires.start()
+    assert fires.offer(_fire(1, "b1", emit=_none, rule=other))
+    async with asyncio.timeout(GUARD_S):
+        await held.running.wait()  # the one worker is held: the rule's lane waits in the turn
+    assert fires.offer(_fire(2, "a1", emit=_none))
+    assert [f.run_id.int for f in fires.drop(RULE)] == [2]
+    held.held[other].set()
+    await _idle(fires)  # the emptied lane was skipped, never stalled
+    assert fires.offer(_fire(3, "a1", emit=_none))
+    await _idle(fires)
+    await fires.stop(0.0)
+    assert held.ran == [(other, 1), (RULE, 3)]
