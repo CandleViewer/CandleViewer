@@ -8,6 +8,7 @@
  * routes this ticket owns (login/logout/403/404/settings-hub redirect)
  * render minimal placeholders.
  */
+import { lazy, Suspense } from "react";
 import { createBrowserRouter, redirect, type RouteObject } from "react-router";
 import { ROUTE_MANIFEST, type ManifestEntry } from "./manifest";
 import { ROUTE_TITLES, type TitleHandle } from "./titles";
@@ -30,6 +31,14 @@ import { SessionsSection } from "../features/session/SessionsSection";
 import { getMeClaims, refreshMeClaims } from "../lib/auth/meCache";
 import { ShellLayout } from "../features/app-shell/ShellLayout";
 import { ScreenRoot } from "../features/app-shell/ScreenRoot";
+
+/**
+ * SCR-063 on R-130 (E29-S01 #911, BQ-16): its own chunk, loaded when the route first renders, so the
+ * panel, its grid and its feed stay out of the first bundle.
+ */
+const PositionsPanel = lazy(() =>
+  import("../features/positions/PositionsPanel").then((m) => ({ default: m.PositionsPanel })),
+);
 
 function elementFor(routeId: string, owner: string | null): RouteObject["element"] {
   if (routeId === "R-900") return <ForbiddenState />;
@@ -57,6 +66,12 @@ function elementFor(routeId: string, owner: string | null): RouteObject["element
     );
   // E42-S01: each admin route inside CMP-087, its code loaded once the guard let the session in.
   if (isAdminRoute(routeId)) return <AdminRouteElement routeId={routeId} owner={owner} />;
+  if (routeId === "R-130")
+    return (
+      <Suspense fallback={null}>
+        <PositionsPanel />
+      </Suspense>
+    );
   if (routeId === "R-101") {
     // First sign-in lands on /terminal/last -> here; the card is server-gated (401 => renders nothing).
     return (

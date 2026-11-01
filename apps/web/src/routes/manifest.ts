@@ -49,7 +49,7 @@ export const ROUTE_MANIFEST: readonly ManifestEntry[] = [
   { id: "R-120", path: "/layouts", access: ALL, owner: "E15" },
 
   // Positions & Orders
-  { id: "R-130", path: "/positions", access: ALL, owner: "E12" },
+  { id: "R-130", path: "/positions", access: ALL, owner: null }, // SCR-063 (E29-S01 #911)
   { id: "R-131", path: "/positions/:accountId", access: ALL, owner: "E12" },
   { id: "R-132", path: "/positions/order/:orderId", access: ALL, owner: "E12" },
 
