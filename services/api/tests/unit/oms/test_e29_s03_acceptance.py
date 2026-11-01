@@ -85,7 +85,11 @@ async def close(
 
 
 def creates(rig: SubmitRig) -> list[PlaceOrderRequest]:
-    return [c.request for c in rig.port.demo.calls if c.method == "place_order"]
+    """Every create the venue double took (`place_order`), each carrying its request."""
+    calls = [c for c in rig.port.demo.calls if c.method == "place_order"]
+    sent = [c.request for c in calls if isinstance(c.request, PlaceOrderRequest)]
+    assert len(sent) == len(calls)
+    return sent
 
 
 def assert_never_opens(rig: SubmitRig) -> None:

@@ -549,7 +549,10 @@ async def rig() -> AsyncIterator[SubmitRig]:
 
 
 def _creates(rig: SubmitRig) -> list[PlaceOrderRequest]:
-    return [c.request for c in rig.port.demo.calls if c.method == "place_order"]
+    calls = [c for c in rig.port.demo.calls if c.method == "place_order"]
+    sent = [c.request for c in calls if isinstance(c.request, PlaceOrderRequest)]
+    assert len(sent) == len(calls)  # every create carries its request
+    return sent
 
 
 async def test_native_sl_a_reversals_entry_carries_the_profiles_stop_on_the_real_pipeline(
