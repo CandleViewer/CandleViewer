@@ -140,6 +140,10 @@ _ENTRY_STOP_SETTLES: Final = frozenset(get_args(EntryStopSettle))
 _ORIGINS: Final = frozenset(get_args(OrderOrigin))
 #: `ord_origin_ref`'s `rule` arm (21 Sec.3.3.4): the rule's id as canonical lower-case UUID text.
 _RULE_REF: Final = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+#: The longest text the store admits as `origin_ref` for an origin other than `rule`, whose third
+#: CHECK arm leaves it free (21 Sec.3.3.4): a parent order's id is 36 characters. The CHECK takes
+#: the same bound with the next revision that touches `orders`, before another origin has a writer.
+MAX_ORIGIN_REF_CHARS: Final = 64
 #: The order terms an accepted amend may change (22-api-openapi.yaml `AmendOrderRequest`).
 AMENDABLE: Final = ("qty", "price", "trigger_price", "take_profit", "stop_loss")
 #: The unique index that makes `order_link_id` an idempotency key (21 Sec.3.3.4).
@@ -190,8 +194,9 @@ def require_exchange_order_id(value: object) -> None:
 def require_origin(origin: object, origin_ref: object) -> None:
     """`ValueError`, before any statement, unless the pair passes `ord_origin` and
     `ord_origin_ref` (21 Sec.3.3.4): no origin and no ref; `rule` with the rule's id as canonical
-    lower-case UUID text; or another of 24 Sec.8.1's values with any text or none. Names no
-    value."""
+    lower-case UUID text; or another of 24 Sec.8.1's values with text of at most
+    `MAX_ORIGIN_REF_CHARS` characters or none, a bound the store holds ahead of the CHECK. Names
+    no value."""
     if origin_ref is not None and not isinstance(origin_ref, str):
         raise ValueError("origin_ref is text or None")
     if origin is None:
@@ -202,6 +207,8 @@ def require_origin(origin: object, origin_ref: object) -> None:
         raise ValueError("origin is one of 24 Sec.8.1's values")
     if origin == "rule" and (origin_ref is None or _RULE_REF.fullmatch(origin_ref) is None):
         raise ValueError("a rule's order names its rule's id as canonical UUID text")
+    if origin_ref is not None and len(origin_ref) > MAX_ORIGIN_REF_CHARS:
+        raise ValueError(f"origin_ref is at most {MAX_ORIGIN_REF_CHARS} characters")
 
 
 def check_fields(

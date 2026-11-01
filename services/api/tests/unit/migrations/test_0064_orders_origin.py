@@ -27,7 +27,13 @@ import pytest
 from sqlalchemy import CheckConstraint, Text
 
 from candleviewer.db import models
-from candleviewer.storage.repositories.orders import NewOrder, OrderOrigin, OrderRow
+from candleviewer.storage.repositories.orders import (
+    MAX_ORIGIN_REF_CHARS,
+    NewOrder,
+    OrderOrigin,
+    OrderRow,
+    require_origin,
+)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _REPO = _ROOT.parents[1]
@@ -199,13 +205,17 @@ def test_the_lockfile_names_the_revision() -> None:
     }
 
 
-#: (origin, origin_ref) pairs the two CHECKs admit, and pairs they refuse, a type error included.
+#: (origin, origin_ref) pairs the two CHECKs admit, and pairs they refuse, a type error included,
+#: and the free arm's text one character past the store's bound (`MAX_ORIGIN_REF_CHARS`), which
+#: the store refuses ahead of the CHECK, as the next revision to touch `orders` will.
 _ADMITTED: list[tuple[object, object]] = [
     (None, None), ("rule", _RULE), ("hotkey", "F5"), ("ticket", None), ("api", "not-a-uuid"),
+    ("algo_child", str(UUID(int=7))), ("hotkey", "x" * 64),
 ]  # fmt: skip
 _REFUSED: list[tuple[object, object]] = [
     (None, "x"), (None, _RULE), ("rule", None), ("rule", "not-a-uuid"), ("rule", _RULE.upper()),
     ("manual", None), ("Rule", _RULE), ("ticket", 7), (["rule"], _RULE),
+    ("hotkey", "x" * 65), ("api", "x" * 4096),
 ]  # fmt: skip
 _NEW: dict[str, Any] = {
     "id": UUID(int=1), "exchange_account_id": UUID(int=2), "order_link_id": "cv",
@@ -232,4 +242,19 @@ def test_a_row_refuses_an_origin_the_checks_refuse_naming_no_value(
     for build in (lambda: NewOrder(**_NEW | pair), lambda: OrderRow(**_ROW | pair)):
         with pytest.raises(ValueError) as refused:
             build()
-        assert all(value not in str(refused.value) for value in (_RULE, "not-a-uuid", "manual"))
+        named = (_RULE, "not-a-uuid", "manual", "x" * 65)
+        assert all(value not in str(refused.value) for value in named)
+
+
+def test_the_free_arm_of_origin_ref_is_bounded_at_sixty_four_characters() -> None:
+    """The CHECK's third arm leaves `origin_ref` free for any origin but `rule`; the store holds
+    that text to 64 characters, so a writer of another origin cannot store an unbounded value
+    before the CHECK takes the bound with the next revision that touches `orders` (R1S-04):
+    pinned at its edge for each of the six origins, and a rule's ref is its UUID alone."""
+    assert MAX_ORIGIN_REF_CHARS == 64
+    for origin in set(get_args(OrderOrigin)) - {"rule"}:
+        require_origin(origin, "x" * 64)
+        with pytest.raises(ValueError, match="at most 64 characters"):
+            require_origin(origin, "x" * 65)
+    with pytest.raises(ValueError, match="canonical UUID text"):
+        require_origin("rule", "x" * 36)

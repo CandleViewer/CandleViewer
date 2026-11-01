@@ -29,7 +29,9 @@ A cancel's reason sets the lane B1's call sends it in, registered with the cance
 `critical`, the circuit breaker's (`rule_circuit_breaker`) among them; a rule's amend
 (`ExitCaller.origin`) registers `entry`, any other amend the order's own lane (24 Sec.8.4
 "Rule-originated orders" item 3, C-12.7). A rule's own cancel and amend are the rule's records
-(`RuleOrigin`, 24 Sec.15.5); the breaker's cancel names its tripped rule in its record's detail.
+(`RuleOrigin`, 24 Sec.15.5), registered with the exit (`ExitWatch.origin`) so that the stop-side
+records the command port writes for the amend are the rule's too; the breaker's cancel names its
+tripped rule in its intent record's detail.
 """
 
 from __future__ import annotations
@@ -463,6 +465,7 @@ class ExitCommands(Protocol):
         request_id: UUID | None = None,
         actor: SubmitActor | None = None,
         lane: OrderLane | None = None,
+        origin: RuleOrigin | None = None,
     ) -> ExitWatch: ...
 
     def forget_exit(self, watch: ExitWatch) -> None: ...
@@ -784,6 +787,7 @@ class OrderExits:
             outcome = await self._commanded(
                 row, operation, event, payload, actor=actor, request_id=request_id,
                 expected_seq=expected_seq, if_match=if_match, terms=terms, lane=lane,
+                origin=origin,
             )  # fmt: skip
         except Exception as exc:
             kind, failure = _kind(operation), type(exc).__name__
@@ -809,9 +813,11 @@ class OrderExits:
         if_match: bool = False,
         terms: Mapping[str, Decimal] | None = None,
         lane: OrderLane | None = None,
+        origin: RuleOrigin | None = None,
     ) -> ExitOutcome:
         """The command through the exit watch (the principal its `actor`, the lane its call sends
-        in `lane`, None for the order's own), then B1's settle, at
+        in `lane`, None for the order's own, and a rule's request's rule its `origin`, which
+        makes the command port's stop-side records of an amend the rule's), then B1's settle, at
         most `SETTLE_TIMEOUT_S`: the exit's outcome, which `_dispatch` records. `if_match` says
         that `expected_seq` is the client's own `If-Match`, not the version the exit read, which
         decides what a version the facade finds moved on answers (`_taken_not`).
@@ -834,7 +840,7 @@ class OrderExits:
         kind = _kind(operation)
         account, pending = row.exchange_account_id, f"{kind}_pending"
         watch = self._d.commands.expect_exit(
-            row.id, kind, request_id=request_id, actor=actor, lane=lane
+            row.id, kind, request_id=request_id, actor=actor, lane=lane, origin=origin
         )
         taken = functools.partial(self._d.commands.take_exit, watch)
         try:

@@ -1,7 +1,7 @@
 """The native-SL helper's own test (E35-T11 slice 3a): each assertion passes on a protected entry
-and fails, naming its layer, on each doctored case: no stop, a stop on the wrong side, no
-`entry_attach` row, no `sl.attached` record, a create without its stop; a stop loosened or
-removed."""
+and fails, naming its layer, on each doctored case: no stop, a stop that is no number, zero or
+negative, a stop on the wrong side, no `entry_attach` row, no `sl.attached` record, a create
+without its stop; a stop loosened or removed."""
 
 from __future__ import annotations
 
@@ -93,6 +93,8 @@ _DOCTORED: dict[str, tuple[dict[str, Any], str]] = {
     "reduce-only": ({"order": _order(reduce_only=True)}, "not reduce-only"),
     "no-stop": ({"order": _order(stop_loss=None)}, "finite stop_loss above zero"),
     "nan-stop": ({"order": _order(stop_loss=Decimal("NaN"))}, "finite stop_loss above zero"),
+    "zero-stop": ({"order": _order(stop_loss=Decimal(0))}, "finite stop_loss above zero"),
+    "negative-stop": ({"order": _order(stop_loss=Decimal("-1"))}, "finite stop_loss above zero"),
     "wrong-side": ({"order": _order(stop_loss=Decimal("61000"))}, "protective side"),
     "no-entry-attach-row": ({"stops": []}, "entry_attach row"),
     "another-orders-row": (

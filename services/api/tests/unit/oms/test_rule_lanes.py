@@ -6,30 +6,37 @@ cancels ride `entry`, a reduce-only close included, a create resumed from its st
 cancel's reason sets its lane, every protective one `critical`, the circuit breaker's among them;
 a cancel B1 sends with no registration (a KILL's, a rebuilt machine's resumed call) rides
 `critical`; and the native stop of a rule's entry is the OMS's protection, `critical`. No route
-names an origin, a rule's reason or a lane: the server builds them. The exchange is a demo
-`FakeTradingPort` (C-13.5) and, for the stop's lane at the venue, the Bybit port over the
-transcribed reply.
+names an origin, a rule's reason or a lane: the server builds them. What a rule's cancel and amend
+record is the rule's (24 Sec.15.5, RE-S1), the command port's stop-side records of an amend, an
+already-final order's and a refusal's included. The exchange is a demo `FakeTradingPort` (C-13.5)
+and, for the stop's lane at the venue, the Bybit port over the transcribed reply.
 """
 
 from __future__ import annotations
 
 import ast
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Coroutine
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
-from uuid import UUID, uuid4
+from types import SimpleNamespace
+from typing import Any, cast
+from uuid import uuid4
 
 import pytest
 
 import candleviewer
+from candleviewer.exchange.base.errors import OmsErrorCode, TransportError
+from candleviewer.exchange.base.fakes import FakeOutcome, FakeReject
 from candleviewer.exchange.base.models import RateHeadroom, TradingStopRequest
 from candleviewer.exchange.bybit.config import EndpointClass
+from candleviewer.oms import commands as oc
 from candleviewer.oms.commands import place_request
 from candleviewer.oms.errors import RateBudgetExceeded
 from candleviewer.oms.exits import CANCEL_LANES, AmendTerms, CancelReason, ExitCaller
-from candleviewer.oms.ports import RequestRecord, RuleOrigin
+from candleviewer.oms.ports import KeyedRecord, RequestRecord, RuleOrigin, StopOffset
+from candleviewer.oms_wiring import OnLaneExits
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import NewOrder, OrderRow, ScopedOrder
 from tests._corpus import rest
@@ -38,11 +45,12 @@ from tests.unit.exchange.bybit._trading import RecordingGovernor, Venue, account
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submit_rig as sr
 from tests.unit.oms.submit_rig import SubmitRig
-from tests.unit.oms.test_exits import exits_of
+from tests.unit.oms.test_exits import exits_of, placed
 from tests.unit.oms.test_submit_rule_origin import (
     ORIGIN,
     OWNER_ACTOR,
     RULE,
+    RULE_FIELDS,
     rule_context,
     through_the_adapter,
 )
@@ -191,6 +199,153 @@ async def test_a_rule_cancel_is_recorded_with_its_reason(rig: SubmitRig, tmp_pat
         assert fields["after_state"]["decision_source"] == "rule"
 
 
+def _as_the_rule(fields: Any) -> None:
+    """One append through the runtime's adapter is the rule's (24 Sec.15.5, RE-S1): its actor
+    `rule:<rule_id>@v<n>` with no user, and the decision source with the rule's fields."""
+    assert (fields["actor_label"], fields["actor_user_id"]) == (ORIGIN.actor_label, None)
+    assert fields["after_state"].items() >= RULE_FIELDS.items()
+
+
+def _rule_caller() -> ExitCaller:
+    """A rule's amend as the composition root's adapter calls it: the owner, and the origin."""
+    return ExitCaller(OwnerScope(sr.USER), OWNER_ACTOR, origin=ORIGIN)
+
+
+async def test_a_rule_amend_is_recorded_with_its_reason(rig: SubmitRig, tmp_path: Path) -> None:
+    """24 Sec.15.5: a rule's amend is `orders.amend` with reason `rule`, its intent and its outcome
+    the rule's records as the runtime's adapter writes them (RE-S1), where a user's amend of the
+    same order stays the user's."""
+    row = await _resting_close(rig)
+    scoped = ScopedOrder(row, None, None, sr.USER, True)
+    got = await exits_of(rig).amend(
+        scoped, AmendTerms(price=Decimal("61500")), caller=_rule_caller(), expected_seq=None
+    )
+    assert (got.kind, got.status) == ("accepted", 202), got
+    records = [r for r in rig.records("orders.amend") if isinstance(r, RequestRecord)]
+    assert [(r.outcome, r.reason, r.origin) for r in records] == [
+        ("success", "rule", ORIGIN), ("success", "submitted", ORIGIN),
+    ]  # fmt: skip
+    for _action, fields in await through_the_adapter(records, tmp_path):
+        _as_the_rule(fields)
+
+
+_VENUE_REFUSAL = FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110003, "refused")
+
+
+@pytest.mark.parametrize(
+    ("venue", "voided"), [(None, 0), (_VENUE_REFUSAL, 2)], ids=["accepted", "venue-refused"]
+)
+async def test_a_rule_amends_stop_side_records_are_the_rules(
+    rig: SubmitRig, tmp_path: Path, venue: FakeOutcome | None, voided: int
+) -> None:
+    """24 Sec.15.5, RE-S1: the records the command port writes for a rule's amend of an entry's
+    stop, each side's request (`sl.modified`, `tp.modified`) and, once the venue refused the
+    amend, each void, are the rule's as its request records are: the exit service registers the
+    origin with the amend, so each names the rule, with the owner it acts for in `after_state`,
+    never the owner alone."""
+    row = await placed(rig)
+    if venue is not None:
+        rig.port.demo.script("amend_order", venue)
+    terms = AmendTerms(sides={"stop_loss": StopOffset("price", Decimal("59000"))})
+    scoped = ScopedOrder(row, None, None, sr.USER, True)
+    await exits_of(rig).amend(scoped, terms, caller=_rule_caller(), expected_seq=None)
+    await rig.quiet()
+    amended = (oc.AMEND_REASON, oc.AMEND_REFUSED)  # not the entry's own `entry_attach` records
+    sides = [
+        r for r in rig.records()
+        if isinstance(r, KeyedRecord) and r.action in ("sl.modified", "tp.modified")
+        and r.reason in amended
+    ]  # fmt: skip
+    assert [r.reason for r in sides] == [oc.AMEND_REASON] * 2 + [oc.AMEND_REFUSED] * voided
+    assert {r.action for r in sides} == {"sl.modified", "tp.modified"}
+    assert all((r.origin, r.actor) == (ORIGIN, OWNER_ACTOR) for r in sides)
+    for _action, fields in await through_the_adapter(sides, tmp_path):
+        _as_the_rule(fields)
+
+
+async def test_a_rule_cancel_of_a_final_order_is_recorded_as_the_rules(
+    rig: SubmitRig, tmp_path: Path
+) -> None:
+    """C-2.9, 24 Sec.15.5: a rule's cancel that finds its order already final sends nothing, and
+    records `orders.cancel` with the reason `already_final`, the rule's record as its intent and
+    its outcome are (RE-S1), where the user's cancel before it is the user's."""
+    row, exits = await _resting_close(rig), exits_of(rig)
+    await exits.cancel_admitted(row, actor=OWNER_ACTOR, reason="user", request_id=None)
+    again = await exits.cancel_admitted(
+        row, actor=OWNER_ACTOR, reason="rule", request_id=None, origin=ORIGIN
+    )
+    assert (again.kind, again.lifecycle_state) == ("accepted", "cancelled")
+    assert _lanes(rig.port.demo.calls, "cancel_order") == ["critical"]  # the user's, none after it
+    records = [r for r in rig.records("orders.cancel") if isinstance(r, RequestRecord)]
+    assert [(r.outcome, r.reason, r.origin) for r in records] == [
+        ("success", "user", None), ("success", "cancelled", None),
+        ("success", "already_final", ORIGIN),
+    ]  # fmt: skip
+    [(_, fields)] = await through_the_adapter(records[-1:], tmp_path)
+    _as_the_rule(fields)
+
+
+@pytest.mark.parametrize(
+    ("operation", "code"), [("cancel", "conflict"), ("amend", "order_not_amendable")]
+)
+async def test_a_refused_rule_cancel_or_amend_is_recorded_denied_as_the_rules(
+    rig: SubmitRig, tmp_path: Path, operation: str, code: str
+) -> None:
+    """C-2.9, 24 Sec.15.5: a rule's cancel or amend that the order's state refuses (an `unknown`
+    order, which reconciliation decides) sends nothing and records `orders.cancel` or
+    `orders.amend` denied with its code, the rule's record (RE-S1)."""
+    rig.port.demo.script("place_order", TransportError("the line went down"))
+    outcome = await rig.submit(sr.entry(), sr.context())
+    await rig.quiet()
+    assert outcome.order_id is not None
+    row = await rig.port.orders.get(cr.ACCOUNT, outcome.order_id)
+    assert row is not None and row.lifecycle_state == "unknown"
+    exits = exits_of(rig)
+    if operation == "cancel":
+        got = await exits.cancel_admitted(
+            row, actor=OWNER_ACTOR, reason="rule", request_id=None, origin=ORIGIN
+        )
+    else:
+        scoped = ScopedOrder(row, None, None, sr.USER, True)
+        terms = AmendTerms(price=Decimal("61500"))
+        got = await exits.amend(scoped, terms, caller=_rule_caller(), expected_seq=None)
+    assert (got.kind, got.code) == ("refused", code)
+    assert not [c for c in rig.port.demo.calls if c.method in ("cancel_order", "amend_order")]
+    [denied] = [r for r in rig.records(f"orders.{operation}") if isinstance(r, RequestRecord)]
+    assert (denied.outcome, denied.reason, denied.origin) == ("denied", code, ORIGIN)
+    [(_, fields)] = await through_the_adapter([denied], tmp_path)
+    _as_the_rule(fields)
+
+
+class _InlineLane:
+    """The order lane on the test's own loop: `call` runs the coroutine as a task, as the lane
+    does, and answers its future."""
+
+    def call(
+        self, coro: Coroutine[Any, Any, Any], *, timeout_s: float | None = None
+    ) -> asyncio.Future[Any]:
+        return asyncio.ensure_future(coro)
+
+
+async def test_the_lanes_bridge_carries_a_rules_origin_to_the_exit_service(
+    rig: SubmitRig,
+) -> None:
+    """24 Sec.8.4 item 3, Sec.15.5: a rule's cancel reaches the exit service through the order
+    lane's bridge (`OnLaneExits`, which the serving loop's callers hold) with its reason and its
+    origin, so the service records it as the rule's; a bridge that left the origin out would meet
+    the service's refusal of a rule's reason that names no rule."""
+    row = await _resting_close(rig)
+    bridge = OnLaneExits(cast(Any, SimpleNamespace(exits=exits_of(rig), lane=_InlineLane())))
+    got = await bridge.cancel_admitted(
+        row, actor=OWNER_ACTOR, reason="rule", request_id=None, origin=ORIGIN
+    )
+    assert (got.kind, got.status) == ("accepted", 202), got
+    records = [r for r in rig.records("orders.cancel") if isinstance(r, RequestRecord)]
+    assert [(r.outcome, r.reason, r.origin) for r in records] == [
+        ("success", "rule", ORIGIN), ("success", "cancelled", ORIGIN),
+    ]  # fmt: skip
+
+
 async def _resting(port_rig: cr.Rig, order: NewOrder) -> OrderRow:
     """`order` resting at the venue, stored `submitted` and bound to the venue's id for it."""
     resting = cr.exchange_order(order)
@@ -269,4 +424,3 @@ def test_the_lane_table_names_every_reason_once() -> None:
     """Every `CancelReason` has its lane, and only a rule's own cancel rides `entry`."""
     assert set(CANCEL_LANES) == {"user", "cancel_all", "rule", "rule_circuit_breaker"}
     assert [r for r, lane in CANCEL_LANES.items() if lane == "entry"] == ["rule"]
-    assert UUID(int=0) != RULE  # the rule's id is a canonical UUID, not a placeholder
