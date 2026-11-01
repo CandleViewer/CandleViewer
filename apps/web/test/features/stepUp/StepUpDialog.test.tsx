@@ -269,4 +269,20 @@ describe("StepUpDialog (SCR-006, E09-D06)", () => {
   it("points the unknown outcome at where the read-back shows it", () => {
     expect(stepUpOutcomePending("Orders")).toBe("Outcome pending, see Orders");
   });
+
+  it("its scrim stacks above the dialog that hosts it, whose later footer would else paint over it (A-5347-01)", () => {
+    // A host's typed confirm renders SCR-006 inline among its notes, ahead of its own footer in the DOM: the fixed
+    // scrim's own stacking level is what lets a pointer reach the gate's Confirm rather than the host's (#2725).
+    render(
+      <div style={{ position: "relative" }}>
+        <StepUpDialog {...base} />
+        <footer style={{ position: "relative" }}>
+          <button type="button">Keep ETHUSDT data forever</button>
+        </footer>
+      </div>,
+    );
+    const scrim = screen.getByRole("alertdialog").parentElement as HTMLElement;
+    expect(getComputedStyle(scrim).position).toBe("fixed");
+    expect(getComputedStyle(scrim).zIndex).toBe("1");
+  });
 });

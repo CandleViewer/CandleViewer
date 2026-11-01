@@ -19,7 +19,7 @@ import {
 import type { RecorderFrame } from "../../../src/features/recorder/model";
 import { RecorderScreen } from "../../../src/features/recorder/RecorderScreen";
 import { NOW } from "./gridFixtures";
-import { STATUS, STORAGE, fakeSocket, frameOf, router } from "./screenFixtures";
+import { LIST, STATUS, STORAGE, fakeSocket, frameOf, router } from "./screenFixtures";
 
 const flush = () => act(async () => void (await vi.advanceTimersByTimeAsync(0)));
 let clock = { now: NOW };
@@ -125,5 +125,63 @@ describe("the row detail on the page (E16-D02 §6.7; #485/#486 BQ-6)", CASE, () 
     expect(screen.getByRole("button", { name: "ETHUSDT" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).toBeNull();
     registry.unmount();
+  });
+});
+
+describe("the last row's going (A-5347-d03; F-05)", CASE, () => {
+  it("unpinning the only row from the grid swaps it for the empty state; focus lands on the H1, never body", async () => {
+    const only = { ...LIST[0], state: "stopped" } as const; // BTCUSDT, pinned, stopped
+    let unpinned = false;
+    const answers = router((method, url) => {
+      if (method === "PUT" && url.endsWith("/recording/symbols/id-btcusdt/pin")) {
+        unpinned = true; // `22`: unpinning a stopped row ends its listing
+        return json(200, { ...only, pinned: false, retention_days: 30 });
+      }
+      if (url.includes("/recording/symbols?")) {
+        const items = unpinned ? [] : [only];
+        return json(200, { items, meta: { count: items.length, has_more: false } });
+      }
+      if (url.endsWith("/recording/status")) {
+        return json(200, { ...STATUS, symbols: STATUS.symbols?.slice(0, 1) });
+      }
+      return undefined;
+    });
+    const frameWith = (symbols: RecorderFrame["symbols"]): RecorderFrame => ({
+      ...frameOf(),
+      symbols,
+    });
+    const btc = frameOf({ BTCUSDT: { state: "stopped" } }).symbols.slice(0, 1);
+    const { socket } = await mountPage(frameWith(btc), answers);
+    const keep = screen.getByRole("switch", { name: "Keep BTCUSDT data forever" });
+    act(() => keep.focus());
+    fireEvent.click(keep);
+    const confirm = screen.getByRole("alertdialog", { name: "Stop keeping BTCUSDT forever?" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Type BTCUSDT to confirm" }), {
+      target: { value: "BTCUSDT" },
+    });
+    await act(async () => void (await vi.advanceTimersByTimeAsync(500)));
+    const stop = screen.getByRole("button", { name: "Stop keeping BTCUSDT forever" });
+    act(() => stop.focus());
+    fireEvent.click(stop);
+    await flush();
+    await flush();
+    expect(confirm).not.toBeInTheDocument();
+    // The list is read again past the topic's 5 s gap (ROWS_REREAD_GAP_MS), with the frame that no longer names it.
+    socket.push(frameWith([]));
+    act(() => socket.step(5_000));
+    await flush();
+    await flush();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Nothing is recorded yet" }),
+    ).toBeVisible();
+    expect(screen.getByRole("heading", { level: 1, name: "Recorder" })).toHaveFocus();
+  });
+
+  it("a page that opens empty leaves focus where it is: nothing to land from", async () => {
+    await mountPage({ ...frameOf({}, { used_bytes: 0 }), symbols: [] }, EMPTY);
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Nothing is recorded yet" }),
+    ).toBeVisible();
+    expect(document.activeElement).toBe(document.body);
   });
 });
