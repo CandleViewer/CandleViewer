@@ -41,7 +41,7 @@ Board 02 of ten (§0 L72: the workspace archetype's Tab sequence and roving zone
 
 ## Sources (1)
 
-- spec E47-D04.md md5 82406120 (§0 L72); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
+- spec E47-D04.md md5 ec4172fe (§0 L72); hand-off E47-D04-handoff.md md5 7ffe0dc8 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
 
 ## Tokens (36)
 

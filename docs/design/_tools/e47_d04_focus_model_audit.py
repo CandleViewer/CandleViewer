@@ -34,7 +34,12 @@ the anchored values, the default-deny pins and the mutations).
    most ten items), G-OWNER (G-ledger owners are tickets or owners, never an agent), G-UNMERGED,
    G-URL, G-UNTOUCHED (only this ticket's files, `05`, the boards, their sheet kit, its MANIFEST
    lines and `.prettierignore` entry differ from the merge base with origin/main), G-BUDGET (600
-   spec lines, 150 hand-off lines), G-MUTLIST.
+   spec lines, 150 hand-off lines), G-MUTLIST (§17's rows and §19.4's continuation equal the
+   tool's list), G-T2 (§10 states the T2 paragraph once, naming CMP-079 RbacGate, the CMP-019
+   `lock` glyph, rendering 2a, the reason node at mount, one polite announcement and the menu
+   arrows; §4's Roles row and every §9.1 row naming T2 cite §10; the hand-off's component list
+   names CMP-079 and CMP-019), G-RECUR (R-12 covers 200 %, the in-app text scale, drawers and
+   fixed-height regions; §11 carries 1.4.4 beside 1.4.10; §4 says what `Enter` does in a field).
 4. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over every unit of both documents
    (each heading, table row by its lead cell and prose line, by heading path and occurrence, with
    a line-shape tag per region) in `e47_d04_ruled_pins.txt`. Anchored values are cut out of the
@@ -183,6 +188,19 @@ ARCH_KEYS = {
 }
 RESERVED = "n/a (reserved)"
 AC_ASPECTS = ("Tab sequence", "Roving zones", "Entry and exit keys", "Initial target")
+T2_PARA = "**The T2 paragraph (G-T2;"
+T2_NAMES = (
+    "CMP-079 RbacGate",
+    "CMP-019 Icon `lock`",
+    "rendering 2a",
+    "in the DOM at mount",
+    "`aria-describedby`",
+    "one polite announcement",
+    "CMP-041 menu `↑` / `↓`",
+)
+R12_NAMES = ("200 %", "in-app text scale", "1.4.4", "a drawer", "a fixed-height region")
+ENTER_RULE = "`Enter` in a field"
+MUT_LATE = 26  # M-1 ... M-26 are §17's rows; the rest continue in §19.4 (the boards cite by line)
 RING = "color.focus.ring"
 HALO = "color.surface.canvas"
 BG_KEYS = (
@@ -220,7 +238,13 @@ Values = dict[str, str]
 
 def git(*args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=ROOT, capture_output=True, text=True, check=True
+        ["git", *args],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        check=True,
     ).stdout
 
 
@@ -766,6 +790,51 @@ MUTATIONS: tuple[Mutation, ...] = (
         "`Ctrl+Delete` (when order row focused)",
         "`Esc` (when order row focused)",
     ),
+    Mutation(
+        "M-27",
+        "drop CMP-079 from §10's T2 paragraph",
+        "G-T2",
+        "spec",
+        "## 10.",
+        "wrapped by CMP-079 RbacGate",
+        "wrapped by a gate",
+    ),
+    Mutation(
+        "M-28",
+        "drop CMP-019 from the hand-off's component list",
+        "G-T2",
+        "hand",
+        "",
+        "with the **CMP-019 Icon** `lock` glyph",
+        "with a glyph",
+    ),
+    Mutation(
+        "M-29",
+        "drop §10's cite from §9.1's menu row",
+        "G-T2",
+        "spec",
+        "### 9.1",
+        " (a T2 item: §10's T2 paragraph)",
+        "",
+    ),
+    Mutation(
+        "M-30",
+        "drop SC 1.4.4 from §11",
+        "G-RECUR",
+        "spec",
+        "## 11.",
+        "1.4.4, 1.4.10",
+        "1.4.10",
+    ),
+    Mutation(
+        "M-31",
+        "drop the `Enter`-in-a-field rule from §4",
+        "G-RECUR",
+        "spec",
+        "## 4.",
+        "; `Enter` in a field submits the form, never an order (`05`:62)",
+        "",
+    ),
 )
 PROBES: tuple[Mutation, ...] = (
     Mutation(
@@ -789,8 +858,8 @@ PROBES: tuple[Mutation, ...] = (
 )
 
 
-def mutation_rows() -> str:
-    return "\n".join(f"| {m.mid} | {m.what} | {m.gate} |" for m in MUTATIONS)
+def mutation_rows(ms: tuple[Mutation, ...] = MUTATIONS[:MUT_LATE]) -> str:
+    return "\n".join(f"| {m.mid} | {m.what} | {m.gate} |" for m in ms)
 
 
 def apply_mutation(t: Texts, m: Mutation) -> Texts:
@@ -1195,12 +1264,62 @@ def g_budget(t: Texts) -> list[Finding]:
 
 
 def g_mutlist(t: Texts) -> list[Finding]:
-    _, _, region = section(t.spec, "## 17.")
-    rows = [(r[0], r[1], r[2]) for r in first_table(t.spec, "## 17.")[1:] if len(r) > 2]
-    want = [(m.mid, m.what, m.gate) for m in MUTATIONS]
-    return (
-        [] if rows == want else [("G-MUTLIST", "§17 differs from the tool's list", "spec", region)]
-    )
+    out: list[Finding] = []
+    for prefix, ms in (("## 17.", MUTATIONS[:MUT_LATE]), ("### 19.4", MUTATIONS[MUT_LATE:])):
+        _, _, region = section(t.spec, prefix)
+        rows = [(r[0], r[1], r[2]) for r in first_table(t.spec, prefix)[1:] if len(r) > 2]
+        if rows != [(m.mid, m.what, m.gate) for m in ms]:
+            out.append(("G-MUTLIST", f"{prefix} differs from the tool's list", "spec", region))
+    return out
+
+
+def g_t2(t: Texts) -> list[Finding]:
+    out: list[Finding] = []
+    s, e, region = section(t.spec, "## 10.")
+    para = [ln for ln in t.spec.split("\n")[s:e] if T2_PARA in ln]
+    if len(para) != 1:
+        out.append(("G-T2", f"§10 states the T2 paragraph {len(para)} times", "spec", region))
+    else:
+        out += [
+            ("G-T2", f"§10's T2 paragraph does not name {n}", "spec", region)
+            for n in T2_NAMES
+            if n not in para[0]
+        ]
+    for prefix, lead in (("## 4.", "Roles (T2 / T3)"), ("### 9.1", "")):
+        _, _, reg = section(t.spec, prefix)
+        for r in first_table(t.spec, prefix)[1:]:
+            names = r[0] == lead if lead else any("T2" in c for c in r)
+            if names and not any("§10" in c for c in r):
+                out.append(("G-T2", f"'{r[0]}' shows T2 without citing §10", "spec", reg))
+    lines, regions = t.hand.split("\n"), line_regions(t.hand)
+    comp = [i for i, ln in enumerate(lines) if ln.startswith("Components: ")]
+    if len(comp) != 1 or not all(x in lines[comp[0]] for x in ("CMP-079 RbacGate", "CMP-019")):
+        reg = regions[comp[0]] if len(comp) == 1 else ""
+        out.append(("G-T2", "the hand-off's component list omits CMP-079 or CMP-019", "hand", reg))
+    return out
+
+
+def g_recur(t: Texts) -> list[Finding]:
+    out: list[Finding] = []
+    lines, regions = t.spec.split("\n"), line_regions(t.spec)
+    r12 = [i for i, ln in enumerate(lines) if ln.startswith("- **R-12 ")]
+    if len(r12) != 1:
+        out.append(("G-RECUR", "no single R-12", "spec", ""))
+    else:
+        out += [
+            ("G-RECUR", f"R-12 does not name {n}", "spec", regions[r12[0]])
+            for n in R12_NAMES
+            if n not in lines[r12[0]]
+        ]
+    _, _, region = section(t.spec, "## 11.")
+    scs = {sc.strip() for r in first_table(t.spec, "## 11.")[1:] for sc in r[0].split(",")}
+    if not {"1.4.4", "1.4.10"} <= scs:
+        out.append(("G-RECUR", "§11 lacks SC 1.4.4 or 1.4.10", "spec", region))
+    _, _, region = section(t.spec, "## 4.")
+    keys = [r for r in first_table(t.spec, "## 4.")[1:] if r[0] == "Entry and exit keys"]
+    if not keys or not any(ENTER_RULE in c for c in keys[0]):
+        out.append(("G-RECUR", "§4 does not say what `Enter` does in a field", "spec", region))
+    return out
 
 
 # ---------------------------------------------------------------------------- pins
@@ -1278,7 +1397,7 @@ def g_pins(t: Texts) -> list[Finding]:
 
 
 def repin(t: Texts) -> int:
-    if PLACEHOLDER_RE.search(t.spec + t.hand) or "{{MUTATIONS}}" in t.spec:
+    if PLACEHOLDER_RE.search(t.spec + t.hand) or "{{MUTATIONS" in t.spec:
         print("FAIL --repin-ruled refuses while a placeholder is unfilled")
         return 1
     rows = all_units(t)
@@ -1309,7 +1428,7 @@ def findings(t: Texts, values: Values) -> list[Finding]:
     out += g_owner(t)
     out += g_lines(t, "G-UNMERGED", lambda ln: any(p in ln for p in UNMERGED_PATHS), "a path")
     out += g_lines(t, "G-URL", lambda ln: bool(URL_RE.search(ln)), "a URL, host or local path")
-    out += g_untouched(t) + g_budget(t) + g_mutlist(t) + g_pins(t)
+    out += g_untouched(t) + g_budget(t) + g_mutlist(t) + g_t2(t) + g_recur(t) + g_pins(t)
     return out
 
 
@@ -1349,6 +1468,7 @@ def read_texts() -> Texts:
 
 def fill(t: Texts) -> Texts:
     t = replace(t, spec=t.spec.replace("{{MUTATIONS}}", mutation_rows()))
+    t = replace(t, spec=t.spec.replace("{{MUTATIONS-LATE}}", mutation_rows(MUTATIONS[MUT_LATE:])))
     values = compute_values(t)
 
     def placeholder(m: re.Match[str]) -> str:

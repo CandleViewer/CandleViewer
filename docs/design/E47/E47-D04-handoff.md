@@ -1,6 +1,6 @@
 # E47-D04 — Hand-off (`16` §11.4; the focus model)
 
-Components: **CMP-039 FocusRing** (the enclosed two-tone ring, the thick geometry), **CMP-043 Dialog** and **CMP-044 ConfirmDialog** (trap, initial focus, restore), **CMP-049 Table** in `grid` mode (one stop, `Tab` out, `Esc` layers, logical identity), **CMP-070 AppShell** with **CMP-085 SkipLink** (landmarks, the ring), plus the SCR-010 and SCR-050 rows of `14`. CMP-080's panel frame is unchanged. The spec is [E47-D04.md](E47-D04.md); every "§" below without a prefix is the spec's. These are component contracts, so the hand-off is due.
+Components: **CMP-039 FocusRing** (the enclosed two-tone ring, the thick geometry), **CMP-043 Dialog** and **CMP-044 ConfirmDialog** (trap, initial focus, restore), **CMP-049 Table** in `grid` mode (one stop, `Tab` out, `Esc` layers, logical identity), **CMP-070 AppShell** with **CMP-085 SkipLink** (landmarks, the ring), **CMP-079 RbacGate** with the **CMP-019 Icon** `lock` glyph (a T2 control, rendering 2a: spec §10's T2 paragraph; board 07), plus the SCR-010 and SCR-050 rows of `14`. CMP-080's panel frame is unchanged. The spec is [E47-D04.md](E47-D04.md); every "§" below without a prefix is the spec's. These are component contracts, so the hand-off is due.
 
 ## §A Hand-off checklist (`16` §11.4)
 

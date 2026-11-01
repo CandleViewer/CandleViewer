@@ -60,7 +60,7 @@ FIXTURE_REL = "packages/fixtures/bybit/2026-10-05/rest/instruments_before.json"
 FIXTURE = REPO / FIXTURE_REL
 # spec and hand-off re-pinned at the boards' as-built record (§0, the §C and §H rows edited in place): every L<n>
 # and §H cite on the ten boards reads the same text as when they were drawn
-SPEC_MD5 = {SPEC.name: "824061209c5a632b416e3ec4498ea893", HANDOFF.name: "d6454712e65839249d15ceb99f5f3ad1",
+SPEC_MD5 = {SPEC.name: "ec4172fe41591c6ccf30fe2edd4123fb", HANDOFF.name: "7ffe0dc82d7552bd7683d31a2724dfdf",
             FIXTURE.name: "edd9dd2a060c51bd4bd1450307728ddf"}
 
 FILE_NAME = "E47-D04 boards"
