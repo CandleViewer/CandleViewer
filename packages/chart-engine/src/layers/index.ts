@@ -4,3 +4,6 @@
 export * from "./candle/ring.js";
 export * from "./host.js";
 export type * from "./plugin-api.js";
+export * from "./candle/geometry.js";
+export * from "./candle/palette.js";
+export * from "./candle/series.js";

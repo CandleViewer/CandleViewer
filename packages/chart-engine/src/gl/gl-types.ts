@@ -49,6 +49,18 @@ export interface GL2Like {
   uniform1i(location: unknown, x: number): void;
   uniform2f(location: unknown, x: number, y: number): void;
   uniform4f(location: unknown, x: number, y: number, z: number, w: number): void;
+  // E12-S06: per-batch blocks (candle `u_batch`, `u_palette`) and int instance attributes.
+  uniform4i(location: unknown, x: number, y: number, z: number, w: number): void;
+  uniform4fv(location: unknown, data: Float32Array): void;
+  enableVertexAttribArray(index: number): void;
+  vertexAttribIPointer(
+    index: number,
+    size: number,
+    type: number,
+    stride: number,
+    offset: number,
+  ): void;
+  vertexAttribDivisor(index: number, divisor: number): void;
   // Buffers, textures and submission.
   bindBuffer(target: number, buffer: GLObject | null): void;
   bufferData(target: number, data: ArrayBufferView, usage: number): void;
@@ -92,6 +104,7 @@ export const GL = {
   RGBA: 0x1908,
   RGBA8: 0x8058,
   UNSIGNED_BYTE: 0x1401,
+  INT: 0x1404,
   TRIANGLE_STRIP: 0x0005,
   COLOR_BUFFER_BIT: 0x4000,
 } as const;
