@@ -7,7 +7,14 @@
  */
 import { GROUPS } from "./copy";
 import type { RecentState } from "./recent";
-import { GROUP_ORDER, type PaletteRow, type PaletteSource, type SourceContext } from "./sources";
+import {
+  ADMIN_READ,
+  GROUP_ORDER,
+  isAdminPath,
+  type PaletteRow,
+  type PaletteSource,
+  type SourceContext,
+} from "./sources";
 
 export function buildIndex(
   sources: readonly PaletteSource[],
@@ -15,8 +22,12 @@ export function buildIndex(
 ): readonly PaletteRow[] {
   const byGroup = new Map<string, PaletteRow[]>(GROUP_ORDER.map((g) => [g, []]));
   const seen = new Set<string>();
+  // Structural anti-enumeration (`14` §0.5 rule 5): whatever source supplied it, an `/admin/*` row never enters the
+  // index without `admin:read`, so no count, highlight, event or Recent entry can name it.
+  const admin = ctx.claims.permissions.includes(ADMIN_READ);
   for (const source of sources) {
     for (const row of source.rows(ctx)) {
+      if (!admin && row.target.kind === "route" && isAdminPath(row.target.path)) continue;
       if (seen.has(row.id)) continue;
       seen.add(row.id);
       byGroup.get(row.group)?.push(row);
