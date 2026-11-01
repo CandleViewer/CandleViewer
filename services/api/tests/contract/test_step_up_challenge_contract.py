@@ -701,7 +701,8 @@ def test_step_up_description_states_the_binding_rule(spec: dict[str, Any], rule:
         "No audit record carries `action_summary`, `target`, a request body, the password or the "
         "code",
         "Always audited (`auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed`, "
-        "`auth.step_up_mismatch`, `auth.session_readonly_downgrade`)",
+        "`auth.step_up_mismatch`, `auth.session_readonly_downgrade`, and the rotation's "
+        "`auth.session_revoked` and `auth.session_created`)",
     ],
 )
 def test_step_up_description_states_the_audit_rule(spec: dict[str, Any], rule: str) -> None:
