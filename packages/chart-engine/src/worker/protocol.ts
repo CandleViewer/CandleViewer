@@ -11,8 +11,11 @@ import type {
 import type { LossDetails } from "../gl/context-loss.js";
 import type { AtlasDetails } from "../text/atlas.js";
 import type { ChartFont } from "../text/platform.js";
+import type { CrosshairDriver, MagnetMode, SnapField } from "../overlays/crosshair.js";
+import type { ReadoutField } from "../overlays/readout.js";
 
 export type { CapabilityReport, DegradeReason, ReducedCapability, RenderProfile };
+export type { CrosshairDriver, MagnetMode, ReadoutField, SnapField };
 
 /** `ENGINE_NO_WEBGL2`'s optional details (E11-T05, README BQ-90): codes, never prose. */
 export interface DegradeDetails {
@@ -102,6 +105,7 @@ const SCALE_MODES: ReadonlySet<unknown> = new Set(["linear", "log", "percent", "
 /** The pointer a pick's tolerance comes from (E11-S08, BQ-130): 10 px, 16 px for touch. */
 export type PickPointer = "mouse" | "pen" | "touch";
 const PICK_POINTERS: ReadonlySet<unknown> = new Set(["mouse", "pen", "touch"]);
+const MAGNET_MODES: ReadonlySet<unknown> = new Set(["off", "weak", "strong"]);
 
 export type Command =
   | { readonly k: "setViewport"; readonly timeStart: number; readonly timeEnd: number }
@@ -133,6 +137,8 @@ export type Command =
       readonly marginBottom?: number;
     }
   | { readonly k: "export"; readonly reqId: number }
+  /** E11-S07 (BQ-4, additive): the crosshair's magnet (E11-D01 D3: `off` by default). */
+  | { readonly k: "setCrosshair"; readonly magnetMode: MagnetMode }
   | { readonly k: "release" };
 
 export type ToWorker =
@@ -251,7 +257,47 @@ export type FromWorker =
       /** Percent / indexed: the anchor bar's close in ticks; null when none. */
       readonly anchorTick: number | null;
     }
-  | { readonly t: "a11y"; readonly id: ChartId; readonly cursorSummary: string }
+  /**
+   * E11-S07 (BQ-3, additive fields): the cursor's spoken summary, for key-driven moves only;
+   * pointer hover and a remote (synced) crosshair never post it. `short` is the held-key form.
+   */
+  | {
+      readonly t: "a11y";
+      readonly id: ChartId;
+      readonly cursorSummary: string;
+      readonly short?: string;
+      readonly origin?: "key";
+    }
+  /**
+   * E11-S07 (BQ-1, additive): the local crosshair, posted at most once per frame and only when a
+   * field changed, never per pointer move. `price` is in ticks (NaN reads as none); `x`, `y` are
+   * the snapped intersection in CSS px; a remote (synced) crosshair never posts it (BQ-5).
+   */
+  | {
+      readonly t: "crosshair";
+      readonly id: ChartId;
+      readonly bar: number;
+      readonly time: number;
+      readonly price: number;
+      readonly priceText: string;
+      readonly timeText: string;
+      readonly x: number;
+      readonly y: number;
+      readonly snap: SnapField;
+      readonly driver: CrosshairDriver;
+      readonly visible: boolean;
+    }
+  /**
+   * E11-S07 (BQ-2, additive): the readout's fields at the crosshair bar, formatted in the worker;
+   * posted when the bar or the data at that bar changes, never per frame. It always follows, in
+   * the same frame, a `crosshair` whose bar or snap moved while visible (the facade's one event).
+   */
+  | {
+      readonly t: "readout";
+      readonly id: ChartId;
+      readonly bar: number;
+      readonly fields: readonly ReadoutField[];
+    }
   /**
    * E11-S06 (BQ-199, additive): the frame's retained axis labels in value order (what the DOM
    * mirror lists and E11-S11 draws), the axis stops' names, the price gutter in CSS px and the
@@ -434,6 +480,8 @@ function validCommand(cmd: unknown): boolean {
       return Number.isSafeInteger(cmd["reqId"]);
     case "setPriceScale":
       return validScale(cmd);
+    case "setCrosshair":
+      return MAGNET_MODES.has(cmd["magnetMode"]);
     case "release":
       return true;
     default:

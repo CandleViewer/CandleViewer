@@ -8,6 +8,14 @@
 // seam (E11-T05, README BQ-85): `openBackend` picks WebGL2 or Canvas 2D, and the loss wiring asks
 // for the optional `LossCapable` hooks, so no line here branches on which backend draws (S3).
 import { AxisModel, SAY, UPDATE } from "../axes/axis-model.js";
+import {
+  clockText,
+  createZoned,
+  dateText,
+  decimalsOf,
+  formatNumber,
+  ZoneClock,
+} from "../axes/format.js";
 import { GRID_NODE_ID } from "../axes/grid.js";
 import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
@@ -23,6 +31,16 @@ import {
 import { Gestures } from "../interaction/gestures.js";
 import { plotWidthOf } from "../interaction/wheel.js";
 import { RangeSlot } from "../model/counters.js";
+import {
+  createCrosshair,
+  hideCrosshair,
+  resolvePointer,
+  takeBarEdge,
+  type CrosshairState,
+  type MagnetMode,
+} from "../overlays/crosshair.js";
+import { CROSSHAIR_NODE_ID, CrosshairNode } from "../overlays/crosshair-node.js";
+import { Readout, type BarSource, type ReadoutProvider } from "../overlays/readout.js";
 import * as scene from "../scene/index.js";
 import { AtlasService, type AtlasCounters, type AtlasDetails } from "../text/atlas.js";
 import type { ChartFont, TextPlatform } from "../text/platform.js";
@@ -34,7 +52,9 @@ import {
   type IndexTimeMap,
   type PaneUniforms,
   backingPx,
-  screenToTime,
+  indexAt,
+  indexToScreen,
+  timeAt,
   writePaneUniforms,
 } from "../viewport/index.js";
 import {
@@ -90,6 +110,11 @@ export interface RuntimeDeps {
   readonly priceSources?: readonly PriceExtentSource[];
   /** The atlas's font, raster and cache platform (E11-S11, BQ-261); null or absent: none here. */
   readonly text?: TextPlatform | null;
+  /**
+   * Internal (E11-S07, BQ-14): the main series' bars for the readout and the magnet until the
+   * runtime owns a `BarStore` per series (#5307); its `BarView` fits structurally.
+   */
+  readonly readoutSources?: readonly BarSource[];
 }
 
 export interface RenderRuntime {
@@ -111,7 +136,23 @@ export interface RenderRuntime {
   resizeCounters(id: ChartId): Readonly<ResizeCounters> | undefined;
   /** Internal (E11-S11, BQ-272): `engine.atlas.*`; null until a WebGL2 chart with fonts opens. */
   atlasCounters(): Readonly<AtlasCounters> | null;
+  /**
+   * Internal (E11-S07, BQ-6): E13's seam. A visible series' value joins the readout after Δ, in
+   * registration order (a provider with a known key replaces it). Returns the unregister function;
+   * undefined for an unknown chart.
+   */
+  registerReadoutProvider(id: ChartId, provider: ReadoutProvider): (() => void) | undefined;
+  /** Internal (BQ-20): `engine.crosshair.*`; `FrameStats` is unchanged. */
+  crosshairCounters(id: ChartId): Readonly<CrosshairCounters> | undefined;
 }
+
+/** `engine.crosshair.events_emitted` (BQ-20): the public event's bar edges (BQ-10). */
+export interface CrosshairCounters {
+  eventsEmitted: number;
+}
+
+/** E11-D06 §5.2: the lines come back after this long without a drag, a glide or a wheel. */
+export const CROSSHAIR_REST_MS = 150;
 
 /** `engine.resize.*` (BQ-153): backing-store reallocations and DPR changes, per chart. */
 export interface ResizeCounters {
@@ -119,6 +160,58 @@ export interface ResizeCounters {
   dprChanges: number;
   lastDpr: number;
 }
+
+/** The crosshair as last posted (BQ-1): a field differs, the message goes out once. */
+interface PostedCrosshair {
+  bar: number;
+  tick: number;
+  x: number;
+  y: number;
+  snap: CrosshairState["snap"];
+  driver: CrosshairState["driver"];
+  visible: boolean;
+  origin: number;
+  tickSize: number;
+  time: number;
+}
+
+/** One chart's crosshair (E11-S07): local state, the pointer, the remote line and the readout. */
+interface CrossSlot {
+  readonly state: CrosshairState;
+  readonly node: CrosshairNode;
+  readonly readout: Readout;
+  readonly providers: Map<string, ReadoutProvider>;
+  readonly counters: CrosshairCounters;
+  readonly posted: PostedCrosshair;
+  magnet: MagnetMode;
+  /** The pointer over the canvas in CSS px; NaN once it left. */
+  px: number;
+  py: number;
+  /** The lines stay hidden until then (a drag, glide or wheel burst, then 150 ms of rest). */
+  restUntil: number;
+  /** The rest timer is pending; `rest` is its one prebuilt callback. */
+  armed: boolean;
+  rest: () => void;
+  /** The synced crosshair's bar time in µs (BQ-5); drawn only, never announced. */
+  remote: number | null;
+  /** The time last published to the sync group; NaN when none. */
+  published: number;
+  readonly clock: ZoneClock;
+  readonly zoned: ReturnType<typeof createZoned>;
+}
+
+const createPosted = (): PostedCrosshair => ({
+  bar: -1,
+  tick: Number.NaN,
+  x: Number.NaN,
+  y: Number.NaN,
+  snap: null,
+  driver: "none",
+  visible: false,
+  origin: Number.NaN,
+  tickSize: Number.NaN,
+  time: Number.NaN,
+});
 
 /** Frame stats are posted at most once per this interval outside bench mode (§6: 1 Hz). */
 export const FRAME_SAMPLE_MS = 1000;
@@ -164,8 +257,8 @@ interface Instance {
   /** Removes the context-loss listeners. */
   detach: (() => void) | null;
   viewportDirty: boolean;
-  summary: string;
-  a11yDirty: boolean;
+  /** E11-S07: the crosshair, its lines and the readout. */
+  readonly cross: CrossSlot;
   lod: LodLevels;
   lastFrameAt: number;
   /** Pointer, wheel, touch and key routing plus the glide (E11-S04). */
@@ -182,10 +275,22 @@ interface Instance {
   readonly fonts: readonly ChartFont[] | "invalid" | undefined;
 }
 
-const summarise = (timeUs: number): string => {
-  const d = new Date(Math.floor(timeUs / 1000));
-  return Number.isFinite(d.getTime()) ? d.toISOString() : "";
-};
+/** The batch's last move or leave row is a leave (G-29): the pointer left the canvas. */
+function leftCanvas(ev: Float32Array): boolean {
+  for (let i = ev.length - INPUT_STRIDE; i >= 0; i -= INPUT_STRIDE) {
+    if (ev[i] === INPUT.leave) return true;
+    if (ev[i] === INPUT.move) return false;
+  }
+  return false;
+}
+
+/** The batch ends a drag or touch (`up` or `cancel`): with no glide, the lines show at once. */
+function endsGesture(ev: Float32Array): boolean {
+  for (let i = 0; i < ev.length; i += INPUT_STRIDE) {
+    if (ev[i] === INPUT.up || ev[i] === INPUT.cancel) return true;
+  }
+  return false;
+}
 
 /** A notice's details for `ChartEvents.error`'s `message` (BQ-S3: §8 has no details field). */
 const describe = (n: scene.FrameNotice): string => {
@@ -198,6 +303,7 @@ const describe = (n: scene.FrameNotice): string => {
 export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   const charts = new Map<ChartId, Instance>();
   const gridRange = new RangeSlot();
+  const crossRange = new RangeSlot();
   let scheduled = false;
   let report: CapabilityReport | null = null;
   /** One CPU atlas per runtime, uploaded into each chart's context (BQ-277). */
@@ -311,6 +417,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     if (atlas?.image) backend.uploadAtlas(atlas.image);
     backend.attach(GRID_NODE_ID, inst.axes.grid); // the grid is its own instance ring
+    backend.attach(CROSSHAIR_NODE_ID, inst.cross.node); // and so is the crosshair (E11-S07)
     if (degraded !== null) {
       const { reason, message, reducedCapabilities } = degraded;
       post(ENGINE_NO_WEBGL2, message, true, { reducedCapabilities, reason }); // BQ-90
@@ -332,6 +439,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         inst.parked = false;
         inst.graph.markAllData(); // the GPU mirrors are rebuilt; the scene graph is untouched
         inst.axes.invalidate(); // the grid's ring re-uploads with the next frame (E11-S06)
+        inst.cross.node.invalidate(); // and the crosshair's (E11-S07)
         kick(inst);
       },
       giveUp: () => inst.scheduler.dispose(), // slot.frame === null for good; the host swaps
@@ -364,12 +472,213 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     touch(inst);
   }
 
-  function crosshairAt(inst: Instance, timeUs: number | null): void {
-    const summary = timeUs === null ? "" : summarise(timeUs);
-    if (summary === inst.summary) return;
-    inst.summary = summary;
-    inst.a11yDirty = true;
+  function createCross(timeZone: string | undefined, old: CrossSlot | undefined): CrossSlot {
+    const c: CrossSlot = {
+      state: createCrosshair(),
+      node: new CrosshairNode(CROSSHAIR_NODE_ID),
+      readout: new Readout(timeZone),
+      // The degraded-2d re-init keeps the providers, the magnet and the counters (G-28).
+      providers: old?.providers ?? new Map(),
+      counters: old?.counters ?? { eventsEmitted: 0 },
+      posted: createPosted(),
+      magnet: old?.magnet ?? "off",
+      px: Number.NaN,
+      py: Number.NaN,
+      restUntil: Number.NEGATIVE_INFINITY,
+      armed: false,
+      rest: () => undefined,
+      remote: old?.remote ?? null,
+      published: Number.NaN,
+      clock: new ZoneClock(timeZone ?? "UTC"),
+      zoned: createZoned(),
+    };
+    c.readout.setProviders([...c.providers.values()]);
+    return c;
+  }
+
+  /**
+   * The pointer moved over the canvas (CSS px), or left it (NaN): the next frame resolves. A move
+   * outside a gesture ends a wheel's hold at once (E11-D06 §5.2: the earlier of 150 ms after the
+   * last wheel event or the next pointer move).
+   */
+  function pointerAt(inst: Instance, x: number, y: number): void {
+    const c = inst.cross;
+    const released = !inst.gestures.active && c.restUntil > deps.now();
+    if (released) c.restUntil = Number.NEGATIVE_INFINITY;
+    if (!released && Object.is(c.px, x) && Object.is(c.py, y)) return;
+    c.px = x;
+    c.py = y;
     touch(inst);
+  }
+
+  /** A drag, glide or wheel hides the lines until 150 ms after the last of them (D06 §5.2). */
+  function holdLines(inst: Instance): void {
+    const c = inst.cross;
+    c.restUntil = deps.now() + CROSSHAIR_REST_MS;
+    if (c.armed) return;
+    c.armed = true;
+    deps.setTimer(c.rest, CROSSHAIR_REST_MS);
+  }
+
+  /** The rest timer: re-armed for what is left (the clock has no cancel), else a frame. */
+  function rested(inst: Instance): void {
+    const c = inst.cross;
+    c.armed = false;
+    if (charts.get(inst.id) !== inst) return; // retired or re-initialised
+    const left = c.restUntil - deps.now();
+    if (left > 0) {
+      c.armed = true;
+      deps.setTimer(c.rest, left);
+      return;
+    }
+    touch(inst);
+  }
+
+  /**
+   * BQ-6: once per frame in the layout hook, after autoscale and the axes. The pointer becomes
+   * the local crosshair (bar centre, magnet), hidden during a gesture and over the gutters; the
+   * lines are rewritten when they moved; the bar time goes to the sync group.
+   */
+  function resolveCrosshair(inst: Instance): void {
+    const c = inst.cross;
+    const s = c.state;
+    // Idle (no pointer seen, nothing shown, drawn or published, no remote line): O(1), so a
+    // frame with no crosshair (a resize drag, a pan from the keys) pays nothing for it.
+    if (
+      !s.visible &&
+      c.remote === null &&
+      Number.isNaN(c.px) &&
+      c.node.count === 0 &&
+      Number.isNaN(c.published)
+    ) {
+      return;
+    }
+    const vp = inst.viewport;
+    const rect = inst.layout.panes[0]?.rect;
+    if (inst.gestures.active) holdLines(inst);
+    const inPlot =
+      rect !== undefined &&
+      c.px >= rect[0] &&
+      c.px < rect[0] + rect[2] &&
+      c.py >= rect[1] &&
+      c.py < rect[1] + rect[3];
+    if (inPlot && deps.now() >= c.restUntil) {
+      resolvePointer(s, vp, 0, deps.readoutSources?.[0] ?? null, c.px, c.py, c.magnet);
+    } else if (s.visible) hideCrosshair(s);
+    if (rect !== undefined) {
+      let remoteX = Number.NaN;
+      if (!s.visible && c.remote !== null) {
+        // The bar holding the remote time, at its centre (an open time maps to its own bar).
+        remoteX = indexToScreen(vp, Math.floor(indexAt(vp.map, c.remote) + 1e-9));
+      }
+      const deviceH = Math.round(inst.layout.height * vp.dpr);
+      if (c.node.write(inst.theme, vp.dpr, deviceH, rect, s.visible, s.x, s.y, remoteX)) {
+        // Joined to the scene on its first lines: a chart never crossed walks no extra node.
+        if (inst.graph.get(CROSSHAIR_NODE_ID) === undefined) {
+          inst.graph.addNode("main", "foreground", c.node);
+        }
+        inst.graph.markData(CROSSHAIR_NODE_ID);
+        inst.builder.patch(CROSSHAIR_NODE_ID, crossRange.set("replace", 0, c.node.count, 0));
+      }
+    }
+    publishCrosshair(inst);
+  }
+
+  /**
+   * BQ-6: the local crosshair's bar time to every other chart of the same sync group, once per
+   * change (null once hidden). S09 (#446) replaces the loop with `SyncGroup`. No echo: a chart
+   * publishes only its own local crosshair, never a remote one it was given (`remote` never
+   * touches `state`), so a peer without a local cursor computes NaN, equal to its `published`,
+   * and sends nothing back.
+   */
+  function publishCrosshair(inst: Instance): void {
+    const group = inst.config.syncGroup;
+    if (group === null) return;
+    const c = inst.cross;
+    const t = c.state.visible ? timeAt(inst.viewport.map, c.state.bar) : Number.NaN;
+    if (Object.is(t, c.published)) return;
+    c.published = t;
+    for (const peer of charts.values()) {
+      if (peer !== inst && peer.config.syncGroup === group) {
+        applyRemoteCrosshair(peer, Number.isNaN(t) ? null : t);
+      }
+    }
+  }
+
+  /**
+   * BQ-5: a remote crosshair is drawn only. It never sets the summary or posts `a11y`, the
+   * readout or a magnet change (E11-D01 D3: never announced, never in the DOM mirror).
+   */
+  function applyRemoteCrosshair(inst: Instance, timeUs: number | null): void {
+    if (inst.cross.remote === timeUs) return;
+    inst.cross.remote = timeUs;
+    touch(inst);
+  }
+
+  /**
+   * BQ-1, BQ-2: in `render`, after `axes` and before `a11y`. The crosshair is posted when one
+   * of its fields changed (at most once a frame); the readout when its bar or the data at that
+   * bar changed. A copy is posted, never the pooled fields (inline mode shares the objects).
+   */
+  function postCrosshair(inst: Instance): void {
+    const c = inst.cross;
+    const s = c.state;
+    const p = c.posted;
+    if (!s.visible && !p.visible) return; // hidden and already posted hidden: nothing to say
+    const pane = inst.viewport.panes[0];
+    const origin = pane?.priceOrigin ?? Number.NaN;
+    const tickSize = pane?.tickSize ?? 0;
+    const time = s.bar >= 0 ? timeAt(inst.viewport.map, s.bar) : Number.NaN;
+    const same =
+      p.bar === s.bar &&
+      Object.is(p.tick, s.tick) &&
+      Object.is(p.x, s.x) &&
+      Object.is(p.y, s.y) &&
+      p.snap === s.snap &&
+      p.driver === s.driver &&
+      p.visible === s.visible &&
+      Object.is(p.origin, origin) &&
+      p.tickSize === tickSize &&
+      Object.is(p.time, time);
+    if (!same) {
+      // The facade emits its readout event once a frame: when the bar or snap moved while shown,
+      // a `readout` always follows this message (BQ-11), so the fields are rebuilt.
+      if (s.visible && (p.bar !== s.bar || p.snap !== s.snap)) c.readout.invalidate();
+      p.bar = s.bar;
+      p.tick = s.tick;
+      p.x = s.x;
+      p.y = s.y;
+      p.snap = s.snap;
+      p.driver = s.driver;
+      p.visible = s.visible;
+      p.origin = origin;
+      p.tickSize = tickSize;
+      p.time = time;
+      if (takeBarEdge(s)) c.counters.eventsEmitted += 1;
+      const price = tickSize > 0 && Number.isFinite(s.tick);
+      const z = c.clock.fields(time / 1000, c.zoned);
+      deps.post({
+        t: "crosshair",
+        id: inst.id,
+        bar: s.bar,
+        time,
+        price: s.tick,
+        priceText: price ? formatNumber(origin + s.tick * tickSize, decimalsOf(tickSize)) : "",
+        timeText: Number.isFinite(time) ? `${dateText(z)} ${clockText(z.ms, false)}` : "",
+        x: s.x,
+        y: s.y,
+        snap: s.snap,
+        driver: s.driver,
+        visible: s.visible,
+      });
+    }
+    if (!s.visible || !c.readout.build(deps.readoutSources?.[0] ?? null, s.bar, s.snap)) return;
+    deps.post({
+      t: "readout",
+      id: inst.id,
+      bar: s.bar,
+      fields: c.readout.fields.map((f) => ({ ...f })),
+    });
   }
 
   /**
@@ -396,6 +705,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       inst.builder.patch(GRID_NODE_ID, gridRange.set("replace", 0, axes.grid.count, 0));
     }
     if ((r & UPDATE.labels) !== 0) inst.axesDirty = true;
+    resolveCrosshair(inst);
   }
 
   /** F-13 (BQ-92): no export while the pixels cannot be trusted; the reason, never a stale PNG. */
@@ -553,6 +863,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "export":
         exportPng(inst, cmd.reqId);
         return;
+      case "setCrosshair":
+        inst.cross.magnet = cmd.magnetMode; // re-resolved next frame; never announced here
+        touch(inst);
+        return;
       case "release":
         retire(inst);
         charts.delete(inst.id);
@@ -573,7 +887,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         if (inst.config.syncGroup !== msg.groupId) continue;
         inst.gestures.stop();
         moved(inst, inst.viewport.setTimeRange(msg.timeRange[0], msg.timeRange[1]));
-        crosshairAt(inst, msg.crosshair);
+        applyRemoteCrosshair(inst, msg.crosshair); // remote-only (BQ-5)
       }
       return;
     }
@@ -588,6 +902,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       const c = msg.canvas as CanvasLike;
       const viewport = new ChartViewport(deps.timeMap);
       const axes = new AxisModel(msg.config.timeZone);
+      const cross = createCross(msg.config.timeZone, old?.cross);
       const [w, h] = [c.width / msg.dpr, c.height / msg.dpr];
       viewport.setSize(plotWidthOf(w), h, msg.dpr); // the plot rect, not the canvas (RULED (5))
       viewport.setPanePlot(0, 0, h);
@@ -619,13 +934,12 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         ),
         ready: false,
         viewportDirty: false,
-        summary: "",
-        a11yDirty: false,
+        cross,
         lod: { candles: 0, footprint: 0 },
         lastFrameAt: Number.NEGATIVE_INFINITY,
         gestures: new Gestures(viewport, scene.layout, {
           moved: (changed) => moved(inst, changed),
-          hover: (x) => crosshairAt(inst, screenToTime(viewport, x)),
+          hover: (x, y) => pointerAt(inst, x, y),
           animate: (m) => inst.scheduler.animate(m),
           say: (code) => (inst.axes.say = code),
         }),
@@ -649,6 +963,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         fonts: msg.fonts === undefined ? undefined : fontsOk(msg.fonts) ? msg.fonts : "invalid",
       };
       inst.gestures.reduce = msg.reducedMotion === true;
+      cross.rest = () => rested(inst);
       charts.set(msg.id, inst);
       touch(inst);
       return;
@@ -663,7 +978,16 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         resize(inst, msg);
         return;
       case "input":
+        if (msg.kind === "wheel") holdLines(inst); // a wheel burst hides the lines (D06 §5.2)
         inst.gestures.apply(msg.kind === "touch", msg.events);
+        if (inst.gestures.active) {
+          holdLines(inst); // a drag between frames hides them too
+        } else if (endsGesture(msg.events)) {
+          // E11-D06 §5.2: an up with no glide shows them at once, not after the rest.
+          inst.cross.restUntil = Number.NEGATIVE_INFINITY;
+          touch(inst);
+        }
+        if (msg.kind === "pointer" && leftCanvas(msg.events)) pointerAt(inst, NaN, NaN);
         if (msg.kind === "pointer" || msg.kind === "touch") {
           hover(inst, msg.kind === "touch", msg.events);
         }
@@ -763,10 +1087,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         ...(say !== null && { say }),
       });
     }
-    if (inst.a11yDirty) {
-      inst.a11yDirty = false;
-      deps.post({ t: "a11y", id: inst.id, cursorSummary: inst.summary });
-    }
+    postCrosshair(inst);
+    // `a11y` is posted for key-driven cursor moves only (BQ-3); their wiring is BQ-7's.
     const end = deps.now();
     if (inst.config.bench || end - inst.lastFrameAt >= FRAME_SAMPLE_MS) {
       inst.lastFrameAt = end;
@@ -846,5 +1168,21 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     },
     resizeCounters: (id) => charts.get(id)?.resizes,
     atlasCounters: () => atlas?.counters ?? null,
+    registerReadoutProvider(id, provider) {
+      const inst = charts.get(id);
+      if (inst === undefined) return undefined;
+      const { providers, readout } = inst.cross;
+      providers.set(provider.key, provider);
+      readout.setProviders([...providers.values()]);
+      touch(inst);
+      return () => {
+        if (providers.get(provider.key) !== provider) return;
+        providers.delete(provider.key);
+        const live = charts.get(id)?.cross ?? inst.cross;
+        live.readout.setProviders([...providers.values()]);
+        touch(charts.get(id) ?? inst);
+      };
+    },
+    crosshairCounters: (id) => charts.get(id)?.cross.counters,
   };
 }

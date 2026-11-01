@@ -18,8 +18,8 @@ import { axisDragFactor, MOD, priceDragFactor, REGION, regionAt, wheelFactor } f
 export interface GestureSink {
   /** A viewport setter ran; `changed` is its result. */
   moved(changed: boolean): void;
-  /** The pointer is over plot x (the crosshair summary, as shipped: G-6). */
-  hover(x: number): void;
+  /** The pointer moved to (x, y), CSS px over the canvas: the crosshair follows it (E11-S07). */
+  hover(x: number, y: number): void;
   /** Registers the glide with the chart's frame scheduler. */
   animate(m: Momentum): void;
   /** An axis key changed the view (E11-S06): its `SAY` announcement code. */
@@ -138,7 +138,7 @@ export class Gestures {
       if (slot >= 0 && !Number.isNaN(this.ids[1 - slot] as number)) this.pinch(slot, x);
       else if (slot >= 0) this.dragTo(x, y, dt);
     } else if ((b & 1) === 1) this.dragTo(x, y, dt);
-    this.sink.hover(x);
+    this.sink.hover(x, y);
   }
 
   private dragTo(x: number, y: number, dt: number): void {
