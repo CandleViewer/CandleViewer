@@ -1,0 +1,86 @@
+- link "Skip to main content":
+  - /url: "#cv-main"
+- banner:
+  - text: CandleViewer
+  - 'img "Trading environment: Demo"': ○ DEMO
+  - button "Account" [disabled]
+  - text: Not available in this build.
+  - button "Interval" [disabled]
+  - text: Not available in this build.
+  - button "Search commands Ctrl+K" [disabled]
+  - text: The command palette is not available in this build.
+  - 'button "Connection: Reconnecting"': Reconnecting
+  - button "Sign out"
+- navigation "Primary":
+  - list:
+    - listitem:
+      - link "Terminal":
+        - /url: /terminal
+    - listitem:
+      - link "Rules":
+        - /url: /rules
+    - listitem:
+      - link "Journal":
+        - /url: /journal
+    - listitem:
+      - link "Replay":
+        - /url: /replay
+    - listitem:
+      - link "Alerts":
+        - /url: /alerts
+    - listitem:
+      - link "Settings":
+        - /url: /settings
+    - listitem:
+      - link "Admin":
+        - /url: /admin
+  - button "Collapse navigation rail" [expanded]
+- main:
+  - text: Search settings
+  - searchbox "Search settings"
+  - navigation "Settings":
+    - list:
+      - listitem:
+        - link "Profile":
+          - /url: /settings/profile
+        - text: Name, contact details and defaults.
+      - listitem:
+        - link "Security":
+          - /url: /settings/profile#security
+        - text: Password, two-factor and active sessions.
+      - listitem:
+        - link "Appearance":
+          - /url: /settings/appearance
+        - text: Theme, density and chart colours.
+      - listitem:
+        - link "Hotkeys":
+          - /url: /settings/hotkeys
+        - text: Every command with its key binding.
+      - listitem:
+        - button "Trading defaults" [disabled]
+        - text: "Not available yet: this section ships in a later release."
+      - listitem:
+        - link "Notifications":
+          - /url: /settings/notifications
+        - text: Channels and quiet hours per event.
+      - listitem:
+        - button "Data & performance" [disabled]
+        - text: "Not available yet: this section ships in a later release."
+      - listitem:
+        - link "Accessibility":
+          - /url: /settings/appearance#accessibility
+        - text: Motion, contrast, focus and announcements.
+      - listitem:
+        - button "Help & about" [disabled]
+        - text: "Not available yet: this section ships in a later release."
+  - button "Reset Notifications…" [disabled]
+  - text: "Not available yet: resetting needs the settings service."
+  - heading "R-204 — owned by E11" [level=1]
+  - paragraph: This screen has not shipped yet.
+- complementary "Side panels":
+  - button "Notifications"
+- contentinfo:
+  - text: "Connection: offline"
+  - status "System status": "WS latency: unavailable"
+  - text: "12:00:00 UTC Trading environment: Demo v0.1.0"
+- status

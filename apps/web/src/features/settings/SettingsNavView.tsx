@@ -23,7 +23,7 @@ const ITEM: CSSProperties = {
   font: "inherit",
   textAlign: "start",
 };
-const CURRENT: CSSProperties = { ...ITEM, fontWeight: "var(--font-weight-bold, 700)" };
+const CURRENT: CSSProperties = { ...ITEM, fontWeight: 700 };
 const DISABLED: CSSProperties = {
   ...ITEM,
   color: "var(--color-text-secondary)",
