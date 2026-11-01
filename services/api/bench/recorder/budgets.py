@@ -4,7 +4,7 @@ Budgets (ticket perf notes, 06-performance-and-load-standard budget #12 and the 
 p95 flush < 50 ms, process RSS <= 512 MiB, API p95 < 150 ms, a `recorder` frame < 8 KiB for 20
 symbols, GB/day within 20 % of the E16-K01 figure, and no silent loss: zero dropped rows, a backlog
 p95 of 0 at flush boundaries, zero spill bytes, and produced rows == written rows + rows a gap
-accounts for, per stream, exactly (either sign is a failure: loss or duplication).
+accounts for, per symbol, exactly (either sign is a failure: loss or duplication).
 The API and frame budgets are judged by k6's thresholds (`tests/load/k6/recorder_api.js`); their
 numbers live here so the script and the docs quote one place.
 """
@@ -38,6 +38,8 @@ class RunResult:
     produced_rows: dict[str, int] = field(default_factory=dict)
     written_rows: dict[str, int] = field(default_factory=dict)
     dropped_rows: dict[str, int] = field(default_factory=dict)
+    #: Of the written rows, those the run left in its WAL and a restart's replay wrote.
+    recovered_rows: dict[str, int] = field(default_factory=dict)
     flush_ms: list[float] = field(default_factory=list)
     rss_bytes: list[int] = field(default_factory=list)
     backlog_rows: list[int] = field(default_factory=list)
@@ -95,8 +97,8 @@ def check_spill(spill_bytes: Sequence[int]) -> Check:
 def check_reconciliation(
     produced: Mapping[str, int], written: Mapping[str, int], gap_accounted: Mapping[str, int]
 ) -> Check:
-    """Produced == written + gap-accounted, per stream; any difference is undetected loss (or a
-    duplicate) and fails."""
+    """Produced == written + gap-accounted, per key (the harness keys by symbol); any difference
+    is undetected loss (or a duplicate) and fails, and the note names each key's difference."""
     streams = sorted(set(produced) | set(written) | set(gap_accounted))
     bad = {
         s: produced.get(s, 0) - written.get(s, 0) - gap_accounted.get(s, 0)
