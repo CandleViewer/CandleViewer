@@ -74,7 +74,7 @@ def test_thresholds_refuse_a_bool() -> None:
     [
         (order(state="submitted", age_s=30.0), None),  # in flight 30 s: at the bound, not over
         (order(state="submitted", age_s=30.001), "in_flight"),
-        (order(state="quarantined", age_s=30.001), "in_flight"),
+        (order(state="unknown", in_flight=False, age_s=30.001), "unknown"),  # a cancel's 110001
         (order(state="unknown", age_s=30.0), None),  # one cycle exactly: not more than one
         (order(state="unknown", age_s=30.001), "unknown"),
         (order(state="pending_cancel", in_flight=False, age_s=15.0), None),
