@@ -6,6 +6,8 @@
 export const PANEL_TEXT = {
   /** PROPOSED: region (g)'s card, the sketch's "(g) Maintenance" (D04 §2). */
   maintenance: "Maintenance",
+  /** D04 §6 `JOB/confirm-compact`'s verb: "Cancel / Compact". */
+  compact: "Compact",
   /** `14` SCR-142's sign-off item "per-symbol breakdown for the hot tier": region (e)'s caption. */
   symbolsCaption: "Per-symbol breakdown for the hot tier",
   /** D04 §4 `TIER/per-symbol`: the Pinned column and its word; PROPOSED, the hidden reading of its "—". */

@@ -100,11 +100,14 @@ export function TierCards({
                   ))}
                 </dl>
                 {view.unreachable === null ? null : (
-                  <InlineError
-                    message={view.unreachable}
-                    live="off"
-                    retry={{ label: RETRY, onClick: () => onRetry(view.tier) }}
-                  />
+                  // The host names this Retry, so the section can land focus once a read takes it away (FM-14).
+                  <div data-cv-retry={view.tier}>
+                    <InlineError
+                      message={view.unreachable}
+                      live="off"
+                      retry={{ label: RETRY, onClick: () => onRetry(view.tier) }}
+                    />
+                  </div>
                 )}
                 {action === undefined || action === null ? null : (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-inset-xs)" }}>

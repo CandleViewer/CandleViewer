@@ -25,6 +25,9 @@ export type StorageJobKind = "compact" | "import";
 /** The deck's `{verb}` (D04 §14's variables: Compaction · Import). */
 const VERB: Readonly<Record<StorageJobKind, string>> = { compact: "Compaction", import: "Import" };
 
+/** The job's verb: its strip line's name. */
+export const verbOf = (kind: StorageJobKind): string => VERB[kind];
+
 /** "Compaction started", said once as the job is accepted (SR-24). */
 export const startedLine = (kind: StorageJobKind): string =>
   fill(STORAGE_DECK["storage.job.started"][0], { "{verb}": VERB[kind] });
