@@ -21,6 +21,8 @@ export interface ChartOptions {
   fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[];
   // E11-S07 (BQ-9, in §8; E11-D01 D3): the crosshair magnet, default 'off'.
   magnetMode?: MagnetMode;
+  // E11-S09 PR 2 (BQ-17, in §8): the modes `syncGroup` joins with (and `setSyncGroup`'s base).
+  syncModes?: Partial<SyncModes>;
 }
 
 export interface Chart {
@@ -41,6 +43,9 @@ export interface Chart {
   getFocusedUnit(): FocusedUnit | null;
   // E11-S07 (BQ-9, in §8): the magnet; the change is announced politely.
   setMagnetMode(m: MagnetMode): void;
+  // E11-S09 PR 2 (BQ-17, in §8): joins a sync group (null leaves); the app names the group, the
+  // engine never invents one. Absent modes keep the chart's (time and crosshair by default).
+  setSyncGroup(groupId: string | null, modes?: Partial<SyncModes>): void;
 }
 
 export interface Pane {
@@ -254,6 +259,17 @@ export type Density = "comfortable" | "compact" | "dense";
 
 /** E11-S07 (BQ-8, BQ-9): `weak` snaps within 12 px of an O/H/L/C, `strong` always snaps. */
 export type MagnetMode = "off" | "weak" | "strong";
+
+/**
+ * E11-S09 PR 2 (BQ-17, BQ-18; E11-D01 D1): what a chart shares with its sync group; default
+ * `{ time: true, crosshair: true, levels: false }`. The price range is never shared; `levels`
+ * is the flag only until E14's drawings exist.
+ */
+export interface SyncModes {
+  time: boolean;
+  crosshair: boolean;
+  levels: boolean;
+}
 
 /** One readout row, formatted in the engine (BQ-2): `open|high|low|close|volume|delta|ind:<id>`. */
 export interface ReadoutFieldValue {

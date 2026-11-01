@@ -57,6 +57,7 @@ export type {
   SeriesOptionsMap,
   SeriesPlugin,
   SeriesType,
+  SyncModes,
   TextStyle,
   TextureId,
   ThemeTokens,

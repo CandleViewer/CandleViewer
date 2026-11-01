@@ -13,6 +13,8 @@ import { createScaleBadge } from "../host/scale-badge.js";
 import { readReducedMotion, watchMotion } from "../host/motion.js";
 import { watchSize } from "../host/resize.js";
 import { PRICE_GUTTER_PX } from "../scene/layout-engine.js";
+import { DEFAULT_SYNC_MODES } from "../sync/SyncGroup.js";
+import { SYNC_ANNOUNCE_KEY, syncRegistryFor, type SyncMember } from "../sync/registry.js";
 import {
   captureInput,
   createChartHost,
@@ -26,6 +28,7 @@ import {
   type FromWorker,
   PANE_LABEL_MAX,
   type RunMode,
+  SYNC_GROUP_MAX,
 } from "../worker/protocol.js";
 import { createPane, type PaneHost, type PaneInternal } from "./pane.js";
 import { checkScaleOptions, createTimeScale } from "./scales.js";
@@ -42,6 +45,7 @@ import type {
   PaneOptions,
   ReadoutEvent,
   ReadoutFieldValue,
+  SyncModes,
   ThemeTokens,
   Unsubscribe,
   VisibleWindow,
@@ -107,6 +111,26 @@ function paneLabel(label: unknown, key: number): string {
   return label;
 }
 
+/** BQ-17: a group id the app names: a non-empty string of at most 120 characters, or null. */
+function syncGroupId(g: unknown): string | null {
+  if (g === null) return null;
+  if (typeof g !== "string" || g.length === 0 || g.length > SYNC_GROUP_MAX) {
+    throw new RangeError(
+      `chart-engine: a sync group id must be a non-empty string of at most ${SYNC_GROUP_MAX}`,
+    );
+  }
+  return g;
+}
+
+/** BQ-17: `base` with the given flags; each must be a boolean. */
+function syncModes(base: SyncModes, modes: Partial<SyncModes> | undefined): SyncModes {
+  const next = { ...base, ...modes };
+  if (![next.time, next.crosshair, next.levels].every((v) => typeof v === "boolean")) {
+    throw new RangeError("chart-engine: sync modes are booleans (time, crosshair, levels)");
+  }
+  return { time: next.time, crosshair: next.crosshair, levels: next.levels };
+}
+
 function positiveInt(value: number | undefined, fallback: number, name: string): number {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -124,6 +148,8 @@ export function createChart(opts: ChartOptions): Chart {
   positiveInt(opts.maxBars, CHART_DEFAULTS.maxBars, "maxBars");
   positiveInt(opts.memoryBudgetMb, CHART_DEFAULTS.memoryBudgetMb, "memoryBudgetMb");
   let magnet = magnetMode(opts.magnetMode ?? "off");
+  let modes = syncModes(DEFAULT_SYNC_MODES, opts.syncModes);
+  const initialGroup = syncGroupId(opts.syncGroup ?? null);
 
   const surface = mountSurface(opts.container);
   const doc = opts.container.ownerDocument;
@@ -264,6 +290,9 @@ export function createChart(opts: ChartOptions): Chart {
         fields = msg.fields;
         emitReadout();
         return;
+      case "sync":
+        registry.relay(member, msg); // BQ-21: to the group's other workers, origin kept
+        return;
       default:
       // pick and a11y are the hit-test and live-region layers' (E11-S08 / E11-S13).
     }
@@ -303,7 +332,7 @@ export function createChart(opts: ChartOptions): Chart {
     replaceCanvas: () => surface.replaceCanvas(),
     dpr: doc.defaultView?.devicePixelRatio ?? 1,
     theme: opts.theme.colors,
-    syncGroup: opts.syncGroup ?? null,
+    syncGroup: initialGroup,
     timeZone: opts.timeZone ?? CHART_DEFAULTS.timeZone,
     reducedMotion,
     ...(opts.fonts !== undefined && { fonts: opts.fonts }),
@@ -338,6 +367,25 @@ export function createChart(opts: ChartOptions): Chart {
     host.command({ k: "setMotion", reduce }),
   );
   if (magnet !== "off") host.command({ k: "setCrosshair", magnetMode: magnet });
+  // E11-S09 PR 2 (BQ-21): the page's registry; the chart's announcer under `chart:sync`.
+  const registry = syncRegistryFor(doc);
+  let saySync: ((text: string) => void) | null = null;
+  const member: SyncMember = {
+    get link(): object {
+      return host.link;
+    },
+    command: (cmd) => host.command(cmd),
+    sync: (groupId, payload) => host.sync(groupId, payload),
+    say(text: string): void {
+      saySync ??= createAnnouncer(
+        opts.container,
+        { now: () => env.now(), setTimer: (cb, ms) => env.setTimer(cb, ms) },
+        SYNC_ANNOUNCE_KEY,
+      );
+      saySync(text);
+    },
+  };
+  if (initialGroup !== null) registry.set(member, initialGroup, modes);
   const timeScale = createTimeScale((r) => {
     host.command({ k: "setViewport", timeStart: r.from, timeEnd: r.to });
   });
@@ -423,6 +471,12 @@ export function createChart(opts: ChartOptions): Chart {
       );
       sayMagnet(magnetText(next));
     },
+    setSyncGroup(groupId: string | null, next?: Partial<SyncModes>): void {
+      if (disposed) return;
+      const g = syncGroupId(groupId);
+      modes = syncModes(modes, next);
+      registry.set(member, g, modes);
+    },
     subscribe<E extends keyof ChartEvents>(e: E, cb: (p: ChartEvents[E]) => void): Unsubscribe {
       if (disposed) return () => undefined;
       let set = listeners.get(e);
@@ -467,6 +521,7 @@ export function createChart(opts: ChartOptions): Chart {
       detachMotion();
       badge.dispose();
       stops?.dispose();
+      registry.remove(member);
       host.dispose();
       surface.unmount();
     },

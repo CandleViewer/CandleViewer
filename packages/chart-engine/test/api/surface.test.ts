@@ -19,6 +19,7 @@ import type {
   PaneId,
   SeriesHandle,
   SeriesType,
+  SyncModes,
   ThemeTokens,
   Unsubscribe,
 } from "../../src/index.js";
@@ -138,6 +139,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "SeriesOptionsMap",
       "SeriesPlugin",
       "SeriesType",
+      "SyncModes",
       "TextStyle",
       "TextureId",
       "ThemeTokens",
@@ -208,6 +210,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "removePane",
       "setDensity",
       "setMagnetMode",
+      "setSyncGroup",
       "setTheme",
       "subscribe",
       "takeScreenshot",
@@ -245,6 +248,24 @@ describe("Scenario: The package builds and exports the designed surface", () => 
     expectTypeOf<ChartEvents["crosshair"]["paneId"]>().toEqualTypeOf<PaneId | undefined>();
     // The §8 sketch carries the crosshair's new field (contract first).
     expect(readSketch().text).toMatch(/paneId\?: PaneId/);
+  });
+
+  it("E11-S09 PR 2 widens the chart additively: setSyncGroup, ChartOptions.syncModes, SyncModes", () => {
+    expect(surface.members("SyncModes")).toEqual({
+      time: "boolean",
+      crosshair: "boolean",
+      levels: "boolean",
+    });
+    expect(surface.members("ChartOptions")["syncModes"]).toBe("Partial<SyncModes> | undefined");
+    expectTypeOf<Chart["setSyncGroup"]>().toEqualTypeOf<
+      (groupId: string | null, modes?: Partial<SyncModes>) => void
+    >();
+    // The §8 sketch carries the new members (contract first).
+    const { text } = readSketch();
+    expect(text).toMatch(
+      /setSyncGroup\(groupId: string \| null, modes\?: Partial<SyncModes>\): void;/,
+    );
+    expect(text).toMatch(/syncModes\?: Partial<SyncModes>;/);
   });
 
   it("type-checks the key signatures (enforced by tsc over test/)", () => {

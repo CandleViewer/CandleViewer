@@ -470,6 +470,7 @@ export interface ChartOptions {
   memoryBudgetMb?: number; // default 600
   fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[]; // SDF atlas (E11-S11 BQ-258)
   magnetMode?: MagnetMode; // default 'off' (E11-S07, E11-D01 D3)
+  syncModes?: Partial<SyncModes>; // default { time: true, crosshair: true, levels: false } (E11-S09)
 }
 
 export interface Chart {
@@ -490,6 +491,8 @@ export interface Chart {
   getFocusedUnit(): FocusedUnit | null;
   // E11-S07: the crosshair magnet; the change is announced politely by the host.
   setMagnetMode(m: MagnetMode): void;
+  // E11-S09: joins the app-named sync group (null leaves); absent modes keep the chart's.
+  setSyncGroup(groupId: string | null, modes?: Partial<SyncModes>): void;
 }
 
 // Mounts into `container` and returns synchronously; capability detection is lazy (E11-T01).
@@ -639,6 +642,13 @@ export interface ChartEvents {
 // E11-S07: weak snaps within 12 px of the bar's O/H/L/C (released 2 px further), strong always.
 export type MagnetMode = "off" | "weak" | "strong";
 
+// E11-S09 (E11-D01 D1): what a chart shares with its group; the price range never.
+export interface SyncModes {
+  time: boolean;
+  crosshair: boolean;
+  levels: boolean; // the flag only until E14's drawings (the level payload is reserved)
+}
+
 export interface ReadoutFieldValue {
   key: string; // 'open' | 'high' | 'low' | 'close' | 'volume' | 'delta' | 'ind:<id>'
   label: string; // 'O', 'H', …; the snapped field in full ('High')
@@ -712,6 +722,7 @@ at `@candleviewer/chart-engine/compat`, never from the package root.
 
 E11-S09 PR 1 (#446 BQ-15) adds one optional member to `PaneOptions`: `label?: string`, at most 120 characters. It is the pane's accessible name, used for its region, separator and announcements. The default is "Price pane" for the first pane and "Pane N" after that. `Pane.setHeightRatio` now reaches the renderer: the facade sends every pane's weight, and the worker normalises them. `heightRatio` is a weight relative to the other panes, not a fraction of the chart; its cap of 1 is a bound. Removing a chart's last pane is refused with `LastPaneError` (code `ENGINE_LAST_PANE`), so the stack never drops to zero panes.
 
+E11-S09 PR 2 (#446 BQ-17, BQ-18) adds `Chart.setSyncGroup(groupId, modes?)`, `ChartOptions.syncModes?` and the `SyncModes` type, all additive. The app names the group; the engine never invents one, and `null` leaves it. A group id is 1 to 120 characters. Absent modes keep the chart's own, which start as `{ time: true, crosshair: true, levels: false }` (E11-D01 D1) or `ChartOptions.syncModes`. `ChartOptions.syncGroup` joins at mount with those modes.
 
 React binding (in `apps/web`, deliberately thin). As shipped (E11-T01): `syncGroup` is a field of
 `options`, `label` names the chart region (05 §6.1), `onFrameStats` is optional, and the crosshair is
