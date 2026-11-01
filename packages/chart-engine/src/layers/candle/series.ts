@@ -8,7 +8,7 @@ import type { BatchUniforms } from "../../gl/submit.js";
 import type { SceneGraph } from "../../scene/graph.js";
 import { PROGRAM } from "../../scene/instance-layout.js";
 import { type HostContext, type HostDeps, type HostedPlugin, SeriesHost } from "../host.js";
-import { candleGeometry } from "./geometry.js";
+import { candleGeometry, GEOM_FLOATS } from "./geometry.js";
 import { candlePalette, PALETTE_FLOATS, PaletteError } from "./palette.js";
 import { CANDLE_STRIDE, type CandleRing } from "./ring.js";
 
@@ -24,7 +24,7 @@ export const CANDLE_PARTS = ["wick", "body"] as const;
 
 export class CandleSeries implements HostedPlugin {
   readonly palette = new Float32Array(PALETTE_FLOATS);
-  readonly geom = new Float32Array(4);
+  readonly geom = new Float32Array(GEOM_FLOATS);
   /** Per part: `u_batch` = (part, head, mask, length), the shared geometry and palette. */
   readonly blocks: readonly BatchUniforms[];
   /** The mounted host nodes, wick then body; replaced on a remount (the degraded-2d init). */

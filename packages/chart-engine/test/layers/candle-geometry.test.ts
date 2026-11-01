@@ -6,6 +6,7 @@ import { mulberry32 } from "../../bench/fixtures/rng.mjs";
 import {
   CANDLE_DIR,
   candleGeometry,
+  fullOutline,
   candlePalette,
   candleRect,
   GEOM,
@@ -15,7 +16,7 @@ import {
 } from "../../src/layers/index.js";
 
 const geom = (s: number, dpr: number): Float32Array => {
-  const g = new Float32Array(4);
+  const g = new Float32Array(8);
   candleGeometry(s, dpr, g);
   return g;
 };
@@ -29,17 +30,22 @@ const rect = (part: number, ohlc: number[], dir: number, g: Float32Array): numbe
 };
 
 describe("candleGeometry", () => {
+  // E12-D06 §3.1 / E12-D12 §5.2: "forced odd from 4 px (an even width takes the next odd value
+  // when it is ≤ s − 1, else the previous one) … Ladder at the sample steps: 9 / 5 / 2 px; the
+  // cap is reached from s = 48" (the sample steps s = 12, 6, 3).
   it.each([
+    [12, 1, 9, 1], // sample step 1: 8 → 9
+    [6, 1, 5, 1], // sample step 2: 4 → 5 (5 ≤ s − 1)
+    [3, 1, 2, 1], // sample step 3: under 4 px, even stays
+    [48, 1, 35, 1], // the cap reached: 34 → 35
+    [47, 1, 33, 1], // not yet: 33 is odd already
     [1.5, 1, 1, 1],
-    [3, 1, 2, 1],
-    [5, 1, 3, 1],
-    [8, 1, 5, 1],
-    [12, 1, 7, 1],
-    [48, 1, 33, 1],
+    [5, 1, 3, 1], // 4 → 5 > s − 1, so the previous odd value
+    [8, 1, 7, 1],
     [200, 1, 35, 1],
-    [12, 2, 14, 2],
-    [12, 1.5, 11, 1],
-    [12, 3, 21, 3],
+    [12, 2, 18, 2], // 9 CSS px × 2: even over an even hairline
+    [12, 1.5, 13, 1], // 13.5 → 14, matched to the odd hairline
+    [12, 3, 27, 3],
   ])("spacing %f at dpr %f: body %i, hairline %i", (s, dpr, body, hair) => {
     const g = geom(s, dpr);
     expect([g[GEOM.body], g[GEOM.hair], g[GEOM.spacing]]).toEqual([body, hair, s]);
@@ -67,15 +73,31 @@ describe("candleGeometry", () => {
 });
 
 describe("candleRect", () => {
-  const g = geom(12, 1); // body 7, hairline 1
+  const g = geom(12, 1); // body 9, hairline 1
   it("places the wick over [low, high] and the body over [open, close] at the bar's centre", () => {
     expect(rect(0, [2, 9, 1, 5], CANDLE_DIR.up, g)).toEqual([35, 482, 1, 16]);
-    expect(rect(1, [2, 9, 1, 5], CANDLE_DIR.up, g)).toEqual([32, 490, 7, 6]);
-    expect(rect(0, [5, 9, 1, 2], CANDLE_DIR.down, g)[2]).toBe(2); // a down wick: 2 hairlines
+    expect(rect(1, [2, 9, 1, 5], CANDLE_DIR.up, g)).toEqual([31, 490, 9, 6]);
+  });
+
+  it("D06 §3.1: a body of 9 px puts the up wick on column 4, the down wick on columns 4 and 5", () => {
+    const body = rect(1, [5, 9, 1, 2], CANDLE_DIR.down, g);
+    const up = rect(0, [2, 9, 1, 5], CANDLE_DIR.up, g);
+    const down = rect(0, [5, 9, 1, 2], CANDLE_DIR.down, g);
+    const columns = (r: number[]): number[] =>
+      Array.from({ length: r[2] ?? 0 }, (_, c) => (r[0] ?? 0) + c - (body[0] ?? 0));
+    expect([body[2], columns(up), columns(down)]).toEqual([9, [4], [4, 5]]);
+  });
+
+  it("D06 §3.2: the full up outline starts at 3 CSS px wide, whatever the DPR", () => {
+    const narrow = geom(3, 1.5); // 2 CSS px → 3 device px: top and bottom only
+    const wide = geom(6, 1.5); // 5 CSS px → 7 device px
+    expect([narrow[GEOM.body], fullOutline(narrow[GEOM.body] ?? 0, narrow)]).toEqual([3, false]);
+    expect([wide[GEOM.body], fullOutline(wide[GEOM.body] ?? 0, wide)]).toEqual([7, true]);
+    expect(fullOutline(3, geom(3, 1))).toBe(true); // 3 CSS px at dpr 1
   });
 
   it("draws a doji 2 hairlines tall (1 below 8 px) and a zero-range bar at least 3 wide", () => {
-    expect(rect(1, [4, 9, 1, 4], CANDLE_DIR.doji, g)).toEqual([32, 491, 7, 2]);
+    expect(rect(1, [4, 9, 1, 4], CANDLE_DIR.doji, g)).toEqual([31, 491, 9, 2]);
     expect(rect(1, [4, 9, 1, 4], CANDLE_DIR.doji, geom(6, 1))[3]).toBe(1);
     expect(rect(1, [4, 4, 4, 4], CANDLE_DIR.zeroRange, geom(2, 1))[2]).toBe(3);
   });

@@ -3,7 +3,7 @@
 // its shader's affine (src/gl/shaders), so both backends place an instance on the same pixels.
 // The pane block (`PaneUniforms`, E11-S03) is the only projection used: no price or time maths here.
 import type { BatchUniforms } from "../gl/submit.js";
-import { candleRect, GEOM } from "../layers/candle/geometry.js";
+import { candleRect, fullOutline, GEOM } from "../layers/candle/geometry.js";
 import { CANDLE_STRIDE } from "../layers/candle/ring.js";
 import { attributeOffset, PROGRAM } from "../scene/instance-layout.js";
 import { projectRel, type PaneUniforms } from "../viewport/transform.js";
@@ -114,11 +114,19 @@ export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
     blk.geom,
     r,
   );
-  let [x, y, w, h] = [r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, r[3] ?? 0];
+  // Scalar locals throughout: a painter runs per bar, per frame (no array per call).
+  let x = r[0] ?? 0;
+  let y = r[1] ?? 0;
+  let w = r[2] ?? 0;
+  let h = r[3] ?? 0;
   if (a.sub === 1) {
     const hair = blk.geom[GEOM.hair] ?? 1;
-    if (w >= 3 * hair) [x, w] = [x + hair, w - 2 * hair];
-    [y, h] = [y + hair, h - 2 * hair];
+    if (fullOutline(w, blk.geom)) {
+      x += hair;
+      w -= 2 * hair;
+    }
+    y += hair;
+    h -= 2 * hair;
     if (w <= 0 || h <= 0) return;
   }
   const sx = scaleX(a);
