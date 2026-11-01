@@ -5,11 +5,18 @@ and gets no frame after.
 
 Cited, not repeated: E12-Q04's RBAC matrix (`tests/contract/test_market_e12_q04_contract.py`) and
 the refused-subscribe case (`tests/contract/ws/test_ws_bars_contract.py`).
+
+IDOR (X01 AC-11's cross-account case) does not apply to the REST half: `/market/bars` and
+`/market/klines` read public market data, scope none (22 `x-rbac`), with no account or owner in
+the request to swap. The WS half's cross-connection case, a `sub_id` of another connection, is
+E17's: `tests/contract/ws/test_ws_resync_names.py::
+test_a_sub_id_or_rs_of_another_connection_never_resolves`. The `rebuild_id` IDOR waits for the
+user rebuild (#535).
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -62,30 +69,47 @@ class _Audit:
         self.rows.append({"action": action, **fields})
 
 
-def test_authz_revoked_bars_subscription_is_announced_audited_and_silent(wire: str) -> None:
-    """23-ws §9.5: `permission_change` first, then `revoked{reason: permission_revoked, sub_id}`;
-    no `snap` or `d` after it, though the series keeps publishing; one `ws.subscription.revoked`
-    row naming the subscription, the socket and the session; the series lease released."""
+class Revocation(NamedTuple):
+    """What one `bars.*` client saw after its permission change (or none) and an update."""
+
+    frames: list[dict[str, Any]]  # every frame after the first `d`, up to the `pong`
+    audit: _Audit
+    rig: _Rig
+
+
+def run_revocation(*, revoke: bool) -> Revocation:
+    """Subscribe to `CH`, take the snapshot and one `d`; then, if `revoke`, withdraw
+    `marketdata:read` (`registry.roles_changed`); publish one update and ping. The negative
+    control runs it with `revoke=False`: the update's `d` then arrives before the `pong`."""
     rig, spec, bar = _Rig({}), _SERIES[_MINUTE], _closed(*_MINUTE)[0]
     audit = _Audit()
     rig.w.registry.services.audit = audit
+    frames: list[dict[str, Any]] = []
     with h.connect(rig.w) as c:
         c.sub(CH)
         c.next_of("snap")
         rig.emit(spec, _up("open", bar))
         c.next_of("d")
-        rig.w.perms = h.ALL_PERMS - {Permission.MARKETDATA_READ}
-        rig.w.call(rig.w.registry.roles_changed, USER)
-        c.recv_permission_change()
-        revoked = c.recv()
-        assert revoked["t"] == "revoked", revoked
-        assert (revoked["ch"], revoked["p"]["reason"]) == (CH, "permission_revoked")
+        if revoke:
+            rig.w.perms = h.ALL_PERMS - {Permission.MARKETDATA_READ}
+            rig.w.call(rig.w.registry.roles_changed, USER)
+            frames += [c.recv_permission_change(), c.recv()]
         rig.emit(spec, _up("update", bar))
         c.send({"t": "ping", "id": "p"})
-        after = []
         while (frame := c.recv())["t"] != "pong":
-            after.append(frame["t"])
-        assert [t for t in after if t in {"snap", "d"}] == []
+            frames.append(frame)
+    return Revocation(frames, audit, rig)
+
+
+def test_authz_revoked_bars_subscription_is_announced_audited_and_silent(wire: str) -> None:
+    """23-ws §9.5: `permission_change` first, then `revoked{reason: permission_revoked, sub_id}`;
+    no `snap` or `d` after it, though the series keeps publishing; one `ws.subscription.revoked`
+    row naming the subscription, the socket and the session; the series lease released."""
+    frames, audit, rig = run_revocation(revoke=True)
+    change, revoked, *after = frames
+    assert (change["t"], revoked["t"]) == ("permission_change", "revoked"), frames[:2]
+    assert (revoked["ch"], revoked["p"]["reason"]) == (CH, "permission_revoked")
+    assert [f["t"] for f in after if f["t"] in {"snap", "d"}] == []
     rows = [r for r in audit.rows if r["action"] == "ws.subscription.revoked"]
     assert len(rows) == 1, audit.rows
     (row,) = rows

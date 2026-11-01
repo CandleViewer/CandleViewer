@@ -54,26 +54,49 @@ def requested_span_us(op: str, query: Mapping[str, object]) -> int:
     return _us(query.get("to"), now) - _us(query["from"], now)
 
 
+class OracleError(AssertionError):
+    """The oracle's refusal of an answer. Each subclass names the rule broken, so a known gap is
+    an xfail on exactly that rule (`raises=`), never on any failure."""
+
+
+class StatusError(OracleError):
+    """A status outside `STATUSES` (a 500 included), or a refusal that is no catalogued Problem."""
+
+
+class LeakError(OracleError):
+    """A traceback, source path, SQL or table name, or an echoed probe in the body."""
+
+
+class SpanCapError(OracleError):
+    """A 200 over a cap: the body over 2 MiB, or the requested window over its span or bars."""
+
+
+def _require(ok: bool, error: type[OracleError], detail: object) -> None:
+    if not ok:
+        raise error(detail)
+
+
 def check(op: str, query: Mapping[str, object], resp: httpx.Response) -> None:
-    """Assert the oracle for one answer of `op` (`getBars` or `getKlines`) to `query`."""
+    """Check the oracle for one answer of `op` (`getBars` or `getKlines`) to `query`."""
     status, body = resp.status_code, resp.text
-    assert status in STATUSES, (status, body[:300])
-    assert _LEAK.search(body) is None, body[:300]
+    _require(status in STATUSES, StatusError, (status, body[:300]))
+    _require(_LEAK.search(body) is None, LeakError, body[:300])
     for name, value in query.items():
         if len(text := str(value)) > ECHO_MAX:
-            assert text not in body, f"{name} echoed"
+            _require(text not in body, LeakError, f"{name} echoed")
     if status != 200:
         problem = resp.json()
-        assert problem["code"] in CODES, problem
-        assert problem["status"] == status, problem
+        _require(problem.get("code") in CODES, StatusError, problem)
+        _require(problem.get("status") == status, StatusError, problem)
         return
-    assert len(body.encode("utf-8")) <= RESPONSE_MAX_BYTES  # the served bytes (UTF-8 JSON)
+    size = len(body.encode("utf-8"))  # the served bytes (UTF-8 JSON)
+    _require(size <= RESPONSE_MAX_BYTES, SpanCapError, ("bytes", size))
     span = requested_span_us(op, query)
-    kind = str(query.get("bar_type", "time"))
-    if kind != "time":
-        assert span <= MAX_NON_TIME_WINDOW_US, ("non-time span", span)
+    if str(query.get("bar_type", "time")) != "time":
+        _require(span <= MAX_NON_TIME_WINDOW_US, SpanCapError, ("non-time span", span))
         return
-    assert span <= MAX_TIME_WINDOW_US, ("time span", span)
+    _require(span <= MAX_TIME_WINDOW_US, SpanCapError, ("time span", span))
     interval = str(query.get("param" if op == "getBars" else "interval"))
     if interval in _TIME_WIDTH_US and op == "getBars":
-        assert -(-span // _TIME_WIDTH_US[interval]) <= MAX_WINDOW_BARS, ("bars", span)
+        estimate = -(-span // _TIME_WIDTH_US[interval])
+        _require(estimate <= MAX_WINDOW_BARS, SpanCapError, ("bars", estimate))

@@ -78,6 +78,7 @@
     "tests/rules/test_rule_save_bounds.py::test_compile_graph_shared_node_copies_are_refused_within_the_perf_budget",
     "tests/rules/test_validator_endpoints.py::test_perf_100_node_compile_and_validate_budget",
     "tests/security/auth/test_credential_abuse.py::test_ac_enum_03_timing_unknown_vs_wrong_password_500_samples",
+    "tests/security/bars/test_caps_and_cost.py::test_caps_tick_1_refusal_costs_under_the_cpu_budget",
     "tests/security/ingestion/test_resource_exhaustion.py::test_huge_exponent_levels_rejected_cheaply",
     "tests/security/ws/test_account_refusal_parity.py::test_x02_ac_05_the_two_refusals_take_the_same_time[json]",
     "tests/security/ws/test_account_refusal_parity.py::test_x02_ac_05_the_two_refusals_take_the_same_time[msgpack-preferred]",

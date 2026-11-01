@@ -62,7 +62,7 @@ F7: Final = "#452 findings row F7: a `to` in the last microsecond of 9999 overfl
 class Case(NamedTuple):
     op: str
     query: Mapping[str, object]
-    xfail: str | None = None
+    xfail: str | None = None  # the findings row a known gap cites
 
 
 def _bars(**over: object) -> dict[str, object]:
@@ -77,7 +77,7 @@ def _klines(**over: object) -> dict[str, object]:
 
 def _known(bar_type: str, window: tuple[str | None, str | None]) -> str | None:
     """The finding a window probe hits: F1 (time bars at 1 min over `PRE_EPOCH` estimate under
-    the cap only when measured from 1970), F7 (every bar type reads `YEAR_9999`)."""
+    the cap only when measured from 1970), F7 (`YEAR_9999`: a 500, probed on time bars only)."""
     if window == YEAR_9999:
         return F7
     return F1 if bar_type == "time" and window == PRE_EPOCH else None
@@ -90,6 +90,8 @@ def cases() -> list[Case]:
     out += [Case("getBars", _bars(bar_type=t)) for t in HOSTILE_BAR_TYPES]
     for bar_type, param in (("time", "1"), ("tick", "100"), ("renko", "30")):
         for window in WINDOWS:
+            if window == YEAR_9999 and bar_type != "time":
+                continue  # F7 is the same overflow for every bar type: one probe pins it
             query = _bars(bar_type=bar_type, param=param, **{"from": window[0], "to": window[1]})
             out.append(Case("getBars", query, _known(bar_type, window)))
     out += [Case("getBars", _bars(limit=v)) for v in LIMITS]

@@ -4,9 +4,14 @@ SQL or echo, and every 200 within the caps. Two lanes:
 
 - PR lane: the dictionary (`_corpus.cases`), then a derandomised Hypothesis property over the
   whole parameter product (300 examples).
-- Nightly (`fuzz`, E08-X02's marker and lane): the same property at 5 000 examples a route.
+- Nightly fuzz: not wired yet (PR-2). The same property at 5 000 examples carries E08-X02's
+  `fuzz` marker, which the default lane deselects; no workflow selects this file yet.
 
-The world is E12-Q04's (`_market_world`): recorded data, in process, no socket (C-13.5).
+The world is E12-Q04's (`_market_world`): recorded data, in process, no socket (C-13.5). Its
+client hands a server error back as the 500 it is (`raise_server_exceptions=False`), so the
+oracle judges it as a status (`StatusError`) instead of the test dying on the exception.
+
+A known gap is a strict xfail on the one oracle rule it breaks (`raises=`, `_RAISES`).
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from datetime import UTC, datetime
 from functools import cache
 
 import pytest
+from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
@@ -28,18 +34,28 @@ NIGHTLY = settings(
     max_examples=5_000, derandomize=True, deadline=None, suppress_health_check=list(HealthCheck)
 )
 _CASES = _corpus.cases()
+_RAISES: dict[str, type[_oracle.OracleError]] = {
+    _corpus.F1: _oracle.SpanCapError,  # served over the 400-day cap
+    _corpus.F7: _oracle.StatusError,  # a 500
+}
 
 
 @cache
 def _world() -> MarketWorld:
     """One app for the module: the corpus and the property only read (C-13.7: no state kept)."""
-    return MarketWorld()
+    world = MarketWorld()
+    world.client = TestClient(world.app, client=("127.0.0.1", 50000), raise_server_exceptions=False)
+    return world
+
+
+def _known(reason: str) -> pytest.MarkDecorator:
+    return pytest.mark.xfail(strict=True, raises=_RAISES[reason], reason=reason)
 
 
 @pytest.mark.parametrize(
     "case",
     [
-        pytest.param(c, id=f"{c.op}-{i}", marks=[pytest.mark.xfail(strict=True, reason=c.xfail)])
+        pytest.param(c, id=f"{c.op}-{i}", marks=[_known(c.xfail)])
         if c.xfail
         else pytest.param(c, id=f"{c.op}-{i}")
         for i, c in enumerate(_CASES)

@@ -60,7 +60,7 @@ _REFUSALS: Final = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason=F4A)
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=F4A)
 @pytest.mark.parametrize(("endpoint", "op", "query"), _REFUSALS)
 def test_observability_every_refusal_path_is_counted(
     stores: Stores, endpoint: str, op: str, query: dict[str, object]
@@ -70,7 +70,7 @@ def test_observability_every_refusal_path_is_counted(
     assert _rejected(endpoint) == before + 1
 
 
-@pytest.mark.xfail(strict=True, reason=F4A)
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=F4A)
 def test_observability_refusal_is_logged_with_the_value_escaped_and_truncated(
     stores: Stores,
 ) -> None:
@@ -94,7 +94,7 @@ def test_observability_alert_rules_are_read() -> None:
     assert len(_rules()) > 10  # the meta-test below is not vacuous: rules are found and parsed
 
 
-@pytest.mark.xfail(strict=True, reason=F4B)
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=F4B)
 @pytest.mark.parametrize(
     "series", ["api_request_rejected_total|bars_endpoint_param_rejected_total", "bars_rebuild_"]
 )

@@ -75,7 +75,7 @@ def test_caps_match_model_qty_max_is_a_power_of_ten() -> None:
     assert limits.QTY_PARAM_MAX == 10 ** (len(str(limits.QTY_PARAM_MAX)) - 1)
 
 
-@pytest.mark.xfail(strict=True, reason=F5)
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=F5)
 def test_caps_match_model_spec_caps_live_in_limits() -> None:
     for name in ("CAP_PER_USER", "CAP_PER_SYMBOL", "CAP_GLOBAL"):
         assert getattr(limits, name, None) == getattr(leases, name), name
