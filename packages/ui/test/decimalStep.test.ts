@@ -35,6 +35,8 @@ describe("parsing: the wire's form, and what a person types", () => {
     expect(parseTyped(" 2495.00 ")).toEqual({ units: 249500n, scale: 2 });
     expect(parseTyped(".5")).toEqual({ units: 5n, scale: 1 });
     expect(parseTyped("5.")).toEqual({ units: 5n, scale: 0 });
+    expect(parseTyped("0.150")).toEqual({ units: 150n, scale: 3 });
+    expect(parseTyped("0.001")).toEqual({ units: 1n, scale: 3 });
     for (const bad of ["", ".", " ", "-2", "+2", "2e3", "2..5", "abc"])
       expect(parseTyped(bad)).toBeNull();
   });
@@ -44,9 +46,12 @@ describe("parsing: the wire's form, and what a person types", () => {
     expect(parseTyped(" 1,234,567 ")).toEqual({ units: 1234567n, scale: 0 });
     expect(parseTyped("63,950.")).toEqual({ units: 63950n, scale: 0 });
     expect(parseTyped("999,000.5")).toEqual({ units: 9990005n, scale: 1 });
+    expect(parseTyped("1,234.5")).toEqual({ units: 12345n, scale: 1 });
+    expect(parseTyped("10,000")).toEqual({ units: 10000n, scale: 0 });
+    expect(parseTyped("100,000.25")).toEqual({ units: 10000025n, scale: 2 });
   });
 
-  it("never reads malformed grouping as a number: 2,5 is not 25", () => {
+  it("never reads malformed grouping as a number: 2,5 is not 25, nor 0,150 150", () => {
     for (const bad of [
       "2,5",
       "2,50",
@@ -57,9 +62,18 @@ describe("parsing: the wire's form, and what a person types", () => {
       "2,495,5",
       "2,495.0,0",
       "2,,495",
+      // a first group with a leading zero is a decimal comma, never thousands: 1000x off on a price
+      "0,150",
+      "0,001",
+      "00,500",
+      "01,234",
+      "0,150.5",
+      "0,150,000",
     ])
       expect(parseTyped(bad)).toBeNull();
     expect(checkTyped("2,5", d("0.1")).kind).toBe("not_a_number");
+    expect(checkTyped("0,150", d("0.001")).kind).toBe("not_a_number"); // on a lot: never on step as 150
+    expect(checkTyped("-0,150", d("0.001")).kind).toBe("not_a_number");
   });
 
   it("writes plain text at the value's own scale", () => {
