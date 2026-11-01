@@ -343,6 +343,7 @@ jobs:
               - 'spikes/**'
               - 'tools/contracts/**'
               - 'tools/errorcodes/**'
+              - 'tools/ga/**' # E49-Q01 (#1335): the GA regression pack's tools (governance tests them)
               - 'tools/ga_defects/**'
               - 'tools/triage/**'
               # Python under docs/ (the design-audit tools) is scanned too; #4325 merged a design
