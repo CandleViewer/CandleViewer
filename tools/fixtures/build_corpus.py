@@ -239,7 +239,6 @@ def oi_pages(symbol: str) -> list[dict[str, Any]]:
 #: apart, push 2 holding two identical prints (only `batch_index` tells them apart), push 4 five
 #: prints inside one second, and push 2 replayed after a reconnect as the last frame.
 LIQ_T0 = T0 + 600_000
-LIQ_SRC = "venue docs example @19518b90 (shape; values generated, seeded)"
 LIQ_NOTE = ("frame shape transcribed from the docs page (ws/docs-all-liquidation.jsonl); "
             "values generated (seeded)")  # fmt: skip
 
@@ -420,12 +419,11 @@ def build() -> list[dict[str, Any]]:
     _write_lines("ws/allLiquidation_BTCUSDT_burst.jsonl", liquidation_burst("BTCUSDT"))
     m.append(_entry("ws/allLiquidation_BTCUSDT_burst.jsonl", "BTCUSDT", "allLiquidation.BTCUSDT",
                     "cascade: 8 pushes @500 ms, twin prints in push 2, push 2 replayed last",
-                    cap=8_000) | liq_docs | {"note": LIQ_NOTE, "source": LIQ_SRC})  # fmt: skip
+                    cap=8_000) | liq_docs | {"note": LIQ_NOTE, "source": _SRC, "retrieved": "2026-10-31"})  # fmt: skip
     m.append(_entry("ws/docs-all-liquidation.jsonl", "ROSEUSDT", "allLiquidation.ROSEUSDT",
                     "docs Response Example: one Sell print (a short was liquidated)",
                     host="bybit-exchange.github.io", cap=4_000)
-             | _TRANSCRIBED | {"capture_date": "2026-10-31", "retrieved": "2026-10-31",
-                               "source": "venue docs example @19518b90"}
+             | _TRANSCRIBED | {"capture_date": "2026-10-31", "retrieved": "2026-10-31"}
              | liq_docs)  # fmt: skip
     for name, after in (("instruments_before", False), ("instruments_after", True)):
         _write_json(f"rest/{name}.json", instruments(after))

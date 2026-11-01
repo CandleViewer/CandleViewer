@@ -181,8 +181,9 @@ class LiquidationStream:
         count_event("liquidation", symbol)
         if self._observer is not None:
             self._observer.prints(events, self._now_us())
-        topic = Topic(env=self._env, domain="md", symbol=symbol, detail=DETAIL)
-        for event in events:
+        topic = Topic(env=self._env, domain="md", symbol=symbol, detail="liquidation")
+        for item in events:
+            event: LiquidationEvent = item  # the census reads a payload's class off its annotation
             await self._bus.publish(topic, event)
         if self._writer is not None:
             await self._enqueue(events)  # full: wait, so the socket lane backs up (no drop)
