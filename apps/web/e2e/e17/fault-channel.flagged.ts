@@ -81,14 +81,15 @@ test(`Q04-F03 fault delay: what the server says reaches the chrome late, in orde
   expect(Date.now() - sentAt).toBeGreaterThanOrEqual(1_400); // a floor only: never a ceiling on a real clock
 });
 
-test(`Q04-F04 fault quality: a saturated class is taken, numbered without a gap ${PACK}`, async ({
+test(`Q04-F04 fault quality: the injected frame is numbered without a gap ${PACK}`, async ({
   page,
 }) => {
   covers("C4", "D02-row-5", "AC-2");
   const harness = await open(page);
   await fault(page, { kind: "quality", class: "saturated" });
   await settle(harness);
-  // The injected frame took a number: the gateway's next real delta still applies, with no gap.
+  // The injected frame took a number: the gateway's next real delta still applies, with no gap. The class itself is
+  // not drawn anywhere yet (no chrome reads `quality`; ledger row 5's probe), so this case does not assert it.
   harness.sendSystem({
     kind: "kill_switch",
     kill_switch: { engaged: true, scope: "global", exchange_account_ids: [] },

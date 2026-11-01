@@ -25,7 +25,8 @@ Command names are owned by `AGENTS.md` section 4; this page names configs and se
 
 - No network and no live exchange: the gateway is `e2e/support/wsHarness.ts` with its recorded ticker fixture
   (C-13.5). The shipped bundle carries neither the harness (`e2e/market-data/ws-harness.spec.ts`) nor the fault
-  channel (Q04-S02).
+  channel (Q04-S02). Q04-S02 has no positive control of its own: `apps/web/test/lib/ws/faultInjection.bundle.test.ts`
+  is it, since it builds the real worker and finds the channel's sentinel with the flag on and in development mode.
 - Every spec is written for `--retries=0`. A test that passes only on a retry is a defect in the test and leaves the
   pack (BQ-10).
 - The per-PR check stays web-only. The Electron pair is a parked row (section B2, E-1) (BQ-04).
@@ -54,41 +55,41 @@ dev-only fault channel on the flagged build (BQ-02). Cases: 35<!--=COUNT:cases--
 
 ### A1. Behaviour to test
 
-| Case    | What a person sees                                                                                          | File | C-rule | D02 row                     | Story or AC                                         | Driver  | Pack             |
-| ------- | ----------------------------------------------------------------------------------------------------------- | ---- | ------ | --------------------------- | --------------------------------------------------- | ------- | ---------------- |
-| Q04-T01 | First connect reads "Connecting…"; no region, no announcement; then Live                                    | T    | C7     | 1                           | US-MKT-005 Reconnect                                | harness | candidate (0/10) |
-| Q04-T02 | Live: no region, no announcement, one socket                                                                | T    | C7     | 2                           | US-MKT-005 Subscribed                               | harness | candidate (0/10) |
-| Q04-T03 | A lost transport shows Disconnected with the last good time, said once; the age moves, nothing more is said | T    | C7     | 3                           | US-MKT-003 Feed interrupted; AC 2                   | harness | candidate (0/10) |
-| Q04-T04 | Reconnect: Live on a new session, a fresh `snap` from `s: 1`, the alert cleared                             | T    | C7     | 16                          | US-MKT-005 Reconnect; AC 3                          | harness | candidate (0/10) |
-| Q04-T05 | A 60 s outage on the page's clock, then Live; the new snapshot is newer than anything before it             | T    | C7     | 20                          | US-MKT-005 Reconnect; AC 3                          | harness | candidate (0/10) |
-| Q04-T06 | T4: the age line turns at 30 s; the region escalates at 5 min                                               | T    | C7     | 20                          | AC 2                                                | harness | candidate (0/10) |
-| Q04-T07 | A fatal close (4400): "Offline — retry stopped", said once; only Retry now brings it back                   | T    | C7     | 6                           | US-MKT-005 Reconnect                                | harness | candidate (0/10) |
-| Q04-T08 | Session ended (4403): Sign in, no Retry now, said once                                                      | T    | C7     | 21                          | AC 2                                                | harness | candidate (0/10) |
-| Q04-T09 | A sequence gap is a resync on the same socket; the chrome ends Live                                         | T    | C2     | 9                           | US-MKT-006 Gap detection; US-MKT-007 Sequence break | harness | candidate (0/10) |
-| Q04-T10 | While `system` resyncs, the kill switch reads unknown: order entry off (R6), said once; then gone           | T    | C12    | 18                          | WS-E06; AC 2                                        | harness | candidate (0/10) |
-| Q04-T11 | A `lagging` class: no chip change, no region, no announcement                                               | T    | C4     | 4                           | AC 2                                                | harness | candidate (0/10) |
-| Q04-T12 | `err` by class: modal, badge, toast with a console error, capacity toast (four tests)                       | T    | §10.3  | 23                          | AC 2                                                | harness | candidate (0/10) |
-| Q04-T13 | A slow-consumer close (4429): Disconnected, said once, then Live on its own                                 | T    | C7     | 3                           | US-MKT-005 Reconnect                                | harness | candidate (0/10) |
-| Q04-T14 | The exchange's public feed down: a CMP-092 warning row, said politely; the chip stays Live                  | T    | §15.9  | 13                          | US-MKT-003 Feed interrupted                         | harness | candidate (0/10) |
-| Q04-T15 | Maintenance, then the store down: blocking rows, said assertively; no connection region                     | T    | §15.9  | 22                          | AC 2                                                | harness | candidate (0/10) |
-| Q04-T16 | The private feed reconnecting: a row for 10 s, then the region's R5                                         | T    | §15.9  | 24, 17                      | AC 2                                                | harness | candidate (0/10) |
-| Q04-N01 | C8, restore half: hide then show sends only heartbeats, no new `snap`, same socket, Live                    | N    | C8     | 2                           | AC 1                                                | harness | candidate (0/10) |
-| Q04-N02 | C12: a `kill_switch` frame puts the region in R2, said once, with no request that could poll the switch     | N    | C12    | 17                          | WS-E06; AC 1                                        | harness | candidate (0/10) |
-| Q04-N03 | C12: a `shutdown_notice` puts the region in R1, said once                                                   | N    | C12    | 8                           | AC 1                                                | harness | candidate (0/10) |
-| Q04-N04 | C12 after a reconnect: the switch is what `auth_ok` says, never the old R2                                  | N    | C12    | 16                          | WS-E06; AC 3                                        | harness | candidate (0/10) |
-| Q04-X01 | axe, zero violations of any impact, in nine forced states (section D)                                       | X    | C-14.1 | 1, 2, 3, 5, 6, 8, 9, 17, 21 | AC 4                                                | harness | candidate (0/10) |
-| Q04-X02 | Retry now by Tab, then Enter or Space (two tests); a state change never moves focus; no dialog              | X    | C-14.1 | 6                           | AC 4                                                | harness | candidate (0/10) |
-| Q04-X03 | Reduced motion: the chip changes with no cross-fade                                                         | X    | C-14.1 | 3                           | AC 4                                                | harness | candidate (0/10) |
-| Q04-X04 | Full motion, the control: the same change fades                                                             | X    | C-14.1 | 3                           | AC 4                                                | harness | candidate (0/10) |
-| Q04-X05 | 200% reflow at 640 px: no horizontal scroll, Retry now in view                                              | X    | C-14.1 | 6                           | AC 4                                                | harness | candidate (0/10) |
-| Q04-F01 | Fault `close` 4400: Offline — retry stopped, said once                                                      | F    | C7     | 6                           | AC 2                                                | fault   | candidate (0/10) |
-| Q04-F02 | Fault `drop`: the next `system` delta never arrives, so the client resyncs                                  | F    | C2     | 9                           | US-MKT-006 Gap detection                            | fault   | candidate (0/10) |
-| Q04-F03 | Fault `delay`: the kill switch reaches the region no sooner than the delay                                  | F    | C12    | 17                          | AC 2                                                | fault   | candidate (0/10) |
-| Q04-F04 | Fault `quality`: the class takes a number and the next real delta applies with no gap                       | F    | C4     | 5                           | AC 2                                                | fault   | candidate (0/10) |
-| Q04-F05 | Fault `shutdown`: R1, said once                                                                             | F    | C12    | 8                           | AC 1                                                | fault   | candidate (0/10) |
-| Q04-F06 | Fault `killSwitch`: R2, said once                                                                           | F    | C12    | 17                          | AC 1                                                | fault   | candidate (0/10) |
-| Q04-F07 | Fault `revoke` on `system`: the switch reads unknown (R6), said once                                        | F    | C12    | 15, 18                      | WS-E06                                              | fault   | candidate (0/10) |
-| Q04-F08 | Fault `staleSnap` on `system`: a stale snapshot leaves the switch unknown (R6), said once                   | F    | C21    | 12, 18                      | WS-E06                                              | fault   | candidate (0/10) |
+| Case    | What a person sees                                                                                                             | File | C-rule | D02 row                     | Story or AC                                         | Driver  | Pack             |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------ | ---- | ------ | --------------------------- | --------------------------------------------------- | ------- | ---------------- |
+| Q04-T01 | First connect reads "Connecting…"; no region, no announcement; then Live                                                       | T    | C7     | 1                           | US-MKT-005 Reconnect                                | harness | candidate (0/10) |
+| Q04-T02 | Live: no region, no announcement, one socket                                                                                   | T    | C7     | 2                           | US-MKT-005 Subscribed                               | harness | candidate (0/10) |
+| Q04-T03 | A lost transport shows Disconnected with the last good time, said once; the age moves, nothing more is said                    | T    | C7     | 3                           | US-MKT-003 Feed interrupted; AC 2                   | harness | candidate (0/10) |
+| Q04-T04 | Reconnect: Live on a new session, a fresh `snap` from `s: 1`, the alert cleared                                                | T    | C7     | 16                          | US-MKT-005 Reconnect; AC 3                          | harness | candidate (0/10) |
+| Q04-T05 | A 60 s outage on the page's clock, then Live; the new snapshot is newer than anything before it                                | T    | C7     | 20                          | US-MKT-005 Reconnect; AC 3                          | harness | candidate (0/10) |
+| Q04-T06 | T4: the age line turns at 30 s; the region escalates at 5 min                                                                  | T    | C7     | 20                          | AC 2                                                | harness | candidate (0/10) |
+| Q04-T07 | A fatal close (4400): "Offline — retry stopped", said once; only Retry now brings it back                                      | T    | C7     | 6                           | US-MKT-005 Reconnect                                | harness | candidate (0/10) |
+| Q04-T08 | Session ended (4403): Sign in, no Retry now, said once                                                                         | T    | C7     | 21                          | AC 2                                                | harness | candidate (0/10) |
+| Q04-T09 | A sequence gap is a resync on the same socket; the chrome ends Live                                                            | T    | C2     | 9                           | US-MKT-006 Gap detection; US-MKT-007 Sequence break | harness | candidate (0/10) |
+| Q04-T10 | While `system` resyncs, the kill switch reads unknown: order entry off (R6), said once; then gone                              | T    | C12    | 18                          | WS-E06; AC 2                                        | harness | candidate (0/10) |
+| Q04-T11 | A `lagging` class: no chip change, no region, no announcement                                                                  | T    | C4     | 4                           | AC 2                                                | harness | candidate (0/10) |
+| Q04-T12 | `err` by class: modal, badge, toast with a console error, capacity toast (four tests)                                          | T    | §10.3  | 23                          | AC 2                                                | harness | candidate (0/10) |
+| Q04-T13 | A slow-consumer close (4429): Disconnected, said once, then Live on its own                                                    | T    | C7     | 3                           | US-MKT-005 Reconnect                                | harness | candidate (0/10) |
+| Q04-T14 | The exchange's public feed down: a CMP-092 warning row, said politely; the chip stays Live                                     | T    | §15.9  | 13                          | US-MKT-003 Feed interrupted                         | harness | candidate (0/10) |
+| Q04-T15 | Maintenance, then the store down: blocking rows, said assertively; no connection region                                        | T    | §15.9  | 22                          | AC 2                                                | harness | candidate (0/10) |
+| Q04-T16 | The private feed reconnecting: a row for 10 s, then the region's R5                                                            | T    | §15.9  | 24, 17                      | AC 2                                                | harness | candidate (0/10) |
+| Q04-N01 | C8, restore half: hide then show sends only heartbeats, no new `snap`, same socket, Live                                       | N    | C8     | 2                           | AC 1                                                | harness | candidate (0/10) |
+| Q04-N02 | C12: a `kill_switch` frame puts the region in R2, said once, with no request that could poll the switch                        | N    | C12    | 17                          | WS-E06; AC 1                                        | harness | candidate (0/10) |
+| Q04-N03 | C12: a `shutdown_notice` puts the region in R1, said once                                                                      | N    | C12    | 8                           | AC 1                                                | harness | candidate (0/10) |
+| Q04-N04 | C12 after a reconnect: the switch is what `auth_ok` says, never the old R2                                                     | N    | C12    | 16                          | WS-E06; AC 3                                        | harness | candidate (0/10) |
+| Q04-X01 | axe, zero violations of any impact, in nine driven states (section D)                                                          | X    | C-14.1 | 1, 2, 3, 5, 6, 8, 9, 17, 21 | AC 4                                                | harness | candidate (0/10) |
+| Q04-X02 | Retry now by Tab, then Enter or Space (two tests); a state change never moves focus; no dialog                                 | X    | C-14.1 | 6                           | AC 4                                                | harness | candidate (0/10) |
+| Q04-X03 | Reduced motion: the chip changes with no cross-fade                                                                            | X    | C-14.1 | 3                           | AC 4                                                | harness | candidate (0/10) |
+| Q04-X04 | Full motion, the control: the same change fades                                                                                | X    | C-14.1 | 3                           | AC 4                                                | harness | candidate (0/10) |
+| Q04-X05 | 200% reflow at 640 px: no horizontal scroll, Retry now in view                                                                 | X    | C-14.1 | 6                           | AC 4                                                | harness | candidate (0/10) |
+| Q04-F01 | Fault `close` 4400: Offline — retry stopped, said once                                                                         | F    | C7     | 6                           | AC 2                                                | fault   | candidate (0/10) |
+| Q04-F02 | Fault `drop`: the next `system` delta never arrives, so the client resyncs                                                     | F    | C2     | 9                           | US-MKT-006 Gap detection                            | fault   | candidate (0/10) |
+| Q04-F03 | Fault `delay`: the kill switch reaches the region no sooner than the delay                                                     | F    | C12    | 17                          | AC 2                                                | fault   | candidate (0/10) |
+| Q04-F04 | Fault `quality`: the injected frame takes a number and the next real delta applies with no gap; the class is not drawn (row 5) | F    | C4     | 5                           | AC 2                                                | fault   | candidate (0/10) |
+| Q04-F05 | Fault `shutdown`: R1, said once                                                                                                | F    | C12    | 8                           | AC 1                                                | fault   | candidate (0/10) |
+| Q04-F06 | Fault `killSwitch`: R2, said once                                                                                              | F    | C12    | 17                          | AC 1                                                | fault   | candidate (0/10) |
+| Q04-F07 | Fault `revoke` on `system`: the switch reads unknown (R6), said once                                                           | F    | C12    | 15, 18                      | WS-E06                                              | fault   | candidate (0/10) |
+| Q04-F08 | Fault `staleSnap` on `system`: a stale snapshot leaves the switch unknown (R6), said once                                      | F    | C21    | 12, 18                      | WS-E06                                              | fault   | candidate (0/10) |
 
 Q04-R01 (`e2e/e17/realtime.nightly.ts`, `@e17-realtime`) measures AC 2's 2 s and AC 3's 10 s on real timers and
 records the numbers; it is never a PR gate and never a pack row.
@@ -195,16 +196,18 @@ Counts: 5<!--=COUNT:ledger.covered--> covered, 14<!--=COUNT:ledger.partial--> pa
 
 ### B2. Parked halves of the named rows and of the parity claim
 
-| Id    | The parked half                                                                                                                       | Probe                                              | Owner                                                 |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------- |
-| C8-a  | C8's throttle half: a `ctl` of 1 000 ms or more while hidden, an `unsub` for a collapsed pane; it needs a mounted consumer of a topic | `^export [a-z ]+ WatchlistRow\b` in `apps/web/src` | E08-S08 (the first topic consumer)                    |
-| C12-a | "The order ticket is disabled"; the wire half is Q04-N02                                                                              | `^export [a-z ]+ OrderTicket\b` in `apps/web/src`  | E30-S01                                               |
-| E-1   | The Electron pair (BQ-04): N01 to N03 on a hidden `BrowserWindow`, through the dev-server load path                                   | path `packages/fixtures/e2e`                       | E10-Q02 (the shared e2e support both apps can import) |
+| Id    | The parked half                                                                                                                       | Probe                                                                                                                              | Owner                                                      |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| C8-a  | C8's throttle half: a `ctl` of 1 000 ms or more while hidden, an `unsub` for a collapsed pane; it needs a mounted consumer of a topic | `^export [a-z ]+ WatchlistRow\b` in `apps/web/src`                                                                                 | E08-S08 (the first topic consumer)                         |
+| C12-a | "The order ticket is disabled"; the wire half is Q04-N02                                                                              | `^export [a-z ]+ OrderTicket\b` in `apps/web/src`                                                                                  | E30-S01                                                    |
+| E-1   | The Electron pair (BQ-04): N01 to N03 on a hidden `BrowserWindow`, through the dev-server load path                                   | `^export [a-z ]+ WsHarness\b` in `packages/fixtures/src/e2e`; `^export [a-z ]+ WS_HARNESS_MARKER\b` in `packages/fixtures/src/e2e` | E08-Q05 (#282, the WS harness): the gateway made shareable |
 
 E-1, why parked: `apps/desktop` may not import `apps/web` (`.dependency-cruiser.js`, `desktop-not-to-web`, C-3.5), so
-the Electron spec cannot reuse the harness or the session stubs from `apps/web/e2e`. E10-Q02's open PR moves shared e2e
-support into `packages/fixtures/e2e`; the pair is written on it once it merges, from `e2e/e17/namedRows.ts`, whose
-bodies take the hide and show steps as arguments for that reason.
+the Electron spec cannot reuse the WS gateway in `apps/web/e2e/support/wsHarness.ts`. E10-Q02 (#5234) put shared e2e
+support in `packages/fixtures/src/e2e` (imported as `@candleviewer/fixtures/e2e`) with the session stubs but not the
+gateway, which is still web-only. The row waits on the gateway: the probes fail the audit the moment it is exported
+there, and the pair is then written from `e2e/e17/namedRows.ts`, whose bodies take the hide and show steps as arguments
+for that reason. The sign-off PR unparks the row only once the gateway has moved.
 
 ## C. The six acceptance criteria
 
@@ -213,21 +216,22 @@ bodies take the hide and show steps as arguments for that reason.
 | 1 Named rows on both shells          | partial      | C8's restore half and C12 run on the web shell (Q04-N01 to N04). The Electron pair is E-1; C8's throttle half is C8-a; the ticket half of C12 is C12-a                                                            |
 | 2 Never stale as live                | partial      | Disconnected with the last good time (Q04-T03), the read-only reasons, the kill switch never "not killed" (Q04-T10, Q04-F07, Q04-F08). Stale, Resyncing and Delayed panel treatments are parked (rows 5, 9 to 12) |
 | 3 Reconnect restores the workspace   | partial      | The 60 s outage on the page's clock (Q04-T05), the switch after a reconnect (Q04-N04), the real-time numbers (Q04-R01). Four panes and private topics are parked (no pane host); section G, G5                    |
-| 4 Accessibility is clean             | partial      | axe with zero violations in nine forced states, keyboard, reduced motion, 200% reflow (section D). The screen-reader passes are owner-run rows (section E)                                                        |
+| 4 Accessibility is clean             | partial      | axe with zero violations in nine driven states, keyboard, reduced motion, 200% reflow (section D). The screen-reader passes are owner-run rows (section E)                                                        |
 | 5 Exploratory findings dispositioned | waits        | Owner-run rows OR-1 to OR-3 (section E)                                                                                                                                                                           |
 | 6 Sign-off evidenced                 | waits        | Part 2, after #408 and the owner-run rows (BQ-13, BQ-14)                                                                                                                                                          |
 
 ## D. Accessibility split with E17-D04 (#408)
 
 One owner per check (BQ-06). "Six forced states" are E17-D01's six as far as the build forces them: Live,
-Disconnected, Resyncing, Delayed and Read-only are forced; Stale cannot be, since no topic consumer is mounted
-(rows 10 to 12). Q04-X01 also scans the four variants that draw their own region (first connect, retry stopped,
+Disconnected, Resyncing and Read-only are forced. Delayed is the probe-gated row (row 5): Q04-X01 sends the saturated
+class and scans, but no Delayed treatment is built, so the page it scans looks Live until row 5's probe fires. Stale
+cannot be forced, since no topic consumer is mounted (rows 10 to 12). Q04-X01 also scans the four variants that draw their own region (first connect, retry stopped,
 session ended, the shutdown notice). The scan is `strictAxe` in `e2e/e17/support.ts`: the gate's tagged scan, every
 impact, minus the waivers ruled in `qa/plans/_tools/e17_q04_ruled_pins.txt` (none is ruled). `seriousAxe` is unchanged.
 
 | Check                                                                         | Owner         | Where                              |
 | ----------------------------------------------------------------------------- | ------------- | ---------------------------------- |
-| axe, zero violations of any impact, dark theme, nine forced states            | Q04 automated | Q04-X01                            |
+| axe, zero violations of any impact, dark theme, nine driven states            | Q04 automated | Q04-X01                            |
 | axe in the light theme and the densities                                      | D04 manual    | not in part 1                      |
 | Retry now by Tab, Enter and Space; focus unmoved by a state change; no dialog | Q04 automated | Q04-X02                            |
 | Focus order of the whole chrome                                               | D04 manual    | not in part 1                      |

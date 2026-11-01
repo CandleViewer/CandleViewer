@@ -1136,6 +1136,8 @@ MUTATIONS = (
              subst("| covered | Q04-T11 |", "| covered | Q04-T11, Q04-T02 |")),
     Mutation("G-PARKED", "main gains row 19's surface",
              lambda t: replace(t, present=t.present | {probe_key("Connection unstable", "apps/web/src")})),
+    Mutation("G-PARKED", "main gains a shareable WS gateway (E-1)",
+             lambda t: replace(t, present=t.present | {probe_key(r"^export [a-z ]+ WsHarness\b", "packages/fixtures/src/e2e")})),
     Mutation("G-PARKED", "row 3's component probe is a bare word again",
              subst("`^export [a-z ]+ WatchlistRow\\b` in `apps/web/src`", "`WatchlistRow` in `apps/web/src`")),
     Mutation("G-UNIT", "row 7's unit needle is not in its file", subst('"OFFLINE_COPY"', '"OFFLINE_COPY_X"')),

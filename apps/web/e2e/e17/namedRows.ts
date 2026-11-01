@@ -1,6 +1,6 @@
 // E17-Q04 (#569): the two rows 23-ws-protocol.md section 16.4 names (C8, C12) as one body each, run by the web spec
 // `named-rows.spec.ts`. The shells differ in how a window is hidden, not in what must follow; the Electron copy is
-// `apps/desktop/e2e/e17-named-rows.spec.ts`. Every assertion here has its mutation line in the pack.
+// not written yet (the pack's parked row E-1). Every assertion here has its mutation line in the pack.
 import { expect, type Page } from "@playwright/test";
 import type { WsHarness } from "../support/wsHarness";
 import {
@@ -83,7 +83,7 @@ export async function killSwitchFrameShowsOrderEntryOff({ page, harness }: Open)
 
 /**
  * C12's second clause ("and on `shutdown_notice`"; 23 section 4.4): the notice puts the region in R1 and says so once;
- * the chip stays as it was until the close. The countdown is not built (ledger row P-8).
+ * the chip stays as it was until the close. The countdown is not built (ledger row 8's probe).
  */
 export async function shutdownNoticeShowsOrderEntryOff({ page, harness }: Open): Promise<void> {
   const polls = watchPolls(page);

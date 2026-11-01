@@ -1,4 +1,4 @@
-# E17-Q04 pins: 260 units of the pack (region|first cell#n, sha12 of the normalised line, its first 80 characters); values cut out, the generated block collapsed.
+# E17-Q04 pins: 264 units of the pack (region|first cell#n, sha12 of the normalised line, its first 80 characters); values cut out, the generated block collapsed.
 # Written by `--repin-ruled` only; `--check` reads it (G-RULED-PIN). Never hand-edit the units.
 # Ruled axe waivers (BQ-06): `axe-waiver<TAB>rule-id<TAB>ruling`, kept by a repin; none is ruled.
 pack:E17 regression pack: the web client's transport states, end to end|p#1	eba5eb4a8618	# E17 regression pack: the web client's transport states, end to end
@@ -21,10 +21,11 @@ pack:How to run|Flagged lane#1	e4c12186556f	| Flagged lane | `e2e/playwright.fau
 pack:How to run|Real-time lane#1	5cd82c0a9ffd	| Real-time lane | `e2e/playwright.e17-nightly.config.ts` (`e2e/e17/*.nightly.ts
 pack:How to run|p#3	231d2d4449db	- No network and no live exchange: the gateway is `e2e/support/wsHarness.ts` wit
 pack:How to run|p#4	33f5b363a0e1	(C-13.5). The shipped bundle carries neither the harness (`e2e/market-data/ws-ha
-pack:How to run|p#5	ad0aa2d36262	channel (Q04-S02).
-pack:How to run|p#6	63b46b6787a4	- Every spec is written for `--retries=0`. A test that passes only on a retry is
-pack:How to run|p#7	d7c709bcb3b4	pack (BQ-10).
-pack:How to run|p#8	c8e5128d1b10	- The per-PR check stays web-only. The Electron pair is a parked row (section B2
+pack:How to run|p#5	accef9d7ac29	channel (Q04-S02). Q04-S02 has no positive control of its own: `apps/web/test/li
+pack:How to run|p#6	6c23ac6561f5	is it, since it builds the real worker and finds the channel's sentinel with the
+pack:How to run|p#7	63b46b6787a4	- Every spec is written for `--retries=0`. A test that passes only on a retry is
+pack:How to run|p#8	d7c709bcb3b4	pack (BQ-10).
+pack:How to run|p#9	c8e5128d1b10	- The per-PR check stays web-only. The Electron pair is a parked row (section B2
 pack:Entry rule|p#1	97c8dbac9f01	### Entry rule
 pack:Entry rule|p#2	9a96fd0ce717	A case enters the pack after 10 consecutive green nightly runs with zero retries
 pack:Entry rule|p#3	a72d2bfe58f0	status is `candidate (n/10)`, `n` the nightly greens so far. No regression pack 
@@ -62,7 +63,7 @@ pack:A1. Behaviour to test|Q04-N01#1	65d3143d7127	| Q04-N01 | C8, restore half: 
 pack:A1. Behaviour to test|Q04-N02#1	369cf1c9cfad	| Q04-N02 | C12: a `kill_switch` frame puts the region in R2, said once, with no
 pack:A1. Behaviour to test|Q04-N03#1	e506d0d4a3de	| Q04-N03 | C12: a `shutdown_notice` puts the region in R1, said once | N | C12 
 pack:A1. Behaviour to test|Q04-N04#1	b9805c78d1c3	| Q04-N04 | C12 after a reconnect: the switch is what `auth_ok` says, never the 
-pack:A1. Behaviour to test|Q04-X01#1	f90e3c2768d3	| Q04-X01 | axe, zero violations of any impact, in nine forced states (section D
+pack:A1. Behaviour to test|Q04-X01#1	8296946031d5	| Q04-X01 | axe, zero violations of any impact, in nine driven states (section D
 pack:A1. Behaviour to test|Q04-X02#1	6768612b13f5	| Q04-X02 | Retry now by Tab, then Enter or Space (two tests); a state change ne
 pack:A1. Behaviour to test|Q04-X03#1	612a200e9bc8	| Q04-X03 | Reduced motion: the chip changes with no cross-fade | X | C-14.1 | 3
 pack:A1. Behaviour to test|Q04-X04#1	86374b46aad2	| Q04-X04 | Full motion, the control: the same change fades | X | C-14.1 | 3 | A
@@ -70,7 +71,7 @@ pack:A1. Behaviour to test|Q04-X05#1	e981a0d9293e	| Q04-X05 | 200% reflow at 640
 pack:A1. Behaviour to test|Q04-F01#1	9a837a9daef5	| Q04-F01 | Fault `close` 4400: Offline — retry stopped, said once | F | C7 | 6 
 pack:A1. Behaviour to test|Q04-F02#1	7b7e034995f2	| Q04-F02 | Fault `drop`: the next `system` delta never arrives, so the client r
 pack:A1. Behaviour to test|Q04-F03#1	ecae4e698e1a	| Q04-F03 | Fault `delay`: the kill switch reaches the region no sooner than the
-pack:A1. Behaviour to test|Q04-F04#1	f0ad5e95630c	| Q04-F04 | Fault `quality`: the class takes a number and the next real delta ap
+pack:A1. Behaviour to test|Q04-F04#1	17f299afd847	| Q04-F04 | Fault `quality`: the injected frame takes a number and the next real
 pack:A1. Behaviour to test|Q04-F05#1	bd7bd2cd575f	| Q04-F05 | Fault `shutdown`: R1, said once | F | C12 | 8 | AC 1 | fault | candi
 pack:A1. Behaviour to test|Q04-F06#1	7e033eecafa6	| Q04-F06 | Fault `killSwitch`: R2, said once | F | C12 | 17 | AC 1 | fault | ca
 pack:A1. Behaviour to test|Q04-F07#1	84b6dafe37d1	| Q04-F07 | Fault `revoke` on `system`: the switch reads unknown (R6), said once
@@ -172,27 +173,30 @@ pack:B2. Parked halves of the named rows and of the parity claim|p#1	262f544a3d4
 pack:B2. Parked halves of the named rows and of the parity claim|Id#1	6a0477b757fc	| Id | The parked half | Probe | Owner |
 pack:B2. Parked halves of the named rows and of the parity claim|C8-a#1	e5c7b34fad26	| C8-a | C8's throttle half: a `ctl` of 1 000 ms or more while hidden, an `unsub
 pack:B2. Parked halves of the named rows and of the parity claim|C12-a#1	336329b20a90	| C12-a | "The order ticket is disabled"; the wire half is Q04-N02 | `^export [a
-pack:B2. Parked halves of the named rows and of the parity claim|E-1#1	5631a393cb8b	| E-1 | The Electron pair (BQ-04): N01 to N03 on a hidden `BrowserWindow`, throu
+pack:B2. Parked halves of the named rows and of the parity claim|E-1#1	103e1c6a2dac	| E-1 | The Electron pair (BQ-04): N01 to N03 on a hidden `BrowserWindow`, throu
 pack:B2. Parked halves of the named rows and of the parity claim|p#2	e89b4d8e592b	E-1, why parked: `apps/desktop` may not import `apps/web` (`.dependency-cruiser.
-pack:B2. Parked halves of the named rows and of the parity claim|p#3	e5391b128587	the Electron spec cannot reuse the harness or the session stubs from `apps/web/e
-pack:B2. Parked halves of the named rows and of the parity claim|p#4	93284fda47a2	support into `packages/fixtures/e2e`; the pair is written on it once it merges, 
-pack:B2. Parked halves of the named rows and of the parity claim|p#5	f09de7cdc595	bodies take the hide and show steps as arguments for that reason.
+pack:B2. Parked halves of the named rows and of the parity claim|p#3	ee3730043ba6	the Electron spec cannot reuse the WS gateway in `apps/web/e2e/support/wsHarness
+pack:B2. Parked halves of the named rows and of the parity claim|p#4	e0323f381e88	support in `packages/fixtures/src/e2e` (imported as `@candleviewer/fixtures/e2e`
+pack:B2. Parked halves of the named rows and of the parity claim|p#5	1d73879d80d2	gateway, which is still web-only. The row waits on the gateway: the probes fail 
+pack:B2. Parked halves of the named rows and of the parity claim|p#6	c2edada8605b	there, and the pair is then written from `e2e/e17/namedRows.ts`, whose bodies ta
+pack:B2. Parked halves of the named rows and of the parity claim|p#7	8f5fc3d0d292	for that reason. The sign-off PR unparks the row only once the gateway has moved
 pack:C. The six acceptance criteria|p#1	42d488bd88a1	## C. The six acceptance criteria
 pack:C. The six acceptance criteria|AC#1	fcf676f66bc0	| AC | After part 1 | What is covered; what waits |
 pack:C. The six acceptance criteria|1 Named rows on both shells#1	0b40a43ef4a6	| 1 Named rows on both shells | partial | C8's restore half and C12 run on the w
 pack:C. The six acceptance criteria|2 Never stale as live#1	401e1edb067f	| 2 Never stale as live | partial | Disconnected with the last good time (Q04-T0
 pack:C. The six acceptance criteria|3 Reconnect restores the workspace#1	89a46898f36a	| 3 Reconnect restores the workspace | partial | The 60 s outage on the page's c
-pack:C. The six acceptance criteria|4 Accessibility is clean#1	3a0542ff5823	| 4 Accessibility is clean | partial | axe with zero violations in nine forced s
+pack:C. The six acceptance criteria|4 Accessibility is clean#1	3044db9a551a	| 4 Accessibility is clean | partial | axe with zero violations in nine driven s
 pack:C. The six acceptance criteria|5 Exploratory findings dispositioned#1	99119070e88b	| 5 Exploratory findings dispositioned | waits | Owner-run rows OR-1 to OR-3 (se
 pack:C. The six acceptance criteria|6 Sign-off evidenced#1	6a5d74abc319	| 6 Sign-off evidenced | waits | Part 2, after #408 and the owner-run rows (BQ-1
 pack:D. Accessibility split with E17-D04 (#408)|p#1	fb4ed842259d	## D. Accessibility split with E17-D04 (#408)
 pack:D. Accessibility split with E17-D04 (#408)|p#2	e7728210e96c	One owner per check (BQ-06). "Six forced states" are E17-D01's six as far as the
-pack:D. Accessibility split with E17-D04 (#408)|p#3	9910f6102b3e	Disconnected, Resyncing, Delayed and Read-only are forced; Stale cannot be, sinc
-pack:D. Accessibility split with E17-D04 (#408)|p#4	c5416d39797d	(rows 10 to 12). Q04-X01 also scans the four variants that draw their own region
-pack:D. Accessibility split with E17-D04 (#408)|p#5	310fe5eb37a0	session ended, the shutdown notice). The scan is `strictAxe` in `e2e/e17/support
-pack:D. Accessibility split with E17-D04 (#408)|p#6	fe43effb42ba	impact, minus the waivers ruled in `qa/plans/_tools/e17_q04_ruled_pins.txt` (non
+pack:D. Accessibility split with E17-D04 (#408)|p#3	2b8267525e68	Disconnected, Resyncing and Read-only are forced. Delayed is the probe-gated row
+pack:D. Accessibility split with E17-D04 (#408)|p#4	e14682752745	class and scans, but no Delayed treatment is built, so the page it scans looks L
+pack:D. Accessibility split with E17-D04 (#408)|p#5	a995b59c0a3d	cannot be forced, since no topic consumer is mounted (rows 10 to 12). Q04-X01 al
+pack:D. Accessibility split with E17-D04 (#408)|p#6	310fe5eb37a0	session ended, the shutdown notice). The scan is `strictAxe` in `e2e/e17/support
+pack:D. Accessibility split with E17-D04 (#408)|p#7	fe43effb42ba	impact, minus the waivers ruled in `qa/plans/_tools/e17_q04_ruled_pins.txt` (non
 pack:D. Accessibility split with E17-D04 (#408)|Check#1	7a149b2f6e28	| Check | Owner | Where |
-pack:D. Accessibility split with E17-D04 (#408)|axe, zero violations of any impact, dark theme, nine forced states#1	a915c7bf1928	| axe, zero violations of any impact, dark theme, nine forced states | Q04 autom
+pack:D. Accessibility split with E17-D04 (#408)|axe, zero violations of any impact, dark theme, nine driven states#1	ca53f4bd1e9d	| axe, zero violations of any impact, dark theme, nine driven states | Q04 autom
 pack:D. Accessibility split with E17-D04 (#408)|axe in the light theme and the densities#1	1e91d9c0ccbf	| axe in the light theme and the densities | D04 manual | not in part 1 |
 pack:D. Accessibility split with E17-D04 (#408)|Retry now by Tab, Enter and Space; focus unmoved by a state change; no dialog#1	4fb3361f9e8b	| Retry now by Tab, Enter and Space; focus unmoved by a state change; no dialog 
 pack:D. Accessibility split with E17-D04 (#408)|Focus order of the whole chrome#1	e39f880b4735	| Focus order of the whole chrome | D04 manual | not in part 1 |

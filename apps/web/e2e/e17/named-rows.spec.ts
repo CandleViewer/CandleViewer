@@ -1,6 +1,6 @@
 // E17-Q04 (#569), web shell: the two rows 23-ws-protocol.md section 16.4 names (C8 hidden tab, C12 kill switch and
 // shutdown notice). A browser tab is hidden through the page's own visibility API, as a background tab reports it;
-// the Electron copy hides the window itself (`apps/desktop/e2e/e17-named-rows.spec.ts`).
+// the Electron copy, which hides the window itself, is the pack's parked row E-1.
 import { expect, test, type Page } from "@playwright/test";
 import {
   hiddenTabRestoredWithoutSnapshot,
