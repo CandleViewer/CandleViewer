@@ -287,6 +287,14 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "watchlist.created",
         "watchlist.updated",
         "watchlist.deleted",
+        # E10-T05 (#5211): hotkey profile writes, written ahead of the change to the row (C-2.9),
+        # with `object_kind` `hotkey_profile` and the profile's id; the state carries the name, the
+        # binding count and the active flag, never a binding (24 Sec.15.5). `.activated` is one
+        # record, for the profile made active, naming the one it deactivated.
+        "hotkey_profile.created",
+        "hotkey_profile.updated",
+        "hotkey_profile.deleted",
+        "hotkey_profile.activated",
         "recorder.start",
         "recorder.stop",
         # #2188 (orchestrator ruling): `update_manual` changed a manual entry's streams or depth.

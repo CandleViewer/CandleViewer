@@ -18,6 +18,20 @@
           "type": "string"
         }
       },
+      "HotkeyBindingsRewritten": {
+        "description": "The actions whose `requires_arm` or `confirm` the request sent with a value other than the one the server derives (`HotkeyBinding`), which the answer carries instead: their ids, each once, in the order of the request's `bindings`, separated by `, ` (`ticket.submit, dom.cancel_all`). Sent only on a `createHotkeyProfile` or `updateHotkeyProfile` answer that rewrote at least one (E10-T05).\n",
+        "schema": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "HotkeyProfileETag": {
+        "description": "`W/\"<id>:<version>\"` of the hotkey profile answered (E10-T05). Send it as `If-Match` on `updateHotkeyProfile`: the server compares the id and the version it names, so the weak tag matches. `listHotkeyProfiles` carries no `ETag`: a client builds the tag of a listed profile from its `id` and `version`.\n",
+        "schema": {
+          "pattern": "^W/\"[0-9a-f-]{36}:[1-9][0-9]*\"$",
+          "type": "string"
+        }
+      },
       "IdempotencyReplayed": {
         "description": "True when the response was replayed from the idempotency store.",
         "schema": {
@@ -96,6 +110,15 @@
       "DrawingId": {
         "in": "path",
         "name": "drawingId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "HotkeyProfileId": {
+        "in": "path",
+        "name": "hotkeyProfileId",
         "required": true,
         "schema": {
           "format": "uuid",
@@ -1681,6 +1704,147 @@
         ],
         "type": "string",
         "x-db-enum": "exchange_env"
+      },
+      "HotkeyBinding": {
+        "additionalProperties": false,
+        "description": "One command's binding in a hotkey profile (E10-S02, E10-T05). A profile stores `keys` alone, keyed by `action` (`HotkeyProfileInput.bindings`): every read derives `scope`, `requires_arm` and `confirm` from the action and answers all three.\n",
+        "properties": {
+          "action": {
+            "description": "A command id of the client's default keymap, `apps/web/src/keymap/keymap.json` (E49-T04), which is the one action vocabulary; `HotkeyBindingAuditInput.command_id` carries the same ids. No parallel set of action names exists. On a write, an id the keymap does not have is `422 validation_failed`, rule `unknown_action`.",
+            "examples": [
+              "ticket.side_buy",
+              "positions.close_all",
+              "chart.footprint_toggle"
+            ],
+            "maxLength": 60,
+            "type": "string"
+          },
+          "confirm": {
+            "description": "Whether the command's handler opens the confirm flow, derived by the server from the action and never stored (E10-T05): `true` for exactly the keymap's dangerous set, the eight commands `keymap.json` marks `confirm` and `audited`: `chart.delete_drawing`, `rules.delete`, `dom.cancel_all`, `positions.close`, `positions.close_all`, `ticket.submit`, `dom.arm` and `ticket.arm`; `false` for every other command. On a write it is advisory, as `requires_arm` is: left out it takes the derived value, and a value that differs is rewritten and named in `Hotkey-Bindings-Rewritten`. A read always answers it.\n",
+            "type": "boolean"
+          },
+          "keys": {
+            "description": "The binding, in canonical form (E10-T05). The grammar is the client's (`validate.ts`\n`normaliseBinding`); the server checks it in code, and no pattern states it here:\n\n- **A key chord:** the modifiers it holds among `Ctrl`, `Alt` and `Shift`, in that\n  order, then one key, joined by `+` (`Ctrl+Shift+F`). The key is a named key (`Esc`,\n  `Del`, `Space`, `Enter`, `Tab`, `Backspace`, `Home`, `End`, `PageUp`, `PageDown`,\n  `←`, `→`, `↑`, `↓`), `F1` to `F24`, one character other than white space (a letter\n  in upper case), or a digit range `a..b` with `a` at most `b`, which binds each digit\n  from `a` to `b` (`Alt+1..9`).\n- **A pointer gesture:** modifiers as above, then `Space` when it is held, then\n  `click`, `drag` or `wheel` (`Ctrl+drag`, `Space+drag`).\n- **A modifier alone:** `Ctrl`, `Alt` or `Shift` (`positions.multi_ctrl`).\n- **Unbound:** `\"\"`.\n\nIn a key chord, `Shift` goes on a letter, a named key or a function key, never on a\ndigit, a digit range or another single character, since a press reads as the character\nShift typed (`?`, never `Shift+/`). Case and the client's aliases are accepted (`esc`\nor `Escape` for `Esc`; `Control`, `Cmd`, `Meta` or `Mod` for `Ctrl`; `Option` for\n`Alt`), and the server stores and answers the canonical form.\n\nA binding keeps the shape of its command's keymap default: a key stays a key; a digit\nrange keeps its digits (`1..9` may become `Alt+1..9`, never `1..4`); a gesture keeps\nits gesture (`Ctrl+drag` may become `Alt+drag`, never `Ctrl+click`); a modifier\nalone stays one. So every default of the keymap, its ranges, gestures and bare\nmodifiers included, is accepted as it is.\n\nOn a write, a binding that breaks a rule is `422 validation_failed` naming it (`field`\n`bindings[2].keys`), with the rule `HotkeyProfileInput.bindings` orders first among:\n\n- `invalid_keys`: not a binding of this grammar;\n- `shape_mismatch`: not its command's shape;\n- `bare_letter_dangerous`: a single letter, with or without `Shift`, on a command of\n  the dangerous set (`confirm`), whatever the user acknowledged;\n- `reserved_key`: `Esc` or `Ctrl+K` on any command but the ones they belong to; or a\n  key the client's `reserved-keys.json` reserves (a digit range by each of its\n  digits) on a command that does not hold it as its own default with a reviewed\n  override (`reservedOverride`);\n- `locked_command`: `global.palette` (`Ctrl+K`), `chart.cancel_drawing` or\n  `ticket.clear` (both `Esc`), the commands the keymap does not let a user remap,\n  bound to anything but its default, or unbound.\n\nThe acknowledgement a client takes before binding a bare key to a dangerous command\n(`HotkeyBindingAuditInput.acknowledged_unsafe`) is not checked here: a device reads a\nstored profile by its import rules, which return such a binding to its default\n(CR-305BD-04).\n",
+            "maxLength": 60,
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "description": "Reserved for a command that declares parameters (E30-S07); none does yet. On a write it must be absent or `{}`: anything else is `422 validation_failed`, rule `params_not_allowed`. It is not stored, and a read never answers it.\n",
+            "type": "object"
+          },
+          "requires_arm": {
+            "description": "Whether the command waits for the session's arm (SR-043), derived by the server from the action and never stored (E10-T05): `true` for exactly the five commands that place an order, which are mutations `ArmToken` requires the token for (a submit, reduce-only ones included): `ticket.submit`, `chart.limit_at_price`, `chart.market_order`, `dom.market_click` and `dom.stop_click`, as `keymap.json` marks them (`requiresArm`). It is `false` for every other command, so no protective command (the C-2.6 carve-out `ArmToken` lists: a cancel, a close, a stop) is ever armed, nor an arm toggle, nor engaging the kill switch, which is no order mutation (C-2.6, C-2.21). On a write it is advisory: left out it takes the derived value, and a value that differs is rewritten, in either direction, and named in `Hotkey-Bindings-Rewritten`. A read always answers it.\n",
+            "type": "boolean"
+          },
+          "scope": {
+            "description": "The view the binding is active in (E10-S02, #305). It is fixed by the action: the\nscope that the `context` of its `keymap.json` command maps to in this table. The table\ngoes by `context`, not by id prefix: `global.auth.submit` is an `Auth` command, so its\nscope is `auth`.\n\n| `keymap.json` context | `scope`     |\n| --------------------- | ----------- |\n| `Global`              | `global`    |\n| `Auth`                | `auth`      |\n| `Workspace`           | `workspace` |\n| `Chart`               | `chart`     |\n| `DOM`                 | `dom`       |\n| `Ticket`              | `ticket`    |\n| `Positions`           | `positions` |\n| `Replay`              | `replay`    |\n| `Rules`               | `rules`     |\n| `Admin`               | `admin`     |\n| `Settings`            | `settings`  |\n\nSeven contexts had no scope among the original six, so each has its own (`auth`,\n`workspace`, `ticket`, `replay`, `rules`, `admin`, `settings`) rather than a fold into\nanother scope. The defaults reuse a key in contexts the keymap declares never active\ntogether (`B` is `ticket.side_buy` and `replay.bookmark`; `Enter` is\n`global.auth.submit`, `positions.open_sltp` and `rules.inspect_node`), and one shared\nscope would make each such pair a `conflict` under `createHotkeyProfile`'s rule. The\norder ticket is `ticket`, not `orders`: `05-accessibility-standard.md` §3.4 makes the\nOrder Ticket and Positions & Orders separate regions. `tape` and `orders` have no\nclient context yet. **Open-ended for readers:** clients must tolerate values they do\nnot know, so adding a scope is an additive change (C-6.3). Writers must send a listed\nvalue, the one this table gives the action: on a write, any other is\n`422 validation_failed`, rule `scope_mismatch`. It is never stored; a read derives it\nfrom the action (E10-T05).\n",
+            "enum": [
+              "global",
+              "chart",
+              "dom",
+              "tape",
+              "orders",
+              "positions",
+              "auth",
+              "workspace",
+              "ticket",
+              "replay",
+              "rules",
+              "admin",
+              "settings"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "keys",
+          "scope"
+        ],
+        "type": "object"
+      },
+      "HotkeyProfile": {
+        "additionalProperties": false,
+        "description": "One of the caller's hotkey profiles as stored (E10-T05): the members of `HotkeyProfileInput`, under the same rules, and the server's own. Every member is always answered. Closed on purpose: a profile's members are exactly these.\n",
+        "properties": {
+          "bindings": {
+            "description": "The stored entries, as `HotkeyProfileInput.bindings` says under \"Reads\".",
+            "items": {
+              "$ref": "#/components/schemas/HotkeyBinding"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_active": {
+            "description": "The profile `getMyKeymap` answers. At most one profile of a user is active (`activateHotkeyProfile`); a new profile is not.\n",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "owner_user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "The last create or replace; activation leaves it as it is.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "description": "Server-assigned: 1 on create, one more on each replace (`updateHotkeyProfile`); activation leaves it as it is. `updateHotkeyProfile` takes it back through `If-Match` (`HotkeyProfileETag`), never in the body.\n",
+            "minimum": 1,
+            "readOnly": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "owner_user_id",
+          "name",
+          "bindings",
+          "is_active",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "HotkeyProfileInput": {
+        "additionalProperties": false,
+        "description": "A hotkey profile as a client writes it (E10-T05). Closed: a member this schema or `HotkeyBinding` does not declare is `422 validation_failed` with rule `extra_forbidden`, and a member that breaks its schema is refused with the rule of the check it fails, at most 20 `errors[]` items, before any rule of `bindings` is judged. Nothing is stored on a refusal.\n",
+        "properties": {
+          "bindings": {
+            "description": "The profile's bindings, at most one per command (E10-T05).\n\n- **Rules.** On a write, each entry is judged on its own, and each refused entry is one\n  `errors[]` item, its `field` the member at fault (`bindings[2].keys`) and its `rule`\n  the first it breaks in this order: `unknown_action` (`action`), `duplicate_action`\n  (an `action` an earlier entry names), `scope_mismatch` (`scope`),\n  `params_not_allowed` (`params`), then the rules of `keys` in their order:\n  `invalid_keys`, `shape_mismatch`, `bare_letter_dangerous`, `reserved_key`,\n  `locked_command`. Each is `422 validation_failed`. A command the caller's role or\n  account grants cannot run is no refusal (E47-S08's rule): its binding is stored and\n  stays inert, since the operation it would run is authorised, and armed, on its own.\n- **A partial profile.** A profile may name only some commands: one it leaves out\n  keeps its keymap default, and `createHotkeyProfile`'s conflict check runs on the\n  profile so filled in, as the client's `checkProfile` does.\n- **Storage.** A profile stores one jsonb object of `action` to `keys`, one string per\n  command it names, `\"\"` for an unbound one (`21-database-schema.md` section 3.8.5).\n  `scope`, `requires_arm`, `confirm` and `params` are not stored.\n- **Reads.** `HotkeyProfile.bindings` and `getMyKeymap` answer one entry per stored\n  command, in the keymap's command order, each with the `scope`, `requires_arm` and\n  `confirm` derived from its action, and leave out an action the keymap no longer has.\n",
+            "items": {
+              "$ref": "#/components/schemas/HotkeyBinding"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "name": {
+            "description": "Unique among the owner's profiles, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`, `createHotkeyProfile`).\n",
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "bindings"
+        ],
+        "type": "object"
       },
       "IndicatorPreset": {
         "description": "Response object. Readers must ignore unknown properties (C-6.3). A built-in has `is_builtin: true` and `owner_user_id: null`.",
@@ -6895,6 +7059,126 @@
     },
     "/settings/hotkeys": {
       "get": {
+        "description": "The caller's own profiles, each with its `version` (E10-T05). Another user's profiles are never listed, whatever the caller's role. A caller with none gets an empty `items`: the `404` below stays declared and is never answered. Each profile's `bindings` are its stored entries, as `HotkeyProfile` says. While the session views as another user the answer is the target's profiles, as for every `scope: self` read (\"View-as session\" in `info.description`). The answer carries no `ETag`: a client builds the tag of a listed profile from its `id` and `version` (`HotkeyProfileETag`). `503 store_unavailable`: the profile store cannot be read; nothing is served.\n",
+        "operationId": "listHotkeyProfiles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "default": {
+                    "value": {
+                      "items": [
+                        {
+                          "bindings": [
+                            {
+                              "action": "ticket.side_buy",
+                              "confirm": false,
+                              "keys": "B",
+                              "requires_arm": false,
+                              "scope": "ticket"
+                            },
+                            {
+                              "action": "ticket.submit",
+                              "confirm": true,
+                              "keys": "Ctrl+Enter",
+                              "requires_arm": true,
+                              "scope": "ticket"
+                            },
+                            {
+                              "action": "dom.cancel_all",
+                              "confirm": true,
+                              "keys": "Ctrl+Shift+X",
+                              "requires_arm": false,
+                              "scope": "dom"
+                            },
+                            {
+                              "action": "positions.close_all",
+                              "confirm": true,
+                              "keys": "Ctrl+Shift+W",
+                              "requires_arm": false,
+                              "scope": "positions"
+                            },
+                            {
+                              "action": "chart.footprint_toggle",
+                              "confirm": false,
+                              "keys": "F",
+                              "requires_arm": false,
+                              "scope": "chart"
+                            },
+                            {
+                              "action": "replay.play_pause",
+                              "confirm": false,
+                              "keys": "Space",
+                              "requires_arm": false,
+                              "scope": "replay"
+                            },
+                            {
+                              "action": "rules.graph_mode",
+                              "confirm": false,
+                              "keys": "Alt+G",
+                              "requires_arm": false,
+                              "scope": "rules"
+                            },
+                            {
+                              "action": "workspace.save",
+                              "confirm": false,
+                              "keys": "Ctrl+S",
+                              "requires_arm": false,
+                              "scope": "workspace"
+                            },
+                            {
+                              "action": "global.account_picker",
+                              "confirm": false,
+                              "keys": "Ctrl+Shift+A",
+                              "requires_arm": false,
+                              "scope": "global"
+                            }
+                          ],
+                          "created_at": "2026-09-01T08:00:00Z",
+                          "id": "17000000-0000-4000-8000-000000000001",
+                          "is_active": true,
+                          "name": "CandleViewer Default",
+                          "owner_user_id": "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001",
+                          "updated_at": "2026-09-10T11:00:00Z",
+                          "version": 3
+                        }
+                      ]
+                    }
+                  }
+                },
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/HotkeyProfile"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Profiles."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "List hotkey profiles",
+        "tags": [
+          "settings"
+        ],
         "x-rbac": {
           "permissions": [
             "settings:read"
@@ -6903,6 +7187,65 @@
         }
       },
       "post": {
+        "description": "Creates one of the caller's profiles, inactive, at `version` 1 (E10-T05);\n`activateHotkeyProfile` makes it the active one. The body is judged whole by the rules of\n`HotkeyProfileInput` and `HotkeyBinding`, and nothing is stored on any refusal.\n\n- **Conflicts.** Detection runs server-side at save time, on the profile filled in with\n  the keymap's defaults for the commands the body leaves out. Two bindings conflict when\n  they share a key (a digit range shares each of its digits) and their scopes overlap:\n  the same scope, or either is `global` (a command the keymap gives `focusContexts` has\n  the scope of each). An unbound command (`keys: \"\"`) conflicts with nothing, and neither\n  does a pair the keymap declares as a view's shadow of a Global command (today\n  `workspace.fullscreen_panel` over `global.fullscreen`, both on `F11`).\n  A conflict is `409 conflict` with `errors[].rule` `binding_conflict`: one item for each\n  command of one such pair, its `field` that command's entry (`bindings[2].keys`, or\n  `bindings` for a command left at its default) and its `message` naming the other\n  command's action.\n- **The arm.** `requires_arm` and `confirm` are the server's, derived from the action\n  (`HotkeyBinding`). A value the body sends is advisory: one that differs from the\n  derived value is rewritten, in either direction, never refused, and the answer names\n  each such action in `Hotkey-Bindings-Rewritten`. So no command that places an order is\n  bound without the arm, and no protective one with it (C-2.6, C-2.21).\n- **Caps.** A body over 64 KiB is `413 payload_too_large`, refused before it is parsed. A\n  caller who already holds 20 profiles is `409 conflict` with rule `limit_reached`. The\n  `name` is unique among the caller's profiles, case-insensitively as Postgres `lower()`\n  folds it: a taken one is `409 conflict` with rule `name_taken` and `field` `name`.\n- **Order.** When several refusals apply, the first in this order answers: `413`, then\n  `422`, then `409` (`binding_conflict`, then `limit_reached`, then `name_taken`).\n- **Acting on a refusal (CR-305C-04).** `413`, any `422`, and `409` with\n  `binding_conflict` or `limit_reached` refuse the body itself: resending it unchanged\n  gets the same answer. `404`, `409` with `name_taken`, and `412` mean the caller's copy\n  of its profiles is stale: list them again first. A code `x-error-codes` marks\n  `retryable` may succeed later, unchanged.\n- **Audit and view-as.** Audited write-ahead as `hotkey_profile.created`\n  (24-internal-schemas.md section 15.5): a record that cannot be written is\n  `503 audit_unavailable`, and nothing is stored. A session viewing as another user is\n  refused `403 view_as_read_only` before anything is read (\"View-as session\" in\n  `info.description`), so a client sends no write while a view is live.\n",
+        "operationId": "createHotkeyProfile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HotkeyProfileInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HotkeyProfile"
+                }
+              }
+            },
+            "description": "Created.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/HotkeyProfileETag"
+              },
+              "Hotkey-Bindings-Rewritten": {
+                "$ref": "#/components/headers/HotkeyBindingsRewritten"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/CsrfTokenInvalid"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Create a hotkey profile",
+        "tags": [
+          "settings"
+        ],
         "x-rbac": {
           "permissions": [
             "settings:write"
@@ -6913,6 +7256,37 @@
     },
     "/settings/hotkeys/{hotkeyProfileId}": {
       "delete": {
+        "description": "Deletes one of the caller's profiles; the row is removed, and its history is the audit trail (`hotkey_profile.deleted`, written ahead; E10-T05). The active profile cannot be deleted: `409 conflict` with rule `profile_active`; activate another first. Another user's profile id is `404`, as an id that does not exist, never `403`, and `404` comes before `409`. A record that cannot be written is `503 audit_unavailable`, and nothing changes; a session viewing as another user is refused `403 view_as_read_only`.\n",
+        "operationId": "deleteHotkeyProfile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/CsrfTokenInvalid"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Delete a hotkey profile",
+        "tags": [
+          "settings"
+        ],
         "x-rbac": {
           "permissions": [
             "settings:write"
@@ -6920,7 +7294,92 @@
           "scope": "self"
         }
       },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/HotkeyProfileId"
+        }
+      ],
       "put": {
+        "description": "Replaces the whole profile, its `name` and `bindings`, and stores it as its next `version` (E10-T05); `is_active` stays as it is. The body is judged as on `createHotkeyProfile`, by the same rules and with the same answers (`422`, `409` with `binding_conflict` or `name_taken`, `413` over 64 KiB, `Hotkey-Bindings-Rewritten`); `limit_reached` never applies. `If-Match` is optional: without it the replace is last-write-wins. With it, a tag that does not name the profile's current version (`HotkeyProfileETag`; `*`, a list of tags, another profile's tag and an unparseable value included) is `412 version_conflict`, whose `ETag` names the current version, and nothing changes. Another user's profile id is `404`, as an id that does not exist, never `403`. When several refusals apply, the first in this order answers: `413`, then `404` (so a tag never tells another user's profile apart from no profile), then `412`, then `422`, then `409` (`binding_conflict`, then `name_taken`). Audited write-ahead as `hotkey_profile.updated`, with `createHotkeyProfile`'s audit and view-as answers.\n",
+        "operationId": "updateHotkeyProfile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HotkeyProfileInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HotkeyProfile"
+                }
+              }
+            },
+            "description": "Replaced.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/HotkeyProfileETag"
+              },
+              "Hotkey-Bindings-Rewritten": {
+                "$ref": "#/components/headers/HotkeyBindingsRewritten"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/CsrfTokenInvalid"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`If-Match` does not name the profile's current version (`version_conflict`). Nothing changed; the `ETag` header names the current version.\n",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/HotkeyProfileETag"
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Replace a hotkey profile",
+        "tags": [
+          "settings"
+        ],
         "x-rbac": {
           "permissions": [
             "settings:write"
@@ -6930,7 +7389,52 @@
       }
     },
     "/settings/hotkeys/{hotkeyProfileId}/activate": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/HotkeyProfileId"
+        }
+      ],
       "post": {
+        "description": "Makes one of the caller's profiles the active one, and the profile that was active inactive, in one transaction, so a user has at most one active profile (E10-T05; `21-database-schema.md` section 3.8.5, `ux_hk_active`). Only `is_active` changes: `version` and `updated_at` stay as they are. Activating the profile that is already active changes nothing, writes no record and answers it as it is. Another user's profile id is `404`, as an id that does not exist, never `403`. Audited write-ahead as `hotkey_profile.activated`: a record that cannot be written is `503 audit_unavailable`, and nothing changes; a session viewing as another user is refused `403 view_as_read_only`.\n",
+        "operationId": "activateHotkeyProfile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HotkeyProfile"
+                }
+              }
+            },
+            "description": "Activated.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/HotkeyProfileETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/CsrfTokenInvalid"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Make a hotkey profile active",
+        "tags": [
+          "settings"
+        ],
         "x-rbac": {
           "permissions": [
             "settings:write"

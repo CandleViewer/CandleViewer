@@ -145,6 +145,7 @@ from candleviewer.api.exchange_accounts import make_exchange_accounts_router
 from candleviewer.api.exchange_keys import make_exchange_keys_router
 from candleviewer.api.feature_flags import make_feature_flags_routers
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
+from candleviewer.api.hotkey_profiles import make_hotkey_profiles_router
 from candleviewer.api.idle_lock import IdleLockMiddleware
 from candleviewer.api.indicator_presets import make_indicator_presets_router
 from candleviewer.api.indicator_presets_service import (
@@ -453,6 +454,9 @@ from candleviewer.storage.repositories.break_glass_sqlalchemy import SqlAlchemyB
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.drawings_sqlalchemy import SqlAlchemyDrawingRepository
 from candleviewer.storage.repositories.export_keys_sqlalchemy import SqlAlchemyExportKeyStore
+from candleviewer.storage.repositories.hotkey_profiles_sqlalchemy import (
+    SqlAlchemyHotkeyProfileStore,
+)
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.incidents_sqlalchemy import SqlAlchemyIncidents
 from candleviewer.storage.repositories.indicator_presets_sqlalchemy import (
@@ -3612,6 +3616,23 @@ def create_app(
             conflicts=metrics_facade.counter(
                 "watchlist_write_conflicts_total", "Stale If-Match 412s of /watchlists replaces."
             ).child(),
+        )
+    )
+    # E10-T05 (#5211): owner-scoped /settings/hotkeys* (`scope: self`), each body judged by the
+    # client's binding rules (`api.hotkey_rules`) and each write recorded ahead. Postgres on the
+    # real backend only: the fake backend answers 503 without any I/O.
+    app.state.hotkey_profiles_repository = (
+        SqlAlchemyHotkeyProfileStore(
+            SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "hotkey-profiles")
+        )
+        if resolved.storage_backend == "real"
+        else None
+    )
+    app.include_router(
+        make_hotkey_profiles_router(
+            lambda: app.state.hotkey_profiles_repository,
+            audit_resolver,
+            _LazyAuditEmitter(ctx.audit),
         )
     )
     # E08-S05: maintained L2 book snapshot (503 while resyncing, never a patched book).

@@ -77,6 +77,7 @@ from candleviewer.storage.repositories.user_lifecycle import UserStatusChange
 from candleviewer.user_cascade_wiring import NoOrderCounter
 from candleviewer.ws.lifecycle import ConnectRateLimiter
 from tests.csrf_helpers import csrf_headers
+from tests.hotkey_profiles._fake_store import FakeHotkeyProfileStore
 from tests.unit.admin._backup_fakes import row
 from tests.unit.admin._link_fakes import Reader
 from tests.unit.api._purge_anchors import InMemoryPurgeAnchors
@@ -849,6 +850,9 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     # E02-T13 (#5181): the per-user settings store `/settings` and `/me/preferences` read is
     # Postgres-only (`None` on this backend), so the world gives them the in-memory one.
     app.state.user_settings_repository = FakeUserSettings()
+    # E10-T05 (#5211): the hotkey profile store `/settings/hotkeys*` reads is Postgres-only
+    # too, so the world gives it the in-memory one.
+    app.state.hotkey_profiles_repository = FakeHotkeyProfileStore()
     _CSRF_CODEC[:] = [app.state.csrf_codec]
     ctx = app.state.app_context
     ctx.audit._writer = audit
