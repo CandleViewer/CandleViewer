@@ -7,6 +7,7 @@ import { createChart, setHostEnvFactory } from "../../src/api/chart.js";
 import type { ChartEvents } from "../../src/api/types.js";
 import { RESTORE_BUDGET_MS } from "../../src/gl/context-loss.js";
 import { createChartHost } from "../../src/worker/host.js";
+import { proceduralPlatform, TEST_FONTS } from "../../bench/fixtures/text-platform.js";
 import {
   ENGINE_CONTEXT_LOST,
   ENGINE_CONTEXT_RESTORE_FAILED,
@@ -186,7 +187,30 @@ describe("Scenario: Context loss restores a correct scene within the budget (G1)
     "G1 with an active crosshair series drawn, not only the a11y summary (pending: E11-S07 #388)",
   );
   it.todo("G1 golden: the post-restore frame matches the pre-loss frame (pending: E11-T08 #391)");
-  it.todo("G1 loss during SDF atlas generation (pending: E11-S11 #336)");
+  it("G1 loss during SDF atlas generation: the CPU build finishes, one upload after restore", async () => {
+    const run = async (lose: boolean) => {
+      vi.clearAllTimers();
+      vi.setSystemTime(0);
+      const text = proceduralPlatform();
+      const { rt, out, init } = runtimeOnFakeClock("inline", text);
+      const gl = roomyGl();
+      const c = lossCanvas(gl);
+      init(c, 1, { fonts: TEST_FONTS });
+      frames(16); // the backend opens; generation is still in flight (no glyph yet)
+      expect(rt.atlasCounters()?.rasterized).toBe(0);
+      if (lose) c.lose();
+      await vi.advanceTimersByTimeAsync(400); // inside attempt 1's 1 s wait
+      const whileLost = gl.textures.length;
+      if (lose) c.restore();
+      await vi.advanceTimersByTimeAsync(64);
+      return { out, gl, whileLost, text };
+    };
+    const ref = await run(false);
+    const hit = await run(true);
+    expect([hit.whileLost, codes(hit.out)]).toEqual([0, [LOST, RESTORED]]);
+    expect(hit.text.rasters).toBe(194); // built once, never restarted by the loss
+    expect(hit.gl.textures).toEqual(ref.gl.textures); // the same image and rows, uploaded once
+  });
   it.todo(
     "G1 SCR-048 announces the loss through role=alert in a mounted chart (pending: needs-owner, once a route mounts the chart)",
   );

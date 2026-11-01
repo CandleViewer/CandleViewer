@@ -10,6 +10,7 @@ import {
   type FromWorker,
   type RunMode,
 } from "../../src/worker/protocol.js";
+import type { TextPlatform } from "../../src/text/platform.js";
 import { FakeGl, FULL, ROOMY } from "../gl/fake-gl.js";
 
 /** The seeds every seeded chaos case walks; a failure message carries the seed. */
@@ -54,7 +55,7 @@ export function lossCanvas(gl: FakeGl | null) {
 }
 
 /** A runtime on the fake clock (call `vi.useFakeTimers()` first) and everything it posted. */
-export function runtimeOnFakeClock(runMode: RunMode = "inline") {
+export function runtimeOnFakeClock(runMode: RunMode = "inline", text?: TextPlatform) {
   const out: FromWorker[] = [];
   const rt: RenderRuntime = createRenderRuntime({
     runMode,
@@ -63,9 +64,11 @@ export function runtimeOnFakeClock(runMode: RunMode = "inline") {
     now: fakeNow,
     setTimer: (cb, ms) => void setTimeout(cb, ms),
     probe: () => FULL,
+    ...(text && { text }),
   });
-  const init = (canvas: object, id = 1): void =>
+  const init = (canvas: object, id = 1, extra: object = {}): void =>
     rt.handle({
+      ...extra,
       t: "init",
       id,
       canvas,

@@ -16,8 +16,15 @@ import {
 } from "./program-cache.js";
 import { GlRegistry } from "./registry.js";
 import { type PaneUniformSource, submitDrawList } from "./submit.js";
-import { GlTextures } from "./textures.js";
+import { ATLAS_TEXTURE, GlTextures } from "./textures.js";
 import { DrawTrace } from "./trace.js";
+
+/** What a backend needs of the CPU atlas (E11-S11, BQ-266): the texture size and its packed rows. */
+export interface AtlasRows {
+  readonly width: number;
+  readonly height: number;
+  readonly rows: Uint8Array;
+}
 
 /** A backend failure the runtime posts as a recoverable `error`, then falls back (BQ-85). */
 export interface BackendFailure {
@@ -60,6 +67,8 @@ export interface RenderBackend extends UploadSink {
   attach(nodeId: string, source: VertexSource): void;
   /** The clear colour, from the theme's background token. */
   setBackground(css: string | undefined): void;
+  /** The SDF atlas's packed rows into texture `ATLAS_TEXTURE` (E11-S11; 2D draws text by font). */
+  uploadAtlas(atlas: AtlasRows): void;
   /** Frees what the backend made (chart release). */
   dispose(): void;
 }
@@ -136,6 +145,11 @@ export class GLBackend implements RenderBackend, LossCapable {
     const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(css ?? "")?.[1] ?? "000";
     const n = Number.parseInt(hex.length === 3 ? hex.replace(/./g, "$&$&") : hex, 16);
     for (let i = 0; i < 3; i += 1) this.rgb[i] = ((n >> (16 - 8 * i)) & 255) / 255;
+  }
+
+  uploadAtlas({ width, height, rows }: AtlasRows): void {
+    this.textures.define(ATLAS_TEXTURE, width, height, null, "r8");
+    this.textures.patchRows(ATLAS_TEXTURE, 0, rows);
   }
 
   /** On `webglcontextlost`: every GL object is gone; the CPU mirrors stay. */

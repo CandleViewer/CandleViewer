@@ -9,6 +9,8 @@ import type {
   RenderProfile,
 } from "../gl/capability.js";
 import type { LossDetails } from "../gl/context-loss.js";
+import type { AtlasDetails } from "../text/atlas.js";
+import type { ChartFont } from "../text/platform.js";
 
 export type { CapabilityReport, DegradeReason, ReducedCapability, RenderProfile };
 
@@ -48,6 +50,12 @@ export {
   ENGINE_CONTEXT_RESTORED,
 } from "../gl/context-loss.js";
 export { ENGINE_SHADER_COMPILE_FAILED } from "../gl/program-cache.js";
+// E11-S11's codes (BQ-272): the cache one is informational, the generation one is not.
+export { ENGINE_ATLAS_CACHE_INVALID, ENGINE_ATLAS_GENERATION_FAILED } from "../text/codes.js";
+export type { AtlasDetails, ChartFont };
+/** Bounds on `init.fonts` (BQ-258): a few faces, each at most 8 MiB. */
+export const MAX_FONTS = 4;
+export const MAX_FONT_BYTES = 8 * 2 ** 20;
 /** Backoff before each worker restart and each context-restore attempt: 1 / 2 / 4 s (BQ-49). */
 export const RESTART_BACKOFF_MS = [1000, 2000, 4000] as const;
 
@@ -137,6 +145,8 @@ export type ToWorker =
       readonly profile?: "degraded-2d";
       /** The app's resolved motion mode at mount (BQ-104); absent means full motion. */
       readonly reducedMotion?: boolean;
+      /** The design fonts' bytes (E11-S11 BQ-258, additive): copied, never transferred. */
+      readonly fonts?: readonly ChartFont[];
     }
   | {
       /** CSS px (backing / dpr, BQ-145); 0 on either axis suspends the chart (BQ-147). */
@@ -240,8 +250,9 @@ export type FromWorker =
       readonly code: string;
       readonly message: string;
       readonly recoverable: boolean;
-      /** On `ENGINE_CONTEXT_LOST` (BQ-64) and `ENGINE_NO_WEBGL2` (BQ-90) only. */
-      readonly details?: LossDetails | DegradeDetails;
+      /** On `ENGINE_CONTEXT_LOST` (BQ-64), `ENGINE_NO_WEBGL2` (BQ-90) and
+       * `ENGINE_ATLAS_GENERATION_FAILED` (BQ-272) only. */
+      readonly details?: LossDetails | DegradeDetails | AtlasDetails;
     }
   // README BQ-10: §6 has no acknowledgement, which the host's backpressure needs, and no reply to
   // the `export` command; both are added in their narrowest form.
@@ -395,6 +406,27 @@ function validCommand(cmd: unknown): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * `init.fonts`: at most `MAX_FONTS` faces, each a named weight over bounded bytes. Checked by the
+ * runtime on its own: a bad `fonts` never rejects the init, it is ENGINE_ATLAS_GENERATION_FAILED
+ * ("font-load") for that chart, which keeps rendering without text.
+ */
+export function fontsOk(fonts: unknown): fonts is readonly ChartFont[] {
+  if (!Array.isArray(fonts) || fonts.length > MAX_FONTS) return false;
+  return fonts.every(
+    (f: unknown) =>
+      isObj(f) &&
+      typeof f["family"] === "string" &&
+      f["family"].length <= 64 &&
+      Number.isInteger(f["weight"]) &&
+      (f["weight"] as number) >= 1 &&
+      (f["weight"] as number) <= 1000 &&
+      f["bytes"] instanceof ArrayBuffer &&
+      f["bytes"].byteLength <= MAX_FONT_BYTES &&
+      (f["version"] === undefined || typeof f["version"] === "string"),
+  );
 }
 
 /**

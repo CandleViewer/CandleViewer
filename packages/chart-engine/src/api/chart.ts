@@ -197,6 +197,7 @@ export function createChart(opts: ChartOptions): Chart {
     theme: opts.theme.colors,
     syncGroup: opts.syncGroup ?? null,
     reducedMotion,
+    ...(opts.fonts !== undefined && { fonts: opts.fonts }),
     // Bench mode (every-frame `frame`, the C-Q02-1 LOD trace) has no §8 option: README BQ-18.
     bench: false,
     listener: {

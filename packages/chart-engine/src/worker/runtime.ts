@@ -21,6 +21,8 @@ import {
 import { Gestures } from "../interaction/gestures.js";
 import { plotWidthOf } from "../interaction/wheel.js";
 import * as scene from "../scene/index.js";
+import { AtlasService, type AtlasCounters, type AtlasDetails } from "../text/atlas.js";
+import type { ChartFont, TextPlatform } from "../text/platform.js";
 import {
   AutoScaler,
   ChartViewport,
@@ -36,6 +38,8 @@ import {
   BACKGROUND_TOKEN,
   ENGINE_DECODE_ERROR,
   ENGINE_NO_WEBGL2,
+  ENGINE_ATLAS_GENERATION_FAILED,
+  fontsOk,
   INPUT,
   INPUT_STRIDE,
   rejectReason,
@@ -73,14 +77,16 @@ export interface RuntimeDeps {
   /** Schedules one frame callback (the worker's or the page's rAF). */
   requestFrame(cb: () => void): void;
   now(): number;
-  /** One-shot timer: the context-restore attempts wait on it (BQ-49). */
-  setTimer(cb: () => void, ms: number): void;
+  /** One-shot timer: the context-restore attempts wait on it (BQ-49); it may return its cancel. */
+  setTimer(cb: () => void, ms: number): void | (() => void);
   /** The capability probe behind the `ready` report; run once, on the first frame. */
   probe(): CapabilityReport;
   /** Test-only (E11-S04, BQ-111): bars for every chart's viewport until E12 wires the store. */
   readonly timeMap?: IndexTimeMap;
   /** Internal (E11-S05, BQ-116): pane 0's price sources for autoscale until E12 attaches them. */
   readonly priceSources?: readonly PriceExtentSource[];
+  /** The atlas's font, raster and cache platform (E11-S11, BQ-261); null or absent: none here. */
+  readonly text?: TextPlatform | null;
 }
 
 export interface RenderRuntime {
@@ -92,13 +98,16 @@ export interface RenderRuntime {
   pickIndex(id: ChartId): { objects: ObjectIndex; structural: StructuralIndex } | undefined;
   /**
    * Internal (E11-S10, BQ-152): `cb(from, to)` runs once per DPR change, after the backing store
-   * is resized and before the next frame (E11-S11's atlas re-selects its size class on it).
+   * is resized and before the next frame. The SDF atlas ignores it: classes and DPR are shader
+   * scales, so a DPR change never regenerates (E11-K01 BQ-175).
    * Returns the unsubscribe function; undefined for an unknown chart. A listener that throws
    * posts a recoverable error for its chart and the others still run.
    */
   onDprChange(id: ChartId, cb: (from: number, to: number) => void): (() => void) | undefined;
   /** Internal (BQ-153): a chart's resize counters. */
   resizeCounters(id: ChartId): Readonly<ResizeCounters> | undefined;
+  /** Internal (E11-S11, BQ-272): `engine.atlas.*`; null until a WebGL2 chart with fonts opens. */
+  atlasCounters(): Readonly<AtlasCounters> | null;
 }
 
 /** `engine.resize.*` (BQ-153): backing-store reallocations and DPR changes, per chart. */
@@ -157,6 +166,8 @@ interface Instance {
   /** The last hover pick posted, (objectId, part, handle): edge-triggered (BQ-134). */
   readonly hover: { id: string | null; part: PickHit["part"]; handle: number };
   readonly elements: Record<StoreId, number>;
+  /** `init.fonts`, checked on their own (a bad option never rejects the init, BQ-258). */
+  readonly fonts: readonly ChartFont[] | "invalid" | undefined;
 }
 
 const summarise = (timeUs: number): string => {
@@ -176,6 +187,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   const charts = new Map<ChartId, Instance>();
   let scheduled = false;
   let report: CapabilityReport | null = null;
+  /** One CPU atlas per runtime, uploaded into each chart's context (BQ-277). */
+  let atlas: AtlasService | null = null;
 
   const fail = (id: ChartId | null, message: string): void => {
     deps.post({ t: "error", id, code: ENGINE_DECODE_ERROR, message, recoverable: true });
@@ -226,6 +239,28 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     return { graph, layout, scheduler, builder };
   }
 
+  /** Starts the runtime's atlas on the first WebGL2 chart that passes fonts (E11-S11 PR A). */
+  function startAtlas(fonts: readonly ChartFont[]): void {
+    if (atlas !== null) return;
+    atlas = new AtlasService({
+      platform: deps.text ?? null,
+      now: () => deps.now(),
+      setTimer: (cb, ms) => deps.setTimer(cb, ms),
+      // A lost context takes the rows as its CPU copy and uploads them once restored (BQ-266).
+      ready: (img) => charts.forEach((inst) => inst.gpu.backend?.uploadAtlas(img)),
+      emit: (code, message, recoverable, details) =>
+        deps.post({
+          t: "error",
+          id: null,
+          code,
+          message,
+          recoverable,
+          ...(details && { details }),
+        }),
+    });
+    void atlas.start(fonts);
+  }
+
   /** Re-requests a frame a park held back, or wakes the scheduler. */
   function kick(inst: Instance): void {
     if (inst.slot.frame === null) touch(inst);
@@ -237,10 +272,25 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
 
   /** The first frame chose the backend: say why it is not WebGL2, and watch a lossy one. */
   function opened(inst: Instance, { backend, degraded }: OpenedBackend): void {
-    type Details = LossDetails | DegradeDetails;
+    type Details = LossDetails | DegradeDetails | AtlasDetails;
     const post = (code: string, message: string, recoverable: boolean, d?: Details): void =>
       deps.post({ t: "error", id: inst.id, code, message, recoverable, ...(d && { details: d }) });
     backend.setPaneUniforms(() => inst.uniforms); // one pane until E11-S09 (BQ-45)
+    // Only a WebGL2 chart samples the atlas: a 2D one never costs a build (E11-S11 PR A).
+    if (!backend.drawsIn2d && backend.failure === null) {
+      if (inst.fonts !== undefined && inst.fonts !== "invalid") startAtlas(inst.fonts);
+      // A malformed option, or a chart that opens after the atlas failed: told with its own id
+      // (skip and disclose, BQ-259); an earlier chart had the id-null broadcast.
+      const failure =
+        inst.fonts === "invalid"
+          ? {
+              message: "Chart fonts option malformed; chart text is not drawn",
+              details: { atlasReason: "font-load" as const },
+            }
+          : atlas?.failure;
+      if (failure) post(ENGINE_ATLAS_GENERATION_FAILED, failure.message, false, failure.details);
+    }
+    if (atlas?.image) backend.uploadAtlas(atlas.image);
     if (degraded !== null) {
       const { reason, message, reducedCapabilities } = degraded;
       post(ENGINE_NO_WEBGL2, message, true, { reducedCapabilities, reason }); // BQ-90
@@ -452,6 +502,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "release":
         retire(inst);
         charts.delete(inst.id);
+        if (charts.size === 0) {
+          atlas?.dispose(); // the faces leave the font set; a build in flight stops
+          atlas = null;
+        }
         return;
       default:
         // setSeriesOptions / addDrawing: the scene graph that consumes them is E11-S01 / E14.
@@ -531,6 +585,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         loss: null,
         detach: null,
         elements: old ? { ...old.elements } : { bars: 0, footprint: 0, heatmap: 0, profile: 0 },
+        fonts: msg.fonts === undefined ? undefined : fontsOk(msg.fonts) ? msg.fonts : "invalid",
       };
       inst.gestures.reduce = msg.reducedMotion === true;
       charts.set(msg.id, inst);
@@ -710,5 +765,6 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       return set && (() => void set.delete(cb));
     },
     resizeCounters: (id) => charts.get(id)?.resizes,
+    atlasCounters: () => atlas?.counters ?? null,
   };
 }

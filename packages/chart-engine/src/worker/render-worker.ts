@@ -4,6 +4,7 @@
 // runs on the main thread. No DOM, no network (C-2.16).
 import { probeCanvas, selectProfile } from "../gl/capability.js";
 import { createRenderRuntime } from "./runtime.js";
+import { createTextPlatform, type TextScope } from "./text-platform.js";
 import type { CapabilityReport, FromWorker } from "./protocol.js";
 
 /** The dedicated-worker scope members used here (typed structurally: no WebWorker lib). */
@@ -38,9 +39,11 @@ export function startWorker(scope: WorkerScope): void {
     },
     now: () => performance.now(),
     setTimer: (cb, ms) => {
-      setTimeout(cb, ms);
+      const t = setTimeout(cb, ms);
+      return () => clearTimeout(t);
     },
     probe: () => probeWorker(scope),
+    text: createTextPlatform(scope as unknown as TextScope),
   });
   scope.onmessage = (ev) => runtime.handle(ev.data);
 }

@@ -258,6 +258,8 @@ Footprint cells are the densest text surface in the product, so text is a first-
 
 **E11-K01 finding (O2 re-confirmed with real font rasterisation, stand-in fonts):** all 194 glyphs pack at 512², 1024² and 2048²; 1024² is kept for headroom until E11-S11 re-applies the "smallest size meeting every gate" rule; the 24 px mono base is provisional; the `fwidth` band beats the shipped fixed band on median and worst cell glyph; a cache record of the packed rows only is what reads near the B9 ≤ 5 ms secondary gate. Figures: `docs/plan/spikes/E11-K01.md` and `E11-K01-results.json`.
 
+_Shipped (E11-S11 PR A, package README BQ-258 to BQ-277): the atlas core in `src/text` — the `ATLAS_CONFIG` table (every field in the cache key; K1–K3 on the vendored fonts edit it in PR C), the Float64 EDT, the deterministic shelf packer, generation per family (mono first) through the DOM-free `TextPlatform` seam, the IndexedDB packed-rows record with an FNV-1a checksum, and F-03: a cache hit is used only after the trading glyphs are re-derived and found byte-identical. The fonts come from `ChartOptions.fonts` bytes; there is never a fallback face. One CPU atlas per runtime is uploaded into each chart's R8 texture. The draw (runs, batcher, shaders, the outline program) is PR B._
+
 Measured budget: 5,000 glyphs (2,500 cells × 2 numbers ≈ 12,500 glyphs at 5 chars average → one draw call, ~0.9 ms CPU batching, ~0.4 ms GPU on the reference machine). The CI benchmark asserts ≤ 2.0 ms total for this case.
 
 ### 3.8 Heatmap texture streaming
@@ -437,6 +439,7 @@ export interface ChartOptions {
   syncGroup?: string;
   maxBars?: number; // default 200_000
   memoryBudgetMb?: number; // default 600
+  fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[]; // SDF atlas (E11-S11 BQ-258)
 }
 
 export interface Chart {
@@ -586,7 +589,8 @@ export interface ChartEvents {
             "footprint-text" | "heatmap" | "bubbles" | "profile-shading" | "gpu-effects"
           )[];
           reason: "no-webgl2" | "context-failed" | "compile-failed" | "restore-failed" | "forced";
-        }; // NO_WEBGL2 only, E11-T05 BQ-90
+        } // NO_WEBGL2 only, E11-T05 BQ-90
+      | { atlasReason: "no-font" | "font-load" | "coverage" | "overflow" | "raster" }; // ATLAS_GENERATION_FAILED only, E11-S11 BQ-272
   };
 }
 
@@ -707,6 +711,8 @@ Replay uses exactly the same series and the same frame types — only the subscr
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | WebGL2 unavailable                             | `RenderProfile = degraded-2d`: Canvas 2D candles, axes, lines, crosshair, drawings; footprint limited to coloured cells without text; heatmap disabled with an explanatory placeholder                                                                               |
 | Context lost                                   | Loop parked, GPU state invalidated, rebuilt from `DataModel`; `ENGINE_CONTEXT_LOST` + `details` per try (1/2/4 s), `ENGINE_CONTEXT_RESTORED` (informational) on the first frame after a rebuild, else `ENGINE_CONTEXT_RESTORE_FAILED`, `degraded-2d` (BQ-49, 53, 64) |
+| SDF atlas cache record invalid                 | Discarded and regenerated (bad shape, version, key-bound checksum or slot bounds, or F-03's re-derived trading glyphs differ); `ENGINE_ATLAS_CACHE_INVALID` (recoverable) once per launch (E11-S11)                                                                  |
+| SDF atlas not generated                        | No bytes, a failed face load, an unmapped glyph, an overflow or a raster fault: `ENGINE_ATLAS_GENERATION_FAILED` once, `details.atlasReason`; no fallback face (E11-S11)                                                                                             |
 | Shader compile failure                         | `ENGINE_SHADER_COMPILE_FAILED` with program, renderer and info log; the whole chart goes `degraded-2d` on a new canvas, not a simpler program (README BQ-54)                                                                                                         |
 | Out-of-memory on texture allocation            | Heatmap drops the coarse ring first, then halves rows; `MemoryGovernor` logs and emits a stats event                                                                                                                                                                 |
 | Data sequence gap                              | Engine keeps the last consistent state and requests a snapshot; UI shows a per-pane stale badge                                                                                                                                                                      |
