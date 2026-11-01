@@ -8,9 +8,12 @@ export const PANEL_TEXT = {
   maintenance: "Maintenance",
   /** `14` SCR-142's sign-off item "per-symbol breakdown for the hot tier": region (e)'s caption. */
   symbolsCaption: "Per-symbol breakdown for the hot tier",
-  /** D04 §4 `TIER/per-symbol`: the Pinned column's word; PROPOSED, the hidden reading of its "—". */
+  /** D04 §4 `TIER/per-symbol`: the Pinned column and its word; PROPOSED, the hidden reading of its "—". */
+  pinnedColumn: "Pinned",
   pinned: "pinned",
   notPinned: "not pinned",
+  /** PROPOSED (A-486P3-06): a listed Symbol's name, the visible symbol first (SC 2.5.3), naming what it opens. */
+  openDetail: "{symbol}: open row detail",
   /** PROPOSED: `storage.tier.unreachable` when the component names no last good time. */
   unreachable: "{Tier} unreachable",
   /** D04 §8 `IMPORT/form`: "Symbol (CMP-009)", "From / To (CMP-047 range)"; PROPOSED the range's name. */

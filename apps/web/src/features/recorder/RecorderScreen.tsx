@@ -274,6 +274,7 @@ export function RecorderScreen({
     storage: data.storage.data,
     frame,
     stale: view.stale,
+    historySinceMs,
   };
   const { RetentionEditor, StoragePanel } = extensions;
   const openRetention = RetentionEditor === undefined ? undefined : () => setRetentionOpen(true);
@@ -441,7 +442,12 @@ export function RecorderScreen({
         )}
         <GapTable gaps={data.gaps} nowMs={nowMs} hostRef={gapsLanding.hostRef} />
         {StoragePanel === undefined ? null : (
-          <StoragePanel headingId={STORAGE_HEADING_ID} {...extView} />
+          <StoragePanel
+            headingId={STORAGE_HEADING_ID}
+            openRetention={openRetention}
+            onSuggested={suggested}
+            {...extView}
+          />
         )}
         <RecordSymbolDialog
           open={adding}
