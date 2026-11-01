@@ -18,7 +18,8 @@
     "build:preload": "node scripts/build-preload.mjs",
     "build:installer": "node scripts/require-web-dist.mjs && electron-builder --config electron-builder.yml",
     "size": "echo \"@candleviewer/desktop: no bundle budget (renderer budget lives in apps/web)\"",
-    "e2e": "playwright test -c e2e/playwright.config.ts"
+    "e2e": "playwright test -c e2e/playwright.config.ts",
+    "perf": "playwright test -c e2e/perf/playwright.perf.config.ts"
   },
   "devDependencies": {
     "@candleviewer/config": "workspace:*",
