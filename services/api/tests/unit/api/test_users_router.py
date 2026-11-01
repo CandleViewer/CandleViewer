@@ -107,6 +107,16 @@ class _Sessions:
         """A refusal's read of its session (#4174): it authorises nothing."""
         return SimpleNamespace(id=SESSION) if token == "tok" else None  # noqa: S105
 
+    async def live_sessions(self, user_id: str) -> tuple[Any, ...]:
+        """#2101: the target holds no session here; `test_role_change_revocation` gives it some."""
+        return ()
+
+    def now(self) -> datetime:
+        return datetime.now(UTC)
+
+    async def revoke_all(self, user_id: str, **_kw: Any) -> tuple[Any, ...]:
+        return ()
+
 
 class _Auth:
     step_up_is_active = True
@@ -584,7 +594,7 @@ def test_put_roles_push_failure_after_the_commit_is_200_logged_and_counted() -> 
     assert r.status_code == 200 and r.json()["roles"] == ["manager"]
     assert store.roles == {"manager"} and n.users == [TARGET]
     assert _pushes("failed") == failed + 1
-    (line,) = [e for e in logs if e["event"] == "users.update.step"]
+    (line,) = [e for e in logs if e["event"] == "users.update.step" and e["step"] == "roles_push"]
     assert (line["log_level"], line["step"], line["outcome"]) == ("error", "roles_push", "failed")
     assert line["error"] == "RuntimeError" and line["target_user_id"] == str(TARGET)
     assert line["part"] == "registry"
@@ -605,7 +615,7 @@ def test_put_roles_a_failed_view_as_hook_is_logged_apart_from_the_registry() -> 
             f"/users/{TARGET}/roles", json={"roles": ["manager"]}
         )
     assert r.status_code == 200 and _pushes("failed") == failed + 1
-    (line,) = [e for e in logs if e["event"] == "users.update.step"]
+    (line,) = [e for e in logs if e["event"] == "users.update.step" and e["step"] == "roles_push"]
     assert (line["part"], line["error"]) == ("view_as_hook", "TimeoutError")
 
 
