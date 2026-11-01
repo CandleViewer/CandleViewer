@@ -94,10 +94,10 @@ issue: each is a row on #452, pinned against the issue that owns its fix where o
 | Id | Finding | Rows | Pinned by | Status |
 | --- | --- | --- | --- | --- |
 | F1 | A pre-1970 `from` was measured from 1970-01-01, so `from=1900…to=1970-06` passed the 400-day cap and the bar read ran over 70 years | BR-28, SR-E12-02 | `test_caps_pre_epoch_window_is_measured_from_its_from`; the oracle's span cap | Fixed in #5348 |
-| F2 | `/market/klines` has no SR-E12-01 deadline on its hot and recording-start reads, and a raw driver error from the hot read is a 500; `/market/bars` has neither for its recording-start read and maps only timeouts and socket errors on its bar read | BR-27, SR-E12-01 | `test_deadlines.py`: five strict xfails (`pytest.fail.Exception` for a hang, `AssertionError` for a 500) | Klines half **fixed in #5348** (its strict xfails in `test_deadlines.py` are removed there); bars half open with #3287 |
+| F2 | `/market/klines` has no SR-E12-01 deadline on its hot and recording-start reads, and a raw driver error from the hot read is a 500; `/market/bars` has neither for its recording-start read and maps only timeouts and socket errors on its bar read | BR-27, SR-E12-01 | `test_deadlines.py::test_deadline_faulted_store_call_is_503`: the klines cases pass; the bars half is two strict xfails (`pytest.fail.Exception` for a hang, `AssertionError` for a 500) | Klines half **fixed in #5348**: a deadline on every klines store read, answered 503, and exact from/to time. Bars half open with #3287 |
 | F3 | No per-user rate limit and no single-flight on the two REST routes, which BR-36 names as its controls: 60 maximal pages meet no 429, and 50 identical requests in flight make 50 bar reads (measured) | BR-36 | `test_caps_and_cost.py::test_caps_one_session_looping_maximal_pages_is_throttled`; `test_exhaustion.py::test_exhaustion_identical_concurrent_reads_are_coalesced` (`NotCoalesced`) | Open, suspected cross-session. The nightly real-QuestDB leg is **carried to #528 (E12-Q05)**; trigger: if budget #13 fails cross-session on real QuestDB → one security issue, contract-first fix (ruling F3) |
 | F4a | Refusals were neither counted by route and reason nor logged | Observability | `test_observability.py` | Fixed in #5348 (`api_request_rejected_total{route,reason}`, the escaped `market_request_refused` log) |
-| F4b | No alert rule watches the bars rejection or rebuild rate | Observability | `test_observability.py::test_observability_an_alert_watches_the_rate` (strict xfail) | Open. Owner: the Security engineer, with infra-devops for the rule; trigger: filed when the filing freeze lifts, at the latest before the E12-X04 sign-off (pending the coordinator's word on whether #5348 fixes it) |
+| F4b | No alert rule watches the bars rejection or rebuild rate | Observability | `test_observability.py::test_observability_an_alert_watches_the_rate` (strict xfail) | Open. Owner: the Security engineer, with infra-devops for the rule; trigger: filed when the filing freeze lifts, at the latest before the E12-X04 sign-off. #5348 does not fix it: it needs an alert rule with a runbook anchor and promtool tests |
 | F5 | The spec caps lived in `bars/leases.py`, not the one home X01 §7 names | SR-E12-04, §7 | `test_caps_match_model.py::test_caps_match_model_spec_caps_live_in_limits` | Fixed in #5348 |
 | F6 | `from`/`to` accept non-RFC 3339 forms (date-only, basic, week dates) | BR-25 | `test_caps_non_rfc_3339_time_*_accepted_f6` (served, and read as the instant they name) | ACCEPTED (ruling; the X01 §3 note) |
 | F7 | `to=9999-12-31T23:59:59.999999Z` was a 500: the float conversion rounded into year 10000 | BR-25 | `test_param_fuzz_last_microsecond_of_9999_is_served_for_time_bars` | Fixed in #5348 (exact integer µs) |
@@ -114,8 +114,8 @@ outlive #452.
 
 ## Follow-ups (rows on #452)
 
-- Klines still converts `from`/`to` through a float (`api/market.py`, about lines 395 and 396): ±1 µs,
-  no 500; reuse `market_bars._ts_us`.
+- Klines converted `from`/`to` through a float (±1 µs, no 500): fixed in #5348, which reads both
+  routes' times in exact integers (`api/market_time.py`).
 - `bars_endpoint_param_rejected_total` now also counts 401, 403, 501 and 503: the F4b alert must exclude
   `reason="unavailable"`.
 - One WARN per unauthenticated refusal: sample it if F3's limiter slips.

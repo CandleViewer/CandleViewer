@@ -496,12 +496,12 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     target host with the D2-M4 bench.
   - E12-X02's open findings (#452; `docs/security/abuse-cases/e12-bars.md`, its Findings and Follow-ups), carried
     here so they outlive #452:
-    - F2: the klines half (no SR-E12-01 deadline on the hot and recording-start reads; a raw driver error a 500) is
-      fixed in #5348. The bars half (the recording-start read; driver errors on the bar read) is open. Owner: #3287.
+    - F2: the klines half is fixed in #5348 (a deadline on every klines store read, answered 503; exact from/to
+      time). The bars half (the recording-start read; driver errors on the bar read) is open. Owner: #3287.
     - F3 (BR-36): no per-user rate limit and no single-flight on the two REST routes. Owner: #528 (E12-Q05), which
       carries the nightly real-QuestDB contention leg and the k6 battery's CI run. Trigger: if budget #13 fails cross-session on real QuestDB → one security issue, contract-first fix.
     - F4b: no alert rule on the bars rejection or rebuild rate; it must exclude `reason="unavailable"`.
-      Owner: the Security engineer, with infra-devops for the rule; trigger: filed when the filing freeze lifts, at the latest before the E12-X04 sign-off (pending the coordinator's word on whether #5348 fixes it).
+      Owner: the Security engineer, with infra-devops for the rule; trigger: filed when the filing freeze lifts, at the latest before the E12-X04 sign-off. #5348 does not fix it: it needs an alert rule with a runbook anchor and promtool tests.
     - F8 (SR-E12-03): the `volume`/`delta` floor applied is 1, so 10 x `qty_step` is unreachable over the integer
       wire grammar. Owner: the E12-T05 limits owner (SR-E12-03); trigger: the X01 §3 per-liquidity-tier review of the floors, or the filing freeze lifting, whichever comes first.
     - F9 (BR-08, SR-E12-11): a row withheld for a failed checksum leaves a silent gap in the REST page. Owner:
@@ -509,7 +509,7 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     - The ADR-0033 Decision 2 abuse cases (AC-05, AC-08, AC-11 `rebuild_id`). Owner: #535.
     - The 10-minute k6 battery: built (`tests/load/k6/bars_abuse.js`), MANUAL / NOT RUN. Its CI run: owner #528
       (E12-Q05).
-    - Follow-ups: klines `from`/`to` through a float (±1 µs; reuse `market_bars._ts_us`); one WARN per
+    - Follow-ups (the klines float time is fixed in #5348): one WARN per
       unauthenticated refusal, to sample if F3's limiter slips; a `limit` outside 1..5000 is FastAPI's 422, not
       counted; the E08-X02 long parser fuzz is not selected by `fuzz-nightly.yml`. Owner: post-freeze filing.
   - SR-E12-07's subscribe rate limit is built per connection (SR-193; #2293, built by #3301) and per user across a
