@@ -12,7 +12,8 @@
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
-        "$TURBO_ROOT$/tests/fuzz/ws-frames/**"
+        "$TURBO_ROOT$/tests/fuzz/ws-frames/**",
+        "$TURBO_ROOT$/packages/fixtures/golden/ticker/**"
       ]
     },
     "test:cov": {
@@ -25,7 +26,8 @@
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
-        "$TURBO_ROOT$/tests/fuzz/ws-frames/**"
+        "$TURBO_ROOT$/tests/fuzz/ws-frames/**",
+        "$TURBO_ROOT$/packages/fixtures/golden/ticker/**"
       ]
     }
   }

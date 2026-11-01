@@ -1,4 +1,4 @@
 export * from "./model";
-export { PreferencesProvider, usePreferences } from "./PreferencesContext";
+export { PreferencesProvider, usePreferences, usePreferencesIfMounted } from "./PreferencesContext";
 export { AccessibilitySettingsScreen } from "./AccessibilitySettingsScreen";
 export * from "./consumers";

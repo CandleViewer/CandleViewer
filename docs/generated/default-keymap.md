@@ -79,3 +79,7 @@
 | Rules | Select all | `Ctrl+A` | no | valid when: always |
 | Rules | Validate | `Ctrl+Enter` | no | valid when: always |
 | Auth | Submit sign-in | `Enter` | no | valid when: login form focused |
+| Watchlist | Filter symbols | `Ctrl+F` | no | valid when: a watchlist panel focused |
+| Watchlist | Move row down | `Alt+↓` | no | valid when: a watchlist row focused, in manual order |
+| Watchlist | Move row up | `Alt+↑` | no | valid when: a watchlist row focused, in manual order |
+| Watchlist | Remove symbol | `Del` | no | valid when: a watchlist row focused |

@@ -347,6 +347,8 @@ export {
   WatchlistRow,
   watchlistColumns,
 } from "./WatchlistRow.js";
+/** CMP-161's Last as its cell draws it (D9), for a host that speaks the value (E08-D12 SR-31). */
+export { formatWatchlistPrice } from "./internal/watchlistFormat.js";
 export type {
   WatchlistColumnId,
   WatchlistColumnsOptions,
@@ -356,6 +358,7 @@ export type {
   WatchlistOptionalColumnId,
   WatchlistRec,
   WatchlistRowData,
+  WatchlistRowKey,
   WatchlistRowProps,
   WatchlistRowState,
   WatchlistTickerFreshness,

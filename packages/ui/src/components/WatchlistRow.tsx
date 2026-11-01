@@ -417,7 +417,24 @@ export interface WatchlistRowProps {
    * stop the key.
    */
   readonly onCopy?: (symbol: string) => void;
+  /**
+   * Which of the row's keys a press is: `remove` (`Del`), `up` and `down` (`Alt+↑`/`Alt+↓`), or none. A host whose
+   * keymap binds them (SCR-100's Watchlist context, remappable) answers from its bindings, and only those keys act;
+   * without it, the defaults. `Enter` and `Ctrl+C` stay the row's own.
+   */
+  readonly keyOf?: (event: KeyboardEvent<HTMLTableRowElement>) => WatchlistRowKey | null;
 }
+
+/** A row key's action (`WatchlistRowProps.keyOf`). */
+export type WatchlistRowKey = "remove" | "up" | "down";
+
+/** The row keys' defaults: `Del`, `Alt+↑`, `Alt+↓`, with no other modifier. */
+const defaultKeyOf = (event: KeyboardEvent<HTMLTableRowElement>): WatchlistRowKey | null => {
+  if (event.ctrlKey || event.metaKey || event.shiftKey) return null;
+  if (event.key === "Delete") return event.altKey ? null : "remove";
+  if (!event.altKey) return null;
+  return event.key === "ArrowUp" ? "up" : event.key === "ArrowDown" ? "down" : null;
+};
 
 /**
  * Whether text is selected that reaches into the grid `row` sits in (the browser's copy is then the user's): a
@@ -438,10 +455,10 @@ const selectedInGrid = (row: HTMLElement): boolean => {
  * values kept, one CMP-239 chip whose words describe every cell); a stale OI baseline (its cells alone, CMP-239's
  * class swap); initialising and not live ("—" and a word, no freshness claimed); delisted (struck, the live cells
  * merged into "Delisted by the exchange", activation T2). Disconnected is the host's: one `data-cv-feed` on an
- * ancestor demotes every row. Keys: `Enter` activates, `Del` removes, `Alt+↑/↓` move, `Ctrl+C` copies (unless text
- * in the grid is selected); a T2 key changes nothing and re-shows its reason in the table's echo, said once per
- * press (a held key's repeats say nothing). A delisted row's symbol leads with the lock, named "Not available"
- * (E09-D09 §2.2).
+ * ancestor demotes every row. Keys: `Enter` activates, `Del` removes, `Alt+↑/↓` move (or the host's bindings for those
+ * three, `keyOf`), `Ctrl+C` copies (unless text in the grid is selected); a T2 key changes nothing and re-shows its
+ * reason in the table's echo, said once per press (a held key's repeats say nothing). A delisted row's symbol leads
+ * with the lock, named "Not available" (E09-D09 §2.2).
  */
 export function WatchlistRow({
   grid,
@@ -460,6 +477,7 @@ export function WatchlistRow({
   onRemove,
   removeReason,
   onCopy,
+  keyOf = defaultKeyOf,
 }: WatchlistRowProps): JSX.Element {
   const id = useId();
   const slots = slotsOf(columns);
@@ -479,6 +497,7 @@ export function WatchlistRow({
   const onKeyDown = (event: KeyboardEvent<HTMLTableRowElement>): void => {
     if (event.defaultPrevented) return;
     const bare = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+    const key = event.key === "Enter" && bare ? null : keyOf(event);
     if (event.key === "Enter" && bare) {
       if (!delisted && onActivate === undefined) return;
       event.preventDefault();
@@ -486,21 +505,15 @@ export function WatchlistRow({
       if (delisted) {
         if (!event.repeat) grid.refuse(DELISTED);
       } else onActivate?.();
-    } else if (event.key === "Delete" && bare) {
+    } else if (key === "remove") {
       if (onRemove === undefined && removeReason === undefined) return;
       event.preventDefault();
       // A held key removes one: its repeats change nothing (E08-D07 §6.2).
       if (event.repeat) return;
       if (removeReason !== undefined) grid.refuse(removeReason);
       else onRemove?.();
-    } else if (
-      event.altKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !event.shiftKey &&
-      (event.key === "ArrowUp" || event.key === "ArrowDown")
-    ) {
-      const direction = event.key === "ArrowUp" ? "up" : "down";
+    } else if (key === "up" || key === "down") {
+      const direction = key;
       const reason = moveReason?.[direction];
       if (onMove === undefined && reason === undefined) return;
       event.preventDefault();

@@ -11,7 +11,9 @@ export type KeymapContext =
   | "Replay"
   | "Rules"
   | "Admin"
-  | "Settings";
+  | "Settings"
+  /** SCR-100's panel (E08-D07 §6.2). */
+  | "Watchlist";
 
 export interface KeymapCommand {
   readonly id: string;

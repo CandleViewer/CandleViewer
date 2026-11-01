@@ -59,6 +59,19 @@ describe("the a11y gate's screen set (#3470)", () => {
     });
   });
 
+  it("audits SCR-100 (R-111) and SCR-101 open over it (R-110) as signed-in owner screens (#4702, A-5335-05)", () => {
+    expect(SIGNED_IN_SCREENS).toContainEqual({
+      id: "R-111",
+      path: "/watchlist/x",
+      signedIn: { role: "owner", heading: "Watchlist" },
+    });
+    expect(SIGNED_IN_SCREENS).toContainEqual({
+      id: "R-110",
+      path: "/watchlist",
+      signedIn: { role: "owner", heading: "Watchlist" },
+    });
+  });
+
   it("audits the hotkey editor (R-202) as a signed-in owner screen (#305, A11Y-305B-04)", () => {
     expect(SIGNED_IN_SCREENS).toContainEqual({
       id: "R-202",

@@ -48,6 +48,11 @@ export interface FileDropProps {
   readonly notTextMessage: string;
   /** The one file's text, decoded as UTF-8 and never interpreted here: the host parses and previews it. */
   readonly onText: (text: string, file: File) => void;
+  /**
+   * A file is being taken (picked or dropped), before it is checked or read: the host clears what it said of the
+   * last one (its `error`), so a refusal of this one is never preceded by those words again.
+   */
+  readonly onPick?: () => void;
   /** The zone's words at rest, the button's description: a drop is the second way in, never the only one. */
   readonly dropHint?: string;
   /** The zone's words while one file it may take is dragged over. */
@@ -152,6 +157,7 @@ export function FileDrop({
   oversizedMessage,
   notTextMessage,
   onText,
+  onPick,
   dropHint,
   dropActiveText,
   dropRejectText,
@@ -182,6 +188,7 @@ export function FileDrop({
 
   const take = async (file: File): Promise<void> => {
     setRejected(undefined);
+    onPick?.();
     if (file.size > maxBytes) {
       setRejected(oversizedMessage(formatFileSize(file.size)));
       return;
@@ -195,7 +202,7 @@ export function FileDrop({
     else onText(text, file);
   };
 
-  const onPick = (event: ChangeEvent<HTMLInputElement>): void => {
+  const onInputChange = (event: ChangeEvent<HTMLInputElement>): void => {
     const file = event.currentTarget.files?.[0];
     // The same file picked again is a new pick.
     event.currentTarget.value = "";
@@ -277,7 +284,7 @@ export function FileDrop({
           hidden
           tabIndex={-1}
           aria-labelledby={buttonId}
-          onChange={onPick}
+          onChange={onInputChange}
         />
         {words === undefined ? null : (
           <p id={hintId} className="cv-filedrop__hint">
