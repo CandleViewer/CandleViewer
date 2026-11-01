@@ -130,7 +130,9 @@ export const DisabledWithReason: Story = {
 
 /**
  * One notice, many pointers (G-T2.5; board 17): the panel-header notice carries the reason once, and the cell points
- * at it with `disabledReasonId`, its value unchanged and no reason of its own.
+ * at it with `disabledReasonId`, its value unchanged and no reason of its own. `Enter` is refused like any press on a
+ * T2 control (G-T2.3): the reason is re-shown 2a under the cell, an `aria-hidden` copy, and the description stays the
+ * notice alone.
  */
 export const PointsAtNotice: Story = {
   args: { disabledReason: VIEW_AS, disabledReasonId: NOTICE_ID },
@@ -159,6 +161,17 @@ export const PointsAtNotice: Story = {
     await expect(cell).toHaveAttribute("aria-describedby", NOTICE_ID);
     await expect(cell).toHaveAccessibleDescription(VIEW_AS);
     await expect(within(canvasElement).getAllByText(VIEW_AS)).toHaveLength(1);
+    // The press opens nothing: the reason shows once more under this cell (the frame the visual run keeps)
+    cell.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect(within(canvasElement).getAllByText(VIEW_AS)).toHaveLength(2);
+    const note = canvasElement.querySelector(".cv-cell-editor__note");
+    await expect(note).toBeVisible();
+    await expect(note).toHaveTextContent(VIEW_AS);
+    await expect(note).toHaveAttribute("aria-hidden", "true"); // a re-show: the notice stays the description
+    await expect(cell).toHaveAttribute("readonly");
+    await expect(cell).toHaveAttribute("aria-describedby", NOTICE_ID);
+    await expect(cell).toHaveAccessibleDescription(VIEW_AS);
   },
 };
 

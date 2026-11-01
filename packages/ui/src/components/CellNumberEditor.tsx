@@ -89,9 +89,12 @@ export interface CellNumberEditorProps {
   validate?: (value: string) => string | undefined;
   /**
    * T2 on the commit of an open editor (E29-D02 §7, board 16; E09-D09 §2.1 step 4): the reason a valid, changed
-   * value may not be sent now (a quantity up under the kill switch, an unarmed LIVE amend), or `undefined` to send
-   * it. A pure function of the value. `Enter` then sends nothing and shows the reason 2a under the editor with one
-   * polite announcement, never `aria-invalid`; `Esc` restores the live value.
+   * value may not be sent now, or `undefined` to send it. A quantity up under the kill switch is one (board 16). On a
+   * Live account the arm gates only an entry's risk-increasing amend, a quantity up or its trigger re-armed (D02:325,
+   * `22` `ArmToken`): a cancel, a quantity cut, a take-profit change and attaching or tightening a stop never wait on
+   * it (C-2.6; R5 in `.claude/rules/32-design-specs.md`), so a host's gate answers `undefined` for them. A pure
+   * function of the value. `Enter` then sends nothing and shows the reason 2a under the editor with one polite
+   * announcement, never `aria-invalid`; `Esc` restores the live value.
    */
   commitGate?: (value: string) => string | undefined;
   /** Controlled editing: the host opens the editor from its grid cell or its row menu. */
@@ -116,7 +119,9 @@ export interface CellNumberEditorProps {
   /**
    * The id of the node in which the host already shows `disabledReason` (E09-D09 §2.2 "one notice, many pointers",
    * G-T2.5: a Viewer's or view-as panel-header notice, D02:431–435): the value is described by it, and the editor
-   * renders no reason node of its own.
+   * renders no reason node of its own. `disabledReason` must be that node's text, verbatim: the editor re-shows it
+   * under the cell and announces it when `Enter`, `F2` or a double-click is refused (G-T2.3, D02:429), and a
+   * different sentence there would contradict the notice the value is described by.
    */
   disabledReasonId?: string;
   density?: "comfortable" | "compact";
@@ -201,6 +206,8 @@ export function CellNumberEditor({
   const [reshown, setReshown] = useState(false);
   const displayRef = useRef<HTMLInputElement>(null);
   const editRef = useRef<HTMLInputElement>(null);
+  /** The note under the cell or the editor while one is drawn: brought into view whenever it shows (`05` §5 item 7). */
+  const noteRef = useRef<HTMLSpanElement>(null);
   /** Set while `Enter` or `Esc` closes the editor, so a blur its unmount may raise restores nothing twice. */
   const closing = useRef(false);
   /** Set when a close returns focus to the cell's value (`Enter`, `Esc`); a blur leaves focus where it went. */
@@ -260,6 +267,18 @@ export function CellNumberEditor({
     }
     setEditing(false);
   }, [discarded, setEditing]);
+
+  // A refused press at rest re-shows the reason only while the gate holds.
+  const reasonShown = reshown && reason.gated;
+  // The note hangs under the cell inside the grid's scroll region (CMP-049, `overflow: auto`), which clips it under the
+  // last visible rows, and past its inline end at 200 % (`05` §5 item 7). Whenever it shows, or a refusal or a gated
+  // commit's reason joins it, it is brought into view: `nearest` moves the region only as far as the note needs, and no
+  // `behavior` keeps it an instant jump, never smooth (the theme sets `scroll-behavior: auto` under reduced motion).
+  // It runs after the focus effect above, which has already brought the value itself into view. jsdom has no method.
+  const noteShown = editing || reasonShown;
+  useLayoutEffect(() => {
+    if (noteShown) noteRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [noteShown, error, gatedPress]);
 
   if (parsedStep === null || parsedStep.units <= 0n) {
     throw new RangeError(
@@ -422,7 +441,7 @@ export function CellNumberEditor({
             }}
           />
         </span>
-        <span className="cv-cell-editor__note">
+        <span ref={noteRef} className="cv-cell-editor__note">
           <span className="cv-cell-editor__live" aria-hidden="true">
             {shown}
           </span>
@@ -447,7 +466,6 @@ export function CellNumberEditor({
     );
   }
 
-  const reasonShown = reshown && reason.gated;
   // One tree whether gated or not: a gate that comes or goes on the focused value never remounts it (`05` §3.4.3).
   return (
     <span {...root}>
@@ -475,7 +493,7 @@ export function CellNumberEditor({
       {reason.gated && !reason.external ? (
         // The reason node, in the DOM from the gate's first render and the value's description: hidden, and shown
         // 2a in place (never re-mounted) once a refused activation re-shows it.
-        <span className={reasonShown ? "cv-cell-editor__note" : "cv-visually-hidden"}>
+        <span ref={noteRef} className={reasonShown ? "cv-cell-editor__note" : "cv-visually-hidden"}>
           <span className="cv-cell-editor__reason" data-shown={reasonShown ? "" : undefined}>
             {reasonShown ? <Lock /> : null}
             <span id={reason.reasonId}>{reason.reason}</span>
@@ -484,7 +502,7 @@ export function CellNumberEditor({
       ) : null}
       {reasonShown && reason.external ? (
         // The host's notice is the description: this is only its re-show at the point of action
-        <span className="cv-cell-editor__note" aria-hidden="true">
+        <span ref={noteRef} className="cv-cell-editor__note" aria-hidden="true">
           <span className="cv-cell-editor__reason" data-shown="">
             <Lock />
             <span>{reason.reason}</span>

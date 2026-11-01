@@ -102,3 +102,10 @@ are separate stacking contexts raises the edited row above the rows its note cov
 Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): the field grows with its text (`size` follows the
 value), so the cell widens rather than truncate a digit (E29-D02 D-8), and the well keeps at least the density's
 control height. The note's words wrap inside its 20rem cap and grow over the rows below; the row itself never grows.
+The grid's scroll region (CMP-049, `overflow: auto`) would clip the note in two places: under the last visible rows,
+and past the region's inline end when the cell is at the right edge, where 200 % leaves 640 × 400 CSS px at the
+1280 × 800 frame. So the editor brings the note into view whenever it shows (when the editor opens, when a refusal or
+a gated commit's reason joins it, and when a refused press re-shows a reason) with
+`scrollIntoView({ block: "nearest", inline: "nearest" })`: the region scrolls on the block and the inline axis only as
+far as the note needs, and not at all when it fits. The call gives no `behavior`, so it is an instant jump, never
+smooth (the theme sets `scroll-behavior: auto` under reduced motion); the host's region needs no code for it.
