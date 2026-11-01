@@ -122,13 +122,18 @@ def test_obs_mfa_guessing_and_recovery_misuse_leave_rows_and_counts(stack: Stack
         assert stack.client.post("/auth/mfa/verify", json=body).status_code == 401
     recovery = {"mfa_token": token, "recovery_code": "zzzz-zzzz-zzzz"}
     assert stack.client.post("/auth/mfa/recovery", json=recovery).status_code == 401
-    expected = [(None, "failure", "info")] * (CHALLENGE_ATTEMPT_CAP + 2)
+    expected = [(None, "failure", "info")] * CHALLENGE_ATTEMPT_CAP
     assert _rows(stack, "auth.mfa_failed") == expected
+    # #2695: the fifth wrong code also locked the account (the login's 5), so the two attempts
+    # after it are refused as the account is locked, each with that row alone, uncounted
+    while_locked = ("second_factor_while_locked", "denied", "warning")
+    locks = [("second_factor", "denied", "warning"), while_locked, while_locked]
+    assert _rows(stack, "auth.account_locked") == locks
     assert stack.audit.of("auth.mfa_verified") == []
     # #2319: one count per refused attempt, on the factor tried (the lock has no row of its own)
     totp = stack.scraped("auth_login_failures_total", method="totp") - totp_before
-    assert totp == CHALLENGE_ATTEMPT_CAP + 1
-    assert stack.scraped("auth_login_failures_total", method="recovery_code") - rec_before == 1
+    assert totp == CHALLENGE_ATTEMPT_CAP
+    assert stack.scraped("auth_login_failures_total", method="recovery_code") - rec_before == 0
 
 
 def test_obs_refresh_token_reuse_is_a_critical_row_and_a_scraped_count(

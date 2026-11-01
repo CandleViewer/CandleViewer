@@ -49,6 +49,16 @@ class FakeUserRepository(UserRepository):
             update={"failed_login_count": 0, "locked_until": None}
         )
 
+    async def record_sign_in_unless_locked(self, user_id: str, *, now: datetime) -> bool:
+        # The lock check and the reset in one synchronous step, as the SQL's conditional update.
+        user = self.users.get(user_id)
+        if user is None or (user.locked_until is not None and user.locked_until > now):
+            return False
+        self.users[user_id] = user.model_copy(
+            update={"failed_login_count": 0, "locked_until": None}
+        )
+        return True
+
     async def record_login_failure(
         self, user_id: str, *, lockout_threshold: int, lock_duration: timedelta, now: datetime
     ) -> datetime | None:

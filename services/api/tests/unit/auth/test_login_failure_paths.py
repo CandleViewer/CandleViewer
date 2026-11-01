@@ -266,8 +266,7 @@ async def test_login_success_path_is_unchanged(real_hash: str) -> None:
         "find_by_identifier",
         "clock",
         "verify",
-        "record_login_success",
-    ]
+    ]  # #2695: no reset before the second factor; `MfaService` resets on its success
 
 
 @pytest.fixture

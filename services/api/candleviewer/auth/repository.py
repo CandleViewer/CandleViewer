@@ -40,6 +40,16 @@ class UserRepository(Protocol):
         match on an active, unlocked account."""
         ...
 
+    async def record_sign_in_unless_locked(self, user_id: str, *, now: datetime) -> bool:
+        """#2695: `record_login_success` for an accepted second factor, as one conditional
+        update that changes the row only while it is not locked (`locked_until` null or not
+        after *now*), e.g. `UPDATE ... WHERE id = :id AND (locked_until IS NULL OR locked_until
+        <= :now) RETURNING id`. The condition is read in the same statement, never by the
+        caller, so the reset can never clear a lock that a concurrent refusal set
+        (`record_login_failure`) after this attempt's own read. `False`, with nothing changed,
+        while the account is locked or has no row."""
+        ...
+
     async def record_login_failure(
         self, user_id: str, *, lockout_threshold: int, lock_duration: timedelta, now: datetime
     ) -> datetime | None:

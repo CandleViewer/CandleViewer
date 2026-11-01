@@ -31,6 +31,7 @@ from prometheus_client import REGISTRY
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import UserDisabled
+from candleviewer.auth.login_service import LOCKOUT_DURATION
 from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP
 from candleviewer.auth.models import UserRecord, UserStatus
 from candleviewer.auth.recovery_codes import normalize_recovery_code
@@ -803,8 +804,9 @@ def test_replaying_a_spent_code_or_challenge_is_refused_and_changes_nothing(
 def test_wrong_codes_are_throttled_and_past_the_cap_even_the_right_one_is_refused(
     stack: Stack,
 ) -> None:
-    """Each wrong code counts toward the challenge's cap (the login lockout's 5), so guessing
-    costs a password sign-in per five tries; past the cap the right code is refused unspent."""
+    """Each wrong code counts toward the challenge's cap and the account's lockout (the login
+    lockout's 5, #2695), so five wrong codes lock the account for 15 minutes; past the cap the
+    right code is refused unspent."""
     uid, _ = stack.add_user("alice")
     codes = _codes(stack, uid)
     token, mark = _challenge(stack, "alice"), len(stack.audit.records)
@@ -814,8 +816,12 @@ def test_wrong_codes_are_throttled_and_past_the_cap_even_the_right_one_is_refuse
 
     answers = {(r.status_code, r.json()["detail"]) for r in (*wrong, locked)}
     assert answers == {_RECOVERY_REFUSED}
-    assert [r["action"] for r in stack.audit.records[mark:]] == ["auth.mfa_failed"] * 6
+    rows = [(r["action"], r.get("reason")) for r in stack.audit.records[mark:]]
+    failed, lock = ("auth.mfa_failed", None), ("auth.account_locked", "second_factor")
+    assert rows == [failed] * 5 + [lock, ("auth.account_locked", "second_factor_while_locked")]
     assert (_unused(stack, uid), _live(stack, uid)) == (len(codes), set())
+    assert _sign_in(stack, "alice").status_code == 401  # the right password, while locked
+    stack.clock.now += LOCKOUT_DURATION
     assert _recover(stack, _challenge(stack, "alice"), codes[0]).status_code == 200
 
 
@@ -1246,6 +1252,7 @@ def test_recovery_never_logs_or_echoes_the_code_or_tokens(
     with structlog.testing.capture_logs() as logs:
         refusals = [_recover(stack, locked, wrong) for _ in range(CHALLENGE_ATTEMPT_CAP)]
         refusals += [_recover(stack, locked, codes[0]), _recover(stack, locked, short)]
+        stack.clock.now += LOCKOUT_DURATION  # the wrong codes also locked the account (#2695)
         token = _challenge(stack, "alice")
         signed_in = _recover(stack, token, codes[0])
 

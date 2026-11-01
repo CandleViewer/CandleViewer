@@ -28,6 +28,15 @@ raises typed errors and returns typed results only.
 `MfaKeyring`; this module holds no key. An opened seed is a `bytearray` zeroed once the code is
 checked; a recovery code is looked up by every candidate digest in one query, and a new code
 stores the first (BQ-3).
+
+#2695 (SR-015 / SR-016): with the user repository wired, every refused second-factor or
+recovery code also counts on the account (`record_login_failure`, the login's
+`LOCKOUT_THRESHOLD` in `LOCKOUT_DURATION`), an accepted second factor resets that count, and an open
+challenge of a locked account is refused with the same `MfaChallengeLocked`. The reset is one
+conditional update (`record_sign_in_unless_locked`): an accepted code is refused, uncounted, while
+the account is locked, so a lock set by a concurrent refusal always stands. The refusal that locks
+carries the account (`locked_user_id`), and so does one refused while locked (`MfaAccountLocked`),
+for the router's `auth.account_locked`.
 """
 
 from __future__ import annotations
@@ -37,9 +46,11 @@ import hashlib
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import NoReturn
 from uuid import UUID
 
 from candleviewer.auth.errors import (
+    MfaAccountLocked,
     MfaChallengeInvalid,
     MfaChallengeLocked,
     MfaCodeInvalid,
@@ -47,9 +58,12 @@ from candleviewer.auth.errors import (
     MfaEnrollmentNotFound,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
+    SecondFactorRefused,
     UserDisabled,
 )
 from candleviewer.auth.failure_hold import FAILURE_MINIMUM, FailureHold, MonotonicClock, Sleep
+from candleviewer.auth.login_service import LOCKOUT_DURATION, LOCKOUT_THRESHOLD
+from candleviewer.auth.metrics import auth_lockouts_total
 from candleviewer.auth.mfa_keyring import MfaKeyring, zero_seeds
 from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import (
@@ -64,6 +78,7 @@ from candleviewer.auth.models import (
     RecoveryCodesRegenerated,
 )
 from candleviewer.auth.recovery_codes import generate_recovery_codes
+from candleviewer.auth.repository import UserRepository
 from candleviewer.auth.totp import generate_secret, otpauth_uri, secret_to_base32, verify_code
 from candleviewer.auth.totp_skew import TotpSkewReporter
 
@@ -111,8 +126,12 @@ class MfaService:
         failure_floor: timedelta = FAILURE_MINIMUM,
         monotonic: MonotonicClock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
+        users: UserRepository | None = None,
     ) -> None:
         self._repository = repository
+        #: #2695: the account lockout the password step also counts on (SR-015 / SR-016);
+        #: `None` only in suites that test the challenge alone.
+        self._users = users
         #: #4664: refuses a minimum time below the setting's lowest value (ValueError).
         self._failure_hold = FailureHold(failure_floor, monotonic=monotonic, sleep=sleep)
         #: Seals, seeds and digests (#2152 S5a); the keys stay behind it (PR #1618 security
@@ -181,15 +200,13 @@ class MfaService:
             zero_seeds(seeds)
 
         if accepted_step is None or matched_method_id is None:
-            await self._record_failed_attempt(challenge)
-            raise MfaCodeInvalid("invalid TOTP code")
+            await self._refuse(challenge, MfaCodeInvalid("invalid TOTP code"))
 
         replay_ok = await self._repository.record_time_step(
             matched_method_id, time_step=accepted_step
         )
         if not replay_ok:
-            await self._record_failed_attempt(challenge)
-            raise MfaCodeReused("this code has already been used")
+            await self._refuse(challenge, MfaCodeReused("this code has already been used"))
 
         await self._repository.touch_method_used(matched_method_id, now=now)
         satisfied = await self._repository.satisfy_challenge(str(challenge.id), now=now)
@@ -201,6 +218,7 @@ class MfaService:
             # second check is what actually stops one challenge minting
             # two sessions.
             raise MfaChallengeInvalid("challenge already satisfied")
+        await self._record_sign_in(challenge.user_id)
         return MfaVerifiedResult(user_id=challenge.user_id)
 
     async def _open_challenge_or_raise(self, mfa_token: str, *, purpose: str) -> MfaChallengeRecord:
@@ -208,16 +226,53 @@ class MfaService:
         challenge = await self._repository.find_open_challenge_by_token_hash(token_hash)
         if challenge is None or challenge.purpose != purpose:
             raise MfaChallengeInvalid("no open challenge for this token")
-        if challenge.expires_at <= self._clock():
+        now = self._clock()
+        if challenge.expires_at <= now:
             raise MfaChallengeInvalid("challenge expired")
+        if self._users is not None:
+            # #2695: an account locked while this challenge was open refuses it as a spent
+            # challenge is refused (one 401 body, SR-014), before the challenge's own cap so each
+            # attempt refused while locked is told apart; the lock is not counted again. A read
+            # that misses a concurrent lock is caught by the conditional reset (`_record_sign_in`).
+            user = await self._users.find_by_id(str(challenge.user_id))
+            if user is not None and user.locked_until is not None and user.locked_until > now:
+                raise MfaAccountLocked(challenge.user_id)
         if challenge.attempts >= CHALLENGE_ATTEMPT_CAP:
             raise MfaChallengeLocked("too many failed attempts")
         return challenge
 
-    async def _record_failed_attempt(self, challenge: MfaChallengeRecord) -> None:
+    async def _refuse(self, challenge: MfaChallengeRecord, error: SecondFactorRefused) -> NoReturn:
+        """Count the refusal on the challenge and the account, then raise *error*, or
+        `MfaChallengeLocked` once the challenge's cap is reached, naming the account if this
+        refusal locked it (#2695, for the router's `auth.account_locked`)."""
         new_count = await self._repository.record_challenge_attempt(str(challenge.id))
+        if self._users is not None:
+            # #2695 (SR-015 / SR-016): the refusal also counts on the account, in the
+            # repository's one atomic increment-and-lock, so refusals spread over several
+            # challenges lock the account as wrong passwords do.
+            locked_until = await self._users.record_login_failure(
+                str(challenge.user_id),
+                lockout_threshold=LOCKOUT_THRESHOLD,
+                lock_duration=LOCKOUT_DURATION,
+                now=self._clock(),
+            )
+            if locked_until is not None:
+                auth_lockouts_total.inc()  # SR-125 / SR-016: the lockout alert's signal
+                error.locked_user_id = challenge.user_id
         if new_count >= CHALLENGE_ATTEMPT_CAP:
-            raise MfaChallengeLocked("too many failed attempts")
+            locked = MfaChallengeLocked("too many failed attempts")
+            locked.locked_user_id = error.locked_user_id
+            raise locked
+        raise error
+
+    async def _record_sign_in(self, user_id: UUID) -> None:
+        """#2695: an accepted second factor resets the account count (before the session mint), in
+        one conditional update that refuses, with `MfaAccountLocked` and uncounted, while the
+        account is locked: a concurrent refusal may have set the lock since this attempt's read."""
+        if self._users is not None:
+            reset = await self._users.record_sign_in_unless_locked(str(user_id), now=self._clock())
+            if not reset:
+                raise MfaAccountLocked(user_id)
 
     # -- enrolment ---------------------------------------------------------
 
@@ -330,7 +385,8 @@ class MfaService:
         """The read-only half of `POST /auth/mfa/recovery` (#2344): the open login challenge
         of *mfa_token* and the unused recovery code of its user that *recovery_code* matches.
         Only a refusal changes anything: it counts toward the challenge's attempt cap, the
-        login lockout's 5, so wrong codes are throttled and each five cost a password sign-in.
+        login lockout's 5, so wrong codes are throttled and each five cost a password sign-in,
+        and on the account's lockout count (#2695).
         The split from `complete_recovery` lets the router write its audit records in between
         (C-2.9).
 
@@ -362,16 +418,18 @@ class MfaService:
             # wrong code) so an attacker cannot probe "is this account's
             # recovery pool exhausted" for free, outside the 5-attempt/
             # `MfaChallengeLocked` budget every other guess is bound by.
-            await self._record_failed_attempt(challenge)
-            raise RecoveryCodesExhausted("all recovery codes have been used")
+            await self._refuse(
+                challenge, RecoveryCodesExhausted("all recovery codes have been used")
+            )
 
         digests = await self._keyring.recovery_code_digests(recovery_code, challenge.user_id)
         code_id = await self._repository.find_unused_recovery_code(
             str(challenge.user_id), code_hashes=digests
         )
         if code_id is None:
-            await self._record_failed_attempt(challenge)
-            raise RecoveryCodeInvalid("invalid or already-used recovery code")
+            await self._refuse(
+                challenge, RecoveryCodeInvalid("invalid or already-used recovery code")
+            )
         return MfaRecoveryCheck(
             user_id=challenge.user_id, challenge_id=challenge.id, code_id=code_id
         )
@@ -389,7 +447,11 @@ class MfaService:
         time (#4664): the code already matched in `check_recovery()`, so the answer turns on the
         other request, not on the code presented. Raises `UserDisabled`, with nothing changed and no
         attempt counted, when the user is disabled or gone, read under the user-row lock in
-        that transaction (#2911), so a disable that commits first always wins."""
+        that transaction (#2911), so a disable that commits first always wins.
+
+        #2695: the account count is reset first, by the conditional update, so an account locked
+        since `check_recovery()` raises `MfaAccountLocked` with nothing spent or counted."""
+        await self._record_sign_in(check.user_id)
         challenge_id = str(check.challenge_id)
         done = await self._repository.complete_recovery(
             str(check.user_id), challenge_id=challenge_id, code_id=check.code_id, now=self._clock()
@@ -397,6 +459,7 @@ class MfaService:
         if done is None:
             raise UserDisabled(None)
         if not done:
+            # Challenge only, not the account (#2695): the code matched; another request spent it.
             await self._repository.record_challenge_attempt(challenge_id)
             raise RecoveryCodeInvalid("invalid or already-used recovery code")
 
