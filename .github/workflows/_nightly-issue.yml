@@ -2,7 +2,8 @@ name: nightly-issue
 
 # #1849: the one writer of the nightlies' regression reports, called once per signal by
 # fixture-drift.yml, perf-storage-nightly.yml, perf-ingestion-nightly.yml, dast-admin-nightly.yml,
-# chaos-ws-nightly.yml, e2e-auth-real.yml, perf-recorder-nightly.yml and chaos-recorder-nightly.yml.
+# chaos-ws-nightly.yml, e2e-auth-real.yml, perf-recorder-nightly.yml, chaos-recorder-nightly.yml
+# and chaos-bars-nightly.yml.
 # It comments on the newest open issue github-actions[bot] opened with the signal's title prefix
 # and all its labels, or opens "<prefix> (YYYY-MM-DD)": one open issue per signal. Only the
 # bot's issues count, as no account can take its login (`[` is not a login character), while a
