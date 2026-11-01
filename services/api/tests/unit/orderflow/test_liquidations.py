@@ -323,9 +323,9 @@ async def test_next_cursor_never_echoes_the_client_key() -> None:
     forged = _forge(await _first_cursor(store, scan=2), _set_after_price("999999999999"))
     page = await _page(_svc(store, 2), cursor=forged, limit=1)
     assert page.items == ()
-    if page.next_cursor is not None:
-        raw = json.loads(base64.urlsafe_b64decode(page.next_cursor + "=="))
-        assert raw["a"] is None or raw["a"][2] != "999999999999"
+    assert page.next_cursor is not None
+    raw = json.loads(base64.urlsafe_b64decode(page.next_cursor + "=="))
+    assert raw["a"] is None or raw["a"][2] != "999999999999"
 
 
 async def test_cursor_is_bound_to_from_and_to() -> None:
