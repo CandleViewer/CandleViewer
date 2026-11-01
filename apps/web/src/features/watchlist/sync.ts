@@ -1,8 +1,9 @@
 /**
  * What SCR-101 tells SCR-100 (E08-S08): each list it stores, created or saved (`stored`, with the server's version),
- * and its closing (`reread`), after which the panel reads the lists again (a deleted list goes then). The panel keeps
- * each view on the version the server holds, so it never shows a stale list or saves against a stale version
- * (C-2.12; #4702 PR (b)'s CR-4702B-01 path, reused). A plain channel: no React state, no persistence.
+ * and its closing (`reread`), after which the panel reads the lists again (a deleted list goes then). SCR-102's
+ * "Add to watchlist…" tells each list it stores the same way, on the app's one channel (`appWatchlistSync`). The
+ * panel keeps each view on the version the server holds, so it never shows a stale list or saves against a stale
+ * version (C-2.12; #4702 PR (b)'s CR-4702B-01 path, reused). A plain channel: no React state, no persistence.
  */
 import type { Watchlist } from "./listEdits";
 
@@ -26,6 +27,9 @@ export function createWatchlistSync(): WatchlistSync {
     },
   };
 }
+
+/** The app's one channel: SCR-100's page, SCR-101 over it and SCR-102's "Add to watchlist…" (a list stored there). */
+export const appWatchlistSync: WatchlistSync = createWatchlistSync();
 
 /**
  * `lists` with `list` in: in its place when it is a newer version (the server's version only goes up), at the end

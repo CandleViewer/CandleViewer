@@ -4,6 +4,8 @@
  * the StatusBar and its live regions out of the inert page and the scrim (AppShell); a press there, or on the open
  * trigger, closes it without commit. Under the list, §6.4's detail bar with the active option's `⋯` (§6.3's CMP-041
  * menu, also on `Shift+F10`, the Menu key and a right-click), then the footer: its key hints or the catalogue's notice.
+ * The menu's "Add to watchlist…" is E08-S08's chooser of the user's lists (`useWatchlistChooser`): T2 without
+ * `workspaces:write`, absent on a row that cannot be opened, its outcome said in this surface's region.
  */
 import {
   useEffect,
@@ -37,6 +39,8 @@ import {
 } from "@candleviewer/ui";
 import { getMeClaims } from "../../lib/auth/meCache";
 import { registerCommand } from "../../keymap/KeymapHost";
+import { announce, forget } from "../app-shell/announcer";
+import { useWatchlistChooser } from "../watchlist/searchChooser";
 import { COLUMNS, COPY, SEARCH_TITLE, keyHints, refreshAnswered, targetWords } from "./copy";
 import { requestRefresh, type InstrumentIndex, type RefreshAnswer } from "./instrumentIndex";
 import { stopKeys } from "./keys";
@@ -60,6 +64,7 @@ import {
   canOpenSymbolSearch,
   closeSymbolSearch,
   forgetSymbol,
+  getSymbolSearchState,
   openSymbolSearch,
   useArrival,
   useHeldSnapshot,
@@ -72,6 +77,8 @@ import { placeOf, searchView, type SearchEmpty } from "./searchView";
 
 /** The trigger's id: its own press toggles, so the TopBar-press close leaves it alone. */
 export const SYMBOL_TRIGGER_ID = "cv-symbol-trigger";
+/** The shell announcer's key for an add's outcome that lands once SCR-102 has closed. */
+const WATCHLIST_KEY = "symbol-search:watchlist";
 /** §5's footer line ("Showing 50 of 213 results — keep typing to narrow"). */
 const showing = (total: number): string =>
   `Showing ${String(RESULT_CAP)} of ${String(total)} results — keep typing to narrow`;
@@ -283,6 +290,17 @@ function SymbolSearchDialog({ index, opener, open, mainRef }: DialogProps): JSX.
   // §6.3: the active option's menu, anchored to it (or at a right-click's point).
   const [active, setActive] = useState<FuzzyListItem | undefined>(undefined);
   const [menu, setMenu] = useState<{ item: FuzzyListItem; anchor: MenuAnchor } | null>(null);
+  // "Add to watchlist…" (E08-S08): the lists read as the menu opens; the session's `workspaces:write`, never a role
+  // name (the server enforces it, C-2.12); the outcome said in this surface's region, or the shell's once it closed.
+  const toWatchlist = useWatchlistChooser(menu !== null, {
+    writable: getMeClaims().permissions.includes("workspaces:write"),
+    say: (text) => {
+      if (getSymbolSearchState().open) return say(text);
+      forget(WATCHLIST_KEY);
+      announce("polite", text, WATCHLIST_KEY);
+    },
+    done: () => card()?.querySelector<HTMLElement>('[role="combobox"]')?.focus(),
+  });
   const actions = (item: FuzzyListItem): MenuItem[] => {
     const { id } = item;
     const run = (action: Opened["action"], then: () => void) => (): void => {
@@ -308,7 +326,7 @@ function SymbolSearchDialog({ index, opener, open, mainRef }: DialogProps): JSX.
           ]),
     ];
     return [
-      ...(item.disabled === true ? [] : opens),
+      ...(item.disabled === true ? [] : [...opens, toWatchlist(id)]),
       ...(info === null
         ? []
         : [{ id: "info", label: COPY.viewInfo, onSelect: run("info", () => viewInfo(id)) }]),

@@ -41,6 +41,9 @@ export interface PaneSettingsPort {
   write(paneId: string, patch: WatchlistPaneSettings): void;
 }
 
+/** R-111's page's pane until panes exist: one watchlist pane per route visit. */
+export const ROUTE_PANE = "r111";
+
 /** The interim store: in memory, for the session. */
 export function createLocalPaneSettings(): PaneSettingsPort {
   const panes = new Map<string, WatchlistPaneSettings>();
