@@ -53,3 +53,31 @@ picker; its words are the copy owner's (E29-D03).
 
 Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): the panel is CMP-017's capped surface, so at 200 %
 the list scrolls under the pinned "Select all" footer, and a long account label wraps rather than truncate.
+
+### CellNumberEditor (the cell use of CMP-100 and CMP-101: an APG Spin Button in a grid cell)
+
+| Keys                      | Action                                                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Enter / F2 / double-click | At rest: opens the editor, a fresh field holding the live value, selected. `Space` is left to the grid.       |
+| ↑ / ↓                     | One tick (a price, a trigger) or one lot (a quantity); `Shift` ten. An off-step value lands on the next step. |
+| Enter                     | Commits a valid value that differs from the live one; focus returns to the cell's value.                      |
+| Esc                       | Restores the live value at once and returns focus; the grid's own `Esc` waits for the next press.             |
+| Tab / a click elsewhere   | Restores the live value; focus stays where it went.                                                           |
+
+| Element | Role       | Name                                              | ARIA                                                                                                      |
+| ------- | ---------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| at rest | spinbutton | the host's `label`: "Price, ETHUSDT Buy on Sub-2" | `readonly`, `aria-valuetext` the shown value; T2: `aria-disabled`, the reason its description, echoed.    |
+| editing | spinbutton | the same label                                    | `aria-valuetext` the typed text; described by the host's sentence, the step hint, then a refusal's words. |
+| lock    | img        | "Not available"                                   | Leads the value while T2 (E09-D09 §2.2, rendering 2b).                                                    |
+
+The value is the wire's decimal string and never becomes a JavaScript number: a step moves a scaled BigInt by the
+tick or the lot, and a typed value off the step is refused with its reason ("Enter a multiple of 0.01."), never rounded
+(E29-D02 §7: "without its blur auto-round"). `Enter` alone commits; the host keeps the live value on the row until the
+exchange confirms (D02 D-10). The step hint is a caption under the editor, not a CMP-016 tooltip, because an open
+tooltip takes the first `Esc` as its layer. Gated (T2), the value keeps its name and its Tab stop; `Enter`, `F2` or a
+double-click opens nothing and says the reason once more, politely. The refusal words for an off-step value, zero and a
+value below the lowest are PROPOSED to E29-D03 with E30-D04's owner.
+
+Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): the field grows with its text (`size` follows the
+value), so the cell widens rather than truncate a digit (E29-D02 D-8); while open, the live value, the hint and a
+refusal stack under it and the row grows to hold them.
