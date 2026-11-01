@@ -136,6 +136,11 @@ describe("series commands and the data series id (additive)", () => {
     // E12-S07 (additive): hollow candles, and the kind switch with Heikin-Ashi on or off.
     expect(rejectReason(cmd({ k: "addSeries", series: 4, kind: "hollow" }))).toBeNull();
     expect(rejectReason(cmd({ k: "setSeriesKind", series: 4, kind: "bars" }))).toBeNull();
+    // E12-S07 PR B (additive): the line family over the same store.
+    for (const kind of ["line", "area", "baseline"]) {
+      expect(rejectReason(cmd({ k: "addSeries", series: 5, kind }))).toBeNull();
+      expect(rejectReason(cmd({ k: "setSeriesKind", series: 5, kind }))).toBeNull();
+    }
     const ha = { k: "setSeriesKind", series: 4, kind: "hollow", heikinAshi: true };
     expect(rejectReason(cmd(ha))).toBeNull();
     expect(rejectReason(data({ series: 2 }))).toBeNull();
@@ -145,11 +150,11 @@ describe("series commands and the data series id (additive)", () => {
   it.each([
     { k: "addSeries", series: -1, kind: "candles" },
     { k: "addSeries", series: 1.5, kind: "candles" },
-    { k: "addSeries", series: 1, kind: "line" },
+    { k: "addSeries", series: 1, kind: "histogram" },
     { k: "addSeries", series: 1, kind: "candles", pane: -2 },
     { k: "removeSeries" },
     { k: "removeSeries", series: "1" },
-    { k: "setSeriesKind", series: 1, kind: "line" },
+    { k: "setSeriesKind", series: 1, kind: "renko" },
     { k: "setSeriesKind", series: -1, kind: "hollow" },
     { k: "setSeriesKind", series: 1, kind: "candles", heikinAshi: 1 },
   ])("refuses a malformed series command %#", (c) => {

@@ -100,12 +100,21 @@ const SCALE_MODES: ReadonlySet<unknown> = new Set(["linear", "log", "percent", "
 
 /**
  * E12-S06: the series kinds a runtime-owned `BarStore` backs (candles and OHLC bars); E12-S07
- * adds hollow candles (BQ-5: a kind; Heikin-Ashi is an option of the candle kinds).
+ * adds hollow candles (BQ-5: a kind; Heikin-Ashi is an option of the candle kinds) and, PR B,
+ * the line family over the same store's closes: `line`, `area`, `baseline` (additive).
  */
-export type BarSeriesKind = "candles" | "hollow" | "bars";
-const BAR_SERIES: ReadonlySet<unknown> = new Set(["candles", "hollow", "bars"]);
+export type BarSeriesKind = "candles" | "hollow" | "bars" | "line" | "area" | "baseline";
+const BAR_SERIES: ReadonlySet<unknown> = new Set([
+  "candles",
+  "hollow",
+  "bars",
+  "line",
+  "area",
+  "baseline",
+]);
 /**
- * E12-S07: a combination the chart cannot draw (Heikin-Ashi with a footprint, or over OHLC bars):
+ * E12-S07: a combination the chart cannot draw (Heikin-Ashi with a footprint, over OHLC bars or a
+ * line kind):
  * refused, the previous combination keeps drawing. An `error` event's code, recoverable.
  */
 export const ENGINE_SERIES_INCOMPATIBLE = "ENGINE_SERIES_INCOMPATIBLE";
