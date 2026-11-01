@@ -196,8 +196,8 @@ noted in `CHANGELOG.md` under _Security_.
 
 ## 5. Dependency and supply-chain policy
 
-- Licences must be on the allowlist (MIT, Apache-2.0, BSD-2/3, ISC, MPL-2.0, Python-2.0, Unlicense, CC0);
-  GPL/AGPL/SSPL/BUSL/commercial-without-licence are denied; unknown licence fails CI.
+- Licences must be on the allowlist in `CONSTITUTION.md` §9 #14 (the single source — it also carries the
+  clause for the two vendored typefaces); the denylist and "unknown licence fails CI" live there too.
 - Lockfiles are committed; CI installs frozen. Container base images are pinned by digest and rebuilt
   weekly.
 - CI gates: CodeQL + Semgrep + Bandit (`sast`), `pip-audit` + `npm audit` + the Dependabot alert
