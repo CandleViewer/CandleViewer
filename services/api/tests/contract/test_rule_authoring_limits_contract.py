@@ -65,6 +65,8 @@ _RULE_OPERATIONS = {
     *("getRuleVersion", "setActiveRuleVersion", "validateRule", "simulateRule", "setRuleMode"),
     *("listRuleRuns", "listRuleRunEvents", "listRuleAccounts", "getRuleVocabulary"),
     *("getRuleIrSchema", "compileRule"),
+    # E35-T14 (#5006): the confirmation queue's three, in their own contract change.
+    *("listRuleConfirmations", "confirmRuleFire", "rejectRuleFire"),
 }
 
 

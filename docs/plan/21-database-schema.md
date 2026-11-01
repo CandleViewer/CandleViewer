@@ -3063,6 +3063,26 @@ To avoid writing 345 k rows/day of nothing, the engine only persists a `rule_run
 
 **Written ahead by the action executor (E35-S03, #863; the ruling of 2026-10-29).** For an armed rule's fire, the executor writes the fire's `rule_runs` row (`status` `running`, `mode`, `matched`, `input_snapshot`) before its first action, under the id the fire was minted with (`24-internal-schemas.md` §11.9 "The fire key"), so a rule-originated group's `trade_groups.origin_rule_run_id` (§3.3.2) always names a row that exists. For each action it writes a `rule_events` `action_start` row, with the action's audit record (`rules.fired`), before the OMS call or the action's handler, then `action_ok` or `action_fail` with the `ActionResult` in `payload` (24 §11.5, §11.9). It writes through `SqlAlchemyRulesRepository.record_run`, extended to take the caller's id and to append events, behind a rules port the composition root binds. A write that fails, or does not land within its bound, stops the fire before that action is sent (the E35 threat model's RE-R1, AC-14). This is the minimal write-ahead E35-S03 owns; E35-S06 (#865) keeps the rest of the log: `condition_eval` and suppression rows, snapshot completeness, the read routes, the WS publish and the export. No column or constraint changes.
 
+#### 3.4.4 `rule_fire_confirmations` (E35-T14, #5006; contract first)
+
+The confirmation queue of `24-internal-schemas.md` §11.5 ("The confirmation queue"): one row per fire of a rule with `limits.require_confirmation: true` that waits for a human, written with the fire's `rule_runs` row (§3.4.3) when the fire is queued, and served by `22-api-openapi.yaml`'s `listRuleConfirmations`, `confirmRuleFire` and `rejectRuleFire`. This contract adds no migration: the change that lands the queue adds the revision (provisionally `0065`, re-parented onto the head at its merge, C-5.3), its DDL block in this section and its row in §9.4, with the tests that read them.
+
+| Column                 | Type        | Null | Default     | Constraints / notes                                                                 |
+| ---------------------- | ----------- | ---- | ----------- | ----------------------------------------------------------------------------------- |
+| `id`                   | uuid        | no   | —           | PK; 22 `RuleFireConfirmation.id`                                                    |
+| `rule_id`              | uuid        | no   | —           | FK `rules(id)` ON DELETE CASCADE                                                    |
+| `rule_version_id`      | uuid        | no   | —           | FK `rule_versions(id)` ON DELETE RESTRICT; the version the fire was evaluated under |
+| `rule_run_id`          | uuid        | no   | —           | FK `rule_runs(id)` ON DELETE CASCADE; UNIQUE, one row per fire                      |
+| `status`               | text        | no   | `'pending'` | `pending`, `confirmed`, `rejected`, `expired` or `dropped`                          |
+| `end_reason`           | text        | yes  | NULL        | `ttl` or `restart` for `expired`, `circuit_breaker` or `kill_switch` for `dropped`  |
+| `exchange_account_ids` | uuid[]      | no   | `'{}'`      | The accounts the fire's actions resolved to when it was queued, sorted, each once   |
+| `created_at`           | timestamptz | no   | `now()`     | When the fire was queued, on the database's clock                                   |
+| `expires_at`           | timestamptz | no   | —           | `created_at` plus 60 s (`CONFIRMATION_TTL_S`, 24 §11.5)                             |
+| `ended_at`             | timestamptz | yes  | NULL        | When the row left `pending`, on the database's clock                                |
+| `decided_by`           | uuid        | yes  | NULL        | FK `users(id)` ON DELETE SET NULL; the user who confirmed or rejected               |
+
+Its CHECKs hold `status` to its five values; `end_reason` set on `expired` and `dropped` alone, each with its two reasons; `ended_at` NULL exactly while the row is `pending`; `decided_by` NULL unless the row is `confirmed` or `rejected`; and `expires_at` after `created_at`. A row leaves `pending` once, by one compare-and-set from `pending` in the transaction of the decision, the expiry or the drop, and no writer changes it after that. Two partial indexes serve the queue, both `WHERE status = 'pending'`: one on `expires_at`, the expiry task's scan and the start sweep, and one on `rule_id`, the per-rule bound and the drops. Rows live and go with their run (CASCADE, under the run retention of §7). Every column is class P0 (§12): ids, a status and times, never a figure, a parameter or a name. No column of `rules`, `rule_runs` or `rule_events` changes: the wait is a `log` event, and a fire that waited and did not run ends its run `aborted`, both existing values.
+
 ### 3.5 Alerts & deliveries
 
 ```sql

@@ -138,6 +138,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "GET /rules/confirmations": {
+      "reason": "contract-first operation (E35-T14 PR 1, the rule fire confirmation contract); E35-T14's queue PR serves it",
+      "ticket": "E35-T14"
+    },
     "GET /rules/runs/{runId}/events": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -225,6 +229,14 @@
     "POST /risk/lockouts/{accountId}/override": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
+    },
+    "POST /rules/confirmations/{confirmationId}/confirm": {
+      "reason": "contract-first operation (E35-T14 PR 1, the rule fire confirmation contract); E35-T14's queue PR serves it",
+      "ticket": "E35-T14"
+    },
+    "POST /rules/confirmations/{confirmationId}/reject": {
+      "reason": "contract-first operation (E35-T14 PR 1, the rule fire confirmation contract); E35-T14's queue PR serves it",
+      "ticket": "E35-T14"
     },
     "POST /rules/{ruleId}/simulate": {
       "reason": "contract-first operation; implementation lands with its owning epic",

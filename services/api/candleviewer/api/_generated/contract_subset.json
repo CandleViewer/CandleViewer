@@ -6442,6 +6442,36 @@
         }
       }
     },
+    "/rules/confirmations": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "rules:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/rules/confirmations/{confirmationId}/confirm": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "rules:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/rules/confirmations/{confirmationId}/reject": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "rules:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
     "/rules/runs/{runId}/events": {
       "get": {
         "x-rbac": {

@@ -858,6 +858,10 @@ _UNPARSED_STEP_UP_TEXT: dict[str, str] = {
     # the rule writes (`_NOT_DANGEROUS`) say none applies to a saved version (#3209).
     "createRule": "no step-up: stored disabled, runs nothing (04 §7.2.2 rows 22, 27)",
     "updateRule": "no step-up: an armed rule keeps its active version (04 §7.2.2 rows 22, 26)",
+    # E35-T14 (#5006, BQ-5): the confirmer's own trade grants on every account the fire targets
+    # are the check; rule actions run on demo and testnet only, so confirming asks neither a
+    # step-up nor an arm token.
+    "confirmRuleFire": "no step-up: the confirmer's trade grants decide, demo and testnet only",
     "setSubaccountTier": "the contract says No step-up: `admin:write` is no SR-025 action class",
     "endViewAs": "ends the caller's own view-as; the contract says it needs no step-up (#3085)",
     # Gated, but the text demands the step-up and names no class: each class is pinned below.

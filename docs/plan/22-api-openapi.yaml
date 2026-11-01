@@ -9272,6 +9272,254 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /rules/confirmations:
+    get:
+      tags: [rules]
+      operationId: listRuleConfirmations
+      summary: List the rule fires waiting for a confirmation
+      description: |
+        The fires of rules with `limits.require_confirmation: true` that wait for a human
+        (24-internal-schemas.md section 11.5, "The confirmation queue", E35-T14), soonest to
+        expire first, then by `id`. Only `pending` ones are listed, and only those still inside
+        their time on the database's clock and queued since this process started, so the list
+        never shows a fire that `confirmRuleFire` would refuse as expired.
+
+        A confirmation is listed only for a rule the caller may read, as `getRule` decides: the
+        Owner role reads every rule; anyone else only a rule they own whose every version's
+        accounts are all still among their grants. A rule the caller may not read is never listed,
+        named or counted, and a `rule_id` the caller may not read, or that does not exist, gives
+        an empty page. The operation takes `rules:write`, as confirming and rejecting do, so a Viewer is
+        `403 forbidden`.
+
+        At most 10 fires wait per rule and 256 in all, each at most 60 s (24-internal-schemas.md
+        section 11.5), so the list is short; `meta.next_cursor` carries what a page leaves.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: rule_id
+          in: query
+          description: Only this rule's fires.
+          schema: { type: string, format: uuid }
+      x-rbac: { permissions: [rules:write], scope: granted_accounts }
+      responses:
+        "200":
+          description: The fires waiting for a confirmation.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/RuleFireConfirmation" }
+              examples:
+                waiting:
+                  value:
+                    items:
+                      - id: "1c000000-0000-4000-8000-000000000001"
+                        rule_id: "10000000-0000-4000-8000-000000000001"
+                        rule_version_id: "11000000-0000-4000-8000-000000000001"
+                        run_id: "12000000-0000-4000-8000-000000000001"
+                        status: pending
+                        symbol: BTCUSDT
+                        exchange_account_ids: ["a1000000-0000-4000-8000-000000000001"]
+                        created_at: "2026-11-01T10:30:12Z"
+                        expires_at: "2026-11-01T10:31:12Z"
+                        ended_at: null
+                        decided_by: null
+                    meta: { next_cursor: null, has_more: false, count: 1 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /rules/confirmations/{confirmationId}/confirm:
+    parameters: [{ $ref: "#/components/parameters/ConfirmationId" }]
+    post:
+      tags: [rules]
+      operationId: confirmRuleFire
+      summary: Confirm a rule fire waiting for a confirmation
+      description: |
+        A human's yes to a fire of a rule with `limits.require_confirmation: true`
+        (24-internal-schemas.md section 11.5, "The confirmation queue", E35-T14). Confirming is
+        placing the rule's orders yourself: besides `rules:write` over the rule (`x-rbac`, as
+        `setRuleMode`), the caller's own trade grants must cover every account the fire targets,
+        each judged as `placeOrder` judges its account (`orders:write` on the account, with
+        `requires_trade`), so a Manager never confirms an order on an account they may not trade
+        and a Viewer never confirms. It asks no step-up and no arm token: rule actions run on demo
+        and testnet only, and opening live rule actions takes its own ruling.
+
+        The confirmed fire is the same fire, offered again to its rule's lane in the bounded fire
+        queue: its run, its fire keys, the accounts its actions resolved to when it was queued,
+        and its original offer time. It meets every check again before anything is sent: the
+        blocks that refuse a fire whole, judged against that offer time, so a circuit-breaker trip
+        or a kill between the fire and its confirmation refuses it; then checks 1 to 8 per action
+        and account, so a kill switch engaged meanwhile is `kill_switch`; then the OMS's own. A
+        confirmation never skips a check. The call answers `202` once the fire is offered, never
+        once it has run: its results ride the run's events (`listRuleRunEvents`, the `rules`
+        topic), and a full lane refuses the fire whole (`backpressure`), as it does any fire.
+
+        **Refusals.** After authentication, CSRF, the session state, validation and RBAC, these
+        refuse a request in this order and change nothing. Before the idempotency lookup, so a
+        caller who has lost access never reads an answer back: `404 not_found` for a confirmation
+        that does not exist or whose rule the caller may not read (`getRule`), answered alike, so
+        the answer never tells which; then `403 account_scope_denied` when an account the fire
+        targets is outside the caller's trade grants (`403 forbidden` without `orders:write`).
+        After the lookup finds no earlier answer: `409 conflict` with `errors[].rule`
+        `confirmation_expired` when its time ran out on the database's clock or a restart ended it
+        (it was queued before this process started), whether or not its expiry is stored yet; then
+        `409 conflict` with `errors[].rule` `confirmation_closed` when it was confirmed, rejected
+        or dropped already. A refusal for a rule the caller may not read, or for an account outside
+        their trade grants, is recorded as a denied `rules.scope_denied` before it is answered,
+        within the budget of "Rule authoring refusal records"; a confirmation that does not exist
+        writes no record.
+
+        **One decision per fire.** The decision holds the confirmation's row from its check to its
+        commit, so of concurrent confirmations and rejections of one fire exactly one takes effect
+        and the others answer `409`, and no expiry lands between the check and the commit.
+
+        **Idempotent.** The same `Idempotency-Key` for the same confirmation is answered with the
+        stored `202` and offers nothing again. Only the `202` is stored; a refusal is evaluated
+        afresh on a retry.
+
+        **Audit (C-2.9).** `rules.confirmed` is written ahead, before the decision commits, the
+        fire is offered and the answer leaves, naming the confirmer and their role, the rule, its
+        version and the run, never a figure (24-internal-schemas.md section 15.5). When it cannot
+        be written the answer is `503 audit_unavailable`, the confirmation stays `pending` and
+        nothing is offered.
+      x-rbac: { permissions: [rules:write], scope: granted_accounts }
+      x-idempotency: required
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
+      responses:
+        "202":
+          description: The fire is confirmed and offered again to its rule's lane.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuleFireConfirmation" }
+              examples:
+                confirmed:
+                  value:
+                    id: "1c000000-0000-4000-8000-000000000001"
+                    rule_id: "10000000-0000-4000-8000-000000000001"
+                    rule_version_id: "11000000-0000-4000-8000-000000000001"
+                    run_id: "12000000-0000-4000-8000-000000000001"
+                    status: confirmed
+                    symbol: BTCUSDT
+                    exchange_account_ids: ["a1000000-0000-4000-8000-000000000001"]
+                    created_at: "2026-11-01T10:30:12Z"
+                    expires_at: "2026-11-01T10:31:12Z"
+                    ended_at: "2026-11-01T10:30:40Z"
+                    decided_by: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict` with rule `confirmation_expired`: the confirmation's time ran out or a restart ended it. `conflict` with rule `confirmation_closed`: it was confirmed, rejected or dropped already. `idempotency_key_reuse`: the key was first used for another request. `idempotency_in_flight`: a call with the same key is still running, with `Retry-After`."
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                expired:
+                  value:
+                    type: "https://candleviewer.local/errors/conflict"
+                    title: "Concurrent modification or state conflict"
+                    status: 409
+                    detail: "The confirmation is no longer pending."
+                    instance: "urn:cv:req:0193f2bb-6c01"
+                    code: conflict
+                    errors: [{ rule: confirmation_expired }]
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /rules/confirmations/{confirmationId}/reject:
+    parameters: [{ $ref: "#/components/parameters/ConfirmationId" }]
+    post:
+      tags: [rules]
+      operationId: rejectRuleFire
+      summary: Reject a rule fire waiting for a confirmation
+      description: |
+        A human's no to a fire of a rule with `limits.require_confirmation: true`
+        (24-internal-schemas.md section 11.5, "The confirmation queue", E35-T14). The fire never
+        executes: its run closes `aborted`, and each of its actions is recorded `blocked` with
+        `blocked_by` `confirmation_rejected`. Rejecting sends nothing and adds no exposure, so it
+        takes `rules:write` over the rule (`x-rbac`, as `setRuleMode`) and no trade grant.
+
+        **Refusals.** After authentication, CSRF, the session state, validation and RBAC, these
+        refuse a request in this order and change nothing. Before the idempotency lookup:
+        `404 not_found` for a confirmation that does not exist or whose rule the caller may not
+        read (`getRule`), answered alike and recorded as `confirmRuleFire` records it. After the
+        lookup finds no earlier answer: `409 conflict` with `errors[].rule` `confirmation_expired`
+        when its time ran out or a restart ended it; then `409 conflict` with `errors[].rule`
+        `confirmation_closed` when it was confirmed, rejected or dropped already. One decision per
+        fire, as on `confirmRuleFire`: of concurrent decisions on one fire exactly one takes effect.
+
+        **Idempotent.** The same `Idempotency-Key` for the same confirmation is answered with the
+        stored `200`. Only the `200` is stored; a refusal is evaluated afresh on a retry.
+
+        **Audit (C-2.9).** `rules.confirmation_rejected` is written ahead, before the decision
+        commits and the answer leaves, naming who rejected and their role, the rule, its version
+        and the run, never a figure (24-internal-schemas.md section 15.5). When it cannot be
+        written the answer is `503 audit_unavailable` and the confirmation stays `pending` until
+        its time runs out.
+      x-rbac: { permissions: [rules:write], scope: granted_accounts }
+      x-idempotency: required
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
+      responses:
+        "200":
+          description: The fire is rejected and will never execute.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuleFireConfirmation" }
+              examples:
+                rejected:
+                  value:
+                    id: "1c000000-0000-4000-8000-000000000001"
+                    rule_id: "10000000-0000-4000-8000-000000000001"
+                    rule_version_id: "11000000-0000-4000-8000-000000000001"
+                    run_id: "12000000-0000-4000-8000-000000000001"
+                    status: rejected
+                    symbol: BTCUSDT
+                    exchange_account_ids: ["a1000000-0000-4000-8000-000000000001"]
+                    created_at: "2026-11-01T10:30:12Z"
+                    expires_at: "2026-11-01T10:31:12Z"
+                    ended_at: "2026-11-01T10:30:51Z"
+                    decided_by: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict` with rule `confirmation_expired`: the confirmation's time ran out or a restart ended it. `conflict` with rule `confirmation_closed`: it was confirmed, rejected or dropped already. `idempotency_key_reuse`: the key was first used for another request. `idempotency_in_flight`: a call with the same key is still running, with `Retry-After`."
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   # ===========================================================================
   # ALERTS
   # ===========================================================================
@@ -16856,6 +17104,12 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    ConfirmationId:
+      name: confirmationId
+      in: path
+      required: true
+      description: A rule fire confirmation's `id` (`RuleFireConfirmation`).
+      schema: { type: string, format: uuid }
     AlertId:
       name: alertId
       in: path
@@ -22233,6 +22487,73 @@ components:
             enum: [evaluated, suppressed, action_sent, action_result, error, started, finished],
           }
         payload: { type: object, additionalProperties: true }
+    RuleFireConfirmation:
+      type: object
+      description: |
+        A fire of a rule with `limits.require_confirmation: true` that waits for a human, or the
+        decision a human took on it (24-internal-schemas.md section 11.5, "The confirmation
+        queue"; the row is 21-database-schema.md section 3.4.4's). It names the fire's rule,
+        version and run and the accounts its actions resolved to when it was queued, every one of
+        which the confirmer's trade grants must cover; never a figure: the actions' parameters are
+        the version's (`getRuleVersion`), and the values the conditions saw stay in the run.
+      required:
+        [
+          id,
+          rule_id,
+          rule_version_id,
+          run_id,
+          status,
+          symbol,
+          exchange_account_ids,
+          created_at,
+          expires_at,
+          ended_at,
+          decided_by,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        rule_id: { type: string, format: uuid }
+        rule_version_id:
+          type: string
+          format: uuid
+          description: The version the fire was evaluated under.
+        run_id:
+          type: string
+          format: uuid
+          description: The fire's `rule_runs` id (`RuleRun.id`), written when the fire was queued.
+        status:
+          type: string
+          enum: [pending, confirmed, rejected]
+          description: >
+            `pending` while the fire waits (`listRuleConfirmations`), `confirmed` on the answer of
+            `confirmRuleFire`, `rejected` on the answer of `rejectRuleFire`. A fire whose time ran
+            out, or that a restart, its rule's circuit breaker or the kill switch ended, is no
+            longer listed and is never served here.
+        symbol:
+          oneOf: [{ $ref: "#/components/schemas/Symbol" }, { type: "null" }]
+          description: The symbol of the scope instance that fired, when it names one.
+        exchange_account_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: >
+            The accounts the fire's actions resolved to when it was queued, sorted; the confirmed
+            fire acts on no other. Empty when no action names an account.
+        created_at:
+          type: string
+          format: date-time
+          description: When the fire was queued, on the database's clock.
+        expires_at:
+          type: string
+          format: date-time
+          description: "`created_at` plus 60 s: past it the fire can no longer be confirmed."
+        ended_at:
+          type: ["string", "null"]
+          format: date-time
+          description: When the fire stopped waiting; null while it is `pending`.
+        decided_by:
+          type: ["string", "null"]
+          format: uuid
+          description: The user who confirmed or rejected it; null while it is `pending`.
     AlertInput:
       type: object
       required: [name, condition_ir, channels]

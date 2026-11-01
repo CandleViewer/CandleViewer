@@ -1406,7 +1406,9 @@ export interface Rules {
       | "action_result"
       | "error"
       | "started"
-      | "finished";
+      | "finished"
+      | "confirmation_pending"
+      | "confirmation_expired";
     /**
      * Epoch milliseconds, UTC.
      */

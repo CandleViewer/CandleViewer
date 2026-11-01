@@ -4062,19 +4062,57 @@ behind a `positions` window open when it arrives (§16.1 S5).
               "action_result",
               "error",
               "started",
-              "finished"
+              "finished",
+              "confirmation_pending",
+              "confirmation_expired"
             ]
           },
           "ts_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
           "payload": { "type": "object", "additionalProperties": true }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "const": "confirmation_pending" } } },
+            "then": {
+              "required": ["payload"],
+              "properties": {
+                "payload": {
+                  "required": ["confirmation_id", "expires_at_ms"],
+                  "properties": {
+                    "confirmation_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
+                    "expires_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "confirmation_expired" } } },
+            "then": {
+              "required": ["payload"],
+              "properties": {
+                "payload": {
+                  "required": ["confirmation_id", "reason"],
+                  "properties": {
+                    "confirmation_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
+                    "reason": { "enum": ["ttl", "restart"] }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        ]
       }
     }
   },
   "additionalProperties": false
 }
 ```
+
+**Confirmation events (E35-T14, #5006).** A fire of a rule with `limits.require_confirmation: true` that waits for a human (`24-internal-schemas.md` §11.5, "The confirmation queue") is announced by one `confirmation_pending` event, sent as the fire is queued: its `rule_id` and `run_id` name the rule and the fire, and its `payload` the confirmation's id (`22-api-openapi.yaml` `RuleFireConfirmation.id`, the id `confirmRuleFire` and `rejectRuleFire` take) and `expires_at_ms`, when its time runs out on the database's clock. A fire whose time runs out, or that a restart ends, is announced by one `confirmation_expired` event: `reason` `ttl` when its 60 s ran out, `restart` when a restart ended it. Neither payload carries a figure, an account or a parameter, and the schema above closes both. A confirmed, rejected or dropped fire sends no `confirmation_expired`: its outcome is the run's own `action_result` and `finished` events. The two kinds are additive (C-6.3), and like every kind here they reach a subscription only with `include_events: true`; serving the topic's `events` to clients is E35-S06's (#865), so until it lands E35-T14 publishes them on the bus's `rules` domain only.
 
 **Who receives a rule (#3488).** A `rules` frame, a `snap` or a `d`, reaches a connection only for a rule its principal may read over REST at that moment (`24-internal-schemas.md` §15.2, `04-security-program.md` §7.2.2 rows 24 and 25): the Owner role reads every rule; anyone else only a rule they own whose every version's accounts are all still among their view grants; a deleted rule is no one's. Another user's rule, whether it names accounts or none, is not theirs whatever their grants (C-12.4). One predicate decides it for both transports, `RulesManager._visible`, the check behind `GET /rules` and `GET /rules/{ruleId}`, applied per rule when the hub publishes the frame, to the principal as it is then (`ConnectionAuthz.apply_snapshot` swaps it in before the §9.5 re-evaluation), so a revoked grant ends the delivery of every rule that named it with no frame of its own. A frame already waiting in a pacing window (§8.1: the subscription's effective `throttle_ms` times the §8.3 class multiplier, 250 ms by default) leaves as it was judged, and a grants change that alters what a user may read re-snapshots their `rules` subscriptions (E35-S06). The family's account scope and the `exchange_account_ids` and `rule_ids` options only narrow it further, never widen it. The topic name holds no rule id (§6), so no `sub` is refused for the rules it names: its `sub_ok` is the same for a rule the caller may read, one they may not and one that does not exist, and `effective` echoes `rule_ids` as sent. The hub refuses a `rules` publish that names no such check (`SequencingHub.publish(viewer=)`), so no producer can leave it out.
 
@@ -4883,7 +4921,7 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Contract         | Canary: a server that sends `closed` instead of `confirm` fails the suite, naming the member, the `ch` and §14.3.                                                                                     | 30 §5.3 exit criterion 7 (E12-Q04, AC3).                  |
 | Contract         | `indicators.*` frames validate against §14.10; points are keyed by `(key, generation, index)`; an amended point carries `amended: true`; a generation change is a `generation_swap` `snap`.           | §6.1, §8.2, §14.10.                                       |
 | Contract         | A `client_worker` or unknown indicator, a param out of bounds and a `compute` key are `invalid_options`; the 9th instance per user, 33rd per symbol and 129th per server are `subscription_limit`.    | §6.1 (SR-E13-01, SR-E13-03, IR-41).                       |
-| Contract         | A replay `indicators.*` `sub` is refused `unknown_topic` and holds nothing; an instance primed from stored bars sends its `snap` once that read ends.            | §6.1, §7.1.                                               |
+| Contract         | A replay `indicators.*` `sub` is refused `unknown_topic` and holds nothing; an instance primed from stored bars sends its `snap` once that read ends.                                                 | §6.1, §7.1.                                               |
 | Contract         | `snapMeta.reason` is one ordered set in the schema, §7.4's list and `SNAP_REASONS`, `history_repair` among them; a client keeps a reason it does not know (C18).                                      | §7.4, §13, §16.5.                                         |
 | Integration      | Grant revocation mid-stream → `revoked` within 1 s, other topics intact.                                                                                                                              | S7, §9.5.                                                 |
 | Integration      | Token expiry → in-place re-`auth` preserves subscriptions and sequences.                                                                                                                              | §4.1.                                                     |
