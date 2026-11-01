@@ -489,6 +489,24 @@ describe("Sort, filters and search (BQ-10; D02 §9.1; KB-02, FM-01, FM-02)", () 
     ]);
   });
 
+  it("a reason-less entry the grid never shows is never counted: no spurious count line (#5309's re-check (a))", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"], now: NOW });
+    const say = vi.fn();
+    // REST's status names a refused entry before the first frame gives it a reason: not a row the grid draws.
+    const unnamed = row("DOGEUSDT", {
+      id: null,
+      reason: null,
+      state: "refused",
+      refusal: "symbol_cap",
+    });
+    render(<Harness say={say} rows={[...D02_ROWS, unnamed]} />);
+    say.mockClear();
+    const search = screen.getByRole("searchbox", { name: "Filter symbols" });
+    fireEvent.change(search, { target: { value: "usdt" } }); // the same five rows: nothing changed
+    await act(async () => void (await vi.advanceTimersByTimeAsync(500)));
+    expect(say).not.toHaveBeenCalled();
+  });
+
   it("a search is judged against the rows as they are now, not as they were when it was last counted (C-5309-d01)", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"], now: NOW });
     const say = vi.fn();
