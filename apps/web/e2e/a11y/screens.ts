@@ -20,6 +20,7 @@ export interface A11yScreen {
 export const PR_IDS: ReadonlySet<string> = new Set(["R-001", "R-901", "R-902", "R-903"]);
 
 const SIGNED_IN = new Map<string, NonNullable<A11yScreen["signedIn"]>>([
+  ["R-130", { role: "owner", heading: "Positions and orders" }], // SCR-063 (E29-S01 #911)
   ["R-201", { role: "owner", heading: "Security settings" }],
   ["R-202", { role: "owner", heading: "Hotkeys" }],
   ["R-203", { role: "owner", heading: "Appearance" }],
