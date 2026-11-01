@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
     MfaChallengeInvalid,
     MfaChallengeLocked,
@@ -22,6 +21,7 @@ from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, MfaVerifyR
 from candleviewer.auth.recovery_codes import generate_recovery_codes, hash_recovery_code
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.unit.auth.auth_fakes import no_wait
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
 from .mfa_fakes import FakeMfaRepository
 from .totp_code_cases import ARABIC_INDIC_CODE
@@ -33,8 +33,7 @@ _NOW = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
 def _service(repo: FakeMfaRepository) -> MfaService:
     return MfaService(
         repo,
-        TotpEncryptor(os.urandom(32)),
-        recovery_code_key=_RC_KEY,
+        FakeMfaKeyring(os.urandom(32), _RC_KEY),
         clock=lambda: _NOW,
         sleep=no_wait,
     )
@@ -60,7 +59,7 @@ async def _enrolled(service: MfaService, repo: FakeMfaRepository, uid: uuid.UUID
     )
     method = repo.methods[str(res.method_id)]
     assert method.secret_enc is not None
-    seed = service._encryptor.decrypt(method.secret_enc)
+    seed = service._keyring.decrypt(method.secret_enc)
     code = generate_code(seed, time_step_for(_NOW.timestamp()) - 1)
     await service.confirm_enrollment(str(uid), method_id=str(res.method_id), code=code)
     return seed
@@ -71,7 +70,7 @@ def _totp(seed: bytes) -> str:
 
 
 def test_default_clock_is_tz_aware_utc() -> None:
-    svc = MfaService(FakeMfaRepository(), TotpEncryptor(os.urandom(32)), recovery_code_key=_RC_KEY)
+    svc = MfaService(FakeMfaRepository(), FakeMfaKeyring(os.urandom(32), _RC_KEY))
     assert svc._clock().tzinfo is UTC
 
 
@@ -167,7 +166,7 @@ async def test_confirm_refuses_a_method_with_an_accepted_step() -> None:
     mid = str(res.method_id)
     method = repo.methods[mid]
     assert method.secret_enc is not None
-    seed = svc._encryptor.decrypt(method.secret_enc)
+    seed = svc._keyring.decrypt(method.secret_enc)
     step = time_step_for(_NOW.timestamp())
     repo.methods[mid] = method.model_copy(update={"last_accepted_time_step": step - 1})
     with pytest.raises(MfaEnrollmentNotFound):
@@ -186,13 +185,13 @@ async def test_confirm_replaces_existing_recovery_codes_with_ten_new_ones() -> N
     )
     method = repo.methods[str(res.method_id)]
     assert method.secret_enc is not None
-    seed = svc._encryptor.decrypt(method.secret_enc)
+    seed = svc._keyring.decrypt(method.secret_enc)
     _, codes = await svc.confirm_enrollment(uid, method_id=str(res.method_id), code=_totp(seed))
     assert len(set(codes)) == 10
-    assert await repo.find_unused_recovery_code(uid, code_hash="x" * 64) is None
+    assert await repo.find_unused_recovery_code(uid, code_hashes=("x" * 64,)) is None
     for code in codes:
         assert await repo.find_unused_recovery_code(
-            uid, code_hash=hash_recovery_code(code, key=_RC_KEY)
+            uid, code_hashes=(hash_recovery_code(code, key=_RC_KEY),)
         )
 
 
@@ -210,7 +209,7 @@ async def test_confirm_revokes_every_other_totp_method_in_the_same_step() -> Non
     new = repo.methods[str(res.method_id)]
     assert new.secret_enc is not None
     step = await svc.check_enrollment(
-        str(uid), method_id=str(new.id), code=_totp(svc._encryptor.decrypt(new.secret_enc))
+        str(uid), method_id=str(new.id), code=_totp(svc._keyring.decrypt(new.secret_enc))
     )
     method, codes = await svc.complete_enrollment(str(uid), method_id=str(new.id), time_step=step)
     assert (method.id, method.confirmed_at, method.last_accepted_time_step) == (new.id, _NOW, step)
@@ -231,7 +230,7 @@ async def test_check_enrollment_changes_nothing_and_a_lost_race_changes_nothing(
     mid = str(res.method_id)
     secret_enc = repo.methods[mid].secret_enc
     assert secret_enc is not None
-    seed = svc._encryptor.decrypt(secret_enc)
+    seed = svc._keyring.decrypt(secret_enc)
     before = dict(repo.methods)
     step = await svc.check_enrollment(uid, method_id=mid, code=_totp(seed))
     assert repo.methods == before and repo.recovery_codes == {}
@@ -357,8 +356,7 @@ async def test_recover_with_wrong_hmac_key_rejects_valid_code() -> None:
     token = await _challenge(repo, uid)
     other = MfaService(
         repo,
-        TotpEncryptor(os.urandom(32)),
-        recovery_code_key=b"z" * 32,
+        FakeMfaKeyring(os.urandom(32), b"z" * 32),
         clock=lambda: _NOW,
         sleep=no_wait,
     )

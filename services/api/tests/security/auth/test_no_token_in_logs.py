@@ -34,7 +34,7 @@ from candleviewer.auth.recovery_codes import normalize_recovery_code
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _GITLEAKS = Path(__file__).resolve().parents[5] / ".gitleaks.toml"
@@ -154,8 +154,7 @@ def stack(monkeypatch: pytest.MonkeyPatch) -> Any:
             users,
             pepper=pepper,
             mfa_repository=mfa,
-            totp_encryption_key=os.urandom(32),
-            recovery_code_hmac_key=b"r" * 32,
+            mfa_keyring=FakeMfaKeyring(os.urandom(32), b"r" * 32),
             session_repository=sessions,
             clock=clock,
         )
@@ -196,7 +195,7 @@ def test_login_mfa_refresh_stepup_never_log_a_credential(
             uid, MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="o"
         )
     )
-    seed = ctx.auth.mfa._encryptor.decrypt(mfa_repo.methods[str(res.method_id)].secret_enc)
+    seed = ctx.auth.mfa._keyring.decrypt(mfa_repo.methods[str(res.method_id)].secret_enc)
     _, recovery_codes = portal.call(
         lambda: mfa.confirm_enrollment(
             uid, method_id=str(res.method_id),

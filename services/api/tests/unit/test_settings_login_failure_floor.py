@@ -15,6 +15,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from candleviewer.app import build_auth_service
+from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.login_service import LOGIN_FAILURE_FLOOR
 from candleviewer.auth.service import AuthService
 from candleviewer.settings import (
@@ -117,8 +118,7 @@ async def test_auth_service_start_passes_the_floor_to_the_second_factor_and_step
         repository=FakeUserRepository(),
         pepper="pepper",
         mfa_repository=FakeMfaRepository(),
-        totp_encryption_key=b"0" * 32,
-        recovery_code_hmac_key=b"1" * 32,
+        mfa_keyring=EnvMfaKeyring(b"0" * 32, b"1" * 32),
         session_repository=FakeSessionRepository(),
         login_failure_floor=timedelta(milliseconds=1234),
     )

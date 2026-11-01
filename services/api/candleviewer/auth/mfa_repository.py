@@ -9,6 +9,7 @@ the other's types — same composition-root pattern `UserRepository` uses.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Literal, Protocol
 
@@ -137,9 +138,12 @@ class MfaRepository(Protocol):
         hard-deleting unused ones")."""
         ...
 
-    async def find_unused_recovery_code(self, user_id: str, *, code_hash: str) -> str | None:
-        """Return the row id (as `str`) of the matching unused code, or
-        `None`."""
+    async def find_unused_recovery_code(
+        self, user_id: str, *, code_hashes: Sequence[str]
+    ) -> str | None:
+        """Return the row id (as `str`) of the unused code of `user_id` whose digest is any of
+        `code_hashes`, in one query (`code_hash = ANY`, #2152 BQ-3: the caller computed every
+        candidate digest first), or `None`."""
         ...
 
     async def count_unused_recovery_codes(self, user_id: str) -> int: ...

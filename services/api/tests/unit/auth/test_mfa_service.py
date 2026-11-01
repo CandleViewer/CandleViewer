@@ -11,7 +11,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
     MfaChallengeInvalid,
     MfaChallengeLocked,
@@ -32,6 +31,7 @@ from candleviewer.auth.models import (
 from candleviewer.auth.recovery_codes import generate_recovery_codes, hash_recovery_code
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.unit.auth.auth_fakes import no_wait
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
 from .mfa_fakes import FakeMfaRepository
 
@@ -46,9 +46,7 @@ def _clock() -> datetime:
 
 def _service(repo: FakeMfaRepository) -> MfaService:
     key = os.urandom(32)
-    return MfaService(
-        repo, TotpEncryptor(key), recovery_code_key=_RC_KEY, clock=_clock, sleep=no_wait
-    )
+    return MfaService(repo, FakeMfaKeyring(key, _RC_KEY), clock=_clock, sleep=no_wait)
 
 
 async def _make_login_challenge(repo: FakeMfaRepository, user_id: uuid.UUID) -> str:
@@ -70,7 +68,7 @@ async def _enroll_and_confirm(
         str(user_id), MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="alice"
     )
     method = repo.methods[str(result.method_id)]
-    seed = service._encryptor.decrypt(method.secret_enc)  # type: ignore[arg-type]
+    seed = service._keyring.decrypt(method.secret_enc)  # type: ignore[arg-type]
     # Confirm one step *before* "now" (still within the +/-1 skew window) so
     # the time-step it consumes never collides with a later `verify()` call
     # made against the same fixed `_clock()` in these tests.

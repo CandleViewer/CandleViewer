@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -102,9 +102,11 @@ _RC_INSERT = sa.text(
     "INSERT INTO recovery_codes (id, user_id, code_hash) "
     "VALUES (CAST(:id AS uuid), CAST(:u AS uuid), :h)"
 )
+#: #2152 BQ-3: every candidate digest of the presented code at once; `UNIQUE (user_id,
+#: code_hash)` serves it.
 _RC_FIND = sa.text(
     "SELECT id::text AS id FROM recovery_codes WHERE user_id = CAST(:u AS uuid) "
-    "AND code_hash = :h AND used_at IS NULL"
+    "AND code_hash = ANY(CAST(:hs AS text[])) AND used_at IS NULL"
 )
 #: #2344: the recovery sign-in's and the enrolment's units of work. #2911: the user row first, `FOR
 #: SHARE`, as a session insert reads it (`sessions_sqlalchemy`): a disable that commits first is
@@ -271,8 +273,10 @@ class SqlAlchemyMfaRepository:
                 )
             await uow.commit()
 
-    async def find_unused_recovery_code(self, user_id: str, *, code_hash: str) -> str | None:
-        rows = await self._run(_RC_FIND, {"u": user_id, "h": code_hash})
+    async def find_unused_recovery_code(
+        self, user_id: str, *, code_hashes: Sequence[str]
+    ) -> str | None:
+        rows = await self._run(_RC_FIND, {"u": user_id, "hs": list(code_hashes)})
         return str(rows[0]._mapping["id"]) if rows else None
 
     async def count_unused_recovery_codes(self, user_id: str) -> int:

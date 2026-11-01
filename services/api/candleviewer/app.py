@@ -226,6 +226,7 @@ from candleviewer.api.watchlists import make_watchlists_router
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
 from candleviewer.audit_lane_wiring import lane_key_loader
 from candleviewer.auth.csrf import CsrfCodec
+from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.models import (
     InviteRecord,
@@ -839,6 +840,9 @@ def build_auth_service(
     rc_key = _decode_key("CV_AUTH_RECOVERY_HMAC_KEY_HEX", rc)
     if not real:
         return AuthService()
+    # #2152 S5a: MFA reaches the keys only through its keyring, still env-backed (behaviour
+    # unchanged); the real backend has both keys, checked above.
+    keyring = None if totp_key is None or rc_key is None else EnvMfaKeyring(totp_key, rc_key)
     relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "auth")
     users = SqlAlchemyUserRepository(
         relational, _record_factory(UserRecord), clock=clock or (lambda: datetime.now(UTC))
@@ -851,8 +855,7 @@ def build_auth_service(
         mfa_repository=SqlAlchemyMfaRepository(
             relational, _record_factory(MfaMethodRecord), _record_factory(MfaChallengeRecord)
         ),
-        totp_encryption_key=totp_key,
-        recovery_code_hmac_key=rc_key,
+        mfa_keyring=keyring,
         session_repository=SqlAlchemySessionRepository(relational, _record_factory(SessionRecord)),
         clock=clock,
         invite_repository=SqlAlchemyInviteRepository(relational, _record_factory(InviteRecord)),

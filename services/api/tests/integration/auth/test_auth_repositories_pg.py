@@ -117,7 +117,7 @@ async def test_mfa_challenge_replay_and_single_use_recovery_code(pg_dsn: str) ->
         assert await mfa.satisfy_challenge(str(ch.id), now=_NOW) is False
         h = "a" * 64
         await mfa.replace_recovery_codes(uid, code_hashes=(h,))
-        cid = await mfa.find_unused_recovery_code(uid, code_hash=h)
+        cid = await mfa.find_unused_recovery_code(uid, code_hashes=(h,))
         assert cid is not None
         fresh = await _login_challenge(mfa, uid)
         assert await mfa.complete_recovery(uid, challenge_id=fresh, code_id=cid, now=_NOW) is True
@@ -146,7 +146,7 @@ async def test_enrolment_completes_in_one_transaction_and_only_the_latest_method
         assert await mfa.complete_enrollment(
             uid, method_id=str(old.id), time_step=1, now=_NOW, code_hashes=old_codes
         )
-        spent = await mfa.find_unused_recovery_code(uid, code_hash=old_codes[0])
+        spent = await mfa.find_unused_recovery_code(uid, code_hashes=(old_codes[0],))
         assert spent is not None
         challenge = await _login_challenge(mfa, uid)
         assert await mfa.complete_recovery(uid, challenge_id=challenge, code_id=spent, now=_NOW)
@@ -162,13 +162,13 @@ async def test_enrolment_completes_in_one_transaction_and_only_the_latest_method
 
         assert got is not None and (got.id, got.last_accepted_time_step) == (new.id, 2)
         assert [m.id for m in await mfa.find_active_totp_methods(uid)] == [new.id]
-        assert await mfa.find_unused_recovery_code(uid, code_hash=old_codes[0]) is None
-        assert await mfa.find_unused_recovery_code(uid, code_hash=new_codes[0]) is not None
+        assert await mfa.find_unused_recovery_code(uid, code_hashes=(old_codes[0],)) is None
+        assert await mfa.find_unused_recovery_code(uid, code_hashes=(new_codes[0],)) is not None
         again = await mfa.complete_enrollment(
             uid, method_id=str(new.id), time_step=3, now=_NOW, code_hashes=("c" * 64,)
         )
         assert again is None
-        assert await mfa.find_unused_recovery_code(uid, code_hash=new_codes[0]) is not None
+        assert await mfa.find_unused_recovery_code(uid, code_hashes=(new_codes[0],)) is not None
         await users.set_mfa_required(uid)
         carol = await users.find_by_id(uid)
         assert carol is not None and carol.mfa_required is True
@@ -181,7 +181,7 @@ async def test_enrolment_completes_in_one_transaction_and_only_the_latest_method
         )
         assert refused is False
         assert await mfa.find_pending_method(str(pending.id), uid) is not None
-        assert await mfa.find_unused_recovery_code(uid, code_hash=new_codes[0]) is not None
+        assert await mfa.find_unused_recovery_code(uid, code_hashes=(new_codes[0],)) is not None
     finally:
         await rel.dispose()
 
@@ -209,9 +209,9 @@ async def test_recovery_spends_once_revokes_every_method_and_rolls_back_a_lost_r
         )
         await mfa.replace_recovery_codes(erin, code_hashes=("f" * 64,))
         first, second = await _login_challenge(mfa, uid), await _login_challenge(mfa, uid)
-        code = await mfa.find_unused_recovery_code(uid, code_hash=codes[0])
-        other = await mfa.find_unused_recovery_code(uid, code_hash=codes[1])
-        foreign = await mfa.find_unused_recovery_code(erin, code_hash="f" * 64)
+        code = await mfa.find_unused_recovery_code(uid, code_hashes=(codes[0],))
+        other = await mfa.find_unused_recovery_code(uid, code_hashes=(codes[1],))
+        foreign = await mfa.find_unused_recovery_code(erin, code_hashes=("f" * 64,))
         assert code is not None and other is not None and foreign is not None
 
         assert await mfa.complete_recovery(uid, challenge_id=first, code_id=code, now=_NOW)

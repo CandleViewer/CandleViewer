@@ -1,15 +1,16 @@
-"""In-memory `MfaRepository` and `SystemEventWriter` fakes for E09 MFA unit tests, and the rig the
-TOTP clock-skew tests share (#2146). No database."""
+"""In-memory `MfaRepository`, `MfaKeyring` and `SystemEventWriter` fakes for E09 MFA unit tests,
+and the rig the TOTP clock-skew tests share (#2146). No database, no real key."""
 
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from candleviewer.auth.envelope import TotpEncryptor
+from candleviewer.auth.env_keyring import EnvMfaKeyring
+from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
 from candleviewer.auth.mfa_service import MfaService, _hash_token
 from candleviewer.auth.models import (
     MfaChallengeRecord,
@@ -17,10 +18,45 @@ from candleviewer.auth.models import (
     MfaMethodRecord,
     MfaVerifyRequest,
 )
+from candleviewer.auth.recovery_codes import hash_recovery_code
 from candleviewer.auth.totp import TOTP_STEP_SECONDS, generate_code, time_step_for
 from candleviewer.auth.totp_skew import SKEW_HOLD_S, TotpSkewReporter
 from candleviewer.observability.health_probes import SystemEvent, SystemEventWriter
 from tests.unit.auth.auth_fakes import no_wait
+
+#: Integer-built test keys (C-13.5), never a real one: TOTP sealing and recovery-code HMAC.
+TEST_TOTP_KEY, TEST_RECOVERY_KEY = bytes(range(32)), bytes(range(32, 64))
+
+
+class FakeMfaKeyring(EnvMfaKeyring):
+    """The env-backed `MfaKeyring` over test keys (#2152 S5a), in today's formats. It records every
+    seed it opens (`opened`), so a test can assert the verifier zeroed each, and keeps the sync
+    fixture helpers the tests used on `TotpEncryptor`: `encrypt`, `decrypt`, `key_ref`, plus
+    `digest` for a stored recovery code."""
+
+    key_ref = LOCAL_KEY_REF
+
+    def __init__(
+        self, totp_key: bytes = TEST_TOTP_KEY, recovery_key: bytes = TEST_RECOVERY_KEY
+    ) -> None:
+        super().__init__(totp_key, recovery_key)
+        self._fixture = TotpEncryptor(totp_key, key_ref=LOCAL_KEY_REF)
+        self._digest_key = recovery_key
+        self.opened: list[bytearray] = []
+
+    async def open_totp_seed(self, blob: bytes, key_ref: str, user_id: uuid.UUID) -> bytearray:
+        seed = await super().open_totp_seed(blob, key_ref, user_id)
+        self.opened.append(seed)
+        return seed
+
+    def encrypt(self, seed: bytes) -> bytes:
+        return self._fixture.encrypt(seed)
+
+    def decrypt(self, blob: bytes) -> bytes:
+        return self._fixture.decrypt(blob)
+
+    def digest(self, code: str) -> str:
+        return hash_recovery_code(code, key=self._digest_key)
 
 
 class FakeMfaRepository:
@@ -206,11 +242,13 @@ class FakeMfaRepository:
                 "used_at": None,
             }
 
-    async def find_unused_recovery_code(self, user_id: str, *, code_hash: str) -> str | None:
+    async def find_unused_recovery_code(
+        self, user_id: str, *, code_hashes: Sequence[str]
+    ) -> str | None:
         for code_id, row in self.recovery_codes.items():
             matches = (
                 row["user_id"] == user_id
-                and row["code_hash"] == code_hash
+                and row["code_hash"] in code_hashes  # `code_hash = ANY` (#2152 BQ-3)
                 and row["used_at"] is None
             )
             if matches:
@@ -278,12 +316,11 @@ class SkewRig:
         self.now = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
         self.user = uuid.uuid4()
         self.repo = FakeMfaRepository()
-        self.enc = TotpEncryptor(os.urandom(32))
+        self.enc = FakeMfaKeyring()
         self.reporter = TotpSkewReporter(sink or self.events)
         self.svc = MfaService(
             self.repo,
             self.enc,
-            recovery_code_key=b"k" * 32,
             clock=self.clock,
             skew_reporter=self.reporter,
             sleep=no_wait,

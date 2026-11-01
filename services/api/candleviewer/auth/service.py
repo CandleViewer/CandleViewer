@@ -13,14 +13,13 @@ can persist the `mfa_challenges` row the two-legged login flow shares.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from candleviewer.auth.break_glass_notice import BreakGlassEvents, BreakGlassNotice
-from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
+from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.errors import AuthServiceUnavailable
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import InviteService
@@ -29,6 +28,7 @@ from candleviewer.auth.login_service import (
     LOGIN_VERIFY_CONCURRENCY,
     LoginService,
 )
+from candleviewer.auth.mfa_keyring import MfaKeyring
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import SessionRecord, UserRecord
 from candleviewer.auth.password_service import PasswordChangeService, PasswordStore
@@ -83,8 +83,7 @@ class AuthService:
         *,
         pepper: str = "",
         mfa_repository: MfaRepository | None = None,
-        totp_encryption_key: bytes | None = None,
-        recovery_code_hmac_key: bytes | None = None,
+        mfa_keyring: MfaKeyring | None = None,
         session_repository: AuthSessionStore | None = None,
         clock: Callable[[], datetime] | None = None,
         invite_repository: InviteRepository | None = None,
@@ -121,8 +120,8 @@ class AuthService:
         self._repository = repository
         self._pepper = pepper
         self._mfa_repository = mfa_repository
-        self._totp_encryption_key = totp_encryption_key
-        self._recovery_code_hmac_key = recovery_code_hmac_key
+        #: #2152 S5a: what MFA seals, opens and digests through; `auth` holds no key.
+        self._mfa_keyring = mfa_keyring
         self._session_repository = session_repository
         self._sessions: SessionService | None = None
         self._login: LoginService | None = None
@@ -301,40 +300,21 @@ class AuthService:
                 backstop_audit=self._audit_backstop,
             )
         if self._mfa_repository is not None:
-            # `totp_encryption_key` stands in for the real M2 KEK wiring
-            # (see `envelope.py`'s module docstring for why M18 cannot
-            # import `candleviewer.secrets` itself). PR #1618 review finding
-            # 3: a process-local fallback key must never silently reach a
-            # live/demo deployment — it is not persisted, so seeds become
-            # undecryptable after any restart, and nothing stops it being
-            # reused outside dev. `E27-T02` (the M2 credential broker /
-            # KEK loader) is the tracked follow-up that replaces this key
-            # with a real `SecretsService`-resolved one; until it lands,
-            # the fallback is refused outside `Environment.DEMO`/`TESTNET`
-            # so a `live`-configured process fails fast at startup instead
-            # of quietly running with an ephemeral key.
-            key = self._totp_encryption_key
-            if key is None:
+            # The keyring the composition root injects (#2152 S5a; M18 cannot import
+            # `candleviewer.secrets`, C-3.2): today the env-backed one. PR #1618 review finding 3:
+            # a process-local fallback must never silently reach a live deployment: it is not
+            # persisted, so seeds become undecryptable and stored recovery codes unverifiable
+            # after any restart. It is refused in live, so a `live`-configured process fails fast
+            # at startup instead of quietly running with ephemeral keys.
+            keyring = self._mfa_keyring
+            if keyring is None:
                 if ctx is not None and ctx.settings.environment is Environment.LIVE:
                     raise RuntimeError(
-                        "AuthService: no totp_encryption_key configured for a live "
-                        "environment; a process-local fallback key would make TOTP "
-                        "seeds undecryptable after restart (see E27-T02, envelope.py)"
+                        "AuthService: no MFA keyring configured for a live environment; "
+                        "process-local keys would make TOTP seeds undecryptable and recovery "
+                        "codes unverifiable after restart (#2152)"
                     )
-                key = _process_local_key()
-            # Recovery-code HMAC key (PR #1618 security review, blocking 1):
-            # same custody boundary and same live fail-fast rule as the TOTP
-            # key above; tracked for real M2 wiring by E27-T02.
-            rc_key = self._recovery_code_hmac_key
-            if rc_key is None:
-                if ctx is not None and ctx.settings.environment is Environment.LIVE:
-                    raise RuntimeError(
-                        "AuthService: no recovery_code_hmac_key configured for a live "
-                        "environment; a process-local fallback key would make stored "
-                        "recovery codes unverifiable after restart (see E27-T02)"
-                    )
-                rc_key = _process_local_key()
-            encryptor = TotpEncryptor(key, key_ref=LOCAL_KEY_REF)
+                keyring = EnvMfaKeyring.process_local()
             skew_reporter = TotpSkewReporter(
                 self._system_events, clock=lambda: self._clock().timestamp()
             )
@@ -342,8 +322,7 @@ class AuthService:
             self._skew_reporter = skew_reporter
             self._mfa = MfaService(
                 self._mfa_repository,
-                encryptor,
-                recovery_code_key=rc_key,
+                keyring,
                 clock=self._clock,
                 skew_reporter=skew_reporter,
                 failure_floor=self._login_failure_floor,
@@ -361,7 +340,7 @@ class AuthService:
                 self._step_up = StepUpService(
                     self._mfa_repository,
                     self._session_repository,
-                    encryptor,
+                    keyring,
                     self._repository,
                     Hasher(pepper=self._pepper),
                     publish_revocation=self._publish_revocation,
@@ -417,7 +396,3 @@ class AuthService:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def _process_local_key() -> bytes:
-    return os.urandom(32)

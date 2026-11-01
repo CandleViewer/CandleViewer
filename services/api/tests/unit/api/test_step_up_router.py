@@ -14,7 +14,6 @@ from candleviewer.api.step_up import make_read_only_guard, make_step_up_router, 
 from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.audit.models import Severity
 from candleviewer.audit.writer import AuditUnavailable
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import SessionNotFound
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
@@ -25,7 +24,7 @@ from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.statechart.bindings import b16_session
 from tests.unit.auth.auth_fakes import FakeUserRepository, InMemoryOwnerReset, make_user, no_wait
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _PW = "correct horse battery staple"
@@ -125,8 +124,8 @@ async def _build(
 ) -> tuple[TestClient, _Emitter, bytes, _Clock, uuid.UUID]:
     """`gated_stub` mounts a stand-in for a `users` write gated in its handler (the invite
     re-issue, #2304 slice 3c); a caller mounting the real invite router turns it off."""
-    clock, repo, enc = _Clock(), FakeMfaRepository(), TotpEncryptor(os.urandom(32))
-    mfa = MfaService(repo, enc, recovery_code_key=b"k" * 32, clock=clock, sleep=no_wait)
+    clock, repo, enc = _Clock(), FakeMfaRepository(), FakeMfaKeyring(os.urandom(32), b"k" * 32)
+    mfa = MfaService(repo, enc, clock=clock, sleep=no_wait)
     user = uuid.uuid4()
     res = await mfa.enroll(
         str(user), MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="o"

@@ -23,6 +23,7 @@ from prometheus_client import REGISTRY
 
 import candleviewer.app as appmod
 from candleviewer.audit.actions import validate_action
+from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind
@@ -211,8 +212,7 @@ def open_stack(
         users,
         pepper=_PEPPER,
         mfa_repository=mfa,
-        totp_encryption_key=bytes(range(32)),  # fixed test keys (determinism)
-        recovery_code_hmac_key=bytes(range(32, 64)),
+        mfa_keyring=EnvMfaKeyring(bytes(range(32)), bytes(range(32, 64))),  # fixed test keys
         session_repository=sessions,
         invite_repository=FakeInviteRepository(),
         clock=clock,

@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer import app as app_module
 from candleviewer.app import create_app
+from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.service import AuthService
 from tests.unit.api.test_invites_create_app_e2e import (
     _BODY,
@@ -48,8 +49,7 @@ async def _world(
     w.auth = AuthService(
         w.users if with_user_repository else None,
         mfa_repository=FakeMfaRepository(),
-        totp_encryption_key=os.urandom(32),
-        recovery_code_hmac_key=os.urandom(32),
+        mfa_keyring=EnvMfaKeyring(os.urandom(32), os.urandom(32)),
         session_repository=FakeSessionRepository(),
         invite_repository=w.invites,
         pepper="test-pepper",

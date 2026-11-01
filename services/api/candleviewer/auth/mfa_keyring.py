@@ -37,3 +37,9 @@ class MfaKeyring(Protocol):
         the code; a new code stores the first. `ValueError` for a code no contract body carries."""
         ...
 
+
+def zero_seeds(seeds: list[bytearray]) -> None:
+    """Wipe every opened seed in place once its code is checked: a seed is plaintext only inside
+    the MFA verifier, for the check (ruling D7, schema Sec.12; #2152 BQ-6)."""
+    for seed in seeds:
+        seed[:] = bytes(len(seed))

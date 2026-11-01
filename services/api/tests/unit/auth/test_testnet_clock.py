@@ -25,6 +25,7 @@ from candleviewer.api.csrf import CsrfMiddleware
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.models import AuditEmission, ExchangeEnv, Severity
 from candleviewer.auth import testnet_clock
+from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.errors import SessionIdleLocked, StepUpRequired
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, UserRecord
@@ -420,8 +421,7 @@ async def _auth(clock: OffsetFileClock, password_hash: str) -> tuple[AuthService
         users,
         pepper="pepper",
         mfa_repository=FakeMfaRepository(),
-        totp_encryption_key=b"t" * 32,
-        recovery_code_hmac_key=b"r" * 32,
+        mfa_keyring=EnvMfaKeyring(b"t" * 32, b"r" * 32),
         session_repository=FakeSessionRepository(),
         clock=clock,
     )

@@ -24,7 +24,6 @@ from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.sessions import REFRESH_COOKIE, make_session_router
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MintedSession, SessionRecord
 from candleviewer.auth.session_chart import SessionChart
@@ -34,7 +33,7 @@ from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.conftest import RecordingAuditSink
 from tests.unit.api._fakes import WriterLane, enrolment_recorder
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _T0 = datetime(2026, 10, 16, 9, 0, 0, tzinfo=UTC)
@@ -154,7 +153,7 @@ class World:
         self.step_up = StepUpService(
             FakeMfaRepository(),
             self.repo,
-            TotpEncryptor(os.urandom(32)),
+            FakeMfaKeyring(os.urandom(32)),
             self.users,
             Hasher(),
             clock=self.clock,
