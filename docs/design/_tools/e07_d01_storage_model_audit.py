@@ -397,13 +397,35 @@ def _states_from_markers(*texts: str) -> dict[str, str]:
     return out
 
 
+def frozen_base(merged_spec: str | None, mb: str) -> str:
+    """PR-1: the merge-base. Post-merge: the base the merged spec recorded in its own
+    `audit:sha:base` marker (the base its pins were read at), never the merge commit or moving main.
+    """
+    if merged_spec is None:
+        return mb
+    for m in AUDIT.finditer(merged_spec):
+        if m[1] == "sha:base" and re.fullmatch(r"[0-9a-f]{40}", m[2]):
+            probe = subprocess.run(
+                ["git", "cat-file", "-e", m[2] + "^{commit}"],
+                cwd=ROOT,
+                check=False,
+                stderr=subprocess.DEVNULL,
+                timeout=60,
+            )
+            if probe.returncode == 0:
+                return m[2]
+    return mb
+
+
 def build_ctx(online: bool = False) -> Ctx:
-    base = merge_base()
+    mb = merge_base()
+    merged_spec = show(mb, SPEC_REL)
+    base = frozen_base(merged_spec, mb)
     spec, hand = read(SPEC_REL), read(HAND_REL)
     changed = [
         ln.strip()
         for ln in (
-            git("diff", "--name-only", base).split("\n")
+            git("diff", "--name-only", mb).split("\n")
             + git("ls-files", "--others", "--exclude-standard").split("\n")
         )
         if ln.strip()
@@ -420,7 +442,7 @@ def build_ctx(online: bool = False) -> Ctx:
         p14=read(P14_REL),
         p14_base=show(base, P14_REL) or "",
         changed=sorted(set(changed)),
-        merged_spec=show(base, SPEC_REL),
+        merged_spec=merged_spec,
         base=base,
         base_date=datetime.date.fromisoformat(date_txt),
         states=states,
@@ -602,7 +624,10 @@ def spec_rows(spec: str, head: str, family: str) -> list[list[str]]:
 
 def added_14(ctx: Ctx) -> list[str]:
     base = set(ctx.p14_base.split("\n"))
-    return [ln for ln in ctx.p14.split("\n") if ln not in base]
+    new = [ln for ln in ctx.p14.split("\n") if ln not in base]
+    if ctx.merged_spec is not None:  # later tickets add their own lines to `14` after the base
+        new = [ln for ln in new if POINTER_MARK in ln]
+    return new
 
 
 def cited_files(ctx: Ctx) -> list[str]:
@@ -1331,7 +1356,8 @@ def g_scope(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
 def g_pointer(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     wt, base = ctx.p14.split("\n"), ctx.p14_base.split("\n")
     added = added_14(ctx)
-    if [ln for ln in base if ln not in set(wt)]:
+    # post-merge, later tickets tick and reword `14`; only the pointer line is this pack's
+    if ctx.merged_spec is None and [ln for ln in base if ln not in set(wt)]:
         f.append(("G15-POINTER", "a line of `14` was removed or changed"))
     if ctx.merged_spec is None and len(added) != 1:
         f.append(("G15-POINTER", f"{len(added)} line(s) added to `14`, not one"))
@@ -1358,12 +1384,48 @@ def g_pointer(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         f.append(("G15-POINTER", f"{POINTER_ENTRY} must end with exactly one pointer line"))
 
 
+# The only edits a merged row may carry: #5265 (E16-S01) merged after this pack did, so the two
+# rows that said "open PR" now say it landed. Each pair is exact; nothing else may move.
+_BQ10_OLD = (
+    "open PR #5265 (E16-S01) is the PR that lands the alignment; no C row about the Manager "
+    "seed; the cites are re-pinned by content after it merges;"
+)
+_BQ10_NEW = (
+    "#5265 (E16-S01) landed the alignment; no C row about the Manager seed; "
+    "the cites to the aligned files are by content;"
+)
+AMENDMENTS = (
+    (_BQ10_OLD, _BQ10_NEW),
+    (
+        "open PR #5265 (E16-S01) lands the alignment in `22`, `04`, `21` and the seed",
+        "#5265 (E16-S01) landed the alignment in `22`, `04`, `21` and the seed",
+    ),
+    ("cites re-pinned after #5265 merges", "cites to those files are by content"),
+)
+
+
+def squash(row: str) -> str:
+    return re.sub(r"\s+", " ", row).strip()
+
+
+def amended(row: str) -> str:
+    for old, new in AMENDMENTS:
+        row = row.replace(old, new)
+    return row
+
+
 def g_freeze(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     if ctx.merged_spec is None:
         return
     now = set(ctx.spec.split("\n"))
+    squashed = {squash(ln) for ln in now}  # prettier re-pads the table cells of an amended row
     for ln in ctx.merged_spec.split("\n"):
-        if ln.startswith("|") and not is_sep(ln) and ln not in now:
+        if (
+            ln.startswith("|")
+            and not is_sep(ln)
+            and ln not in now
+            and squash(amended(ln)) not in squashed
+        ):
             f.append(("G16-FREEZE", f"a merged row changed: {ln[:48]!r}"))
 
 
@@ -1859,6 +1921,25 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
 ]
 
 
+def frozen_base_problems(ctx: Ctx) -> list[str]:
+    """Post-merge cites freeze at the recorded base: a moved merge-base must not move them."""
+    out: list[str] = []
+    moved = "f" * 40  # stands for a main that has moved on since the pack merged
+    if frozen_base(None, moved) != moved:
+        out.append("PR-1 mode must read at the merge-base")
+    if ctx.merged_spec is not None:
+        want = ctx.base
+        if frozen_base(ctx.merged_spec, moved) != want:
+            out.append("post-merge mode follows the merge-base, not the recorded base")
+        no_marker = ctx.merged_spec.replace("audit:sha:base=", "audit:sha:unused=")
+        if frozen_base(no_marker, moved) != moved:
+            out.append("post-merge mode with no recorded base must fall back, which G02 then fails")
+        stale = re.sub(r"(audit:sha:base=)[0-9a-f]{40}", r"\g<1>" + "0" * 40, ctx.merged_spec)
+        if frozen_base(stale, moved) != moved:
+            out.append("an unresolvable recorded base was accepted")
+    return out
+
+
 def self_test(ctx: Ctx) -> tuple[int, int, list[str]]:
     _, base = run(ctx)
     problems: list[str] = []
@@ -1878,6 +1959,7 @@ def self_test(ctx: Ctx) -> tuple[int, int, list[str]]:
             problems.append(f"{code}: the mutation added no FAIL of its gate")
     if {code for code, _ in GATES} - {code for code, _ in MUTATIONS}:
         problems.append("a gate has no mutation")
+    problems += frozen_base_problems(ctx)
     return passed, len(MUTATIONS), problems
 
 
