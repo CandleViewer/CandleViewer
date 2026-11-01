@@ -74,7 +74,10 @@ interface TableColumnBase {
   readonly sortDisabledReason?: string;
   /** A glyph and a word after the label (E08-D07 §4.2: a stale column's "⚠", named "stale"). */
   readonly headerStatus?: TableHeaderStatus;
-  /** Words visually hidden after the label, in the header's name: a narrow column's unit ("uPnL" "(USDT)"). */
+  /**
+   * Words visually hidden after the label, in the header's name and in its echo with the label, on hover and focus: a
+   * narrow column's unit ("uPnL" "(USDT)", E29-D02 §11.5's name and tooltip).
+   */
   readonly headerHint?: string;
 }
 
@@ -1933,6 +1936,7 @@ export function Table<T>({
         scope="col"
         className={`cv-table__header${sortable ? "" : ring}`}
         data-numeric={endAligned(column) ? "" : undefined}
+        data-cv-echo={hint === undefined || hint === "" ? undefined : `${column.header} ${hint}`}
         aria-sort={sortable ? (direction ?? "none") : undefined}
         {...role("columnheader")}
         {...at(0, c, sortable ? "widget" : "cell")}
