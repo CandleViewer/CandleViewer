@@ -227,11 +227,13 @@ class IngestionService:
         since_yield = 0
         try:
             while True:
-                frame = await self.ws_frames.get()
-                since_yield += 1
                 if since_yield >= PUMP_YIELD_EVERY:
                     since_yield = 0
-                    await asyncio.sleep(0)  # #1893: give the loop a turn under a backlog
+                    # #1893: give the loop a turn under a backlog, before taking the next frame
+                    # so a cancel here never drops one in hand.
+                    await asyncio.sleep(0)
+                frame = await self.ws_frames.get()
+                since_yield += 1
                 if json_depth_exceeds(frame):  # once per frame, before any parser
                     self._pump_rejects.record(
                         FrameRejectedError("depth_limit", "frame nests too deep")

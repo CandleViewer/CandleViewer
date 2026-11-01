@@ -190,6 +190,15 @@ def test_absurd_min_notional_is_visible_as_change() -> None:
         {"launchTime": ["1"]},
         {"fundingInterval": None},
         {"fundingInterval": ""},
+        {"fundingInterval": True},
+        {"fundingInterval": 1.5},
+        {"launchTime": True},
+        {"priceFilter": {"tickSize": 10**5000}},
+        {"lotSizeFilter": {"qtyStep": 10**5000, "minOrderQty": "1", "maxOrderQty": "9"}},
+        {"symbol": 10**5000},
+        {"fundingInterval": 10**5000},
+        {"fundingInterval": 0},
+        {"fundingInterval": -480},
     ],
 )
 def test_malformed_instrument_row_cannot_fail_catalogue(over: dict[str, Any]) -> None:
@@ -198,6 +207,17 @@ def test_malformed_instrument_row_cannot_fail_catalogue(over: dict[str, Any]) ->
     res = parse_instruments([{**good[0], **over}, good[1]], fetched_at_us=1)
     assert len(res.instruments) == 1 and len(res.rejected) == 1
     assert res.instruments[0].symbol == good[1]["symbol"]
+
+
+@pytest.mark.parametrize(
+    "over",
+    [{"fundingInterval": "9" * 5000}, {"launchTime": "x" * 5000}, {"status": "y" * 5000}],
+)
+def test_rejection_reason_is_bounded(over: dict[str, Any]) -> None:
+    """#1896: the value is hostile, so its size is too; a reason quotes a bounded part of it."""
+    good = rest("rest/instruments_before.json")["result"]["list"]
+    res = parse_instruments([{**good[0], **over}], fetched_at_us=1)
+    assert len(res.rejected) == 1 and len(res.rejected[0].reason) < 300
 
 
 def test_missing_funding_interval_is_rejected_not_defaulted() -> None:
