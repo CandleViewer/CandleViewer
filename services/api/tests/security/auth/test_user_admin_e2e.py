@@ -81,9 +81,22 @@ def _still_open(ws: Any) -> bool:
     return kind == "pong"
 
 
-# The socket read races the revoke fan-out under load (C-9.3).
-# ticket: GH-5328 quarantined: 2026-11-01
-@pytest.mark.flaky
+#: More frames than this before the close fail `_to_close`, with the frames.
+_TO_CLOSE_MAX = 8
+
+
+def _to_close(ws: Any) -> tuple[list[dict[str, Any]], int]:
+    """Every frame `ws` gets until it closes, in order, and the close code. Each read waits at most
+    `_recv`'s wall-clock deadline, so a socket left open fails there."""
+    frames: list[dict[str, Any]] = []
+    try:
+        while len(frames) <= _TO_CLOSE_MAX:
+            frames.append(_recv(ws))
+    except WebSocketDisconnect as close:
+        return frames, close.code
+    pytest.fail(f"still open after {len(frames)} frames: {frames}")
+
+
 def test_the_owner_revokes_one_of_ms_sessions() -> None:
     """S12: M has two sessions, a socket on each. The Owner revokes one: one `users.session_revoked`
     naming the Owner, then one `auth.session_revoked` for it, both written before its row is
@@ -114,9 +127,7 @@ def test_the_owner_revokes_one_of_ms_sessions() -> None:
             assert _auth_ws(ws_ended, ended.access_token)["t"] == "auth_ok"
             started = w.clock.now
             gone = client.delete(f"/users/{_M}/sessions/{ended.session_id}", headers=headers)
-            bye = _recv(ws_ended)
-            with pytest.raises(WebSocketDisconnect) as close:
-                _recv(ws_ended)
+            frames, code = _to_close(ws_ended)
             assert _still_open(ws_kept)
         assert w.clock.now == started  # the close came before the call returned: 0 s elapsed
         rest = [
@@ -131,11 +142,11 @@ def test_the_owner_revokes_one_of_ms_sessions() -> None:
         str(ended.session_id),
     }
     assert gone.status_code == 204 and gone.content == b""
-    assert (bye["t"], bye["p"]["reason"], close.value.code) == (
-        "bye",
-        "session_revoked",
-        CLOSE_TOKEN_EXPIRED,
-    )
+    # the revoke published one event, for the ended session alone, and that socket's frames from
+    # the DELETE on are one `bye session_revoked`, then the close 4401 (§9.5: nothing after a bye)
+    assert w.published == [(str(ended.session_id), "admin")]
+    sent = [(frame.get("t"), frame.get("p", {}).get("reason")) for frame in frames]
+    assert (sent, code) == ([("bye", "session_revoked")], CLOSE_TOKEN_EXPIRED), frames
     assert rest == [200, 401]
     (record,) = [r for r in records if r["action"] == "auth.session_revoked"]
     assert (record["session_id"], record["reason"]) == (str(ended.session_id), "admin")
