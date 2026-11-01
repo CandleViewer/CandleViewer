@@ -13,13 +13,14 @@
 # last lines in a log group, one line in the step summary) and the step goes on. On a hit that is
 # all; on a miss `install chromium` (no --with-deps) then downloads the browser in up to 5 attempts
 # (waits PW_BACKOFF, default 10 20 40 60 s), each bound to PW_INSTALL_TIMEOUT seconds (default 120,
-# then killed 10 s later: 130 s of deps + 5 x 130 s + waits stays inside the 900 s job backstop), so
-# a slow CDN is retried and, if it never answers, fails here with the code instead of in a later step. The same retry shape as
+# then killed 10 s later), so a slow CDN is retried and, if it never answers, fails here with the
+# code instead of in a later step. The worst case (130 s of deps + 5 x 130 s + 130 s of waits = 910 s)
+# is longer than a job's timeout-minutes, which alone bounds it and fails closed. The same retry shape as
 # tools/ci/prepull_images.sh. The cache key and hit or miss go to $GITHUB_STEP_SUMMARY.
 #
-# #5275: every bounded command runs in its own session (`setsid`, so its process group is its pid)
-# and the bound kills that whole group, TERM then KILL after PW_KILL_GRACE (default 10) seconds,
-# from outside it. coreutils `timeout` signalled only its own group: `sudo` ignores a signal sent
+# #5275: every bounded command runs in its own session (`setsid`; the command records its process
+# group id) and the bound kills that whole group, TERM then KILL after PW_KILL_GRACE (default 10)
+# seconds, from outside it. coreutils `timeout` signalled only its own group: `sudo` ignores a signal sent
 # from its parent's process group (it assumes the command got it too), but the runner user cannot
 # signal the root `apt-get` that install-deps starts, so that `apt-get` outlived the bound and held
 # /var/lib/apt/lists/lock through the vr job's font step (CI-A11Y-008). Sent from outside the group,
@@ -57,48 +58,63 @@ for wait_s in "${backoff[@]}"; do
   [[ "$wait_s" =~ ^[0-9]+$ ]] || fail "PW_BACKOFF must be whole seconds"
 done
 
-# pause <seconds>: the bound's clock, a builtin (`read -t` on a pipe that never writes), so a stand-in
-# `sleep` on PATH (the retry waits) never shortens it.
-pause() {
-  read -rt "$1" <> <(:) || true
-}
+# The bound's clock is `/bin/sleep` by its absolute path, so a stand-in `sleep` on PATH (the retry
+# waits) never shortens it; its fds go to /dev/null so a sleep left behind holds no pipe of the step.
 
 # bounded <command...>: runs the command in its own session and process group, and kills the whole
 # group when it outlives attempt_timeout: TERM, then KILL once kill_grace seconds pass with any of
 # the group left. Returns the command's status, or 124 when the bound sent its TERM.
-# Never enable job control (`set -m`) here: a background job would then lead its own group, `setsid`
-# would fork, and $! would not be the command's group. `-w` keeps the command's status in that case.
+# The command writes its own process group id (`$$` of the session leader `setsid` starts) to a file
+# the watchdog signals, never `-$!`: when the background job already leads a group (job control),
+# `setsid` forks and `$!` is the `setsid -w` wrapper, so `-$!` would kill only the wrapper (exit
+# 143) and leave the command running (#5275).
+# The two phases are marker files, never a flag rewritten in place: `>` truncates first, and a
+# parent reading the empty file in that instant killed the watchdog before its KILL and kept the
+# 143 (#5275, run 41265688180, reproduced on bash 5.2). "firing" is a `mkdir` claim that exactly
+# one of the watchdog (the bound ran out) and the parent (the command ended) wins, so a watchdog
+# that may have sent its TERM is never killed; "fired" is made once the TERM reached the group, so
+# a command that ended by itself in the same instant keeps its own status.
 bounded() {
-  local pid watchdog fired rc=0
-  fired=$(mktemp)
-  setsid -w "$@" &
+  local pid watchdog st timer rc=0
+  st=$(mktemp -d)
+  setsid -w bash -c 'echo "$$" >"$1"; shift; exec "$@"' _ "$st/pgid" "$@" &
   pid=$!
   (
-    pause "$attempt_timeout"
-    # "firing" before the TERM, so the parent never reaps the leader without giving the group its
-    # grace; "fired" only once the TERM reached the group, so a command that ended by itself in the
-    # same instant keeps its own status.
-    echo firing >"$fired"
-    kill -TERM -- "-$pid" 2>/dev/null || exit 0
-    echo fired >"$fired"
-    for ((t = 0; t < kill_grace; t++)); do
-      kill -0 -- "-$pid" 2>/dev/null || exit 0
-      pause 1
+    /bin/sleep "$attempt_timeout" </dev/null >/dev/null 2>&1 &
+    echo "$!" >"$st/timer"
+    wait "$!" || true
+    mkdir "$st/firing" 2>/dev/null || exit 0
+    pgid=""
+    for ((t = 0; t < 50; t++)); do
+      pgid=$(cat "$st/pgid" 2>/dev/null || true)
+      if [[ "$pgid" =~ ^[1-9][0-9]*$ ]]; then break; fi
+      pgid=""
+      /bin/sleep 0.1 </dev/null >/dev/null 2>&1
     done
-    kill -KILL -- "-$pid" 2>/dev/null || true
+    # Never written (the command could not start): the group `setsid` made in place.
+    pgid=${pgid:-$pid}
+    kill -TERM -- "-$pgid" 2>/dev/null || exit 0
+    : >"$st/fired"
+    for ((t = 0; t < kill_grace; t++)); do
+      kill -0 -- "-$pgid" 2>/dev/null || exit 0
+      /bin/sleep 1 </dev/null >/dev/null 2>&1
+    done
+    kill -KILL -- "-$pgid" 2>/dev/null || true
   ) &
   watchdog=$!
   wait "$pid" || rc=$?
-  if [ -s "$fired" ]; then
-    # The leader is gone; the watchdog gives the rest of the group (sudo relaying the TERM to its
-    # apt-get) its grace, then kills what is left.
+  if mkdir "$st/firing" 2>/dev/null; then
+    # The command ended before the bound: the watchdog has not fired and now never will.
+    timer=$(cat "$st/timer" 2>/dev/null || true)
+    kill "$watchdog" ${timer:+"$timer"} 2>/dev/null || true
     wait "$watchdog" 2>/dev/null || true
-    if [ "$(cat "$fired")" = fired ]; then rc=124; fi
   else
-    kill "$watchdog" 2>/dev/null || true
+    # The watchdog fired: it gives the rest of the group (sudo relaying the TERM to its apt-get)
+    # its grace, then kills what is left.
     wait "$watchdog" 2>/dev/null || true
+    if [ -e "$st/fired" ]; then rc=124; fi
   fi
-  rm -f "$fired"
+  rm -rf "$st"
   return "$rc"
 }
 

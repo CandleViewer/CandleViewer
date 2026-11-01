@@ -612,7 +612,7 @@ index alone, removing nothing.
   budget needs sharding (`vitest --shard`), not a higher number.
 - **CI-A11Y-005** (Playwright browser download failed, `tools/ci/playwright_browsers.sh`): the
   chromium download (`playwright install chromium`) failed 5 times, waits 10, 20,
-  40, 60 s, each try bound to 120 s (`PW_INSTALL_TIMEOUT`; 5 tries and the waits stay inside the job's 15 min); the CDN is slow or down, so re-run the
+  40, 60 s, each try bound to 120 s (`PW_INSTALL_TIMEOUT`; with `install-deps`, the kill grace and the waits the worst case is 910 s, which only the job's `timeout-minutes` bounds, failing closed); the CDN is slow or down, so re-run the
   job and never change a budget. Both a11y jobs cache `~/.cache/ms-playwright` under the key
   `pw-browsers-<runner OS>-<Playwright version from the lockfile>`, with no `restore-keys`, so a
   Playwright bump starts a cold cache. The step summary names the key and says hit or miss: both
@@ -662,7 +662,8 @@ index alone, removing nothing.
   the seconds waited, and another says when `fuser` is missing and the wait is skipped;
   `DPkg::Lock::Timeout` covers only dpkg's), then tries `update` and `install` three times each,
   20 s apart, with a warning per failed try; a lock still held after 120 s fails with this code and
-  says so. A held lock is usually an `apt-get` an earlier step left: `playwright_browsers.sh` kills
+  says so. The step's worst case, 2 × (3 × (120 + 60) + 40) s, is longer than the shard's
+  `timeout-minutes`, which alone bounds it and fails closed. A held lock is usually an `apt-get` an earlier step left: `playwright_browsers.sh` kills
   its bounded commands as a whole process group (`setsid`) since #5275, because coreutils `timeout`
   left `install-deps`' root `apt-get` running past the bound (`sudo` ignores a signal from its
   parent's group). Re-run once if the archive was unreachable;

@@ -7,11 +7,14 @@ lockfile's Playwright version."""
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
+import termios
 import time
 from pathlib import Path
 from typing import Any
@@ -278,11 +281,124 @@ def test_a_stuck_download_is_killed_after_its_bound_and_retried(
     assert "playwright install chromium (attempt 5) failed (exit 124)" in r.stderr
 
 
+def _ctty() -> None:
+    # In the child, before exec: a new session whose controlling terminal is the pty on fd 0, so
+    # `bash -m` gets job control and every background job leads its own process group.
+    os.setsid()
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+
+def _run_as(condition: str, env: dict[str, str], extra: dict[str, str]) -> int:
+    """Runs `install` as a group leader with job control on a pty ("leader"), or as a session
+    leader with no tty at all ("no-tty"); returns its exit status."""
+    full = {**env, **extra}
+    if condition == "no-tty":
+        r = subprocess.run(
+            ["bash", str(SCRIPT), "install"],
+            env=full,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            start_new_session=True,
+            timeout=60,
+            check=False,
+        )
+        return r.returncode
+    master, slave = os.openpty()
+    try:
+        r = subprocess.run(
+            ["bash", "-m", str(SCRIPT), "install"],
+            env=full,
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            preexec_fn=_ctty,
+            timeout=60,
+            check=False,
+        )
+        return r.returncode
+    finally:
+        os.close(slave)
+        os.close(master)
+
+
+def test_job_control_makes_setsid_fork_so_dollar_bang_is_not_the_command(
+    tmp_path: Path,
+) -> None:
+    # The condition the next test reproduces: a background job that leads its own group makes
+    # `setsid` fork, so `$!` is the wrapper and only the command's own `$$` names its group.
+    master, slave = os.openpty()
+    try:
+        probe = (
+            'setsid -w bash -c \'echo "$$" >"$1"\' _ "$F" & echo "$!" >"$F.bang"; wait'
+        )
+        out = tmp_path / "pgid"
+        subprocess.run(
+            ["bash", "-m", "-c", probe],
+            env={**os.environ, "F": str(out)},
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            preexec_fn=_ctty,
+            timeout=20,
+            check=True,
+        )
+        bang = Path(f"{out}.bang").read_text().strip()
+        own = out.read_text().strip()
+    finally:
+        os.close(slave)
+        os.close(master)
+    assert bang != own
+
+
+@pytest.mark.parametrize("condition", ["leader", "no-tty"])
+def test_the_bound_kills_a_stuck_install_deps_as_a_group_leader_or_without_a_tty(
+    env: dict[str, str], condition: str
+) -> None:
+    # #5275: under job control `setsid` forks, and a bound that signalled `-$!` killed only the
+    # wrapper, said 143 and left the stuck child running. As a group leader and with no tty, the
+    # bound kills the command's own group, says 124 and leaves nothing behind.
+    started = time.monotonic()
+    pidfile = Path(env["FAKE"]) / "deps-child.pid"
+    try:
+        rc = _run_as(
+            condition,
+            env,
+            {
+                "PW_CACHE_KEY": KEY,
+                "PW_CACHE_HIT": "true",
+                "PW_VERSION": VERSION,
+                "PW_INSTALL_TIMEOUT": "1",
+                "PW_KILL_GRACE": "1",
+                "DEPS_STUCK": "1",
+            },
+        )
+        assert rc == 0
+        assert "install-deps failed (exit 124" in _summary(env)
+        child = int(pidfile.read_text())
+        assert not _alive(child), "the stuck install-deps child outlived the bound"
+        assert time.monotonic() - started < 20
+    finally:
+        if pidfile.exists() and _alive(int(pidfile.read_text())):
+            os.kill(int(pidfile.read_text()), signal.SIGKILL)
+
+
 def test_a_bounded_command_runs_in_its_own_process_group() -> None:
     text = SCRIPT.read_text()
     code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
-    assert 'setsid -w "$@" &' in code
-    assert 'kill -TERM -- "-$pid"' in code and 'kill -KILL -- "-$pid"' in code
+    # The command records its own group id; `-$!` is the wrapper when `setsid` forks (#5275).
+    assert (
+        """setsid -w bash -c 'echo "$$" >"$1"; shift; exec "$@"' _ "$st/pgid" "$@" &"""
+        in code
+    )
+    assert 'kill -TERM -- "-$pgid"' in code and 'kill -KILL -- "-$pgid"' in code
+    # Marker files made once, never a flag rewritten in place (a truncate read empty, #5275), and
+    # "firing" an atomic `mkdir` claim: the parent kills the watchdog only when it won the claim,
+    # so a watchdog that may have sent its TERM always finishes its KILL.
+    assert code.count('mkdir "$st/firing"') == 2 and ': >"$st/fired"' in code
+    assert not re.search(r"echo \w+ >", code)
+    # A parseable clock (Semgrep's bash parser refused `read -t` on a process substitution,
+    # CI-SEC-005) that a PATH `sleep` stand-in cannot shorten.
+    assert "<(" not in code and '/bin/sleep "$attempt_timeout"' in code
     # coreutils timeout signals only its own group, which sudo ignores (#5275).
     assert not re.search(r"\btimeout\b", code)
 

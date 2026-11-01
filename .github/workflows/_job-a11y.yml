@@ -384,6 +384,8 @@ jobs:
           # runner's unattended-upgrades after boot, or an apt-get an earlier step left behind), and
           # DPkg::Lock::Timeout covers only dpkg's. Wait for all of them, up to 120 s, polling every
           # 2 s, before each apt-get; then try it three times, 20 s apart, a warning per failure.
+          # The worst case, 2 x (3 x (120 + 60) + 40) s, is longer than the job's timeout-minutes,
+          # which alone bounds it and fails closed.
           apt_locks=(/var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend
             /var/cache/apt/archives/lock)
           # Without fuser the wait is skipped, loudly; DPkg::Lock::Timeout and the retries remain.
