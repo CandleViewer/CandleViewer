@@ -50,3 +50,7 @@ packages/ui/vr/baselines/*.png binary
 # E15-K01 (#371): the spike's results, written by docs/plan/spikes/E15-K01-harness/run.mjs and never
 # hand-edited (every figure in E15-K01.md is printed from it); linguist-generated hides its diff by default.
 docs/plan/spikes/E15-K01-results.json linguist-generated=true
+
+# E05-Q02: per-cell a11y audit results written by the committed drivers (docs/plan/a11y/_tools/e05-q02-*);
+# regenerate with them, never hand-edit. Hidden from PR diffs.
+docs/qa/a11y/e05-q02-design-system-v1-results/*.json.gz linguist-generated=true
