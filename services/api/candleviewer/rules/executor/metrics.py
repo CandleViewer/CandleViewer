@@ -22,6 +22,10 @@ RereadFailure = Literal["timeout", "store_error"]
 #: The record-only job the full audit queue shed (`rule_records_shed_total{kind}`).
 ShedKind = Literal["refused_fire", "scope_denial"]
 _TYPES: Final = frozenset(get_args(ActionType))
+#: The refusals of a fire whole off the tick, each action counted as a `blocked` result where it
+#: is refused: a full queue's (`backpressure`), and a fire dropped from its rule's lane by the
+#: circuit breaker or the kill-switch hook (E35-T10).
+_WHOLE: Final = frozenset({"backpressure", "circuit_breaker", "kill_switch"})
 _SERIES: Final = (
     "rule_actions_total", "rule_action_duration_seconds", "rule_actions_blocked_total",
     "rule_dispatch_reread_failed_total", "rule_records_shed_total",
@@ -72,11 +76,11 @@ class ExecutorMetrics:
             self._series["rule_actions_blocked_total"].labels(reason).inc()
 
     def refused(self, action_type: str, reason: BlockedBy) -> None:
-        """An action refused on the tick, before it had a result of its own: a fire the full queue
-        refused (`backpressure`, counted as a `blocked` result too) or an action the tick's scope
-        gate refused (`scope`: no fire, so no result; 20 §12.1)."""
+        """An action refused before it had a result of its own: a fire the full queue refused or
+        one dropped from its lane (`_WHOLE`, counted as a `blocked` result too), or an action the
+        tick's scope gate refused (`scope`: no fire, so no result; 20 §12.1)."""
         checked = _closed(reason, BLOCKED_BY, "reason")
-        if reason == "backpressure":
+        if reason in _WHOLE:
             counted = _closed(action_type, _TYPES, "type")
             if self._series:
                 self._series["rule_actions_total"].labels(counted, "blocked").inc()

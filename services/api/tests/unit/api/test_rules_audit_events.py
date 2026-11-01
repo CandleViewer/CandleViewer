@@ -17,14 +17,15 @@ from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.rules import manager
 
-#: The manager's eleven events and their verbs, as E35-S01 and E35-X02 mapped them.
+#: The manager's twelve events and their verbs, as E35-S01 and E35-X02 mapped them, and E35-T10
+#: the kill switch's and the circuit breaker's `rule.kill_switched`.
 _VERBS = {
     "rule.armed": "rules.arm", "rule.disarmed": "rules.disarm",
     "rule.created": "rules.version_create", "rule.updated": "rules.version_create",
     "rule.deleted": "rules.delete", "rule.simulated": "rules.simulate",
     "rule.mode_refused": "rules.arm", "rule.system_rule_refused": "rules.scope_denied",
     "rule.system_rule_tampered": "rules.scope_denied", "rule.import_refused": "rules.scope_denied",
-    "rule.scope_refused": "rules.scope_denied",
+    "rule.scope_refused": "rules.scope_denied", "rule.kill_switched": "rules.disarm",
 }  # fmt: skip
 _REFUSALS = {k for k in _VERBS if k.endswith(("_refused", "_tampered"))}
 _ACTOR = str(uuid.UUID(int=0xA1))
@@ -64,3 +65,22 @@ async def test_every_manager_audit_event_keeps_its_verb() -> None:
         assert (fields["actor_user_id"], fields["before_state"]) == (_ACTOR, {"mode": "simulate"})
     assert set(_VERBS.values()) <= AUDIT_ACTIONS
     assert _WRITTEN and _WRITTEN <= set(_VERBS)  # every event the manager writes still lands
+
+
+async def test_rule_kill_switched_is_filed_under_rules_disarm() -> None:
+    """24 §15.5 (E35-T10): `rule.kill_switched` is filed under the registered `rules.disarm`, with
+    its reason, `kill_switch` or `order_budget`, and no actor, so `system` names it."""
+    emitter = _Emitter()
+    audit = make_rules_audit(emitter)
+    for reason in ("kill_switch", "order_budget"):
+        payload = {"rule_id": "r1", "from": "armed", "b9_from": "armed", "reason": reason}
+        await audit("rule.kill_switched", payload)
+    assert [action for action, _ in emitter.records] == ["rules.disarm"] * 2
+    for (_, fields), reason in zip(emitter.records, ("kill_switch", "order_budget"), strict=True):
+        assert (fields["actor_label"], fields["actor_user_id"]) == ("system", None)
+        assert fields["outcome"] == AuditOutcome.SUCCESS
+        assert fields["after_state"] | {} == {
+            "rule_id": "r1", "from": "armed", "b9_from": "armed", "reason": reason,
+            "event": "rule.kill_switched",
+        }  # fmt: skip
+    assert "rules.disarm" in AUDIT_ACTIONS
