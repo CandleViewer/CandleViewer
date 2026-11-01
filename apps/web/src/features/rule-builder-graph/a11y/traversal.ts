@@ -4,7 +4,8 @@
  * canvas coordinates. rule-graph edges run from an input's producer to the node it feeds, the root
  * condition feeds every action's `when`, and the trigger has no edge.
  *
- * The order (topological: a producer before the node it feeds):
+ * The order (topological: a producer before the node it feeds; post-order, as ruled in comment
+ * 6563393200 on PR #5372, pinned by traversal.test.ts):
  * 1. the trigger;
  * 2. the root condition's subtree, depth-first in `in`-edge order: each producer's own subtree
  *    before the next producer, the root after its producers (a node shared by two consumers is
@@ -37,9 +38,9 @@ import {
   adjacencyOf,
   byId,
   OUTPUT_PORT,
-  type A11yEdge,
+  type GraphEdge,
   type A11yGraph,
-  type A11yNode,
+  type GraphNode,
   type Adjacency,
   type PortOracle,
 } from "./graph.js";
@@ -53,7 +54,7 @@ export interface TraversalEntry {
 /** The order every node appears in, each exactly once. */
 export function traversalOrder(graph: A11yGraph): readonly TraversalEntry[] {
   const adj = adjacencyOf(graph);
-  const nodes: A11yNode[] = [];
+  const nodes: GraphNode[] = [];
   const listed = new Set<string>();
   for (const node of graph.nodes) {
     if (listed.has(node.id)) continue;
@@ -109,7 +110,7 @@ export interface PortRef {
   /** The input port's name, or `out`. */
   readonly port: string;
   /** The port's connections: an input's in `in`-edge order, the output's by consumer rank. */
-  readonly edges: readonly A11yEdge[];
+  readonly edges: readonly GraphEdge[];
 }
 
 /** Where focus is inside the graph region: a node, one of its ports, or one of that port's edges. */
@@ -141,7 +142,7 @@ export class GraphNavigator {
   readonly order: readonly TraversalEntry[];
   private readonly rank = new Map<string, number>();
   private readonly adj: ReadonlyMap<string, Adjacency>;
-  private readonly nodes: ReadonlyMap<string, A11yNode>;
+  private readonly nodes: ReadonlyMap<string, GraphNode>;
 
   /** Without an oracle a node's ports are the ones its edges name (no empty input is listed). */
   constructor(
@@ -275,9 +276,9 @@ export class GraphNavigator {
   }
 
   /** The edges reachable from a node: outbound first, then inbound, by rank (the adjacency list). */
-  edgesOf(id: string): readonly A11yEdge[] {
+  edgesOf(id: string): readonly GraphEdge[] {
     const { inbound, outbound } = adjacencyFor(this.adj, id);
-    const sort = (key: "source" | "target") => (a: A11yEdge, b: A11yEdge) =>
+    const sort = (key: "source" | "target") => (a: GraphEdge, b: GraphEdge) =>
       this.byRank(a[key], b[key]) || byId(a.id, b.id);
     return [...[...outbound].sort(sort("target")), ...[...inbound].sort(sort("source"))];
   }

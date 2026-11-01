@@ -8,9 +8,9 @@
  * User content (node names, parameter values) is interpolated as plain text and must be rendered
  * as a text node, never as markup.
  */
-import type { A11yNodeType } from "./graph.js";
+import type { GraphNodeType } from "./graph.js";
 
-export const TYPE_LABEL: Readonly<Record<A11yNodeType, string>> = {
+export const TYPE_LABEL: Readonly<Record<GraphNodeType, string>> = {
   trigger: "Trigger",
   condition: "Condition",
   action: "Action",

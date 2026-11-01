@@ -11,9 +11,9 @@ import {
   adjacencyFor,
   adjacencyOf,
   OUTPUT_PORT,
-  type A11yEdge,
+  type GraphEdge,
   type A11yGraph,
-  type A11yNode,
+  type GraphNode,
   type PortOracle,
 } from "./graph.js";
 import { traversalOrder, type TraversalEntry } from "./traversal.js";
@@ -26,7 +26,7 @@ import { traversalOrder, type TraversalEntry } from "./traversal.js";
 const HIDDEN = new Set(["name", "label", "kind", "node_id", "type", "account_id"]);
 
 /** A node's own spoken name: `name` / `label` (and only a comment's `text`), else type and id. */
-export function nodeName(node: A11yNode): string {
+export function nodeName(node: GraphNode): string {
   const keys = node.type === "comment" ? ["name", "label", "text"] : ["name", "label"];
   for (const key of keys) {
     const value = node.data[key];
@@ -44,7 +44,7 @@ export function nodeNames(
   order: readonly TraversalEntry[] = traversalOrder(graph),
 ): ReadonlyMap<string, string> {
   const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
-  const own = order.map((entry) => nodeName(nodes.get(entry.id) as A11yNode)); // order ⊆ nodes
+  const own = order.map((entry) => nodeName(nodes.get(entry.id) as GraphNode)); // order ⊆ nodes
   const uses = new Map<string, number>();
   for (const name of own) uses.set(name, (uses.get(name) ?? 0) + 1);
   return new Map(
@@ -66,7 +66,7 @@ const placeholder = (v: unknown): boolean => Array.isArray(v) && v.every((item) 
  * values (nested lists or records) are counted, not read: "plus 2 more settings", or "parameters
  * set" when there is nothing else, never "no parameters" (A-9).
  */
-export function parameterSummary(node: A11yNode): string {
+export function parameterSummary(node: GraphNode): string {
   const keys = Object.keys(node.data)
     .filter((key) => !HIDDEN.has(key) && !(key === "text" && node.type === "comment"))
     .sort();
@@ -127,7 +127,7 @@ export function buildOutline(graph: A11yGraph, oracle: PortOracle): readonly Out
   const names = nodeNames(graph, order);
   const rank = new Map(order.map((entry, i) => [entry.id, i]));
   const nameFor = (id: string): string => names.get(id) ?? id;
-  const link = (edge: A11yEdge, other: string, text: string): OutlineLink => ({
+  const link = (edge: GraphEdge, other: string, text: string): OutlineLink => ({
     edgeId: edge.id,
     nodeId: other,
     port: edge.targetPort,
@@ -148,7 +148,7 @@ export function buildOutline(graph: A11yGraph, oracle: PortOracle): readonly Out
     ),
   });
   return order.map((entry, i) => {
-    const node = nodes.get(entry.id) as A11yNode; // the order lists only the graph's own nodes
+    const node = nodes.get(entry.id) as GraphNode; // the order lists only the graph's own nodes
     const { inbound, outbound } = adjacencyFor(adj, entry.id);
     const ins = inbound
       .map((e) => link(e, e.source, copy.inboundFrom(nameFor(e.source), e.targetPort)))

@@ -258,7 +258,7 @@ describe("verdictFor", () => {
     });
     expect(verdictFor(RULE, oracle, "trigger", "and", "in")).toEqual({
       ok: false,
-      reason: "A trigger can't feed a boolean.",
+      reason: "A trigger can't be used as true or false.",
     });
     expect(verdictFor(RULE, oracle, "cmp2", "act1", "when")).toMatchObject({
       reason: REFUSAL.occupied,

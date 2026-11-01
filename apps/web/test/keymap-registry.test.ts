@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { inertMessage } from "../src/keymap/dispatcher";
 import { KEYMAP, type KeymapCommand } from "../src/keymap/keymap";
 import {
   KeymapRegistryError,
@@ -256,6 +257,16 @@ describe("E47-S03's Rules rows, as ruled (BQ-04, BQ-12)", () => {
   it("adds no connect row: Enter on a port shares rules.inspect_node's Enter (D02 §13)", () => {
     expect(rules.map((c) => c.id)).not.toContain("rules.connect");
     expect(rules.filter((c) => c.defaultBinding === "Space").map((c) => c.id)).toEqual([]);
+  });
+
+  it("reads each nudge row's inert toast as a sentence (security lens record 6563473726, Low)", () => {
+    const nudges = rules.filter((c) => c.id.startsWith("rules.nudge_"));
+    expect(nudges).toHaveLength(8);
+    for (const c of nudges) {
+      expect(inertMessage(c)).toBe(
+        `${c.label} is not available here (Rules view): it needs graph node focused.`,
+      );
+    }
   });
 
   it("gives Ctrl+Shift+N a reviewed reserved-key rationale, in rules.auto_layout's form", () => {

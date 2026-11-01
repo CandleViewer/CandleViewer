@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { A11yNode } from "../../../src/features/rule-builder-graph/a11y/graph.js";
+import type { GraphNode } from "../../../src/features/rule-builder-graph/a11y/graph.js";
 import {
   buildOutline,
   nodeName,
@@ -137,7 +137,7 @@ describe("outline: Gherkin 3, the structure without the canvas", () => {
       );
       expect(links).toBe(ends);
       for (const row of out) {
-        const n = graph.nodes.find((g) => g.id === row.id) as A11yNode;
+        const n = graph.nodes.find((g) => g.id === row.id) as GraphNode;
         const inputs = row.ports.filter((p) => p.direction === "input").map((p) => p.port);
         for (const [port] of oracle.inputsOf(n)) expect(inputs).toContain(port);
       }

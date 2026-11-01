@@ -32,9 +32,9 @@ import {
   adjacencyFor,
   adjacencyOf,
   OUTPUT_PORT,
-  type A11yEdge,
+  type GraphEdge,
   type A11yGraph,
-  type A11yNode,
+  type GraphNode,
   type Adjacency,
   type ConnectVerdict,
   type PortOracle,
@@ -42,7 +42,7 @@ import {
 import { nodeNames } from "./outline.js";
 import { traversalOrder } from "./traversal.js";
 
-export type NewEdge = Omit<A11yEdge, "id">;
+export type NewEdge = Omit<GraphEdge, "id">;
 
 export interface Candidate {
   readonly node: string;
@@ -88,7 +88,7 @@ const refused = (reason: string): ConnectVerdict => ({ ok: false, reason });
 
 /** What one verdict reads, built once per call so a whole candidate list costs O(n + e). */
 interface Context {
-  readonly nodes: ReadonlyMap<string, A11yNode>;
+  readonly nodes: ReadonlyMap<string, GraphNode>;
   readonly adj: ReadonlyMap<string, Adjacency>;
   /** Announced names, built on first use (only a loop refusal or an announcement needs them). */
   readonly name: (id: string) => string;
@@ -158,7 +158,7 @@ function inputNumber(ctx: Context, oracle: PortOracle, target: string, port: str
   if (oracle.acceptsMany(port)) {
     return adjacencyFor(ctx.adj, target).inbound.filter((e) => e.targetPort === port).length + 1;
   }
-  const node = ctx.nodes.get(target) as A11yNode; // confirm re-checked the verdict first
+  const node = ctx.nodes.get(target) as GraphNode; // confirm re-checked the verdict first
   return oracle.inputsOf(node).findIndex(([name]) => name === port) + 1;
 }
 
@@ -192,7 +192,7 @@ function candidatesFor(
   return traversalOrder(graph)
     .filter((entry) => entry.id !== source)
     .flatMap((entry) =>
-      oracle.inputsOf(ctx.nodes.get(entry.id) as A11yNode).map(([port, type]) => ({
+      oracle.inputsOf(ctx.nodes.get(entry.id) as GraphNode).map(([port, type]) => ({
         node: entry.id,
         port,
         type,
@@ -301,7 +301,7 @@ export function disconnect(
   graph: A11yGraph,
   edgeId: string,
 ):
-  | { readonly edges: readonly A11yEdge[]; readonly text: string; readonly focusNodeId: string }
+  | { readonly edges: readonly GraphEdge[]; readonly text: string; readonly focusNodeId: string }
   | undefined {
   const edge = graph.edges.find((e) => e.id === edgeId);
   if (edge === undefined) return undefined;

@@ -1,34 +1,17 @@
 /**
  * The keyboard and screen-reader core of the node-graph rule editor (SCR-082, E47-S03): pure, no
- * React, no DOM. Dependency (E47-S03 BQ-12 (d), as ruled): this core imports nothing from
- * `@candleviewer/rule-graph`, apps/web declares no dependency on it and `pnpm-lock.yaml` is
- * untouched. The interfaces below are this core's own input contract, the few fields it reads; a
- * rule-graph `GraphModel` (packages/rule-graph/src/model.ts) satisfies them structurally, so the
- * screen passes one as is. No wire DTO and no port table is written here: the port rules come in
- * through the `PortOracle` the screen (E37-S01) builds from rule-graph's `portsOf` / `canConnect`
- * when it adds the dependency (with its CODEOWNER, per the ruling).
+ * React, no DOM. Dependency (E47-S03 BQ-12 (d), option 2, ruled in record 6563473726): the model
+ * types are `@candleviewer/rule-graph`'s own, imported type-only from its public entry; none is
+ * copied here. A rule-graph `GraphModel` is passed as is (this core reads its nodes and edges). No
+ * wire DTO and no port table is written here: the port rules come in through the `PortOracle` the
+ * screen (E37-S01) builds from rule-graph's `portsOf` / `canConnect`.
  */
-export type A11yNodeType = "trigger" | "condition" | "action" | "logicGate" | "comment";
+import type { GraphEdge, GraphModel, GraphNode } from "@candleviewer/rule-graph";
 
-export interface A11yNode {
-  readonly id: string;
-  readonly type: A11yNodeType;
-  readonly data: Readonly<Record<string, unknown>>;
-}
+export type { GraphEdge, GraphNode, GraphNodeType } from "@candleviewer/rule-graph";
 
-/** `source`'s output feeds input `targetPort` of `target` (rule-graph's edge direction). */
-export interface A11yEdge {
-  readonly id: string;
-  readonly source: string;
-  readonly sourcePort: string;
-  readonly target: string;
-  readonly targetPort: string;
-}
-
-export interface A11yGraph {
-  readonly nodes: readonly A11yNode[];
-  readonly edges: readonly A11yEdge[];
-}
+/** The part of a rule-graph `GraphModel` this core reads. */
+export type A11yGraph = Pick<GraphModel, "nodes" | "edges">;
 
 export type ConnectVerdict =
   { readonly ok: true } | { readonly ok: false; readonly reason: string };
@@ -36,9 +19,9 @@ export type ConnectVerdict =
 /** The port rules, supplied by the screen from rule-graph (`portsOf`, `canConnect`). */
 export interface PortOracle {
   /** The node's output port type, or null when it has none (an action, a comment). */
-  readonly outputOf: (node: A11yNode) => string | null;
+  readonly outputOf: (node: GraphNode) => string | null;
   /** The node's input ports and their types, in port order. */
-  readonly inputsOf: (node: A11yNode) => readonly (readonly [port: string, type: string])[];
+  readonly inputsOf: (node: GraphNode) => readonly (readonly [port: string, type: string])[];
   /** Whether an output of type `from` may feed an input of type `to`, else why not. */
   readonly canConnect: (from: string, to: string) => ConnectVerdict;
   /** Whether the input takes several edges (rule-graph's list port `in`). */
@@ -49,15 +32,15 @@ export interface PortOracle {
 export const OUTPUT_PORT = "out";
 
 export interface Adjacency {
-  readonly inbound: readonly A11yEdge[];
-  readonly outbound: readonly A11yEdge[];
+  readonly inbound: readonly GraphEdge[];
+  readonly outbound: readonly GraphEdge[];
 }
 
 const NONE: Adjacency = Object.freeze({ inbound: [], outbound: [] });
 
 /** Per node id, its inbound and outbound edges: built once, O(nodes + edges). */
 export function adjacencyOf(graph: A11yGraph): ReadonlyMap<string, Adjacency> {
-  const map = new Map<string, { inbound: A11yEdge[]; outbound: A11yEdge[] }>();
+  const map = new Map<string, { inbound: GraphEdge[]; outbound: GraphEdge[] }>();
   for (const node of graph.nodes) map.set(node.id, { inbound: [], outbound: [] });
   for (const edge of graph.edges) {
     map.get(edge.source)?.outbound.push(edge);

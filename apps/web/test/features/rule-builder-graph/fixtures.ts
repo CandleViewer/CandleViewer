@@ -1,49 +1,45 @@
-// Shared fixtures for the rule-builder-graph a11y tests: a port oracle mirroring the subset of
-// @candleviewer/rule-graph's NODE_PORTS / PORT_COMPAT these tests use, and a seeded PRNG.
+// Shared fixtures for the rule-builder-graph a11y tests: a port oracle built from
+// @candleviewer/rule-graph's own NODE_PORTS / PORT_COMPAT (via `portsOf`, which applies a
+// comparison's arity), never a hand copy (BQ-12 (d), record 6563473726), and a seeded PRNG.
+import { NODE_PORTS, PORT_COMPAT, portsOf, type PortType } from "@candleviewer/rule-graph";
 import type {
-  A11yEdge,
   A11yGraph,
-  A11yNode,
+  GraphEdge,
+  GraphNode,
   PortOracle,
 } from "../../../src/features/rule-builder-graph/a11y/graph.js";
 
-type Ports = { output: string | null; inputs: (readonly [string, string])[] };
-
-const PORTS: Record<string, Ports> = {
-  trigger: { output: "trigger", inputs: [] },
-  comment: { output: null, inputs: [] },
-  action: { output: null, inputs: [["when", "action"]] },
-  logicGate: { output: "boolean", inputs: [["in", "boolean"]] },
-  comparison: {
-    output: "boolean",
-    inputs: [
-      ["left", "number"],
-      ["right", "number"],
-    ],
-  },
-  arithmetic: { output: "number", inputs: [["in", "number"]] },
-};
-
-const kindOf = (node: A11yNode): string =>
+const kindOf = (node: GraphNode): string =>
   node.type === "condition" ? String(node.data["kind"]) : node.type;
 
-const OK = new Set(["boolean>boolean", "boolean>action", "number>number"]);
+/** The node's ports, or none for a kind rule-graph does not know. */
+const portsFor = (node: GraphNode) =>
+  Object.hasOwn(NODE_PORTS, kindOf(node)) ? portsOf(node) : { output: null, inputs: [] };
+
+const isPortType = (type: string): type is PortType => Object.hasOwn(PORT_COMPAT, type);
 
 export const oracle: PortOracle = {
-  outputOf: (node) => PORTS[kindOf(node)]?.output ?? null,
-  inputsOf: (node) => PORTS[kindOf(node)]?.inputs ?? [],
-  canConnect: (from, to) =>
-    OK.has(`${from}>${to}`) ? { ok: true } : { ok: false, reason: `A ${from} can't feed a ${to}.` },
+  outputOf: (node) => portsFor(node).output,
+  inputsOf: (node) => portsFor(node).inputs,
+  canConnect: (from, to) => {
+    const cell = isPortType(from) && isPortType(to) ? PORT_COMPAT[from][to] : "Unknown port type.";
+    return cell === true ? { ok: true } : { ok: false, reason: cell };
+  },
   acceptsMany: (port) => port === "in",
 };
 
 export const node = (
   id: string,
-  type: A11yNode["type"],
+  type: GraphNode["type"],
   data: Record<string, unknown> = {},
-): A11yNode => ({ id, type, data });
+): GraphNode => ({ id, type, data });
 
-export const edge = (id: string, source: string, target: string, targetPort: string): A11yEdge => ({
+export const edge = (
+  id: string,
+  source: string,
+  target: string,
+  targetPort: string,
+): GraphEdge => ({
   id,
   source,
   sourcePort: "out",
@@ -82,7 +78,7 @@ export function rng(seed: number): () => number {
   };
 }
 
-const TYPES: [A11yNode["type"], string | undefined][] = [
+const TYPES: [GraphNode["type"], string | undefined][] = [
   ["trigger", undefined],
   ["condition", "comparison"],
   ["condition", "arithmetic"],
