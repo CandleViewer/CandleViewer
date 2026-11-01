@@ -380,7 +380,7 @@ def test_a_root_one_shot_seeds_a_run_dir_owned_by_the_uid_it_is_named(
     code, out, err = _go(capsys, run_dir, _settings(tmp_path), command="init", owner=owner)
 
     assert (code, err) == (0, "")
-    assert out == f"account-fixture: {seed.SECRETS_WRITTEN}; seeded 6 users: {', '.join(USERS)}\n"
+    assert out == f"account-fixture: {seed.KEYS_WRITTEN}; seeded 6 users: {', '.join(USERS)}\n"
     assert sorted(p.name for p in run_dir.iterdir()) == sorted(CLOSED | SECRET_FILES)
 
 
@@ -410,7 +410,7 @@ def test_secrets_writes_the_kek_and_the_lane_key_once_and_shows_neither(
         kept = {p.name: p.read_bytes() for p in run_dir.iterdir()}
         second = _go(capsys, run_dir, _settings(tmp_path), command="secrets")
 
-    assert first == (0, f"account-fixture: {seed.SECRETS_WRITTEN}\n", "")
+    assert first == (0, f"account-fixture: {seed.KEYS_WRITTEN}\n", "")
     assert second == (2, "", f"account-fixture: refused: {seed.FILE_EXISTS}\n")
     exclusive = os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
     assert sorted(path.name for path, _ in created) == sorted(SECRET_FILES)
@@ -465,7 +465,7 @@ def test_init_checks_the_database_before_it_writes_the_keys_then_seeds_the_roste
     )
 
     assert (code, err) == (0, "")
-    assert out == f"account-fixture: {seed.SECRETS_WRITTEN}; seeded 6 users: {', '.join(USERS)}\n"
+    assert out == f"account-fixture: {seed.KEYS_WRITTEN}; seeded 6 users: {', '.join(USERS)}\n"
     assert seen == {"probe": [], "seeder": ["kek", "lane.key", "pw-qa-owner-1"]}
     assert listing() == sorted(CLOSED | SECRET_FILES)
 

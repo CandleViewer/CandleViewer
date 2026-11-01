@@ -81,7 +81,7 @@ NOT_THROWAWAY: Final = "the database is not a throwaway one: its name is not 'te
 NOT_EMPTY: Final = "the database already holds users, exchange accounts or API keys"
 USER_EXISTS: Final = "a user of the roster already exists: the run is incomplete, start a new run"
 FAILED: Final = "the seed did not complete: start a new run"
-SECRETS_WRITTEN: Final = "wrote kek and lane.key"
+KEYS_WRITTEN: Final = "wrote kek and lane.key"
 
 SEEDED_MARKER: Final = ".seeded"
 ROSTER_FILE: Final = "roster.json"
@@ -356,13 +356,13 @@ def run(
     run_dir = gate(settings, args.run_dir, args.command, owner)
     if args.command == "secrets":
         write_secrets(run_dir)
-        return SECRETS_WRITTEN
+        return KEYS_WRITTEN
     init = args.command == "init"
     names = asyncio.run(
         seed_users(run_dir, settings, seeder=seeder, probe=probe, with_secrets=init)
     )
     seeded = f"seeded {len(names)} users: {', '.join(names)}"
-    return f"{SECRETS_WRITTEN}; {seeded}" if init else seeded
+    return f"{KEYS_WRITTEN}; {seeded}" if init else seeded
 
 
 def main(
