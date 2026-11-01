@@ -9,6 +9,12 @@ const allowFaultInjection = process.env["CV_ALLOW_FAULT_INJECTION"] === "1";
 // `CV_MFA_RECOVERY_UI=1` builds SCR-002's recovery-code form (#2711 BQ-08 (a)). Off by default, so a production
 // build has it `false` and the form is not bundled: a recovery sign-in lands on enrolment (R-006), not built yet.
 const mfaRecoveryUi = process.env["CV_MFA_RECOVERY_UI"] === "1";
+// `CV_PERF_PROBE=1` builds the E10-Q04 render counter (`features/app-shell/perfProbe.tsx`) for the
+// shell perf bench; any other build drops it as dead code.
+const perfProbe = process.env["CV_PERF_PROBE"] === "1";
+// React's production react-dom never calls a Profiler's `onRender`, so the probe build takes the
+// profiling one (`react-dom/client` requires `react-dom`, so the one alias covers both).
+const probeAliases = perfProbe ? [{ find: /^react-dom$/, replacement: "react-dom/profiling" }] : [];
 
 // The status bar's version (E10-S01 S4): this package's `version`, fixed at build time.
 const pkg = JSON.parse(readFileSync(resolve(import.meta.dirname, "package.json"), "utf8")) as {
@@ -23,11 +29,13 @@ export default defineConfig({
     __CV_ALLOW_FAULT_INJECTION__: JSON.stringify(allowFaultInjection),
     __CV_APP_VERSION__: JSON.stringify(pkg.version),
     __CV_MFA_RECOVERY_UI__: JSON.stringify(mfaRecoveryUi),
+    __CV_PERF_PROBE__: JSON.stringify(perfProbe),
   },
   // The shared worker is an ES module, so it can `import()` the fault channel and share chunks with the app.
   worker: { format: "es" },
   resolve: {
     alias: [
+      ...probeAliases,
       // Exact match for the entry only: `@candleviewer/ui/theme.css` and the token CSS must resolve through
       // the package `exports` (built files), not turn into `src/index.ts/theme.css`.
       {

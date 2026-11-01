@@ -1,11 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, chromium, expect, test, type Page } from "@playwright/test";
 import { calibration } from "@candleviewer/config/perf-calibration";
 import { ELECTRON_EGRESS_GUARD, ELECTRON_EGRESS_HITS } from "@candleviewer/fixtures/e2e";
-import { SETTINGS, sessionInfo } from "@candleviewer/fixtures/e2e/stubs";
 import { MAIN_PERF_MARKS } from "../../src/main/perfMarks.js";
 import {
   buildReport,
@@ -15,6 +14,7 @@ import {
   type RunSample,
   type Target,
 } from "./support/report";
+import { NON_LOOPBACK, RESOLVER, REST, VERSION, WEB_ROOT } from "./support/shell";
 import { startStubBackend, type StubBackend } from "./support/stubBackend";
 
 // E10-Q04 PR-2 cold-start harness (budget #10; AC1, AC2, AC6; BQ-Q04-02/03/04/07/08). Per target:
@@ -26,7 +26,6 @@ import { startStubBackend, type StubBackend } from "./support/stubBackend";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_ENTRY = path.join(__dirname, "../../dist/main/index.js");
-const WEB_ROOT = path.join(__dirname, "../../../web/dist");
 const REPORT_DIR =
   process.env["CV_PERF_REPORT_DIR"] ?? path.join(__dirname, "../../test-results/perf");
 const RUNS = 10;
@@ -36,43 +35,9 @@ const HOST: HostClass = process.env["CI"]
   : process.env["CV_PERF_HOST_CLASS"] === "reference"
     ? "reference"
     : "below-class";
-/** Name resolution fails for every host but loopback, from process start (before any route). */
-const RESOLVER = "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost";
-/** Any http(s)/ws(s) URL whose host is not loopback; matched by Playwright, not per request in JS. */
-const NON_LOOPBACK = /^(?:https?|wss?):\/\/(?!(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\/)/u;
-
 /** apps/web's `SHELL_PERF_MARKS` (src/shell/perfMarks.ts), verbatim: this app may not import it. */
 const RENDERER_STAGES = ["shell_bootstrap_ms", "ws_live", "route_mounted", "shell_cold_start_ms"];
 const MAIN_STAGES: readonly string[] = Object.values(MAIN_PERF_MARKS);
-
-const VERSION = (
-  JSON.parse(readFileSync(path.join(__dirname, "../../../web/package.json"), "utf8")) as {
-    version: string;
-  }
-).version;
-
-/** The boot calls the shell makes for a signed-in owner (as `stubSession` answers them). */
-const REST: Readonly<Record<string, unknown>> = {
-  "/api/v1/auth/refresh": {
-    status: "authenticated",
-    tokens: {
-      access_token: ["perf", "stub", "opaque", "bearer"].join("."),
-      token_type: "Bearer",
-      expires_in: 600,
-      refresh_expires_in: 2_592_000,
-    },
-  },
-  "/api/v1/me": {
-    role: "owner",
-    permissions: [],
-    session: { environment: "demo", elevated_until: null },
-  },
-  "/api/v1/me/preferences": {},
-  "/api/v1/me/keymap": { bindings: [] },
-  "/api/v1/settings": SETTINGS,
-  "/api/v1/auth/session": sessionInfo("owner"),
-  "/api/v1/health/live": { status: "ok" },
-};
 
 interface Timeline {
   readonly origin: number;
