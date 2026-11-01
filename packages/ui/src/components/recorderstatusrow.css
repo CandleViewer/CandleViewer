@@ -75,11 +75,45 @@ tr.cv-rsr-row[data-stale] {
   vertical-align: middle;
 }
 
+/*
+ * The grid's State cell is one line, so a longer state never changes the row's height (D02 §9.1): the words cut
+ * with an ellipsis (CMP-049's echo shows them whole), the icon and the stale tag kept whole. Stacked into cards, the
+ * words wrap.
+ */
+tr.cv-rsr-row:not([data-stacked]) .cv-rsr__state {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+tr.cv-rsr-row:not([data-stacked]) .cv-rsr__words {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cv-rsr__icon,
+.cv-rsr__state > .cv-tag {
+  flex: none;
+}
+
 .cv-rsr__num,
 .cv-rsr__meta {
   font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
     var(--type-num-sm-font-family);
   font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The grid's figures end-aligned under their end-aligned headers. Size (D02 §1, board 05) is no `numeric` cell: from
+ * disk level 1 the share of the budget takes its own line, and the figures wrap rather than overprint Retention
+ * (B-5309-01, D-5309-03).
+ */
+.cv-rsr__num {
+  display: block;
+  text-align: end;
+  white-space: normal;
 }
 
 .cv-rsr__meta,
@@ -109,22 +143,8 @@ tr.cv-rsr-row[data-stale] {
   gap: var(--space-stack-xs);
 }
 
-/* T2 (§10.5, E09-D09 §2.2): the raised fill with a border.default hairline; label and lock tertiary, never dimmed. */
-.cv-rsr__action.cv-button[aria-disabled="true"] {
-  background: var(--color-surface-raised);
-  border-color: var(--color-border-default);
-  color: var(--color-text-tertiary);
-  cursor: not-allowed;
-}
-
-.cv-rsr__lock {
-  display: inline-flex;
-  flex: none;
-  width: var(--size-icon);
-  height: var(--size-icon);
-  color: var(--color-text-tertiary);
-}
-
+/* T2 (§10.5, E09-D09 §2.2): the action is CMP-001's own T2 (its look is #262's C-row); the switch, drawn here, takes
+   CMP-004's centred lock (`cv-choice__lock`) and its label in text.tertiary, never dimmed. */
 .cv-rsr__keep[data-gated] .cv-choice__label {
   color: var(--color-text-tertiary);
 }
@@ -137,16 +157,9 @@ tr.cv-rsr-row[data-stale] {
   /* Every carrier is a word, a border or a glyph (D02 §1): words and glyphs CanvasText. */
   .cv-rsr__words,
   .cv-rsr__icon[data-tone],
-  .cv-rsr__lock,
   .cv-rsr__reason,
   .cv-rsr__meta,
   .cv-rsr__keep[data-gated] .cv-choice__label {
     color: CanvasText;
-  }
-
-  .cv-rsr__action.cv-button[aria-disabled="true"] {
-    border-color: GrayText;
-    background: ButtonFace;
-    color: ButtonText;
   }
 }

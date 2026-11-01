@@ -27,6 +27,7 @@ export { RECORDER_REASONS, RecorderStatusRow, recorderStatusColumns } from "./Re
 export type {
   RecorderCellOptions,
   RecorderCellProps,
+  RecorderColumnsOptions,
   RecorderReason,
   RecorderRowGrid,
   RecorderRowState,
