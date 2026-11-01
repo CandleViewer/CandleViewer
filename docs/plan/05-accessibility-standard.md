@@ -43,7 +43,7 @@ Research found no reusable default keymap (DeepCharts ships user-defined-only, T
 | ----------------------------- | --------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | **Global / Navigation**       | Command palette / search-anything                   | `Ctrl+K`                                                | Opens searchable command list — critical a11y escape hatch when a hotkey is forgotten or remapped away |
 |                               | Switch workspace layout preset                      | `Ctrl+1`..`Ctrl+9`                                      | Per View 11                                                                                            |
-|                               | Toggle sidebar / panel focus cycle                  | `Ctrl+\`                                                | Cycles focus between major regions (chart, DOM, order ticket, positions) — see §4.2 landmark model     |
+|                               | Toggle sidebar / panel focus cycle                  | `Ctrl+\`                                                | Cycles focus between major regions (chart, DOM, order ticket, positions) — see §3.4 items 1 and 11     |
 |                               | Open Watchlist / symbol search                      | `/`                                                     | Only active when focus is not inside a text input                                                      |
 |                               | Toggle keyboard-hotkey cheat-sheet overlay          | `Shift+/` (i.e. `?`)                                    | Always available, shows current (possibly remapped) bindings                                           |
 |                               | Escape / cancel current action                      | `Esc`                                                   | Universal cancel: closes dialogs, cancels in-progress order draft, exits drawing-tool mode             |
@@ -101,6 +101,19 @@ CandleViewer screens are unusually dense (multi-pane chart + footprint + DOM hea
 8. **Dragging alternatives**: WCAG 2.2 SC 2.5.7 (Dragging Movements, AA) — every drag interaction (order-line reprice, drawing-tool node move, rule-graph node move, panel resize) has a non-drag alternative: click-to-select then arrow-key nudge, or a keyboard-accessible "..." menu offering the same repositioning as discrete steps/values.
 9. **Consistent help mechanism**: WCAG 2.2 SC 3.2.6 (Consistent Help, A) — the hotkey cheat-sheet (`?`) and a "Help/Docs" entry point appear in the same relative location/order across every screen.
 10. **Redundant entry**: WCAG 2.2 SC 3.3.7/3.3.8 (Redundant Entry / Accessible Authentication, AA) — order tickets pre-fill from last-used values/defaults where safe; login/API-key entry never requires a cognitive-function test (no CAPTCHA puzzle; 2FA via standard TOTP/WebAuthn is exempt as "object recognition"/allowed alternative).
+11. **Focus model (E47-D04).** The normative expansion of items 1–6, one line per rule; the detail, the five screen archetypes, the screen map and the measured ring are `docs/design/E47/E47-D04.md`:
+    - R-1 Tab order and the region ring follow the visual panel arrangement, never DOM order alone.
+    - R-2 A composite (grid, tree, listbox, toolbar, tablist) is one Tab stop with a roving tabindex.
+    - R-3 Focus in a live composite is keyed by a logical id (price level, bar, order, position, symbol), never an index.
+    - R-4 Whatever removes or disables the focused element names a surviving destination in the same frame; never the document body.
+    - R-5 Data events never move focus; only a user action or an announced `alertdialog` does.
+    - R-6 No dialog, overlay or region opens with focus on a destructive or committing control; destructive confirms open on Cancel.
+    - R-7 Every close path of a dialog or overlay restores focus to its invoker, else to a fallback chosen by R-4.
+    - R-8 A ring move, a grid entry and a non-user restoration are announced once by a label, at most once a second.
+    - R-9 CMP-039 is the only focus ring: two-tone, enclosed by its halo, ≥3:1 on every measured background.
+    - R-10 A role-gated control stays focusable with its reason (E09-D09 T2); a hidden admin affordance is absent from the tree (T3).
+    - R-11 A focused element is scrolled into view with an offset so no sticky bar or floating panel hides it.
+    - R-12 At 400 % and the in-app text scale no focus target is clipped or needs two-dimensional scrolling.
 
 ## 4. Colour-independence for buy/sell and all status signalling
 
