@@ -145,6 +145,7 @@ from candleviewer.api.exchange_accounts import make_exchange_accounts_router
 from candleviewer.api.exchange_keys import make_exchange_keys_router
 from candleviewer.api.feature_flags import make_feature_flags_routers
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
+from candleviewer.api.hotkey_profiles import REFUSAL_SERIES as HOTKEY_REFUSAL_SERIES
 from candleviewer.api.hotkey_profiles import make_hotkey_profiles_router
 from candleviewer.api.idle_lock import IdleLockMiddleware
 from candleviewer.api.indicator_presets import make_indicator_presets_router
@@ -3633,8 +3634,12 @@ def create_app(
             lambda: app.state.hotkey_profiles_repository,
             audit_resolver,
             _LazyAuditEmitter(ctx.audit),
+            refusals=metrics_facade.counter(
+                "hotkey_profile_refusals_total", "Hotkey-profile writes refused 409 or 422.",
+                ("code", "rule"), max_series=HOTKEY_REFUSAL_SERIES,
+            ),
         )
-    )
+    )  # fmt: skip
     # E08-S05: maintained L2 book snapshot (503 while resyncing, never a patched book).
     app.include_router(
         make_orderbook_router(lambda: ctx.ingestion.books, principal_resolver=audit_resolver)

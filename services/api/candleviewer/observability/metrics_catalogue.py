@@ -2823,6 +2823,23 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E08",
         max_series=1,
     ),
+    # E10-T05: registered by `create_app()` for the /settings/hotkeys router; its two labels are
+    # closed sets (`api.hotkey_profiles.CONFLICT_RULES` and `INVALID_RULES`), never a user or a
+    # profile.
+    _s(
+        "hotkey_profile_refusals_total",
+        "counter",
+        "requests",
+        ("code", "rule"),
+        "Hotkey-profile writes refused 409 or 422 (E10-T05), one per refusal answered, by problem "
+        "code (conflict, validation_failed) and rule: a 409's own (binding_conflict, "
+        "limit_reached, name_taken, profile_active), a 422's first errors[] item's, any schema "
+        "rule as schema.",
+        "dashboard only",
+        _P,
+        "E10",
+        max_series=15,
+    ),
     _s(
         "cv_outbox_depth",
         "gauge",
