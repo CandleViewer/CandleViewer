@@ -334,6 +334,15 @@
       "visibleControl": true
     },
     {
+      "id": "chart.table_toggle",
+      "label": "Toggle data-table alternative view",
+      "context": "Chart",
+      "defaultBinding": "Alt+T",
+      "destructive": false,
+      "validWhen": "chart panel focused",
+      "visibleControl": "Table button in the chart panel header"
+    },
+    {
       "id": "dom.market_click",
       "label": "Market order (click)",
       "context": "DOM",

@@ -27,6 +27,7 @@
 | Chart | Place limit order at price (arm-gated) | `Ctrl+drag` | no | valid when: chart trading armed |
 | Chart | Market order at market (arm-gated) | `Alt+click` | no | valid when: chart trading armed |
 | Chart | Redo drawing | `Ctrl+Y` | no | valid when: always |
+| Chart | Toggle data-table alternative view | `Alt+T` | no | valid when: chart panel focused |
 | Chart | Undo drawing | `Ctrl+Z` | no | valid when: always |
 | Chart | Zoom price scale | `Shift+wheel` | no | valid when: always |
 | DOM | Arm/disarm one-click | `Ctrl+Shift+T` | no | overrides reserved key: Deliberate override of browser reopen-tab; Electron has no tabs; valid when: always |

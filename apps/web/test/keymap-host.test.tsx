@@ -135,7 +135,7 @@ describe("inert press explains itself (wired host)", () => {
 
 describe("SCR-113 editor", () => {
   // #305 PR B: the Esc commands are locked (BQ-7) and the shell announcer speaks a message, never a role="alert".
-  // Queries stay inside one row: the table has 75 (CR-305B-06).
+  // Queries stay inside one row: the table has 76 (CR-305B-06).
   const inRow = (label: string) => {
     const th = screen.getByText(label, { selector: 'th[scope="row"]' });
     return within(th.closest("tr") as HTMLElement);
