@@ -6650,3 +6650,11 @@ This number follows `main`'s last entry, §19.61; an entry that lands first take
 This number follows §19.62, as the orchestrator renumbered it on 2026-10-31 (21:21Z): #5185 (#914 PR2b) takes the next free number at its final rebase.
 
 - §15.5: `trade_group_definition.save_refused` joins the closed set and is registered: a definition create or replace refused for a membership across environments is recorded before its `400 environment_mismatch` (C-2.9, C-2.11), unbudgeted as the scope refusals are today; one unwritten is `503 audit_unavailable`, which 22 already declares. No operation changes. `21-database-schema.md` §3.10.1 lists it.
+
+### 19.75 2026-11-01 — 26 §8 `CandleData`, 23 / 26 §6 `bars` layout: the optional `flags` column (E12-S06, #395)
+
+Assigned by the E12-S06 rulings of record (BQ-3). Additive only: no field is renamed, removed or narrowed.
+
+- 26 §8 `CandleData` gains `flags?: Uint8Array`, one byte per bar: bit 0 `gap_before`, bit 1 forming (not confirmed), bit 2 partial, bit 3 amended; bits 4–7 are reserved and a batch that sets one is refused (`ENGINE_DECODE_ERROR`, `engine.data.rejected{reason="flags"}`). Absent, every bar reads 0.
+- The engine's `bars` buffer (26 §6) carries it as a seventh, 1-byte column after `volume`; six columns stay valid. The `data` message gains an optional `series` id and the `ack` echoes it, so the host's backpressure is per series.
+- The renderer-side store refuses a bar with `high < low`, `open` or `close` outside `[low, high]`, or negative volume (threat model F-02), and narrows prices to ticks only through the exported `toTicks` (F-01, BQ-10); a refusal leaves the store byte-identical.

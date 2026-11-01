@@ -6,6 +6,8 @@
 // The pre-§8 palette/flags seam lives at `@candleviewer/chart-engine/compat` (README BQ-2).
 
 export { createChart } from "./api/chart.js";
+// E12-S06 (BQ-10, additive): the checked price → tick narrowing the data binding must use (F-01).
+export { toTicks } from "./worker/protocol.js";
 export type {
   BarView,
   BubbleOptions,
