@@ -7,7 +7,7 @@ import type { AuditRecord } from "../src/keymap/audit";
  * offers a one-click Swap (AC3), Export sits beside Import (AC7), a locked command has no change control (AC4), and
  * every message goes through the shell announcer; the lens's A11Y-305B-01, -02, -04 to -06, CR-305B-02 and -06 and
  * DS-305B-03 and -04 too. A dangerous command on a single letter (D3, AC5) is PR A's. Each test loads its own copy of
- * the keymap modules, which keep their state at module level; queries stay inside one row, since the table has 75.
+ * the keymap modules, which keep their state at module level; queries stay inside one row, since the table has 76.
  */
 const load = async () => ({
   ...(await import("../src/keymap/HotkeyEditor")),
