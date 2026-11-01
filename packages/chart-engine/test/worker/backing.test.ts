@@ -3,7 +3,10 @@
 // space, `frame` and the pick math keep the exact size.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Canvas2DBackend } from "../../src/canvas2d/backend.js";
+import { GRID_NODE_ID } from "../../src/axes/grid.js";
 import { GLBackend } from "../../src/gl/backend.js";
+import type { PaneUniformSource } from "../../src/gl/submit.js";
+import type { RetainedBatch } from "../../src/scene/batch-builder.js";
 import type { PaneUniforms } from "../../src/viewport/index.js";
 import { BACKING_STEP_PX, BackingSizer, grownPx, SETTLE_FRAMES } from "../../src/worker/backing.js";
 import { rejectReason, type FromWorker } from "../../src/worker/protocol.js";
@@ -104,7 +107,9 @@ describe("Scenario: a padded store is drawn in its exact sub-rect", () => {
       config: { bench: true, syncGroup: null },
     });
     frame();
-    block = spy.mock.calls[0]?.[0] as () => PaneUniforms;
+    // E11-S09 (BQ-10): the source answers per batch; the grid's draws with the first pane's block.
+    const source = spy.mock.calls[0]?.[0] as PaneUniformSource;
+    block = () => source({ nodeId: GRID_NODE_ID } as RetainedBatch) as PaneUniforms;
   });
 
   afterEach(() => {

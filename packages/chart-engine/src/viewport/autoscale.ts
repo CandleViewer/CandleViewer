@@ -48,15 +48,32 @@ const flagsOf = (p: Readonly<PaneTransform>): number =>
 export class AutoScaler {
   readonly counters: ScaleCounters = { autoscale_recomputes: 0, log_guard_trips: 0 };
   private readonly out = new Float64Array(2);
-  private readonly keys: Float64Array;
+  private keys: Float64Array;
   private readonly next = new Float64Array(KEYS);
 
   constructor(
     private readonly vp: ChartViewport,
-    /** Each pane's sources; the runtime injects pane 0's (`RuntimeDeps.priceSources`). */
+    /** Each pane's sources by index; the runtime maps the index to its pane key (BQ-10). */
     private readonly sources: (pane: number) => readonly PriceExtentSource[],
   ) {
     this.keys = new Float64Array(vp.panes.length * KEYS).fill(Number.NaN);
+  }
+
+  /** E11-S09 (BQ-10): a pane was added below the others: its keys start unset (a first fit). */
+  addPane(): void {
+    const next = new Float64Array(this.keys.length + KEYS).fill(Number.NaN);
+    next.set(this.keys);
+    this.keys = next;
+  }
+
+  /** E11-S09 (BQ-2): the pane at `index` left; the keys after it move up with their panes. */
+  removePane(index: number): void {
+    const at = index * KEYS;
+    if (!(index >= 0) || at >= this.keys.length) return;
+    const next = new Float64Array(this.keys.length - KEYS);
+    next.set(this.keys.subarray(0, at));
+    next.set(this.keys.subarray(at + KEYS), at);
+    this.keys = next;
   }
 
   /** Once per frame: true when a window, mode, anchor or log reason changed. */

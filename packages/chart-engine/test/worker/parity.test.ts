@@ -155,7 +155,8 @@ describe("Scenario: Inline fallback is behaviourally identical", () => {
     const inline = transport("inline");
     const kinds = new Set(worker.map((e) => ((e as unknown[])[1] as FromWorker).t));
     // E11-S07: hover never posts `a11y` (BQ-3); this 0×0 canvas has no plot to cross.
-    expect([...kinds].sort()).toEqual(["frame", "pick", "ready", "viewport"]);
+    // E11-S09 (BQ-4): the pane stack's `layout` is posted on the first frame in both modes.
+    expect([...kinds].sort()).toEqual(["frame", "layout", "pick", "ready", "viewport"]);
     expect(inline).toEqual(worker);
   });
 });

@@ -111,11 +111,26 @@ export class ChartViewport implements ViewportState {
     return this.place(this.leftIndex, this.barSpacing) || !same;
   }
 
-  setPanePlot(pane: number, top: number, height: number): void {
+  /** E11-S09 (BQ-10): a pane below the others, its own price state; time stays shared. */
+  addPane(): number {
+    return this.panes.push(createPaneTransform()) - 1;
+  }
+
+  /** E11-S09 (BQ-2): drops the pane at `index`; the panes after it move up one index. */
+  removePane(index: number): boolean {
+    if (!(index >= 0 && index < this.panes.length)) return false;
+    this.panes.splice(index, 1);
+    return true;
+  }
+
+  /** The pane's plot rows in CSS px; false when rejected or unchanged. */
+  setPanePlot(pane: number, top: number, height: number): boolean {
     const p = this.panes[pane];
-    if (p === undefined || !(height >= 0) || !Number.isFinite(top + height)) return;
+    if (p === undefined || !(height >= 0) || !Number.isFinite(top + height)) return false;
+    const changed = p.plotTop !== top || p.plotHeight !== height;
     p.plotTop = top;
     p.plotHeight = height;
+    return changed;
   }
 
   /** A price window in ticks; one under a tick widens to one tick. False when rejected. */

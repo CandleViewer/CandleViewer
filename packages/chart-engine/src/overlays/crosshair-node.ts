@@ -19,8 +19,8 @@ export const MUTED_TOKEN = "opacity.muted";
 export const MUTED_DEFAULT = 0.7;
 const STRIDE = 9;
 const DASH = 4;
-/** dpr, deviceH, plot x, y, w, h, local, x, y, remote x. */
-const SIG = 10;
+/** dpr, deviceH, plot x, y, w, h, local, x, y, remote x, stack y, h. */
+const SIG = 12;
 
 type Theme = Readonly<Record<string, string>>;
 
@@ -47,7 +47,9 @@ export class CrosshairNode extends ContentNode {
   /**
    * The lines for a local cursor at (`x`, `y`) when `local`, else the remote vertical at
    * `remoteX` (NaN: none), clipped to `plot`; CSS px over a store `deviceH` device px high.
-   * True when the instances changed (the caller re-uploads the ring).
+   * E11-S09 (BQ-23): the vertical runs through `stack`'s rows (every pane), the horizontal only
+   * through the hovered pane's `plot`: still one ring, one draw. True when the instances changed
+   * (the caller re-uploads the ring).
    */
   write(
     theme: Theme,
@@ -58,6 +60,7 @@ export class CrosshairNode extends ContentNode {
     x: number,
     y: number,
     remoteX: number,
+    stack: PlotRect = plot,
   ): boolean {
     const c = this.cur;
     c[0] = dpr;
@@ -70,6 +73,8 @@ export class CrosshairNode extends ContentNode {
     c[7] = local ? x : Number.NaN;
     c[8] = local ? y : Number.NaN;
     c[9] = local ? Number.NaN : remoteX;
+    c[10] = stack[1];
+    c[11] = stack[3];
     let same = theme === this.palette;
     for (let i = 0; i < SIG; i += 1) {
       if (!Object.is(c[i], this.sig[i])) same = false;
@@ -92,8 +97,10 @@ export class CrosshairNode extends ContentNode {
     this.dpr = dpr;
     this.deviceH = deviceH;
     this.width = hairlineDevicePx(dpr);
-    this.reserve(dpr, pw, ph);
-    if (v) this.vLine(vx, py, py + ph, local ? 0 : 4);
+    const sy = stack[1];
+    const sh = stack[3];
+    this.reserve(dpr, pw, Math.max(ph, sh));
+    if (v) this.vLine(vx, sy, sy + sh, local ? 0 : 4);
     if (h) this.hLine(y, px, px + pw, 0);
     return true;
   }

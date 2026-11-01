@@ -2,7 +2,10 @@
 // change resizes the backing store and tells its listeners before the next frame (BQ-152, BQ-153),
 // and a 0×0 container suspends the chart and resumes it within one frame (BQ-147, BQ-148).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GRID_NODE_ID } from "../../src/axes/grid.js";
 import { GLBackend } from "../../src/gl/backend.js";
+import type { PaneUniformSource } from "../../src/gl/submit.js";
+import type { RetainedBatch } from "../../src/scene/batch-builder.js";
 import { Dirty, SceneGraph } from "../../src/scene/index.js";
 import { snapHairline, type PaneUniforms } from "../../src/viewport/index.js";
 import { createRenderRuntime, type RenderRuntime } from "../../src/worker/runtime.js";
@@ -39,7 +42,9 @@ beforeEach(() => {
   const config = { bench: true, syncGroup: null };
   rt.handle({ t: "init", id: 1, canvas, dpr: 1, theme: {}, config });
   frame();
-  block = spy.mock.calls[0]?.[0] as () => PaneUniforms;
+  // E11-S09 (BQ-10): the source answers per batch; the grid's draws with the first pane's block.
+  const source = spy.mock.calls[0]?.[0] as PaneUniformSource;
+  block = () => source({ nodeId: GRID_NODE_ID } as RetainedBatch) as PaneUniforms;
 });
 
 afterEach(() => {

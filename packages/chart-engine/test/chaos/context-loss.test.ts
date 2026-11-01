@@ -14,6 +14,7 @@ import {
   ENGINE_CONTEXT_RESTORED,
   ENGINE_NO_WEBGL2,
   INPUT,
+  type Command,
   type FromWorker,
 } from "../../src/worker/protocol.js";
 import {
@@ -72,8 +73,23 @@ function op(rt: ReturnType<typeof runtimeOnFakeClock>["rt"], phase: Phase, r: Rn
   }
 }
 
+/** E11-S09: panes 1 and 2 under the first, at 60 / 20 / 20. */
+function stack3(rt: ReturnType<typeof runtimeOnFakeClock>["rt"]): void {
+  const cmd = (c: Command): void => rt.handle({ t: "command", id: 1, cmd: c });
+  cmd({ k: "addPane", pane: 1, share: 0.2, label: "Volume pane" });
+  cmd({ k: "addPane", pane: 2, share: 0.2, label: "CVD pane" });
+  cmd({
+    k: "setPaneShares",
+    shares: [
+      [0, 0.6],
+      [1, 0.2],
+      [2, 0.2],
+    ],
+  });
+}
+
 /** A session of `phase` with a seeded loss point and restore delay (or none); the GL state. */
-function session(seed: number, phase: Phase, lose: boolean) {
+function session(seed: number, phase: Phase, lose: boolean, panes = false) {
   vi.clearAllTimers();
   vi.setSystemTime(0);
   const r = rng(seed);
@@ -81,6 +97,7 @@ function session(seed: number, phase: Phase, lose: boolean) {
   const gl = roomyGl();
   const c = lossCanvas(gl);
   init(c);
+  if (panes) stack3(rt);
   frames(32);
   const ops = 40;
   const lossAt = r.int(0, ops - 1);
@@ -104,6 +121,7 @@ function session(seed: number, phase: Phase, lose: boolean) {
   const uniforms = new Map(gl.uniforms.map(([name, ...v]) => [name, v]));
   return {
     out,
+    rt,
     gl: { live: gl.alive.size, clear: gl.clears.at(-1), uniforms: [...uniforms].sort(), draws },
   };
 }
@@ -201,7 +219,34 @@ describe("Scenario: Context loss restores a correct scene within the budget (G1)
     }
   });
 
-  it.todo("G1 at 3 runtime panes with pane ratios kept (pending: E11-S09 #446)");
+  it("G1 at 3 runtime panes with pane ratios kept, 25 seeds (E11-S09 #446)", () => {
+    for (const seed of SEEDS) {
+      const ref = session(seed, "pan", false, true);
+      const hit = session(seed, "pan", true, true);
+      expect(codes(hit.out), `seed ${seed}`).toEqual([LOST, RESTORED]);
+      expect(settled(hit), `seed ${seed}`).toEqual(settled(ref));
+      // The stack: the same panes, rows and shares, and every pane on the same time state.
+      const layout = last(hit.out, "layout") as Extract<FromWorker, { t: "layout" }>;
+      expect(layout, `seed ${seed}`).toEqual(last(ref.out, "layout"));
+      expect(
+        layout.panes.map((p) => [p.pane, p.height]),
+        `seed ${seed}`,
+      ).toEqual([
+        [0, 46],
+        [1, 15],
+        [2, 15],
+      ]);
+      expect(
+        layout.panes.reduce((a, p) => a + p.share, 0),
+        `seed ${seed}`,
+      ).toBe(1);
+      expect(hit.rt.paneStats(1), `seed ${seed}`).toEqual(ref.rt.paneStats(1));
+      for (const pane of [1, 2]) {
+        const of = (s: typeof hit) => s.out.filter((m) => m.t === "viewport" && m.pane === pane);
+        expect(of(hit).at(-1), `seed ${seed} pane ${pane}`).toEqual(of(ref).at(-1));
+      }
+    }
+  });
   it("G1 with an active crosshair series drawn, not only the a11y summary, 25 seeds", () => {
     for (const seed of SEEDS) {
       const ref = session(seed, "cross", false);
