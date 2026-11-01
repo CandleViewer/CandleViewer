@@ -55,10 +55,10 @@ MAX_FRAME_BYTES = 1_048_576  # explicit cap on a single WS frame (E08-X01)
 #: how long one may stay unanswered before it is counted `timeout`.
 MAX_PENDING_ACKS = 256
 ACK_TIMEOUT_S = 10.0
-#: Bybit does not fix the key order of an op reply (the recorded pong leads with `req_id`), so a
-#: frame is a candidate ack when `"req_id"` appears in its head; `_on_ack` parses strictly.
-_ACK_MARK = '"req_id"'
-_ACK_HEAD = 200
+#: Op replies lead with `success`, `req_id` or `op` (the recorded pong leads with `req_id`); data
+#: frames lead with `topic`. A leading key, not a head window: a refusal echoes its args in
+#: `ret_msg`, which pushes `req_id` far past any fixed offset. `_on_ack` parses strictly.
+_ACK_LEADS = ('{"success"', '{"req_id"', '{"op"')
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,9 +274,9 @@ class ConnectionManager:
             raise
 
     def _on_ack(self, frame: str) -> None:
-        """An op reply (`req_id` in its head): settle the pending op it answers (others, e.g. the
-        pong, carry no tracked `req_id`). A refused subscribe counts and marks its topics stale,
-        so the existing per-topic stale resubscribe retries it."""
+        """An op reply (led by `success`, `req_id` or `op`): settle the pending op it answers
+        (others, e.g. the pong, carry no tracked `req_id`). A refused subscribe counts and
+        marks its topics stale, so the existing per-topic stale resubscribe retries it."""
         try:
             msg = json.loads(frame)
         except ValueError:
@@ -407,7 +407,7 @@ class ConnectionManager:
             frame = await sock.recv(MAX_FRAME_BYTES)
             if len(frame) > MAX_FRAME_BYTES:
                 raise ValueError("ws frame exceeds MAX_FRAME_BYTES")
-            if _ACK_MARK in frame[:_ACK_HEAD]:
+            if frame.startswith(_ACK_LEADS):
                 self._on_ack(frame)  # still forwarded below: the parsers ignore op replies
             rec = self._latency
             if rec is None or not rec.sample():

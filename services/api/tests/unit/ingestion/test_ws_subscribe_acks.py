@@ -273,3 +273,25 @@ async def test_overflow_drops_oldest_unsubscribe_before_any_subscribe() -> None:
     # no unsubscribe left: the oldest subscribe goes
     await m._send_tracked(sock, "subscribe", ["publicTrade.NEW2USDT"])
     assert "cv-1" not in m._pending
+
+
+async def test_long_ret_msg_rejection_with_success_first_is_rejected() -> None:
+    """The `ret_msg` args echo is from Bybit's docs, not a recorded fixture."""
+    clk, sock = _Clock(), _Sock()
+    m, _ = _mgr(clk, sock)
+    topics = {f"publicTrade.LONGSYMBOL{i}USDT" for i in range(10)}
+    m.set_desired(topics)
+    await m.subscribe()
+    rid = sock.sent[0]["req_id"]
+    ret_msg = "error:handler not found,args:[" + ",".join(sorted(topics)) + "]"
+    frame = json.dumps(
+        {"success": False, "ret_msg": ret_msg, "conn_id": "c-1", "req_id": rid, "op": "subscribe"}
+    )
+    assert len(ret_msg) > 250 and frame.index('"req_id"') > 250
+    sock._frames = [frame]
+    rej = _count("rejected")
+    try:
+        await m._read(sock)
+    except ConnectionError:
+        pass
+    assert _count("rejected") == rej + 1 and m._pending == {}
