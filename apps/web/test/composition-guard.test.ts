@@ -27,6 +27,7 @@ const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
     "E11-S05 (#386): SCR-043 is a <Chart> child; no screen mounts one until SCR-030",
   "rule-builder-graph":
     "E47-S03 (#1317): the pure keyboard / screen-reader core; E37-S05 (#1071) wires it into SCR-082",
+  "symbol-info": "E08-S10 (#4704): the data layer only; mounted by #4704 PR 3 (after #5335)",
   tape: "E22-S01 (#714) PR-A: the SCR-053 model only; PR-B mounts the panel behind its flag",
 };
 
