@@ -49,6 +49,10 @@ _QUEUE_MAXSIZE = 256
 WS_FRAME_QUEUE_MAXSIZE = 4096
 #: #1889: this many consecutive frames failing inside the pump trip a resync.
 PUMP_BREAKER_TRIPS = 32
+#: #1893: the pump yields to the loop after this many frames, so a never-idle stream cannot
+#: starve the reader, the watchdog, the pings or its own lane workers. `Queue.get` on a non-empty
+#: queue never suspends, so without it a backlog runs to completion in one turn.
+PUMP_YIELD_EVERY = 64
 #: #1919: health stays DEGRADED this long after a pump breaker trip.
 PUMP_BREAKER_WINDOW_S = 30.0
 #: #1919: WS may be non-open this long (reconnect backoff) before health degrades.
@@ -212,16 +216,24 @@ class IngestionService:
         (queued frames are discarded; streams resync on restart).
 
         Must never die (#1889): failures are per frame, inside the lanes;
-        `PUMP_BREAKER_TRIPS` consecutive failures in one lane trip a resync."""
+        `PUMP_BREAKER_TRIPS` consecutive failures in one lane trip a resync.
+        Every `PUMP_YIELD_EVERY` frames it yields to the loop (#1893)."""
         lanes = self.lanes = LaneSet(
             self._dispatch,
             self._resync_route,
             self._trip_breaker,
             lambda: PUMP_BREAKER_TRIPS,
         )
+        since_yield = 0
         try:
             while True:
+                if since_yield >= PUMP_YIELD_EVERY:
+                    since_yield = 0
+                    # #1893: give the loop a turn under a backlog, before taking the next frame
+                    # so a cancel here never drops one in hand.
+                    await asyncio.sleep(0)
                 frame = await self.ws_frames.get()
+                since_yield += 1
                 if json_depth_exceeds(frame):  # once per frame, before any parser
                     self._pump_rejects.record(
                         FrameRejectedError("depth_limit", "frame nests too deep")

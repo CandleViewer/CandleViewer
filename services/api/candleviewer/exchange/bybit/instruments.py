@@ -11,6 +11,8 @@ from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Protocol
 
+from pydantic import ValidationError
+
 from candleviewer.domain.events import Instrument
 from candleviewer.exchange.base.instruments import (
     InstrumentParseError,
@@ -34,39 +36,88 @@ _STATUS_MAP: dict[str, Literal["pre_launch", "trading", "delivering", "closed"]]
 }
 
 
+#: A rejection reason quotes at most this many characters of the offending value (#1896).
+_REPR_MAX = 80
+#: The longest funding interval accepted, in minutes (one week): Bybit's linear intervals are a few
+#: hours, so anything past this is a malformed row, not a schedule (#1933).
+_FUNDING_INTERVAL_MAX_MIN = 10_080
+
+
+def _safe_repr(value: object) -> str:
+    """A bounded `repr` for a rejection reason: the value is hostile, so its size is too (#1896).
+    `repr` of an int past the interpreter's digit limit raises `ValueError`."""
+    try:
+        text = repr(value)
+    except ValueError:
+        return f"<{type(value).__name__} too large to show>"
+    return text if len(text) <= _REPR_MAX else text[: _REPR_MAX - 3] + "..."
+
+
+def _to_decimal(key: str, value: object) -> Decimal:
+    # `str()` of a huge int raises ValueError, not InvalidOperation (#1896).
+    if isinstance(value, bool):
+        raise InstrumentParseError(f"field {key!r} is not a valid decimal: {value!r}")
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise InstrumentParseError(
+            f"field {key!r} is not a valid decimal: {_safe_repr(value)}"
+        ) from exc
+
+
 def _decimal(raw: Mapping[str, Any], key: str, *, require_positive: bool = False) -> Decimal:
     value = raw.get(key)
     if value is None or value == "":
         raise InstrumentParseError(f"missing required field {key!r}")
-    try:
-        parsed = Decimal(str(value))
-    except InvalidOperation as exc:
-        raise InstrumentParseError(f"field {key!r} is not a valid decimal: {value!r}") from exc
+    parsed = _to_decimal(key, value)
     if not parsed.is_finite():
-        raise InstrumentParseError(f"field {key!r} is not finite: {value!r}")
+        raise InstrumentParseError(f"field {key!r} is not finite: {_safe_repr(value)}")
     if require_positive and parsed <= 0:
-        raise InstrumentParseError(f"field {key!r} must be > 0: {value!r}")
+        raise InstrumentParseError(f"field {key!r} must be > 0: {_safe_repr(value)}")
     return parsed
+
+
+def _strict_int(value: Any) -> int:
+    """An int, an integral float or a digit string; never a bool or a fraction (#1896)."""
+    if isinstance(value, bool):
+        raise TypeError("bool is not an integer")
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError("fractional")
+    return int(value)  # any other unsupported type raises TypeError here
 
 
 def _int(raw: Mapping[str, Any], key: str, value: Any) -> int:
     try:
-        return int(value)
+        return _strict_int(value)
     except (TypeError, ValueError, OverflowError) as exc:  # #5040: `int(inf)` overflows
-        raise InstrumentParseError(f"field {key!r} is not an integer: {value!r}") from exc
+        raise InstrumentParseError(f"field {key!r} is not an integer: {_safe_repr(value)}") from exc
 
 
 def _optional_decimal(raw: Mapping[str, Any], key: str, default: Decimal) -> Decimal:
     value = raw.get(key)
     if value is None or value == "":
         return default
-    try:
-        parsed = Decimal(str(value))
-    except InvalidOperation as exc:
-        raise InstrumentParseError(f"field {key!r} is not a valid decimal: {value!r}") from exc
+    parsed = _to_decimal(key, value)
     if not parsed.is_finite():
-        raise InstrumentParseError(f"field {key!r} is not finite: {value!r}")
+        raise InstrumentParseError(f"field {key!r} is not finite: {_safe_repr(value)}")
     return parsed
+
+
+def _filter(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    """A nested filter object; absent is empty, anything but an object is malformed (#1896)."""
+    value = raw.get(key)
+    if value is None or value == "":
+        return {}
+    if not isinstance(value, Mapping):
+        raise InstrumentParseError(f"field {key!r} is not an object: {_safe_repr(value)}")
+    return value
+
+
+def _str(raw: Mapping[str, Any], key: str, default: str) -> str:
+    value = raw.get(key, default)
+    if not isinstance(value, str):
+        raise InstrumentParseError(f"field {key!r} is not a string: {_safe_repr(value)}")
+    return value
 
 
 def parse_instrument(raw: Mapping[str, Any], *, fetched_at_us: int) -> Instrument:
@@ -79,30 +130,57 @@ def parse_instrument(raw: Mapping[str, Any], *, fetched_at_us: int) -> Instrumen
     try:
         symbol = raw["symbol"]
         status_raw = raw["status"]
-        launch_time_ms = int(raw["launchTime"])
+        launch_time_ms = _strict_int(raw["launchTime"])
     except KeyError as exc:
         raise InstrumentParseError(f"missing required field {exc.args[0]!r}") from exc
     except (TypeError, ValueError, OverflowError) as exc:
         raise InstrumentParseError(
-            f"launchTime is not an integer: {raw.get('launchTime')!r}"
+            f"launchTime is not an integer: {_safe_repr(raw.get('launchTime'))}"
         ) from exc
 
-    status = _STATUS_MAP.get(status_raw)
+    if not isinstance(symbol, str) or not symbol:
+        raise InstrumentParseError(f"symbol is not a non-empty string: {_safe_repr(symbol)}")
+    # A list or object here is unhashable: check the type before the lookup (#1896).
+    status = _STATUS_MAP.get(status_raw) if isinstance(status_raw, str) else None
     if status is None:
-        raise InstrumentParseError(f"unknown instrument status: {status_raw!r}")
+        raise InstrumentParseError(f"unknown instrument status: {_safe_repr(status_raw)}")
 
-    price_filter = raw.get("priceFilter") or {}
-    lot_size_filter = raw.get("lotSizeFilter") or {}
-    leverage_filter = raw.get("leverageFilter") or {}
+    # No default (#1933): a wrong interval corrupts the countdown and annualisation, so a row
+    # without one is rejected like any other missing precision field.
     funding_cfg = raw.get("fundingInterval")
+    if funding_cfg is None or funding_cfg == "":
+        raise InstrumentParseError("missing required field 'fundingInterval'")
+    funding_min = _int(raw, "fundingInterval", funding_cfg)
+    if not 0 < funding_min <= _FUNDING_INTERVAL_MAX_MIN:
+        raise InstrumentParseError(
+            f"field 'fundingInterval' is out of range: {_safe_repr(funding_cfg)}"
+        )
 
+    try:
+        return _build(raw, symbol, status, launch_time_ms, funding_min, fetched_at_us)
+    except ValidationError as exc:  # a value the domain model refuses is a malformed row (#1896)
+        fields = ", ".join(sorted({str(e["loc"][0]) for e in exc.errors() if e["loc"]}))
+        raise InstrumentParseError(f"invalid instrument field(s): {fields}") from exc
+
+
+def _build(
+    raw: Mapping[str, Any],
+    symbol: str,
+    status: Literal["pre_launch", "trading", "delivering", "closed"],
+    launch_time_ms: int,
+    funding_min: int,
+    fetched_at_us: int,
+) -> Instrument:
+    price_filter = _filter(raw, "priceFilter")
+    lot_size_filter = _filter(raw, "lotSizeFilter")
+    leverage_filter = _filter(raw, "leverageFilter")
     return Instrument(
         exchange="bybit",
         category="linear",
         symbol=symbol,
-        base_coin=raw.get("baseCoin", ""),
-        quote_coin=raw.get("quoteCoin", "USDT"),
-        settle_coin=raw.get("settleCoin", "USDT"),
+        base_coin=_str(raw, "baseCoin", ""),
+        quote_coin=_str(raw, "quoteCoin", "USDT"),
+        settle_coin=_str(raw, "settleCoin", "USDT"),
         status=status,
         contract_type="linear_perpetual",
         launch_time=launch_time_ms * 1000,
@@ -120,9 +198,7 @@ def parse_instrument(raw: Mapping[str, Any], *, fetched_at_us: int) -> Instrumen
         max_leverage=_decimal(leverage_filter, "maxLeverage"),
         min_leverage=_optional_decimal(leverage_filter, "minLeverage", Decimal(1)),
         leverage_step=_optional_decimal(leverage_filter, "leverageStep", Decimal("0.01")),
-        funding_interval_min=(
-            _int(raw, "fundingInterval", funding_cfg) if funding_cfg is not None else 480
-        ),
+        funding_interval_min=funding_min,
         upper_funding_rate=(
             _decimal(raw, "upperFundingRate")
             if raw.get("upperFundingRate") is not None
@@ -160,13 +236,18 @@ def parse_instruments(
     parsed: list[Instrument] = []
     rejected: list[RejectedInstrument] = []
     for raw in raw_items:
+        if not isinstance(raw, Mapping):
+            rejected.append(RejectedInstrument(symbol=None, reason="row is not an object"))
+            continue
         try:
             parsed.append(parse_instrument(raw, fetched_at_us=fetched_at_us))
         except InstrumentParseError as exc:
             symbol = raw.get("symbol")
             rejected.append(
                 RejectedInstrument(
-                    symbol=symbol if isinstance(symbol, str) else None, reason=str(exc)
+                    # The symbol is logged with the reason: a hostile one is bounded too (#1896).
+                    symbol=symbol if isinstance(symbol, str) and len(symbol) <= _REPR_MAX else None,
+                    reason=str(exc),
                 )
             )
     return InstrumentsFetchResult(instruments=tuple(parsed), rejected=tuple(rejected))
@@ -184,7 +265,8 @@ async def _fetch_raw_pages(client: _PublicGetter) -> list[Mapping[str, Any]]:
         page = result.get("list") or []
         if not isinstance(page, list):
             raise InstrumentParseError("instruments-info result.list is not a list")
-        items.extend(p for p in page if isinstance(p, Mapping))
+        # Every item goes on: a non-object one is a counted rejection in parse_instruments (#1896).
+        items.extend(page)
         cursor = result.get("nextPageCursor") or None
         if not cursor:
             return items
