@@ -293,10 +293,16 @@ describe("Table (CMP-049) treegrid: roles, levels and indices", () => {
     expect(tree()).toHaveAttribute("aria-multiselectable", "true");
   });
 
-  it("has no serious or critical axe violation, expanded with its totals", async () => {
-    const host = await mount(<TreeHost open="all" totals />);
-    expect(await seriousViolations(host)).toEqual([]);
-  });
+  // Measured 1.5 to 2.1 s in three runs and 7.4 s once at a load of about 27 on 8 cores: axe walks the whole expanded
+  // grid, past the 5 s default on a loaded host, so the measured 30 s ceiling PositionsGrid's axe test carries.
+  it(
+    "has no serious or critical axe violation, expanded with its totals",
+    { timeout: 30_000 },
+    async () => {
+      const host = await mount(<TreeHost open="all" totals />);
+      expect(await seriousViolations(host)).toEqual([]);
+    },
+  );
 });
 
 describe("Table (CMP-049) treegrid: keys (APG Treegrid)", () => {
