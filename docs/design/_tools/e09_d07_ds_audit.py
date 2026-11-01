@@ -45,7 +45,10 @@ working tree.
    base: G-AROW reads a replace row's New on its line and an insert row's bullets right after its
    anchor line, and PR 2 skips it; it is not a HELD entry. G-UNTOUCHED reads
    committed and uncommitted paths against the merge-base, failing closed when it does not
-   resolve or a git call fails: in PR 1 only the pack's five files may differ. G-EDGE matches
+   resolve or a git call fails: in PR 1 only the pack's five files may differ; PR 3 (the boards)
+   also admits the board PNGs and their CVD renders, `sheets/e09-d07/` and `sheets/MANIFEST.sha256`,
+   and G-HANDOFF reads a ticked Final Penpot link: it names the band page by name + id and a board
+   PNG that is in the tree. G-EDGE matches
    patterns, never literals (S-22, S-23): an all-caps cite key the key table does not declare, a
    server-tree path, a source file with a line number, or a fix-direction wording arm. G-CHARSET
    holds every file to an allow-list of non-ASCII characters (no compatibility form, homoglyph,
@@ -1521,6 +1524,17 @@ def pack_changed(paths: list[str]) -> bool:
     return any(p in OWN_PATHS for p in paths)
 
 
+# PR 3 (the boards; the orchestrator's PR 3 answers): the board PNGs and their CVD renders, the
+# board script's folder and the sheets MANIFEST it is listed in
+PR3_IMG = re.compile(r"docs/design/E09/img/E09-D07-\d\d-[a-z0-9-]+\.png")
+PR3_SHEETS = "docs/design/_tools/sheets/e09-d07/"
+PR3_MANIFEST = "docs/design/_tools/sheets/MANIFEST.sha256"
+
+
+def pr3_path(p: str) -> bool:
+    return bool(PR3_IMG.fullmatch(p)) or p.startswith(PR3_SHEETS) or p == PR3_MANIFEST
+
+
 def g_untouched(t: Texts) -> list[Finding]:
     mb = t.env.mb()
     if not mb:
@@ -1533,7 +1547,7 @@ def g_untouched(t: Texts) -> list[Finding]:
     bad: list[str] = []
     pr2 = not pack_changed(paths) and CAT_REL in paths
     for p in paths:
-        if p in OWN_PATHS:
+        if p in OWN_PATHS or pr3_path(p):
             continue
         if p == CAT_REL and pr2:
             at_mb = t.env.base(CAT_REL) if mb.startswith(BASE) else (t.env.show(mb, CAT_REL) or "")
@@ -2295,7 +2309,10 @@ HAND_FIXED: dict[tuple[str, int], tuple[tuple[str, ...], ...]] = {
         ("Lock now", "button", "the visible label", "rendered only with `authLock` wired"),
     ),
 }
-PR3_ONLY = ("Final Penpot link", "Design QA checklist (16 §12)", "Sign-off")
+PR3_ONLY = ("Design QA checklist (16 §12)", "Sign-off")
+# PR 3: a ticked Final Penpot link names the band page by name + id and a board PNG in the tree
+BAND_PAGE = "page `E09-D07 auth band` (`e4de416d-a820-8072-8008-e06d290d694c`)"
+BOARD_PNG = re.compile(r"\]\(img/(E09-D07-\d\d-[a-z0-9-]+\.png)\)")
 
 
 def ledger_table(spec: str) -> list[list[str]]:
@@ -2344,6 +2361,13 @@ def g_handoff(t: Texts) -> list[Finding]:
                 bad.append(f"{cid}: '{label}' has no evidence or reason")
             if label in PR3_ONLY and mark != " ":
                 bad.append(f"{cid}: '{label}' is ticked; it lands with PR 3 (or after)")
+            if label == "Final Penpot link" and mark == "x":
+                pngs = BOARD_PNG.findall(rest)
+                if BAND_PAGE not in rest or not pngs:
+                    bad.append(f"{cid}: the ticked Final Penpot link names no band page or board")
+                for png in pngs:
+                    if not (ROOT / "docs/design/E09/img" / png).is_file():
+                        bad.append(f"{cid}: the Final Penpot link's {png} is not in the tree")
         for n in (2, 3):
             if (cid, n) in HAND_FIXED:
                 blk = re.search(rf"^### Table {n} — .*?(?=^### |\Z)", p, re.MULTILINE | re.DOTALL)
@@ -3311,8 +3335,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-HANDOFF",
         "misname a checklist line of CMP-205's checklist",
         subst(
-            "CMP-205 QrCode (E09-D07, #190)\n\n- [ ] **Final Penpot link**",
-            "CMP-205 QrCode (E09-D07, #190)\n\n- [ ] **Final Penpot lnk**",
+            "CMP-205 QrCode (E09-D07, #190)\n\n- [x] **Final Penpot link**",
+            "CMP-205 QrCode (E09-D07, #190)\n\n- [x] **Final Penpot lnk**",
             doc="hand",
         ),
     ),

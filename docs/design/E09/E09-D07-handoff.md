@@ -22,7 +22,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 
 ## Handoff checklist — CMP-200 AuthCard (E09-D07, #190)
 
-- [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-200 · AuthCard`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
+- [x] **Final Penpot link** — page `E09-D07 auth band` (`e4de416d-a820-8072-8008-e06d290d694c`) of the per-set file `E09-D07 boards` (the PR 3 ruling), page name + page id only: the specimen frames `CMP-200 · AuthCard / State=…` on board 01, [E09-D07-01-auth-card-and-build-footer.png](img/E09-D07-01-auth-card-and-build-footer.png), and its row on the band boards 08, 09 and 10 (dark, light, high contrast); specimen boards, no library component (BQ-2)
 - [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (`15`:2597 (unchanged))
 - [x] **Keyboard table** — table 2
 - [x] **Accessible name / role table** — table 3
@@ -88,7 +88,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 
 ## Handoff checklist — CMP-201 PasswordField (E09-D07, #190)
 
-- [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-201 · PasswordField`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
+- [x] **Final Penpot link** — page `E09-D07 auth band` (`e4de416d-a820-8072-8008-e06d290d694c`) of the per-set file `E09-D07 boards` (the PR 3 ruling), page name + page id only: the specimen frames `CMP-201 · PasswordField / State=…` on board 02, [E09-D07-02-password-field.png](img/E09-D07-02-password-field.png), and its row on the band boards 08, 09 and 10 (dark, light, high contrast); specimen boards, no library component (BQ-2)
 - [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (A-19)
 - [x] **Keyboard table** — table 2
 - [x] **Accessible name / role table** — table 3
@@ -155,7 +155,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 
 ## Handoff checklist — CMP-202 PasswordStrengthMeter (E09-D07, #190)
 
-- [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-202 · PasswordStrengthMeter`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
+- [x] **Final Penpot link** — page `E09-D07 auth band` (`e4de416d-a820-8072-8008-e06d290d694c`) of the per-set file `E09-D07 boards` (the PR 3 ruling), page name + page id only: the specimen frames `CMP-202 · PasswordStrengthMeter / State=…` on board 03, [E09-D07-03-strength-meter-and-checklist.png](img/E09-D07-03-strength-meter-and-checklist.png), and its row on the band boards 08, 09 and 10 (dark, light, high contrast); specimen boards, no library component (BQ-2)
 - [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (A-24)
 - [x] **Keyboard table** — N/A — not focusable (table 2 lists no key)
 - [x] **Accessible name / role table** — table 3
@@ -219,7 +219,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 
 ## Handoff checklist — CMP-203 RequirementChecklist (E09-D07, #190)
 
-- [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-203 · RequirementChecklist`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
+- [x] **Final Penpot link** — page `E09-D07 auth band` (`e4de416d-a820-8072-8008-e06d290d694c`) of the per-set file `E09-D07 boards` (the PR 3 ruling), page name + page id only: the specimen frames `CMP-203 · RequirementChecklist / State=…` on board 03, [E09-D07-03-strength-meter-and-checklist.png](img/E09-D07-03-strength-meter-and-checklist.png), and its row on the band boards 08, 09 and 10 (dark, light, high contrast); specimen boards, no library component (BQ-2)
 - [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (A-30)
 - [x] **Keyboard table** — N/A — not focusable (table 2 lists no key)
 - [x] **Accessible name / role table** — table 3
@@ -284,7 +284,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 
 ## Handoff checklist — CMP-204 OtpInput (E09-D07, #190)
 
-- [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-204 · OtpInput`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
+- [x] **Final Penpot link** — page `E09-D07 auth band` (`e4de416d-a820-8072-8008-e06d290d694c`) of the per-set file `E09-D07 boards` (the PR 3 ruling), page name + page id only: the specimen frames `CMP-204 · OtpInput / State=…` on board 04, [E09-D07-04-otp-input.png](img/E09-D07-04-otp-input.png), and its row on the band boards 08, 09 and 10 (dark, light, high contrast); specimen boards, no library component (BQ-2)
 - [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (A-36)
 - [x] **Keyboard table** — table 2
 - [x] **Accessible name / role table** — table 3
@@ -352,7 +352,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 
 ## Handoff checklist — CMP-205 QrCode (E09-D07, #190)
 
-- [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-205 · QrCode`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
+- [x] **Final Penpot link** — page `E09-D07 auth band` (`e4de416d-a820-8072-8008-e06d290d694c`) of the per-set file `E09-D07 boards` (the PR 3 ruling), page name + page id only: the specimen frames `CMP-205 · QrCode / State=…` on board 05, [E09-D07-05-qr-code-and-recovery-codes.png](img/E09-D07-05-qr-code-and-recovery-codes.png), and its row on the band boards 08, 09 and 10 (dark, light, high contrast); specimen boards, no library component (BQ-2)
 - [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (`15`:2661 (unchanged))
 - [x] **Keyboard table** — N/A — not focusable (table 2 lists no key)
 - [x] **Accessible name / role table** — table 3
@@ -413,7 +413,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 
 ## Handoff checklist — CMP-206 RecoveryCodeList (E09-D07, #190)
 
-- [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-206 · RecoveryCodeList`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
+- [x] **Final Penpot link** — page `E09-D07 auth band` (`e4de416d-a820-8072-8008-e06d290d694c`) of the per-set file `E09-D07 boards` (the PR 3 ruling), page name + page id only: the specimen frames `CMP-206 · RecoveryCodeList / State=…` on board 05, [E09-D07-05-qr-code-and-recovery-codes.png](img/E09-D07-05-qr-code-and-recovery-codes.png), and its row on the band boards 08, 09 and 10 (dark, light, high contrast); specimen boards, no library component (BQ-2)
 - [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (A-45)
 - [x] **Keyboard table** — table 2
 - [x] **Accessible name / role table** — table 3
@@ -477,7 +477,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 
 ## Handoff checklist — CMP-207 BuildFooter (E09-D07, #190)
 
-- [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-207 · BuildFooter`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
+- [x] **Final Penpot link** — page `E09-D07 auth band` (`e4de416d-a820-8072-8008-e06d290d694c`) of the per-set file `E09-D07 boards` (the PR 3 ruling), page name + page id only: the specimen frames `CMP-207 · BuildFooter / State=…` on board 01, [E09-D07-01-auth-card-and-build-footer.png](img/E09-D07-01-auth-card-and-build-footer.png), and its row on the band boards 08, 09 and 10 (dark, light, high contrast); specimen boards, no library component (BQ-2)
 - [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (A-50)
 - [x] **Keyboard table** — N/A — not focusable (table 2 lists no key)
 - [x] **Accessible name / role table** — table 3
@@ -540,7 +540,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 
 ## Handoff checklist — CMP-097 OnboardingChecklist (E09-D07, #190)
 
-- [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-097 · OnboardingChecklist`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
+- [x] **Final Penpot link** — page `E09-D07 auth band` (`e4de416d-a820-8072-8008-e06d290d694c`) of the per-set file `E09-D07 boards` (the PR 3 ruling), page name + page id only: the specimen frames `CMP-097 · OnboardingChecklist / State=…` on board 06, [E09-D07-06-onboarding-checklist.png](img/E09-D07-06-onboarding-checklist.png), and its row on the band boards 08, 09 and 10 (dark, light, high contrast); specimen boards, no library component (BQ-2)
 - [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (A-4)
 - [x] **Keyboard table** — table 2
 - [x] **Accessible name / role table** — table 3
@@ -605,7 +605,7 @@ The pack's §2 holds the ledger: 36<!--=COUNT:ledger--> rows, 21<!--=COUNT:ledge
 
 ## Handoff checklist — CMP-098 SessionTimeoutWarning (E09-D07, #190)
 
-- [ ] **Final Penpot link** — PR 3: file CandleViewer DS, page `E09-D07 auth band`, component `CMP-098 · SessionTimeoutWarning`, referenced by page name + page id only; its specimen PNG under `docs/design/E09/img/` (BQ-2)
+- [x] **Final Penpot link** — page `E09-D07 auth band` (`e4de416d-a820-8072-8008-e06d290d694c`) of the per-set file `E09-D07 boards` (the PR 3 ruling), page name + page id only: the specimen frames `CMP-098 · SessionTimeoutWarning / State=…` on board 07, [E09-D07-07-session-timeout-warning.png](img/E09-D07-07-session-timeout-warning.png), and its row on the band boards 08, 09 and 10 (dark, light, high contrast); specimen boards, no library component (BQ-2)
 - [x] **Variants × States matrix** — table 1; the stories of the pack's §7 (A-9)
 - [x] **Keyboard table** — table 2
 - [x] **Accessible name / role table** — table 3
