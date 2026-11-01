@@ -97,6 +97,34 @@ describe("setDrawings through the runtime", () => {
   });
 });
 
+describe("drawing-line through the runtime (slice 2)", () => {
+  type Frame = Extract<FromWorker, { t: "frame" }>;
+  const last = (): Frame => out.filter((m): m is Frame => m.t === "frame").at(-1) as Frame;
+
+  it("draws the lines in one call; a pan uploads 0 bytes; a drag uploads one instance", () => {
+    cmd({ k: "setDrawings", op: "replace", drawings: many(5) });
+    frame();
+    expect([last().drawCalls, last().triangles, last().uploadedBytes]).toEqual([1, 10, 64 * 64]); // the first upload is the whole 64-slot ring
+    cmd({ k: "setViewport", timeStart: T(3), timeEnd: T(90) });
+    frame();
+    expect([last().drawCalls, last().uploadedBytes]).toEqual([1, 0]);
+    cmd({ k: "setDrawings", op: "patch", drawings: [seg("d2", 40)] });
+    frame();
+    expect(last().uploadedBytes).toBe(64);
+  });
+
+  it("re-wires the ring to the degraded-2d re-init's backend and builder", () => {
+    cmd({ k: "setDrawings", op: "replace", drawings: many(3) });
+    frame();
+    init({ profile: "degraded-2d" });
+    frame();
+    expect([last().renderProfile, last().drawCalls]).toEqual(["degraded-2d", 0]); // FakeGl: no 2D
+    cmd({ k: "setDrawings", op: "patch", drawings: [seg("d9", 9)] });
+    frame();
+    expect(bounds().at(-1)?.ids).toEqual(["d0", "d1", "d2", "d9"]);
+  });
+});
+
 describe("the host after a worker restart", () => {
   it("replays the folded set as one replace, never holding a refused change", () => {
     FakeWorker.created = [];

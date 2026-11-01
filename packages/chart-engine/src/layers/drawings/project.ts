@@ -5,10 +5,13 @@
 import { Dirty } from "../../scene/dirty.js";
 import type { FrameCtx } from "../../scene/frame-context.js";
 import { ContentNode } from "../../scene/node.js";
+import type { MutationRange } from "../../model/counters.js";
+import { PROGRAM } from "../../scene/instance-layout.js";
 import type { BatchSink } from "../../scene/pool.js";
 import { indexAt, indexToScreen, priceToScreen } from "../../viewport/transform.js";
 import type { IndexTimeMap, ViewportState } from "../../viewport/types.js";
 import { copyInput, MAX_DRAWINGS, type DrawingInput, type SetDrawings } from "./model.js";
+import { LineInstances } from "./lines.js";
 import { DrawingSet } from "./set.js";
 
 export interface DrawingRecord {
@@ -148,9 +151,17 @@ export class DrawingsNode extends ContentNode {
   /** Counters: a pan re-indexes no record, a one-drawing drag one a frame. */
   reindexed = 0;
   boundsPasses = 0;
+  /** The `drawing-line` ring (slice 2): rewritten on DATA, a re-index or a DPR change only. */
+  readonly lines = new LineInstances();
+  /** Encodes so far: a pan adds none. */
+  encodes = 0;
+  /** Where a changed instance range goes: the runtime's `BatchBuilder.patch` (one per encode). */
+  onRange: ((r: MutationRange) => void) | null = null;
+  private readonly range = { op: "patch" as const, from: 0, to: 0, indexShift: 0 };
   private map: IndexTimeMap | null = null;
   private mapLength = -1;
   private stamp = 0;
+  private dpr = 0;
 
   /** A `setDrawings`: DATA on this node only; a refusal changes nothing (E14-X01 DR29). */
   apply(cmd: SetDrawings): string | null {
@@ -167,21 +178,36 @@ export class DrawingsNode extends ContentNode {
       this.stamp += 1; // a new bar map re-indexes every record once
     }
     const order = this.set.order;
+    let encode = (this.dirty & (Dirty.DATA | Dirty.STYLE)) !== 0 || vp.dpr !== this.dpr;
     for (let i = 0; i < order.length; i += 1) {
       const r = order[i] as DrawingRecord;
       if (r.stamp !== this.stamp) {
         reindex(r, vp.map, this.stamp);
         this.reindexed += 1;
+        encode = true;
       }
       screenBounds(vp, r, this.bounds, 4 * i);
     }
     this.boundsPasses += 1;
     this.boundsDirty = true;
+    if (!encode) return; // TRANSFORM alone: the shader re-projects from the pane block
+    this.dpr = vp.dpr;
+    this.lines.encode(order, vp.dpr);
+    this.encodes += 1;
+    if (this.lines.lo >= this.lines.hi) return;
+    this.range.from = this.lines.lo;
+    this.range.to = this.lines.hi;
+    this.onRange?.(this.range);
   }
 
-  /** Slice 2 appends the line, fill and label batches here. */
+  /** One `drawing-line` batch for every line-type drawing (26 §3.10: ≤ 3 draws for the layer). */
   collect(sink: BatchSink): boolean {
-    void sink;
+    const e = sink.append();
+    e.nodeId = this.id;
+    e.program = PROGRAM.drawingLine;
+    e.texture = 0;
+    e.first = 0;
+    e.count = this.lines.count;
     return true;
   }
 }

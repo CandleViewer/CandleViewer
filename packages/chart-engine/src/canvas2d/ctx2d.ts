@@ -5,6 +5,9 @@ export interface Ctx2DLike {
   fillStyle: unknown;
   strokeStyle: unknown;
   lineWidth: number;
+  /** E14-T03: round caps and dashes for `drawing-line`; optional, as a fake may omit them. */
+  lineCap?: string;
+  setLineDash?(segments: readonly number[]): void;
   clearRect(x: number, y: number, w: number, h: number): void;
   fillRect(x: number, y: number, w: number, h: number): void;
   beginPath(): void;

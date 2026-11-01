@@ -598,6 +598,24 @@ accepted exception: the `drawingBounds` post, at most once a frame, copies the b
 only when the set changed) into the message. Residuals: a same-length bar replace is not
 re-indexed until E12 wires the store; text bounds are the anchor until labels draw (slice 4).
 
+## Drawings layer: lines (E14-T03 slice 2)
+
+`drawing-line` (`src/gl/shaders/drawing-line.ts`, program 4; BQ-5: `line` is untouched) draws
+segment, ray, extended line, hline, vline and polyline as one instanced quad per drawn segment,
+one draw call per pane for all of them (26's drawings budget is 3: lines, fills, glyphs). It
+differs from §3.10's per-instance `p0`/`p1` in px: anchors are chart space, int (bar index, tick)
+plus a fraction, re-projected through the pane block like `bar-cell` (BQ-75, BQ-113), so a pan or
+zoom is a uniform write and the ring (`src/layers/drawings/lines.ts`) is rewritten only on DATA,
+a re-index or a DPR change (width is stored in device px), and then only the changed instances
+upload. Round caps and dashes are a fragment SDF (a capsule cut by the pattern) measured from the
+anchor p0, so an extended line's dashes stay put; polyline joins are round and dashes restart per
+segment. `DASH_LUT` is in stroke widths (solid; dashed, a 4-width dash and a 2-width gap; dotted,
+a 1-width dot every 2): engine values, as E14-D04 names the three styles only. The 2D painter
+strokes the same geometry with round caps and `setLineDash`, buckets keyed by dash too. Gaps:
+the engine sets no vertex attributes yet (shared GL infrastructure), so the GL fake proves the
+program, uniforms, draws and uploads, and a float32 stand-in proves the projection (BQ-78) until
+E11-T08's goldens; hover and selection outlines are E14-T04's.
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/chart-engine build` — tsup ESM build with `.d.ts` (entries:

@@ -8,6 +8,7 @@ import { GL, type GL2Like, type GLObject } from "./gl-types.js";
 import type { GlRegistry, Handle } from "./registry.js";
 import { BAR_CELL } from "./shaders/bar-cell-stub.js";
 import { CANDLE } from "./shaders/candle.js";
+import { DRAWING_LINE } from "./shaders/drawing-line.js";
 import { LINE } from "./shaders/line.js";
 import { QUAD } from "./shaders/quad.js";
 import { SDF_TEXT } from "./shaders/sdf-text.js";
@@ -31,7 +32,14 @@ export class ContextLostError extends Error {
 }
 
 /** A batch's `program` number (shared with the 2D backend, BQ-87) indexes this table. */
-export const PROGRAMS: readonly ProgramSource[] = [LINE, QUAD, SDF_TEXT, BAR_CELL, CANDLE];
+export const PROGRAMS: readonly ProgramSource[] = [
+  LINE,
+  QUAD,
+  SDF_TEXT,
+  BAR_CELL,
+  CANDLE,
+  DRAWING_LINE,
+];
 export { PROGRAM };
 
 /** A compile or link failure; `log` is the driver's info log (trimmed in the backend's message). */

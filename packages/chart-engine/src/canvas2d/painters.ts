@@ -5,6 +5,7 @@
 import type { BatchUniforms } from "../gl/submit.js";
 import { candleRect, fullOutline, GEOM } from "../layers/candle/geometry.js";
 import { CANDLE_STRIDE } from "../layers/candle/ring.js";
+import { DASH_LUT } from "../gl/shaders/drawing-line.js";
 import { attributeOffset, PROGRAM } from "../scene/instance-layout.js";
 import { projectRel, type PaneUniforms } from "../viewport/transform.js";
 import type { Ctx2DLike } from "./ctx2d.js";
@@ -27,6 +28,9 @@ const SEG = attributeOffset(PROGRAM.line, "a_segment");
 const RECT = attributeOffset(PROGRAM.quad, "a_rect");
 const CELL = attributeOffset(PROGRAM.barCell, "a_cell");
 const SIZE = attributeOffset(PROGRAM.barCell, "a_size");
+const P0 = attributeOffset(PROGRAM.drawingLine, "a_p0");
+const FRAC = attributeOffset(PROGRAM.drawingLine, "a_frac");
+const STYLE = attributeOffset(PROGRAM.drawingLine, "a_style");
 
 /** `u_viewport` → backing store: the shaders' `p / u_viewport * 2 - 1` then the GL viewport. */
 const scaleX = (a: PaintArgs): number => {
@@ -134,6 +138,43 @@ export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
   ctx.rect(x * sx, y * sy, w * sx, h * sy);
 }
 
+/** `drawing-line`'s anchor `k` (0 or 1) through the block, in `u_viewport` px: the shader's. */
+function lineX(a: PaintArgs, b: PaneUniforms, k: number): number {
+  const rel =
+    (a.ints[a.at + P0 + 2 * k] ?? 0) - (b.ints[0] ?? 0) + (a.data[a.at + FRAC + 2 * k] ?? 0);
+  return (rel + 0.5 - (b.floats[3] ?? 0)) * (b.floats[0] ?? 0);
+}
+function lineY(a: PaintArgs, b: PaneUniforms, k: number): number {
+  const rel = (a.ints[a.at + P0 + 2 * k + 1] ?? 0) - (b.ints[1] ?? 0);
+  return projectRel(b.floats, rel + (a.data[a.at + FRAC + 2 * k + 1] ?? 0));
+}
+
+/**
+ * `drawing-line` (E14-T03): p0 → p1 as the shader projects them, a ray or an extended line run
+ * out as far as the shader's; an extended line starts a whole number of dash periods before p0,
+ * so the bucket's dash pattern (which restarts per subpath) lines up with the shader's.
+ */
+export function paintDrawingLine(ctx: Ctx2DLike, a: PaintArgs): void {
+  const b = a.block;
+  if (b === null) return;
+  const x0 = lineX(a, b, 0);
+  const y0 = lineY(a, b, 0);
+  const dx = lineX(a, b, 1) - x0;
+  const dy = lineY(a, b, 1) - y0;
+  const len = Math.hypot(dx, dy);
+  const ux = len > 1e-6 ? dx / len : 1;
+  const uy = len > 1e-6 ? dy / len : 0;
+  const ext = a.data[a.at + STYLE + 2] ?? 0;
+  const far = 2 * (Math.abs(x0) + Math.abs(y0) + (b.floats[4] ?? 0) + (b.floats[5] ?? 0));
+  const period = (DASH_LUT[a.data[a.at + STYLE + 1] ?? 0]?.[1] ?? 0) * (a.data[a.at + STYLE] ?? 0);
+  const s0 = ext > 1.5 ? -(period > 0 ? Math.ceil(far / period) * period : far) : 0;
+  const s1 = ext > 0.5 ? far : len;
+  const sx = scaleX(a);
+  const sy = scaleY(a);
+  ctx.moveTo((x0 + ux * s0) * sx, (y0 + uy * s0) * sy);
+  ctx.lineTo((x0 + ux * s1) * sx, (y0 + uy * s1) * sy);
+}
+
 /** Indexed by `PROGRAM`; `sdf-text` has none: the 2D path cannot rebuild strings (BQ-88). */
 export const PAINTERS: readonly (((ctx: Ctx2DLike, a: PaintArgs) => void) | null)[] = [
   paintLine,
@@ -141,4 +182,5 @@ export const PAINTERS: readonly (((ctx: Ctx2DLike, a: PaintArgs) => void) | null
   null,
   paintBarCell,
   paintCandle,
+  paintDrawingLine,
 ];

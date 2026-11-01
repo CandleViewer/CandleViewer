@@ -299,6 +299,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     backend.setPaneUniforms(() => inst.uniforms); // one pane until E11-S09 (BQ-45)
     backend.setBatchUniforms((b) => inst.blocks.get(b.nodeId) ?? null); // E12-S06
     for (const c of inst.candles) attachCandle(backend, c);
+    if (inst.drawings !== null) backend.attach(inst.drawings.id, inst.drawings.lines);
     if (degraded !== null) {
       const { reason, message, reducedCapabilities } = degraded;
       post(ENGINE_NO_WEBGL2, message, true, { reducedCapabilities, reason }); // BQ-90
@@ -643,7 +644,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         removeSeries(inst, cmd.series);
         return;
       case "setDrawings": {
-        const why = (inst.drawings ??= addDrawings(inst.graph)).apply(cmd);
+        const why = (inst.drawings ??= wire(inst, addDrawings(inst.graph))).apply(cmd);
         if (why === null) touch(inst);
         else fail(inst.id, `setDrawings: ${why}`); // nothing changed (E14-X01 DR29)
         return;
@@ -662,6 +663,13 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   function addDrawings(graph: scene.SceneGraph, node = new DrawingsNode("main/drawings/set")) {
     graph.addNode("main", "drawings", node);
     node.dirty = scene.DIRTY_ALL;
+    return node;
+  }
+
+  /** The node's ring on the open backend, and its changed instance ranges into the builder. */
+  function wire(inst: Instance, node: DrawingsNode): DrawingsNode {
+    node.onRange = (r) => inst.builder.patch(node.id, r);
+    inst.gpu.backend?.attach(node.id, node.lines);
     return node;
   }
 
@@ -770,6 +778,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       const main = inst.series.get(inst.main);
       if (main !== undefined) viewport.setMap(main.store);
       inst.gestures.reduce = msg.reducedMotion === true;
+      if (inst.drawings !== null) wire(inst, inst.drawings); // the new scene's builder
       charts.set(msg.id, inst);
       touch(inst);
       return;

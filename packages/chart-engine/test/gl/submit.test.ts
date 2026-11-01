@@ -40,7 +40,8 @@ describe("draw submission: steady state", () => {
     // The scene draws line, sdf-text and bar-cell: quad's one and candle's (E12-S06) never resolve.
     const unused =
       (PROGRAMS[PROGRAM.quad]?.uniforms.length ?? 0) +
-      (PROGRAMS[PROGRAM.candle]?.uniforms.length ?? 0);
+      (PROGRAMS[PROGRAM.candle]?.uniforms.length ?? 0) +
+      (PROGRAMS[PROGRAM.drawingLine]?.uniforms.length ?? 0); // E14-T03's, unused here
     const uniforms = PROGRAMS.reduce((n, p) => n + p.uniforms.length, 0) - unused;
     const before = [registry.stats.created, programs.stats.compiles, bench.builder.pool.created];
     expect(calls(gl, "getUniformLocation")).toBe(uniforms);

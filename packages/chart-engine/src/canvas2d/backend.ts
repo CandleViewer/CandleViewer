@@ -9,6 +9,7 @@ import type { VertexSource } from "../gl/buffers.js";
 import type { BatchUniforms, BatchUniformSource, PaneUniformSource } from "../gl/submit.js";
 import { CANDLE_DIR, CANDLE_STRIDE } from "../layers/candle/ring.js";
 import { PALETTE } from "../layers/candle/palette.js";
+import { DASH_LUT } from "../gl/shaders/drawing-line.js";
 import { DrawTrace } from "../gl/trace.js";
 import type { RetainedBatch } from "../scene/batch-builder.js";
 import { attributeOffset, INSTANCE_LAYOUTS, PROGRAM } from "../scene/instance-layout.js";
@@ -41,6 +42,14 @@ const COLOR = INSTANCE_LAYOUTS.map(
   (l) => l.attributes.find(([name]) => name === "a_color")?.[1] ?? 0,
 );
 const WIDTH = attributeOffset(PROGRAM.line, "a_width");
+const STYLE = attributeOffset(PROGRAM.drawingLine, "a_style");
+const SOLID: readonly number[] = [];
+
+/** A `drawing-line` bucket's dash index and the [dash, gap] it strokes with (set per flush). */
+interface Dash {
+  readonly index: number;
+  readonly pattern: number[];
+}
 /**
  * A line width in 1/16 px, in [1, 65535]: the bucket key and the stroked width agree, and a
  * hairline, NaN or huge width never becomes 0 (a canvas ignores `lineWidth = 0` and keeps the last).
@@ -72,6 +81,10 @@ export class Canvas2DBackend implements RenderBackend {
   private readonly frameBlocks: (PaneUniforms | null)[] = [];
   private readonly frameBatches: (BatchUniforms | null)[] = [];
   private run = 1;
+  /** Per `drawing-line` bucket: kept apart so the other buckets' shape and path stay as they were. */
+  private readonly dashes = new WeakMap<Bucket, Dash>(); // dies with its bucket
+  /** The last stroke set round caps or a dash (`drawing-line`). */
+  private dashed = false;
   private readonly args: PaintArgs = {
     data: new Float32Array(0),
     ints: EMPTY,
@@ -167,9 +180,17 @@ export class Canvas2DBackend implements RenderBackend {
       }
       const capacity = Math.floor(data.length / stride);
       const n = Math.min(b.count, capacity);
-      for (let j = 0; j < n; j += 1) {
-        const at = ((head + b.first + j) % capacity) * stride;
-        this.push(this.bucketOf(b.program, data, at), i, at);
+      if (b.program === PROGRAM.drawingLine) {
+        // E14-T03: decided once per batch, so the other programs' per-instance path is unchanged.
+        for (let j = 0; j < n; j += 1) {
+          const at = ((head + b.first + j) % capacity) * stride;
+          this.push(this.drawingBucket(data, at), i, at);
+        }
+      } else {
+        for (let j = 0; j < n; j += 1) {
+          const at = ((head + b.first + j) % capacity) * stride;
+          this.push(this.bucketOf(b.program, data, at), i, at);
+        }
       }
       if (trace.enabled) trace.nodes.push(b.nodeId);
     }
@@ -229,6 +250,51 @@ export class Canvas2DBackend implements RenderBackend {
     return bucket;
   }
 
+  /**
+   * `drawing-line`'s bucket: keyed by its dash too, above every program's key (below 2^53: (16 +
+   * 2) × 2^16 × 2^32), its width the instance's device px.
+   */
+  private drawingBucket(data: Float32Array, at: number): Bucket {
+    const c = at + (COLOR[PROGRAM.drawingLine] ?? 0);
+    const rgba = byte(data[c]) * 0x1000000 + byte(data[c + 1]) * 0x10000;
+    const packed = rgba + byte(data[c + 2]) * 0x100 + byte(data[c + 3]);
+    const width = sixteenths(data[at + STYLE]);
+    const index = Math.min(Math.max(Math.round(data[at + STYLE + 1] ?? 0), 0), 2);
+    const key = ((16 + index) * 65536 + width) * 2 ** 32 + packed;
+    let bucket = this.buckets.get(key);
+    if (bucket === undefined) {
+      if (this.buckets.size >= MAX_BUCKETS) this.buckets.clear();
+      const css = `rgba(${byte(data[c])}, ${byte(data[c + 1])}, ${byte(data[c + 2])}, ${byte(data[c + 3]) / 255})`;
+      const program = PROGRAM.drawingLine;
+      bucket = { program, css, width: width / 16, refs: new Int32Array(64), n: 0, run: 0 };
+      this.buckets.set(key, bucket);
+      this.dashes.set(bucket, { index, pattern: [0, 0] });
+    }
+    if (bucket.run !== this.run) {
+      bucket.run = this.run;
+      bucket.n = 0;
+      this.order.push(bucket);
+    }
+    return bucket;
+  }
+
+  /**
+   * Round caps and the LUT's pattern for a `drawing-line` bucket, so a dash is its core plus a cap
+   * at each end, as the shader's capsule; `null` after one: a `line` gets butt caps, no dash.
+   */
+  private dash(ctx: Ctx2DLike, bucket: Bucket | null, width: number): void {
+    const d = bucket === null ? undefined : this.dashes.get(bucket);
+    this.dashed = d !== undefined;
+    ctx.lineCap = d === undefined ? "butt" : "round";
+    const core = DASH_LUT[d?.index ?? 0]?.[0] ?? 0;
+    const period = DASH_LUT[d?.index ?? 0]?.[1] ?? 0;
+    if (d !== undefined) {
+      d.pattern[0] = core * width;
+      d.pattern[1] = (period - core) * width;
+    }
+    ctx.setLineDash?.(d !== undefined && period > 0 ? d.pattern : SOLID);
+  }
+
   /** Appends a ref pair, doubling the bucket's array when full (amortised: none once warm). */
   private push(b: Bucket, i: number, at: number): void {
     if (b.n + 2 > b.refs.length) {
@@ -268,6 +334,14 @@ export class Canvas2DBackend implements RenderBackend {
         const v = a.block?.floats[4] ?? a.w;
         ctx.lineWidth = bucket.width * (v > 0 ? a.w / v : 0);
         ctx.strokeStyle = bucket.css;
+        if (this.dashed) this.dash(ctx, null, 0);
+        ctx.stroke();
+      } else if (bucket.program === PROGRAM.drawingLine) {
+        const v = a.block?.floats[4] ?? a.w;
+        const width = bucket.width * (v > 0 ? a.w / v : 0);
+        ctx.lineWidth = width;
+        ctx.strokeStyle = bucket.css;
+        this.dash(ctx, bucket, width);
         ctx.stroke();
       } else {
         ctx.fillStyle = bucket.css;

@@ -3,7 +3,14 @@
 // and the Canvas2D backend (its painters) read one ring the same way. DOM- and GL-free.
 
 /** A batch's `program` number: the state-sort key of 26 §3.1, shared by both backends. */
-export const PROGRAM = { line: 0, quad: 1, sdfText: 2, barCell: 3, candle: 4 } as const;
+export const PROGRAM = {
+  line: 0,
+  quad: 1,
+  sdfText: 2,
+  barCell: 3,
+  candle: 4,
+  drawingLine: 5,
+} as const;
 
 /** [shader attribute, float offset in the slot, components, read as int32 bits]. */
 export type InstanceAttribute = readonly [name: string, offset: number, size: number, int: boolean];
@@ -57,6 +64,18 @@ export const INSTANCE_LAYOUTS: readonly InstanceLayout[] = [
     attributes: [
       ["a_ohlc", 0, 4, true],
       ["a_meta", 4, 1, true],
+    ],
+  },
+  // E14-T03: anchors as int (bar index, tick) bits plus fractions; style = (width in device px,
+  // dash index, extend: 0 none / 1 forward / 2 both, unused); colour RGBA in 0..1.
+  {
+    stride: 16,
+    attributes: [
+      ["a_p0", 0, 2, true],
+      ["a_p1", 2, 2, true],
+      ["a_frac", 4, 4, false],
+      ["a_style", 8, 4, false],
+      ["a_color", 12, 4, false],
     ],
   },
 ];
