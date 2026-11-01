@@ -447,22 +447,15 @@ describe("Tooltip (CMP-016)", () => {
     expect(onHostKey).toHaveBeenCalledWith("Escape");
   });
 
-  it("pressing the trigger hides a hover-opened tooltip, so the next Esc is not spent on it", async () => {
+  it("a press on a gated trigger keeps its reason echo up (G-T2.3: a press re-shows why)", async () => {
     const host = await saveAs();
     const button = trigger(host);
-    await hover(button);
-    await advance(300);
+    await focus(button);
     expect(shown()).toBe(true);
     await act(async () => {
       fireEvent.pointerDown(button);
     });
-    expect(shown()).toBe(false);
-    // Still hovered: it stays away until the pointer leaves and returns.
     await advance(1000);
-    expect(shown()).toBe(false);
-    await unhover(button);
-    await hover(button);
-    await advance(300);
     expect(shown()).toBe(true);
   });
 
