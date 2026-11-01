@@ -27,19 +27,13 @@ describe("filterbar.css contract", () => {
     expect(css.all).not.toMatch(/opacity|text-disabled/);
   });
 
-  it("T2: the named lock leads in text.secondary; CMP-001's trailing lock is not drawn twice", () => {
-    expect(find(css.normal, ".cv-filterbar__lock", "color")).toContain(
-      "color: var(--color-text-secondary)",
-    );
-    expect(find(css.normal, ".cv-filterbar .cv-button__glyph", "display")).toContain(
-      "display: none",
-    );
+  it("T2: no lock or glyph rule of the bar's own; CMP-001 draws its named lock (as CMP-177's controls)", () => {
+    expect(css.all).not.toMatch(/cv-filterbar__lock|\.cv-button/);
   });
 
-  it("forced colours: the words CanvasText, the lock currentColor, no token", () => {
+  it("forced colours: the words CanvasText, no token", () => {
     expect(find(css.forced, ".cv-filterbar__reason", "color")).toContain("CanvasText");
     expect(find(css.forced, ".cv-filterbar__empty", "color")).toContain("CanvasText");
-    expect(find(css.forced, ".cv-filterbar__lock", "color")).toContain("currentcolor");
     expect(css.forced).not.toContain("var(--color");
   });
 });

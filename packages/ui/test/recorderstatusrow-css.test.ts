@@ -29,21 +29,39 @@ describe("recorderstatusrow.css contract (E16-D02 §11.1, §10.4, §10.5)", () =
     ).toContain("var(--color-status-success-default)");
   });
 
-  it("T2: the raised fill with a border.default hairline, label and lock tertiary, never dimmed", () => {
-    const t2 = find(css.normal, '.cv-rsr__action.cv-button[aria-disabled="true"]', "background");
-    expect(t2).toContain("background: var(--color-surface-raised)");
-    expect(t2).toContain("border-color: var(--color-border-default)");
-    expect(t2).toContain("color: var(--color-text-tertiary)");
-    expect(find(css.normal, ".cv-rsr__lock", "color")).toContain("var(--color-text-tertiary)");
+  it("T2: the action is CMP-001's own (no restyle here); the switch's lock CMP-004's, its label tertiary, never dimmed", () => {
+    // Composed as CMP-055's controls are: the atom's T2 look stands (#262's C-row), never restyled per molecule; the
+    // switch's lock is CMP-004's centred `cv-choice__lock` (B-5309-09), no lock rule of the row's own.
+    expect(css.all).not.toMatch(/\.cv-button|cv-rsr__action|cv-rsr__lock/);
+    expect(find(css.normal, ".cv-rsr__keep[data-gated] .cv-choice__label", "color")).toContain(
+      "var(--color-text-tertiary)",
+    );
     expect(find(css.normal, ".cv-rsr__reason", "color")).toContain("var(--color-text-secondary)");
     expect(css.all).not.toMatch(/opacity|--color-text-disabled/);
   });
 
-  it("forced colours: words and glyphs CanvasText, a T2 control's border GrayText", () => {
+  it("the grid's State is one line, its words cut with an ellipsis, icon and tag whole (D02 §9.1, B-5309-01)", () => {
+    const line = "tr.cv-rsr-row:not([data-stacked]) .cv-rsr__state";
+    expect(find(css.normal, line, "white-space")).toContain("white-space: nowrap");
+    const words = find(
+      css.normal,
+      "tr.cv-rsr-row:not([data-stacked]) .cv-rsr__words",
+      "text-overflow",
+    );
+    expect(words).toContain("overflow: hidden");
+    expect(words).toContain("text-overflow: ellipsis");
+    expect(find(css.normal, ".cv-rsr__icon", "flex")).toContain("flex: none");
+    expect(find(css.normal, ".cv-rsr__state > .cv-tag", "flex")).toContain("flex: none");
+  });
+
+  it("figures end-aligned; they wrap, the share on its own line, never over Retention (board 05, D-5309-03)", () => {
+    const num = find(css.normal, ".cv-rsr__num", "white-space");
+    expect(num).toContain("white-space: normal");
+    expect(num).toContain("text-align: end");
+  });
+
+  it("forced colours: words and glyphs CanvasText, the card's border CanvasText", () => {
     expect(find(css.forced, ".cv-rsr__icon[data-tone]", "color")).toContain("CanvasText");
-    expect(
-      find(css.forced, '.cv-rsr__action.cv-button[aria-disabled="true"]', "border-color"),
-    ).toContain("GrayText");
     expect(find(css.forced, ".cv-rsr", "border-color")).toContain("CanvasText");
     expect(css.forced).not.toContain("var(--color");
   });
