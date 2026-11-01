@@ -2,6 +2,10 @@
 
 - Status: **Accepted — Approved (owner waiver, Sprint 01 per C-10.1 v1.1.0)**
 - Date: 2026-09-30
+- Amended: 2026-11-01, E11-T04 PR-1 (#390): the engine export is per theme,
+  `build/engine/theme-uniforms.{dark,light,high-contrast}.json`, and `theme-uniforms.json` stays as
+  the dark export, byte-identical to `theme-uniforms.dark.json` (`16` §11.1); the build now emits
+  nine artefacts. §5's decision is unchanged.
 - Deciders: Owner (`@basiltt`) — per the "Agent-delivery adaptations" on ticket E05-T07 (issue #214), the
   owner's `approved` comment on the issue, or owner merge of the PR, substitutes for Architect/CDO
   countersignature; this ADR is Accepted on drafting and does not block on a separate signature.
@@ -122,7 +126,7 @@ proposal, per the ticket's acceptance criteria.
 ## Validation
 
 - E05-T01's merged test suite (`packages/ui/test/tokens-build/build-integration.test.ts` and the
-  per-format unit tests) exercises every claim in this ADR: all six artefacts non-empty, byte-identical
+  per-format unit tests) exercises every claim in this ADR: all nine artefacts non-empty (six before the E11-T04 amendment), byte-identical
   across two consecutive builds, `TOKENS-E001`/`TOKENS-E002` failures naming the offending token, RGBA
   engine uniforms as numeric 0..1 floats with no CSS/hex leakage, and a flat CSS/TS-free Electron JSON.
 - `docs/plan/16-design-system-brief.md` was checked against the merged implementation while drafting

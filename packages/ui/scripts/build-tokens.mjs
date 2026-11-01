@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // The single Style Dictionary build entry point for @candleviewer/ui.
 //
-// Run via `pnpm --filter @candleviewer/ui build:tokens`. Produces the six
+// Run via `pnpm --filter @candleviewer/ui build:tokens`. Produces the
 // artefacts from docs/plan/16-design-system-brief.md §11:
 //   build/css/tokens.{dark,light,high-contrast}.css
 //   build/ts/tokens.ts
-//   build/engine/theme-uniforms.json
+//   build/engine/theme-uniforms.{dark,light,high-contrast}.json (one per theme, §11.1)
+//   build/engine/theme-uniforms.json (the dark export under its original name)
 //   build/electron/tokens.main.json
 //
 // Determinism (ticket AC "second run produces byte-identical output"):
@@ -121,7 +122,7 @@ async function main() {
   await buildCss("high-contrast", resolvedThemes["high-contrast"]);
 
   await buildTs(resolvedThemes.dark);
-  await buildEngine(resolvedThemes.dark);
+  for (const themeName of ENGINE_THEMES) await buildEngine(themeName, resolvedThemes[themeName]);
   await buildElectron(resolvedThemes.dark);
 
   logSummary(resolvedThemes);
@@ -172,10 +173,21 @@ async function buildTs(resolvedDark) {
   await writeFile(path.join(BUILD_DIR, "ts", "tokens.ts"), content, "utf-8");
 }
 
-async function buildEngine(resolvedDark) {
-  const allTokens = Object.entries(resolvedDark).map(([name, t]) => ({ name, value: t.$value }));
+/** The themes that get an engine export, each loaded by the host for the active theme (§11.1). */
+export const ENGINE_THEMES = ["dark", "light", "high-contrast"];
+
+/**
+ * Writes `build/engine/theme-uniforms.<theme>.json`. The dark export is also written to
+ * `theme-uniforms.json`, the name the engine contract had before the per-theme files, so a
+ * consumer of that name keeps reading the same bytes.
+ */
+async function buildEngine(themeName, resolved) {
+  const allTokens = Object.entries(resolved).map(([name, t]) => ({ name, value: t.$value }));
   const content = jsonFlatRgba({ dictionary: { allTokens } });
-  await writeFile(path.join(BUILD_DIR, "engine", "theme-uniforms.json"), content, "utf-8");
+  const dir = path.join(BUILD_DIR, "engine");
+  await writeFile(path.join(dir, `theme-uniforms.${themeName}.json`), content, "utf-8");
+  if (themeName === "dark")
+    await writeFile(path.join(dir, "theme-uniforms.json"), content, "utf-8");
 }
 
 async function buildElectron(resolvedDark) {

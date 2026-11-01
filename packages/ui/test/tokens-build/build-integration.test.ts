@@ -34,7 +34,7 @@ describe("token build integration (real Style Dictionary run)", () => {
     rmSync(sandbox, { recursive: true, force: true });
   });
 
-  it("produces all six documented, non-empty artefacts", () => {
+  it("produces all nine documented, non-empty artefacts", () => {
     runBuild(ui);
     const artefacts = [
       "css/tokens.dark.css",
@@ -42,6 +42,9 @@ describe("token build integration (real Style Dictionary run)", () => {
       "css/tokens.high-contrast.css",
       "ts/tokens.ts",
       "engine/theme-uniforms.json",
+      "engine/theme-uniforms.dark.json",
+      "engine/theme-uniforms.light.json",
+      "engine/theme-uniforms.high-contrast.json",
       "electron/tokens.main.json",
     ];
     for (const rel of artefacts) {
@@ -117,6 +120,54 @@ describe("token build integration (real Style Dictionary run)", () => {
       }
       expect(entry.hex).toMatch(/^#[0-9A-F]{6,8}$/);
     }
+  });
+
+  it("emits one engine export per theme, and the dark one under the original name too", () => {
+    runBuild(ui);
+    const read = (file: string) => readFileSync(path.join(buildDir, "engine", file), "utf-8");
+    const dark = read("theme-uniforms.dark.json");
+    expect(read("theme-uniforms.json")).toBe(dark);
+    const names = (json: string) => Object.keys(JSON.parse(json) as object);
+    // Theme parity: every export carries exactly the same names.
+    for (const theme of ["light", "high-contrast"]) {
+      expect(names(read(`theme-uniforms.${theme}.json`))).toEqual(names(dark));
+    }
+  });
+
+  it("resolves every chart slot and engine-chrome alias per theme (E11-D05 §4.1, §4.1b)", () => {
+    runBuild(ui);
+    const hex = (theme: string) => {
+      const file = path.join(buildDir, "engine", `theme-uniforms.${theme}.json`);
+      const map = JSON.parse(readFileSync(file, "utf-8")) as Record<string, { hex: string }>;
+      return (name: string) => map[name]?.hex;
+    };
+    // [slot, dark, light, high-contrast]: the resolved values E11-D05 §4.1 / §4.1b record.
+    const slots: [string, string, string, string][] = [
+      ["color.chart.axis", "#8B949E", "#525C66", "#C9D1D9"],
+      ["color.chart.grid.major", "#2E363E", "#D6DAE0", "#586470"],
+      ["color.chart.grid.minor", "#1C222B", "#E3E6EA", "#11151A"],
+      ["color.chart.crosshair", "#B1BAC4", "#3A4148", "#B1BAC4"],
+      ["color.chart.watermark", "#2E363E", "#D6DAE0", "#586470"],
+      ["color.chart.pane.bg.default", "#11151A", "#F6F7F9", "#11151A"],
+      ["color.chart.pane.bg.focused", "#11151A", "#F6F7F9", "#11151A"],
+      ["color.chart.replay.border", "#A78BFA", "#7040E0", "#A78BFA"],
+      ["color.chart.boundary", "#8B949E", "#525C66", "#C9D1D9"],
+      ["color.chart.rule", "#2E363E", "#D6DAE0", "#586470"],
+      ["color.chart.hatch.texture", "#3D4650", "#C2C8D0", "#3D4650"],
+      ["color.chart.pill.bg", "#161B22", "#EDEFF2", "#161B22"],
+      ["color.chart.pill.border", "#3D4650", "#C2C8D0", "#3D4650"],
+      ["color.chart.pill.text.default", "#E8EAED", "#14171A", "#F6F8FA"],
+      ["color.chart.pill.text.inverse", "#0B0E11", "#FFFFFF", "#0B0E11"],
+      ["color.chart.pill.text.on-marker", "#FFFFFF", "#FFFFFF", "#0B0E11"],
+      ["color.chart.marker.goto", "#2B6CE8", "#2B6CE8", "#6EA1F5"],
+      ["color.chart.focus.ring", "#6EA1F5", "#1F55BF", "#FFFFFF"],
+    ];
+    const [dark, light, hc] = [hex("dark"), hex("light"), hex("high-contrast")];
+    for (const [slot, d, l, h] of slots) {
+      expect([dark(slot), light(slot), hc(slot)], slot).toEqual([d, l, h]);
+    }
+    // G16: the CVD-safe heatmap stops ride in the export.
+    expect(dark("color.cvd.heatmap.bid.1")).toMatch(/^#[0-9A-F]{6}$/);
   });
 
   it("emits a flat, CSS/TS-free JSON map for the Electron main process", () => {

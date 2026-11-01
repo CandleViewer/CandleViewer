@@ -6,6 +6,26 @@ change should be shippable and reviewable without touching component code").
 
 ## [Unreleased]
 
+### Added
+
+`color.chart.axis`, `color.chart.grid.major`, `color.chart.grid.minor`, `color.chart.crosshair`,
+`color.chart.watermark`, `color.chart.pane.bg.default`, `color.chart.pane.bg.focused`,
+`color.chart.replay.border`, `color.chart.boundary`, `color.chart.rule`,
+`color.chart.hatch.texture`, `color.chart.pill.bg`, `color.chart.pill.border`,
+`color.chart.pill.text.default`, `color.chart.pill.text.inverse`,
+`color.chart.pill.text.on-marker`, `color.chart.marker.goto`, `color.chart.focus.ring` — aliases
+of existing semantic tokens for the chart chassis and its engine-drawn chrome (engineering,
+E11-T04; design, `docs/design/E11/E11-D05.md` §4.1 and §4.1b; E11-D02 CR-1 to CR-4). No primitive
+is added and no value changes. Two theme lines: light `color.chart.replay.border` =
+`{palette.purple.600}` (`#7040E0`), and high contrast `color.chart.grid.minor` =
+`{color.surface.canvas}`, the minor grid "off" (E11-D05 Q2). The replay hue stays the owner's
+call (O-A). Contrast rows are in `tools/contrast/pairs.mjs`; the nine decorative slots below 3:1
+by design are exempted in `tools/contrast/exemptions.json` (Q4).
+
+The engine export is now built per theme: `build/engine/theme-uniforms.{dark,light,high-contrast}.json`
+(`16` §11.1, ADR-0024), with `theme-uniforms.json` kept as the dark export. `color.cvd.` joins the
+engine prefixes (E11-D05 G16), so the thirteen CVD-safe tokens ride in every export.
+
 ### Fixed
 
 Light-theme status inks reach WCAG 2.2 AA on their subtle fills (#5134). `color.status.danger.strong`

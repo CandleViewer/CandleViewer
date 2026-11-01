@@ -97,5 +97,6 @@
   "color.cvd.heatmap.ask.5": { "$type": "color", "$value": "{palette.cvd.light.orange.1}" },
   "color.sync.a": { "$type": "color", "$value": "{palette.light.cyan.300}" },
   "color.sync.b": { "$type": "color", "$value": "{palette.light.amber.300}" },
-  "color.sync.c": { "$type": "color", "$value": "{palette.purple.600}" }
+  "color.sync.c": { "$type": "color", "$value": "{palette.purple.600}" },
+  "color.chart.replay.border": { "$type": "color", "$value": "{palette.purple.600}" }
 }
