@@ -3625,19 +3625,20 @@ CREATE INDEX ix_ip_fav ON indicator_presets (owner_user_id) WHERE is_favourite A
 
 One global hotkey layer spanning all views (cross-cutting requirement from digest 23). E10-T05
 (#5211): the profiles `22` `/settings/hotkeys*` persists, migrated by Alembic
-`0059_hotkey_profiles`. A profile belongs to one user and is read and written only by its owner: the
-API answers another user's profile id as an id that does not exist (`404`). A user holds at most 20
-profiles (the API checks it: `409 conflict` / `limit_reached`) and at most one active one
-(`ux_hk_active`): activating a profile deactivates the user's other one in the same transaction.
-`version` starts at 1 and goes up by one on each replace. A replace that carries `If-Match` is one
-statement guarded by the version it names (`UPDATE … WHERE id = :id AND owner_user_id = :owner AND
-version = :expected`), so of two writers holding the same version exactly one wins and the other is
-`412 version_conflict`; one without it is last-write-wins. Activation changes neither `version` nor
-`updated_at`. `ux_hk_name` makes a name unique per user case-insensitively, as `lower()` folds it
-(`409 conflict` / `name_taken`). A delete removes the row: there is no soft delete, and the history
-is the audit trail (`hotkey_profile.created`, `.updated`, `.deleted` and `.activated`,
-`24-internal-schemas.md` §15.5), which records the name, the binding count and the active flag,
-never the bindings. Rows also go with their owner's `users` row (`ON DELETE CASCADE`).
+`0062_hotkey_profiles`, which revises `0061_password_history` (§3.1.1a). A profile belongs to one
+user and is read and written only by its owner: the API answers another user's profile id as an id
+that does not exist (`404`). A user holds at most 20 profiles (the API checks it: `409 conflict` /
+`limit_reached`) and at most one active one (`ux_hk_active`): activating a profile deactivates the
+user's other one in the same transaction. `version` starts at 1 and goes up by one on each replace.
+A replace that carries `If-Match` is one statement guarded by the version it names (`UPDATE … WHERE
+id = :id AND owner_user_id = :owner AND version = :expected`), so of two writers holding the same
+version exactly one wins and the other is `412 version_conflict`; one without it is last-write-wins.
+Activation changes neither `version` nor `updated_at`. `ux_hk_name` makes a name unique per user
+case-insensitively, as `lower()` folds it (`409 conflict` / `name_taken`). A delete removes the row:
+there is no soft delete, and the history is the audit trail (`hotkey_profile.created`, `.updated`,
+`.deleted` and `.activated`, `24-internal-schemas.md` §15.5), which records the name, the binding
+count and the active flag, never the bindings. Rows also go with their owner's `users` row
+(`ON DELETE CASCADE`).
 
 ```sql
 CREATE TABLE hotkey_profiles (
@@ -5131,7 +5132,7 @@ NAMING_CONVENTION = {
 | `0008_rules`                    | `rules`, `rule_versions`, `rule_runs`, `rule_events`                                                                                                                                                                                                                                                                                    |
 | `0009_alerts`                   | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                                                                                                                  |
 | `0010_journal`                  | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                                                                                                                         |
-| `0011_workspace`                | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; `indicator_presets` = `0040_indicator_presets`; `hotkey_profiles` = `0059_hotkey_profiles`; rest pending                    |
+| `0011_workspace`                | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; `indicator_presets` = `0040_indicator_presets`; `hotkey_profiles` = `0062_hotkey_profiles`; rest pending                    |
 | `0012_governance`               | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flags = `0027_feature_flags`; `backups` = `0028_incidents_backups`                                                                                                  |
 | `0013_partitioning`             | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                                                                                                                           |
 | `0030_auth_keys`                | `auth_keys`, the per-environment auth keyring (§3.1.5a, ADR-0009 Amendment 4) — **#2152 S2**, landed after `0029_oms_core`; the downgrade refuses while any row exists                                                                                                                                                                  |
@@ -5163,7 +5164,7 @@ NAMING_CONVENTION = {
 | `0057_se_component_statechart`  | `statechart` added to `se_component` (§3.10.2): the inspector's failed-seal row — **E42-T07 #1025**; on `0056_sessions_lock_state` (#4743); the downgrade refuses while a `statechart` row exists                                                                                                                                       |
 | `0058_oms_handovers`            | `oms_handovers` (§3.3.12): what a lookup or the private stream hands to the next reconciliation pass, at most 1,000 entries per account, its guard `trg_oh_guard` and the `PII:` comments of `record` and `payload` — **E29-T06 #914**; the downgrade refuses while any entry exists; on `0057_se_component_statechart` (#1025)         |
 | `0061_password_history`         | `password_history` (§3.1.1a): the retired Argon2id hashes behind SR-028's reuse rule, 4 kept per user, `ph_pwd_argon` and the `SECRET:` comment of `password_hash` — **#2110 / #2330**; the downgrade refuses while any row exists; on `0060_recording_write_owner_only` (#5265)                                                        |
-| `0059_hotkey_profiles`          | `hotkey_profiles` (§3.8.5): a user's hotkey profiles, `bindings` a jsonb object of command id to binding, `version` the guard of a replace, unique indexes `ux_hk_name` on `(owner_user_id, lower(name))` and `ux_hk_active` on the active one — **E10-T05 #5211**; the downgrade refuses while any profile exists                      |
+| `0062_hotkey_profiles`          | `hotkey_profiles` (§3.8.5): a user's hotkey profiles, `bindings` a jsonb object of command id to binding, `version` the guard of a replace, unique indexes `ux_hk_name` on `(owner_user_id, lower(name))` and `ux_hk_active` on the active one — **E10-T05 #5211**; the downgrade refuses while any profile exists                      |
 
 ---
 
