@@ -7,8 +7,9 @@
 // (the outline is `drawing-line`'s, drawn first: program order), so a fill never tints its own
 // stroke. Ellipse: inscribed in the projected box, filled and stroked by a fragment SDF (no
 // tessellation); its dashes follow the angle × mean radius, an approximation of arc length.
-// Fill and stroke alpha come from the numeric colours. Style = (kind 0 rect / 1 ellipse / 2 band,
-// stroke width in device px, dash index, unused). Static source.
+// Fill and stroke colours arrive premultiplied (alpha × the flatten opacity) and leave so.
+// Style = (kind 0 rect / 1 ellipse / 2 band, stroke width in device px, dash index, unused).
+// Static source.
 export const DRAWING_FILL = {
   name: "drawing-fill",
   uniforms: ["u_viewport", "u_indexBase", "u_tickBase", "u_k", "u_log"],
@@ -33,7 +34,7 @@ flat out vec4 v_style;
 flat out vec2 v_dash;
 flat out vec4 v_fill;
 flat out vec4 v_stroke;
-const vec2 DASH[3] = vec2[3](vec2(0.0, 0.0), vec2(3.0, 6.0), vec2(0.0, 2.0));
+const vec2 DASH[3] = vec2[3](vec2(0.0, 0.0), vec2(3.0, 6.0), vec2(0.0, 3.0));
 vec2 project(ivec2 c, vec2 f) {
   vec2 rel = vec2(c - ivec2(u_indexBase, u_tickBase)) + f;
   float x = (rel.x + 0.5 - u_k.w) * u_k.x;
@@ -97,16 +98,17 @@ void main() {
       float s = mod(atan(q.y / r.y, q.x / r.x) * 0.5 * (r.x + r.y), v_dash.y);
       ring = length(vec2(min(max(s - v_dash.x, 0.0), v_dash.y - s), ring));
     }
-    sa = v_stroke.a * clamp(hw + 0.5 - ring, 0.0, 1.0);
+    sa = clamp(hw + 0.5 - ring, 0.0, 1.0);
   } else {
     vec2 m = (v_a + v_d) * 0.5;
     float e = min(edge(v_a, v_b, m), edge(v_b, v_d, m));
     e = min(e, min(edge(v_d, v_c, m), edge(v_c, v_a, m)));
     fa = clamp(e - hw + 0.5, 0.0, 1.0);
   }
-  fa *= v_fill.a;
-  float a = sa + fa * (1.0 - sa);
-  if (a <= 0.0) discard;
-  o_color = vec4((v_stroke.rgb * sa + v_fill.rgb * fa * (1.0 - sa)) / a, a);
+  // Premultiplied colours (alpha × flatten opacity): the ring over the fill, "over" in one pass.
+  vec4 s = v_stroke * sa;
+  vec4 o = s + v_fill * fa * (1.0 - s.a);
+  if (o.a <= 0.0) discard;
+  o_color = o;
 }`,
 } as const;

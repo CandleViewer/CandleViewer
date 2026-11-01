@@ -125,6 +125,18 @@ describe("drawing-line through the runtime (slice 2)", () => {
     );
   });
 
+  it("a setTheme re-resolves token colours (BQ-4): one instance re-uploaded, none on a pan", () => {
+    const token = { ...seg("t"), style: { colour: "color.drawing.default", width: 2, dash: 0 } };
+    cmd({ k: "setDrawings", op: "replace", drawings: [token, seg("u", 30)] });
+    frame();
+    cmd({ k: "setTheme", theme: { "color.drawing.default": "#00ff00" } });
+    frame();
+    expect(last().uploadedBytes).toBe(64);
+    cmd({ k: "setViewport", timeStart: T(3), timeEnd: T(90) });
+    frame();
+    expect(last().uploadedBytes).toBe(0);
+  });
+
   it("re-wires the ring to the degraded-2d re-init's backend and builder", () => {
     cmd({ k: "setDrawings", op: "replace", drawings: many(3) });
     frame();
@@ -165,7 +177,12 @@ describe("the host after a worker restart", () => {
     vi.advanceTimersByTime(1020);
     const inbox = (FakeWorker.created.at(-1) as FakeWorker).inbox as ToWorker[];
     expect(inbox.flatMap((m) => (m.t === "command" ? [m.cmd] : []))).toEqual([
-      { k: "setDrawings", op: "replace", drawings: [seg("d1", 50), seg("d2", 2)].map(copyInput) },
+      {
+        k: "setDrawings",
+        op: "replace",
+        drawings: [seg("d1", 50), seg("d2", 2)].map(copyInput),
+        opacity: 1, // the layer's flatten opacity rides the replay
+      },
     ]);
     host.dispose();
   });

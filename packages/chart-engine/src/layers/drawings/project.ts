@@ -11,7 +11,7 @@ import type { BatchSink } from "../../scene/pool.js";
 import { indexAt, indexToScreen, priceToScreen } from "../../viewport/transform.js";
 import type { IndexTimeMap, ViewportState } from "../../viewport/types.js";
 import { MAX_DRAWINGS, type SetDrawings } from "./model.js";
-import { toRecord, type DrawingRecord } from "./record.js";
+import { resolveColours, toRecord, type DrawingRecord, type ThemeColours } from "./record.js";
 import { FillInstances } from "./fills.js";
 import { LineInstances } from "./lines.js";
 import { DrawingSet } from "./set.js";
@@ -154,6 +154,10 @@ export class DrawingsNode extends ContentNode {
   /** The `drawing-fill` ring and its batch's node (slice 3), attached after this one. */
   readonly fills = new FillInstances();
   readonly fillNode: DrawingFillsNode;
+  /** The theme object token colours resolve through (BQ-4); a change marks STYLE. */
+  theme: ThemeColours = {};
+  /** The layer's flatten opacity in [0, 1]: every alpha × it (a re-encode, never per frame). */
+  opacity = 1;
   /** Encodes so far: a pan adds none. */
   encodes = 0;
   /** Where a ring's changed instance range goes: the runtime's `BatchBuilder.patch`. */
@@ -172,8 +176,10 @@ export class DrawingsNode extends ContentNode {
   /** A `setDrawings`: DATA on this node only; a refusal changes nothing (E14-X01 DR29). */
   apply(cmd: SetDrawings): string | null {
     const why = this.set.apply(cmd);
-    if (why === null) this.dirty |= Dirty.DATA;
-    return why;
+    if (why !== null) return why;
+    this.dirty |= Dirty.DATA;
+    if (cmd.opacity !== undefined) this.opacity = cmd.opacity;
+    return null;
   }
 
   override update(ctx: FrameCtx): void {
@@ -198,8 +204,9 @@ export class DrawingsNode extends ContentNode {
     this.boundsDirty = true;
     if (!encode) return; // TRANSFORM alone: the shader re-projects from the pane block
     this.dpr = vp.dpr;
-    this.lines.encode(order, vp.dpr);
-    this.fills.encode(order, vp.dpr);
+    for (let i = 0; i < order.length; i += 1) resolveColours(order[i] as DrawingRecord, this.theme);
+    this.lines.encode(order, vp.dpr, this.opacity);
+    this.fills.encode(order, vp.dpr, this.opacity);
     this.encodes += 1;
     this.fillNode.dirty |= Dirty.DATA; // collected after this node: its count is this encode's
     this.report(this.id, this.lines.lo, this.lines.hi);

@@ -61,7 +61,7 @@ export class LineInstances extends InstanceRing {
   }
 
   /** Writes every record's instances in draw order; a pan never calls this. */
-  encode(order: readonly DrawingRecord[], dpr: number): void {
+  encode(order: readonly DrawingRecord[], dpr: number, opacity = 1): void {
     let total = 0;
     for (let i = 0; i < order.length; i += 1) total += lineCount(order[i] as DrawingRecord);
     this.begin(total);
@@ -85,6 +85,7 @@ export class LineInstances extends InstanceRing {
             0,
             0,
             dpr,
+            opacity,
           );
         }
         continue;
@@ -97,7 +98,7 @@ export class LineInstances extends InstanceRing {
         const ta = r.tick[s] as number;
         const ib = r.idx[b] as number;
         const tb = r.tick[b] as number;
-        this.write(at++, r, ia, ta, ib, tb, EXTEND[k], DIRECTION[k], dpr);
+        this.write(at++, r, ia, ta, ib, tb, EXTEND[k], DIRECTION[k], dpr, opacity);
       }
     }
     this.end(at);
@@ -113,17 +114,18 @@ export class LineInstances extends InstanceRing {
     extend: number,
     direction: number,
     dpr: number,
+    opacity: number,
   ): void {
     const o = i * LINE_STRIDE;
     this.open();
     this.anchor(o + A0, ia, ta);
     this.anchor(o + A1, ib, tb);
-    const { colour, width, dash } = r.input.style;
+    const { width, dash } = r.input.style;
     this.f(o + STYLE, width * dpr);
     this.f(o + STYLE + 1, dash);
     this.f(o + STYLE + 2, extend);
     this.f(o + STYLE + 3, direction);
-    this.rgba(o + COLOR, colour);
+    this.rgba(o + COLOR, r.colour, opacity);
     this.close(i);
   }
 }

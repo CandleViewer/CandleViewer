@@ -19,6 +19,19 @@ export function attributesOf(program: number): AttributeLayout {
   };
 }
 
+const PREMUL = new Float64Array(4);
+
+/**
+ * The "flatten opacity" path (ticket §Technical notes, BQ-4): 0xRRGGBBAA into `out` as
+ * premultiplied [r·a, g·a, b·a, a] with a = its alpha × `opacity` (0..1), the form both drawing
+ * shaders read and write.
+ */
+export function flatten(colour: number, opacity: number, out: Float64Array): void {
+  const a = (((colour >>> 0) & 255) / 255) * Math.min(1, Math.max(0, opacity));
+  for (let c = 0; c < 3; c += 1) out[c] = (((colour >>> (24 - 8 * c)) & 255) / 255) * a;
+  out[3] = a;
+}
+
 export class InstanceRing implements VertexSource {
   data: Float32Array;
   ints: Int32Array;
@@ -73,9 +86,10 @@ export class InstanceRing implements VertexSource {
     this.f(o + 3, tick - it);
   }
 
-  /** 0xRRGGBBAA as four floats in 0..1 at `o`. */
-  protected rgba(o: number, colour: number): void {
-    for (let c = 0; c < 4; c += 1) this.f(o + c, ((colour >>> (24 - 8 * c)) & 255) / 255);
+  /** 0xRRGGBBAA at `o` as premultiplied floats: alpha × `opacity`, then rgb × that alpha. */
+  protected rgba(o: number, colour: number, opacity: number): void {
+    flatten(colour, opacity, PREMUL);
+    for (let c = 0; c < 4; c += 1) this.f(o + c, PREMUL[c] as number);
   }
 
   protected f(o: number, v: number): void {

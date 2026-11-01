@@ -382,6 +382,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   const retained = new Map<string, Command>();
   /** E14-T03: the drawing set as the worker holds it, replayed as one `replace` on a restart. */
   const drawings = new DrawingSet<DrawingInput>(copyInput); // no caller references kept
+  let drawingOpacity = 1; // the layer's flatten opacity, replayed with the set
   let disposed = false;
   let restoring = false;
   let flushQueued = false;
@@ -428,8 +429,14 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       link.post(size, []);
     }
     for (const cmd of retained.values()) link.post({ t: "command", id, cmd }, []);
-    if (drawings.size > 0) {
-      const cmd: Command = { k: "setDrawings", op: "replace", drawings: drawings.order.slice() };
+    if (drawings.size > 0 || drawingOpacity !== 1) {
+      const order = drawings.order.slice();
+      const cmd: Command = {
+        k: "setDrawings",
+        op: "replace",
+        drawings: order,
+        opacity: drawingOpacity,
+      };
       link.post({ t: "command", id, cmd }, []);
     }
   };
@@ -623,7 +630,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       if (cmd.k === "setMotion") reduce = cmd.reduce;
       // The worker refuses what this refuses, so the replayed set never holds a refused change.
       if (cmd.k === "setDrawings" && rejectReason({ t: "command", id, cmd }) === null) {
-        drawings.apply(cmd);
+        if (drawings.apply(cmd) === null && cmd.opacity !== undefined) drawingOpacity = cmd.opacity;
       }
       const key = retainKey(cmd);
       if (key !== null) {

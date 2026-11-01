@@ -49,7 +49,13 @@ describe("the drawing-fill ring", () => {
     expect([i[0], i[1], f[2], f[3], i[4], i[5], i[8], i[9], f[11]]).toEqual([
       20, 1012, 0.5, 0.25, 60, 1012, 20, 1047, 0,
     ]);
-    const byte = (o: number): number[] => [...f.slice(o, o + 4)].map((c) => Math.round(c * 255));
+    // Premultiplied colours, un-premultiplied here back to bytes: the fill, then the stroke.
+    const byte = (o: number): number[] => {
+      const al = f[o + 3] ?? 0;
+      return [0, 1, 2]
+        .map((c) => Math.round(((f[o + c] ?? 0) / al) * 255))
+        .concat(Math.round(al * 255));
+    };
     expect([byte(12), byte(16)]).toEqual([
       [0x29, 0x62, 0xff, 0x33],
       [0x29, 0x62, 0xff, 0xff],

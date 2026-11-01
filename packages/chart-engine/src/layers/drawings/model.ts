@@ -34,12 +34,29 @@ export const TICK_MAX = INT32_TICKS;
 export const FONT_MIN = 8;
 export const FONT_MAX = 48;
 export const WIDTH_MAX = 8;
+/**
+ * The dash patterns in stroke widths, (dash core, period), round-capped, indexed by `style.dash`:
+ * solid; dashed, a 4w dash and a 2w gap; dotted, a 1w dot and a 2w gap. The engine default
+ * pending E14-D04's value (#358 BQ-358-7); E14-T02 and both drawing shaders read this one table.
+ */
+export const DRAWING_DASH: readonly (readonly [core: number, period: number])[] = [
+  [0, 0],
+  [3, 6],
+  [0, 3],
+];
+/** A theme token key (BQ-4): an engine-category name the theme object resolves; never CSS. */
+const TOKEN = /^color\.(drawing|position|chart)\.[a-z0-9]+([.-][a-z0-9]+)*$/;
+export const isColourToken = (v: unknown): v is string =>
+  typeof v === "string" && v.length <= 64 && TOKEN.test(v);
 const ID = /^[\w:.#-]{1,64}$/;
 
 export interface DrawingStyle {
-  /** 0xRRGGBBAA numbers: no CSS colour string exists to inject (SR-E14-04); no fill if absent. */
-  readonly colour: number;
-  readonly fill?: number;
+  /**
+   * 0xRRGGBBAA, or a theme token key the engine resolves through the theme object (BQ-4); never a
+   * CSS string (SR-E14-04). No fill if absent.
+   */
+  readonly colour: number | string;
+  readonly fill?: number | string;
   /** CSS px, an integer 1..8 (the server's range). */
   readonly width: number;
   /** Into slice 2's LUT: 0 solid, 1 dashed, 2 dotted. */
@@ -75,12 +92,14 @@ export interface SetDrawings {
   readonly op: "replace" | "patch";
   readonly drawings: readonly DrawingInput[];
   readonly remove?: readonly string[];
+  /** The layer's "flatten opacity" in [0, 1] (ticket §Technical notes): every alpha × it. */
+  readonly opacity?: number;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const isInt = (v: unknown, lo: number, hi: number): boolean =>
   Number.isInteger(v) && (v as number) >= lo && (v as number) <= hi;
-const rgba = (v: unknown): boolean => isInt(v, 0, 0xffffffff);
+const rgba = (v: unknown): boolean => isInt(v, 0, 0xffffffff) || isColourToken(v);
 export const isDrawingId = (v: unknown): v is string => typeof v === "string" && ID.test(v);
 
 function styleReason(s: unknown): string | null {
@@ -125,8 +144,10 @@ export function drawingReason(d: unknown): string | null {
 
 /** Why a `setDrawings` is refused structurally (caps against state are the set's own). */
 export function setDrawingsReason(cmd: Record<string, unknown>): string | null {
-  const { op, drawings, remove } = cmd;
+  const { op, drawings, remove, opacity } = cmd;
   if (op !== "replace" && op !== "patch") return "op";
+  const flat = typeof opacity === "number" && opacity >= 0 && opacity <= 1;
+  if (opacity !== undefined && !flat) return "opacity";
   if (!Array.isArray(drawings) || drawings.length > MAX_DRAWINGS) return "drawings";
   if (remove !== undefined && (op === "replace" || !Array.isArray(remove))) return "remove";
   if (Array.isArray(remove) && (remove.length > MAX_DRAWINGS || !remove.every(isDrawingId))) {

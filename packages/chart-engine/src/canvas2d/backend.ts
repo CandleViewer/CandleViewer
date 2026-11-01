@@ -291,7 +291,10 @@ export class Canvas2DBackend implements RenderBackend {
     let bucket = this.buckets.get(key);
     if (bucket === undefined) {
       if (this.buckets.size >= MAX_BUCKETS) this.buckets.clear();
-      const css = `rgba(${byte(data[c])}, ${byte(data[c + 1])}, ${byte(data[c + 2])}, ${byte(data[c + 3]) / 255})`;
+      // The drawings' colours are premultiplied (flatten opacity, BQ-4); CSS takes straight alpha.
+      const al = data[c + 3] ?? 0;
+      const un = (v: number | undefined): number => byte(al > 0 ? (v ?? 0) / al : 0);
+      const css = `rgba(${un(data[c])}, ${un(data[c + 1])}, ${un(data[c + 2])}, ${byte(al) / 255})`;
       bucket = { program, css, width: width / 16, refs: new Int32Array(64), n: 0, run: 0 };
       this.buckets.set(key, bucket);
       if (width > 0) this.dashes.set(bucket, { index, pattern: [0, 0] });
@@ -357,15 +360,15 @@ export class Canvas2DBackend implements RenderBackend {
       const paint = PAINTERS[bucket.program];
       if (paint === null || paint === undefined || bucket.n === 0) continue;
       ctx.beginPath();
+      // A candle or drawing-fill ref carries its sub-part in the low bit (per bucket, not per ref).
+      const candle = bucket.program === PROGRAM.candle;
+      const twin = candle || bucket.program === PROGRAM.drawingFill;
       for (let r = 0; r < bucket.n; r += 2) {
         const i = bucket.refs[r] ?? 0;
         const slot = this.frameSlots[i] as Slot; // set when the ref was pushed
         a.data = slot.source.data;
         a.ints = slot.ints;
         const at = bucket.refs[r + 1] ?? 0;
-        // A candle or drawing-fill ref carries its sub-part in the low bit.
-        const candle = bucket.program === PROGRAM.candle;
-        const twin = candle || bucket.program === PROGRAM.drawingFill;
         a.at = twin ? at >> 1 : at;
         a.sub = twin ? at & 1 : 0;
         a.batch = candle ? (this.frameBatches[i] ?? null) : null;

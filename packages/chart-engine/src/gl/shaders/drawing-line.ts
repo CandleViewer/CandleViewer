@@ -5,17 +5,16 @@
 // around p0 → p1 in device px; the fragment evaluates a signed distance: a capsule (round caps,
 // no tessellation) cut by the dash pattern, measured from the anchor p0 so dashes stay put on an
 // extended line. `DASH` is the pattern LUT in stroke widths, (dash core, period), round-capped:
-// solid; dashed, a 4-width dash and a 2-width gap; dotted, a 1-width dot every 2 widths. The 2D
-// painter and the tests read `DASH_LUT`, which a test holds equal to the shader's. The lengths are
-// engine defaults pending an E14 design value. Inputs are ivec4s at fixed locations (the VAO binds
-// ints only; floats ride as bits), the corner is gl_VertexID's. Known limit: `mod(v_along, ...)` is
-// float32, so the dash phase drifts once |along| reaches ~1e5 px (an anchor far off screen).
-// Static source.
-export const DASH_LUT: readonly (readonly [number, number])[] = [
-  [0, 0],
-  [3, 6],
-  [0, 2],
-];
+// solid; dashed, a 4w dash and a 2w gap; dotted, a 1w dot and a 2w gap (`DRAWING_DASH`, the one
+// table: the engine default pending E14-D04's value, BQ-358-7); a test holds this copy equal.
+// Colours arrive premultiplied (alpha × the layer's flatten opacity) and leave premultiplied.
+// Inputs are ivec4s at fixed locations (the VAO binds ints only; floats ride as bits), the
+// corner is gl_VertexID's. Known limit: `mod(v_along, ...)` is float32, so the dash phase
+// drifts once |along| reaches ~1e5 px (an anchor far off screen). Static source.
+import { DRAWING_DASH } from "../../layers/drawings/model.js";
+
+/** `DRAWING_DASH` under the name the backends read; the GLSL `DASH` copies are held equal. */
+export const DASH_LUT = DRAWING_DASH;
 
 export const DRAWING_LINE = {
   name: "drawing-line",
@@ -36,7 +35,7 @@ flat out vec2 v_span;
 flat out vec2 v_dash;
 flat out float v_hw;
 out vec4 v_color;
-const vec2 DASH[3] = vec2[3](vec2(0.0, 0.0), vec2(3.0, 6.0), vec2(0.0, 2.0));
+const vec2 DASH[3] = vec2[3](vec2(0.0, 0.0), vec2(3.0, 6.0), vec2(0.0, 3.0));
 vec2 project(ivec4 a) {
   vec2 rel = vec2(a.xy - ivec2(u_indexBase, u_tickBase)) + intBitsToFloat(a.zw);
   float x = (rel.x + 0.5 - u_k.w) * u_k.x;
@@ -85,6 +84,6 @@ void main() {
   }
   float alpha = clamp(v_hw + 0.5 - d, 0.0, 1.0);
   if (alpha <= 0.0) discard;
-  o_color = vec4(v_color.rgb, v_color.a * alpha);
+  o_color = v_color * alpha; // premultiplied in, premultiplied out
 }`,
 } as const;

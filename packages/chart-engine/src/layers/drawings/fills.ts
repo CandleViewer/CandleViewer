@@ -19,9 +19,9 @@ const C = new Float64Array(2);
 
 /** 1 for a visible ellipse, or a visible rect or band with a fill colour; else 0. */
 export function fillCount(r: DrawingRecord): number {
-  const { kind, visible, style } = r.input;
+  const { kind, visible } = r.input;
   if (visible === false || !Object.hasOwn(FILL_KIND, kind)) return 0;
-  return kind === "ellipse" || style.fill !== undefined ? 1 : 0;
+  return kind === "ellipse" || r.fill >= 0 ? 1 : 0;
 }
 
 export class FillInstances extends InstanceRing {
@@ -30,7 +30,7 @@ export class FillInstances extends InstanceRing {
   }
 
   /** Writes every filled record's instance in draw order; a pan never calls this. */
-  encode(order: readonly DrawingRecord[], dpr: number): void {
+  encode(order: readonly DrawingRecord[], dpr: number, opacity = 1): void {
     let total = 0;
     for (let i = 0; i < order.length; i += 1) total += fillCount(order[i] as DrawingRecord);
     this.begin(total);
@@ -44,9 +44,9 @@ export class FillInstances extends InstanceRing {
         corner(r, c, C);
         this.anchor(o + A + 4 * c, C[0] as number, C[1] as number);
       }
-      const { colour, fill, width, dash } = r.input.style;
-      this.rgba(o + FILL, fill ?? 0); // no fill: alpha 0 (an ellipse's ring alone)
-      this.rgba(o + STROKE, colour);
+      const { width, dash } = r.input.style;
+      this.rgba(o + FILL, r.fill < 0 ? 0 : r.fill, opacity); // none: alpha 0 (the ring alone)
+      this.rgba(o + STROKE, r.colour, opacity);
       this.f(o + STYLE, FILL_KIND[r.input.kind as keyof typeof FILL_KIND]);
       this.f(o + STYLE + 1, width * dpr);
       this.f(o + STYLE + 2, dash);

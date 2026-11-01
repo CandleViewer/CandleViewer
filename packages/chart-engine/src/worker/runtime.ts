@@ -615,6 +615,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         return;
       case "setTheme":
         inst.theme = cmd.theme;
+        if (inst.drawings !== null) inst.drawings.theme = cmd.theme; // re-encoded on STYLE
         inst.hostTheme = hostTheme(cmd.theme);
         for (const c of inst.candles) themeCandle(inst, c); // STYLE: uniforms, never an upload
         inst.graph.markTheme();
@@ -678,6 +679,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   /** The node's ring on the open backend, and its changed instance ranges into the builder. */
   function wire(inst: Instance, node: DrawingsNode): DrawingsNode {
     node.onRange = (id, r) => inst.builder.patch(id, r);
+    node.theme = inst.theme; // token colours resolve through it (BQ-4)
     if (inst.gpu.backend !== undefined) attachDrawings(inst.gpu.backend, node);
     return node;
   }

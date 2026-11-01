@@ -581,9 +581,10 @@ and the splitter-drag bench (BQ-149, BQ-150, BQ-154, C-44 and G-35; scenario 5).
 ## Drawings layer (E14-T03 slice 1)
 
 `src/layers/drawings/` (DOM-free, internal) holds the model and its projection; nothing is drawn
-yet. It follows the defaults of #358 BQ-1 to BQ-6 (the plan comment on #358); their rulings are
-pending. `model.ts` is the engine's minimal `DrawingInput` (BQ-3): ten primitives, not tools,
-anchored at (µs time, tick), with a numeric style (0xRRGGBBAA colours, width 1..8, a dash index)
+yet. It follows #358 BQ-1 to BQ-6 and BQ-358-7 as ruled (the orchestrator's ruling of record,
+#358 comment 6554487765, 2026-11-01). `model.ts` is the engine's minimal `DrawingInput` (BQ-3): ten primitives, not tools,
+anchored at (µs time, tick), with a style of colours (0xRRGGBBAA numbers or theme token keys
+such as `color.drawing.default`, resolved through the theme object: BQ-4), width 1..8, a dash index
 and a label clamped as data (120 code points, controls and bidi stripped, font 8..48; SR-E14-03,
 SR-E14-04). The worker boundary refuses an unknown top-level or style key, an unknown kind, a
 wrong anchor count, a non-finite number, a time past 2^53 µs or a tick at or past ±2^30, a raw label over
@@ -613,8 +614,13 @@ the ring (`src/layers/drawings/lines.ts`) is rewritten only on DATA, a re-index 
 their direction outright (a one-tick difference cancels in float32 when |ky| < ~1.5e-5). Round
 caps and dashes are a fragment SDF (a capsule cut by the pattern) measured from the anchor p0, so
 an extended line's dashes stay put; dashes restart per polyline segment. `DASH_LUT` is in stroke
-widths (solid; dashed, a 4-width dash and a 2-width gap; dotted, a 1-width dot every 2): engine
-defaults pending an E14 design value (E14-D04 names the three styles only). The 2D painter
+widths (`DRAWING_DASH` in `model.ts`, the one table both shaders' GLSL copies are tested against:
+solid; dashed, a 4w dash and a 2w gap; dotted, a 1w dot and a 2w gap): the engine default pending
+E14-D04's value (BQ-358-7). Colours reach both programs premultiplied by their alpha times the
+layer's flatten opacity (`setDrawings { opacity }`, 0..1; a re-encode, not a uniform: the program
+cache writes only the five pane uniforms), and leave premultiplied, for ONE, ONE_MINUS_SRC_ALPHA;
+the backend sets no blend state yet (`GL2Like` has no `enable` / `blendFunc`), so blending lands
+with E11-T08's goldens. The 2D painter
 strokes the same geometry with round caps and `setLineDash`. Known limits: the dash phase is
 float32 in `mod(along, period)`, so it drifts once |along| from p0 reaches ~1e5 device px (an
 extended line anchored far off screen); a polyline with alpha below 1 blends twice where two

@@ -54,7 +54,10 @@ describe("the drawing-line ring", () => {
       10, 1012, 0.25, 0.75, 12, 1000, 0, 0,
     ]);
     expect([...f.slice(8, 12)]).toEqual([6, 1, 1, 0]); // 4 CSS px × 1.5; dashed; a ray; p0 → p1
-    expect([...f.slice(12, 16)].map((c) => Math.round(c * 255))).toEqual([0x29, 0x62, 0xff, 0x80]);
+    // Premultiplied (BQ-4's flatten path): rgb × alpha, the alpha as sent at opacity 1.
+    const a = 0x80 / 255;
+    const want = [0x29, 0x62, 0xff].map((v) => Math.fround((v / 255) * a));
+    expect([...f.slice(12, 16)]).toEqual([...want, Math.fround(a)]);
     // hline / vline: p1 = p0, both ways, the direction given (1 horizontal, 2 vertical).
     expect([i[16], i[17], i[20], i[21], f[26], f[27]]).toEqual([5, 7, 5, 7, 2, 1]);
     expect([i[32], i[33], i[36], i[37], f[42], f[43]]).toEqual([5, 7, 5, 7, 2, 2]);
