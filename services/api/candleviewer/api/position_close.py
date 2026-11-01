@@ -329,6 +329,19 @@ def size_detail(terms: CloseTerms, size: CloseSize) -> dict[str, str]:
     return shown | {"rounded": str(size.rounded).lower()}
 
 
+def advisory_floor(read: Callable[[str], Decimal | None] | None, symbol: str) -> Decimal | None:
+    """Step 13's dust floor for `symbol` (SR-E22-03's `MIN_SIZE_FLOOR`, BQ-5), advisory: a floor
+    that cannot be read is left out, so the close is held to `min_order_qty` alone and never
+    refused for want of it (C-2.6). Logged by its failure's type alone (C-12.6)."""
+    if read is None:
+        return None
+    try:
+        return read(symbol)
+    except Exception as exc:  # advisory: an unread floor never refuses an exit (C-2.6)
+        _log().warning("oms_close_floor_unread", failure=type(exc).__name__)
+        return None
+
+
 def partial_result(error: OmsError, status: int) -> str:
     """A refused close's `oms_partial_close_total` result: a step-13 rule's `422` by its rule,
     any other answer `rejected`."""
@@ -383,7 +396,8 @@ def make_position_close_router(
     `records` the refusals; `replays` is the 24 h record of first `2xx` answers; `protective`, the
     view-as guard's registry, learns that these handlers decide a viewer's close themselves;
     `min_size_floor` is SR-E22-03's `MIN_SIZE_FLOOR` of a symbol, step 13's dust floor until
-    E29-K01 (BQ-5): None, or a symbol it does not list, leaves `min_order_qty` alone."""
+    E29-K01 (BQ-5): None, a symbol it does not list, or a floor it cannot read
+    (`advisory_floor`) leaves `min_order_qty` alone."""
     if protective is not None:
         protective.register(_OPERATION)
         protective.register(_ALL_OPERATION)
@@ -464,7 +478,8 @@ def make_position_close_router(
             count_partial(full, "rejected")
             return order_problem(exc, pager=paging)
         if outcome.status != 202:
-            count_partial(full, "rejected")
+            if not outcome.replayed:  # a repeat's answer is never counted (20 Sec.12.1)
+                count_partial(full, "rejected")
             if outcome.status == 502 and not outcome.replayed:
                 await refreshed(oms, caller.row)
             return outcome_problem(outcome)
@@ -545,7 +560,7 @@ def make_position_close_router(
             if errors:
                 raise OrderInvalid(errors[0].message, errors=errors)
             instrument = await oms.positions.instrument(Symbol(row.symbol))
-            floor = None if min_size_floor is None else min_size_floor(row.symbol)
+            floor = advisory_floor(min_size_floor, row.symbol)
             size = resolve_close(row, terms, instrument, floor=floor)  # no exchange call (BQ-2)
         except OmsError as exc:
             if step == "key":
