@@ -757,3 +757,10 @@ at or before the last bar's, the `bar-store` microbenches still cost more than o
 6 ns a bar), 100 k mutation steps 9.6 → 10.6 ms. The 1 M budget is ≤ 120 ms: about 79 ms of headroom
 remains. No baseline moved: neither scenario is in `bench/baseline.json` or the matrix baselines
 (they are `*.perf.test.ts` budgets), and `bench/results.json` is byte-identical.
+The coordinator accepted this at 03:38Z: the two `bar-store` scenarios are fixed perf budgets, not
+baselined, so nothing moves. Whether they join the baselined set is a row for E11-T06 #449 (the
+bench CI gate).
+
+Seam limit: the scene graph cannot remove nodes, so `removeSeries` hides and unregisters the
+series' two hosts and frees its store and ring, and host node ids carry a generation number so a
+re-added series id cannot collide. Node removal is a row for E11 (the scene graph).
