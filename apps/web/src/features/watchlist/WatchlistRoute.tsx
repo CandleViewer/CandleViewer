@@ -23,13 +23,12 @@ import { COPY } from "./copy";
 import { useWatchlistIndex } from "./instruments";
 import { MODAL_PARAM, MODAL_WATCHLISTS, type ManagerIntent } from "./manager/intent";
 import { WatchlistManager, type ManagerOutcome } from "./manager/WatchlistManager";
+import { ROUTE_PANE } from "./ports";
 import { WatchlistPanel } from "./WatchlistPanel";
-import { createWatchlistSync } from "./sync";
+import { appWatchlistSync } from "./sync";
 import { useTickerHub } from "./ticker/wsTickerTransport";
 import { createWatchlistApi } from "./watchlistApi";
 
-/** The page's pane until panes exist: one watchlist pane per route visit. */
-export const ROUTE_PANE = "r111";
 /** Marks the history entry this page pushed to open SCR-101: closing goes back over it. */
 const OPENED_HERE = "cvWatchlistsOpened";
 
@@ -41,7 +40,8 @@ export function WatchlistRoute(): JSX.Element {
   const location = useLocation();
   const [params, setParams] = useSearchParams();
   const api = useMemo(() => createWatchlistApi(), []);
-  const sync = useMemo(() => createWatchlistSync(), []);
+  // The app's one channel: what SCR-101 and SCR-102's "Add to watchlist…" store reaches the panel (C-2.12).
+  const sync = appWatchlistSync;
   const hub = useTickerHub();
   const instruments = useWatchlistIndex();
   const writable = useShellSelector((s) => s.me?.permissions.includes("workspaces:write") === true);

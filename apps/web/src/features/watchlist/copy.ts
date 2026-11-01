@@ -124,4 +124,14 @@ export const COPY = {
   removeFrom: (name: string): string => `Remove from ${name}`,
   /** The active row's description (§4.2 Live, proposed): its sync group. */
   showsIn: (group: string): string => `Shows in group ${group}`,
+  /** E08-D05 §6.3: SCR-102's action menu item (verbatim). */
+  addToWatchlist: "Add to watchlist…",
+  /** D07 board 08: a list that holds the symbol shows its outcome in its label, "Majors, 12 symbols · has ETHUSDT". */
+  hasSymbol: (list: string, symbol: string): string => `${list} · has ${symbol}`,
+  /** D07 board 08: the one item with no list (verbatim). */
+  newWith: (symbol: string): string => `New watchlist with ${symbol}`,
+  /** PROPOSED: the chooser's one item while the lists are read. */
+  listsLoading: "Loading watchlists…",
+  /** PROPOSED: an add from SCR-102 that failed (no answer, or one that is not a refusal or a conflict). */
+  addFailed: (symbol: string, name: string): string => `Could not add ${symbol} to ${name}.`,
 } as const;
