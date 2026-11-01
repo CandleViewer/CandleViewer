@@ -120,7 +120,7 @@ Disk-pressure acceptance thresholds (for E16-Q04): at 75 % an alert fires; at 90
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | R-E1 | C7 | Viewer or Manager reaches `recording:write` / purge without step-up (missing check, IDOR on symbol scope) | A1, A2 | M | H | **High** | Server-side RBAC on every route (C-12.4); permission 51 is Owner + step-up only; every endpoint test includes forbidden-role and cross-scope cases; E16-X02 reviews | Low | permission-check failure metric |
 | R-E2 | C3 | Purge scope widened by client params (wildcards, empty symbol = all) | A1, A2 | M | H | High | Strict pydantic (`extra="forbid"`), explicit enumerated scope, empty/wildcard rejected, dry-run token bound to the exact scope and expiring (**E16-FR-10**) | Low | audit |
-| R-E3 | C5, C7 | `CV_TEST_CLOCK` or `CV_ALLOW_SHARED_VOLUME` reachable in production, defeating retention timing or the volume-separation guard (SR-096) | A4 | M | H | High | Startup refuses to boot when either is set and `CV_ENV` is live/demo; flags never read from request input; **E16-FR-11** unit test of the startup guard; listed in the deploy checklist | Low | startup failure log; config audit |
+| R-E3 | C5, C7 | `CV_TEST_CLOCK` or `CV_ALLOW_SHARED_VOLUME` reachable in production, defeating retention timing or the volume-separation guard (SR-096) | A4 | M | H | High | Startup refuses to boot when either is set and `CV_ENVIRONMENT` is live/demo; flags never read from request input; **E16-FR-11** unit test of the startup guard (`services/api/tests/unit/test_e16_fr11_startup_guard.py`; both refusals are field validators, so the refusal payload carries only the offending field); listed in the deploy checklist | Low | startup failure log; config audit |
 | R-E4 | C6, C4 | Path traversal in archive paths (`..`, absolute, symlinks, drive letters, reserved names) writing outside the data dir | A3 | M | H | **High** | See section 5 | Low | `recorder_path_containment_reject_total` |
 | R-E5 | C2 | Recorder process runs with rights beyond its volume | A4 | L | M | Low | Dedicated service user; data dirs only | Low | none |
 
@@ -152,7 +152,7 @@ SR-097 forbids user-supplied paths; datasets resolve through a registry. Every f
 | AC-11 | R-D4 | Stop QuestDB for 1 h under full load | WAL stops at 1 GB, lowest-priority symbols stop first, gaps recorded, replay on recovery |
 | AC-12 | R-D5 | Hold a replay lease 24 h at 90 % disk | Lease expires at TTL, reaper frees space |
 | AC-13 | R-E2 | Purge with empty symbol / `*` | 422; nothing deleted |
-| AC-14 | R-E3 | Start with `CV_TEST_CLOCK` set and `CV_ENV=live` | Boot refuses with a clear error |
+| AC-14 | R-E3 | Start with `CV_TEST_CLOCK` set and `CV_ENVIRONMENT=live` | Boot refuses with a clear error |
 | AC-15 | R-D3 | Import a range projected above 80 % of free budget | Refused pre-flight with the projection |
 
 ## 7. Findings raised as work
