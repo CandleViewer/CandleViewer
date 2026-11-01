@@ -618,11 +618,9 @@ widths (`DRAWING_DASH` in `model.ts`, the one table both shaders' GLSL copies ar
 solid; dashed, a 4w dash and a 2w gap; dotted, a 1w dot and a 2w gap): the engine default pending
 E14-D04's value (BQ-358-7). Colours reach both programs premultiplied by their alpha times the
 layer's flatten opacity (`setDrawings { opacity }`, 0..1; a re-encode, not a uniform: the program
-cache writes only the five pane uniforms), and leave premultiplied. Premultiplied blending
-(enable BLEND, blendFunc(ONE, ONE_MINUS_SRC_ALPHA)) is not yet set by the GL backend (`GL2Like`
-has no `enable` / `blendFunc`); translucent fills and AA edges need it on real GPUs: it lands with
-PR 2 / E11-S02. A token the theme lacks falls back silently (to `color.drawing.default`, then a
-fixed grey); a metric and a warn for it arrive with PR 2's `engine_drawing_*` metrics. The 2D painter
+cache writes only the five pane uniforms), and leave premultiplied; PR 2 blends them (below). A
+token the theme lacks falls back (to `color.drawing.default`, then a fixed grey), counted by PR 2's
+`engine_drawing_token_fallbacks_total`. The 2D painter
 strokes the same geometry with round caps and `setLineDash`. Known limits: the dash phase is
 float32 in `mod(along, period)`, so it drifts once |along| from p0 reaches ~1e5 device px (an
 extended line anchored far off screen); a polyline with alpha below 1 blends twice where two
@@ -652,6 +650,52 @@ ranges behave as the lines' (a shared `InstanceRing`, `src/layers/drawings/ring.
 limits: across drawings, every fill draws after every line in the layer, so a fill can tint
 another drawing's line below it in z (z orders within a program only); pixel-level fill, ring and
 dash parity defers to E11-T08's goldens.
+
+## Drawings layer: labels, blending, B8 and metrics (E14-T03 PR 2)
+
+**Labels** (`drawing-label`, program 7, the layer's third and last draw call; 26 §3.7's third text
+batch of a pane) draw one instanced quad per glyph behind the `GlyphSource` seam
+(`src/layers/drawings/glyphs.ts`, #358 BQ-1): metrics, uv and the atlas texture number come from
+the source, so E11-S11's atlas (#336) drops in with no layer change. Until then `FakeAtlas` stands
+in: printable ASCII, 0.6 em monospace advances, texture 0, so labels position, bound, batch and
+upload now, and a WebGL2 label samples no atlas until #336 (the 2D path draws text today). A
+label sits on the record's first anchor, re-projected from the pane block like the lines' (a pan
+uploads nothing); a `text` drawing's baseline is its anchor, any other kind's label sits 4 CSS px
+right of and above it; the size is `style.fontSize` (8..48, default 12) in device px, so a DPR
+change re-encodes. A code point the atlas lacks draws `?`; a space advances with no instance. The
+label box (advance × size, ascent and descent) widens the drawing's `drawingBounds`. The 2D path
+keeps one run per label (anchor, offset, size, colour) and the record's clamped string, and
+`fillText`s it, bucketed by colour and size: the font is `<px>px sans-serif`, built from the size
+alone, never from input (SR-E14-04); the text is data, never parsed (SR-E14-03).
+
+**Blending.** `GL2Like` gains `enable`, `disable` and `blendFunc`. `PROGRAM_PREMULTIPLIED`
+(`src/gl/submit.ts`) marks the three drawings programs; submission turns BLEND on with
+`blendFunc(ONE, ONE_MINUS_SRC_ALPHA)` where a run of those programs starts and off where another
+starts, so every older program draws exactly as before (the grid's colours are straight, the
+candle's opaque). The backend keeps the state across frames (off on a new or restored context,
+WebGL's default): a chart without drawings makes no blend call, one with them two a frame.
+
+**B8** runs inside the existing `engine-bench` job (BQ-2, no new required check): the
+`drawings-drag` scene (100 000 bars, 200 drawings + 50 order lines, every one labelled, one
+dragged for 180 frames) and `drawings-drag.perf.test.ts`, which bounds each drag frame's p95 at
+12 ms on the GL fake and on a silent 2D context and asserts 0 price / footprint redraws; the
+standing 5 % engine-bench gate is the relative one.
+
+**Metrics** (`src/layers/drawings/metrics.ts`): `engine_drawing_layer_frame_ms` (a histogram of
+the node's update, an injected clock), `engine_drawing_count`, `engine_drawing_instance_uploads_total`
+(changed instances across the three rings), `engine_text_draw_calls` (the label draw, ≤ 1 a pane)
+and `engine_drawing_token_fallbacks_total` with the last missing token (the warn), posted on the
+worker's `frame` message as the additive `drawings` block; §8's `FrameStats` is unchanged (the
+`engine.pick.*` precedent); the debug overlay that shows them is the app's.
+
+**`degraded-2d`**: lines, fills and labels draw in Canvas 2D; the capability notice is the
+existing `ENGINE_NO_WEBGL2` error with `reducedCapabilities` (drawings are not among them), which
+the app shows as E11-D04 D13's card and E11-D02 D16's "Basic rendering" badge.
+
+**Goldens**: the CPU stand-in (each primitive × theme × DPR rendered twice from scratch through the
+2D path and the GL rings, equal at zero tolerance) ships now; the SwiftShader goldens (≤ 0.1 %, both
+profiles, token contrast) are `it.todo` rows for E11-T08 (#391). `DRAWING_DASH` is exported from
+the package root (ruled additive, BQ-358-7), so E14-T02 reads the one table.
 
 ## Scripts
 
