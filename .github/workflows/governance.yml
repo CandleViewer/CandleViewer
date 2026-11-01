@@ -66,7 +66,8 @@ jobs:
         run: python scripts/check_rule_refs.py
 
       - name: Keymap conflict, reserved-key and catalogue-drift lint (E49-T04)
-        run: python scripts/keymap_lint.py --check-docs
+        # E10-T05 (#5211): and the server's keymap vocabulary is what the keymap renders.
+        run: python scripts/keymap_lint.py --check-docs --check-vocabulary
 
       - name: Single-source-of-truth duplication check (GOV-003)
         # known pre-existing GOV-003 finding on docs/plan/04-security-program.md

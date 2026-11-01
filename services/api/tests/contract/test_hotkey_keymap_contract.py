@@ -12,7 +12,9 @@ E10-T05 (#5211), the server half's contract: the profile is one closed object wh
 unknown members (BQ-1), `22` names the five forced commands and the dangerous set it derives
 `requires_arm` and `confirm` from, with no default (BQ-3), `keys` names the three locked commands
 and no sequence (BQ-4), and the writes declare the ruled answers and headers (BQ-5, BQ-10, BQ-13).
-The generated vocabulary file is the third side of the forced-class pin once it lands."""
+The generated vocabulary file (`api/_generated/hotkey_vocabulary.json`, BQ-8) is the third side of
+the forced-class pin: its `requires_arm`, `confirm`, `editable` and `scope` are the keymap's and
+22's."""
 
 from __future__ import annotations
 
@@ -248,3 +250,26 @@ def test_contract_my_keymap_answers_the_active_profile() -> None:
     text = _text(_SPEC["paths"]["/me/keymap"]["get"]["description"])
     assert "While the caller has no active profile, `hotkey_profile_id` is absent" in text
     assert "or the hotkey profile store cannot be read; nothing is served" in text
+
+
+_VOCABULARY = (
+    Path(__file__).resolve().parents[2] / "candleviewer/api/_generated/hotkey_vocabulary.json"
+)
+VOCABULARY = {c["id"]: c for c in json.loads(_VOCABULARY.read_text(encoding="utf-8"))["commands"]}
+
+
+def test_contract_vocabulary_is_the_third_side_of_the_forced_class_pin() -> None:
+    """BQ-3 and BQ-8: the server derives `requires_arm` and `confirm` from the vocabulary, so its
+    five and its eight are 22's and the keymap's, as are its locked commands and its scopes."""
+    assert list(VOCABULARY) == list(COMMANDS)
+    assert {cid for cid, c in VOCABULARY.items() if c["requires_arm"]} == FORCED
+    assert {cid for cid, c in VOCABULARY.items() if c["requires_arm"]} == _named(
+        _MEMBERS["requires_arm"]["description"]
+    )
+    assert {cid for cid, c in VOCABULARY.items() if c["confirm"]} == DANGEROUS
+    assert {cid for cid, c in VOCABULARY.items() if c["dangerous"]} == DANGEROUS
+    locked = {cid for cid, c in VOCABULARY.items() if not c["editable"]}
+    assert locked == {"global.palette", "chart.cancel_drawing", "ticket.clear"}
+    for cid, c in VOCABULARY.items():
+        assert c["scope"] == dict(TABLE)[COMMANDS[cid]["context"]], cid
+        assert c["default"] == COMMANDS[cid]["defaultBinding"], cid

@@ -133,9 +133,13 @@ GENERATE_OUTPUTS: tuple[Path, ...] = (
 # generator's --check or by a test. #3452: generate_cvwb_vectors.py's --check runs in no
 # lane, as the py lane's test_cvwb_binary.py already byte-checks every file it writes with
 # the script's own renderers, and the governance job runs keymap_lint.py --check-docs on
-# every PR.
+# every PR. E10-T05 (#5211): keymap_lint.py --vocabulary also writes the server's keymap
+# vocabulary, which that job's --check-vocabulary and the py lane's freshness test check.
 FIXED_OUTPUTS: dict[str, tuple[str, ...]] = {
-    "scripts/keymap_lint.py": ("docs/generated/default-keymap.md",),
+    "scripts/keymap_lint.py": (
+        "docs/generated/default-keymap.md",
+        "services/api/candleviewer/api/_generated/hotkey_vocabulary.json",
+    ),
     "tools/contracts/gen_ws_constants.py": (
         "packages/protocol/generated/ws_constants.py",
     ),

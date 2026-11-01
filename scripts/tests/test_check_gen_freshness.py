@@ -142,7 +142,8 @@ def _cvwb_targets() -> set[str]:
 # its source; services/api/tests/unit/ws/test_cvwb_binary.py also pins its evaluated
 # TARGETS). The tracked files in those directories are those files, the CVWB layout twin
 # (step 3's) and the corpora kept by hand (SR-185; #415). #3452: docs/generated, where only
-# scripts/keymap_lint.py writes (the governance job runs its --check-docs).
+# scripts/keymap_lint.py writes (the governance job runs its --check-docs). E10-T05 (#5211): it
+# also writes the server's keymap vocabulary into services/api/candleviewer/api/_generated.
 _GATED_DIRS = {
     "docs/generated",
     "packages/fixtures/golden/cvwb",
@@ -156,7 +157,7 @@ _ERROR_CODES = _load_script("tools/errorcodes/generate.py")
 _MODELS = _load_script("services/api/scripts/generate_protocol_models.py")
 _KEYMAP = _load_script("scripts/keymap_lint.py")
 _WRITES: dict[str, set[str]] = {
-    "scripts/keymap_lint.py": {_rel(_KEYMAP.DOCS_OUT)},
+    "scripts/keymap_lint.py": {_rel(_KEYMAP.DOCS_OUT), _rel(_KEYMAP.VOCABULARY_OUT)},
     "tools/contracts/gen_ws_constants.py": {_rel(_CONSTANTS.OUT)},
     "tools/errorcodes/generate.py": {
         _rel(_ERROR_CODES.OUT_PY),
@@ -1230,8 +1231,11 @@ def _make_recipe(target: str) -> list[str]:
 
 # The arguments with which a generator FIXED_OUTPUTS names writes its files in place; every
 # other one writes them when run with none. Each also has a mode that writes nothing
-# (--check, --check-docs), and keymap_lint.py without --docs only lints.
-_WRITE_ARGS: dict[str, list[str]] = {"scripts/keymap_lint.py": ["--docs"]}
+# (--check, --check-docs, --check-vocabulary), and keymap_lint.py without --docs and
+# --vocabulary only lints.
+_WRITE_ARGS: dict[str, list[str]] = {
+    "scripts/keymap_lint.py": ["--docs", "--vocabulary"]
+}
 
 
 def test_make_gen_runs_pnpm_generate_then_every_generator_step_7_names() -> None:
