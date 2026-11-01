@@ -41,6 +41,15 @@ SECURITY = [
     "infra/images/Dockerfile.api",
     "infra/compose/docker compose.override.yml",  # a space is a name character
     *(p + "Screen.tsx" if p.endswith("/") else p for p in s.WEB_AUTH_PATHS),
+    # #1022: the admin area's route element and frame, named here too so that dropping either from
+    # WEB_AUTH_PATHS fails this list, not only the list built from it
+    "apps/web/src/features/admin/AdminRouteElement.tsx",
+    "apps/web/src/features/admin/shell/AdminArea.tsx",
+    # S-5330-01: and the files that decide the `403`: the read's outcome, the withdrawal, and the
+    # store that holds it (C-5330-13: `withdrawn()`, the denied branch and `cleared`)
+    "apps/web/src/features/admin/overview/adminReads.ts",
+    "apps/web/src/features/admin/overview/strip.ts",
+    "apps/web/src/features/admin/overview/readStore.ts",
     "apps/web/src/features/sessions/SessionsScreen.tsx",  # a future slice, before the list names it
     "apps/web/src/lib/session/store.ts",
     "package.json",
