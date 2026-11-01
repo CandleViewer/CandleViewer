@@ -133,3 +133,39 @@ describe("Gestures.paneAt (BQ-10)", () => {
     expect(bare.paneAt(80)).toBe(0);
   });
 });
+
+describe("a collapsed pane's stub row (E11-S09, BQ-11)", () => {
+  it("test_update_secondPaneCollapsed_noPriceLabelsAndNoGridLineInsideTheStubRow", () => {
+    const s = stack();
+    s.vp.setPriceInfo(1, 0, 1);
+    s.vp.setPriceRange(1, 2_000, 2_400);
+    // Pane 1 is a 24 px stub at 300..324; pane 0 above it; the strip below.
+    const panes = [
+      { rect: [0, 0, 1000, 300] as Rect, collapsed: false },
+      { rect: [0, 300, 1000, 24] as Rect, collapsed: true },
+    ];
+    s.vp.setPanePlot(1, 300, 24);
+    const layout = { ...s.layout, panes, timeAxis: [0, 324, 1000, 24] as Rect, height: 348 };
+    const axes = new AxisModel();
+    axes.addPane(1);
+    settle(axes, { vp: s.vp, layout });
+    expect(axes.ladders[0]?.labels).toEqual([]); // `axes.panes` empties its list
+    expect(axes.priceLabels.length).toBeGreaterThan(0); // pane 0 keeps its own
+    const inside = (y: number): boolean => y > 300.5 && y < 323.5;
+    expect(horizontals(axes, 348).filter(inside)).toEqual([]);
+    const g = axes.grid;
+    let verticals = 0;
+    for (let i = 0; i < g.count; i += 1) {
+      const [x0 = 0, y0 = 0, x1 = 0, y1 = 0] = g.data.slice(i * 9, i * 9 + 4);
+      if (x0 !== x1 || Math.abs(x0 - 1000) < 1) continue; // the plot | gutter rule is an edge, not grid
+      verticals += 1;
+      const [top, bottom] = [348 - Math.max(y0, y1), 348 - Math.min(y0, y1)];
+      expect(top < 323.5 && bottom > 300.5, `vertical ${i} ${top}..${bottom}`).toBe(false);
+    }
+    expect(verticals).toBeGreaterThan(0); // pane 0 keeps its time lines
+    panes[0] = { rect: [0, 0, 1000, 300] as Rect, collapsed: true }; // the first pane too
+    panes[1] = { rect: [0, 300, 1000, 24] as Rect, collapsed: false };
+    expect(settle(axes, { vp: s.vp, layout })).not.toBe(0); // the collapse is in the signature
+    expect(axes.priceLabels).toEqual([]);
+  });
+});

@@ -32,7 +32,7 @@ const valid: ToWorker[] = [
     canvas: offscreen,
     dpr: 2,
     theme: {},
-    config: { bench: false, syncGroup: null },
+    config: { bench: false, syncGroup: null, density: "compact" },
   },
   { t: "resize", id: 1, width: 10, height: 10, dpr: 1 },
   { t: "input", id: 1, kind: "pointer", events: new Float32Array(INPUT_STRIDE) },
@@ -70,6 +70,7 @@ const valid: ToWorker[] = [
       ],
     },
   },
+  { t: "command", id: 1, cmd: { k: "setPaneCollapsed", pane: 1, collapsed: true } },
   { t: "command", id: 1, cmd: { k: "release" } },
 ];
 
@@ -115,6 +116,11 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
       { k: "setPaneShares", shares: Array.from({ length: 65 }, (_, i) => [i, 1]) },
     ],
     ["a scale for a negative pane key", { k: "setPriceScale", pane: -2 }],
+    ["a fractional shares seq", { k: "setPaneShares", shares: [[0, 1]], seq: 1.5 }],
+    // BQ-11: a collapse names a key and a boolean.
+    ["a collapse without its flag", { k: "setPaneCollapsed", pane: 1 }],
+    ["a collapse flag that is not a boolean", { k: "setPaneCollapsed", pane: 1, collapsed: 1 }],
+    ["a collapse of a negative key", { k: "setPaneCollapsed", pane: -1, collapsed: true }],
   ])("rejects %s", (_name, cmd) => {
     expect(rejectReason({ t: "command", id: 1, cmd })).toBe("malformed command");
   });
@@ -161,6 +167,11 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
     [
       "an init canvas with a NaN width",
       { ...valid[0], canvas: { ...offscreen, width: Number.NaN } },
+      "malformed init",
+    ],
+    [
+      "an init with an unknown density (E11-S09 BQ-11)",
+      { ...valid[0], config: { bench: false, syncGroup: null, density: "roomy" } },
       "malformed init",
     ],
     // BQ-147 / C-45: a 0 size is a hidden container and legal; these stay malformed.

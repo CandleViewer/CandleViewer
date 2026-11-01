@@ -27,7 +27,8 @@ export interface AxisLayout {
   readonly width: number;
   readonly height: number;
   readonly priceGutter: number;
-  readonly panes: readonly { readonly rect: Rect }[];
+  /** E11-S09 (BQ-11): a `collapsed` pane is a stub row: no price ladder, no grid in its rows. */
+  readonly panes: readonly { readonly rect: Rect; readonly collapsed?: boolean }[];
   readonly timeAxis: Rect;
 }
 
@@ -160,6 +161,7 @@ export class AxisModel {
     const m = this.measure;
     const ps = this.priceSet;
     this.price.update(vp, 0, rect[1], rect[3], DENSITY_GAP.price, m.height, ps);
+    if (layout.panes[0]?.collapsed === true) ps.n = 0; // a stub row has no ladder (BQ-11)
     let g = ps.n > 0 ? this.gutterOf(this.gutter, this.price) : 0;
     for (let i = 0; i < this.ladders.length; i += 1) {
       const l = this.ladders[i] as PaneLadder;
@@ -167,6 +169,7 @@ export class AxisModel {
       const q = vp.panes[i + 1];
       l.set.n = 0;
       if (r === undefined || q === undefined || !(q.tickSize > 0)) continue;
+      if (layout.panes[i + 1]?.collapsed === true) continue; // its `axes.panes` list empties
       l.ticks.update(vp, i + 1, r[1], r[3], DENSITY_GAP.price, m.height, l.set);
       if (l.set.n > 0) g = Math.max(g, this.gutterOf(l.gutter, l.ticks));
     }
@@ -276,16 +279,26 @@ export class AxisModel {
         if (set.kept[i] === 1) g.hLine(set.at[i] as number, 0, r[2], set.tier[i] as number);
       }
     }
-    const last = l.panes[l.panes.length - 1]?.rect ?? r;
-    const top = r[1];
-    const bottom = last[1] + last[3];
+    // Time lines run through each stretch of expanded panes; a stub row has none (BQ-11).
     const ts = this.timeSet;
-    for (let i = 0; i < ts.n; i += 1) {
-      const tier = ts.tier[i] as number;
-      const x = ts.at[i] as number;
-      if (ts.kept[i] === 1 || (tier === TIER.boundary && x >= 0 && x <= r[2])) {
-        g.vLine(x, top, bottom, tier, tier === TIER.boundary);
+    let top = Number.NaN;
+    for (let p = 0; p <= l.panes.length; p += 1) {
+      const pane = l.panes[p];
+      if (pane !== undefined && pane.collapsed !== true) {
+        if (Number.isNaN(top)) top = pane.rect[1];
+        continue;
       }
+      if (Number.isNaN(top)) continue;
+      const above = (l.panes[p - 1] as { readonly rect: Rect }).rect;
+      const bottom = above[1] + above[3];
+      for (let i = 0; i < ts.n; i += 1) {
+        const tier = ts.tier[i] as number;
+        const x = ts.at[i] as number;
+        if (ts.kept[i] === 1 || (tier === TIER.boundary && x >= 0 && x <= r[2])) {
+          g.vLine(x, top, bottom, tier, tier === TIER.boundary);
+        }
+      }
+      top = Number.NaN;
     }
     for (let p = 1; p < l.panes.length; p += 1) {
       g.hLine((l.panes[p] as { readonly rect: Rect }).rect[1], 0, r[2], TIER.rule);
@@ -359,7 +372,7 @@ export class AxisModel {
     c[11] = p.priceOrigin;
     c[12] = p.anchorTick;
     c[13] = MODES.indexOf(p.scaleMode);
-    c[14] = (p.inverted ? 1 : 0) + (p.autoScale ? 2 : 0);
+    c[14] = (p.inverted ? 1 : 0) + (p.autoScale ? 2 : 0) + (l.panes[0]?.collapsed ? 4 : 0);
     c[15] = l.width;
     c[16] = l.height;
     c[17] = l.priceGutter;
@@ -375,7 +388,7 @@ export class AxisModel {
       c[at + 2] = q?.tickSize ?? Number.NaN;
       c[at + 3] = q?.priceOrigin ?? Number.NaN;
       c[at + 4] = q === undefined ? -1 : MODES.indexOf(q.scaleMode);
-      c[at + 5] = q === undefined ? -1 : q.inverted ? 1 : 0;
+      c[at + 5] = (q === undefined ? -1 : q.inverted ? 1 : 0) + (l.panes[i + 1]?.collapsed ? 4 : 0);
       c[at + 6] = q?.anchorTick ?? Number.NaN;
       c[at + 7] = pr?.[1] ?? Number.NaN;
       c[at + 8] = pr?.[3] ?? Number.NaN;

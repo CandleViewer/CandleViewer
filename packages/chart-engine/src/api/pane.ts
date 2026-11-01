@@ -33,6 +33,8 @@ export interface PaneHost {
   resized?(id: PaneId): void;
   /** E11-S09 (lens M1): false for the last pane of a live chart: `remove` throws instead. */
   canRemove?(id: PaneId): boolean;
+  /** E11-S09 (BQ-16): a `setCollapsed` the host sends (the worker refuses the last plot). */
+  collapse?(id: PaneId, collapsed: boolean): void;
 }
 
 /** A series handle plus the state the stub records (read by tests; no renderer yet). */
@@ -52,6 +54,8 @@ export interface PaneInternal extends Pane {
   readonly label: string;
   /** E11-S09 (BQ-4): the normalised share the worker last laid out; NaN before its first. */
   share: number;
+  /** E11-S09 (BQ-11, BQ-16): mirrored from each `layout` message (the worker's truth). */
+  collapsed: boolean;
 }
 
 function checkRatio(r: number): number {
@@ -81,11 +85,12 @@ export function createPane(
     if (removed) throw new Error(`chart-engine: pane ${id} was removed`);
   }
 
-  return {
+  const pane: PaneInternal = {
     id,
     key,
     label,
     share: Number.NaN,
+    collapsed: false,
     priceScale,
     get heightRatio(): number {
       return heightRatio;
@@ -150,6 +155,13 @@ export function createPane(
       heightRatio = checkRatio(r);
       host.resized?.(id);
     },
+    setCollapsed(c: boolean): void {
+      live();
+      if (typeof c !== "boolean") throw new TypeError("chart-engine: collapsed must be a boolean");
+      // Always sent (the mirror may lag a call made this tick); `collapsed` follows the next
+      // `layout`, so a refusal in the worker never leaves it wrong.
+      host.collapse?.(id, c);
+    },
     remove(): void {
       if (removed) return;
       if (host.canRemove?.(id) === false) throw new LastPaneError();
@@ -158,4 +170,5 @@ export function createPane(
       host.onRemoved(id);
     },
   };
+  return pane;
 }

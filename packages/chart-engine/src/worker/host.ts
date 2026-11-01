@@ -308,6 +308,8 @@ export interface ChartHostOptions {
   readonly reducedMotion?: boolean;
   /** The design fonts (E11-S11 BQ-258); every `init` carries them, a restart's included. */
   readonly fonts?: readonly ChartFont[];
+  /** §8's `ChartOptions.density` at mount: the collapsed stub's row (E11-S09, BQ-11). */
+  readonly density?: "comfortable" | "compact" | "dense";
   readonly listener: HostListener;
 }
 
@@ -332,6 +334,11 @@ export interface ChartHost {
   /** Hands `buffer` over (it is detached on return) under the two-in-flight rule. */
   data(store: StoreId, op: DataOp, layout: BufferLayout, buffer: ArrayBuffer): void;
   command(cmd: Command): void;
+  /**
+   * E11-S09 (BQ-11, BQ-19): keeps `cmd` for the restart replay without posting it: the state a
+   * worker-side splitter drag reached (shares, collapse), learnt from its `layout` message.
+   */
+  retain(cmd: Command): void;
   /** Resolves the PNG, or null when it cannot encode; rejects `ExportUnavailableError` (BQ-92). */
   exportPng(): Promise<unknown>;
   dispose(): void;
@@ -372,6 +379,8 @@ function retainKey(cmd: Command): string | null {
       return `pane:${cmd.pane}`;
     case "setPaneShares":
       return "shares";
+    case "setPaneCollapsed":
+      return `collapsed:${cmd.pane}`; // BQ-11: after its `addPane`, replayed in order
     default:
       return null;
   }
@@ -421,7 +430,12 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   const init = (): void => {
     const canvas = o.canvas();
     const dpr = size?.dpr ?? o.dpr;
-    const config = { bench: o.bench, syncGroup: o.syncGroup, timeZone: o.timeZone ?? "UTC" };
+    const config = {
+      bench: o.bench,
+      syncGroup: o.syncGroup,
+      timeZone: o.timeZone ?? "UTC",
+      ...(o.density !== undefined && { density: o.density }),
+    };
     const extra = {
       ...(forced && { profile: "degraded-2d" as const }),
       ...(reduce && { reducedMotion: true }),
@@ -662,9 +676,16 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
         // BQ-2: a removal deletes the pane's retained key; key 0 exists from `init`, so its
         // removal is itself replayed.
         retained.delete(`pane:${cmd.pane}`);
+        retained.delete(`collapsed:${cmd.pane}`);
         if (cmd.pane === 0) retained.set("pane:0", cmd);
       }
       link.post({ t: "command", id, cmd }, []);
+    },
+    retain(cmd): void {
+      const key = retainKey(cmd);
+      if (disposed || key === null) return;
+      retained.delete(key);
+      retained.set(key, cmd);
     },
     exportPng(): Promise<unknown> {
       if (disposed) return Promise.resolve(null);

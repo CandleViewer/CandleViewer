@@ -504,3 +504,146 @@ describe("the crosshair and the chassis across the stack", () => {
     expect(of("error").map((e) => e.recoverable)).toEqual([true]);
   });
 });
+
+describe("Scenario: A pane too small to read collapses honestly (runtime, BQ-11)", () => {
+  /** A drawing node in `pane` with its own 2-instance ring (as above). */
+  function ring(pane: string): NullSeries {
+    const s = Object.assign(new NullSeries(`${pane}/s`), { program: PROGRAM.quad, count: 2 });
+    graph().addNode(pane, "series", s);
+    const backend = vi.mocked(GLBackend.prototype.submit).mock.contexts[0] as GLBackend;
+    backend.attach(s.id, { data: new Float32Array(16), head: 0, stride: 8 });
+    cmd({ k: "setLod", candles: 0, footprint: 0 });
+    return s;
+  }
+  const layoutRows = () =>
+    of("layout")
+      .at(-1)
+      ?.panes.map((p) => [p.pane, p.height, p.collapsed]);
+
+  it("a splitter drag below 48 px collapses the pane: 0 draws, rings kept, share remembered", () => {
+    vi.spyOn(GLBackend.prototype, "submit");
+    stack3();
+    step();
+    ring("main");
+    ring("pane-2");
+    step();
+    expect(lastFrame()?.drawCalls).toBe(2);
+    const share = of("layout").at(-1)?.panes[2]?.share;
+    // The 24 px band of the boundary at y = 480 captures the down; 80 px down leaves 40 px.
+    input("pointer", [INPUT.down, 300, 484, 1, 0, 0], [INPUT.move, 300, 564, 1, 0, 16]);
+    input("pointer", [INPUT.move, 300, 400, 1, 0, 16], [INPUT.up, 300, 400, 0, 0, 16]); // ended
+    input("pointer", [INPUT.leave, 0, 0, 0, 0, 0]); // no crosshair in the draw count
+    step();
+    expect(layoutRows()).toEqual([
+      [0, 432, false],
+      [1, 144, false],
+      [2, 24, true],
+    ]);
+    expect(of("layout").at(-1)?.panes[2]?.share).toBe(share);
+    expect(
+      of("layout")
+        .at(-1)
+        ?.panes.reduce((s, p) => s + p.share, 0),
+    ).toBe(1);
+    expect(lastFrame()?.drawCalls).toBe(1); // only main/s: no squashed chart
+    expect(lastFrame()?.uploadedBytes).toBe(0);
+    expect(rt.paneStats(1)?.map((p) => p.collapsed)).toEqual([false, false, true]);
+    expect(graph().get("pane-2/s")).toBeDefined(); // its node and ring stay
+    cmd({ k: "setPaneCollapsed", pane: 2, collapsed: false });
+    step();
+    expect(layoutRows()?.[2]).toEqual([2, 120, false]);
+    expect(lastFrame()?.drawCalls).toBe(2);
+    expect(lastFrame()?.uploadedBytes).toBe(0); // the kept ring draws again, nothing re-uploads
+  });
+
+  it("setPaneCollapsed: unknown keys, repeats and the last expanded pane change nothing", () => {
+    stack3();
+    step();
+    const posted = of("layout").length;
+    cmd({ k: "setPaneCollapsed", pane: 9, collapsed: true });
+    cmd({ k: "setPaneCollapsed", pane: 1, collapsed: false });
+    step(2);
+    expect(of("layout")).toHaveLength(posted);
+    cmd({ k: "setPaneCollapsed", pane: 0, collapsed: true });
+    cmd({ k: "setPaneCollapsed", pane: 1, collapsed: true });
+    cmd({ k: "setPaneCollapsed", pane: 2, collapsed: true }); // the last plot: refused
+    step();
+    expect(layoutRows()).toEqual([
+      [0, 24, true],
+      [1, 24, true],
+      [2, 552, false],
+    ]);
+    expect(of("layout")).toHaveLength(posted + 1);
+  });
+
+  it("a drag that grows a stub restores it; the comfortable density's stub is 32 px", () => {
+    rt.handle({ t: "command", id: 1, cmd: { k: "release" } });
+    rt.handle({
+      t: "init",
+      id: 1,
+      canvas: { width: 1064, height: 624, getContext: () => gl },
+      dpr: 1,
+      theme: {},
+      config: { bench: true, syncGroup: null, density: "comfortable" },
+    });
+    stack3();
+    cmd({ k: "setPaneCollapsed", pane: 2, collapsed: true });
+    step();
+    expect(layoutRows()?.[2]).toEqual([2, 32, true]);
+    const top = of("layout").at(-1)?.panes[2]?.top ?? 0;
+    input("pointer", [INPUT.down, 300, top + 2, 1, 0, 0], [INPUT.move, 300, top - 30, 1, 0, 16]);
+    input("pointer", [INPUT.up, 300, top - 30, 0, 0, 16]);
+    step();
+    expect(layoutRows()?.[2]).toEqual([2, 120, false]);
+  });
+
+  it("removing the last expanded pane un-collapses the survivor, which draws again (lens M2)", () => {
+    vi.spyOn(GLBackend.prototype, "submit");
+    cmd({ k: "addPane", pane: 1, label: "Volume pane" });
+    step();
+    ring("pane-1");
+    step();
+    cmd({ k: "setPaneCollapsed", pane: 1, collapsed: true });
+    step();
+    expect(lastFrame()?.drawCalls).toBe(0);
+    cmd({ k: "removePane", pane: 0 });
+    step();
+    expect(layoutRows()).toEqual([[1, 600, false]]);
+    expect(graph().get("pane-1")?.visible).toBe(true);
+    expect(lastFrame()?.drawCalls).toBe(1); // pane-1/s draws
+  });
+
+  it("layout echoes the last applied setPaneShares seq, 0 before one carries it (BQ-3)", () => {
+    stack3();
+    step();
+    expect(of("layout").at(-1)?.seq).toBe(0);
+    cmd({ k: "setPaneShares", shares: [[1, 0.3]], seq: 5 });
+    step();
+    expect(of("layout").at(-1)?.seq).toBe(5);
+    cmd({ k: "setPaneShares", shares: [[1, 0.25]] }); // no seq: the last one stays
+    step();
+    expect(of("layout").at(-1)?.seq).toBe(5);
+  });
+
+  it("the degraded-2d re-init keeps the stubs (BQ-10, BQ-11)", () => {
+    stack3();
+    cmd({ k: "setPaneCollapsed", pane: 1, collapsed: true });
+    step();
+    rt.handle({
+      t: "init",
+      id: 1,
+      canvas: { width: 1064, height: 624, getContext: () => new FakeCtx2D() },
+      dpr: 1,
+      theme: {},
+      config: { bench: true, syncGroup: null },
+      profile: "degraded-2d",
+    });
+    step(2);
+    expect(rt.paneStats(1)?.map((p) => [p.key, p.collapsed])).toEqual([
+      [0, false],
+      [1, true],
+      [2, false],
+    ]);
+    expect(layoutRows()?.[1]).toEqual([1, 24, true]);
+  });
+});

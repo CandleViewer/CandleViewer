@@ -50,6 +50,13 @@ export interface Pane {
   addOverlay(plugin: OverlayPlugin, opts?: unknown): OverlayHandle;
   addIndicator(plugin: IndicatorPlugin, params: Record<string, number | string>): IndicatorHandle;
   setHeightRatio(r: number): void;
+  /**
+   * E11-S09 (#446 BQ-16, additive): collapses the pane to a labelled stub row or restores it to
+   * max(its last share, the minimum height). Collapsing the last expanded pane does nothing.
+   */
+  setCollapsed(collapsed: boolean): void;
+  /** Whether the pane is a collapsed stub (the worker's last layout; a drag can collapse it). */
+  readonly collapsed: boolean;
   remove(): void;
 }
 

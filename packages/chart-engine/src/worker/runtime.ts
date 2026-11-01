@@ -45,6 +45,7 @@ import * as scene from "../scene/index.js";
 import { AtlasService, type AtlasCounters, type AtlasDetails } from "../text/atlas.js";
 import type { ChartFont, TextPlatform } from "../text/platform.js";
 import { defaultWeight } from "../scene/pane-shares.js";
+import { SPLIT, STUB_PX_COMFORTABLE } from "../scene/layout-engine.js";
 import {
   AutoScaler,
   ChartViewport,
@@ -167,6 +168,8 @@ export interface PaneStats {
   readonly timeEnd: number;
   /** The block's x words: `u_indexBase`, `u_k.x` (bar spacing) and the index fraction. */
   readonly xWords: readonly [number, number, number];
+  /** E11-S09 (BQ-11): a stub row with its nodes hidden; `engine.panes.collapsed` counts these. */
+  readonly collapsed: boolean;
 }
 
 /** The first pane's default label (BQ-15); later panes are "Pane N" from the facade. */
@@ -302,6 +305,8 @@ interface Instance {
   layoutSeen: number;
   /** The `layout` message last posted: keys, tops, heights, shares, then the time axis (BQ-4). */
   layoutSig: Float64Array;
+  /** The last `setPaneShares.seq` applied, echoed by `layout` (BQ-3); 0 while none. */
+  sharesSeq: number;
   /** The crosshair's vertical spans these rows: the first pane's top to the last's bottom. */
   readonly stack: scene.Rect;
   ready: boolean;
@@ -648,6 +653,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       inst.gpu.backend?.detach(nodeId);
     }
     inst.layout.removePane(slot.id);
+    showPanes(inst); // a stack of stubs only expands again: the survivor draws (BQ-11)
     inst.viewport.removePane(at);
     inst.autoscale.removePane(at);
     inst.axes.removePane(key);
@@ -655,6 +661,36 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     inst.viewportDirty = true;
     inst.graph.markViewport();
     touch(inst);
+  }
+
+  /**
+   * BQ-11: a collapsed pane's subtree is hidden (0 draws; its batches and rings are kept, so a
+   * restore re-uploads nothing) and an expanded one shown, after any layout collapse change.
+   */
+  function showPanes(inst: Instance): void {
+    const rows = inst.layout.panes;
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i] as scene.PaneLayout;
+      if (inst.graph.get(row.id)?.visible === row.collapsed) {
+        inst.graph.setVisible(row.id, !row.collapsed);
+      }
+    }
+  }
+
+  /** BQ-11: `setPaneCollapsed`; an unknown key, the same state or the last plot do nothing. */
+  function setCollapsed(inst: Instance, key: PaneKey, collapsed: boolean): void {
+    if (!inst.layout.setCollapsed(paneIdOf(key), collapsed)) return;
+    showPanes(inst);
+    touch(inst);
+  }
+
+  /** BQ-19: a splitter drag step from the gestures; `false` ends the drag (BQ-11). */
+  function split(inst: Instance, boundary: number, dy: number): boolean {
+    const r = inst.layout.dragSplitter(boundary, dy);
+    if (r === SPLIT.none) return true;
+    if (r !== SPLIT.moved) showPanes(inst);
+    touch(inst);
+    return r === SPLIT.moved;
   }
 
   /** BQ-3: the whole weight vector; the layout normalises it (`normaliseShares`). */
@@ -1069,7 +1105,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         removePane(inst, cmd.pane);
         return;
       case "setPaneShares":
+        if (cmd.seq !== undefined) inst.sharesSeq = cmd.seq;
         setShares(inst, cmd.shares);
+        return;
+      case "setPaneCollapsed":
+        setCollapsed(inst, cmd.pane, cmd.collapsed);
         return;
       case "pickAt":
         // BQ-135: an explicit pick always replies and leaves the hover edge state alone.
@@ -1107,6 +1147,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       addPane(inst, slot.key, old.layout.panes[i]?.ratio, slot.label);
     }
     if (slotAt(old, 0) < 0) removePane(inst, 0);
+    for (const row of old.layout.panes) {
+      if (row.collapsed) inst.layout.setCollapsed(row.id, true); // BQ-11: the stubs too
+    }
+    showPanes(inst);
   }
 
   function dispatch(msg: ToWorker): void {
@@ -1145,6 +1189,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         () => prepare(inst),
       );
       scene.layout.setSize(w, h);
+      // BQ-11: the stub row is 32 px under the comfortable density, 24 px otherwise (D02 §8).
+      if (msg.config.density === "comfortable") scene.layout.stubPx = STUB_PX_COMFORTABLE;
       const inst: Instance = {
         ...scene,
         slot,
@@ -1160,6 +1206,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         plotsSeen: -1,
         layoutSeen: -1,
         layoutSig: new Float64Array(0),
+        sharesSeq: old?.sharesSeq ?? 0,
         stack: [0, 0, 0, 0],
         autoscale: new AutoScaler(viewport, (pane) => sourcesOf(inst.panes[pane]?.key)),
         ready: false,
@@ -1172,6 +1219,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
           hover: (x, y) => pointerAt(inst, x, y),
           animate: (m) => inst.scheduler.animate(m),
           say: (code) => (inst.axes.say = code),
+          split: (boundary, dy) => split(inst, boundary, dy),
         }),
         // G-28: the degraded-2d re-init keeps the registrations, re-placed under the new view.
         objects: old ? old.objects.rebind(viewport) : new ObjectIndex(viewport, 0, "main"),
@@ -1388,7 +1436,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     if (inst.layoutSeen === L.computes) return;
     inst.layoutSeen = L.computes;
     const n = L.panes.length;
-    if (inst.layoutSig.length !== 4 * n + 3) inst.layoutSig = new Float64Array(4 * n + 3).fill(NaN);
+    if (inst.layoutSig.length !== 5 * n + 3) inst.layoutSig = new Float64Array(5 * n + 3).fill(NaN);
     const sig = inst.layoutSig;
     let same = true;
     const put = (j: number, v: number): void => {
@@ -1397,14 +1445,15 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     };
     for (let i = 0; i < n; i += 1) {
       const p = L.panes[i] as scene.PaneLayout;
-      put(4 * i, (inst.panes[i] as PaneSlot).key); // the slots and the rows stay in step
-      put(4 * i + 1, p.rect[1]);
-      put(4 * i + 2, p.rect[3]);
-      put(4 * i + 3, p.share);
+      put(5 * i, (inst.panes[i] as PaneSlot).key); // the slots and the rows stay in step
+      put(5 * i + 1, p.rect[1]);
+      put(5 * i + 2, p.rect[3]);
+      put(5 * i + 3, p.share);
+      put(5 * i + 4, p.collapsed ? 1 : 0);
     }
-    put(4 * n, L.timeAxis[1]);
-    put(4 * n + 1, L.timeAxis[3]);
-    put(4 * n + 2, Math.max(0, L.width - L.priceGutter));
+    put(5 * n, L.timeAxis[1]);
+    put(5 * n + 1, L.timeAxis[3]);
+    put(5 * n + 2, Math.max(0, L.width - L.priceGutter));
     if (same) return;
     deps.post({
       t: "layout",
@@ -1414,10 +1463,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         top: p.rect[1],
         height: p.rect[3],
         share: p.share,
-        collapsed: false,
+        collapsed: p.collapsed,
       })),
       timeAxis: [L.timeAxis[1], L.timeAxis[3]],
       plotWidth: Math.max(0, L.width - L.priceGutter),
+      seq: inst.sharesSeq, // always echoed (0 before any): an absent one means "no echo" (BQ-3)
     });
   }
 
@@ -1503,6 +1553,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         timeStart: p.stats[0] as number,
         timeEnd: p.stats[1] as number,
         xWords: [p.stats[2] as number, p.stats[3] as number, p.stats[4] as number],
+        collapsed: charts.get(id)?.layout.panes.find((r) => r.id === p.id)?.collapsed === true,
       })),
   };
 }

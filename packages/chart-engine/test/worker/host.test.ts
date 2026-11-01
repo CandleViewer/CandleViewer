@@ -635,6 +635,50 @@ describe("Scenario: Worker death is recovered", () => {
     host.dispose();
   });
 
+  it("replays setPaneCollapsed per key after a restart, and what retain() kept (E11-S09, BQ-11)", () => {
+    const host = hostOn(workerDoc());
+    settle();
+    host.command({ k: "addPane", pane: 1, label: "Volume pane" });
+    host.command({ k: "addPane", pane: 2, label: "CVD pane" });
+    host.command({ k: "setPaneCollapsed", pane: 1, collapsed: true });
+    host.command({ k: "setPaneCollapsed", pane: 1, collapsed: false }); // last per key wins
+    host.command({ k: "setPaneCollapsed", pane: 2, collapsed: true });
+    host.command({ k: "removePane", pane: 2 }); // its collapse leaves with it
+    settle();
+    const posted = inboxOf(lastWorker(), "command").length;
+    // A worker-side drag's outcome, learnt from `layout`: kept, never posted back.
+    host.retain({
+      k: "setPaneShares",
+      shares: [
+        [0, 0.9],
+        [1, 0.1],
+      ],
+    });
+    host.retain({ k: "setPaneCollapsed", pane: 1, collapsed: true });
+    host.retain({ k: "release" }); // not a retained kind: ignored
+    settle();
+    expect(inboxOf(lastWorker(), "command")).toHaveLength(posted);
+    lastWorker().kill();
+    vi.advanceTimersByTime(1000);
+    settle();
+    const cmds = (inboxOf(lastWorker(), "command") as Extract<ToWorker, { t: "command" }>[]).map(
+      (m) => m.cmd,
+    );
+    expect(cmds).toEqual([
+      { k: "addPane", pane: 1, label: "Volume pane" },
+      {
+        k: "setPaneShares",
+        shares: [
+          [0, 0.9],
+          [1, 0.1],
+        ],
+      },
+      { k: "setPaneCollapsed", pane: 1, collapsed: true },
+    ]);
+    host.dispose();
+    host.retain({ k: "setPaneCollapsed", pane: 1, collapsed: false }); // disposed: nothing
+  });
+
   it("resolves a pending screenshot null once the worker is lost for good", async () => {
     let calls = 0;
     env = fakeEnv({

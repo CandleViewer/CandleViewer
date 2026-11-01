@@ -217,9 +217,11 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "addIndicator",
       "addOverlay",
       "addSeries",
+      "collapsed",
       "id",
       "priceScale",
       "remove",
+      "setCollapsed",
       "setHeightRatio",
     ]);
     expect(Object.keys(surface.members("ChartEvents")).sort()).toEqual([
@@ -245,6 +247,13 @@ describe("Scenario: The package builds and exports the designed surface", () => 
     expectTypeOf<ChartEvents["crosshair"]["paneId"]>().toEqualTypeOf<PaneId | undefined>();
     // The §8 sketch carries the crosshair's new field (contract first).
     expect(readSketch().text).toMatch(/paneId\?: PaneId/);
+  });
+
+  it("E11-S09 (BQ-16) adds Pane.setCollapsed and Pane.collapsed, additively, in the §8 sketch", () => {
+    expectTypeOf<Pane["setCollapsed"]>().toEqualTypeOf<(collapsed: boolean) => void>();
+    expectTypeOf<Pane["collapsed"]>().toEqualTypeOf<boolean>();
+    expect(readSketch().text).toMatch(/setCollapsed\(collapsed: boolean\): void;/);
+    expect(readSketch().text).toMatch(/readonly collapsed: boolean;/);
   });
 
   it("type-checks the key signatures (enforced by tsc over test/)", () => {

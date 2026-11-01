@@ -286,3 +286,67 @@ describe("keys in the worker (BQ-108, BQ-109)", () => {
     expect([g.panModifier, vp.barSpacing, changes()]).toEqual([false, DEFAULT_BAR_SPACING, 0]);
   });
 });
+
+describe("the splitter drag (E11-S09, #446 BQ-19): the band captures only the drag's pointer-down", () => {
+  /** Two panes, 360 / 240 of the 600 px plot: the boundary at y = 360. */
+  function split(sink: (i: number, dy: number) => boolean = () => true) {
+    const vp = new ChartViewport(minuteMap(5000));
+    vp.setSize(plotWidthOf(SIZE.width), 600, 1);
+    vp.setPanePlot(0, 0, 600);
+    vp.pan(-2000 * vp.barSpacing);
+    const panes = [{ rect: [0, 0, 1000, 360] as const }, { rect: [0, 360, 1000, 240] as const }];
+    const calls: [number, number][] = [];
+    const hovers: number[] = [];
+    let changes = 0;
+    const g = new Gestures(
+      vp,
+      { ...SIZE, panes },
+      {
+        moved: (c) => void (changes += c ? 1 : 0),
+        hover: (_x, y) => void hovers.push(y),
+        animate: () => undefined,
+        split: (i, dy) => {
+          calls.push([i, dy]);
+          return sink(i, dy);
+        },
+      },
+    );
+    const mouse = (...r: number[][]): void => g.apply(false, rows(...r));
+    return { vp, g, calls, hovers, mouse, changes: () => changes };
+  }
+
+  it("a down inside the 24 px band drags the boundary by dy, never pans, and never coasts", () => {
+    const { vp, g, calls, mouse, changes } = split();
+    const at = vp.leftIndex;
+    expect([g.boundaryAt(349), g.boundaryAt(371), g.boundaryAt(300), g.boundaryAt(372)]).toEqual([
+      0, 0, -1, -1,
+    ]);
+    mouse([down, 300, 365, 1, 0, 0], [move, 400, 355, 1, 0, 8], [move, 500, 330, 1, 0, 8]);
+    expect(g.active).toBe(true); // hover does not pick mid-resize
+    mouse([move, 500, 330, 1, 0, 8], [up, 500, 330, 0, 0, 8]);
+    expect(calls).toEqual([
+      [0, -10],
+      [0, -25],
+    ]);
+    expect([vp.leftIndex, changes(), g.momentum.active, g.active]).toEqual([at, 0, false, false]);
+  });
+
+  it("the gutter's band resizes too; outside the band a down pans; hover passes through", () => {
+    const { calls, hovers, mouse, g } = split();
+    g.apply(
+      true,
+      rows([down, 300, 360, 7, 0, 0], [move, 300, 380, 7, 0, 8], [up, 300, 380, 7, 0, 8]),
+    );
+    mouse([move, 300, 362, 0, 0, 16]); // hover in the band: the crosshair follows, no resize
+    mouse([down, 1030, 358, 1, 0, 0], [move, 1030, 368, 1, 0, 8], [up, 1030, 368, 0, 0, 8]);
+    mouse([down, 300, 100, 1, 0, 0], [move, 300, 140, 1, 0, 8], [up, 300, 140, 0, 0, 8]);
+    expect(calls).toEqual([[0, 10]]); // a touch in the band pans: no resize
+    expect(hovers[1]).toBe(362); // after the touch move
+  });
+
+  it("a collapse ends the drag: later moves of the same press do nothing", () => {
+    const { calls, mouse } = split(() => false);
+    mouse([down, 300, 360, 1, 0, 0], [move, 300, 380, 1, 0, 8], [move, 300, 400, 1, 0, 8]);
+    expect(calls).toEqual([[0, 20]]);
+  });
+});

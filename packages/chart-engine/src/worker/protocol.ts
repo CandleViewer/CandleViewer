@@ -103,6 +103,11 @@ export interface ChartConfig {
   readonly syncGroup: string | null;
   /** §8's `ChartOptions.timeZone` for the axis labels (E11-S06, BQ-203, additive); UTC when absent. */
   readonly timeZone?: string;
+  /**
+   * §8's `ChartOptions.density` at mount (E11-S09, #446 BQ-11, additive): a collapsed pane's
+   * stub row is 32 px when `comfortable`, 24 px otherwise and when absent.
+   */
+  readonly density?: "comfortable" | "compact" | "dense";
 }
 
 /** One column of a columnar buffer: `count` elements of `bytes` each from `offset`. */
@@ -130,6 +135,7 @@ const SCALE_MODES: ReadonlySet<unknown> = new Set(["linear", "log", "percent", "
 export type PickPointer = "mouse" | "pen" | "touch";
 const PICK_POINTERS: ReadonlySet<unknown> = new Set(["mouse", "pen", "touch"]);
 const MAGNET_MODES: ReadonlySet<unknown> = new Set(["off", "weak", "strong"]);
+const DENSITIES: ReadonlySet<unknown> = new Set(["comfortable", "compact", "dense"]);
 
 export type Command =
   | { readonly k: "setViewport"; readonly timeStart: number; readonly timeEnd: number }
@@ -179,8 +185,21 @@ export type Command =
     }
   /** E11-S09 (BQ-2, additive): detaches only that pane's nodes and rings; nothing re-uploads. */
   | { readonly k: "removePane"; readonly pane: PaneKey }
-  /** E11-S09 (BQ-3, additive): the whole weight vector, `[pane, weight]`; unknown keys ignored. */
-  | { readonly k: "setPaneShares"; readonly shares: readonly (readonly [PaneKey, number])[] }
+  /**
+   * E11-S09 (BQ-3, additive): the whole weight vector, `[pane, weight]`; unknown keys ignored.
+   * `seq?` (a safe integer >= 0) is echoed by the next `layout` once applied.
+   */
+  | {
+      readonly k: "setPaneShares";
+      readonly shares: readonly (readonly [PaneKey, number])[];
+      readonly seq?: number;
+    }
+  /**
+   * E11-S09 (BQ-3, BQ-11, additive): collapses a pane to its stub (its nodes hidden, its rings
+   * kept, its share remembered) or restores it to max(its last share, the minimum). Collapsing
+   * the last expanded pane does nothing. Retained per key across a worker restart.
+   */
+  | { readonly k: "setPaneCollapsed"; readonly pane: PaneKey; readonly collapsed: boolean }
   | { readonly k: "release" };
 
 export type ToWorker =
@@ -377,7 +396,8 @@ export type FromWorker =
   /**
    * E11-S09 (BQ-4, additive): the pane stack in CSS px, posted when it changes, at most once per
    * frame: each pane's top, height and normalised share (summing exactly 1), the time axis
-   * `[top, height]` and the plot width. `collapsed` is always false until BQ-11 is ruled.
+   * `[top, height]` and the plot width. A `collapsed` pane is a stub row (BQ-11); its `share`
+   * is the remembered one, so the shares still sum to 1.
    */
   | {
       readonly t: "layout";
@@ -385,6 +405,11 @@ export type FromWorker =
       readonly panes: readonly PaneBox[];
       readonly timeAxis: readonly [number, number];
       readonly plotWidth: number;
+      /**
+       * The last `setPaneShares.seq` applied, 0 before any (BQ-3); absent from a worker that does
+       * not echo, which makes the facade drop every pending weight.
+       */
+      readonly seq?: number;
     }
   | {
       readonly t: "error";
@@ -579,7 +604,9 @@ function validCommand(cmd: unknown): boolean {
     case "removePane":
       return paneKey(cmd["pane"]);
     case "setPaneShares":
-      return validShares(cmd["shares"]);
+      return validShares(cmd["shares"]) && optional(cmd["seq"], paneKey);
+    case "setPaneCollapsed":
+      return paneKey(cmd["pane"]) && typeof cmd["collapsed"] === "boolean";
     case "release":
       return true;
     default:
@@ -632,6 +659,7 @@ export function rejectReason(msg: unknown): string | null {
         isObj(msg["theme"]) &&
         isObj(msg["config"]) &&
         optional(msg["config"]["timeZone"], (v) => typeof v === "string") &&
+        optional(msg["config"]["density"], (v) => DENSITIES.has(v)) &&
         (msg["profile"] === undefined || msg["profile"] === "degraded-2d") &&
         (msg["reducedMotion"] === undefined || typeof msg["reducedMotion"] === "boolean")
         ? null

@@ -9,6 +9,7 @@ import {
   createAxisStops,
   MAGNET_ANNOUNCE_KEY,
 } from "../host/axis-stop.js";
+import { createPaneChrome, type PaneChrome } from "../host/pane-chrome.js";
 import { createScaleBadge } from "../host/scale-badge.js";
 import { readReducedMotion, watchMotion } from "../host/motion.js";
 import { watchSize } from "../host/resize.js";
@@ -135,10 +136,23 @@ export function createChart(opts: ChartOptions): Chart {
   let paneSeq = 0;
   let paneKeys = 0; // BQ-1: the next stable key; 0 is the first pane's, never reused
   const byKey = (key: number): PaneInternal | undefined => panes.find((p) => p.key === key);
+  /**
+   * BQ-3, BQ-11: weights sent since the worker's last `layout` (by key); they win over the
+   * mirrored shares, so two `setHeightRatio` calls in one tick both hold. Cleared by `layout`.
+   */
+  const pending = new Map<number, { w: number; seq: number }>();
+  let shareSeq = 0; // each `setPaneShares` carries it; `layout` echoes the last applied one
+  const weightOf = (p: PaneInternal): number =>
+    pending.get(p.key)?.w ?? (Number.isNaN(p.share) ? p.heightRatio : p.share);
+  function sendShares(): void {
+    const shares = panes.map((p) => [p.key, weightOf(p)] as const);
+    host.command({ k: "setPaneShares", shares, seq: shareSeq });
+  }
   let renderProfile: FrameStats["renderProfile"] | null = null;
   let lastStats: FrameStats | null = null;
   let lastRange = { from: 0, to: 1 };
   let stops: AxisStops | null = null; // the axis stops (E11-S06), from the first `axes` message
+  let chrome: PaneChrome | null = null; // the splitters, stubs and regions (E11-S09), from `layout`
   // E11-S07: the last crosshair and readout fields the worker posted, and the event's bar edge.
   let cursor: CrosshairMessage | null = null;
   let fields: readonly ReadoutFieldValue[] = [];
@@ -217,13 +231,40 @@ export function createChart(opts: ChartOptions): Chart {
         });
         return;
       }
-      case "layout":
-        // BQ-4: the worker owns the shares; the facade mirrors them (BQ-11's API is pending).
-        for (const box of msg.panes) {
-          const pane = byKey(box.pane);
-          if (pane !== undefined) pane.share = box.share;
+      case "layout": {
+        // BQ-4: the worker owns the shares and the collapse; the facade mirrors them, and the
+        // host keeps them for a restart (a splitter drag happens in the worker, BQ-19).
+        // A layout posted before a removal reached the worker names a pane gone here: its keys
+        // are never retained, so a restart does not bring back its collapse.
+        // Only what the worker has applied: a layout posted before a pending send keeps it. A
+        // layout with no echo (a worker that does not echo) clears them all, as before.
+        const seen = msg.seq ?? Number.POSITIVE_INFINITY;
+        for (const [k, p] of pending) if (p.seq <= seen) pending.delete(k);
+        const known = msg.panes.filter((b) => byKey(b.pane) !== undefined);
+        for (const box of known) {
+          const pane = byKey(box.pane) as PaneInternal;
+          [pane.share, pane.collapsed] = [box.share, box.collapsed];
+          host.retain({ k: "setPaneCollapsed", pane: box.pane, collapsed: box.collapsed });
         }
+        const seq = msg.seq === undefined ? {} : { seq: msg.seq }; // a restart resumes it
+        host.retain({ k: "setPaneShares", shares: known.map((b) => [b.pane, b.share]), ...seq });
+        chrome ??= createPaneChrome(
+          opts.container,
+          surface.mirrorRoot,
+          {
+            shares(shares): void {
+              shareSeq += 1;
+              for (const [key, w] of shares) pending.set(key, { w, seq: shareSeq });
+              host.command({ k: "setPaneShares", shares, seq: shareSeq });
+            },
+            restore: (key) => byKey(key)?.setCollapsed(false),
+          },
+          theme.colors,
+          { now: () => env.now(), setTimer: (cb, ms) => env.setTimer(cb, ms) },
+        );
+        chrome.update(msg, (key) => byKey(key)?.label ?? paneLabelFor(key));
         return;
+      }
       case "error":
         emit("error", {
           code: msg.code,
@@ -305,6 +346,7 @@ export function createChart(opts: ChartOptions): Chart {
     theme: opts.theme.colors,
     syncGroup: opts.syncGroup ?? null,
     timeZone: opts.timeZone ?? CHART_DEFAULTS.timeZone,
+    density, // BQ-11: the stub row's height at mount
     reducedMotion,
     ...(opts.fonts !== undefined && { fonts: opts.fonts }),
     // Bench mode (every-frame `frame`, the C-Q02-1 LOD trace) has no §8 option: README BQ-18.
@@ -373,13 +415,21 @@ export function createChart(opts: ChartOptions): Chart {
         },
         // Lens M1: the stack never drops to zero panes; dispose still removes them all.
         canRemove: (): boolean => disposed || panes.length > 1,
+        collapse(_id, collapsed): void {
+          // BQ-11: the worker refuses collapsing the last plot; `layout` brings the outcome.
+          host.command({ k: "setPaneCollapsed", pane: key, collapsed });
+        },
         resized(): void {
-          // BQ-3: the whole weight vector, so the wire never carries a partial state.
-          host.command({ k: "setPaneShares", shares: panes.map((p) => [p.key, p.heightRatio]) });
+          // BQ-3: the whole weight vector, so the wire never carries a partial state. The other
+          // panes keep what was last sent or laid out, so a splitter drag or key survives.
+          shareSeq += 1;
+          pending.set(key, { w: byKey(key)?.heightRatio ?? 1, seq: shareSeq });
+          sendShares();
         },
         onRemoved(id: PaneId): void {
           const i = panes.findIndex((p) => p.id === id);
           if (i >= 0) panes.splice(i, 1);
+          pending.delete(key);
           if (!disposed) host.command({ k: "removePane", pane: key });
         },
       } satisfies PaneHost;
@@ -404,6 +454,7 @@ export function createChart(opts: ChartOptions): Chart {
       host.command({ k: "setTheme", theme: next.colors });
       badge.setTheme(next.colors);
       stops?.setTheme(next.colors);
+      chrome?.setTheme(next.colors);
     },
     setDensity(d: Density): void {
       if (disposed) return;
@@ -467,6 +518,7 @@ export function createChart(opts: ChartOptions): Chart {
       detachMotion();
       badge.dispose();
       stops?.dispose();
+      chrome?.dispose();
       host.dispose();
       surface.unmount();
     },
