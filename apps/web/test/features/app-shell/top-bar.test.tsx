@@ -124,7 +124,7 @@ describe("E10-S01 S2: the top bar's controls", () => {
     const names = stops.slice(0, 6).map((e) => e.getAttribute("aria-label") ?? e.textContent);
     // No Symbol control: SCR-102's trigger is drawn only once a workspace binds a pane (E08-S09).
     expect(names.join(" | ")).toMatch(
-      /^Skip to main content \| Account \| Interval \| Search commands Ctrl\+K \| Connection: [^|]+ \| Sign out$/,
+      /^Skip to main content \| Account \| Interval \| Search commands, Ctrl\+K \| Connection: [^|]+ \| Sign out$/,
     );
     for (const name of ["Account", "Interval"]) {
       const picker = within(bar).getByRole("button", { name });
@@ -132,7 +132,7 @@ describe("E10-S01 S2: the top bar's controls", () => {
       expect(picker).toHaveAccessibleDescription("Not available in this build.");
     }
     expect(within(bar).getByText("Pickers: not available in this build.")).toBeVisible();
-    const search = within(bar).getByRole("button", { name: "Search commands Ctrl+K" });
+    const search = within(bar).getByRole("button", { name: "Search commands, Ctrl+K" });
     expect(search).not.toHaveAttribute("aria-keyshortcuts"); // only while it does something
     expect(search).toHaveAccessibleDescription(
       "The command palette is not available in this build.",
@@ -148,9 +148,9 @@ describe("E10-S01 S2: the top bar's controls", () => {
         {...{ onSignOut: vi.fn(), signingOut: false, signOutFailed: false }}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Search commands Ctrl+K" }));
+    fireEvent.click(screen.getByRole("button", { name: "Search commands, Ctrl+K" }));
     expect(onSearch).toHaveBeenCalledTimes(1);
-    const enabled = screen.getByRole("button", { name: "Search commands Ctrl+K" });
+    const enabled = screen.getByRole("button", { name: "Search commands, Ctrl+K" });
     expect(enabled).toHaveAttribute("aria-keyshortcuts", "Control+K");
     expect([ariaKeys("Cmd+K"), ariaKeys("Meta+Shift+P")]).toEqual(["Meta+K", "Meta+Shift+P"]);
   });

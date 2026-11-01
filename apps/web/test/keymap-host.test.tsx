@@ -292,6 +292,8 @@ describe("SCR-013 cheatsheet is a modal dialog (D-03, A11Y-F-0026)", () => {
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
     expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    // E10-Q03 F-5: Close carries the CMP-039 ring, not the browser's default 1 px `auto` ring
+    expect(screen.getByRole("button", { name: "Close" })).toHaveClass("cv-focus-ring");
     // jsdom has no layout; contrast is the real-browser collectors'
     const res = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
     expect(res.violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual(

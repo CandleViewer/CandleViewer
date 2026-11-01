@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type CSSProperties, type JSX } from "react";
 import { NavLink, useNavigate } from "react-router";
-import { Icon, Tooltip } from "@candleviewer/ui";
+import { Icon, Tooltip, useFocusRing } from "@candleviewer/ui";
 import { useMeClaims } from "../../lib/auth/meCache";
 import { registerCommand } from "../../keymap/KeymapHost";
 import { ROUTE_MANIFEST } from "../../routes/manifest";
@@ -100,6 +100,8 @@ export function NavRail({
   const claims = useMeClaims();
   const items = useMemo(() => visibleNavItems(claims), [claims]);
   const list = useRef<HTMLUListElement>(null);
+  // CMP-039 ring, inset: the rail frame clips what it overflows (E10-Q03 F-4, SC 2.4.7 / 2.4.13).
+  const ring = useFocusRing({ inset: true });
 
   // `Alt+1..9` (keymap.json). Deps: the visible items (new only when the claims change) and the
   // router's navigate, so the command is registered once per role, not per render.
@@ -148,6 +150,7 @@ export function NavRail({
             >
               <NavLink
                 to={item.to}
+                className={ring.className}
                 style={linkStyle}
                 aria-label={badge === undefined ? undefined : `${item.label}, ${badge}`}
                 aria-keyshortcuts={`Alt+${item.digit}`}

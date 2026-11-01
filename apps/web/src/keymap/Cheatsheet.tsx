@@ -1,5 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore, type CSSProperties } from "react";
-import { Link } from "@candleviewer/ui";
+import { Link, useFocusRing } from "@candleviewer/ui";
 import { KEYMAP } from "./keymap";
 import { getBindings, subscribeBindings } from "./profile";
 import { commandMeta, globalShadowNote } from "./registry";
@@ -41,6 +41,7 @@ export function Cheatsheet({ onClose }: { readonly onClose?: () => void }): JSX.
   const contexts = [...new Set(KEYMAP.map((c) => c.context))];
   const dialog = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const ring = useFocusRing(); // E10-Q03 F-5: the Close button had the browser's default 1 px ring (SC 2.4.7 / 2.4.13)
   const close = useRef(onClose);
   close.current = onClose;
 
@@ -93,7 +94,7 @@ export function Cheatsheet({ onClose }: { readonly onClose?: () => void }): JSX.
       <h2 id="cs-h">Keyboard shortcuts</h2>
       <Link href="/settings/hotkeys">Customise</Link>
       {onClose ? (
-        <button ref={closeButton} type="button" onClick={onClose}>
+        <button ref={closeButton} type="button" className={ring.className} onClick={onClose}>
           Close
         </button>
       ) : null}
