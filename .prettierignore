@@ -105,6 +105,9 @@ docs/design/_tools/sheets/e42-d03/v4/
 # docs/design/_tools/sheets/e12-d07/v4: the packed (compact) E12-D07 sheets the boards were rendered from, kept
 # byte-identical apart from compactOf.file (the bare raw-sheet name; e12-d07/BUILD.md rebuilds them)
 docs/design/_tools/sheets/e12-d07/v4/
+# docs/design/_tools/sheets/e08-d09/v4: the packed (compact) E08-D09 sheets the boards were rendered from, kept
+# byte-identical apart from compactOf.file (the bare raw-sheet name; e08-d09/BUILD.md rebuilds them)
+docs/design/_tools/sheets/e08-d09/v4/
 # docs/design/_tools/sheets/e11-d05/v4: the packed (compact) E11-D05 ref-frame sheets (boards 09 / 10), as the kit
 # writes them (compactOf.file the bare raw-sheet name)
 docs/design/_tools/sheets/e11-d05/v4/
