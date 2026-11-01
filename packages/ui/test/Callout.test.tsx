@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
-import { act, useLayoutEffect } from "react";
+import { act, useLayoutEffect, useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { describe, it, vi } from "vitest";
 import { Callout, type CalloutTone } from "../src/components/index.js";
@@ -235,6 +235,36 @@ describe("Callout (CMP-028)", () => {
     await userEvent.keyboard(" ");
     expect(retry).toHaveBeenCalledTimes(1);
     expect(details).toHaveBeenCalledTimes(1);
+  });
+
+  it("an action takes CMP-001's loading: busy, focusable, a press does nothing, the element kept", async () => {
+    // E16-D02 §6.5: the level-3 banner's "Purge data…" is busy while this client's purge runs (not T2).
+    const onClick = fn();
+    function Banner() {
+      const [busy, setBusy] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setBusy(true)}>
+            Start
+          </button>
+          <Callout
+            tone="danger"
+            title="Recording stopped"
+            actions={[{ label: "Purge data…", onClick, loading: busy }]}
+          />
+        </>
+      );
+    }
+    const host = await mount(<Banner />);
+    const action = within(host).getByRole("button", { name: "Purge data…" });
+    expect(action).not.toHaveAttribute("aria-busy");
+    await userEvent.click(within(host).getByRole("button", { name: "Start" }));
+    const busy = within(host).getByRole("button", { name: "Purge data…" });
+    expect(busy).toBe(action);
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(busy).not.toHaveAttribute("aria-disabled");
+    await userEvent.click(busy);
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   it("no buttons and nothing focusable without retry, actions or dismissible", async () => {

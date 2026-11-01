@@ -452,3 +452,87 @@ describe("Button T2: a held Enter says the reason once per press", () => {
     expect(onClick).toHaveBeenCalledTimes(3);
   });
 });
+
+// The validity look (E09-D09 §9.1: a control disabled by form validity is the host's call; E16-D04 §1.3, E16-D06
+// T2-07 and T2-10): never T2. The button stays a Tab stop with aria-disabled, its fill and label dimmed and no lock,
+// described by the host's reason node; a press does nothing here and says nothing (the host answers it).
+describe("Button unavailableReasonId: the validity look", () => {
+  const WHY = "Type ETHUSDT exactly to confirm.";
+  const Invalid = ({ onClick }: { readonly onClick?: () => void }): JSX.Element => (
+    <>
+      <Button variant="danger" unavailableReasonId="purge-why" {...(onClick ? { onClick } : {})}>
+        Purge ETHUSDT data
+      </Button>
+      <p id="purge-why">{WHY}</p>
+    </>
+  );
+
+  it("stays a Tab stop: aria-disabled, not disabled, described by the host's node, no lock and no echo", async () => {
+    const host = await mount(<Invalid />);
+    const b = get(host, "Purge ETHUSDT data");
+    expect(b.disabled).toBe(false);
+    expect(b).toHaveAttribute("aria-disabled", "true");
+    expect(b).toHaveAttribute("data-unavailable", "");
+    expect(b).not.toHaveAttribute("data-gated");
+    expect(b).toHaveAccessibleDescription(WHY);
+    expect(within(b).queryByRole("img", { name: "Not available" })).toBeNull();
+    expect(b.querySelectorAll("svg")).toHaveLength(0);
+    await userEvent.tab();
+    expect(b).toHaveFocus();
+    await userEvent.hover(b);
+    expect(document.querySelector('[data-cmp="CMP-016"]')).toBeNull();
+  });
+
+  it("a click, Enter or Space does nothing and announces nothing; a held Enter's repeats are swallowed", async () => {
+    const onClick = fn();
+    const announce = fn();
+    const host = await mount(
+      <GatedAnnounceProvider announce={announce}>
+        <Invalid onClick={onClick} />
+      </GatedAnnounceProvider>,
+    );
+    const b = get(host, "Purge ETHUSDT data");
+    await userEvent.click(b);
+    await userEvent.tab();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard(" ");
+    expect(fireEvent.keyDown(b, { key: "Enter", repeat: true })).toBe(false);
+    expect(onClick).not.toHaveBeenCalled();
+    expect(announce).not.toHaveBeenCalled();
+  });
+
+  it("a disabledReason wins (T2, the lock), and native disabled wins over the look", async () => {
+    const gated = await mount(
+      <Button disabledReason={REASON} unavailableReasonId="purge-why">
+        Save
+      </Button>,
+    );
+    const t2 = within(gated).getByRole("button", { name: /Save/ });
+    expect(t2).toHaveAttribute("data-gated", "");
+    expect(t2).not.toHaveAttribute("data-unavailable");
+    expect(t2).toHaveAccessibleDescription(REASON);
+    const off = await mount(
+      <Button disabled unavailableReasonId="purge-why">
+        Close
+      </Button>,
+    );
+    const b = get(off, "Close");
+    expect(b).toBeDisabled();
+    expect(b).not.toHaveAttribute("aria-disabled");
+    expect(b).not.toHaveAttribute("data-unavailable");
+  });
+
+  it("a blank id is no look: the button is enabled and undescribed", async () => {
+    const onClick = fn();
+    const host = await mount(
+      <Button unavailableReasonId="  " onClick={onClick}>
+        Save
+      </Button>,
+    );
+    const b = get(host);
+    expect(b).not.toHaveAttribute("aria-disabled");
+    expect(b).not.toHaveAttribute("aria-describedby");
+    await userEvent.click(b);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+});
