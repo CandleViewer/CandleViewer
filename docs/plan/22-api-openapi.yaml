@@ -8126,6 +8126,8 @@ paths:
         `422 validation_failed` before anything is sent, its rule in `errors[].rule`, when:
         - `position_flat`: the stored position is flat;
         - `exceeds_position`: a `qty` above the stored size;
+        - `listed`: no instrument is listed under the position's symbol (`errors[].field`
+          `symbol`), so no size can be resolved;
         - `qty_below_minimum`: the resolved size of a partial close is below the instrument's
           `min_order_qty`, zero included (`errors[].limit` the minimum);
         - `dust_remainder`: a partial close would leave a remainder above zero but below the
@@ -8136,7 +8138,9 @@ paths:
           whether the exchange exempts a reduce-only order from its minimum notional. A client
           offers the full close in its place: `pct: "100"` under a new `Idempotency-Key`.
         The last two also carry `errors[].symbol` and `errors[].resolved`, the size the close
-        resolved to. A close of the whole size meets neither. Each refusal is recorded
+        resolved to, and a partial close that breaks both lists `dust_remainder` first in
+        `errors[]`, the rule only the full close answers. A close of the whole size meets
+        neither. Each refusal is recorded
         (`position.closed`, `denied`) before it is answered. A close, as every order the server
         classifies as only reducing its position, is exempt from the server's own
         minimum-notional check (`min_notional`): the exchange arbitrates (E29-S03 BQ-5, C-2.6).
@@ -8201,8 +8205,8 @@ paths:
         "422":
           description: >
             `validation_failed`: the body breaks its schema, or the close breaks a rule of its
-            size (see the description: `position_flat`, `exceeds_position`, `qty_below_minimum`,
-            `dust_remainder`). Nothing was sent.
+            size (see the description: `position_flat`, `exceeds_position`, `listed`,
+            `qty_below_minimum`, `dust_remainder`). Nothing was sent.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
