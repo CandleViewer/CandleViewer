@@ -365,6 +365,19 @@ def _lift(now: datetime) -> StepUpChange:
     return change
 
 
+def carried_grants(elevations: dict[str, datetime], now: datetime) -> dict[str, datetime]:
+    """SR-013 (#2101, C-5): the step-up state a step-up's session rotation carries to the
+    successor (`SessionService.rotate`): every unexpired grace window and bound one-shot grant,
+    the one the rotating step-up just made included, its binding kept. Never a pending challenge,
+    which that step-up used, nor a key that binds nothing (`StepUpChallenge.parse`)."""
+    return {
+        key: until
+        for key, until in elevations.items()
+        if until > now
+        and (key in ACTION_CLASSES or StepUpChallenge.parse(key, until, _ONCE) is not None)
+    }
+
+
 @dataclass(frozen=True)
 class ResetPreview:
     target_user_id: uuid.UUID
