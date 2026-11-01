@@ -370,6 +370,8 @@ class LiquidationEvent(MarketEvent):
 
 Mapping — `allLiquidation.{symbol}` (the legacy singular `liquidation` topic is retired and 404s): `T→ts_event` (ms→µs), `s→symbol`, `S→(side, liquidated_side)`, `v→qty`, `p→price`. `S` is the POSITION side at the venue (Bybit v5: "When you receive a `Buy` update, this means that a long position has been liquidated"; `bybit-exchange/docs@19518b90`, `websocket/public/all-liquidation.mdx`), so `S == "Buy"` ⇒ `liquidated_side = "long"`, `side = "sell"`, and `S == "Sell"` ⇒ `liquidated_side = "short"`, `side = "buy"`: the adapter derives `side`, the closing order's side, as the opposite of `S`, both in one function. Because the field is confusingly named at the exchange, **no code outside the adapter may read `side` on this event** — consumers use `liquidated_side` (lint-enforced).
 
+**Empirical sign check:** in the first recorded `allLiquidation` capture, a long's bankruptcy `p` is below the mark at `T` and a short's is above it; check this before the recording replaces the fixtures.
+
 **Edge case:** the topic batches at most one push per symbol per 500 ms with a `data[]` array — the recorder must store every array element, not assume one record per push (research 08 §9).
 
 ### 2.6 OpenInterestEvent
