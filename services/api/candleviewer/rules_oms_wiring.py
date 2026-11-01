@@ -4,8 +4,9 @@
 `rules` imports neither `storage` nor `audit` (`forbidden-M15`), so the executor's two ports are
 bound here: `RuleRunRecords` over `SqlAlchemyRulesRepository` (the run row, its events and its
 close, under the fire's own id) and `RuleActionAudit` over the audit writer (`rules.fired` and
-`rules.blocked`, keyed by the action's `dedupe_key`). Until E35-T10 adds the principal, a record
-names the rule as its actor with no user id and no request id, and both roles are `None` (BQ-11).
+`rules.blocked`, keyed by the action's `dedupe_key`). A record names the rule as its actor with no
+user id and no request id (04 SR-062), and both users' roles as the principal snapshot the action
+was checked against gave them, `None` when it was not read (E35-T10, BQ-5).
 `RuleAlerts` binds the executor's alerts to the page line and to `system_events` (BQ-7), and
 `rule_metrics` its series to the app's metrics facade (BQ-8); `app.py` binds all three. E35-T10's
 `rule_switches` binds checks 2 and 3 to the two flag views and the B18 verdict the OMS takes.
@@ -122,8 +123,8 @@ def _entry(fields: ActionAuditFields) -> dict[str, Any]:
         "ir_sha256": fields.ir_hash, "run_id": str(fields.run_id), "node_id": fields.node_id,
         "action_type": fields.action_type, "scope_instance": fields.scope_instance,
         "account_id": None if fields.account_id is None else str(fields.account_id),
-        "owner_user_id": str(fields.owner), "owner_role": None,
-        "armed_by_user_id": fields.armed_by, "armed_by_role": None,
+        "owner_user_id": str(fields.owner), "owner_role": fields.owner_role,
+        "armed_by_user_id": fields.armed_by, "armed_by_role": fields.armed_by_role,
         "dedupe_sha256": fields.dedupe_key,
     }  # fmt: skip
     if fields.blocked_by is not None:

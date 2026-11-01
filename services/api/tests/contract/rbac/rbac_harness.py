@@ -16,7 +16,7 @@ import tempfile
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -679,6 +679,12 @@ class _ScopeSource:
 
     async def load_permissions(self, owner: uuid.UUID) -> frozenset[str]:
         return actor_permissions(self._actor(owner), self._spec)
+
+    async def load_account_environments(
+        self, account_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """E35-T10 (BQ-3): every account read in this world's environment, `demo`."""
+        return dict.fromkeys(account_ids, "demo")
 
 
 class _Views:

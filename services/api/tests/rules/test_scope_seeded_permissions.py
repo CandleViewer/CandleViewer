@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -56,6 +57,12 @@ class _SeededSource:
 
     async def load_permissions(self, owner: uuid.UUID) -> frozenset[str]:
         return _db_codes(self.roles[owner])
+
+    async def load_account_environments(
+        self, account_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """E35-T10 (BQ-3): every account read in this world's environment, `live`."""
+        return dict.fromkeys(account_ids, "live")
 
 
 async def _gate(user: uuid.UUID) -> tuple[ScopeResolver, list[str]]:

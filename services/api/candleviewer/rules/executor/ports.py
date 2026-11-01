@@ -113,6 +113,10 @@ class ActionAuditFields:
     armed_by: str | None
     dedupe_key: str
     blocked_by: BlockedBy | None = None
+    #: Both users' roles as the principal snapshot the action was checked against gave them
+    #: (check 5, E35-T10); `None` when that snapshot was not read.
+    owner_role: str | None = None
+    armed_by_role: str | None = None
 
 
 def audit_fields(
@@ -150,6 +154,29 @@ class AlertPort(Protocol):
 
     def settled(self, rule_id: str) -> None:
         """The rule's fire ended with no partial outcome: its alert episode is over."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PrincipalView:
+    """One user's principal snapshot (24 §11.5 "The principal"; E35-T10, BQ-5): whether the user
+    is active (neither disabled nor deleted), the role's name and whether it is the Owner role,
+    the accounts the order route's decision admits with `requires_trade` in the process's
+    environment (every account of it for an Owner; a view-only or frozen grant admits none), and
+    when it was read, on the executor's monotonic clock."""
+
+    user_id: UUID
+    active: bool
+    role: str | None
+    is_owner: bool
+    trade_accounts: frozenset[UUID]
+    read_at: float
+
+
+class PrincipalReads(Protocol):
+    """Check 5's reads by user id, never a session (E35-FR-01): synchronous, from memory. E35-T11
+    binds them; unbound, every action that reaches check 5 is refused (`permission`)."""
+
+    def principal(self, user_id: UUID) -> PrincipalView | None: ...
 
 
 class RuleSwitches(Protocol):

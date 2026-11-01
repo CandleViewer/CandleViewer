@@ -31,7 +31,13 @@ from candleviewer.rules.runner import EvalTick
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
 from candleviewer.rules.service import RulesService
 from candleviewer.settings import Settings
-from tests.rules.executor.request_builders import Counted, Records, Switches, action_request
+from tests.rules.executor.request_builders import (
+    Counted,
+    Principals,
+    Records,
+    Switches,
+    action_request,
+)
 from tests.rules.executor.test_mode_split import NOTE, Rig
 from tests.rules.test_evaluator import Clock
 from tests.rules.test_scope_wiring import OWNER, A, B, Source
@@ -124,6 +130,7 @@ async def start(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Start]:
         store, svc, records, counted = InMemoryRuleStore(), RulesService(), Records(), Counted()
         svc.bind(store=store, action_sink=sink, simulation_sink=to_simulation)
         svc.bind(records=(records, records), metrics=counted.metrics, switches=Switches())
+        svc.bind(principal=Principals(frozenset({A, B})))
         svc.wire_scope(source, "demo", audit)
         await svc.refresh_scope(OWNER)
         ctx: Any = SimpleNamespace(settings=SimpleNamespace(rules_evaluator_enabled=True))
@@ -561,7 +568,7 @@ async def test_the_recheck_before_a_retry_runs_check_one_then_the_scope_recheck(
 
 
 def _fire(
-    run: int, *nodes: str, emit: Callable[[ActionRequest], Awaitable[bool]], rule: str = RULE
+    run: int, *nodes: str, emit: Callable[[ActionRequest], Awaitable[object]], rule: str = RULE
 ) -> dispatch.Fire:
     scope = RuleScope(level="account")
     reqs = tuple(
@@ -605,18 +612,18 @@ async def test_a_failed_action_stops_its_fire_and_the_worker_goes_on(
         return None
 
     executor = ActionExecutor(
-        check_one=armed, scope_check=lambda _req: None, gates=Gates(switches=Switches()),
-        records=records, audit=records, stand_in=passes,
+        check_one=armed, scope_check=lambda _req: None,
+        gates=Gates(switches=Switches(), principal=Principals()), records=records, audit=records,
+        stand_in=passes,
     )  # fmt: skip
 
-    async def emit(req: ActionRequest) -> bool:
+    async def emit(req: ActionRequest) -> None:
         seen.append((req.run_id.int, req.payload.node_id))
         if seen == [(1, "a1")]:
             if failure == "timeout":
                 await asyncio.Event().wait()  # never answers: only the bound ends it
             raise RuntimeError("the emitter failed")
-        await executor.hand_over(req)
-        return True
+        await executor.hand_over(req)  # `emit_checked`: None once the action went on
 
     fires = dispatch.FireDispatch(_never_refused, executor.execute)
     fires.start()
