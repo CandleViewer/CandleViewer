@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>E14-K01 harness (throwaway)</title>
+    <style>
+      body {
+        margin: 0;
+        font: 13px sans-serif;
+      }
+      #row {
+        display: flex;
+        align-items: flex-start;
+      }
+      #chart {
+        position: relative;
+        width: 1200px;
+        height: 600px;
+        background: #111;
+        outline-offset: -3px;
+      }
+      #mirror {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0;
+        overflow: hidden;
+      }
+      .sur {
+        position: absolute;
+        left: 0;
+        top: 0;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: none;
+      }
+      .sr {
+        position: absolute;
+        left: -9999px;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+      }
+      #drawer {
+        width: 320px;
+        height: 600px;
+        background: #222;
+        color: #ccc;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="before" type="button">Before the chart</button>
+    <div id="row">
+      <div id="chart" role="application" aria-label="Chart BTCUSDT 1m" tabindex="0">
+        <canvas id="cv" width="1200" height="600"></canvas>
+        <div id="mirror"></div>
+      </div>
+      <div id="drawer" aria-label="Properties drawer (docked)">docked drawer</div>
+    </div>
+    <button id="next" type="button">Next region</button>
+    <div id="cursorRegion" class="sr" role="status" aria-live="polite"></div>
+    <div id="drawRegion" class="sr" role="status" aria-live="polite"></div>
+    <script type="module" src="harness.mjs"></script>
+  </body>
+</html>

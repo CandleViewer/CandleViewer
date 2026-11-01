@@ -966,7 +966,7 @@ Drag preview                Drop zones
 ```
 
 - **Data:** drawings persist per symbol+user: `GET/POST /api/v1/drawings?symbol=`, `PUT/DELETE /api/v1/drawings/{drawingId}`; shared across synced panels on the same symbol.
-- **Interactions:** keyboard tool selection (`Alt+T` trendline, `Alt+H` horizontal, `Alt+F` fib, `Alt+R` rect, `Alt+M` measure); magnet snapping toggle `Ctrl+M`; drawings can be created entirely by keyboard via SCR-045's grid ("Create horizontal line at focused price").
+- **Interactions:** keyboard tool selection (`Alt+L` trendline, `Alt+H` horizontal, `Alt+O` fib, `Alt+R` rect, `Alt+D` measure; interim keys, registered by E14-S10; the keyboard creation flow and the surrogate pattern: [E14-K01.md](spikes/E14-K01.md)); magnet snapping toggle `Ctrl+M`; drawings can be created entirely by keyboard via SCR-045's grid ("Create horizontal line at focused price").
 - **Validation:** a drawing needs ≥2 anchors before it persists; the position tool validates against tick/lot.
 - **A11y:** each drawing has an accessible name and is listed in SCR-036; property popovers are standard forms.
 - **Components:** CMP-008 NumericStepperInput, CMP-010 Slider, CMP-017 Popover, CMP-022 Kbd, CMP-031 ColorSwatch / ThemeChip, CMP-041 Menu, CMP-223 DrawingToolbar.
