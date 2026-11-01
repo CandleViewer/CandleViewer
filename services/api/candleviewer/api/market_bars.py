@@ -166,6 +166,12 @@ def _ts_us(value: str | None) -> int | None:
     return int(parsed.timestamp() * 1_000_000)
 
 
+def window_span_us(start_us: int, end_us: int, after_us: int | None) -> int:
+    """The window the read still has to cover, for the SR-E12-02 caps: from the cursor when there
+    is one, else from `from`. A `from` before 1970 must not be clamped up to 1970 (#452 F1)."""
+    return end_us - (start_us if after_us is None else max(start_us, after_us + 1))
+
+
 def _bad(detail: str) -> JSONResponse:
     return problem(400, "validation_failed", "Bad request", detail)
 
@@ -303,7 +309,7 @@ def make_market_bars_router(
                               "Choose a later window or use time bars.")  # fmt: skip
             return with_recording_started_at(refused, started)
         span_cap = MAX_TIME_WINDOW_US if spec.kind == "time" else MAX_NON_TIME_WINDOW_US
-        span = end_us - max(start_us, (after_us or 0) + 1)
+        span = window_span_us(start_us, end_us, after_us)
         if span > span_cap:
             days = span_cap // 86_400_000_000
             return _window_too_large(f"A {bar_type} bar window may span at most {days} days.")
@@ -374,4 +380,5 @@ __all__ = [
     "TradeTotalsSource",
     "make_market_bars_router",
     "parse_bar_request",
+    "window_span_us",
 ]
