@@ -12,6 +12,7 @@ import {
   CandleSeries,
   candleGeometry,
   candleRect,
+  GEOM,
   hollowFill,
   MARK,
   PALETTE,
@@ -140,6 +141,26 @@ describe("hollow candle: the four marks (D06 §4.2)", () => {
       [doji, PALETTE.down, 2],
       [zeroRange, PALETTE.wick, 1],
     ]);
+  });
+
+  it("a doji wick at dpr 2 is h and 2h device px: 2 (up) and 4 (down), E12-D06 §9", () => {
+    const rows = [
+      [10, 12, 8, 11],
+      [11, 13, 9, 11], // up doji
+      [10, 12, 8, 10], // down doji
+    ];
+    const { ring } = hollowRing(rows);
+    const g = geom(12, 2);
+    const h = g[GEOM.hair] ?? 0;
+    expect(h).toBe(2);
+    const out = new Float64Array(4);
+    const wicks = [1, 2].map((i) => {
+      const [o = 0, hi = 0, l = 0, c = 0] = rows[i] ?? [];
+      candleRect(CANDLE_PART.hollowWick, i, o, hi, l, c, mark(ring, i), K, 0, 0, g, out);
+      return out[2];
+    });
+    expect(wicks).toEqual([h, 2 * h]);
+    expect(wicks).toEqual([2, 4]);
   });
 
   it("below 3 CSS px the hosts draw the candle's wick and body (D06 §5.5)", () => {

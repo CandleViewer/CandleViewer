@@ -14,6 +14,7 @@ import {
   fullOutline,
   GEOM,
   hollowFill,
+  PALETTE,
   partColor,
 } from "../../src/layers/index.js";
 import { BarStore } from "../../src/model/index.js";
@@ -27,16 +28,18 @@ function paint(dpr: number, ha: boolean) {
   const store = new BarStore({ initialCapacity: 8 });
   const ring = new CandleRing();
   const c = new CandleSeries(ring, "hollow");
-  const open = Int32Array.of(10, 16, 8, 15, 9, 12);
+  const open = Int32Array.of(10, 16, 8, 15, 9, 12, 12, 11);
   ring.sync(
     store,
     store.append({
       time: Float64Array.from(open, (_, i) => i * 60e6),
       open,
-      high: Int32Array.of(16, 18, 13, 16, 14, 12),
-      low: Int32Array.of(8, 9, 7, 9, 8, 12),
-      close: Int32Array.of(14, 12, 10, 11, 13, 12), // the four marks, then a zero-range bar
-      volume: new Float32Array(6).fill(1),
+      high: Int32Array.of(16, 18, 13, 16, 14, 12, 14, 13),
+      low: Int32Array.of(8, 9, 7, 9, 8, 12, 10, 9),
+      // the four marks, a zero-range bar, then E12-D06 §9's doji row: an up doji (12 >= 12, wick 1
+      // hairline) and a down doji (11 < 12, wick 2 hairlines)
+      close: Int32Array.of(14, 12, 10, 11, 13, 12, 12, 11),
+      volume: new Float32Array(8).fill(1),
       priceOrigin: 0,
       tickSize: 1,
     }),
@@ -47,7 +50,7 @@ function paint(dpr: number, ha: boolean) {
   vp.setPanePlot(0, 0, 100);
   vp.setPriceInfo(0, 0, 1);
   vp.setPriceRange(0, 0, 20);
-  vp.setTimeRange(-30e6, 330e6); // ≈ 33 CSS px a bar: the hollow parts, full outlines
+  vp.setTimeRange(-30e6, 450e6); // ≈ 25 CSS px a bar: the hollow parts, full outlines
   const block = createPaneUniforms();
   writePaneUniforms(vp, 0, block);
   block.floats[4] = 200 * dpr;
@@ -117,6 +120,31 @@ describe("Canvas2D hollow painter (parity with the geometry twin)", () => {
           }
         }
         expect(hollow).toBeGreaterThan(0);
+        // E12-D06 §9's doji row, pinned: the up doji's wick is 1 hairline, the down doji's 2, the
+        // colour the previous-close row (up / down), the body painted whole.
+        const dojiOf = (i: number): [number, number] => {
+          const at = ((ring.head + i) & (ring.capacity - 1)) * CANDLE_STRIDE;
+          const v = (k: number): number => ring.ints[at + k] ?? 0;
+          candleRect(
+            CANDLE_PART.hollowWick,
+            i,
+            v(0),
+            v(1),
+            v(2),
+            v(3),
+            v(4) >> 4,
+            block.floats,
+            ib,
+            tb,
+            c.geom,
+            out,
+          );
+          return [out[2] ?? 0, partColor(CANDLE_PART.hollowBody, v(4) >> 4)];
+        };
+        expect([dojiOf(6), dojiOf(7)]).toEqual([
+          [hair, PALETTE.up],
+          [2 * hair, PALETTE.down],
+        ]);
         expect(painted).toEqual(want.sort());
       },
     );
