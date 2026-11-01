@@ -5,8 +5,8 @@
  * While it is queued or running every Purge data… and Purge… is busy (CMP-001 `loading`): a press opens nothing. A
  * reload forgets the job id; the server's 409 `job_running` then answers a second purge at the dialog's confirm
  * (§6.5). Each line is said once through the shell's announcer, never by a node in the page, so it is heard under
- * the row detail's modal drawer too (A-5347-04): the running line, a refused poll's T4, each polite outcome, and a
- * failure assertively.
+ * the row detail's modal drawer too (A-5347-04): the running line, a refused poll's T4 and each polite outcome here;
+ * a failure is one of the page's assertive set, which the page's batch announcer says (`failure`, BG-05, BG-06).
  */
 import { useCallback, useEffect, useState } from "react";
 import { announce, forget } from "../app-shell/announcer";
@@ -29,6 +29,8 @@ export interface PagePurge {
   readonly started: (job: PurgeJob) => void;
   /** The job reached a terminal state: the page's figures are read again (C-5347-03). */
   readonly ended: boolean;
+  /** A failed purge's assertive line, once per job (its key), for the page's batch announcer; null otherwise. */
+  readonly failure: { readonly key: string; readonly text: string } | null;
 }
 
 export function usePurge(): PagePurge {
@@ -63,16 +65,19 @@ export function usePurge(): PagePurge {
     }
   }
 
-  // Each line once per job and phase, through the shell's regions (inert-exempt, pre-rendered at load).
+  // Each polite line once per job and phase, through the shell's polite region (inert-exempt, pre-rendered at load).
   const jobId = job?.jobId ?? null;
   const speech = state === null ? null : purgeSpeech(state);
-  const phaseKey = state === null ? null : state.phase === "failed" ? "failed" : state.phase;
-  const said = speech?.text ?? null;
-  const politeness = speech?.politeness ?? "polite";
+  const polite = speech?.politeness === "polite" ? speech.text : null;
+  const phase = state?.phase ?? null;
   useEffect(() => {
-    if (jobId === null || phaseKey === null || said === null) return;
-    announce(politeness, said, `recorder:purge:${jobId}:${phaseKey}`);
-  }, [jobId, phaseKey, said, politeness]);
+    if (jobId === null || phase === null || polite === null) return;
+    announce("polite", polite, `recorder:purge:${jobId}:${phase}`);
+  }, [jobId, phase, polite]);
+  const failure =
+    jobId !== null && speech?.politeness === "assertive"
+      ? { key: `purge:${jobId}:failed`, text: speech.text }
+      : null;
   // A refused poll's T4, once per refusal: the key is forgotten when an answer clears it, so a later one is said.
   const refused = state?.phase === "running" ? state.pollRefused : null;
   useEffect(() => {
@@ -94,5 +99,5 @@ export function usePurge(): PagePurge {
     setDialogFor(undefined);
   }, []);
   const ended = state !== null && state.phase !== "running";
-  return { busy, state, dialogFor, open, close, started, ended };
+  return { busy, state, dialogFor, open, close, started, ended, failure };
 }

@@ -1,9 +1,8 @@
 /**
  * SCR-140's chrome parts (E16-D02 §1, §3, §8, §9.3, §10.2; E16-D06 RG-07, RG-08, RG-10, RG-11, SR-01, SR-05 to
  * SR-09, SR-15, BG-01, BG-05): the banner slot (at most one, by priority: disk level 3, an incident, a purge
- * running), the disk card on CMP-050 and CMP-023, the summary line with its one polite region, the page's one
- * assertive region (RG-11's `alert`), and the gap table. Each draws what the model computed; none decides a write
- * (C-12.4).
+ * running), the disk card on CMP-050 and CMP-023, the summary line, and the gap table. Each draws what the model
+ * computed; none decides a write (C-12.4). None holds a live region: the page speaks through the shell's (#484 PR 3).
  */
 import { useRef, type JSX, type ReactNode, type RefObject } from "react";
 import {
@@ -161,26 +160,6 @@ export function incidentSentence(incident: IncidentBanner): string {
       });
 }
 
-/** What the page's assertive region says: re-keyed per write, so the same words after a release are said again. */
-export interface Said {
-  readonly text: string;
-  readonly n: number;
-}
-
-/**
- * The page's one assertive region (RG-11's `alert`; E16-D06 BG-05): pre-rendered empty at load, written once per
- * condition by the batch announcer (`alert`, after a pending batch, BG-06), emptied when no condition holds. Like the
- * shell's own regions it stays in the accessibility tree under a modal (`data-cv-inert-exempt`, E05-D02 H23), so a
- * condition that begins while a dialog is open is still read out (A-5309-d02).
- */
-export function AlertRegion({ said }: { readonly said: Said }): JSX.Element {
-  return (
-    <div className="cv-visually-hidden" role="alert" aria-atomic="true" data-cv-inert-exempt="">
-      {said.n === 0 || said.text === "" ? null : <span key={said.n}>{said.text}</span>}
-    </div>
-  );
-}
-
 const TONES = { primary: "default", warning: "warning", danger: "danger" } as const;
 
 export interface DiskCardPanelProps {
@@ -267,24 +246,16 @@ export interface SummaryLineProps {
   readonly updatedAtMs: number | null;
   /** The summary's "{m} auto-recorded" applies the Reason: Auto chip (§5.2). */
   readonly onAutoReview: () => void;
-  /** The region's newest batch (SR-01): re-keyed per batch, so the same words twice are said twice. */
-  readonly said: { readonly text: string; readonly n: number };
 }
 
 const AUTO = /^(\d+) auto-recorded$/;
 
 /**
  * The summary line (D02 §1, §5.2, §9.3): the counts and the recorder's state word, "{m} auto-recorded" a link that
- * applies the chip, "updated hh:mm:ss UTC" beside it; and RG-10, the one polite region, pre-rendered empty, which
- * says the 10 s batch of state changes (never a ticking number, BG-01, BG-04); it too stays exposed under a modal
- * (`data-cv-inert-exempt`, A-5309-d02).
+ * applies the chip, "updated hh:mm:ss UTC" beside it. RG-10's 10 s batch of state changes (never a ticking number,
+ * BG-01, BG-04) is said through the shell's polite region, which a modal leaves exposed (#484 PR 3).
  */
-export function SummaryLine({
-  line,
-  updatedAtMs,
-  onAutoReview,
-  said,
-}: SummaryLineProps): JSX.Element {
+export function SummaryLine({ line, updatedAtMs, onAutoReview }: SummaryLineProps): JSX.Element {
   const ring = useFocusRing();
   const parts = line.split(" · ");
   return (
@@ -328,15 +299,6 @@ export function SummaryLine({
           {updatedLine(updatedAtMs)}
         </span>
       )}
-      <div
-        className="cv-visually-hidden"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        data-cv-inert-exempt=""
-      >
-        {said.n === 0 ? null : <span key={said.n}>{said.text}</span>}
-      </div>
     </div>
   );
 }

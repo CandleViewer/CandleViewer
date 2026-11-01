@@ -4,12 +4,15 @@
  * ("Compacting · 42 %", focusable, a press starts nothing, no lock: busy, not T2), the percentage never spoken.
  * The terminal state is the card's line, polite, once; a refusal shows under the button with its code, polite,
  * once, and the button stays enabled (T4); a poll the server refused (§16.4 row 10) shows its T4 there too, the job
- * still busy.
+ * still busy. Each is said through the shell's announcer, never a live region in the page, which the row detail's
+ * modal drawer would make inert (C-5347-d07, the A-5347-04 class); the line under the button is its description.
  */
-import { useId, useState, type JSX } from "react";
+import { useEffect, useId, useState, type JSX } from "react";
 import { Button } from "@candleviewer/ui";
+import { announce, forget } from "../app-shell/announcer";
 import { DECK, TEXT, fill } from "./copy";
 import { formatHourMinute, parseMs } from "./model";
+import { sayPolitely } from "./pageAnnouncer";
 import { recorderApi } from "./recorderApi";
 import { refusalText } from "./refusal";
 import { pollRefusalText, useJobPoll, type JobView } from "./useJobPoll";
@@ -41,11 +44,29 @@ export function CompactNow(): JSX.Element {
     const res = await recorderApi.compact();
     setSending(false);
     if (res.ok && res.data?.job_id !== undefined) setJobId(res.data.job_id);
-    else if (res.route !== null) setRefused(refusalText(res.route, "compact"));
+    else if (res.route !== null) {
+      const text = refusalText(res.route, "compact");
+      setRefused(text);
+      sayPolitely(text); // a press's answer: said again on the next press
+    }
   };
   // §16.4 row 10: a refused poll's T4 shows here while the job runs; the next answer clears it.
   const pollRefused = job?.pollRefusal == null ? null : pollRefusalText(job.pollRefusal);
-  const line = lineOf(job) ?? pollRefused;
+  const ended = lineOf(job);
+  const line = ended ?? pollRefused;
+  // The terminal line once per job and phase; a refused poll's T4 once per refusal, its key forgotten when an answer
+  // clears it. The page's unmount clears every `recorder:` key.
+  const phase = job?.phase ?? null;
+  useEffect(() => {
+    if (jobId === null || phase === null || ended === null) return;
+    announce("polite", ended, `recorder:compact:${jobId}:${phase}`);
+  }, [jobId, phase, ended]);
+  useEffect(() => {
+    if (jobId === null || pollRefused === null) return undefined;
+    const key = `recorder:compact:${jobId}:poll`;
+    announce("polite", pollRefused, key);
+    return () => forget(key);
+  }, [jobId, pollRefused]);
   return (
     <span style={{ display: "inline-grid", gap: "var(--space-stack-xs)" }}>
       <Button
@@ -58,10 +79,8 @@ export function CompactNow(): JSX.Element {
           ? fill(TEXT.compact.busy, { "{pct}": Math.round(job.pct) })
           : TEXT.compact.button}
       </Button>
-      {/* The polite lines, there from the start so each arrival is said once (BG-02). */}
-      <span id={`${id}-line`} role="status" aria-live="polite" aria-atomic="true">
-        {refused ?? line}
-      </span>
+      {/* The line, drawn under the button and describing it; the shell's region says it (C-5347-d07). */}
+      <span id={`${id}-line`}>{refused ?? line}</span>
     </span>
   );
 }

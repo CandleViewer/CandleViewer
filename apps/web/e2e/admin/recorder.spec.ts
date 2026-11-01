@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { stubAdminReads } from "../support/admin";
 import { stubSession } from "../support/api";
 import { seriousAxe } from "../support/axe";
 import { recorderFrame, stubRecorder } from "../support/recorder";
@@ -43,6 +44,7 @@ test("E16-S01 an owner records a symbol, keeps it forever and stops it on /admin
   const paths = watchPaths(page);
   await stubSession(page, { role: "owner" });
   const ws = await installWsHarness(page);
+  await stubAdminReads(page); // the strip's reads on every admin route; registered first so the recorder stub answers its own
   const api = await stubRecorder(page);
   await page.goto("/admin/recorder");
 
