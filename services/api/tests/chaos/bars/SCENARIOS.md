@@ -20,8 +20,10 @@ not tick past the last print). `test_harness_guards.py` proves a clean run equal
 
 **Store seam (PR-2).** `BarsRig(extra_sinks=[WriterSink(BarWriter(FlakyRowSink))])`: the real
 writer on the virtual clock over an in-memory table keyed like the DEDUP key, with outage windows.
-`test_s05b` swaps in the real QuestDB container (`chaos` + `integration`); it stops that container,
-so it runs only on GitHub Actions or with `CV_CHAOS_STACK=1` on a stack you own, else it skips.
+`test_s05b` swaps in the real QuestDB container (`chaos` + `integration`); it stops that container, so
+it runs only in `_job-integration.yml`'s storage chaos step (github-hosted, project `cv-chaos`, set on
+those steps) or locally with `CV_CHAOS_STACK=1` and that project, else it skips. The bars nightly
+starts no stack, so it skips there.
 
 **Negative controls (DoD).** Every scenario has a test that feeds a naive collaborator or a
 naive result to the invariant and expects it to fail.
@@ -37,7 +39,7 @@ fix lands, so the fix removes the marker.
 | 2 | Tape gap (REST backfill ok / down) | #1, #3 | PR-1 | recovered: bars == golden ✅; unrecovered: `GapEvent`, `trade_gaps_total`, health ✅; bar marked (`gap_before`) ✅ (#529 gap-marking fix) | no-backfill run fails the golden |
 | 3 | Out-of-order and duplicate prints | #3 | PR-1 | dup suppressed upstream ✅; reorder amends the closed bar ✅; > 60 s dropped, counted, logged ✅ | with `TradeStream`'s ring replaced by a no-op (monkeypatched), a duplicated frame is double counted by the volume, tick, range and renko folds |
 | 4 | 5xx and 10018 during kline backfill | #5 | PR-2 | every 3rd page limited: complete, nothing lost; 4 limits in a row: full-jitter delays in `[1, cap]`; `loading_older_bars` while earlier pages stay readable; 5 in a row: partial, resumed without refetching; 5xx retried ✅ | the bounds helper rejects an immediate retry and a delay past 60 s |
-| 5 | Store restart / write failure | #10 | PR-2 | short outage (< 7.5 s): store == golden, nothing dropped ✅; nothing reported persisted while the store rejects ✅; long outage: dropped loudly (`bars_write_failed_total{reason="transient_exhausted"}`, `degraded`, ERROR), stored + dropped == submitted ✅; replay of dropped rows: xfail (#531); real QuestDB stop/start: `test_s05b` (nightly) | a sink that acks and discards fails the golden |
+| 5 | Store restart / write failure | #10 | PR-2 | short outage (< 7.5 s): store == golden, nothing dropped ✅; nothing reported persisted while the store rejects ✅; long outage: dropped loudly (`bars_write_failed_total{reason="transient_exhausted"}`, `degraded`, ERROR), stored + dropped == submitted ✅; replay of dropped rows: xfail (#531); real QuestDB stop/start: `test_s05b` (integration job) | a sink that acks and discards fails the golden |
 | 6 | Host clock jumps +-2 s, +-2 min | #6 | PR-1 | bars == golden, no drops, no amends, alarm ✅ (#529 fix: bars on the exchange-corrected clock) | the raw host clock drops prints (+2 min) and re-emits amended bars (+2 s) |
 | 7 | Kill mid renko rebuild | #12 (extension) | PR-2 | skipped placeholder: blocked by #535 (no rebuild exists) | - |
 | 8 | Delisted or halted symbol | none (extension of #1) | PR-2 | bars == golden; at most the clock close after the last print, no empty bar; feed `delisted`, demand refused, bars healthy ✅ | filler empty bars fail the helper |

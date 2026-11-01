@@ -12,7 +12,7 @@ asserts is `SCENARIOS.md`; this file records what a run *observed*.
 | Commit | |
 | Workflow run or local command | `uv run pytest tests/chaos/bars -m "chaos and not flaky" --no-cov` |
 | Seed | `tests/chaos/bars/conftest.py` `SEED` (fixed) |
-| Integration leg (`test_s05b`) | ran / skipped (no stack) |
+| Integration leg (`test_s05b`) | ran in the integration job / skipped (no stack) |
 | Result | passed / failed / xfailed / skipped counts |
 
 ## Scenarios

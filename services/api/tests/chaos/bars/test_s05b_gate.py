@@ -10,11 +10,27 @@ from tests.chaos.bars._gate import CHAOS_PROJECT, questdb_ownership_skip, stack_
 
 pytestmark = pytest.mark.chaos
 
-HOSTED = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}
+HOSTED = {
+    "GITHUB_ACTIONS": "true",
+    "RUNNER_ENVIRONMENT": "github-hosted",
+    "COMPOSE_PROJECT_NAME": CHAOS_PROJECT,
+}
 
 
 def test_gate_opens_on_a_github_hosted_runner() -> None:
     assert stack_skip_reason(HOSTED) is None
+    assert (
+        questdb_ownership_skip(
+            [8812, 9009], lambda port: _container(HOSTED["COMPOSE_PROJECT_NAME"])
+        )
+        is None
+    )
+
+
+def test_gate_stays_shut_on_a_hosted_run_that_did_not_pin_the_project() -> None:
+    unpinned = {k: v for k, v in HOSTED.items() if k != "COMPOSE_PROJECT_NAME"}
+    assert stack_skip_reason(unpinned)
+    assert stack_skip_reason({**unpinned, "COMPOSE_PROJECT_NAME": "compose"})
 
 
 def test_gate_stays_shut_on_a_self_hosted_runner_beside_a_demo_stack() -> None:
@@ -44,6 +60,8 @@ def test_gate_reads_the_real_environment_through_the_fixture(
     assert stack_skip_reason(os.environ)
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("RUNNER_ENVIRONMENT", "github-hosted")
+    assert stack_skip_reason(os.environ)  # not pinned yet
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", CHAOS_PROJECT)
     assert stack_skip_reason(os.environ) is None
 
 
