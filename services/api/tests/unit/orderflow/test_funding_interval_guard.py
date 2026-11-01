@@ -18,6 +18,8 @@ SCANNED = (
     "domain/funding.py",
     "orderflow/funding.py",
     "orderflow/funding_metrics.py",
+    "orderflow/derivatives.py",
+    "orderflow/derivatives_metrics.py",
     "exchange/bybit/funding.py",
     "api/funding.py",
     "storage/questdb/funding_store.py",

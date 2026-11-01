@@ -70,7 +70,7 @@ _MARKET: tuple[_Row, ...] = (
     ("liquidity_cluster_persistence_ms", "Liquidity cluster persistence", "ms", _B, "", 0, _E, "symbol", "How long the nearest cluster has persisted", ">=0"),
     ("liquidity_pulled", "Liquidity pulled", "bool", _B, "", 0, _E, "symbol", "A cluster was pulled without trading", ""),
     ("liquidation_cluster_distance", "Liquidation cluster distance", "count", "liquidations", "", 0, _E, "symbol", "Ticks to the nearest liquidation cluster", ">=0"),
-    ("liquidation_notional", "Liquidation notional", "notional", "liquidations", "window_ms=60000", 0, _E, "symbol", "Liquidated notional in the window", ">=0"),
+    ("liquidation_notional", "Liquidation notional", "notional", "liquidations", "side=both", 0, _E, "symbol", "Per-bar liquidated notional, by liquidated side (long, short or both)", ">=0"),
     ("price", "Price", "price", _R, "source=last", 0, _E, "symbol", "Last / mark / index price", ">0"),
     ("realized_vol", "Realised volatility", "pct", _R, "n=20", 20, _E, "symbol", "Close-close log-return stdev, annualised", ">=0"),
     ("parkinson_vol", "Parkinson volatility", "pct", _R, "n=20", 20, _E, "symbol", "High-low range volatility estimator", ">=0"),
@@ -79,13 +79,13 @@ _MARKET: tuple[_Row, ...] = (
     ("market_regime", "Market regime", "enum:trending|ranging|volatile|mixed", _R, "", 512, _S, "symbol", "Regime from ADX, Hurst and ATR%", ""),
     ("open_interest", "Open interest", "qty", "oi", "", 0, _E, "symbol", "Open interest in contracts", ">=0"),
     ("open_interest_value", "Open interest value", "notional", "oi", "", 0, _E, "symbol", "Open interest notional", ">=0"),
-    ("open_interest_delta", "OI change", "pct", "oi", "window_ms=300000", 0, _E, "symbol", "Percent change in open interest over the window", ""),
-    ("oi_price_quadrant", "OI/price quadrant", "enum:long_build|short_build|long_unwind|short_cover", "oi", "", 0, _E, "symbol", "Quadrant of OI change vs price change", ""),
+    ("open_interest_delta", "OI change", "qty", "oi", "", 0, _E, "symbol", "OI(close) - OI(open) per bar, in contracts", ""),
+    ("oi_price_quadrant", "OI/price quadrant", "enum:long_buildup|short_covering|short_buildup|long_unwind", "oi", "", 0, _E, "symbol", "Quadrant of OI change vs price change", ""),
     ("funding_rate", "Funding rate", "pct", "funding", "", 0, _E, "symbol", "Current funding rate", ""),
     ("funding_annualized", "Funding (annualised)", "pct", "funding", "", 0, _E, "symbol", "Funding rate annualised", ""),
     ("time_to_funding_ms", "Time to funding", "ms", "funding", "", 0, _E, "symbol", "Milliseconds until the next funding", ">=0"),
-    ("basis", "Basis", "price", "funding", "", 0, _E, "symbol", "Mark minus index price", ""),
-    ("premium_pct", "Premium", "pct", "funding", "", 0, _E, "symbol", "Premium index percent", ""),
+    ("basis", "Basis", "price", "funding", "source=last", 0, _E, "symbol", "Last (or mark, source=mark) minus index price", ""),
+    ("premium_pct", "Premium", "pct", "funding", "source=last", 0, _E, "symbol", "Basis as a percent of the index price", ""),
     ("profile_poc", "Profile POC", "price", _T, "", 0, _E, "symbol", "Point of control", ">0"),
     ("profile_vah", "Profile VAH", "price", _T, "", 0, _E, "symbol", "Value area high", ">0"),
     ("profile_val", "Profile VAL", "price", _T, "", 0, _E, "symbol", "Value area low", ">0"),
@@ -122,6 +122,17 @@ _ACCOUNT: tuple[_Row, ...] = (
     ("replay_integrity_ok", "Replay integrity OK", "bool", "trades", "", 0, _E, "global", "Replay data is gap-free", ""),
 )  # fmt: skip
 _ROWS: tuple[_Row, ...] = _FLOW + _MARKET + _ACCOUNT
+_NULLABLE: Final = "before warmup completes or when an input is unavailable"
+_NO_OI: Final = "no OI sample in the bar, or the bar-open OI is past the staleness bound"
+#: The per-bar derivatives rows (24 §7.2): bar-scoped, so `on_bar_close`, with the exact None
+#: case the `DerivativesEngine` (E24-T04) yields; OI is never defaulted to zero or a quadrant.
+_BAR_SCOPED: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "open_interest_delta": _NO_OI,
+        "oi_price_quadrant": _NO_OI + ", or a flat price or OI change",
+        "liquidation_notional": "never None: a bar with no prints, or a liquidation feed gap, reads 0",
+    }
+)
 
 # metric, indicator, output, title, tape, description, range
 _Bound = tuple[str, str, str, str, bool, str, str]
@@ -184,8 +195,8 @@ def _build() -> tuple[tuple[MetricDescriptor, ...], dict[str, tuple[str, str]]]:
             "name": name, "title": title, "unit": unit, "enum_values": enums, "scope": scope,
             "inputs": (inp,), "params": p, "warmup_bars": warmup, "confidence": conf,
             "value_type": "enum" if unit == "enum" else "bool" if unit == "bool" else "number",
-            "cadence": "on_bar_close" if inp == "bars" else "on_trade",
-            "nullable_when": "before warmup completes or when an input is unavailable",
+            "cadence": "on_bar_close" if inp == "bars" or name in _BAR_SCOPED else "on_trade",
+            "nullable_when": _BAR_SCOPED.get(name, _NULLABLE),
         }  # fmt: skip
         descs.append(MetricDescriptor.model_validate(kwargs))
         docs[name] = (desc, rng)
