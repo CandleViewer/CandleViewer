@@ -563,6 +563,78 @@ describe("Scenario: Worker death is recovered", () => {
     host.dispose();
   });
 
+  it("replays the pane commands in order after a restart; a removal drops its key (E11-S09, BQ-2)", () => {
+    const host = hostOn(workerDoc());
+    settle();
+    host.command({ k: "addPane", pane: 0, share: 1, label: "Price pane" });
+    host.command({ k: "addPane", pane: 1, share: 0.2, label: "Volume pane" });
+    host.command({ k: "addPane", pane: 2, share: 0.2, label: "CVD pane" });
+    host.command({
+      k: "setPaneShares",
+      shares: [
+        [0, 0.5],
+        [1, 0.2],
+        [2, 0.3],
+      ],
+    });
+    host.command({ k: "removePane", pane: 1 });
+    host.command({ k: "removePane", pane: 0 }); // key 0 exists from init: its removal replays
+    host.command({ k: "addPane", pane: 3, label: "OI pane" });
+    lastWorker().kill();
+    vi.advanceTimersByTime(1000);
+    settle();
+    const cmds = (inboxOf(lastWorker(), "command") as Extract<ToWorker, { t: "command" }>[]).map(
+      (m) => m.cmd,
+    );
+    expect(cmds).toEqual([
+      { k: "addPane", pane: 2, share: 0.2, label: "CVD pane" },
+      {
+        k: "setPaneShares",
+        shares: [
+          [0, 0.5],
+          [1, 0.2],
+          [2, 0.3],
+        ],
+      },
+      { k: "removePane", pane: 0 },
+      { k: "addPane", pane: 3, label: "OI pane" },
+    ]);
+    host.dispose();
+  });
+
+  it("replays add 1, the shares, then add 2 in that order after a restart (E11-S09)", () => {
+    const host = hostOn(workerDoc());
+    settle();
+    host.command({ k: "addPane", pane: 1, label: "Volume pane" });
+    host.command({
+      k: "setPaneShares",
+      shares: [
+        [0, 0.7],
+        [1, 0.3],
+      ],
+    });
+    host.command({ k: "addPane", pane: 2, share: 0.2, label: "CVD pane" });
+    lastWorker().kill();
+    vi.advanceTimersByTime(1000);
+    settle();
+    const cmds = (inboxOf(lastWorker(), "command") as Extract<ToWorker, { t: "command" }>[]).map(
+      (m) => m.cmd,
+    );
+    // The live order, so the restarted worker normalises the same weights the same way.
+    expect(cmds).toEqual([
+      { k: "addPane", pane: 1, label: "Volume pane" },
+      {
+        k: "setPaneShares",
+        shares: [
+          [0, 0.7],
+          [1, 0.3],
+        ],
+      },
+      { k: "addPane", pane: 2, share: 0.2, label: "CVD pane" },
+    ]);
+    host.dispose();
+  });
+
   it("resolves a pending screenshot null once the worker is lost for good", async () => {
     let calls = 0;
     env = fakeEnv({

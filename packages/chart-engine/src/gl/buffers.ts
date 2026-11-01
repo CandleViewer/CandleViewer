@@ -43,6 +43,16 @@ export class GlBuffers implements UploadSink {
     this.slots.set(nodeId, { source, buffer, vao, uploaded: null });
   }
 
+  /** E11-S09 (BQ-2): releases the node's buffer and VAO; its GPU bytes leave the estimate. */
+  detach(nodeId: string): void {
+    const slot = this.slots.get(nodeId);
+    if (slot === undefined) return;
+    this.slots.delete(nodeId);
+    this.bytes -= slot.uploaded?.byteLength ?? 0;
+    this.registry.release(slot.buffer);
+    this.registry.release(slot.vao);
+  }
+
   /** The node's VAO; null without one, and submission skips the batch. */
   vao(nodeId: string): GLObject | null {
     const slot = this.slots.get(nodeId);

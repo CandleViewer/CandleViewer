@@ -55,6 +55,21 @@ const valid: ToWorker[] = [
   { t: "command", id: 1, cmd: { k: "export", reqId: 1 } },
   // E11-S07 (BQ-4): the magnet, one of three modes.
   { t: "command", id: 1, cmd: { k: "setCrosshair", magnetMode: "weak" } },
+  // E11-S09 (BQ-2, BQ-3): the pane stack, addressed by stable keys.
+  { t: "command", id: 1, cmd: { k: "addPane", pane: 3, share: 0.2, label: "Volume pane" } },
+  { t: "command", id: 1, cmd: { k: "addPane", pane: 4, label: "" } },
+  { t: "command", id: 1, cmd: { k: "removePane", pane: 3 } },
+  {
+    t: "command",
+    id: 1,
+    cmd: {
+      k: "setPaneShares",
+      shares: [
+        [0, 0.6],
+        [4, 1],
+      ],
+    },
+  },
   { t: "command", id: 1, cmd: { k: "release" } },
 ];
 
@@ -73,6 +88,36 @@ describe("the §6 messages survive the structured-clone boundary", () => {
 });
 
 describe("Scenario: A malformed message cannot kill the worker (validation)", () => {
+  // E11-S09 (BQ-1 to BQ-3): keys are safe integers >= 0, weights in (0, 1], labels bounded.
+  it.each<[string, unknown]>([
+    ["a negative pane key", { k: "addPane", pane: -1, label: "x" }],
+    ["a fractional pane key", { k: "removePane", pane: 1.5 }],
+    ["a pane without a label", { k: "addPane", pane: 1 }],
+    ["a pane label that is not text", { k: "addPane", pane: 1, label: 7 }],
+    ["a pane label past the bound", { k: "addPane", pane: 1, label: "x".repeat(121) }],
+    ["a zero share", { k: "addPane", pane: 1, label: "x", share: 0 }],
+    ["a share past 1", { k: "addPane", pane: 1, label: "x", share: 1.5 }],
+    ["shares that are not a list", { k: "setPaneShares", shares: {} }],
+    ["a share pair of three", { k: "setPaneShares", shares: [[0, 0.5, 1]] }],
+    ["a NaN weight", { k: "setPaneShares", shares: [[0, Number.NaN]] }],
+    [
+      "a key listed twice",
+      {
+        k: "setPaneShares",
+        shares: [
+          [0, 0.5],
+          [0, 0.5],
+        ],
+      },
+    ],
+    [
+      "more pairs than the pane limit",
+      { k: "setPaneShares", shares: Array.from({ length: 65 }, (_, i) => [i, 1]) },
+    ],
+    ["a scale for a negative pane key", { k: "setPriceScale", pane: -2 }],
+  ])("rejects %s", (_name, cmd) => {
+    expect(rejectReason({ t: "command", id: 1, cmd })).toBe("malformed command");
+  });
   it("rejects a bars buffer 3 bytes shorter than its declared element count", () => {
     const msg = { ...valid[3], buffer: new ArrayBuffer(13) };
     expect(rejectReason(msg)).toBe("buffer length does not match its layout");

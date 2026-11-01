@@ -193,6 +193,27 @@ describe("Canvas2DBackend", () => {
   });
 });
 
+describe("detach (E11-S09, BQ-2)", () => {
+  it("test_detach_aDrawnNode_noSlotOutlivesItAndTheOthersStillDraw", () => {
+    const { ctx, backend } = setup();
+    const quad = (): Float32Array => new Float32Array([0, 0, 10, 10, 0, 0, 0, 1]);
+    const gone = { data: quad(), head: 0, stride: 8 };
+    backend.attach("a", gone);
+    backend.attach("b", { data: quad(), head: 0, stride: 8 });
+    backend.submit([batch("a", PROGRAM.quad, 1), batch("b", PROGRAM.quad, 1)], 2, 400, 200);
+    const rects = (from: number): number => ctx.paths.slice(from).flatMap((p) => p.parts).length;
+    expect(rects(0)).toBe(2);
+    backend.detach("a");
+    // The per-draw arrays held "a"'s slot past the next frame's count: none survives detach.
+    const held = backend as unknown as { frameSlots: ({ source: unknown } | undefined)[] };
+    expect(held.frameSlots.some((slot) => slot?.source === gone)).toBe(false);
+    const mark = ctx.paths.length;
+    backend.submit([batch("a", PROGRAM.quad, 1), batch("b", PROGRAM.quad, 1)], 2, 400, 200);
+    expect(rects(mark)).toBe(1); // "b" still draws; "a" has no ring
+    backend.detach("missing"); // unknown: nothing
+  });
+});
+
 describe("hostile instance data (non-finite or huge) never throws or draws NaN geometry", () => {
   it("paints only finite geometry with a positive line width, and still counts every draw", () => {
     const { ctx, backend } = setup(1);

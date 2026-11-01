@@ -40,6 +40,7 @@ export class BatchBuilder {
   uploads = 0; // sub-range uploads issued: the pan scenario's bufferSubData count
   private readonly byNode = new Map<string, RetainedBatch>();
   private readonly sorted: RetainedBatch[] = [];
+  private readonly spare: RetainedBatch[] = [];
   private resort = false;
   private walkSeen = -1; // the graph rebuild the walk positions were read at; -1 forces a read
 
@@ -60,6 +61,20 @@ export class BatchBuilder {
     }
     b.lo = b.lo < b.hi ? Math.min(b.lo, r.from) : r.from;
     b.hi = Math.max(b.hi, r.to);
+  }
+
+  /**
+   * E11-S09 (BQ-2): a removed node's batch leaves the draw order; its object is reused by the
+   * next new batch, so adding and removing panes does not grow the pool.
+   */
+  drop(nodeId: string): void {
+    const b = this.byNode.get(nodeId);
+    if (b === undefined) return;
+    this.byNode.delete(nodeId);
+    this.sorted.splice(this.sorted.indexOf(b), 1);
+    this.drawList.length = this.sorted.length;
+    this.drawCount = 0;
+    this.spare.push(b);
   }
 
   /** Merges this frame's collect entries, flushes pending uploads, re-forms the draw list. */
@@ -91,7 +106,7 @@ export class BatchBuilder {
   private merge(e: BatchEntry): void {
     let b = this.byNode.get(e.nodeId);
     if (b === undefined) {
-      b = this.pool.acquire();
+      b = this.spare.pop() ?? this.pool.acquire();
       [b.nodeId, b.lo, b.hi] = [e.nodeId, e.first, e.first + e.count]; // first build: all of it
       this.byNode.set(e.nodeId, b);
       this.sorted.push(b);

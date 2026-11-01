@@ -700,6 +700,16 @@ shell announcer; the engine owns no live region. `bench/scenes/axis-ticks.ts` ti
   crosshair stage in O(1), and its node joins the scene graph only with its first lines. On a
   never-pointed chart the gesture hold therefore no longer arms (benign: there is nothing to hide).
 
+## Pane stack (E11-S09 PR 1)
+
+Panes are added and removed at runtime by stable key (#446 BQ-1 to BQ-6, BQ-10, BQ-14, BQ-15,
+BQ-23; the design doc §6 and §8 list the protocol and the API). The stack never drops to zero
+panes: the facade throws `LastPaneError`, and the worker refuses with `ENGINE_LAST_PANE`.
+
+| C / G | Topic   | The ticket                     | Reading                                                                                                                                                                       |
+| ----- | ------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G-54  | Restart | Pane scales survive a restart. | Gap, older than S09: the host never retains `setPriceScale`, so after a worker restart every pane's scale is back to its defaults; the panes, labels and shares are replayed. |
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/chart-engine build` — tsup ESM build with `.d.ts` (entries:

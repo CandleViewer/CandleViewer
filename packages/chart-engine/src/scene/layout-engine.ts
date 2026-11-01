@@ -3,13 +3,16 @@
 // only when a pane it lays out is LAYOUT-dirty (BQ-43). DOM-free; rects are allocated per pane once.
 import { Dirty } from "./dirty.js";
 import type { SceneGraph } from "./graph.js";
+import { normaliseShares } from "./pane-shares.js";
 
 /** x, y, width, height. */
 export type Rect = [number, number, number, number];
 
 export interface PaneLayout {
   readonly id: string;
+  /** The pane's weight; `share` is its normalised part of the stack (E11-S09, BQ-3). */
   ratio: number;
+  share: number;
   readonly rect: Rect; // the plot area
   readonly priceAxis: Rect; // its right-hand gutter
 }
@@ -37,6 +40,8 @@ export class LayoutEngine {
   width = 0;
   height = 0;
   computes = 0; // recomputations so far: LAYOUT frames only
+  private readonly weights: number[] = [];
+  private readonly shares: number[] = [];
 
   constructor(
     private readonly graph: SceneGraph,
@@ -55,8 +60,27 @@ export class LayoutEngine {
   /** Lays out a pane already in the graph, below the others. */
   addPane(id: string, ratio = 1): void {
     if (this.graph.get(id)?.kind !== "pane") throw new RangeError(`unknown pane ${id}`);
-    this.panes.push({ id, ratio: checkRatio(ratio), rect: [0, 0, 0, 0], priceAxis: [0, 0, 0, 0] });
-    this.graph.markResize();
+    const rect: Rect = [0, 0, 0, 0];
+    this.panes.push({ id, ratio: checkRatio(ratio), share: 1, rect, priceAxis: [0, 0, 0, 0] });
+    this.reshare();
+  }
+
+  /** E11-S09 (BQ-2): drops a pane's row; the others share its height (`false`: unknown id). */
+  removePane(id: string): boolean {
+    const i = this.panes.findIndex((p) => p.id === id);
+    if (i < 0) return false;
+    this.panes.splice(i, 1);
+    this.reshare();
+    return true;
+  }
+
+  /** E11-S09 (BQ-3): every listed pane's weight at once; an id not laid out is ignored. */
+  setWeights(weights: ReadonlyMap<string, number>): void {
+    for (const p of this.panes) {
+      const w = weights.get(p.id);
+      if (w !== undefined) p.ratio = checkRatio(w);
+    }
+    this.reshare();
   }
 
   setSize(width: number, height: number): void {
@@ -71,7 +95,7 @@ export class LayoutEngine {
     const pane = this.panes.find((p) => p.id === id);
     if (pane === undefined) throw new RangeError(`unknown pane ${id}`);
     pane.ratio = checkRatio(ratio);
-    this.graph.markResize();
+    this.reshare();
   }
 
   /** The layout stage, every frame: `true` when it recomputed. Allocates nothing. */
@@ -99,5 +123,15 @@ export class LayoutEngine {
     put(this.timeAxis, 0, plotH, plotW, height - plotH);
     this.computes += 1;
     return true;
+  }
+
+  /** The weights changed: the shares again (BQ-3's one function) and every pane LAYOUT. */
+  private reshare(): void {
+    const { panes, weights, shares } = this;
+    for (let i = 0; i < panes.length; i += 1) weights[i] = (panes[i] as PaneLayout).ratio;
+    normaliseShares(weights, panes.length, shares);
+    for (let i = 0; i < panes.length; i += 1) (panes[i] as PaneLayout).share = shares[i] as number;
+    weights.length = shares.length = panes.length;
+    this.graph.markResize();
   }
 }

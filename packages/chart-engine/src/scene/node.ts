@@ -54,8 +54,9 @@ export class StructuralNode extends SceneNode {
   constructor(
     id: string,
     readonly kind: Exclude<NodeKind, "content">,
+    opts?: NodeOptions,
   ) {
-    super(id);
+    super(id, opts);
   }
 
   collect(sink: BatchSink): boolean {
@@ -67,4 +68,9 @@ export class StructuralNode extends SceneNode {
 /** A node a caller adds to a layer: a series, an overlay, a drawing, a label. */
 export abstract class ContentNode extends SceneNode {
   readonly kind = "content" as const;
+  /**
+   * E11-S09 (BQ-10): the pane this node was added to (`SceneGraph.addNode`), whose uniform block
+   * its batch draws with; null for a chart-level chassis node (the grid, the crosshair).
+   */
+  pane: string | null = null;
 }

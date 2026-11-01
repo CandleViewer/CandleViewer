@@ -39,6 +39,21 @@ export class ExportUnavailableError extends Error {
   }
 }
 
+/**
+ * E11-S09 (lens M1): the stack never drops to zero panes. The facade throws `LastPaneError` and
+ * the worker refuses a `removePane` of its last pane with this recoverable code.
+ */
+export const ENGINE_LAST_PANE = "ENGINE_LAST_PANE";
+
+/** `Pane.remove()` / `Chart.removePane` on a chart's only pane. */
+export class LastPaneError extends Error {
+  readonly code = ENGINE_LAST_PANE;
+  constructor() {
+    super("chart-engine: a chart keeps at least one pane");
+    this.name = "LastPaneError";
+  }
+}
+
 /** The token the renderer clears the canvas with (§5 rule 1: colour comes from tokens only). */
 export const BACKGROUND_TOKEN = "color.chart.background";
 
@@ -65,6 +80,15 @@ export const RESTART_BACKOFF_MS = [1000, 2000, 4000] as const;
 export type RunMode = "worker" | "inline";
 /** One chart instance on the shared worker, minted by the host. */
 export type ChartId = number;
+/**
+ * E11-S09 (BQ-1): a pane's stable key, minted by the facade (0 for the first pane, never reused),
+ * so a removal never shifts another pane's address on the wire.
+ */
+export type PaneKey = number;
+/** BQ-2: the most panes one message may name (a bound on allocation, not E15-S01's `maxPanes`). */
+export const PANE_LIMIT = 64;
+/** BQ-15: the longest pane label accepted at the boundary. */
+export const PANE_LABEL_MAX = 120;
 /** The `DataModel` stores a `data` message can mutate (§3.3; the stores themselves are E11-T03). */
 export const STORE_IDS = ["bars", "footprint", "heatmap", "profile"] as const;
 export type StoreId = (typeof STORE_IDS)[number];
@@ -123,10 +147,13 @@ export type Command =
       readonly pointer?: PickPointer;
       readonly reqId?: number;
     }
-  /** E11-S05 (BQ-124, additive): one pane's scale; `auto: false` is the lock. */
+  /**
+   * E11-S05 (BQ-124, additive): one pane's scale; `auto: false` is the lock. E11-S09 (BQ-1):
+   * `pane` is the facade's stable pane key, never an array index.
+   */
   | {
       readonly k: "setPriceScale";
-      readonly pane: number;
+      readonly pane: PaneKey;
       readonly mode?: ScaleModeName;
       readonly inverted?: boolean;
       readonly auto?: boolean;
@@ -139,6 +166,21 @@ export type Command =
   | { readonly k: "export"; readonly reqId: number }
   /** E11-S07 (BQ-4, additive): the crosshair's magnet (E11-D01 D3: `off` by default). */
   | { readonly k: "setCrosshair"; readonly magnetMode: MagnetMode }
+  /**
+   * E11-S09 (BQ-2, additive): a pane below the others, or a known key's label and weight. Key 0
+   * exists from `init`. `share` is a weight in (0, 1] the worker normalises (BQ-3); without it the
+   * pane takes the mean weight, an equal share. Retained per key across a worker restart.
+   */
+  | {
+      readonly k: "addPane";
+      readonly pane: PaneKey;
+      readonly share?: number;
+      readonly label: string;
+    }
+  /** E11-S09 (BQ-2, additive): detaches only that pane's nodes and rings; nothing re-uploads. */
+  | { readonly k: "removePane"; readonly pane: PaneKey }
+  /** E11-S09 (BQ-3, additive): the whole weight vector, `[pane, weight]`; unknown keys ignored. */
+  | { readonly k: "setPaneShares"; readonly shares: readonly (readonly [PaneKey, number])[] }
   | { readonly k: "release" };
 
 export type ToWorker =
@@ -191,6 +233,15 @@ export type ToWorker =
       readonly timeRange: readonly [number, number];
       readonly crosshair: number | null;
     };
+
+/** One pane of a `layout` message (BQ-4). */
+export interface PaneBox {
+  readonly pane: PaneKey;
+  readonly top: number;
+  readonly height: number;
+  readonly share: number;
+  readonly collapsed: boolean;
+}
 
 export interface LodLevels {
   readonly candles: 0 | 1 | 2;
@@ -245,8 +296,12 @@ export type FromWorker =
       readonly priceLow: number;
       readonly priceHigh: number;
       readonly barSpacing: number;
-      /** E11-S05 (BQ-124, additive): the reported pane's scale state (pane 0 until E11-S09). */
-      readonly pane: number;
+      /**
+       * E11-S05 (BQ-124, additive): the reported pane's scale state. E11-S09 (BQ-1, BQ-5): its
+       * stable key; the first pane's message goes out on any view change, another pane's only
+       * when its own price state changed.
+       */
+      readonly pane: PaneKey;
       readonly mode: ScaleModeName;
       readonly requestedMode: ScaleModeName;
       readonly inverted: boolean;
@@ -286,6 +341,8 @@ export type FromWorker =
       readonly snap: SnapField;
       readonly driver: CrosshairDriver;
       readonly visible: boolean;
+      /** E11-S09 (BQ-6, additive): the pane under the pointer while visible; `price` is its. */
+      readonly pane?: PaneKey;
     }
   /**
    * E11-S07 (BQ-2, additive): the readout's fields at the crosshair bar, formatted in the worker;
@@ -314,6 +371,20 @@ export type FromWorker =
       readonly priceGutter: number;
       readonly timeZone: string;
       readonly say?: string;
+      /** E11-S09 (BQ-5, additive): every other pane's price ladder; `price` stays the first's. */
+      readonly panes?: readonly { readonly pane: PaneKey; readonly price: readonly string[] }[];
+    }
+  /**
+   * E11-S09 (BQ-4, additive): the pane stack in CSS px, posted when it changes, at most once per
+   * frame: each pane's top, height and normalised share (summing exactly 1), the time axis
+   * `[top, height]` and the plot width. `collapsed` is always false until BQ-11 is ruled.
+   */
+  | {
+      readonly t: "layout";
+      readonly id: ChartId;
+      readonly panes: readonly PaneBox[];
+      readonly timeAxis: readonly [number, number];
+      readonly plotWidth: number;
     }
   | {
       readonly t: "error";
@@ -437,11 +508,27 @@ const optional = (v: unknown, ok: (v: unknown) => boolean): boolean => v === und
 const isBool = (v: unknown): boolean => typeof v === "boolean";
 const isMargin = (v: unknown): boolean => finite(v) && v >= 0 && v <= 0.45;
 
-/** BQ-124: a pane index, a known mode, booleans and margins in [0, 0.45], nothing else. */
+const paneKey = (v: unknown): boolean => Number.isSafeInteger(v) && (v as number) >= 0;
+const isWeight = (v: unknown): boolean => finite(v) && v > 0 && v <= 1;
+
+/** BQ-3: at most `PANE_LIMIT` `[key, weight]` pairs, each key once, each weight in (0, 1]. */
+function validShares(v: unknown): boolean {
+  if (!Array.isArray(v) || v.length > PANE_LIMIT) return false;
+  const seen = new Set<unknown>();
+  for (const pair of v) {
+    if (!Array.isArray(pair) || pair.length !== 2 || !paneKey(pair[0]) || !isWeight(pair[1])) {
+      return false;
+    }
+    if (seen.has(pair[0])) return false;
+    seen.add(pair[0]);
+  }
+  return true;
+}
+
+/** BQ-124: a pane key, a known mode, booleans and margins in [0, 0.45], nothing else. */
 function validScale(cmd: Record<string, unknown>): boolean {
   return (
-    Number.isSafeInteger(cmd["pane"]) &&
-    (cmd["pane"] as number) >= 0 &&
+    paneKey(cmd["pane"]) &&
     optional(cmd["mode"], (v) => SCALE_MODES.has(v)) &&
     ["inverted", "auto", "includeDrawings", "priceOnly"].every((f) => optional(cmd[f], isBool)) &&
     optional(cmd["marginTop"], isMargin) &&
@@ -482,6 +569,17 @@ function validCommand(cmd: unknown): boolean {
       return validScale(cmd);
     case "setCrosshair":
       return MAGNET_MODES.has(cmd["magnetMode"]);
+    case "addPane":
+      return (
+        paneKey(cmd["pane"]) &&
+        optional(cmd["share"], isWeight) &&
+        typeof cmd["label"] === "string" &&
+        cmd["label"].length <= PANE_LABEL_MAX
+      );
+    case "removePane":
+      return paneKey(cmd["pane"]);
+    case "setPaneShares":
+      return validShares(cmd["shares"]);
     case "release":
       return true;
     default:

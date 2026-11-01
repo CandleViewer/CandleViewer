@@ -40,6 +40,42 @@ export class SceneGraph {
     const target = this.pane(paneId).layers[LAYER_ORDER.indexOf(layer)];
     if (target === undefined) throw new RangeError(`unknown layer ${layer}`);
     this.attach(target, node);
+    node.pane = paneId;
+  }
+
+  /**
+   * E11-S09 (BQ-23): a chart-level node spanning the whole pane stack, drawn under every pane
+   * (`under`: the grid) or over them (`over`: the crosshair). It survives any pane's removal.
+   */
+  addChassis(at: "under" | "over", node: ContentNode): void {
+    const id = `chart/${at}`;
+    let layer = this.byId.get(id);
+    if (layer === undefined) {
+      layer = new StructuralNode(id, "layer", { zIndex: at === "under" ? -1 : 1 });
+      this.attach(this.root, layer);
+    }
+    this.attach(layer, node);
+    node.pane = null;
+  }
+
+  /**
+   * E11-S09 (BQ-2): detaches a pane and its subtree; nothing else is touched. Returns the ids of
+   * the content nodes it held, whose batches and rings the caller releases.
+   */
+  removePane(id: string): string[] {
+    const pane = this.pane(id);
+    const removed: string[] = [];
+    const drop = (node: SceneNode): void => {
+      this.byId.delete(node.id);
+      if (node instanceof ContentNode) removed.push(node.id);
+      for (const child of node.children) drop(child);
+    };
+    drop(pane);
+    const siblings = this.root.children;
+    siblings.splice(siblings.indexOf(pane), 1);
+    pane.parent = null;
+    this.layoutPending = true;
+    return removed;
   }
 
   get(id: string): SceneNode | undefined {

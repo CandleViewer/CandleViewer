@@ -367,6 +367,11 @@ function retainKey(cmd: Command): string | null {
       return `series:${cmd.series}`;
     case "addDrawing":
       return `drawing:${cmd.drawingId}`;
+    // E11-S09 (BQ-2, BQ-3): a pane per key, replayed in order; the whole share vector once.
+    case "addPane":
+      return `pane:${cmd.pane}`;
+    case "setPaneShares":
+      return "shares";
     default:
       return null;
   }
@@ -652,6 +657,12 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       if (key !== null) {
         retained.delete(key);
         retained.set(key, cmd);
+      }
+      if (cmd.k === "removePane") {
+        // BQ-2: a removal deletes the pane's retained key; key 0 exists from `init`, so its
+        // removal is itself replayed.
+        retained.delete(`pane:${cmd.pane}`);
+        if (cmd.pane === 0) retained.set("pane:0", cmd);
       }
       link.post({ t: "command", id, cmd }, []);
     },

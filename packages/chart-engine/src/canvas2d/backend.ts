@@ -96,6 +96,15 @@ export class Canvas2DBackend implements RenderBackend {
     if (!this.slots.has(nodeId)) this.slots.set(nodeId, { source, ints: EMPTY, of: null });
   }
 
+  /** E11-S09 (BQ-2): a removed node's ring is dropped; the others keep theirs. */
+  detach(nodeId: string): void {
+    this.slots.delete(nodeId);
+    // The per-draw arrays may still point at its slot past this frame's count: drop them, so no
+    // detached ring outlives `detach` (they refill on the next submit).
+    this.frameSlots.length = 0;
+    this.frameBlocks.length = 0;
+  }
+
   setBackground(css: string | undefined): void {
     this.background = css;
   }

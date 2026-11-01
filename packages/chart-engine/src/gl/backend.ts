@@ -70,6 +70,8 @@ export interface RenderBackend extends UploadSink {
   setPaneUniforms(source: PaneUniformSource | null): void;
   /** Gives a drawing node its instance ring (the store-to-node mapping is the runtime's). */
   attach(nodeId: string, source: VertexSource): void;
+  /** E11-S09 (BQ-2): frees a removed node's ring; every other node's is untouched. */
+  detach(nodeId: string): void;
   /** The clear colour, from the theme's background token. */
   setBackground(css: string | undefined): void;
   /** The SDF atlas's packed rows into texture `ATLAS_TEXTURE` (E11-S11; 2D draws text by font). */
@@ -111,6 +113,10 @@ export class GLBackend implements RenderBackend, LossCapable {
 
   attach(nodeId: string, source: VertexSource): void {
     this.buffers.attach(nodeId, source);
+  }
+
+  detach(nodeId: string): void {
+    this.buffers.detach(nodeId);
   }
 
   submit(

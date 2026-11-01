@@ -409,6 +409,16 @@ Shipped by E11-S06 PR 1 (package README BQ-194, BQ-199, BQ-203), additive: `KEY`
 
 Shipped by E11-S07 (#388; package README BQ-1 to BQ-5), additive: `command { k: "setCrosshair", magnetMode }` (`off`, `weak` or `strong`; retained across a worker restart); worker → main `crosshair { id, bar, time, price, priceText, timeText, x, y, snap, driver, visible }`, the local crosshair (price in ticks, `x`/`y` the snapped intersection in CSS px), posted at most once per frame and only when a field changed, never per pointer move; worker → main `readout { id, bar, fields }`, the fields at the crosshair bar formatted in the worker, posted when the bar or the data at that bar changes and always right after, in the same frame, a `crosshair` whose bar or snap moved while visible (so the facade emits one `readout` event a frame). `a11y` is posted for key-driven cursor moves only, with the additive `short?` (the held-key form) and `origin?: "key"`; pointer hover never posts it. A `sync` crosshair is the remote crosshair only: drawn, never a `crosshair`, `readout` or `a11y` message, and never re-published to the group.
 
+Shipped by E11-S09 PR 1 (#446 BQ-1 to BQ-6), additive:
+
+- **Pane keys.** A pane is addressed by a stable key that the facade mints: 0 for the first pane, never reused. `setPriceScale.pane` and `viewport.pane` carry the key, not an array index, so removing a pane never shifts another pane's address. Pane 0 exists from `init`.
+- **Pane commands.** `command { k: "addPane", pane, share?, label }` adds a pane below the others; for a known key it changes the label and, when given, the weight. `command { k: "removePane", pane }` removes one. `command { k: "setPaneShares", shares: [pane, weight][] }` always carries the whole vector. Keys are safe integers ≥ 0, weights are in (0, 1], labels are at most 120 characters, and a vector holds at most 64 pairs, each key once.
+- **Restart.** The host retains one `addPane` per key and the last `setPaneShares`, and replays them in order after a worker restart. A removal deletes its key's entry; the removal of key 0 is replayed itself.
+- **Shares.** A share on the wire is a weight, not a fraction: the cap of 1 is a bound, and the worker normalises the weights in one function. Each pane but the last gets its weight over the total, and the last takes the remainder, so the shares sum to exactly 1 when added left to right.
+- **`layout` message.** Worker → main `layout { id, panes: [{ pane, top, height, share, collapsed }], timeAxis: [top, height], plotWidth }` carries CSS px. It is posted after a layout recompute that changed a field, at most once per frame. `collapsed` stays `false` until collapse ships.
+- **Per-pane messages.** The first pane's `viewport` goes out on any view change. Another pane's goes out only when its own price state changed. `axes.panes?: [{ pane, price }]` carries every other pane's price labels; `price` stays the first pane's, and `time` is posted once per chart.
+- **Crosshair.** `crosshair.pane?` names the pane under the pointer while the crosshair is visible; `price` is in that pane's ticks.
+
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
 ---
