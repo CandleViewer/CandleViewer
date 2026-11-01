@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
 import { act, useState, type JSX } from "react";
-import { expect, fireEvent, userEvent, within } from "storybook/test";
+import { expect, fireEvent, userEvent, waitFor, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
   Checkbox,
@@ -437,10 +437,14 @@ describe("Table (CMP-049) treegrid: keys (APG Treegrid)", () => {
     act(() => cellAt(1, 0).focus());
     await userEvent.keyboard("{Shift>}{F10}{/Shift}");
     expect(page.queryByRole("menu")).toBeNull();
+    // The empty request was dropped at once: focus landing on a row with items opens nothing by itself.
     act(() => cellAt(2, 0).focus());
+    expect(page.queryByRole("menu")).toBeNull();
     await userEvent.keyboard("{Shift>}{F10}{/Shift}");
     const menu = await page.findByRole("menu", { name: "Actions for Item 0.0" });
-    expect(within(menu).getByRole("menuitem", { name: "Act" })).toHaveFocus();
+    // CMP-041 moves focus in from a passive effect, which can run after the menu is found.
+    const item = within(menu).getByRole("menuitem", { name: "Act" });
+    await waitFor(() => expect(item).toHaveFocus());
   });
 });
 
