@@ -1,4 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore, type CSSProperties } from "react";
+import { Link } from "@candleviewer/ui";
 import { KEYMAP } from "./keymap";
 import { getBindings, subscribeBindings } from "./profile";
 import { commandMeta, globalShadowNote } from "./registry";
@@ -90,7 +91,7 @@ export function Cheatsheet({ onClose }: { readonly onClose?: () => void }): JSX.
       style={sheet}
     >
       <h2 id="cs-h">Keyboard shortcuts</h2>
-      <a href="/settings/hotkeys">Customise</a>
+      <Link href="/settings/hotkeys">Customise</Link>
       {onClose ? (
         <button ref={closeButton} type="button" onClick={onClose}>
           Close

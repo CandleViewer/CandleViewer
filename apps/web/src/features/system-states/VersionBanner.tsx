@@ -100,7 +100,13 @@ function VersionBanner({ desktop, serverVersion, onReload }: VersionBannerProps)
     target?.focus();
   };
   return (
-    <div ref={root} data-version-banner={desktop ? "desktop" : "browser"} style={BAND}>
+    <div
+      ref={root}
+      role="region"
+      aria-label="Software update"
+      data-version-banner={desktop ? "desktop" : "browser"}
+      style={BAND}
+    >
       <div role="status" aria-live="polite" aria-atomic="true" className="cv-visually-hidden">
         {said ? `${VERSION_COPY.label}. ${sentence}` : null}
       </div>
