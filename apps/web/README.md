@@ -13,6 +13,12 @@ env badge and global shortcuts are **E10**.
   `@candleviewer/ui` first (`pnpm --filter @candleviewer/ui build`).
 - `src/lib/{ws,state,auth}/` — WS client, Zustand/Jotai state, auth helpers
   (empty; see each directory's `README.md` for ownership).
+- `src/chart/` — the chart host and its readout surfaces (E11-S07, #388): `ChartTooltip` (CMP-197),
+  `BarCountdown` (CMP-226) and `useReadout`. CMP-226's non-time activity-progress text is not shipped:
+  a tick, volume, range or renko bar reads only "—" with the title "No countdown for tick bars".
+  - C-row: Stories for CMP-197 ChartTooltip (9) and CMP-226 BarCountdown (15), including the non-time
+    and HighContrast state matrix, land with the apps/web Storybook path; the ticket's Done depends on
+    this row.
 - `e2e/` — Playwright web smoke + `@axe-core/playwright` a11y spec.
 - `test/` — Vitest + React Testing Library component tests.
 
