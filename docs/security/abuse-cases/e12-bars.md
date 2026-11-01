@@ -18,7 +18,8 @@
 - Lanes: the PR `py` lanes run everything but `perf` and `fuzz`. `py-perf` runs the rejection-cost and
   the abuse-beside-ingestion legs. `fuzz-nightly.yml` runs the 5 000-query property in a step of its
   own (#452 PR-2); it is derandomised, so a red night replays from the commit, and the step prints no
-  failing query.
+  failing query. The 10-minute k6 battery (`tests/load/k6/bars_abuse.js`) is MANUAL: no workflow runs
+  it; its CI run is carried to #528 (E12-Q05).
 - Each defence is shown to fail when removed: `test_negative_controls.py` (caps, authz, deadline,
   revocation, 2 MiB ceiling) and the `*_control_*` cases of `test_integrity.py` and `test_exhaustion.py`
   (event window, checksum check, single-flight, per-user spec cap), each red for its named reason
@@ -26,7 +27,7 @@
 - Verdict key: DEFENDED (the refusal holds as documented) · DEFENDED, leg NOT RUN (the NOT RUN table
   says why) · FINDING (a strict xfail pinned against the findings register below) · NOT RUN.
 - Result: no executed case produced a 500, a stack trace, SQL or a path in a body, an unbounded read, a
-  hostile print in a bar, a tampered row served, or a frame after revocation. Open: F2, F3, F4b, F8, F9.
+  hostile print in a bar, a tampered row served, or a frame after revocation. Open: F3, F4b, F8, F9, and F2's bars half (#3287).
 
 ## Cases (the model's §9 seeds)
 
@@ -54,7 +55,7 @@
 | --- | --- | --- |
 | No input produces a 500 or a stack trace | AC-03 (several thousand crafted requests a night: 5 000; about 900 per PR run) | DEFENDED |
 | An expensive request is refused, not served slowly | `tick:1` over 30 d: 400 before any storage call; the added CPU over an unauthenticated refusal under the BQ-5 bound (below) | DEFENDED |
-| Abuse must not touch ingestion; a well-behaved p95 within budget #13 | `test_exhaustion_perf.py` (`perf`): 4 sessions looping maximal pages over stale rows beside the `Rig` feeding the tape into a `BarBuilderSet`: bars equal to the run alone, the four loss counters unmoved, one rebuild per series; the polite session's p95 67 ms (median 15 ms, 126 abusive pages) on a loaded 8-core box. Real QuestDB and 10 minutes: not built, carried to #528 | DEFENDED in process, leg NOT RUN |
+| Abuse must not touch ingestion; a well-behaved p95 within budget #13 | `test_exhaustion_perf.py` (`perf`): 4 sessions looping maximal pages over stale rows beside the `Rig` feeding the tape into a `BarBuilderSet`: bars equal to the run alone, the four loss counters unmoved, one rebuild per series; the polite session's p95 67 ms (median 15 ms, 126 abusive pages) on a loaded 8-core box. The 10-minute k6 battery is built, MANUAL / NOT RUN; its CI run and the real-QuestDB leg are carried to #528 | DEFENDED in process, leg NOT RUN |
 | Permission revoked mid-subscription, audited | `test_authz_and_revocation.py::test_authz_revoked_bars_subscription_is_announced_audited_and_silent`: `permission_change`, then `revoked` `permission_revoked`, no `snap` or `d` after it, one `ws.subscription.revoked` row with `sub_id`, `connection_id`, `session_id`; the lease released | DEFENDED |
 | A hostile upstream payload never reaches a builder | AC-10 | DEFENDED |
 | Parameter fuzzing, all ten parameters | AC-03 | DEFENDED |
@@ -77,8 +78,8 @@ in one constant, `REJECTION_CPU_BUDGET_S` (`test_caps_and_cost.py`).
 | Leg | Why | What runs it |
 | --- | --- | --- |
 | ADR-0033 Decision 2: 1 concurrent and 6 per 10 min per user, 2 process-wide, disconnect cancels, foreign cancel refused, `rebuild_id` IDOR, rebuild audit, interrupted swap, stale generation, mutated builder at an unchanged version (AC-05, AC-08, AC-11; SR-E12-05, -06, -13) | The user rebuild and its generation swap are unbuilt (E12-S12 #535, contract first #2127); ten `pytest.skip` placeholders in `test_rebuild_blocked.py` | The #535 PR, carrying these cases as an explicit row on #535 (ruling BQ-6) |
-| Cross-session p95 on real QuestDB, where REST reads serialise on the `bars` pgwire lock (F3) | Needs the compose stack; **not built**; carried to #528 (E12-Q05). No nightly leg watches F3 today | #528 (E12-Q05): its real-QuestDB contention leg is F3's escalation trigger; if it fails budget #13 cross-session, one security issue and a contract-first 429 (ruling F3) |
-| The 10-minute battery (k6, host-guarded, MANUAL) | **Not built**; carried to #528 (E12-Q05), whose load harness is not built either | #528 (E12-Q05) |
+| Cross-session p95 on real QuestDB, where REST reads serialise on the `bars` pgwire lock (F3) | Needs the compose stack; not built here, and **carried to #528 (E12-Q05)** with the k6 battery's CI run. No nightly leg watches F3 today | #528 (E12-Q05). F3's trigger: if budget #13 fails cross-session on real QuestDB → one security issue, contract-first fix |
+| The 10-minute battery: `tests/load/k6/bars_abuse.js` (maximal pages, hostile parameters and concurrent sessions; loopback-only host guard, pinned without k6 by `scripts/tests/test_bars_abuse_k6.py`) | **Built; MANUAL / NOT RUN**: no workflow runs it, and no staging host or seeded dev session exists in this lane | A manual run on a loopback dev stack; its CI run is **carried to #528 (E12-Q05)** |
 | AC-06 at load scale | X01 assigns it to E12-Q05/Q06 | E12-Q05 (#528), E12-Q06 (#529) |
 | AC-13, AC-14 | X01 assigns them to E12-Q06 | E12-Q06 (#529) |
 | A manual abuse session, recorded (`02-definition-of-ready-done.md` §3.2) | No staging profile exists (only `infra/compose` dev and deploy); everything automated runs in process | The first staging environment |
@@ -93,21 +94,21 @@ issue: each is a row on #452, pinned against the issue that owns its fix where o
 | Id | Finding | Rows | Pinned by | Status |
 | --- | --- | --- | --- | --- |
 | F1 | A pre-1970 `from` was measured from 1970-01-01, so `from=1900…to=1970-06` passed the 400-day cap and the bar read ran over 70 years | BR-28, SR-E12-02 | `test_caps_pre_epoch_window_is_measured_from_its_from`; the oracle's span cap | Fixed in #5348 |
-| F2 | `/market/klines` has no SR-E12-01 deadline on its hot and recording-start reads, and a raw driver error from the hot read is a 500; `/market/bars` has neither for its recording-start read and maps only timeouts and socket errors on its bar read | BR-27, SR-E12-01 | `test_deadlines.py`: five strict xfails (`pytest.fail.Exception` for a hang, `AssertionError` for a 500) | Open. Bars half: #3287. Klines half: a row on #452 |
-| F3 | No per-user rate limit and no single-flight on the two REST routes, which BR-36 names as its controls: 60 maximal pages meet no 429, and 50 identical requests in flight make 50 bar reads (measured) | BR-36 | `test_caps_and_cost.py::test_caps_one_session_looping_maximal_pages_is_throttled`; `test_exhaustion.py::test_exhaustion_identical_concurrent_reads_are_coalesced` (`NotCoalesced`) | Open, suspected cross-session. The real-QuestDB contention leg is **not built**; carried to #528 (E12-Q05), and that leg is the escalation trigger: if it fails budget #13 cross-session, one security issue and a contract-first 429 `rate_limited` on `getKlines`/`getBars` (ruling F3) |
+| F2 | `/market/klines` has no SR-E12-01 deadline on its hot and recording-start reads, and a raw driver error from the hot read is a 500; `/market/bars` has neither for its recording-start read and maps only timeouts and socket errors on its bar read | BR-27, SR-E12-01 | `test_deadlines.py`: five strict xfails (`pytest.fail.Exception` for a hang, `AssertionError` for a 500) | Klines half **fixed in #5348** (its strict xfails in `test_deadlines.py` are removed there); bars half open with #3287 |
+| F3 | No per-user rate limit and no single-flight on the two REST routes, which BR-36 names as its controls: 60 maximal pages meet no 429, and 50 identical requests in flight make 50 bar reads (measured) | BR-36 | `test_caps_and_cost.py::test_caps_one_session_looping_maximal_pages_is_throttled`; `test_exhaustion.py::test_exhaustion_identical_concurrent_reads_are_coalesced` (`NotCoalesced`) | Open, suspected cross-session. The nightly real-QuestDB leg is **carried to #528 (E12-Q05)**; trigger: if budget #13 fails cross-session on real QuestDB → one security issue, contract-first fix (ruling F3) |
 | F4a | Refusals were neither counted by route and reason nor logged | Observability | `test_observability.py` | Fixed in #5348 (`api_request_rejected_total{route,reason}`, the escaped `market_request_refused` log) |
-| F4b | No alert rule watches the bars rejection or rebuild rate | Observability | `test_observability.py::test_observability_an_alert_watches_the_rate` (strict xfail) | Open, a row on #452 (an infra rule) |
+| F4b | No alert rule watches the bars rejection or rebuild rate | Observability | `test_observability.py::test_observability_an_alert_watches_the_rate` (strict xfail) | Open. Owner: the Security engineer, with infra-devops for the rule; trigger: filed when the filing freeze lifts, at the latest before the E12-X04 sign-off (pending the coordinator's word on whether #5348 fixes it) |
 | F5 | The spec caps lived in `bars/leases.py`, not the one home X01 §7 names | SR-E12-04, §7 | `test_caps_match_model.py::test_caps_match_model_spec_caps_live_in_limits` | Fixed in #5348 |
 | F6 | `from`/`to` accept non-RFC 3339 forms (date-only, basic, week dates) | BR-25 | `test_caps_non_rfc_3339_time_*_accepted_f6` (served, and read as the instant they name) | ACCEPTED (ruling; the X01 §3 note) |
 | F7 | `to=9999-12-31T23:59:59.999999Z` was a 500: the float conversion rounded into year 10000 | BR-25 | `test_param_fuzz_last_microsecond_of_9999_is_served_for_time_bars` | Fixed in #5348 (exact integer µs) |
-| F8 | The `volume`/`delta` floor applied is the integer 1, so below a `qty_step` of 0.1 the documented 10 × `qty_step` floor is never the one applied, and over the no-dot wire grammar it is unreachable | BR-29, SR-E12-03 | `test_caps_and_cost.py::test_caps_qty_floor_is_ten_qty_steps` (`BarParamOutOfRange`) | Open, a row on #452 |
+| F8 | The `volume`/`delta` floor applied is the integer 1, so below a `qty_step` of 0.1 the documented 10 × `qty_step` floor is never the one applied, and over the no-dot wire grammar it is unreachable | BR-29, SR-E12-03 | `test_caps_and_cost.py::test_caps_qty_floor_is_ten_qty_steps` (`BarParamOutOfRange`) | Open. Owner: the E12-T05 limits owner (SR-E12-03); trigger: the X01 §3 per-liquidity-tier review of the floors, or the filing freeze lifting, whichever comes first |
 | F9 | **New in PR-2.** A row withheld for a failed checksum leaves a silent gap: the 200 carries no sign of it (`meta` holds count, cursor, sources and times only; `coverage_holes` is not set), so a chart draws a bar-wide gap that reads as no trading. The event is counted and logged server-side | BR-08, SR-E12-11 | `test_integrity.py::test_integrity_withheld_bar_is_named_to_the_client` (`SilentGap`) | Open, a row on #452; the shape of a fix is contract-first (22 `DataMeta`) |
 | — | NOT COVERED: a `limit` outside 1..5000 is refused by FastAPI (422) before the handler, so it is neither counted nor logged | Observability | `test_observability.py` (`limit` strict xfails) | Recorded, as ruled |
 
-No finding is Critical. F3 is the one with cross-session reach; it stays a strict xfail until #528's
-real-QuestDB leg, not built today, quantifies it. No nightly leg watches F3 now.
+No finding is Critical. F3 is the one with cross-session reach; it stays a strict xfail until the
+real-QuestDB leg carried to #528 quantifies it (if budget #13 fails cross-session on real QuestDB → one security issue, contract-first fix). No nightly leg watches F3 today.
 
-Every open finding (F2's klines half, F3, F4b, F8, F9), the NOT RUN legs and the follow-ups below are
+Every open finding (F2's bars half, F3, F4b, F8, F9), the NOT RUN legs and the follow-ups below are
 carried, each with its owner, into the threat model's residual register (`E12-bars.md` §12), so they
 outlive #452.
 

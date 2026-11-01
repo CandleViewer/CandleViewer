@@ -13,9 +13,10 @@ one event loop and one in-process app (no socket, C-13.5). Asserted:
 - the rebuild-trigger storm schedules one rebuild per series;
 - the well-behaved session's p95 is under budget #13's 150 ms, in process.
 
-Not here, and **not built**: real QuestDB, where the REST reads serialise on the `bars` pgwire lock
-(#452 findings row F3), and the 10-minute k6 battery; both are carried to #528 (E12-Q05), whose
-real-QuestDB leg is F3's escalation trigger. Both are NOT RUN rows of the report.
+Not here: real QuestDB, where the REST reads serialise on the `bars` pgwire lock (#452 findings row
+F3), a nightly leg carried to #528 (E12-Q05) and F3's escalation trigger; and the 10-minute battery,
+built as `tests/load/k6/bars_abuse.js`, MANUAL, its CI run carried to #528 too. Both are NOT RUN
+rows of the report.
 """
 
 from __future__ import annotations
