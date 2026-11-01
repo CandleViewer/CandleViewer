@@ -92,7 +92,8 @@ def frame_obscured() -> tuple[k.Node, tuple[str, list[str]]]:
                     {"gap": k.STACK_SM, "pad": k.INSET_MD, "fill": k.RAISED, "radius": k.R_CARD,
                      "stroke": k.BORDER_STRONG, "strokeWidth": k.HAIR, "strokeAlign": "inner"},
                     w=tk_w, h=tk_h, x=tk_x, y=tk_y, abs=True, note="a floating panel over the grid")
-    ov = [ticket, k.tag(f"floating order ticket · overlaps the grid by {overlap} px", tk_x, tk_y - 18),
+    ov = [ticket, # boards lens M-1: the tag sits on the ticket's body, under its submit button, clear of the focused row
+          k.tag(f"floating order ticket · overlaps the grid by {overlap} px", tk_x + 8, tk_y + tk_h - 22),
           k.callout("2.4.11", [f"scroll-padding-bottom = {overlap} + {e} = {overlap + e} px",
                                f"the focused row ends {e} px above the ticket"], px + pw + 40, body_bot - 80, 300)]
     fr = k.workspace_window(F_OBS, bodies(positions=None), focus_panel="positions", overlays=ov,

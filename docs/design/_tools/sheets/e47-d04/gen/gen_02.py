@@ -38,18 +38,20 @@ def frame_tab() -> tuple[k.Node, tuple[str, list[str]]]:
 def frame_rove() -> tuple[k.Node, tuple[str, list[str]]]:
     G = k.GEO
     ov = [k.outline("RG-02", *G["tabstrip"]), k.tag("roving · RG-02 tab strip (←/→)", G["tabstrip"][0] + 300, 54),
-          k.outline("RG-07", 0, k.TOP_H, k.NAV_W, 7 * 36 + 8), k.tag("roving · RG-07 rail tree (↑/↓)", 60, 290),
+          k.outline("RG-07", 0, k.TOP_H, k.NAV_W, 7 * 36 + 8), # boards lens m-5: the tag sits in the rail, under the tree's outline
+          k.tag_stack("roving · RG-07 rail tree (↑/↓)", ["roving", "RG-07", "tree", "(↑/↓)"], 1,
+                      k.TOP_H + 7 * 36 + 16, 54),
           k.outline("RG-04", *G["tray"]), k.tag("roving · RG-04 tray (←/→)", G["tray"][0] + 300, G["tray"][1] + 6)]
     for kind, _n in k.PANELS:
         x, y, w, _h = G[kind]
         ov.append(k.outline(f"RG-08 {kind}", x + w - 64, y, 64, k.HEADER_H))
-    ov.append(k.tag("roving · RG-08 header toolbars (←/→)", G["dom"][0] + 250, G["dom"][1] + 32))
+    ov.append(k.tag("roving · RG-08 header toolbars (←/→)", G["dom"][0] + 196, G["dom"][1] + 6))
     cx, cy, cw, ch = G["chart"]
     ov += [k.outline("plot stop", cx, cy + k.HEADER_H, cw, ch - k.HEADER_H),
            k.tag("one stop · the chart's plot stop", cx + 12, cy + k.HEADER_H + 8)]
     ov.append(k.callout("R-2", ["One item tabindex=\"0\", the rest \"-1\":",
                                 "the DOM header's first tool holds the zone's one stop (R-2)"],
-                        G["tape"][0] + 120, G["tape"][1] + 150, 320))
+                        G["tape"][0] + 120, G["tape"][1] + 150, 344))
     fr = k.workspace_window(F_ROVE, bodies(), focus_panel="dom", toolbar_focus=("dom", 1), overlays=ov,
                             note="the roving zones: each is one Tab stop, arrows inside")
     lines = [k.arch("Roving zones", "workspace"),

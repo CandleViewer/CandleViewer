@@ -11,13 +11,13 @@ Board 09 of ten (§0 L79: light twin of 08). Grid (18000, 3200); 3280 x 998 px; 
 
 ## Validator and size
 
-- `09-ring-spec-light.json: 0 errors, 0 warnings, 15 sections, 51919 bytes` (exit 0)
-- 15 sections, 51919 bytes
+- `09-ring-spec-light.json: 0 errors, 0 warnings, 15 sections, 51994 bytes` (exit 0)
+- 15 sections, 51994 bytes
 
 ## Live checks (6)
 
 - root 'E47-D04 / 09 ring-spec-light' at (18000, 3200): read back the name exactly after the first section call; size 3280 x 998
-- after touchTexts + relayout: the annotation column (estimated 786 px) ends inside the root (h 998); set the root's h to max(column end, footer end) + 80
+- after touchTexts + relayout: the annotation column (estimated 799 px) ends inside the root (h 998); set the root's h to max(column end, footer end) + 80
 - frame 'ring∕geometry · light': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'ring∕backgrounds · light': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - theme: activate the light token set before exporting board 09 (twin of 08); read back one bound fill (color.surface.canvas) as the light value
@@ -44,7 +44,7 @@ Board 09 of ten (§0 L79: light twin of 08). Grid (18000, 3200); 3280 x 998 px; 
 
 ## Sources (1)
 
-- spec E47-D04.md md5 8a3e30af (§0 L79); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
+- spec E47-D04.md md5 82406120 (§0 L79); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
 
 ## Tokens (40)
 

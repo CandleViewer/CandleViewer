@@ -2,7 +2,7 @@
 
 File `E47-D04 boards`, page `E47-D04 — Focus model`; export `docs/design/E47/img/E47-D04-07-full-page-form.png`; sheet `07-full-page-form.json` (validated); theme dark.
 
-Board 07 of ten (§0 L77: SCR-110 with SCR-117, and SCR-121: the page sequence, the h1 on entry, a T2 control in the order, a T3 item absent (§4, §10)). Grid (6000, 3200); 3280 x 998 px; "page E47-D04 — Focus model · board 07 · r1".
+Board 07 of ten (§0 L77: SCR-110 with SCR-117, and SCR-121: the page sequence, the h1 on entry, a T2 control in the order, a T3 item absent (§4, §10)). Grid (6000, 3200); 3280 x 1042 px; "page E47-D04 — Focus model · board 07 · r1".
 
 ## Frames
 
@@ -11,13 +11,13 @@ Board 07 of ten (§0 L77: SCR-110 with SCR-117, and SCR-121: the page sequence, 
 
 ## Validator and size
 
-- `07-full-page-form.json: 0 errors, 0 warnings, 32 sections, 52236 bytes` (exit 0)
-- 32 sections, 52236 bytes
+- `07-full-page-form.json: 0 errors, 0 warnings, 32 sections, 52564 bytes` (exit 0)
+- 32 sections, 52564 bytes
 
 ## Live checks (5)
 
-- root 'E47-D04 / 07 full-page-form' at (6000, 3200): read back the name exactly after the first section call; size 3280 x 998
-- after touchTexts + relayout: the annotation column (estimated 917 px) ends inside the root (h 998); set the root's h to max(column end, footer end) + 80
+- root 'E47-D04 / 07 full-page-form' at (6000, 3200): read back the name exactly after the first section call; size 3280 x 1042
+- after touchTexts + relayout: the annotation column (estimated 974 px) ends inside the root (h 1042); set the root's h to max(column end, footer end) + 80
 - frame 'form∕settings-sequence · dark': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'form∕admin-t2-t3 · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - export docs/design/E47/img/E47-D04-07-full-page-form.png: every frame is 1280 x 800; record the board id and the PNG size
@@ -45,7 +45,7 @@ Board 07 of ten (§0 L77: SCR-110 with SCR-117, and SCR-121: the page sequence, 
 
 ## Sources (1)
 
-- spec E47-D04.md md5 8a3e30af (§0 L77); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
+- spec E47-D04.md md5 82406120 (§0 L77); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
 
 ## Tokens (38)
 

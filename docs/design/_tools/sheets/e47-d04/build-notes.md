@@ -30,8 +30,8 @@ packed sheets in `v4/` (`compactOf.file` the bare raw-sheet name).
 One live round on the rendered page found and fixed, and the kit now writes, the following (a rebuild reproduces the
 boards as drawn):
 
-- Root heights: max(annotation end, footer end) + 80 as measured (`MEASURED_H`): 01, 02, 05, 07–10 998; 03 1036;
-  04 1878; 06 1101.
+- Root heights: max(annotation end, footer end) + 80 as measured (`MEASURED_H`): 01, 02, 05, 08–10 998; 03 1036;
+  04 1878; 06 1101; 07 1042 (after the boards lens fold below).
 - Board 07 `form∕admin-t2-t3`: the TopBar's T2 FLATTEN ALL and its ruled reason ("Only the owner can flatten every
   account.", E39-D03 S4) as a column clipped the reason 8 px in the 48 px TopBar: laid out as a row (centred, gap
   `space.inset.sm`), the reason hugging; the `seq 02` marker moves 104 px left with the group.
@@ -39,8 +39,22 @@ boards as drawn):
 - Board 01: the wrap line and its two heads move 2 px in, inside the frame's right edge.
 - Board 06: the cheatsheet's restore callout moves 24 px left, inside the frame.
 
-Not folded: the live check's generator note that the "Waits on D04-Gn (...)" summaries on boards 01 and 08–10 are cut
-mid-word. It was not applied on the page, so the kit keeps the drawn text; spec §0 records it as a drawn deviation.
+## Boards lens fold
+
+The boards lens on the exported PNGs found the annotation layer at fault in places; the kit now writes the fixes and
+boards 01, 02, 03, 04, 07, 08, 09 and 10 were redrawn from it (deleted by root name, rendered again, live-checked):
+
+- `frame_block`: the "Waits on D04-Gn (...)" summaries quote the full §18.2 title (they were cut at 70 characters,
+  mid-word, on boards 01, 04 and 08–10).
+- Board 04 `retention∕not-obscured`: the ticket's tag sits on the ticket, under its submit button, off the focused row.
+- Board 07 `form∕admin-t2-t3`: the T3 tag moves under Keyboard-only mode, clear of W-8's help text; the Drawn line
+  counts the rail (six entries, the owner frame's seven) and names what is not drawn (the sticky footer row, the
+  radio groups). Its column grew, so its root is 1042 high.
+- Board 01 `shell∕landmarks`: the `navigation` tag moves up, off the `main` tag, and is the frame's last overlay so
+  the main outline does not cross it (a z-order fix on the page); the four `region · h2` tags sit in the header bars.
+- Board 02 `workspace∕roving-zones`: the RG-07 tag is a four-line tag in the rail under the tree's outline
+  (`tag_stack`); the RG-08 tag sits in the DOM header bar; the R-2 callout is 344 wide, so "(R-2)" stays whole.
+- Board 03 `grid∕esc-layers`: an alphabetic marker (`Esc`) is a 28 × 20 pill.
 
 ## Penpot file, page, names
 
@@ -59,7 +73,7 @@ mid-word. It was not applied on the page, so the kit keeps the drawn text; spec 
 | 04 retention       | 4      | 3280 x 1878 | dark  |
 | 05 dialog-flatten  | 2      | 3280 x 998  | dark  |
 | 06 overlay-palette | 3      | 4640 x 1101 | dark  |
-| 07 full-page-form  | 2      | 3280 x 998  | dark  |
+| 07 full-page-form  | 2      | 3280 x 1042 | dark  |
 | 08 ring-spec       | 2      | 3280 x 998  | dark  |
 | 09 ring-spec-light | 2      | 3280 x 998  | light |
 | 10 ring-hc-thick   | 2      | 3280 x 998  | hc    |

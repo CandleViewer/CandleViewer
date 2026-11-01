@@ -11,8 +11,8 @@ Board 01 of ten (§0 L71: SCR-020: the landmarks (§2), every region numbered in
 
 ## Validator and size
 
-- `01-landmarks-ring.json: 0 errors, 1 warnings, 61 sections, 112478 bytes` (exit 0)
-- 61 sections, 112478 bytes
+- `01-landmarks-ring.json: 0 errors, 1 warnings, 61 sections, 112482 bytes` (exit 0)
+- 61 sections, 112482 bytes
 
 ## Live checks (5)
 
@@ -45,7 +45,7 @@ Board 01 of ten (§0 L71: SCR-020: the landmarks (§2), every region numbered in
 
 ## Sources (1)
 
-- spec E47-D04.md md5 8a3e30af (§0 L71); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
+- spec E47-D04.md md5 82406120 (§0 L71); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
 
 ## Tokens (36)
 

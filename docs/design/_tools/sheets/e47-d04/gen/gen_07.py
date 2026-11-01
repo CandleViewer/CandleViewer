@@ -72,6 +72,8 @@ def frame_seq() -> tuple[k.Node, tuple[str, list[str]]]:
              "The h1 takes focus on route entry (tabindex -1, not a Tab stop); W-7 and W-8 (§15, verbatim) label "
              "the shipped thick-ring preference; the other SCR-117 options are `14`:2468's, descriptions as "
              "placeholders",
+             "Not drawn (the text is binding): the sticky footer row (§4) and SCR-117's radio groups (announce "
+             "price updates, screen-reader verbosity; `14`:2468)",
              k.arch("Restore on exit", "full-page form"), k.arch("Announcements", "full-page form")]
     return fr, k.frame_block(F_SEQ, lines, keyboard="Tab from the skip link through 1-11; the ring keys jump "
                                                     "banner → navigation → main → contentinfo")
@@ -92,7 +94,8 @@ def frame_t2t3() -> tuple[k.Node, tuple[str, list[str]]]:
     shift = 364 - 260
     ov = [mark(1, (440, 4), name="seq 01 · skip link"), mark(2, (fx - 24 - shift, 4), name="seq 02 · FLATTEN ALL T2"),
           mark(3, "navrail", name="seq 03 · NavRail"), mark(4, sp["section nav"], name="seq 04 · section nav"),
-          k.tag("Admin entry: absent (T3) — not rendered, no ghost, no palette or search hit", 60, 330),
+          # boards lens m-2: under Keyboard-only mode, clear of W-8's help text
+          k.tag("Admin entry: absent (T3) — not rendered, no ghost, no palette or search hit", 60, 420),
           k.tag("no Admin link in the section nav (T3)", k.NAV_W + 8, k.TOP_H + 10 * 28 + 30),
           k.callout("T2", ["FLATTEN ALL (all accounts) stays in the Tab order with its reason;",
                            "Enter changes nothing and re-shows the reason (§10)"], fx - 380, 70, 360),
@@ -105,8 +108,8 @@ def frame_t2t3() -> tuple[k.Node, tuple[str, list[str]]]:
              "the tree, not in the palette, not in search; nothing is merely dimmed",
              f"{k.rule('R-10')}",
              f"Drawn: the Manager's TopBar FLATTEN ALL (global scope, owner-only: E39-D03's RBAC matrix) as T2, "
-             f"focused, reason \"{T2_REASON}\"; the NavRail without its Admin entry and the section nav without "
-             "its Admin link, so SCR-121 has no route in",
+             f"focused, reason \"{T2_REASON}\"; the NavRail with six entries, its Admin entry absent (the owner frame "
+             "draws seven, `14`:346), and the section nav without its Admin link, so SCR-121 has no route in",
              k.arch("Roles (T2 / T3)", "full-page form"),
              "The TopBar control's placement follows §9.2 (`14`:302); E39-D03 C6 places the panic buttons in the "
              "RightRail (recorded, not re-decided)"]

@@ -60,7 +60,7 @@ FIXTURE_REL = "packages/fixtures/bybit/2026-10-05/rest/instruments_before.json"
 FIXTURE = REPO / FIXTURE_REL
 # spec and hand-off re-pinned at the boards' as-built record (§0, the §C and §H rows edited in place): every L<n>
 # and §H cite on the ten boards reads the same text as when they were drawn
-SPEC_MD5 = {SPEC.name: "8a3e30afc96f7c03eb9792dfdd730d06", HANDOFF.name: "d6454712e65839249d15ceb99f5f3ad1",
+SPEC_MD5 = {SPEC.name: "824061209c5a632b416e3ec4498ea893", HANDOFF.name: "d6454712e65839249d15ceb99f5f3ad1",
             FIXTURE.name: "edd9dd2a060c51bd4bd1450307728ddf"}
 
 FILE_NAME = "E47-D04 boards"
@@ -734,8 +734,9 @@ def inset_ring(wd: int, ht: int, *, name: str = "CMP-039 ring · inset", radius:
 # --- annotation overlays inside a frame: numbered stops, region tags, outlines, move arrows, callouts
 def marker(n: int | str, x: int, y: int, *, name: str | None = None) -> Node:
     fallback("markers")
+    wd = 20 if str(n).isdigit() else 28  # an alphabetic label ("Esc") is a 28 x 20 pill (boards lens D-5)
     return hbox(name or f"stop {n}", [text("n", str(n), LABEL, TEXT_INVERSE)],
-                {"justify": "center", "fill": MARK_FILL, "radius": R_BADGE}, w=20, h=20, x=x, y=y, abs=True,
+                {"justify": "center", "fill": MARK_FILL, "radius": R_BADGE}, w=wd, h=20, x=x, y=y, abs=True,
                 note="annotation marker (not product UI)")
 
 
@@ -743,6 +744,15 @@ def tag(label_: str, x: int, y: int, *, name: str | None = None) -> Node:
     fallback("markers")
     return hbox((name or f"tag · {label_[:40]}").replace("/", SLASH), [text("label", label_, CAPTION, TEXT_INVERSE)],
                 {"padX": INSET_XS, "radius": R_CONTROL, "fill": MARK_FILL}, h=16, x=x, y=y, abs=True,
+                note="annotation tag (not product UI)")
+
+
+def tag_stack(name: str, lines: Iterable[str], x: int, y: int, wd: int) -> Node:
+    """A tag on several lines, for a narrow region (the 56 px NavRail; boards lens m-5)."""
+    fallback("markers")
+    kids = [text(f"line-{i}", s, CAPTION, TEXT_INVERSE, w=wd - 2 * PX[INSET_XS]) for i, s in enumerate(lines, 1)]
+    return vbox(f"tag · {name}".replace("/", SLASH), kids, {"padX": INSET_XS, "padY": INSET_XS, "radius": R_CONTROL,
+                                                            "fill": MARK_FILL}, w=wd, x=x, y=y, abs=True,
                 note="annotation tag (not product UI)")
 
 
@@ -1221,7 +1231,7 @@ def frame_block(fid: str, lines: Iterable[str], *, keyboard: str | None = None,
         out.append(f"Keyboard: {keyboard}")
     gs = [g(x) for x in waits]
     if gs:
-        out.append("Waits on " + ", ".join(f"{k} ({GROWS[k][0][:70]})" for k in gs))
+        out.append("Waits on " + ", ".join(f"{k} ({GROWS[k][0]})" for k in gs))  # the full §18.2 title (boards lens D-3)
     return frame_name(fid), out
 
 
@@ -1266,7 +1276,7 @@ def grid_xy(nn: int) -> tuple[int, int]:
 
 # the live check's root heights: max(annotation end, footer end) + MARGIN as Penpot measured them (build-notes, "Live
 # check fold"); the estimate above is the floor a board without a measurement keeps
-MEASURED_H = {1: 998, 2: 998, 3: 1036, 4: 1878, 5: 998, 6: 1101, 7: 998, 8: 998, 9: 998, 10: 998}
+MEASURED_H = {1: 998, 2: 998, 3: 1036, 4: 1878, 5: 998, 6: 1101, 7: 1042, 8: 998, 9: 998, 10: 998}
 
 
 def board(nn: int, frames: list[Node], ann: Node, *, per_row: int | None = None,

@@ -11,8 +11,8 @@ Board 02 of ten (§0 L72: the workspace archetype's Tab sequence and roving zone
 
 ## Validator and size
 
-- `02-workspace-order.json: 0 errors, 1 warnings, 63 sections, 115530 bytes` (exit 0)
-- 63 sections, 115530 bytes
+- `02-workspace-order.json: 0 errors, 1 warnings, 63 sections, 115890 bytes` (exit 0)
+- 63 sections, 115890 bytes
 
 ## Live checks (5)
 
@@ -41,7 +41,7 @@ Board 02 of ten (§0 L72: the workspace archetype's Tab sequence and roving zone
 
 ## Sources (1)
 
-- spec E47-D04.md md5 8a3e30af (§0 L72); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
+- spec E47-D04.md md5 82406120 (§0 L72); hand-off E47-D04-handoff.md md5 d6454712 (§H L94); tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
 
 ## Tokens (36)
 
