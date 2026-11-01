@@ -802,7 +802,7 @@ def g_anchor(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     seen_fields: list[str] = []
     for r in an:
         name = r[1].strip("`")
-        kind, values = r[2], re.sub(r"\s*<!--.*?-->", "", r[3]).strip()
+        kind, values = r[2], re.sub(r"\s*<!--.*?-->", "", r[3], flags=re.DOTALL).strip()
         spans = cite_spans(r[4])
         if not spans:
             f.append(("G05-ANCHOR", f"{r[0]}: no definition cite"))
@@ -1196,7 +1196,7 @@ def g_nopath(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
                 f.append(("G12-NOPATH", f"{name} line {i}: {what} in prose {ln.strip()[:40]!r}"))
     for head in ("3. ", "7. ", "9.1 ", "13.1 "):
         for r in table_lines(section(ctx.spec, head)):
-            for what in nopath_hits(re.sub(r"<!--.*?-->", "", " ".join(r))):
+            for what in nopath_hits(re.sub(r"<!--.*?-->", "", " ".join(r), flags=re.DOTALL)):
                 f.append(("G12-NOPATH", f"{r[0]}: {what} in a table cell"))
 
 
@@ -1498,7 +1498,7 @@ def g_recon(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
 def g_units(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     urows = spec_rows(ctx.spec, "8. ", r"U-\d\d")
     for r in urows:
-        ex = re.sub(r"\s*<!--.*?-->", "", r[3])
+        ex = re.sub(r"\s*<!--.*?-->", "", r[3], flags=re.DOTALL)
         ex = re.sub(r"\d{4}-\d\d-\d\d|\d\d:\d\d:\d\d", "", ex)
         for m in re.finditer(r"\d[\d,]*(?:\.\d+)?", ex):
             if not re.match(r"\s?(?:%|GB/day|MB/day|GB|MB|TB|days?\b|UTC|s\b|\))", ex[m.end() :]):
