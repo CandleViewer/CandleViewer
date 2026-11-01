@@ -34,10 +34,12 @@ from pydantic import (
     Field,
     SecretStr,
     StringConstraints,
+    ValidationError,
     ValidationInfo,
     field_validator,
     model_validator,
 )
+from pydantic_core import InitErrorDetails
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 #: A linear-perpetual symbol, as `domain.primitives.Symbol` (M1 may not import `domain`).
@@ -263,6 +265,21 @@ def _data_directories(data: Mapping[str, Any]) -> dict[str, Path]:
     return {name: Path(os.path.realpath(p)) for name, p in found.items() if p is not None}
 
 
+def _data_dir_of(parquet_root: str) -> Path:
+    """`Settings.data_dir` for this `CV_PARQUET_ROOT`: its `~`-expanded, resolved parent."""
+    return Path(parquet_root).expanduser().resolve().parent
+
+
+def _expanded(path: Path) -> Path | None:
+    """`path.expanduser()` for an anchor, or None for an unknown `~user`: the anchor then keeps
+    its value, which `CV_BACKUP_ROOT`'s check refuses naming the setting, else the
+    `model_post_init` re-expansion does, as before #5303. Never a refusal naming the user."""
+    try:
+        return path.expanduser()
+    except RuntimeError:
+        return None
+
+
 #: Ports a browser leaves out of a serialised origin (WHATWG URL "special" schemes).
 _DEFAULT_PORTS: dict[str, int] = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 _ORIGIN_SCHEME_RE = re.compile(r"[a-z][a-z0-9+.-]*")
@@ -403,9 +420,9 @@ class Settings(BaseSettings):
         extra="forbid",
         frozen=True,
         # #2086: hides the input from a refusal's message (`str()`) only. `errors()` and `json()`
-        # still carry it, and a model validator's input is every setting, CV_BYBIT_API_KEY
-        # included, so the test-clock gate is a field validator (#2728). The other model
-        # validators still echo every setting there; #2778 tracks that.
+        # still carry it, and a model validator's input is every setting, so every refusal is a
+        # field validator (#2728, #5303): it reports only the offending field. The one refusal
+        # in `model_post_init` builds its error with that field alone (`_refusal`).
         hide_input_in_errors=True,
     )
 
@@ -957,71 +974,101 @@ class Settings(BaseSettings):
         """The data dir: the parent of `parquet_root`, with `~` expanded and the path resolved, so
         it is absolute and holds no `..`. The recorder WAL anchors in it (SR-097 pattern) and so
         does the lost-jobs count (E42-T05), whatever form `CV_PARQUET_ROOT` is given in."""
-        return Path(self.parquet_root).expanduser().resolve().parent
+        return _data_dir_of(self.parquet_root)
 
-    @model_validator(mode="after")
-    def _check_liquidity(self) -> Settings:
-        """E21-T04: the bands ascend and are positive; the pins are distinct and within the cap
-        (over the cap is refused, never truncated)."""
-        bands = self.liquidity_bands_ticks
+    # #5303: the refusals below are field validators, each on the last field it reads, so a
+    # refusal reports only the offending field; `info.data` holds the fields declared above it
+    # that validated. A field that failed its own check is missing there, and has refused.
+
+    @field_validator("liquidity_bands_ticks")
+    @classmethod
+    def _check_liquidity_bands(cls, bands: tuple[int, ...]) -> tuple[int, ...]:
+        """E21-T04: the bands ascend and are positive."""
         if not bands or list(bands) != sorted(set(bands)) or bands[0] <= 0:
             raise ValueError("CV_LIQUIDITY_BANDS_TICKS must be distinct, positive and ascending")
-        pins = self.liquidity_pinned_symbols
+        return bands
+
+    @field_validator("liquidity_pinned_symbols")
+    @classmethod
+    def _check_liquidity_pins(cls, pins: tuple[str, ...]) -> tuple[str, ...]:
+        """E21-T04: the pins are distinct."""
         if len(set(pins)) != len(pins):
             raise ValueError("CV_LIQUIDITY_PINNED_SYMBOLS must not repeat a symbol")
-        if len(pins) > self.liquidity_pin_max:
+        return pins
+
+    @field_validator("liquidity_pin_max")
+    @classmethod
+    def _check_liquidity_pin_cap(cls, pin_max: int, info: ValidationInfo) -> int:
+        """E21-T04: the pins are within the cap (over the cap is refused, never truncated)."""
+        pins = info.data.get("liquidity_pinned_symbols", ())
+        if len(pins) > pin_max:
             raise ValueError(
                 f"CV_LIQUIDITY_PINNED_SYMBOLS holds {len(pins)} symbols; "
-                f"CV_LIQUIDITY_PIN_MAX is {self.liquidity_pin_max}"
+                f"CV_LIQUIDITY_PIN_MAX is {pin_max}"
             )
-        return self
+        return pin_max
 
-    @model_validator(mode="after")
-    def _refuse_shared_volume_outside_testnet(self) -> Settings:
+    @field_validator("allow_shared_volume")
+    @classmethod
+    def _refuse_shared_volume_outside_testnet(cls, value: bool, info: ValidationInfo) -> bool:
         """E16-FR-11 (#1741, SR-096): live and demo never boot with the shared-volume hatch."""
-        if self.allow_shared_volume and self.environment is not Environment.TESTNET:
+        if value and info.data.get("environment") is not Environment.TESTNET:
             raise ValueError(
                 "CV_ALLOW_SHARED_VOLUME is refused when CV_ENVIRONMENT is live or demo"
             )
-        return self
+        return value
 
-    @model_validator(mode="after")
-    def _refuse_file_kek_on_live(self) -> Settings:
+    @field_validator("kek_source")
+    @classmethod
+    def _refuse_file_kek_on_live(cls, value: str, info: ValidationInfo) -> str:
         """E27-T02 / e27-kek.md §4: fatal before any module starts (`kek_source_not_permitted`)."""
-        if self.environment is Environment.LIVE and self.kek_source == "file":
+        if info.data.get("environment") is Environment.LIVE and value == "file":
             raise ValueError("kek_source_not_permitted: CV_KEK_SOURCE=file is refused in live")
-        return self
+        return value
 
-    @model_validator(mode="after")
-    def _refuse_dev_questdb_password_on_live(self) -> Settings:
-        """#2037 S1: live on the real backend must not use the QuestDB dev default password."""
+    @field_validator("storage_backend")
+    @classmethod
+    def _refuse_dev_questdb_password_on_live(cls, value: str, info: ValidationInfo) -> str:
+        """#2037 S1: live on the real backend must not use the QuestDB dev default password.
+        On the backend field, declared after the password, so the password is never reported."""
+        password = info.data.get("questdb_pg_password")
         if (
-            self.environment is Environment.LIVE
-            and self.storage_backend == "real"
-            and self.questdb_pg_password.get_secret_value() == _QUESTDB_DEV_PASSWORD
+            info.data.get("environment") is Environment.LIVE
+            and value == "real"
+            and isinstance(password, SecretStr)
+            and password.get_secret_value() == _QUESTDB_DEV_PASSWORD
         ):
             raise ValueError(
                 "CV_QUESTDB_PG_PASSWORD must be set to a non-default value "
                 "(environment=live, storage_backend=real)"
             )
-        return self
+        return value
 
-    @model_validator(mode="after")
-    def _replay_ceiling_above_readahead(self) -> Settings:
+    @field_validator("replay_memory_ceiling_bytes")
+    @classmethod
+    def _replay_ceiling_above_readahead(cls, ceiling: int, info: ValidationInfo) -> int:
         """E26-T02: the replay memory ceiling holds the read-ahead queue plus the stream windows."""
-        if self.replay_memory_ceiling_bytes <= self.replay_readahead_bytes:
+        readahead = info.data.get("replay_readahead_bytes")
+        if readahead is not None and ceiling <= readahead:
             raise ValueError("CV_REPLAY_MEMORY_CEILING_BYTES must exceed CV_REPLAY_READAHEAD_BYTES")
-        return self
+        return ceiling
 
-    @model_validator(mode="after")
-    def _anchor_recorder_wal_dir(self) -> Settings:
+    @field_validator("recorder_wal_dir")
+    @classmethod
+    def _anchor_recorder_wal_dir(cls, value: str, info: ValidationInfo) -> str:
         """E16-T03 (SR-097 pattern): `CV_RECORDER_WAL_DIR` must be absolute, have no `..`
         segment, not be a symlink, and resolve inside the data dir (the parent of
         `parquet_root`). It is created with `mkdir(parents=True)`, so a traversal here would
         create directories anywhere."""
-        root = self.data_dir
-        text = self.recorder_wal_dir.strip()
-        raw = Path(text).expanduser() if text else root / "recorder-wal"
+        parquet_root = info.data.get("parquet_root")
+        if not isinstance(parquet_root, str):
+            return value
+        lake = _expanded(Path(parquet_root))
+        text = value.strip()
+        raw = _expanded(Path(text)) if text else lake and lake.resolve().parent / "recorder-wal"
+        if lake is None or raw is None:
+            return value
+        root = lake.resolve().parent
         if not raw.is_absolute():
             raise RecorderWalDirError("CV_RECORDER_WAL_DIR must be an absolute path")
         if ".." in raw.parts:
@@ -1031,8 +1078,7 @@ class Settings(BaseSettings):
         resolved = raw.resolve()
         if resolved == root or not resolved.is_relative_to(root):
             raise RecorderWalDirError(f"CV_RECORDER_WAL_DIR must be inside the data dir {root}")
-        object.__setattr__(self, "recorder_wal_dir", str(resolved))
-        return self
+        return str(resolved)
 
     @model_validator(mode="after")
     def _anchor_machine_event_wal(self) -> Settings:
@@ -1042,19 +1088,22 @@ class Settings(BaseSettings):
             object.__setattr__(self, "machine_event_wal_path", str(beside))
         return self
 
-    @model_validator(mode="after")
-    def _anchor_bars_state_root(self) -> Settings:
-        raw = self.bars_state_root.strip()
-        if not raw:
-            root = Path(self.parquet_root).expanduser().parent / "bars" / "state"
-        else:
-            root = Path(raw).expanduser()
-            if not root.is_absolute():
-                raise ValueError("CV_BARS_STATE_ROOT must be an absolute path")
-        if root.is_symlink():
+    @field_validator("bars_state_root")
+    @classmethod
+    def _anchor_bars_state_root(cls, value: str, info: ValidationInfo) -> str:
+        parquet_root = info.data.get("parquet_root")
+        if not isinstance(parquet_root, str):
+            return value
+        raw = value.strip()
+        lake = _expanded(Path(parquet_root))
+        expanded = _expanded(Path(raw)) if raw else lake and lake.parent / "bars" / "state"
+        if expanded is None:
+            return value
+        if raw and not expanded.is_absolute():
+            raise ValueError("CV_BARS_STATE_ROOT must be an absolute path")
+        if expanded.is_symlink():
             raise ValueError("CV_BARS_STATE_ROOT must not be a symlink")
-        object.__setattr__(self, "bars_state_root", str(root.resolve()))
-        return self
+        return str(expanded.resolve())
 
     @field_validator("audit_lane_mac_file", "audit_lane_previous_mac_file")
     @classmethod
@@ -1490,16 +1539,21 @@ class Settings(BaseSettings):
             )
         return value
 
-    @model_validator(mode="after")
-    def _trusted_proxy_set_together(self) -> Settings:
+    @field_validator("mesh_trusted_proxy_address")
+    @classmethod
+    def _trusted_proxy_set_together(cls, value: str | None, info: ValidationInfo) -> str | None:
         """#2275: with only one of the pair set the header is never read, so every request
-        through the proxy would be recorded as the proxy: it fails startup instead."""
-        if (self.mesh_trusted_proxy_header is None) != (self.mesh_trusted_proxy_address is None):
+        through the proxy would be recorded as the proxy: it fails startup instead. Declared
+        after `_trusted_proxy_address_is_an_ip`, so it runs after it; a header that failed its
+        own check is not in `info.data` and has refused already."""
+        if "mesh_trusted_proxy_header" not in info.data:
+            return value
+        if (info.data["mesh_trusted_proxy_header"] is None) != (value is None):
             raise ValueError(
                 "CV_MESH_TRUSTED_PROXY_HEADER and CV_MESH_TRUSTED_PROXY_ADDRESS "
                 "must be set together"
             )
-        return self
+        return value
 
     def model_post_init(self, __context: object) -> None:
         """Fail fast on `CV_FEED=live` without credentials (acceptance criterion 3).
@@ -1511,12 +1565,18 @@ class Settings(BaseSettings):
         if self.feed is FeedMode.LIVE and (
             self.bybit_api_key is None or self.bybit_api_secret is None
         ):
-            raise ValueError(
+            raise _refusal(
+                "feed",
+                self.feed.value,
                 "CV_FEED=live requires CV_BYBIT_API_KEY and CV_BYBIT_API_SECRET to be "
                 "set; refusing to start half-configured (see "
                 "docs/plan/20-architecture.md Sec.7.3). Use CV_FEED=synthetic for local "
-                "development without exchange credentials."
+                "development without exchange credentials.",
             )
+        # #5303: an anchor that met an unknown `~user` kept its value (`_expanded`); expanding
+        # the three paths again raises the `RuntimeError` an unanchorable path always raised.
+        for path in (self.parquet_root, self.recorder_wal_dir, self.bars_state_root):
+            Path(path).expanduser()
 
     def __repr_args__(self) -> list[tuple[str | None, object]]:
         """Redact any field whose name looks like a secret before it is ever printed.
@@ -1532,6 +1592,39 @@ class Settings(BaseSettings):
             else:
                 redacted.append((name, value))
         return redacted
+
+
+def _refusal(field: str, value: str, message: str) -> ValidationError:
+    """#5303: a refusal raised after validation (`model_post_init`), built as the
+    `ValidationError` a field validator on `field` raises, so it reports only that field."""
+    detail = InitErrorDetails(
+        type="value_error", loc=(field,), input=value, ctx={"error": ValueError(message)}
+    )
+    return ValidationError.from_exception_data(Settings.__name__, [detail], hide_input=True)
+
+
+def refusal_messages(exc: ValidationError) -> list[str]:
+    """#5303: each refusal of a settings load as `<field>: <message>`, for a boot site to report.
+    Read without inputs, context or links: never another setting's value."""
+    lines: list[str] = []
+    for error in exc.errors(include_url=False, include_context=False, include_input=False):
+        where = ".".join(str(part) for part in error["loc"]) or "settings"
+        lines.append(f"{where}: {error['msg']}")
+    return lines
+
+
+class SettingsRefusedError(ValueError):
+    """#5303: the settings refused to load; it carries the refusal messages only."""
+
+
+def load_settings() -> Settings:
+    """`Settings()` for a boot site: a refusal leaves as `SettingsRefusedError`, holding only
+    `refusal_messages`, with no `__context__` or `__cause__` that keeps the original error."""
+    try:
+        return Settings()
+    except ValidationError as exc:
+        messages = refusal_messages(exc)
+    raise SettingsRefusedError("invalid settings: " + "; ".join(messages))
 
 
 def get_settings() -> Settings:
