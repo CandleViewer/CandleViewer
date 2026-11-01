@@ -242,6 +242,35 @@ describe("the recorder step-up on a pinned add (D02 §6.4; §16.4 row 5)", () =>
   });
 });
 
+describe("while its add is on the wire (H22; S-5347-d01)", () => {
+  it("Cancel, ✕ and Esc keep the dialog, so a challenge is never parked under a later opening; the answer closes it", async () => {
+    let release: (response: Response) => void = () => undefined;
+    apiFetch.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const onAdded = vi.fn();
+    open({ onAdded });
+    type("SOLUSDT");
+    press(button("Start recording"));
+    await settle();
+    press(button("Cancel"));
+    expect(dialog()).toBeInTheDocument();
+    press(button("Close Record a symbol"));
+    expect(dialog()).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    expect(dialog()).toBeInTheDocument();
+    release(reply(201, { id: "e1-sol", symbol: "SOLUSDT", reason: "manual", state: "starting" }));
+    await settle();
+    await settle();
+    expect(onAdded).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("refusals (T2-02; §16.4 rows 2 and 4)", () => {
   const four = { ...POLICY, max_symbols: 4 };
 
