@@ -6,7 +6,8 @@
 // with CV_E27_FIXTURE_STACK=1, since the API has no route that says "the fixture is armed".
 /* global __ENV */
 
-const ALLOWED = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\]|api)(:\d{1,5})?$/; // BQ-11
+// Case-insensitive, as the Python guard (a URL's scheme and host compare without case).
+const ALLOWED = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\]|api)(:\d{1,5})?$/i; // BQ-11
 const EXCHANGE = /(^|\.)(bybit|bytick)\.com(:\d+)?(\/|$)/i; // C-13.5 deny list
 
 export function guardedBase() {

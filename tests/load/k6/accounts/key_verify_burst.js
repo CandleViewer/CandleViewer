@@ -6,7 +6,7 @@
 //
 // k6 measures the REST side only: the burst's latency and that no key's answer says "passed" on a
 // failed probe. The per-UID exchange budget and the reserve are judged after the run from the stub's
-// request log and /metrics (request_log_check.py; README rows E27-L2). The "order path unaffected"
+// request log and /metrics (request_log_check.py; qa/plans/e27/chaos.md row E27-L2). The "order path unaffected"
 // probe is a signed READ-ONLY call on the same budget class, never an order (BQ-08: no demo keys in
 // tests, C-13.5; the substitution is written into the results, not hidden).
 /* global __ENV */
@@ -16,16 +16,21 @@ import { check, sleep } from "k6";
 import { Counter, Trend } from "k6/metrics";
 import { guardedBase } from "./lib/guard.js";
 import { auth, loadUsers, signIn } from "./lib/session.js";
+import { probeThreshold } from "./lib/thresholds.js";
 
 const BASE = guardedBase(); // BQ-11
 const USERS = loadUsers();
-const ROUNDS = Number(__ENV.CV_E27_ROUNDS || 3); // BQ-07: >= 3 runs, median (06 section 7.4)
+// Bursts inside this one run. Not the baseline procedure: the no-burst baseline the 5 % gate
+// compares with is the median p95 of 3 separate probe-only runs (06 section 7.4).
+const ROUNDS = Number(__ENV.CV_E27_ROUNDS || 3);
 // One VU per stored key (a second test of one key inside the minute is a 429). BQ-04: the stack's
 // roster decides how many keys exist; set CV_E27_KEYS to that number, 6 only if it is 6.
 const KEYS = Number(__ENV.CV_E27_KEYS || 6);
 const ROUND_GAP_S = 65; // the per-key test throttle is one a minute (22 testApiKey)
 const probeMs = new Trend("e27_order_path_probe_ms", true);
-const falsePass = new Counter("e27_false_pass"); // a passed verdict while the scenario says it cannot
+const falsePass = new Counter("e27_false_pass"); // a pass with `rest.ok == false` (plan, E27-L2)
+// Throws at init when CV_E27_PROBE_BASELINE_P95_MS is unset or not a positive number: no fallback.
+const PROBE_GATE = probeThreshold(__ENV.CV_E27_PROBE_BASELINE_P95_MS);
 
 export const options = {
   setupTimeout: "180s",
@@ -52,11 +57,11 @@ export const options = {
   },
   thresholds: {
     checks: ["rate>0.99"],
-    e27_false_pass: ["count==0"], // fail closed (README, E27-L2)
-    // BQ-07: the documented tolerance is 5 % (06 section 7.4's gate) against a no-burst baseline
-    // run of this same probe: interim, ruled 2026-11-01, owner ratification on #2701. The baseline
-    // is passed in.
-    e27_order_path_probe_ms: [`p(95)<=${Number(__ENV.CV_E27_PROBE_BASELINE_P95_MS || 150) * 1.05}`],
+    e27_false_pass: ["count==0"], // fail closed (qa/plans/e27/chaos.md, E27-L2)
+    // BQ-07: the documented tolerance is 5 % (06 section 7.4's gate, `PROBE_TOLERANCE` in
+    // lib/thresholds.js) against a no-burst baseline of this same probe: interim, ruled 2026-11-01,
+    // owner ratification on #2701. The baseline is passed in; without it the run stops at init.
+    e27_order_path_probe_ms: [PROBE_GATE],
   },
 };
 

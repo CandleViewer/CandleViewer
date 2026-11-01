@@ -13,8 +13,13 @@ and a missing key is a refusal here, never a pass (`_need`).
 
 `cache`: for each signing key, the signed wallet-balance reads in any `window_s` window stay at or
 below 1 once the boot allowance is spent (the 60 s cache policy of 22 listExchangeAccounts).
-`burst`: in [t0, t1) no key makes more than `per-key-max` calls, and nothing but reads is signed
-(`/v5/order/*` never appears: the probe is read-only, BQ-08). Exit 0 = pass, 1 = fail, 2 = unusable.
+`burst`: in [t0, t1) no key makes more than `per-key-max` calls, no call but a GET is made, and no
+call reaches an order or fund path (`/v5/order/`, `/v5/asset/`), whatever its method: the probe is
+read-only (BQ-08) and neither it nor the key self-check reads orders, so even a GET of
+`/v5/order/realtime` inside the window fails the run (a policy choice: a run that finds a legitimate
+order read there records it and moves this rule by a reviewed change, never by a flag).
+Nothing to judge is never a pass: an empty log exits 2, and a log with no signed wallet read
+(`cache`) or no row inside the window (`burst`) fails. Exit 0 = pass, 1 = fail, 2 = unusable.
 """
 
 from __future__ import annotations
@@ -27,6 +32,8 @@ from datetime import datetime
 from pathlib import Path
 
 WALLET = "/v5/account/wallet-balance"
+#: Paths no call may reach during the burst, GET included: the order and the fund paths.
+NEVER_IN_BURST = ("/v5/order/", "/v5/asset/")
 FIELDS = ("ts", "method", "path", "outcome", "signing_key_id")
 
 
@@ -58,8 +65,10 @@ def _worst(times: list[float], window_s: float) -> int:
 def check_cache(rows: list[dict[str, object]], window_s: float, boot_allowance: int) -> list[str]:
     by_key: dict[str, list[float]] = defaultdict(list)
     for r in rows:
-        if r["path"] == WALLET and r["outcome"] == "served":
+        if r["path"] == WALLET and r["outcome"] == "served" and r["signing_key_id"] is not None:
             by_key[str(r["signing_key_id"])].append(_t(r))
+    if not by_key:
+        return ["no signed wallet-balance read in the log: nothing to judge, never a pass"]
     bad = []
     for key, times in by_key.items():
         times.sort()
@@ -75,14 +84,19 @@ def check_cache(rows: list[dict[str, object]], window_s: float, boot_allowance: 
 
 def check_burst(rows: list[dict[str, object]], t0: float, t1: float, per_key_max: int) -> list[str]:
     inside = [r for r in rows if t0 <= _t(r) < t1 and r.get("transport", "rest") == "rest"]
+    if not inside:
+        return ["no request inside the burst window: nothing to judge, never a pass"]
     bad = []
     count: dict[str, int] = defaultdict(int)
     for r in inside:
         count[str(r["signing_key_id"])] += 1
-        if str(r["path"]).startswith("/v5/order/") and r["method"] != "GET":
+        path = str(r["path"])
+        if r["method"] != "GET":
             bad.append(
-                f"an order call reached the exchange during the burst: {r['method']} {r['path']}"
+                f"a non-GET call reached the exchange during the burst: {r['method']} {path}"
             )
+        elif path.startswith(NEVER_IN_BURST):
+            bad.append(f"an order or fund path was called during the burst: GET {path}")
     bad += [
         f"{k}: {c} calls in the burst window (max {per_key_max})"
         for k, c in count.items()
@@ -97,16 +111,19 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("cache")
     c.add_argument("log", type=Path)
     c.add_argument("--window-s", type=float, default=60.0)
+    # Not ruled: the start-up check's reads; the results file records the allowance used.
     c.add_argument("--boot-allowance", type=int, default=2)
     b = sub.add_parser("burst")
     b.add_argument("log", type=Path)
     b.add_argument("--t0", required=True)
     b.add_argument("--t1", required=True)
-    b.add_argument(
-        "--per-key-max", type=int, required=True
-    )  # BQ-07: no number in 06; the run sets it
+    # Not ruled: 06 has no per-key number; the run sets the cap and the results file records it.
+    b.add_argument("--per-key-max", type=int, required=True)
     a = ap.parse_args(argv)
     rows = load(a.log)
+    if not rows:
+        print(f"UNUSABLE {a.mode}: the request log is empty; nothing to judge, never a pass")
+        return 2
     if a.mode == "cache":
         bad = check_cache(rows, a.window_s, a.boot_allowance)
     else:

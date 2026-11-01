@@ -14,7 +14,9 @@ const CSRF_COOKIE = "__Host-cv_csrf";
 // roster has three Owners, `seed.ROSTER`; the file lists as many as the run uses).
 export function loadUsers() {
   if (!__ENV.CV_E27_PASSWORD || !__ENV.CV_E27_USERS_FILE) {
-    throw new Error("CV_E27_PASSWORD and CV_E27_USERS_FILE are required (see the README)");
+    throw new Error(
+      "CV_E27_PASSWORD and CV_E27_USERS_FILE are required (qa/plans/e27/chaos.md, section 3)",
+    );
   }
   return JSON.parse(open(__ENV.CV_E27_USERS_FILE)).map((u) => ({
     identifier: u.identifier,

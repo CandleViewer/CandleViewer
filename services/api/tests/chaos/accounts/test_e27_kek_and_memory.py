@@ -29,12 +29,13 @@ from typing import Any
 
 import pytest
 import yaml
-from prometheus_client import REGISTRY
+from prometheus_client import REGISTRY, CollectorRegistry
 
 from candleviewer.observability.health import HealthStatus
 from candleviewer.secrets import KEY_ID_SLOT
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets.errors import KekUnavailable
+from candleviewer.secrets.metrics import export_secrets_metrics
 from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.service import SecretsService, mint_borrower, mint_candidate_keys
 from tests.unit.credentials_m2._service_fakes import _borrow, _ctx, _Src, _store_one, _svc
@@ -43,6 +44,8 @@ from tests.unit.credentials_m2.test_candidate_keys import run, signing
 
 RULES = Path(__file__).resolve().parents[5] / "infra/prometheus/alerts/system_page.yml"
 GAUGE = "cv_kek_degraded_state"
+#: The label the page groups by: M2's exporter adds it to every served series (secrets/metrics.py).
+BY = "env"
 #: The one expression shape this evaluator reads; any other shape fails the test, never passes it.
 _EXPR = re.compile(r"max by \((\w+)\) \((\w+)\) == (\d+)")
 #: Fixture-only marker: a fixed prefix and random hex made per run, so no copy sits in the source.
@@ -64,17 +67,31 @@ def _kek_page() -> dict[str, Any]:
     return dict(rules[0])
 
 
-def _fires(rule: dict[str, Any], value: float | None) -> bool:
-    """`max by (label) (metric) == n` over the one series this process exports, as Prometheus
-    evaluates it at `for: 0m`: an absent series is an empty vector, which fires nothing."""
+def _fires(rule: dict[str, Any], served: tuple[float | None, dict[str, str]]) -> bool:
+    """`max by (label) (metric) == n` over the one series this process serves, as Prometheus
+    evaluates it at `for: 0m`: an absent series, or one without the grouping label, is an empty
+    group, which fires nothing."""
+    value, labels = served
     shape = _EXPR.fullmatch(str(rule["expr"]))
     assert shape is not None, "the KekUnavailable expression changed shape: update this evaluator"
+    assert shape.group(1) == BY, "the page groups by `env`: one page per environment"
     assert shape.group(2) == GAUGE and str(rule.get("for", "0m")) in ("0m", "0s")
-    return value is not None and value == float(shape.group(3))
+    return value is not None and BY in labels and value == float(shape.group(3))
 
 
 def _sample() -> float | None:
     return REGISTRY.get_sample_value(GAUGE)
+
+
+def _served() -> tuple[float | None, dict[str, str]]:
+    """The gauge as a scrape serves it: through M2's exporter, with its `env` constant label."""
+    registry = CollectorRegistry()
+    export_secrets_metrics(registry, env="demo")
+    for family in registry.collect():
+        for sample in family.samples:
+            if sample.name == GAUGE:
+                return sample.value, dict(sample.labels)
+    return None, {}
 
 
 async def test_kek_refused_at_start_refuses_key_operations_and_fires_the_page() -> None:
@@ -91,7 +108,7 @@ async def test_kek_refused_at_start_refuses_key_operations_and_fires_the_page() 
         await _borrow(svc, ACCOUNT)
     rule = _kek_page()
     assert rule["labels"]["severity"] == "page" and rule["labels"]["component"] == "secrets"
-    assert _sample() == 1 and _fires(rule, _sample())
+    assert _sample() == 1 and _served() == (1.0, {BY: "demo"}) and _fires(rule, _served())
 
 
 async def test_kek_refused_after_start_signing_goes_on_from_memory() -> None:
@@ -110,9 +127,13 @@ async def test_kek_refused_after_start_signing_goes_on_from_memory() -> None:
 
 def test_the_page_rule_evaluator_fires_only_on_the_degraded_value() -> None:
     rule = _kek_page()
-    assert [_fires(rule, v) for v in (1.0, 0.0, None)] == [True, False, False]
+    served = [(v, {BY: "demo"}) for v in (1.0, 0.0, None)]
+    assert [_fires(rule, s) for s in served] == [True, False, False]
+    assert not _fires(rule, (1.0, {})), "a series without the `env` label is no page group"
     with pytest.raises(AssertionError, match="changed shape"):
-        _fires({**rule, "expr": f"{GAUGE} > 0"}, 1.0)
+        _fires({**rule, "expr": f"{GAUGE} > 0"}, (1.0, {BY: "demo"}))
+    with pytest.raises(AssertionError, match="groups by `env`"):
+        _fires({**rule, "expr": f"max by (foo) ({GAUGE}) == 1"}, (1.0, {BY: "demo"}))
 
 
 def _marked() -> tuple[str, Secret[str]]:

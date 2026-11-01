@@ -5,25 +5,27 @@
 //     -e CV_E27_PASSWORD=<from the seed run dir> -e CV_E27_USERS_FILE=<0600 file> \
 //     tests/load/k6/accounts/health_poll.js
 //
-// Two scenarios, back to back (README: scenario table, row E27-L1):
-//   cadence  5 VUs, one GET /exchange-accounts per 60 s each (SCR-125 refresh), 30 min (the AC).
-//   peak     5 VUs, one GET per second each, 5 min: a 60x overshoot so a p95 means something
+// Two scenarios, back to back (qa/plans/e27/chaos.md: scenario table, row E27-L1). Each is one VU
+// per signed-in user (`constant-vus`), and each VU paces itself, so every user makes its own reads:
+//   cadence  5 users, one GET /exchange-accounts per 60 s each (SCR-125 refresh), 30 min (the AC).
+//   peak     5 users, one GET per second each, 5 min: a 60x overshoot so a p95 means something
 //            (06 section 2 row 13: 5-user realistic peak).
 // What k6 cannot see is the exchange side: "no more than the 60 s cache policy permits" is judged
-// from the stub's request log by request_log_check.py after the run (README), never here.
-// SCR-079 (<=100 ms drawer) is a UI timing: only its REST part is read here (stated in the README).
+// from the stub's request log by request_log_check.py after the run (the plan), never here.
+// SCR-079 (<=100 ms drawer) is a UI timing: only its REST part is read here (plan section 4).
 /* global __ENV */
 import http from "k6/http";
 import exec from "k6/execution";
-import { check } from "k6";
+import { check, sleep } from "k6";
 import { Trend } from "k6/metrics";
 import { guardedBase } from "./lib/guard.js";
 import { auth, loadUsers, signIn } from "./lib/session.js";
+import { READ_P95_MS } from "./lib/thresholds.js";
 
 const BASE = guardedBase(); // BQ-11
 const USERS = loadUsers();
-const BUDGET_MS = 150; // 06 section 2 row 13: read endpoints p95 < 150 ms
-const STAGE_S = Number(__ENV.CV_E27_CADENCE_S || 1800); // BQ-07: 30 min per the AC; a dry run shortens it
+const BUDGET_MS = READ_P95_MS; // BQ-07: 06 section 2 row 13, read endpoints p95 < 150 ms
+const STAGE_S = Number(__ENV.CV_E27_CADENCE_S || 1800); // 30 min per the AC; a dry run shortens it
 const VUS = Math.min(5, USERS.length); // BQ-04: 5 concurrent users, fewer if the roster has fewer
 
 const listMs = new Trend("e27_list_accounts_ms", true);
@@ -33,23 +35,19 @@ export const options = {
   summaryTrendStats: ["avg", "p(50)", "p(95)", "p(99)", "max", "count"],
   scenarios: {
     cadence: {
-      executor: "constant-arrival-rate",
-      rate: VUS, // VUS requests per 60 s
-      timeUnit: "60s",
+      executor: "constant-vus",
+      vus: VUS, // one VU per user, each one read per 60 s (`cadence` below)
       duration: `${STAGE_S}s`,
-      preAllocatedVUs: VUS,
-      maxVUs: VUS,
-      exec: "poll",
+      gracefulStop: "5s",
+      exec: "cadence",
     },
     peak: {
-      executor: "constant-arrival-rate",
-      rate: VUS,
-      timeUnit: "1s",
+      executor: "constant-vus",
+      vus: VUS, // one VU per user, each one read per second (`peak` below)
       duration: "300s",
-      preAllocatedVUs: VUS,
-      maxVUs: VUS,
-      startTime: `${STAGE_S + 5}s`,
-      exec: "poll",
+      gracefulStop: "5s",
+      startTime: `${STAGE_S + 10}s`,
+      exec: "peak",
     },
   },
   thresholds: {
@@ -72,7 +70,8 @@ export function setup() {
   return { sessions };
 }
 
-export function poll(data) {
+// A VU keeps its id for the whole scenario, so VU n always reads as user n (mod the roster).
+function poll(data) {
   const s = data.sessions[(exec.vu.idInTest - 1) % data.sessions.length];
   const r = http.get(
     `${BASE}/exchange-accounts?include_balance=true`,
@@ -87,7 +86,23 @@ export function poll(data) {
   });
 }
 
-// One JSON summary for the results file (README: where results go).
+// One read, then the rest of the user's period asleep: one read per `periodS` per user.
+function paced(data, periodS) {
+  const t0 = Date.now();
+  poll(data);
+  const left = periodS - (Date.now() - t0) / 1000;
+  if (left > 0) sleep(left);
+}
+
+export function cadence(data) {
+  paced(data, 60);
+}
+
+export function peak(data) {
+  paced(data, 1);
+}
+
+// One JSON summary for the results file (the plan: where results go).
 export function handleSummary(data) {
   return { [__ENV.CV_E27_SUMMARY || "k6-summary-health-poll.json"]: JSON.stringify(data) };
 }

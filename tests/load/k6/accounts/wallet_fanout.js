@@ -11,10 +11,15 @@
 // that keeps no stream state beyond `s`. If a ruling prefers the shared harness, only the Connection
 // below is replaced by an import; the checks stay.
 //
-// INPUT LIMIT (README, open question 2): the pack's private-WS script sends one wallet snapshot after
-// auth and no periodic frames unless a scenario sets `every_ms`. A 500 ms stream needs a scenario
-// that does; the pack has none (UNVERIFIED by listing). With fewer than MIN_FRAMES frames this
-// script FAILS its `enough_frames` check instead of passing on silence.
+// INPUT (plan section 6 item 2, finding F9): the pack's `compliant` scenario sends a wallet snapshot
+// after auth and then a wallet frame every 5 s (`every_ms` 5000, packages/fixtures/accounts/
+// compliant/manifest.json lines 76-83); no pack scenario sends one at or below the 500 ms throttle.
+// So this run gates what the stream does send: the median gap between two frames carrying one
+// account's balance must sit within one throttle of the manifest's period, and every connection
+// must see MIN_FRAMES frames, so a silent, too-slow or too-fast stream fails. The p5 floor
+// (no frame closer than the throttle less the tolerance) holds trivially on a 5 s stream: it is
+// not a throttle test until a sub-500 ms scenario exists, which touches the shared E27-Q01 pack
+// and is recorded as F9, not built here. The run prints that the throttle was not exercised.
 /* global __ENV */
 import http from "k6/http";
 import { WebSocket } from "k6/websockets";
@@ -22,19 +27,27 @@ import { check, fail } from "k6";
 import { Counter, Trend } from "k6/metrics";
 import { guardedBase } from "./lib/guard.js";
 import { auth, loadUsers, signIn } from "./lib/session.js";
+import {
+  COMPLIANT_WALLET_PERIOD_MS,
+  throttleExercised,
+  walletFloor,
+  walletPacing,
+} from "./lib/thresholds.js";
 
 const BASE = guardedBase(); // BQ-11
 const USERS = loadUsers();
 const CONNS = 5; // 06 section 10: 5 concurrent users
-const THROTTLE_MS = 500; // 23 section 6.2: the wallet topic row, default throttle 500 ms
-const TOLERANCE_MS = Number(__ENV.CV_E27_THROTTLE_TOL_MS || 50); // BQ-07: UNVERIFIED, written to the results
+// The per-account period of the scenario the keys run as: `compliant`'s `every_ms` unless the run
+// switches them to another scenario, whose manifest `every_ms` it then passes here.
+const PERIOD_MS = Number(__ENV.CV_E27_WALLET_PERIOD_MS || COMPLIANT_WALLET_PERIOD_MS);
 const RUN_S = Number(__ENV.CV_E27_WS_RUN_S || 600);
 const MIN_FRAMES = 20;
 const WS_URL = BASE.replace(/^http/, "ws") + (__ENV.WS_PATH || "/ws"); // profiles.json ws_path
 const ORIGIN = "http://127.0.0.1:5173"; // profiles.json origin
 const SUBPROTOCOL = "cv.v1.json"; // profiles.json subprotocol
 
-const gapMs = new Trend("e27_wallet_gap_ms", true);
+const gapMs = new Trend("e27_wallet_gap_ms", true); // topic gap: any two wallet frames
+const accountGapMs = new Trend("e27_wallet_account_gap_ms", true); // one account's two frames
 const seqGaps = new Counter("e27_wallet_seq_gaps");
 const frames = new Counter("e27_wallet_frames");
 const errors = new Counter("e27_wallet_errors");
@@ -51,10 +64,13 @@ export const options = {
     },
   },
   thresholds: {
+    checks: ["rate==1"], // every connection's own frame and gap counts (one silent one fails)
     e27_wallet_seq_gaps: ["count==0"], // a coalesced delta still takes one sequence number (23 section 4)
     e27_wallet_errors: ["count==0"],
-    // no frame closer than the throttle (minus the tolerance): the p5 gap is the floor that matters
-    e27_wallet_gap_ms: [`p(5)>=${THROTTLE_MS - TOLERANCE_MS}`],
+    // the floor: no frame closer than the throttle less the tolerance (the p5 topic gap)
+    e27_wallet_gap_ms: walletFloor(),
+    // the pacing: one account's median gap within one throttle of the manifest's period
+    e27_wallet_account_gap_ms: walletPacing(PERIOD_MS),
     e27_wallet_frames: [`count>=${MIN_FRAMES * CONNS}`], // fails on a silent stream
   },
 };
@@ -70,6 +86,12 @@ function scrape(name) {
 }
 
 export function setup() {
+  if (!throttleExercised(PERIOD_MS)) {
+    console.warn(
+      `wallet period ${PERIOD_MS} ms is not below the 500 ms throttle: the throttle is not ` +
+        "exercised by this run (plan finding F9); the floor and pacing gates still apply",
+    );
+  }
   const owner = signIn(BASE, USERS[0], -1);
   const items = http
     .get(`${BASE}/exchange-accounts?include_balance=false`, auth(owner))
@@ -97,6 +119,8 @@ export default function (data) {
   let lastTs = null;
   let lastS = null;
   let n = 0;
+  let accountGaps = 0;
+  const lastByAccount = {};
   let seq = 0;
   const send = (t, p, extra) => ws.send(JSON.stringify({ t, id: `c-${++seq}`, ...extra, p }));
   ws.addEventListener("open", () =>
@@ -124,6 +148,15 @@ export default function (data) {
       if (m.t === "d" && lastS !== null && m.s !== lastS + 1) seqGaps.add(1);
       if (lastTs !== null) gapMs.add(now - lastTs);
       lastTs = now;
+      // 23 section 15.4: `balances[].exchange_account_id`; one gap per account the frame carries
+      const ids = new Set(((m.p && m.p.balances) || []).map((b) => b.exchange_account_id));
+      for (const id of ids) {
+        if (lastByAccount[id] !== undefined) {
+          accountGapMs.add(now - lastByAccount[id]);
+          accountGaps += 1;
+        }
+        lastByAccount[id] = now;
+      }
       lastS = m.s;
       n += 1;
       frames.add(1);
@@ -138,6 +171,7 @@ export default function (data) {
       clearInterval(tick);
       ws.close();
       check(n, { enough_frames: (c) => c >= MIN_FRAMES });
+      check(accountGaps, { enough_account_gaps: (c) => c >= MIN_FRAMES - 1 });
     }
   }, 500);
 }

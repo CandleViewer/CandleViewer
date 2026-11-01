@@ -16,9 +16,14 @@ connections, metrics catalogue), the asyncio task count (no catalogue series exi
 pass `--task-metric <name>` once one does, else the column is empty and `judge` FAILS the
 task-count criterion rather than passing it), and `cv_account_health_state{state,reason}`.
 
-`judge` fits a Theil-Sen slope per series over the whole run (06 section 9, the backend-memory row's
-estimator) and compares it with a noise band set in this file's constants; the band is a proposal
-(BQ-07), to be moved only by a reviewed change. The 24 h run is a dispatch-only workflow on the
+`judge` fits a Theil-Sen slope per series over the last 12 h of the run (the whole run when it is
+shorter), with at least 100 samples: the estimator, window and sample floor of 06 section 9's
+backend-memory row (`docs/plan/06-performance-and-load-standard.md` line 213). The bands it
+compares with are NOT 06's: 06 rules 0.18 MB/h on the per-symbol RSS of the bars soak, a budget
+derived from (300 - 170) MB over 30 days; the account monitor has no 06 memory row, and this
+sampler reads one process's RSS. The bands in `BAND_PER_H` are PROPOSED, not ruled (owner: the 06
+owners, Architect and Backend leads per 06 line 3; ratified on #2701 or in the results PR), and
+move only by a reviewed change. The 24 h run is a dispatch-only workflow on the
 self-hosted bench group (PR-2, `security-review`), or owner-run with the harness proven at 1 h on a
 hosted runner (BQ-09). End-state truth: the final `cv_account_health_state`
 must hold exactly the states the scenario implies (`--expect`).
@@ -39,14 +44,16 @@ from pathlib import Path
 from guard import check_target
 
 SCRAPE_S = 60.0
-# BQ-07: proposed noise bands, units per hour; a slope above one is a trend beyond noise.
+# PROPOSED, not ruled (owner: the 06 owners; module docstring): noise bands, units per hour; a
+# slope above one is a trend beyond noise. Not 06's 0.18 MB/h (06 line 213, per-symbol bars RSS).
 BAND_PER_H = {
     "rss_bytes": 512 * 1024,
     "open_fds": 0.5,
     "connections": 0.5,
     "tasks": 0.5,
 }
-MIN_SAMPLES = 100  # 06 section 9 asks for >= 100 samples for a slope claim
+MIN_SAMPLES = 100  # 06 line 213: >= 100 samples for a slope claim
+WINDOW_S = 12 * 3600.0  # 06 line 213: the slope over the last 12 h
 _SAMPLE = re.compile(r"^([a-z_:0-9]+)(\{[^}]*\})? ([0-9.e+-]+)$", re.MULTILINE)
 
 
@@ -109,8 +116,13 @@ def judge(a: argparse.Namespace) -> int:
     with open(a.csv, newline="") as fh:
         rows = list(csv.DictReader(fh))
     failed = []
+    end_s = max((float(r["t_s"]) for r in rows), default=0.0)
     for col, band in BAND_PER_H.items():
-        pts = [(float(r["t_s"]), float(r[col])) for r in rows if r.get(col) not in (None, "")]
+        pts = [
+            (float(r["t_s"]), float(r[col]))
+            for r in rows
+            if r.get(col) not in (None, "") and float(r["t_s"]) >= end_s - WINDOW_S
+        ]
         if len(pts) < MIN_SAMPLES:
             failed.append(f"{col}: {len(pts)} samples (< {MIN_SAMPLES}); no trend claim possible")
             continue
@@ -142,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     j.add_argument(
         "--expect",
         action="append",
-        default=[],
+        required=True,  # no expectation, no end-state check: a judge without one is refused
         help="<scenario>=<healthy|degraded|down>",
     )
     a = ap.parse_args(argv)

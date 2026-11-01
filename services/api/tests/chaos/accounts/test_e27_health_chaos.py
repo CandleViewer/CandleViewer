@@ -35,7 +35,7 @@ import pytest
 from candleviewer.settings import (
     ACCOUNT_DOWN_MAX_S,
     ACCOUNT_HEARTBEAT_MAX_S,
-)  # BQ-07: caps 10 s / 30 s
+)  # the settings' caps, 10 s / 30 s (US-ACCT-010)
 from tests.chaos.accounts._e27_stack import (
     Api,
     health_count,
@@ -52,8 +52,10 @@ HOLD_WS_S = float(
     os.environ.get("CV_E27_WS_HOLD_S", 300)
 )  # the ticket's 5 minutes; a dry run shortens it
 HOLD_5XX_S = float(os.environ.get("CV_E27_5XX_HOLD_S", 120))  # the ticket's 2 minutes
-TICK_TOL_S = float(os.environ.get("CV_E27_TICK_TOL_S", 5))  # BQ-07: health tick period UNVERIFIED
-RECOVER_S = float(os.environ.get("CV_E27_RECOVER_S", 120))  # BQ-07: no number in the ticket
+# Not ruled (no BQ-07 stamp): the health tick period is UNVERIFIED and the ticket names no recovery
+# time; both are the run's, written into the results.
+TICK_TOL_S = float(os.environ.get("CV_E27_TICK_TOL_S", 5))
+RECOVER_S = float(os.environ.get("CV_E27_RECOVER_S", 120))
 TEST_THROTTLE_S = 65.0  # 22 testApiKey: one test per key per minute
 RUNS = [1, 2]  # the ticket: each chaos scenario at least twice
 
@@ -67,10 +69,15 @@ def api() -> Api:
 
 @pytest.fixture
 def key(api: Api) -> Iterator[tuple[str, dict[str, Any]]]:
-    """(account id, key row) of the stack's first signable key."""
+    """(account id, key row) of the stored key the cases switch, `KEY_ID`. 22 ApiKey shows only
+    `key_id_masked` (`...` and the last 4); the pack's key ids end in a unique 4-digit serial, so
+    exactly one signable key must carry `KEY_ID`'s, or the cases would switch one key and probe
+    another."""
     pairs = api.accounts_and_keys()
     assert pairs, "no signable stored key on the stack: seed it first"
-    yield pairs[0]
+    mine = [p for p in pairs if p[1]["key_id_masked"] == "..." + KEY_ID[-4:]]
+    assert len(mine) == 1, f"{len(mine)} signable keys carry the masked id of CV_E27_KEY_ID"
+    yield mine[0]
     switch(KEY_ID, "compliant")  # always leave the stack as it was found
     assert wait_until(lambda: health_count("healthy") >= 1, RECOVER_S)
 
@@ -109,15 +116,18 @@ def test_private_ws_drop_goes_degraded_then_down_then_recovers(
 ) -> None:
     # BQ-05/BQ-06: `ws_drop_rest_fail`: the WS drops at 5 s and refuses reconnects; REST is 503.
     down_before = metric("cv_account_health_transitions_total", state="down")
+    # counts before the switch: a state that stood already must not satisfy the waits below
+    amber_before = health_count("degraded") + health_count("down")
+    red_before = health_count("down")
     switch(KEY_ID, "ws_drop_rest_fail")
     # amber inside the heartbeat cap (+ the drop at 5 s and a tick), red inside the down cap
     amber_s = 5 + ACCOUNT_HEARTBEAT_MAX_S + TICK_TOL_S
-    assert wait_until(lambda: health_count("degraded") + health_count("down") >= 1, amber_s), (
-        "no amber inside the heartbeat cap"
-    )
-    assert wait_until(lambda: health_count("down") >= 1, 5 + ACCOUNT_DOWN_MAX_S + TICK_TOL_S), (
-        "no red inside the down cap"
-    )
+    assert wait_until(
+        lambda: health_count("degraded") + health_count("down") > amber_before, amber_s
+    ), "no amber inside the heartbeat cap"
+    assert wait_until(
+        lambda: health_count("down") > red_before, 5 + ACCOUNT_DOWN_MAX_S + TICK_TOL_S
+    ), "no red inside the down cap"
     assert metric("cv_account_health_transitions_total", state="down") > down_before, (
         "transition metric did not move"
     )
@@ -176,7 +186,8 @@ def test_rate_limit_10018_on_self_check_is_inconclusive_and_does_not_loop(
     assert _verdicts()["passed"] == before["passed"]
     # Not asserted: "the order path is unaffected" and "a metric records the throttle". The reserve
     # behind the order path is E34-T02's (exchange/bybit/rate_limit.py header) and no
-    # cv_exchange_rate_limit_remaining series exists in the catalogue (README, UNVERIFIED 3).
+    # cv_exchange_rate_limit_remaining series exists in the catalogue (qa/plans/e27/chaos.md
+    # section 5).
 
 
 # -- C-13.6 #6: clock beyond recv_window ----------------------------------------------------------
@@ -192,4 +203,4 @@ def test_clock_drift_beyond_recv_window_reports_the_clock_reason(
     # BQ-05: 22 says a no-verdict probe is a 200 with `rest.error`. The pack's manifest and plan
     # TC-109 still word the outcome as a 502 exchange_error (plan DC-31, a contract question);
     # this asserts
-    # the contract (22), and the README lists the disagreement.
+    # the contract (22), and qa/plans/e27/chaos.md section 6 item 8 lists the disagreement.

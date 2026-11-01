@@ -207,7 +207,8 @@ def health_count(state: str) -> float:
 
 def wait_until(cond: Callable[[], bool], timeout_s: float, step_s: float = 1.0) -> bool:
     """Poll `cond` until true or `timeout_s` passes. Bounded, and the only wait: the stack runs on
-    wall-clock time, so a fake clock cannot stand in (C-13.7 binds unit tests; plan README, 6.5).
+    wall-clock time, so a fake clock cannot stand in (C-13.7 binds unit tests; qa/plans/e27/chaos.md
+    section 6 item 5).
     """
     end = time.monotonic() + timeout_s
     while time.monotonic() < end:
