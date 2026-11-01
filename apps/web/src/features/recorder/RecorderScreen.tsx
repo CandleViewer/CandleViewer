@@ -13,6 +13,7 @@
  * Unreachable until #484 PR 3 swaps R-340 (no route, no flag).
  */
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -35,7 +36,7 @@ import {
 import { reportRecorder } from "./analytics";
 import { CompactNow } from "./CompactNow";
 import { DECK, TEXT, fill } from "./copy";
-import { useRecorderExtensions } from "./extensions";
+import { registerRecorderExtensions, useRecorderExtensions } from "./extensions";
 import { AUTO_FILTER, DEEP_FILTERS, PINNED_FILTER, type GridSort, type RowContext } from "./grid";
 import {
   buildRows,
@@ -63,6 +64,7 @@ import {
   DiskCardPanel,
   GapTable,
   SummaryLine,
+  asLanding,
   focusLanding,
   incidentSentence,
   useGapLanding,
@@ -125,6 +127,10 @@ export function RecorderScreen({
   /** An add's planning estimate, the Size cell's rate ("est.") until the storage report measures one. */
   const [estimates, setEstimates] = useState<ReadonlyMap<string, number>>(new Map());
   const gapsLanding = useGapLanding();
+  // The row detail (D02 §6.7), opened from a row or by `openRowDetail(symbol)`, which this page registers.
+  const [detail, setDetail] = useState<string | null>(null);
+  const openDetail = useCallback((symbol: string) => setDetail(symbol), []);
+  useEffect(() => registerRecorderExtensions({ openRowDetail: openDetail }), [openDetail]);
   // The page's own clock, the injected one in tests (C-5309-13), read once at mount.
   const mountedAt = useRef<number | null>(null);
   mountedAt.current ??= (dataOptions?.now ?? Date.now)();
@@ -137,6 +143,15 @@ export function RecorderScreen({
       },
     }),
     [recordId],
+  );
+  /** The H1, readied to take focus: a dialog's or the drawer's last landing when its opener is gone (A-5347-03). */
+  const pageHeading = useMemo(
+    () => ({
+      get current(): HTMLElement | null {
+        return asLanding(document.getElementById(RECORDER_H1_ID));
+      },
+    }),
+    [],
   );
 
   // The story's own key, once per entry (C-z); StrictMode's second run is the same entry.
@@ -177,6 +192,12 @@ export function RecorderScreen({
     ? diskCard(facts, policy, rows.length === 0, nowMs, historySinceMs)
     : null;
   const empty = !loading && !statusFailed && rows.length === 0;
+  // The detail belongs to the grid: while none is drawn (the empty state, a failed first read), a detail asked for
+  // is dropped, so it never opens by itself when rows arrive (C-5347-08).
+  const gridShown = !empty && !(statusFailed && rows.length === 0);
+  useEffect(() => {
+    if (!gridShown && detail !== null) setDetail(null);
+  }, [gridShown, detail]);
   const overall = frame?.overall ?? data.status.data?.overall ?? null;
 
   const measured = new Map(
@@ -432,11 +453,17 @@ export function RecorderScreen({
             loading={loading}
             say={sayPolitely}
             onWritten={(write) => {
-              if (write.kind === "added") data.merge(write.row);
+              if (write.kind === "added" || write.kind === "updated") data.merge(write.row);
               data.rereadList();
             }}
-            onOpenDetail={extensions.openRowDetail}
+            onOpenDetail={openDetail}
             readBack={data.rereadList}
+            fallbackFocusRef={pageHeading}
+            detail={detail}
+            onDetailClose={() => setDetail(null)}
+            frame={frame}
+            status={data.status.data}
+            gaps={data.gaps}
           />
         )}
         <GapTable gaps={data.gaps} nowMs={nowMs} hostRef={gapsLanding.hostRef} />
