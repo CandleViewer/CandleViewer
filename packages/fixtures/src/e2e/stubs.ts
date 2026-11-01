@@ -256,7 +256,7 @@ export function watchForLeaks(
   };
 }
 
-/** No forbidden value in localStorage, sessionStorage, the URL or readable cookies (SR-012). */
+/** No forbidden value in localStorage, sessionStorage, the URL, history state or readable cookies (SR-012). */
 export async function assertNoClientSecrets(
   page: Page,
   forbidden: readonly string[],
@@ -267,12 +267,14 @@ export async function assertNoClientSecrets(
       localStorage: object;
       sessionStorage: object;
       location: { href: string };
+      history: { state: unknown };
       document: { cookie: string };
     };
     return {
       local: JSON.stringify({ ...w.localStorage }),
       session: JSON.stringify({ ...w.sessionStorage }),
       url: w.location.href,
+      history: JSON.stringify(w.history.state ?? null),
       cookie: w.document.cookie,
     };
   });
