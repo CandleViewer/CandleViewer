@@ -75,9 +75,9 @@ function persist(user: string | null, b: ReadonlyMap<string, string>): void {
 }
 
 /**
- * The server's profile store (BQ-1): none until a server implements `22`'s `/settings/hotkeys`, so nothing is sent.
- * The device store above stays the active one; a store set here also gets each change made by a session holding
- * `settings:write` (A55), and the server still decides.
+ * The server's profile store (BQ-1), which `sync.ts` sets for the page (E10-T05). The device store above stays the
+ * active one; a store set here also gets each change made by a session holding `settings:write` (A55), and the server
+ * still decides. A Viewer's change is never handed to it.
  */
 let serverStore: ProfileStorePort | null = null;
 export function setProfileStore(store: ProfileStorePort | null): void {
@@ -112,6 +112,16 @@ export function setBindings(next: ReadonlyMap<string, string>): void {
 export function subscribeBindings(l: () => void): () => void {
   listeners.add(l);
   return () => listeners.delete(l);
+}
+/**
+ * The server's profile at sign-in (E10-T05, BQ-9), as an import's rules applied it (CR-305BD-04): this device keeps it
+ * for `user`, the one it was read for, and it is neither sent back nor audited, since it bypasses `applyRebind`.
+ */
+export function receiveBindings(user: string, next: ReadonlyMap<string, string>): void {
+  if (user !== profileUser) return; // read for one user, never handed to another (CR-305C-01)
+  bindings = next;
+  persist(user, next);
+  listeners.forEach((l) => l());
 }
 /** SCR-113's Reset all, through the audited rebind (D10). */
 export function resetBindings(): void {
