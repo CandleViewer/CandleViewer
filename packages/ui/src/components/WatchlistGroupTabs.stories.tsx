@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState, type JSX } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
+import { eventually, shownWith } from "../../.storybook/eventually.js";
 import { IconButton } from "./IconButton.js";
 import {
   WatchlistGroupTabs,
@@ -91,11 +92,13 @@ export const Default: Story = {
 export const Hover: Story = {
   play: async ({ canvasElement }) => {
     await userEvent.hover(within(canvasElement).getByRole("button", { name: "New watchlist" }));
-    await waitFor(() =>
-      expect(document.querySelector('[data-cmp="CMP-016"]:not([hidden])')).toHaveTextContent(
-        "New watchlist",
-      ),
+    // CMP-016's hover delay; the wait counts only time the runner's page could run (#5274).
+    const tooltip = await eventually(
+      "the tooltip",
+      () => shownWith('[data-cmp="CMP-016"]', "New watchlist"),
+      1000,
     );
+    await expect(tooltip).toHaveTextContent("New watchlist");
   },
 };
 
