@@ -149,6 +149,26 @@ describe("DatePicker (CMP-047): the field", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it("tells the host its typed error as it changes: the sentence once committed, null once valid", async () => {
+    // A host whose own rules wait on a valid day (the purge's Confirm, A-5347-d02): `onChange` never carries the entry.
+    const onInvalidChange = fn();
+    const host = await mount(
+      <Host onInvalidChange={onInvalidChange} min="2026-09-01" rangeCaption={CAPTION} />,
+    );
+    const input = field(host);
+    expect(onInvalidChange).not.toHaveBeenCalled();
+    await type(input, "2026-13-45");
+    expect(onInvalidChange).toHaveBeenLastCalledWith("Enter a date as YYYY-MM-DD.");
+    await type(input, "2026-08-31");
+    expect(onInvalidChange).toHaveBeenLastCalledWith(CAPTION);
+    await type(input, "2026-10-01");
+    expect(onInvalidChange).toHaveBeenLastCalledWith(null);
+    expect(onInvalidChange).toHaveBeenCalledTimes(3);
+    // Nothing is drawn differently for it: the field's own words and look are as without the prop.
+    expect(input).not.toHaveAttribute("aria-invalid");
+    expect(input).toHaveValue("2026-10-01");
+  });
+
   it("refuses typed days outside min-max with the caption, never clamping them", async () => {
     const onChange = fn();
     const host = await mount(

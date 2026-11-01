@@ -235,6 +235,33 @@ describe("RecorderStatusRow (CMP-177), table variant: a row of the host's grid",
   });
 });
 
+// E16-D02 §2 and §3 `paused` (board 04): while `accelerate_retention` holds, an unpinned row's Retention reads its
+// days and the effective days the host passes (the reaper halves retention, `21-database-schema.md`).
+describe("RecorderStatusRow (CMP-177), accelerated retention", () => {
+  const { AcceleratedRetention } = composeStories(stories);
+
+  it("an unpinned row reads '30 d → 15 d (accelerated)' in the grid and the card", async () => {
+    const host = await mount(<AcceleratedRetention />);
+    const row = within(host).getByRole("row", { name: /^ETHUSDT, manual/ });
+    expect(within(row).getByText("30 d → 15 d (accelerated)")).toBeVisible();
+    const card = await mount(
+      <RecorderStatusRow {...SOL} retentionDays={7} retentionAcceleratedDays={3.5} />,
+    );
+    expect(within(card).getByText(/Retention 7 d → 3\.5 d \(accelerated\)/)).toBeInTheDocument();
+    const words = recorderStatusColumns().find((c) => c.id === "retention");
+    expect(words?.cell({ ...SOL, retentionDays: 30, retentionAcceleratedDays: 15 })).toBe(
+      "30 d → 15 d (accelerated)",
+    );
+  });
+
+  it("a pinned row stays Forever, a refused one a dash; no accelerated days, the plain days", async () => {
+    const words = recorderStatusColumns().find((c) => c.id === "retention");
+    expect(words?.cell({ ...BTC, retentionAcceleratedDays: 15 })).toBe("Forever");
+    expect(words?.cell({ ...SOL, state: "refused", retentionAcceleratedDays: 15 })).toBe("—");
+    expect(words?.cell({ ...SOL, retentionAcceleratedDays: null })).toBe("30 d");
+  });
+});
+
 describe("RecorderStatusRow (CMP-177), standalone (SCR-103)", () => {
   it("Tab reaches Why?, then Keep forever, then the action (D02H table 2)", async () => {
     await mount(<RecorderStatusRow {...SOL} />);

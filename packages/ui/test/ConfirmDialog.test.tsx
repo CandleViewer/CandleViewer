@@ -196,10 +196,13 @@ describe("ConfirmDialog (CMP-044)", () => {
     expect(onConfirm).not.toHaveBeenCalled();
     t = 3400;
     await userEvent.click(confirm);
+    // The field's text as typed rides with the confirm, so a host whose server checks an echo sends what was
+    // typed, never its own copy of the token (E16-D06 §20.3 (ii)); a standard confirm carries none (above).
     expect(onConfirm).toHaveBeenLastCalledWith<[ConfirmMeta]>({
       variant: "typed",
       gate: "typed",
       elapsedMs: 2400,
+      typedValue: "FLATTEN",
     });
   });
 
@@ -660,5 +663,144 @@ describe("ConfirmDialog (CMP-044)", () => {
     expect(fireEvent.keyUp(cancel, { key: " " })).toBe(true);
     expect(fireEvent.keyUp(confirmButton(), { key: " " })).toBe(false);
     expect(fireEvent.keyUp(cancel, { key: "a" })).toBe(true);
+  });
+});
+
+// The typed confirm's validity look (E16-D06 KB-07, KB-12, T2-07, T2-10; E16-D04 §1.3; E09-D09 §9.1: form validity is
+// the host's call, never T2): with `typedReason` or `validityReason`, Confirm stays a Tab stop, `aria-disabled`, its
+// fill and label dimmed, the reason under the footer as its description; a press says the reason once, politely, and
+// confirms nothing. Without them `typed` keeps the native disabled state above.
+describe("ConfirmDialog: the validity look", () => {
+  const TYPED = "Type BTCUSDT exactly to confirm.";
+  const SHORT = "Give a reason of at least 3 characters.";
+  const polite = (): string =>
+    document.querySelector(".cv-confirm > [role='status']")?.textContent ?? "";
+
+  it("typedReason: focusable, aria-disabled, described by the reason; a press says it once and sends nothing", async () => {
+    const onConfirm = vi.fn();
+    await openHost({
+      onConfirm,
+      variant: "typed",
+      typedConfirmValue: "BTCUSDT",
+      typedReason: TYPED,
+    });
+    const confirm = confirmButton();
+    expect(confirm).toBeEnabled();
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    expect(confirm).toHaveAttribute("data-unavailable", "");
+    expect(confirm).toHaveAccessibleDescription(TYPED);
+    expect(within(alert("Freeze sub_001?")).getByText(TYPED)).toBeVisible();
+    expect(within(confirm).queryByRole("img", { name: "Not available" })).toBeNull();
+    t = 5000;
+    await userEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(polite()).toBe(TYPED);
+    expect(confirm).toHaveFocus();
+  });
+
+  it("typedReason: the match lifts the look, drops the reason and rearms the guard", async () => {
+    const onConfirm = vi.fn();
+    await openHost({
+      onConfirm,
+      variant: "typed",
+      typedConfirmValue: "BTCUSDT",
+      typedReason: TYPED,
+    });
+    t = 3000;
+    await userEvent.type(
+      screen().getByRole("textbox", { name: "Type BTCUSDT to confirm" }),
+      "BTCUSDT",
+    );
+    const confirm = confirmButton();
+    expect(confirm).not.toHaveAttribute("aria-disabled");
+    expect(confirm).not.toHaveAttribute("data-unavailable");
+    expect(screen().queryByText(TYPED)).toBeNull();
+    await userEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+    t = 3400;
+    await userEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("validityReason: the host's own rule takes the look once the token matches; the typed reason comes first", async () => {
+    const onConfirm = vi.fn();
+    function Form(): JSX.Element {
+      const [reason, setReason] = useState("");
+      return (
+        <ConfirmDialog
+          open
+          title="Purge ETHUSDT data?"
+          role="dialog"
+          confirmLabel="Purge ETHUSDT data"
+          variant="typed"
+          typedConfirmValue="ETHUSDT"
+          typedInstruction="Type the symbol to confirm"
+          typedReason="Type ETHUSDT exactly to confirm."
+          validityReason={reason.trim().length < 3 ? SHORT : undefined}
+          now={now}
+          onConfirm={onConfirm}
+          onCancel={vi.fn()}
+        >
+          <label>
+            Reason
+            <input value={reason} onChange={(event) => setReason(event.currentTarget.value)} />
+          </label>
+        </ConfirmDialog>
+      );
+    }
+    await mount(<Form />);
+    const confirm = button("Purge ETHUSDT data");
+    expect(confirm).toHaveAccessibleDescription("Type ETHUSDT exactly to confirm.");
+    await userEvent.type(
+      screen().getByRole("textbox", { name: "Type the symbol to confirm" }),
+      "ETHUSDT",
+    );
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    expect(confirm).toHaveAccessibleDescription(SHORT);
+    await userEvent.type(screen().getByRole("textbox", { name: "Reason" }), "space for the import");
+    expect(confirm).not.toHaveAttribute("aria-disabled");
+    t = 9000;
+    await userEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("aria-describedby: a host's body node describes the dialog after the restatement", async () => {
+    await mount(
+      <ConfirmDialog
+        open
+        role="dialog"
+        title="Purge ETHUSDT data?"
+        confirmLabel="Purge ETHUSDT data"
+        aria-describedby="purge-body"
+        now={now}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      >
+        <p>Symbol: ETHUSDT</p>
+        <p id="purge-body">This deletes about 1.2 GB recorded from 2026-08-13 to 2026-08-15.</p>
+      </ConfirmDialog>,
+    );
+    expect(
+      screen().getByRole("dialog", { name: "Purge ETHUSDT data?" }),
+    ).toHaveAccessibleDescription(
+      "This deletes about 1.2 GB recorded from 2026-08-13 to 2026-08-15.",
+    );
+  });
+
+  it("a gated Confirm (T2) wins over the look; notes follow the typed field, before the footer", async () => {
+    await openHost({
+      variant: "typed",
+      typedConfirmValue: "BTCUSDT",
+      typedReason: TYPED,
+      confirmDisabledReason: "Only the owner can change recording.",
+      notes: <p>This action is audited.</p>,
+    });
+    const confirm = confirmButton();
+    expect(confirm).toHaveAttribute("data-gated", "");
+    expect(confirm).not.toHaveAttribute("data-unavailable");
+    const field = screen().getByRole("textbox", { name: "Type BTCUSDT to confirm" });
+    const note = screen().getByText("This action is audited.");
+    expect(field.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(note.closest(".cv-dialog__footer")).toBeNull();
   });
 });
