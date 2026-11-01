@@ -28,6 +28,7 @@ import type { HostDeps, HostTheme } from "../layers/host.js";
 import type { BatchUniforms } from "../gl/submit.js";
 import { type BarBatch, BarStore } from "../model/BarStore.js";
 import { ModelRejection, type MutationRange, RangeSlot } from "../model/counters.js";
+import { DrawingsNode } from "../layers/drawings/project.js";
 import { plotWidthOf } from "../interaction/wheel.js";
 import * as scene from "../scene/index.js";
 import {
@@ -199,6 +200,9 @@ interface Instance {
   hostTheme: HostTheme;
   /** Mount generations: node ids stay unique across a remove and a re-add (no node removal). */
   mounts: number;
+  /** E14-T03: pane 0's drawings, made on the first `setDrawings`; `ids` posted at this rev. */
+  drawings: DrawingsNode | null;
+  boundsRev: number;
 }
 
 /** The ObjectIndex's rebuild after the main series is removed (a `replace` of nothing). */
@@ -638,6 +642,12 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "removeSeries":
         removeSeries(inst, cmd.series);
         return;
+      case "setDrawings": {
+        const why = (inst.drawings ??= addDrawings(inst.graph)).apply(cmd);
+        if (why === null) touch(inst);
+        else fail(inst.id, `setDrawings: ${why}`); // nothing changed (E14-X01 DR29)
+        return;
+      }
       case "release":
         retire(inst);
         charts.delete(inst.id);
@@ -646,6 +656,23 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         // setSeriesOptions / addDrawing: the scene graph that consumes them is E11-S01 / E14.
         touch(inst);
     }
+  }
+
+  /** The drawings layer's node: DATA on a drag never marks the series or footprint (B8). */
+  function addDrawings(graph: scene.SceneGraph, node = new DrawingsNode("main/drawings/set")) {
+    graph.addNode("main", "drawings", node);
+    node.dirty = scene.DIRTY_ALL;
+    return node;
+  }
+
+  /** E14-T03: at most one bounds post a frame; `ids` only when the set changed. */
+  function postBounds(inst: Instance, node: DrawingsNode): void {
+    node.boundsDirty = false;
+    const n = node.set.size;
+    const ids = node.set.rev === inst.boundsRev ? undefined : node.set.ids.slice();
+    inst.boundsRev = node.set.rev;
+    const bounds = node.bounds.slice(0, 4 * n);
+    deps.post({ t: "drawingBounds", id: inst.id, ...(ids && { ids }), bounds });
   }
 
   function dispatch(msg: ToWorker): void {
@@ -727,6 +754,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         blocks: new Map(),
         hostTheme: hostTheme(msg.theme),
         mounts: old?.mounts ?? 0,
+        // The degraded-2d re-init keeps the drawings, re-attached to the new scene.
+        drawings: old?.drawings ? addDrawings(scene.graph, old.drawings) : null,
+        boundsRev: -1,
       };
       // BQ-53: the DataModel is kept; its rings now patch the fresh scene's batches.
       for (const [sid, s] of inst.series) {
@@ -843,6 +873,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         anchorTick: Number.isFinite(pane?.anchorTick) ? (pane?.anchorTick ?? null) : null,
       });
     }
+    if (inst.drawings?.boundsDirty) postBounds(inst, inst.drawings);
     if (inst.a11yDirty) {
       inst.a11yDirty = false;
       deps.post({ t: "a11y", id: inst.id, cursorSummary: inst.summary });

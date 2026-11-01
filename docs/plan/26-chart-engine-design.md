@@ -296,6 +296,8 @@ _Shipped (E11-S08, package README BQ-127 to BQ-141, `src/hit/`): the object grid
 - **Persistence**: per (user, symbol, bar-spec-agnostic) in Postgres through `/api/v1/drawings`; optimistic local writes with server reconciliation; drawings are part of a saved workspace.
 - **Rendering**: lines as instanced quads with a geometry shader-free thick-line expansion done in the vertex shader (per-instance `p0`, `p1`, `width`, dash pattern index); dashes via a distance-along-line varying and a pattern LUT.
 
+_Shipped (E14-T03 slice 1, package README "Drawings layer"): the engine's input is a closed set of ten primitives (segment, ray, line, hline, vline, rect, ellipse, band, polyline, text), not tools, anchored at (µs time, tick) with the bar index derived through the bar map; style is numeric (0xRRGGBBAA colours, width 1..8, a dash index) and labels are clamped as data (120 code points, controls and bidi stripped, font 8..48). The `DrawingsNode` in the drawings layer is marked DATA alone by a drawing change and TRANSFORM by a pan or zoom, which rewrites no record; each drawing's screen box goes to the main thread for E14-T04 and the DOM mirror. Drawing pixels land from slice 2._
+
 ### 3.11 Interaction and gestures
 
 | Input                  | Action                                                                                                                                        |
@@ -398,6 +400,8 @@ Shipped by E11-S08 PR 2 (package README BQ-134 to BQ-136), additive: `command { 
 Shipped by E11-S10 PR 1 (package README BQ-147, BQ-148 and BQ-153), additive: `resize` sizes are CSS px equal to `backing / dpr` and may be 0 (finite, ≥ 0; dpr > 0), which suspends the chart until a non-zero size; `ExportRejectReason` gains `suspended`; `frame` gains `dpr` and `backingStorePx` (`[width, height]` in device px).
 
 Shipped by E12-S06 PR 1 (`24` §19.75; package README "Candle series"), additive: `command { k: "addSeries", series, kind: "candles" | "bars", pane? }` and `command { k: "removeSeries", series }`; `data` gains `series?` (a `bars` batch for that series' `BarStore`) and `ack` echoes it, so the host's two-in-flight rule and conflation are per series; the `bars` buffer is `time` f64, `open` / `high` / `low` / `close` i32 ticks and `volume` f32, then an optional seventh 1-byte `flags` column (bits `gap_before`, forming, partial, amended; bits 4–7 refused), with the params `[priceOrigin, tickSize]` re-checked against the int32 tick window (F-01). A refused batch (F-01 decode, F-02 bar relations) posts a recoverable `ENGINE_DECODE_ERROR` and is still acked.
+
+Shipped by E14-T03 slice 1 (package README "Drawings layer"), additive: `command { k: "setDrawings", op: "replace" | "patch", drawings, remove? }` (a closed kind set, finite anchors, bounded counts; a refusal changes nothing) and worker to main `drawingBounds { id, ids?, bounds }` (each drawing's `[x0, y0, x1, y1]` in CSS px, NaN when hidden, at most once a frame; `ids` only when the set changed). The host folds the set and replays it as one `replace` after a worker restart; `addDrawing` is unchanged.
 
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 

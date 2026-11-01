@@ -4,9 +4,12 @@
 // message per frame, keeps at most two unacknowledged `data` batches per store, transfers every
 // buffer, and restarts a lost worker. DOM side: this file is in tsconfig.dom.json's program.
 import { probeRenderProfile } from "../host/mount.js";
+import type { DrawingInput } from "../layers/drawings/model.js";
+import { DrawingSet } from "../layers/drawings/set.js";
 import { createRenderRuntime, type RenderRuntime } from "./runtime.js";
 import {
   conflate,
+  rejectReason,
   INPUT,
   INPUT_MAX_ROWS,
   INPUT_STRIDE,
@@ -377,6 +380,8 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   let link = linkOrInline(o.realm, o.runMode, o.env);
   let theme = o.theme;
   const retained = new Map<string, Command>();
+  /** E14-T03: the drawing set as the worker holds it, replayed as one `replace` on a restart. */
+  const drawings = new DrawingSet<DrawingInput>((d) => d);
   let disposed = false;
   let restoring = false;
   let flushQueued = false;
@@ -423,6 +428,10 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       link.post(size, []);
     }
     for (const cmd of retained.values()) link.post({ t: "command", id, cmd }, []);
+    if (drawings.size > 0) {
+      const cmd: Command = { k: "setDrawings", op: "replace", drawings: drawings.order.slice() };
+      link.post({ t: "command", id, cmd }, []);
+    }
   };
 
   function send(store: StoreId, series: number | undefined, batch: PendingData): void {
@@ -612,6 +621,10 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       if (disposed) return;
       if (cmd.k === "setTheme") theme = cmd.theme;
       if (cmd.k === "setMotion") reduce = cmd.reduce;
+      // The worker refuses what this refuses, so the replayed set never holds a refused change.
+      if (cmd.k === "setDrawings" && rejectReason({ t: "command", id, cmd }) === null) {
+        drawings.apply(cmd);
+      }
       const key = retainKey(cmd);
       if (key !== null) {
         retained.delete(key);

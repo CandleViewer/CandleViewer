@@ -252,6 +252,17 @@ export type FromWorker =
       readonly anchorTick: number | null;
     }
   | { readonly t: "a11y"; readonly id: ChartId; readonly cursorSummary: string }
+  /**
+   * E14-T03 (additive): each drawing's screen box `[x0, y0, x1, y1]` in CSS px (NaN when hidden),
+   * in `ids` order, at most once a frame after the drawings or the view changed. `ids` comes only
+   * when the set changed since the last post; the host keeps the last one.
+   */
+  | {
+      readonly t: "drawingBounds";
+      readonly id: ChartId;
+      readonly ids?: readonly string[];
+      readonly bounds: Float32Array;
+    }
   | {
       readonly t: "error";
       readonly id: ChartId | null;
