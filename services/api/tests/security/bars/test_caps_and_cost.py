@@ -46,7 +46,6 @@ TIME_DAYS, NON_TIME_DAYS, MAX_BARS, MAX_LIMIT = 400, 31, 250_000, 5_000
 #: #452 BQ-5, proposed into X01 §3 as SR-E12-01's rejection-cost bound: the median CPU time one
 #: refused `tick:1` request adds over a 401, in process. The one place the number lives.
 REJECTION_CPU_BUDGET_S: Final = 0.002
-F1: Final = "#452 findings row F1: a window whose `from` is before 1970"
 F3: Final = "#452 findings row F3: one session sending a burst of maximal pages"
 F8: Final = (
     "#452 findings row F8: the applied floor is 1 for qty_step < 0.1; the documented 10 x qty_step"
@@ -276,7 +275,6 @@ def test_caps_tick_1_refusal_costs_under_the_cpu_budget(stores: Stores) -> None:
     assert stores.calls == Counter()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=F1)
 def test_caps_pre_epoch_window_is_measured_from_its_from(stores: Stores) -> None:
     """X01 AC-01: `from=1900-01-01 to=1970-06-01` spans about 70 years, over the 400-day cap: it
     is refused before any bar read. The findings register on #452 holds the analysis."""

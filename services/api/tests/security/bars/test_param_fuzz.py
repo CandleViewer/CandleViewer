@@ -35,10 +35,7 @@ NIGHTLY = settings(
     max_examples=5_000, derandomize=True, deadline=None, suppress_health_check=list(HealthCheck)
 )
 _CASES = _corpus.cases()
-_RAISES: dict[str, type[_oracle.OracleError]] = {
-    _corpus.F1: _oracle.SpanCapError,  # served over the 400-day cap
-    _corpus.F7: _oracle.StatusError,  # a 500
-}
+_RAISES: dict[str, type[_oracle.OracleError]] = {}  # no known gap is pinned today
 
 
 @cache
@@ -167,3 +164,11 @@ def test_param_fuzz_property_every_answer_meets_the_oracle(drawn: _Drawn) -> Non
 def test_param_fuzz_nightly_every_answer_meets_the_oracle(drawn: _Drawn) -> None:
     op, query = drawn
     _oracle.check(op, query, _world().get(op, query))
+
+
+def test_param_fuzz_last_microsecond_of_9999_is_served_for_time_bars() -> None:
+    """#452 F7: the float conversion rounded `to` up into year 10000 and the bar read raised
+    (a 500). The conversion is exact now, so the last representable microsecond is served."""
+    query = {"symbol": "BTCUSDT", "bar_type": "time", "param": "1", "limit": 50,
+             "from": "9999-12-30T00:00:00Z", "to": "9999-12-31T23:59:59.999999Z"}  # fmt: skip
+    assert _world().get("getBars", query).status_code == 200
