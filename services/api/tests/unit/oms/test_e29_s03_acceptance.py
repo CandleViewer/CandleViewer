@@ -295,7 +295,7 @@ async def test_whole_close_a_position_under_the_minimum_reaches_the_venue_its_ex
     [create] = creates(rig)
     assert (create.qty, create.reduce_only) == (Decimal("0.004"), True)
     [written] = [r for r in rig.records("orders.submit") if r.reason == "validated"]
-    assert written.detail["exemption"] == "min_order_qty_whole_close"  # its write-ahead record
+    assert written.detail["min_qty_exempt"] == "full_close"  # its write-ahead record
     assert_never_opens(rig)
 
 
@@ -304,8 +304,8 @@ async def test_whole_close_an_ordinary_close_names_no_exemption(rig: SubmitRig) 
     _size, outcome = await close(rig, held("0.250"), WHOLE)
     assert outcome.status == 202
     [written] = [r for r in rig.records("orders.submit") if r.reason == "validated"]
-    assert "exemption" not in written.detail  # its write-ahead record, nor the outcome's
-    assert all("exemption" not in r.detail for r in rig.records("orders.submit"))
+    assert "min_qty_exempt" not in written.detail  # its write-ahead record, nor the outcome's
+    assert all("min_qty_exempt" not in r.detail for r in rig.records("orders.submit"))
 
 
 async def test_whole_close_a_partial_reduce_only_order_under_the_minimum_keeps_its_400(

@@ -98,8 +98,11 @@ _NOT_FOR_MARKET: Final = frozenset(
 _NOT_FOR_AN_EXIT: Final = frozenset({FilterViolationCode.NOTIONAL_BELOW_MIN})
 #: The filter a reduce-only close of the whole position is exempt from too: the venue judges it.
 _NOT_FOR_A_WHOLE_CLOSE: Final = frozenset({FilterViolationCode.QTY_BELOW_MIN})
-#: The name the order's write-ahead record gives the whole close's exemption (`orders.submit`).
-EXEMPT_WHOLE_CLOSE: Final = "min_order_qty_whole_close"
+#: The pair the order's write-ahead record (`orders.submit`) names the whole close's exemption
+#: with, as the orchestrator's ruling (a) words it: `min_qty_exempt: full_close`. The audit chain
+#: is append-only (C-2.9), so a key once written is never corrected.
+EXEMPT_FIELD: Final = "min_qty_exempt"
+EXEMPT_WHOLE_CLOSE: Final = "full_close"
 _TICK_RULES: Final = frozenset({"tick_size"})
 _LOT_RULES: Final = frozenset(
     {"qty_step", "min_order_qty", "max_order_qty", "max_mkt_order_qty", "min_notional"}
