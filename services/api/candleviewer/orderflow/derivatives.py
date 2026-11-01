@@ -25,7 +25,10 @@ Bounded state (C-2.18): at most `max_bars` bars (the oldest drops on append), an
 keep only what a bar in the window reads: per bar the last ticker snapshot, the last OI sample at
 its start and the last inside it, and its liquidation prints; per gap the last OI sample; nothing
 before the first bar except an OI sample within `OI_STALENESS_MS` of it. Rows past the last bar
-wait for the next one, at most `MAX_PENDING_ROWS` per store; more are refused, not dropped.
+wait for the next one, at most `MAX_PENDING_ROWS` per store. Overflow policy: refused, never
+dropped (`DerivativesBackpressure`, a `DerivativesInputError` subclass, so a caller can tell a
+stalled grid from a malformed row). A refused `load()` resets the engine to empty (it refuses the
+whole load), so the caller (PR B) must reload; a refused `on_*` leaves the engine unchanged.
 
 Incremental path: a row recomputes only the bars it can change (a ticker or liquidation its own
 bar; OI its own bar plus the bars starting within `OI_STALENESS_MS` after it; a settlement at
@@ -91,7 +94,12 @@ Value = Decimal | int | str | None
 
 class DerivativesInputError(OrderflowError, ValueError):
     """An input row is malformed: a NaN/infinite/out-of-range number, a negative quantity, an
-    unordered grid, a stalled grid's overflow or a bad param."""
+    unordered grid or a bad param."""
+
+
+class DerivativesBackpressure(DerivativesInputError):
+    """The `MAX_PENDING_ROWS` refusal: rows are piling up past a stalled bar grid. Not a
+    malformed row; the row is refused, never dropped (C-2.18)."""
 
 
 def _finite(v: Decimal | None, what: str) -> None:
@@ -313,12 +321,17 @@ _FAMILIES: Final = ("open_interest", "funding", "basis", "liquidation_notional")
 class DerivativesEngine:
     """Per-symbol state: the bar grid (at most `max_bars`), the rows it reads, the series."""
 
-    def __init__(self, instrument: InstrumentMeta, *, max_bars: int = MAX_BARS) -> None:
+    def __init__(
+        self, instrument: InstrumentMeta, *, max_bars: int = MAX_BARS, prune: bool = True
+    ) -> None:
+        """`prune=False` keeps every row (no compaction): TEST-ONLY, the oracle that a pruning
+        bug shared by the full and incremental paths cannot hide from."""
         if max_bars < 1:
             raise DerivativesInputError("max_bars must be at least 1")
         self._interval_ms = resolve_funding_interval_minutes(instrument) * _MS_PER_MIN
         self._interval_min = self._interval_ms // _MS_PER_MIN
         self._max_bars = max_bars
+        self._prune = prune
         self._bars: list[DerivBar] = []
         self._oi: _Sorted[OiSample] = _Sorted()
         self._tickers: _Sorted[TickerSnapshot] = _Sorted()
@@ -457,7 +470,7 @@ class DerivativesEngine:
     def _add[R: _Row](self, store: _Sorted[R], row: R) -> None:
         seg, start, end = self._segment(row.ts_ms)
         if seg == "tail" and len(store.rows) - store.span(start, end)[0] >= MAX_PENDING_ROWS:
-            raise DerivativesInputError("too many rows past the bar grid; append the next bar")
+            raise DerivativesBackpressure("too many rows past the bar grid; append the next bar")
         store.add(row)
         if seg != "tail":
             self._tidy(seg, start, end)
@@ -466,7 +479,7 @@ class DerivativesEngine:
         start = self._bars[-1].end_ms if self._bars else _LOW
         for store in self._all():
             if len(store) - store.span(start, _HIGH)[0] > MAX_PENDING_ROWS:
-                raise DerivativesInputError("too many rows past the bar grid")
+                raise DerivativesBackpressure("too many rows past the bar grid")
 
     def _keep_idx(self, seg: _Seg, start: int, end: int) -> list[tuple[int, int, list[int]]]:
         """Per store (oi, tickers, funding, liquidations): the span `[lo, hi)` of one segment
@@ -493,14 +506,14 @@ class DerivativesEngine:
         return self._oi, self._tickers, self._funding, self._liqs
 
     def _tidy(self, seg: _Seg, start: int, end: int) -> None:
-        if seg == "tail" or not self._bars:
+        if seg == "tail" or not self._bars or not self._prune:
             return
         for store, (lo, hi, idx) in zip(self._all(), self._keep_idx(seg, start, end), strict=True):
             store.keep(lo, hi, idx)
 
     def _tidy_all(self) -> None:
         """Compact every store in one pass over the grid (`load`)."""
-        if not self._bars:
+        if not self._bars or not self._prune:
             return
         segs: list[tuple[_Seg, int, int]] = [("head", _LOW, self._bars[0].start_ms)]
         for b, nxt in pairwise(self._bars):

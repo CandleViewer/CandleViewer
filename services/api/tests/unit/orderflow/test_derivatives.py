@@ -15,6 +15,7 @@ from candleviewer.domain.funding import FundingIntervalUnknown
 from candleviewer.orderflow.derivatives import (
     MAX_PENDING_ROWS,
     OI_STALENESS_MS,
+    DerivativesBackpressure,
     DerivativesEngine,
     DerivativesInputError,
     DerivBar,
@@ -279,10 +280,21 @@ def test_state_stays_bounded_after_many_appends() -> None:
 def test_a_stalled_grid_refuses_rows_past_the_pending_bound() -> None:
     e = engine()
     e.load([bar(0)], tickers=[TickerSnapshot(T0 + H + i) for i in range(MAX_PENDING_ROWS)])
-    with pytest.raises(DerivativesInputError):
+    with pytest.raises(DerivativesBackpressure):
         e.on_ticker(TickerSnapshot(T0 + 2 * H))
-    with pytest.raises(DerivativesInputError):
+    with pytest.raises(DerivativesBackpressure):
         engine().load([bar(0)], oi=[oi(T0 + H + i, "1") for i in range(MAX_PENDING_ROWS + 1)])
+
+
+def test_backpressure_is_distinguishable_from_a_malformed_row() -> None:
+    assert issubclass(DerivativesBackpressure, DerivativesInputError)
+    e = engine()
+    with pytest.raises(DerivativesInputError) as bad:
+        e.load([bar(1), bar(0)])
+    assert not isinstance(bad.value, DerivativesBackpressure)
+    with pytest.raises(DerivativesBackpressure):
+        e.load([bar(0)], oi=[oi(T0 + H + i, "1") for i in range(MAX_PENDING_ROWS + 1)])
+    assert e.series == () and e.retained()["bars"] == 0  # a refused load resets the engine
 
 
 def _none_count(reason: str) -> float:
@@ -320,13 +332,20 @@ _EDGES = sorted(
 _ts = st.one_of(st.integers(min_value=T0 - H, max_value=T0 + 5 * H), st.sampled_from(_EDGES))
 _px = st.decimals(min_value=1, max_value=1000, places=2)
 _rate = st.sampled_from([D("0.0001"), D("-0.0002"), D("0.00010")])
-_rows = st.one_of(
-    st.builds(OiSample, _ts, _px, _px, st.just("ws_ticker")),
-    st.builds(TickerSnapshot, _ts, _px, _px, _px, st.one_of(st.none(), _rate), _ts),
-    st.builds(LiquidationPrint, _ts, st.sampled_from(["long", "short"]), _px),
-    st.builds(FundingRow, _ts, _rate),
-)
 _Row = OiSample | TickerSnapshot | LiquidationPrint | FundingRow
+_GAPS = (0, 1, OI_STALENESS_MS, OI_STALENESS_MS + 1)
+
+
+def _rows_at(ts: st.SearchStrategy[int]) -> st.SearchStrategy[_Row]:
+    return st.one_of(
+        st.builds(OiSample, ts, _px, _px, st.just("ws_ticker")),
+        st.builds(TickerSnapshot, ts, _px, _px, _px, st.one_of(st.none(), _rate), ts),
+        st.builds(LiquidationPrint, ts, st.sampled_from(["long", "short"]), _px),
+        st.builds(FundingRow, ts, _rate),
+    )
+
+
+_rows = _rows_at(_ts)
 
 
 def _feed(e: DerivativesEngine, row: _Row) -> tuple[object, ...]:
@@ -352,14 +371,21 @@ def test_incremental_updates_equal_a_full_recompute(
     and at its edges fed after each, the current bar re-priced: after every row the targeted
     update equals a full recompute and returns exactly the bars that changed; at the end the
     series equals one fresh load of every input."""
-    bars = [DerivBar(T0 + i * H, T0 + (i + 1) * H, o, c) for i, (o, c) in enumerate(prices)]
+    gaps = data.draw(st.lists(st.sampled_from(_GAPS), min_size=len(prices), max_size=len(prices)))
+    starts = [T0 + i * H + sum(gaps[:i]) for i in range(len(prices))]
+    bars = [DerivBar(t, t + H, o, c) for t, (o, c) in zip(starts, prices, strict=True)]
+    # rows also land on and around every bar edge, so the gaps between bars are exercised
+    edge_ts = st.sampled_from(
+        sorted({e + d for b in bars for e in (b.start_ms, b.end_ms) for d in (-1, 0, 1)})
+    )
+    rows = st.one_of(_rows, _rows_at(edge_ts))
     inc = DerivativesEngine(InstrumentMeta(funding_interval_min=60), max_bars=max_bars)
     fed: list[_Row] = []
     inc.load(bars[:1])
     for i, b in enumerate(bars):
         if i:
             inc.upsert_bar(b)
-        for row in data.draw(st.lists(_rows, max_size=8)):
+        for row in data.draw(st.lists(rows, max_size=8)):
             before = inc.series
             changed = _feed(inc, row)
             fed.append(row)
@@ -370,10 +396,11 @@ def test_incremental_updates_equal_a_full_recompute(
         bars[i] = DerivBar(b.start_ms, b.end_ms, o, c)
         inc.upsert_bar(bars[i])  # the current bar re-priced
     full = DerivativesEngine(InstrumentMeta(funding_interval_min=60), max_bars=max_bars)
-    oracle = DerivativesEngine(InstrumentMeta(funding_interval_min=60), max_bars=max_bars)
-    # The oracle keeps every row (no compaction), so a pruning bug shared by both engine paths
+    oracle = DerivativesEngine(
+        InstrumentMeta(funding_interval_min=60), max_bars=max_bars, prune=False
+    )
+    # The oracle keeps every row (prune=False), so a pruning bug shared by both engine paths
     # still shows up as a difference.
-    oracle._tidy_all = lambda: None  # type: ignore[method-assign]  # disable pruning only
     for e in (full, oracle):
         e.load(
             bars,
