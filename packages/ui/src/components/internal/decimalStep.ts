@@ -3,7 +3,8 @@
 // lot on a scaled BigInt and never through a binary double. Nothing here rounds: a typed value off the step stays
 // off it and is reported so ("without its blur auto-round", D02 §7), and a step lands on a multiple of the step.
 // Typed text may carry the grid's own thousands grouping ("2,495.00", `15` CMP-008): well-formed groups of three
-// are dropped, and anything else with a comma is no number ("2,5" is never 25: in a price that is a 10x error).
+// are dropped, and anything else with a comma is no number ("2,5" is never 25: in a price that is a 10x error). A
+// grouped number never opens with a zero group, so "0,150" is a decimal comma and no number, never 150.
 
 /** A non-negative decimal as an exact scaled integer: its value is `units / 10^scale`. */
 export interface StepDecimal {
@@ -21,8 +22,11 @@ export const MAX_TEXT = 66;
 const WIRE = /^[0-9]+(?:\.[0-9]+)?$/;
 /** What a person may type once trimmed: the wire's form, or a bare leading or trailing point (".5", "5."). */
 const TYPED = /^([0-9]*)(?:\.([0-9]*))?$/;
-/** The same with well-formed thousands grouping: one to three digits, then groups of exactly three ("2,495.00"). */
-const GROUPED = /^([0-9]{1,3}(?:,[0-9]{3})+)(?:\.([0-9]*))?$/;
+/**
+ * The same with well-formed thousands grouping: a first group of one to three digits with no leading zero, then groups
+ * of exactly three ("2,495.00"). "0,150", "00,500" and "01,234" are no grouping ("0,150" is a decimal comma).
+ */
+const GROUPED = /^([1-9][0-9]{0,2}(?:,[0-9]{3})+)(?:\.([0-9]*))?$/;
 
 const pow10 = (n: number): bigint => 10n ** BigInt(n);
 
@@ -39,7 +43,7 @@ export function parseWire(text: string): StepDecimal | null {
 
 /**
  * Typed text, trimmed: the wire's form, ".5" / "5.", or either with well-formed grouping, which is dropped
- * ("2,495.00" is 2495.00); null for "", ".", a sign, malformed grouping ("2,5", "12,34") or anything else.
+ * ("2,495.00" is 2495.00); null for "", ".", a sign, malformed grouping ("2,5", "12,34", "0,150") or anything else.
  */
 export function parseTyped(text: string): StepDecimal | null {
   const trimmed = text.trim();

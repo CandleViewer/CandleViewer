@@ -309,6 +309,7 @@ describe("refusals: never rounded, never sent", () => {
     ["0", "Enter a number above zero."],
     ["-5", "Enter a number above zero."],
     ["2,5", "Enter a number."],
+    ["0,150", "Enter a number."], // a decimal comma: on this tick it would read as 150.00, on step
     ["   ", "Enter a number."],
   ])("%s is refused with “%s”, the text kept as typed", async (typed, message) => {
     const { onCommit } = await render();
@@ -328,6 +329,20 @@ describe("refusals: never rounded, never sent", () => {
     const editor = await open();
     await retype(editor, "2,495.00{Enter}");
     expect(onCommit).toHaveBeenCalledWith("2495.00");
+  });
+
+  it("a leading-zero first group is a decimal comma, never thousands: 0,150 on a lot sends nothing", async () => {
+    const { onCommit } = await render({ label: "Qty", value: "0.15", step: "0.001", unit: "lot" });
+    cell("Qty").focus();
+    await userEvent.keyboard("{F2}");
+    for (const typed of ["0,150", "01,234"]) {
+      await retype(cell("Qty"), `${typed}{Enter}`);
+      expect(cell("Qty")).toHaveAttribute("aria-invalid", "true"); // read as 150 it would be on step and sent
+      expect(cell("Qty")).toHaveValue(typed);
+      expect(cell("Qty")).toHaveAccessibleDescription(expect.stringContaining("Enter a number."));
+    }
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(cell("Qty")).not.toHaveAttribute("readonly"); // still open, nothing committed
   });
 
   it("a lot's refusals are E30's words: off the lot, zero and below the lowest (E30-D06 v.qty.lot)", async () => {
