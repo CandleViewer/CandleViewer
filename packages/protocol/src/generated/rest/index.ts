@@ -5764,8 +5764,9 @@ export interface paths {
      *     an empty page. The operation takes `rules:write`, as confirming and rejecting do, so a Viewer is
      *     `403 forbidden`.
      *
-     *     At most 10 fires wait per rule and 256 in all, each at most 60 s (24-internal-schemas.md
-     *     section 11.5), so the list is short; `meta.next_cursor` carries what a page leaves.
+     *     At most 10 fires wait per rule and 256 in all (interim limits), each at most 60 s
+     *     (24-internal-schemas.md section 11.5), so the list is short; `meta.next_cursor` carries
+     *     what a page leaves.
      */
     get: operations["listRuleConfirmations"];
     put?: never;

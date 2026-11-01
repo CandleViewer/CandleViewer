@@ -431,6 +431,8 @@ info:
     one of another environment, is `404`.
     Exception (E25-D04 BQ-04): `setDetectorConfig` stores only its `200` under the key; a `422`
     or `503` is evaluated afresh on a retry.
+    Exception (E35-T14): `confirmRuleFire` and `rejectRuleFire` store only their `2xx` under the
+    key, a `202` and a `200`; a refusal is evaluated afresh on a retry.
 
     **Binding point (#2304).** On every operation that requires the key (parameter
     `IdempotencyKeyRequired`, which every `x-idempotency: required` operation takes) the key is
@@ -9291,8 +9293,9 @@ paths:
         an empty page. The operation takes `rules:write`, as confirming and rejecting do, so a Viewer is
         `403 forbidden`.
 
-        At most 10 fires wait per rule and 256 in all, each at most 60 s (24-internal-schemas.md
-        section 11.5), so the list is short; `meta.next_cursor` carries what a page leaves.
+        At most 10 fires wait per rule and 256 in all (interim limits), each at most 60 s
+        (24-internal-schemas.md section 11.5), so the list is short; `meta.next_cursor` carries
+        what a page leaves.
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
