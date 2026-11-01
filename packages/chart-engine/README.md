@@ -741,7 +741,7 @@ figure without any code change; such a move still follows rules 1–3.
    first file is committed from the first green `main` run (for Chromium, a `workflow_dispatch` on `main`;
    that job runs on PRs and on dispatch, never on a push).
 
-## Candle series (E12-S06 PR 1) and the BQ-16 bench ruling
+## Candle series (E12-S06 PR 1) and the #395 BQ-16 bench ruling
 
 The runtime owns a `BarStore` and a `CandleRing` per `addSeries` id (closing G-8 and G-23); a
 `CandleSeries` draws the ring as two hosts, the wick and the body, of one `candle` program over one
@@ -750,7 +750,7 @@ Deviation: `BatchBuilder.patch` folded an empty range into the pending one, so `
 `[0, 0)` uploaded `[0, 4)`; an empty range now only rebases and resets (regression test in
 `test/scene/batch-builder.test.ts`), and `CandleRing` never sends one.
 
-**BQ-16 (coordinator, as CODEOWNER):** F-02's per-bar checks stay unconditional. With the flags
+**#395 BQ-16 (coordinator ruling 2026-11-01 02:51Z, as CODEOWNER; RelayRoom R28 — not yet a comment on #395, whose last ruling of record is issuecomment-6552295449, BQ-1 to BQ-15):** F-02's per-bar checks stay unconditional. With the flags
 column written only once a series carries flags and the merge looked at only when the first time is
 at or before the last bar's, the `bar-store` microbenches still cost more than on `main`
 (interleaved medians, 8 rounds): 1 M one-bar appends 34.4 → 40.6 ms (+6.3 ms per 1 M, about

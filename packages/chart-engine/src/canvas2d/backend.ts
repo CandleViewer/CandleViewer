@@ -186,12 +186,10 @@ export class Canvas2DBackend implements RenderBackend {
    * ref (`sub` 1) in the tint bucket, after its outline's.
    */
   private candles(blk: BatchUniforms, ints: Int32Array, i: number): void {
-    const [part, head, mask, n] = [
-      blk.ints[0] ?? 0,
-      blk.ints[1] ?? 0,
-      blk.ints[2] ?? 0,
-      blk.ints[3] ?? 0,
-    ];
+    const part = blk.ints[0] ?? 0; // scalar locals: no per-frame array
+    const head = blk.ints[1] ?? 0;
+    const mask = blk.ints[2] ?? 0;
+    const n = blk.ints[3] ?? 0;
     const pal = blk.palette;
     for (let j = 0; j < n; j += 1) {
       const at = ((head + j) & mask) * CANDLE_STRIDE;

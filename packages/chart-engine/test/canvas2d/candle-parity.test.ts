@@ -8,6 +8,7 @@ import {
   CandleRing,
   CandleSeries,
   candleRect,
+  fullOutline,
   GEOM,
 } from "../../src/layers/index.js";
 import { BarStore } from "../../src/model/index.js";
@@ -49,7 +50,7 @@ function scene(dpr: number) {
 }
 
 describe("Canvas2D candle painter (parity with the geometry twin)", () => {
-  it.each([1, 2])("dpr %i: every part's rect and colour", (dpr) => {
+  it.each([1, 1.5, 2])("dpr %f: every part's rect and colour", (dpr) => {
     const { ring, block, c } = scene(dpr);
     const ctx = new FakeCtx2D();
     const be = new Canvas2DBackend(ctx);
@@ -92,7 +93,7 @@ describe("Canvas2D candle painter (parity with the geometry twin)", () => {
         const row = part === 0 || dir >= 2 ? 2 : dir; // wick / neutral, else up 0 / down 1
         want.push(`${css(row)} rect ${x} ${y} ${w} ${hh}`);
         if (part === 1 && dir === 0) {
-          const [ix, iw] = w >= 3 * hair ? [x + hair, w - 2 * hair] : [x, w];
+          const [ix, iw] = fullOutline(w, c.geom) ? [x + hair, w - 2 * hair] : [x, w];
           want.push(`${css(3)} rect ${ix} ${y + hair} ${iw} ${hh - 2 * hair}`);
         }
       }

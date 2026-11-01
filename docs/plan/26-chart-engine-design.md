@@ -399,24 +399,26 @@ Shipped by E11-S08 PR 2 (package README BQ-134 to BQ-136), additive: `command { 
 
 Shipped by E11-S10 PR 1 (package README BQ-147, BQ-148 and BQ-153), additive: `resize` sizes are CSS px equal to `backing / dpr` and may be 0 (finite, ≥ 0; dpr > 0), which suspends the chart until a non-zero size; `ExportRejectReason` gains `suspended`; `frame` gains `dpr` and `backingStorePx` (`[width, height]` in device px).
 
+Shipped by E12-S06 PR 1 (`24` §19.75; package README "Candle series"), additive: `command { k: "addSeries", series, kind: "candles" | "bars", pane? }` and `command { k: "removeSeries", series }`; `data` gains `series?` (a `bars` batch for that series' `BarStore`) and `ack` echoes it, so the host's two-in-flight rule and conflation are per series; the `bars` buffer is `time` f64, `open` / `high` / `low` / `close` i32 ticks and `volume` f32, then an optional seventh 1-byte `flags` column (bits `gap_before`, forming, partial, amended; bits 4–7 refused), with the params `[priceOrigin, tickSize]` re-checked against the int32 tick window (F-01). A refused batch (F-01 decode, F-02 bar relations) posts a recoverable `ENGINE_DECODE_ERROR` and is still acked.
+
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
 ---
 
 ## 7. Memory budgets
 
-| Item                            | Formula                    | 100k-bar / 4 h-heatmap case      |
-| ------------------------------- | -------------------------- | -------------------------------- |
-| BarStore                        | 100k × (8 + 4×4 + 4 + 4) B | 3.2 MB                           |
-| GPU candle buffers              | 100k × 28 B                | 2.8 MB                           |
-| FootprintStore                  | 20k bars × 40 cells × 18 B | 14.4 MB                          |
-| Footprint glyph runs            | 20k × 40 × 12 B            | 9.6 MB                           |
-| Heatmap fine ring               | 2048 × 512 × 2 B           | 2.1 MB                           |
-| Heatmap coarse ring             | 14400 × 512 × 2 B          | 14.7 MB                          |
-| SDF atlas (both families)       | 1024 × 1024 × 1 B          | 1.0 MB                           |
-| Profile / indicators / drawings | —                          | ≤ 8 MB                           |
-| Framebuffers @2× DPI, 2560×1440 | —                          | ≈ 60 MB                          |
-| **Total per chart instance**    |                            | **≈ 116 MB** (budget 600 MB, R7) |
+| Item                            | Formula                                                                     | 100k-bar / 4 h-heatmap case      |
+| ------------------------------- | --------------------------------------------------------------------------- | -------------------------------- |
+| BarStore                        | 100k × (8 + 4×4 + 4 + 4 + 1) B = 33 B a slot (`BAR_BYTES`, E12-S06 `flags`) | 3.3 MB                           |
+| GPU candle buffers              | 100k × 20 B (`CandleRing`: 4 × i32 OHLC + i32 meta, one buffer per series)  | 2.0 MB                           |
+| FootprintStore                  | 20k bars × 40 cells × 18 B                                                  | 14.4 MB                          |
+| Footprint glyph runs            | 20k × 40 × 12 B                                                             | 9.6 MB                           |
+| Heatmap fine ring               | 2048 × 512 × 2 B                                                            | 2.1 MB                           |
+| Heatmap coarse ring             | 14400 × 512 × 2 B                                                           | 14.7 MB                          |
+| SDF atlas (both families)       | 1024 × 1024 × 1 B                                                           | 1.0 MB                           |
+| Profile / indicators / drawings | —                                                                           | ≤ 8 MB                           |
+| Framebuffers @2× DPI, 2560×1440 | —                                                                           | ≈ 60 MB                          |
+| **Total per chart instance**    |                                                                             | **≈ 115 MB** (budget 600 MB, R7) |
 
 Eviction policy: footprint cells and heatmap columns outside a 3× viewport window are dropped from GPU buffers (kept in CPU stores until a memory-pressure threshold, then re-fetched from the backend on demand). A `MemoryGovernor` samples usage every 5 s and steps down retained history when over 70 % of the budget, logging each step.
 
@@ -518,6 +520,7 @@ export interface CandleData {
   volume: Float32Array;
   priceOrigin: number;
   tickSize: number;
+  flags?: Uint8Array; // E12-S06 (BQ-3, 24 §19.75): gap_before | forming | partial | amended bits
 }
 
 export interface FootprintData {

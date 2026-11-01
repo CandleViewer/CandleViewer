@@ -6681,7 +6681,7 @@ The orchestrator assigned this number on 2026-10-31 (23:40Z, with #5267's unique
 
 ### 19.75 2026-11-01 — 26 §8 `CandleData`, 23 / 26 §6 `bars` layout: the optional `flags` column (E12-S06, #395)
 
-Assigned by the E12-S06 rulings of record (BQ-3). Additive only: no field is renamed, removed or narrowed.
+Assigned by the E12-S06 rulings of record (BQ-3). Additive only: no field is renamed, removed or narrowed. `26-chart-engine-design.md` §6 (the `bars` layout and the series messages), §7 (the 33-byte bar slot) and §8 (`CandleData.flags?`) carry the change in the same PR.
 
 - 26 §8 `CandleData` gains `flags?: Uint8Array`, one byte per bar: bit 0 `gap_before`, bit 1 forming (not confirmed), bit 2 partial, bit 3 amended; bits 4–7 are reserved and a batch that sets one is refused (`ENGINE_DECODE_ERROR`, `engine.data.rejected{reason="flags"}`). Absent, every bar reads 0.
 - The engine's `bars` buffer (26 §6) carries it as a seventh, 1-byte column after `volume`; six columns stay valid. The `data` message gains an optional `series` id and the `ack` echoes it, so the host's backpressure is per series.

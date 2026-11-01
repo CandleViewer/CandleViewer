@@ -6,18 +6,26 @@ import { hairlineDevicePx } from "../../viewport/pixels.js";
 import { projectRel } from "../../viewport/transform.js";
 import { CANDLE_DIR } from "./ring.js";
 
-/** `u_geom` slots: body width and hairline in device px, OHLC tick in device px, spacing in CSS px. */
-export const GEOM = { body: 0, hair: 1, tick: 2, spacing: 3 } as const;
+/**
+ * `u_geom` (two vec4 rows): body width, hairline and OHLC tick in device px, spacing in CSS px;
+ * then the DPR (the up outline's CSS-px threshold, D06 §3.2). Floats per block: `GEOM_FLOATS`.
+ */
+export const GEOM = { body: 0, hair: 1, tick: 2, spacing: 3, dpr: 4 } as const;
+export const GEOM_FLOATS = 8;
+/** D06 §3.2: an up body is outlined on every side once it is ≥ 3 CSS px wide. */
+export const FULL_OUTLINE_CSS = 3;
 
 /**
- * Body: clamp(roundHalfUp(0.7 s), 1, 35) CSS px, odd from 4, then device px; from 4 device px
+ * E12-D06 §3.1 / E12-D12 §5.2: body = clamp(roundHalfUp(0.7 s), 1, 35) CSS px, forced odd from
+ * 4 px: an even width takes the next odd value when it is ≤ s − 1, else the previous one (the
+ * ladder 9 / 5 / 2 at s = 12 / 6 / 3, the 35 cap from s = 48). Then device px; from 4 device px
  * its parity is the hairline's, so it centres on the wick exactly. Hairline max(1, floor(dpr));
  * OHLC tick clamp(floor(body / 2), 1, floor((s - 3) / 2)).
  */
 export function candleGeometry(spacingCss: number, dpr: number, out: Float32Array): void {
   const s = spacingCss > 0 ? spacingCss : 0;
   let css = Math.min(35, Math.max(1, Math.floor(0.7 * s + 0.5)));
-  if (css >= 4 && css % 2 === 0) css -= 1;
+  if (css >= 4 && css % 2 === 0) css = css + 1 <= s - 1 ? css + 1 : css - 1;
   const hair = hairlineDevicePx(dpr);
   let body = Math.max(hair, Math.round(css * dpr));
   if (body >= 4 && (body - hair) % 2 !== 0) body -= 1;
@@ -26,7 +34,12 @@ export function candleGeometry(spacingCss: number, dpr: number, out: Float32Arra
   out[GEOM.hair] = hair;
   out[GEOM.tick] = Math.max(hair, Math.round(tick * dpr));
   out[GEOM.spacing] = s;
+  out[GEOM.dpr] = dpr > 0 ? dpr : 1;
 }
+
+/** D06 §3.2: a `w` device-px up body gets the full outline from 3 CSS px, else top and bottom. */
+export const fullOutline = (w: number, geom: ArrayLike<number>): boolean =>
+  w >= FULL_OUTLINE_CSS * (geom[GEOM.dpr] ?? 1);
 
 /**
  * Part `part` (0 wick, 1 body) of bar `index` (logical) as [x, y, w, h] in `u_viewport` px, y
@@ -71,7 +84,8 @@ export function candleRect(
   }
   const top = Math.min(y0, y1);
   const bottom = Math.max(Math.max(y0, y1), top + hair);
-  out[0] = left + Math.floor((body - w) * 0.5);
+  // D06 §3.1: the wick on the centre column, a down wick widened to the column on its right.
+  out[0] = left + Math.floor((body - (part === 0 ? hair : w)) * 0.5);
   out[1] = top;
   out[2] = w;
   out[3] = bottom - top;
