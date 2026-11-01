@@ -20,7 +20,8 @@ not tick past the last print). `test_harness_guards.py` proves a clean run equal
 
 **Store seam (PR-2).** `BarsRig(extra_sinks=[WriterSink(BarWriter(FlakyRowSink))])`: the real
 writer on the virtual clock over an in-memory table keyed like the DEDUP key, with outage windows.
-`test_s05b` swaps in the real QuestDB container (`chaos` + `integration`, skipped without it).
+`test_s05b` swaps in the real QuestDB container (`chaos` + `integration`); it stops that container,
+so it runs only on GitHub Actions or with `CV_CHAOS_STACK=1` on a stack you own, else it skips.
 
 **Negative controls (DoD).** Every scenario has a test that feeds a naive collaborator or a
 naive result to the invariant and expects it to fail.
