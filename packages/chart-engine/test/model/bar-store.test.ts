@@ -1,6 +1,6 @@
 // E11-T03 BarStore: the ticket's Gherkin scenarios by name, then the unit matrix.
 import { describe, expect, it } from "vitest";
-import { BarStore, ModelRejection } from "../../src/model/index.js";
+import { BAR_BYTES, BarStore, ModelRejection } from "../../src/model/index.js";
 import { ENGINE_DECODE_ERROR } from "../../src/worker/protocol.js";
 import { bars, snapshot, STEP, T0 } from "./fixtures.js";
 
@@ -102,7 +102,7 @@ describe("BarStore ring, growth and index maps", () => {
     const view = store.view();
     expect([store.view() === view, store.view().time === view.time]).toEqual([true, true]);
     const time = view.time;
-    store.patch(7, { ...bars(16, 1), close: Int32Array.of(99) });
+    store.patch(7, { ...bars(16, 1), high: Int32Array.of(99), close: Int32Array.of(99) });
     expect([store.view().time === time, view.close[7]]).toEqual([true, 99]); // a patch: same arrays
     store.append(bars(17, 1));
     expect(store.view().time === time).toBe(false); // an append rebuilds the views
@@ -139,7 +139,7 @@ describe("BarStore ring, growth and index maps", () => {
   it("patches in place and returns the patched range", () => {
     const store = new BarStore();
     store.append(bars(0, 5));
-    const patch = { ...bars(3, 2), close: Int32Array.of(70, 80) };
+    const patch = { ...bars(3, 2), high: Int32Array.of(70, 80), close: Int32Array.of(70, 80) };
     expect({ ...store.patch(3, patch) }).toEqual({ op: "patch", from: 3, to: 5, indexShift: 0 });
     expect(Array.from(store.view().close)).toEqual([1, 2, 3, 70, 80]);
   });
@@ -169,7 +169,7 @@ describe("BarStore ring, growth and index maps", () => {
     expect([store.view().close[0], store.priceOrigin, store.tickSize]).toEqual([
       1_001, 60_000, 0.5,
     ]);
-    expect(store.bytes).toBe(store.capacity * 32);
+    expect(store.bytes).toBe(store.capacity * BAR_BYTES); // 33 since the flags column (E12-S06)
   });
 });
 

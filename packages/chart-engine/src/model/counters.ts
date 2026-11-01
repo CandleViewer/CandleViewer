@@ -11,6 +11,10 @@ export const REJECT_REASONS = [
   "origin", // priceOrigin / tickSize differ from the series held
   "offsets", // footprint prefix sums not starting at 0 or not non-decreasing
   "type", // a column that is not the typed array its field declares
+  // E12-S06 F-02 (threat model CE-T04): a bar that cannot be drawn as a candle.
+  "relation", // high < low, or open / close outside [low, high]
+  "negative", // volume below 0
+  "flags", // a flags byte with a reserved bit (4..7) set
 ] as const;
 export type RejectReason = (typeof REJECT_REASONS)[number];
 
