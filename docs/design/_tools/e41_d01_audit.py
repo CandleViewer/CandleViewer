@@ -7,18 +7,19 @@ the plan documents AS TEXT at the pinned base (`git show BASE:<path>`) and the m
 tool does not know FAILs.
 
 Gates (each prints `FAIL G-NAME: ...`):
-  G-CITE     every `NN`:line cite is registered in CITES and its needle stands at that line
+  G-CITE     every `NN`:line cite is registered in CITES and its needle stands at that line;
+             a cite in another shape (a space, an ASCII hyphen range) FAILs as malformed
   G-RULE     every C-x.y rule id exists in CONSTITUTION.md at the base
   G-AC       the AC trace carries AC1..AC3 and six DoD rows, each with a known status word
   G-FIND     5-8 findings F-1..F-n, each `(heuristic)`, each -> an existing WD; every WD reached
   G-WD       each WD names a listed frame, a Given/then check and an owner ticket; all 4 SCRs
   G-STATES   the frame list covers `14`'s States lines, the checklist states, no-match and error
   G-COMP     every CMP id the memo names is a heading in `15` at the base
-  G-ADVICE   no imperative or evaluative word in the copy deck (AC3)
+  G-ADVICE   the copy deck exists; no imperative or evaluative word in it (AC3)
   G-HEUR     no participant count, observation or quote is claimed
-  G-PUBLIC   no host, local path, uuid or secret-shaped string; URLs allow-listed
+  G-PUBLIC   no host, local path, uuid, workspace name or secret-shaped string; URLs allow-listed
   G-BQ       the BQ heading names the posted comment; BQ-1..BQ-16 each have a row
-  G-BOARDS   at most ten boards, each PENDING or drawn
+  G-BOARDS   the boards table exists; at most ten boards, each PENDING or drawn
   G-WALK     the owner walkthrough has at most ten items
   G-COMMENT  no HTML comment in the memo or the protocol
   G-17       `17` carries the section 1.6 journey; `14` carries exactly one pointer line
@@ -96,7 +97,9 @@ CITES: dict[str, str] = {
     "14:2169": '**States:** loading · empty ("No trades in this range")',
     "14:2175": "DEMO and LIVE trades are visibly separated and never aggregated",
     "14:2179": "**Type:** Page/Drawer. Everything about one trade",
+    "14:2195": "CMP-169 TagEditor",
     "14:2197": "'context not recorded' state",
+    "14:2198": "`journal.screenshot_exported`",
     "14:2199": "[ ] 'context not recorded' state",
     "14:2201": "### SCR-095 — Journal analytics dashboard",
     "14:2205": "Fewer than 20 trades — statistics are noisy",
@@ -107,6 +110,7 @@ CITES: dict[str, str] = {
     "14:2222": "[ ] empty state",
     "15:2098": "### CMP-166 JournalEntryRow",
     "15:2127": "### CMP-167 JournalEquityCurveChart",
+    "15:2129": "may use the same series primitive (CMP-181) in a minimal pane",
     "15:2136": "### CMP-168 JournalStatsSummaryCard",
     "15:2147": "`readOnlyTags?: string[]` (rule-auto-tags, non-removable by hand",
     "21:3307": "plus one aggregate row with `is_aggregate = true`",
@@ -114,6 +118,8 @@ CITES: dict[str, str] = {
     "21:3318-3319": "is_paper             boolean",
     "21:3379": "CREATE UNIQUE INDEX ux_jtag_name ON journal_tags (lower(name))",
     "22:9657": "items: { type: string, maxLength: 40 }",
+    "22:9840": "name: { type: string, minLength: 1, maxLength: 40 }",
+    "22:9864": "breakdowns by symbol, tag, session hour",
     "22:9877": "enum: [symbol, tag, hour_of_day, day_of_week, side, account, setup]",
     "22:22310": "JournalTrade:",
 }
@@ -135,9 +141,11 @@ PUBLIC_BANNED = (
     r"/home/|\blocalhost\b|\b\d{1,3}(\.\d{1,3}){3}\b",
     r"(?i:\bpenpot\.[a-z]|\brelay\.[a-z])|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-",
     r"\b(ghp_|gho_|sk-|AKIA)[A-Za-z0-9]{8,}|(?i:\b(api[_-]?key|secret|password)\s*[:=])",
+    r"(?i:-worker-\d|\bscratch-[a-z]|\brelayroom\b)",
 )
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 CITE_RE = re.compile(r"`(\d{2})`:(\d+)(?:–(\d+))?")
+LOOSE_CITE_RE = re.compile(r"`\d{2}`\s*:\s*\d+(?:[-–]\d+)?")
 RULE_RE = re.compile(r"\bC-\d+\.\d+\b")
 URL_RE = re.compile(r"https?://([^/\s`)]+)[^\s`)]*")
 FRAME_RE = re.compile(r"\b(SCR-09[3-6])/([a-z-]+)")
@@ -190,6 +198,11 @@ def rows(body: str) -> list[list[str]]:
 def g_cite(d: Docs) -> list[str]:
     fails = []
     for doc in (d.memo, d.protocol):
+        fails += [
+            f"malformed cite {m.group(0)!r}"
+            for m in LOOSE_CITE_RE.finditer(doc)
+            if not CITE_RE.fullmatch(m.group(0))
+        ]
         for m in CITE_RE.finditer(doc):
             key, a, b = m.group(1), int(m.group(2)), m.group(3)
             tag = f"{key}:{a}" + (f"-{b}" if b else "")
@@ -311,8 +324,9 @@ def g_comp(d: Docs) -> list[str]:
 
 
 def g_advice(d: Docs) -> list[str]:
-    fails = []
-    for r in rows(section(d.memo, "7.1 Copy deck")):
+    deck = rows(section(d.memo, "7.1 Copy deck"))
+    fails = [] if deck else ["no copy deck rows"]
+    for r in deck:
         fails += [f"copy {r[0]} uses {m.group(0)!r}" for m in ADVICE_RE.finditer(r[-1])]
     return fails
 
@@ -346,6 +360,8 @@ def g_bq(d: Docs) -> list[str]:
 
 def g_boards(d: Docs) -> list[str]:
     boards = rows(section(d.memo, "0. Wireframe boards"))
+    if not boards:
+        return ["no Wireframe boards table"]
     fails = [f"{len(boards)} boards; the cap is ten"] if len(boards) > 10 else []
     return fails + [
         f"board {r[0]} is neither PENDING nor drawn"
@@ -413,6 +429,7 @@ def run(d: Docs) -> list[tuple[str, str]]:
 # (gate, document, anchor, replacement): each must add FAILs from exactly that gate.
 MUTATIONS: list[tuple[str, str, str, str]] = [
     ("G-CITE", "memo", "(`11`:4628)", "(`11`:4629)"),
+    ("G-CITE", "memo", "(`11`:4628)", "(`11` :4628)"),
     ("G-RULE", "memo", "(C-1.2)", "(C-1.99)"),
     ("G-AC", "memo", "| AC3 —", "| AX3 —"),
     ("G-FIND", "memo", "double-counts (heuristic)", "double-counts"),
@@ -420,6 +437,7 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("G-STATES", "memo", "partial · reconciling ·", "partial ·"),
     ("G-COMP", "memo", "CMP-075,", "CMP-999,"),
     ("G-ADVICE", "memo", "| No trades in this range ", "| No trades yet, you should trade "),
+    ("G-ADVICE", "memo", "### 7.1 Copy deck", "### 7.1 Copy list"),
     (
         "G-HEUR",
         "protocol",
@@ -432,8 +450,10 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         "## 11. Security",
         "See `https://penpot.example.org/f`.\n\n## 11. Security",
     ),
+    ("G-PUBLIC", "protocol", "## 5. Recording", "Notes sit in a scratch-dir.\n\n## 5. Recording"),
     ("G-BQ", "memo", "ruling pending (comment 6563728342)", "ruling pending"),
     ("G-BOARDS", "memo", "| 10  | keyboard", "| 11  | extra | PENDING |\n| 10  | keyboard"),
+    ("G-BOARDS", "memo", "## 0. Wireframe boards", "## 0. Boards"),
     ("G-WALK", "memo", "10. Rule OQ-1", "11. Rule OQ-1"),
     ("G-COMMENT", "protocol", "## 1. Purpose", "<!--\nnote\n-->\n\n## 1. Purpose"),
     ("G-17", "ux17", "### 1.6 Review journey", "### 1.6 Review map"),
@@ -459,7 +479,9 @@ def self_test(d: Docs) -> int:
         hit = {name for name, _ in run(mutate(d, field, old, new))}
         ok = hit == {gate}
         bad += not ok
-        print(f"M-{i:<2} {gate:<10} {'ok' if ok else 'BAD -> ' + ','.join(sorted(hit)) or 'none'}")
+        print(
+            f"M-{i:<2} {gate:<10} {'ok' if ok else 'BAD -> ' + (','.join(sorted(hit)) or 'none')}"
+        )
     missing = set(GATES) - {m[0] for m in MUTATIONS}
     if missing:
         print(f"self-test: gates without a mutation: {sorted(missing)}")

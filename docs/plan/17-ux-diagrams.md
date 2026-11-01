@@ -149,6 +149,8 @@ journey
 This journey comes from E41-D01's heuristic evaluation (`docs/design/research/e41-journal-review.md` §4–§6) and
 assumes that memo's PROPOSED decisions (WD-n). Its scores are designer judgement (DJ: a `journey` needs one), not
 measurements; the owner-run sessions of `docs/design/research/e41-d01-session-protocol.md` will replace them.
+Owner and Manager share each score: no persona difference is predicted at this depth. Each low score's basis
+is named below; the Trigger score of 2 rests on hypothesis H1 (untested).
 
 ```mermaid
 journey
@@ -173,11 +175,13 @@ journey
 
 **Abandonment points** (WD ids as in the memo §6)
 
-| Step               | Why a trader abandons                                | What the screen must show                                 |
-| ------------------ | ---------------------------------------------------- | --------------------------------------------------------- |
-| Find the trades    | A total that may hold DEMO, or a group counted twice | One scope label per total (WD-1); per-account rows (WD-9) |
-| Look at one trade  | A spinner where no recording exists                  | Context not recorded, bar-only or pruned in words (WD-6)  |
-| Look for a pattern | A rate with no sample size, or a chart with no table | The caveat and n (WD-3, WD-4); "View as table" (WD-11)    |
+| Step                    | Why a trader abandons                                  | What the screen must show                                 | Basis    |
+| ----------------------- | ------------------------------------------------------ | --------------------------------------------------------- | -------- |
+| Find the trades         | A total that may hold DEMO, or a group counted twice   | One scope label per total (WD-1); per-account rows (WD-9) | F-1, F-6 |
+| Look at one trade       | A spinner where no recording exists                    | Context not recorded, bar-only or pruned in words (WD-6)  | F-4      |
+| Record what was learned | An auto tag that cannot be removed, or no record of it | `auto` on the tag, removable, the removal recorded (WD-8) | F-5      |
+| Look for a pattern      | A rate with no sample size, or a chart with no table   | The caveat and n (WD-3, WD-4); "View as table" (WD-11)    | F-2, F-8 |
+| Take it elsewhere       | An export that does not say whose data it holds        | The confirm names accounts, environment and range (WD-10) | F-7      |
 
 ---
 

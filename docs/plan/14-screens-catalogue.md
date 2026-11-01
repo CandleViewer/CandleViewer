@@ -2173,7 +2173,7 @@ Drag preview                Drop zones
 - **Performance:** Cursor-paginated, virtualised table over `GET /api/v1/journal/trades`; 10k trades scroll without exceeding 8 ms scripting per frame; aggregate stats are computed server-side, never client-side over the full set.
 - **Analytics/audit:** `journal.note_added`, `journal.tag_added`, `journal.tag_removed`, `journal.trade_excluded`, `journal.rating_set` - **audited** (journal content is user-authored evidence and must be tamper-evident); analytics: `journal.list_viewed`, `journal.filtered`, `journal.exported`.
 - **Design sign-off acceptance checklist:** [ ] columns (open/close time, symbol, side, size, entry, exit, PnL, R, fees, account, environment, tags, rating) drawn [ ] DEMO and LIVE trades are visibly separated and never aggregated together [ ] filters (date, symbol, account, environment, tag, outcome) [ ] bulk tagging [ ] empty state tied to recording/trading start [ ] export
-- **UX research (E41-D01):** [e41-journal-review.md](../design/research/e41-journal-review.md) (heuristic, pending owner approval; one environment scope per total, the low-sample caveat with n, the frames per state for SCR-093..096, WD-1..WD-13).
+- **UX research (E41-D01):** [e41-journal-review.md](../design/research/e41-journal-review.md) (heuristic, pending owner approval; one environment scope per total, the low-sample caveat with n, the frames per state for SCR-093..096, WD-1..WD-14).
 
 ### SCR-094 — Trade detail / post-mortem
 
