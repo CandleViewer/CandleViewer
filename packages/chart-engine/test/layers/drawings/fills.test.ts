@@ -5,7 +5,13 @@
 // `drawing-line`'s, sharing the chart-space fourth corner D = B + C − A), and fills an ellipse
 // inside its ring, which it strokes with the dash pattern. Pixel-level parity defers to E11-T08.
 import { describe, expect, it } from "vitest";
-import { FILL_STRIDE, FillInstances, fillCount } from "../../../src/layers/drawings/fills.js";
+import { DRAWING_FILL } from "../../../src/gl/shaders/drawing-fill.js";
+import {
+  FILL_INT_MAX,
+  FILL_STRIDE,
+  FillInstances,
+  fillCount,
+} from "../../../src/layers/drawings/fills.js";
 import { corner } from "../../../src/layers/drawings/lines.js";
 import type { DrawingInput } from "../../../src/layers/drawings/model.js";
 import { reindex, toRecord, type DrawingRecord } from "../../../src/layers/drawings/project.js";
@@ -180,5 +186,48 @@ describe("Scenario: fills in parity (2D and the GL stand-in) at dpr 1, 1.5 and 2
     graph.markViewport();
     frame();
     expect(node.encodes).toBe(encodes);
+  });
+});
+
+/**
+ * The fragment's ellipse branch in float64, line for line (BQ-78's stand-in until E11-T08):
+ * [fill coverage, ring coverage] at q = p − centre for radii r and half-width hw.
+ */
+function ellipseFragment(qx: number, qy: number, rx: number, ry: number, hw: number): number[] {
+  const k0 = Math.hypot(qx / rx, qy / ry);
+  const k1 = Math.hypot(qx / (rx * rx), qy / (ry * ry));
+  const d = k1 < 1e-6 ? -Math.min(rx, ry) : (k0 * (k0 - 1)) / k1;
+  const clamp = (v: number): number => Math.min(1, Math.max(0, v));
+  return [clamp(-d - hw + 0.5), clamp(hw + 0.5 - Math.abs(d))];
+}
+
+describe("the ellipse fragment (stand-in) and the int range of D", () => {
+  it("fills the exact centre and the pixels next to it; the ring sits on the edge", () => {
+    // The guard the stand-in mirrors is the shader's own line.
+    expect(DRAWING_FILL.fragment).toContain(
+      "float d = k1 < 1e-6 ? -min(r.x, r.y) : k0 * (k0 - 1.0) / k1;",
+    );
+    for (const [rx, ry] of [
+      [10, 10],
+      [40, 7],
+      [2.5, 3],
+    ]) {
+      expect(ellipseFragment(0, 0, rx!, ry!, 2)).toEqual([1, 0]); // was 0 / 0: an unfilled pixel
+      expect(ellipseFragment(1e-7, 0, rx!, ry!, 2)[0]).toBe(1);
+      expect(ellipseFragment(0.5, -0.5, rx!, ry!, 1)[0]).toBe(1);
+      expect(ellipseFragment(rx!, 0, rx!, ry!, 2)).toEqual([0, 1]);
+    }
+  });
+
+  it("clamps fill corners to ±2^29, so the shader's int B + C − A stays inside int32", () => {
+    const far = (1 - 2 ** 30) * 1; // the most negative tick validation lets through
+    const ring = new FillInstances();
+    ring.encode([rec(input("rect", [T(20), 2 ** 30 - 1, T(60), far]))], 1);
+    const i = ring.ints;
+    const ticks = [i[1], i[5], i[9]] as number[]; // A, B, C ticks
+    expect(ticks).toEqual([FILL_INT_MAX, FILL_INT_MAX, -FILL_INT_MAX]);
+    const sum = (i[5] as number) + (i[9] as number) - (i[1] as number); // D's tick, as the shader
+    expect(Math.abs(sum)).toBeLessThan(2 ** 31);
+    expect([ring.data[3], ring.data[7], ring.data[11]]).toEqual([0, 0, 0]); // no fraction kept
   });
 });

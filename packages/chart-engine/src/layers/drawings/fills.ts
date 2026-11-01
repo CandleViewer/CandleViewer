@@ -16,6 +16,8 @@ const STYLE = attributeOffset(PROGRAM.drawingFill, "a_style");
 /** The shader's kind codes. */
 export const FILL_KIND = { rect: 0, ellipse: 1, band: 2 } as const;
 const C = new Float64Array(2);
+/** ±2^29: the shader's int B + C − A then stays inside int32 (|sum| ≤ 3 · 2^29 < 2^31). */
+export const FILL_INT_MAX = 2 ** 29;
 
 /** 1 for a visible ellipse, or a visible rect or band with a fill colour; else 0. */
 export function fillCount(r: DrawingRecord): number {
@@ -42,7 +44,7 @@ export class FillInstances extends InstanceRing {
       this.open();
       for (let c = 0; c < 3; c += 1) {
         corner(r, c, C);
-        this.anchor(o + A + 4 * c, C[0] as number, C[1] as number);
+        this.anchor(o + A + 4 * c, C[0] as number, C[1] as number, FILL_INT_MAX);
       }
       const { width, dash } = r.input.style;
       this.rgba(o + FILL, r.fill < 0 ? 0 : r.fill, opacity); // none: alpha 0 (the ring alone)

@@ -91,7 +91,9 @@ void main() {
     vec2 r = max(abs(v_d - v_a) * 0.5, vec2(1e-3));
     vec2 q = v_p - c;
     float k0 = length(q / r);
-    float d = k0 * (k0 - 1.0) / max(length(q / (r * r)), 1e-6);
+    float k1 = length(q / (r * r));
+    // At the centre k1 is 0 and k0 (k0 - 1) / k1 is 0 / 0: the centre is min(r) inside.
+    float d = k1 < 1e-6 ? -min(r.x, r.y) : k0 * (k0 - 1.0) / k1;
     fa = clamp(-d - hw + 0.5, 0.0, 1.0);
     float ring = abs(d);
     if (v_dash.y > 0.0) {

@@ -618,9 +618,11 @@ widths (`DRAWING_DASH` in `model.ts`, the one table both shaders' GLSL copies ar
 solid; dashed, a 4w dash and a 2w gap; dotted, a 1w dot and a 2w gap): the engine default pending
 E14-D04's value (BQ-358-7). Colours reach both programs premultiplied by their alpha times the
 layer's flatten opacity (`setDrawings { opacity }`, 0..1; a re-encode, not a uniform: the program
-cache writes only the five pane uniforms), and leave premultiplied, for ONE, ONE_MINUS_SRC_ALPHA;
-the backend sets no blend state yet (`GL2Like` has no `enable` / `blendFunc`), so blending lands
-with E11-T08's goldens. The 2D painter
+cache writes only the five pane uniforms), and leave premultiplied. Premultiplied blending
+(enable BLEND, blendFunc(ONE, ONE_MINUS_SRC_ALPHA)) is not yet set by the GL backend (`GL2Like`
+has no `enable` / `blendFunc`); translucent fills and AA edges need it on real GPUs: it lands with
+PR 2 / E11-S02. A token the theme lacks falls back silently (to `color.drawing.default`, then a
+fixed grey); a metric and a warn for it arrive with PR 2's `engine_drawing_*` metrics. The 2D painter
 strokes the same geometry with round caps and `setLineDash`. Known limits: the dash phase is
 float32 in `mod(along, period)`, so it drifts once |along| from p0 reaches ~1e5 device px (an
 extended line anchored far off screen); a polyline with alpha below 1 blends twice where two

@@ -76,14 +76,18 @@ export class InstanceRing implements VertexSource {
     this.hi = Math.max(this.hi, i + 1);
   }
 
-  /** One `ivec4` anchor at `o`: the clamped int (bar index, tick), then their fractions' bits. */
-  protected anchor(o: number, idx: number, tick: number): void {
-    const ix = Math.min(INT_MAX, Math.max(-INT_MAX, Math.floor(idx)));
-    const it = Math.floor(tick);
+  /**
+   * One `ivec4` anchor at `o`: the int (bar index, tick) clamped to ±`limit`, then their
+   * fractions' bits (0 once clamped). Ticks are validated inside 2^30 (BQ-75); a tighter `limit`
+   * keeps a shader's int sums inside int32 (`drawing-fill`'s B + C − A).
+   */
+  protected anchor(o: number, idx: number, tick: number, limit = INT_MAX): void {
+    const ix = Math.min(limit, Math.max(-limit, Math.floor(idx)));
+    const it = Math.min(limit, Math.max(-limit, Math.floor(tick)));
     this.i(o, ix);
     this.i(o + 1, it);
     this.f(o + 2, Math.abs(idx - ix) < 1 ? idx - ix : 0);
-    this.f(o + 3, tick - it);
+    this.f(o + 3, Math.abs(tick - it) < 1 ? tick - it : 0);
   }
 
   /** 0xRRGGBBAA at `o` as premultiplied floats: alpha × `opacity`, then rgb × that alpha. */

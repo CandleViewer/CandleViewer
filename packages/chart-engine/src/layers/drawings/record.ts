@@ -38,6 +38,8 @@ export function parseHex(css: string | undefined): number | null {
  */
 export function resolveColour(v: number | string, theme: ThemeColours): number {
   if (typeof v === "number") return v;
+  // A token the theme lacks falls back silently for now; PR 2's engine_drawing_* metrics add a
+  // count (and a warn) for it, so a misnamed token shows up in the stats channel.
   return parseHex(theme[v]) ?? parseHex(theme["color.drawing.default"]) ?? FALLBACK_COLOUR;
 }
 
