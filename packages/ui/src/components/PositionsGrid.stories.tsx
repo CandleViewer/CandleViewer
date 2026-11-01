@@ -549,7 +549,6 @@ export const Perf500Rows: Story = {
       host.remove();
     }
     const median = firstRenders.slice(5).sort((a, b) => a - b)[7] ?? Infinity;
-    await expect(median).toBeLessThanOrEqual(BUDGET_MS);
 
     const host = canvasElement.appendChild(document.createElement("div"));
     Object.assign(host.style, frame);
@@ -566,6 +565,10 @@ export const Perf500Rows: Story = {
     }
     root.unmount();
     host.remove();
-    await expect(Math.max(...burst)).toBeLessThanOrEqual(BUDGET_MS);
+    // Both halves are measured before either is judged, so a miss reports the two figures.
+    const worst = Math.max(...burst);
+    const figures = `first render median ${median.toFixed(1)} ms, burst worst ${worst.toFixed(1)} ms`;
+    await expect(median, figures).toBeLessThanOrEqual(BUDGET_MS);
+    await expect(worst, figures).toBeLessThanOrEqual(BUDGET_MS);
   },
 };

@@ -262,8 +262,8 @@ describe("PositionsGrid (CMP-114): the treegrid", { timeout: 60_000 }, () => {
   it("windows past 50 rows; a key past the window asks for its row and lands there", async () => {
     await mount(<Host groups={MANY} totals={undefined} />);
     expect(grid()).toHaveAttribute("aria-rowcount", "101");
-    // The first window: 30 rows before the region reports, and 20 past them.
-    expect(within(grid()).getAllByRole("row")).toHaveLength(51);
+    // The first window: 30 rows before the region reports, and 10 past them.
+    expect(within(grid()).getAllByRole("row")).toHaveLength(41);
     act(() =>
       within(rowNamed("P0USDT · Long · 0.250 P0 · A0")).getAllByRole("gridcell")[1]?.focus(),
     );
@@ -293,6 +293,8 @@ describe("PositionsGrid (CMP-114): the treegrid", { timeout: 60_000 }, () => {
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(240);
     vi.spyOn(HTMLElement.prototype, "scrollTop", "get").mockImplementation(() => scroll);
     const host = await mount(<Host groups={MANY} totals={undefined} />);
+    // The mount's measured view (rows 0 to 8) sits inside the first window: nothing is drawn again.
+    expect(within(grid()).getAllByRole("row")).toHaveLength(41);
     const first = rowNamed("P0USDT · Long · 0.250 P0 · A0");
     const cell = within(first).getAllByRole("gridcell")[1];
     act(() => cell?.focus());
@@ -301,14 +303,14 @@ describe("PositionsGrid (CMP-114): the treegrid", { timeout: 60_000 }, () => {
     act(() => {
       region?.dispatchEvent(new Event("scroll"));
     });
-    // Rows 50 to 58 are in view: the window draws 30 to 78, and the focused row stays as the one outside it.
+    // Rows 50 to 58 are past the drawn rows: the window draws 40 to 68, and the focused row stays outside it.
     expect(document.activeElement).toBe(cell);
     expect(first.isConnected).toBe(true);
     expect(first).toHaveAttribute("aria-rowindex", "3");
     const drawn = within(grid()).getAllByRole("row").slice(1);
-    expect(drawn).toHaveLength(50);
+    expect(drawn).toHaveLength(30);
     expect(drawn[0]).toBe(first);
-    expect(drawn[1]).toHaveAttribute("aria-rowindex", "32");
+    expect(drawn[1]).toHaveAttribute("aria-rowindex", "42");
   });
 });
 

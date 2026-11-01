@@ -172,7 +172,7 @@ export interface PositionsGridProps<R extends PositionsGridRow = PositionsGridRo
 /** CMP-049 renders a window of the rows from this many (`15` CMP-049: windowing from 50 rows). */
 const WINDOW_FROM = 50;
 /** Rows drawn either side of the rows in view. */
-const OVERSCAN = 20;
+const OVERSCAN = 10;
 /** Before the region reports what it shows: the first rows. */
 const FIRST_WINDOW = 30;
 /** D02 §5.1's minimum widths in px, compact and comfortable, as `em` of a 16 px table (the `<col>` widths). */
@@ -817,7 +817,8 @@ export function PositionsGrid<R extends PositionsGridRow = PositionsGridRow>({
   const closed = collapsed ?? ownClosed;
   const entries = useMemo(() => flatten(groups, closed), [groups, closed]);
   const indexOf = useMemo(() => new Map(entries.map((entry, i) => [entry.id, i])), [entries]);
-  // The window (CMP-049's host side): the rows in view and OVERSCAN either side, from WINDOW_FROM rows.
+  // The window (CMP-049's host side): the rows in view and OVERSCAN either side, from WINDOW_FROM rows. A view
+  // reported inside the drawn rows keeps the window as it is, so a mount or a short scroll draws nothing again.
   const [view, setView] = useState({ first: 0, last: FIRST_WINDOW - 1 });
   const windowed = entries.length > WINDOW_FROM;
   const offset = windowed ? Math.max(0, Math.min(view.first - OVERSCAN, entries.length - 1)) : 0;
@@ -948,7 +949,9 @@ export function PositionsGrid<R extends PositionsGridRow = PositionsGridRow>({
               rowWindow: { offset, total: entries.length },
               onRowsInView: (first: number, last: number) =>
                 setView((was) =>
-                  was.first === first && was.last === last ? was : { first, last },
+                  first >= was.first - OVERSCAN && last <= was.last + OVERSCAN
+                    ? was
+                    : { first, last },
                 ),
               rowByKey: (key: string) => {
                 const index = indexOf.get(key);
