@@ -2,7 +2,7 @@
 
 File `E08-D09 boards`, page `E08-D09 SCR-147 Connectivity`; export `docs/design/E08/img/E08-D09-03-held-banned.png`; sheet `03-held-banned.json` (validated); theme dark.
 
-Board 03 of ten (§0 L85: S-04 held by IP (all accounts, time left, its condition sentence W-33); S-05 banned (placeholder, contract-first) side by side). Grid (12000, 0); 3280 x 1527 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 03 · r1".
+Board 03 of ten (§0 L85: S-04 held by IP (all accounts, time left, its condition sentence W-33); S-05 banned (placeholder, contract-first) side by side). Grid (12000, 0); 3280 x 1481 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 03 · r1".
 
 ## Frames
 
@@ -11,8 +11,8 @@ Board 03 of ten (§0 L85: S-04 held by IP (all accounts, time left, its conditio
 
 ## Validator and size
 
-- `03-held-banned.json: 0 errors, 1 warnings, 26 sections, 100651 bytes` (exit 0)
-- 26 sections, 100651 bytes
+- `03-held-banned.json: 0 errors, 1 warnings, 26 sections, 100741 bytes` (exit 0)
+- 26 sections, 100741 bytes
 
 ## Live checks (9)
 
@@ -20,8 +20,8 @@ Board 03 of ten (§0 L85: S-04 held by IP (all accounts, time left, its conditio
 - S-05 frame: read back 'Time left: not received' in both the panel and the IP hold tile; no W-31 text on either frame (search the frames for 'reserved budget')
 - each frame: scrolled 180 px, the summary strip's top (its tiles' top borders) sits at about y 16 in the main column; three account rows show under the hold panel; in the REST budget and IP hold tiles the glyph sits on the first line of its wrapped word
 - each frame: the hold panel's stroke is the state's tone token (color.status.danger.strong)
-- root 'E08-D09 / 03 held-banned' at (12000, 0): read back the name exactly after the first section call; size 3280 x 1527
-- after touchTexts + relayout: the annotation column (estimated 1509 px) ends inside the root (h 1527); raise the root's h to its end + 80 if not
+- root 'E08-D09 / 03 held-banned' at (12000, 0): read back the name exactly after the first section call; size 3280 x 1481
+- after touchTexts + relayout: the annotation column (estimated 1509 px) ends inside the root (h 1481); raise the root's h to its end + 80 if not
 - frame 'SCR-147 · S-04 held by IP · dark': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'SCR-147 · S-05 banned · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - export docs/design/E08/img/E08-D09-03-held-banned.png: every frame is 1280 x 800; record the board id and the PNG size
@@ -77,7 +77,7 @@ Board 03 of ten (§0 L85: S-04 held by IP (all accounts, time left, its conditio
 
 ## Sources (1)
 
-- spec E08-D09.md md5 9146d4d4 (§0 L85, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
+- spec E08-D09.md md5 bb6e2dd1 (§0 L85, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
 
 ## Tokens (35)
 

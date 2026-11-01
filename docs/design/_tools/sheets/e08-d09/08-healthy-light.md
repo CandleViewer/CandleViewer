@@ -115,7 +115,7 @@ Board 08 of ten (§0 L90: light twin of 01). Grid (12000, 3200); 4640 x 2758 px;
 
 ## Sources (1)
 
-- spec E08-D09.md md5 9146d4d4 (§0 L90, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
+- spec E08-D09.md md5 bb6e2dd1 (§0 L90, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
 
 ## Tokens (44)
 

@@ -2,7 +2,7 @@
 
 File `E08-D09 boards`, page `E08-D09 SCR-147 Connectivity`; export `docs/design/E08/img/E08-D09-10-throttled-hc.png`; sheet `10-throttled-hc.json` (validated); theme hc.
 
-Board 10 of ten (§0 L92: high-contrast twin of 02). Grid (24000, 3200); 3280 x 1989 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 10 · r1".
+Board 10 of ten (§0 L92: high-contrast twin of 02). Grid (24000, 3200); 3280 x 1905 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 10 · r1".
 
 ## Frames
 
@@ -16,8 +16,8 @@ Board 10 of ten (§0 L92: high-contrast twin of 02). Grid (24000, 3200); 3280 x 
 
 ## Live checks (11)
 
-- root 'E08-D09 / 10 throttled-hc' at (24000, 3200): read back the name exactly after the first section call; size 3280 x 1989
-- after touchTexts + relayout: the annotation column (estimated 1953 px) ends inside the root (h 1989); raise the root's h to its end + 80 if not
+- root 'E08-D09 / 10 throttled-hc' at (24000, 3200): read back the name exactly after the first section call; size 3280 x 1905
+- after touchTexts + relayout: the annotation column (estimated 1953 px) ends inside the root (h 1905); raise the root's h to its end + 80 if not
 - frame 'SCR-147 · S-02 approaching limit · hc': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'SCR-147 · S-03 throttled · hc': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - theme: activate the hc token set before exporting board 10 (twin of 02); read back one bound fill (color.surface.canvas) as the hc value
@@ -78,7 +78,7 @@ Board 10 of ten (§0 L92: high-contrast twin of 02). Grid (24000, 3200); 3280 x 
 
 ## Sources (1)
 
-- spec E08-D09.md md5 9146d4d4 (§0 L92, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
+- spec E08-D09.md md5 bb6e2dd1 (§0 L92, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
 
 ## Tokens (36)
 

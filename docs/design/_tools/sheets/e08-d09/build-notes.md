@@ -1,7 +1,7 @@
 # E08-D09 board kit: build notes (#177 PR 3, the ten boards)
 
 Kit `e08d09kit.py` (this folder). Spec, binding, every string from it: `docs/design/E08/E08-D09.md` and
-`E08-D09-handoff.md`, read from this checkout by repo-relative path (md5 pinned in `SPEC_MD5`: spec `9146d4d4…`,
+`E08-D09-handoff.md`, read from this checkout by repo-relative path (md5 pinned in `SPEC_MD5`: spec `bb6e2dd1…`,
 hand-off `3dc8240e…`, the texts as PR 3 commits them; the kit refuses drifted bytes). Every `L<n>` cite is looked up
 with `k.L()`, never typed. The boards were drawn at spec `30646600…` and hand-off `e6bb50a9…`, before §0's as-built
 record and the hand-off's ticks, which PR 3 made in place (no line added or removed, so every cite holds); §0's board
@@ -253,3 +253,18 @@ The boards lens read the ten exports against the spec; these kit changes answer 
 
 Regenerated all ten; validator exit 0 ×10, warnings unchanged. Node by node against the sheets the boards were rendered
 from, 07 is unchanged; 01, 02, 03, 04, 05, 06, 08, 09 and 10 change and need a re-render.
+
+## Round-2 live-check fold (2026-11-01; after the re-render of 01–06 and 08–10)
+
+The round-2 live check measured the re-rendered boards and fixed two things on the page; both are folded here, so a
+rebuild equals the drawn sheets except the md5 pins of `notes.sources`:
+
+- Root h (`k.MEASURED_H`): the measured max(annotation end, footer end) + 80 replaces the estimate on 02 1874
+  (estimated 1958), 03 1481 (1527), 06 1878 (1918) and 10 1905 (1989); 01, 04, 05, 08 and 09 were already exact.
+- 03 S-04 / S-05 CMP-049 rows' State cell (`gen_03.state_cell`): the word is 140 px wide (cell 160 − glyph 16 − gap 4)
+  with auto height and the cell aligns to its top, so the glyph sits on the word's first line (the glyph stood alone
+  above "On hold — all accounts" and "Banned by the exchange" in all ten cells).
+
+Node by node against the sheets the round-2 boards were rendered from: 02, 06 and 10 differ in the root h only; 03 in
+the root h and the ten State cells (the cell's alignment and the word's width, 20 nodes); 01, 04, 05, 07, 08 and 09
+are unchanged.

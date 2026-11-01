@@ -50,7 +50,7 @@ TOKENS_FILE = SHEETS_DIR / "tools" / "token-sync.json"
 REPO = KIT_DIR.parents[4]  # the checkout's root: every spec read is REPO / <repo-relative path>, md5-pinned below
 SPEC = REPO / "docs/design/E08/E08-D09.md"
 HANDOFF = REPO / "docs/design/E08/E08-D09-handoff.md"
-SPEC_MD5 = {SPEC.name: "9146d4d4d487bdecbdda4696c3559016", HANDOFF.name: "3dc8240e5e2f88fb640cfb7ce06b8d7d"}
+SPEC_MD5 = {SPEC.name: "bb6e2dd100900608848f7d7ef5fabc30", HANDOFF.name: "3dc8240e5e2f88fb640cfb7ce06b8d7d"}
 
 FILE_NAME = "E08-D09 boards"
 PAGE = "E08-D09 SCR-147 Connectivity"
@@ -1240,11 +1240,9 @@ def layout(frames: list[Node], per_row: int | None = None) -> list[Node]:
 
 
 # Root h per board as drawn: the live-measured max(annotation end, footer end) + MARGIN after touchTexts + relayout
-# (the live check's SHEET-FIX; text_h over-estimates the column). board() uses it for strict boards. The boards
-# lens's kit fix lengthened the annotation columns of 02, 03, 06 and 10: their roots grow by 0.9 x the estimated
-# growth, rounded up to 8 (02 +32, 03 +72, 06 +40, 10 +32), until the re-render's live check measures them again;
-# 01, 07 and 08 end on their footers.
-MEASURED_H = {1: 2758, 2: 1958, 3: 1527, 4: 2506, 5: 2270, 6: 1918, 7: 2758, 8: 2758, 9: 2244, 10: 1989}
+# (the live checks' SHEET-FIX; text_h over-estimates the column). board() uses it for strict boards. 02, 03, 06
+# and 10 are the round-2 live check's measures after the boards lens's kit fix; 01, 07 and 08 end on their footers.
+MEASURED_H = {1: 2758, 2: 1874, 3: 1481, 4: 2506, 5: 2270, 6: 1878, 7: 2758, 8: 2758, 9: 2244, 10: 1905}
 
 
 def board(nn: int, frames: list[Node], ann: Node, *, per_row: int | None = None, strict: bool = True,

@@ -48,6 +48,13 @@ def hold_panel(sid: str) -> Node:
     return lines_panel(f"hold panel · {sid}", head, lines, stroke=k.tone_color(sid))
 
 
+def state_cell(sid: str) -> Node:
+    """The rows' State cell (160 px): the word wraps at 140 px (160 - glyph 16 - gap 4) and the line aligns to its
+    top, so the glyph sits on the word's first line (§5.2: the glyph beside its word; round-2 live check)."""
+    cell = k.state_line(sid, origin=False, w_=160, word_w=160 - k.PX[k.ICON] - k.PX[k.INSET_XS])
+    return dict(cell, o={**cell["o"], "align": "start"})
+
+
 def rows(sid: str) -> list[Node]:
     lim = k.LIM["order_per_s"]
     out = []
@@ -56,7 +63,7 @@ def rows(sid: str) -> list[Node]:
             "class": "order.create", "account": acct, "limit": f"{lim} / s", "used": "0", "window": "1 s",
             "headroom": k.headroom_cell(lim, 0, RESERVE),
             "meter": k.meter(0, lim, valuetext=k.w("W-09", None, 0, lim, k.headroom(lim, 0, RESERVE)[0])),
-            "state": k.state_line(sid, origin=False, w_=160), "action": k.row_action()},
+            "state": state_cell(sid), "action": k.row_action()},
             f"row {i:02d} · order.create · {acct}", i, second={"class": "order"}))
     return out
 

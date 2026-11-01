@@ -89,7 +89,7 @@ Board 07 of ten (§0 L89: the inspector with 3 connections at 36, 120 and 480 to
 
 ## Sources (1)
 
-- spec E08-D09.md md5 9146d4d4 (§0 L89, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
+- spec E08-D09.md md5 bb6e2dd1 (§0 L89, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
 
 ## Tokens (36)
 

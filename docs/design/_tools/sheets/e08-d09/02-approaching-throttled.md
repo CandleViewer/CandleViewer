@@ -2,7 +2,7 @@
 
 File `E08-D09 boards`, page `E08-D09 SCR-147 Connectivity`; export `docs/design/E08/img/E08-D09-02-approaching-throttled.png`; sheet `02-approaching-throttled.json` (validated); theme dark.
 
-Board 02 of ten (§0 L84: S-02 approaching limit on one account's order row; S-03 throttled with the account, class, observed limit and retry time). Grid (6000, 0); 3280 x 1958 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 02 · r1".
+Board 02 of ten (§0 L84: S-02 approaching limit on one account's order row; S-03 throttled with the account, class, observed limit and retry time). Grid (6000, 0); 3280 x 1874 px; footer W-01; "page E08-D09 SCR-147 Connectivity · board 02 · r1".
 
 ## Frames
 
@@ -16,8 +16,8 @@ Board 02 of ten (§0 L84: S-02 approaching limit on one account's order row; S-0
 
 ## Live checks (10)
 
-- root 'E08-D09 / 02 approaching-throttled' at (6000, 0): read back the name exactly after the first section call; size 3280 x 1958
-- after touchTexts + relayout: the annotation column (estimated 1949 px) ends inside the root (h 1958); raise the root's h to its end + 80 if not
+- root 'E08-D09 / 02 approaching-throttled' at (6000, 0): read back the name exactly after the first section call; size 3280 x 1874
+- after touchTexts + relayout: the annotation column (estimated 1949 px) ends inside the root (h 1874); raise the root's h to its end + 80 if not
 - frame 'SCR-147 · S-02 approaching limit · dark': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'SCR-147 · S-03 throttled · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - export docs/design/E08/img/E08-D09-02-approaching-throttled.png: every frame is 1280 x 800; record the board id and the PNG size
@@ -77,7 +77,7 @@ Board 02 of ten (§0 L84: S-02 approaching limit on one account's order row; S-0
 
 ## Sources (1)
 
-- spec E08-D09.md md5 9146d4d4 (§0 L84, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
+- spec E08-D09.md md5 bb6e2dd1 (§0 L84, §2, §3, §5.2, §15, §16, §17); hand-off E08-D09-handoff.md md5 3dc8240e
 
 ## Tokens (36)
 
