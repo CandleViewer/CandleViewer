@@ -7,7 +7,7 @@
 import { composeStories } from "@storybook/react-vite";
 import { act, useState, type JSX } from "react";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
-import { describe, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
   CELL_NUMBER_EDITOR_COPY,
   CELL_TRIGGER_OFF_TICK,
@@ -488,6 +488,36 @@ describe("T2: disabled with a visible reason (E09-D09 §2.2; E29-D04 §4.1, D02:
     expect(note).toHaveAttribute("aria-hidden", "true"); // a re-show: the notice stays the description
   });
 
+  it("a gate that lifts takes the re-shown reason with it; one that returns shows nothing until a press", async () => {
+    let gate: (reason: string | undefined) => void = () => undefined;
+    function Host(): JSX.Element {
+      const [reason, setReason] = useState<string | undefined>(IN_FLIGHT);
+      gate = setReason;
+      return (
+        <CellNumberEditor
+          label={PRICE}
+          value="2500"
+          step="0.01"
+          unit="tick"
+          onCommit={fn()}
+          {...(reason === undefined ? {} : { disabledReason: reason })}
+        />
+      );
+    }
+    const host = await mount(<Host />);
+    const note = (): Element | null => host.querySelector(".cv-cell-editor__note");
+    cell().focus();
+    await userEvent.keyboard("{Enter}");
+    expect(note()).toHaveTextContent(IN_FLIGHT); // re-shown by the press
+    await act(async () => gate(undefined)); // the gate lifts, focus stays on the value
+    expect(note()).toBeNull();
+    expect(cell()).toHaveFocus();
+    await act(async () => gate(IN_FLIGHT)); // and comes back
+    expect(note()).toBeNull(); // nothing shows until the next press
+    await userEvent.keyboard("{Enter}");
+    expect(note()).toHaveTextContent(IN_FLIGHT);
+  });
+
   it.each([
     ["arrives", undefined, IN_FLIGHT],
     ["lifts", IN_FLIGHT, undefined],
@@ -682,6 +712,132 @@ describe("the open editor's keys and note (E29-D01 D12; D01 D13 b)", () => {
     for (const part of [".cv-cell-editor__live", ".cv-cell-editor__hint", ".cv-field__message"])
       expect(note?.querySelector(part)).not.toBeNull();
     expect(host.querySelector(".cv-cell-editor__well")?.children).toHaveLength(1);
+  });
+});
+
+describe("the grid's keys at rest, and the caret's while open (E29-D02 §11.1; `05` §3.1 item 1)", () => {
+  /** A stand-in for the grid's key handler around the editor: what it receives is what the grid would move on. */
+  async function inGrid(): Promise<ReturnType<typeof fn>> {
+    const onGridKey = fn();
+    await mount(
+      // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- a stand-in for the grid's key handler
+      <div onKeyDown={(event) => onGridKey(event.key)}>
+        <CellNumberEditor label={PRICE} value="2500" step="0.01" unit="tick" onCommit={fn()} />
+      </div>,
+    );
+    return onGridKey;
+  }
+
+  it.each(["ArrowLeft", "ArrowRight", "Home", "End", "ArrowUp", "ArrowDown"])(
+    "at rest, %s reaches the grid, with and without Shift, and the editor never prevents it",
+    async (name) => {
+      const onGridKey = await inGrid();
+      const value = cell();
+      value.focus();
+      expect(await key(value, { key: name })).toBe(true); // not default-prevented: the grid's handler owns it
+      expect(await key(value, { key: name, shiftKey: true })).toBe(true); // an extending move too
+      expect(onGridKey.mock.calls.map(([k]) => k)).toEqual([name, name]);
+      expect(value).toHaveAttribute("readonly"); // nothing opened
+    },
+  );
+
+  it("while open, ←, →, Home and End stay in the field: never to the grid, never prevented, so the caret moves", async () => {
+    const onGridKey = await inGrid();
+    await open();
+    onGridKey.mockClear();
+    for (const caret of ["ArrowLeft", "ArrowRight", "Home", "End"]) {
+      expect(await key(cell(), { key: caret })).toBe(true);
+      expect(await key(cell(), { key: caret, shiftKey: true })).toBe(true);
+    }
+    expect(onGridKey).not.toHaveBeenCalled();
+    expect(cell()).not.toHaveAttribute("readonly"); // still open
+  });
+});
+
+describe("the note is brought into view when it shows (the grid's scroll region clips it; `05` §5 item 7)", () => {
+  // jsdom has no `scrollIntoView`: a spy stands in for it in this block only, and every other test runs without one.
+  const scroll = vi.fn();
+  beforeEach(() => {
+    scroll.mockClear();
+    Element.prototype.scrollIntoView = scroll;
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+  });
+  const noteOf = (host: HTMLElement): Element | null => host.querySelector(".cv-cell-editor__note");
+
+  it("opening the editor scrolls its note into view once: nearest on both axes, never smooth", async () => {
+    const { host } = await render();
+    expect(scroll).not.toHaveBeenCalled(); // at rest there is no note
+    await open();
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" }); // no `behavior`: instant
+    expect(scroll.mock.contexts[0]).toBe(noteOf(host));
+  });
+
+  it("a refusal, and a gated commit's reason, that join the open note bring it into view again", async () => {
+    const { host } = await render({
+      label: "Qty",
+      value: "0.1",
+      step: "0.001",
+      unit: "lot",
+      commitGate: qtyUp,
+    });
+    cell("Qty").focus();
+    await userEvent.keyboard("{F2}");
+    await retype(cell("Qty"), "0.0015");
+    expect(scroll).toHaveBeenCalledTimes(1); // typing alone adds nothing to the note
+    scroll.mockClear();
+    await key(cell("Qty"), { key: "Enter" }); // off the lot: the refusal joins the note
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
+    await retype(cell("Qty"), "0.150"); // valid now: the refusal clears silently
+    scroll.mockClear();
+    await key(cell("Qty"), { key: "Enter" }); // a quantity up under the freeze: the reason joins it
+    expect(cell("Qty")).toHaveAccessibleDescription(expect.stringContaining(FROZEN));
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll.mock.contexts[0]).toBe(noteOf(host));
+  });
+
+  it("a refused press at rest scrolls the re-shown reason into view; the gate alone scrolls nothing", async () => {
+    const { host } = await render({ disabledReason: IN_FLIGHT });
+    expect(scroll).not.toHaveBeenCalled();
+    cell().focus();
+    await userEvent.keyboard("{Enter}");
+    expect(noteOf(host)).toHaveTextContent(IN_FLIGHT);
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
+    expect(scroll.mock.contexts[0]).toBe(noteOf(host));
+  });
+
+  it("does the same for the re-shown copy of the host's notice (disabledReasonId)", async () => {
+    const notice = document.body.appendChild(document.createElement("p"));
+    notice.id = "orders-notice";
+    notice.textContent = "Read-only while viewing as alex.";
+    const { host } = await render({
+      disabledReason: "Read-only while viewing as alex.",
+      disabledReasonId: "orders-notice",
+    });
+    expect(scroll).not.toHaveBeenCalled();
+    cell().focus();
+    await userEvent.keyboard("{Enter}");
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
+    expect(scroll.mock.contexts[0]).toBe(noteOf(host));
+  });
+
+  it("is guarded where the method is missing, as in jsdom: the editor opens and refuses all the same", async () => {
+    Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+    expect(typeof Element.prototype.scrollIntoView).toBe("undefined");
+    await render({ disabledReason: IN_FLIGHT });
+    cell().focus();
+    await userEvent.keyboard("{Enter}"); // a refused press re-shows the reason: nothing throws
+    expect(document.querySelectorAll(".cv-cell-editor__note")).toHaveLength(1);
+    document.body.replaceChildren();
+    await render();
+    const editor = await open();
+    await retype(editor, "2495.003{Enter}");
+    expect(cell()).toHaveAttribute("aria-invalid", "true");
   });
 });
 
