@@ -201,7 +201,8 @@ def policy_config(settings: Settings) -> PolicyConfig:
 def stored_presence(settings: Settings) -> QuestDbStoredPresence | None:
     """E16-FR-03 (#1739): the hot-tier presence reader `CoverageService` reconciles with (and
     `IntegrityJob` can read as its `StoredData`), on its own lazy wire; None off the `real`
-    backend. Connects on its first read, never here."""
+    backend. Connects on its first read, never here; the reader owns the wire, so its `close()`
+    (registered on the recorder module, run on its `stop`) releases it at shutdown."""
     if settings.storage_backend != "real":
         return None
     host, _, port = settings.questdb_pg.partition(":")
@@ -209,7 +210,7 @@ def stored_presence(settings: Settings) -> QuestDbStoredPresence | None:
         host, int(port or QUESTDB_PG_DEFAULT_PORT), settings.questdb_pg_user,
         settings.questdb_pg_password.get_secret_value(), name="storage",
     )  # fmt: skip
-    return QuestDbStoredPresence(wire)
+    return QuestDbStoredPresence(wire, close=wire.close)
 
 
 def questdb_sinks(settings: Settings) -> SinkFactory:

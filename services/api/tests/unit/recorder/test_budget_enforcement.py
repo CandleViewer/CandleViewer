@@ -191,7 +191,7 @@ async def test_disk_pressure_refuses_new_chart_recording_only(
     try:
         await p.add_manual("BTCUSDT", user_actor("owner-1"))  # the explicit list keeps going
         await p.on_position_opened("ETHUSDT", "pos-1")  # money at risk: never refused
-        await p.on_chart_opened("SOLUSDT", "c1")
+        await p.on_chart_opened("SOLUSDT", "c1", session_id=None)
         clock.advance(60)
         await p.tick()
         await p.tick()  # the refusal engages once

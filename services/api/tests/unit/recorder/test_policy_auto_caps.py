@@ -67,7 +67,7 @@ async def test_auto_cap_holds_against_200_chart_opens_in_5_minutes(clock: FakeCl
     before = _value(recorder_auto_record_refused_total, cause="auto_cap")
     try:
         for i in range(200):
-            await p.on_chart_opened(_sym(i), f"c{i}")
+            await p.on_chart_opened(_sym(i), f"c{i}", session_id=None)
             clock.advance(1.5)
             await p.tick()
             assert len(p.effective_set()) <= 20
@@ -95,7 +95,7 @@ async def test_manual_entries_are_neither_counted_nor_displaced_by_the_auto_cap(
         await p.add_manual("BTCUSDT", OWNER)
         await p.add_manual("ETHUSDT", OWNER)
         for i in range(3):
-            await p.on_chart_opened(_sym(i), f"c{i}")
+            await p.on_chart_opened(_sym(i), f"c{i}", session_id=None)
         clock.advance(60)
         await p.tick()
         assert set(p.effective_set()) == {"BTCUSDT", "ETHUSDT", _sym(0), _sym(1)}
@@ -111,7 +111,7 @@ async def test_a_position_at_the_auto_cap_still_starts(clock: FakeClock) -> None
     audit = FakeAudit()
     p = _policy(clock, audit, max_symbols=5, max_auto_symbols=1)
     try:
-        await p.on_chart_opened(_sym(0), "c0")
+        await p.on_chart_opened(_sym(0), "c0", session_id=None)
         clock.advance(60)
         await p.tick()
         await p.on_position_opened("XRPUSDT", "p1")
@@ -126,12 +126,12 @@ async def test_a_closed_chart_frees_its_auto_slot_after_the_grace(clock: FakeClo
     audit = FakeAudit()
     p = _policy(clock, audit, max_auto_symbols=1)
     try:
-        await p.on_chart_opened("BTCUSDT", "c1")
-        await p.on_chart_opened("ETHUSDT", "c2")
+        await p.on_chart_opened("BTCUSDT", "c1", session_id=None)
+        await p.on_chart_opened("ETHUSDT", "c2", session_id=None)
         clock.advance(60)
         await p.tick()
         assert set(p.effective_set()) == {"BTCUSDT"}
-        await p.on_chart_closed("BTCUSDT", "c1")
+        await p.on_chart_closed("BTCUSDT", "c1", session_id=None)
         await p.tick()
         assert set(p.effective_set()) == {"BTCUSDT"}  # lingering: the slot is still held
         clock.advance(1_801)
@@ -183,7 +183,9 @@ async def test_a_session_past_its_start_rate_is_refused_until_the_window_moves(
         assert _value(recorder_auto_record_refused_total, cause="session_rate") == before + 1
         assert _denied(audit, "session_rate_refused") == [_sym(10)]
         await p.on_chart_opened(_sym(11), "c11", session_id="sess-b")  # another session
-        await p.on_chart_opened(_sym(12), "c12")  # no session: the global caps only
+        await p.on_chart_opened(
+            _sym(12), "c12", session_id=None
+        )  # no session: the global caps only
         assert p.chart_open(_sym(11)) and p.chart_open(_sym(12))
         clock.t = t0 + 59.5
         await p.on_chart_opened(_sym(10), "c10", session_id="sess-a")
@@ -258,9 +260,9 @@ async def test_the_auto_cap_admits_no_new_chart_start_while_a_transition_holds_i
     audit = FakeAudit()
     p = _policy(clock, audit, max_symbols=10, max_auto_symbols=1)
     try:
-        await p.on_chart_opened(_sym(0), "c0")
+        await p.on_chart_opened(_sym(0), "c0", session_id=None)
         await p.add_manual("BTCUSDT", OWNER)
-        await p.on_chart_opened("BTCUSDT", "c1")
+        await p.on_chart_opened("BTCUSDT", "c1", session_id=None)
         clock.advance(60)
         await p.tick()
         assert _value(recorder_auto_record_active) == 1
@@ -268,7 +270,7 @@ async def test_the_auto_cap_admits_no_new_chart_start_while_a_transition_holds_i
         await p.tick()
         assert {_sym(0), "BTCUSDT"} <= set(p.effective_set())  # neither recording is stopped
         assert _value(recorder_auto_record_active) == 2
-        await p.on_chart_opened(_sym(1), "c2")
+        await p.on_chart_opened(_sym(1), "c2", session_id=None)
         clock.advance(60)
         await p.tick()
         assert p.start_refusal(_sym(1)) == "symbol_cap"
@@ -292,9 +294,9 @@ async def test_property_auto_symbols_never_exceed_the_cap(steps: list[tuple[str,
     try:
         for op, i in steps:
             if op == "open":
-                await p.on_chart_opened(_sym(i), f"c{i}")
+                await p.on_chart_opened(_sym(i), f"c{i}", session_id=None)
             elif op == "close":
-                await p.on_chart_closed(_sym(i), f"c{i}")
+                await p.on_chart_closed(_sym(i), f"c{i}", session_id=None)
             else:
                 clock.advance(45)
             await p.tick()

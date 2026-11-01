@@ -459,11 +459,10 @@ class RecordingPolicy:
 
     # --- public triggers ---------------------------------------------------------------
 
-    async def on_chart_opened(
-        self, symbol: str, chart_id: str, *, session_id: str | None = None
-    ) -> None:
+    async def on_chart_opened(self, symbol: str, chart_id: str, *, session_id: str | None) -> None:
         """`session_id` is the server-side session the chart belongs to (never client input);
-        with it, the session's limits apply (E16-FR-01). None: only the global caps do. A ref
+        with it, the session's limits apply (E16-FR-01). It is required, so a caller cannot leave
+        the session caps off by omission; an explicit None applies only the global caps. A ref
         taken here counts against the session even if its start is then refused by a global cap
         or disk pressure: it stays queued for the tick's retry, so the session holds it."""
         _valid(symbol)
@@ -487,9 +486,7 @@ class RecordingPolicy:
             await self._mirror_ref(symbol, "chart", chart_id, add=True)
         await self._reconcile(symbol)
 
-    async def on_chart_closed(
-        self, symbol: str, chart_id: str, *, session_id: str | None = None
-    ) -> None:
+    async def on_chart_closed(self, symbol: str, chart_id: str, *, session_id: str | None) -> None:
         if session_id is not None:
             self._sessions.release(session_id, _valid(symbol), chart_id, self._now())
         s = self._syms.get(_valid(symbol))

@@ -132,8 +132,8 @@ async def test_chart_flood_cannot_starve_position(clock: FakeClock) -> None:
     p.positions_reloaded()
     try:
         for i in range(1_024):
-            await p.on_chart_opened(f"S{i:04d}USDT", "c")
-        await p.on_chart_opened("EXTRAUSDT", "c")  # over cap: refused, not tracked
+            await p.on_chart_opened(f"S{i:04d}USDT", "c", session_id=None)
+        await p.on_chart_opened("EXTRAUSDT", "c", session_id=None)  # over cap: refused, not tracked
         assert "EXTRAUSDT" not in p._syms
         await p.on_position_opened("XRPUSDT", "p1")
         assert p.effective_set()["XRPUSDT"].reason == "position_open"

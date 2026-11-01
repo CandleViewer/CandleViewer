@@ -590,3 +590,23 @@ async def test_the_anchor_step_runs_every_tick_and_a_failing_one_skips_no_other(
     assert [(e["step"], e["error"]) for e in logs if e["event"] == "recorder_tick_failed"] == [
         ("anchors", "OSError")
     ]
+
+
+async def test_the_service_releases_its_closers_once_on_stop_and_a_failing_one_starves_none() -> (
+    None
+):
+    """E16-FR-03 (#1739): the presence wire, attached as a closer, is released on `stop`."""
+    svc, released = RecorderService(), list[str]()
+
+    async def broken() -> None:
+        released.append("broken")
+        raise OSError("db.internal:8812 refused")
+
+    async def wire() -> None:
+        released.append("wire")
+
+    svc.attach_closer(broken)
+    svc.attach_closer(wire)
+    await svc.stop(1.0)
+    await svc.stop(1.0)  # released once: a second stop has nothing left to close
+    assert released == ["broken", "wire"]

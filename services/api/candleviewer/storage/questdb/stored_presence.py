@@ -12,7 +12,8 @@ allowlist, so no caller text reaches SQL: symbol and time bounds are bind parame
 C-12.10), and only a validated integer row limit is inlined, because QuestDB's PGWire has no
 `LIMIT $n` slot (#2168). Every fetch is time-bounded; a deadline is `StoredPresenceTimeout` and
 a driver failure `StoredPresenceError`, each naming only the failure's type and holding no cause
-or context (a driver's text may name the server's host and port, RP-I02).
+or context (a driver's text may name the server's host and port, RP-I02). The reader owns its
+wire: `close()` releases it at shutdown (the recorder module runs it on `stop`).
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from types import MappingProxyType
 from typing import Final, Protocol
 
@@ -163,11 +165,28 @@ def find_breaks(rows: Sequence[Mapping[str, object]]) -> list[tuple[int, int]]:
 class QuestDbStoredPresence:
     """Hot-tier `StoredPresence` / `StoredData`: QuestDB over PGWire (`RecordFetcher`)."""
 
-    def __init__(self, connection: RecordFetcher, *, timeout_s: float = DEFAULT_TIMEOUT_S) -> None:
+    def __init__(
+        self,
+        connection: RecordFetcher,
+        *,
+        timeout_s: float = DEFAULT_TIMEOUT_S,
+        close: Callable[[], Awaitable[None]] | None = None,
+        deadline: Callable[[float], AbstractAsyncContextManager[object]] = asyncio.timeout,
+    ) -> None:
+        """`close` releases the wire (`LazyPgWire.close`); `deadline` is the per-read timer,
+        `asyncio.timeout` unless a test injects one that needs no real waiting."""
         if not (math.isfinite(timeout_s) and timeout_s > 0):
             raise ValueError("timeout_s must be a positive, finite number of seconds")
         self._conn = connection
         self._timeout_s = timeout_s
+        self._close = close
+        self._deadline = deadline
+
+    async def close(self) -> None:
+        """Release the wire, if this reader was given one to close; idempotent."""
+        close, self._close = self._close, None
+        if close is not None:
+            await close()
 
     async def stored_spans(
         self, symbol: str, stream: str, lo: int, hi: int
@@ -185,7 +204,7 @@ class QuestDbStoredPresence:
         """Raised after the handler, so neither cause nor context holds the driver's text."""
         failure: StoredPresenceError
         try:
-            async with asyncio.timeout(self._timeout_s):
+            async with self._deadline(self._timeout_s):
                 return await self._conn.fetch_records(sql, *params)
         except TimeoutError:
             failure = StoredPresenceTimeout(f"presence read exceeded {self._timeout_s}s")

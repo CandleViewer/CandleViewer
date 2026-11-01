@@ -43,10 +43,10 @@ async def test_policy_manual_add_publishes_within_5s(
 async def test_policy_chart_browsing_under_delay_never_records(
     policy: RecordingPolicy, bus: FakeBus, clock: FakeClock
 ) -> None:
-    await policy.on_chart_opened("SOLUSDT", "c1")
+    await policy.on_chart_opened("SOLUSDT", "c1", session_id=None)
     clock.advance(20)
     await policy.tick()
-    await policy.on_chart_closed("SOLUSDT", "c1")
+    await policy.on_chart_closed("SOLUSDT", "c1", session_id=None)
     clock.advance(120)
     await policy.tick()
     assert policy.effective_set() == {} and bus.events == []
@@ -56,7 +56,7 @@ async def test_policy_chart_browsing_under_delay_never_records(
 async def test_policy_chart_open_delay_boundary(
     policy: RecordingPolicy, clock: FakeClock, held: float, recorded: bool
 ) -> None:
-    await policy.on_chart_opened("SOLUSDT", "c1")
+    await policy.on_chart_opened("SOLUSDT", "c1", session_id=None)
     clock.advance(held)
     await policy.tick()
     assert ("SOLUSDT" in policy.effective_set()) is recorded
@@ -76,14 +76,16 @@ async def test_policy_position_open_records_immediately_and_holds(
 async def test_policy_grace_period_prevents_fragmentation(
     policy: RecordingPolicy, audit: FakeAudit, clock: FakeClock
 ) -> None:
-    await policy.on_chart_opened("ETHUSDT", "c1")
+    await policy.on_chart_opened("ETHUSDT", "c1", session_id=None)
     clock.advance(60)
     await policy.tick()
-    await policy.on_chart_closed("ETHUSDT", "c1")
+    await policy.on_chart_closed("ETHUSDT", "c1", session_id=None)
     assert policy.effective_set()["ETHUSDT"].lingering
     clock.advance(300)
     await policy.tick()
-    await policy.on_chart_opened("ETHUSDT", "c2")  # re-acquired at once, no 60 s delay
+    await policy.on_chart_opened(
+        "ETHUSDT", "c2", session_id=None
+    )  # re-acquired at once, no 60 s delay
     assert policy.leaf("ETHUSDT") == "recording"
     clock.advance(3_600)
     await policy.tick()
@@ -109,10 +111,10 @@ async def test_policy_manual_survives_trigger_loss(
     policy: RecordingPolicy, clock: FakeClock
 ) -> None:
     await policy.add_manual("BTCUSDT", OWNER)
-    await policy.on_chart_opened("BTCUSDT", "c1")
+    await policy.on_chart_opened("BTCUSDT", "c1", session_id=None)
     clock.advance(60)
     await policy.tick()
-    await policy.on_chart_closed("BTCUSDT", "c1")
+    await policy.on_chart_closed("BTCUSDT", "c1", session_id=None)
     clock.advance(10_000)
     await policy.tick()
     entry = policy.effective_set()["BTCUSDT"]
@@ -134,7 +136,7 @@ async def test_policy_reason_precedence(
     policy: RecordingPolicy, clock: FakeClock, triggers: tuple[str, ...], expected: str
 ) -> None:
     if "chart" in triggers:
-        await policy.on_chart_opened("ADAUSDT", "c1")
+        await policy.on_chart_opened("ADAUSDT", "c1", session_id=None)
         clock.advance(60)
         await policy.tick()
     if "position" in triggers:
@@ -167,7 +169,7 @@ async def test_policy_autorecord_disabled_gates_chart_only(
     )
     p.positions_reloaded()
     try:
-        await p.on_chart_opened("SOLUSDT", "c1")
+        await p.on_chart_opened("SOLUSDT", "c1", session_id=None)
         clock.advance(600)
         await p.tick()
         assert "SOLUSDT" not in p.effective_set()
@@ -192,7 +194,7 @@ async def test_policy_capacity_guard(clock: FakeClock, bus: FakeBus, audit: Fake
         await p.add_manual("BTCUSDT", OWNER)
         with pytest.raises(RecorderSymbolLimitError):
             await p.add_manual("ETHUSDT", OWNER)
-        await p.on_chart_opened("SOLUSDT", "c1")
+        await p.on_chart_opened("SOLUSDT", "c1", session_id=None)
         clock.advance(60)
         await p.tick()
         assert set(p.effective_set()) == {"BTCUSDT"}  # auto-start refused, not silent start
@@ -213,4 +215,4 @@ async def test_policy_capacity_guard(clock: FakeClock, bus: FakeBus, audit: Fake
 )
 async def test_policy_rejects_invalid_symbol(policy: RecordingPolicy, bad: str) -> None:
     with pytest.raises(InvalidRecordedSymbolError):
-        await policy.on_chart_opened(bad, "c1")
+        await policy.on_chart_opened(bad, "c1", session_id=None)

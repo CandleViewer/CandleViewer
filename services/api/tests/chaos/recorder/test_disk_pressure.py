@@ -68,7 +68,9 @@ async def test_disk_ladder_91_refuses_auto_record_keeps_explicit(ladder: LadderR
     assert ("WARNING", "recorder.disk_autostop") in _codes(ladder)
     policy = ladder.policy
     await policy.add_manual("SOLUSDT", user_actor("owner-1"))  # explicit: keeps recording
-    await policy.on_chart_opened("XRPUSDT", "chart-1")  # a new chart-open start: refused
+    await policy.on_chart_opened(
+        "XRPUSDT", "chart-1", session_id=None
+    )  # a new chart-open start: refused
     ladder.clock.advance(60)
     await policy.tick()
     await policy.tick()

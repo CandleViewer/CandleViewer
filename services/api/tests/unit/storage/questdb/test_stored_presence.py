@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
 
 import asyncpg
@@ -163,11 +164,39 @@ async def test_a_driver_failure_is_typed_and_carries_no_driver_text(exc: Excepti
     assert err.__cause__ is None and err.__context__ is None
 
 
+class ExpiredDeadline:
+    """The injected per-read timer, due at once: a real `asyncio.timeout` whose deadline is now,
+    so the stuck read is cancelled on the loop's next turn and surfaces as `TimeoutError`,
+    exactly as at a real deadline, with no real waiting. Records the seconds it was asked for."""
+
+    def __init__(self) -> None:
+        self.asked: list[float] = []
+
+    def __call__(self, seconds: float) -> AbstractAsyncContextManager[object]:
+        self.asked.append(seconds)
+        return asyncio.timeout(0)
+
+
 async def test_a_read_past_its_deadline_is_a_typed_timeout() -> None:
-    reader = QuestDbStoredPresence(StuckWire(), timeout_s=0.01)
-    with pytest.raises(StoredPresenceTimeout) as caught:
+    deadline = ExpiredDeadline()
+    reader = QuestDbStoredPresence(StuckWire(), timeout_s=7.5, deadline=deadline)
+    with pytest.raises(StoredPresenceTimeout, match=r"7\.5s") as caught:
         await reader.stored_spans("BTCUSDT", "trades", 0, M)
     assert isinstance(caught.value, TimeoutError) and caught.value.__context__ is None
+    assert deadline.asked == [7.5]  # the reader's own timeout bounds each read
+
+
+async def test_close_releases_the_wire_it_was_given_once_and_without_one_is_a_no_op() -> None:
+    closed: list[int] = []
+
+    async def close() -> None:
+        closed.append(1)
+
+    reader = QuestDbStoredPresence(FakeWire(), close=close)
+    await reader.close()
+    await reader.close()
+    await QuestDbStoredPresence(FakeWire()).close()
+    assert closed == [1]
 
 
 @pytest.mark.parametrize("timeout_s", [0.0, -1.0, float("nan"), float("inf")])
