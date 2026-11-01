@@ -25,7 +25,7 @@ export type DispatchResult =
   | { readonly status: "inert"; readonly commandId: string; readonly notified: boolean }
   /** An order entry while the arm reads unarmed (BQ-5): taken (default prevented), not run, and said why. */
   | { readonly status: "unarmed"; readonly commandId: string; readonly notified: boolean }
-  /** `Ctrl+K` with no palette yet: taken (default prevented) and never reported (BQ-7, D9). */
+  /** `Ctrl+K` with no palette handler (the public routes): taken (default prevented), never reported (BQ-7, D9). */
   | { readonly status: "reserved"; readonly binding: string }
   /** A key A-D05-2's rule leaves alone: neither run nor reported, its default not prevented. */
   | { readonly status: "ignored"; readonly reason: "composing" | "prevented" | "editable" }
@@ -108,8 +108,9 @@ const viewOf = (active: ReadonlySet<string>): string =>
  * before the Global (AC1, BQ-4); the first command that can run takes the key, once per press unless it is a stepper.
  * An inert key explains itself from any context, as E49-S07 shipped, except a bare navigation key (Tab, Enter, Space,
  * the arrows: D6, ruled option (c)), Esc (D7), a range binding and a held key's repeat; `Ctrl+K`, reserved for the
- * palette, is taken without a notice until E15 registers the palette on it (BQ-7, D9). An order entry (`requiresArm`,
- * BQ-5) that could run takes its key while the arm reads unarmed, runs nothing and says why, as an inert key does.
+ * palette, is taken without a notice wherever SCR-012 (E10-S05, #5236) has no handler (BQ-7, D9). An order entry
+ * (`requiresArm`, BQ-5) that could run takes its key while the arm reads unarmed, runs nothing and says why, as an
+ * inert key does.
  */
 export function createDispatcher(deps: DispatcherDeps) {
   const lastNotified = new Map<string, number>();

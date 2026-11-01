@@ -132,11 +132,10 @@ describe("E10-S01 S2: the top bar's controls", () => {
       expect(picker).toHaveAccessibleDescription("Not available in this build.");
     }
     expect(within(bar).getByText("Pickers: not available in this build.")).toBeVisible();
+    // SCR-012 is mounted (E10-S05, #5236): the trigger is enabled and names its key.
     const search = within(bar).getByRole("button", { name: "Search commands Ctrl+K" });
-    expect(search).not.toHaveAttribute("aria-keyshortcuts"); // only while it does something
-    expect(search).toHaveAccessibleDescription(
-      "The command palette is not available in this build.",
-    );
+    expect(search).not.toHaveAttribute("aria-disabled");
+    expect(search).toHaveAttribute("aria-keyshortcuts", "Control+K");
     expect(within(search).getByText("Ctrl+K").tagName).toBe("KBD");
   });
 
