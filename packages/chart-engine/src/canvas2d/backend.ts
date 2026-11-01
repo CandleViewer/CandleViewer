@@ -10,6 +10,7 @@ import type { BatchUniforms, BatchUniformSource, PaneUniformSource } from "../gl
 import { CANDLE_PART, hollowFill, partColor } from "../layers/candle/geometry.js";
 import { CANDLE_DIR, CANDLE_STRIDE } from "../layers/candle/ring.js";
 import { PALETTE } from "../layers/candle/palette.js";
+import { isSegment, RIBBON_PART, ribbonRow } from "../layers/ribbon/geometry.js";
 import { DrawTrace } from "../gl/trace.js";
 import type { RetainedBatch } from "../scene/batch-builder.js";
 import { attributeOffset, INSTANCE_LAYOUTS, PROGRAM } from "../scene/instance-layout.js";
@@ -161,11 +162,12 @@ export class Canvas2DBackend implements RenderBackend {
         slot.ints = new Int32Array(data.buffer, data.byteOffset, data.length);
         slot.of = data;
       }
-      if (b.program === PROGRAM.candle) {
+      if (b.program === PROGRAM.candle || b.program === PROGRAM.ribbon) {
         const blk = this.own === null ? null : this.own(b);
         this.frameBatches[i] = blk;
         if (blk !== null && blk.instances === 0) continue; // the seam, no gap in view (BQ-8)
         if (blk === null || block === null) trace.skipped += 1;
+        else if (b.program === PROGRAM.ribbon) this.ribbons(blk, i);
         else this.candles(blk, slot.ints, i);
         if (trace.enabled) {
           trace.nodes.push(b.nodeId);
@@ -221,6 +223,23 @@ export class Canvas2DBackend implements RenderBackend {
     }
   }
 
+  /**
+   * E12-S07 PR B: a ribbon part's instances by logical bar (a ref is the bar index): every bar
+   * for the joins, every segment start for the stroke and the fills, the last bar for the disc
+   * and the base line; the painter drops what the twin collapses (a gap, a fill's other side).
+   */
+  private ribbons(blk: BatchUniforms, i: number): void {
+    const part = blk.ints[0] ?? 0;
+    const n = blk.ints[3] ?? 0;
+    const bucket = this.bucketOf(PROGRAM.ribbon, blk.palette, ribbonRow(part) * 4, 0);
+    if (part === RIBBON_PART.last || part === RIBBON_PART.base) {
+      if (n > 0) this.push(bucket, i, n - 1);
+      return;
+    }
+    const end = isSegment(part) ? n - 1 : n;
+    for (let j = 0; j < end; j += 1) this.push(bucket, i, j);
+  }
+
   /** The instance's bucket, joined to this run on first use. */
   private bucketOf(
     program: number,
@@ -270,16 +289,19 @@ export class Canvas2DBackend implements RenderBackend {
       const paint = PAINTERS[bucket.program];
       if (paint === null || paint === undefined || bucket.n === 0) continue;
       ctx.beginPath();
+      // Per bucket, not per ref: a candle ref carries its sub-rect in the low bit, a ribbon ref
+      // is its bar (E12-S07 PR B); both read their batch's own block.
+      const candle = bucket.program === PROGRAM.candle;
+      const own = candle || bucket.program === PROGRAM.ribbon;
       for (let r = 0; r < bucket.n; r += 2) {
         const i = bucket.refs[r] ?? 0;
         const slot = this.frameSlots[i] as Slot; // set when the ref was pushed
         a.data = slot.source.data;
         a.ints = slot.ints;
         const at = bucket.refs[r + 1] ?? 0;
-        const candle = bucket.program === PROGRAM.candle;
-        a.at = candle ? at >> 1 : at; // a candle ref carries its sub-rect in the low bit
+        a.at = candle ? at >> 1 : at;
         a.sub = candle ? at & 1 : 0;
-        a.batch = candle ? (this.frameBatches[i] ?? null) : null;
+        a.batch = own ? (this.frameBatches[i] ?? null) : null;
         a.block = this.frameBlocks[i] ?? null;
         paint(ctx, a);
       }

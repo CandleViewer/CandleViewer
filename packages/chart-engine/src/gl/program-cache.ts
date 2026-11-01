@@ -10,6 +10,7 @@ import { BAR_CELL } from "./shaders/bar-cell-stub.js";
 import { CANDLE } from "./shaders/candle.js";
 import { LINE } from "./shaders/line.js";
 import { QUAD } from "./shaders/quad.js";
+import { RIBBON } from "./shaders/ribbon.js";
 import { SDF_TEXT } from "./shaders/sdf-text.js";
 
 export const ENGINE_SHADER_COMPILE_FAILED = "ENGINE_SHADER_COMPILE_FAILED";
@@ -31,7 +32,7 @@ export class ContextLostError extends Error {
 }
 
 /** A batch's `program` number (shared with the 2D backend, BQ-87) indexes this table. */
-export const PROGRAMS: readonly ProgramSource[] = [LINE, QUAD, SDF_TEXT, BAR_CELL, CANDLE];
+export const PROGRAMS: readonly ProgramSource[] = [LINE, QUAD, SDF_TEXT, BAR_CELL, CANDLE, RIBBON];
 export { PROGRAM };
 
 /** A compile or link failure; `log` is the driver's info log (trimmed in the backend's message). */
@@ -108,11 +109,13 @@ export class ProgramCache {
     const b = u["u_batch"];
     const g = u["u_geom"];
     const p = u["u_palette"];
+    const bs = u["u_base"]; // E12-S07 PR B: the ribbon's base B (the last close for its disc)
     const i = block.ints;
     if (b !== undefined && b !== null)
       this.gl.uniform4i(b, i[0] ?? 0, i[1] ?? 0, i[2] ?? 0, i[3] ?? 0);
     if (g !== undefined && g !== null) this.gl.uniform4fv(g, block.geom); // u_geom[2]: 8 floats
     if (p !== undefined && p !== null) this.gl.uniform4fv(p, block.palette);
+    if (bs !== undefined && bs !== null) this.gl.uniform1i(bs, block.base ?? 0);
   }
 
   private compile(id: number): LinkedProgram {
