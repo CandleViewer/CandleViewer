@@ -9,6 +9,7 @@ import importlib.util
 import json
 import re
 import shutil
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -360,6 +361,8 @@ def test_attribution_applies_only_without_row_text_screen(tmp_path: Path) -> Non
         ("docs/design/E09/E09-D10.md", 51),
         ("docs/design/E08/E08-D12.md", 8),
         ("docs/design/E32/E32-D07-a11y.md", 11),
+        ("docs/design/E12/E12-D11.md", 9),
+        ("docs/design/E14/E14-D10.md", 17),
     ],
 )
 def test_real_review_tables_parse_to_the_documented_count(
@@ -405,7 +408,15 @@ def test_fixture_helper_copies_cleanly(tmp_path: Path) -> None:
 
 def test_real_attribution_leaves_only_the_unmapped_finding_and_no_blocker() -> None:
     reg = cat.build(ROOT)
-    assert [f["id"] for f in reg["unattributed"]] == ["A11Y-R-E09-D10-F-48"]
+    assert sorted(f["id"] for f in reg["unattributed"]) == [
+        "A11Y-R-E09-D10-F-48",
+        "A11Y-R-E12-D11-F-07",
+        "A11Y-R-E12-D11-F-08",
+        "A11Y-R-E14-D10-F-12",
+        "A11Y-R-E14-D10-F-14",
+        "A11Y-R-E14-D10-F-15",
+        "A11Y-R-E14-D10-F-16",
+    ]
     assert reg["counts"]["unattributedBlockers"] == 0
     assert reg["counts"]["bySeverity"]["blocker"] == 4  # E09-D10's four Blockers
     routing = json.loads((ROOT / cat.ROUTING_REL).read_text(encoding="utf-8"))
@@ -512,7 +523,8 @@ def test_real_cited_reviews_and_e32_d07_are_in_the_register() -> None:
         "E35-D04",
     }
     assert reg["derivedFrom"]["pendingReviews"] == []
-    assert "E32-D07" in reg["derivedFrom"]["reviews"]
+    assert {"E32-D07", "E12-D11", "E14-D10"} <= set(reg["derivedFrom"]["reviews"])
+    assert not {"E12-D11", "E14-D10"} & keys  # joined row by row, no longer only cited
     e15 = next(c for c in reg["derivedFrom"]["citedReviews"] if c["key"] == "E15-D15")
     assert (e15["total"], e15["blocker"]) == (
         12,
@@ -590,3 +602,70 @@ def test_check_without_the_pinned_blob_checks_consistency_only(
     md = tree / cat.CATALOGUE_OUT_REL
     md.write_text(md.read_text(encoding="utf-8") + "\nstale edit\n", encoding="utf-8")
     assert cat.main(["--root", str(tree), "--check"]) == 1
+
+
+def test_e12_and_e14_reviews_are_joined_row_by_row() -> None:
+    reg = cat.build(ROOT)
+    src = Counter(f["source"] for f in reg["findings"])
+    assert (src["review E12-D11"], src["review E14-D10"]) == (7, 13)
+    # the rows no review screen mapping covers stay listed, never dropped
+    assert {f["id"] for f in reg["unattributed"]} >= {
+        "A11Y-R-E12-D11-F-07",
+        "A11Y-R-E14-D10-F-12",
+    }
+    for f in reg["findings"]:
+        if f["source"] in ("review E12-D11", "review E14-D10"):
+            assert f["screens"] and f["designOwner"]
+
+
+def test_audit_count_markers_without_a_slash_form_are_read() -> None:
+    text = (
+        "F 3 <!-- audit:f=3 --> <!-- audit:f.blocking=1 --> <!-- audit:f.major=0 -->"
+        " <!-- audit:f.minor=1 --> <!-- audit:f.info=1 -->"
+    )
+    assert cat.expected_counts("X", text) == {
+        "total": 3, "blocker": 1, "major": 0, "minor": 1, "info": 1,
+    }  # fmt: skip
+
+
+def test_status_overrides_flip_open_rows_and_drop_out_when_the_register_says_fixed() -> (
+    None
+):
+    sha = "9684b740138f8ec163884fb2b6644834e12782a8"
+    routing = {
+        "statusOverrides": {"A11Y-F-1": {"status": "fixed", "sha": sha, "pr": 5214}}
+    }
+    f = {"id": "A11Y-F-1", "status": "open"}
+    assert cat.status_for(f, routing) == f"fixed (#5214, {sha[:12]})"
+    assert cat.status_for({"id": "A11Y-F-1", "status": "fixed"}, routing) == "fixed"
+    assert cat.status_for({"id": "A11Y-F-2", "status": "open"}, routing) == "open"
+    bad = {"statusOverrides": {"A11Y-F-1": {"status": "fixed", "sha": "abc", "pr": 1}}}
+    with pytest.raises(cat.CatalogueError):
+        cat.status_for(f, bad)
+
+
+def test_real_status_overrides_name_register_findings_with_a_full_sha() -> None:
+    routing = json.loads((ROOT / cat.ROUTING_REL).read_text(encoding="utf-8"))
+    register = json.loads(
+        (ROOT / "docs/plan/a11y/findings.json").read_text(encoding="utf-8")
+    )
+    ids = {f["id"] for f in register["findings"]}
+    assert len(routing["statusOverrides"]) == 9
+    for fid, ov in routing["statusOverrides"].items():
+        assert fid in ids and re.fullmatch(r"[0-9a-f]{40}", ov["sha"])
+
+
+def test_real_nine_level_a_rows_are_fixed_by_the_override() -> None:
+    reg = cat.build(ROOT)
+    by = {f["id"]: f for f in reg["findings"]}
+    ids = [f"A11Y-F-{n:04d}" for n in (3, 6, 10, 11, 12, 25, 26, 27, 28)]
+    for i in ids:
+        assert by[i]["status"].startswith("fixed (#52"), i
+    assert reg["counts"]["fixed"] == 13 and reg["counts"]["open"] == 106
+
+
+def test_real_md_carries_the_sweep_carry_and_the_ci_correction() -> None:
+    md = cat.render(cat.build(ROOT))
+    assert "kappa 0.61 (n = 96" in md
+    assert "does run in CI, in the `governance` lane" in md
+    assert "#5254" in md and "#193" in md

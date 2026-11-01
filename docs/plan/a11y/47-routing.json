@@ -40,6 +40,14 @@
     {
       "key": "E32-D07",
       "path": "docs/design/E32/E32-D07-a11y.md"
+    },
+    {
+      "key": "E12-D11",
+      "path": "docs/design/E12/E12-D11.md"
+    },
+    {
+      "key": "E14-D10",
+      "path": "docs/design/E14/E14-D10.md"
     }
   ],
   "pendingReviews": [],
@@ -179,6 +187,102 @@
     }
   ],
   "overrides": {
+    "A11Y-R-E12-D11-F-01": {
+      "owner": "E47-D07",
+      "reason": "the combined announcement cap across the chart's polite writes is a live-region throttling rule"
+    },
+    "A11Y-R-E12-D11-F-02": {
+      "owner": "E47-D06",
+      "reason": "which values the table alternative and the mirror carry for a Heikin-Ashi chart is the canvas table alternative"
+    },
+    "A11Y-R-E12-D11-F-03": {
+      "owner": "E47-D06",
+      "reason": "which node carries the chart's accessible description is the canvas DOM mirror's contract"
+    },
+    "A11Y-R-E12-D11-F-04": {
+      "owner": "E47-D04",
+      "reason": "the focus destination after the boundary tag's Enter is a focus-order rule"
+    },
+    "A11Y-R-E12-D11-F-05": {
+      "owner": "E47-D07",
+      "reason": "four announcements lack their strings: live-region content"
+    },
+    "A11Y-R-E12-D11-F-06": {
+      "owner": "E47-D07",
+      "reason": "the error card's politeness (polite against assertive) is a live-region rule"
+    },
+    "A11Y-R-E12-D11-F-07": {
+      "owner": "engineering-only",
+      "reason": "a process row (the review is written after the stories began); the waiver lines are the orchestrator's, no design change"
+    },
+    "A11Y-R-E12-D11-F-08": {
+      "owner": "engineering-only",
+      "reason": "unverified until a real screen reader runs (E12-Q07 #530); a verification row, not a design change"
+    },
+    "A11Y-R-E12-D11-F-09": {
+      "owner": "engineering-only",
+      "reason": "the finding's own words: the silence is the design, stated in the script so a build does not add a close announcement; no design change"
+    },
+    "A11Y-R-E14-D10-F-01": {
+      "owner": "E47-D07",
+      "reason": "the combined announcement cap for the cursor region and the drawing announcements is a live-region throttling rule"
+    },
+    "A11Y-R-E14-D10-F-02": {
+      "owner": "E47-D09",
+      "reason": "the single delete's confirm against the toast and one undo is keyboard operability (the keymap row and its confirm)"
+    },
+    "A11Y-R-E14-D10-F-03": {
+      "owner": "E47-D09",
+      "reason": "a pointer-only path to the anchor fields is the keyboard and drag alternative design"
+    },
+    "A11Y-R-E14-D10-F-05": {
+      "owner": "E47-D07",
+      "reason": "the commit and delete pane counts and the undo wording are announcement content"
+    },
+    "A11Y-R-E14-D10-F-06": {
+      "owner": "E47-D07",
+      "reason": "the refusal wording differs between the canvas and the tree: announcement content, not a canvas layer change"
+    },
+    "A11Y-R-E14-D10-F-07": {
+      "owner": "E47-D04",
+      "reason": "the focus destination after a commit with keep tool on is a focus-order rule"
+    },
+    "A11Y-R-E14-D10-F-08": {
+      "owner": "E47-D04",
+      "reason": "where focus goes after a single tree delete is a focus-order rule"
+    },
+    "A11Y-R-E14-D10-F-10": {
+      "owner": "E47-D09",
+      "reason": "drag alternatives drawn in text only until D05's boards exist: the drag alternative design"
+    },
+    "A11Y-R-E14-D10-F-11": {
+      "owner": "E47-D07",
+      "reason": "the words \"placed\" and the anchor's name are announcement content"
+    },
+    "A11Y-R-E14-D10-F-12": {
+      "owner": "engineering-only",
+      "reason": "a scope note on the focus-appearance criteria in the review's own task text, not an accessibility design change"
+    },
+    "A11Y-R-E14-D10-F-13": {
+      "owner": "engineering-only",
+      "reason": "fifteen rail tools lack a numbered walk: a text follow-up in the E14-D02 keyboard walk, no design change"
+    },
+    "A11Y-R-E14-D10-F-14": {
+      "owner": "engineering-only",
+      "reason": "an analytics event enum (entry_method), not an accessibility design change"
+    },
+    "A11Y-R-E14-D10-F-15": {
+      "owner": "engineering-only",
+      "reason": "a process row (sign-off timing against the sprint); the waiver is the orchestrator's, no design change"
+    },
+    "A11Y-R-E14-D10-F-16": {
+      "owner": "engineering-only",
+      "reason": "key delivery through the application wrapper is an engineering wiring note, no design change"
+    },
+    "A11Y-R-E14-D10-F-17": {
+      "owner": "E47-D06",
+      "reason": "which of two overlapping handle targets wins is the hit-test and surrogate contract"
+    },
     "A11Y-R-E08-D12-F-01": {
       "owner": "E47-D03",
       "reason": "token pair identical to the live text colour: a contrast and colour-independence design change"
@@ -234,6 +338,54 @@
     "A11Y-D02-T2-SCR-112": {
       "owner": "engineering-only",
       "reason": "a documentation fix to 14's component list by 14's owner (#2701), modelled on E08-D12 F-03, not a design deliverable"
+    }
+  },
+  "statusOverridesNote": "The register status comes from findings.json, which this PR does not edit (the E47-T01 sweep PR owns it). Each entry here marks a finding fixed on main by the named merged PR; the tool applies it on top of the register, and an entry stops applying once findings.json itself says fixed (then the register's status is kept). Remove an entry when findings.json catches up.",
+  "statusOverrides": {
+    "A11Y-F-0003": {
+      "status": "fixed",
+      "sha": "9684b740138f8ec163884fb2b6644834e12782a8",
+      "pr": 5214
+    },
+    "A11Y-F-0006": {
+      "status": "fixed",
+      "sha": "9684b740138f8ec163884fb2b6644834e12782a8",
+      "pr": 5214
+    },
+    "A11Y-F-0010": {
+      "status": "fixed",
+      "sha": "9684b740138f8ec163884fb2b6644834e12782a8",
+      "pr": 5214
+    },
+    "A11Y-F-0011": {
+      "status": "fixed",
+      "sha": "9684b740138f8ec163884fb2b6644834e12782a8",
+      "pr": 5214
+    },
+    "A11Y-F-0012": {
+      "status": "fixed",
+      "sha": "9684b740138f8ec163884fb2b6644834e12782a8",
+      "pr": 5214
+    },
+    "A11Y-F-0025": {
+      "status": "fixed",
+      "sha": "aec583dcc862b25de149d52ef2191b86ef613971",
+      "pr": 5213
+    },
+    "A11Y-F-0026": {
+      "status": "fixed",
+      "sha": "9684b740138f8ec163884fb2b6644834e12782a8",
+      "pr": 5214
+    },
+    "A11Y-F-0027": {
+      "status": "fixed",
+      "sha": "9684b740138f8ec163884fb2b6644834e12782a8",
+      "pr": 5214
+    },
+    "A11Y-F-0028": {
+      "status": "fixed",
+      "sha": "d721407c71d7ddda11d2ec781d9ce8010746c94e",
+      "pr": 5215
     }
   },
   "attribution": {
@@ -316,18 +468,82 @@
     "A11Y-R-E32-D07-F-11": {
       "screens": ["SCR-064", "SCR-065", "SCR-069"],
       "cite": "E32-D07 section 11 F-11 Screen cell 'all three' (SCR-064, SCR-065, SCR-069)"
+    },
+    "A11Y-R-E12-D11-F-01": {
+      "screens": ["SCR-030"],
+      "cite": "E12-D11 §2 inventory L138 (SCR-030's sources include D02:282–296, the F-01 row's own cite D02:282–285) and the F-01 row L724"
+    },
+    "A11Y-R-E12-D11-F-03": {
+      "screens": ["SCR-030"],
+      "cite": "E12-D11 §2 inventory L138 (D02:282–296 holds the cited D02:289) and the F-03 row L726"
+    },
+    "A11Y-R-E12-D11-F-04": {
+      "screens": ["SCR-030"],
+      "cite": "E12-D11 §5 PP-05 L207 (the off-view edge tag, SCR-030, D08:301) and the F-04 row L727"
+    },
+    "A11Y-R-E12-D11-F-05": {
+      "screens": ["SCR-030"],
+      "cite": "E12-D11 §2 inventory L138 (SCR-030: D06:344–360, D08:288–313, D02:282–296, 14:750–761; the F-05 row L728 cites D02:283, D08:294, D06:254, 14:755)"
+    },
+    "A11Y-R-E12-D11-F-09": {
+      "screens": ["SCR-030"],
+      "cite": "E12-D11 §2 inventory L138 (SCR-030's accessible text and cursor region) and the F-09 row L732 (the bar's close under follow, E06-D03:105)"
+    },
+    "A11Y-R-E14-D10-F-01": {
+      "screens": ["SCR-037"],
+      "cite": "E14-D10 §5 DR-01 L231 (SCR-037 canvas) and the F-01 row L851 (the drawing announcements, D02:388)"
+    },
+    "A11Y-R-E14-D10-F-02": {
+      "screens": ["SCR-036"],
+      "cite": "E14-D10 §2 inventory L144 (SCR-036 drawings branch, D07:313–388) and DR-08 L238; the F-02 row L852 cites D07:299"
+    },
+    "A11Y-R-E14-D10-F-03": {
+      "screens": ["SCR-037"],
+      "cite": "E14-D10 §2 inventory L140 (SCR-037 properties popover, D02:338–362) and DR-02 L232, DR-06 L236 (the anchor fields)"
+    },
+    "A11Y-R-E14-D10-F-04": {
+      "screens": ["SCR-037"],
+      "cite": "E14-D10 DR-02 L232 and DR-03 L233 (the anchor surrogates, D02:314; SCR-037 canvas) with the F-04 row L854 (D02:325)"
+    },
+    "A11Y-R-E14-D10-F-05": {
+      "screens": ["SCR-036", "SCR-037"],
+      "cite": "E14-D10 §2 inventory L140 and L144: the F-05 row L855 cites the commit (D02:526, SCR-037) and the delete and its undo (D07:384, :317, SCR-036)"
+    },
+    "A11Y-R-E14-D10-F-06": {
+      "screens": ["SCR-036", "SCR-037"],
+      "cite": "E14-D10 F-06 row L856: the canvas refusal (D02:533, SCR-037, DR-01 L231) against the tree's wording (D07:384, SCR-036, §2 L144)"
+    },
+    "A11Y-R-E14-D10-F-07": {
+      "screens": ["SCR-037"],
+      "cite": "E14-D10 DR-01 L231 (SCR-037 canvas) with the F-07 row L857 (T38 re-arm, D02:256, :420)"
+    },
+    "A11Y-R-E14-D10-F-08": {
+      "screens": ["SCR-036"],
+      "cite": "E14-D10 §2 inventory L144 (SCR-036 drawings branch, D07:313–388) with the F-08 row L858 (D07:299, :317)"
+    },
+    "A11Y-R-E14-D10-F-09": {
+      "screens": ["SCR-036", "SCR-037"],
+      "cite": "E14-D10 DR-10 L240 (the measure ribbon, SCR-037 canvas) and §2 L144 (the tree, SCR-036): the F-09 row L859 compares the two"
+    },
+    "A11Y-R-E14-D10-F-10": {
+      "screens": ["SCR-037"],
+      "cite": "E14-D10 DR-05 L235 and DR-10 L240 (D05's drag alternatives, SCR-037 canvas, text only)"
+    },
+    "A11Y-R-E14-D10-F-11": {
+      "screens": ["SCR-037"],
+      "cite": "E14-D10 DR-05 L235 and DR-10 L240 (D05's fib, VWAP and measure handles and ribbon, SCR-037 canvas)"
+    },
+    "A11Y-R-E14-D10-F-13": {
+      "screens": ["SCR-037"],
+      "cite": "E14-D10 §2 inventory L139 (SCR-037 the rail, its overflow and the Draw menu) with the F-13 row L863 (fifteen rail tools, §3.1)"
+    },
+    "A11Y-R-E14-D10-F-17": {
+      "screens": ["SCR-037"],
+      "cite": "E14-D10 §2 inventory L139 and DR-03 L233 (the handle targets on the SCR-037 canvas; D08:170 is the cited line)"
     }
   },
-  "unattributedNote": "A11Y-R-E09-D10-F-48 stays unattributed: E09-D10 §6.2 T-77 L390 maps it to the RBAC pattern (a panel holding focus), not to one screen.",
+  "unattributedNote": "A11Y-R-E09-D10-F-48 stays unattributed: E09-D10 §6.2 T-77 L390 maps it to the RBAC pattern (a panel holding focus), not to one screen. E12-D11 F-07 and F-08 and E14-D10 F-12, F-14, F-15 and F-16 stay unattributed because the reviews give no screen for them: a process row (T DoD or T Scope), the application wrapper's key delivery, or an analytics enum.",
   "citedReviews": [
-    {
-      "key": "E12-D11",
-      "path": "docs/design/E12/E12-D11.md"
-    },
-    {
-      "key": "E14-D10",
-      "path": "docs/design/E14/E14-D10.md"
-    },
     {
       "key": "E15-D15",
       "path": "docs/design/E15/E15-D15.md"
@@ -358,10 +574,10 @@
     }
   ],
   "vehicles": {
-    "A11Y-R-E09-D10-F-1": "#5254 (the fix issue for the E09 Blocking rows); the E09-D10 delta re-review is held at #193",
-    "A11Y-R-E09-D10-F-2": "#5254 (the fix issue for the E09 Blocking rows); the E09-D10 delta re-review is held at #193",
-    "A11Y-R-E09-D10-F-25": "#5254 (the fix issue for the E09 Blocking rows); the E09-D10 delta re-review is held at #193",
-    "A11Y-R-E09-D10-F-26": "#5254 (the fix issue for the E09 Blocking rows); the E09-D10 delta re-review is held at #193"
+    "A11Y-R-E09-D10-F-1": "#5254 (the fix issue for the E09 Blocking rows) and #193 (the held E09-D10 delta re-review)",
+    "A11Y-R-E09-D10-F-2": "#5254 (the fix issue for the E09 Blocking rows) and #193 (the held E09-D10 delta re-review)",
+    "A11Y-R-E09-D10-F-25": "#5254 (the fix issue for the E09 Blocking rows) and #193 (the held E09-D10 delta re-review)",
+    "A11Y-R-E09-D10-F-26": "#5254 (the fix issue for the E09 Blocking rows) and #193 (the held E09-D10 delta re-review)"
   },
   "remedyNotes": {
     "A11Y-R-E09-D10-F-32": "on SCR-006's read-only window Buy and Sell are CMP-079 RbacGate in its T2 treatment (E09-D09 section 2.2): `aria-disabled=\"true\"`, never `disabled`; a leading CMP-019 Icon `lock` named \"Not available\"; `aria-describedby` on the reason node that is in the DOM at mount; the reason string is the section 3.1 key `rbac.read_only` (\"Read-only after three wrong codes.\")."

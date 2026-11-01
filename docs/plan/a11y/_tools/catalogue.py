@@ -209,6 +209,18 @@ def expected_counts(key: str, text: str) -> dict[str, int]:
     if m:
         n = [int(g) for g in m.groups()]
         return dict(zip(("total", *SEVERITIES), n, strict=True))
+    named = {
+        k: re.search(rf"<!-- audit:f{suf}=(\d+) -->", text)
+        for k, suf in (
+            ("total", ""),
+            ("blocker", ".blocking"),
+            ("major", ".major"),
+            ("minor", ".minor"),
+            ("info", ".info"),
+        )
+    }
+    if all(named.values()):
+        return {k: int(m.group(1)) for k, m in named.items() if m}
     out: dict[str, int] = {}
     for name, label in (
         ("total", "findings"),
@@ -370,6 +382,25 @@ def sc_reason(f: dict[str, Any]) -> str:
     return "the source row cites no WCAG criterion"
 
 
+def status_for(f: dict[str, Any], routing: dict[str, Any]) -> str:
+    """The register's status, unless ``statusOverrides`` marks the row fixed on main.
+
+    The override is a stop-gap for a register PR that has not landed: it applies only while the
+    register still reads a non-fixed status, so it drops out cleanly once the register says fixed.
+    """
+    status = f.get("status", "open")
+    ov = routing.get("statusOverrides", {}).get(f["id"])
+    if not ov or status.startswith("fixed"):
+        return str(status)
+    if ov.get("status") != "fixed" or not re.fullmatch(
+        r"[0-9a-f]{40}", ov.get("sha", "")
+    ):
+        raise CatalogueError(
+            f"{f['id']}: statusOverrides needs status fixed and a full sha"
+        )
+    return f"fixed (#{ov['pr']}, {ov['sha'][:12]})"
+
+
 def t01_findings(reg: dict[str, Any], routing: dict[str, Any]) -> list[dict[str, Any]]:
     smap = routing["severityMap"]["t01"]
     out = []
@@ -395,7 +426,7 @@ def t01_findings(reg: dict[str, Any], routing: dict[str, Any]) -> list[dict[str,
                 "title": f.get("title", ""),
                 "remedy": f.get("expected", ""),
                 "remediation": f.get("owningTicket", ""),
-                "status": f.get("status", "open"),
+                "status": status_for(f, routing),
             }
         )
     return out
@@ -945,6 +976,24 @@ def render(reg: dict[str, Any]) -> str:
         ),
         "- Canvas four-layer verification, and the missing-layer blocker rule, pending a build. Only the screens listed with a canvas check in section 3 carry one, and those come from keyword matches on the 14 A11y line.",
         "- Contrast pairs are cited from the T01 and review tables, not re-measured here.",
+        (
+            "- The four Blockers (E09-D10 F-1, F-2, F-25, F-26) are carried by #5254 (the fix issue "
+            "for the E09 Blocking rows) and #193 (the held E09-D10 delta re-review); both are named "
+            "on each Blocker row in section 3."
+        ),
+        (
+            "- Inter-rater agreement carried from the E47-T01 sweep (`docs/qa/a11y/e47-t01-sweep.md` "
+            "section 10.1, not recomputed here: this tool reads no rater data): primary Cohen's "
+            "kappa 0.61 (n = 96, six WCAG 2.2 criteria); secondary kappa 0.28 (n = 880, 55 "
+            "criteria, fail against not-fail), below the 0.6 target because fails are rare "
+            "(chance agreement 0.962)."
+        ),
+        (
+            '- Correction to that sweep\'s section 13 row "STEST not in CI": '
+            "`scripts/tests/test_a11y_finding_schema.py` (STEST) does run in CI, in the "
+            "`governance` lane, which runs the `scripts/tests` suites on every PR. The row is "
+            "wrong; the sweep document is owned by its own PR and is not edited here."
+        ),
         "",
     ]
     return "\n".join(lines)
