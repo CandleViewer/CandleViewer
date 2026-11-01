@@ -122,6 +122,22 @@ G_T2 = re.compile(r"^(?:n/a|T2 · (?:2a|2b|sentence))$")
 FOCUS = re.compile(r"^(?:n/a|(?:kept|moves to|restored to|returns to) · \S.*)$")
 OWNER_TOKEN = r"`E\d\d-[DK]\d\d · area/[a-z-]+`"
 OWNER = re.compile(rf"^{OWNER_TOKEN}$")
+RULED_OWNERS = frozenset(
+    f"`{o}`"
+    for o in (
+        "E14-D02 · area/charting-ui",
+        "E14-D07 · area/charting-ui",
+        "E14-D08 · area/charting-ui",
+        "E14-D10 · area/charting-ui",
+        "E14-K01 · area/charting-ui",
+        "E06-D03 · area/chart-engine",
+        "E17-D02 · area/backend-platform",
+    )
+)
+CK_OWNERS = {
+    "CK-01": ("`E14-D10 · area/charting-ui`", "`E06-D03 · area/chart-engine`"),
+    "CK-02": ("`E17-D02 · area/backend-platform`",),
+}
 RULED_HOSTS = ("RG-03", "RG-04", "RG-14", "RG-15")
 POLITENESS = ("polite", "polite, coalesced", 'assertive (`role="alert"`)')
 HARNESS_ONLY = ("`Alt+C`", "`Alt+P`", "`Shift+Enter`")
@@ -566,6 +582,18 @@ def ring_values(base: str) -> dict[str, str]:
         out[f"ink.halo.{name}"] = " / ".join(str(mod.show_ratio(r)) for r in hh)
         both += sum(1 for a, b in zip(rr, hh, strict=True) if a < 3.0 and b < 3.0)
     out["ring.both-low"] = str(both)
+    short = {"color.candle.up": "up", "color.candle.down": "down", "color.candle.wick": "wick"}
+    themes = {"dark": "dark", "light": "light", "high-contrast": "hc"}
+    parts = []
+    for ink in CANDLE_INKS:
+        low = [
+            themes.get(th, th)
+            for th in mod.THEMES
+            if float(mod.contrast(hexof(th, RING), hexof(th, ink))) < 3.0
+        ]
+        if low:
+            parts.append(f"{short.get(ink, ink)}: {', '.join(low)}")
+    out["ring.under3"] = "; ".join(parts)
     port = engine("e09_d07_ds_audit")
     ring, hal = hexof("dark", RING), hexof("dark", HALO)
     des = [float(port.delta_e(port.simulate(ring, s), port.simulate(hal, s))) for s in port.SIMS]
@@ -854,6 +882,8 @@ def g_findings(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(("G08-FINDINGS", f"{r[0]}: no reason"))
         if not OWNER.match(r[5]):
             f.append(("G08-FINDINGS", f"{r[0]}: the owner is not one spec and its area"))
+        elif r[5] not in RULED_OWNERS:
+            f.append(("G08-FINDINGS", f"{r[0]}: the owner is not one of the ruled owners"))
         if not r[6]:
             f.append(("G08-FINDINGS", f"{r[0]}: the target cell is empty"))
         if not G_T2.match(r[7]):
@@ -875,6 +905,12 @@ def g_proposed(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         spec_owners = [o for o in owners if re.match(r"`E\d\d-", o)]
         if not spec_owners or any(not OWNER.match(o) for o in spec_owners):
             f.append(("G09-PROPOSED", f"{r[0]}: the owner is not in the ruled form"))
+        for need in CK_OWNERS.get(r[0], ()):
+            if need not in spec_owners:
+                f.append(("G09-PROPOSED", f"{r[0]}: the ruled owner {need} is missing"))
+        for o in spec_owners:
+            if o not in RULED_OWNERS:
+                f.append(("G09-PROPOSED", f"{r[0]}: {o} is not one of the ruled owners"))
     for i, ln in enumerate(ctx.spec.split("\n"), 1):
         if "PROPOSED" not in ln or ln.startswith("| CK-"):
             continue
@@ -1332,6 +1368,30 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
     (
         "G09-PROPOSED",
         lambda c: dataclasses.replace(c, spec=c.spec + "\nA new rule is PROPOSED here.\n"),
+    ),
+    (
+        "G09-PROPOSED",
+        lambda c: dataclasses.replace(
+            c, spec=set_cell(c.spec, "CK-01", 3, "`E14-D10 · area/charting-ui`")
+        ),
+    ),
+    (
+        "G09-PROPOSED",
+        lambda c: dataclasses.replace(
+            c, spec=set_cell(c.spec, "CK-01", 3, "`E06-D03 · area/chart-engine`")
+        ),
+    ),
+    (
+        "G08-FINDINGS",
+        lambda c: dataclasses.replace(
+            c, spec=set_cell(c.spec, "FK-03", 5, "`E14-D99 · area/nonsense`")
+        ),
+    ),
+    (
+        "G02-AUDIT",
+        lambda c: dataclasses.replace(
+            c, spec=_swap(c.spec, "audit:ring.under3=", "audit:ring.under3=none ")
+        ),
     ),
     (
         "G10-HYGIENE",
