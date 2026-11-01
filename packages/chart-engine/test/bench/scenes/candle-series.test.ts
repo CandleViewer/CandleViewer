@@ -66,7 +66,7 @@ describe("candle-series bench: 5k and 100k bars, pan and feed frames", () => {
       for (let f = 1; f <= 60; f += 1) bench.pan(f * 16);
       expect([trace.draws, bench.backend.takeUploadedBytes()]).toEqual([2, 0]);
       expect(trace.labels).toEqual(["series.hollow.wick", "series.hollow.body"]);
-      expect(bench.series.blocks.map((b) => b.ints[0])).toEqual([5, 6, 4]);
+      expect(bench.series.blocks.map((b) => b.ints[0])).toEqual([5, 6, 4, 7]);
       const writes = gl.writes.length;
       for (let f = 61; f <= 120; f += 1) bench.feed(f * 16);
       expect(gl.writes.length - writes).toBe(60);

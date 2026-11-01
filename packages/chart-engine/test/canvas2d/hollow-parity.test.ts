@@ -87,7 +87,7 @@ describe("Canvas2D hollow painter (parity with the geometry twin)", () => {
       `dpr %f${ha ? ", Heikin-Ashi" : ""}: every part's rects and colour`,
       (dpr) => {
         const { ring, block, c, ctx } = paint(dpr, ha);
-        expect(c.blocks.map((b) => b.ints[0])).toEqual([5, 6, 4]);
+        expect(c.blocks.map((b) => b.ints[0])).toEqual([5, 6, 4, 7]);
         const painted = ctx.paths.flatMap((p) => p.parts.map((r) => `${p.style} ${r}`)).sort();
         const css = (row: number): string => {
           const p = c.palette;
