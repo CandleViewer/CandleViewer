@@ -31,12 +31,35 @@ describe("parsing: the wire's form, and what a person types", () => {
     expect(parseWire("9".repeat(MAX_TEXT + 1))).toBeNull();
   });
 
-  it("takes typed text trimmed, with a bare point either side, never a sign or grouping", () => {
+  it("takes typed text trimmed, with a bare point either side, never a sign", () => {
     expect(parseTyped(" 2495.00 ")).toEqual({ units: 249500n, scale: 2 });
     expect(parseTyped(".5")).toEqual({ units: 5n, scale: 1 });
     expect(parseTyped("5.")).toEqual({ units: 5n, scale: 0 });
-    for (const bad of ["", ".", " ", "-2", "+2", "2,495", "2e3", "2..5", "abc"])
+    for (const bad of ["", ".", " ", "-2", "+2", "2e3", "2..5", "abc"])
       expect(parseTyped(bad)).toBeNull();
+  });
+
+  it("drops well-formed thousands grouping, as the grid shows a value (CMP-008)", () => {
+    expect(parseTyped("2,495.00")).toEqual({ units: 249500n, scale: 2 });
+    expect(parseTyped(" 1,234,567 ")).toEqual({ units: 1234567n, scale: 0 });
+    expect(parseTyped("63,950.")).toEqual({ units: 63950n, scale: 0 });
+    expect(parseTyped("999,000.5")).toEqual({ units: 9990005n, scale: 1 });
+  });
+
+  it("never reads malformed grouping as a number: 2,5 is not 25", () => {
+    for (const bad of [
+      "2,5",
+      "2,50",
+      "2,5000",
+      "12,34",
+      "1234,567",
+      ",495",
+      "2,495,5",
+      "2,495.0,0",
+      "2,,495",
+    ])
+      expect(parseTyped(bad)).toBeNull();
+    expect(checkTyped("2,5", d("0.1")).kind).toBe("not_a_number");
   });
 
   it("writes plain text at the value's own scale", () => {
@@ -74,6 +97,14 @@ describe("checkTyped: reasons in order, and never a rounding", () => {
 
   it("reads 2,495.03 on a 0.1 tick as off the step, never as 2,495.0", () => {
     expect(checkTyped("2495.03", d("0.1")).kind).toBe("off_step");
+    expect(checkTyped("2,495.03", d("0.1")).kind).toBe("off_step");
+  });
+
+  it("reads a minus sign before a number as below zero, not as no number", () => {
+    for (const negative of ["-5", " -0.5 ", "-.5", "-2,495.00", "-0"])
+      expect(checkTyped(negative, tick).kind).toBe("not_positive");
+    for (const junk of ["-", "--5", "-abc", "5-"])
+      expect(checkTyped(junk, tick).kind).toBe("not_a_number");
   });
 });
 

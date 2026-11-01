@@ -45,7 +45,11 @@ export { SplitButton } from "./SplitButton.js";
 export type { SplitButtonPrimary, SplitButtonProps } from "./SplitButton.js";
 
 // E29-S02's in-cell editor: the cell use of CMP-100 PriceInput and CMP-101 QtyInput.
-export { CELL_NUMBER_EDITOR_COPY, CellNumberEditor } from "./CellNumberEditor.js";
+export {
+  CELL_NUMBER_EDITOR_COPY,
+  CELL_TRIGGER_OFF_TICK,
+  CellNumberEditor,
+} from "./CellNumberEditor.js";
 export type {
   CellEditorUnit,
   CellNumberEditorCopy,

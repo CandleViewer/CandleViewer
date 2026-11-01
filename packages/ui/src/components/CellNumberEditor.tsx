@@ -10,7 +10,6 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Icon } from "../icons/Icon.js";
-import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { formatDecimal } from "./internal/decimalText.js";
 import {
   checkTyped,
@@ -23,32 +22,49 @@ import {
   type StepCheck,
   type StepDecimal,
 } from "./internal/decimalStep.js";
-import { ReasonText, useDisabledReason, useGatedAnnounce } from "./internal/disabledReason.js";
+import { useDisabledReason, useGatedAnnounce } from "./internal/disabledReason.js";
 import { FieldMessage } from "./internal/fieldParts.js";
 
 /** What the step is: a price's or a trigger's tick, or a quantity's lot (E29-D02 §7). */
 export type CellEditorUnit = "tick" | "lot";
 
+/**
+ * The editor's words: E30's merged validation strings where E30 has them (E30-D06, owner E30-D02 §14), CMP-008's
+ * and D02's own, and the rest PROPOSED with their owner named.
+ */
 export interface CellNumberEditorCopy {
   /** The step hint (E29-D02 §7, D02:303): "Step 0.1 · ↑/↓ one tick · Shift ten". */
   readonly stepHint: (step: string, unit: CellEditorUnit) => string;
   /** CMP-008's words for text that is no number. */
   readonly notANumber: string;
-  /** PROPOSED (E29-D03 with E30-D04, BQ-11): zero or less. */
+  /** A price or a trigger at zero or below. PROPOSED to E30-D02 §14's owner, E29-D03 informed (BQ-11). */
   readonly notPositive: string;
-  /** PROPOSED: a value off the step, which the editor never rounds. */
-  readonly offStep: (step: string) => string;
-  /** PROPOSED: below the lowest valid value. */
-  readonly belowMin: (min: string) => string;
+  /**
+   * A price off its tick, never rounded: `ticket.order.v.price.tick` (E30-D06, merged; E30-D02:373). A Trigger
+   * cell's host passes `CELL_TRIGGER_OFF_TICK` here.
+   */
+  readonly offTick: (tick: string) => string;
+  /**
+   * A quantity off its lot, at zero or below its lowest, and any value below `min`: `ticket.order.v.qty.lot`
+   * (E30-D06, merged; E30-D02:374).
+   */
+  readonly offLot: (min: string, lot: string) => string;
 }
 
 export const CELL_NUMBER_EDITOR_COPY: CellNumberEditorCopy = {
   stepHint: (step, unit) => `Step ${step} · ↑/↓ one ${unit} · Shift ten`,
   notANumber: "Enter a number.",
   notPositive: "Enter a number above zero.",
-  offStep: (step) => `Enter a multiple of ${step}.`,
-  belowMin: (min) => `Enter ${min} or more.`,
+  offTick: (tick) => `Price must be a multiple of ${tick}.`,
+  offLot: (min, lot) => `Minimum ${min}, step ${lot}.`,
 };
+
+/**
+ * A trigger off its tick, the Trigger cell's `offTick`. PROPOSED to E30-D02 §14's owner, E29-D03 informed: E30
+ * words a price's tick only.
+ */
+export const CELL_TRIGGER_OFF_TICK = (tick: string): string =>
+  `Trigger must be a multiple of ${tick}.`;
 
 export interface CellNumberEditorProps {
   /** The value's name, which the host makes the row's ("Price, ETHUSDT Buy on Sub-2"); the shown value follows it. */
@@ -59,24 +75,50 @@ export interface CellNumberEditorProps {
   step: string;
   /** "tick" for a price or a trigger, "lot" for a quantity: the step hint's word, and CMP-100 or CMP-101. */
   unit: CellEditorUnit;
-  /** The lowest valid value (a decimal string): a step down stops at it, and a typed value below it is refused. */
+  /**
+   * The lowest valid value, a quantity's floor (E29-D01 D7's lowest valid quantity; a fill raises it, D12): a step
+   * down stops at it, and a typed value below it is refused.
+   */
   min?: string;
   /** `Enter` on a valid value that differs from `value`: the typed decimal string, never rounded, never a number. */
   onCommit: (value: string) => void;
-  /** The host's own verdict on a value the editor accepts (E29-D01 D7: a stop's quantity that leaves size bare). */
+  /**
+   * The host's own verdict on a value the editor accepts (E29-D01 D7: a stop's quantity that leaves size bare): a
+   * refusal, drawn as one (`aria-invalid`, the danger boundary and its words).
+   */
   validate?: (value: string) => string | undefined;
+  /**
+   * T2 on the commit of an open editor (E29-D02 §7, board 16; E09-D09 §2.1 step 4): the reason a valid, changed
+   * value may not be sent now (a quantity up under the kill switch, an unarmed LIVE amend), or `undefined` to send
+   * it. A pure function of the value. `Enter` then sends nothing and shows the reason 2a under the editor with one
+   * polite announcement, never `aria-invalid`; `Esc` restores the live value.
+   */
+  commitGate?: (value: string) => string | undefined;
   /** Controlled editing: the host opens the editor from its grid cell or its row menu. */
   editing?: boolean;
   /**
-   * Every open, close and discarded edit, controlled or not: the host suppresses its trading hotkeys while an edit is
-   * open (E29-D02 §7), and a controlled host applies the change.
+   * Every open, close and discarded edit, controlled or not. From `true` to `false` the host suspends its grid keys
+   * and its trading hotkeys (E29-D01 D12, E29-D02 §7), and a controlled host applies the change.
    */
   onEditingChange?: (editing: boolean) => void;
   /** The description during an edit (E29-D02 §7: "Editing the price. 2,500.00 stays live until you press Enter."). */
   editingDescription?: string;
+  /**
+   * Plain disabled, with no reason to give: native, dimmed and out of the Tab order. SCR-063 has no use for it: a
+   * cell that may not be edited is T2 with its reason (#912 BQ-9).
+   */
   disabled?: boolean;
-  /** The visible reason the edit is denied: disabled-with-reason (T2, E09-D09 §2.2), rendered 2b in the cell. */
+  /**
+   * The reason the edit is denied: disabled with a visible reason (T2, E09-D09 §2.2). The value keeps its look; the
+   * reason is its description and is re-shown 2a under the cell when `Enter`, `F2` or a double-click is refused.
+   */
   disabledReason?: string;
+  /**
+   * The id of the node in which the host already shows `disabledReason` (E09-D09 §2.2 "one notice, many pointers",
+   * G-T2.5: a Viewer's or view-as panel-header notice, D02:431–435): the value is described by it, and the editor
+   * renders no reason node of its own.
+   */
+  disabledReasonId?: string;
   density?: "comfortable" | "compact";
   /** A roving grid's stop: `-1` for a cell that is not its stop. */
   tabIndex?: 0 | -1;
@@ -85,10 +127,22 @@ export interface CellNumberEditorProps {
 
 const isChord = (event: KeyboardEvent): boolean => event.ctrlKey || event.metaKey || event.altKey;
 
+/** The caret's keys: while the editor is open they move its caret, and never the grid (E29-D02 §11.1 binds them). */
+const CARET_KEYS: ReadonlySet<string> = new Set(["ArrowLeft", "ArrowRight", "Home", "End"]);
+
 /** The live value as the cell shows it: grouped at the step's places or the value's own, never fewer (no rounding). */
 function shownText(value: StepDecimal | null, raw: string, step: StepDecimal): string {
   if (value === null) return raw;
   return formatDecimal(toText(widen(value, step.scale)))?.text ?? raw;
+}
+
+/** The CMP-019 `lock` that leads a reason shown 2a, named "Not available" (E09-D09 §2.2, G-T2.1d). */
+function Lock(): JSX.Element {
+  return (
+    <span className="cv-cell-editor__lock">
+      <Icon name="lock" decorative={false} label="Not available" />
+    </span>
+  );
 }
 
 /**
@@ -96,8 +150,17 @@ function shownText(value: StepDecimal | null, raw: string, step: StepDecimal): s
  * edited in place as the wire's decimal string. At rest it is a read-only spin button showing the live value;
  * `Enter`, `F2` or a double-click opens the editor, a fresh field that takes focus. `↑` / `↓` step one tick or lot,
  * `Shift` ten, on a scaled BigInt; `Enter` alone commits a valid value, and `Esc`, `Tab` or a click elsewhere
- * restores the live value. Nothing is rounded: a value off the step is refused with its reason. Gated (T2), it keeps
- * its name and its place in the Tab order with `aria-disabled`, a lock glyph and the reason echoed (2b).
+ * restores the live value. Nothing is rounded: a value off the step is refused with its reason. While open, the
+ * editor keeps `←`, `→`, `Home` and `End` for its caret; every other grid key and every trading hotkey is the host's
+ * to suspend from `onEditingChange(true)` until `onEditingChange(false)` (E29-D01 D12).
+ *
+ * T2 (E09-D09 §2.2; E29-D04 §4.1, D02:429): a gated cell keeps its value's own look, with no glyph among the
+ * numerals and no echo, its name and its Tab stop, with `aria-disabled` and the reason as its description (its own
+ * hidden node, or the host's notice through `disabledReasonId`). A refused `Enter`, `F2` or double-click sends
+ * nothing and re-shows the reason 2a under the cell, the lock leading it, with one polite announcement (G-T2.3);
+ * `commitGate` refuses an open editor's commit the same way, under the editor. A gate that comes or goes never
+ * remounts the focused value. The step hint, the live value, a refusal and a reason overlay the rows under the
+ * cell, out of the flow, so a windowed row keeps its height (D01 D13 b).
  */
 export function CellNumberEditor({
   label,
@@ -107,11 +170,13 @@ export function CellNumberEditor({
   min,
   onCommit,
   validate,
+  commitGate,
   editing: editingProp,
   onEditingChange,
   editingDescription,
   disabled,
   disabledReason,
+  disabledReasonId,
   density,
   tabIndex = 0,
   copy: copyOverride,
@@ -122,7 +187,7 @@ export function CellNumberEditor({
     parsedStep !== null && parsedStep.units > 0n ? parsedStep : { units: 1n, scale: 0 };
   const minValue = min === undefined ? undefined : (parseWire(min) ?? undefined);
   const live = parseWire(value);
-  const reason = useDisabledReason(disabled, disabledReason);
+  const reason = useDisabledReason(disabled, disabledReason, disabledReasonId);
   const announce = useGatedAnnounce();
   const blocked = reason.gated || reason.disabled || live === null;
   const [own, setOwn] = useState(false);
@@ -130,6 +195,10 @@ export function CellNumberEditor({
   const editing = held && !blocked;
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** A commit the gate refused: its reason stays under the editor until the text changes (G-T2.3). */
+  const [gatedPress, setGatedPress] = useState(false);
+  /** A refused activation at rest: the reason stays under the cell until focus leaves it (G-T2.3). */
+  const [reshown, setReshown] = useState(false);
   const displayRef = useRef<HTMLInputElement>(null);
   const editRef = useRef<HTMLInputElement>(null);
   /** Set while `Enter` or `Esc` closes the editor, so a blur its unmount may raise restores nothing twice. */
@@ -140,6 +209,7 @@ export function CellNumberEditor({
   const descriptionId = useId();
   const hintId = useId();
   const messageId = useId();
+  const gateId = useId();
   const shown = shownText(live, value, stepValue);
   const plain = live === null ? value : toText(widen(live, stepValue.scale));
 
@@ -160,8 +230,11 @@ export function CellNumberEditor({
     if (editing) {
       setDraft(plain);
       setError(null);
+      setGatedPress(false);
     }
   }
+  // A gate that lifts takes its re-shown reason with it: one that comes back shows nothing until a press.
+  if (reshown && !reason.gated) setReshown(false);
 
   // The editor is a fresh field: it takes focus when it opens, so its name and description are read once. Closed by
   // `Enter` or `Esc`, focus comes back to the cell's value.
@@ -196,7 +269,8 @@ export function CellNumberEditor({
 
   const open = (): void => {
     if (reason.gated) {
-      announce(reason.reason); // G-T2.3: nothing changes; the reason is said once more, politely
+      setReshown(true); // G-T2.3: nothing changes; the reason is re-shown 2a and said once more, politely
+      announce(reason.reason);
       return;
     }
     if (!blocked) setEditing(true);
@@ -209,20 +283,33 @@ export function CellNumberEditor({
   };
 
   function messageOf(check: Exclude<StepCheck, { kind: "ok" }>): string {
+    const lowest = min ?? step;
     switch (check.kind) {
       case "empty":
       case "not_a_number":
         return copy.notANumber;
       case "not_positive":
-        return copy.notPositive;
+        return unit === "lot" ? copy.offLot(lowest, step) : copy.notPositive;
       case "off_step":
-        return copy.offStep(step);
+        return unit === "lot" ? copy.offLot(lowest, step) : copy.offTick(step);
       case "below_min":
-        return copy.belowMin(min ?? step);
+        return copy.offLot(lowest, step);
     }
   }
 
+  /** The gate's reason for typed text that would be sent, else `undefined` (no gate, junk, or the live value). */
+  function gateOf(text: string): string | undefined {
+    if (commitGate === undefined) return undefined;
+    const check = checkTyped(text, stepValue, minValue);
+    if (check.kind !== "ok" || (live !== null && compareDecimal(check.value, live) === 0)) {
+      return undefined;
+    }
+    const said = commitGate(toText(check.value))?.trim();
+    return said === "" ? undefined : said;
+  }
+
   function commit(): void {
+    setGatedPress(false);
     const check = checkTyped(draft, stepValue, minValue);
     if (check.kind !== "ok") {
       setError(messageOf(check));
@@ -232,6 +319,14 @@ export function CellNumberEditor({
     const refusal = validate?.(text);
     if (refusal !== undefined && refusal !== "") {
       setError(refusal);
+      return;
+    }
+    const gate = gateOf(draft);
+    if (gate !== undefined) {
+      // T2 on the commit: nothing is sent, the reason shows 2a under the editor and is said once, politely
+      setError(null);
+      setGatedPress(true);
+      announce(gate);
       return;
     }
     const changed = live === null || compareDecimal(check.value, live) !== 0;
@@ -245,10 +340,15 @@ export function CellNumberEditor({
     const from = typed !== null && typed.units > 0n ? typed : (live ?? stepValue);
     setDraft(toText(stepFrom(from, stepValue, direction, times, minValue)));
     setError(null);
+    setGatedPress(false);
   }
 
   const onEditKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
     if (event.nativeEvent.isComposing || isChord(event)) return;
+    if (CARET_KEYS.has(event.key)) {
+      event.stopPropagation(); // the caret moves (no preventDefault); the grid never moves under an open edit
+      return;
+    }
     if (event.key === "Enter") commit();
     else if (event.key === "Escape") close(true);
     else if (event.key === "ArrowUp" || event.key === "ArrowDown")
@@ -269,6 +369,7 @@ export function CellNumberEditor({
   const onInput = (event: ChangeEvent<HTMLInputElement>): void => {
     const text = event.target.value;
     setDraft(text);
+    setGatedPress(false);
     // A shown message keeps its words while the text is still refused, then clears silently (CMP-008's rule).
     if (error !== null && checkTyped(text, stepValue, minValue).kind === "ok") setError(null);
   };
@@ -285,11 +386,17 @@ export function CellNumberEditor({
   };
 
   if (editing) {
-    const describedBy = [editingDescription === undefined ? "" : descriptionId, hintId, messageId]
+    const gateReason = gatedPress ? gateOf(draft) : undefined;
+    const describedBy = [
+      editingDescription === undefined ? "" : descriptionId,
+      hintId,
+      messageId,
+      gateId,
+    ]
       .filter((id) => id !== "")
       .join(" ");
-    // The step hint is a caption, not a CMP-016 tooltip: an open tooltip takes the first `Esc` as
-    // its own layer (conventions 32), and here `Esc` must restore the live value at once (D01 D12).
+    // The note under the editor is not a CMP-016 tooltip: an open tooltip takes the first `Esc` as its own layer
+    // (conventions 32), and here `Esc` must restore the live value at once (D01 D12).
     return (
       <span {...root}>
         <span className="cv-cell-editor__well">
@@ -315,53 +422,75 @@ export function CellNumberEditor({
             }}
           />
         </span>
-        <span className="cv-cell-editor__live" aria-hidden="true">
-          {shown}
-        </span>
-        <span id={hintId} className="cv-cell-editor__hint">
-          {copy.stepHint(step, unit)}
+        <span className="cv-cell-editor__note">
+          <span className="cv-cell-editor__live" aria-hidden="true">
+            {shown}
+          </span>
+          <FieldMessage id={messageId} message={error ?? undefined} />
+          <span
+            className="cv-cell-editor__reason"
+            data-shown={gateReason === undefined ? undefined : ""}
+          >
+            {gateReason === undefined ? null : <Lock />}
+            <span id={gateId}>{gateReason}</span>
+          </span>
+          <span id={hintId} className="cv-cell-editor__hint">
+            {copy.stepHint(step, unit)}
+          </span>
         </span>
         {editingDescription === undefined ? null : (
           <span id={descriptionId} className="cv-visually-hidden">
             {editingDescription}
           </span>
         )}
-        <FieldMessage id={messageId} message={error ?? undefined} />
       </span>
     );
   }
 
-  const display = (
-    <input
-      ref={displayRef}
-      key="display"
-      type="text"
-      role="spinbutton"
-      readOnly
-      tabIndex={reason.disabled ? undefined : tabIndex}
-      disabled={reason.disabled}
-      className="cv-cell-editor__input cv-focus-ring"
-      size={Math.max(shown.length, 1) + 1}
-      value={shown}
-      aria-label={label}
-      aria-valuetext={shown}
-      aria-disabled={reason.ariaDisabled}
-      aria-describedby={reason.ariaDescribedBy}
-      onKeyDown={onDisplayKeyDown}
-      onDoubleClick={open}
-    />
-  );
+  const reasonShown = reshown && reason.gated;
+  // One tree whether gated or not: a gate that comes or goes on the focused value never remounts it (`05` §3.4.3).
   return (
     <span {...root}>
       <span className="cv-cell-editor__well">
-        {reason.gated ? (
-          <span className="cv-cell-editor__lock">
-            <Icon name="lock" decorative={false} label="Not available" />
-          </span>
-        ) : null}
-        {reason.gated ? <ReasonEcho text={reason.reason}>{display}</ReasonEcho> : display}
+        <input
+          ref={displayRef}
+          key="display"
+          type="text"
+          role="spinbutton"
+          readOnly
+          tabIndex={reason.disabled ? undefined : tabIndex}
+          disabled={reason.disabled}
+          className="cv-cell-editor__input cv-focus-ring"
+          size={Math.max(shown.length, 1) + 1}
+          value={shown}
+          aria-label={label}
+          aria-valuetext={shown}
+          aria-disabled={reason.ariaDisabled}
+          aria-describedby={reason.ariaDescribedBy}
+          onKeyDown={onDisplayKeyDown}
+          onDoubleClick={open}
+          onBlur={() => setReshown(false)}
+        />
       </span>
-      <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
+      {reason.gated && !reason.external ? (
+        // The reason node, in the DOM from the gate's first render and the value's description: hidden, and shown
+        // 2a in place (never re-mounted) once a refused activation re-shows it.
+        <span className={reasonShown ? "cv-cell-editor__note" : "cv-visually-hidden"}>
+          <span className="cv-cell-editor__reason" data-shown={reasonShown ? "" : undefined}>
+            {reasonShown ? <Lock /> : null}
+            <span id={reason.reasonId}>{reason.reason}</span>
+          </span>
+        </span>
+      ) : null}
+      {reasonShown && reason.external ? (
+        // The host's notice is the description: this is only its re-show at the point of action
+        <span className="cv-cell-editor__note" aria-hidden="true">
+          <span className="cv-cell-editor__reason" data-shown="">
+            <Lock />
+            <span>{reason.reason}</span>
+          </span>
+        </span>
+      ) : null}
     </span>
   );
 }
