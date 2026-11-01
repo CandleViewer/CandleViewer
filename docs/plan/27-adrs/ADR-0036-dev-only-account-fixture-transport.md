@@ -164,7 +164,9 @@ invariant (C-4.14).
    fixture stack's api, which keeps the app's entrypoint so the S8 guard runs first, and adds the seed's `init`
    as a root one-shot (`secrets`, the run's throwaway KEK and audit lane key, then `users`). Compose passes it
    the invoking user's uid, and the gate accepts only a run directory that uid owns (R1C-01 (a)); root gets no
-   pass of its own. **S16b** is the fixture clock in the E27 timers, which waits on #896 and #899.
+   pass of its own. **S16b** is the fixture clock in the E27 timers, which waits on #896 and #899. The stack is
+   brought up and taken down by `infra/scripts/account_fixture_stack.py` (runbook:
+   `docs/ops/runbooks/account-fixture-stack.md`).
 10. **A test-only switch, not a C-4.13 flag,** like `CV_TEST_CLOCK` (`settings.py:264-266`), which is not in
     the flag catalogue (`admin/flags/catalogue.py:25`). A flag is runtime, Owner-toggled and in every build;
     this switch is fixed at boot and its code is not in the release image. Each slice fails closed (until S7
