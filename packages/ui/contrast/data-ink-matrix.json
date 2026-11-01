@@ -4393,7 +4393,7 @@
       "palette": "default",
       "id": "color.text.tertiary on color.surface.hover",
       "key": "light:comfortable:color.text.tertiary on color.surface.hover",
-      "ratio": 5.44,
+      "ratio": 4.86,
       "threshold": 4.5,
       "pass": true
     },
@@ -4404,7 +4404,7 @@
       "palette": "default",
       "id": "color.text.tertiary on color.surface.hover",
       "key": "light:compact:color.text.tertiary on color.surface.hover",
-      "ratio": 5.44,
+      "ratio": 4.86,
       "threshold": 4.5,
       "pass": true
     },
