@@ -9,6 +9,7 @@ import type {
   RenderProfile,
 } from "../gl/capability.js";
 import type { LossDetails } from "../gl/context-loss.js";
+import { setDrawingsReason, type SetDrawings } from "../layers/drawings/model.js";
 import { INT32_TICKS } from "../viewport/transform.js";
 
 export type { CapabilityReport, DegradeReason, ReducedCapability, RenderProfile };
@@ -102,6 +103,8 @@ export type Command =
   | { readonly k: "setViewport"; readonly timeStart: number; readonly timeEnd: number }
   | { readonly k: "setSeriesOptions"; readonly series: number; readonly options: object }
   | { readonly k: "addDrawing"; readonly drawingId: string; readonly kind: string }
+  /** E14-T03 (additive): the drawing set, replaced whole or patched by id (closed, bounded). */
+  | ({ readonly k: "setDrawings" } & SetDrawings)
   | { readonly k: "setTheme"; readonly theme: ThemeLut }
   | { readonly k: "setLod"; readonly candles: 0 | 1 | 2; readonly footprint: 0 | 1 | 2 | 3 }
   /** The app's resolved motion mode changed (E11-S04 BQ-104): `reduce` stops a glide. */
@@ -483,8 +486,14 @@ export function rejectReason(msg: unknown): string | null {
       const covered = layoutBytes(msg["layout"], buf.byteLength);
       return covered === buf.byteLength ? null : "buffer length does not match its layout";
     }
-    case "command":
-      return validCommand(msg["cmd"]) ? null : "malformed command";
+    case "command": {
+      const cmd = msg["cmd"];
+      if (!isObj(cmd) || cmd["k"] !== "setDrawings") {
+        return validCommand(cmd) ? null : "malformed command";
+      }
+      const why = setDrawingsReason(cmd); // E14-X01 DR8, DR9, DR29: refused before any state
+      return why === null ? null : `setDrawings: ${why}`;
+    }
     default:
       return `unknown message kind ${String(t)}`;
   }
