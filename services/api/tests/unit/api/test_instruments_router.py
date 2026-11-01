@@ -39,6 +39,7 @@ def raw(symbol: str, **overrides: object) -> dict[str, object]:
         "priceFilter": {"tickSize": "0.10"},
         "lotSizeFilter": {"qtyStep": "0.001", "minOrderQty": "0.001", "maxOrderQty": "100"},
         "leverageFilter": {"maxLeverage": "100.00"},
+        "fundingInterval": 480,
     }
     r.update(overrides)
     return r

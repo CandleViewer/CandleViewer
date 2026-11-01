@@ -220,6 +220,13 @@ def test_rejection_reason_is_bounded(over: dict[str, Any]) -> None:
     assert len(res.rejected) == 1 and len(res.rejected[0].reason) < 300
 
 
+def test_rejected_symbol_is_bounded() -> None:
+    """#1896: the rejection's symbol is logged; an oversized one is not carried."""
+    good = rest("rest/instruments_before.json")["result"]["list"]
+    res = parse_instruments([{**good[0], "symbol": "S" * 5000, "status": "Bogus"}], fetched_at_us=1)
+    assert res.rejected[0].symbol is None
+
+
 def test_missing_funding_interval_is_rejected_not_defaulted() -> None:
     """#1933: no silent 480; the row is rejected and names the field."""
     good = rest("rest/instruments_before.json")["result"]["list"]

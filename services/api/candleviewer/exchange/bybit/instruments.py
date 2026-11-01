@@ -245,7 +245,9 @@ def parse_instruments(
             symbol = raw.get("symbol")
             rejected.append(
                 RejectedInstrument(
-                    symbol=symbol if isinstance(symbol, str) else None, reason=str(exc)
+                    # The symbol is logged with the reason: a hostile one is bounded too (#1896).
+                    symbol=symbol if isinstance(symbol, str) and len(symbol) <= _REPR_MAX else None,
+                    reason=str(exc),
                 )
             )
     return InstrumentsFetchResult(instruments=tuple(parsed), rejected=tuple(rejected))
@@ -263,7 +265,8 @@ async def _fetch_raw_pages(client: _PublicGetter) -> list[Mapping[str, Any]]:
         page = result.get("list") or []
         if not isinstance(page, list):
             raise InstrumentParseError("instruments-info result.list is not a list")
-        items.extend(p for p in page if isinstance(p, Mapping))
+        # Every item goes on: a non-object one is a counted rejection in parse_instruments (#1896).
+        items.extend(page)
         cursor = result.get("nextPageCursor") or None
         if not cursor:
             return items

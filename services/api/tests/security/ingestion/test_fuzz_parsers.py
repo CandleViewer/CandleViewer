@@ -179,7 +179,14 @@ def test_recent_trades_page_fuzz(body: dict[str, Any]) -> None:
 @PR
 @given(
     st.fixed_dictionaries(
-        {"symbol": _sym, "status": st.sampled_from(["Trading", "Bogus"]), "launchTime": _ts},
+        {
+            "symbol": _sym,
+            "status": st.sampled_from(["Trading", "Bogus"]),
+            "launchTime": _ts,
+            # Present, so an example reaches the nested filters (#1896's surface) instead of
+            # stopping at the missing interval (#1933).
+            "fundingInterval": st.just(480),
+        },
         optional={"priceFilter": _json, "lotSizeFilter": _json, "leverageFilter": _json},
     )
 )
