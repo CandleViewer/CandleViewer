@@ -233,7 +233,7 @@ async def test_questdb_store_rows_reads_and_coverage_are_parameterised() -> None
     assert written[0]["stream"] == "all" and written[0]["recv_ts"] == 7
     fields = {k: v for k, v in written[0].items() if k != "ts"}
     line = serialize_ilp_line(LIQUIDATIONS_SCHEMA, fields, ev.ts_event)
-    assert line.startswith("liquidations,symbol=BTCUSDT,side=sell,stream=all ")
+    assert line.startswith("liquidations,symbol=BTCUSDT,side=buy,stream=all ")
     (got,) = await store.read_prints("BTCUSDT", _Win(0, 10), "sell", 50)
     assert (got.price, got.notional, got.batch_index) == (Decimal("100.5"), Decimal("201.0"), 0)
     assert await store.first_ts("BTCUSDT") == got.ts_us
