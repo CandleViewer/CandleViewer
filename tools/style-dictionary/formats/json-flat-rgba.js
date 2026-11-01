@@ -46,6 +46,8 @@ export const ENGINE_CATEGORY_PREFIXES = [
   "color.heatmap.",
   "color.buy.",
   "color.sell.",
+  // E11-D05 G16: the CVD-safe palette (E47-S06), so its heatmap stops reach the engine export.
+  "color.cvd.",
 ];
 
 export function isEngineToken(name) {

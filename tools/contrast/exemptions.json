@@ -225,6 +225,51 @@
       "pair": "light:color.heatmap.ask.4 vs color.heatmap.ask.5:protanopia",
       "reason": "Adjacent light-theme heatmap ramp stops collapse under protanopia simulation (dE76 2.64 < floor 5.0); tracked as follow-up design debt to retune the light-theme heatmap ramp spacing.",
       "owner": "basiltt"
+    },
+    {
+      "token": "color.chart.grid.major",
+      "reason": "Decorative chrome that carries no meaning, so the 3:1 floor of docs/plan/16-design-system-brief.md §6 rule 7 (for meaning-carrying lines) does not apply (docs/design/E11/E11-D05.md §4.4 rule 5, Q4): major grid lines; the aesthetic grid recedes (1.50 / 1.31 / 3.03:1 on the canvas).",
+      "owner": "basiltt"
+    },
+    {
+      "token": "color.chart.grid.minor",
+      "reason": "Decorative chrome that carries no meaning, so the 3:1 floor of docs/plan/16-design-system-brief.md §6 rule 7 (for meaning-carrying lines) does not apply (docs/design/E11/E11-D05.md §4.4 rule 5, Q4): minor grid lines; the aesthetic grid recedes, and in high contrast the slot is off (the canvas colour, E11-D05 Q2).",
+      "owner": "basiltt"
+    },
+    {
+      "token": "color.chart.watermark",
+      "reason": "Decorative chrome that carries no meaning, so the 3:1 floor of docs/plan/16-design-system-brief.md §6 rule 7 (for meaning-carrying lines) does not apply (docs/design/E11/E11-D05.md §4.4 rule 5, Q4): the aria-hidden symbol watermark; the symbol and interval live in the toolbar and the label (E11-D02 D13).",
+      "owner": "basiltt"
+    },
+    {
+      "token": "color.chart.pane.bg.default",
+      "reason": "Decorative chrome that carries no meaning, so the 3:1 floor of docs/plan/16-design-system-brief.md §6 rule 7 (for meaning-carrying lines) does not apply (docs/design/E11/E11-D05.md §4.4 rule 5, Q4): the pane background, a surface rather than ink; every chart pair is measured on its colour, color.surface.canvas.",
+      "owner": "basiltt"
+    },
+    {
+      "token": "color.chart.pane.bg.focused",
+      "reason": "Decorative chrome that carries no meaning, so the 3:1 floor of docs/plan/16-design-system-brief.md §6 rule 7 (for meaning-carrying lines) does not apply (docs/design/E11/E11-D05.md §4.4 rule 5, Q4): the focused pane background, identical to .default by design; the focus bar carries focus (E11-D02 D13, D14).",
+      "owner": "basiltt"
+    },
+    {
+      "token": "color.chart.rule",
+      "reason": "Decorative chrome that carries no meaning, so the 3:1 floor of docs/plan/16-design-system-brief.md §6 rule 7 (for meaning-carrying lines) does not apply (docs/design/E11/E11-D05.md §4.4 rule 5, Q4): the axis, strip and splitter hairline between a gutter and the pane (1.50 / 1.31 / 3.03:1 on the canvas).",
+      "owner": "basiltt"
+    },
+    {
+      "token": "color.chart.hatch.texture",
+      "reason": "Decorative chrome that carries no meaning, so the 3:1 floor of docs/plan/16-design-system-brief.md §6 rule 7 (for meaning-carrying lines) does not apply (docs/design/E11/E11-D05.md §4.4 rule 5, Q4): the 45-degree texture of pattern.hatch.gap; its edges are color.chart.boundary, which carries the band.",
+      "owner": "basiltt"
+    },
+    {
+      "token": "color.chart.pill.border",
+      "reason": "Decorative chrome that carries no meaning, so the 3:1 floor of docs/plan/16-design-system-brief.md §6 rule 7 (for meaning-carrying lines) does not apply (docs/design/E11/E11-D05.md §4.4 rule 5, Q4): the 1 px border of the neutral GL pills; the pill's text (color.chart.pill.text.default) carries it.",
+      "owner": "basiltt"
+    },
+    {
+      "token": "color.chart.pill.bg",
+      "reason": "Decorative chrome that carries no meaning, so the 3:1 floor of docs/plan/16-design-system-brief.md §6 rule 7 (for meaning-carrying lines) does not apply (docs/design/E11/E11-D05.md §4.4 rule 5, Q4): the fill of the neutral GL pills, a surface rather than ink; its text pair is registered in pairs.mjs.",
+      "owner": "basiltt"
     }
   ]
 }

@@ -36,9 +36,24 @@
       "buildPath": "build/engine/",
       "files": [
         {
+          "destination": "theme-uniforms.dark.json",
+          "format": "json/flat-rgba",
+          "filter": { "category": "chart", "theme": "dark" }
+        },
+        {
+          "destination": "theme-uniforms.light.json",
+          "format": "json/flat-rgba",
+          "filter": { "category": "chart", "theme": "light" }
+        },
+        {
+          "destination": "theme-uniforms.high-contrast.json",
+          "format": "json/flat-rgba",
+          "filter": { "category": "chart", "theme": "high-contrast" }
+        },
+        {
           "destination": "theme-uniforms.json",
           "format": "json/flat-rgba",
-          "filter": { "category": "chart" }
+          "filter": { "category": "chart", "theme": "dark" }
         }
       ]
     },
