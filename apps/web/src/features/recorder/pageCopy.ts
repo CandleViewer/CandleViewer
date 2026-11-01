@@ -50,6 +50,8 @@ export const PAGE_TEXT = {
     add: "Not started: the server refused it.",
     stop: "Not stopped: the server refused it.",
     compact: "Not started: the server refused it.",
+    /** PROPOSED (owner E16-D02; E16-D06 §16.4 row 10): a job's poll refused; its last line stands. */
+    poll: "Status not updated: the server refused it.",
   },
   /** No answer: the app's existing words (the change-password screen's, E09-D06). */
   unreachable: "Cannot reach the server. Try again.",
