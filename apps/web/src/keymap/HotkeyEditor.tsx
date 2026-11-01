@@ -1,6 +1,15 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import "./hotkey-editor.css";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { announce, forget } from "../features/app-shell/announcer";
-import { KEYMAP, type KeymapCommand } from "./keymap";
+import { KEYMAP, eventBinding, isDangerous, type KeymapCommand } from "./keymap";
 import { reportHotkey, reportRebound } from "./analytics";
 import { applyRebind } from "./audit";
 import { getBindings, setBindings, subscribeBindings } from "./profile";
@@ -25,6 +34,11 @@ import {
 } from "./validate";
 
 const MODS = ["Ctrl", "Alt", "Shift"] as const;
+/** The search box's announcement waits for the typing to stop: one count, never one per keystroke. */
+const SEARCH_SAY_MS = 600;
+/** The context select's "every context" value: no context is named this. */
+const ALL = "*";
+const CONTEXTS = [...new Set(KEYMAP.map((c) => c.context))];
 /** The editor's one key in the shell announcer (#304): each message replaces the last, none is a region of its own. */
 const SAID = "keymap:editor";
 
@@ -61,6 +75,15 @@ function refusalText(cmd: KeymapCommand, problem: BindingProblem): string {
 function pointerTo(problem: BindingProblem, swap: SwapPlan | null): string {
   if (swap !== null) return "Swap is available after Save.";
   return problem.kind === "unsafe-destructive" ? "The acknowledgement is after Save." : "";
+}
+/** The row a control acts on: a hidden tail after the visible word, so the name starts with it (WCAG 2.5.3). */
+function ForRow(props: { readonly cmd: KeymapCommand; readonly joiner?: string }): JSX.Element {
+  return (
+    <span className="cv-visually-hidden">
+      {props.joiner ?? " "}
+      {rowName(props.cmd)}
+    </span>
+  );
 }
 const sentence = (s: string): string => (/[.!?]$/.test(s) ? s : `${s}.`);
 /** An import replaces the profile (D4): what a file leaves out is at its default, as its message says (DS-305B-03). */
@@ -104,6 +127,55 @@ export function HotkeyEditor(): JSX.Element {
   const [report, setReport] = useState<readonly string[]>([]);
   const [importText, setImportText] = useState("");
   const [exported, setExported] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [ctx, setCtx] = useState(ALL);
+  const needle = query.trim().toLowerCase();
+  /**
+   * The row last focused: a ref, so focusing a row renders nothing. Only when the row it releases was listed solely
+   * because it was being edited does the list change, and then one render drops it.
+   */
+  const editingRef = useRef<string | null>(null);
+  const matchesRef = useRef<ReadonlySet<KeymapCommand>>(new Set());
+  const [, setListed] = useState(0);
+  const onEdit = useCallback((id: string) => {
+    const prev = editingRef.current;
+    if (prev === id) return;
+    editingRef.current = id;
+    const held = KEYMAP.find((c) => c.id === prev);
+    if (held !== undefined && !matchesRef.current.has(held)) setListed((n) => n + 1);
+  }, []);
+  const matches = useMemo(
+    () =>
+      new Set(
+        KEYMAP.filter(
+          (c) =>
+            (ctx === ALL || c.context === ctx) &&
+            (needle === "" ||
+              `${c.label} ${c.context} ${bindings.get(c.id) ?? c.defaultBinding}`
+                .toLowerCase()
+                .includes(needle)),
+        ),
+      ),
+    [ctx, needle, bindings],
+  );
+  matchesRef.current = matches;
+  const matched = matches.size;
+  /** The row being edited, or holding the last message, stays listed whatever the search says. */
+  const keep = notice?.id ?? editingRef.current;
+  const shown = useMemo(
+    () => KEYMAP.filter((c) => matches.has(c) || c.id === keep),
+    [matches, keep],
+  );
+  const count = shown.length; // the announcement counts the rows on screen
+  const filtering = needle !== "" || ctx !== ALL;
+  useEffect(() => {
+    if (!filtering) return undefined;
+    const timer = setTimeout(
+      () => say(`${count} ${count === 1 ? "command matches" : "commands match"}.`),
+      SEARCH_SAY_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [count, filtering]);
   const exportRef = useRef<HTMLTextAreaElement>(null);
   const importRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -122,28 +194,32 @@ export function HotkeyEditor(): JSX.Element {
     say(text);
   }
 
+  /** A refusal, for a Save or a Reset alike: counted, said, and offering the swap a conflict allows. */
+  function refuse(
+    cmd: KeymapCommand,
+    raw: string,
+    problem: BindingProblem,
+    current: ReadonlyMap<string, string>,
+  ): void {
+    if (problem.kind === "conflict") {
+      reportHotkey({ name: "hotkey.conflict_blocked", action: cmd.id, collidesWith: problem.with });
+    }
+    const swap = problem.kind === "conflict" ? planSwap(cmd.id, raw, current) : null;
+    const text = refusalText(cmd, problem);
+    // The button it offers sits after Save: say it is there (A11Y-305B-01, A11Y-305B-05).
+    const pointer = pointerTo(problem, swap);
+    tell(
+      cmd.id,
+      text,
+      { raw, problem, swap },
+      pointer === "" ? text : `${sentence(text)} ${pointer}`,
+    );
+  }
+
   function tryBind(cmd: KeymapCommand, raw: string, ack = false): void {
     const current = getBindings();
     const problem = validateBinding(cmd.id, raw, current, undefined, { acknowledgedUnsafe: ack });
-    if (problem) {
-      if (problem.kind === "conflict") {
-        reportHotkey({
-          name: "hotkey.conflict_blocked",
-          action: cmd.id,
-          collidesWith: problem.with,
-        });
-      }
-      const swap = problem.kind === "conflict" ? planSwap(cmd.id, raw, current) : null;
-      const text = refusalText(cmd, problem);
-      // The button it offers sits after Save: say it is there (A11Y-305B-01, A11Y-305B-05).
-      const pointer = pointerTo(problem, swap);
-      return tell(
-        cmd.id,
-        text,
-        { raw, problem, swap },
-        pointer === "" ? text : `${sentence(text)} ${pointer}`,
-      );
-    }
+    if (problem) return refuse(cmd, raw, problem, current);
     const binding = normaliseBinding(raw) ?? raw;
     const next = applyRebind(current, cmd.id, binding, ack);
     setBindings(next);
@@ -162,6 +238,20 @@ export function HotkeyEditor(): JSX.Element {
       tell(cmd.id, `${labelOf(plan.a)}: ${plan.aTo}; ${labelOf(plan.b)}: ${plan.bTo}`);
     }
     focusIn(cmd.id, "save"); // either way the Swap button leaves the row
+  }
+
+  function resetOne(cmd: KeymapCommand): void {
+    const before = getBindings();
+    // The default may have been taken since: the same checks as a Save, and nothing is applied on a refusal.
+    const problem =
+      cmd.defaultBinding === "" ? null : validateBinding(cmd.id, cmd.defaultBinding, before);
+    if (problem) return refuse(cmd, cmd.defaultBinding, problem, before);
+    const next = applyRebind(before, cmd.id, cmd.defaultBinding);
+    setBindings(next);
+    reportRebound(before, next, [cmd.id]);
+    reportHotkey({ name: "hotkey.reset" });
+    tell(cmd.id, `${cmd.label}: back to its default, ${cmd.defaultBinding || "unbound"}`);
+    focusIn(cmd.id, "key"); // the row's Reset is now disabled
   }
 
   function unbind(cmd: KeymapCommand): void {
@@ -197,10 +287,56 @@ export function HotkeyEditor(): JSX.Element {
     exportRef.current?.focus(); // already shown: refreshed in place
   }
 
+  // Rows are memoised: the handlers they get never change identity, and call the latest closures.
+  const latest = useRef({ tryBind, swap, resetOne, unbind });
+  latest.current = { tryBind, swap, resetOne, unbind };
+  const onBind = useCallback(
+    (c: KeymapCommand, raw: string, ack?: boolean) => latest.current.tryBind(c, raw, ack),
+    [],
+  );
+  const onSwap = useCallback((c: KeymapCommand, r: Refusal) => latest.current.swap(c, r), []);
+  const onUnbind = useCallback((c: KeymapCommand) => latest.current.unbind(c), []);
+  const onReset = useCallback((c: KeymapCommand) => latest.current.resetOne(c), []);
+
   return (
     <section aria-labelledby="hk-h" data-keymap-context="Settings">
       <h1 id="hk-h">Hotkeys</h1>
       {savesToServer() ? null : <p>Saved on this device only.</p>}
+      <p>
+        Trading commands (marked in the Context column) change the risk surface of your muscle
+        memory: rebinding one is audited.
+      </p>
+      <div className="hk-noprint">
+        <label>
+          Search commands
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => {
+              setNotice(null); // a stale message must not pin its row under every later filter
+              setQuery(e.target.value);
+            }}
+          />
+        </label>
+        <label>
+          Context
+          <select
+            value={ctx}
+            onChange={(e) => {
+              setNotice(null);
+              setCtx(e.target.value);
+            }}
+          >
+            <option value={ALL}>All contexts</option>
+            {CONTEXTS.map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
+        </label>
+        <button type="button" onClick={() => window.print()}>
+          Print list
+        </button>
+      </div>
       <table>
         <caption>Current key bindings by context</caption>
         <thead>
@@ -208,23 +344,28 @@ export function HotkeyEditor(): JSX.Element {
             <th scope="col">Context</th>
             <th scope="col">Command</th>
             <th scope="col">Binding</th>
-            <th scope="col">Change</th>
+            <th scope="col" className="hk-noprint">
+              Change
+            </th>
           </tr>
         </thead>
         <tbody>
-          {KEYMAP.map((c) => (
+          {shown.map((c) => (
             <Row
               key={c.id}
               cmd={c}
               binding={bindings.get(c.id) ?? c.defaultBinding}
               notice={notice?.id === c.id ? notice : null}
-              onBind={tryBind}
-              onSwap={swap}
-              onUnbind={unbind}
+              onBind={onBind}
+              onSwap={onSwap}
+              onUnbind={onUnbind}
+              onReset={onReset}
+              onEdit={onEdit}
             />
           ))}
         </tbody>
       </table>
+      {matched === 0 ? <p>No command matches.</p> : null}
       <button
         type="button"
         onClick={() => {
@@ -239,7 +380,6 @@ export function HotkeyEditor(): JSX.Element {
         Import keymap (JSON)
         <textarea
           ref={importRef}
-          aria-label="Import keymap JSON"
           value={importText}
           onChange={(e) => setImportText(e.target.value)}
         />
@@ -268,15 +408,18 @@ export function HotkeyEditor(): JSX.Element {
   );
 }
 
-function Row(props: {
+const Row = memo(function Row(props: {
   cmd: KeymapCommand;
   binding: string;
   notice: Notice | null;
   onBind: (c: KeymapCommand, raw: string, ack?: boolean) => void;
   onSwap: (c: KeymapCommand, r: Refusal) => void;
   onUnbind: (c: KeymapCommand) => void;
+  onReset: (c: KeymapCommand) => void;
+  onEdit: (id: string) => void;
 }): JSX.Element {
-  const { cmd, binding, notice, onBind, onSwap, onUnbind } = props;
+  const { cmd, binding, notice, onBind, onSwap, onUnbind, onReset, onEdit } = props;
+  const [recording, setRecording] = useState(false);
   const [mods, setMods] = useState<readonly string[]>([]);
   const [key, setKey] = useState("");
   const raw = [...MODS.filter((m) => mods.includes(m)), key].join("+");
@@ -284,23 +427,38 @@ function Row(props: {
   const locked = commandMeta(cmd.id)?.remappable === false;
   const refusal = notice?.refusal ?? null;
   return (
-    <tr>
-      <td>{cmd.context}</td>
+    <tr onFocus={() => onEdit(cmd.id)}>
+      <td>
+        {cmd.context}
+        {isDangerous(cmd) ? <span> (trading)</span> : null}
+      </td>
       <th scope="row">{cmd.label}</th>
       <td>
         {binding === "" ? "unbound" : <kbd>{binding}</kbd>}
         {locked ? null : (
           <button
             type="button"
-            aria-label={`Unbind ${rowName(cmd)}`}
+            className="hk-noprint"
             disabled={binding === ""}
             onClick={() => onUnbind(cmd)}
           >
             Unbind
+            <ForRow cmd={cmd} />
+          </button>
+        )}
+        {locked ? null : (
+          <button
+            type="button"
+            className="hk-noprint"
+            disabled={binding === cmd.defaultBinding}
+            onClick={() => onReset(cmd)}
+          >
+            Reset
+            <ForRow cmd={cmd} />
           </button>
         )}
       </td>
-      <td>
+      <td className="hk-noprint">
         {locked ? (
           "not remappable"
         ) : (
@@ -309,30 +467,74 @@ function Row(props: {
               <label key={m}>
                 <input
                   type="checkbox"
-                  aria-label={`${m} for ${rowName(cmd)}`}
                   checked={mods.includes(m)}
                   onChange={(e) =>
                     setMods(e.target.checked ? [...mods, m] : mods.filter((x) => x !== m))
                   }
                 />
                 {m}
+                <ForRow cmd={cmd} joiner=" for " />
               </label>
             ))}
-            <input
-              id={`hk-key-${cmd.id}`}
-              aria-label={`Key for ${rowName(cmd)}`}
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              size={6}
-            />
+            {/* The field sits inside its label: an implicit association, which jsdom (and a reader's tree) resolves
+                without a document-wide id search per label. */}
+            <label>
+              Key
+              <ForRow cmd={cmd} joiner=" for " />
+              <input
+                id={`hk-key-${cmd.id}`}
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                size={6}
+              />
+            </label>
+            <button
+              type="button"
+              aria-pressed={recording}
+              onClick={() => {
+                setRecording(!recording);
+                say(recording ? "Recording cancelled." : "Press the keys now. Esc cancels.");
+              }}
+              onBlur={() => {
+                if (!recording) return;
+                setRecording(false);
+                say("Recording cancelled.");
+              }}
+              onKeyDown={(e) => {
+                if (!recording) return;
+                if (e.key === "Tab") {
+                  // Tab keeps moving focus (WCAG 2.1.2); leaving the button cancels the recording.
+                  setRecording(false);
+                  return say("Recording cancelled.");
+                }
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.key === "Escape") {
+                  setRecording(false);
+                  return say("Recording cancelled.");
+                }
+                if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return; // wait for the key
+                const hit = normaliseBinding(eventBinding(e.nativeEvent));
+                setRecording(false);
+                if (hit === null) return say("That key cannot be bound. Choose another.");
+                const prefix = MODS.filter((m) => hit.split("+").includes(m));
+                setMods(prefix);
+                setKey(hit.slice(prefix.map((m) => `${m}+`).join("").length));
+                say(`Captured ${hit}. Choose Save to apply it.`);
+              }}
+            >
+              Record
+              <ForRow cmd={cmd} />
+            </button>
+            {recording ? <span> Press keys now (Esc cancels)</span> : null}
             <button
               id={`hk-save-${cmd.id}`}
               type="button"
-              aria-label={`Save ${rowName(cmd)}`}
               disabled={!key}
               onClick={() => onBind(cmd, raw)}
             >
               Save
+              <ForRow cmd={cmd} />
             </button>
           </>
         )}
@@ -360,4 +562,4 @@ function Row(props: {
       </td>
     </tr>
   );
-}
+});

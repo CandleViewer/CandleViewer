@@ -101,7 +101,7 @@ test.describe("SCR-113 conflict classes", () => {
   });
 
   test("import rejects conflicting and reserved entries in a report", async ({ page }) => {
-    const box = page.getByLabel("Import keymap JSON");
+    const box = page.getByLabel("Import keymap (JSON)");
     await box.fill(JSON.stringify({ "dom.zoom_in": "C", "dom.zoom_out": "Ctrl+W" }));
     await page.getByRole("button", { name: "Import" }).click(); // #305: applied on Import, never on blur
     const report = page.getByRole("list", { name: "Import report" });
@@ -131,7 +131,7 @@ test.describe("SCR-113 conflict classes", () => {
     const exported = await page.getByLabel("Export keymap (JSON)").inputValue();
     await page.getByRole("button", { name: "Reset all" }).click();
     await expect(keyOf(page, "Price zoom in")).toHaveText("+");
-    const box = page.getByLabel("Import keymap JSON");
+    const box = page.getByLabel("Import keymap (JSON)");
     await box.fill(exported);
     await page.getByRole("button", { name: "Import" }).click();
     await expect(keyOf(page, "Price zoom in")).toHaveText("J");
@@ -173,10 +173,25 @@ test("inert press of a context-gated command (drawing selected) explains what it
   await signIn(page);
   await page.goto("/terminal/last");
   await expect(page.getByRole("main")).toBeVisible();
-  await page.keyboard.press("Delete");
-  await expect(page.getByRole("region", { name: "Notifications" })).toContainText(
-    "needs drawing selected",
-  );
+  // The window listener mounts after the route paints: press until it hears one (the toast region exists only then).
+  await expect(async () => {
+    await page.keyboard.press("Delete");
+    await expect(page.getByRole("region", { name: "Notifications" })).toContainText(
+      "needs drawing selected",
+      { timeout: 500 },
+    );
+  }).toPass({ timeout: 10_000 });
+});
+
+test("the key field keeps its name, 'Key for <command>', once a value is typed", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/settings/hotkeys");
+  await page.getByRole("textbox", { name: "Key for Price zoom in", exact: true }).fill("J");
+  await expect(
+    page.getByRole("textbox", { name: "Key for Price zoom in", exact: true }),
+  ).toHaveValue("J");
 });
 
 test("a rebind persists across reload", async ({ page }) => {

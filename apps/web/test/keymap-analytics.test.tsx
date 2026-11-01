@@ -106,7 +106,7 @@ describe("SCR-113's changes: hotkey.rebound, hotkey.conflict_blocked, hotkey.res
   it("Reset all says hotkey.reset and an import hotkey.profile_imported, once each; a failed import nothing", () => {
     render(<m.HotkeyEditor />);
     fireEvent.click(button("Reset all"));
-    const box = screen.getByLabelText("Import keymap JSON");
+    const box = screen.getByLabelText("Import keymap (JSON)");
     fireEvent.change(box, { target: { value: "not json" } });
     fireEvent.click(button("Import"));
     fireEvent.change(box, { target: { value: '{"chart.footprint_toggle":"Alt+Q"}' } });

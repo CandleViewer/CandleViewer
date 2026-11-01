@@ -1,0 +1,6 @@
+/* SCR-113 printable list: the page prints as the table of commands and their bindings, with no controls. */
+@media print {
+  .hk-noprint {
+    display: none !important;
+  }
+}

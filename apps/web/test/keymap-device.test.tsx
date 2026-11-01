@@ -172,7 +172,7 @@ describe("A55: a remap applies on the device for every role; its audit is sent o
         <HotkeyEditor />
       </>,
     );
-    fireEvent.change(screen.getByLabelText("Import keymap JSON"), {
+    fireEvent.change(screen.getByLabelText("Import keymap (JSON)"), {
       target: { value: '{"ticket.submit":"Ctrl+Alt+Enter"}' },
     });
     fireEvent.click(button("Import"));

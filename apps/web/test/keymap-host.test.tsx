@@ -189,13 +189,48 @@ describe("SCR-113 editor", () => {
   it("import applies safe, lists unsafe", () => {
     const { HotkeyEditor, getBindings } = mods;
     render(<HotkeyEditor />);
-    const ta = screen.getByLabelText("Import keymap JSON") as HTMLTextAreaElement;
+    const ta = screen.getByLabelText("Import keymap (JSON)") as HTMLTextAreaElement;
     fireEvent.change(ta, {
       target: { value: JSON.stringify({ "dom.cancel_all": "Ctrl+Shift+I" }) },
     });
     fireEvent.click(screen.getByText("Import", { selector: "button" })); // #305 CR-305B-02: no apply on blur
     expect(screen.getByLabelText("Import report").textContent).toMatch(/reserved/);
     expect(getBindings().get("dom.cancel_all")).not.toBe("Ctrl+Shift+I");
+  });
+});
+
+describe("SCR-113 record capture is isolated from the hotkey layer", () => {
+  it("a bound trading chord pressed while recording runs nothing, counts no inert press and is captured", () => {
+    const { KeymapHost, HotkeyEditor, registerCommand } = mods;
+    const run = vi.fn();
+    const off = registerCommand("dom.cancel_all", run, () => false);
+    const seen: string[] = [];
+    const listen = (e: Event): void => {
+      seen.push((e as CustomEvent<{ name: string }>).detail.name);
+    };
+    window.addEventListener("cv:analytics", listen);
+    render(
+      <>
+        <KeymapHost />
+        <HotkeyEditor />
+      </>,
+    );
+    const th = screen.getByText("Price zoom in", { selector: 'th[scope="row"]' });
+    const row = within(th.closest("tr") as HTMLElement);
+    const rec = row.getByRole("button", { name: /^Record\b/ });
+    rec.focus();
+    fireEvent.click(rec);
+    fireEvent.keyDown(rec, { key: "X", ctrlKey: true, shiftKey: true });
+    expect(run).not.toHaveBeenCalled();
+    expect(seen).not.toContain("hotkey.inert_pressed");
+    expect(screen.queryByRole("region", { name: "Notifications" })?.textContent ?? "").not.toMatch(
+      /Cancel all/,
+    );
+    expect(row.getByRole("textbox", { name: "Key for Price zoom in" })).toHaveValue("X");
+    expect(row.getByRole("checkbox", { name: "Ctrl for Price zoom in" })).toBeChecked();
+    expect(row.getByRole("checkbox", { name: "Shift for Price zoom in" })).toBeChecked();
+    window.removeEventListener("cv:analytics", listen);
+    off();
   });
 });
 
@@ -210,6 +245,17 @@ describe("SCR-013 cheatsheet", () => {
       "/settings/hotkeys",
     );
     expect(screen.getAllByLabelText(/conflicting binding/).length).toBeGreaterThan(0);
+  });
+
+  it("tells the truth: a remap shows in its row, and Ctrl+/ is listed as shipped", () => {
+    const { Cheatsheet, getBindings, setBindings } = mods;
+    act(() => setBindings(new Map(getBindings()).set("chart.delete_drawing", "Alt+D")));
+    render(<Cheatsheet />);
+    const row = screen.getByText("Delete selected drawing", { selector: "th" }).closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("Alt+D")).toBeVisible();
+    const help = screen.getByText("Hotkey cheatsheet", { selector: "th" }).closest("tr");
+    expect(within(help as HTMLElement).getByText("Ctrl+/")).toBeVisible();
   });
 });
 
