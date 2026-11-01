@@ -13,6 +13,8 @@ export type CalloutLive = "assertive" | "polite" | "off";
 export interface CalloutAction {
   label: string;
   onClick: () => void;
+  /** CMP-001's busy state: focusable, `aria-busy`, a press does nothing (E16-D02 §6.5's Purge data…). */
+  loading?: boolean;
 }
 
 /**
@@ -150,6 +152,7 @@ export function Callout(props: CalloutProps): JSX.Element {
               <Button
                 key={`${index}-${action.label}`}
                 variant="secondary"
+                loading={action.loading === true}
                 onClick={() => action.onClick()}
               >
                 {action.label}
