@@ -54,15 +54,15 @@ export const TypeScale: Story = {
   },
 };
 
-/** The semantic level never follows the look: an h1 drawn small, an h4 drawn as display. */
+/** The semantic level never follows the look: an h1 drawn small, an h2 drawn as display. */
 export const HeadingLevelVsStyle: Story = {
   render: () => (
     <div style={col}>
       <Heading level={1} variant="heading-sm">
         Level 1, heading-sm
       </Heading>
-      <Heading level={4} variant="display">
-        Level 4, display
+      <Heading level={2} variant="display">
+        Level 2, display
       </Heading>
     </div>
   ),
@@ -72,7 +72,7 @@ export const HeadingLevelVsStyle: Story = {
       "data-variant",
       "heading-sm",
     );
-    await expect(canvas.getByRole("heading", { level: 4 })).toHaveAttribute(
+    await expect(canvas.getByRole("heading", { level: 2 })).toHaveAttribute(
       "data-variant",
       "display",
     );

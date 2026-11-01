@@ -29,6 +29,9 @@ describe("skiplink.css contract", () => {
   it("focused: the primary pill at the control height with the CMP-039 ring", () => {
     const shown = rule(normal, ".cv-skip-link:focus");
     expect(shown).toContain("clip-path: none");
+    // in the flow, never an overlay on another target (WCAG 2.5.8)
+    expect(shown).toContain("position: relative");
+    expect(shown).not.toContain("position: absolute");
     expect(shown).toContain("min-height: var(--size-control-height)");
     expect(shown).toContain("padding-inline: var(--space-button-paddingX)");
     expect(shown).toContain("border-radius: var(--radius-control)");

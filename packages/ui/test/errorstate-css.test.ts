@@ -74,6 +74,14 @@ describe("errorstate.css contract", () => {
     expect(css.all).not.toMatch(/text-overflow|line-clamp/);
   });
 
+  it("each summary link is at least size.target.min tall (WCAG 2.5.8, list items)", () => {
+    const text = find(css.normal, ".cv-error-state__items a", "min-block-size");
+    expect(text).toContain("min-block-size: var(--size-target-min)");
+    expect(find(css.normal, ".cv-error-state__items a", "display")).toContain(
+      "display: inline-flex",
+    );
+  });
+
   it("forced colours: words and glyph CanvasText, the details box a 1px CanvasText border", () => {
     expect(find(css.forced, ".cv-error-state__glyph", "color")).toContain("color: CanvasText");
     expect(find(css.forced, ".cv-error-state__text", "color")).toContain("color: CanvasText");
