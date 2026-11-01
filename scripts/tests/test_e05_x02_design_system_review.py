@@ -7,7 +7,9 @@ of its verdicts true after it merges:
   no allowlist path, global or per rule, matches a file under `packages/ui/tokens/`.
 - §10: the CSP is not weakened. Neither CSP site lets `script-src` run inline code by
   `'unsafe-inline'` (or eval), and every inline script in `apps/web/index.html` is allowed by its
-  own hash (none exists today; E10-S01 embeds the pre-paint script).
+  own hash (none exists today; E10-S01 embeds the pre-paint script). The web policy is the meta
+  in `index.html` today; once #5262 moves it to a build-injected meta (`cspMetaPlugin.ts`, from the
+  shared builder whose output `csp-policy.golden.json` pins), the test reads that policy instead.
 - §11: Storybook is not published. No workflow uploads a Storybook build or runs a pages / hosted
   Storybook step (by `uses:`, by an `upload-artifact` path, or by a `run:` that copies the build
   out), and the dev and VR servers bind loopback.
@@ -35,6 +37,11 @@ DESKTOP_CSP = ROOT / "apps" / "desktop" / "src" / "main" / "csp.ts"
 WORKFLOWS = ROOT / ".github" / "workflows"
 UI_PACKAGE = ROOT / "packages" / "ui" / "package.json"
 VR_CONFIG = ROOT / "packages" / "ui" / "vr" / "playwright.config.ts"
+WEB_VITE_CONFIG = ROOT / "apps" / "web" / "vite.config.ts"
+CSP_META_PLUGIN = ROOT / "apps" / "web" / "plugins" / "cspMetaPlugin.ts"
+CSP_GOLDEN = ROOT / "packages" / "config" / "src" / "csp-policy.golden.json"
+#: The meta CSP written in the page's source (none once the build injects it, #5262).
+META_CSP = re.compile(r'http-equiv="Content-Security-Policy"\s+content="([^"]+)"', re.DOTALL)
 
 #: Sources a `script-src` may hold: the app's own origin or a hash (CSP3 hash-source).
 SCRIPT_SOURCE = re.compile(r"'self'|'sha(?:256|384|512)-[A-Za-z0-9+/]+={0,2}'")
@@ -127,12 +134,22 @@ def _inline_scripts(html: str) -> list[str]:
     return parser.bodies
 
 
+def _web_policy(html: str) -> str:
+    """The web page's CSP: the source meta, or the one the build plugin injects (#5262)."""
+    metas = META_CSP.findall(html)
+    if metas:
+        (policy,) = metas
+        return str(policy)
+    plugin = CSP_META_PLUGIN.read_text(encoding="utf-8")
+    assert "cspMetaPlugin()" in WEB_VITE_CONFIG.read_text(encoding="utf-8"), "no CSP on the page"
+    assert 'apply: "build"' in plugin and 'surface: "meta"' in plugin, plugin
+    assert "buildCspPolicy" in plugin and "throw new Error" in plugin, plugin
+    return str(json.loads(CSP_GOLDEN.read_text(encoding="utf-8"))["meta"])
+
+
 def test_the_web_meta_csp_runs_no_inline_script_without_its_hash() -> None:
     html = INDEX.read_text(encoding="utf-8")
-    (policy,) = re.findall(
-        r'http-equiv="Content-Security-Policy"\s+content="([^"]+)"', html, flags=re.DOTALL
-    )
-    sources = _script_src(policy)
+    sources = _script_src(_web_policy(html))
     assert sources and all(SCRIPT_SOURCE.fullmatch(source) for source in sources), sources
     inline = _inline_scripts(html)
     for body in inline:

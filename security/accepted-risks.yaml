@@ -198,15 +198,17 @@ entries:
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/3672"
   # #272 (E05-X02, the design-system review, record §3 and §13): the Medium advisories on the
   # packages/ui dev and build paths, none on its runtime path (@floating-ui/* only). Accepted
-  # under the owner's 2026-10-29 delegation, #2701 6490317249; the owner ratifies. Approval is
-  # the orchestrator's comment on the PR. 2026-11-20 ends inside C-12.3's 30 days, so no
-  # exception is needed, and it is the date of the #3639 batch, so one re-decision covers all.
-  # qs and fast-uri have a patch-level fix (a workspace override and a lockfile change, outside
-  # #272's write set): the fix is preferred, and its PR removes these two entries.
+  # under the owner's 2026-10-29 delegation, #2701 6490317249; the owner ratifies. Approved by
+  # the orchestrator's comment 6547596929 (2026-10-31), re-confirmed 6555686879 (2026-11-01).
+  # 2026-11-20 ends inside C-12.3's 30 days, so no exception is needed, and it is the date of
+  # the #3639 batch, so one re-decision covers all. Three of the packages, vite, qs and
+  # fast-uri, have a patch-level fix (a lockfile change, outside #272's write set): the fix is
+  # preferred, and its PR removes their entries (four: fast-uri has two). Each entry matches on
+  # the advisory, so it applies workspace-wide, not only to packages/ui.
   - id: "GHSA-8g5g-mxqh-grgj"
     tool: npm-audit
     severity: MEDIUM
-    reason: "vite 6.4.4 under vitest (packages/ui and the other test runners), dev-only; no patched release in the 6.x line is reported. The flaw is in vite's dev server: the unit runs never start it as a network server, and nothing ships it"
+    reason: "vite 6.4.4, dev-only and workspace-wide: vitest (packages/ui and the other test runners), the apps/web dev server and the e2e preview, both loopback only; fixed in 6.4.5, a patch release every range that pulls vite accepts (preferred; remove this entry when it lands). The flaw is in vite's dev server: the unit runs never start it as a network server, and nothing ships it"
     approver: "basiltt" # accepted under the owner's 2026-10-29 delegation, #2701 6490317249; the owner ratifies
     expires: "2026-11-20"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/272"
