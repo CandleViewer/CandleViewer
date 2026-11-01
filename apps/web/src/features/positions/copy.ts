@@ -270,6 +270,7 @@ export const DECK = {
     source: "D02:421",
     key_status: "PROPOSED name",
   },
+  // S-21's chip: its consumer comes with B20's runtime machine (the orchestrator's carry on #911)
   "blotter.ui.lockout_chip": {
     string: "Locked · daily loss limit · until 00:00 UTC · closing and reducing still work",
     screen: "SCR-063",
@@ -593,13 +594,91 @@ export type DeckKey = keyof typeof DECK;
 
 /**
  * Merged E29-D02 strings the deck does not key (each cited; a test finds it at its line): the
- * kill-switch lock's header marker (D02:422) and the totals row's label (D02:142, :209).
+ * kill-switch lock's header marker (D02:422), the totals row's label (D02:142, :209), and the
+ * panel's own words: the five tabs and two placeholders' causes (D02:166), the toolbar (D02:374 to
+ * :376), filter-empty's button (D02:380) and S-02's Retry (D02:389).
  */
 export const D02_TEXT = {
   killLockMarker: { string: "Locked — kill switch", source: "D02:422" },
   liveTotal: { string: "LIVE total", source: "D02:142" },
   demoTotal: { string: "DEMO total", source: "D02:209" },
+  tabPositions: { string: "Positions", source: "D02:166" },
+  tabWorkingOrders: { string: "Working orders", source: "D02:166" },
+  tabFills: { string: "Fills", source: "D02:166" },
+  tabTradeGroups: { string: "Trade groups", source: "D02:166" },
+  tabAlgos: { string: "Algos", source: "D02:166" },
+  tradeGroupsCause: {
+    string: "Grouped orders across accounts will be listed here.",
+    source: "D02:166",
+  },
+  algosCause: { string: "Running algorithms will be listed here.", source: "D02:166" },
+  groupBy: { string: "Group by", source: "D02:374" },
+  groupAccount: { string: "Account", source: "D02:374" },
+  groupSymbol: { string: "Symbol", source: "D02:374" },
+  groupTradeGroup: { string: "Trade group", source: "D02:374" },
+  addFilter: { string: "Filter", source: "D02:375" },
+  chipAccount: { string: "Account", source: "D02:375" },
+  chipSymbol: { string: "Symbol", source: "D02:375" },
+  chipSide: { string: "Side", source: "D02:375" },
+  columns: { string: "Columns", source: "D02:376" },
+  exportCsv: { string: "Export CSV", source: "D02:376" },
+  clearFilters: { string: "Clear filters", source: "D02:380" },
+  retry: { string: "Retry", source: "D02:389" },
+  envLive: { string: "LIVE", source: "D02:238" },
+  envDemo: { string: "DEMO", source: "D02:209" },
 } as const;
+
+/**
+ * PROPOSED words (#911 BQ-15, routed to E29-D03's copy owner through G-W3 and listed in the PR body
+ * for the ledger row): the Working orders and Fills placeholders, which no deck or D02 line draws,
+ * the words the panel composes where no design gives a string (a trade group's name and the
+ * positions with none, the crossing and value announcements, the export's file name), and the
+ * environment words for a session D02 does not draw (TESTNET, the shell badge's PROPOSED word).
+ */
+export const PROPOSED_TEXT = {
+  workingOrdersTitle: "Working orders are not available yet",
+  workingOrdersCause: "Open orders across accounts will be listed here.",
+  fillsTitle: "Fills are not available yet",
+  fillsCause: "Fills across accounts will be listed here.",
+  tradeGroupLabel: "Trade group …{stub}",
+  noTradeGroup: "No trade group",
+  envTestnet: "TESTNET",
+  testnetTotal: "TESTNET total",
+  exportFileName: "candleviewer-positions-{stamp}.csv",
+} as const;
+
+/** The values a deck string's data-bound spans take, by the kind its `params` name (D06 §6). */
+export interface DeckValues {
+  readonly label?: string;
+  readonly environment?: string;
+  readonly time?: string;
+  readonly count?: string;
+  readonly figure?: string;
+}
+
+const SPAN_KINDS: Readonly<Record<string, keyof DeckValues>> = {
+  "account label": "label",
+  environment: "environment",
+  "time (UTC)": "time",
+  count: "count",
+  figure: "figure",
+};
+
+/**
+ * The deck string of `key` with each span bound by its kind ("account label", "environment", ...),
+ * so one call fits every key of a family whatever fixture word the deck wrote ("Sub-1", "Sub-2").
+ * A span left unbound throws, as `bindDeck` does.
+ */
+export function bindKinds(key: DeckKey, values: DeckValues): string {
+  const entry: DeckEntry = DECK[key];
+  const spans: Record<string, string> = {};
+  for (const [span, kind] of Object.entries(entry.params ?? {})) {
+    const field = Object.hasOwn(SPAN_KINDS, kind) ? SPAN_KINDS[kind] : undefined;
+    const value = field === undefined ? undefined : values[field];
+    if (value !== undefined) spans[span] = value;
+  }
+  return bindDeck(key, spans);
+}
 
 /** E09-D09 §3.2's verbs for the Viewer's two `rbac.permission` lines, in D02:433's order. */
 export const RBAC_VERBS = {
