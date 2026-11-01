@@ -4506,11 +4506,12 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "tasks",
         ("flag",),
-        "Flag-view poll tasks that ended other than by their stop; each latches its view off.",
-        "pages via the cv_page CRITICAL log line: the view reads off until a restart",
+        "Flag-view poll tasks that ended other than by their stop; each latches its view closed.",
+        "pages via the cv_page CRITICAL log line: the view reads its fail-closed value until a "
+        "restart",
         _L,
         "E42",
-        max_series=3,
+        max_series=5,  # E35-T10: the OMS's two views, trade_groups and the two rule switches
         exported=True,
     ),
     # --- Admin jobs (E42-T05, #966 Q10) -------------------------------------

@@ -18,9 +18,10 @@ or its seed for the process environment (`ENVIRONMENT_SEEDS`, #913 slice 3). `st
 `flags.read_budget_ms` (500 ms when unset or unreadable; anything but a whole number of ms from 50
 to 2000 refuses boot), ensures every flag's row, reads `desktop.backend_connection`
 (`BackendConnectionFlag`) once and starts the maintenance poll and the polls of the OMS's two
-flag views and the `trade_groups` one (`FlagView`); `stop()` cancels the polls and the flag's
-refresh. A maintenance poll that ends before `stop()` latches the gate engaged until a restart,
-and a view's poll latches its view to its fail-closed value until a restart.
+flag views, the `trade_groups` one and the rule executor's two switches (`FlagView`); `stop()`
+cancels the polls and the flag's refresh. A maintenance poll that ends before `stop()` latches the
+gate engaged until a restart, and a view's poll latches its view to its fail-closed value until a
+restart.
 """
 
 from __future__ import annotations
@@ -40,11 +41,17 @@ from candleviewer.admin.flags.catalogue import (
     DESKTOP_BACKEND_CONNECTION,
     ENVIRONMENT_SEEDS,
     LIVE_ENABLED,
+    RULES_ENABLED,
     TRADING_OMS_ENABLED,
     TRADING_TRADE_GROUPS,
     default_registry,
 )
-from candleviewer.admin.flags.maintenance import MaintenanceController, MaintenanceGate, chain_hooks
+from candleviewer.admin.flags.maintenance import (
+    KILL_ORDER_ENTRY,
+    MaintenanceController,
+    MaintenanceGate,
+    chain_hooks,
+)
 from candleviewer.admin.flags.metrics import (
     flag_view_stopped_total,
     order_entry_gate_poll_dead_total,
@@ -286,7 +293,14 @@ class FeatureFlagsRuntime:
         self.oms_enabled = FlagView(self, TRADING_OMS_ENABLED)
         self.live_enabled = FlagView(self, LIVE_ENABLED)
         self.trade_groups = FlagView(self, TRADING_TRADE_GROUPS)  # E28-T05 (#909)
-        self._views = (self.oms_enabled, self.live_enabled, self.trade_groups)
+        # E35-T10 (#5002): the rule executor's checks 2 and 3, read directly: off while unread,
+        # and engaged while unread, never through the order-entry gate (24 Sec.11.5).
+        self.rules_enabled = FlagView(self, RULES_ENABLED)
+        self.order_entry_killed = FlagView(self, KILL_ORDER_ENTRY)
+        self._views = (
+            self.oms_enabled, self.live_enabled, self.trade_groups, self.rules_enabled,
+            self.order_entry_killed,
+        )  # fmt: skip
         self._build(DEFAULT_READ_BUDGET_MS)
         self.backend_connection = BackendConnectionFlag(self)
 
@@ -366,8 +380,9 @@ class FeatureFlagsRuntime:
 
     def _view_ended(self, view: FlagView) -> Callable[[asyncio.Task[None]], None]:
         """The done-callback of `view`'s poll, as `_poll_ended` is the maintenance poll's: a death
-        latches the view to its fail-closed value until a restart, since a stale `True` would keep
-        the live gate or the OMS admitting (C-2.21, C-4.14), then counts it and logs CRITICAL."""
+        latches the view to its fail-closed value until a restart, since a stale reading would keep
+        the live gate, the OMS or rule actions admitting (C-2.21, C-4.14), then counts it and logs
+        CRITICAL."""
 
         def ended(task: asyncio.Task[None]) -> None:
             death = self._death(task)
@@ -456,7 +471,8 @@ class FlagView:
     """One boolean flag read process-wide with no principal, for a synchronous check (C-2.21; 21
     10.7): a call returns the last value read at once, so no request waits on the store. Unlike
     `BackendConnectionFlag`, which keeps its last value through a fault (BC-D3), it fails closed:
-    off while unread, and whenever the store or the row cannot be read (its fail-closed value).
+    its fail-closed value while unread, and whenever the store or the row cannot be read (off, but
+    engaged for `killswitch.order_entry`).
     The writer's change hook applies a committed write before the write returns; `run` reads the
     row every `FLAG_POLL_S` with a load of its own, never the service's snapshot, so it meets
     another process's write within one poll and never drops another reader's load. A write applied
@@ -530,7 +546,7 @@ class FlagView:
 
     def _lost(self, event: str, exc: Exception) -> None:
         """A poll left the flag unread: a warning when the view turns unread, debug while it stays
-        so (three views, twelve polls a minute each, through an outage); the error's class alone."""
+        so (five views, twelve polls a minute each, through an outage); the error's class alone."""
         log = _log().debug if self._failing else _log().warning
         log(event, key=self.key, error=type(exc).__name__)
         self._failing = True

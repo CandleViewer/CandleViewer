@@ -150,3 +150,18 @@ class AlertPort(Protocol):
 
     def settled(self, rule_id: str) -> None:
         """The rule's fire ended with no partial outcome: its alert episode is over."""
+
+
+class RuleSwitches(Protocol):
+    """Checks 2 and 3's switches (24 §11.5; E35-T10, BQ-2), each a synchronous read of memory,
+    never an interpreter (C-2.20, C-2.21): the master switch `rules.enabled` (off while unread),
+    the `killswitch.order_entry` flag (engaged while unread), B18's verdict for an account (the
+    global one for `None`) and the rollout flag `rules.oms_actions` (off until E35-T11)."""
+
+    def rules_enabled(self) -> bool: ...
+
+    def order_entry_killed(self) -> bool: ...
+
+    def kill_switch_engaged(self, account_id: UUID | None) -> bool: ...
+
+    def oms_actions(self) -> bool: ...

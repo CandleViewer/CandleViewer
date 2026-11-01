@@ -7,7 +7,8 @@ close, under the fire's own id) and `RuleActionAudit` over the audit writer (`ru
 `rules.blocked`, keyed by the action's `dedupe_key`). Until E35-T10 adds the principal, a record
 names the rule as its actor with no user id and no request id, and both roles are `None` (BQ-11).
 `RuleAlerts` binds the executor's alerts to the page line and to `system_events` (BQ-7), and
-`rule_metrics` its series to the app's metrics facade (BQ-8); `app.py` binds all three.
+`rule_metrics` its series to the app's metrics facade (BQ-8); `app.py` binds all three. E35-T10's
+`rule_switches` binds checks 2 and 3 to the two flag views and the B18 verdict the OMS takes.
 Outcome and severity go as their values (C-3.3 keeps `audit` from this module, as from
 `oms_stream_wiring`). Nothing here logs: the input snapshot is financial and confidential (21
 §3.4.3).
@@ -16,12 +17,13 @@ Outcome and severity go as their values (C-3.3 keeps `audit` from this module, a
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
 
+from candleviewer.domain.primitives import AccountId
 from candleviewer.observability.health_probes import SystemEvent, SystemEventWriter
 from candleviewer.observability.metrics import Metrics
 from candleviewer.rules.executor.metrics import ExecutorMetrics
@@ -182,3 +184,54 @@ class RuleAlerts:
 def rule_metrics(metrics: Metrics) -> ExecutorMetrics:
     """The executor's series over the app's metrics facade (BQ-8)."""
     return ExecutorMetrics(metrics)
+
+
+#: The account B18 is asked about for an action that names none (24 §11.5 check 3): no grant names
+#: it, so no per-account engagement covers it, and its verdict is the global one.
+GLOBAL_ACCOUNT: Final = AccountId(UUID(int=0))
+
+
+class RuleFlagViews(Protocol):
+    """The two flag views of `FeatureFlagsRuntime` checks 2 and 3 read (BQ-2)."""
+
+    @property
+    def rules_enabled(self) -> Callable[[], bool]: ...
+
+    @property
+    def order_entry_killed(self) -> Callable[[], bool]: ...
+
+
+class RuleSwitchesBinding:
+    """`RuleSwitches` at the composition root (24 §11.5 checks 2 and 3; BQ-2), each a synchronous
+    read of memory: the master switch's view (off while unread, latched off if its poll dies), the
+    `killswitch.order_entry` view (engaged while unread, latched engaged), never the order-entry
+    gate, so maintenance mode stays the OMS's `order_entry`; B18's verdict through the OMS's
+    shared port (`HaltingKillSwitch`, #2904: engaged everywhere while the audit-chain break halt
+    is, else `InterimKillSwitch`, which admits until #956), asked for `GLOBAL_ACCOUNT` when an
+    action names no account; and the rollout port, off until E35-T11 registers
+    `rules.oms_actions`."""
+
+    def __init__(
+        self, views: RuleFlagViews, kill_switch: Callable[[AccountId], object | None]
+    ) -> None:
+        self._views, self._kill_switch = views, kill_switch
+
+    def rules_enabled(self) -> bool:
+        return self._views.rules_enabled() is True
+
+    def order_entry_killed(self) -> bool:
+        return self._views.order_entry_killed() is not False
+
+    def kill_switch_engaged(self, account_id: UUID | None) -> bool:
+        asked = GLOBAL_ACCOUNT if account_id is None else AccountId(account_id)
+        return self._kill_switch(asked) is not None
+
+    def oms_actions(self) -> bool:
+        return False
+
+
+def rule_switches(
+    views: RuleFlagViews, kill_switch: Callable[[AccountId], object | None]
+) -> RuleSwitchesBinding:
+    """The executor's switches, for `RulesService.bind(switches=...)` (E35-T10)."""
+    return RuleSwitchesBinding(views, kill_switch)

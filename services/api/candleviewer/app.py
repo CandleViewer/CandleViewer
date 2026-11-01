@@ -406,7 +406,12 @@ from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.manager import REFUSED_CAPS, Actor
 from candleviewer.rules.service import RulesService
-from candleviewer.rules_oms_wiring import RuleAlerts, rule_action_records, rule_metrics
+from candleviewer.rules_oms_wiring import (
+    RuleAlerts,
+    rule_action_records,
+    rule_metrics,
+    rule_switches,
+)
 from candleviewer.rules_store_pg import PostgresRuleStore
 from candleviewer.settings import (
     STOP_SLACK_S,
@@ -3384,6 +3389,10 @@ def create_app(
         ),
         metrics=rule_metrics(metrics_facade),
     )
+    # E35-T10: checks 2 and 3 read the master switch's and the order-entry kill switch's views and
+    # B18 through the OMS's shared port, the #2904 audit-chain break halt folded in (G-79), so a
+    # halted rule leg is refused at check 3 (24 §11.5); the rollout port stays off (BQ-2, BQ-17).
+    ctx.rules.bind(switches=rule_switches(feature_flags, kill_switch_port.refusal))
     rules_actor = (
         SessionRulesActorResolver(
             lambda: ctx.auth.sessions,

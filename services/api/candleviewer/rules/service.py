@@ -23,10 +23,10 @@ from candleviewer.rules.evaluator import Evaluator, SnapshotBuilder
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.executor.dispatch import AuditDispatch, Fire, FireDispatch, JobKind
 from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
+from candleviewer.rules.executor.gates import Gates
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.metrics import RereadFailure as RereadFailure
-from candleviewer.rules.executor.ports import ActionAudit, AlertPort, RunRecords
-from candleviewer.rules.executor.results import BlockedBy
+from candleviewer.rules.executor.ports import ActionAudit, AlertPort, RuleSwitches, RunRecords
 from candleviewer.rules.ir.models import Rule
 from candleviewer.rules.manager import (
     Audit,
@@ -108,6 +108,8 @@ class RulesService:
         self._records: tuple[RunRecords, ActionAudit] | None = None
         self._alerts: AlertPort | None = None
         self._metrics = ExecutorMetrics()
+        # E35-T10: the checks' ports (unbound: each refuses, so no armed action is handed over).
+        self._switches: RuleSwitches | None = None
         self._executor: ActionExecutor | None = None  # while the evaluator runs
         self._dispatch: FireDispatch | None = None  # the fire queue, while the evaluator runs
         self._audits: AuditDispatch | None = None  # the record-only jobs' queue, beside it
@@ -123,6 +125,7 @@ class RulesService:
         records: tuple[RunRecords, ActionAudit] | None = None,
         alerts: AlertPort | None = None,
         metrics: ExecutorMetrics | None = None,
+        switches: RuleSwitches | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
         Each option is set only when given, so a later call (E35-S05's simulation sink, the
@@ -134,7 +137,8 @@ class RulesService:
         `action_sink` stands in for the engine-internal handlers no slice has bound, never for an
         action that would reach the OMS (`ActionExecutor`). `records` are the executor's two
         write-ahead ports, `alerts` its partial-fire and write-ahead alerts and `metrics` its
-        series (E35-T09, `rules_oms_wiring`)."""
+        series (E35-T09, `rules_oms_wiring`); `switches` the master switch, both kill switches and
+        the rollout port its checks 2 and 3 read (E35-T10)."""
         if action_sink is not None:
             self._action_sink = action_sink
         if simulation_sink is not None:
@@ -145,6 +149,8 @@ class RulesService:
             self._alerts = alerts
         if metrics is not None:
             self._metrics = metrics
+        if switches is not None:
+            self._switches = switches
         if store is not None:
             self._store = store
         if audit is not None:
@@ -274,16 +280,14 @@ class RulesService:
             return "mode_changed"
         return "armed"
 
-    async def _recheck(self, req: ActionRequest) -> BlockedBy | None:
-        """The checks that exist, run again before `retry_once`'s retry (24 §11.9): check 1, then
-        the scope re-check. E35-T10 adds its checks here."""
-        if await self._check_one(req) != "armed":
-            return "mode_changed"
+    def _scope_check(self, req: ActionRequest) -> str | None:
+        """Check 4 run again before `retry_once`'s retry (24 §11.9), outside the emitter, which
+        would hand the action over: the resolver's reason, `None` while in scope; refused while no
+        resolver is wired."""
         resolver = self.scope_resolver
         if resolver is None:
-            return "scope"
-        refused = resolver.check_action(req.rule_scope, req.owner, req.environment, req.instance)
-        return None if refused is None else "scope"
+            return "out_of_scope"
+        return resolver.check_action(req.rule_scope, req.owner, req.environment, req.instance)
 
     def _refused(self, fire: Fire, first: bool) -> None:
         """A fire the full queue refused (24 §11.5), on the tick: each of its actions is counted
@@ -343,8 +347,9 @@ class RulesService:
         run_records, action_audit = self._records or (None, None)
         stand_in = None if self._action_sink is _discard_actions else self._action_sink
         executor = self._executor = ActionExecutor(
-            check_one=self._check_one, recheck=self._recheck, records=run_records,
-            audit=action_audit, alerts=self._alerts, metrics=self._metrics, stand_in=stand_in,
+            check_one=self._check_one, scope_check=self._scope_check,
+            gates=Gates(switches=self._switches), records=run_records, audit=action_audit,
+            alerts=self._alerts, metrics=self._metrics, stand_in=stand_in,
         )  # fmt: skip
         dispatch = self._dispatch = FireDispatch(self._refused, executor.execute)
         audits = self._audits = AuditDispatch(self._shed, executor.execute)

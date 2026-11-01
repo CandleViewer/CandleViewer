@@ -1,9 +1,10 @@
 """E35-T09 (#5000) slice 2d: the action executor (24 §11.5, §11.9; BQ-5 to BQ-9).
 
-`Engine` drives one `ActionExecutor` with scripted doubles: check 1's verdicts, the routing
-emitter (a scope denial, or the hand-over back to the executor; a dry run to the simulation
-list), one bound `send_notification` handler whose answers a test scripts per node, the records in
-memory and the alerts. Every action is `send_notification`, so the bound handler serves them all.
+`Engine` drives one `ActionExecutor` with scripted doubles: check 1's verdicts, the switches of
+checks 2 and 3 (open, E35-T10), the routing emitter (a scope denial, or the hand-over back to the
+executor; a dry run to the simulation list) and the scope re-check before a retry, one bound
+`send_notification` handler whose answers a test scripts per node, the records in memory and the
+alerts. Every action is `send_notification`, so the bound handler serves them all.
 No sleeps: a hang is an event nobody sets, under a bound the test sets to 0.
 """
 
@@ -23,6 +24,7 @@ from candleviewer.rules.executor import dispatch, writeahead
 from candleviewer.rules.executor import engine as engine_module
 from candleviewer.rules.executor.dispatch import Fire
 from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
+from candleviewer.rules.executor.gates import Gates
 from candleviewer.rules.executor.handlers import (
     HANDLERS,
     HandlerAnswer,
@@ -32,10 +34,9 @@ from candleviewer.rules.executor.handlers import (
 )
 from candleviewer.rules.executor.keys import client_ref, dedupe_key
 from candleviewer.rules.executor.ports import ActionAuditFields, EventRow, RunRow
-from candleviewer.rules.executor.results import BlockedBy
 from candleviewer.rules.ir.models import Action, RuleScope
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
-from tests.rules.executor.request_builders import Counted, Records, action_request
+from tests.rules.executor.request_builders import Counted, Records, Switches, action_request
 
 GUARD_S = 5.0
 RULE, RUN, OWNER = str(uuid.UUID(int=7)), uuid.UUID(int=8), uuid.UUID(int=0xA1)
@@ -120,7 +121,8 @@ class Engine:
     handler: Handler
     records: Records = field(default_factory=Records)
     verdicts: dict[str, list[RowVerdict]] = field(default_factory=dict)
-    rechecks: dict[str, list[BlockedBy | None]] = field(default_factory=dict)
+    rechecks: dict[str, list[str | None]] = field(default_factory=dict)  # the retry's check 4
+    switches: Switches = field(default_factory=Switches)
     denied: set[str] = field(default_factory=set)
     order: list[tuple[str, str]] = field(default_factory=list)
     simulated: list[str] = field(default_factory=list)
@@ -132,8 +134,9 @@ class Engine:
         spec = replace(HANDLERS["send_notification"], handler=self.handler)
         table: dict[str, HandlerSpec] = {**HANDLERS, "send_notification": spec}
         self.executor = ActionExecutor(
-            check_one=self.check_one, recheck=self.recheck, records=self.records,
-            audit=self.records, alerts=self.alerts, metrics=self.counted.metrics, handlers=table,
+            check_one=self.check_one, scope_check=self.scope_check,
+            gates=Gates(switches=self.switches), records=self.records, audit=self.records,
+            alerts=self.alerts, metrics=self.counted.metrics, handlers=table,
         )  # fmt: skip
 
     async def check_one(self, req: ActionRequest) -> RowVerdict:
@@ -142,7 +145,7 @@ class Engine:
         queue = self.verdicts.get(node)
         return queue.pop(0) if queue else "armed"
 
-    async def recheck(self, req: ActionRequest) -> BlockedBy | None:
+    def scope_check(self, req: ActionRequest) -> str | None:
         self.order.append(("recheck", req.payload.node_id))
         queue = self.rechecks.get(req.payload.node_id)
         return queue.pop(0) if queue else None
@@ -299,16 +302,18 @@ async def test_the_write_ahead_comes_first(
 
 
 async def test_retry_once_reruns_the_checks_and_a_refusal_sends_nothing() -> None:
-    """Before the retry the checks run again (one hook, E35-T10's to extend): one that now refuses
-    sends nothing, and the first call's result stands (`unknown` after no answer)."""
+    """Before the retry checks 1 to 8 run again (E35-T10): one that now refuses (the scope
+    re-check here, check 1 below) sends nothing, and the first call's result stands (`unknown`
+    after no answer)."""
     engine = Engine(Handler({"a1": [NO_ANSWER, OK]}))
-    engine.rechecks["a1"] = ["scope"]
+    engine.rechecks["a1"] = ["grant_revoked"]
     await engine.run("a1", on_error="retry_once")
     assert len(engine.handler.sent) == 1 and outcomes(engine.records) == [("a1", "unknown")]
     pre = Engine(Handler({"a1": [PRE_ANCHOR, OK]}))
-    pre.rechecks["a1"] = ["mode_changed"]
+    pre.verdicts["a1"] = ["armed", "mode_changed"]  # the row is disarmed before the retry
     await pre.run("a1", on_error="retry_once")
     assert len(pre.handler.sent) == 1 and outcomes(pre.records) == [("a1", "failed")]
+    assert ("recheck", "a1") not in pre.order  # check 1 refused first: check 4 was never asked
 
 
 @pytest.mark.parametrize("mode", ["abort_remaining", "continue", "retry_once"])
@@ -431,7 +436,8 @@ async def test_a_bound_stand_in_never_serves_an_action_that_would_reach_the_oms(
     engine = Engine(Handler({}))
     records = engine.records
     engine.executor = ActionExecutor(
-        check_one=engine.check_one, recheck=engine.recheck, records=records, audit=records,
+        check_one=engine.check_one, scope_check=engine.scope_check,
+        gates=Gates(switches=Switches(rollout=True)), records=records, audit=records,
         stand_in=sink,
     )  # fmt: skip
     types = (
@@ -475,7 +481,8 @@ async def test_an_executor_with_no_records_bound_hands_nothing_over() -> None:
     result is counted `failed` (`write_ahead_failed`) and the write-ahead alert raised."""
     engine = Engine(Handler({"a1": [OK]}))
     engine.executor = ActionExecutor(
-        check_one=engine.check_one, recheck=engine.recheck, alerts=engine.alerts,
+        check_one=engine.check_one, scope_check=engine.scope_check,
+        gates=Gates(switches=engine.switches), alerts=engine.alerts,
         metrics=engine.counted.metrics, handlers=engine.executor._handlers,
     )  # fmt: skip
     with capture_logs() as logs:
@@ -538,7 +545,8 @@ async def test_an_armed_fires_close_carries_its_duration() -> None:
 
     engine = Engine(Slow({"a1": [OK]}))
     engine.executor = ActionExecutor(
-        check_one=engine.check_one, recheck=engine.recheck, records=engine.records,
+        check_one=engine.check_one, scope_check=engine.scope_check,
+        gates=Gates(switches=engine.switches), records=engine.records,
         audit=engine.records, handlers=engine.executor._handlers, clock=lambda: now[0],
     )  # fmt: skip
     await engine.run("a1")
@@ -617,7 +625,8 @@ async def test_the_defensive_refusals_send_nothing() -> None:
     table = {k: v for k, v in HANDLERS.items() if k != "send_notification"}
     missing = Engine(Handler({"a1": [OK]}))
     missing.executor = ActionExecutor(
-        check_one=missing.check_one, recheck=missing.recheck, records=missing.records,
+        check_one=missing.check_one, scope_check=missing.scope_check,
+        gates=Gates(switches=missing.switches), records=missing.records,
         audit=missing.records, handlers=table,
     )  # fmt: skip
     await missing.run("a1")
