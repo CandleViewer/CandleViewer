@@ -428,17 +428,34 @@ _SELF_SERVICE_QUERY_ROUTES = [
     ("DELETE", "/me/sessions/{sessionId}"),
     ("GET", "/alerts"),
     ("GET", "/alerts/{alertId}"),
+    ("GET", "/settings"),
+    ("PATCH", "/settings"),
+]
+#: Each route with every authenticated role its matrix row allows. A role the route's own
+#: permission refuses (the Viewer's `PATCH /settings`) is refused so first, before the query is
+#: read (`api.query_allowlist`), which `test_route_matrix.py` asserts.
+_SELF_SERVICE_QUERY_CELLS = [
+    (actor, method, path)
+    for method, path in _SELF_SERVICE_QUERY_ROUTES
+    for actor in ACTORS[:4]
+    if _OPS[f"{method} {path}"]["outcomes"][actor] == "allow"
 ]
 
 
-@pytest.mark.parametrize(("method", "path"), _SELF_SERVICE_QUERY_ROUTES)
-@pytest.mark.parametrize("actor", ACTORS[:4])  # every authenticated role
+def test_self_service_query_cells_number_43_so_none_drops_out_silently() -> None:
+    """The cells come from the matrix outcomes, so a role a matrix change denies would leave the
+    registry unnoticed: nine routes for all four roles (36), `GET /settings` for all four and
+    `PATCH /settings` for all but the Viewer."""
+    assert len(_SELF_SERVICE_QUERY_CELLS) == 43
+
+
+@pytest.mark.parametrize(("actor", "method", "path"), _SELF_SERVICE_QUERY_CELLS)
 def test_self_service_routes_reject_a_target_user_query_parameter(
     world: World, method: str, path: str, actor: str
 ) -> None:
     """SR-026 (#2573, #2632): a target-user parameter is refused (422), never silently ignored,
-    for every role and whichever other user it names. The refusal carries no data and writes no
-    audit record, so nothing was revoked."""
+    for every role the route admits and whichever other user it names. The refusal carries no
+    data and writes no audit record, so nothing was revoked or changed."""
     target = next(a for a in ACTORS[:4] if a != actor)
     resp = world.client.request(
         method, fill_path(path), params={"user_id": str(user_id_of(target))}, headers=bearer(actor)

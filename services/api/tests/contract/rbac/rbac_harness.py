@@ -80,6 +80,7 @@ from tests.csrf_helpers import csrf_headers
 from tests.unit.admin._backup_fakes import row
 from tests.unit.admin._link_fakes import Reader
 from tests.unit.api._purge_anchors import InMemoryPurgeAnchors
+from tests.unit.storage.fakes_user_settings import FakeUserSettings
 
 MATRIX_PATH = Path(__file__).with_name("matrix.yaml")
 #: A stored-hash placeholder for seeded users; nothing in the pack ever verifies a password.
@@ -796,6 +797,9 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     # #3085 S9: the guard runs as deployed (`build_view_as` wires it on the real backend). A
     # session holding no context passes it untouched, so every other cell is unchanged.
     app.state.view_as = _Views()
+    # E02-T13 (#5181): the per-user settings store `/settings` and `/me/preferences` read is
+    # Postgres-only (`None` on this backend), so the world gives them the in-memory one.
+    app.state.user_settings_repository = FakeUserSettings()
     _CSRF_CODEC[:] = [app.state.csrf_codec]
     ctx = app.state.app_context
     ctx.audit._writer = audit
