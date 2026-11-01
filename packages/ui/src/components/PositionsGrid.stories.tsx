@@ -150,11 +150,15 @@ const BY_ACCOUNT: readonly PositionsGridGroup[] = [
   account("acct-sub-1", "Sub-1 · LIVE", [SUB1_BTC, SUB1_ETH], "-118.80", "3.20"),
   account("acct-sub-2", "Sub-2 · LIVE", [SUB2_SOL, SUB2_BTC], "-95.04", "-6.20"),
 ];
-/** "LIVE total" (D02:142) over the five rows: count, exposure and the accounts' own realised figures (D-15). */
+/**
+ * "LIVE total" (D02:142) over the five rows: count, exposure, Net (Σ signed notional: the ETH short's 3,841.50
+ * against 30,481.16 long) and the accounts' own realised figures (D-15).
+ */
 const LIVE_TOTAL: PositionsGridTotals = {
   label: "LIVE total",
   count: 5,
   exposure: "34322.66",
+  net: "26639.66",
   unrealisedPnl: "-205.84",
   realisedToday: "34.40",
 };
@@ -224,7 +228,8 @@ const gridOf = (canvas: HTMLElement): HTMLElement => {
 
 /**
  * Board 01 (`CMP-114/row-default`, `group-header`, `totals-row`): grouped by account, every group open, the select
- * column and the pinned Account and Symbol, tiers as glyph, word and distance, the pinned "LIVE total".
+ * column and the pinned Account and Symbol, tiers as glyph, word and distance, the pinned "LIVE total" with Net in its
+ * tooltip and description (D-15).
  */
 export const Default: Story = {
   play: async ({ canvasElement }) => {
@@ -233,7 +238,9 @@ export const Default: Story = {
     await expect(
       within(grid).getByRole("row", { name: "BTCUSDT · Long · 0.250 BTC · Main" }),
     ).toHaveAttribute("aria-level", "2");
-    await expect(within(grid).getByRole("rowheader", { name: /^LIVE total/ })).toBeVisible();
+    const total = within(grid).getByRole("rowheader", { name: /^LIVE total/ });
+    await expect(total).toBeVisible();
+    await expect(total.closest("tr")).toHaveAccessibleDescription("Net 26,639.66 USDT");
   },
 };
 
@@ -344,7 +351,8 @@ export const Updating: Story = {
 
 /**
  * The 360 px dock (D02 §11.5): Symbol · Side · Size · uPnL · Status, the account in its header; the base coin and
- * the uPnL unit leave the cells and stay in the names.
+ * the uPnL unit leave the cells and stay in the names (the unit in its header's tooltip too). The totals row keeps
+ * its label, count and uPnL; its exposure, Net and rPnL today move to its tooltip and description, never cut.
  */
 export const Narrow: Story = {
   decorators: [
@@ -360,6 +368,10 @@ export const Narrow: Story = {
     await expect(within(grid).getByRole("columnheader", { name: "uPnL (USDT)" })).toBeVisible();
     await expect(within(grid).queryByRole("columnheader", { name: "Account" })).toBeNull();
     await expect(within(grid).getByRole("columnheader", { name: "Status" })).toBeVisible();
+    const total = within(grid).getByRole("rowheader", { name: "LIVE total · 5 open" });
+    await expect(total.closest("tr")).toHaveAccessibleDescription(
+      "Exposure 34,322.66 USDT · Net 26,639.66 USDT · rPnL today profit 34.40 USDT",
+    );
   },
 };
 
