@@ -9,10 +9,10 @@ published issue map; it reads the same paths at `origin/main` for G-VERSION; the
 
 Default-deny: a cite key the tool does not declare, an id nobody defines, a section heading the
 tool does not expect, an HTML comment, a URL outside the competitive review, a changed path outside
-this PR's three files and a `14` edit other than the one SCR-050 pointer line all FAIL.
+this PR's three files and a `14` edit other than the one pure SCR-050 pointer line all FAIL.
 
 Gates:
-  G-SECTIONS  the H2 headings, in order (the BQ heading in its pending or its RULED form).
+  G-SECTIONS  the H2 headings, in order (the BQ heading in its RULED form only).
   G-MARKER    no HTML comment and no `[//]: #` comment anywhere in the memo.
   G-CITE      every `KEY`:N or `KEY`:N-M cite names a declared key and resolves at BASE.
   G-VERSION   every cited range at BASE stands, contiguous, in the file at `origin/main`.
@@ -20,7 +20,13 @@ Gates:
               competitive review is verbatim in a source its own line cites or in the ticket;
               every competitive row that quotes carries an https URL; quotes pair on each line.
   G-AC        the three scenario names stand verbatim in the AC trace and in the ticket.
-  G-BQ        BQ-0..BQ-14, once each; the heading names the posted BQ comment.
+  G-BQ        BQ-0..BQ-14, once each; the heading names the ruling comment and the section
+              names the posted BQ comment.
+  G-RULING    the header and the AD section carry the ruling of record: PROPOSED decisions
+              become interim rulings on the design approval, reversible by one line; the
+              memo PR is `Refs #417` + `Partial:` and the research-boards PR closes #417.
+  G-AMEND     A1..An in order under 12.4; each row cites `12`, `13`, `14` or `24`, names the
+              feeding AD and an owner; an owner-document change is an A row, never an edit.
   G-TESTABLE  AD-1..AD-10 in order; each row has a satisfies clause and a violates clause and
               no aesthetic-only word (LEXICON_AESTHETIC).
   G-HEURISTIC every F row is `(heuristic)`; no participant, count, timing or attributed quote.
@@ -36,7 +42,8 @@ Gates:
   G-PUBLIC    no local path, host, worker name or secret-shaped string; no URL outside the
               competitive review; no image embed (no third-party screenshot).
   G-UNTOUCHED only the memo, this tool and `14` differ from the merge base; `14` gains exactly
-              the SCR-050 pointer line after its DES-HEATMAP-01 line.
+              the exact pure SCR-050 pointer line (POINTER_LINE) after its DES-HEATMAP-01
+              line; a pointer that carries a decision or a requirement FAILs.
 
 `--check` runs the gates on the working tree; `--self-test` first requires FAIL 0, then applies
 every mutation in MUTATIONS in memory (texts, `origin/main` copies and the changed-path list) and
@@ -69,6 +76,8 @@ PUBLISHED_JSON = "docs/plan/backlog/_tools/published.json"
 TICKET_KEY = "E21-D01"
 ISSUE = 417
 BQ_COMMENT = "6563728077"
+RULING_COMMENT = "6563817374"
+AMEND_KEYS = frozenset({"12", "13", "14", "24"})
 QUOTE_MIN = 12
 ALLOWED_PATHS = frozenset({MEMO_REL, TOOL_REL, CAT_REL})
 
@@ -99,7 +108,7 @@ CITE_KEYS: dict[str, str] = {
 H2_EXPECTED: tuple[str, ...] = (
     r"Acceptance-criteria trace \(E21-D01, issue #417\)",
     r"Deviations",
-    r"BQ list — (?:defaults built; ruling pending|RULED) \(comment \d+\)",
+    r"BQ list — RULED \(comment \d+\)",
     r"0\. Research boards \(Penpot\)(?: — PENDING)?",
     r"1\. Method note \(agent-delivery adaptation, owner decision 2026-09-25\)",
     r"2\. Research questions and pre-registered hypotheses",
@@ -190,13 +199,15 @@ COMMENT_OPEN_RE = re.compile(r"<!--", re.DOTALL)
 LINK_COMMENT_RE = re.compile(r"^\[//\]: #", re.MULTILINE)
 QUOTE_RE = re.compile(r'"([^"\n]*)"')
 URL_RE = re.compile(r"https?://")
-ID_RE = re.compile(r"(?<![\w-])(?:(F|AD|OQ|BQ)-(\d+)|(RQ|H|C|G|K|T|W)(\d+))(?![\w])")
+ID_RE = re.compile(r"(?<![\w-])(?:(F|AD|OQ|BQ)-(\d+)|(RQ|H|C|G|K|T|W|A)(\d+))(?![\w])")
 PAIR_RE = re.compile(r"\b(E\d{2}-[DKQSTX]\d{2})\s+#(\d+)\b")
 ISSUE_RE = re.compile(r"#(\d+)\b")
-POINTER_RE = re.compile(
-    r"^- \*\*UX research:\*\* \[e21-dom-heatmap\.md\]\(\.\./design/research/e21-dom-heatmap\.md\)"
-    r" \(E21-D01; heuristic, owner approval pending; "
+# The ruling of record allows one pure pointer in `14`: it names the memo and changes no requirement.
+POINTER_LINE = (
+    "- **UX research:** [e21-dom-heatmap.md](../design/research/e21-dom-heatmap.md)"
+    " (E21-D01; heuristic research memo; a pointer only, it changes no requirement here)."
 )
+POINTER_RE = re.compile("^" + re.escape(POINTER_LINE) + "$")
 PRE_POINTER = "- **Design decision (DES-HEATMAP-01):**"
 
 
@@ -491,12 +502,53 @@ def g_ac(t: Texts) -> list[Finding]:
 def g_bq(t: Texts) -> list[Finding]:
     out: list[Finding] = []
     heads = [h for h in h2_list(t.memo) if h.startswith("BQ list")]
-    if len(heads) != 1 or f"(comment {BQ_COMMENT})" not in heads[0]:
-        out.append(Finding("G-BQ", "the BQ heading does not name the posted BQ comment"))
+    if len(heads) != 1 or heads[0] != f"BQ list — RULED (comment {RULING_COMMENT})":
+        out.append(Finding("G-BQ", "the BQ heading is not RULED with the ruling comment"))
+    if f"(comment {BQ_COMMENT})" not in section(t.memo, "BQ list"):
+        out.append(Finding("G-BQ", "the BQ section does not name the posted BQ comment"))
     got = [lead(r) for r in data_rows(section(t.memo, "BQ list"))]
     want = [f"BQ-{i}" for i in range(15)]
     if got != want:
         out.append(Finding("G-BQ", f"BQ rows {','.join(got)[:60]} != BQ-0..BQ-14"))
+    return out
+
+
+def g_ruling(t: Texts) -> list[Finding]:
+    out: list[Finding] = []
+    header = t.memo.split("\n## ", 1)[0]
+    need = (
+        f"(comment {RULING_COMMENT})",
+        "**RULED**",
+        f"`Refs #{ISSUE}` plus a `Partial:` line",
+        f"research-boards PR, which carries `Closes #{ISSUE}`",
+        "interim rulings",
+        "reverse any one by one line",
+        "A row (§12.4), never an edit",
+    )
+    for word in need:
+        if word not in header:
+            out.append(Finding("G-RULING", f"the header lacks: {ascii_clip(word, 50)}"))
+    intro = section(t.memo, "7. Adopted").split("\n|", 1)[0]
+    for word in ("stays PROPOSED", "interim rulings", "reverse any one by one line"):
+        if word not in intro:
+            out.append(Finding("G-RULING", f"the AD section lacks: {word}"))
+    return out
+
+
+def g_amend(t: Texts) -> list[Finding]:
+    out: list[Finding] = []
+    sec = section(t.memo, "12. Contradictions")
+    if "### 12.4 Proposed owner-document amendments" not in sec:
+        out.append(Finding("G-AMEND", "no 12.4 amendment table"))
+    rows = [r for r in data_rows(sec) if re.fullmatch(r"A\d+", lead(r))]
+    if not rows or [lead(r) for r in rows] != [f"A{i}" for i in range(1, len(rows) + 1)]:
+        out.append(Finding("G-AMEND", "A rows are missing or not A1..An in order"))
+    for row in rows:
+        keys = {k for k, _, _ in cite_ranges(row[1] if len(row) > 1 else "")}
+        if len(row) < 5 or not keys or not keys <= AMEND_KEYS:
+            out.append(Finding("G-AMEND", f"{lead(row)}: no cite to 12, 13, 14 or 24 only"))
+        if len(row) < 5 or not re.search(r"\bAD-\d+\b", row[3]):
+            out.append(Finding("G-AMEND", f"{lead(row)}: no feeding AD"))
     return out
 
 
@@ -708,6 +760,8 @@ GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_quote,
     g_ac,
     g_bq,
+    g_ruling,
+    g_amend,
     g_testable,
     g_heuristic,
     g_defaults,
@@ -728,6 +782,8 @@ GATE_NAMES: tuple[str, ...] = (
     "G-QUOTE",
     "G-AC",
     "G-BQ",
+    "G-RULING",
+    "G-AMEND",
     "G-TESTABLE",
     "G-HEURISTIC",
     "G-DEFAULTS",
@@ -945,6 +1001,47 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         lambda t: replace(t, changed=tuple(sorted({*t.changed, "apps/web/src/x.ts"}))),
     ),
     ("M29 the 14 pointer twice", "G-UNTOUCHED", pointer_twice),
+    (
+        "M30 the BQ heading back to pending",
+        "G-BQ",
+        memo_mut(
+            lambda m: sub1(
+                m,
+                f"## BQ list — RULED (comment {RULING_COMMENT})",
+                f"## BQ list — defaults built; ruling pending (comment {BQ_COMMENT})",
+            )
+        ),
+    ),
+    (
+        "M31 the interim-ruling sentence dropped from the AD section",
+        "G-RULING",
+        memo_mut(lambda m: sub1(m, "Every AD stays PROPOSED; ", "Every AD is a decision; ")),
+    ),
+    (
+        "M32 the memo PR claims to close the ticket",
+        "G-RULING",
+        memo_mut(lambda m: sub1(m, "which carries `Closes #417`", "after this PR closes #417")),
+    ),
+    (
+        "M33 an A row dropped",
+        "G-AMEND",
+        memo_mut(lambda m: resub1(m, r"^\| A2 .*\n", "")),
+    ),
+    (
+        "M34 an A row aimed at a contract outside 12, 13, 14, 24",
+        "G-AMEND",
+        memo_mut(lambda m: sub1(m, "intent word (`24`:1269)", "intent word (`23`:752)")),
+    ),
+    (
+        "M35 the 14 pointer carries a decision",
+        "G-UNTOUCHED",
+        lambda t: replace(
+            t,
+            cat_work=t.cat_work.replace(
+                POINTER_LINE, POINTER_LINE[:-2] + "; PROPOSED: the heatmap beside the ladder)."
+            ),
+        ),
+    ),
 )
 
 
