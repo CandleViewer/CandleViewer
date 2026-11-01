@@ -24,6 +24,7 @@ measurement.
 from __future__ import annotations
 
 import asyncio
+import functools
 import importlib.util
 import json
 import re
@@ -31,7 +32,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -111,6 +112,7 @@ def _budget(
     mono: _Mono | None = None,
     refused: bool = False,
     pinned: frozenset[str] = frozenset({"BTCUSDT"}),
+    clock: UsClock | None = None,
 ) -> DiskBudget:
     async def pins() -> frozenset[str]:
         return pinned
@@ -121,7 +123,7 @@ def _budget(
         bus=FakeBus(),
         env="demo",
         config=BudgetConfig(cap_bytes=CAP),
-        now_us=UsClock(NOW),
+        now_us=clock or UsClock(NOW),
         pinned=pins,
         monotonic=mono or _Mono(),
         recording_refused=refused,
@@ -132,6 +134,29 @@ def _sampled(meter: FakeMeter, **kw: Any) -> DiskBudget:
     budget = _budget(meter, **kw)
     asyncio.run(budget.sample_once())
     return budget
+
+
+STEP_S = 600  # the sampler's series step (`BudgetConfig.series_step_s`)
+PER_STEP = 100_000_000  # recorded bytes added per step: exactly 14.4 GB per day
+SYMBOL_STEP = {"BTCUSDT": 60_000_000, "ETHUSDT": 40_000_000}  # per step: 8.64 and 5.76 GB per day
+PER_DAY = PER_STEP * 86_400 // STEP_S
+SYMBOL_PER_DAY = {s: b * 86_400 // STEP_S for s, b in SYMBOL_STEP.items()}
+
+
+def _grown(steps: int = 12) -> tuple[DiskBudget, int, int]:
+    """The real sampler over a fake clock: `steps + 1` passes, one series step apart, the meter
+    growing a fixed amount between them. Returns the budget, the last pass time and the recorded
+    bytes at it. Nothing sleeps: the clock is injected."""
+    clock, mono, meter = UsClock(NOW), _Mono(), _meter()
+    budget = _budget(meter, mono=mono, clock=clock)
+    asyncio.run(budget.sample_once())
+    for _ in range(steps):
+        clock.advance_s(STEP_S)
+        mono.t += 60
+        meter.used += PER_STEP
+        meter.symbols = {s: b + SYMBOL_STEP[s] for s, b in meter.symbols.items()}
+        asyncio.run(budget.sample_once())
+    return budget, clock.t, meter.used
 
 
 @pytest.fixture(scope="module")
@@ -203,31 +228,62 @@ def test_baseline_field_set_is_exactly_the_schema_fields(baseline: dict[str, Any
 
 # --- CK rows (RULED BQ-05) ------------------------------------------------------------------------
 
-_CK = [  # (id, field, python type of the value, unit by name per D01 section 4.1)  # (RULED BQ-05)
-    ("CK-01", "disk_total_bytes", int, "bytes"),
-    ("CK-02", "disk_used_bytes", int, "bytes"),
-    ("CK-03", "disk_free_bytes", int, "bytes"),
-    ("CK-04", "projected_full_at", type(None), "date-time UTC"),
-    ("CK-05", "daily_growth_bytes", int, "bytes per day"),
-    ("CK-06", "tiers", list, "tier rows"),
-    ("CK-07", "symbols", list, "symbol rows"),
-    ("CK-08", "generated_at", str, "date-time UTC"),
-    ("CK-09", "cap_bytes", int, "bytes"),
-    ("CK-10", "level", int, "enum 0..3"),
-    ("CK-11", "write_gate", str, "enum"),
-    ("CK-12", "write_gate_reason", type(None), "enum or null"),
-    ("CK-13", "accelerate_retention", bool, "bool"),
+_CK = [  # (id, field, python type of the baseline value)  # (RULED BQ-05)
+    ("CK-01", "disk_total_bytes", int),
+    ("CK-02", "disk_used_bytes", int),
+    ("CK-03", "disk_free_bytes", int),
+    ("CK-04", "projected_full_at", type(None)),
+    ("CK-05", "daily_growth_bytes", int),
+    ("CK-06", "tiers", list),
+    ("CK-07", "symbols", list),
+    ("CK-08", "generated_at", str),
+    ("CK-09", "cap_bytes", int),
+    ("CK-10", "level", int),
+    ("CK-11", "write_gate", str),
+    ("CK-12", "write_gate_reason", type(None)),
+    ("CK-13", "accelerate_retention", bool),
 ]
 
 
-@pytest.mark.parametrize(("ck", "field", "kind", "unit"), _CK, ids=[c[0] for c in _CK])
+@pytest.mark.parametrize(("ck", "field", "kind"), _CK, ids=[c[0] for c in _CK])
 def test_baseline_field_has_its_schema_type(
-    baseline: dict[str, Any], ck: str, field: str, kind: type, unit: str
+    baseline: dict[str, Any], ck: str, field: str, kind: type
 ) -> None:
     value = baseline[field]
-    assert isinstance(value, kind), (ck, unit)
+    assert isinstance(value, kind), ck
     if kind is int:
         assert not isinstance(value, bool)
+
+
+def test_storage_usage_schema_has_no_required_list_so_validation_proves_types_only() -> None:
+    schema = _SPEC["components"]["schemas"]["StorageUsage"]
+    assert "required" not in schema and schema.get("additionalProperties") is not False
+    # Schema validation checks the type of each field that is present; that every field is
+    # present is held by `test_baseline_field_set_is_exactly_the_schema_fields` and the fixture.
+
+
+def test_grown_series_serves_the_growth_unit_and_the_projection_through_the_route(
+    world: World,
+) -> None:  # CK-04, CK-05, CK-07: bytes per day, and a date-time from the fit (BQ-05, BQ-09)
+    budget, now, used = _grown()
+    body = _body(world, budget)
+    assert PER_DAY == 14_400_000_000 and SYMBOL_PER_DAY == {
+        "BTCUSDT": 8_640_000_000,
+        "ETHUSDT": 5_760_000_000,
+    }
+    assert body["daily_growth_bytes"] == PER_DAY  # bytes per day, not per hour
+    assert {r["symbol"]: r["daily_growth_bytes"] for r in body["symbols"]} == SYMBOL_PER_DAY
+    stamp = datetime.fromisoformat(body["projected_full_at"].replace("Z", "+00:00"))
+    assert stamp.utcoffset() == timedelta(0)  # a UTC date-time, not null
+    remaining = min(CAP - used, TOTAL // 2)  # the nearer wall: the cap (298.8 GB left)
+    assert remaining == 298_800_000_000 < TOTAL // 2
+    expected = datetime(1970, 1, 1, tzinfo=UTC) + timedelta(
+        microseconds=now + remaining * US_PER_DAY // PER_DAY
+    )
+    assert stamp == expected
+    generated = datetime.fromisoformat(body["generated_at"].replace("Z", "+00:00"))
+    assert stamp - generated == timedelta(days=20, hours=18)  # 298.8 GB at 14.4 GB per day
+    validate_example(_OK, body)
 
 
 def test_nullable_fields_are_exactly_the_schema_nullable_fields() -> None:
@@ -290,7 +346,7 @@ def test_pinned_flag_follows_the_pin_source_ck_07_pinned(world: World) -> None:
     assert [r["pinned"] for r in both["symbols"]] == [True, True]
 
 
-def test_level_three_payload_has_no_pinned_exemption_field_d01_c_c_not_expressible(
+def test_level_three_payload_has_no_pinned_exemption_not_expressible_f07(
     world: World,
 ) -> None:  # AC4, D01 section 18 item 7: level 3 says nothing about pinned symbols
     body = _body(world, _sampled(_meter(free=TOTAL * 4 // 100)))
@@ -321,27 +377,62 @@ def test_baseline_enum_values_are_in_the_schema_set(
 
 # --- DL rows: every decision maps to fields or to a recorded gap (T AC1) -------------------------
 
-_GAPS = {"D01-G1", "D01-G2", "D01-G3", "D01-G4", "D01-G5", "D01-G6", "D01-G7",
-         "D04-G1", "D04-G7", "D04-G8"}  # fmt: skip
-_DL: dict[str, tuple[set[str], set[str]]] = {  # id -> (fields, gaps)  # (RULED BQ-05)
-    "DL-01": ({"level", "disk_free_bytes", "disk_total_bytes", "cap_bytes", "daily_growth_bytes",
-               "tiers", "projected_full_at"}, set()),
-    "DL-02": ({"level", "write_gate", "write_gate_reason", "accelerate_retention"}, set()),
-    "DL-03": (set(), {"D04-G7"}),
-    "DL-04": (set(), {"D04-G1"}),
-    "DL-05": ({"symbols"}, set()),
-    "DL-06": ({"symbols"}, set()),
-    "DL-07": ({"generated_at"}, set()),
-    "DL-08": (set(), {"D01-G1"}),
-    "DL-09": ({"daily_growth_bytes"}, {"D04-G1"}),
-    "DL-10": ({"tiers"}, set()),
-}  # fmt: skip
+_DL_GAPS = {"D01-G1", "D04-G7", "D04-G1"}  # the gaps the ruling maps DL rows to (BQ-05)
+_DL_IDS = [f"DL-{n:02d}" for n in range(1, 11)]
+_ITEM_FIELDS = {  # row-level fields of the two list fields, from the schema
+    "tiers": set(_SCHEMA["tiers"]["items"]["properties"]),
+    "symbols": set(_SCHEMA["symbols"]["items"]["properties"]),
+}
 
 
-@pytest.mark.parametrize("dl", sorted(_DL))
+def _report_text() -> str:
+    return REPORT.read_text(encoding="utf-8")
+
+
+def _cells(line: str) -> list[str]:
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def _tables(text: str) -> list[tuple[list[str], list[dict[str, str]]]]:
+    """Every markdown table of the report: its header cells and its rows keyed by header."""
+    lines, out, i = text.splitlines(), [], 0
+    while i < len(lines) - 1:
+        if lines[i].startswith("|") and re.fullmatch(r"\|[\s:|-]+\|", lines[i + 1]):
+            head, rows, j = _cells(lines[i]), [], i + 2
+            while j < len(lines) and lines[j].startswith("|"):
+                rows.append(dict(zip(head, _cells(lines[j]), strict=False)))
+                j += 1
+            out.append((head, rows))
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def _dl_rows() -> dict[str, tuple[set[str], set[str]]]:
+    """Section 3 of the report: DL id -> (field tokens, gap ids), as the report states them."""
+    rows = {}
+    for head, table in _tables(_report_text()):
+        if head[:1] == ["Id"] and "Question" in head:
+            for row in table:
+                tokens = set(re.findall(r"`([^`]+)`", row["Fields"]))
+                rows[row["Id"]] = (tokens, set(re.findall(r"\b[DE]\d\d-G\d\b", row["Gap"])))
+    return rows
+
+
+def test_report_decision_table_has_the_ten_decision_rows() -> None:
+    assert sorted(_dl_rows()) == _DL_IDS
+
+
+@pytest.mark.parametrize("dl", _DL_IDS)
 def test_decision_row_names_real_fields_or_a_recorded_gap(dl: str) -> None:
-    fields, gaps = _DL[dl]
-    assert fields <= set(_FIELDS) and gaps <= _GAPS and (fields or gaps)
+    tokens, gaps = _dl_rows()[dl]  # read from the report, not from this file
+    for token in tokens:
+        name, _, sub = token.partition("[]")
+        assert name in _FIELDS, (dl, token)
+        if sub:  # `symbols[].pinned`: the part after the dot is a row field of that list
+            assert sub.startswith(".") and sub[1:] in _ITEM_FIELDS.get(name, set()), (dl, token)
+    assert gaps <= _DL_GAPS and (tokens or gaps), dl
 
 
 # --- ST rows: the states the sampler can reach (RULED BQ-07) --------------------------------------
@@ -539,12 +630,18 @@ def test_build_storage_usage_is_the_eight_field_shape_f05() -> None:
 # --- the no-path scan (RULED BQ-11) ---------------------------------------------------------------
 
 
+@functools.cache
 def _d01_tool() -> ModuleType:
+    """Executed once for the module; `sys.modules` holds it only while it runs (its dataclasses
+    resolve their module there), so no other test can see it."""
     spec = importlib.util.spec_from_file_location("e07_d01_storage_model_audit", D01_TOOL)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
     return module
 
 
@@ -562,9 +659,11 @@ def test_baseline_strings_have_no_path_or_credential_shape(baseline: dict[str, A
     assert _scan(baseline) == []  # the token-shaped rule must pass an ISO date-time (UNVERIFIED)
 
 
-def test_every_state_payload_has_no_path_or_credential_shape(world: World) -> None:
-    for st, budget in _state_budgets():
-        assert _scan(_body(world, budget)) == [], st
+@pytest.mark.parametrize(("st", "kw", "refused", "want"), _STATES, ids=[s[0] for s in _STATES])
+def test_every_state_payload_has_no_path_or_credential_shape(
+    world: World, st: str, kw: dict[str, Any], refused: bool, want: tuple[Any, ...]
+) -> None:
+    assert _scan(_body(world, _sampled(_meter(**kw), refused=refused))) == [], st
 
 
 def test_503_problem_has_no_path_or_credential_shape(world: World) -> None:
@@ -645,6 +744,13 @@ def test_audit_name_is_in_the_openapi_document(name: str) -> None:  # (RULED BQ-
     assert name in json.dumps(_SPEC)
 
 
+@pytest.mark.parametrize("name", ["storage.vacuum_triggered", "storage.tier_migration_triggered"])
+def test_audit_name_without_a_route_is_absent_from_the_openapi_document(
+    name: str,
+) -> None:  # (RULED BQ-13) D04-G8, D01-G4: no route, no job kind, so no audit name in `22`
+    assert name not in json.dumps(_SPEC)
+
+
 # --- cadence (RULED BQ-14) ------------------------------------------------------------------------
 
 
@@ -658,21 +764,43 @@ def test_route_serves_the_last_sample_without_measuring(world: World) -> None:
 
 # --- the report links to the tests (RULED BQ-02) --------------------------------------------------
 
-_ROW = re.compile(
-    r"^\|\s*(CK|ST|F)-\d\d[^|]*\|(?:[^|]*\|){0,4}\s*(?P<tests>[^|]*?)\s*\|\s*(?:PENDING|PASS|FAIL)\s*\|",
-    re.M,
-)
+_RESULTS = {"PASS", "FAIL"}
+_SEVERITIES = {"Blocking", "Major", "Minor", "Info"}
+_TRACED_ROWS = 77  # CK 14, ST 12, gaps 10, projection 7, scan 4, access 6, names 12, D01 F 12
+_FINDING_ROWS = 5  # D02-F1..F5
+
+
+def _listed(cell: str) -> list[str]:
+    return [t.strip().split("[")[0] for t in cell.split(",")]
 
 
 def test_every_report_row_names_a_test_that_exists() -> None:  # (RULED BQ-02)
     names = {n for n in globals() if n.startswith("test_")}
-    rows = list(_ROW.finditer(REPORT.read_text(encoding="utf-8")))
-    assert len(rows) >= 13 + 10  # at least the CK rows and the ST rows
+    count = 0
+    for head, table in _tables(_report_text()):
+        if "Test id" not in head:
+            continue
+        for row in table:
+            count += 1
+            cell, ident = row["Test id"], row[head[0]]
+            assert row["Result"] in _RESULTS, row
+            if cell.startswith("n/a"):  # a text finding with no payload behaviour (D01 F rows)
+                assert ident.startswith("F-"), row
+            else:
+                assert all(t in names for t in _listed(cell)), row
+    assert count == _TRACED_ROWS
+
+
+def test_every_new_finding_row_has_a_severity_an_owner_and_a_test_or_none() -> None:
+    names = {n for n in globals() if n.startswith("test_")}
+    owner = _d01_tool().OWNER  # D01's owner form: backticked `Exx-nn · area/x` tokens, commas
+    rows = [r for head, t in _tables(_report_text()) if "Shown by" in head for r in t]
+    assert [r["Id"] for r in rows] == [f"D02-F{n}" for n in range(1, _FINDING_ROWS + 1)]
     for row in rows:
-        cell = row.group("tests")
-        listed = [t.strip().split("[")[0] for t in cell.split(",")]
-        assert all(t in names for t in listed) or cell.startswith("n/a"), row.group(0)
-        assert not (row.group(1) in {"CK", "ST"} and cell.startswith("n/a")), row.group(0)
+        assert row["Severity"] in _SEVERITIES, row
+        assert owner.fullmatch(row["Owner"]), row
+        shown = row["Shown by"]
+        assert shown.startswith("none") or all(t in names for t in _listed(shown)), row
 
 
 # --- baseline writer: the one documented command (RULED BQ-06) ------------------------------------

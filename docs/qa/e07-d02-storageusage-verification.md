@@ -1,6 +1,6 @@
 # E07-D02 (#223): verification of the shipped `StorageUsage` payload
 
-Status: verified, every result below is the outcome of the committed test file. Base: `584757638` <!-- BQ-02 RULED (orchestrator, 2026-11-01, #223 ruling of record 6555029325) -->.
+Status: verified, every result below is the outcome of the committed test file. Base: `40e63d452` <!-- BQ-02 RULED (orchestrator, 2026-11-01, #223 ruling of record 6555029325) -->.
 Ticket: #223 `[E07-D02]`, Task, 2 pts, QA. Parents, all merged: E07-D01 (#166), E07-T05 (#225).
 Served route: E16-T08 (#492). One PR, `Closes #223`. <!-- BQ-03 RULED (orchestrator, 2026-11-01, #223 ruling of record 6555029325) -->
 
@@ -29,7 +29,7 @@ committed bytes; a change to the shape, the key order or a sampler rule turns it
 file, run `python -m tests.contract.storage.test_storage_usage_verification --write-baseline` from
 `services/api` on purpose; it is not a pytest option.
 
-Run: 97 of 97 tests passed on 2026-11-01. Nothing touches the network.
+Run: 107 of 107 tests passed on 2026-11-01. Nothing touches the network.
 No test sleeps. No test skips (AGENTS.md section 8 rule 4). <!-- BQ-04 RULED (orchestrator, 2026-11-01, #223 ruling of record 6555029325) -->
 
 Not run, and not claimed:
@@ -49,37 +49,55 @@ All four are listed UNVERIFIED in section 9.
 One row per `CK` row of HO section A. "Observed" comes from the frozen baseline.
 Accepted exceptions are copied from D01 section 4.2 and are not re-opened.
 
-| Id           | Field                  | Observed                                                                | Test id                                                                                                                                                                                            | Result |
-| ------------ | ---------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| CK-01        | `disk_total_bytes`     | 1000000000000 bytes                                                     | test_baseline_field_has_its_schema_type                                                                                                                                                            | PASS   |
-| CK-02        | `disk_used_bytes`      | 500000000000 bytes                                                      | test_baseline_field_has_its_schema_type, test_baseline_disk_used_is_total_minus_free_x1                                                                                                            | PASS   |
-| CK-03        | `disk_free_bytes`      | 500000000000 bytes                                                      | test_baseline_field_has_its_schema_type                                                                                                                                                            | PASS   |
-| CK-04        | `projected_full_at`    | null                                                                    | test_baseline_field_has_its_schema_type, test_first_sample_has_no_projection_and_zero_growth_em08_f04, test_projection_is_null_beyond_one_hundred_years_u05                                        | PASS   |
-| CK-05        | `daily_growth_bytes`   | 0 bytes per day                                                         | test_baseline_field_has_its_schema_type, test_first_sample_has_no_projection_and_zero_growth_em08_f04                                                                                              | PASS   |
-| CK-06        | `tiers[]`              | questdb 150 GB (7 days), parquet 150 GB (30 days), postgres 1 GB (null) | test_baseline_tier_rows_follow_the_tier_order, test_baseline_retention_days_are_7_30_and_null, test_tier_rows_carry_no_growth_d04_g1_not_expressible                                               | PASS   |
-| CK-07        | `symbols[]`            | BTCUSDT 200 GB pinned, ETHUSDT 100 GB                                   | test_baseline_symbols_are_sorted_largest_first, test_symbols_are_capped_at_64_largest_first_x2                                                                                                     | PASS   |
-| CK-07.pinned | `symbols[].pinned`     | BTCUSDT true, ETHUSDT false                                             | test_baseline_symbol_rows_carry_the_pinned_flag_ck_07_pinned, test_pinned_flag_follows_the_pin_source_ck_07_pinned, test_level_three_payload_has_no_pinned_exemption_field_d01_c_c_not_expressible | PASS   |
-| CK-08        | `generated_at`         | `2026-09-21T14:13:20Z`                                                  | test_baseline_timestamps_are_utc_date_times                                                                                                                                                        | PASS   |
-| CK-09        | `cap_bytes`            | 600000000000 bytes                                                      | test_baseline_cap_bytes_is_at_least_one                                                                                                                                                            | PASS   |
-| CK-10        | `level`                | 0                                                                       | test_baseline_enum_values_are_in_the_schema_set, test_state_payload_names_level_gate_reason_and_flag                                                                                               | PASS   |
-| CK-11        | `write_gate`           | `open`                                                                  | test_baseline_enum_values_are_in_the_schema_set, test_state_payload_names_level_gate_reason_and_flag                                                                                               | PASS   |
-| CK-12        | `write_gate_reason`    | `null`                                                                  | test_baseline_enum_values_are_in_the_schema_set, test_write_gate_reason_stays_in_the_closed_set_d01_g1_not_expressible                                                                             | PASS   |
-| CK-13        | `accelerate_retention` | False                                                                   | test_state_payload_names_level_gate_reason_and_flag                                                                                                                                                | PASS   |
+| Id           | Field                  | Observed                                                                                    | Test id                                                                                                                                                                                                                                     | Result |
+| ------------ | ---------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| CK-01        | `disk_total_bytes`     | 1000000000000 bytes                                                                         | test_baseline_field_has_its_schema_type                                                                                                                                                                                                     | PASS   |
+| CK-02        | `disk_used_bytes`      | 500000000000 bytes                                                                          | test_baseline_field_has_its_schema_type, test_baseline_disk_used_is_total_minus_free_x1                                                                                                                                                     | PASS   |
+| CK-03        | `disk_free_bytes`      | 500000000000 bytes                                                                          | test_baseline_field_has_its_schema_type                                                                                                                                                                                                     | PASS   |
+| CK-04        | `projected_full_at`    | null at baseline; a UTC date-time 20 days 18 hours after `generated_at` in the grown state  | test_baseline_field_has_its_schema_type, test_first_sample_has_no_projection_and_zero_growth_em08_f04, test_projection_is_null_beyond_one_hundred_years_u05 , test_grown_series_serves_the_growth_unit_and_the_projection_through_the_route | PASS   |
+| CK-05        | `daily_growth_bytes`   | 0 bytes per day at baseline; 14400000000 bytes per day in the grown state                   | test_baseline_field_has_its_schema_type, test_first_sample_has_no_projection_and_zero_growth_em08_f04 , test_grown_series_serves_the_growth_unit_and_the_projection_through_the_route                                                       | PASS   |
+| CK-06        | `tiers[]`              | questdb 150 GB (7 days), parquet 150 GB (30 days), postgres 1 GB (null)                     | test_baseline_tier_rows_follow_the_tier_order, test_baseline_retention_days_are_7_30_and_null, test_tier_rows_carry_no_growth_d04_g1_not_expressible                                                                                        | PASS   |
+| CK-07        | `symbols[]`            | BTCUSDT 200 GB pinned, ETHUSDT 100 GB; grown state: 8640000000 and 5760000000 bytes per day | test_baseline_symbols_are_sorted_largest_first, test_symbols_are_capped_at_64_largest_first_x2 , test_grown_series_serves_the_growth_unit_and_the_projection_through_the_route                                                              | PASS   |
+| CK-07.pinned | `symbols[].pinned`     | BTCUSDT true, ETHUSDT false                                                                 | test_baseline_symbol_rows_carry_the_pinned_flag_ck_07_pinned, test_pinned_flag_follows_the_pin_source_ck_07_pinned, test_level_three_payload_has_no_pinned_exemption_not_expressible_f07                                                    | PASS   |
+| CK-08        | `generated_at`         | `2026-09-21T14:13:20Z`                                                                      | test_baseline_timestamps_are_utc_date_times                                                                                                                                                                                                 | PASS   |
+| CK-09        | `cap_bytes`            | 600000000000 bytes                                                                          | test_baseline_cap_bytes_is_at_least_one                                                                                                                                                                                                     | PASS   |
+| CK-10        | `level`                | 0                                                                                           | test_baseline_enum_values_are_in_the_schema_set, test_state_payload_names_level_gate_reason_and_flag                                                                                                                                        | PASS   |
+| CK-11        | `write_gate`           | `open`                                                                                      | test_baseline_enum_values_are_in_the_schema_set, test_state_payload_names_level_gate_reason_and_flag                                                                                                                                        | PASS   |
+| CK-12        | `write_gate_reason`    | `null`                                                                                      | test_baseline_enum_values_are_in_the_schema_set, test_write_gate_reason_stays_in_the_closed_set_d01_g1_not_expressible                                                                                                                      | PASS   |
+| CK-13        | `accelerate_retention` | False                                                                                       | test_state_payload_names_level_gate_reason_and_flag                                                                                                                                                                                         | PASS   |
 
 What every row also asserts: the field is present, the JSON type is the schema's, the field set is
-exactly the 13 names (`test_baseline_field_set_is_exactly_the_schema_fields`), the body validates
-against the `22` schema, and the only nullable fields are `projected_full_at`, `write_gate_reason`
+exactly the 13 names (`test_baseline_field_set_is_exactly_the_schema_fields`), the body's present fields
+validate against the `22` schema (types only, see below), and the only nullable fields are `projected_full_at`, `write_gate_reason`
 and `tiers[].retention_days` (`test_nullable_fields_are_exactly_the_schema_nullable_fields`).
 
 Units, by name, as D01 section 4.1 gives them: bytes, bytes per day, UTC date-time, a level 0 to 3,
-a bool. The unit is a property of the field, not of the value.
+a bool. The unit is a property of the field, not of the value. The baseline is a first sample (growth
+0, projection null), so it cannot show the unit of `daily_growth_bytes` or a date-time projection.
+`test_grown_series_serves_the_growth_unit_and_the_projection_through_the_route`
+drives the real sampler through 13 passes on an injected clock (one 600 s series step apart, the
+meter growing by 100 MB a step, BTCUSDT 60 MB and ETHUSDT 40 MB), reads the served body and checks
+`daily_growth_bytes` equals 14400000000 bytes per day, the two symbol rows 8640000000 and 5760000000,
+and `projected_full_at` is the UTC date-time `now + remaining x 1 day / growth`, which is 20 days
+18 hours after `generated_at`. A growth read as per hour, or a projection a day off, turns it red.
+
+Schema validation. The `StorageUsage` schema in `22` has no `required` list and no closed
+`additionalProperties`, so validating a body against it proves the types of the fields that are
+present and nothing about absent ones. Presence is held by
+`test_baseline_field_set_is_exactly_the_schema_fields` and the frozen fixture bytes.
+`test_storage_usage_schema_has_no_required_list_so_validation_proves_types_only` pins the fact (see
+D01-G5 and F-06): when `22` adds `required`, it goes red and this paragraph is updated.
 
 Accepted exceptions: X-1 `disk_used_bytes` (derivable, kept for the volume meter; the test pins the
 arithmetic). X-2 the `symbols[]` cap of 64 (the test pins it; the schema is silent, D01-G5).
 
 ## 3. Decision rows: every decision has fields or a gap (AC1)
 
-Test: `test_decision_row_names_real_fields_or_a_recorded_gap`, one case per `DL` row.
+Tests: `test_report_decision_table_has_the_ten_decision_rows` and
+`test_decision_row_names_real_fields_or_a_recorded_gap`, one case per `DL` row. Both parse this table:
+each field token must be a field of the `22` schema (a `symbols[].x` or `tiers[].x` token must name a
+row field of that list), each gap must be one of D01-G1, D04-G7 and D04-G1, and a row needs a field
+or a gap. A bogus field or gap written in a row turns it red.
 Result of the whole table: PASS.
 
 | Id    | Question                          | Fields                                                                                                            | Gap                        |
@@ -172,14 +190,15 @@ number, and none of the 13 field names in the body. Tests: ST-12 row above. Resu
 
 ### 6.3 No projection (AC5, EM-08, F-04) <!-- BQ-09 RULED (orchestrator, 2026-11-01, #223 ruling of record 6555029325) -->
 
-| Case                                             | Test id                                                            | Result |
-| ------------------------------------------------ | ------------------------------------------------------------------ | ------ |
-| first sample: `projected_full_at` null, growth 0 | test_first_sample_has_no_projection_and_zero_growth_em08_f04       | PASS   |
-| growth unknown, zero or negative: null           | test_projection_is_null_when_growth_is_unknown_or_not_positive_u05 | PASS   |
-| a wall over 100 years away: null, not a date     | test_projection_is_null_beyond_one_hundred_years_u05               | PASS   |
-| a wall exactly 100 years away: a date            | test_projection_is_a_date_at_exactly_one_hundred_years             | PASS   |
-| the nearer of the two walls                      | test_projection_names_the_nearer_wall_u03                          | PASS   |
-| no estimate flag in the payload                  | test_route_marks_no_estimate_field_the_word_is_the_clients_u08     | PASS   |
+| Case                                                                       | Test id                                                                       | Result |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------ |
+| first sample: `projected_full_at` null, growth 0                           | test_first_sample_has_no_projection_and_zero_growth_em08_f04                  | PASS   |
+| growth unknown, zero or negative: null                                     | test_projection_is_null_when_growth_is_unknown_or_not_positive_u05            | PASS   |
+| a wall over 100 years away: null, not a date                               | test_projection_is_null_beyond_one_hundred_years_u05                          | PASS   |
+| a wall exactly 100 years away: a date                                      | test_projection_is_a_date_at_exactly_one_hundred_years                        | PASS   |
+| a grown series: growth in bytes per day and a date-time projection, served | test_grown_series_serves_the_growth_unit_and_the_projection_through_the_route | PASS   |
+| the nearer of the two walls                                                | test_projection_names_the_nearer_wall_u03                                     | PASS   |
+| no estimate flag in the payload                                            | test_route_marks_no_estimate_field_the_word_is_the_clients_u08                | PASS   |
 
 The ticket asks that the response marks the projection as an estimate. The payload has no such
 field. D01 ruled the label is the client's ("about", U-08) and that the payload carries no label
@@ -227,26 +246,30 @@ tests own it.
 ### 8.2 Names (RULED BQ-13) <!-- BQ-13 RULED (orchestrator, 2026-11-01, #223 ruling of record 6555029325) -->
 
 D01 section 11 lists 15 names: 10 are read here and found (8 metrics and the two audit names of `22`),
-1 is pinned absent (`pg_migration_pending`), and the 4 `storage.*` audit names of `14` are catalogue
-names not tested here (D01 counts 3 absent: that metric and two audit names with no route).
+3 are pinned absent (`pg_migration_pending`, `storage.vacuum_triggered` and
+`storage.tier_migration_triggered`, the three D01 counts absent) and 2 catalogue names of `14` are not
+tested here (`storage.panel_viewed` and `storage.compaction_triggered`).
 The metric names that exist are read from the default metrics registry, with the owner modules
 imported, and from the metric catalogue (`questdb_write_seconds` is declared there only). `pg_migration_pending` is pinned
 absent (D01-G6). The two audit names `recorder.import` and `retention.purge` are read from `22`.
-The audit names `storage.panel_viewed`, `storage.compaction_triggered`, `storage.vacuum_triggered` and
-`storage.tier_migration_triggered` are catalogue names in `14` and are not tested here.
+The two audit names with no route are pinned absent from `22` (D04-G8 and D01-G4). The audit names
+`storage.panel_viewed` and `storage.compaction_triggered` are catalogue names in `14` and are not tested
+here.
 
-| Name                                         | State at D01       | Test id                                                            | Result |
-| -------------------------------------------- | ------------------ | ------------------------------------------------------------------ | ------ |
-| `storage_export_rows_total`                  | exists             | test_listed_metric_name_is_registered                              | PASS   |
-| `storage_export_duration_seconds`            | exists             | test_listed_metric_name_is_registered                              | PASS   |
-| `storage_export_verify_failures_total`       | exists, not listed | test_listed_metric_name_is_registered                              | PASS   |
-| `storage_retention_dropped_bytes_total`      | exists             | test_listed_metric_name_is_registered                              | PASS   |
-| `storage_disk_free_ratio`                    | exists             | test_listed_metric_name_is_registered                              | PASS   |
-| `questdb_write_seconds`                      | exists             | test_listed_metric_name_is_registered                              | PASS   |
-| `recorder_disk_budget_breakdown_age_seconds` | exists, not listed | test_listed_metric_name_is_registered                              | PASS   |
-| `disk_budget_sample_failed_total`            | exists, not listed | test_listed_metric_name_is_registered                              | PASS   |
-| `pg_migration_pending`                       | absent (D01-G6)    | test_pg_migration_pending_is_not_registered_d01_g6_not_expressible | PASS   |
-| `recorder.import`, `retention.purge`         | exists in `22`     | test_audit_name_is_in_the_openapi_document                         | PASS   |
+| Name                                         | State at D01       | Test id                                                             | Result |
+| -------------------------------------------- | ------------------ | ------------------------------------------------------------------- | ------ |
+| `storage_export_rows_total`                  | exists             | test_listed_metric_name_is_registered                               | PASS   |
+| `storage_export_duration_seconds`            | exists             | test_listed_metric_name_is_registered                               | PASS   |
+| `storage_export_verify_failures_total`       | exists, not listed | test_listed_metric_name_is_registered                               | PASS   |
+| `storage_retention_dropped_bytes_total`      | exists             | test_listed_metric_name_is_registered                               | PASS   |
+| `storage_disk_free_ratio`                    | exists             | test_listed_metric_name_is_registered                               | PASS   |
+| `questdb_write_seconds`                      | exists             | test_listed_metric_name_is_registered                               | PASS   |
+| `recorder_disk_budget_breakdown_age_seconds` | exists, not listed | test_listed_metric_name_is_registered                               | PASS   |
+| `disk_budget_sample_failed_total`            | exists, not listed | test_listed_metric_name_is_registered                               | PASS   |
+| `pg_migration_pending`                       | absent (D01-G6)    | test_pg_migration_pending_is_not_registered_d01_g6_not_expressible  | PASS   |
+| `recorder.import`, `retention.purge`         | exists in `22`     | test_audit_name_is_in_the_openapi_document                          | PASS   |
+| `storage.vacuum_triggered`                   | absent (D04-G8)    | test_audit_name_without_a_route_is_absent_from_the_openapi_document | PASS   |
+| `storage.tier_migration_triggered`           | absent (D01-G4)    | test_audit_name_without_a_route_is_absent_from_the_openapi_document | PASS   |
 
 The export verification failure event (a CRITICAL system event) is owned by the exporter's unit
 test (`tests/unit/storage/cold/test_exporter.py`). It is cited, not repeated.
@@ -285,16 +308,17 @@ outside a test PR). The test pins its 8-field shape, so aligning or retiring it 
 
 ### 9.2 New findings (D02-F) <!-- BQ-10 RULED (orchestrator, 2026-11-01, #223 ruling of record 6555029325) -->
 
-Severity set and owner tokens are D01's. Nothing is filed and nothing is fixed in this PR. The
+Severity set and owner tokens are D01's, and `test_every_new_finding_row_has_a_severity_an_owner_and_a_test_or_none`
+checks each row against them (D01's owner pattern, loaded from its tool). Nothing is filed and nothing is fixed in this PR. The
 orchestrator files what it chooses from this table.
 
-| Id     | Severity | Finding                                                                                                                                                                                                                                 | Shown by                                                                          | Owner                                                          |
-| ------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| D02-F1 | Major    | "tier unreachable" cannot be told from "reachable but empty" in the payload: a failed first breakdown gives `tiers: []`; the unreachable state lives on the health report only. Differs from D01's "yes, on another surface" (HO ST-09) | test_failed_first_breakdown_gives_empty_tiers_with_valid_free_space_fields_d02_f1 | `22 · area/backend-platform`, `E16-T07 · area/recorder-replay` |
-| D02-F2 | Minor    | D01 section 10.2 says non-Owners get "no `symbols[]`", while the route only filters symbols held only by a hidden cause; a non-Owner still gets a `symbols[]` with the visible symbols                                                  | test_non_owner_sees_no_symbol_held_only_by_a_hidden_cause                         | `E07-D01 · area/backend-platform`                              |
-| D02-F3 | Minor    | `build_storage_usage` is still in the tree with one caller, its own test (F-05 re-confirmed at the base)                                                                                                                                | test_build_storage_usage_is_the_eight_field_shape_f05                             | `E07-T05 · area/backend-platform`                              |
-| D02-F4 | Info     | the ticket says Owner-only for the storage read; the shipped rule is `recording:read` for all four roles with a reduced view for non-Owners. The report uses the shipped rule                                                           | test_every_role_reads_storage_with_recording_read                                 | `E07-D02 · area/backend-platform`                              |
-| D02-F5 | Info     | the live-stack run, the real-store state runs, the `21` section 14 values and the latency budget are not done here                                                                                                                      | none (section 1)                                                                  | `E07-Q01 / E07-Q03 / E07-Q04 · area/backend-platform`          |
+| Id     | Severity | Finding                                                                                                                                                                                                                                 | Shown by                                                                          | Owner                                                                                                   |
+| ------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| D02-F1 | Major    | "tier unreachable" cannot be told from "reachable but empty" in the payload: a failed first breakdown gives `tiers: []`; the unreachable state lives on the health report only. Differs from D01's "yes, on another surface" (HO ST-09) | test_failed_first_breakdown_gives_empty_tiers_with_valid_free_space_fields_d02_f1 | `22 · area/backend-platform`, `E16-T07 · area/recorder-replay`                                          |
+| D02-F2 | Minor    | D01 section 10.2 says non-Owners get "no `symbols[]`", while the route only filters symbols held only by a hidden cause; a non-Owner still gets a `symbols[]` with the visible symbols                                                  | test_non_owner_sees_no_symbol_held_only_by_a_hidden_cause                         | `E07-D01 · area/backend-platform`                                                                       |
+| D02-F3 | Minor    | `build_storage_usage` is still in the tree with one caller, its own test (F-05 re-confirmed at the base)                                                                                                                                | test_build_storage_usage_is_the_eight_field_shape_f05                             | `E07-T05 · area/backend-platform`                                                                       |
+| D02-F4 | Info     | the ticket says Owner-only for the storage read; the shipped rule is `recording:read` for all four roles with a reduced view for non-Owners. The report uses the shipped rule                                                           | test_every_role_reads_storage_with_recording_read                                 | `E07-D02 · area/backend-platform`                                                                       |
+| D02-F5 | Info     | the live-stack run, the real-store state runs, the `21` section 14 values and the latency budget are not done here                                                                                                                      | none (section 1)                                                                  | `E07-Q01 · area/backend-platform`, `E07-Q03 · area/backend-platform`, `E07-Q04 · area/backend-platform` |
 
 Counts: D02-F 5 (Major 1, Minor 2,
 Info 2). No row is Blocking: every decision with a field is answered, and the
@@ -335,7 +359,7 @@ record 6555029325): each unmet or changed item is named here and none is claimed
 
 | #   | Ticket text                                                                             | What this PR does                                                                                                                       | Status                                           | Owner                 |
 | --- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------- |
-| 1   | Branch `test/storage-contract-verification`, PR <= 300 lines                            | the branch is the claim's; the diff is about 1000 counted lines (test, report, fixtures README bullet)                                  | deviation, `large-pr-approved` requested at open | orchestrator          |
+| 1   | Branch `test/storage-contract-verification`, PR <= 300 lines                            | the branch is the claim's; the diff is 1,212 counted lines (test, report, fixtures README bullet)                                       | deviation, `large-pr-approved` requested at open | orchestrator          |
 | 2   | DoD: "Defects filed, fixed and re-verified"                                             | defects are recorded as D02-F1..F5 with severity and owning area; re-verified where the owning fix lands                                | deviation under the filing freeze                | owners in section 9.2 |
 | 3   | AC7: defects filed and fixed, Architect and CDO re-review, E07-D01 confirmed Done       | nothing is filed or fixed; the orchestrator's approval plus this record stand in for the re-review; the Done call is the orchestrator's | NOT met, named here                              | orchestrator          |
 | 4   | AC5: "the response marks the projection as an estimate"                                 | the payload has no marker; the word is the client's rule (D01 U-08, Q-01)                                                               | accepted exception, not "met"                    | `E07-D01`, `E16-S04`  |
