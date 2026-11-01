@@ -110,7 +110,13 @@ export function PurgeDialog({
   const opening = useRef({ first: preselected ?? symbols[0]?.symbol ?? null, symbols, now });
   opening.current = { first: preselected ?? symbols[0]?.symbol ?? null, symbols, now };
   useEffect(() => {
-    if (!open) return;
+    // Closed, it forgets its symbol: a re-opening renders nothing until this reset has run, so its first frame
+    // (and the name said as focus lands on Cancel) is that opening's, never the last one's.
+    if (!open) {
+      setSymbol(null);
+      clear(); // a challenge that answers this opening's purge after the close is dropped (S-5353-01)
+      return;
+    }
     const { first, symbols: offered, now: clock } = opening.current;
     setSymbol(first);
     setDay(
