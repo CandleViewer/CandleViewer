@@ -4,7 +4,11 @@
 // the hairline width in `color.crosshair`, snapped with `snapStroke` so each covers whole device
 // pixels. A remote (synced) crosshair is a dashed vertical at `opacity.muted`, drawn only while
 // there is no local cursor. Hiding is instant (BQ-16, G-row: the 100 ms fade needs a per-node
-// alpha uniform). The node is its own vertex source, so the 2D painter draws the same instances.
+// alpha uniform). E11-S07 BQ-7: while the chart root has focus the keyboard cursor's bar is the
+// E06-D03 D10 column: a solid 2 px core in `color.focus.ring` between two 1 px halos in the pane
+// colour, full plot height, drawn under the lines and replacing the dashed vertical at its bar; it
+// snaps, never eases (D06 D11). The narrow-bar band and forced colours are G-rows.
+// The node is its own vertex source, so the 2D painter draws the same instances.
 // The ring grows only with the plot (doubling); a steady or moving frame allocates nothing.
 import { parseHex } from "../axes/grid.js";
 import { PROGRAM } from "../scene/instance-layout.js";
@@ -17,10 +21,19 @@ export const CROSSHAIR_TOKEN = "color.crosshair";
 /** The remote crosshair's alpha token (a number as text); 0.7 when the theme has none. */
 export const MUTED_TOKEN = "opacity.muted";
 export const MUTED_DEFAULT = 0.7;
+/** E06-D03 D10: the keyboard column's core and its halo, the pane colour. */
+export const FOCUS_RING_TOKEN = "color.focus.ring";
+export const HALO_TOKEN = "color.chart.background";
+/** The column's core width and each halo's, in CSS px (D10: ≥ 2 px, 1 px halos). */
+export const COLUMN_CORE_PX = 2;
+export const COLUMN_HALO_PX = 1;
 const STRIDE = 9;
 const DASH = 4;
-/** dpr, deviceH, plot x, y, w, h, local, x, y, remote x. */
-const SIG = 10;
+/** dpr, deviceH, plot x, y, w, h, local, x, y, remote x, column x. */
+const SIG = 11;
+/** Colour offsets into `colors`: local, remote, ring, halo. */
+const RING = 8;
+const HALO = 12;
 
 type Theme = Readonly<Record<string, string>>;
 
@@ -33,8 +46,8 @@ export class CrosshairNode extends ContentNode {
   readonly head = 0;
   readonly stride = STRIDE;
   count = 0;
-  /** RGBA, local then remote. */
-  readonly colors = new Float32Array(8);
+  /** RGBA: local, remote, the focus ring and the halo. */
+  readonly colors = new Float32Array(16);
   /** Rewrites (tests and the bench). */
   writes = 0;
   private palette: Theme | null = null;
@@ -46,7 +59,8 @@ export class CrosshairNode extends ContentNode {
 
   /**
    * The lines for a local cursor at (`x`, `y`) when `local`, else the remote vertical at
-   * `remoteX` (NaN: none), clipped to `plot`; CSS px over a store `deviceH` device px high.
+   * `remoteX` (NaN: none), clipped to `plot`; CSS px over a store `deviceH` device px high. The
+   * focus column at `columnX` (NaN: none) is drawn first and replaces a local vertical at its x.
    * True when the instances changed (the caller re-uploads the ring).
    */
   write(
@@ -58,6 +72,7 @@ export class CrosshairNode extends ContentNode {
     x: number,
     y: number,
     remoteX: number,
+    columnX = Number.NaN,
   ): boolean {
     const c = this.cur;
     c[0] = dpr;
@@ -70,6 +85,7 @@ export class CrosshairNode extends ContentNode {
     c[7] = local ? x : Number.NaN;
     c[8] = local ? y : Number.NaN;
     c[9] = local ? Number.NaN : remoteX;
+    c[10] = columnX;
     let same = theme === this.palette;
     for (let i = 0; i < SIG; i += 1) {
       if (!Object.is(c[i], this.sig[i])) same = false;
@@ -77,10 +93,11 @@ export class CrosshairNode extends ContentNode {
     }
     if (same) return false;
     const [px, py, pw, ph] = plot;
+    const col = columnX >= px && columnX <= px + pw;
     const vx = local ? x : remoteX;
-    const v = vx >= px && vx <= px + pw;
+    const v = vx >= px && vx <= px + pw && !(col && local && vx === columnX);
     const h = local && y >= py && y <= py + ph;
-    if (!v && !h) {
+    if (!v && !h && !col) {
       // Nothing to draw: an empty ring stays as it is (no re-upload, no collect for the caller).
       const had = this.count > 0;
       this.count = 0;
@@ -93,6 +110,7 @@ export class CrosshairNode extends ContentNode {
     this.deviceH = deviceH;
     this.width = hairlineDevicePx(dpr);
     this.reserve(dpr, pw, ph);
+    if (col) this.column(columnX, py, py + ph);
     if (v) this.vLine(vx, py, py + ph, local ? 0 : 4);
     if (h) this.hLine(y, px, px + pw, 0);
     return true;
@@ -121,12 +139,26 @@ export class CrosshairNode extends ContentNode {
     const muted = Number.isFinite(m) && m > 0 && m <= 1 ? m : MUTED_DEFAULT;
     k.copyWithin(4, 0, 4);
     k[7] = (k[3] as number) * muted;
+    parseHex(theme[FOCUS_RING_TOKEN], k, RING);
+    parseHex(theme[HALO_TOKEN], k, HALO);
+  }
+
+  /** The D10 column at CSS x over y0..y1: the halo span, then the core over it (whole px). */
+  private column(x: number, y0: number, y1: number): void {
+    const d = this.dpr;
+    const core = Math.max(2, Math.round(COLUMN_CORE_PX * d));
+    const halo = core + 2 * Math.max(1, Math.round(COLUMN_HALO_PX * d));
+    const xx = snapStroke(x, d, core) * d;
+    const top = this.deviceH - y0 * d;
+    const bottom = this.deviceH - y1 * d;
+    this.put(xx, bottom, xx, top, HALO, halo);
+    this.put(xx, bottom, xx, top, RING, core);
   }
 
   /** Room for both lines over the plot: grows (doubling) only when the plot or DPR does. */
   private reserve(dpr: number, w: number, h: number): void {
     const period = 2 * DASH * this.width;
-    const need = (Math.ceil((w * dpr) / period) + Math.ceil((h * dpr) / period) + 4) * STRIDE;
+    const need = (Math.ceil((w * dpr) / period) + Math.ceil((h * dpr) / period) + 6) * STRIDE;
     if (need <= this.data.length) return;
     let n = Math.max(STRIDE * 128, this.data.length);
     while (n < need) n *= 2;
@@ -156,7 +188,14 @@ export class CrosshairNode extends ContentNode {
     }
   }
 
-  private put(x0: number, y0: number, x1: number, y1: number, color: number): void {
+  private put(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    color: number,
+    width = this.width,
+  ): void {
     let o = this.count * STRIDE;
     if (o + STRIDE > this.data.length) return; // reserve() sized it; never reached
     const f = this.data;
@@ -164,7 +203,7 @@ export class CrosshairNode extends ContentNode {
     f[o++] = y0;
     f[o++] = x1;
     f[o++] = y1;
-    f[o++] = this.width;
+    f[o++] = width;
     for (let i = 0; i < 4; i += 1) f[o++] = this.colors[color + i] as number;
     this.count += 1;
   }

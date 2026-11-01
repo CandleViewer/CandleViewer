@@ -20,6 +20,8 @@ export const ANNOUNCE_EVENT = "candleviewer:announce";
 export const ANNOUNCE_KEY = "chart:axis";
 /** E11-S07 (BQ-9): the magnet's own key, so it never replaces an axis announcement. */
 export const MAGNET_ANNOUNCE_KEY = "chart:magnet";
+/** E11-S07 (BQ-12): the keyboard cursor's key; pointer hover and a remote crosshair never use it. */
+export const CURSOR_ANNOUNCE_KEY = "chart:cursor";
 /** E06-D03 D5 `repeatWindow`: while requests keep coming, at most one announcement per window. */
 export const ANNOUNCE_WINDOW_MS = 500;
 /** E06-D03 D5 `trailingFlush`: the final state is announced within this long of the last request. */
@@ -49,15 +51,28 @@ export interface AxisStops {
  * lands at most 250 ms after the last request (which may be inside a window: a bounded one-off per
  * release, as D5 allows). A pending state is dropped once the target is unmounted. `key` is the
  * writer's key in the shell announcer (E11-S07, additive: the axes by default).
+ *
+ * E11-S07 (BQ-12): `say(full, short)`. The lone request and the trailing flush speak the full
+ * form; a window flush while requests keep coming speaks the short (held-key) form, and a trailing
+ * deadline that finds the final state already spoken short speaks it once more in full (E06-D03
+ * D5: the landing bar's full summary). Without `short` both forms are `full`, as before.
+ * `cancel()` drops the pending state and what is owed, so a pending window or trailing timer
+ * speaks nothing; only its own key's writer is affected.
  */
+/** `say(full, short?)`, plus `cancel()`: drops the pending state (E11-S07: a cleared cursor). */
+export type Announcer = ((full: string, short?: string) => void) & { cancel(): void };
+
 export function createAnnouncer(
   target: HTMLElement,
   clock: AnnounceClock,
   key: string = ANNOUNCE_KEY,
-): (text: string) => void {
+): Announcer {
   let last = Number.NEGATIVE_INFINITY;
   let lastAsk = 0;
   let pending: string | null = null;
+  let pendingShort: string | null = null;
+  /** The full form of the state last spoken short; null once spoken full (or when equal). */
+  let owed: string | null = null;
   let repeatArmed = false;
   let trailArmed = false;
   const emit = (text: string): void => {
@@ -67,11 +82,14 @@ export function createAnnouncer(
     const detail = { politeness: "polite", text, key };
     target.dispatchEvent(new Custom(ANNOUNCE_EVENT, { bubbles: true, detail }));
   };
-  const flush = (): void => {
+  const flush = (held: boolean): void => {
     if (pending === null) return;
-    const text = pending;
+    const full = pending;
+    const short = pendingShort ?? full;
     pending = null;
-    if (target.isConnected !== false) emit(text); // unmounted: drop it
+    pendingShort = null;
+    owed = held && short !== full ? full : null;
+    if (target.isConnected !== false) emit(held ? short : full); // unmounted: drop it
   };
   // The clock has no cancel: a timer that fires early (a flush moved the window, or a newer
   // request moved the trailing deadline) re-arms for what is left.
@@ -84,26 +102,33 @@ export function createAnnouncer(
       clock.setTimer(onRepeat, wait);
       return;
     }
-    flush();
+    flush(true);
   };
   const onTrail = (): void => {
     trailArmed = false;
-    if (pending === null) return;
+    if (pending === null && owed === null) return;
     const wait = lastAsk + ANNOUNCE_TRAILING_MS - clock.now();
     if (wait > 0) {
       trailArmed = true;
       clock.setTimer(onTrail, wait);
       return;
     }
-    flush();
+    if (pending === null) {
+      // The final state went out short at a window's end: it lands once in full.
+      pending = owed;
+      pendingShort = null;
+    }
+    flush(false);
   };
-  return (text) => {
+  const say = (full: string, short?: string): void => {
     const now = clock.now();
     if (pending === null && now - last >= ANNOUNCE_WINDOW_MS) {
-      emit(text);
+      owed = null;
+      emit(full);
       return;
     }
-    pending = text;
+    pending = full;
+    pendingShort = short ?? null;
     lastAsk = now;
     if (!repeatArmed) {
       repeatArmed = true;
@@ -114,6 +139,13 @@ export function createAnnouncer(
       clock.setTimer(onTrail, ANNOUNCE_TRAILING_MS);
     }
   };
+  return Object.assign(say, {
+    cancel(): void {
+      pending = null;
+      pendingShort = null;
+      owed = null;
+    },
+  });
 }
 
 const modsOf = (e: KeyboardEvent): number =>

@@ -535,7 +535,7 @@ describe("Scenario: Worker death is recovered", () => {
     chart.dispose();
   });
 
-  it("replays the retained LOD, series options and magnet and counts the batches a restart discards", () => {
+  it("replays the retained LOD, series options, magnet and focus and counts the batches a restart discards", () => {
     const host = hostOn(workerDoc());
     settle();
     host.command({ k: "setLod", candles: 1, footprint: 2 });
@@ -544,6 +544,8 @@ describe("Scenario: Worker death is recovered", () => {
     host.command({ k: "addDrawing", drawingId: "d1", kind: "trend" });
     host.command({ k: "setCrosshair", magnetMode: "weak" }); // E11-S07: the last one survives
     host.command({ k: "setCrosshair", magnetMode: "strong" });
+    host.command({ k: "setFocus", focused: true }); // E11-S07 BQ-7: so does the focus
+    host.command({ k: "setFocus", focused: false });
     host.command({ k: "pickAt", x: 1, y: 1 }); // transient: never replayed
     for (const op of ["append", "patch", "append"] as const)
       host.data("bars", op, one().layout, one().buffer);
@@ -559,6 +561,7 @@ describe("Scenario: Worker death is recovered", () => {
       { k: "setSeriesOptions", series: 0, options: { a: 2 } },
       { k: "addDrawing", drawingId: "d1", kind: "trend" },
       { k: "setCrosshair", magnetMode: "strong" },
+      { k: "setFocus", focused: false },
     ]);
     host.dispose();
   });

@@ -6,12 +6,13 @@
 // and a vertical plot drag pans price only while locked. Two touches pinch about their midpoint.
 // Only a one-pointer plot drag coasts. Keys go through the navigator (PR 2, BQ-106 to BQ-109); a
 // reduced-motion release never coasts (BQ-104). E11-S06: a key row's target sends it to an axis
-// stop's keys (BQ-194). DOM-free and allocation-free per row.
+// stop's keys (BQ-194). E11-S07 BQ-7: a plot cursor key goes to the sink's keyboard cursor, and
+// `+/-` zoom about its bar. DOM-free and allocation-free per row.
 import { DEFAULT_BAR_SPACING, type ChartViewport } from "../viewport/Viewport.js";
 import { INPUT, INPUT_STRIDE, KEY } from "../worker/protocol.js";
 import { Momentum } from "./momentum.js";
 import { priceAxisKey, TARGET, timeAxisKey } from "./axis-keys.js";
-import { navigate, resetView } from "./navigator.js";
+import { cursorStep, navigate, resetView } from "./navigator.js";
 import { VelocityEstimator } from "./velocity.js";
 import { axisDragFactor, MOD, priceDragFactor, REGION, regionAt, wheelFactor } from "./wheel.js";
 
@@ -24,6 +25,10 @@ export interface GestureSink {
   animate(m: Momentum): void;
   /** An axis key changed the view (E11-S06): its `SAY` announcement code. */
   say?(code: number): void;
+  /** E11-S07 BQ-7: a plot key stepped the keyboard cursor (a `STEP` code). */
+  cursorKey?(step: number): void;
+  /** E11-S07 BQ-7: the keyboard cursor's bar centre in CSS px (the `+/-` anchor); NaN for none. */
+  cursorX?(): number;
 }
 
 const Drag = { none: 0, pan: 1, spacing: 2, price: 3 } as const;
@@ -227,7 +232,13 @@ export class Gestures {
     }
     this.stop();
     if (target === TARGET.plot) {
-      this.sink.moved(navigate(this.vp, code, mods, this.pointerX));
+      const step = this.sink.cursorKey === undefined ? 0 : cursorStep(code, mods);
+      if (step !== 0) {
+        this.sink.cursorKey?.(step);
+        return;
+      }
+      const at = this.sink.cursorX?.() ?? Number.NaN;
+      this.sink.moved(navigate(this.vp, code, mods, Number.isFinite(at) ? at : this.pointerX));
       return;
     }
     // E11-S06 (BQ-194): an axis stop's key, and what it announces.

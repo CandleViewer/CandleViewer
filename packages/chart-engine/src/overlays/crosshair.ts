@@ -4,7 +4,7 @@
 // unless the magnet is on. `weak` snaps to the nearest O/H/L/C within 12 px of screen y and holds
 // that snap until 14 px (2 px release hysteresis); `strong` always snaps to the nearest of the
 // four. The public event is edge-triggered on the bar alone (BQ-10). Key stepping is a pure
-// function here; no key handling is wired to it yet (BQ-7 pending).
+// function here; the runtime's plot keys drive it (BQ-7, pending ruling).
 import { indexToScreen, priceToScreen, screenToIndex, screenToPrice } from "../viewport/index.js";
 import type { ViewportState } from "../viewport/index.js";
 
@@ -157,7 +157,7 @@ export function takeBarEdge(s: CrosshairState): boolean {
   return true;
 }
 
-/** A key step (E11-D02 §7.3, E06-D03 D6), as plain codes; no key wiring yet (BQ-7). */
+/** A key step (E11-D02 §7.3, E06-D03 D6), as plain codes (`navigator.cursorStep`, BQ-7). */
 export const STEP = {
   barPrev: 1,
   barNext: 2,
@@ -193,8 +193,9 @@ export const createStepResult = (): StepResult => ({
 /**
  * One key step from (`bar`, `tick`) over `length` loaded bars: ±1 or ±10 bars clamped to the
  * data, ±`levelTicks` in price, or the first / last bar. With no cursor placed (`bar` < 0) any
- * bar step lands on the last fully visible bar. `follow` is how far the view must move to keep
- * the landing bar inside [first, last] fully visible bars of `vp`. Writes `out`; no allocation.
+ * bar or level step lands on the last fully visible bar (`Home` / `End` still jump). `follow` is
+ * how far the view must move to keep the landing bar inside [first, last] fully visible bars of
+ * `vp`. Writes `out`; no allocation.
  */
 export function stepCursor(
   vp: ViewportState,
@@ -218,7 +219,8 @@ export function stepCursor(
     out.follow = 0;
     return out;
   }
-  if (b < 0 || b > lastBar) b = Math.min(lastBar, Math.max(0, lastVisible));
+  const jump = code === STEP.first || code === STEP.last;
+  if ((b < 0 || b > lastBar) && !jump) b = Math.min(lastBar, Math.max(0, lastVisible));
   else if (code === STEP.levelUp || code === STEP.levelDown) {
     t = Number.isFinite(t) ? t + (code === STEP.levelUp ? levelTicks : -levelTicks) : t;
   } else {

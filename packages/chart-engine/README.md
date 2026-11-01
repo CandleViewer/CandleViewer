@@ -412,13 +412,13 @@ Protocol (`26` §6, additive, stride 6): `KEY.left = 3`, `right = 4`, `home = 5`
 `spaceDown = 7`, `spaceUp = 8`, with Shift and Ctrl in the modifiers column; `init.reducedMotion?`
 and `command { k: "setMotion", reduce }`, both validated at the worker boundary.
 
-| C / G | Topic  | The ticket                                      | Reading                                                                                                                                                                                                                                                        |
-| ----- | ------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C-21  | Keys   | "the view pans" / `26`: "move the data cursor". | The orchestrator's ruling (2): arrows pan by a bar now (diverging from `05` §3.1 item 7: arrows move the crosshair, `Shift+arrows` pan); E11-D01's reading (the cursor moves, the view follows at the edge) and `+/-` about the cursor bar go to E11-S13 #520. |
-| C-22  | Motion | OS, then app, then chart option; reduce only.   | RULED (3) per E11-D06 D21 / A-11 and `26` §12: the resolved `data-motion` wins in both directions; no chart option (BQ-104).                                                                                                                                   |
-| C-24  | Keys   | "register Space through E10".                   | The engine cannot reach the app's registry (C-2.16) and #5124 owns the keymap files: a tracked flag only (BQ-109).                                                                                                                                             |
-| G-9   | Stats  | `FrameStats` motion fields.                     | Gap: `reducedMotion` / `momentumActive` on `FrameStats` are a §8 change, E11-T04 / T07's; §8 is untouched here.                                                                                                                                                |
-| G-12  | Focus  | "the chart pane has keyboard focus".            | Gap: the engine sets no `tabindex` and draws no focus ring; keys reach the container by bubbling. The single tab stop with CMP-004 and E11-D01's roving tabindex are E11-S13 #520 / `apps/web`'s.                                                              |
+| C / G | Topic  | The ticket                                      | Reading                                                                                                                                                                                                                                                                                                                   |
+| ----- | ------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C-21  | Keys   | "the view pans" / `26`: "move the data cursor". | Superseded by E11-S07 BQ-7 (pending ruling): the plot's arrows, `PageUp/PageDown` and `Home/End` move the keyboard data cursor and the view follows at the edge; `+/-` zoom about the cursor bar; E11-S13 #520 keeps the mirror table, `Enter` and the Tab order. Was the orchestrator's ruling (2): arrows pan by a bar. |
+| C-22  | Motion | OS, then app, then chart option; reduce only.   | RULED (3) per E11-D06 D21 / A-11 and `26` §12: the resolved `data-motion` wins in both directions; no chart option (BQ-104).                                                                                                                                                                                              |
+| C-24  | Keys   | "register Space through E10".                   | The engine cannot reach the app's registry (C-2.16) and #5124 owns the keymap files: a tracked flag only (BQ-109).                                                                                                                                                                                                        |
+| G-9   | Stats  | `FrameStats` motion fields.                     | Gap: `reducedMotion` / `momentumActive` on `FrameStats` are a §8 change, E11-T04 / T07's; §8 is untouched here.                                                                                                                                                                                                           |
+| G-12  | Focus  | "the chart pane has keyboard focus".            | Gap: the engine sets no `tabindex` and draws no focus ring; keys reach the container by bubbling. The single tab stop with CMP-004 and E11-D01's roving tabindex are E11-S13 #520 / `apps/web`'s.                                                                                                                         |
 
 ## Price scales (E11-S05 PR 1)
 
@@ -696,9 +696,46 @@ shell announcer; the engine owns no live region. `bench/scenes/axis-ticks.ts` ti
 
 ## Crosshair (E11-S07 PR 1)
 
-- Idle cost: a chart with no pointer seen, no remote line and nothing drawn or published skips the
-  crosshair stage in O(1), and its node joins the scene graph only with its first lines. On a
-  never-pointed chart the gesture hold therefore no longer arms (benign: there is nothing to hide).
+- Idle cost: a chart with no pointer seen, no key cursor, no remote line and nothing drawn or
+  published skips the crosshair stage in O(1), and its node joins the scene graph only with its
+  first lines. On a never-pointed chart the gesture hold therefore no longer arms (benign: there
+  is nothing to hide). `setFocus` on a chart with no key cursor requests no frame.
+- BQ-7 (pending the orchestrator's ruling; supersedes C-21): no new `KEY` codes. The router's
+  `keyCode()` adds `ArrowUp/Down` and `PageUp/Down` for the chart root; a plot key row steps the
+  keyboard cursor (`cursorStep`: `←/→` one bar, `Shift` or `PageUp/PageDown` ten, `PageUp`
+  older; `↑/↓` one tick; `Home/End` the loaded ends; `Ctrl+Home` stays the view reset), seeded on
+  the last fully visible bar at its close (else the plot's middle). The view scrolls only to keep
+  the cursor bar fully visible. `+/-` zoom about the cursor bar while it drives the lines. A real
+  pointer move takes the lines back (silently); a pointer leaving hands them back to the key
+  cursor (E11-D02 §7.3: a keyboard-placed cursor stays).
+- BQ-3 / BQ-12 / BQ-13: each key step that moves the cursor posts one `a11y { cursorSummary,
+short, origin: "key" }`; ", first bar" / ", last bar" ride the arrival at a loaded end, a step
+  refused there is silent. The facade speaks key-origin `a11y` only, through `createAnnouncer(…,
+"chart:cursor")`'s `say(full, short)`: the lone press and the trailing flush in full, window
+  flushes while held in the short form. 30 presses 100 ms apart give at most 6 short-form
+  announcements in [0, 3000) after the first press's full form (500 to 2500), then exactly one
+  full-form flush of bar 30 at 3150. The window end at 3000 also says bar 30 short (C-68).
+- BQ-16 / D10: while the root has focus (`setFocus`, from the root's own `focus` / `blur`), the
+  key cursor's bar is a solid 2 px `color.focus.ring` core between 1 px `color.chart.background`
+  halos, full plot height, drawn under the lines and replacing the dashed vertical at that bar;
+  the pointer's own vertical still draws elsewhere. It snaps (never eases). Gaps: the narrow-bar
+  band behind the series (bars under 4 px) and the forced-colours probe (E11-Q05) are not drawn
+  yet; the focus is replayed after a worker restart, the key cursor survives a degraded-2d re-init.
+- `Home`/`End` now move the cursor to the first / last loaded bar and the view follows only as far
+  as it must to show it (the `End` right offset of 12 bars is not restored); `Ctrl+Home` still
+  resets the view. `Esc` on the root (`command { k: "clearCursor" }`, never consumed) and a bars
+  `replace` clear the key cursor silently (the spec has no copy for it), which returns the chart
+  to the O(1) idle path. The clear posts one `a11y { cleared: true }` with an empty summary; the
+  facade then calls the cursor announcer's `cancel()`, so a bar still pending in its window or
+  trailing timer is never spoken (the axes' announcer is a separate writer and keeps its state). `setFocus` is retained across a worker restart; the key cursor is not
+  (a fresh worker starts with none).
+- BQ-23: `getFocusedUnit()` is the first pane's id with the key cursor's bar and tick
+  (`paneId` is the facade's `PaneId`, not a literal `"main"`); null for a pointer cursor.
+
+| C / G | Topic    | The ticket                                          | Reading                                                                                                                                                                                                                                                                                                          |
+| ----- | -------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C-67  | Focus    | BQ-23: `getFocusedUnit()` returns `paneId: "main"`. | `paneId` is the real `PaneId` per §8 (`FocusedUnit.paneId: PaneId`), not BQ-23's literal `main`.                                                                                                                                                                                                                 |
+| C-68  | Announce | BQ-13: the final bar is spoken once.                | The double read stays: a held key's last bar can be spoken short at a window's end, then in full ≤ 250 ms later. E06-D03 D5's `trailingFlush` requires the final state in full within 250 ms of the last key, and a window end cannot know the hold ended, so suppressing it would silence the 2/s held cadence. |
 
 ## Scripts
 

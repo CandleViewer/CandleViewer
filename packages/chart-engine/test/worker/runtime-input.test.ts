@@ -157,16 +157,28 @@ describe("Scenario: Every pointer gesture has a keyboard equivalent (worker key 
     return last();
   };
 
-  it("←, Shift+→, Home, End, +, − and Ctrl+Home each post one viewport", () => {
+  // E11-S07 BQ-7 (supersedes C-21): the plot's arrows, Home and End step the keyboard cursor and
+  // the view follows only to keep its bar visible; +/- zoom about the cursor's bar.
+  it("←, Home and End move the cursor, the view following; +/− zoom about it; Ctrl+Home resets", () => {
     make(1064, 624);
-    const v0 = last();
-    expect((press(KEY.left).timeStart - v0.timeStart) / MIN).toBeCloseTo(-1, 6);
-    expect((press(KEY.right, MOD.shift).timeStart - v0.timeStart) / MIN).toBeCloseTo(9, 6);
-    expect(press(KEY.home).timeStart).toBeCloseTo(minuteMap().indexToTime(0) - MIN / 2, -1);
+    const n0 = viewports().length;
+    press(KEY.left); // the first press places the cursor on the last fully visible bar
+    expect(viewports().length).toBe(n0); // it is visible: the view stays
+    const home = press(KEY.home);
+    const left = (home.timeStart - (minuteMap().indexToTime(0) - MIN / 2)) / MIN;
+    expect(left).toBeGreaterThan(-1); // bar 0 is fully visible at the left edge
+    expect(left).toBeLessThanOrEqual(1e-6);
     const end = press(KEY.end);
-    expect((end.timeEnd - minuteMap().indexToTime(1999)) / MIN).toBeCloseTo(12.5, 6);
+    const right = (end.timeEnd - (minuteMap().indexToTime(1999) + MIN / 2)) / MIN;
+    expect(right).toBeGreaterThanOrEqual(-1e-6); // the last bar is fully visible at the right
+    expect(right).toBeLessThan(1);
+    const x = (): number =>
+      (out.filter((m) => m.t === "crosshair").at(-1) as { x: number } | undefined)?.x ?? NaN;
+    const at = x();
     expect(press(KEY.zoomIn).barSpacing).toBeCloseTo(end.barSpacing * 1.1, 9);
+    expect(x()).toBeCloseTo(at, 6); // the cursor's bar holds its x
     expect(press(KEY.zoomOut, MOD.shift).barSpacing).toBeCloseTo((end.barSpacing * 1.1) / 1.25, 9);
+    expect(x()).toBeCloseTo(at, 6);
     const n = viewports().length;
     input("key", [INPUT.key, KEY.zoomIn, 0, 0, MOD.ctrl, 0]); // browser zoom: ignored
     frame();

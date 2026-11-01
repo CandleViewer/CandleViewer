@@ -6,13 +6,13 @@
 // folded per frame by class (zoom, pan) and region. Every gesture's meaning is the worker's
 // (src/interaction/gestures.ts). Keys (PR 2, BQ-106 to BQ-109) are heard on the container only,
 // never the window: the navigator's keys are prevented, Space only mid-drag, and a held Space is
-// released on focus loss. E11-S05 (BQ-124): a right-click over the price gutter dispatches
-// `candleviewer:pricescalemenu` for the app's menu (E11-S06's axis stop adds the keys). DOM
-// program (tsconfig.dom.json); O(1) per event, and no allocation but `getCoalescedEvents()`'s array.
+// released on focus loss; the root's focus and blur go as `setFocus` (E11-S07 BQ-7). E11-S05
+// (BQ-124): a right-click over the price gutter dispatches `candleviewer:pricescalemenu` for the
+// app's menu (E11-S06's axis stop adds the keys). DOM program (tsconfig.dom.json); O(1) per event, and no allocation but `getCoalescedEvents()`'s array.
 import { isSpace, keyCode } from "../interaction/navigator.js";
 import { MOD, plotHeightOf, REGION, regionAt, wheelPx } from "../interaction/wheel.js";
 import { PRICE_GUTTER_PX } from "../scene/layout-engine.js";
-import { INPUT, KEY, type InputKind } from "../worker/protocol.js";
+import { type Command, INPUT, KEY, type InputKind } from "../worker/protocol.js";
 
 /** The `ChartHost` members the router uses (structural: no import cycle with worker/host.ts). */
 export interface InputSink {
@@ -21,6 +21,8 @@ export interface InputSink {
     row: readonly [number, number, number, number, number, number],
     fold?: number,
   ): void;
+  /** E11-S07 BQ-7: the root's focus goes as `setFocus` (the D10 column); optional for stubs. */
+  command?(cmd: Command): void;
 }
 
 interface Modded {
@@ -149,6 +151,12 @@ export function routeInput(
       space = true;
       return;
     }
+    if (e.key === "Escape" && modifiers(e) === 0) {
+      // BQ-7: clears the keyboard cursor; never consumed, so the universal cancel propagates
+      // (E06-D03 D6, 05 §3.3).
+      host.command?.({ k: "clearCursor" });
+      return;
+    }
     const code = keyCode(e.key, e.code, modifiers(e));
     if (code === 0) return;
     e.preventDefault(); // the arrows, Home, End and +/- never scroll the page under the chart
@@ -162,6 +170,9 @@ export function routeInput(
   const onKeyUp = (e: KeyboardEvent): void => {
     if (isSpace(e.key, e.code)) release(e);
   };
+  // E11-S07 BQ-7: the root's own focus (non-bubbling, so a child stop taking focus is a blur).
+  const onFocus = (): void => host.command?.({ k: "setFocus", focused: true });
+  const onBlur = (): void => host.command?.({ k: "setFocus", focused: false });
 
   const names = Object.keys(DOWN) as (keyof typeof DOWN)[];
   for (const n of names) target.addEventListener(n, onPointer);
@@ -174,6 +185,8 @@ export function routeInput(
   target.addEventListener("keydown", onKeyDown);
   target.addEventListener("keyup", onKeyUp);
   target.addEventListener("focusout", release);
+  target.addEventListener("focus", onFocus);
+  target.addEventListener("blur", onBlur);
   target.style.touchAction = "none"; // the browser neither scrolls nor zooms the page on touch
   return () => {
     for (const n of names) target.removeEventListener(n, onPointer);
@@ -186,5 +199,7 @@ export function routeInput(
     target.removeEventListener("keydown", onKeyDown);
     target.removeEventListener("keyup", onKeyUp);
     target.removeEventListener("focusout", release);
+    target.removeEventListener("focus", onFocus);
+    target.removeEventListener("blur", onBlur);
   };
 }

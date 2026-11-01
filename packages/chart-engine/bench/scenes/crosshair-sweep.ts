@@ -4,6 +4,8 @@
 // rewrite the dashed lines (the CPU dash cost, ~375 instances), rebuild the readout when the bar
 // moved, and format the posted price and time text. The ticket's budget is ≤ 0.3 ms a frame; the
 // .perf.test.ts times it, the counted test checks the work. `dash()` times the line rewrite alone.
+// `key()` (E11-S07 BQ-7): a held `→` with the chart root focused, one step a frame: the cursor
+// step and its edge follow, the D10 column with the lines, the readout and the spoken summary.
 import {
   clockText,
   createZoned,
@@ -13,8 +15,12 @@ import {
   ZoneClock,
 } from "../../src/axes/format.js";
 import {
+  applyStep,
   createCrosshair,
+  createStepResult,
   resolvePointer,
+  STEP,
+  stepCursor,
   takeBarEdge,
   type MagnetMode,
 } from "../../src/overlays/crosshair.js";
@@ -29,8 +35,15 @@ const GUTTER = 64;
 const PLOT = [0, 0, W - GUTTER, H - 24] as const;
 /** 1000 px/s at 60 Hz. */
 export const PX_PER_FRAME = 1000 / 60;
-const THEME = { "color.crosshair": "#848e9c", "opacity.muted": "0.7" };
+const THEME = {
+  "color.crosshair": "#848e9c",
+  "opacity.muted": "0.7",
+  "color.focus.ring": "#f0b90b",
+  "color.chart.background": "#0b0e11",
+};
 const MIN = 60e6;
+/** The held key's first bar (far from both loaded ends). */
+const KEY_START = 1_000;
 
 /** `n` 1 m bars as columns: a slow wave with a 40-tick range per bar. */
 export function sweepBars(n: number): BarSource {
@@ -65,6 +78,10 @@ export class CrosshairSweepBench {
   posted = 0;
   /** The last formatted text (kept so the work is not dead code). */
   text = "";
+  /** Key steps that moved the view (the edge follow) and the last spoken summary. */
+  follows = 0;
+  said = "";
+  private readonly stepOut = createStepResult();
   private turn = 0;
   private readonly clock = new ZoneClock("UTC");
   private readonly zoned = createZoned();
@@ -104,6 +121,29 @@ export class CrosshairSweepBench {
     const time = timeAt(vp.map, s.bar);
     const z = this.clock.fields(time / 1000, this.zoned);
     this.text = `${formatNumber(s.tick * 0.5, decimalsOf(0.5))} ${dateText(z)} ${clockText(z.ms, false)}`;
+  }
+
+  /**
+   * One held-`→` frame (BQ-7) with the root focused, at the worst case: the cursor starts on the
+   * last visible bar (bar 1 000), so every step makes the view follow. Then the column and lines,
+   * the readout and the spoken summary.
+   */
+  key(): void {
+    const s = this.state;
+    const vp = this.viewport;
+    const b = this.bars;
+    if (s.driver !== "key") {
+      vp.scrollTo(KEY_START + 1 - vp.plotWidth / vp.barSpacing);
+      s.bar = KEY_START;
+      s.tick = b.close[KEY_START] ?? 0;
+    }
+    const r = stepCursor(vp, b.length, s.bar, s.tick, STEP.barNext, 1, this.stepOut);
+    if (r.follow !== 0 && vp.scrollTo(vp.leftIndex + r.follow)) this.follows += 1;
+    applyStep(s, vp, 0, r);
+    this.node.write(THEME, DPR, H * DPR, PLOT, true, s.x, s.y, Number.NaN, s.x);
+    if (takeBarEdge(s)) this.edges += 1;
+    if (this.readout.build(b, s.bar, s.snap)) this.posted += 1;
+    this.said = r.edge === 0 ? this.readout.full : `${this.readout.full}, last bar`;
   }
 
   /** The line rewrite alone: the CPU dash cost of a moving cursor. */

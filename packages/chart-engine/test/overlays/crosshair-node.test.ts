@@ -136,3 +136,50 @@ describe("crosshair node: change detection and allocation", () => {
     });
   });
 });
+
+describe("E06-D03 D10: the keyboard column while the chart root has focus (BQ-7)", () => {
+  const FOCUS = { ...THEME, "color.focus.ring": "#00ff00", "color.chart.background": "#000000" };
+  /** Segment rows with their RGB: [x0, y0, x1, y1, width, r, g, b]. */
+  const rgb = (n: CrosshairNode): number[][] =>
+    Array.from({ length: n.count }, (_, i) => {
+      const r = Array.from(n.data.slice(i * 9, i * 9 + 9));
+      return [...r.slice(0, 8)];
+    });
+
+  it.each([1, 2])(
+    "dpr %d: a solid 2 px core over 1 px halos, full height, under the lines",
+    (dpr) => {
+      const n = new CrosshairNode(CROSSHAIR_NODE_ID);
+      const h = 300 * dpr;
+      expect(n.write(FOCUS, dpr, h, PLOT, true, 150, 40, Number.NaN, 150)).toBe(true);
+      const [halo, core, ...lines] = rgb(n);
+      expect(halo).toEqual([150 * dpr, 0, 150 * dpr, h, 4 * dpr, 0, 0, 0]); // the pane colour
+      expect(core).toEqual([150 * dpr, 0, 150 * dpr, h, 2 * dpr, 0, 1, 0]); // color.focus.ring
+      // The column replaces the dashed vertical at its bar; the horizontal keeps its treatment.
+      expect(lines.every(([, y0, , y1]) => y0 === y1)).toBe(true);
+      expect(lines.length).toBe(Math.ceil((400 * dpr) / (8 * Math.max(1, Math.floor(dpr)))));
+    },
+  );
+
+  it("test_column_pointerElsewhere_bothTheColumnAndThePointerVerticalDraw", () => {
+    const n = new CrosshairNode(CROSSHAIR_NODE_ID);
+    n.write(FOCUS, 1, 300, PLOT, true, 250.5, 40, Number.NaN, 150);
+    const segs = rgb(n);
+    expect(segs.filter(([x0, , x1]) => x0 === 150 && x1 === 150)).toHaveLength(2);
+    expect(segs.some(([x0, , x1]) => x0 === x1 && x0 !== 150)).toBe(true); // the pointer's
+  });
+
+  it("test_column_noLocalCursor_drawsAlone_andNeverEases", () => {
+    const n = new CrosshairNode(CROSSHAIR_NODE_ID);
+    expect(n.write(FOCUS, 1, 300, PLOT, false, Number.NaN, Number.NaN, Number.NaN, 150)).toBe(true);
+    expect(n.count).toBe(2);
+    const writes = n.writes;
+    n.write(FOCUS, 1, 300, PLOT, false, Number.NaN, Number.NaN, Number.NaN, 150);
+    expect(n.writes).toBe(writes); // a steady frame rewrites nothing (no easing frames)
+    expect(n.write(FOCUS, 1, 300, PLOT, false, Number.NaN, Number.NaN, Number.NaN, 170)).toBe(true);
+    expect(rgb(n)[1]?.[0]).toBe(170); // the next frame lands on the new bar: a snap
+    // Focus lost: the column goes at once.
+    expect(n.write(FOCUS, 1, 300, PLOT, false, Number.NaN, Number.NaN, Number.NaN)).toBe(true);
+    expect(n.count).toBe(0);
+  });
+});

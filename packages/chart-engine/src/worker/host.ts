@@ -363,6 +363,8 @@ function retainKey(cmd: Command): string | null {
       return "lod";
     case "setCrosshair":
       return "crosshair"; // the magnet survives a worker restart (E11-S07)
+    case "setFocus":
+      return "focus"; // and so does the focus column (E11-S07 BQ-7)
     case "setSeriesOptions":
       return `series:${cmd.series}`;
     case "addDrawing":

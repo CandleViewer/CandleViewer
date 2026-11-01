@@ -32,12 +32,17 @@ import { Gestures } from "../interaction/gestures.js";
 import { plotWidthOf } from "../interaction/wheel.js";
 import { RangeSlot } from "../model/counters.js";
 import {
+  applyStep,
   createCrosshair,
+  createStepResult,
   hideCrosshair,
   resolvePointer,
+  stepCursor,
   takeBarEdge,
   type CrosshairState,
   type MagnetMode,
+  type StepCode,
+  type StepResult,
 } from "../overlays/crosshair.js";
 import { CROSSHAIR_NODE_ID, CrosshairNode } from "../overlays/crosshair-node.js";
 import { Readout, type BarSource, type ReadoutProvider } from "../overlays/readout.js";
@@ -54,6 +59,7 @@ import {
   backingPx,
   indexAt,
   indexToScreen,
+  screenToPrice,
   timeAt,
   writePaneUniforms,
 } from "../viewport/index.js";
@@ -144,6 +150,8 @@ export interface RenderRuntime {
   registerReadoutProvider(id: ChartId, provider: ReadoutProvider): (() => void) | undefined;
   /** Internal (BQ-20): `engine.crosshair.*`; `FrameStats` is unchanged. */
   crosshairCounters(id: ChartId): Readonly<CrosshairCounters> | undefined;
+  /** Internal (tests): a chart's element count per store, as the `data` batches moved it. */
+  elementCounts(id: ChartId): Readonly<Record<StoreId, number>> | undefined;
 }
 
 /** `engine.crosshair.events_emitted` (BQ-20): the public event's bar edges (BQ-10). */
@@ -196,6 +204,22 @@ interface CrossSlot {
   remote: number | null;
   /** The time last published to the sync group; NaN when none. */
   published: number;
+  /** E11-S07 BQ-7: the chart root has focus (`setFocus`): the key bar is the D10 column. */
+  focused: boolean;
+  /** The keyboard (selected) cursor's bar and tick; -1 / NaN until a key places it. */
+  keyBar: number;
+  keyTick: number;
+  /** The key cursor drives the lines until the pointer moves over the canvas again. */
+  keyLive: boolean;
+  /** A key moved the cursor: the next frame posts `a11y` (BQ-3), with the loaded edge (D5). */
+  keySay: boolean;
+  /** The key cursor was cleared: the next frame posts `a11y { cleared }` (no speech). */
+  keyCleared: boolean;
+  keyEdge: number;
+  readonly step: StepResult;
+  /** The texts last posted with `crosshair` (the summary's fallback without bar data). */
+  timeText: string;
+  priceText: string;
   readonly clock: ZoneClock;
   readonly zoned: ReturnType<typeof createZoned>;
 }
@@ -489,6 +513,17 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       rest: () => undefined,
       remote: old?.remote ?? null,
       published: Number.NaN,
+      // A degraded-2d re-init keeps the focus and the placed key cursor too.
+      focused: old?.focused ?? false,
+      keyBar: old?.keyBar ?? -1,
+      keyTick: old?.keyTick ?? Number.NaN,
+      keyLive: old?.keyLive ?? false,
+      keySay: false,
+      keyCleared: false,
+      keyEdge: 0,
+      step: createStepResult(),
+      timeText: "",
+      priceText: "",
       clock: new ZoneClock(timeZone ?? "UTC"),
       zoned: createZoned(),
     };
@@ -506,9 +541,68 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     const released = !inst.gestures.active && c.restUntil > deps.now();
     if (released) c.restUntil = Number.NEGATIVE_INFINITY;
     if (!released && Object.is(c.px, x) && Object.is(c.py, y)) return;
+    // A real move over the canvas hands the lines back to the pointer (BQ-7); leaving does not.
+    if (Number.isFinite(x) && !(Object.is(c.px, x) && Object.is(c.py, y))) c.keyLive = false;
     c.px = x;
     c.py = y;
     touch(inst);
+  }
+
+  /**
+   * E11-S07 BQ-7: a plot key steps the keyboard cursor (E11-D02 §7.3, E06-D03 D6): ±1 / ±10 bars
+   * within the loaded data, one tick per `↑/↓`, the first / last bar; the view follows so the bar
+   * stays fully visible. A first price is the bar's close, else the plot's middle. A step that
+   * moves nothing (the loaded edge) is silent; a move posts `a11y` with the next frame (BQ-3).
+   */
+  function cursorKey(inst: Instance, code: number): void {
+    const c = inst.cross;
+    const vp = inst.viewport;
+    const r = stepCursor(vp, vp.map.length, c.keyBar, c.keyTick, code as StepCode, 1, c.step);
+    if (r.bar < 0) return;
+    if (!Number.isFinite(r.tick)) r.tick = seedTick(inst, r.bar);
+    const arrived = r.bar !== c.keyBar;
+    const movedCursor = arrived || !Object.is(r.tick, c.keyTick);
+    c.keyBar = r.bar;
+    c.keyTick = r.tick;
+    c.keyLive = true;
+    if (movedCursor) {
+      c.keySay = true;
+      c.keyEdge = arrived ? r.edge : 0; // the loaded edge is said once per arrival (D5)
+    }
+    if (r.follow !== 0) moved(inst, vp.scrollTo(vp.leftIndex + r.follow));
+    touch(inst);
+  }
+
+  /**
+   * BQ-7: `Esc` or a bars `replace` clears the keyboard cursor: the lines it drove hide (silent:
+   * the spec has no copy for it), the column goes, and the chart falls back to the O(1) idle path.
+   */
+  function clearCursor(inst: Instance): void {
+    const c = inst.cross;
+    if (c.keyBar < 0) return;
+    c.keyBar = -1;
+    c.keyTick = Number.NaN;
+    c.keyLive = false;
+    c.keySay = false;
+    c.keyCleared = true; // the host drops a cursor announcement still pending
+    if (c.state.driver === "key") hideCrosshair(c.state);
+    touch(inst);
+  }
+
+  /** The key cursor's first tick: the bar's close, else the plot's middle price. */
+  function seedTick(inst: Instance, bar: number): number {
+    const src = deps.readoutSources?.[0];
+    const close = src !== undefined && bar < src.length ? src.close[bar] : undefined;
+    if (close !== undefined && Number.isFinite(close)) return close;
+    const p = inst.viewport.panes[0];
+    if (p === undefined) return Number.NaN;
+    return Math.round(screenToPrice(inst.viewport, 0, p.plotTop + p.plotHeight / 2));
+  }
+
+  /** The `+/-` anchor (BQ-7): the live key cursor's bar centre, else NaN (the pointer's x). */
+  function cursorX(inst: Instance): number {
+    const c = inst.cross;
+    return c.keyLive && c.keyBar >= 0 ? indexToScreen(inst.viewport, c.keyBar) : Number.NaN;
   }
 
   /** A drag, glide or wheel hides the lines until 150 ms after the last of them (D06 §5.2). */
@@ -542,9 +636,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   function resolveCrosshair(inst: Instance): void {
     const c = inst.cross;
     const s = c.state;
-    // Idle (no pointer seen, nothing shown, drawn or published, no remote line): O(1), so a
-    // frame with no crosshair (a resize drag, a pan from the keys) pays nothing for it.
+    // Idle (no pointer seen, no key cursor, nothing shown, drawn or published, no remote line):
+    // O(1), so a frame with no crosshair (a resize drag, a zoom from the keys) pays nothing.
     if (
+      c.keyBar < 0 &&
       !s.visible &&
       c.remote === null &&
       Number.isNaN(c.px) &&
@@ -562,17 +657,25 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       c.px < rect[0] + rect[2] &&
       c.py >= rect[1] &&
       c.py < rect[1] + rect[3];
-    if (inPlot && deps.now() >= c.restUntil) {
+    const rested = deps.now() >= c.restUntil;
+    if (rested && inPlot && !c.keyLive) {
       resolvePointer(s, vp, 0, deps.readoutSources?.[0] ?? null, c.px, c.py, c.magnet);
+    } else if (rested && c.keyBar >= 0) {
+      // BQ-7: the key cursor, re-placed under the current view; it stays when the pointer leaves.
+      c.step.bar = c.keyBar;
+      c.step.tick = c.keyTick;
+      applyStep(s, vp, 0, c.step);
     } else if (s.visible) hideCrosshair(s);
     if (rect !== undefined) {
+      // E06-D03 D10: the key bar's column while the root has focus, whatever drives the lines.
+      const columnX = c.focused && c.keyBar >= 0 ? indexToScreen(vp, c.keyBar) : Number.NaN;
       let remoteX = Number.NaN;
       if (!s.visible && c.remote !== null) {
         // The bar holding the remote time, at its centre (an open time maps to its own bar).
         remoteX = indexToScreen(vp, Math.floor(indexAt(vp.map, c.remote) + 1e-9));
       }
       const deviceH = Math.round(inst.layout.height * vp.dpr);
-      if (c.node.write(inst.theme, vp.dpr, deviceH, rect, s.visible, s.x, s.y, remoteX)) {
+      if (c.node.write(inst.theme, vp.dpr, deviceH, rect, s.visible, s.x, s.y, remoteX, columnX)) {
         // Joined to the scene on its first lines: a chart never crossed walks no extra node.
         if (inst.graph.get(CROSSHAIR_NODE_ID) === undefined) {
           inst.graph.addNode("main", "foreground", c.node);
@@ -657,14 +760,16 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       if (takeBarEdge(s)) c.counters.eventsEmitted += 1;
       const price = tickSize > 0 && Number.isFinite(s.tick);
       const z = c.clock.fields(time / 1000, c.zoned);
+      c.priceText = price ? formatNumber(origin + s.tick * tickSize, decimalsOf(tickSize)) : "";
+      c.timeText = Number.isFinite(time) ? `${dateText(z)} ${clockText(z.ms, false)}` : "";
       deps.post({
         t: "crosshair",
         id: inst.id,
         bar: s.bar,
         time,
         price: s.tick,
-        priceText: price ? formatNumber(origin + s.tick * tickSize, decimalsOf(tickSize)) : "",
-        timeText: Number.isFinite(time) ? `${dateText(z)} ${clockText(z.ms, false)}` : "",
+        priceText: c.priceText,
+        timeText: c.timeText,
         x: s.x,
         y: s.y,
         snap: s.snap,
@@ -679,6 +784,29 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       bar: s.bar,
       fields: c.readout.fields.map((f) => ({ ...f })),
     });
+  }
+
+  /**
+   * BQ-3: after `crosshair` and `readout`, a key move posts the cursor's spoken summary once: the
+   * full and short forms (E06-D03 D1/D5), "first bar" / "last bar" on arriving at a loaded edge.
+   * Never for the pointer or a remote crosshair. Without bar data the time and price texts stand.
+   */
+  function postCursorSummary(inst: Instance): void {
+    const c = inst.cross;
+    if (c.keyCleared) {
+      c.keyCleared = false;
+      deps.post({ t: "a11y", id: inst.id, cursorSummary: "", origin: "key", cleared: true });
+    }
+    if (!c.keySay) return;
+    c.keySay = false;
+    const s = c.state;
+    if (!s.visible || s.driver !== "key") return; // hidden by a hold: nothing on screen to say
+    const r = c.readout;
+    const fallback = c.priceText === "" ? c.timeText : `${c.timeText}, ${c.priceText}`;
+    const edge = c.keyEdge < 0 ? ", first bar" : c.keyEdge > 0 ? ", last bar" : "";
+    const full = (r.full === "" ? fallback : r.full) + edge;
+    const short = (r.short === "" ? fallback : r.short) + edge;
+    deps.post({ t: "a11y", id: inst.id, cursorSummary: full, short, origin: "key" });
   }
 
   /**
@@ -867,6 +995,14 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         inst.cross.magnet = cmd.magnetMode; // re-resolved next frame; never announced here
         touch(inst);
         return;
+      case "setFocus":
+        if (inst.cross.focused === cmd.focused) return;
+        inst.cross.focused = cmd.focused;
+        if (inst.cross.keyBar >= 0) touch(inst); // only a placed cursor has a column to draw
+        return;
+      case "clearCursor":
+        clearCursor(inst);
+        return;
       case "release":
         retire(inst);
         charts.delete(inst.id);
@@ -942,6 +1078,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
           hover: (x, y) => pointerAt(inst, x, y),
           animate: (m) => inst.scheduler.animate(m),
           say: (code) => (inst.axes.say = code),
+          cursorKey: (step) => cursorKey(inst, step),
+          cursorX: () => cursorX(inst),
         }),
         // G-28: the degraded-2d re-init keeps the registrations, re-placed under the new view.
         objects: old ? old.objects.rebind(viewport) : new ObjectIndex(viewport, 0, "main"),
@@ -995,8 +1133,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "data": {
         // The stores are E11-T03's; until then a batch only moves the element count.
         const n = msg.layout.count;
-        if (msg.op === "replace") inst.elements[msg.store] = n;
-        else if (msg.op !== "patch") inst.elements[msg.store] += n;
+        if (msg.op === "replace") {
+          inst.elements[msg.store] = n;
+          if (msg.store === "bars") clearCursor(inst); // a new series: no key cursor (BQ-7)
+        } else if (msg.op !== "patch") inst.elements[msg.store] += n;
         // BQ-115: a bars batch's params are [priceOrigin, tickSize], the main series' (pane 0).
         const [origin, tick] = msg.layout.params;
         if (msg.store === "bars" && origin !== undefined && tick !== undefined) {
@@ -1088,7 +1228,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       });
     }
     postCrosshair(inst);
-    // `a11y` is posted for key-driven cursor moves only (BQ-3); their wiring is BQ-7's.
+    postCursorSummary(inst); // key-driven cursor moves only (BQ-3)
     const end = deps.now();
     if (inst.config.bench || end - inst.lastFrameAt >= FRAME_SAMPLE_MS) {
       inst.lastFrameAt = end;
@@ -1184,5 +1324,6 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       };
     },
     crosshairCounters: (id) => charts.get(id)?.cross.counters,
+    elementCounts: (id) => charts.get(id)?.elements,
   };
 }

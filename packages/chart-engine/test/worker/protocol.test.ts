@@ -55,6 +55,9 @@ const valid: ToWorker[] = [
   { t: "command", id: 1, cmd: { k: "export", reqId: 1 } },
   // E11-S07 (BQ-4): the magnet, one of three modes.
   { t: "command", id: 1, cmd: { k: "setCrosshair", magnetMode: "weak" } },
+  // E11-S07 (BQ-7): the root's focus, for the D10 column.
+  { t: "command", id: 1, cmd: { k: "setFocus", focused: true } },
+  { t: "command", id: 1, cmd: { k: "clearCursor" } },
   { t: "command", id: 1, cmd: { k: "release" } },
 ];
 
@@ -135,6 +138,11 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
     [
       "a magnet without a mode",
       { t: "command", id: 1, cmd: { k: "setCrosshair" } },
+      "malformed command",
+    ],
+    [
+      "a focus that is not a boolean",
+      { t: "command", id: 1, cmd: { k: "setFocus", focused: 1 } },
       "malformed command",
     ],
     [

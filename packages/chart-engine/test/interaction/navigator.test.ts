@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  cursorStep,
   DEFAULT_RIGHT_OFFSET,
   isSpace,
   keyCode,
@@ -12,6 +13,7 @@ import {
   zoomAnchor,
 } from "../../src/interaction/navigator.js";
 import { MOD } from "../../src/interaction/wheel.js";
+import { STEP } from "../../src/overlays/crosshair.js";
 import {
   ChartViewport,
   DEFAULT_BAR_SPACING,
@@ -135,7 +137,7 @@ describe("which keys the chart takes (the router's filter)", () => {
 });
 
 describe("C-2.16: the navigator is DOM-free", () => {
-  it("imports only the viewport, the protocol and the wheel maths, and names no DOM global", () => {
+  it("imports only the viewport, the step codes, the protocol and the wheel maths, no DOM", () => {
     const src = readFileSync(
       new URL("../../src/interaction/navigator.ts", import.meta.url),
       "utf8",
@@ -144,9 +146,42 @@ describe("C-2.16: the navigator is DOM-free", () => {
     expect(imports).toEqual([
       "../viewport/Viewport.js",
       "../viewport/transform.js",
+      "../overlays/crosshair.js",
       "../worker/protocol.js",
       "./wheel.js",
     ]);
     expect(src).not.toMatch(/\b(document|window|navigator\.|matchMedia|HTMLElement)\b/);
+  });
+});
+
+describe("E11-S07 BQ-7: the plot's cursor keys", () => {
+  it("test_keyCode_arrowsUpDownAndPages_mapToTheExistingCodes", () => {
+    expect(["ArrowUp", "ArrowDown", "PageUp", "PageDown"].map((k) => keyCode(k, k, 0))).toEqual([
+      KEY.up,
+      KEY.down,
+      KEY.pageUp,
+      KEY.pageDown,
+    ]);
+    expect(keyCode("PageUp", "PageUp", MOD.alt)).toBe(0); // chords stay the page's
+    expect(keyCode("ArrowUp", "ArrowUp", MOD.ctrl)).toBe(0);
+  });
+
+  it("test_cursorStep_mapsEveryCursorKey_andLeavesZoomAndCtrlHomeToTheView", () => {
+    const rows: [number, number, number][] = [
+      [KEY.left, 0, STEP.barPrev],
+      [KEY.right, 0, STEP.barNext],
+      [KEY.left, MOD.shift, STEP.pagePrev],
+      [KEY.right, MOD.shift, STEP.pageNext],
+      [KEY.pageUp, 0, STEP.pagePrev],
+      [KEY.pageDown, 0, STEP.pageNext],
+      [KEY.up, 0, STEP.levelUp],
+      [KEY.down, 0, STEP.levelDown],
+      [KEY.home, 0, STEP.first],
+      [KEY.end, 0, STEP.last],
+      [KEY.home, MOD.ctrl, 0],
+      [KEY.zoomIn, 0, 0],
+      [KEY.spaceDown, 0, 0],
+    ];
+    for (const [code, mods, step] of rows) expect(cursorStep(code, mods)).toBe(step);
   });
 });

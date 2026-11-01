@@ -1,11 +1,14 @@
 // The keyboard equivalents (E11-S04 PR 2, 26 §3.11, README BQ-106 to BQ-109): which keys the
-// chart takes, and what each does to the viewport. Every move is a cut (BQ-110). `←/→` pan by a
-// bar (Shift: ten) until E11-S13's data cursor (C-21); `Home` puts bar 0 at the left edge, `End`
-// the latest bar `DEFAULT_RIGHT_OFFSET` bars in from the right; `Ctrl+Home` and the plot's
-// double-click restore the default spacing, then `End`; `+/-` zoom by 1.1 (Shift: 1.25) about the
-// pointer's last plot x, else the latest bar. DOM-free: the host router and the worker share it.
+// chart takes, and what each does to the viewport. Every move is a cut (BQ-110). E11-S07 BQ-7
+// (pending ruling; supersedes C-21): the plot's `←/→` (Shift: ten), `PageUp/PageDown` (±10),
+// `↑/↓` and `Home/End` step the keyboard data cursor (`cursorStep`), the view following at the
+// edge; without a cursor sink they still pan as shipped. `Ctrl+Home` and the plot's double-click
+// restore the default spacing, then `End`; `+/-` zoom by 1.1 (Shift: 1.25) about the keyboard
+// cursor's bar, else the pointer's last plot x, else the latest bar. DOM-free: the host router and
+// the worker share it.
 import { DEFAULT_BAR_SPACING, clampSpacing, type ChartViewport } from "../viewport/Viewport.js";
 import { indexToScreen } from "../viewport/transform.js";
+import { STEP } from "../overlays/crosshair.js";
 import { KEY } from "../worker/protocol.js";
 import { MOD } from "./wheel.js";
 
@@ -29,11 +32,43 @@ export function keyCode(key: string, code: string, mods: number): number {
   if ((mods & MOD.ctrl) !== 0) return key === "Home" ? KEY.home : 0;
   if (key === "ArrowLeft") return KEY.left;
   if (key === "ArrowRight") return KEY.right;
+  if (key === "ArrowUp") return KEY.up; // E11-S07 BQ-4: the cursor's price level
+  if (key === "ArrowDown") return KEY.down;
+  if (key === "PageUp") return KEY.pageUp; // the ±10-bar alias (E06-D03 D6)
+  if (key === "PageDown") return KEY.pageDown;
   if (key === "Home") return KEY.home;
   if (key === "End") return KEY.end;
   if (key === "+" || key === "=" || code === "NumpadAdd") return KEY.zoomIn;
   if (key === "-" || key === "_" || code === "NumpadSubtract") return KEY.zoomOut;
   return 0;
+}
+
+/**
+ * E11-S07 BQ-7: the cursor step a plot key makes (a `STEP` code), or 0 when it is not a cursor key
+ * (`+/-`, Space, `Ctrl+Home`). `PageUp` goes ten bars back (older), like `Shift+←`.
+ */
+export function cursorStep(code: number, mods: number): number {
+  const shift = (mods & MOD.shift) !== 0;
+  switch (code) {
+    case KEY.left:
+      return shift ? STEP.pagePrev : STEP.barPrev;
+    case KEY.right:
+      return shift ? STEP.pageNext : STEP.barNext;
+    case KEY.pageUp:
+      return STEP.pagePrev;
+    case KEY.pageDown:
+      return STEP.pageNext;
+    case KEY.up:
+      return STEP.levelUp;
+    case KEY.down:
+      return STEP.levelDown;
+    case KEY.home:
+      return (mods & MOD.ctrl) !== 0 ? 0 : STEP.first;
+    case KEY.end:
+      return STEP.last;
+    default:
+      return 0;
+  }
 }
 
 /** `End`: the latest bar `DEFAULT_RIGHT_OFFSET` bars in (≤ visibleBars − 1), at `spacing`. */

@@ -139,6 +139,13 @@ export type Command =
   | { readonly k: "export"; readonly reqId: number }
   /** E11-S07 (BQ-4, additive): the crosshair's magnet (E11-D01 D3: `off` by default). */
   | { readonly k: "setCrosshair"; readonly magnetMode: MagnetMode }
+  /**
+   * E11-S07 (BQ-7, additive): the chart root gained or lost focus; while it has it, the keyboard
+   * cursor's bar is drawn as the E06-D03 D10 column (retained across a worker restart).
+   */
+  | { readonly k: "setFocus"; readonly focused: boolean }
+  /** E11-S07 (BQ-7, additive): `Esc` on the chart root clears the keyboard cursor (transient). */
+  | { readonly k: "clearCursor" }
   | { readonly k: "release" };
 
 export type ToWorker =
@@ -267,6 +274,11 @@ export type FromWorker =
       readonly cursorSummary: string;
       readonly short?: string;
       readonly origin?: "key";
+      /**
+       * BQ-7 (additive): the key cursor was cleared (`Esc`, a bars `replace`); `cursorSummary` is
+       * empty and nothing is spoken: the host drops any cursor announcement still pending.
+       */
+      readonly cleared?: true;
     }
   /**
    * E11-S07 (BQ-1, additive): the local crosshair, posted at most once per frame and only when a
@@ -482,6 +494,10 @@ function validCommand(cmd: unknown): boolean {
       return validScale(cmd);
     case "setCrosshair":
       return MAGNET_MODES.has(cmd["magnetMode"]);
+    case "setFocus":
+      return typeof cmd["focused"] === "boolean";
+    case "clearCursor":
+      return true;
     case "release":
       return true;
     default:

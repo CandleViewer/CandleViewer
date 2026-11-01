@@ -4,9 +4,11 @@
 // scene graph and GL backend land in E11-S01 / E11-S02 behind this same surface.
 import { mountSurface, probeRenderProfile } from "../host/mount.js";
 import {
+  type Announcer,
   type AxisStops,
   createAnnouncer,
   createAxisStops,
+  CURSOR_ANNOUNCE_KEY,
   MAGNET_ANNOUNCE_KEY,
 } from "../host/axis-stop.js";
 import { createScaleBadge } from "../host/scale-badge.js";
@@ -128,6 +130,7 @@ export function createChart(opts: ChartOptions): Chart {
   let fields: readonly ReadoutFieldValue[] = [];
   let emittedBar = -1;
   let sayMagnet: ((text: string) => void) | null = null;
+  let sayCursor: Announcer | null = null;
 
   function emit<E extends keyof ChartEvents>(e: E, payload: ChartEvents[E]): void {
     const set = listeners.get(e);
@@ -233,8 +236,18 @@ export function createChart(opts: ChartOptions): Chart {
         fields = msg.fields;
         emitReadout();
         return;
+      case "a11y":
+        // BQ-3, BQ-12: keyboard cursor moves only, on E06-D03 D5's cadence under their own key.
+        if (msg.origin !== "key") return;
+        if (msg.cleared === true) {
+          sayCursor?.cancel(); // BQ-7: a cleared cursor's pending announcement is never spoken
+          return;
+        }
+        sayCursor ??= createAnnouncer(opts.container, announceClock, CURSOR_ANNOUNCE_KEY);
+        sayCursor(msg.cursorSummary, msg.short);
+        return;
       default:
-      // pick and a11y are the hit-test and live-region layers' (E11-S08 / E11-S13).
+      // pick is the hit-test layer's (E11-S08); the mirror rows are E11-S13's.
     }
   }
 
@@ -263,6 +276,10 @@ export function createChart(opts: ChartOptions): Chart {
     () => stops?.price ?? opts.container,
   );
   const env = (envOverride ?? defaultHostEnv)(doc);
+  const announceClock = {
+    now: () => env.now(),
+    setTimer: (cb: () => void, ms: number) => env.setTimer(cb, ms),
+  };
   const reducedMotion = readReducedMotion(doc); // the app's resolved mode (E11-S04 BQ-104)
   const host = createChartHost({
     realm: doc,
@@ -374,11 +391,7 @@ export function createChart(opts: ChartOptions): Chart {
       magnet = next;
       host.command({ k: "setCrosshair", magnetMode: next });
       // BQ-9: through the #5322 announcer, under its own key (never the axes').
-      sayMagnet ??= createAnnouncer(
-        opts.container,
-        { now: () => env.now(), setTimer: (cb, ms) => env.setTimer(cb, ms) },
-        MAGNET_ANNOUNCE_KEY,
-      );
+      sayMagnet ??= createAnnouncer(opts.container, announceClock, MAGNET_ANNOUNCE_KEY);
       sayMagnet(magnetText(next));
     },
     subscribe<E extends keyof ChartEvents>(e: E, cb: (p: ChartEvents[E]) => void): Unsubscribe {
@@ -406,7 +419,7 @@ export function createChart(opts: ChartOptions): Chart {
     getDomMirrorRoot: () => surface.mirrorRoot,
     // No data plane yet (E11-T03): nothing is visible or focused until series hold bars.
     getVisibleWindow: (): VisibleWindow | null => null,
-    // BQ-23: a bar while a key-driven cursor is placed (key wiring is BQ-7's); null otherwise.
+    // BQ-23: a bar while a key-driven cursor is placed (BQ-7's plot keys); null otherwise.
     getFocusedUnit(): FocusedUnit | null {
       const pane = panes[0];
       if (cursor === null || !cursor.visible || cursor.driver !== "key" || pane === undefined) {
