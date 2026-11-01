@@ -201,44 +201,56 @@ function Streaming({ onTick }: { onTick: (tick: (n: number) => void) => void }):
 }
 
 describe("Gherkin 2: streaming does not flood or steal", () => {
-  it("at 20 Hz with the 2 s cadence: ≤ 1 polite write per 2 s with the latest value, focus kept", async () => {
-    prefs({ announce_prices: "always", always_show_tables: true });
-    let tick: (n: number) => void = () => undefined;
-    const view = render(
-      <PreferencesProvider>
-        <ShellAnnouncer />
-        <Streaming onTick={(t) => (tick = t)} />
-      </PreferencesProvider>,
-    );
-    await waitFor(() => expect(screen.getByRole("grid")).toBeInTheDocument());
-    vi.useFakeTimers();
-    clearAnnouncements();
-    const stop = screen.getByRole("grid").querySelector<HTMLElement>('[tabindex="0"]');
-    act(() => stop?.focus());
-    fireEvent.keyDown(document.activeElement as Element, { key: "ArrowDown" });
-    const selected = document.activeElement;
-    expect(selected?.closest("tr")).toHaveAttribute("aria-current", "true");
-    const writes = new Map<string, string>();
-    for (let n = 1; n <= 200; n++) {
-      act(() => {
-        tick(n);
-        vi.advanceTimersByTime(50);
-      });
-      const p = document.querySelector('[aria-live="polite"] p');
-      if (p !== null && p.textContent?.startsWith("Last price")) {
-        writes.set(p.getAttribute("data-seq") ?? "", p.textContent);
+  // CPU-bound: one synchronous re-render of the panel and its grid per tick. 80 ticks took 9.0 s at load 30
+  // on the lane's host; the old 200-tick drive took 9.2 s in a merge group and 19.4 s at load 27. 15 s is
+  // a hang guard, the same value as the keymap files' (#5364).
+  it(
+    "at 20 Hz with the 2 s cadence: ≤ 1 polite write per 2 s with the latest value, focus kept",
+    { timeout: 15_000 },
+    async () => {
+      prefs({ announce_prices: "always", always_show_tables: true });
+      let tick: (n: number) => void = () => undefined;
+      const view = render(
+        <PreferencesProvider>
+          <ShellAnnouncer />
+          <Streaming onTick={(t) => (tick = t)} />
+        </PreferencesProvider>,
+      );
+      await waitFor(() => expect(screen.getByRole("grid")).toBeInTheDocument());
+      vi.useFakeTimers();
+      clearAnnouncements();
+      const stop = screen.getByRole("grid").querySelector<HTMLElement>('[tabindex="0"]');
+      act(() => stop?.focus());
+      fireEvent.keyDown(document.activeElement as Element, { key: "ArrowDown" });
+      const selected = document.activeElement;
+      expect(selected?.closest("tr")).toHaveAttribute("aria-current", "true");
+      // 80 ticks at 50 ms is 4 s of stream: two whole 2 s windows, the smallest drive that proves at most
+      // one polite write per window with the latest value. Whole windows keep the bound exact: a stream
+      // ending mid-window adds a legitimate trailing write of the latest value (#5364).
+      const TICKS = 80;
+      const TICK_MS = 50;
+      const writes = new Map<string, string>();
+      for (let n = 1; n <= TICKS; n++) {
+        act(() => {
+          tick(n);
+          vi.advanceTimersByTime(TICK_MS);
+        });
+        const p = document.querySelector('[aria-live="polite"] p');
+        if (p !== null && p.textContent?.startsWith("Last price")) {
+          writes.set(p.getAttribute("data-seq") ?? "", p.textContent);
+        }
+        expect(document.activeElement).toBe(selected);
       }
+      act(() => vi.advanceTimersByTime(2_000));
+      const last = document.querySelector('[aria-live="polite"] p');
+      if (last !== null) writes.set(last.getAttribute("data-seq") ?? "", last.textContent ?? "");
+      expect(writes.size).toBeGreaterThan(0);
+      expect(writes.size).toBeLessThanOrEqual((TICKS * TICK_MS) / 2_000 + 1);
+      expect([...writes.values()].at(-1)).toBe(`Last price ${64000 + TICKS / 2}`);
       expect(document.activeElement).toBe(selected);
-    }
-    act(() => vi.advanceTimersByTime(2_000));
-    const last = document.querySelector('[aria-live="polite"] p');
-    if (last !== null) writes.set(last.getAttribute("data-seq") ?? "", last.textContent ?? "");
-    expect(writes.size).toBeGreaterThan(0);
-    expect(writes.size).toBeLessThanOrEqual(10_000 / 2_000 + 1);
-    expect([...writes.values()].at(-1)).toBe("Last price 64100");
-    expect(document.activeElement).toBe(selected);
-    view.unmount();
-    act(() => vi.runAllTimers()); // the writer was disposed with the panel: no timer left behind
-    expect(vi.getTimerCount()).toBe(0);
-  });
+      view.unmount();
+      act(() => vi.runAllTimers()); // the writer was disposed with the panel: no timer left behind
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 });
