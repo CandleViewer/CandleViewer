@@ -147,8 +147,8 @@ graph LR
 - **Performance:** first paint ≤1 s cold; no chart bundle loaded on this route (code-split).
 - **Analytics/audit:** `auth.login.attempt`, `auth.login.success`, `auth.login.failure` (audit, with IP), `auth.login.rate_limited`.
 - **Sign-off checklist:** [ ] error copy never leaks account existence [ ] rate-limit countdown designed [ ] 125 % zoom layout [ ] dark + light + CVD-safe themes [ ] keyboard-only pass.
-- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
 - **Design QA (E09-D11):** [E09-D11.md](../design/E09/E09-D11.md) — the built screen has no account-disabled state: one message for every credential failure (DF-47, accepted under `16` §13.5).
+- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
 - **Stories:** US-ONB-001, US-ONB-008.
 
 ### SCR-002 — Two-factor (TOTP) challenge
@@ -176,7 +176,7 @@ graph LR
 - **Performance:** TOTP verify round-trip <=400 ms p95; the 6-digit field auto-submits on the 6th character with no extra render pass.
 - **Stories:** US-ONB-002.
 - **Design sign-off acceptance checklist:** [ ] code field accepts paste of 6 digits and splits correctly [ ] countdown to code expiry drawn [ ] lockout-after-5-failures state drawn [ ] recovery-code path drawn [ ] keyboard-only pass, no focus trap escape
-- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
+- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
 
 ### SCR-003 — TOTP enrolment (first login / re-enrol)
 
@@ -203,7 +203,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Hi-fi:** E09-D04 (`docs/design/E09/E09-D04.md`) — all states above plus step2 expired-secret, owner-
   reset landing, recovery-code-consumed forced re-enrolment, and recovery-exhaustion lockout drawn in
   `semantic-dark` tokens on Penpot page "E09-D04 TOTP Enrolment Hi-Fi".
-- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
+- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
 
 ### SCR-004 — Forced password change
 
@@ -216,7 +216,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Performance:** Policy evaluation is client-side and synchronous; strength meter updates within one frame (<=16 ms).
 - **Stories:** US-ONB-006, US-ADMIN-001.
 - **Design sign-off acceptance checklist:** [ ] policy rules listed before typing, not only as errors [ ] strength meter is not colour-only (text label) [ ] 'cannot reuse last 5 passwords' server error state drawn [ ] show/hide password control [ ] no dismiss path (forced) verified
-- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
+- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
 
 ### SCR-005 — Session expired / re-auth modal
 
@@ -243,7 +243,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Hi-fi (E09-D06):** idle-lock and absolute-expiry variants drawn over a live workspace (UI frozen; private panels masked; public data streaming; nothing unsubscribed; armed 1-click disarmed and not auto-restored; draft retained on idle lock, discarded on absolute expiry and sign-out). Pre-lock warning is CMP-098 (60 s). Spec: `docs/design/E09/E09-D06.md`.
 - **Motion (E09-D08):** `docs/design/E09/E09-D08.md` — the lock-in / unlock-out transitions, the frame-0 mask rule, CMP-098's arrival and dismissal, the reduced-motion variants and the measured cost register.
 - **Design sign-off acceptance checklist:** [ ] underlying screen state is preserved and visibly frozen, not destroyed [ ] 'sign out instead' escape drawn [ ] expiry-during-order-entry case drawn (idle lock: draft retained, unarmed; absolute expiry: not sent, discarded, disarmed) [ ] focus moves to the modal and returns on close
-- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
+- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
 
 ### SCR-006 — Step-up authentication modal (S)
 
@@ -270,8 +270,8 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Hi-fi (E09-D06):** code-only, code+typed confirmation, valid-grace (server expiry), failures 1-2, 3rd-failure read-only downgrade (5 min), no-grace variant for Live enablement / kill-switch disable. Spec: `docs/design/E09/E09-D06.md`.
 - **Motion (E09-D08):** `docs/design/E09/E09-D08.md` — open / close, the one-frame failure feedback, the grace indicator's cadence, the input-opacity rule and the reduced-motion variants.
 - **Design sign-off acceptance checklist:** [ ] the exact action being authorised is restated verbatim in the dialog [ ] remaining-TTL indicator for an already-valid step-up token [ ] failure/lockout state drawn [ ] cancel returns the caller to a safe no-op state
-- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
 - **Design QA (E09-D11):** [E09-D11.md](../design/E09/E09-D11.md) — the built dialog warns before its challenge expires and offers a fresh challenge (DF-46, accepted); Confirm stays enabled and names the first unmet field on a press (DF-45, accepted).
+- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
 
 ### SCR-010 — App shell (global chrome)
 
@@ -476,7 +476,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Analytics/audit:** `onboarding.started`, `onboarding.step_completed`, `onboarding.skipped`, `onboarding.completed` (analytics); `user.first_login` (audit).
 - **Hi-fi (E42-D05):** accept, password (SCR-004), two-factor (SCR-003), the orientation card for a manager and for a viewer, a link no longer valid. See `docs/design/E42/E42-D05.md` §9.3.
 - **Design sign-off acceptance checklist:** [ ] scoped-account explanation drawn for manager and viewer separately [ ] 'what you cannot do' section drawn honestly [ ] mandatory TOTP enrolment step drawn [ ] skip/resume [ ] no step depends on data the invited user cannot read
-- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
+- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
 
 ### SCR-018 — Guided tour / coach marks
 
@@ -499,7 +499,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Stories:** US-ONB-007, US-ACCT-001, US-REC-001.
 - **Design sign-off acceptance checklist:** [ ] per-role task set drawn (owner vs manager) [ ] partially-complete and fully-complete states [ ] dismiss/restore path [ ] each task deep-links to the screen that completes it
 - **Wireframes (E27-D02, account tasks):** [E27-D02.md](../design/E27/E27-D02.md) §5.7 (text-first, owner approval pending) — the `sub_account` and `api_key` tasks pending, done and blocked with reason; a Manager's task is disabled with the owner-only reason and its admin link dropped.
-- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
+- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
 
 ---
 
@@ -2409,7 +2409,7 @@ Drag preview                Drop zones
 - **Hi-fi (two-factor section only):** E09-D04 (`docs/design/E09/E09-D04.md`) draws the status card, re-enrol,
   regenerate-recovery-codes and disable-TOTP (step-up gated) actions in `semantic-dark` tokens. The
   password/sessions/audit sections of this screen remain out of scope for E09-D04.
-- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
+- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12).
 
 ### SCR-113 — Hotkey editor
 

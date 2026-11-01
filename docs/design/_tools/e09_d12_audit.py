@@ -52,6 +52,21 @@ working tree.
    at the filled baseline; each must add exactly one FAIL, from the gate it names, and every text
    is restored byte-identically (sha256 in memory and on disk). The report is ASCII, every line at
    most 100 characters.
+7. **v2 (the closing version, R2 = ruling 6547862139).** The spec is v1 as merged (`V1_SHA`) plus
+   blocks whose heading ends "(v2)" and the in-place lines its §17.1 register names (C rows).
+   A line is a v1 line or a v2 line by content: a v1 line's cites are read at `BASE`, a v2 line's
+   at `BASE_V2`. The v1 gates run on the v1 view (the spec without its v2 blocks); the lexicon,
+   document, cite and pin gates run on the whole spec; the v2 gates read the v2 blocks. G-V1-FROZEN
+   holds the v1 view byte-equal to v1 but for the C rows; G-REGISTER reads §17.1; G-DELTA ties the
+   pin diff against v1's pins to §17.1; G-CITED-STABLE keeps the lines and section numbers other
+   files cite. A v1 cite edited at `origin/main` must be a §17.3 row. Every v2 cite must hold
+   its text recorded in CITE_TEXT_V2 (written here, never by --repin-ruled), and a quote on a v2
+   line that cites must stand in its own sources or v1's deck.
+8. **Modes, by content (never a flag).** PR mode: the spec differs from its copy at `origin/main`.
+   Post-merge mode: the spec equals that copy and the copy carries the v2 version line; a cited
+   range edited later is then a WARN naming the commit, never a FAIL, and G-UNTOUCHED reads
+   nothing; every content gate runs unchanged. `--self-test` runs its PR tuple in PR mode and its
+   post-merge tuple (Z-n, with expected WARNs) in post-merge mode, and prints both counts.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e09_d12_audit.py --check [SPEC] [--json] [--fill]
@@ -81,8 +96,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "121e9e989b"  # every cite was read here (the spec's Inputs line)
-HEAD = "origin/main"  # G-VERSION: a cited range edited at origin/main FAILs
+BASE = "121e9e989b"  # v1's base: every v1 line's cite was read here (the spec's Inputs line)
+BASE_V2 = "be4294d0e2"  # v2's base: every v2 line's cite is read here (the Ticket line)
+V1_SHA = "67ab4aa8a5"  # v1 as merged (#4959): G-V1-FROZEN's reference and G-DELTA's pins
+V2_MARK = "(v2)"  # every v2 block's heading ends with it
+HEAD = "origin/main"  # G-VERSION: a cited range edited at origin/main FAILs (PR mode)
 MULTI = re.MULTILINE
 
 SPEC_REL = "docs/design/E09/E09-D12.md"
@@ -118,6 +136,9 @@ CITE_FILES: dict[str, str] = {
     "CVD": "docs/research/_tools/cvd_simulate.py",
     "CAL": "docs/plan/backlog/_tools/calendar_cv.py",
     "E09J": "docs/plan/backlog/E09.json",
+    "D07": "docs/design/E09/E09-D07.md",
+    "D10": "docs/design/E09/E09-D10.md",
+    "E17D02": "docs/design/E17/E17-D02.md",
 }
 # the standing rule: no `05`, `14`, `15`, `16`, `21`, `22`, `23` or `24` edit, nor of a merged E09
 # design doc (G-UNTOUCHED compares each with the merge-base, and refuses any other stray path)
@@ -134,8 +155,13 @@ RULING_ID = "6495555374"
 BQ_LIST_ID = "6495025903"
 # the comment ids the docs may cite: R194, the BQ list, ledger 1, the directive, R188, R940
 RULED_IDS = (RULING_ID, BQ_LIST_ID, "6491680793", "6490317249", "6489306947", "6463770354")
+# v2: R2 (the ruling of record), its BQ list and the owner's 2026-10-31 directive
+R2_ID = "6547862139"
+RULED_IDS_V2 = (R2_ID, "6547530536", "6546079373")
 REPORT_WIDTH = 100
-SPEC_LINE_BUDGET = 560  # S-20 "≤ ~300 lines"; past it by the one-row-per-item tables (D6)
+# S-20 "≤ ~300 lines"; v1 ran past it by the one-row-per-item tables (D6), and v2 adds its
+# register and its blocks beside v1's byte-equal text (R2 BQ-02)
+SPEC_LINE_BUDGET = 900
 # R194's own figures: 34 defaults as proposed of 40, six ruled differently, riders on fifteen;
 # the walkthrough protocol "≤ 10 minutes" (BQ-36, taken as proposed); the recovery-code file
 # holds "ten codes only" (R194's BQ-34 rider)
@@ -466,9 +492,9 @@ def cite_path(cid: str) -> str | None:
     return None
 
 
-def base_lines(cid: str) -> list[str]:
+def base_lines(cid: str, rev: str = "") -> list[str]:
     rel = cite_path(cid)
-    text = git_show(BASE, rel) if rel else None
+    text = git_show(rev or BASE, rel) if rel else None
     return text.split("\n") if text is not None else []
 
 
@@ -1136,13 +1162,16 @@ def count_values(spec: str, deck: str) -> Values:
 
 @functools.lru_cache(maxsize=16)
 def compute_cached(spec: str, deck: str) -> tuple[tuple[str, str], ...]:
+    """v1's values over the v1 view (its sections end where a v2 block begins) and v2's."""
+    view = v1_view(spec)
     values: Values = {}
     values.update(RULED_VALUES)
     values.update(cite_values())
-    values.update(count_values(spec, deck))
-    values.update(contrast_values(spec))
-    values.update(sprint_values(spec))
+    values.update(count_values(view, deck))
+    values.update(contrast_values(view))
+    values.update(sprint_values(view))
     values.update(hash_values())
+    values.update(v2_values(spec))
     return tuple(sorted(values.items()))
 
 
@@ -1405,7 +1434,7 @@ def g_penpot(t: Texts) -> list[Finding]:
         if URL.search(work) or UUID.search(work):
             bad.append(F("G-PENPOT", f"spec:{i} a URL, host or id", "spec", sec))
         for m in COMMENT_ID.finditer(CODE.sub(" ", CITE_GROUP.sub(" ", work))):
-            if m[1] not in RULED_IDS:
+            if m[1] not in (*RULED_IDS, *RULED_IDS_V2):
                 bad.append(F("G-PENPOT", f"spec:{i} an unlisted id {m[1]}", "spec", sec))
     raw = t.deck
     if URL.search(raw) or UUID.search(raw):
@@ -1543,8 +1572,8 @@ def unique_block(base: list[str], a: int, b: int) -> list[str]:
 
 
 @functools.lru_cache(maxsize=2048)
-def cited_block(rel: str, a: int, b: int) -> tuple[str, ...]:
-    return tuple(unique_block((git_show(BASE, rel) or "").split("\n"), a, b))
+def cited_block(rev: str, rel: str, a: int, b: int) -> tuple[str, ...]:
+    return tuple(unique_block((git_show(rev, rel) or "").split("\n"), a, b))
 
 
 def deck_cites(deck: str) -> list[tuple[str, str]]:
@@ -1552,50 +1581,86 @@ def deck_cites(deck: str) -> list[tuple[str, str]]:
     return [(k, str(e.get("source", ""))) for k, e in deck_strings(deck).items()]
 
 
+def drift_sha(rel: str, rev: str) -> str:
+    """The latest commit after `rev` that touched `rel` on `origin/main` (a WARN names it)."""
+    return git_out("log", "-1", "--format=%h", "--abbrev=10", f"{rev}..{HEAD}", "--", rel).strip()
+
+
 def cite_findings(t: Texts) -> tuple[list[Finding], int]:
-    """G-CITE (every line at the base, the range's ends non-blank) and G-VERSION (each cited
-    range stands, by content, at `origin/main`; an unresolvable `origin/main` FAILs)."""
+    """G-CITE (every line at its base, the range's ends non-blank) and G-VERSION (each cited
+    range stands, by content, at `origin/main`; an unresolvable `origin/main` FAILs). A v1 line
+    reads at `BASE`, a v2 line at `BASE_V2`; a v1 range edited at `origin/main` must be a §17.3
+    row, and in post-merge mode an edit is a WARN naming the commit."""
     fails: list[Finding] = []
-    done: set[tuple[str, int, int]] = set()
+    done: set[tuple[str, str, int, int]] = set()
+    post = post_merge()
     if not head_ok():
         fails.append(F("G-VERSION", f"{HEAD} does not resolve: drift is unread", None, None))
-    sources = [("spec", i, ln, h2_at(t.spec, i)) for i, ln in enumerate(t.spec.split("\n"), 1)]
-    sources += [("deck", 0, src, key) for key, src in deck_cites(t.deck)]
-    for doc, li, line, sec in sources:
+    v2 = v2_line_set(t.spec)
+    registered = drift_registered(t.spec)
+    drift_rows = {ln for ln in section(t.spec, DRIFT_HEAD).split("\n") if ln.startswith("| ")}
+    sources: list[tuple[str, int, str, str, str]] = []
+    for i, ln in enumerate(t.spec.split("\n"), 1):
+        sec = h2_at(t.spec, i)
+        if ln in drift_rows:  # §17.3: the first cell is v1's cite, the rest the v2 base's
+            cells = split_row(ln)
+            sources += [
+                ("spec", i, cells[0], sec, BASE),
+                ("spec", i, " | ".join(cells[1:]), sec, BASE_V2),
+            ]
+        else:
+            sources.append(("spec", i, ln, sec, BASE_V2 if i in v2 else BASE))
+    sources += [("deck", 0, src, key, BASE) for key, src in deck_cites(t.deck)]
+    for doc, li, line, sec, rev in sources:
         for cid, a, b in cite_refs(line):
             rel = cite_path(cid)
-            base_t = git_show(BASE, rel) if rel else None
+            base_t = git_show(rev, rel) if rel else None
             where = f"{doc}:{li}" if li else f"deck {sec}"
             if rel is None or base_t is None:
                 fails.append(F("G-CITE", f"{where} `{cid}`:{a} no such file", doc, sec))
                 continue
-            if (cid, a, b) in done:
+            if (rev, cid, a, b) in done:
                 continue
-            done.add((cid, a, b))
+            done.add((rev, cid, a, b))
             base = base_t.split("\n")
             if b < a or a < 1 or b > len(base) or not base[a - 1].strip():
-                fails.append(
-                    F("G-CITE", f"{where} `{cid}`:{a}–{b} not a range at {BASE}", doc, sec)
-                )
+                fails.append(F("G-CITE", f"{where} `{cid}`:{a}–{b} not a range at {rev}", doc, sec))
                 continue
             if not base[b - 1].strip():
-                fails.append(F("G-CITE", f"{where} `{cid}`:{b} is blank at {BASE}", doc, sec))
+                fails.append(F("G-CITE", f"{where} `{cid}`:{b} is blank at {rev}", doc, sec))
                 continue
+            if rev == BASE_V2 and doc == "spec":
+                want = CITE_TEXT_V2.get(cite_label(cid, a, b))
+                if want is None or cite_line_text(base, a) != want:
+                    what = "has no recorded text" if want is None else "is not its recorded text"
+                    msg = f"{where} `{cid}`:{a}–{b} {what} at {rev}"
+                    fails.append(F("G-CITE", msg, doc, sec))
             if not head_ok():
                 continue
             head_t = git_fetch_head(rel)
-            if head_t is None or not block_count(
-                head_t.split("\n"), list(cited_block(rel, a, b)), 1
+            if head_t is not None and block_count(
+                head_t.split("\n"), list(cited_block(rev, rel, a, b)), 1
             ):
-                msg = f"`{cid}`:{a}–{b} edited at {HEAD}: re-read and re-point the cite"
-                fails.append(F("G-VERSION", msg, doc, sec))
-    for cid, n, frag in CITED:
-        base = base_lines(cid)
-        if n > len(base) or frag not in base[n - 1]:
-            hits = [i + 1 for i, ln in enumerate(base) if frag in ln]
-            msg = f'`{cid}`:{n} "{frag[:40]}" not on the line (found {hits[:4]})'
-            fails.append(F("G-CITE", msg, None, None))
-    return fails, len(done) + len(CITED)
+                continue
+            if rev == BASE and (cid, a, b) in registered:
+                continue
+            msg = f"`{cid}`:{a}–{b} edited at {HEAD}"
+            if post:
+                warn(f"[G-VERSION] {msg} by {drift_sha(rel, rev) or 'a later commit'}")
+            else:
+                fails.append(F("G-VERSION", f"{msg}: re-read and re-point the cite", doc, sec))
+    used = {cite_label(*ref) for ref in v2_cites(t.spec)}
+    for lab in sorted(set(CITE_TEXT_V2) - used):
+        msg = f"the recorded text for {lab} is held by no v2 cite"
+        fails.append(F("G-CITE", msg, UNHELD, None))
+    for rev, table in ((BASE, CITED), (BASE_V2, CITED_V2)):
+        for cid, n, frag in table:
+            base = base_lines(cid, rev)
+            if n > len(base) or frag not in base[n - 1]:
+                hits = [i + 1 for i, ln in enumerate(base) if frag in ln]
+                msg = f'`{cid}`:{n} "{frag[:40]}" not on the line at {rev} (found {hits[:4]})'
+                fails.append(F("G-CITE", msg, None, None))
+    return fails, len(done) + len(CITED) + len(CITED_V2)
 
 
 # ---------------------------------------------------------------------------- G-QUOTE
@@ -1617,24 +1682,35 @@ def template(s: str) -> str:
     return r"\S+(?: \S+){0,3}?".join(re.escape(p) for p in parts)
 
 
-@functools.lru_cache(maxsize=256)
-def source_text(cid: str) -> str:
+@functools.lru_cache(maxsize=512)
+def source_text(cid: str, rev: str = "") -> str:
     if cid == "T":
         return loose(ticket().replace('\\"', '"'))
     rel = cite_path(cid)
-    text = git_show(BASE, rel) if rel else None
+    text = git_show(rev or BASE, rel) if rel else None
     return loose(text.replace('\\"', '"')) if text else ""
 
 
-def quoted_ok(q: str, cids: list[str], deck_texts: list[str]) -> bool:
+def quoted_ok(q: str, cids: list[str], deck_texts: list[str], rev: str = "") -> bool:
+    """A quote of a v2 line (`rev` = BASE_V2) may also be v1's own text or R2's words."""
     lq = loose(q)
     if any(lq == loose(r) or lq in loose(r) for r in RULING_QUOTES):
         return True
     if any(lq == d or re.fullmatch(template(d), lq) for d in deck_texts):
         return True
     pat = re.compile(template(lq)) if "{" in lq else None
+    v1_strings = [loose(str(e.get("string", ""))) for e in v1_deck().values()]
+    if rev == BASE_V2 and cids:  # a v2 line that cites: its own sources or v1's deck (lens M5)
+        return lq in v1_strings or any(
+            lq in (src := source_text(cid, rev)) or (pat is not None and bool(pat.search(src)))
+            for cid in cids
+        )
+    if rev == BASE_V2 and (lq in loose(v1_text()) or any(lq in loose(r) for r in R2_QUOTES)):
+        return True
+    if rev == BASE_V2 and lq in v1_strings:
+        return True
     for cid in [*cids, *CORE]:
-        src = source_text(cid)
+        src = source_text(cid, rev)
         if lq in src or (pat is not None and pat.search(src)):
             return True
     return False
@@ -1650,17 +1726,24 @@ def g_quote(t: Texts) -> list[Finding]:
         for ln in section(t.spec, head).split("\n"):
             if ln.startswith("|"):
                 skip[ln] = cols
+    v2 = v2_line_set(t.spec)
     for i, line in enumerate(t.spec.split("\n"), 1):
+        rev = BASE_V2 if i in v2 else BASE
         work = line
         if line in skip:
             work = " | ".join(c for j, c in enumerate(split_row(line)) if j not in skip[line])
         cids = [c for c, _a, _b in cite_refs(work)]
         cids += re.findall(rf"\b({_BARE_IDS})\b", work)
-        for m in QUOTED.finditer(CODE.sub(" ", strip_comments(work))):
+        plain = CODE.sub(" ", strip_comments(work))
+        for m in QUOTED.finditer(plain):
             q = m[0][1:-1]
             if len(q) < QUOTE_MIN:
                 continue
-            if not quoted_ok(q, cids, deck_texts):
+            # a v2 line may quote the v1 unit it names ("§4.1's "…"", "supersedes "…"")
+            names_v1 = rev == BASE_V2 and re.search(r"(?:supersedes|'s) $", plain[: m.start()])
+            if names_v1 and loose(q) in loose(v1_text()):
+                continue
+            if not quoted_ok(q, cids, deck_texts, rev):
                 msg = f"spec:{i} {q[:50]!r} is not verbatim in a cited source"
                 bad.append(F("G-QUOTE", msg, "spec", h2_at(t.spec, i)))
     return bad
@@ -1694,7 +1777,9 @@ def stray_paths_at(ref: str) -> tuple[str, ...] | None:
 
 # BQ-40 (RULED as proposed): one content-only pointer line in `14` after the last design line of
 # each band screen; nothing else in `14` changes (G-UNTOUCHED reads it by content)
-POINTER_14 = "- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12)."
+# R2 BQ-07: the version-free form "(E09-D12)", once; the merge-base may still carry v1's form
+POINTER_14 = "- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (E09-D12)."
+POINTER_14_V1 = "- **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12)."
 POINTER_SCREENS = (
     "SCR-001",
     "SCR-002",
@@ -1714,8 +1799,13 @@ def pointer_problems(text: str, base: str) -> list[str]:
     band screen, right after its last design line (or that line's continuation); none elsewhere."""
     lines = text.split("\n")
     out: list[str] = []
-    if [ln for ln in lines if ln != POINTER_14] != base.split("\n"):
+    forms = (POINTER_14, POINTER_14_V1)
+    if [ln for ln in lines if ln not in forms] != [
+        ln for ln in base.split("\n") if ln not in forms
+    ]:
         out.append("`14` differs from the merge-base beyond BQ-40's pointer lines")
+    if POINTER_14_V1 in lines:
+        out.append("`14` still carries v1's pointer form (R2 BQ-07)")
     heads = [(i, m[1]) for i, ln in enumerate(lines) if (m := re.match(r"^### (SCR-\d{3})\b", ln))]
     for k, (i, scr) in enumerate(heads):
         body = lines[i : heads[k + 1][0] if k + 1 < len(heads) else len(lines)]
@@ -1738,6 +1828,8 @@ def g_untouched(t: Texts) -> list[Finding]:
     """The standing rule: the untouched files equal the merge-base; only this PR's four files
     differ (committed or not), and `14` only by BQ-40's pointer lines; an unresolvable merge-base
     or a failed git call FAILs closed."""
+    if post_merge():
+        return []
     ref = merge_base()
     if not ref:
         return [F("G-UNTOUCHED", f"no merge-base with {HEAD}: nothing compared", None, None)]
@@ -1818,10 +1910,6 @@ def g_version(t: Texts) -> list[Finding]:
     for need in (f"v1 at base {BASE}", "re-sync needed", "posted once on each affected consumer"):
         if norm_text(need) not in body:
             bad.append(F("G-VERSION", f"§17 lacks {need!r}", "spec", vsec))
-    if deck_data(t.deck).get("base") != BASE or deck_data(t.deck).get("version") != "v1":
-        bad.append(
-            F("G-VERSION", "the deck's base or version is not v1 at the base", "deck", "(meta)")
-        )
     return bad
 
 
@@ -2481,11 +2569,16 @@ def source_holds(source: str, string: str) -> bool:
     lines = base_lines(cid)
     if not lines or b > len(lines):
         return False
-    text = loose(" ".join(lines[a - 1 : b]).replace('\\"', '"'))
+    raw = " ".join(lines[a - 1 : b]).replace('\\"', '"')
+    text = loose(raw)
     s = loose(string)
-    return s in text or (
-        ("{" in s or "N " in string or "m:ss" in s)
-        and bool(re.search(template(s).replace("n\\ ", r"\S+\ "), text))
+    return (
+        s in text
+        or quoted_pieces(raw, string)
+        or (
+            ("{" in s or "N " in string or "m:ss" in s)
+            and bool(re.search(template(s).replace("n\\ ", r"\S+\ "), text))
+        )
     )
 
 
@@ -3476,6 +3569,1330 @@ def pin_findings(t: Texts) -> list[Finding]:
     ]
 
 
+# ---------------------------------------------------------------------------- v2: the delta
+
+# R2's own words the v2 blocks may quote (G-QUOTE); the ruling is a comment, not a file
+R2_QUOTES = ("(E09-D12)", "Outside", "pending")
+# v2's load-bearing fragments: (cite id, line at BASE_V2, text the line must hold)
+CITED_V2: tuple[tuple[str, int, str], ...] = (
+    ("22", 1847, "operationId: authLock"),
+    ("22", 1211, "Every failed sign-in gets one answer, whatever the account's state"),
+    ("22", 1879, "if the audit sink is"),
+    ("22", 1880, "the session is not locked"),
+    ("22", 24795, "maxLength: 32"),
+    ("04", 834, "Every failed sign-in gets one answer"),
+    ("04", 844, "Absolute lifetime 12 h"),
+    ("14", 471, "link not valid"),
+    ("15", 2624, 'the constant name "Show password"'),
+    ("15", 2661, "name contains its visible heading"),
+    ("15", 2675, "untinted"),
+    ("15", 2699, "`version: string`"),
+    ("ACT", 53, '"auth.session_locked"'),
+    ("D07", 22, "`E09-D07 auth band`"),
+    ("D07", 37, "Nothing in the band is published."),
+    ("D07", 240, "quiet-zone token"),
+    ("D07", 242, "D12 Q-9"),
+    ("D07", 254, "D12 Q-9, D12 Q-10"),
+    ("D09", 49, "**never the `disabled` attribute**"),
+    ("D09", 204, "CMP-079 RbacGate"),
+    ("D09", 207, '"Not available"'),
+    ("D10", 237, '"Two-factor code"'),
+    ("D10", 406, "pre-rendered polite region"),
+    ("D10", 408, "the carrier"),
+    ("D10", 517, '"Invalid password or code."'),
+    ("D10", 518, '"Signed out. Market data stopped. Sign in again."'),
+    ("D10", 912, "the enrolment-only session"),
+    ("D10", 919, "the owner MFA-reset operation"),
+    ("D10", 931, "forces enrolment under a fresh password re-authentication"),
+    ("E17D02", 249, "owned by the app shell"),
+    ("22", 14986, "Available to any authenticated"),
+    ("16", 632, "re-sync needed: <what changed>"),
+    ("22", 1863, "A request with only the cookie is"),
+    ("22", 1865, "`403 csrf_token_invalid` and nothing is locked"),
+    ("22", 1866, "`401 unauthenticated`, whatever cookie comes with it"),
+)
+REGISTER_HEAD = "17.1 The v2 delta register"
+MODES_HEAD = "17.2 The modes and the gates"
+DRIFT_HEAD = "17.3 The v1 cites re-read"
+STATUS2_HEAD = "0.1 The status table"
+PARENTS_HEAD = "1.3 The parents at the v2 base"
+LIFT_HEAD = "1.4 Lift, copy or cite"
+OPS2_HEAD = "3.4 `authLock`"
+ERR2_HEAD = "4.3 The error map at the v2 base"
+COMP2_HEAD = "6.1 The inventory at the v2 base"
+T2_HEAD = "6.2 The T2 controls"
+PAIRS2_HEAD = "7.4 Contrast and CVD at the v2 base"
+DECK2_HEAD = "8.4 The deck at v2"
+CROSS_HEAD = "9.4 The crosswalk"
+FIND_HEAD = "9.6 D10's findings carried"
+LIVE_HEAD = "9.7 Live regions"
+AHEAD2_HEAD = "13.1 The design-ahead record at the v2 base"
+QROW2_HEAD = "14.1 The open questions at the v2 base"
+CROW2_HEAD = "15.4 C-rows at the v2 base"
+GROW2_HEAD = "15.5 The G-ledger at the v2 base"
+AROW2_HEAD = "15.6 A-rows at the v2 base"
+STORY_HEAD = "16.0 The per-story table"
+OUTSIDE_HEAD = "16.4 The outside dry run"
+# BQ-04 (R2 as default): the D12 lines E09-D07's tool cites by content, kept byte-stable (never a
+# C row), and the section numbers the e2e specs and `15` cite
+D07_CITED = (
+    (60, "#190 takes §6 as its input"),
+    (252, "not published"),
+    (424, "Q-9"),
+    (425, "Q-10"),
+    (488, "`version: string`"),
+)
+CITED_HEADS = (
+    "## 6. The component and state inventory",
+    "### 8.3 The never-list",
+    "### 9.2 The interim focus-continuity map",
+    "### 10.2 Audit and analytics",
+)
+# §1.4's lifted blocks: (cite id, first, last, the HASH key) at BASE_V2
+LIFTS = (
+    ("D10", 308, 402, "d10.map"),
+    ("D10", 590, 635, "d10.script"),
+    ("D10", 639, 661, "d10.assert"),
+    ("D10", 663, 781, "d10.templates"),
+    ("D07", 104, 115, "d07.contracts"),
+)
+GRADES = ("Blocker", "Major", "Minor", "Info")
+D10_BLOCKERS = ("F-1", "F-2", "F-25", "F-26")
+# §9.6's carried rows, frozen: the four Blockers, D10's rows for the deck strings, and every Info
+CARRIED_F = (*D10_BLOCKERS, "F-13", "F-14", "F-49", "F-50", "F-51")
+D10_FINDINGS = (532, 588)  # D10 §12 at BASE_V2
+D10_MAP = (308, 402)  # D10 §6.2 at BASE_V2
+D10_SCRIPT = (590, 635)
+D10_ASSERT = (639, 661)
+STORY_CONSUMERS = (
+    "#2711 (SCR-002)",
+    "#2110 frontend leg (SCR-004)",
+    'the web "Lock now" leg',
+    "E09-D11 (#291)",
+    "E09-Q02 (#293)",
+    "E09-Q06 (#297)",
+    "#2490",
+)
+A_STATUS = ("applied", "applied in part", "open", "the RULED sentence")
+DEPUTY = re.compile(r"\(deputy, \d{4}-\d{2}-\d{2}\)")
+MODE_OVERRIDE: list[str] = []  # self-test lever: "pr" or "post"
+WARNS: list[str] = []  # the WARN lines of the current audit
+
+
+def warn(msg: str) -> None:
+    WARNS.append(msg)
+
+
+@functools.lru_cache(maxsize=1)
+def v1_text() -> str:
+    """v1 as merged; an unreadable v1 is a parse failure (every v2 gate reads it)."""
+    text = git_show(V1_SHA, SPEC_REL)
+    if text is None:
+        raise SystemExit(f"FAIL parse: {SPEC_REL} is not readable at {V1_SHA}")
+    return text
+
+
+@functools.lru_cache(maxsize=1)
+def v1_deck() -> dict[str, dict[str, object]]:
+    return deck_strings(git_show(V1_SHA, DECK_REL) or "")
+
+
+def on_disk_spec() -> str:
+    return (ROOT / SPEC_REL).read_bytes().decode("utf-8")
+
+
+@functools.lru_cache(maxsize=1)
+def post_merge_by_content() -> bool:
+    """Post-merge: the spec on disk equals its copy at `origin/main`, which carries the v2 line."""
+    head = git_show(HEAD, SPEC_REL)
+    return head is not None and head == on_disk_spec() and f"**v2 at base `{BASE_V2}`**" in head
+
+
+def post_merge() -> bool:
+    if MODE_OVERRIDE:
+        return MODE_OVERRIDE[-1] == "post"
+    return post_merge_by_content()
+
+
+def mode_name() -> str:
+    return "post-merge" if post_merge() else "PR"
+
+
+def v2_spans(spec: str) -> tuple[tuple[int, int], ...]:
+    """0-based [start, end) line spans of the v2 blocks: a heading ending in "(v2)" to the next
+    heading that does not."""
+    return v2_spans_cached(spec)
+
+
+@functools.lru_cache(maxsize=64)
+def v2_spans_cached(spec: str) -> tuple[tuple[int, int], ...]:
+    lines = spec.split("\n")
+    fence = fenced(lines)
+    out: list[tuple[int, int]] = []
+    start = -1
+    for i, ln in enumerate(lines):
+        m = HEADING.match(ln)
+        if not m or fence[i]:
+            continue
+        mine = m[2].rstrip().endswith(V2_MARK)
+        if mine and start < 0:
+            start = i
+        elif not mine and start >= 0:
+            out.append((start, i))
+            start = -1
+    if start >= 0:
+        out.append((start, len(lines)))
+    return tuple(out)
+
+
+@functools.lru_cache(maxsize=64)
+def v2_line_set(spec: str) -> frozenset[int]:
+    """The 1-based line numbers inside v2 blocks, plus the C lines §17.1 names."""
+    lines: set[int] = set()
+    for a, b in v2_spans(spec):
+        lines |= set(range(a + 1, b + 1))
+    view_map = v1_view_map(spec)
+    for n in c_lines(spec):
+        if 0 < n <= len(view_map):
+            lines.add(view_map[n - 1])
+    return frozenset(lines)
+
+
+@functools.lru_cache(maxsize=64)
+def v1_view_map(spec: str) -> tuple[int, ...]:
+    """For each line of the v1 view, its 1-based line number in the spec."""
+    drop: set[int] = set()
+    for a, b in v2_spans(spec):
+        drop |= set(range(a, b))
+    return tuple(i + 1 for i in range(len(spec.split("\n"))) if i not in drop)
+
+
+@functools.lru_cache(maxsize=64)
+def v1_view(spec: str) -> str:
+    lines = spec.split("\n")
+    return "\n".join(lines[n - 1] for n in v1_view_map(spec))
+
+
+def register_rows(spec: str) -> list[list[str]]:
+    return [r for r in rows_of(spec, REGISTER_HEAD) if re.fullmatch(r"V-\d+", r[0])]
+
+
+@functools.lru_cache(maxsize=64)
+def c_lines(spec: str) -> frozenset[int]:
+    """The v1 line numbers §17.1's C rows name ("v1 line N")."""
+    out: set[int] = set()
+    for r in register_rows(spec):
+        if len(r) > 2 and r[2] == "C":
+            out |= {int(n) for n in re.findall(r"v1 line (\d+)", r[1])}
+    return frozenset(out)
+
+
+def unit_name(cell: str) -> str:
+    """A register Unit cell's key: "§4.3", "(top)", "deck `key`", "deck (meta)", "`14`"."""
+    cell = cell.strip()
+    m = re.match(r"(§\d+(?:\.\d+)?|\(top\)|deck `[^`]+`|deck \(meta\)|`14`)", cell)
+    return m[1] if m else cell
+
+
+@functools.lru_cache(maxsize=64)
+def drift_registered(spec: str) -> frozenset[tuple[str, int, int]]:
+    """The v1 cites §17.3's first column names (the ranges edited after v1's base)."""
+    out: set[tuple[str, int, int]] = set()
+    for r in rows_of(spec, DRIFT_HEAD):
+        if len(r) >= 4:
+            out |= set(cite_refs(r[0]))
+    return frozenset(out)
+
+
+def v1_drifted() -> set[tuple[str, int, int]]:
+    """Every v1 cite (spec v1 lines and deck sources) whose range is edited at `origin/main`."""
+    out: set[tuple[str, int, int]] = set()
+    if not head_ok():
+        return out
+    spec = v1_text()
+    deck = git_show(V1_SHA, DECK_REL) or ""
+    lines = [*spec.split("\n"), *(src for _k, src in deck_cites(deck))]
+    for line in lines:
+        for cid, a, b in cite_refs(line):
+            rel = cite_path(cid)
+            if rel is None or git_show(BASE, rel) is None:
+                continue
+            head_t = git_fetch_head(rel)
+            block = list(cited_block(BASE, rel, a, b))
+            if head_t is None or not block or not block_count(head_t.split("\n"), block, 1):
+                out.add((cid, a, b))
+    return out
+
+
+def sec_of_v1(n: int) -> str:
+    return h2_at(v1_text(), n)
+
+
+def quoted(cell: str) -> list[str]:
+    return [m[0][1:-1] for m in QUOTED.finditer(CODE.sub(" ", strip_comments(cell)))]
+
+
+def quoted_pieces(raw: str, string: str) -> bool:
+    """`string` is quoted pieces of `raw`, in order, joined by single spaces."""
+    rest = string
+    for q in quoted(raw):
+        if rest.startswith(q):
+            rest = rest[len(q) :].lstrip(" ")
+            if not rest:
+                return True
+    return False
+
+
+def d10_rows(a: int, b: int, prefix: str) -> dict[str, list[str]]:
+    """D10's table rows at BASE_V2 within lines a..b whose lead cell starts with `prefix`."""
+    out: dict[str, list[str]] = {}
+    for ln in base_lines("D10", BASE_V2)[a - 1 : b]:
+        if ln.startswith(f"| {prefix}"):
+            cells = split_row(ln)
+            out[cells[0]] = cells
+    return out
+
+
+def id_span(text: str, prefix: str) -> list[str]:
+    """Every `prefix`-n id in text, with "X-a to X-b" expanded."""
+    ids: list[str] = []
+    for m in re.finditer(rf"\b{prefix}-(\d+)(?: to {prefix}-(\d+))?\b", text):
+        lo = int(m[1])
+        hi = int(m[2]) if m[2] else lo
+        ids += [f"{prefix}-{n}" for n in range(lo, hi + 1)]
+    return ids
+
+
+@functools.lru_cache(maxsize=4)
+def openapi_ops_at(rev: str) -> dict[str, tuple[str, str, int]]:
+    out: dict[str, tuple[str, str, int]] = {}
+    path, path_line, method = "", 0, ""
+    for i, ln in enumerate(base_lines("22", rev), 1):
+        m = re.match(r"^  (/[^:]*):\s*$", ln)
+        if m:
+            path, path_line = m[1], i
+            continue
+        m = re.match(r"^    (get|put|post|delete|patch):\s*$", ln)
+        if m:
+            method = m[1].upper()
+            continue
+        m = re.match(r"^      operationId: (\w+)\s*$", ln)
+        if m and path:
+            out[m[1]] = (method, path, path_line)
+    return out
+
+
+@functools.lru_cache(maxsize=16)
+def token_file_at(rev: str, name: str) -> dict[str, object]:
+    text = git_show(rev, f"{DS_SRC_REL}/{name}.tokens.json")
+    if text is None:
+        raise SystemExit(f"FAIL parse: the {name} tokens are not readable at {rev}")
+    data = json.loads(text)
+    return {k: v.get("$value") for k, v in data.items() if isinstance(v, dict)}
+
+
+def theme_hex_at(rev: str, theme: str, name: str) -> str:
+    merged: dict[str, object] = {}
+    for f in THEMES[theme]:
+        merged.update(token_file_at(rev, f))
+    v = resolve(merged, name)
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
+        raise SystemExit(f"FAIL token {name} does not resolve to an opaque colour in {theme}")
+    return v.upper()
+
+
+def lift_hash(cid: str, a: int, b: int) -> str:
+    text = "\n".join(base_lines(cid, BASE_V2)[a - 1 : b])
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def v2_values(spec: str) -> Values:
+    """v2's computed values: the ops count, the pairs at BASE_V2, D10's grade counts, the lift
+    hashes."""
+    view = v1_view(spec)
+    out: Values = {}
+    v1_ops = [r for r in rows_of(view, OPS_HEAD) if r[0].startswith("`")]
+    v2_ops = [r for r in rows_of(spec, OPS2_HEAD) if r[0].startswith("`")]
+    out["COUNT:v2.ops"] = str(len(v1_ops) + len(v2_ops))
+    for r in pair_rows(view):
+        pid = r[0].split()[0].lower().replace("-", "")
+        fg, bg = r[1].strip("`"), r[2].strip("`")
+        for theme in PAIR_THEMES:
+            try:
+                ratio = contrast(theme_hex_at(BASE_V2, theme, fg), theme_hex_at(BASE_V2, theme, bg))
+                out[f"CONTRAST:v2.{pid}.{theme}"] = show_ratio(ratio)
+            except SystemExit:
+                out[f"CONTRAST:v2.{pid}.{theme}"] = "unresolved"
+    rows = d10_rows(*D10_FINDINGS, "F-")
+    out["COUNT:v2.f.total"] = str(len(rows))
+    for g in GRADES:
+        out[f"COUNT:v2.f.{g.lower()}"] = str(sum(1 for c in rows.values() if c[2] == g))
+    for cid, a, b, key in LIFTS:
+        out[f"HASH:{key}"] = lift_hash(cid, a, b)
+    return out
+
+
+def v2_below(spec: str) -> tuple[list[str], list[str]]:
+    """(pairs below their bar at BASE_V2, pairs that meet it but fall below it simulated)."""
+    view = v1_view(spec)
+    cite = cite_values()
+    bar = {"text": float(cite["CITE:bar.text"]), "non-text": float(cite["CITE:bar.ui"])}
+    below: list[str] = []
+    sim: list[str] = []
+    for r in pair_rows(view):
+        pid, fg, bg = r[0].split()[0], r[1].strip("`"), r[2].strip("`")
+        need = bar.get(r[-1], bar["text"])
+        for theme in PAIR_THEMES:
+            a, c = theme_hex_at(BASE_V2, theme, fg), theme_hex_at(BASE_V2, theme, bg)
+            if contrast(a, c) < need:
+                below.append(f"{pid} {theme}")
+                continue
+            for kind in DEFICIENCIES:
+                if contrast(simulate(a, kind), simulate(c, kind)) < need:
+                    sim.append(f"{pid} {theme} {kind}")
+    return below, sim
+
+
+UNHELD = "unheld"  # the doc tag of a recorded cite text no v2 cite holds
+
+
+def cite_label(cid: str, a: int, b: int) -> str:
+    return f"{cid}:{a}" if a == b else f"{cid}:{a}-{b}"
+
+
+# each v2 cite's recorded text at the v2 base (lens M5): written once here, never by
+# --repin-ruled, so a cite moved to another line or a line edited under it FAILs G-CITE
+CITE_TEXT_V2: dict[str, str] = {
+    "14:144": "- **States:** idle · submitting · error (one message for eve",
+    "14:215": "- **Audit:** `auth.password_change` (with `auth.session_revo",
+    "INVITE:85-88": "<h1 ref={land} tabIndex={-1}>",
+    "INVITE:148-188": "return (",
+    "LOGIN:124-130": "<TwoFactorStep",
+    "04:834": "| SR-014 | Login responses MUST be indistinguishable between",
+    "04:844": "sha:231ebfdea0fb",
+    "05:116": "- Demo vs Live: colour (documented owner decision: Live = re",
+    "14:143": "- **Interactions/hotkeys:** `Enter` submits; Tab order usern",
+    "14:148": "- **Analytics/audit:** `auth.login.attempt`, `auth.login.suc",
+    "14:172": '- **States:** idle · verifying · invalid code ("That code is',
+    "14:175": "- **Sign-off:** [ ] paste behaviour [ ] recovery-code path [",
+    "14:264": "- **Validation:** typed confirmation must match exactly (cas",
+    "14:471": "- **States:** invite valid · link not valid (expired, used a",
+    "14:2401": "- **Data:** `GET /api/v1/me/sessions`, `DELETE /api/v1/me/se",
+    "15:2624": "sha:8394fa59db3d",
+    "15:2661": "sha:4a31c4d92f44",
+    "15:2670-2681": "### CMP-205 QrCode",
+    "15:2675": "- **Tokens**: the card `color.surface.raised`; the bitmap an",
+    "15:2699": "- **Props**: `version: string` (before sign-in the version l",
+    "15:2702": "- **Storybook**: PreAuthVersionOnly, SignedInDemo, SignedInL",
+    "16:632": "- **Re-open, don't drift (§13.5 made operational).** A chang",
+    "22:1211-1216": "Every failed sign-in gets one answer, whatever the account's",
+    "22:1211-1220": "Every failed sign-in gets one answer, whatever the account's",
+    "22:1844": "/auth/lock:",
+    "22:1850": "Locks the calling session at once, exactly as if its idle de",
+    "22:1856-1858": "the `auth.session_locked` audit row's time. The body is the ",
+    "22:1859-1860": "Lock records no activity and never moves `expires_at`; only ",
+    "22:1863-1865": '`cv_refresh` cookie identifies no lock (see "Idle lock"). A ',
+    "22:1866": "access token past its lifetime is `401 unauthenticated`, wha",
+    "22:1867-1868": "Self only: any query parameter is refused with `422` (SR-026",
+    "22:1867": "Self only: any query parameter is refused with `422` (SR-026",
+    "22:1871": "* A session that is already idle-locked answers `200` with i",
+    "22:1874-1875": "* A revoked session, or one past its absolute lifetime, answ",
+    "22:1879-1880": "The lock's record is `auth.session_locked`, written ahead (C",
+    "22:14986-14987": "Backs the About dialog and the Electron update check. Availa",
+    "22:18908": "End of the 12 h absolute lifetime. Refresh, extend, lock and",
+    "22:24795": "version: { type: string, minLength: 1, maxLength: 32, patter",
+    "ACT:35-142": '"auth.login",',
+    "ACT:45": '"auth.idle_locked",',
+    "ACT:53": '"auth.session_locked",',
+    "CHECK:60": "{/* `reason` is free text: never rendered raw, the state wor",
+    "D07:22": "- **BQ-2 (confirmed).** Three PRs in that order — pack, cata",
+    "D07:37": "**Nothing in the band is published.** No band component exis",
+    "D07:104-115": "## 4. The ten contracts (BQ-11 ... BQ-20)",
+    "D07:119": "- **T2** (D09:49): only CMP-097's steps meet a denied action",
+    "D07:195-209": "## 9. Design-ahead, the build owner and publication (BQ-33, ",
+    "D07:234-254": "## 11. The open-questions log (BQ-37): the union by id",
+    "D07:240": "| G-1 | a theme-invariant quiet-zone token for CMP-205 (L-17",
+    "D07:242": "| G-3 | the light danger and warning text values and the hig",
+    "D07:254": "| D05 Q-6, D10 Q-6, D12 Q-9, D12 Q-10 | the caps-lock string",
+    "D08:336": "| absolute expiry / revocation / the fifth wrong password | ",
+    "D08:340": '| step-up / unlock failure | assertive, once | "Invalid pass',
+    "D09:49": "- **T2 Disabled with a visible reason (D4).** _Semantics:_ t",
+    "D09:75": '| Onboarding task "Invite a second user", SCR-019 (CMP-097 s',
+    "D09:90": '| `rbac.owner_only` | "Only the owner can {verb}." | the ope',
+    "D09:94": '| `rbac.read_only` | "Read-only after three wrong codes." | ',
+    "D09:95": '| `rbac.view_as` | "Read-only while viewing as {user}." | `G',
+    "D09:103": '| users | `users:read` → "see users" · `users:write` → "mana',
+    "D09:204": "| T2 wrapper | CMP-079 RbacGate | `reason` required when `al",
+    "D09:207": "| T2 glyph | CMP-019 Icon `lock` | `decorative=false`, name ",
+    "D10:154": "- **R-2 Routing and the hold (RULED BQ-9).** An F-row names ",
+    "D10:237": "| 2.5.3 | `6.5` | non-compliant | F-1, F-26: the name must c",
+    "D10:304": "### 6.1 Precedence and the carried causes",
+    "D10:308-402": "### 6.2 The map",
+    "D10:406": "- **Hygiene:** per surface one pre-rendered polite region an",
+    "D10:408": "- **The auth assertive set** (RULED differently): the lock (",
+    "D10:412-428": "### 8.1 The time-limit table",
+    "D10:434-436": "| EX-1 | the absolute session lifetime (TL-2) | the expiry c",
+    "D10:509-521": "### 11.1 The copy of record (RULED BQ-17)",
+    "D10:517": '| SCR-005 and SCR-006 failure | "Invalid password or code." ',
+    "D10:518": '| the expiry announcement | "Session expired." then "Signed ',
+    "D10:532-588": "## 12. The finding register (RULED BQ-9)",
+    "D10:590-635": "## 13. The screen-reader script (RULED BQ-18, BQ-19)",
+    "D10:639-661": "## 14. The CI-checkable assertion list (RULED BQ-29)",
+    "D10:661": "Handed at merge as comments to E09-Q02 (#293) and E09-Q06 (#",
+    "D10:663-781": "## 15. The `05` §10 templates (RULED BQ-5)",
+    "D10:668": "Feature: SCR-001 sign-in — accessibility acceptance criteria",
+    "D10:682": "Feature: SCR-002 two-factor, recovery-code entry and exhaust",
+    "D10:696": "Feature: SCR-003 enrolment, its SCR-017 step 3 and SCR-112's",
+    "D10:710": "Feature: SCR-004 password change, its SCR-017 step 2 and SCR",
+    "D10:724": "Feature: SCR-005 lock with CMP-098 — accessibility acceptanc",
+    "D10:738": "Feature: SCR-006 step-up — accessibility acceptance criteria",
+    "D10:766": "Feature: the RBAC pattern — accessibility acceptance criteri",
+    "D10:912": "| G-1 | the enrolment-only session (`22`:81–84) gives no sig",
+    "D10:919": "| G-8 | the owner MFA-reset operation (Q-7 as RULED): the `r",
+    "D10:931": "| Q-7 | does re-enrolment after an owner reset ask a step-up",
+    "E17D02:249": "One live-region pair (polite + assertive) pre-rendered empty",
+    "LOGIN:5-14": 'type State = "idle" | "submitting" | "invalid" | "rate_limit',
+    "LOGIN:134-173": "return (",
+}
+# built from pieces, so this file holds none of the words the public-text rules keep out
+BANNED_WORDS = re.compile(
+    "le"
+    + "ak|expo"
+    + "sed|by"
+    + "pass|expl"
+    + "oit|att"
+    + "ack|ora"
+    + "cle|rev"
+    + "eal|unbou"
+    + "nded|flo"
+    + "od|sta"
+    + "ll|\\bD"
+    + "oS\\b|advis"
+    + "ory|GH"
+    + "SA|pre-"
+    + "auth",
+    re.IGNORECASE,
+)
+
+
+def cite_line_text(lines: list[str], n: int) -> str:
+    """The text a v2 cite is held to: its first line, normalised, its first 60 characters, or
+    `sha:` and that line's hash where the line holds a word the public-text rules keep out."""
+    line = pin_norm(lines[n - 1]) if 0 < n <= len(lines) else ""
+    if BANNED_WORDS.search(line):
+        return "sha:" + hashlib.sha256(line.encode("utf-8")).hexdigest()[:12]
+    return line[:60]
+
+
+def v2_cites(spec: str) -> list[tuple[str, int, int]]:
+    """Every distinct cite a v2 line reads at the v2 base (§17.3's v1 column excluded)."""
+    v2 = v2_line_set(spec)
+    drift_rows = {ln for ln in section(spec, DRIFT_HEAD).split("\n") if ln.startswith("| ")}
+    out: dict[tuple[str, int, int], None] = {}
+    for i, ln in enumerate(spec.split("\n"), 1):
+        if i not in v2:
+            continue
+        text = " | ".join(split_row(ln)[1:]) if ln in drift_rows else ln
+        for ref in cite_refs(text):
+            out[ref] = None
+    return list(out)
+
+
+def v2_body(t: Texts, head: str) -> tuple[str, str]:
+    return section(t.spec, head), spec_sec(t, head)
+
+
+def g_v1_frozen(t: Texts) -> list[Finding]:
+    """R2 BQ-02/03: the spec without its v2 blocks is v1 byte for byte, but for the v1 lines a
+    §17.1 C row names (a finding here is a NOTE where another gate flags the same section)."""
+    want = v1_text().split("\n")
+    got = v1_view(t.spec).split("\n")
+    allowed = c_lines(t.spec)
+    bad: list[Finding] = []
+    ops = difflib.SequenceMatcher(None, want, got, autojunk=False).get_opcodes()
+    for op, i1, i2, j1, j2 in ops:
+        if op == "equal":
+            continue
+        if op == "replace" and i2 - i1 == j2 - j1:
+            for i in range(i1, i2):
+                if i + 1 not in allowed:
+                    msg = f"v1 line {i + 1} changed without a §17.1 C row"
+                    bad.append(F("G-V1-FROZEN", msg, "spec", sec_of_v1(i + 1)))
+            continue
+        at = max(i1, 1)
+        what = {"insert": "lines added", "delete": "lines dropped", "replace": "lines changed"}[op]
+        msg = f"v1 lines {i1 + 1}..{max(i1 + 1, i2)}: {what} outside a v2 block ({j2 - j1} now)"
+        bad.append(F("G-V1-FROZEN", msg, "spec", sec_of_v1(at)))
+    return bad
+
+
+def g_register(t: Texts) -> list[Finding]:
+    """R2 BQ-02: §17.1's rows are V-1..V-n in order; each change is C, A or S; an A or S row names
+    a v2 block, a C row a v1 line that differs; an S row quotes the v1 unit it supersedes, which
+    still stands in the v1 view."""
+    _body, sec = v2_body(t, REGISTER_HEAD)
+    rows = register_rows(t.spec)
+    bad: list[Finding] = []
+    if not rows:
+        return [F("G-REGISTER", "§17.1 has no rows", "spec", sec)]
+    pointers = plan_text("14").count(POINTER_14 + "\n")
+    if pointers and not any(unit_name(r[1]) == "`14`" and "(E09-D12)" in r[3] for r in rows):
+        bad.append(
+            F("G-REGISTER", f"`14` carries {pointers} pointer lines; no §17.1 row", "spec", sec)
+        )
+    if [r[0] for r in rows] != [f"V-{n}" for n in range(1, len(rows) + 1)]:
+        bad.append(F("G-REGISTER", "§17.1's ids are not V-1..V-n in order", "spec", sec))
+    blocks = set()
+    lines = t.spec.split("\n")
+    for a, b in v2_spans(t.spec):
+        for ln in lines[a:b]:
+            m = re.match(r"^#+ (\d+(?:\.\d+)?)[ .].*\(v2\)\s*$", ln)
+            if m:
+                blocks.add(f"§{m[1]}")
+    view = strip_comments(v1_view(t.spec))
+    want = v1_text().split("\n")
+    got = v1_view(t.spec).split("\n")
+    for r in rows:
+        if len(r) < 6:
+            bad.append(F("G-REGISTER", f"{r[0]} has {len(r)} cells", "spec", sec))
+            continue
+        name, change = unit_name(r[1]), r[2]
+        if change not in ("C", "A", "S"):
+            bad.append(F("G-REGISTER", f"{r[0]} change {change!r} is not C, A or S", "spec", sec))
+        elif change in ("A", "S") and name not in blocks:
+            bad.append(F("G-REGISTER", f"{r[0]} names {name}, no v2 block", "spec", sec))
+        elif change == "S" and not any(q in view for q in quoted(r[3])):
+            bad.append(F("G-REGISTER", f"{r[0]} supersedes nothing that stands", "spec", sec))
+        elif change == "C" and name == "(top)":
+            for n in (int(x) for x in re.findall(r"v1 line (\d+)", r[1])):
+                if n > len(want) or n > len(got) or want[n - 1] == got[n - 1]:
+                    bad.append(F("G-REGISTER", f"{r[0]}: v1 line {n} is unchanged", "spec", sec))
+    return bad
+
+
+def pin_regions(text: str | None) -> set[tuple[str, str, str, str]]:
+    return set(parse_pins(text)) if text is not None else set()
+
+
+def region_unit(doc: str, region: str) -> str:
+    """A pin region's register key (the inverse of unit_name)."""
+    if doc == "deck":
+        key = region.rsplit("#", 1)[0]
+        return "deck (meta)" if key == "(meta)" else f"deck `{key}`"
+    last = region.rsplit("#", 1)[0].split(" › ")[-1]
+    m = re.match(r"(\d+(?:\.\d+)?)[ .]", last)
+    if m is None or " › " not in region:
+        return "(top)"
+    return f"§{m[1]}"
+
+
+def g_delta(t: Texts) -> list[Finding]:
+    """R2 BQ-06: every pin unit that differs from v1's pins (`V1_SHA`) sits in a region §17.1
+    names; it runs in both modes."""
+    _body, sec = v2_body(t, REGISTER_HEAD)
+    old = git_show(V1_SHA, PIN_REL)
+    if old is None:
+        return [F("G-DELTA", f"v1's pins are not readable at {V1_SHA}", "spec", sec)]
+    new = pin_file_text()
+    if new is None:
+        return [F("G-DELTA", "no pins file in the tree", "spec", sec)]
+    named = {unit_name(r[1]) for r in register_rows(t.spec) if len(r) > 1}
+    changed = {(u[0], u[1]) for u in pin_regions(old) ^ pin_regions(new)}
+    missing = sorted({region_unit(d, r) for d, r in changed} - named)
+    return [
+        F("G-DELTA", f"the pin diff touches {m}, which §17.1 does not name", "spec", sec)
+        for m in missing
+    ]
+
+
+def v1_kept(spec: str) -> frozenset[int]:
+    """The 1-based v1 lines that stand unchanged in the v1 view (aligned by content)."""
+    want = v1_text().split("\n")
+    got = v1_view(spec).split("\n")
+    kept: set[int] = set()
+    for op, i1, i2, _j1, _j2 in difflib.SequenceMatcher(
+        None, want, got, autojunk=False
+    ).get_opcodes():
+        if op == "equal":
+            kept |= set(range(i1 + 1, i2 + 1))
+    return frozenset(kept)
+
+
+def g_cited_stable(t: Texts) -> list[Finding]:
+    """BQ-04: the D12 lines E09-D07's tool cites stand byte-equal (never a C row; aligned by
+    content, so a line inserted elsewhere is no change) and the cited headings keep their
+    numbers."""
+    want = v1_text().split("\n")
+    kept = v1_kept(t.spec)
+    bad: list[Finding] = []
+    for n, frag in D07_CITED:
+        if n not in kept or frag not in want[n - 1]:
+            msg = f"v1 line {n} ({frag!r}), cited by E09-D07's tool, changed"
+            bad.append(F("G-CITED-STABLE", msg, "spec", sec_of_v1(n)))
+    lines = t.spec.split("\n")
+    for head in CITED_HEADS:
+        if not any(ln.startswith(head) for ln in lines):
+            bad.append(F("G-CITED-STABLE", f"the cited heading {head!r} is gone", "spec", None))
+    return bad
+
+
+def g_drift(t: Texts) -> list[Finding]:
+    """R2 BQ-14: each §17.3 row names v1 cites whose range is edited at `origin/main`, and its
+    v2 column cites lines at the v2 base."""
+    _body, sec = v2_body(t, DRIFT_HEAD)
+    drifted = v1_drifted()
+    bad: list[Finding] = []
+    rows = [r for r in rows_of(t.spec, DRIFT_HEAD) if len(r) >= 4]
+    if not rows:
+        return [F("G-DRIFT", "§17.3 has no rows", "spec", sec)]
+    for r in rows:
+        refs = cite_refs(r[0])
+        if not refs or not cite_refs(r[1]):
+            bad.append(F("G-DRIFT", f"§17.3 row {r[0][:30]!r} lacks a cite", "spec", sec))
+        for ref in refs:
+            if ref not in drifted and not post_merge():
+                msg = f"§17.3 names `{ref[0]}`:{ref[1]}–{ref[2]}, which is not edited"
+                bad.append(F("G-DRIFT", msg, "spec", sec))
+    return bad
+
+
+def g_mode(t: Texts) -> list[Finding]:
+    """R2 BQ-01/05: the Ticket line names v2 at its base; the deck reads v2 at it; §17.2 states
+    both versions and R2; the v2 base is a commit under `origin/main`."""
+    _body, sec = v2_body(t, MODES_HEAD)
+    bad: list[Finding] = []
+    first = next((ln for ln in t.spec.split("\n") if ln.startswith("**Ticket:**")), "")
+    if f"**v2 at base `{BASE_V2}`**" not in first:
+        bad.append(F("G-MODE", "the Ticket line does not name v2 at its base", "spec", "(top)"))
+    meta = deck_data(t.deck)
+    if meta.get("version") != "v2" or meta.get("base") != BASE_V2:
+        bad.append(F("G-MODE", "the deck's version or base is not v2's", "deck", "(meta)"))
+    body = norm_text(section(t.spec, MODES_HEAD))
+    for need in (f"v2 at base {BASE_V2}", f"v1 at base {BASE}", R2_ID, "post merge mode"):
+        if norm_text(need) not in body:
+            bad.append(F("G-MODE", f"§17.2 lacks {need!r}", "spec", sec))
+    full = git_out("rev-parse", "--verify", "--quiet", f"{BASE_V2}^{{commit}}").strip()
+    if head_ok() and (not full or git_out("merge-base", full, HEAD).strip() != full):
+        bad.append(F("G-MODE", f"{BASE_V2} is not under {HEAD}", "spec", sec))
+    return bad
+
+
+def g_parents(t: Texts) -> list[Finding]:
+    """R2 BQ-08: each merged parent's sha is a commit under the v2 base whose subject names its
+    PR; an unmerged parent reads "none" and is named only."""
+    body, sec = v2_body(t, PARENTS_HEAD)
+    bad: list[Finding] = []
+    for r in table_rows(body):
+        if len(r) < 4:
+            continue
+        for pr, sha in re.findall(r"#(\d+) `([0-9a-f]{10})`", r[2]):
+            full = git_out("rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}").strip()
+            subj = git_out("log", "-1", "--format=%s", sha).strip()
+            under = bool(full) and git_out("merge-base", full, BASE_V2).strip() == full
+            if not under or not subj.endswith(f"(#{pr})"):
+                bad.append(
+                    F("G-PARENTS", f"#{pr} `{sha}` is not its merge under the base", "spec", sec)
+                )
+        if r[1].startswith("not merged") and r[2] != "none":
+            bad.append(F("G-PARENTS", f"{r[0]} is unmerged but names a merge", "spec", sec))
+    if "**Named only, never pinned or quoted (v2):**" not in body:
+        bad.append(F("G-PARENTS", "§1.3 lacks the named-only line", "spec", sec))
+    return bad
+
+
+def g_lift(t: Texts) -> list[Finding]:
+    """R2 BQ-10: §1.4's lifted rows are LIFTS, each with its range and its HASH anchor."""
+    body, sec = v2_body(t, LIFT_HEAD)
+    rows = [r for r in table_rows(body) if len(r) >= 3 and r[2].startswith("lifted by hash")]
+    got = set()
+    for r in rows:
+        for cid, a, b in cite_refs(r[1]):
+            keys = re.findall(r"HASH:([a-z0-9.]+)", r[2])
+            got.add((cid, a, b, keys[0] if keys else ""))
+    want = set(LIFTS)
+    bad = [
+        F("G-LIFT", f"§1.4 lacks the lift {x[0]}:{x[1]}–{x[2]} ({x[3]})", "spec", sec)
+        for x in sorted(want - got)
+    ]
+    bad += [
+        F("G-LIFT", f"§1.4 lifts {x[0]}:{x[1]}–{x[2]} ({x[3]}), not a tool lift", "spec", sec)
+        for x in sorted(got - want)
+    ]
+    return bad
+
+
+def g_ops2(t: Texts) -> list[Finding]:
+    """R2 BQ-12: §3.4's rows are operations of `22` at the v2 base, at their path's line, absent
+    from §3.1; the count is §3.1's plus §3.4's."""
+    body, sec = v2_body(t, OPS2_HEAD)
+    ops = openapi_ops_at(BASE_V2)
+    v1_ops = {r[0].strip("`") for r in rows_of(v1_view(t.spec), OPS_HEAD)}
+    bad: list[Finding] = []
+    rows = [r for r in table_rows(body) if r[0].startswith("`")]
+    if not rows:
+        bad.append(F("G-OPS2", "§3.4 has no operation", "spec", sec))
+    for r in rows:
+        op = r[0].strip("`")
+        got = ops.get(op)
+        cites = cite_refs(r[2])
+        method_path = f"{got[0]} `{got[1]}`" if got else ""
+        if got is None or r[1] != method_path or not cites or cites[0][1] != got[2]:
+            bad.append(F("G-OPS2", f"§3.4 {op} is not `22`'s at the v2 base", "spec", sec))
+        if op in v1_ops:
+            bad.append(F("G-OPS2", f"§3.4 {op} is already a §3.1 row", "spec", sec))
+    return bad
+
+
+# §4.3, frozen (R2 BQ-13; lens M1): condition -> (the code its answer cell names, the `22` range
+# that holds that code at the v2 base, the deck key, the fallback, the state cell's opening)
+ERR2_ROWS: dict[str, tuple[str, int, int, str, str, str]] = {
+    "locked account": (
+        "401 unauthenticated",
+        1211,
+        1216,
+        "`auth.login.failed`",
+        "F-1",
+        "SCR-001 `error-generic`",
+    ),
+    "Lock now: revoked or expired session": (
+        "401 session_revoked",
+        1874,
+        1875,
+        "—",
+        "—",
+        "SCR-001; no reason line",
+    ),
+    "Lock now: access token past its lifetime": (
+        "401 unauthenticated",
+        1866,
+        1866,
+        "—",
+        "—",
+        "SCR-001; no reason line",
+    ),
+    "Lock now: no access token (the cookie only)": (
+        "403 csrf_token_invalid",
+        1863,
+        1865,
+        "—",
+        "—",
+        "nothing visible",
+    ),
+    "Lock now: unavailable": ("503", 1879, 1880, "`auth.unreachable`", "F-4", "the host's"),
+}
+
+
+def g_errmap2(t: Texts) -> list[Finding]:
+    """R2 BQ-13: §4.3 holds exactly the frozen rows; each answer names its code at the `22`
+    range that holds it (the code's words read there), with its deck key, fallback and state;
+    a supersede cell quotes a §4.1 row that stands."""
+    body, sec = v2_body(t, ERR2_HEAD)
+    v1_conds = {r[0] for r in rows_of(v1_view(t.spec), ERR_HEAD)}
+    api = base_lines("22", BASE_V2)
+    rows = {r[0]: r for r in table_rows(body) if len(r) == 6}
+    bad: list[Finding] = []
+    if sorted(rows) != sorted(ERR2_ROWS):
+        bad.append(F("G-ERRMAP2", f"§4.3's conditions are not {sorted(ERR2_ROWS)}", "spec", sec))
+    for cond, (code, a, b, key, fb, state) in ERR2_ROWS.items():
+        r = rows.get(cond)
+        if r is None:
+            continue
+        words = code.split()[-1]
+        held = words in " ".join(api[a - 1 : b])
+        if (
+            f"`{code}" not in r[1]
+            and code not in r[1]
+            or ("22", a, b) not in cite_refs(r[1])
+            or not held
+        ):
+            bad.append(F("G-ERRMAP2", f"§4.3 {cond}: not {code} at `22`:{a}–{b}", "spec", sec))
+        if r[3] != key or r[4] != fb or not r[2].startswith(state):
+            bad.append(F("G-ERRMAP2", f"§4.3 {cond}: key, fallback or state moved", "spec", sec))
+        if r[5] != "—" and not any(q in v1_conds for q in quoted(r[5])):
+            bad.append(F("G-ERRMAP2", f"§4.3 {cond} supersedes no §4.1 row", "spec", sec))
+    return bad
+
+
+# the crosswalk's agreement, frozen (R2 BQ-17): every §9.2 row agrees with D10 but unlock
+CROSS_AGREES = {"unlock": "no (C-27)"}
+
+
+def g_crosswalk(t: Texts) -> list[Finding]:
+    """R2 BQ-17: each §9.2 row appears once in §9.4, naming T-rows of D10's map at the v2 base
+    and each one's focus target verbatim, in order; its agreement is the frozen one, and a row
+    that disagrees names a §15.4 C-row."""
+    body, sec = v2_body(t, CROSS_HEAD)
+    interim = [r[0] for r in rows_of(v1_view(t.spec), FOCUS_HEAD)]
+    tmap = d10_rows(*D10_MAP, "T-")
+    crows = {r[0] for r in rows_of(t.spec, CROW2_HEAD)}
+    rows = [r for r in table_rows(body) if len(r) == 4]
+    bad: list[Finding] = []
+    if sorted(r[0] for r in rows) != sorted(interim):
+        bad.append(F("G-CROSSWALK", "§9.4 does not cross every §9.2 row once", "spec", sec))
+    for r in rows:
+        tids = id_span(r[1], "T")
+        if not tids or any(x not in tmap for x in tids):
+            bad.append(F("G-CROSSWALK", f"§9.4 {r[0]}: {r[1]} not in D10's map", "spec", sec))
+            continue
+        want = list(dict.fromkeys(pin_norm(tmap[x][4]) for x in tids))
+        if [pin_norm(x) for x in r[2].split(" · ")] != want:
+            bad.append(F("G-CROSSWALK", f"§9.4 {r[0]}: not {r[1]}'s focus targets", "spec", sec))
+        if r[3] != CROSS_AGREES.get(r[0], "yes"):
+            bad.append(F("G-CROSSWALK", f"§9.4 {r[0]}: {r[3]!r} is not the reading", "spec", sec))
+        m = re.fullmatch(r"no \((C-\d+)\)", r[3])
+        if r[3] != "yes" and (m is None or m[1] not in crows):
+            bad.append(F("G-CROSSWALK", f"§9.4 {r[0]}: {r[3]!r} names no C-row", "spec", sec))
+    return bad
+
+
+def g_findings(t: Texts) -> list[Finding]:
+    """R2 BQ-21/22: §9.6 carries D10's rows with D10's grade, owner and close state, in the four
+    grades; the four Blockers are carried and none reads closed."""
+    body, sec = v2_body(t, FIND_HEAD)
+    d10 = d10_rows(*D10_FINDINGS, "F-")
+    rows = {r[0]: r for r in table_rows(body) if re.fullmatch(r"F-\d+", r[0])}
+    bad: list[Finding] = []
+    infos = [f for f, c in d10.items() if c[2] == "Info"]
+    for fid in (*CARRIED_F, *infos):
+        if fid not in rows:
+            bad.append(F("G-FINDINGS", f"§9.6 does not carry {fid}", "spec", sec))
+    for fid, r in rows.items():
+        src = d10.get(fid)
+        if src is None or len(r) != 5:
+            bad.append(F("G-FINDINGS", f"§9.6 {fid} is not a D10 row", "spec", sec))
+            continue
+        if r[1] not in GRADES or r[1] != src[2] or r[2] != src[5] or r[4] != src[8]:
+            bad.append(
+                F("G-FINDINGS", f"§9.6 {fid} is not D10's grade, owner or state", "spec", sec)
+            )
+        if re.search(r"\bclosed\b", r[4]):
+            bad.append(F("G-FINDINGS", f"§9.6 {fid} reads closed", "spec", sec))
+    text = norm_text(body)
+    for g in GRADES:
+        if (
+            f"<!--=COUNT:v2.f.{g.lower()}-->" not in body
+            and f"{{{{COUNT:v2.f.{g.lower()}}}}}" not in body
+        ):
+            bad.append(F("G-FINDINGS", f"§9.6 does not count the grade {g}", "spec", sec))
+    for need in ("not claimed closed", "info rows carry and none is dropped"):
+        if need not in text:
+            bad.append(F("G-FINDINGS", f"§9.6 lacks {need!r}", "spec", sec))
+    return bad
+
+
+SELF_HOSTED = re.compile(
+    r"(?:before sign.?in|scr-001|/login)[^.;]*\bown(?:s)? (?:their|its) own\b"
+    r"|\bown(?:s)? (?:their|its) own (?:pair|regions?)\b[^.;]*before sign.?in",
+)
+
+
+def g_announcer(t: Texts) -> list[Finding]:
+    """R2 BQ-19: no rule is invented for the screens before sign-in; G-14 carries the case to
+    D10 §7 and E17-D02 §11, the shell's presence on `/login` UNVERIFIED."""
+    body, sec = v2_body(t, LIVE_HEAD)
+    text = norm_text(body)
+    bad: list[Finding] = []
+    if "(SCR-001..004, SCR-017 step 1)" not in body:
+        bad_hosts = [
+            F("G-ANNOUNCER", "§9.7's hosts are not SCR-001..004, SCR-017 step 1", "spec", sec)
+        ]
+    else:
+        bad_hosts = []
+    for need in ("g 14", "d10 §7", "e17 d02 §11", "unverified", "no rule is invented"):
+        if need not in text:
+            bad.append(F("G-ANNOUNCER", f"§9.7 lacks {need!r}", "spec", sec))
+    for c in clauses(body):
+        if SELF_HOSTED.search(norm_text(c)) and not re.search(rf"\b{NEG_WORD}\b", norm_text(c)):
+            bad.append(
+                F("G-ANNOUNCER", f"§9.7 rules a host before sign-in: {c[:50]!r}", "spec", sec)
+            )
+    bad += bad_hosts
+    g14 = next((r for r in rows_of(t.spec, GROW2_HEAD) if r[0] == "G-14"), [])
+    if len(g14) < 4 or g14[3] != "D10 §7 and E17-D02 §11":
+        bad.append(F("G-ANNOUNCER", "G-14's owner is not D10 §7 and E17-D02 §11", "spec", sec))
+    return bad
+
+
+# §6.2's T2 rows, frozen (D09:75, :95; D07:119): (control, key)
+T2_ROWS = (
+    ('SCR-019 "Invite a second user" (manager)', "rbac.owner_only"),
+    ("SCR-112 actions while viewing as a user (§12)", "rbac.view_as"),
+)
+T2_NEEDS = (
+    '`aria-disabled="true"`',
+    "never the `disabled` attribute",
+    "`aria-describedby`",
+    "in the DOM at mount",
+    "CMP-079 RbacGate",
+    "CMP-019 `lock`",
+    "`decorative={false}`",
+    '"Not available"',
+    "leads the full label",
+)
+
+
+@functools.lru_cache(maxsize=1)
+def d09_verbs() -> frozenset[str]:
+    lines = base_lines("D09", BASE_V2)
+    start = next((i for i, ln in enumerate(lines) if ln.startswith("### 3.2 ")), 0)
+    out: set[str] = set()
+    for ln in lines[start : start + 40]:
+        out |= set(re.findall(r"→ \"([^\"]+)\"", ln))
+    return frozenset(out)
+
+
+def g_t2(t: Texts) -> list[Finding]:
+    """D09's T2 anatomy restated for the band's T2 controls: each row a D09 §3.1 key, a §3.2
+    verb (or none, for a key that fills none), a `15` component; §6.1 names CMP-079 and CMP-019."""
+    body, sec = v2_body(t, T2_HEAD)
+    bad = [F("G-T2", f"§6.2 lacks {n!r}", "spec", sec) for n in T2_NEEDS if n not in body]
+    keys = set(d09_keys())
+    got = [(r[0], r[1].split()[0].strip("`")) for r in table_rows(body) if len(r) == 4]
+    if got != list(T2_ROWS):
+        bad.append(F("G-T2", f"§6.2's T2 rows are not {list(T2_ROWS)}", "spec", sec))
+    for r in table_rows(body):
+        if len(r) != 4:
+            continue
+        key = re.match(r"`([a-z_.]+)`", r[1])
+        if key is None or key[1] not in keys:
+            bad.append(F("G-T2", f"§6.2 {r[0][:30]}: {r[1][:30]} is not a D09 key", "spec", sec))
+        verb = quoted(r[2])
+        if not (r[2].startswith("none:") or (verb and verb[0] in d09_verbs())):
+            bad.append(F("G-T2", f"§6.2 {r[0][:30]}: {r[2][:30]} is not a D09 verb", "spec", sec))
+        if not CMP_ID.search(r[3]) and "not a band component" not in r[3]:
+            bad.append(F("G-T2", f"§6.2 {r[0][:30]} names no component", "spec", sec))
+    comp = section(t.spec, COMP2_HEAD)
+    for cmp in ("CMP-079 RbacGate", "CMP-019 Icon"):
+        if cmp not in comp:
+            bad.append(F("G-T2", f"§6.1 does not list {cmp}", "spec", sec))
+    return bad
+
+
+def g_comp2(t: Texts) -> list[Finding]:
+    """R2 BQ-15: §6.1 re-cites each component at its `15` heading at the v2 base and lists D07's
+    composition records for the band's screens, by id, exactly."""
+    body, sec = v2_body(t, COMP2_HEAD)
+    heads = {
+        m[1]: i
+        for i, ln in enumerate(base_lines("15", BASE_V2), 1)
+        if (m := re.match(r"^### (CMP-\d{3}) ", ln))
+    }
+    comp_json = git_show(BASE_V2, "docs/design/E09/E09-D07-composition.json") or "{}"
+    records = json.loads(comp_json).get("records", [])
+    band = {*BAND, "SCR-112"}
+    by: dict[str, list[str]] = {}
+    for rec in records if isinstance(records, list) else []:
+        if isinstance(rec, dict) and rec.get("screen") in band:
+            by.setdefault(str(rec.get("component")), []).append(str(rec.get("id")))
+    bad: list[Finding] = []
+    for r in table_rows(body):
+        if len(r) != 4:
+            continue
+        cmp = r[0].split()[0]
+        if heads.get(cmp) != int(r[1].lstrip(":") or 0):
+            bad.append(F("G-COMP2", f"§6.1 {cmp} is not at `15`:{r[1]}", "spec", sec))
+        want = by.get(cmp, [])
+        got = re.findall(r"R-\d+", r[3])
+        if got != want:
+            bad.append(F("G-COMP2", f"§6.1 {cmp}'s records are not D07's {want}", "spec", sec))
+    return bad
+
+
+def g_contrast2(t: Texts) -> list[Finding]:
+    """R2 BQ-16: §7.4 names exactly the pairs below their bar at the v2 base (none: "none") and
+    exactly those below it under a simulation, routed to a Q-row of §14.1."""
+    body, sec = v2_body(t, PAIRS2_HEAD)
+    below, sim = v2_below(t.spec)
+    bad: list[Finding] = []
+    head = body.split("**Under simulation", 1)[0].split("**Below the bar", 1)[-1]
+    named = re.findall(r"\b(P-\d+ (?:dark|light|hc))\b", head)
+    if sorted(named) != sorted(below) or (not below and "none" not in head):
+        bad.append(F("G-CONTRAST2", f"below the bar {below}, named {named}", "spec", sec))
+    tail = body.split("**Under simulation", 1)[-1]
+    named_sim = re.findall(
+        r"\b(P-\d+ (?:dark|light|hc) (?:protanopia|deuteranopia|tritanopia|greyscale))", tail
+    )
+    if sorted(named_sim) != sorted(sim):
+        bad.append(F("G-CONTRAST2", f"under simulation {sim}, named {named_sim}", "spec", sec))
+    route = re.search(r"carried as (Q-\d+)", tail)
+    qids = {r[0] for r in rows_of(t.spec, QROW2_HEAD)}
+    if sim and (route is None or route[1] not in qids):
+        bad.append(F("G-CONTRAST2", "the shortfall is not carried to a §14.1 Q-row", "spec", sec))
+    if "Machado 2009" not in body or "linear-sRGB" not in body:
+        bad.append(F("G-CONTRAST2", "§7.4 does not state the simulation applied", "spec", sec))
+    return bad
+
+
+def g_deck2(t: Texts) -> list[Finding]:
+    """R2 BQ-11: the re-keyed entries hold D10's copy of record (D10:517, :518) with C-25; a
+    superseded entry names its §15.4 C-row; the frozen set's entries are v1's byte for byte."""
+    strings = deck_strings(t.deck)
+    lines = base_lines("D10", BASE_V2)
+    record = {
+        "lock.wrong_password": " ".join(quoted(lines[516])),
+        "lock.expired.announce": " ".join(quoted(lines[517])),
+    }
+    crows = {r[0] for r in rows_of(t.spec, CROW2_HEAD)}
+    bad: list[Finding] = []
+    for key, want in record.items():
+        e = strings.get(key, {})
+        if e.get("string") != want or "C-25" not in str(e.get("notes", "")):
+            bad.append(F("G-DECK2", f"{key} is not D10's copy of record with C-25", "deck", key))
+    for key, e in strings.items():
+        st = str(e.get("status", ""))
+        m = re.fullmatch(r"superseded \((C-\d+)\)", st)
+        if st.startswith("superseded") and (m is None or m[1] not in crows):
+            bad.append(F("G-DECK2", f"{key} is superseded without its C-row", "deck", key))
+    return bad
+
+
+def g_frozen_stable(t: Texts) -> list[Finding]:
+    """R2 BQ-27: every deck entry with a `security` cell is v1's entry byte for byte (a NOTE
+    where another gate flags the same entry)."""
+    old = v1_deck()
+    bad: list[Finding] = []
+    for key, e in deck_strings(t.deck).items():
+        held = "security" in e or "security" in old.get(key, {})
+        if held and json.dumps(e, sort_keys=True) != json.dumps(old.get(key), sort_keys=True):
+            bad.append(F("G-FROZEN-STABLE", f"{key} differs from v1's entry", "deck", key))
+    return bad
+
+
+def g_outside(t: Texts) -> list[Finding]:
+    """R2 BQ-26: §16.4's Outside cells are empty, or carry the deputy's dated record."""
+    body, sec = v2_body(t, OUTSIDE_HEAD)
+    bad: list[Finding] = []
+    rows = [r for r in table_rows(body) if len(r) == 5]
+    if len(rows) < 6:
+        bad.append(F("G-OUTSIDE", "§16.4's table is short of the six steps", "spec", sec))
+    for r in rows:
+        for cell in r[3:5]:
+            if cell and not DEPUTY.search(cell):
+                bad.append(
+                    F("G-OUTSIDE", f"§16.4 step {r[0]}: an Outside cell filled", "spec", sec)
+                )
+    for need in ("the orchestrator's deputy", "never fills", "no session took place"):
+        if need not in norm_text(body):
+            bad.append(F("G-OUTSIDE", f"§16.4 lacks {need!r}", "spec", sec))
+    return bad
+
+
+def g_4743(t: Texts) -> list[Finding]:
+    """R2 (BQ-25 delegation): #4743 is closed; the web Lock-now leg is G-15's, the E09 frontend
+    lane's, and #291's list names the same owner."""
+    body, sec = v2_body(t, AHEAD2_HEAD)
+    bad: list[Finding] = []
+    row = next((r for r in table_rows(body) if r[0].startswith("#4743")), [])
+    cell = row[-1] if row else ""
+    if "#4743 is closed" not in cell or "G-15" not in cell or "#291" not in cell:
+        bad.append(F("G-4743", "§13.1's #4743 row is not R2's", "spec", sec))
+    g15 = next((r for r in rows_of(t.spec, GROW2_HEAD) if r[0] == "G-15"), [])
+    if len(g15) < 4 or g15[3] != "the E09 frontend lane" or "#291" not in g15[1]:
+        bad.append(F("G-4743", "G-15 is not the E09 frontend lane's, with #291", "spec", sec))
+    return bad
+
+
+def g_story(t: Texts) -> list[Finding]:
+    """R2 BQ-23: §16.0 has one row per consumer; its T-, SR- and AS- ids are D10's."""
+    body, sec = v2_body(t, STORY_HEAD)
+    rows = [r for r in table_rows(body) if len(r) == 5]
+    bad: list[Finding] = []
+    if sorted(r[0] for r in rows) != sorted(STORY_CONSUMERS):
+        bad.append(F("G-STORY", "§16.0's consumers are not the pack's", "spec", sec))
+    known = {
+        **d10_rows(*D10_MAP, "T-"),
+        **d10_rows(*D10_SCRIPT, "SR-"),
+        **d10_rows(*D10_ASSERT, "AS-"),
+    }
+    ledger = own_row_ids(t.spec)
+    for r in rows:
+        for prefix in ("T", "SR", "AS"):
+            for x in id_span(r[3], prefix):
+                if x not in known:
+                    bad.append(F("G-STORY", f"§16.0 {r[0]}: {x} is not D10's", "spec", sec))
+        gaps = re.sub(r"\b[A-Z0-9]+'s [A-Z]-\d+(?:\.\.[A-Z]-\d+)?", " ", r[4])
+        for x in re.findall(r"\b[CGQF]-\d+\b", gaps):
+            if x not in ledger and x not in d10_rows(*D10_FINDINGS, "F-"):
+                bad.append(F("G-STORY", f"§16.0 {r[0]}: {x} is no row of the pack", "spec", sec))
+    return bad
+
+
+def own_row_ids(spec: str) -> frozenset[str]:
+    """Every C-, G- and Q-row id the pack's ledgers define (v1's and v2's tables)."""
+    ids: set[str] = set()
+    for head in (CROW_HEAD, GROW_HEAD, QROW_HEAD, CROW2_HEAD, GROW2_HEAD, QROW2_HEAD):
+        ids |= {r[0] for r in rows_of(spec, head) if re.fullmatch(r"[CGQ]-\d+", r[0])}
+    return frozenset(ids)
+
+
+# §15.6, frozen and read by content (R2 BQ-29): A-row -> (status, cite id, line, the text that
+# stands at that line at the v2 base: v1's old text for an open row, the new text for an
+# applied one)
+AROW_STATUS: dict[str, tuple[str, str, int, str]] = {
+    "A-4": ("applied in part", "14", 471, "link not valid"),
+    "A-7": ("applied", "15", 2699, "`version: string`"),
+    "A-2": ("open", "14", 143, "remember"),
+    "A-3": ("open", "05", 116, "every screen"),
+    "A-5": ("open", "14", 2401, "me/sessions"),
+    "A-6": ("applied", "14", 264, "Confirm stays enabled"),
+    "A-8": ("open", "14", 148, "auth.login.attempt"),
+    "A-9": ("open", "14", 175, "US-AUTH-"),
+    "A-10": ("open", "14", 172, "Codes refresh every 30 s"),
+}
+
+
+def g_arows2(t: Texts) -> list[Finding]:
+    """R2 BQ-29: §15.6 gives each of v1's A-rows its status read at the v2 base: the frozen
+    status, its cite, and the text at the cited line that shows it."""
+    body, sec = v2_body(t, AROW2_HEAD)
+    bad: list[Finding] = []
+    rows = {r[0]: r for r in table_rows(body) if len(r) == 4}
+    if "A-11" not in rows:
+        bad.append(F("G-AROWS2", "§15.6 lacks A-11", "spec", sec))
+    for aid, (status, cid, n, frag) in AROW_STATUS.items():
+        r = rows.get(aid)
+        lines = base_lines(cid, BASE_V2)
+        stands = n <= len(lines) and frag in lines[n - 1]
+        if r is None or not r[2].startswith(status) or (cid, n, n) not in cite_refs(r[2]):
+            bad.append(F("G-AROWS2", f"§15.6 {aid} is not {status} at `{cid}`:{n}", "spec", sec))
+        elif not stands:
+            bad.append(F("G-AROWS2", f"§15.6 {aid}: `{cid}`:{n} no longer shows it", "spec", sec))
+    for aid in rows:
+        if aid not in AROW_STATUS and aid != "A-11":
+            bad.append(F("G-AROWS2", f"§15.6 {aid} is not an A-row of v1", "spec", sec))
+    return bad
+
+
+# §14.1's readings and owner lanes, frozen (Q-13's lane is D07's G-3 lane, D07:242)
+Q2_ROWS = {
+    "Q-12": ("closed:", "none: closed"),
+    "Q-13": (
+        "the label also carries words",
+        "E05 (E05-D01's follow-up revision), D07's G-3 lane (D07:242)",
+    ),
+}
+
+
+def g_rows2(t: Texts) -> list[Finding]:
+    """R2 BQ-29: new ids continue each series; the rows v2 closes are closed by new rows, the old
+    rows byte-stable."""
+    bad: list[Finding] = []
+    series = ((CROW2_HEAD, "C", 25), (QROW2_HEAD, "Q", 12))
+    for head, prefix, first in series:
+        ids = [r[0] for r in rows_of(t.spec, head) if re.fullmatch(rf"{prefix}-\d+", r[0])]
+        want = [f"{prefix}-{n}" for n in range(first, first + len(ids))]
+        if ids != want:
+            bad.append(F("G-ROWS2", f"{head[:5]}'s ids are not {want}", "spec", spec_sec(t, head)))
+    new_g = [r[0] for r in rows_of(t.spec, GROW2_HEAD) if r[0] not in ("G-1", "G-10")]
+    if new_g != ["G-14", "G-15", "G-16"]:
+        bad.append(
+            F("G-ROWS2", "§15.5's new ids are not G-14..G-16", "spec", spec_sec(t, GROW2_HEAD))
+        )
+    q = {r[0]: r for r in rows_of(t.spec, QROW2_HEAD) if len(r) == 5}
+    for qid, (reading, lane) in Q2_ROWS.items():
+        r = q.get(qid)
+        if r is None or not r[2].startswith(reading) or r[3] != lane:
+            sec = spec_sec(t, QROW2_HEAD)
+            bad.append(
+                F("G-ROWS2", f"{qid}'s reading or owner lane is not the ruled one", "spec", sec)
+            )
+    whole = norm_text("\n".join(section(t.spec, h) for h in (CROW2_HEAD, GROW2_HEAD, QROW2_HEAD)))
+    for need in ("c 24 closed", "c 11 closed", "g 10", "q 9 and q 10"):
+        if need not in whole:
+            bad.append(F("G-ROWS2", f"no v2 row closes {need!r}", "spec", spec_sec(t, CROW2_HEAD)))
+    return bad
+
+
+SCREENS_HEAD = "9.8 The per-screen review rows"
+# D10 §15's Features in the band (the line of each), in order; SCR-149's is outside the pack
+D10_FEATURES = (668, 682, 696, 710, 724, 738, 766)
+
+
+def d10_screen_rows() -> list[tuple[int, str, str]]:
+    """(the Feature's line, its T-rows, the findings their verdicts name), from D10 at the v2
+    base: a Feature's own T range plus the pass-2 rows (T-81 on) whose From names its screen."""
+    lines = base_lines("D10", BASE_V2)
+    tmap = d10_rows(*D10_MAP, "T-")
+    ends = [*D10_FEATURES[1:], 782]
+    out: list[tuple[int, str, str]] = []
+    for a, b in zip(D10_FEATURES, ends, strict=True):
+        text = "\n".join(lines[a - 1 : b - 1])
+        m = re.search(r"T-(\d+)\D+T-(\d+)", text)
+        if m is None:
+            continue
+        lo, hi = int(m[1]), int(m[2])
+        scr = re.findall(r"SCR-\d{3}", lines[a - 1])[:1]
+        extra = [x for x in tmap if int(x[2:]) >= 81 and scr and scr[0] in tmap[x][1]]
+        found: set[str] = set()
+        for x in [*(f"T-{n}" for n in range(lo, hi + 1)), *extra]:
+            found |= set(re.findall(r"F-\d+", tmap.get(x, [""] * 9)[8]))
+        tcell = f"T-{lo} to T-{hi}" + "".join(f", {x}" for x in extra)
+        fcell = ", ".join(sorted(found, key=lambda f: int(f[2:])))
+        out.append((a, tcell, fcell))
+    return out
+
+
+def g_screens(t: Texts) -> list[Finding]:
+    """R2 BQ-18 (lens M4): §9.8 has one row per band Feature of D10 §15, citing its line, with
+    the Feature's T-rows and the findings their verdicts name, as D10 has them."""
+    body, sec = v2_body(t, SCREENS_HEAD)
+    rows = [r for r in table_rows(body) if len(r) == 4]
+    want = d10_screen_rows()
+    got = [(cite_refs(r[1])[0][1] if cite_refs(r[1]) else 0, r[2], r[3]) for r in rows]
+    if got != want:
+        diff = next((g for g, w in zip(got, want, strict=False) if g != w), got[len(want) :][:1])
+        return [F("G-SCREENS", f"§9.8 is not D10's per-Feature rows (first: {diff})", "spec", sec)]
+    return []
+
+
+# contract facts the v2 blocks state, tied to `22` at the v2 base (lens Minor 14): (the words in
+# the spec, the `22` line, the words there)
+FACTS = (
+    ("1 to 32 printable ASCII characters", 24795, "maxLength: 32"),
+    ("is refused with `422`", 1867, "refused with `422`"),
+    ("a session already locked answers `200` and changes nothing", 1871, "answers `200`"),
+)
+
+
+def g_facts(t: Texts) -> list[Finding]:
+    """Each contract fact of §3.4 and §4.3 stands in the spec and in `22` at the v2 base."""
+    api = base_lines("22", BASE_V2)
+    text = section(t.spec, OPS2_HEAD) + section(t.spec, ERR2_HEAD)
+    bad: list[Finding] = []
+    for words, n, there in FACTS:
+        if words not in text or n > len(api) or there not in api[n - 1]:
+            sec = spec_sec(t, OPS2_HEAD)
+            bad.append(F("G-FACTS", f"{words!r} is not `22`:{n}'s ({there!r})", "spec", sec))
+    return bad
+
+
+V2_GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
+    g_register,
+    g_delta,
+    g_cited_stable,
+    g_drift,
+    g_mode,
+    g_parents,
+    g_lift,
+    g_ops2,
+    g_errmap2,
+    g_crosswalk,
+    g_findings,
+    g_announcer,
+    g_t2,
+    g_comp2,
+    g_contrast2,
+    g_deck2,
+    g_outside,
+    g_4743,
+    g_story,
+    g_arows2,
+    g_rows2,
+    g_screens,
+    g_facts,
+)
+
+
 # ---------------------------------------------------------------------------- the audit
 
 
@@ -3554,11 +4971,17 @@ MEASURED_GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
 DOC_GATES = ("G-ANCHOR", "G-WORDCOUNT", "G-MARKER", "G-HEX", "G-CITE", "G-RULED-PIN")
 
 
+WHOLE_SPEC_GATES = (g_budget, g_edge)
+
+
 def audit(t: Texts) -> tuple[list[str], list[str], list[str], int]:
-    """(FAIL lines, NOTE lines, WARN lines, cites checked). One FAIL line per gate; a pin finding
-    in a section another gate already FAILs is demoted to a NOTE line."""
+    """(FAIL lines, NOTE lines, WARN lines, cites checked). One FAIL line per gate; a pin or a
+    G-V1-FROZEN finding in a section another gate already FAILs is demoted to a NOTE line. The
+    v1 gates read the v1 view; the lexicon, document, cite, pin and v2 gates the whole spec."""
+    WARNS.clear()
     found: list[Finding] = []
     v = t.vals
+    v1t = Texts(v1_view(t.spec), t.deck, t.plans, t.values)
     found += g_anchor_doc(t.spec, v)
     found += g_wordcount_doc(t.spec, v)
     found += g_marker_doc(t.spec, v)
@@ -3566,13 +4989,25 @@ def audit(t: Texts) -> tuple[list[str], list[str], list[str], int]:
     for gate in LEXICON_GATES:
         found += gate(t)
     cf, n = cite_findings(t)
-    found += cf
+    unheld = [f for f in cf if f[2] == UNHELD]
+    found += [f for f in cf if f[2] != UNHELD]
     for gate in MEASURED_GATES:
+        found += gate(t if gate in WHOLE_SPEC_GATES else v1t)
+    for gate in V2_GATES:
         found += gate(t)
     flagged = {(f[2], f[3]) for f in found if f[2] is not None}
     pins = pin_findings(t)
-    notes = [f"NOTE [G-RULED-PIN] {p[1][:150]}" for p in pins if (p[2], p[3]) in flagged]
+    notes = [f"NOTE [{p[0]}] {p[1][:150]}" for p in pins if (p[2], p[3]) in flagged]
     found += [p for p in pins if (p[2], p[3]) not in flagged]
+    flagged |= {(p[2], p[3]) for p in pins if p[2] is not None}
+    # a record no cite holds is the trace of a cite another gate already reports when one FAILs
+    if found:
+        notes += [f"NOTE [{p[0]}] {p[1][:150]}" for p in unheld]
+    else:
+        found += unheld
+    held = [*g_v1_frozen(t), *g_frozen_stable(t)]
+    notes += [f"NOTE [{p[0]}] {p[1][:150]}" for p in held if (p[2], p[3]) in flagged]
+    found += [p for p in held if (p[2], p[3]) not in flagged]
     merged: dict[str, list[str]] = {}
     for tag, msg, _d, _s in found:
         merged.setdefault(tag, []).append(msg)
@@ -3581,7 +5016,7 @@ def audit(t: Texts) -> tuple[list[str], list[str], list[str], int]:
         msgs = list(dict.fromkeys(msgs))
         more = f" (+{len(msgs) - 4} more)" if len(msgs) > 4 else ""
         fails.append(f"[{tag}] " + "; ".join(m[:150] for m in msgs[:4]) + more)
-    return fails, notes, [], n
+    return fails, notes, list(dict.fromkeys(WARNS)), n
 
 
 # ---------------------------------------------------------------------------- self-test
@@ -3597,6 +5032,8 @@ class Mutation:
     spec: Edit | None = None
     deck: Edit | None = None
     lever: Callable[[], Callable[[], None]] | None = None
+    repin: bool = False  # v2's Y-n and Z-n: re-pinned, so only a content gate may catch them
+    warns: int = 0  # the new WARN lines a probe (gate "") must add
 
 
 def sub(old: str, new: str, count: int = 1) -> Edit:
@@ -3794,6 +5231,28 @@ def lever_merge_base() -> Callable[[], None]:
     return popper(BROKEN)
 
 
+def lever_drift_v2() -> Callable[[], None]:
+    """A range a v2 line cites (`22`:1844, §0.1 and §3.4) edited at `origin/main`."""
+    DRIFT.append(("docs/plan/22-api-openapi.yaml", 1844, "  /auth/locked:"))
+    return popper(DRIFT)
+
+
+def both(*edits: Edit) -> Edit:
+    def run(text: str) -> str:
+        for e in edits:
+            text = e(text)
+        return text
+
+    return run
+
+
+def deck_meta(fld: str, value: str) -> Edit:
+    def fn(data: dict[str, object]) -> None:
+        data[fld] = value
+
+    return deck_edit(fn)
+
+
 # built at run time so the source holds no scanner-shaped literal
 ENTROPY_PROBE = (
     "The fixture uses "
@@ -3812,6 +5271,8 @@ S57 = "**One invalid-invite state**"
 S58 = "The task set is `22`'s enum"
 S53 = "- States as D04 §3 lists"
 S56 = "D06's frames bound to `authStepUp`"
+# a v2 line: the N-n probes land in a v2 block, where a v1 line added would be G-V1-FROZEN's
+S510 = "- **SCR-002 and SCR-006** (R2 BQ-22)"
 MUTATIONS = (
     Mutation(
         "M-1",
@@ -3857,7 +5318,7 @@ MUTATIONS = (
         "M-9",
         "G-CLOSE",
         "a closing keyword",
-        spec=sub("**Status:** v1, `Refs #194`", "**Status:** v1, closes #194, `Refs #194`"),
+        spec=sub("the closing version (R2 BQ-01)", "the closing version, closes #194 (R2 BQ-01)"),
     ),
     Mutation(
         "M-10",
@@ -4523,35 +5984,357 @@ MUTATIONS = (
             "No grace for Live enablement and kill-switch disable",
         ),
     ),
+    # Y-n: v2's gates, each mutation re-pinned so only its content gate may catch it
+    Mutation(
+        "Y-1",
+        "G-V1-FROZEN",
+        "a v1 sentence edited outside the register",
+        spec=sub(
+            "The band was built before most of its design",
+            "The band was built before much of its design",
+        ),
+        repin=True,
+    ),
+    Mutation(
+        "Y-2",
+        "G-REGISTER",
+        "an S row quotes a unit that does not stand",
+        spec=sub(
+            '"Below the bar (computed, not heuristic):"', '"Every failed sign-in gets one answer"'
+        ),
+        repin=True,
+    ),
+    Mutation(
+        "Y-3",
+        "G-DELTA",
+        "a changed deck entry the register does not name",
+        spec=cell_set("V-28", 1, "deck `lock.title`"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-4",
+        "G-CITED-STABLE",
+        "a line E09-D07's tool cites changed under a C row",
+        spec=both(
+            sub(
+                "below the text bar in light (§7.2); P-6",
+                "below the text bar in light at v1 (§7.2); P-6",
+            ),
+            sub("| (top), v1 line 3 ", "| (top), v1 line 3 and v1 line 424 "),
+        ),
+        repin=True,
+    ),
+    Mutation(
+        "Y-5",
+        "G-DRIFT",
+        "a §17.3 row for a range that is not edited",
+        spec=after_line("| `04`:831 ", "| `05`:116 | `05`:116 | nothing changed | holds |"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-6", "G-MODE", "the deck still reads v1", deck=deck_meta("version", "v1"), repin=True
+    ),
+    Mutation(
+        "Y-7",
+        "G-PARENTS",
+        "a parent's sha is another PR's merge",
+        spec=sub("#4963 `ccaad0fea6`", "#4963 `c3119e61e7`"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-8",
+        "G-LIFT",
+        "a lifted range cut short",
+        spec=drop_row("D10 §13, the screen-reader script"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-9",
+        "G-OPS2",
+        "the added operation's method changed",
+        spec=sub("| `authLock` | POST `/auth/lock`", "| `authLock` | GET `/auth/lock`"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-10",
+        "G-ERRMAP2",
+        "a fallback outside §4.2",
+        spec=cell_set("locked account", 4, "F-9"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-11",
+        "G-CROSSWALK",
+        "a focus target that is not D10's",
+        spec=sub("| T-42        | SCR-005's password field", "| T-42        | SCR-005's dialog"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-12",
+        "G-FINDINGS",
+        "a Blocker read closed",
+        spec=cell_set("F-25", 4, "closed"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-13",
+        "G-ANNOUNCER",
+        "a rule invented for the screens before sign-in",
+        spec=after_line(
+            "Signed-in screens write into", "The screens before sign-in own their own pair."
+        ),
+        repin=True,
+    ),
+    Mutation(
+        "Y-14",
+        "G-T2",
+        "a T2 key D09 does not have",
+        spec=sub("`rbac.owner_only` (D09:90)", "`rbac.owners_only` (D09:90)"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-15",
+        "G-COMP2",
+        "a composition record that is not D07's",
+        spec=sub("R-21, R-22, R-23", "R-21, R-22, R-24"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-16",
+        "G-CONTRAST2",
+        "a pair named under simulation that keeps its bar",
+        spec=sub(
+            "simulation: P-6 dark protanopia,",
+            "simulation: P-3 dark protanopia, P-6 dark protanopia,",
+        ),
+        repin=True,
+    ),
+    Mutation(
+        "Y-17",
+        "G-DECK2",
+        "a re-keyed entry without C-25",
+        deck=deck_set("lock.wrong_password", "notes", "D10's copy of record (D10:517)"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-18",
+        "G-FROZEN-STABLE",
+        "a frozen-set entry changed",
+        deck=deck_set("auth.login.failed", "notes", "a note"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-19",
+        "G-OUTSIDE",
+        "an Outside cell filled here",
+        spec=cell_set("1", 3, "found"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-20",
+        "G-4743",
+        "#4743 read as open",
+        spec=sub("#4743 is closed and the route", "#4743 is open and the route"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-21",
+        "G-STORY",
+        "a script step D10 does not have",
+        spec=sub("T-41 · SR-19 · AS-8", "T-41 · SR-99 · AS-8"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-22",
+        "G-AROWS2",
+        "an A-row status outside the set",
+        spec=sub("open: the remember line stands", "done: the remember line stands"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-23",
+        "G-ROWS2",
+        "C-11 left open",
+        spec=sub("| C-11 closed", "| C-11 still open"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-24", "G-VERSION", "a v2 cite edited at origin/main", lever=lever_drift_v2, repin=True
+    ),
+    Mutation(
+        "Y-25",
+        "G-CITE",
+        "a v2 cite past the file",
+        spec=sub("(`22`:1850)", "(`22`:99999)"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-26",
+        "G-QUOTE",
+        "an unsourced quote in a v2 block",
+        spec=after_line(
+            "- **SCR-002 and SCR-006** (R2 BQ-22)",
+            'The dialog reads "Please confirm this sensitive action now".',
+        ),
+        repin=True,
+    ),
+    # Y-27..: the lens round's probes (#5252), each re-pinned so only its content gate catches it
+    Mutation(
+        "Y-27",
+        "G-ERRMAP2",
+        "the cookie-only answer given the expired token's code",
+        spec=sub(
+            "`403 csrf_token_invalid` on `authLock`; nothing is locked",
+            "`401 unauthenticated` on `authLock`; nothing is locked",
+        ),
+        repin=True,
+    ),
+    Mutation(
+        "Y-28",
+        "G-ERRMAP2",
+        "a Lock-now error row deleted",
+        spec=drop_row("Lock now: no access token"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-29",
+        "G-ERRMAP2",
+        "the unavailable row given F-1",
+        spec=cell_set("Lock now: unavailable", 4, "F-1"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-30",
+        "G-T2",
+        "the T2 rows deleted",
+        spec=both(drop_row('SCR-019 "Invite a second user"'), drop_row("SCR-112 actions while")),
+        repin=True,
+    ),
+    Mutation(
+        "Y-31",
+        "G-CROSSWALK",
+        "the unlock row's agreement flipped",
+        spec=sub("no (C-27)", "yes"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-32",
+        "G-AROWS2",
+        "an open A-row read as applied",
+        spec=sub("open: the remember line stands", "applied: the remember line stands"),
+        repin=True,
+    ),
+    Mutation("Y-33", "G-FINDINGS", "an Info row deleted", spec=drop_row("F-51"), repin=True),
+    Mutation(
+        "Y-34",
+        "G-STORY",
+        "a gap id the pack does not have",
+        spec=cell_set("E09-Q06 (#297)", 4, "G-99"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-35",
+        "G-CITE",
+        "a v2 cite moved to the next line",
+        spec=sub("(`22`:1850)", "(`22`:1851)"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-36",
+        "G-QUOTE",
+        "a quoted copy string changed to words found elsewhere",
+        spec=sub('"Invalid password or code." (D08:340', '"Invalid code, try again." (D08:340'),
+        repin=True,
+    ),
+    Mutation(
+        "Y-37",
+        "G-SCREENS",
+        "a per-screen finding that is not D10's",
+        spec=cell_set("SCR-004, SCR-017 step 2, SCR-112 password", 3, "F-22"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-38",
+        "G-FACTS",
+        "the version label's bound changed",
+        spec=sub("1 to 32 printable", "1 to 64 printable"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-39",
+        "G-ROWS2",
+        "Q-12 read as open",
+        spec=sub("closed: P-3 to P-5", "open: P-3 to P-5"),
+        repin=True,
+    ),
+    Mutation(
+        "Y-40", "G-REGISTER", "the `14` pointer row dropped", spec=drop_row("V-33"), repin=True
+    ),
+    Mutation(
+        "Y-41",
+        "G-ANNOUNCER",
+        "a signed-in screen among the hosts before sign-in",
+        spec=sub("(SCR-001..004, SCR-017 step 1)", "(SCR-001..005, SCR-017 step 1)"),
+        repin=True,
+    ),
     # N-n: probes that must trip nothing (a negated or cited form of a ruled behaviour)
     Mutation(
         "N-1",
         "",
         "a negated badge",
-        spec=after_line(S51, "- No environment badge is shown before sign-in."),
+        spec=after_line(S510, "- No environment badge is shown before sign-in."),
     ),
     Mutation(
         "N-2",
         "",
         "a negated trust control",
-        spec=after_line(S52, "- The trust this device checkbox is never shown in v1."),
+        spec=after_line(S510, "- The trust this device checkbox is never shown in v1."),
+    ),
+)
+
+# Z-n: the post-merge tuple (run in post-merge mode): drift is a WARN, never a FAIL; G-UNTOUCHED
+# reads nothing; the content gates still catch
+POST_MUTATIONS = (
+    Mutation(
+        "Z-1", "", "a v2 cite edited later: one WARN", lever=lever_drift_v2, repin=True, warns=1
+    ),
+    Mutation("Z-2", "", "a v1 cite edited later: one WARN", lever=lever_drift, repin=True, warns=1),
+    Mutation("Z-3", "", "a stray path: nothing", lever=lever_extra, repin=True),
+    Mutation(
+        "Z-4",
+        "G-V1-FROZEN",
+        "a v1 sentence edited outside the register",
+        spec=sub(
+            "The band was built before most of its design",
+            "The band was built before much of its design",
+        ),
+        repin=True,
+    ),
+    Mutation(
+        "Z-5",
+        "G-DELTA",
+        "a changed deck entry the register does not name",
+        spec=cell_set("V-28", 1, "deck `lock.title`"),
+        repin=True,
     ),
 )
 
 
-def selftest(spec: str, deck: str, paths: tuple[Path, ...]) -> tuple[bool, list[str]]:
+def run_mutations(
+    muts: tuple[Mutation, ...], spec_f: str, deck: str, values: Values, paths: tuple[Path, ...]
+) -> tuple[bool, int, list[str]]:
+    """Apply each mutation in the current mode: (all caught, caught, report lines)."""
     on_disk = digest(paths)
     plans = read_plans()
-    values = compute(spec, deck)
-    spec_f, _ = fill(spec, values)
-    values = compute(spec_f, deck)  # frozen at the filled baseline
     vt = tuple(sorted(values.items()))
-    base_fails, _n, _w, _c = audit(Texts(spec_f, deck, plans, vt))
-    lines = [f"baseline (filled in memory): {len(base_fails)} FAIL"]
+    base_fails, _n, base_warns, _c = audit(Texts(spec_f, deck, plans, vt))
+    lines = [f"{mode_name()} baseline: {len(base_fails)} FAIL, {len(base_warns)} WARN"]
     lines += [f"  baseline FAIL {x}" for x in base_fails]
-    ok = not base_fails
+    lines += [f"  baseline WARN {x}" for x in base_warns]
+    ok = not base_fails and not base_warns
+    caught = 0
     pristine = digest_texts(spec_f, deck)
-    for mu in MUTATIONS:
+    for mu in muts:
         s = mu.spec(spec_f) if mu.spec else spec_f
         d = mu.deck(deck) if mu.deck else deck
         if (s, d) == (spec_f, deck) and mu.lever is None:
@@ -4559,37 +6342,61 @@ def selftest(spec: str, deck: str, paths: tuple[Path, ...]) -> tuple[bool, list[
             lines.append(f"  {mu.mid} [{mu.gate}] NOT APPLIED (the target text moved)")
             continue
         undo = mu.lever() if mu.lever else None
-        repin = mu.mid.startswith(("X-", "N-"))
+        repin = mu.mid.startswith(("X-", "N-")) or mu.repin
         if repin:
             PIN_UNITS_OVERRIDE.append(tuple(ruled_units(s, d, values)))
         try:
-            fails, _n2, _w2, _c2 = audit(Texts(s, d, plans, vt))
+            fails, _n2, warns, _c2 = audit(Texts(s, d, plans, vt))
         except SystemExit as exc:
-            fails = [str(exc)]
+            fails, warns = [str(exc)], []
         finally:
             if undo:
                 undo()
             if repin:
                 PIN_UNITS_OVERRIDE.pop()
         new = [x for x in fails if x not in base_fails]
+        new_w = [x for x in warns if x not in base_warns]
         if mu.gate:
             named = [x for x in new if x.startswith(f"[{mu.gate}]")]
-            hit = bool(named) and len(new) == 1
+            hit = bool(named) and len(new) == 1 and not new_w
         else:
-            named, hit = [], not new
+            named, hit = [], not new and len(new_w) == mu.warns
         levers = (
             DRIFT or CVD_OVERRIDE or PIN_UNITS_OVERRIDE or EXTRA_PATHS or BROKEN or PLAN_OVERRIDE
         )
         restored = digest_texts(spec_f, deck) == pristine and digest(paths) == on_disk
         restored = restored and not levers and not PIN_TEXT_OVERRIDE
         ok = ok and hit and restored
-        first = (named or new or ["nothing new"])[0]
+        caught += int(hit and restored)
+        first = (named or new or new_w or ["nothing new"])[0]
         lines.append(
-            f"  {mu.mid} [{mu.gate or 'none'}] {'ok' if hit else 'MISSED'} ({len(new)} new"
-            f"{'' if restored else ', NOT RESTORED'}) - {first}"
+            f"  {mu.mid} [{mu.gate or 'none'}] {'ok' if hit else 'MISSED'} ({len(new)} new,"
+            f" {len(new_w)} warn{'' if restored else ', NOT RESTORED'}) - {first}"
         )
         if not hit:
-            lines += [f"      new: {x}" for x in new]
+            lines += [f"      new: {x}" for x in [*new, *new_w]]
+    return ok, caught, lines
+
+
+def selftest(spec: str, deck: str, paths: tuple[Path, ...]) -> tuple[bool, list[str]]:
+    """The PR tuple in PR mode and the post-merge tuple in post-merge mode, each against its own
+    baseline, with the values frozen at the filled baseline."""
+    values = compute(spec, deck)
+    spec_f, _ = fill(spec, values)
+    values = compute(spec_f, deck)
+    ok = True
+    lines: list[str] = []
+    counts: list[str] = []
+    for mode, muts in (("pr", MUTATIONS), ("post", POST_MUTATIONS)):
+        MODE_OVERRIDE.append(mode)
+        try:
+            good, caught, out = run_mutations(muts, spec_f, deck, values, paths)
+        finally:
+            MODE_OVERRIDE.pop()
+        ok = ok and good
+        lines += out
+        counts.append(f"{'PR' if mode == 'pr' else 'post-merge'} {caught} of {len(muts)}")
+    lines.append("caught: " + "; ".join(counts))
     return ok, [report(x) for x in lines]
 
 
@@ -4623,7 +6430,8 @@ def main(argv: list[str]) -> int:
         paths = (spec_path, deck_path, ROOT / PIN_REL, *(p for _n, p in plan_paths()))
         ok, lines = selftest(spec, deck, paths)
         print("\n".join(lines))
-        print(report(f"--self-test: {'ok' if ok else 'FAIL'} - {len(MUTATIONS)} mutations"))
+        total = len(MUTATIONS) + len(POST_MUTATIONS)
+        print(report(f"--self-test: {'ok' if ok else 'FAIL'} - {total} mutations"))
         return 0 if ok else 1
     values = compute(spec, deck)
     if args.fill:
@@ -4638,12 +6446,20 @@ def main(argv: list[str]) -> int:
     t = Texts(spec, deck, read_plans(), tuple(sorted(values.items())))
     fails, notes, warns, n = audit(t)
     if args.json:
-        doc = {"values": values, "fails": fails, "notes": notes, "warnings": warns, "cites": n}
+        doc = {
+            "values": values,
+            "mode": mode_name(),
+            "fails": fails,
+            "notes": notes,
+            "warnings": warns,
+            "cites": n,
+        }
         print(json.dumps(doc, ensure_ascii=False, indent=1))
     else:
-        gates = len(LEXICON_GATES) + len(MEASURED_GATES) + len(DOC_GATES)
+        gates = len(LEXICON_GATES) + len(MEASURED_GATES) + len(DOC_GATES) + len(V2_GATES) + 2
         shown = spec_path.relative_to(ROOT) if spec_path.is_relative_to(ROOT) else spec_path
-        print(f"## E09-D12 audit of {shown} (+ the deck) at base {BASE}")
+        print(f"## E09-D12 audit of {shown} (+ the deck): v1 at {BASE}, v2 at {BASE_V2}")
+        print(f"mode: {mode_name()} (by content)")
         print(f"values computed: {len(values)}; cites checked: {n}; gates: {gates}")
         print("\n".join(f"WARN {w}" for w in warns))
         print("\n".join(notes))

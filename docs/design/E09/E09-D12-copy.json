@@ -1,7 +1,7 @@
 {
   "pack": "E09-D12",
-  "version": "v1",
-  "base": "121e9e989b",
+  "version": "v2",
+  "base": "be4294d0e2",
   "header": "Every string the band may show, once. Provenance: verbatim (the cited line holds it), 14 (the screens catalogue), as shipped (no design text exists), new PROPOSED, RULED. A security entry names its frozen-set row and what breaks if it is reworded.",
   "by_cite": {
     "SCR-004 and the SCR-112 password section": "D05:277–314 (W-1..W-32)",
@@ -125,8 +125,8 @@
       "state": "idle",
       "provenance": "verbatim",
       "source": "`15`:2587",
-      "status": "merged",
-      "notes": "the accessible name of CMP-204",
+      "status": "superseded (C-30)",
+      "notes": "the accessible name of CMP-204 at v1; at v2 the name is the consumer's visible heading (`15`:2646)",
       "key_status": "PROPOSED"
     },
     "auth.mfa.invalid": {
@@ -223,8 +223,9 @@
       "state": "idle",
       "provenance": "verbatim",
       "source": "`15`:2560",
-      "status": "merged",
-      "key_status": "PROPOSED"
+      "status": "superseded (C-29)",
+      "key_status": "PROPOSED",
+      "notes": "CMP-201's show-password toggle keeps one name with aria-pressed (`15`:2609); a builder renders no second name"
     },
     "auth.reveal.show": {
       "string": "Show password",
@@ -555,13 +556,14 @@
       "key_status": "PROPOSED"
     },
     "lock.expired.announce": {
-      "string": "Session expired. Signed out. Sign in again.",
+      "string": "Session expired. Signed out. Market data stopped. Sign in again.",
       "screen": "SCR-005",
       "state": "absolute-expiry",
       "provenance": "verbatim",
-      "source": "S03:141",
+      "source": "D08:336",
       "status": "merged",
-      "key_status": "PROPOSED"
+      "key_status": "PROPOSED",
+      "notes": "D08:336's two sentences, joined and spoken once as one announcement; D08:336 labels the second PROPOSED, and D10:518 is the ruled copy of record; C-25 closes C-24"
     },
     "lock.expired.badge": {
       "string": "NOT SENT · DISCARDED · DISARMED",
@@ -713,13 +715,14 @@
       "key_status": "PROPOSED"
     },
     "lock.wrong_password": {
-      "string": "Incorrect password. Try again.",
+      "string": "Invalid password or code.",
       "screen": "SCR-005",
       "state": "wrong-password",
       "provenance": "verbatim",
-      "source": "S03:132",
+      "source": "D08:340",
       "status": "merged",
-      "key_status": "PROPOSED"
+      "key_status": "PROPOSED",
+      "notes": "D10's copy of record (D10:517); C-25 closes C-24; D10's F-14 grades the password-only card's \"or code\" for D08's owner"
     },
     "sessions.all": {
       "string": "Sign out everywhere",
