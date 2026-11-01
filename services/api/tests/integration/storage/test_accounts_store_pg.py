@@ -543,6 +543,41 @@ async def test_key_selfcheck_store_is_env_bound_and_writes_only_its_columns(
     )  # fmt: skip
 
 
+async def test_key_selfcheck_retire_moves_a_usable_key_once_on_its_environment_only(
+    store: SqlAlchemyAccountsStore,
+    creds: SqlAlchemyCredentialStore,
+    rel: SqlAlchemyRelationalRepository,
+    pg_dsn: str,
+) -> None:
+    """#5281: a failed check's status write on M2's real rows. `active` to `invalid` once, on its
+    environment only; the key leaves the usable-key read and the boot read lists it until the
+    Owner revokes it; another account's key stays active; `expired` is never listed as invalid."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(exch))
+    other = await store.create_account(owner, _new(exch))
+    kid, oid = await _seed_key(creds, acct.id), await _seed_key(creds, other.id)
+    for account, key in ((acct, kid), (other, oid)):
+        await store.transition_key_status(owner, account.id, key, expected="pending", new="active")
+    demo, live = (SqlAlchemyKeySelfCheckStore(rel, env=env) for env in ("demo", "live"))
+    assert await live.retire_key(kid, status="invalid") is False  # another environment's key
+    assert await demo.retire_key(kid, status="invalid") is True
+    assert await demo.retire_key(kid, status="expired") is False  # never moves a retired key
+    usable = {t.key_id for t in await demo.targets()}
+    assert kid not in usable and oid in usable
+    [listed] = [k for k in await demo.invalid_keys() if k.key_id == kid]
+    assert (listed.account_id, listed.code) == (acct.id, None)
+    assert kid not in {k.key_id for k in await live.invalid_keys()}
+    assert await demo.retire_key(oid, status="expired") is True
+    assert oid not in {k.key_id for k in await demo.invalid_keys()}  # lapsed: no standing failure
+    with _c(pg_dsn) as c:
+        found = c.execute(
+            "SELECT id, status::text FROM api_keys WHERE id = ANY(%s)", ([kid, oid],)
+        ).fetchall()
+    assert {row[0]: row[1] for row in found} == {kid: "invalid", oid: "expired"}
+    await creds.mark_revoked(kid)  # the Owner acts: the restart latches nothing for it
+    assert kid not in {k.key_id for k in await demo.invalid_keys()}
+
+
 async def test_a_pass_that_is_trade_and_read_only_leaves_without_the_key_row(
     rel: SqlAlchemyRelationalRepository,
     store: SqlAlchemyAccountsStore,

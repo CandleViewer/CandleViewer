@@ -320,6 +320,25 @@ class VerifiedKey:
     at: datetime
 
 
+#: What a failed check sets a usable key's status to (#5281): `invalid` when the check failed or
+#: could not verify the key (SR-032, TC-134), `expired` when only the key's own expiry failed it
+#: and the rest was verified (SR-034, TC-212).
+RetiredStatus = Literal["invalid", "expired"]
+
+
+@dataclass(frozen=True, slots=True)
+class InvalidKey:
+    """A key a failed check set `invalid` (#5281), unrevoked, of a non-deleted account: a standing
+    failure that latches the gate again at boot until the Owner revokes it."""
+
+    key_id: UUID
+    account_id: UUID
+    #: `api_keys.last_error_code`: the failing rule, when its write committed.
+    code: str | None
+    #: `api_keys.permission_snapshot_at`: the key's last pass.
+    verified_at: datetime
+
+
 @dataclass(frozen=True, slots=True)
 class PolicyDisarm:
     """A self-check force-disable as `exchange_accounts` keeps it (21 §3.2.1, #836 slice 2d): the
@@ -338,9 +357,10 @@ class KeySelfCheckStore(Protocol):
     the composition root's `account_health_wiring` a second, reviewed reader of `targets()` alone
     (E27-T04); key import also writes the verified columns of the key its own request stored
     (`record_pass`). All are pinned by `tests/unit/architecture/test_key_selfcheck_store_callers.py`
-    (C-12.4). It writes the verification columns of `api_keys` and, of `exchange_accounts`,
-    `trading_enabled` with the policy-disarm columns, never a ciphertext, identity or status
-    column. Each write returns whether it changed a row."""
+    (C-12.4). It writes the verification columns of `api_keys`, a usable key's `status` to
+    `invalid` or `expired` after a failed check (#5281), and, of `exchange_accounts`,
+    `trading_enabled` with the policy-disarm columns; never a ciphertext or identity column. Each
+    write returns whether it changed a row."""
 
     async def targets(self) -> tuple[SelfCheckTargetRow, ...]:
         """Every `active` or `rotating`, unrevoked key of a non-deleted account."""
@@ -352,6 +372,17 @@ class KeySelfCheckStore(Protocol):
 
     async def record_error(self, key_id: UUID, *, code: str, at: datetime) -> bool:
         """`last_error_code` and `last_error_at` only: the verified columns keep their time."""
+        ...
+
+    async def retire_key(self, key_id: UUID, *, status: RetiredStatus) -> bool:
+        """The key's `status` from `active` or `rotating` to `status`, in one conditional update;
+        `False` when the key was not usable (revoked, or already retired). M2 signs only an
+        `active` or `rotating` key, so the key signs nothing after it (#5281)."""
+        ...
+
+    async def invalid_keys(self) -> tuple[InvalidKey, ...]:
+        """Every unrevoked `invalid` key of a non-deleted account: the boot pass's standing
+        failures (#5281)."""
         ...
 
     async def disable_trading(self, account_id: UUID, *, code: str, at: datetime) -> bool:

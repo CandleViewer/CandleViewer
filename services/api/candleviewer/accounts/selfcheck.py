@@ -8,17 +8,25 @@ another environment (C-2.11). Outcomes (threat model `E27-accounts.md` D7, SR-E2
 - pass: a write-ahead `account.tested`, then the verified `api_keys` columns are refreshed. Only
   a recorded pass moves the key's last pass.
 - failure: the process read-only gate latches first, for the whole system. A write-ahead
-  `account.tested` covers `last_error_*` (the failing rule). The account is force-disabled
-  whatever the audit sink does (C-2.8 enforcement before the C-2.9 record, as `secrets`
-  degrades), and the rule's code and the time commit with the disarm, which is then owed its
-  `account.disabled_by_policy` (the rule; the message stays verbatim on the standing result for
-  display). The record follows the conditional update that reports the disarm, and its mark
-  follows the record; a refused record is logged critical, stays owed and is re-sent on the next
-  pass. The key's status never changes, so reads continue. The record names the disarm's time
-  (`disarmed_at`), however late it is sent. `security.key_policy_violation` (`policy_violation`,
-  decision 12 on #836) comes last, after the code and the disarm with its record, so it never
-  delays the force-disable or withholds the code. A borrow that M2's C-2.8 re-check refuses
-  (SR-E27-14) is a `key_withdraw_permission` failure.
+  `account.tested` covers `last_error_*` (the failing rule) and the key's new status
+  (`after_state.key_status`). The account is force-disabled whatever the audit sink does (C-2.8
+  enforcement before the C-2.9 record, as `secrets` degrades), and the rule's code and the time
+  commit with the disarm, which is then owed its `account.disabled_by_policy` (the rule; the
+  message stays verbatim on the standing result for display). The record follows the conditional
+  update that reports the disarm, and its mark follows the record; a refused record is logged
+  critical, stays owed and is re-sent on the next pass. The record names the disarm's time
+  (`disarmed_at`), however late it is sent. Then the key's status becomes `invalid`, whatever the
+  audit sink did, as the disarm (#5281; SR-032, TC-134): M2 signs only an `active` or `rotating`
+  key, so the key signs nothing more, and the pass leaves the key's rows readable. A verdict with
+  no verified facts (an exchange refusal, such as a key deleted at the venue) cannot verify
+  withdrawal-off or the allowlist (`04` §5.14 KV3), so it is such a failure.
+  `security.key_policy_violation` (`policy_violation`, decision 12 on #836) comes last, after the
+  code, the disarm with its record and the status, so it never delays an enforcement step or
+  withholds the code. A borrow that M2's C-2.8 re-check refuses (SR-E27-14) is a
+  `key_withdraw_permission` failure.
+- lapsed (US-ACCT-005, SR-034, TC-212): a verdict whose facts were read and whose only failure is
+  the key's own expiry (`key_expired`: withdrawal-off and the allowlist were verified) is the same
+  failure for that account alone: no system latch, and the key's status becomes `expired`.
 - inconclusive (no verdict): logged; nothing is disabled or refreshed. Only a verdict replaces a
   key's standing result: a failure stays in force with its rule in `last_error_*` (the ticket's
   chaos rule); otherwise `last_error_*` takes the code. A key whose last pass is older than
@@ -37,9 +45,13 @@ this job's failure by a weaker code), so a repeat notifies nobody. Every externa
 a timed-out write is a refused one (any latch due came first). Each key's standing result is kept
 with its time for display (US-ACCT-003 NFR).
 
-Restarts: the latch and the standing results live in memory. A rule code found in
-`last_error_code` for a key the job holds no result for is a standing failure (decision 3 on #836):
-a check with no verdict keeps it in force, logs it critical and latches again, and only a pass,
+Restarts: the latch and the standing results live in memory. A key set `invalid` is a standing
+failure in the store: the boot pass reads every unrevoked one (`invalid_keys`), latches `FAILED`
+again and keeps its result on display until the Owner revokes it; a read of them that fails
+latches `UNAVAILABLE` (#5281). An `expired` key latches nothing and leaves the key list. A rule
+code found in `last_error_code` for a key the job holds no result for is a standing failure
+(decision 3 on #836): a check with no verdict keeps it in force, logs it critical and latches
+again, and only a pass,
 whose write clears `last_error_*`, ends it. The code follows its write-ahead `account.tested`, so
 one double fault remains: a failure whose record or code write was refused, then a restart whose
 boot check has no verdict, latches nothing for that key until its last pass leaves the window (at
@@ -105,6 +117,7 @@ from candleviewer.observability import spawn
 from candleviewer.storage.repositories.accounts import (
     KeySelfCheckStore,
     PolicyDisarm,
+    RetiredStatus,
     SelfCheckTargetRow,
     VerifiedKey,
 )
@@ -252,6 +265,17 @@ def _facts(result: VerificationResult, now: datetime) -> dict[str, object]:
     }
 
 
+def lapsed(verdict: VerificationResult) -> bool:
+    """A failing verdict for a key whose facts were read and whose only failure is its own expiry:
+    withdrawal-off and the allowlist were verified, so it disables its account alone (US-ACCT-005,
+    SR-034, TC-212). A refusal, the venue's expired-key one included, verified neither: no."""
+    return (
+        not verdict.passed
+        and verdict.key_info_ret_code == 0
+        and all(failure.rule is Rule.KEY_EXPIRED for failure in verdict.failures)
+    )
+
+
 def is_fresh(last_pass_at: datetime, *, now: datetime, interval_s: float) -> bool:
     """SR-E27-18: a key is green only while its last pass is at most one self-check interval plus
     `FRESHNESS_GRACE` old; an inconclusive check never moves it."""
@@ -324,8 +348,11 @@ class KeySelfCheck:
         self._booted = False
         #: Disarms whose record was written but not marked, by account: only the mark is retried.
         self._unmarked: dict[UUID, datetime] = {}
-        #: The standing result of each key in the last key list read.
+        #: The standing result of each key in the last key list read, and of each `invalid` key.
         self.results: dict[UUID, KeyCheck] = {}
+        #: Keys a failed check set `invalid`, or the boot pass found so: they leave the key list,
+        #: and their failed results stay on display until a restart finds them revoked (#5281).
+        self._invalid: dict[UUID, KeyCheck] = {}
 
     @property
     def failing(self) -> int:
@@ -445,7 +472,10 @@ class KeySelfCheck:
                     self._latch(UNAVAILABLE)
                 self._ran("error")
                 return
-            self.results = {t.key_id: c for t in targets if (c := self.results.get(t.key_id))}
+            if booting:
+                await self._standing_invalid()
+            kept = {t.key_id: c for t in targets if (c := self.results.get(t.key_id))}
+            self.results = {**self._invalid, **kept}
             self._expiry = min(
                 (t.expires_at for t in targets if t.expires_at is not None), default=None
             )
@@ -473,6 +503,29 @@ class KeySelfCheck:
                 self._ran("error")
             else:
                 self._ran(next((o for o in ("failed", "inconclusive") if o in outcomes), "passed"))
+
+    async def _standing_invalid(self) -> None:
+        """At boot: a key a failed check set `invalid` before the restart is a standing failure.
+        The gate latches `FAILED` again and the key's result stays on display until the Owner
+        revokes it (#5281). A read that fails or times out latches `UNAVAILABLE`: nothing then
+        vouches that no such key exists."""
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                rows = await self._store.invalid_keys()
+        except Exception as exc:  # TimeoutError included; cancellation propagates
+            logger().error("key_selfcheck_invalid_unread", error=type(exc).__name__)
+            self._latch(UNAVAILABLE)
+            return
+        now, egress = self._clock(), self._policy.egress_ip
+        for row in rows:
+            code = row.code if row.code in STANDING_FAILURE_CODES else _DISARM_FALLBACK
+            self._invalid[row.key_id] = KeyCheck(
+                row.key_id, row.account_id, now, "failed", code, None, row.verified_at, egress
+            )
+        if rows:
+            ids = [str(row.key_id) for row in rows]
+            logger().critical("key_selfcheck_invalid_keys", key_ids=ids, restored=True)
+            self._latch(FAILED)
 
     def _ran(self, result: str) -> None:
         """Count the run, and publish the alerts' gauges."""
@@ -600,15 +653,19 @@ class KeySelfCheck:
         now: datetime,
         actor: Mapping[str, object],
     ) -> None:
-        """Latch first; then the verdict's record and its rule code, the force-disable whatever
-        they did, and the policy-violation record last (decision 2 on #836: enforcement first)."""
+        """Latch first (not for a lapsed key); then the verdict's record and its rule code, the
+        force-disable and the key's status whatever they did, and the policy-violation record
+        last (decision 2 on #836: enforcement first)."""
         key, rule, egress = target.key_id, verdict.failures[0].rule.value, self._policy.egress_ip
-        self._latch(FAILED)
+        status: RetiredStatus = "expired" if lapsed(verdict) else "invalid"
+        if status == "invalid":  # a lapsed key disables its account alone (SR-034, TC-212)
+            self._latch(FAILED)
         check = KeyCheck(key, account_id, now, "failed", rule, verdict, target.verified_at, egress)
         self.results[key] = check
         rules = [failure.rule.value for failure in verdict.failures]
-        logger().critical("key_selfcheck_failed", key_id=str(key), rules=rules)
-        crit, summary = {"severity": "critical", "reason": rule}, self._summary(verdict, now)
+        logger().critical("key_selfcheck_failed", key_id=str(key), rules=rules, key_status=status)
+        crit = {"severity": "critical", "reason": rule}
+        summary = {**self._summary(verdict, now), "key_status": status}
         tested = {"outcome": "failure", "after_state": summary, **crit}
         await self._write(
             key,
@@ -616,8 +673,30 @@ class KeySelfCheck:
             lambda: self._store.record_error(key, code=rule, at=now),
         )
         await self._disarm(PolicyDisarm(account_id, rule, now))
+        await self._retire(check, status)
         await self._violation(key, account_id, verdict)
         self._failing()  # its alert now, not after the run's other keys
+
+    async def _retire(self, check: KeyCheck, status: RetiredStatus) -> None:
+        """The key's status after a failed check, whatever the audit sink did, as the disarm
+        (C-2.8 enforcement first; its record is the write-ahead `account.tested`). A write that
+        times out or raises leaves the key usable as far as this pass knows, so the next pass
+        checks it again while the latch holds; an `invalid` key's result outlives the key list."""
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                retired = await self._store.retire_key(check.key_id, status=status)
+        except Exception as exc:  # TimeoutError included; cancellation propagates
+            logger().critical(
+                "key_selfcheck_retire_failed",
+                key_id=str(check.key_id),
+                key_status=status,
+                error=type(exc).__name__,
+            )
+            return
+        if not retired:  # revoked meanwhile, or already retired: nothing usable to change
+            logger().warning("key_selfcheck_retire_unchanged", key_id=str(check.key_id))
+        elif status == "invalid":
+            self._invalid[check.key_id] = check
 
     async def _violation(self, key: UUID, account_id: UUID, verdict: VerificationResult) -> None:
         """`security.key_policy_violation`, after the rule code and the disarm: a refused or

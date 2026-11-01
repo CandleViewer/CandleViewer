@@ -20,6 +20,7 @@ import sqlalchemy as sa
 from candleviewer.storage.repositories import key_selfcheck_sqlalchemy as mod
 from candleviewer.storage.repositories.accounts import (
     AccountsStoreError,
+    InvalidKey,
     PolicyDisarm,
     VerifiedKey,
 )
@@ -38,7 +39,10 @@ ROW = {
     "equity_cached_at": None, "max_sub_accounts_hint": 5, "last_reconciled_at": None,
     "created_at": T, "updated_at": T, "deleted_at": None,
 }  # fmt: skip
-STATEMENTS = (mod._TARGETS, mod._PASS, mod._ERROR, mod._DISABLE, mod._OWED, mod._AUDITED)
+STATEMENTS = (
+    mod._TARGETS, mod._PASS, mod._ERROR, mod._DISABLE, mod._OWED, mod._AUDITED, mod._RETIRE,
+    mod._INVALID,
+)  # fmt: skip
 RULE = "key_withdraw_permission"
 
 
@@ -124,7 +128,7 @@ async def test_owed_disarms_are_read_for_the_bound_environment_and_marked_one_by
 
 
 def test_every_write_is_bound_to_the_environment_and_a_live_row() -> None:
-    for stmt in (mod._PASS, mod._ERROR):
+    for stmt in (mod._PASS, mod._ERROR, mod._RETIRE):
         assert "ea.env::text = :env AND k.revoked_at IS NULL" in stmt.text
     assert "env::text = :env AND deleted_at IS NULL AND trading_enabled" in mod._DISABLE.text
     owed_only = "AND policy_disarmed_at = :disarmed_at AND policy_disarm_audited_at IS NULL"
@@ -156,9 +160,46 @@ def test_statements_write_only_the_verification_columns() -> None:
     assert "CAST(:ips AS cidr[])" in mod._PASS.text
 
 
-def test_no_write_statement_names_an_envelope_status_or_last_used_column() -> None:
-    """No write names one of them. The read is held to the envelope and `last_used_at` names
-    too, but it selects on `status` (`active`, `rotating`), so only the writes are held to that."""
+def test_no_write_statement_names_an_envelope_or_last_used_column() -> None:
+    """No statement names one of them (21 §3.2.2, #2336, #2580)."""
     names = ("secret_enc", "key_id_enc", "enc_nonce", "enc_alg", "dek_ref", "last_used_at")
     assert [n for stmt in STATEMENTS for n in names if n in stmt.text] == []
-    assert [stmt for stmt in STATEMENTS[1:] if "status" in stmt.text] == []
+
+
+def test_only_the_retire_writes_status_and_only_from_a_usable_key() -> None:
+    """#5281: one write sets `status`, `active` or `rotating` to the bound value, never back and
+    never `revoked` (M2's); the reads filter on it."""
+    setting = [stmt for stmt in STATEMENTS for w in writes_to(stmt.text) if "status" in w.targets]
+    assert setting == [mod._RETIRE]
+    [retire] = writes_to(mod._RETIRE.text)
+    assert retire.targets == {"status", "updated_at"}
+    assert "SET status = CAST(:status AS key_status), updated_at = now()" in mod._RETIRE.text
+    assert mod._RETIRE.text.endswith("AND k.status IN ('active', 'rotating')")
+    assert "revoked'" not in mod._RETIRE.text
+
+
+async def test_retire_binds_the_environment_and_refuses_any_other_status() -> None:
+    rel = _Rel()
+    assert await _store(rel, "live").retire_key(KEY, status="invalid") is True
+    rel.rowcount = 0  # revoked meanwhile, or retired already
+    assert await _store(rel).retire_key(KEY, status="expired") is False
+    assert [params for _, params in rel.calls] == [
+        {"id": str(KEY), "status": "invalid", "env": "live"},
+        {"id": str(KEY), "status": "expired", "env": "demo"},
+    ]
+    for status in ("revoked", "active", "rotating", "pending"):
+        with pytest.raises(ValueError, match="invalid"):
+            await _store(rel).retire_key(KEY, status=cast(Any, status))
+    assert len(rel.calls) == 2 and rel.commits == 2  # a refused status runs no SQL
+
+
+async def test_invalid_keys_are_read_for_the_bound_environment_and_capped() -> None:
+    row = {"key_id": str(KEY), "account_id": str(ACCT), "code": RULE, "verified_at": T}
+    rel = _Rel([row])
+    assert await _store(rel, "live").invalid_keys() == (InvalidKey(KEY, ACCT, RULE, T),)
+    assert rel.calls == [(mod._INVALID.text, {"env": "live", "cap": mod.MAX_TARGETS + 1})]
+    assert rel.commits == 0
+    where = "WHERE ea.env::text = :env AND ea.deleted_at IS NULL AND k.revoked_at IS NULL"
+    assert f"{where} AND k.status = 'invalid' ORDER BY k.id LIMIT :cap" in mod._INVALID.text
+    with pytest.raises(AccountsStoreError):
+        await _store(_Rel([row] * (mod.MAX_TARGETS + 1))).invalid_keys()

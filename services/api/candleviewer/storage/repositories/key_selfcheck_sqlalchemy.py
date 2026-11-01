@@ -2,9 +2,11 @@
 
 Bound to one environment at construction: every statement filters on `env` (C-2.11), so the job
 never reads or writes another environment's rows. Literal `sa.text` with bound parameters only.
-No UPDATE sets an envelope column, `status` or `last_used_at`: no statement names an envelope
-column or `last_used_at`, and only the targets read filters on `status` (the write-once and
+No UPDATE sets an envelope column or `last_used_at`: no statement names one (the write-once and
 single-writer guards in `tests/unit/credentials_m2/test_write_once_surface.py` scan this file).
+One UPDATE sets `status`, after a failed check (#5281): a usable key (`active` or `rotating`) to
+`invalid` or `expired`, never back, and never `revoked`, which stays M2's (the broker drops its
+cached keys). The targets read and the invalid-key read filter on it.
 A pass merges the verified key-info fields into `permission_snapshot` (`||`), so a field the
 import stored and the check does not read stays, and `ak_snapshot_shape` still checks the
 result, and clears `last_error_*`. A verdict or an inconclusive check writes `last_error_*` only.
@@ -26,7 +28,9 @@ import sqlalchemy as sa
 from candleviewer.storage.repositories.accounts import (
     AccountsStoreError,
     ExchangeAccountRow,
+    InvalidKey,
     PolicyDisarm,
+    RetiredStatus,
     SelfCheckTargetRow,
     VerifiedKey,
 )
@@ -70,6 +74,21 @@ _ERROR = sa.text(
     "FROM exchange_accounts ea WHERE k.id = CAST(:id AS uuid) "
     "AND ea.id = k.exchange_account_id AND ea.env::text = :env AND k.revoked_at IS NULL"
 )
+_RETIRE = sa.text(
+    "UPDATE api_keys AS k SET status = CAST(:status AS key_status), updated_at = now() "
+    "FROM exchange_accounts ea WHERE k.id = CAST(:id AS uuid) "
+    "AND ea.id = k.exchange_account_id AND ea.env::text = :env AND k.revoked_at IS NULL "
+    "AND k.status IN ('active', 'rotating')"
+)
+_INVALID = sa.text(
+    "SELECT k.id::text AS key_id, ea.id::text AS account_id, k.last_error_code AS code, "
+    "k.permission_snapshot_at AS verified_at "
+    "FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
+    "WHERE ea.env::text = :env AND ea.deleted_at IS NULL AND k.revoked_at IS NULL "
+    "AND k.status = 'invalid' ORDER BY k.id LIMIT :cap"
+)
+#: The statuses a failed check may set (`retire_key`): a typo is refused before any SQL runs.
+_RETIRED: Final = frozenset({"invalid", "expired"})
 _DISABLE = sa.text(
     "UPDATE exchange_accounts SET trading_enabled = false, "
     "policy_disarm_code = :code, policy_disarmed_at = :at, policy_disarm_audited_at = NULL, "
@@ -136,6 +155,22 @@ class SqlAlchemyKeySelfCheckStore:
 
     async def record_error(self, key_id: UUID, *, code: str, at: datetime) -> bool:
         return await self._write(_ERROR, id=str(key_id), code=code, at=at)
+
+    async def retire_key(self, key_id: UUID, *, status: RetiredStatus) -> bool:
+        if status not in _RETIRED:
+            raise ValueError("a failed check sets `invalid` or `expired` only")
+        return await self._write(_RETIRE, id=str(key_id), status=status)
+
+    async def invalid_keys(self) -> tuple[InvalidKey, ...]:
+        async with self._relational.unit_of_work() as uow:  # a read: nothing to commit
+            res = await uow.session.execute(_INVALID, {"env": self._env, "cap": MAX_TARGETS + 1})
+            rows = tuple(
+                InvalidKey(UUID(m["key_id"]), UUID(m["account_id"]), m["code"], m["verified_at"])
+                for m in res.mappings()
+            )
+        if len(rows) > MAX_TARGETS:
+            raise AccountsStoreError("more invalid keys than one self-check pass reads")
+        return rows
 
     async def disable_trading(self, account_id: UUID, *, code: str, at: datetime) -> bool:
         return await self._write(_DISABLE, id=str(account_id), code=code, at=at)
