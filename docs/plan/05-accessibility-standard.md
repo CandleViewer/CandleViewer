@@ -141,6 +141,10 @@ This is the highest-risk area: the chart engine, footprint grid, DOM heatmap, an
 - The mirror is windowed/virtualized (only currently-visible/currently-focusable items are materialized in the DOM — not all 100k bars) to avoid a11y-tree bloat and to keep it in sync with WebGL's own LOD/culling, per the performance standard (`06-performance-and-load-standard.md`).
 - Engine architecture requirement (feeds `26-chart-engine-design.md`): the rendering engine's public API must expose a "current visible window + current focused unit" query surface that the React layer consumes to keep the DOM mirror and the WebGL draw calls frame-synchronized — this is an explicit chart-engine-design requirement, not an afterthought bolted on later.
 
+#### 6.1.1 Drawings (E14-K01)
+
+Drawings are mirrored by the **windowed surrogate** pattern, strategy (c) of the E14-K01 spike: one roving group of `button` surrogates per pane after the plot stop holds the drawings whose bounds intersect the visible range, every selected drawing and the focused one, up to 200 surrogates; `aria-setsize` states the full count and `aria-posinset` the rank in time-then-price order, so a drawing outside the window stays reachable by the cursor and the object tree. A window change never moves focus. A surrogate's name is the drawing's label template with "item k of n" and its state words, written as one text node, never as markup. Drawing announcements go to the chart panel's polite status region, at most two writes in any one second, nudge and snap values latest-wins, confirmations never dropped. The measurements, the keyboard flow and the key map are in [E14-K01.md](spikes/E14-K01.md).
+
 ### 6.2 Layer 2 — ARIA live regions for streaming updates
 
 - **Price/position/order updates** are announced via `aria-live` regions, but with strict throttling/summarization to avoid "announcement flooding" at 10Hz+ tick rates (a screen reader reading every tick aloud is unusable):
