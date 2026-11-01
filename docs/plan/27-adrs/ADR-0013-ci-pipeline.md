@@ -57,9 +57,9 @@ release tag
 1. **Required checks for merge**: commitlint, lint, typecheck, unit, generated-code freshness, contract, integration, e2e (web), a11y, security (SAST + secrets + SCA), and — when `packages/chart-engine` changed — the engine benchmarks. Two approvals including one code owner (`.github/CODEOWNERS`).
 2. **Path filtering** decides which jobs run, but the _required_ set is computed from the same filter so a skipped-but-required job reports success only when genuinely not applicable (a "required checks resolver" job emits the conclusion). While a pull request is a draft, the e2e, a11y and engine-bench lanes are deferred: their jobs skip the draft's runs and the resolver reports them deferred, and the run `ready_for_review` starts and every merge-group run execute them (Amendment 5).
 3. **Generated-code freshness is a hard gate.** `packages/protocol` is regenerated from `22-api-openapi.yaml` and the WS schema; any diff fails the build. Generated files are committed so consumers need no codegen step.
-4. **Benchmarks run on a pinned self-hosted runner** (the reference machine class, fixed GPU driver, fixed Chromium). Results are compared to a stored baseline; a > 10 % regression fails. Baseline updates require an explicit reviewer-approved commit that states the cause.
+4. **Benchmarks run on a pinned self-hosted runner** (the reference machine class, fixed GPU driver, fixed Chromium). Results are compared to a stored baseline; a > 5 % regression fails (the C-9.1 #16 threshold; this ADR said 10 % until Amendment 7). Baseline updates require an explicit reviewer-approved commit that states the cause.
 5. **Caching**: Turborepo remote cache for JS, `uv` cache for Python, Playwright browser cache, Docker layer cache. Target: PR feedback ≤ 15 minutes end-to-end.
-6. **No secrets in PR workflows from forks.** The repository is private and single-org, but workflows still use least-privilege `permissions:` blocks and pinned action SHAs (not floating tags) to close the supply-chain path.
+6. **No secrets in PR workflows from forks.** The repository is public (it was private when this ADR was written; Amendment 7), so workflows use least-privilege `permissions:` blocks and pinned action SHAs (not floating tags) to close the supply-chain path.
 7. **Concurrency groups** cancel superseded runs per branch to keep the queue short.
 8. **Deployment is image-based and immutable**: every merge to `main` produces a tagged image with an SBOM and a signature; the staging stack is redeployed automatically, production (the owner's box or the VPS) is a deliberate, checklisted action.
 9. **Migrations are applied on boot under an advisory lock** and must be backward-compatible for one release (expand/contract), so a rollback never requires a down-migration.
@@ -75,14 +75,14 @@ Positive:
 
 Negative / risks:
 
-- A self-hosted GPU runner is infrastructure we must maintain and secure (isolated, ephemeral workspace, no secrets, restricted to this repository). Documented in `04-security-program.md`.
+- A self-hosted GPU runner is infrastructure we must maintain and secure (isolated, ephemeral workspace, no secrets, restricted to this repository). Threat framing and the accepted residual: `docs/plan/threat-models/E03-supply-chain.md` §4.3 row G1 and §5 (the isolation spike is E03-K01); `04-security-program.md` has no runner-isolation section (Amendment 7).
 - GitHub Actions minutes and LFS bandwidth are real costs; mitigated by caching, path filters and concurrency cancellation.
 - Benchmark stability depends on that one machine; if it is unavailable, the engine check blocks merges. Mitigated by a documented manual-override procedure requiring the architect's approval, recorded in the PR.
 
 ### Why not the alternatives
 
 - **Run everything on every PR**: simple and honest, but a 40-minute pipeline on a docs typo destroys the small-PR culture the SDLC depends on.
-- **External CI**: better GPU-runner ergonomics in some cases, but it splits the workflow across two systems, duplicates permissions, and adds a third-party with repository access — a poor trade for a private, security-sensitive project.
+- **External CI**: better GPU-runner ergonomics in some cases, but it splits the workflow across two systems, duplicates permissions, and adds a third-party with repository access — a poor trade for a security-sensitive project.
 
 ## Validation
 
@@ -129,3 +129,7 @@ Negative / risks:
 ## Amendment 6 (2026-10-31, #5177)
 
 - **Pipeline shape (documented, not changed).** The merge queue has been on for `main` since 2026-10-19/20, so every merge passes a `merge_group` run, and a PR-level `ci-required` is not the full set while the PR is a draft (Amendment 5). Amendment 3 and 01-sdlc-and-branching.md §7 now say so, and `.github/branch-protection.json` records the live `merge_queue` rule (squash, grouping `ALLGREEN`, 3 builds, up to 5 entries per merge, a 60-minute check timeout); its ruleset also carries a `required_status_checks` rule that the drift check cannot declare yet. `scripts/tests/test_pr_yml_merge_group.py` pins `ready_for_review` in `perf-engine-matrix.yml`'s trigger, and the C-10.2 labeller's `GATE` list gains the resolver, the reconciliation proof and the `pr.yml` governance tests.
+
+## Amendment 7 (2026-11-01, #5112)
+
+- **Corrections, no decision change.** Three statements had drifted from the normative texts and were found by the E03-K01 spike's scout (#5112): rule 4 said a "> 10 %" benchmark regression fails, while C-9.1 #16, C-13.9 and `06-performance-and-load-standard.md` §7.4 set 5 % — rule 4 now says 5 %, and the `_job-engine-bench.yml` stub header that still says 10 % is E03-T14's to fix; rule 6 and the "Why not the alternatives" section described the repository as private, but it is public (verified on 2026-10-16 and again at this amendment; the fork / least-privilege reasoning in rule 6 stands, and is stronger for a public repository); the GPU-runner consequence pointed at `04-security-program.md`, which has no runner-isolation section — it now points at the E03 threat model's row G1 and §5, where the residual is recorded. The E03 threat model's P6 row carries the same visibility correction in the same PR.

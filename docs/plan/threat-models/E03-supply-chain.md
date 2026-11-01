@@ -88,7 +88,7 @@ verifying test (owned by `E03-Q01`), residual risk. A row missing the ticket or 
 | P3 | Repudiation | Force-push erases history, hiding what was reviewed | L | H | Medium | Branch protection: linear history required, force-push disabled on `main` (C-4.1, C-4.2) | E03-T13 | `E03-Q01`: attempted force-push to `main` is rejected by a fixture/dry-run check | Low |
 | P4 | Elevation of privilege | A bypass actor (owner/admin merge override) is used beyond its documented scope | L | H | Medium | SR-141-style environment protection pattern applied to any bypass path; bypass usage logged (see Observability, `E03-T09`) | E03-T13 | `E03-Q01`: bypass-usage audit row asserted present for any bypass merge | Low |
 | P5 | Denial of service | Required-check flakiness (e.g. quarantined suite growth) blocks all merges | M | M | Medium | C-9.3 flaky-test quarantine within 24h + P1 ticket; quarantine list capped and reviewed | E03-Q01 | `E03-Q01`: quarantine-size alert fixture | Low |
-| P6 | Information disclosure | N/A — no secret material flows through the PR-diff element itself | — | — | N/A | Reason: PR diffs are public within the private repo; secret leakage is modeled at the CI-log element (row L2) instead. | — | — | — |
+| P6 | Information disclosure | N/A — no secret material flows through the PR-diff element itself | — | — | N/A | Reason: PR diffs are public (the repository is public; they were visible to every member while it was private); secret leakage is modeled at the CI-log element (row L2) instead. | — | — | — |
 
 ### 4.2 Element — GitHub Actions hosted runners
 
