@@ -272,6 +272,24 @@ async def test_a_store_that_fails_at_boot_degrades_mfa_alone(step: str) -> None:
     assert (failed["log_level"], failed["error"]) == ("error", "RuntimeError")
 
 
+async def test_an_insert_whose_record_is_not_written_is_an_audit_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BQ-5: the keyring's record failed, so its rows rolled back with it: MFA is
+    `auth_keyring_audit_unavailable` (M10's error told apart by its code), never a store outage,
+    and the keyring made is zeroed."""
+    made = await _opened_rings(monkeypatch)
+    keyring = InMemoryAuthKeyStore()
+    keyring.audit_fails = True
+    with capture_logs() as logs:
+        svc, ctx = await _booted(keyring, _Src(KEK_V1, 1))
+    assert _down(svc, ctx) == ("auth_keyring_audit_unavailable", HealthStatus.DEGRADED, False, 1)
+    assert (keyring.rows, keyring.audit) == ([], [])
+    assert [made[0]._totp_key, made[0]._rc_key] == [bytearray(32)] * 2
+    [failed] = [e for e in logs if e["event"] == "secrets.auth_keyring_store_failed"]
+    assert failed["error"] == "_AuthKeyAuditNotWritten"
+
+
 async def test_a_lost_insert_race_opens_the_winning_keyring(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -530,20 +548,35 @@ async def test_a_boot_closed_by_the_collector_after_the_keyring_opened_closes_it
     assert not await mint_auth_keyring(svc).available()
 
 
-async def test_a_keyring_step_that_raises_degrades_mfa_alone(
-    monkeypatch: pytest.MonkeyPatch,
+async def _raises(*_: object) -> Any:
+    raise RuntimeError("a row M2 cannot read")
+
+
+async def _no_reason(*_: object) -> Any:
+    return None, None
+
+
+@pytest.mark.parametrize(
+    ("opened", "error"),
+    [(_raises, ["RuntimeError"]), (_no_reason, [])],
+    ids=["raises", "no_reason"],
+)
+async def test_an_open_that_fails_unexpectedly_is_unopenable_never_a_mismatch(
+    monkeypatch: pytest.MonkeyPatch, opened: Any, error: list[str]
 ) -> None:
-    """A row M2 cannot read is never a reason to stop the boot, nor to generate."""
-
-    async def broken(*_: object) -> Any:
-        raise RuntimeError("a row M2 cannot read")
-
-    monkeypatch.setattr(custody, "open_at_boot", broken)
+    """A row M2 cannot read is never a reason to stop the boot, nor to generate, nor to restore
+    the rows from a backup (`_mismatch`'s remediation): MFA alone is `auth_keyring_unopenable`."""
+    monkeypatch.setattr(custody, "open_at_boot", opened)
+    audit = AuditLog()
     with capture_logs() as logs:
-        svc, ctx = await _booted(InMemoryAuthKeyStore(), _Src(KEK_V1, 1))
-    assert _down(svc, ctx) == ("auth_keyring_mismatch", HealthStatus.DEGRADED, False, 1)
-    [failed] = [e for e in logs if e["event"] == "secrets.auth_keyring_open_failed"]
-    assert (failed["log_level"], failed["error"]) == ("error", "RuntimeError")
+        svc, ctx = await _booted(InMemoryAuthKeyStore(), _Src(KEK_V1, 1), audit=audit)
+    assert _down(svc, ctx) == ("auth_keyring_unopenable", HealthStatus.DEGRADED, False, 1)
+    failed = [e for e in logs if e["event"] == "secrets.auth_keyring_open_failed"]
+    assert [(e["log_level"], e["error"]) for e in failed] == [("error", e) for e in error]
+    text = service_module.AUTH_REMEDIATION.format(reason="auth_keyring_unopenable")
+    record = {"env": "demo", "reason": "auth_keyring_unopenable", "remediation": text}
+    assert audit.records[-1] == (custody.LOAD_FAILED, _OWNER | record)
+    assert "_unopenable: " in text and "keep the rows" in text
 
 
 async def test_a_page_whose_record_is_lost_still_stands_and_is_counted() -> None:

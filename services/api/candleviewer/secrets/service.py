@@ -110,8 +110,9 @@ AUTH_REMEDIATION = (
     "latched. Never delete MFA material to force a new keyring. auth_keyring_missing or _mismatch: "
     "restore the environment's two auth_keys rows from a backup (on demo or testnet, both old env "
     "settings import them once); _stranded: restart with CV_KEK_PREV_HANDLE; _store_unavailable "
-    "or _audit_unavailable: fix Postgres or the audit writer, then restart. See "
-    "docs/ops/runbooks/kek-custody.md."
+    "or _audit_unavailable: fix Postgres or the audit writer, then restart; _unopenable: an error "
+    "M2 did not expect stopped the open (its class is logged): keep the rows, fix the cause, then "
+    "restart. See docs/ops/runbooks/kek-custody.md."
 )
 #: The broker's reasons for a record it could not write (`CredentialBroker._audit`).
 _AUDIT_FAILURES = frozenset({"audit_unavailable", "audit_timeout"})
@@ -625,11 +626,11 @@ class SecretsService:
         env_keys = _auth_custody.env_keys(settings)
         try:
             ring, reason = await _auth_custody.open_at_boot(keys, kek, prev, env_keys, self._audit)
-        except Exception as exc:
+        except Exception as exc:  # no verdict on the rows: never "restore from a backup"
             _log().error("secrets.auth_keyring_open_failed", error=type(exc).__name__)
-            ring, reason = None, _auth_custody.MISMATCH
+            ring, reason = None, _auth_custody.UNOPENABLE
         if ring is None:
-            await self._auth_unavailable(reason or _auth_custody.MISMATCH)
+            await self._auth_unavailable(reason or _auth_custody.UNOPENABLE)
             return
         self._auth_ring, self._auth_reason = ring, None
         m.auth_keyring_unavailable_state.set(0)

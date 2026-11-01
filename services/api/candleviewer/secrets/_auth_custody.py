@@ -64,9 +64,16 @@ REWRAPPED = "security.auth_keyring_rewrapped"
 LOAD_FAILED = "security.auth_keyring_load_failed"  # the caller's, at error (it pages)
 #: The env settings D3 imports once, by name: a log names a setting, never its value.
 SETTINGS = ("CV_AUTH_TOTP_KEY_HEX", "CV_AUTH_RECOVERY_HMAC_KEY_HEX")
-MISSING, MISMATCH = "auth_keyring_missing", "auth_keyring_mismatch"
-#: The keyring's store, or the audit sink of its load record, failed at boot: a restart retries.
+MISSING = "auth_keyring_missing"
+#: The keyring's store failed at boot, or a record did (a write's, or the load's through the
+#: sink): a restart retries.
 STORE_DOWN, AUDIT_DOWN = "auth_keyring_store_unavailable", "auth_keyring_audit_unavailable"
+#: The caller's, when `open_at_boot` raises what it does not expect: the open reached no verdict
+#: on the rows, so its remediation is never a restore from a backup (as `export_key_unopenable`).
+UNOPENABLE = "auth_keyring_unopenable"
+#: M10's typed failure of a write's record, told apart by `code` as `export_rotator` tells its
+#: own (no `storage` import, C-3.2): the write rolled back with it.
+_UNWRITTEN = "STORAGE_AUTH_KEY_AUDIT_NOT_WRITTEN"
 _ACTOR = {"actor_kind": "system", "actor_role": "secrets"}
 EnvKeys = tuple[SecretStr | None, SecretStr | None]
 
@@ -84,14 +91,17 @@ class _Unavailable(Exception):
 
 
 async def _io[T](aw: Awaitable[T]) -> T:
-    """A bounded store call; any failure but a cancellation is `auth_keyring_store_unavailable`,
-    logged by its class (a typed refusal of M10 names no row)."""
+    """A bounded store call. A write whose record M10 did not write is
+    `auth_keyring_audit_unavailable`; any other failure but a cancellation is
+    `auth_keyring_store_unavailable`. Each is logged by its class (a typed refusal of M10 names
+    no row)."""
     try:
         async with asyncio.timeout(_IO_TIMEOUT_S):
             return await aw
     except Exception as exc:
         _log().error("secrets.auth_keyring_store_failed", error=type(exc).__name__)
-    raise _Unavailable(STORE_DOWN)  # after the handler: nothing chained
+        reason = AUDIT_DOWN if getattr(exc, "code", None) == _UNWRITTEN else STORE_DOWN
+    raise _Unavailable(reason)  # after the handler: nothing chained
 
 
 def env_keys(settings: Settings) -> EnvKeys:
