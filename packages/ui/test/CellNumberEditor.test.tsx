@@ -908,4 +908,22 @@ describe("CellNumberEditor stories", () => {
       expect(host.querySelectorAll('[data-use="cell"]').length).toBeGreaterThan(0);
     },
   );
+
+  // One story's play in jsdom, as the other suites run theirs (the storybook project runs every play in Chromium, with
+  // axe, and the visual run keeps its last frame): the one whose `Enter` press keeps the refused activation's re-shown
+  // reason a frame (R4), so the light gate runs that press too, not only CI.
+  it("runs PointsAtNotice's play: the refused press re-shows the notice's sentence", async () => {
+    const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const canvasElement = document.body.appendChild(document.createElement("div"));
+    env.IS_REACT_ACT_ENVIRONMENT = false; // the play's presses are not act-wrapped, as in the storybook project
+    try {
+      await expect(
+        composed.PointsAtNotice.run({ canvasElement }),
+        "PointsAtNotice",
+      ).resolves.toBeUndefined();
+    } finally {
+      env.IS_REACT_ACT_ENVIRONMENT = true;
+      canvasElement.remove();
+    }
+  });
 });
