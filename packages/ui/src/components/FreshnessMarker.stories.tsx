@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { JSX } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
+import { eventually, shownWith } from "../../.storybook/eventually.js";
 import {
   DATA_CONFIDENCE_PRECEDENCE,
   FreshnessMarker,
@@ -81,10 +82,11 @@ export const Hover: Story = {
     const chip = canvasElement.querySelector('[data-cmp="CMP-239"]');
     if (chip === null) throw new Error("no chip");
     await userEvent.hover(chip);
-    // CMP-016 shows a hover echo after 300 ms: give a loaded runner more than waitFor's 1 s default.
-    await waitFor(() => expect(echoShown()).toHaveTextContent("Last update 10:31:02 UTC"), {
-      timeout: 3000,
-    });
+    // CMP-016 shows a hover echo after 300 ms; the wait counts only time the runner's page could run (#5274).
+    const echo = await eventually("the hover echo", () =>
+      shownWith(".cv-table__echo", "Last update 10:31:02 UTC"),
+    );
+    await expect(echo).toHaveTextContent("Last update 10:31:02 UTC");
   },
 };
 
