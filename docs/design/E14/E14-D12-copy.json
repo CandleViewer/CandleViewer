@@ -1,7 +1,7 @@
 {
   "pack": "E14-D12",
   "version": "v1.1",
-  "base": "9518fe3cbd",
+  "base": "8bae585409",
   "note": "The copy deck of the E14-D12 hand-off pack: every row of the five parents' copy tables (E14-D02 §12, E14-D04 §9.5, E14-D05 §9.4, E14-D06 §10, E14-D07 §12.2) under the id `<parent>:<row number>`, with the row's keys, the String cell verbatim, the source row, the status (proposed: the parent's own proposal, owner the parent, finalised by E14-D10 at v1.1; ruled; cited: the owner its Source cell names) and the owner; a row whose key or string carries a word of the public-text list keeps its source and owner and is cited only. Checked by docs/design/_tools/e14_d12_handoff_audit.py (G-DECK).",
   "entries": {
     "d02:01": {

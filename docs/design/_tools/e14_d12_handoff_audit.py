@@ -6,7 +6,8 @@ Standalone, offline, stdlib only; it runs under `python3 -I` and executes no rep
 AS TEXT at the pinned base `BASE` (`git show`): the plan texts, the merged E14 design docs (D02 ...
 D09 and the hand-off twins), the constitution's C-14.2 row, the design-spec rule file, the
 calendar and the E14 backlog JSON; then the pack (`E14-D12.md`), the deck (`E14-D12-copy.json`),
-`14` and the pins from the working tree. E14-D10 (#354) is not on the base: nothing of it is read.
+`14` and the pins from the working tree. E14-D10 (#354) merged with #5229: it is read at the base,
+by section and as a whole file, for the v1.1 lift (§8).
 
 Values. Every `{{KIND:key}}` outside a code span is computed and `--fill` writes it as
 `VALUE<!--=KIND:key-->`; a `{{COPY:key}}` line becomes a block between `<!-- COPY:key -->` and
@@ -23,8 +24,9 @@ Gates (one mutation each in `--self-test`):
               range's ends are non-blank; copied blocks are the source's own and are skipped.
   G-VERSION   every cited line's content stands at `origin/main` (moved = WARN, gone = FAIL).
   G-TOOLS     the derived behaviour table equals its derivation cell by cell (one row per `22`
-              `DrawingTool` value), and the anchor count agrees at `22`, D02's registry, D04's
-              schema and D07's templates.
+              `DrawingTool` value; the persistence cell carries `geometry.extend_left` /
+              `extend_right` on every tool whose D04 row offers extend L / R), and the anchor count
+              agrees at `22`, D02's registry, D04's schema and D07's templates.
   G-GLYPHS    the derived glyph register equals D03 §2.1 + §2.2 cell by cell; the `15` count.
   G-INDEX     one row per story E14-S01..S10; US-DRAW-001..009 each on its story; every frame
               cell a board whose PNG is on the base or "text only"; every § a heading of its doc.
@@ -32,7 +34,8 @@ Gates (one mutation each in `--self-test`):
               anchored at its own row); every PROPOSED entry names an owner.
   G-ROWS      the register: ids unique, the four grades, an owner cell "<spec>; <area>" from the
               ruled sets, a due cell from the ruled forms, a cite on every row; the four ruled
-              contradictions (C-1..C-4) and the E14-D10 G-row present; the counts.
+              contradictions (C-1..C-4) and the E14-D10 G-row present; every PROPOSED reason key
+              of the T2 table has a G row that names it; the counts.
   G-T2        the T2 table: the rendering, the §3.1 key and §3.2 verb per row, CMP-079 RbacGate on
               every role leg and the CMP-019 `lock` on every row; the stated attributes; the
               companions row names CMP-079 and CMP-019 (G-T2.1b, .1c, .1d, .6).
@@ -40,8 +43,10 @@ Gates (one mutation each in `--self-test`):
               names C-14.2 as its owner and cites `26`; "hard-disabled" only inside a quote of the
               ticket; the send-to-ticket sentence is the byte copy of D06 §6.4.
   G-EVENTS    every `drawing.*` name outside a copy is a D02 §14 name or a `14` analytics name.
-  G-PENDING   E14-D10 is absent at the base and never cited; the chapter says so (a WARN once it
-              is on `origin/main` and v1.1 has not folded it).
+  G-PENDING   before E14-D10 merges: it is absent at the base and never cited; the chapter says
+              so (a WARN once it is on `origin/main` and v1.1 has not folded it). Once it is on
+              the base: §8 cites its merge commit (SHA) and its whole-file hash, lifts every
+              section by hash, and no line of the pack still calls it pending.
   G-AHEAD     the sprint, date and margin values from the calendar and the backlog JSON.
   G-UNTOUCHED PR-1 mode: the tree differs from the merge-base only in this pack's files and `14`,
               and `14` equals the merge-base with the three pointer lines and the SCR-037 ticks
@@ -80,7 +85,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "9518fe3cbd"  # the base of record: every cite was read here (the version line)
+BASE = "8bae585409"  # the base of record: every cite was read here (the version line)
 HEAD_REF = "origin/main"
 VERSION_DATE = datetime.date(2026, 10, 31)  # v1's date: the design-ahead margins count from it
 ISSUE = "355"
@@ -176,6 +181,7 @@ LIFTS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
     "d10.s121": ("D10", (("### 12.1 ", ""),)),
     "d10.s14": ("D10", (("## 14. ", ""),)),
     "d10.s15": ("D10", (("## 15. ", ""),)),
+    "d10.file": ("D10", (("", ""),)),  # the whole merged file, as E12-D12 §8.1 lifts E12-D11
 }
 CHIPS = "Two named forms, one rule set."  # D08 §7, the chip heights' defining line
 NFR008 = "NFR: undo stack ≥50 operations per symbol"  # `11` US-DRAW-008's NFR line
@@ -258,8 +264,9 @@ TICKS: dict[int, str] = {
 }
 
 SEVERITIES = ("Blocking", "Major", "Minor", "Info")
+# oms-execution: E30-D02's area, the owner of the PROPOSED reason keys' vocabulary (G-11..G-15)
 AREAS = ("charting-ui", "chart-engine", "design-system", "backend-platform", "frontend-platform",
-         "docs", "auth-rbac")  # fmt: skip
+         "docs", "auth-rbac", "oms-execution")  # fmt: skip
 OWNER_SPEC = re.compile(
     r"E\d\d-[DSTQKX]\d\d \(#\d+\)(?: §\d+(?:\.\d+)?)?"
     r"|CONSTITUTION C-\d+\.\d+"
@@ -670,6 +677,10 @@ def status_values(env: Env) -> dict[str, str]:
                       ("ui.glyphs", "trendline")):  # fmt: skip
         vals[f"STATUS:{key}"] = "present" if env.grep(env.base, name, ("packages",)) else "absent"
     vals["STATUS:d10"] = "present" if D10_REL in env.tree(env.base, D10_REL) else "absent"
+    if vals["STATUS:d10"] == "present":
+        out = git_raw("log", "-1", "--format=%H", env.base, "--", D10_REL)
+        if out and re.fullmatch(r"[0-9a-f]{40}\s*", out):
+            vals["SHA:d10.merge"] = out.strip()[:10]  # the commit that last wrote D10 at the base
     return vals
 
 
@@ -737,6 +748,16 @@ def geometry_keys(env: Env) -> dict[str, list[str]]:
     return out
 
 
+def every_tool_keys(env: Env) -> list[str]:
+    """The `geometry` keys `22`'s key rules allow on every tool (`extend_left` / `extend_right`)."""
+    text = " ".join(x.strip() for x in tool_block(env))
+    m = re.search(r"((?:`[a-z_]+`(?:\s*/\s*)?)+) are allowed on every tool", text)
+    return re.findall(r"`([a-z_]+)`", m[1]) if m else []
+
+
+EXTEND = "extend L / R"  # D04 §3's column whose fields are the every-tool keys (`D04`:81)
+
+
 def keyed(rows: list[list[str]], col: int) -> dict[str, list[str]]:
     return {r[col].strip("`"): r for r in rows if len(r) > col and r[col].strip("`") != "—"}
 
@@ -765,7 +786,7 @@ ANCHOR_RULE = {
     "3": "T01 → T16 → T25 → T26",
     "2..100": "T01 → T16 → T25… → T27",
 }
-PROPS = ("colour", "width", "style", "extend L / R", "fill", "font size", "label", "lock / visible")
+PROPS = ("colour", "width", "style", EXTEND, "fill", "font size", "label", "lock / visible")
 TOOL_HEADER = ["`DrawingTool`", "anchors (`22`)", "rail group · key (D02 §2.2)",
                "creation (D02 §4.4) · keyboard (D02 §9)", "properties (D04 §3)",
                "persistence (`22` key rules)", "label template = accessible name (D07 §2.1)",
@@ -783,6 +804,7 @@ def creation(n: str) -> str:
 def derive_tools(env: Env) -> list[list[str]]:
     pc, gk, reg, (hdr, d04), d07 = (point_counts(env), geometry_keys(env), registry(env),
                                     schema(env), templates(env))  # fmt: skip
+    every = every_tool_keys(env)
     sp = sprints(env)
     rows = [TOOL_HEADER]
     for tool in tool_enum(env):
@@ -800,6 +822,8 @@ def derive_tools(env: Env) -> list[list[str]]:
         if slot != "—":
             props.append(slot)
         geo = [f"`geometry.points` ×{n}"] + [f"`geometry.{k}`" for k in gk.get(tool, [])]
+        if EXTEND in props:  # the popover writes them (`D04`:81); `22` allows them on every tool
+            geo += [f"`geometry.{k}`" for k in every]
         tp = d07.get(tool, ["?", "", "?"])
         story = r[6]
         m = re.fullmatch(r"E14-S(\d\d)", story)
@@ -1503,6 +1527,30 @@ def owner_problems(rid: str, cell: str) -> list[str]:
     return bad
 
 
+def top_level(cell: str) -> list[str]:
+    """A cell split at its `;` outside parentheses."""
+    out, depth, cur = [], 0, ""
+    for ch in cell:
+        depth += (ch == "(") - (ch == ")")
+        if ch == ";" and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return [*out, cur]
+
+
+def proposed_keys(spec: str) -> list[str]:
+    """The §3.1 reason keys the T2 table marks PROPOSED (a key and its "(PROPOSED …)" share one
+    top-level part of the reason cell)."""
+    out: list[str] = []
+    for r in t2_rows(spec):
+        for part in top_level(r[3]) if len(r) > 3 else []:
+            if "PROPOSED" in part:
+                out += [k for k in re.findall(r"`([a-z_.]+)`", part) if k in T2_KEYS]
+    return sorted(set(out))
+
+
 def first_consumer(t: Texts) -> int:
     sp = sprints(t.env)
     return min((sp[k] for k in MARGINS if k in sp), default=0)
@@ -1540,6 +1588,9 @@ def g_rows(t: Texts) -> list[Finding]:
         "#5229" in r[3] and "E14-D10" in r[3] for r in rows.values() if r[0].startswith("G-")
     ):
         bad.append("no G-row carries E14-D10's chapter (#5229)")
+    for key in proposed_keys(t.spec):
+        if not any(f"`{key}`" in r[3] for r in rows.values() if r[0].startswith("G-")):
+            bad.append(f"the PROPOSED reason key `{key}` (§6.2) has no G row")
     return one("G-ROWS", bad)
 
 
@@ -1639,8 +1690,11 @@ def g_pending(t: Texts) -> list[Finding]:
         for k in LIFTS:
             if k.startswith("d10.") and f"<!--=HASH:{k}-->" not in s8:
                 bad.append(f"§8 does not lift E14-D10's block {k} by hash")
-        if PENDING in s8:
-            bad.append("§8 still says the chapter is pending, but E14-D10 is on the base")
+        for k in ("SHA:d10.merge", "HASH:d10.file"):
+            if f"<!--={k}-->" not in s8:
+                bad.append(f"§8 does not cite E14-D10 by {k}")
+        if PENDING in " ".join(t.spec.split()):
+            bad.append("the pack still says the chapter is pending, but E14-D10 is on the base")
         if not folded:
             bad.append("E14-D10 is on the base and no v1.1 version row stands")
         return one("G-PENDING", bad)
@@ -1947,6 +2001,9 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("G-VERSION", "edit a cited D04 line at origin/main", head_gone),
     Mutation("G-TOOLS", "give the trendline three anchors in the behaviour table",
              subst("| `trendline` | 2 |", "| `trendline` | 3 |")),
+    Mutation("G-TOOLS", "drop the extend fields from the trendline's persistence cell",
+             subst("`geometry.points` ×2 · `geometry.extend_left` · `geometry.extend_right` · "
+                   "`style` (as served) | #1 ", "`geometry.points` ×2 · `style` (as served) | #1 ")),
     Mutation("G-GLYPHS", "rename a glyph in the register",
              subst("| ray | `ray` |", "| ray | `ray-line` |")),
     Mutation("G-INDEX", "map E14-S04 to the wrong user story",
@@ -1955,6 +2012,9 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("G-ROWS", "a due sprint before the first consumer's (re-pinned)",
              repinned(subst("| Sprint 06<!--=SPRINT:t02--> | open; routed by D08 G-1",
                             "| Sprint 02 | open; routed by D08 G-1"))),
+    Mutation("G-ROWS", "un-name the PROPOSED key `pos.wallet.stale` in its G row (re-pinned)",
+             repinned(subst("| G-15 | gap | Minor | The reason key `pos.wallet.stale`",
+                            "| G-15 | gap | Minor | The reason key `pos.wallet`"))),
     Mutation("G-ROWS", "grade a row outside the four",
              subst("| C-8 | contradiction | Info ", "| C-8 | contradiction | Note ")),
     Mutation("G-T2", "drop the measure Pin row (re-pinned)", repinned(drop_row("| measure Pin "))),
@@ -1969,6 +2029,11 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("G-EVENTS", "name an event no source defines",
              subst("and `drawing.removed` for SCR-036", "and `drawing.erased` for SCR-036")),
     Mutation("G-PENDING", "drop the v1.1 version row (re-pinned)", repinned(drop_row("| v1.1 "))),
+    Mutation("G-PENDING", "drop §8's cite of E14-D10's merge commit (re-pinned)",
+             repinned(subst("<!--=SHA:d10.merge-->", ""))),
+    Mutation("G-PENDING", "call the chapter pending again in the BQ list (re-pinned)",
+             repinned(subst("its chapter was cited from the ticket text only",
+                            "its chapter is \"pending, cited from the ticket text only\""))),
     Mutation("G-AHEAD", "type a margin by hand", anchor_edit("DAYS:margin.s10", "99")),
     Mutation("G-UNTOUCHED", "edit a parent in the same tree", parent_changed),
     Mutation("G-TICKS", "point a tick's evidence at a missing section (tool, 14 and §15.1)",
