@@ -6,7 +6,8 @@ the routing emitter, still the only path to a sink, whose sink hands the action 
 good for `widen_stop`); then the records written ahead, the hand-over and the answer. `on_error`
 decides what follows a result other than `ok`, `simulated` or `skipped`; a failed write, or a row no
 longer armed or not confirmed, stops the fire whatever it says. The run row is closed with the
-fire's status, every result is counted, a partial fire raises its alert, and nothing is rolled back.
+fire's status (`error` after a failed write, its close still tried once), every result is counted,
+a partial fire raises its alert, and nothing is rolled back.
 
 A simulate fire's actions go through the emitter to the simulation sink with no records; a refused
 fire's records and a scope-skipped evaluation's audits are record-only jobs (BQ-4). A cancel is
@@ -21,7 +22,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, Literal, NoReturn, cast
 
 import structlog
 
@@ -38,6 +39,7 @@ from candleviewer.rules.executor.ports import (
     RunRecords,
     RunRow,
     RunStatus,
+    SnapshotValue,
     audit_fields,
     input_snapshot,
     trigger_reason,
@@ -50,6 +52,7 @@ from candleviewer.rules.executor.results import (
     skipped_result,
 )
 from candleviewer.rules.executor.writeahead import WRITE_AHEAD_FAILED, FireRecords, WriteAheadFailed
+from candleviewer.rules.ir.canonical import IrValueError
 from candleviewer.rules.scope import ActionRequest, ActionSink
 
 #: What check 1 found (24 §11.5): the row still armed at the fire's version and `ir_hash`, no
@@ -79,23 +82,39 @@ def _log() -> Any:
 
 
 class _Unbound:
-    """The ports while the composition root has bound none: every write fails, so an armed action
-    is never handed over without its records (RE-R1)."""
+    """Ports that refuse every write, so an armed action is never handed over without its
+    records (RE-R1): the ports while the composition root has bound none, and (`_Unrecordable`)
+    a fire's own when its run row cannot be built."""
+
+    def _refuse(self, port: str) -> NoReturn:
+        raise RuntimeError(f"rule action {port} not bound")
 
     async def begin(self, run: RunRow, first: EventRow) -> None:
-        raise RuntimeError("rule action records not bound")
+        self._refuse("records")
 
     async def append(self, run_id: Any, events: Any) -> None:
-        raise RuntimeError("rule action records not bound")
+        self._refuse("records")
 
     async def close(self, run_id: Any, status: RunStatus, duration_ms: int) -> None:
-        raise RuntimeError("rule action records not bound")
+        self._refuse("records")
 
     async def fired(self, fields: ActionAuditFields) -> None:
-        raise RuntimeError("rule action audit not bound")
+        self._refuse("audit")
 
     async def blocked(self, fields: ActionAuditFields) -> None:
-        raise RuntimeError("rule action audit not bound")
+        self._refuse("audit")
+
+
+class _Unrecordable(_Unbound):
+    """A fire's ports when its snapshot holds a value `input_snapshot` refuses (a non-finite or
+    over-wide decimal): each write fails with that error, which names no value, so the fire stops
+    as one whose write ahead failed, and no record holds the value."""
+
+    def __init__(self, refused: IrValueError) -> None:
+        self._loc, self._reason = refused.loc, refused.reason
+
+    def _refuse(self, port: str) -> NoReturn:
+        raise IrValueError(self._loc, self._reason)
 
 
 @dataclass(slots=True)
@@ -127,13 +146,15 @@ def _status(results: list[ActionResult]) -> RunStatus:
     return "ok" if outcomes <= {"ok", "simulated"} else "aborted"
 
 
-def _run_row(fire: Fire) -> RunRow:
+def _run_row(fire: Fire, snapshot: Mapping[str, SnapshotValue] | None = None) -> RunRow:
+    """The fire's `rule_runs` row, under the mode its actions carry: the stored row's as the rule
+    was evaluated, `simulate` or `armed`, for a fire the full queue refused too."""
     instance = fire.requests[0].instance
     return RunRow(
         run_id=fire.run_id, rule_id=fire.rule_id, version_id=fire.version_id or "",
-        mode="armed", trigger_reason=trigger_reason(fire.trigger_type),
+        mode=fire.requests[0].mode, trigger_reason=trigger_reason(fire.trigger_type),
         account_id=instance.account_id, symbol=instance.symbol, matched=True,
-        input_snapshot=input_snapshot(fire.metric_values),
+        input_snapshot=input_snapshot(fire.metric_values) if snapshot is None else snapshot,
     )  # fmt: skip
 
 
@@ -192,12 +213,14 @@ class ActionExecutor:
                 return
 
     async def _throttled(self, fire: Fire) -> None:
-        """A fire the full fire queue refused, off the tick (BQ-4): its run row closed
-        `throttled`, and per action `action_fail` (`blocked`, `backpressure`, no account) and
-        `rules.blocked`. Its metrics were counted on the tick."""
+        """A fire the full fire queue refused, off the tick (BQ-4): per action `action_fail`
+        (`blocked`, `backpressure`, no account) and `rules.blocked`, then its run row closed
+        `throttled`, or `error` after a failed write, its close still tried once (BQ-9). Its
+        metrics were counted on the tick."""
         if not fire.requests:
             return
-        records = FireRecords(_run_row(fire), self._records, self._audit)
+        records = self._records_for(fire)
+        status: RunStatus = "throttled"
         try:
             for req in fire.requests:
                 key = dedupe_key(
@@ -209,15 +232,13 @@ class ActionExecutor:
                     resolved_accounts=(), dedupe_key=key, reason="backpressure",
                 )  # fmt: skip
                 await records.refused(result, audit_fields(req, account_id=None, dedupe_key=key))
-            await records.closed("throttled", 0)
         except WriteAheadFailed as failed:
-            _log().error(
-                "rules.records_failed", rule_id=fire.rule_id, run_id=str(fire.run_id),
-                write=failed.write, cause=failed.cause,
-            )  # fmt: skip
+            status = "error"
+            self._records_failed(fire, failed)
+        await self._close(fire, records, status, 0)
 
     async def _armed(self, fire: Fire) -> None:
-        records = FireRecords(_run_row(fire), self._records, self._audit)
+        records = self._records_for(fire)
         started, results = self._clock(), list[ActionResult]()
         stop: Stop | None = None
         writable, alerted = True, False
@@ -232,16 +253,26 @@ class ActionExecutor:
                 stop = self._stop_after(action, result)
             results.append(result)
             self._metrics.result(result)
-            if writable and not await self._keep(records, result, fields):
+            if writable and not await self._keep(fire, records, result, fields):
                 writable = False
                 if stop in (None, "abort"):
                     stop = "write"  # a write after the answer stops the rest the same way
             if (stop == "write" or not writable) and not alerted:
                 alerted = True  # AC-14: once per fire, naming the action whose write failed
                 await self._alert_write(fire, req)
-        if writable:
-            await self._close(fire, records, _status(results), started)
+        status: RunStatus = _status(results) if writable else "error"  # a failed write: closed too
+        await self._close(fire, records, status, max(0, int((self._clock() - started) * 1000)))
         await self._settle(fire, results, troubled=alerted)
+
+    def _records_for(self, fire: Fire) -> FireRecords:
+        """The fire's records. One whose run row cannot be built, as its snapshot holds a value
+        `input_snapshot` refuses, gets ports that refuse every write: it stops as a fire whose
+        write ahead failed, nothing sent, and an armed one raises the alert (AC-14)."""
+        try:
+            return FireRecords(_run_row(fire), self._records, self._audit)
+        except IrValueError as refused:
+            unwritable = _Unrecordable(refused)
+            return FireRecords(_run_row(fire, snapshot={}), unwritable, unwritable)
 
     async def _bounded(self, fire: Fire, action: _Action) -> ActionResult:
         """The action's whole step under `ACTION_TIMEOUT_S`: a timeout after its hand-over began
@@ -387,33 +418,37 @@ class ActionExecutor:
         )  # fmt: skip
 
     async def _keep(
-        self, records: FireRecords, result: ActionResult, fields: ActionAuditFields
+        self, fire: Fire, records: FireRecords, result: ActionResult, fields: ActionAuditFields
     ) -> bool:
         """The result's records: a refusal's `action_fail` and `rules.blocked`, any other's event.
-        False when a write failed; the caller then writes nothing more for the fire."""
+        False when a write failed; the caller then writes nothing more for the fire but its
+        close."""
         try:
             if result.blocked_by is not None:
                 await records.refused(result, fields)
             else:
                 await records.answered(result)
         except WriteAheadFailed as failed:
-            _log().error(
-                "rules.records_failed", rule_id=fields.rule_id, run_id=str(fields.run_id),
-                write=failed.write, cause=failed.cause,
-            )  # fmt: skip
+            self._records_failed(fire, failed)
             return False
         return True
 
+    def _records_failed(self, fire: Fire, failed: WriteAheadFailed) -> None:
+        _log().error(
+            "rules.records_failed", queue=fire.queue, rule_id=fire.rule_id,
+            run_id=str(fire.run_id), write=failed.write, cause=failed.cause,
+        )  # fmt: skip
+
     async def _close(
-        self, fire: Fire, records: FireRecords, status: RunStatus, started: float
+        self, fire: Fire, records: FireRecords, status: RunStatus, duration_ms: int
     ) -> None:
-        duration_ms = max(0, int((self._clock() - started) * 1000))
+        """The run row's close, tried once whatever was written before (BQ-9)."""
         try:
             await records.closed(status, duration_ms)
         except WriteAheadFailed as failed:  # the row stays `running`
             _log().error(
-                "rules.run_close_failed", rule_id=fire.rule_id, run_id=str(fire.run_id),
-                cause=failed.cause,
+                "rules.run_close_failed", queue=fire.queue, rule_id=fire.rule_id,
+                run_id=str(fire.run_id), cause=failed.cause,
             )  # fmt: skip
 
     async def _alert_write(self, fire: Fire, req: ActionRequest) -> None:

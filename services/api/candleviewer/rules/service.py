@@ -439,18 +439,20 @@ class RulesService:
         after it; the workers of the fire queue, then of the audit queue in what is left of that
         one grace, drain them while the manager still answers the re-reads; then the manager
         cancels its tick disarms in flight and stops the live B9 rule charts. A cancel during the
-        fire queue's drain ends the audit queue's workers at once too, then goes on (#5231's carry
-        RC-02): no queue outlives the module."""
+        runner's stop or the fire queue's drain goes on to the caller, and ends both queues'
+        workers at once too (#5231's carry RC-02): no queue outlives the module."""
         self._started = False
-        if self.runner is not None:
-            await self.runner.stop()
-        self.runner = self.metric_source = None
         deadline, drained = monotonic() + grace_s, False
         try:
+            if self.runner is not None:
+                await self.runner.stop()
+            self.runner = self.metric_source = None
             if self._dispatch is not None:
                 await self._dispatch.stop(max(0.0, deadline - monotonic()))
             drained = True
         finally:
+            if self._dispatch is not None and not drained:
+                await self._dispatch.stop(0.0)  # a no-op once its own stop has begun
             if self._audits is not None:
                 await self._audits.stop(max(0.0, deadline - monotonic()) if drained else 0.0)
             self._dispatch = self._audits = self._executor = None

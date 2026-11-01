@@ -34,7 +34,7 @@ async def test_rules_fired_and_blocked_are_registered_and_keyed(
     assert KEYED_ACTIONS["rules.fired"] != KEYED_ACTIONS["rules.blocked"]
     section = _DOC.read_text("utf-8").split("\n### 15.5 ", 1)[1].split("\n### 15.6 ", 1)[0]
     vocabulary = " ".join(section.split())
-    assert "and are registered (E35-T09):" in vocabulary
+    assert "are registered as `rules.fired` and `rules.blocked` (E35-T09)," in vocabulary
     assert "are not registered yet: E35-T09" not in vocabulary
     writer = AuditWriter(repo, str(tmp_path / "audit.wal"), clock=clock, sleep=repo.retry_sleep)
     await writer.start()

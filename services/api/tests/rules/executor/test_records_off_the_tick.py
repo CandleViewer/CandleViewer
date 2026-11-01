@@ -16,7 +16,9 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.rules.executor import dispatch
-from candleviewer.rules.executor.ports import EventRow, RunRow
+from candleviewer.rules.executor.keys import dedupe_key
+from candleviewer.rules.executor.ports import ActionAuditFields, EventRow, RunRow
+from candleviewer.rules.scope import ActionRequest
 from tests.rules.executor.test_dispatch import GUARD_S, DispatchRig, Start, _actions, rig, start
 from tests.rules.test_scope_wiring import A, B
 
@@ -64,6 +66,7 @@ async def test_a_refused_fire_writes_one_blocked_record_per_action_off_the_tick(
     rig.sink.release(rid, 4)
     await rig.settle()
     assert rig.records.closed[refused] == ("throttled", 0)
+    assert rig.records.runs[refused].mode == "armed"  # the rule's own mode (below: `simulate`)
     rows = [(e.kind, e.payload["node_id"], e.payload["outcome"], e.payload["blocked_by"],
              e.payload["account_id"]) for r, e in rig.records.events if r == refused]  # fmt: skip
     assert rows == [("action_fail", n, "blocked", "backpressure", None) for n in ("a1", "a2")]
@@ -71,7 +74,50 @@ async def test_a_refused_fire_writes_one_blocked_record_per_action_off_the_tick(
         (verb, f.node_id, f.blocked_by) for verb, f in rig.records.audits if f.run_id == refused
     ]
     assert mine == [("rules.blocked", n, "backpressure") for n in ("a1", "a2")]
+    theirs = [f for _, f in rig.records.audits if f.run_id == refused]
+    assert [(f.account_id, f.dedupe_key) for f in theirs] == [
+        (None, _unresolved_key(f)) for f in theirs
+    ]
     assert rig.counted.blocked() == {"backpressure": 2}
+
+
+def _unresolved_key(f: ActionAuditFields) -> str:
+    """An unresolved action's key (24 §11.9): its account is the JSON `null`."""
+    return dedupe_key(
+        rule_id=f.rule_id, version=f.version, scope_instance=f.scope_instance, node_id=f.node_id,
+        run_id=f.run_id, account_id=None,
+    )  # fmt: skip
+
+
+async def test_a_refused_simulate_fire_is_recorded_under_its_own_mode(
+    start: Start, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `simulate` rule's fire the full queue refuses is recorded as an armed one's is (24 §11.5
+    "The fire queue"), under its own mode: its run row names `simulate`, never `armed`, closed
+    `throttled`, with its `rules.blocked` record, and no armer."""
+    monkeypatch.setattr(dispatch, "FIRE_QUEUE_BOUND", 1)
+    rig = await start()
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held(_req: ActionRequest) -> None:  # the simulation sink holds fire 1's worker
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(rig.svc, "_simulation_sink", held)
+    await rig.add("simulate")
+    await rig.fire()
+    async with asyncio.timeout(GUARD_S):
+        await entered.wait()  # fire 1 is in the simulation sink
+    await rig.fire()  # fire 2 waits
+    await rig.fire()  # fire 3 is refused
+    release.set()
+    await rig.settle()
+    refused = uuid.UUID(int=3)
+    run = rig.records.runs[refused]
+    assert (run.mode, rig.records.closed[refused]) == ("simulate", ("throttled", 0))
+    mine = [(verb, f.blocked_by, f.armed_by) for verb, f in rig.records.audits]
+    assert mine == [("rules.blocked", "backpressure", None)]
+    assert set(rig.records.runs) == {refused}  # a simulate fire that ran writes no row
 
 
 async def test_a_full_record_queue_sheds_and_counts_never_awaits(
@@ -143,6 +189,8 @@ async def test_every_scope_denial_counts_once_under_scope(
         (f.rule_id, f.blocked_by) for verb, f in rig.records.audits if verb == "rules.blocked"
     ]
     assert (armed, "scope") in refusals and rig.sink.entered == []
+    denials = [(event, data["reason"]) for event, data in rig.audits[2:]]
+    assert denials == [("rule_action_scope_denied", "grant_revoked")]  # the emitter's own record
 
 
 async def test_stop_leaves_an_in_flight_fires_run_row_running(rig: DispatchRig) -> None:

@@ -65,6 +65,22 @@ def test_the_blocked_metric_never_counts_a_result_without_a_reason() -> None:
     assert counted.of("rule_actions_total")[("blocked", "flatten_position")] == 1
 
 
+def test_a_skipped_result_is_counted_but_never_timed() -> None:
+    """`rule_action_duration_seconds` times an action from its dispatch to its result (20
+    §12.1): a `skipped` result was never attempted, so it is counted by type and outcome and
+    observed in no bucket, while an attempted one of the same type is."""
+    counted = Counted()
+    ids = {**_IDS, "node_id": "a1", "action_type": "flatten_position"}
+    counted.metrics.result(skipped_result(**ids))
+    counted.metrics.result(skipped_result(**ids, reason="mode_changed"))
+    timed = {"env": "demo", "type": "flatten_position"}
+    count = "rule_action_duration_seconds_count"
+    assert counted.facade.registry.get_sample_value(count, timed) is None
+    assert counted.of("rule_actions_total") == {("skipped", "flatten_position"): 2}
+    counted.metrics.result(_result("a2", "flatten_position", "failed", 4_000))
+    assert counted.facade.registry.get_sample_value(count, timed) == 1
+
+
 def test_the_executor_series_are_live_with_closed_labels() -> None:
     specs = {s.name: s for s in CATALOGUE}
     expected = {

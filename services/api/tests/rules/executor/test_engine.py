@@ -13,6 +13,7 @@ import asyncio
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -218,11 +219,13 @@ async def test_on_error_matrix(mode: str, answer: HandlerAnswer, outcome: str) -
     assert len(engine.handler.sent) == (1 if stops else 2)
 
 
-async def test_retry_once_reuses_the_same_request_and_key() -> None:
-    """Scenario: A retry reuses the same request and key (edge case): after no answer, one retry
-    with the same fingerprint, dedupe key and `client_ref`; one `rules.fired` keyed by that key.
-    An in-flight answer is recorded `unknown` and not re-sent (below)."""
-    engine = Engine(Handler({"a1": [NO_ANSWER, OK]}))
+@pytest.mark.parametrize("answer", [NO_ANSWER, PRE_ANCHOR], ids=["no_answer", "pre_anchor"])
+async def test_retry_once_reuses_the_same_request_and_key(answer: HandlerAnswer) -> None:
+    """Scenario: A retry reuses the same request and key (edge case): after no answer, or a
+    refusal before the anchor existed (24 §11.9), one retry with the same fingerprint, dedupe key
+    and `client_ref`; one `rules.fired` keyed by that key. An in-flight answer is recorded
+    `unknown` and not re-sent (below)."""
+    engine = Engine(Handler({"a1": [answer, OK]}))
     await engine.run("a1", on_error="retry_once")
     (first, again) = engine.handler.sent
     assert first == again == ("a1", client_ref(key("a1")), first[2])
@@ -278,7 +281,7 @@ async def test_the_write_ahead_comes_first(
     (AC-14). A retried write-ahead's one audit record: the retry test above, and the real writer's
     in `test_write_ahead.py`."""
     if late:
-        monkeypatch.setattr(writeahead, "WRITE_AHEAD_TIMEOUT_S", 0.0)
+        monkeypatch.setattr(writeahead, "FIRE_RECORD_TIMEOUT_S", 0.0)
     records = FlakyRecords(write, nth, hang=late)
     engine = Engine(Handler({"a0": [OK], "a1": [OK], "a2": [OK]}), records=records)
     nodes = ("a0", "a1", "a2") if write == "append" else ("a1", "a2")  # a0 lands the run row
@@ -498,15 +501,19 @@ async def test_the_unbound_ports_refuse_every_write(write: str) -> None:
 
 async def test_a_failed_write_after_the_answer_stops_the_rest_and_alerts() -> None:
     """24 §11.5: a write after the answer that fails stops the rest the same way, the answered
-    result standing; nothing more is written for the fire and its row stays `running`."""
+    result standing; nothing more is written for the fire but its close, still tried once, as
+    `error` (BQ-9), so the row never stays `running` after its fire ended."""
     records = FailingRecords("append", nth=1)  # a1's `action_ok`
     engine = Engine(Handler({"a1": [OK], "a2": [OK]}), records=records)
     with capture_logs() as logs:
         await engine.run("a1", "a2", on_error="continue")
     assert [node for node, _, _ in engine.handler.sent] == ["a1"]
     assert [a[0] for a in engine.alerts.raised] == ["write_ahead_failed"]
-    assert RUN not in records.closed and [e.kind for _, e in records.events] == ["action_start"]
-    assert [e["write"] for e in logs if e["event"] == "rules.records_failed"] == ["event"]
+    assert records.closed[RUN][0] == "error" and [e.kind for _, e in records.events] == [
+        "action_start"
+    ]
+    failed = [(e["queue"], e["write"]) for e in logs if e["event"] == "rules.records_failed"]
+    assert failed == [("rule-dispatch", "event")]
 
 
 async def test_a_close_that_fails_leaves_the_run_running_and_is_logged() -> None:
@@ -515,8 +522,51 @@ async def test_a_close_that_fails_leaves_the_run_running_and_is_logged() -> None
     with capture_logs() as logs:
         await engine.run("a1")
     assert RUN not in records.closed and outcomes(records) == [("a1", "ok")]
-    closes = [e["cause"] for e in logs if e["event"] == "rules.run_close_failed"]
-    assert closes == ["ConnectionError"]
+    closes = [(e["queue"], e["cause"]) for e in logs if e["event"] == "rules.run_close_failed"]
+    assert closes == [("rule-dispatch", "ConnectionError")]
+
+
+async def test_an_armed_fires_close_carries_its_duration() -> None:
+    """The run row's close carries the fire's own `duration_ms`, from its start to its last
+    result, on the executor's clock (24 §11.5)."""
+    now = [100.0]
+
+    class Slow(Handler):
+        async def send(self, prep: Prepared, *, client_ref: str) -> HandlerAnswer:
+            now[0] += 1.25  # the handler's answer takes 1.25 s
+            return await super().send(prep, client_ref=client_ref)
+
+    engine = Engine(Slow({"a1": [OK]}))
+    engine.executor = ActionExecutor(
+        check_one=engine.check_one, recheck=engine.recheck, records=engine.records,
+        audit=engine.records, handlers=engine.executor._handlers, clock=lambda: now[0],
+    )  # fmt: skip
+    await engine.run("a1")
+    assert engine.records.closed[RUN] == ("ok", 1250)
+    (answered,) = [e.payload for _, e in engine.records.events if e.kind == "action_ok"]
+    assert answered["duration_us"] == 1_250_000
+
+
+async def test_a_snapshot_no_run_row_can_hold_stops_the_fire_as_a_failed_write() -> None:
+    """A metric value `input_snapshot` refuses (an over-wide decimal) leaves the fire no run row
+    to write: it stops as one whose write ahead failed, nothing sent and nothing recorded, the
+    alert raised once and each failed write logged by its class alone, never the value."""
+    engine = Engine(Handler({"a1": [OK], "a2": [OK]}))
+    wide = replace(fire(engine.emit, "a1", "a2"), metric_values={"price": Decimal("1E+100")})
+    with capture_logs() as logs:
+        async with asyncio.timeout(GUARD_S):
+            await engine.executor.execute(wide)
+    assert engine.handler.sent == [] and engine.records.runs == {}
+    assert engine.records.events == [] and engine.records.audits == []
+    assert engine.alerts.raised == [("write_ahead_failed", RULE, RUN, "a1")]
+    assert engine.counted.of("rule_actions_total") == {
+        ("failed", "send_notification"): 1, ("skipped", "send_notification"): 1,
+    }  # fmt: skip
+    failed = [(e["event"], e["cause"]) for e in logs if e["log_level"] == "error"]
+    assert failed == [
+        ("rules.records_failed", "IrValueError"), ("rules.run_close_failed", "IrValueError"),
+    ]  # fmt: skip
+    assert "1E+100" not in repr(logs) and "1e+100" not in repr(logs).lower()
 
 
 async def test_a_retry_whose_write_ahead_fails_keeps_the_first_result() -> None:
@@ -583,16 +633,22 @@ async def test_a_scope_denial_job_that_raises_is_logged_on_the_audit_queue() -> 
     assert engine.records.events == []
 
 
-async def test_a_refused_fires_records_that_fail_are_logged() -> None:
-    """A refused fire's record-only job whose write fails is logged by the write and the class
-    alone; a job with no action writes nothing."""
-    records = FlakyRecords("begin", 1)
+@pytest.mark.parametrize(("write", "kept"), [("begin", []), ("append", ["a1"])])
+async def test_a_refused_fires_records_that_fail_are_logged(write: str, kept: list[str]) -> None:
+    """A refused fire's record-only job whose write fails (the row with a1's records, or a2's
+    `action_fail`) is logged by its queue, the write and the class alone, and writes nothing
+    more but its row's close, still tried once, as `error` (BQ-9); a job with no action writes
+    nothing."""
+    records = FlakyRecords(write, 1)
     engine = Engine(Handler({}), records=records)
-    refused = replace(fire(engine.emit, "a1"), kind="refused_fire")
+    refused = replace(fire(engine.emit, "a1", "a2", "a3"), kind="refused_fire")
     with capture_logs() as logs:
         await engine.executor.execute(refused)
         await engine.executor.execute(replace(refused, requests=()))
-    assert [(e["write"], e["cause"]) for e in logs if e["event"] == "rules.records_failed"] == [
-        ("run", "ConnectionError")
+    failed = [
+        (e["queue"], e["write"], e["cause"]) for e in logs if e["event"] == "rules.records_failed"
     ]
-    assert records.calls == {"begin": 1} and records.events == []
+    kind = "run" if write == "begin" else "event"
+    assert failed == [("rule-dispatch-audit", kind, "ConnectionError")]
+    assert [e.node_ref for _, e in records.events] == [f.node_id for _, f in records.audits] == kept
+    assert records.closed == {RUN: ("error", 0)}

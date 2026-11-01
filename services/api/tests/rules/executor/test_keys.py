@@ -104,6 +104,7 @@ def test_request_sha256_changes_with_every_field_and_never_with_key_order() -> N
     request: dict[str, Any] = {
         "symbol": "BTCUSDT", "side": "buy", "qty": Decimal("0.010"), "reduce_only": False,
         "stop": {"trigger": Decimal("62000"), "mode": "absolute"}, "tags": ["a", None, 3],
+        "account": ACCOUNT,
     }  # fmt: skip
     digest = request_sha256(request)
     reordered = {k: request[k] for k in reversed(request)} | {
@@ -111,13 +112,15 @@ def test_request_sha256_changes_with_every_field_and_never_with_key_order() -> N
     }
     assert request_sha256(reordered) == digest
     text = json.dumps(
-        {**request, "qty": "0.01", "stop": {"mode": "absolute", "trigger": "62000"}},
+        {**request, "qty": "0.01", "stop": {"mode": "absolute", "trigger": "62000"},
+         "account": str(ACCOUNT)},
         sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     )  # fmt: skip
-    assert digest == hashlib.sha256(text.encode("utf-8")).hexdigest()
+    assert digest == hashlib.sha256(text.encode("utf-8")).hexdigest()  # an id in canonical form
     changed = {
         "symbol": "ETHUSDT", "side": "sell", "qty": Decimal("0.011"), "reduce_only": True,
         "stop": {"trigger": Decimal("62001"), "mode": "absolute"}, "tags": ["a", None, 4],
+        "account": uuid.UUID(int=9),
     }  # fmt: skip
     for field, value in changed.items():
         assert request_sha256(request | {field: value}) != digest, field

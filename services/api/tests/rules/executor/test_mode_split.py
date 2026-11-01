@@ -103,12 +103,12 @@ class Rig:
         assert self.svc._audits is not None
         return self.svc._audits
 
-    async def fire(self, price: str = "150") -> None:
+    async def fire(self, price: str = "150", trigger: str = "on_price_update") -> None:
         """One tick: the rules evaluate and their fires are queued, not yet run."""
         self.clock.t += 2_000  # past the default cooldown
         assert self.svc.metric_source is not None
         self.svc.metric_source.push(PRICE, Decimal(price), self.clock.t)
-        await self.runner.process(EvalTick("on_price_update", "BTCUSDT"))
+        await self.runner.process(EvalTick(trigger, "BTCUSDT"))
 
     async def settle(self) -> None:
         await asyncio.gather(*self.svc._tasks)
