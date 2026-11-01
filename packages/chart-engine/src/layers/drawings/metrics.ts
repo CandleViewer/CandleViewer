@@ -1,6 +1,8 @@
 // `engine_drawing_*` (E14-T03 PR 2, ticket Observability): the drawings layer's counters, kept on
 // its node and posted on the worker's `frame` message (the engine's stats channel, §6) as the
-// additive `drawings` block; read by tests. Not on §8's public `FrameStats` (the `engine.pick.*`
+// additive `drawings` block; read by tests. The block is this one mutable object, reused every
+// frame (no per-frame allocation): a worker post clones it; an inline receiver must copy what it
+// keeps. Not on §8's public `FrameStats` (the `engine.pick.*`
 // precedent, G-24): the debug overlay that shows them is the app's. DOM- and GL-free.
 
 /** Upper bounds of `engine_drawing_layer_frame_ms`'s buckets (ms); the last one is open. */
@@ -20,6 +22,8 @@ export interface DrawingMetrics {
   readonly tokenFallbacks: number;
   /** The last token key the theme lacked (the warn), or null. */
   readonly missingToken: string | null;
+  /** `engine_drawing_layer_frame_ms`'s counts, one per `LAYER_MS_BUCKETS` bucket (closed: 9). */
+  readonly layerFrameHistogram: Uint32Array;
 }
 
 export class DrawingCounters implements DrawingMetrics {
@@ -38,17 +42,5 @@ export class DrawingCounters implements DrawingMetrics {
     let i = 0;
     while (ms > (LAYER_MS_BUCKETS[i] as number)) i += 1;
     this.layerFrameHistogram[i] = (this.layerFrameHistogram[i] as number) + 1;
-  }
-
-  /** A plain copy for the `frame` message (structured-cloned in worker mode). */
-  snapshot(): DrawingMetrics {
-    return {
-      count: this.count,
-      layerFrameMs: this.layerFrameMs,
-      instanceUploads: this.instanceUploads,
-      textDrawCalls: this.textDrawCalls,
-      tokenFallbacks: this.tokenFallbacks,
-      missingToken: this.missingToken,
-    };
   }
 }

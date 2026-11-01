@@ -16,7 +16,8 @@ describe("engine_drawing_* counters", () => {
       ),
     );
     expect(c.layerFrameMs).toBe(1e9);
-    expect(c.snapshot()).toEqual({
+    expect(c).toEqual({
+      layerFrameHistogram: c.layerFrameHistogram,
       count: 0,
       layerFrameMs: 1e9,
       instanceUploads: 0,

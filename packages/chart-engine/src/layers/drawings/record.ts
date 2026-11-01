@@ -45,7 +45,11 @@ export function parseHex(css: string | undefined): number | null {
   return Number.parseInt(full.length === 6 ? `${full}ff` : full, 16);
 }
 
-/** Set by the last `resolveColour` that fell back: the token key the theme lacked (or null). */
+/**
+ * Set by the last `resolveColour` that fell back: the token key the theme lacked (or null). A
+ * module-level out-parameter, so resolving allocates nothing; safe because `resolveColours` is
+ * not re-entrant (synchronous, no callbacks) and its caller reads it at once.
+ */
 export const MISSED: { token: string | null } = { token: null };
 
 /**

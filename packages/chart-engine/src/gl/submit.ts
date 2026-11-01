@@ -61,7 +61,9 @@ export function submitDrawList(
   let program = -1;
   let texture = -1;
   let block: PaneUniforms | null = null; // set on the current program: once per (pane, program)
-  const blend = parts.blend ?? { on: -1 }; // the backend keeps it across frames: no call per frame
+  // The backend keeps it across frames (GLBackend starts it at 0, a fresh or restored context's
+  // default), so a steady chart makes no blend call; without one, the first program sets it.
+  const blend = parts.blend ?? { on: -1 };
   try {
     for (let i = 0; i < count; i += 1) {
       const b = list[i] as RetainedBatch; // i < count <= list.length

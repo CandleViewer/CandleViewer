@@ -168,6 +168,12 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       [3, 6],
       [0, 3],
     ]);
+    // Frozen, table and rows: a caller cannot rewrite the dashes under the shaders (strict mode).
+    const dash = root.DRAWING_DASH as unknown as number[][];
+    expect(() => void (dash[1] = [9, 9])).toThrow(TypeError);
+    expect(() => void ((dash[1] as number[])[0] = 9)).toThrow(TypeError);
+    expect(() => void dash.push([1, 1])).toThrow(TypeError);
+    expect(root.DRAWING_DASH[1]).toEqual([3, 6]);
     expect(surface.print("createChart")).toBe("(opts: ChartOptions) => Chart");
     expect(surface.print("toTicks")).toBe(
       "(price: number, priceOrigin: number, tickSize: number) => number",

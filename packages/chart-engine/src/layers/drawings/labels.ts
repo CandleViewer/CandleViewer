@@ -3,8 +3,8 @@
 // chart space, so a pan or zoom rewrites nothing; the glyph boxes are device px (CSS × dpr) and
 // rebuilt on DATA, STYLE or a DPR change only, and then only for the records that changed. Beside
 // the glyphs it keeps one run per label (the anchor, offset, font px and colour) and the label
-// strings themselves, which the Canvas 2D path
-// draws with `fillText` (26 §3.7's fallback): text as data, never parsed, no CSS built from it.
+// strings themselves, which the Canvas 2D path draws with `fillText` (26 §3.7's fallback): text as
+// data, never parsed, no CSS built from it.
 // Glyph metrics come through the `GlyphSource` seam (#358 BQ-1). DOM- and GL-free.
 import { attributeOffset, PROGRAM } from "../../scene/instance-layout.js";
 import {
@@ -83,7 +83,6 @@ export class LabelInstances extends InstanceRing {
     super(LABEL_STRIDE);
   }
 
-  /** Writes every label's glyphs and run in draw order; a pan never calls this. */
   /**
    * Writes the labels in draw order, incrementally: a record whose glyphs and run sit where it
    * last wrote them, under the same epoch (DPR, opacity, glyph source, theme and capacity), is

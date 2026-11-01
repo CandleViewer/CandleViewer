@@ -101,13 +101,16 @@ describe("engine_drawing_* on the frame message", () => {
       textDrawCalls: 1,
       tokenFallbacks: 0,
       missingToken: null,
+      layerFrameHistogram: Uint32Array.from([1, 0, 0, 0, 0, 0, 0, 0, 0]), // 0 ms: bucket 0
     });
+    const block = last().drawings;
     cmd({ k: "setViewport", timeStart: T(5), timeEnd: T(70) }); // a pan: no upload
     frame();
     expect(last().drawings?.instanceUploads).toBe(uploads);
     cmd({ k: "setDrawings", op: "patch", drawings: [{ ...DRAWINGS[2], points: [T(41), 121] }] });
     frame();
     expect(last().drawings?.instanceUploads).toBe(uploads + 4); // "note"'s 4 glyphs moved
+    expect(last().drawings).toBe(block); // one block, reused: no allocation per frame (inline)
   });
 
   it("counts a theme token the theme lacks (the warn names it), and stops once it is there", () => {

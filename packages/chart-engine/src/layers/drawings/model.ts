@@ -39,11 +39,11 @@ export const WIDTH_MAX = 8;
  * solid; dashed, a 4w dash and a 2w gap; dotted, a 1w dot and a 2w gap. The engine default
  * pending E14-D04's value (#358 BQ-358-7); E14-T02 and both drawing shaders read this one table.
  */
-export const DRAWING_DASH: readonly (readonly [core: number, period: number])[] = [
-  [0, 0],
-  [3, 6],
-  [0, 3],
-];
+export const DRAWING_DASH: readonly (readonly [core: number, period: number])[] = Object.freeze([
+  Object.freeze([0, 0] as const),
+  Object.freeze([3, 6] as const),
+  Object.freeze([0, 3] as const),
+]); // frozen: a root export (BQ-358-7) no caller can rewrite under the shaders
 /** A theme token key (BQ-4): an engine-category name the theme object resolves; never CSS. */
 const TOKEN = /^color\.(drawing|position|chart)\.[a-z0-9]+([.-][a-z0-9]+)*$/;
 export const isColourToken = (v: unknown): v is string =>

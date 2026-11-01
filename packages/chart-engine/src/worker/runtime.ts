@@ -920,7 +920,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         lod: inst.lod,
         dpr: inst.dpr,
         backingStorePx: [width, height],
-        ...(inst.drawings !== null && { drawings: inst.drawings.metrics() }), // engine_drawing_*
+        ...(inst.drawings !== null && inst.drawings.frameField()), // engine_drawing_*, reused
       });
     }
   }

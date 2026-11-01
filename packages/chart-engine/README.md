@@ -670,7 +670,8 @@ holds every incremental encode equal to a fresh one). The label box (advance × 
 descent, cached per record at measure time) widens the drawing's `drawingBounds`. The 2D path
 keeps one run per label (anchor, offset, size, colour) and the record's clamped string, and
 `fillText`s it, bucketed by colour and size: the font is `<px>px sans-serif`, built from the size
-alone, never from input (SR-E14-04); the text is data, never parsed (SR-E14-03).
+alone, never from input (SR-E14-04), its device-px size rounded to 1/16 px (the bucket key, as the
+2D line widths); the text is data, never parsed (SR-E14-03).
 
 **Blending.** `GL2Like` gains `enable`, `disable` and `blendFunc`. `PROGRAM_PREMULTIPLIED`
 (`src/gl/submit.ts`) marks the three drawings programs; submission turns BLEND on with
@@ -689,7 +690,8 @@ standing 5 % engine-bench gate is the relative one.
 the node's update, an injected clock), `engine_drawing_count`, `engine_drawing_instance_uploads_total`
 (changed instances across the three rings), `engine_text_draw_calls` (the label draw, ≤ 1 a pane)
 and `engine_drawing_token_fallbacks_total` with the last missing token (the warn), posted on the
-worker's `frame` message as the additive `drawings` block; §8's `FrameStats` is unchanged (the
+worker's `frame` message as the additive `drawings` block (with the histogram's 9 bucket counts;
+one object reused every frame, so an inline receiver copies what it keeps); §8's `FrameStats` is unchanged (the
 `engine.pick.*` precedent); the debug overlay that shows them is the app's.
 
 **`degraded-2d`**: lines, fills and labels draw in Canvas 2D; the capability notice is the

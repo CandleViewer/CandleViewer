@@ -198,6 +198,7 @@ export class DrawingsNode extends ContentNode {
   glyphs: GlyphSource = new FakeAtlas();
   /** `engine_drawing_*` (PR 2); `now` times the layer's update (an injected clock). */
   readonly counters = new DrawingCounters();
+  private readonly field = { drawings: this.counters as DrawingMetrics };
   now: () => number = () => 0;
   /** The theme object token colours resolve through (BQ-4); a change marks STYLE. */
   theme: ThemeColours = {};
@@ -243,10 +244,16 @@ export class DrawingsNode extends ContentNode {
     this.counters.observe(this.now() - start);
   }
 
-  /** The `frame` message's `drawings` block: the label draw as the last collect left it. */
+  /** The `frame` message's `drawings` block (the counters themselves, reused, not copied). */
   metrics(): DrawingMetrics {
-    this.counters.textDrawCalls = this.labelNode.drawn;
-    return this.counters.snapshot();
+    this.counters.textDrawCalls = this.labelNode.drawn; // as the last collect left it
+    return this.counters;
+  }
+
+  /** `{ drawings }` for the `frame` message's spread: one object, reused every frame. */
+  frameField(): { readonly drawings: DrawingMetrics } {
+    this.metrics();
+    return this.field;
   }
 
   private pass(ctx: FrameCtx): void {
