@@ -140,7 +140,7 @@ const headerOf = (id: string): HTMLElement => {
   return found;
 };
 
-describe("PositionsGrid (CMP-114): the treegrid", { timeout: 60_000 }, () => {
+describe("PositionsGrid (CMP-114): the treegrid", () => {
   it("marks one root with data-cmp and draws CMP-049's treegrid, named by its caption", async () => {
     const host = await mount(<Host />);
     expect(host.querySelectorAll('[data-cmp="CMP-114"]')).toHaveLength(1);
@@ -432,7 +432,7 @@ describe("PositionsGrid (CMP-114): the treegrid", { timeout: 60_000 }, () => {
   });
 });
 
-describe("PositionsGrid (CMP-114): LiqTierCell (D02 §5.3)", { timeout: 60_000 }, () => {
+describe("PositionsGrid (CMP-114): LiqTierCell (D02 §5.3)", () => {
   it.each([
     ["watch", "△ Watch 2.1", "Watch: 46 % of the entry buffer left, 2.1 % from liquidation"],
     [
@@ -505,7 +505,7 @@ describe("PositionsGrid (CMP-114): LiqTierCell (D02 §5.3)", { timeout: 60_000 }
   });
 });
 
-describe("PositionsGrid (CMP-114): GroupHeaderRow (D02 §5.5)", { timeout: 60_000 }, () => {
+describe("PositionsGrid (CMP-114): GroupHeaderRow (D02 §5.5)", () => {
   it("reads the label, the mode, the count, uPnL and rPnL today in its one rowheader", async () => {
     await mount(<Host />);
     const header = within(grid()).getByRole("rowheader", { name: /^Sub-1 · LIVE/ });
@@ -586,7 +586,7 @@ describe("PositionsGrid (CMP-114): GroupHeaderRow (D02 §5.5)", { timeout: 60_00
   });
 });
 
-describe("PositionsGrid (CMP-114): TotalsRow (D02 §5.2, D-15)", { timeout: 60_000 }, () => {
+describe("PositionsGrid (CMP-114): TotalsRow (D02 §5.2, D-15)", () => {
   it("is CMP-049's trailing rowgroup, led by its rowheader with the count and the exposure", async () => {
     await mount(<Host />);
     const groups = within(grid()).getAllByRole("rowgroup");
@@ -651,7 +651,7 @@ describe("PositionsGrid (CMP-114): TotalsRow (D02 §5.2, D-15)", { timeout: 60_0
   });
 });
 
-describe("PositionsGrid (CMP-114): selection (D-3)", { timeout: 60_000 }, () => {
+describe("PositionsGrid (CMP-114): selection (D-3)", () => {
   it("the box and Space on a cell toggle the row; Ctrl+A selects every position, closed groups' too", async () => {
     const onSelect = vi.fn();
     await mount(<Host onSelect={onSelect} collapsed={new Set(["sub-2"])} />);
@@ -704,183 +704,179 @@ const closeItems = (reason?: string): MenuItem[] =>
     }))
     .concat({ id: "chart", label: "Chart", onSelect: fn() });
 
-describe(
-  "PositionsGrid (CMP-114): the Actions column (CMP-057) and T2",
-  { timeout: 60_000 },
-  () => {
-    const VIEWER = "Your role can't change positions.";
+describe("PositionsGrid (CMP-114): the Actions column (CMP-057) and T2", () => {
+  const VIEWER = "Your role can't change positions.";
 
-    /** A Viewer's grid (D02 §10.4): one notice, every Close described by it (G-T2.5). */
-    function Viewer({ onClose }: { readonly onClose: () => void }): JSX.Element {
-      return (
-        <>
-          <p id="notice">{VIEWER}</p>
-          <Host
-            rowActions={(r): SplitButtonProps => ({
-              primary: { label: "Close", onClick: onClose },
-              items: closeItems(VIEWER),
-              menuLabel: `More close actions, ${r.symbol} ${r.sideWord} on ${r.accountLabel ?? ""}`,
-              disabledReason: VIEWER,
-              disabledReasonId: "notice",
-            })}
-          />
-        </>
-      );
+  /** A Viewer's grid (D02 §10.4): one notice, every Close described by it (G-T2.5). */
+  function Viewer({ onClose }: { readonly onClose: () => void }): JSX.Element {
+    return (
+      <>
+        <p id="notice">{VIEWER}</p>
+        <Host
+          rowActions={(r): SplitButtonProps => ({
+            primary: { label: "Close", onClick: onClose },
+            items: closeItems(VIEWER),
+            menuLabel: `More close actions, ${r.symbol} ${r.sideWord} on ${r.accountLabel ?? ""}`,
+            disabledReason: VIEWER,
+            disabledReasonId: "notice",
+          })}
+        />
+      </>
+    );
+  }
+
+  it("the T2 test: role and full label, aria-disabled never disabled, the notice in the DOM at mount, nothing sent", async () => {
+    const onClose = vi.fn();
+    const announce = vi.fn();
+    const host = await mount(
+      <GatedAnnounceProvider announce={announce}>
+        <Viewer onClose={onClose} />
+      </GatedAnnounceProvider>,
+    );
+    const closes = within(grid()).getAllByRole("button", { name: "Not available Close" });
+    expect(closes).toHaveLength(4);
+    for (const close of closes) {
+      expect(close).toHaveAttribute("aria-disabled", "true");
+      expect(close).not.toBeDisabled();
+      expect(close).toHaveAttribute("aria-describedby", "notice");
+      expect(close).toHaveAccessibleDescription(VIEWER);
     }
+    // One notice, many pointers: the reason's words are in the DOM once.
+    expect(within(host).getAllByText(VIEWER)).toHaveLength(1);
+    await userEvent.click(closes[0] as HTMLElement);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith(VIEWER);
+  });
 
-    it("the T2 test: role and full label, aria-disabled never disabled, the notice in the DOM at mount, nothing sent", async () => {
-      const onClose = vi.fn();
-      const announce = vi.fn();
-      const host = await mount(
-        <GatedAnnounceProvider announce={announce}>
-          <Viewer onClose={onClose} />
-        </GatedAnnounceProvider>,
-      );
-      const closes = within(grid()).getAllByRole("button", { name: "Not available Close" });
-      expect(closes).toHaveLength(4);
-      for (const close of closes) {
-        expect(close).toHaveAttribute("aria-disabled", "true");
-        expect(close).not.toBeDisabled();
-        expect(close).toHaveAttribute("aria-describedby", "notice");
-        expect(close).toHaveAccessibleDescription(VIEWER);
-      }
-      // One notice, many pointers: the reason's words are in the DOM once.
-      expect(within(host).getAllByText(VIEWER)).toHaveLength(1);
-      await userEvent.click(closes[0] as HTMLElement);
-      expect(onClose).not.toHaveBeenCalled();
-      expect(announce).toHaveBeenCalledTimes(1);
-      expect(announce).toHaveBeenCalledWith(VIEWER);
-    });
+  it("the T2 control stays in the roving grid: Enter reaches it, Enter on it sends nothing, ↑ / ↓ keep moving", async () => {
+    const onClose = vi.fn();
+    await mount(<Viewer onClose={onClose} />);
+    const main = rowNamed(/^BTCUSDT · Long · 0\.250/);
+    const cell = main.querySelector<HTMLElement>(".cv-positions-grid__actions");
+    act(() => cell?.focus());
+    await userEvent.keyboard("{Enter}");
+    const close = within(main).getByRole("button", { name: "Not available Close" });
+    expect(close).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(within(main).getByRole("button", { name: /^More close actions/ })).toHaveFocus();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(close).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(cell).toHaveFocus();
+  });
 
-    it("the T2 control stays in the roving grid: Enter reaches it, Enter on it sends nothing, ↑ / ↓ keep moving", async () => {
-      const onClose = vi.fn();
-      await mount(<Viewer onClose={onClose} />);
-      const main = rowNamed(/^BTCUSDT · Long · 0\.250/);
-      const cell = main.querySelector<HTMLElement>(".cv-positions-grid__actions");
-      act(() => cell?.focus());
-      await userEvent.keyboard("{Enter}");
-      const close = within(main).getByRole("button", { name: "Not available Close" });
-      expect(close).toHaveFocus();
-      await userEvent.keyboard("{Enter}");
-      expect(onClose).not.toHaveBeenCalled();
-      await userEvent.keyboard("{ArrowRight}");
-      expect(within(main).getByRole("button", { name: /^More close actions/ })).toHaveFocus();
-      await userEvent.keyboard("{ArrowLeft}");
-      expect(close).toHaveFocus();
-      await userEvent.keyboard("{Escape}");
-      expect(cell).toHaveFocus();
-    });
+  it("the row menu (Shift+F10) repeats the primary first, its gate as the item's second line", async () => {
+    await mount(<Viewer onClose={vi.fn()} />);
+    const main = rowNamed(/^BTCUSDT · Long · 0\.250/);
+    act(() => within(main).getAllByRole("gridcell")[1]?.focus());
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = await page.findByRole("menu", { name: "Actions for BTCUSDT Long on Main" });
+    const items = within(menu).getAllByRole("menuitem");
+    expect(items[0]).toHaveAccessibleName(/\bClose$/);
+    expect(items[0]).toHaveAttribute("aria-disabled", "true");
+    expect(within(menu).getByRole("menuitem", { name: "Chart" })).not.toHaveAttribute(
+      "aria-disabled",
+    );
+  });
 
-    it("the row menu (Shift+F10) repeats the primary first, its gate as the item's second line", async () => {
-      await mount(<Viewer onClose={vi.fn()} />);
-      const main = rowNamed(/^BTCUSDT · Long · 0\.250/);
-      act(() => within(main).getAllByRole("gridcell")[1]?.focus());
+  it("an allowed Close sends from the actions cell; busy keeps its label and is never T2", async () => {
+    const onClose = vi.fn();
+    await mount(
+      <Host
+        rowActions={(r): SplitButtonProps => ({
+          primary: { label: "Close", busyLabel: "Closing…", onClick: onClose },
+          items: closeItems(),
+          menuLabel: `More close actions, ${r.symbol}`,
+          busy: r.symbol === "SOLUSDT",
+        })}
+      />,
+    );
+    await userEvent.click(
+      within(rowNamed(/^BTCUSDT · Long · 0\.250/)).getByRole("button", { name: "Close" }),
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
+    const busy = within(rowNamed(/^SOLUSDT/)).getByRole("button", { name: "Closing…" });
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(busy).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("a group header leaves its Actions cell empty (Flatten account… mounts with BQ-3's ticket)", async () => {
+    await mount(<Host rowActions={() => undefined} />);
+    const header = within(grid()).getByRole("rowheader", { name: /^Main · LIVE/ });
+    expect(header.closest("tr")?.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("the row menu's Close is busy with the primary: its busy label, aria-busy, and it sends nothing; a gate wins", async () => {
+    const onClose = vi.fn();
+    await mount(
+      <Host
+        rowActions={(r): SplitButtonProps => ({
+          primary: { label: "Close", busyLabel: "Closing…", onClick: onClose },
+          items: closeItems(),
+          menuLabel: `More close actions, ${r.symbol}`,
+          busy: r.symbol !== "BTCUSDT",
+          ...(r.symbol === "ETHUSDT"
+            ? { disabledReason: "Your role can't change positions." }
+            : {}),
+        })}
+      />,
+    );
+    const menuOf = async (row: HTMLElement, name: string): Promise<HTMLElement> => {
+      act(() => within(row).getAllByRole("gridcell")[1]?.focus());
       await userEvent.keyboard("{Shift>}{F10}{/Shift}");
-      const menu = await page.findByRole("menu", { name: "Actions for BTCUSDT Long on Main" });
-      const items = within(menu).getAllByRole("menuitem");
-      expect(items[0]).toHaveAccessibleName(/\bClose$/);
-      expect(items[0]).toHaveAttribute("aria-disabled", "true");
-      expect(within(menu).getByRole("menuitem", { name: "Chart" })).not.toHaveAttribute(
-        "aria-disabled",
-      );
-    });
+      return page.findByRole("menu", { name });
+    };
+    const sol = await menuOf(rowNamed(/^SOLUSDT/), "Actions for SOLUSDT Long on Sub-2");
+    const busy = within(sol).getAllByRole("menuitem")[0];
+    expect(busy).toHaveAccessibleName("Closing…");
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(busy).not.toHaveAttribute("aria-disabled");
+    expect(busy).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.click(busy as HTMLElement);
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    // Busy and gated: the reason wins, as on the button (CMP-057, CMP-041).
+    const eth = await menuOf(rowNamed(/^ETHUSDT · Short/), "Actions for ETHUSDT Short on Sub-1");
+    const gated = within(eth).getAllByRole("menuitem")[0];
+    expect(gated).toHaveAccessibleName("Close");
+    expect(gated).toHaveAttribute("aria-disabled", "true");
+    expect(gated).not.toHaveAttribute("aria-busy");
+  });
 
-    it("an allowed Close sends from the actions cell; busy keeps its label and is never T2", async () => {
-      const onClose = vi.fn();
-      await mount(
-        <Host
-          rowActions={(r): SplitButtonProps => ({
-            primary: { label: "Close", busyLabel: "Closing…", onClick: onClose },
-            items: closeItems(),
-            menuLabel: `More close actions, ${r.symbol}`,
-            busy: r.symbol === "SOLUSDT",
-          })}
-        />,
-      );
-      await userEvent.click(
-        within(rowNamed(/^BTCUSDT · Long · 0\.250/)).getByRole("button", { name: "Close" }),
-      );
-      expect(onClose).toHaveBeenCalledTimes(1);
-      const busy = within(rowNamed(/^SOLUSDT/)).getByRole("button", { name: "Closing…" });
-      expect(busy).toHaveAttribute("aria-busy", "true");
-      expect(busy).not.toHaveAttribute("aria-disabled");
+  it("a group header offers no row menu: Shift+F10 and a right-click there open nothing", async () => {
+    await mount(
+      <Host
+        rowActions={(r): SplitButtonProps => ({
+          primary: { label: "Close", onClick: vi.fn() },
+          items: closeItems(),
+          menuLabel: `More close actions, ${r.symbol}`,
+        })}
+      />,
+    );
+    const header = within(grid()).getByRole("rowheader", { name: /^Main · LIVE/ });
+    act(() => header.focus());
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    expect(page.queryByRole("menu")).toBeNull();
+    await userEvent.pointer({ keys: "[MouseRight]", target: header });
+    expect(page.queryByRole("menu")).toBeNull();
+    // A position's row still opens its own.
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(rowNamed(/^BTCUSDT · Long · 0\.250/)).getAllByRole(
+        "gridcell",
+      )[1] as HTMLElement,
     });
+    expect(
+      await page.findByRole("menu", { name: "Actions for BTCUSDT Long on Main" }),
+    ).toBeInTheDocument();
+  });
+});
 
-    it("a group header leaves its Actions cell empty (Flatten account… mounts with BQ-3's ticket)", async () => {
-      await mount(<Host rowActions={() => undefined} />);
-      const header = within(grid()).getByRole("rowheader", { name: /^Main · LIVE/ });
-      expect(header.closest("tr")?.querySelectorAll("button")).toHaveLength(0);
-    });
-
-    it("the row menu's Close is busy with the primary: its busy label, aria-busy, and it sends nothing; a gate wins", async () => {
-      const onClose = vi.fn();
-      await mount(
-        <Host
-          rowActions={(r): SplitButtonProps => ({
-            primary: { label: "Close", busyLabel: "Closing…", onClick: onClose },
-            items: closeItems(),
-            menuLabel: `More close actions, ${r.symbol}`,
-            busy: r.symbol !== "BTCUSDT",
-            ...(r.symbol === "ETHUSDT"
-              ? { disabledReason: "Your role can't change positions." }
-              : {}),
-          })}
-        />,
-      );
-      const menuOf = async (row: HTMLElement, name: string): Promise<HTMLElement> => {
-        act(() => within(row).getAllByRole("gridcell")[1]?.focus());
-        await userEvent.keyboard("{Shift>}{F10}{/Shift}");
-        return page.findByRole("menu", { name });
-      };
-      const sol = await menuOf(rowNamed(/^SOLUSDT/), "Actions for SOLUSDT Long on Sub-2");
-      const busy = within(sol).getAllByRole("menuitem")[0];
-      expect(busy).toHaveAccessibleName("Closing…");
-      expect(busy).toHaveAttribute("aria-busy", "true");
-      expect(busy).not.toHaveAttribute("aria-disabled");
-      expect(busy).toHaveFocus();
-      await userEvent.keyboard("{Enter}");
-      await userEvent.click(busy as HTMLElement);
-      expect(onClose).not.toHaveBeenCalled();
-      await userEvent.keyboard("{Escape}");
-      // Busy and gated: the reason wins, as on the button (CMP-057, CMP-041).
-      const eth = await menuOf(rowNamed(/^ETHUSDT · Short/), "Actions for ETHUSDT Short on Sub-1");
-      const gated = within(eth).getAllByRole("menuitem")[0];
-      expect(gated).toHaveAccessibleName("Close");
-      expect(gated).toHaveAttribute("aria-disabled", "true");
-      expect(gated).not.toHaveAttribute("aria-busy");
-    });
-
-    it("a group header offers no row menu: Shift+F10 and a right-click there open nothing", async () => {
-      await mount(
-        <Host
-          rowActions={(r): SplitButtonProps => ({
-            primary: { label: "Close", onClick: vi.fn() },
-            items: closeItems(),
-            menuLabel: `More close actions, ${r.symbol}`,
-          })}
-        />,
-      );
-      const header = within(grid()).getByRole("rowheader", { name: /^Main · LIVE/ });
-      act(() => header.focus());
-      await userEvent.keyboard("{Shift>}{F10}{/Shift}");
-      expect(page.queryByRole("menu")).toBeNull();
-      await userEvent.pointer({ keys: "[MouseRight]", target: header });
-      expect(page.queryByRole("menu")).toBeNull();
-      // A position's row still opens its own.
-      await userEvent.pointer({
-        keys: "[MouseRight]",
-        target: within(rowNamed(/^BTCUSDT · Long · 0\.250/)).getAllByRole(
-          "gridcell",
-        )[1] as HTMLElement,
-      });
-      expect(
-        await page.findByRole("menu", { name: "Actions for BTCUSDT Long on Main" }),
-      ).toBeInTheDocument();
-    });
-  },
-);
-
-describe("PositionsGrid (CMP-114): the narrow dock (D02 §11.5)", { timeout: 60_000 }, () => {
+describe("PositionsGrid (CMP-114): the narrow dock (D02 §11.5)", () => {
   it("Symbol · Side · Size · uPnL · Status; the units in the names; no Actions column", async () => {
     const host = await mount(<Host variant="narrow" rowActions={() => undefined} />);
     const names = within(grid())
@@ -965,7 +961,7 @@ describe("PositionsGrid (CMP-114): the narrow dock (D02 §11.5)", { timeout: 60_
   });
 });
 
-describe("PositionsGrid (CMP-114): UpdatesPausedChip (D02 §9.1)", { timeout: 60_000 }, () => {
+describe("PositionsGrid (CMP-114): UpdatesPausedChip (D02 §9.1)", () => {
   it("names the held rows and applies them on a press", async () => {
     const onApply = vi.fn();
     const host = await mount(<UpdatesPausedChip newRows={2} closedRows={1} onApply={onApply} />);
@@ -988,7 +984,7 @@ describe("PositionsGrid (CMP-114): UpdatesPausedChip (D02 §9.1)", { timeout: 60
   });
 });
 
-describe("PositionsGrid (CMP-114): states", { timeout: 60_000 }, () => {
+describe("PositionsGrid (CMP-114): states", () => {
   it("loading: CMP-049's skeleton under the header, aria-busy and the host's words", async () => {
     await mount(<Host groups={[]} totals={undefined} loading loadingText="Loading positions…" />);
     expect(grid()).toHaveAttribute("aria-busy", "true");
@@ -1020,7 +1016,7 @@ describe("PositionsGrid (CMP-114): states", { timeout: 60_000 }, () => {
   });
 });
 
-describe("PositionsGrid stories", { timeout: 60_000 }, () => {
+describe("PositionsGrid stories", () => {
   const all = composeStories(stories);
   // Theme stories wait on the preview's theme runtime, and the bench is a perf story: mounted, not played.
   const played = new Set([
@@ -1037,8 +1033,11 @@ describe("PositionsGrid stories", { timeout: 60_000 }, () => {
     "ReducedMotion",
   ]);
 
+  // Each story mounts, plays and runs axe: at most 3.8 s apiece at a load of 23 on 8 cores, 17.8 s for the slowest at
+  // 35 to 45 (the code lens' run), so a measured 30 s ceiling, as the Table story test's own.
   it.each(Object.keys(all).filter((name) => name !== "Perf500Rows"))(
     "%s renders, plays, and has no serious or critical axe violation at its root",
+    { timeout: 30_000 },
     async (name) => {
       const Story = all[name as keyof typeof all];
       const canvasElement = await mount(<Story />);
