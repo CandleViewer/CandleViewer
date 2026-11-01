@@ -71,6 +71,13 @@ before commit.
   Date 2026-10-22; no recorded data (symbols and account ids appear only as rule values), no
   credentials. Written and byte-checked by `tests/rules/roundtrip/test_client_hash_vectors.py`;
   regenerate with `CV_REGEN_GOLDEN=1` on that test and review the diff.
+- `golden/storage/storage_usage_baseline.golden.json` — E07-D02 frozen `StorageUsage` baseline for
+  E16 (the 13-field body of `GET /recording/storage`, one sample). Source: the real
+  `DiskBudget.sample_once()` on a fake meter, served by the real route as the Owner; date
+  2026-11-01; env: demo; no recording and no measurement of any disk; redaction: none needed, sample
+  figures only, no path, no id, no secret. Read by `services/api/tests/contract/storage/` and meant
+  for E16's mock layer. Regenerate from `services/api` with
+  `python -m tests.contract.storage.test_storage_usage_verification --write-baseline`.
 
 ## Scripts
 

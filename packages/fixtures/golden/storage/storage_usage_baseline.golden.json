@@ -1,0 +1,44 @@
+{
+  "disk_total_bytes": 1000000000000,
+  "disk_used_bytes": 500000000000,
+  "disk_free_bytes": 500000000000,
+  "projected_full_at": null,
+  "daily_growth_bytes": 0,
+  "tiers": [
+    {
+      "tier": "questdb",
+      "used_bytes": 150000000000,
+      "retention_days": 7
+    },
+    {
+      "tier": "parquet",
+      "used_bytes": 150000000000,
+      "retention_days": 30
+    },
+    {
+      "tier": "postgres",
+      "used_bytes": 1000000000,
+      "retention_days": null
+    }
+  ],
+  "symbols": [
+    {
+      "symbol": "BTCUSDT",
+      "used_bytes": 200000000000,
+      "daily_growth_bytes": 0,
+      "pinned": true
+    },
+    {
+      "symbol": "ETHUSDT",
+      "used_bytes": 100000000000,
+      "daily_growth_bytes": 0,
+      "pinned": false
+    }
+  ],
+  "generated_at": "2026-09-21T14:13:20Z",
+  "cap_bytes": 600000000000,
+  "level": 0,
+  "write_gate": "open",
+  "write_gate_reason": null,
+  "accelerate_retention": false
+}
