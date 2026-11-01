@@ -50,6 +50,13 @@ recorder_gap_seconds_total = Counter(
     "recorder_gap_seconds_total", "Seconds of recorded data lost to gaps.", ["symbol"]
 )
 recorder_sessions_open = Gauge("recorder_sessions_open", "Open recording sessions.")
+#: E16-FR-03 (#1739): fresh coverage reconciles where session windows minus gap rows claimed a
+#: hot-tier span that holds no stored rows (the span is reported as a gap instead).
+recorder_coverage_reconcile_mismatch_total = Counter(
+    "recorder_coverage_reconcile_mismatch_total",
+    "Coverage reconciles that found claimed coverage with no stored data (E16-FR-03).",
+    ["stream"],
+)
 recorder_integrity_anomalies_total = Counter(
     "recorder_integrity_anomalies_total",
     "Daily integrity-job anomalies (gap = explained, event = unexplainable).",

@@ -12,18 +12,31 @@ tick-level window covered (ADR-0015 d7 "no interpolation, ever").
 Cached per `(symbol, stream)` for the last `CACHE_DAYS`; any session/gap write for the symbol
 invalidates it (`invalidate`). Older ranges fall through to SQL. `rows` is omitted: row
 estimates need QuestDB partition metadata (not wired yet; the field is optional).
+
+Reconcile (E16-FR-03, #1739, threat model R-T1): with a `presence` port, the hot-tier
+(`questdb`) intervals of a `RECONCILE_TOLERANCE_US` stream are checked against the minutes that
+hold stored rows, so a deleted or shrunk gap row cannot make absent data read as present. A span
+claimed covered but holding no rows, longer than the stream's tolerance, is taken out of the
+intervals and listed as a gap with cause `unverified_data` (no contract `reason`: the route
+omits it). A presence read that fails reports the whole hot-tier span that way (fail closed),
+logged, never raised. Presence is cached per `(symbol, stream)` for `PRESENCE_TTL_US`, and
+`invalidate` drops it. The cold tier is trusted through its roll-off watermark and manifest.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol
 
+import structlog
+
 from candleviewer.recorder.intervals import Span, coverage, split_at, subtract, union
+from candleviewer.recorder.metrics import recorder_coverage_reconcile_mismatch_total
 from candleviewer.recorder.rolloff import WatermarkStore
 from candleviewer.recorder.sessions import to_dt, to_us
 from candleviewer.storage.models import StreamKind
@@ -50,6 +63,21 @@ GAP_REASON: Final[dict[str, str]] = {
     "seq_jump": "seq_jump",
     "backpressure_drop": "backpressure_drop",
 }
+#: E16-FR-03: the gap cause of hot-tier coverage that stored data does not back.
+UNVERIFIED_CAUSE: Final = "unverified_data"
+#: E16-FR-03: the streams reconciled against stored rows, and the longest absent span each
+#: tolerates (start-up latency, a quiet market, the 1-minute presence buckets, ingest lag).
+#: Sparse streams (liquidations, funding, open interest, klines, anchors) are not reconciled:
+#: an empty minute there is normal.
+RECONCILE_TOLERANCE_US: Final[Mapping[str, int]] = MappingProxyType(
+    {"orderbook_delta": 90_000_000, "tickers": 90_000_000, "trades": 900_000_000}
+)
+#: Data arrives without a session or gap write, so presence is re-read at least this often.
+PRESENCE_TTL_US: Final = 60_000_000
+
+
+def logger() -> structlog.stdlib.BoundLogger:
+    return structlog.get_logger("candleviewer.recorder.coverage")  # type: ignore[no-any-return]  # structlog: Any
 
 
 class CoverageStore(Protocol):
@@ -60,6 +88,16 @@ class CoverageStore(Protocol):
     async def gaps_in(self, symbol: str, lo: datetime, hi: datetime) -> list[dict[str, Any]]: ...
 
     async def earliest_first_event(self, symbol: str) -> datetime | None: ...
+
+
+class StoredPresence(Protocol):
+    """Hot-tier presence, `[lo, hi)` microseconds: the merged spans that hold stored rows
+    (`storage.questdb.stored_presence.QuestDbStoredPresence`; the integrity job's `StoredData`
+    has the same method)."""
+
+    async def stored_spans(
+        self, symbol: str, stream: str, lo: int, hi: int
+    ) -> list[tuple[int, int]]: ...
 
 
 class ArchiveCoverage(Protocol):
@@ -120,6 +158,20 @@ def _span(lo: int, hi: int) -> Span | None:
     return Span(lo, hi) if hi > lo else None
 
 
+def _without(tiers: Sequence[CoveredInterval], absent: Sequence[Span]) -> list[CoveredInterval]:
+    """`tiers` with the hot-tier parts in `absent` taken out; the cold tier is untouched."""
+    out: list[CoveredInterval] = []
+    for i in tiers:
+        if i.tier != "questdb":
+            out.append(i)
+            continue
+        out += [
+            CoveredInterval(s.lo, s.hi, i.tier, i.source)
+            for s in subtract([Span(i.lo, i.hi)], absent)
+        ]
+    return out
+
+
 class CoverageService:
     """Session windows minus gaps, tier-attributed; cached per (symbol, stream)."""
 
@@ -130,9 +182,13 @@ class CoverageService:
         now_us: Callable[[], int],
         watermarks: WatermarkReader | None = None,
         archive: ArchiveCoverage | None = None,
+        presence: StoredPresence | None = None,
         timeout_s: float = 5.0,
     ) -> None:
         self._store = store
+        self._presence = presence
+        #: symbol -> stream -> (read_at, lo, hi, spans): the last presence read.
+        self._seen: OrderedDict[str, dict[str, tuple[int, int, int, list[Span]]]] = OrderedDict()
         self._archive = archive
         self._now_us = now_us
         self._marks = watermarks
@@ -144,6 +200,7 @@ class CoverageService:
     def invalidate(self, symbol: str) -> None:
         """Called on every session or gap write for `symbol` (SessionManager hook)."""
         self._cache.pop(symbol, None)
+        self._seen.pop(symbol, None)
 
     async def recording_started_at_us(self, symbol: str) -> int | None:
         """Earliest `first_event_ts` across sessions for the symbol (`no_data_recorded`)."""
@@ -214,28 +271,85 @@ class CoverageService:
             g_spans = [Span(to_us(g["gap_start"]), to_us(g["gap_end"])) for g in g_rows]
             covered = coverage(windows, g_spans)
             tiers = attribute_tiers(covered, await self._watermark(symbol, stream))
+            absent = await self._unverified(symbol, stream, tiers, now)
+            if absent:
+                covered = subtract(covered, absent)
+                tiers = _without(tiers, absent)
             if stream in ARCHIVE_STREAMS:
                 tiers = sorted(
                     tiers + await self._archive_only(symbol, lo, hi, covered),
                     key=lambda i: i.lo,
                 )
-            out.append(
-                StreamCoverage(
-                    stream=stream,
-                    intervals=tuple(tiers),
-                    gaps=tuple(
-                        GapInterval(
-                            max(lo, to_us(g["gap_start"])),
-                            min(hi, to_us(g["gap_end"])),
-                            str(g["cause"]),
-                            bool(g.get("backfilled")),
-                            g.get("backfill_source"),
-                        )
-                        for g in g_rows
-                    ),
+            gaps_out = [
+                GapInterval(
+                    max(lo, to_us(g["gap_start"])),
+                    min(hi, to_us(g["gap_end"])),
+                    str(g["cause"]),
+                    bool(g.get("backfilled")),
+                    g.get("backfill_source"),
                 )
-            )
+                for g in g_rows
+            ]
+            if absent:
+                gaps_out += [GapInterval(a.lo, a.hi, UNVERIFIED_CAUSE) for a in absent]
+                gaps_out.sort(key=lambda g: (g.lo, g.hi))
+            out.append(StreamCoverage(stream=stream, intervals=tuple(tiers), gaps=tuple(gaps_out)))
         return out
+
+    async def _unverified(
+        self, symbol: str, stream: str, tiers: Sequence[CoveredInterval], now: int
+    ) -> list[Span]:
+        """The hot-tier spans claimed covered that stored data does not back (E16-FR-03)."""
+        tol = RECONCILE_TOLERANCE_US.get(stream)
+        hot = [Span(i.lo, i.hi) for i in tiers if i.tier == "questdb"]
+        presence = self._presence
+        if presence is None or tol is None or not hot:
+            return []
+        try:
+            stored, fresh = await self._stored(presence, symbol, stream, hot[0].lo, hot[-1].hi, now)
+        except Exception as exc:  # fail closed: unverifiable coverage is not reported covered
+            logger().error(
+                "recorder_coverage_reconcile_failed",
+                symbol=symbol,
+                stream=stream,
+                error=type(exc).__name__,
+            )
+            return union(hot)
+        absent = [a for a in subtract(hot, stored) if a.hi - a.lo > tol]
+        if absent and fresh:
+            recorder_coverage_reconcile_mismatch_total.labels(stream=stream).inc()
+            logger().warning(
+                "recorder_coverage_reconcile_mismatch",
+                symbol=symbol,
+                stream=stream,
+                spans=len(absent),
+                first_us=absent[0].lo,
+                last_us=absent[-1].hi,
+            )
+        return absent
+
+    async def _stored(
+        self, presence: StoredPresence, symbol: str, stream: str, lo: int, hi: int, now: int
+    ) -> tuple[list[Span], bool]:
+        """Presence over `[lo, hi)`, from the last read when it is younger than the TTL, starts
+        no later and reached `hi` or its own read time; True when read now. Rows stored after a
+        cached read count as absent, within the tolerance, until the TTL lapses."""
+        held = self._seen.get(symbol, {}).get(stream)
+        if (
+            held is not None
+            and now - held[0] < PRESENCE_TTL_US
+            and held[1] <= lo
+            and held[2] >= min(hi, held[0])
+        ):
+            return held[3], False
+        async with asyncio.timeout(self._timeout_s):
+            raw = await presence.stored_spans(symbol, stream, lo, hi)
+        spans = [s for a, b in raw if (s := _span(a, b)) is not None]
+        self._seen.setdefault(symbol, {})[stream] = (now, lo, hi, spans)
+        self._seen.move_to_end(symbol)
+        while len(self._seen) > _CACHE_MAX:
+            self._seen.popitem(last=False)
+        return spans, True
 
     async def recorded_windows(
         self, symbol: str, lo: int, hi: int, stream: str = StreamKind.TRADES.value

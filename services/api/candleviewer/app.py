@@ -383,6 +383,7 @@ from candleviewer.recorder_wiring import (
     build_recorder,
     policy_config,
     questdb_sinks,
+    stored_presence,
 )
 from candleviewer.replay.metrics import export_replay_metrics
 from candleviewer.replay.service import ReplayService
@@ -1576,6 +1577,7 @@ def create_app(
             watermarks=FileWatermarkStore(DatasetRegistry(resolved.parquet_root)),
             # E16-T10: imported archive windows -> `trades` coverage labelled `archive`.
             archive=FileImportLedger(DatasetRegistry(resolved.parquet_root)),
+            presence=stored_presence(resolved),  # E16-FR-03: hot tier reconciled with its rows
         )
         if _kb_pg is not None
         else None
