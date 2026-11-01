@@ -2,9 +2,9 @@
 
 `SqlAlchemyRulesRepository.order_action_ages` is one static, parameterised read over `rule_events`
 joined to `rule_runs` (`0013_rules`, no migration), on real Postgres 16 at head: the `action_start`
-events of the counted types in the rule's armed runs started within the window, newest first, at
-most the limit, each event's age taken from the database's own clock. Seeded as
-`test_rule_runs_write_ahead_pg.py` seeds its world; `testcontainers` in CI.
+events of the counted types in the rule's armed runs started within the window, one per fire key
+(`dedupe_key`), its first, newest first, at most the limit, each age taken from the database's own
+clock. Seeded as `test_rule_runs_write_ahead_pg.py` seeds its world; `testcontainers` in CI.
 """
 
 from __future__ import annotations
@@ -54,8 +54,14 @@ def _run(c: Conn, rule: uuid.UUID, version: uuid.UUID, mode: str, started: str) 
     return run
 
 
-def _event(c: Conn, run: uuid.UUID, seq: int, kind: str, action_type: str, ago: str) -> None:
-    payload: dict[str, Any] = {"action_type": action_type, "dedupe_key": "ab" * 32}
+def _event(
+    c: Conn, run: uuid.UUID, seq: int, kind: str, action_type: str, ago: str, key: str = ""
+) -> None:
+    """One event; its fire key the event's own (from its run and `seq`) unless `key` names one."""
+    payload: dict[str, Any] = {
+        "action_type": action_type,
+        "dedupe_key": key or f"{run.hex}{seq:032x}",
+    }
     c.execute(
         "INSERT INTO rule_events (rule_run_id, seq, kind, node_ref, payload, event_ts) "
         "VALUES (%s, %s, %s, 'a1', CAST(%s AS jsonb), now() - CAST(%s AS interval))",
@@ -112,3 +118,16 @@ async def test_the_rebuild_ages_come_from_the_database_clock(db: str) -> None:
     _seed(db)
     (age,) = await _repo(db).order_action_ages(str(_RULE_B), _TYPES, since_s=DAY_S, limit=200)
     assert 89.0 <= age <= 120.0  # 90 s before the database's now, read moments later
+
+
+async def test_a_retried_order_counts_once_by_its_first_start(db: str) -> None:
+    """24 §11.7 (R1S-01): a retried order is written ahead again under its fire key, 10 s after its
+    first start; the rebuild reads one age for the key, its first start's, so the order counts
+    once, beside the seed's one counted start."""
+    _seed(db)
+    with _conn(db) as c:
+        run = _run(c, _RULE_B, _VERSION, "armed", "5 minutes")
+        _event(c, run, 1, "action_start", "place_order", "60 seconds", key="ef" * 32)
+        _event(c, run, 2, "action_start", "place_order", "50 seconds", key="ef" * 32)
+    ages = await _repo(db).order_action_ages(str(_RULE_B), _TYPES, since_s=DAY_S, limit=200)
+    assert len(ages) == 2 and 59.0 <= ages[0] <= 89.0 < ages[1]

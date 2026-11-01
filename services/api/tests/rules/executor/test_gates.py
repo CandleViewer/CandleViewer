@@ -26,7 +26,12 @@ from candleviewer.oms_wiring import InterimKillSwitch
 from candleviewer.rules.executor.budget import CircuitBreaker, OrderBudget
 from candleviewer.rules.executor.dispatch import Fire
 from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
-from candleviewer.rules.executor.gates import PRINCIPAL_MAX_AGE_S, Gates, Halts
+from candleviewer.rules.executor.gates import (
+    PRINCIPAL_AHEAD_S,
+    PRINCIPAL_MAX_AGE_S,
+    Gates,
+    Halts,
+)
 from candleviewer.rules.executor.handlers import (
     ENGINE_INTERNAL,
     HANDLERS,
@@ -36,6 +41,7 @@ from candleviewer.rules.executor.handlers import (
     prepared,
 )
 from candleviewer.rules.executor.keys import dedupe_key
+from candleviewer.rules.executor.ports import PrincipalView
 from candleviewer.rules.ir.models import MAX_ACTIONS, Action, ActionType, RuleLimits, RuleScope
 from candleviewer.rules.scope import (
     ActionRequest,
@@ -166,7 +172,6 @@ class Gated:
     sent: list[tuple[str, str]] = field(default_factory=list)
     records: Records = field(default_factory=Records)
     counted: Counted = field(default_factory=Counted)
-    stops: dict[uuid.UUID, Decimal] = field(default_factory=lambda: {A: Decimal("58000")})
     principals: Principals = field(default_factory=lambda: Principals(frozenset({A, B, C})))
     emitter: ScopedActionEmitter | None = None  # the real one, over a scope snapshot
     checked: list[tuple[str, str]] = field(default_factory=list)  # check 1 per (node, account)
@@ -236,12 +241,13 @@ class Gated:
 
     async def emit(self, req: ActionRequest) -> str | None:
         """The routing emitter (`emit_checked`): the scope re-check's reason (check 4), else the
-        hand-over (`_route`) and `None`."""
+        hand-over (`_route`, which sends a dry run to the simulation sink instead) and `None`."""
         if self.emitter is not None:
             return await self.emitter.emit_checked(req)
         if req.payload.node_id in self.denied:
             return self.denied[req.payload.node_id]
-        await self.executor.hand_over(req)
+        if not req.payload.dry_run_only:
+            await self.executor.hand_over(req)
         return None
 
     async def run(
@@ -277,12 +283,11 @@ def blocked_alone(gated: Gated, reason: str) -> None:
 async def test_the_kill_switch_stops_every_rule_action_within_its_guarantee() -> None:
     """Scenario: The kill switch stops every rule action (parent Gherkin 5). An engaged B18 double,
     all 25 types bound to handler doubles and the rollout port on: every action is blocked before
-    any handler (`kill_switch`), and positions and their native stops are untouched."""
+    any handler (`kill_switch`), and positions and their native stops are untouched: no double
+    that would send, move or cancel was called."""
     gated = Gated(Switches(engaged={None}))
-    before = dict(gated.stops)
     await gated.run(*every_type())
     blocked_alone(gated, "kill_switch")
-    assert gated.stops == before  # the recorded-stop double: nothing moved, nothing cancelled
     assert gated.counted.blocked() == {"kill_switch": len(TYPES)}
 
 
@@ -405,6 +410,34 @@ async def test_check_order_is_stable_first_refusal_wins(k: int, action_type: str
     assert "a1" not in {node for node, _ in gated.sent}
 
 
+@pytest.mark.parametrize("k", [2, 3, 5])
+async def test_a_retry_runs_checks_2_3_and_5_again_and_a_refusal_sends_nothing(
+    k: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """24 §11.9 (R1C1-01): check k starts to refuse while the first call waits (the master switch
+    goes off, the kill switch engages, or the armer's read is lost); the retry's checks refuse,
+    nothing is sent again, the first call's `unknown` stands, and check 5's refusal there is no
+    strike toward the auto-disarm: the pass the action met at first is its one outcome (BQ-10)."""
+    no_answer = HandlerAnswer("no_answer", error_code="timeout")
+    gated = Gated(answers={"place_order": [no_answer, HandlerAnswer("accepted")]})
+    outcomes: list[tuple[str, uuid.UUID | None, bool]] = []
+    gated.executor._on_scope = lambda rule, account, refused: outcomes.append(
+        (rule, account, refused)
+    )
+    double = gated.executor._handlers["place_order"].handler
+    assert double is not None
+    send = double.send
+
+    async def closing(prep: Prepared, *, client_ref: str) -> HandlerAnswer:
+        _fail(gated, k)
+        return await send(prep, client_ref=client_ref)
+
+    monkeypatch.setattr(double, "send", closing)
+    await gated.run(action("a1", on_error="retry_once"))
+    assert gated.sent == [("a1", str(A))] and gated.results() == [("a1", "unknown", None)]
+    assert outcomes == [(RULE, A, False)]
+
+
 async def test_widen_stop_reads_kill_switch_while_engaged_and_native_sl_otherwise() -> None:
     """`widen_stop` is refused by type at check 8's slot, so an engaged kill switch (check 3) reads
     first; with every switch open it is `native_sl`, and `rules.blocked` alone is written."""
@@ -438,6 +471,38 @@ async def test_an_oms_action_is_unavailable_while_the_rollout_port_reads_off() -
     assert refused == expected | {f"a{past.index('widen_stop')}": "native_sl"}
     reached = {f"a{n}" for n in range(len(past), len(TYPES))}
     assert {node for node, _ in gated.sent} == reached and len(internal) == 6
+
+
+@pytest.mark.parametrize(
+    ("closed", "result"),
+    [(None, ("simulated", None)), ("enabled", ("blocked", "rules_disabled")),
+     ("engaged", ("blocked", "kill_switch")), ("denied", ("blocked", "scope"))],
+    ids=["simulated", "check-2", "check-3", "check-4"],
+)  # fmt: skip
+async def test_a_dry_run_is_never_unavailable_and_still_meets_checks_1_to_4(
+    closed: str | None, result: tuple[str, str | None]
+) -> None:
+    """24 §11.5 (R1C1-02): a `dry_run_only` order is simulated while the rollout port reads off,
+    as no handler serves it, and checks 2 to 4 refuse it as they refuse any action; nothing of it
+    is sent."""
+    gated = Gated(Switches(rollout=False))
+    if closed == "enabled":
+        gated.switches.enabled = False
+    elif closed == "engaged":
+        gated.switches.engaged.add(None)
+    elif closed == "denied":
+        gated.denied["a1"] = "grant_revoked"
+    await gated.run(action("a1", action={"dry_run_only": True}))
+    assert gated.results() == [("a1", *result)] and gated.sent == []
+
+
+async def test_check_2s_unavailable_reads_before_the_kill_switch() -> None:
+    """24 §11.5 (R1C1-06): an action that cannot run is `unavailable` though the kill switch is
+    engaged, check 2 before check 3; with every handler unbound, as in production until E35-T11,
+    an engaged switch is recorded `unavailable`."""
+    gated = Gated(Switches(engaged={None}, rollout=False))
+    await gated.run(action("a1"))
+    assert gated.results() == [("a1", "blocked", "unavailable")]
 
 
 # --- The scope environment, `targets` and the principal (BQ-3, BQ-4, BQ-5) -----------------------
@@ -483,7 +548,7 @@ async def _scoped(
         audits.append((event, data))
 
     source = _Source(dict.fromkeys((A, B, C), environment) if envs is None else envs)
-    state = SnapshotScopeState(source, environment, lambda: live_gate)
+    state = SnapshotScopeState(source, lambda: live_gate)
     await state.refresh(OWNER)
     gated.emitter = ScopedActionEmitter(
         ScopeResolver(state, audit), audit, gated.executor.hand_over
@@ -663,6 +728,17 @@ async def test_all_accounts_expands_to_current_grants_only() -> None:
     ]  # fmt: skip
 
 
+async def test_all_accounts_resolves_in_sorted_order_whatever_the_sets_own() -> None:
+    """24 §11.5 (R1C1-06): the intersection is sorted, so its accounts run in one order: two
+    accounts whose set iterates them the other way round still run sorted."""
+    early, late = uuid.UUID(int=0xC7), uuid.UUID(int=0xD0)
+    both = frozenset({early, late})
+    assert list(both) == [late, early]  # the set's own order, the reverse of the sorted one
+    gated = _role(both, both)
+    await gated.run(action("a1", targets="all_accounts"))
+    assert gated.sent == [("a1", str(early)), ("a1", str(late))]
+
+
 # fmt: off
 async def test_all_accounts_resolves_to_the_owner_armer_intersection_and_needs_the_owner_role_at_execution() -> None:  # noqa: E501 -- the issue's test name (#5002)
     """Scenario: all_accounts resolves at fire time to the intersection and needs the Owner role
@@ -754,15 +830,18 @@ async def test_all_accounts_never_reaches_past_the_rules_scope() -> None:
 @pytest.mark.parametrize(
     ("missing", "age", "admitted"),
     [(None, PRINCIPAL_MAX_AGE_S, True), (None, PRINCIPAL_MAX_AGE_S + 0.5, False),
-     (OWNER, 0.0, False), (ARMER, 0.0, False)],
-    ids=["at-the-bound", "stale", "owner-unread", "armer-unread"],
+     (OWNER, 0.0, False), (ARMER, 0.0, False), (None, -0.05, True), (None, -0.2, False),
+     (None, -1e6, False)],
+    ids=["at-the-bound", "stale", "owner-unread", "armer-unread", "a-little-ahead", "ahead",
+         "far-ahead"],
 )  # fmt: skip
 async def test_a_stale_or_unread_principal_blocks_as_permission(
     missing: uuid.UUID | None, age: float, admitted: bool
 ) -> None:
-    """24 §11.5: a snapshot older than one second, or not read at all, is a failed read: the
-    action is blocked `permission`. The executor holds the bound: one second old still serves."""
-    assert PRINCIPAL_MAX_AGE_S == 1.0
+    """24 §11.5: a snapshot older than one second, stamped more than 0.1 s ahead of the executor's
+    clock (R1C1-03), or not read at all, is a failed read: the action is blocked `permission`. The
+    executor holds the bound on both sides: one second old, or a little ahead, still serves."""
+    assert (PRINCIPAL_MAX_AGE_S, PRINCIPAL_AHEAD_S) == (1.0, 0.1)
     gated = Gated()
     gated.principals.ages[ARMER] = age
     if missing is not None:
@@ -780,6 +859,42 @@ async def test_an_account_less_action_needs_both_users_active(inactive: uuid.UUI
     gated.principals.facts[inactive] = (False, "owner", True, frozenset({A, B, C}))
     await gated.run(action("a2", "send_notification"))
     assert gated.results() == [("a1", "ok", None), ("a2", "blocked", "permission")]
+
+
+class _Swapped(Principals):
+    """A port that answers the armer's read with the owner's snapshot."""
+
+    def principal(self, user_id: uuid.UUID) -> PrincipalView | None:
+        return super().principal(OWNER if user_id == ARMER else user_id)
+
+
+class _Raising(Principals):
+    """A bound port whose read raises."""
+
+    def principal(self, user_id: uuid.UUID) -> PrincipalView | None:
+        raise ConnectionError("the identity store is unreachable")
+
+
+async def test_a_snapshot_naming_another_user_is_a_failed_read() -> None:
+    """24 §11.5 (R1C1-06): the port answers the armer's read with the owner's snapshot, active
+    and admitting A: it is no read of the armer, and the action is blocked `permission`."""
+    gated = Gated(principals=_Swapped(frozenset({A, B, C})))
+    await gated.run(action("a1"))
+    assert gated.results() == [("a1", "blocked", "permission")] and gated.sent == []
+
+
+@pytest.mark.parametrize(("targets", "account"), [("all_accounts", None), ("scope_accounts", A)])
+async def test_a_raising_principal_port_fails_the_action_and_closes_its_row(
+    targets: str, account: uuid.UUID | None
+) -> None:
+    """C-2.18 (R1C1-04): a bound principal port that raises fails the action, recorded, and its
+    run row is closed `error`, whether `all_accounts` reads it to resolve the targets or check 5
+    reads it; the dispatch worker never meets the raise."""
+    gated = Gated(principals=_Raising())
+    await gated.run(action("a1", targets=targets))
+    expected = ("a1", None if account is None else str(account), "failed", None)
+    assert per_account(gated) == [expected] and gated.sent == []
+    assert gated.records.closed[RUN][0] == "error"
 
 
 async def test_records_carry_both_roles_from_the_principal_snapshot() -> None:
@@ -873,6 +988,18 @@ async def test_the_allowance_is_the_smaller_remainder_of_the_fire_and_the_utc_da
     assert days.asked == [(RULE, "2027-01-01"), (RULE, "2027-01-02")]
 
 
+async def test_only_an_accepted_answer_feeds_the_allowance_ledger() -> None:
+    """24 §11.7 (R1C2-04): the ledger reads the notional of an `accepted` answer alone, the one
+    E35-T11's handlers name it on; an answer of unknown outcome lowers no remainder, what the
+    ledger takes from one being E35-T11's carry (#5003)."""
+    unknown = HandlerAnswer("no_answer", error_code="timeout", notional_usd=Decimal("60"))
+    gated = Gated(limits=RuleLimits(max_notional_per_fire=Decimal("100")),
+                  answers={"place_order": [unknown, _SENT_100]})  # fmt: skip
+    await gated.run(*(action(f"a{n}", on_error="continue") for n in range(3)))
+    assert gated.ceilings() == [("a0", Decimal("100")), ("a1", Decimal("100"))]
+    assert [outcome for _, outcome, _ in gated.results()] == ["unknown", "ok", "blocked"]
+
+
 async def test_a_reduce_only_order_never_meets_the_notional_allowance() -> None:
     """BQ-11 (C-2.6): only entries meet the allowance; a reduce-only order runs with no ceiling,
     even with the allowance spent, and the column names the six entries alone."""
@@ -955,6 +1082,7 @@ async def test_a_confirmation_required_fire_is_blocked_and_never_executed_later(
     assert gated.results() == [("a1", "blocked", blocked), ("a2", "blocked", blocked)]
     assert gated.audited() == [("rules.blocked", "a1", blocked), ("rules.blocked", "a2", blocked)]
     assert gated.records.closed[RUN][0] == "aborted" and gated.checked == []
+    assert gated.counted.blocked() == {blocked: 2}  # recorded and counted (R1C2-05)
     gated.limits = RuleLimits()  # the rule's next fire, confirmation no longer required
     await gated.run(action("a3"))
     assert gated.sent == [("a3", str(A))]  # the blocked fire's actions never run later

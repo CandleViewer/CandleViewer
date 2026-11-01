@@ -4,14 +4,16 @@
 resolved account, for the `counts_orders` types), checked and counted at check 7, before the
 records written ahead: an order counts whatever the OMS then answers, and an order a check refuses
 never counts. Two sliding windows, 60 s and 24 h, run on the wall clock. A rule's counts are
-rebuilt at its first order action after a start, from the `action_start` events of its armed runs
-(`BudgetRebuild`, ages on the database's clock); while that read fails or runs late, its order
-actions are refused and the read runs again at its next one. Only a spent budget trips the breaker.
+rebuilt at its first order action after a start, from the `action_start` events of its armed runs,
+one per fire key, so a retried order counts once (`BudgetRebuild`, ages on the database's clock);
+while that read fails or runs late, its order actions are refused and the read runs again at its
+next one. Only a spent budget trips the breaker.
 
 `CircuitBreaker.trip` stops the rule: its trip time, which blocks at dispatch any fire offered
 before it, even after a re-arm; its waiting fires dropped from its lane; the page and the count;
 B9 `KILL_SWITCH` through the manager; the drop again; and one `system_events` row. A move that
-fails keeps the trip: the rule's order actions stay refused, and each sends the move again.
+fails keeps the trip: the rule's order actions stay refused, and each sends the move again, which
+is no new trip: the trip time stands, and neither the trip's page nor its count repeats.
 """
 
 from __future__ import annotations
@@ -133,12 +135,17 @@ class CircuitBreaker:
     async def trip(self, rule_id: str, run_id: UUID, node_id: str) -> None:
         """Stop the rule, in this order: its trip time; its waiting fires dropped; the page and the
         count; B9 `KILL_SWITCH`, under its bound; the drop again, for fires offered during the
-        move; and the `system_events` row saying whether the rule was moved."""
-        self._halts.tripped[rule_id] = self._clock()
+        move; and the `system_events` row saying whether the rule was moved. For a rule whose move
+        has not landed, this sends the move again and is no new trip: its trip time, page and
+        count stay the first trip's, and the row and the not-moved page record the attempt."""
+        again = rule_id in self._unmoved
+        if not again:
+            self._halts.tripped[rule_id] = self._clock()
         self._dropped(rule_id)
-        if self._alerts is not None:
-            self._alerts.breaker_tripped(rule_id, run_id, node_id)
-        self._metrics.tripped()
+        if not again:
+            if self._alerts is not None:
+                self._alerts.breaker_tripped(rule_id, run_id, node_id)
+            self._metrics.tripped()
         moved = False
         try:
             async with asyncio.timeout(TRIP_MOVE_TIMEOUT_S):

@@ -7,6 +7,8 @@ A grant's freeze is read per (owner, account): one owner's refresh never changes
 Each granted account's own environment is read with the grants, from `exchange_accounts.env`
 (E35-T10, BQ-3): an account whose environment was not read has none, which the action re-check
 refuses (`environment`, fail closed). E34 replaces the `live_gate_open` body, not the port.
+A refresh publishes only if no `invalidate` of the owner ran while it read: a grant revoked
+meanwhile never comes back with a read that started before it.
 """
 
 from __future__ import annotations
@@ -39,24 +41,24 @@ class ScopeSource(Protocol):
 
 class SnapshotScopeState:
     def __init__(
-        self,
-        source: ScopeSource,
-        environment: str,
-        live_gate_open: Callable[[], bool] = lambda: False,
+        self, source: ScopeSource, live_gate_open: Callable[[], bool] = lambda: False
     ) -> None:
         self._source = source
-        self._env = environment
         self._live_gate = live_gate_open
+        self._generation: dict[UUID, int] = {}  # per owner: bumped by each `invalidate`
         self._grants: dict[UUID, dict[UUID, GrantRow]] = {}
         self._perms: dict[UUID, frozenset[str]] = {}
         self._accounts: dict[UUID, AccountState] = {}  # account-level fields only, no freeze
         self._envs: dict[UUID, str | None] = {}  # each granted account's environment, as read
 
     async def refresh(self, owner: UUID) -> None:
+        generation = self._generation.get(owner, 0)
         rows = [GrantRow(*t) for t in await self._source.load_grants(owner) if t[1]]
         perms = await self._source.load_permissions(owner)
         ids = [r.account_id for r in rows]
         envs = await self._source.load_account_environments(ids) if ids else {}
+        if self._generation.get(owner, 0) != generation:
+            return  # invalidated while it read: the next refresh reads again
         # Load first, publish once: no await below, so a reader sees the old snapshot or the new.
         self._grants[owner] = {r.account_id: r for r in rows}
         self._perms[owner] = perms
@@ -64,6 +66,7 @@ class SnapshotScopeState:
         self._sync_accounts()
 
     def invalidate(self, owner: UUID) -> None:
+        self._generation[owner] = self._generation.get(owner, 0) + 1
         self._grants.pop(owner, None)
         self._perms.pop(owner, None)
         self._sync_accounts()

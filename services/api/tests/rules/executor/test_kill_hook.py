@@ -10,6 +10,7 @@ again against #956. The rules run on the real manager, store and B9 charts.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.rules import manager as manager_module
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleRow, RulesManager
 from candleviewer.rules.vocabulary import default_registry
 from tests.rules.executor.request_builders import Switches
@@ -149,6 +151,7 @@ async def test_a_fire_offered_before_the_kill_is_blocked_at_dispatch() -> None:
     assert gated.results() == [("a1", "blocked", "kill_switch"), ("a2", "blocked", "kill_switch")]
     assert gated.checked == [] and gated.sent == []
     assert next(iter(gated.records.closed.values()))[0] == "aborted"
+    assert gated.counted.blocked() == {"kill_switch": 2}  # recorded and counted (R1C2-05)
     later = Gated()
     later.halts.killed[RULE] = 50.0
     await later.run(action("a1"), offered_at=60.0)
@@ -171,6 +174,27 @@ async def test_a_failed_kill_move_leaves_the_rule_blocked_by_check_three() -> No
     await gated.run(action("a1", on_error="continue"), action("a2", "send_notification"))
     assert gated.results() == [("a1", "blocked", "kill_switch"), ("a2", "blocked", "kill_switch")]
     assert gated.sent == []
+
+
+async def test_kill_all_reads_the_rules_under_the_bound_of_each_move(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """24 §11.7 (R1C2-07): the hook reads the rules under the same bound as each move: a read
+    that hangs raises `TimeoutError` to its caller, and no rule is moved; check 3 holds them."""
+    monkeypatch.setattr(manager_module, "STOP_TIMEOUT_S", 0.0)
+    w = _World()
+    rid = await w.rule("armed")
+    never = asyncio.Event()
+
+    async def hanging() -> list[RuleRow]:
+        await never.wait()
+        return []
+
+    monkeypatch.setattr(w.store, "all", hanging)
+    async with asyncio.timeout(5):  # a guard: an unbounded read never returns
+        with pytest.raises(TimeoutError):
+            await w.mgr.kill_all("global", "kill_switch")
+    assert (await w.row(rid)).mode == "armed" and w.stopped == [] and w.audits == []
 
 
 @pytest.mark.parametrize("scope", ["global", frozenset({B})])

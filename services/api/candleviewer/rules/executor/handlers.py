@@ -75,7 +75,9 @@ class HandlerAnswer:
     order_id: UUID | None = None
     group_id: UUID | None = None
     #: An accepted entry's notional in USD (quantity times reference price), which feeds the
-    #: rule's allowance ledger (E35-T10, BQ-11); E35-T11's handlers fill it.
+    #: rule's allowance ledger (E35-T10, BQ-11). E35-T11's handlers name it on an `accepted`
+    #: answer only, the one the ledger reads; an answer of unknown outcome (`no_answer`,
+    #: `in_flight`) names none, and E35-T11 (#5003) carries what the ledger does with one.
     notional_usd: Decimal | None = None
 
 

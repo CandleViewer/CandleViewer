@@ -14,12 +14,15 @@ drive `Gated` (`test_gates.py`); the B9 move and its record run on the real mana
 from __future__ import annotations
 
 import asyncio
+import math
 import uuid
 from dataclasses import replace
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
+from candleviewer.rules import manager as manager_module
 from candleviewer.rules.executor import budget as budget_module
 from candleviewer.rules.executor import dispatch
 from candleviewer.rules.executor.budget import DAY_S, CircuitBreaker, OrderBudget
@@ -56,8 +59,9 @@ def _run(n: int) -> uuid.UUID:
 
 
 async def _order(gated: Gated, n: int, at: float, *, rule_id: str = RULE, **over: Any) -> None:
-    """One fire of one `place_order`, `o<n>`, at wall time `at`."""
-    gated.wall = at
+    """One fire of one `place_order`, `o<n>`, at wall time `at`, offered a second after the last
+    on the executor's clock, so never at a trip time (a fire offered at it is refused whole)."""
+    gated.wall, gated.now = at, gated.now + 1.0
     await gated.run(action(f"o{n}", rule_id=rule_id, run_id=_run(n), **over), rule_id=rule_id,
                     run_id=_run(n))  # fmt: skip
 
@@ -396,8 +400,84 @@ async def test_a_fire_offered_before_the_trip_is_blocked_at_dispatch_even_after_
         ("a2", "blocked", "circuit_breaker"),
     ]
     assert gated.checked == [] and gated.records.closed[RUN][0] == "aborted"
+    assert gated.counted.blocked() == {"circuit_breaker": 2}  # recorded and counted (R1C2-05)
     await gated.run(action("a3", run_id=_run(3)), run_id=_run(3), offered_at=60.0)
     assert _outcomes(gated)[-1] == ("a3", "ok", None)
+
+
+@pytest.mark.parametrize("halt", ["tripped", "killed"])
+def test_a_fire_offered_at_the_halt_time_is_refused_as_one_offered_before_it(halt: str) -> None:
+    """24 §11.5 (R1S-04): a fire offered at its rule's trip or kill time is refused whole, as the
+    retry's check 7 reads the trip time (`>=`); one offered the least time after it is not."""
+    halts = Halts()
+    getattr(halts, halt)[RULE] = 50.0
+    blocked = "circuit_breaker" if halt == "tripped" else "kill_switch"
+    assert halts.block(RULE, 50.0) == blocked
+    assert halts.block(RULE, math.nextafter(50.0, math.inf)) is None
+
+
+async def test_a_breaker_move_that_finds_the_rule_disarmed_has_landed() -> None:
+    """24 §11.7 (R1C2-03): the rule is disarmed before its breaker's move reads it. Nothing is
+    left to stop, so the move has landed and the rule is not left unmoved: after a human re-arm
+    its first order is admitted, and no second move is sent."""
+    w, rid = await _armed_world()
+    gated = Gated(moving=w.mgr.trip_breaker, rows=w.mgr)
+
+    async def step_up() -> bool:
+        return True
+
+    owner = Actor(str(uuid.UUID(int=0xA1)), "s1", frozenset({"rules:arm_live"}), is_owner=True,
+                  consume_step_up=step_up)  # fmt: skip
+    await w.mgr.set_mode(rid, "disabled", owner, "disarm")
+    await gated.executor._breaker.trip(rid, _run(1), "o1")
+    assert not gated.executor._breaker.unmoved(rid) and gated.alerts.rows[-1][3] is True
+    await w.mgr.set_mode(rid, "armed", owner, "rearm")
+    await _order(gated, 2, T0 + 1, rule_id=rid)
+    assert _outcomes(gated) == [("o2", "ok", None)] and gated.moves == [rid]
+    assert w.mgr.lifecycle.leaf(rid) == "armed"
+
+
+async def test_a_breaker_move_the_chart_refuses_is_no_landed_move() -> None:
+    """24 §11.7 (R1C2-03, the other side): a row still armed whose B9 chart does not take the move
+    (here the chart is already `kill_switched`) is stuck: `trip_breaker` answers false, nothing
+    is recorded and the row stays armed, so the breaker keeps the rule's order actions refused."""
+    w, rid = await _armed_world()
+    assert await w.mgr.lifecycle.current(rid, "armed", None) == "armed"
+    await w.mgr.lifecycle.send(rid, "KILL", reason="kill_switch")  # the chart alone moves
+    assert await w.mgr.trip_breaker(rid) is False
+    assert (await w.row(rid)).mode == "armed" and w.audits == [] and not w.mgr._stop_broadcasts
+
+
+@pytest.mark.parametrize("broadcast", ["slow", "hangs", "fails"])
+async def test_the_stop_broadcast_runs_beside_the_move_under_a_bound_of_its_own(
+    broadcast: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """24 §11.7 (R1C2-03): the moved rule's `rules` broadcast never holds the move or its caller's
+    bound: the move answers before its broadcast runs; a slow one then ends in its own time, and
+    one that hangs (its own bound cut to nothing here) or fails is logged by its error's class."""
+    if broadcast == "hangs":
+        monkeypatch.setattr(manager_module, "STOP_TIMEOUT_S", 0.0)
+    w, rid = await _armed_world()
+    release = asyncio.Event()
+
+    async def hub(message: dict[str, Any]) -> None:
+        if broadcast == "fails":
+            raise ConnectionError("the hub is unreachable")
+        await release.wait()
+
+    w.mgr.set_hooks(broadcast=hub)
+    with capture_logs() as logs:
+        async with asyncio.timeout(5):  # a guard: a move that awaited the broadcast never returns
+            assert await w.mgr.trip_breaker(rid) is True
+            (running,) = w.mgr._stop_broadcasts
+            assert not running.done()  # the move answered before its broadcast ran
+            if broadcast == "slow":
+                release.set()
+            await running
+    assert w.mgr.lifecycle.leaf(rid) == "kill_switched" and not w.mgr._stop_broadcasts
+    failed = [e["error"] for e in logs if e["event"] == "rules.stop_broadcast_failed"]
+    expected = {"slow": [], "hangs": ["TimeoutError"], "fails": ["ConnectionError"]}
+    assert failed == expected[broadcast]
 
 
 async def test_the_breaker_pages_p1_naming_the_rule_and_counts_the_trip() -> None:
@@ -417,7 +497,8 @@ async def test_the_breaker_pages_p1_naming_the_rule_and_counts_the_trip() -> Non
 async def test_a_failed_breaker_move_keeps_the_trip_and_pages() -> None:
     """BQ-8: a B9 move that fails keeps the trip time standing and pages that the rule was not
     moved; until the move lands every order action of the rule is refused, even once the window
-    has slid, and each sends the move again."""
+    has slid, and each sends the move again, which is no new trip (R1S-02): the trip time, the
+    trip's page and its count stay the first trip's, and each attempt writes its row."""
     gated = Gated(moving=ConnectionError("the rule store is unreachable"))
     gated.budget.per_minute = 1
     await _order(gated, 0, T0)
@@ -426,7 +507,10 @@ async def test_a_failed_breaker_move_keeps_the_trip_and_pages() -> None:
     assert gated.alerts.rows == [(RULE, _run(1), "o1", False)]
     await _order(gated, 2, T0 + 120)  # the minute is clear, but the rule was never moved
     assert _outcomes(gated)[-1] == ("o2", "blocked", "order_budget")
-    assert gated.moves == [RULE, RULE] and gated.halts.tripped[RULE] >= tripped_at
+    assert gated.moves == [RULE, RULE] and gated.halts.tripped[RULE] == tripped_at
+    assert gated.alerts.pages == [("tripped", RULE, _run(1), "o1")]
+    assert gated.counted.of("rule_circuit_breaker_trips_total") == {(): 1}
+    assert gated.alerts.rows[-1] == (RULE, _run(2), "o2", False)
     gated.moving = True  # the store is back: the next refusal moves it
     await _order(gated, 3, T0 + 121)
     assert gated.moves == [RULE] * 3 and gated.alerts.rows[-1][3] is True

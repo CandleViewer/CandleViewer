@@ -298,6 +298,10 @@ def _noop_stopped(_rule_id: str, _reason: StopReason) -> None:
     return None
 
 
+def _noop_left_armed(_rule_id: str) -> None:
+    return None
+
+
 def _now_us() -> int:
     """The server's clock for a stored version's authorship, in µs (24 §11.2 `TsUs`)."""
     return time.time_ns() // 1_000
@@ -467,9 +471,13 @@ class RulesManager:
         self._sim_window: dict[str, tuple[str, int]] = {}
         #: rule_id -> its disarm in flight above a hard cap (#3232): one per rule, `stop()` cancels.
         self._tick_disarms: dict[str, asyncio.Task[None]] = {}
+        #: The `rules` broadcasts of the forced stops (E35-T10), each run beside the move, never
+        #: inside its caller's bound, so a slow broadcast never reads as a failed move.
+        self._stop_broadcasts: set[asyncio.Task[None]] = set()
         #: Forced disarms run one at a time, so their re-read of the row and chart holds (#3232).
         self._disarming = asyncio.Lock()
         self._rule_stopped: Callable[[str, StopReason], None] = _noop_stopped
+        self._left_armed: Callable[[str], None] = _noop_left_armed
         self.kill_moves_failed_total = 0  # the kill-switch hook's moves that failed
 
     def set_hooks(
@@ -478,19 +486,26 @@ class RulesManager:
         audit: Audit | None = None,
         broadcast: Broadcast | None = None,
         rule_stopped: Callable[[str, StopReason], None] | None = None,
+        left_armed: Callable[[str], None] | None = None,
     ) -> None:
         """`rule_stopped` hears, synchronously and once per rule moved, a rule this module took
-        out of `armed` with its reason: the kill-switch hook's (E35-T10)."""
+        out of `armed` with its reason: the kill-switch hook's (E35-T10). `left_armed` hears,
+        synchronously, each rule whose stored row leaves `armed` by any move, once the move has
+        landed (`_record_b9`): a human disarm or mode change, the auto-disarm, the breaker's or
+        the kill switch's move, a version switch (E35-T10, the service's strike counts)."""
         if audit is not None:
             self._audit = audit
         if broadcast is not None:
             self._bc = broadcast
         if rule_stopped is not None:
             self._rule_stopped = rule_stopped
+        if left_armed is not None:
+            self._left_armed = left_armed
 
     async def stop(self) -> None:
-        """Cancel the tick disarms in flight (their rules stay armed, skipped), then the charts."""
-        tasks = list(self._tick_disarms.values())
+        """Cancel the tick disarms in flight (their rules stay armed, skipped) and the forced
+        stops' broadcasts still running, then the charts."""
+        tasks = [*self._tick_disarms.values(), *self._stop_broadcasts]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -1091,9 +1106,12 @@ class RulesManager:
         actor, under its own bound, so re-arming needs a human (INV-B9-d). Each rule moved is
         handed to `rule_stopped`, which drops its waiting fires; a move that fails is logged and
         counted, and check 3 keeps the rule's actions blocked while the switch is engaged. The
-        rules moved, in the store's order."""
+        rules moved, in the store's order. The rules are read under the same bound as each move;
+        a read that fails or runs late raises to the caller, and check 3 holds meanwhile."""
         moved: list[str] = []
-        for row in await self._s.all():
+        async with asyncio.timeout(STOP_TIMEOUT_S):
+            rows = await self._s.all()
+        for row in rows:
             if row.deleted or row.mode != "armed":
                 continue
             if scope != "global" and not _can_act_on(row, scope):
@@ -1105,7 +1123,7 @@ class RulesManager:
                 self.kill_moves_failed_total += 1
                 _log().error("rules.kill_move_failed", rule_id=row.id, error=type(lost).__name__)
                 continue
-            if stopped:
+            if stopped == "moved":
                 moved.append(row.id)
                 self._rule_stopped(row.id, reason)
         return tuple(moved)
@@ -1113,8 +1131,10 @@ class RulesManager:
     async def trip_breaker(self, rule_id: str) -> bool:
         """The circuit breaker's move (24 §11.7; BQ-8): B9 `KILL_SWITCH`, so only a human re-arm
         with step-up leaves it (INV-B9-d), recorded `rule.kill_switched` with the reason
-        `order_budget` and no actor (`system`). True when the rule moved; its caller bounds it."""
-        return await self._stop_rule(rule_id, "KILL_SWITCH", "order_budget")
+        `order_budget` and no actor (`system`). True when the rule moved, or when its row is
+        already out of `armed` (disarmed, killed or deleted first), so nothing is left to stop;
+        False only while the row stays armed. Its caller bounds the move, never the broadcast."""
+        return await self._stop_rule(rule_id, "KILL_SWITCH", "order_budget") != "stuck"
 
     def auto_disarm(self, rule_id: str, reason: Literal["scope_denied"]) -> None:
         """Disarm a rule after repeated scope or permission refusals (24 §11.5; RE-E1, BQ-10):
@@ -1138,27 +1158,38 @@ class RulesManager:
         except Exception as lost:  # the hook names no error type: `rules` may not import `audit`
             _log().error("rules.scope_disarm_failed", rule_id=rule_id, error=type(lost).__name__)
 
-    async def _stop_rule(self, rule_id: str, event: str, reason: str) -> bool:
+    async def _stop_rule(
+        self, rule_id: str, event: str, reason: str
+    ) -> Literal["moved", "out", "stuck"]:
         """B9 `event` (`KILL` or `KILL_SWITCH`) to the rule while its row is armed, recorded
-        `rule.kill_switched` with `reason` and no actor (the system), then the `rules` broadcast;
-        False when the row is gone or no longer armed, or the chart does not move. Forced moves run
-        one at a time, on the row read again."""
+        `rule.kill_switched` with `reason` and no actor (the system): `moved`, its `rules`
+        broadcast then run beside the caller (`_broadcast_stop`); `out` when the row is gone or no
+        longer armed; `stuck` when the chart does not move. Forced moves run one at a time, on the
+        row read again."""
         async with self._disarming:
             row = await self._s.get(rule_id)
             if row is None or row.deleted or row.mode != "armed":
-                return False
+                return "out"
             leaf = await self._leaf(row)
             payload = {"rule_id": row.id, "mode": "disabled", "from": row.mode}
             payload |= {"b9_from": leaf, "b9_event": event, "reason": reason}
             if not await self._record_b9(row, event, "rule.kill_switched", payload, reason=reason):
-                return False
-        try:  # the rule has moved: a broadcast that fails is no failed move
-            await self._bc({"topic": "rules", **payload})
+                return "stuck"
+        task = spawn(self._broadcast_stop(rule_id, payload), name="rule-stop-broadcast")
+        self._stop_broadcasts.add(task)
+        task.add_done_callback(self._stop_broadcasts.discard)
+        return "moved"
+
+    async def _broadcast_stop(self, rule_id: str, payload: dict[str, Any]) -> None:
+        """The moved rule's `rules` broadcast, under its own bound: one that fails or runs late is
+        logged by the error's class, and the move stands."""
+        try:
+            async with asyncio.timeout(STOP_TIMEOUT_S):
+                await self._bc({"topic": "rules", **payload})
         except Exception as lost:  # the hook names no error type
             _log().warning(
                 "rules.stop_broadcast_failed", rule_id=rule_id, error=type(lost).__name__
             )
-        return True
 
     async def _disarm_on_tick(self, row: RuleRow) -> None:
         """One attempt, bounded by `TICK_DISARM_TIMEOUT_S`. A failed or timed-out one is logged,
@@ -1286,7 +1317,8 @@ class RulesManager:
         and only then persist the projected mode on the row. Returns False when the chart
         refused (nothing audited as a success, nothing persisted). Any failure after the
         chart moved evicts it, so it is rebuilt from the row - the durable truth - and the
-        caller gets an error, never a 2xx."""
+        caller gets an error, never a 2xx. Every move out of `armed` lands here: once the row
+        that was armed is persisted in another mode, `left_armed` hears it (E35-T10)."""
         try:
             before, leaf = await self.lifecycle.send(row.id, event, **ev)
         except LifecycleError as exc:
@@ -1296,6 +1328,7 @@ class RulesManager:
             ) from exc
         if leaf == before:
             return False
+        was_armed = row.mode == "armed"
         try:
             await self._audit(audit_action, payload | {"b9_to": leaf})
             row.mode = mode_of(leaf)
@@ -1307,6 +1340,8 @@ class RulesManager:
         except BaseException:
             await self.lifecycle.evict(row.id)
             raise
+        if was_armed and row.mode != "armed":
+            self._left_armed(row.id)
         return True
 
     async def _transition(
