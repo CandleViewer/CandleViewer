@@ -1,3 +1,8 @@
+// E15-K01 (#371) mirror cases: this test reads the throwaway spike harness
+// (`docs/plan/spikes/E15-K01-harness/lib.mjs`) and its stored windows to check that the app's probe and
+// trigger agree with what the spike measured. The dependency runs one way (the harness imports nothing
+// from the app). When the harness is deleted, delete the mirror cases here with it; E15-S08 (#561), which
+// owns the probe's calibration on reference hardware, decides when.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
