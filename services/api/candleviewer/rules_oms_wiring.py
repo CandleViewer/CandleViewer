@@ -33,7 +33,7 @@ from candleviewer.rules.executor.budget import DAY_S, OrderBudget
 from candleviewer.rules.executor.handlers import COUNTS_ORDERS
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.ports import ActionAuditFields, EventRow, RunRow, RunStatus
-from candleviewer.rules.limits import ORDER_BUDGET_CAPS
+from candleviewer.rules.limits import ORDER_BUDGET_CAPS, SIGNAL_MAX_DEPTH_CAP
 from candleviewer.storage.repositories.rules_sqlalchemy import (
     RuleEventInsert,
     SqlAlchemyRulesRepository,
@@ -242,6 +242,22 @@ def rule_order_budget(
             raise OrderBudgetAboveCap(f"{setting} is above its hard cap of {cap}")
     rebuild = None if repository is None else RuleBudgetRebuild(repository)
     return OrderBudget(per_minute, per_day, rebuild=rebuild)
+
+
+class SignalDepthAboveCap(ValueError):
+    """The signal chain's depth setting above its hard cap: the app refuses to start."""
+
+
+def rule_signal_depth(value: int) -> int:
+    """The signal chain's depth limit from its boot setting (24 §11.5, §16.1; E35-T13 BQ-5), for
+    `RulesService.bind(signal_max_depth=...)`: `create_app` reads it whatever
+    `rules_evaluator_enabled` says, so a setting above `rules.limits.SIGNAL_MAX_DEPTH_CAP` (interim,
+    pending the owner's ratification, #2701) refuses start."""
+    if value > SIGNAL_MAX_DEPTH_CAP:
+        raise SignalDepthAboveCap(
+            f"CV_RULES_SIGNAL_MAX_DEPTH is above its hard cap of {SIGNAL_MAX_DEPTH_CAP}"
+        )
+    return value
 
 
 #: The account B18 is asked about for an action that names none (24 §11.5 check 3): no grant names

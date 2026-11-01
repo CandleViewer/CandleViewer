@@ -2,8 +2,9 @@
 
 `rule_actions_total{type,result}`, `rule_action_duration_seconds{type}`,
 `rule_actions_blocked_total{reason}`, `rule_dispatch_reread_failed_total{reason}`,
-`rule_records_shed_total{kind}`, and, since E35-T10, `rule_circuit_breaker_trips_total` and
-`rule_autodisarm_total`, registered from their catalogue entries over the app's metrics
+`rule_records_shed_total{kind}`, since E35-T10 `rule_circuit_breaker_trips_total` and
+`rule_autodisarm_total`, and since E35-T13 `rule_signal_chain_truncated_total` and
+`rule_signal_dropped_total`, registered from their catalogue entries over the app's metrics
 facade (idempotent: `register_r0` declares the same). Every label is checked against its closed set
 before any series is touched, so no value outside it ever makes a series; no label names a rule,
 an account, a user or a value. Unbound (no facade), it counts nothing, as the sinks discard.
@@ -31,6 +32,7 @@ _SERIES: Final = (
     "rule_actions_total", "rule_action_duration_seconds", "rule_actions_blocked_total",
     "rule_dispatch_reread_failed_total", "rule_records_shed_total",
     "rule_circuit_breaker_trips_total", "rule_autodisarm_total",
+    "rule_signal_chain_truncated_total", "rule_signal_dropped_total",
 )  # fmt: skip
 
 
@@ -108,3 +110,13 @@ class ExecutorMetrics:
         """One rule disarmed after repeated scope or permission refusals (24 §11.5, BQ-10)."""
         if self._series:
             self._series["rule_autodisarm_total"].child().inc()
+
+    def chain_truncated(self) -> None:
+        """One signal chain cut at its depth limit (24 §11.5; RE-D7), every cut counted."""
+        if self._series:
+            self._series["rule_signal_chain_truncated_total"].child().inc()
+
+    def signal_dropped(self) -> None:
+        """One signal the full signal queue refused, the newest (24 §11.5; RE-D7)."""
+        if self._series:
+            self._series["rule_signal_dropped_total"].child().inc()

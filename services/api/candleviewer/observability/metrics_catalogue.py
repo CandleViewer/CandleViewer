@@ -3984,6 +3984,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E35",
         max_series=2,
     ),
+    # E35-T13 (#5005; 24 Sec.11.5, BQ-5): live in `rules/executor/metrics.py`, no labels.
     _s(
         "rule_signal_chain_truncated_total",
         "counter",
@@ -3991,7 +3992,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         (),
         "emit_signal chains cut at their depth limit, each also logged as an error.",
         "dashboard only",
-        _P,
+        _L,
+        "E35",
+    ),
+    _s(
+        "rule_signal_dropped_total",
+        "counter",
+        "signals",
+        (),
+        "Signals the full signal queue refused, the newest, never one waiting.",
+        "dashboard only",
+        _L,
         "E35",
     ),
     # --- Recorder StreamWriter (E16-T03); served by recorder.metrics.export_recorder_metrics

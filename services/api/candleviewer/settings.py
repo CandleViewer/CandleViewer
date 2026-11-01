@@ -841,6 +841,10 @@ class Settings(BaseSettings):
     # live in the rules module alone (this module may not import it).
     rules_order_budget_per_minute: int = Field(default=10, ge=1)
     rules_order_budget_per_day: int = Field(default=200, ge=1)
+    # E35-T13 (24 Sec.11.5, Sec.16.1): the signal chain's depth limit, the boot setting
+    # `CV_RULES_SIGNAL_MAX_DEPTH`; `create_app` refuses to start above its hard cap, which lives in
+    # the rules module alone, as the order budget's caps do.
+    rules_signal_max_depth: int = Field(default=3, ge=1)
     # E40-T03: run the server-side alert evaluator (C-4.13: off by default until E40-T04's
     # dispatcher ships; removal with E40-Q02). Never gates a safety invariant (C-4.14).
     alerts_evaluator_enabled: bool = False

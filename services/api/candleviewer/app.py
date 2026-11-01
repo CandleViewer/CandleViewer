@@ -411,6 +411,7 @@ from candleviewer.rules_oms_wiring import (
     rule_action_records,
     rule_metrics,
     rule_order_budget,
+    rule_signal_depth,
     rule_switches,
 )
 from candleviewer.rules_store_pg import PostgresRuleStore
@@ -3405,6 +3406,9 @@ def create_app(
             ),
         )
     )
+    # E35-T13: the signal chain's depth limit from its boot setting; above its hard cap the app
+    # refuses to start here, whatever the evaluator flag says.
+    ctx.rules.bind(signal_max_depth=rule_signal_depth(resolved.rules_signal_max_depth))
     rules_actor = (
         SessionRulesActorResolver(
             lambda: ctx.auth.sessions,
