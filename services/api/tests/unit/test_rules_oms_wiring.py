@@ -40,6 +40,7 @@ from candleviewer.rules_oms_wiring import (
     RuleRunRecords,
     rule_action_records,
 )
+from candleviewer.storage.repositories import rules_sqlalchemy
 from candleviewer.storage.repositories.rules_sqlalchemy import SqlAlchemyRulesRepository
 from tests.rules.executor.request_builders import action_request
 
@@ -256,6 +257,14 @@ async def test_the_repository_serves_a_caller_that_names_no_run_as_before() -> N
         await RuleRunRecords(repo).begin(
             _unpersisted(), EventRow(seq=1, kind="action_start", node_ref="a1", payload={})
         )
+
+
+def test_the_write_ahead_run_insert_is_the_plain_insert_and_its_conflict_clause() -> None:
+    """R1C1-07: the write-ahead insert is written out whole, so that no built string reaches
+    `sa.text`, and says what the plain insert says plus its conflict clause, byte for byte: the
+    two statements never drift apart."""
+    plain = rules_sqlalchemy._INSERT_RUN.text
+    assert rules_sqlalchemy._INSERT_RUN_AHEAD.text == plain + " ON CONFLICT (id) DO NOTHING"
 
 
 def _unpersisted() -> RunRow:

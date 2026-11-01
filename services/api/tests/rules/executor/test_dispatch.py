@@ -729,25 +729,31 @@ async def test_a_stop_cancelled_mid_drain_ends_the_audit_queue_too(
 async def test_the_audit_queue_drains_in_what_the_fire_queue_left_of_the_grace(
     rig: DispatchRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One grace for the module: the audit queue drains in what the fire queue's drain left of
-    it, after it, never in a grace of its own (#5231's carry RC-02)."""
+    """One grace for the module, counted from the start of `stop()`: the runner's stop takes its
+    share of it, the fire queue drains in what is left, and the audit queue in what that leaves,
+    never in a grace of its own (#5231's carry RC-02)."""
     now, graces = [1_000.0], list[tuple[str, float]]()
     monkeypatch.setattr(rules_service, "monotonic", lambda: now[0])
-    fires_stop, audits_stop = rig.dispatch.stop, rig.audit_queue.stop
+    runner_stop, fires_stop, audits_stop = rig.runner.stop, rig.dispatch.stop, rig.audit_queue.stop
+
+    async def runner() -> None:
+        now[0] += 2.0  # the runner's stop takes 2 s of the 10
+        await runner_stop()
 
     async def fires(grace_s: float) -> None:
         graces.append(("fires", grace_s))
-        now[0] += 3.0  # the fire queue's drain takes 3 s of the 10
+        now[0] += 3.0  # the fire queue's drain takes 3 s more
         await fires_stop(grace_s)
 
     async def audits(grace_s: float) -> None:
         graces.append(("audits", grace_s))
         await audits_stop(grace_s)
 
+    monkeypatch.setattr(rig.runner, "stop", runner)
     monkeypatch.setattr(rig.dispatch, "stop", fires)
     monkeypatch.setattr(rig.audit_queue, "stop", audits)
     await rig.svc.stop(10.0)
-    assert graces == [("fires", 10.0), ("audits", 7.0)]
+    assert graces == [("fires", 8.0), ("audits", 5.0)]  # 10 less the runner's 2, then 3 more
 
 
 async def test_a_stop_cancelled_while_the_runner_ends_goes_on_to_the_caller(
